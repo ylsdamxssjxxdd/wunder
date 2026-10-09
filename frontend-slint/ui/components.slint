@@ -161,7 +161,7 @@ export component Avatar inherits Rectangle {
     // Runtime state is rendered as the small web-style badge beside the face.
     in property <string> status: "";
     width: 34px; height: 34px; border-radius: 17px;
-    background: root.mine ? Theme.accent-soft : (root.tone == 1 ? #fff0e3 : root.tone == 2 ? #e7f5ef : root.tone == 3 ? #e8efff : #ffffff);
+    background: root.mine ? Theme.accent-soft : (root.tone == 1 ? Theme.accent-soft : root.tone == 2 ? Theme.success-bg : root.tone == 3 ? #e8efff : Theme.surface);
     Rectangle {
         width: parent.width; height: parent.height; border-radius: parent.border-radius; clip: true;
         // An empty source falls back to the glyph bubble so callers can pass a

@@ -114,7 +114,7 @@ ENTRIES = [
     ("st_ui_language", "语言", "Language"),
     ("st_palette", "配色主题", "Color theme"),
     ("st_palette_note", "选择系统设置的主色风格", "Pick the primary accent style"),
-    ("st_palette_eva", "EVA 橙", "EVA orange"),
+    ("st_palette_terracotta", "赭橙（蜂巢基调）", "Terracotta (hive base)"),
     ("st_palette_hula", "Hula 绿", "Hula green"),
     ("st_palette_minimal", "极简", "Minimal"),
     ("st_palette_tech", "科技蓝", "Tech blue"),

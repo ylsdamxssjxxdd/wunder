@@ -26,7 +26,7 @@ export component RuntimeBadge inherits Rectangle {
     if root.state != "running" : Image {
         width: 10px; height: 10px;
         source: root.state == "done" ? @image-url("../assets/icons/status-check.svg") : root.state == "pending" ? @image-url("../assets/icons/status-clock.svg") : root.state == "error" ? @image-url("../assets/icons/status-error.svg") : @image-url("../assets/icons/status-pause.svg");
-        image-fit: contain; colorize: root.state == "idle" ? #6b7280 : white;
+        image-fit: contain; colorize: root.state == "idle" ? Theme.muted : white;
     }
     if root.state == "running" : spinner := Rectangle {
         width: 10px; height: 10px;

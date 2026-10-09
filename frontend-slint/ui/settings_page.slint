@@ -25,8 +25,8 @@ component SettingsNavItem inherits Rectangle {
     background: root.selected ? Theme.accent : (touch.has-hover ? Theme.accent-soft : transparent);
     Rectangle {
         x: 10px; y: 12px; width: 36px; height: 36px; border-radius: 18px;
-        background: root.selected ? #ffffff3d : #ececec;
-        Image { x: 9px; y: 9px; width: 18px; height: 18px; source: root.icon; colorize: root.selected ? white : #5a5a5a; }
+        background: root.selected ? #ffffff3d : Theme.selected;
+        Image { x: 9px; y: 9px; width: 18px; height: 18px; source: root.icon; colorize: root.selected ? white : Theme.text-secondary; }
     }
     Text { x: 56px; y: 12px; width: parent.width - 66px; height: 18px; text: root.title; color: root.selected ? white : Theme.text; font-size: Theme.font-md; font-weight: 600; overflow: elide; }
     Text { x: 56px; y: 31px; width: parent.width - 66px; height: 15px; text: root.subtitle; color: root.selected ? #ffffffd1 : Theme.muted; font-size: Theme.font-xs; overflow: elide; }
@@ -485,7 +485,7 @@ export component SettingsPage inherits Rectangle {
     background: Theme.chat;
 
     function palette-name(index: int) -> string {
-        return index == 1 ? "hula-green" : index == 2 ? "minimal" : index == 3 ? "tech-blue" : "eva-orange";
+        return index == 1 ? "hula-green" : index == 2 ? "minimal" : index == 3 ? "tech-blue" : "terracotta";
     }
     // Per-type list icons, mirroring the web messenger model list.
     public pure function model-icon(kind: string) -> image {
@@ -699,7 +699,7 @@ export component SettingsPage inherits Rectangle {
                                         selected(value) => { root.language = value; root.save-runtime(root.workspace-root, root.language, root.python-path, root.git-path, root.rg-path); } }
                                 }
                                 SettingRow { label: I18n.st_palette; note: I18n.st_palette_note;
-                                    ComboBox { width: 150px; height: 38px; model: [I18n.st_palette_eva, I18n.st_palette_hula, I18n.st_palette_minimal, I18n.st_palette_tech]; current-index: root.theme == "hula-green" ? 1 : root.theme == "minimal" ? 2 : root.theme == "tech-blue" ? 3 : 0;
+                                    ComboBox { width: 150px; height: 38px; model: [I18n.st_palette_terracotta, I18n.st_palette_hula, I18n.st_palette_minimal, I18n.st_palette_tech]; current-index: root.theme == "hula-green" ? 1 : root.theme == "minimal" ? 2 : root.theme == "tech-blue" ? 3 : 0;
                                         selected(value) => { root.theme = root.palette-name(self.current-index); Theme.palette = root.theme; root.save-preferences(); } }
                                 }
                                 SettingRow { label: I18n.st_font_size; note: I18n.st_font_size_note; last: true;

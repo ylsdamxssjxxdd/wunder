@@ -68,8 +68,8 @@ pub struct DesktopSettings {
     pub container_cloud_workspaces: HashMap<i32, String>,
     #[serde(default)]
     pub language: String,
-    /// UI accent palette: "light" (legacy, renders as eva-orange),
-    /// "eva-orange", "hula-green", "minimal" or "tech-blue".
+    /// UI accent palette: "terracotta" (the 蜂巢 default; stored legacy names
+    /// like "light" render as it), "hula-green", "minimal" or "tech-blue".
     #[serde(default = "default_theme")]
     pub theme: String,
     /// Composer send key: "enter" (default), "ctrl_enter" or "none" (button only).
@@ -873,7 +873,7 @@ fn resolve_tool_auto(
 }
 
 fn default_theme() -> String {
-    "light".to_string()
+    "terracotta".to_string()
 }
 
 fn default_send_key() -> String {

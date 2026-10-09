@@ -202,10 +202,13 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
                     format!("history-{index}-group-{}", round.round),
                 );
                 bar.text = crate::timeline_text::tool_calls(tools).into();
-                bar.open = false;
+                // The newest turn reads exactly as it did while it streamed:
+                // its batches start open. Older turns stay folded, both behind
+                // their divider and behind their bars.
+                bar.open = current;
                 bar.payload = rows.len() as i32;
                 bar.group_idx = group;
-                bar.group_open = false;
+                bar.group_open = current;
                 bar.visible = current;
                 bar.foldable = true;
                 bar_at = Some(rows.len());
@@ -223,7 +226,7 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
                 reason.detail = round.reasoning.as_str().into();
                 reason.payload = rows.len() as i32;
                 reason.group_idx = group;
-                reason.group_open = false;
+                reason.group_open = current;
                 reason.visible = current;
                 reason.foldable = true;
                 rows.push(reason);
@@ -264,7 +267,7 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
                 };
                 row.payload = rows.len() as i32;
                 row.group_idx = group;
-                row.group_open = false;
+                row.group_open = current;
                 row.visible = current;
                 row.foldable = true;
                 rows.push(row);

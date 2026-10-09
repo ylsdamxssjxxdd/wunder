@@ -1,5 +1,5 @@
 import { Theme, AvatarOption, AvatarColorChip, CompanionCard } from "theme.slint";
-import { ExpertTheme, ExpertButton } from "expert_widgets.slint";
+import { ExpertButton } from "expert_widgets.slint";
 import { Action } from "components.slint";
 import { ScrollView, Switch, ComboBox } from "std-widgets.slint";
 import { I18n } from "i18n.slint";
@@ -73,13 +73,13 @@ export component AvatarDialog inherits Rectangle {
                 spacing: 12px;
                 // ---- header ----
                 HorizontalLayout { height: 26px; spacing: 8px;
-                    Text { text: I18n.av_title; color: ExpertTheme.text; font-size: 18px; font-weight: 700; vertical-alignment: center; }
+                    Text { text: I18n.av_title; color: Theme.text; font-size: 18px; font-weight: 700; vertical-alignment: center; }
                     Rectangle { horizontal-stretch: 1; }
                     Action { width: 28px; icon: @image-url("../assets/icons/xmark.svg"); clicked => { AvatarDialogState.cancel(); } }
                 }
                 // ---- preview ----
                 Rectangle {
-                    height: 76px; border-radius: 12px; background: ExpertTheme.soft;
+                    height: 76px; border-radius: 12px; background: Theme.panel;
                     HorizontalLayout { padding: 10px; spacing: 14px;
                         Rectangle {
                             width: 56px; height: 56px; border-radius: 28px;
@@ -100,7 +100,7 @@ export component AvatarDialog inherits Rectangle {
                         Text {
                             width: parent.width - 96px;
                             text: I18n.av_tip;
-                            color: ExpertTheme.muted; font-size: 12px; wrap: word-wrap;
+                            color: Theme.muted; font-size: 12px; wrap: word-wrap;
                             vertical-alignment: center;
                         }
                     }
@@ -116,7 +116,7 @@ export component AvatarDialog inherits Rectangle {
                         width: 100%; height: 100%;
                         horizontal-scrollbar-policy: always-off;
                         VerticalLayout { spacing: 12px; padding-right: 4px;
-                            Text { height: 18px; text: I18n.av_static_title; color: ExpertTheme.text; font-size: 13px; font-weight: 700; }
+                            Text { height: 18px; text: I18n.av_static_title; color: Theme.text; font-size: 13px; font-weight: 700; }
                             // 6x4 paged grid, 24 options per page like the web panel.
                             Rectangle {
                                 height: 4 * stride - stride + cell;
@@ -132,9 +132,9 @@ export component AvatarDialog inherits Rectangle {
                                         width: root.cell; height: root.cell;
                                         visible: self.idx < AvatarDialogState.options.length;
                                         border-radius: 12px;
-                                        background: AvatarDialogState.selected-key == item.key ? #fff1e5 : white;
+                                        background: AvatarDialogState.selected-key == item.key ? Theme.accent-soft : white;
                                         border-width: AvatarDialogState.selected-key == item.key ? 2px : 1px;
-                                        border-color: AvatarDialogState.selected-key == item.key ? #ff9448 : Theme.border;
+                                        border-color: AvatarDialogState.selected-key == item.key ? Theme.accent : Theme.border;
                                         TouchArea { enabled: self.visible; mouse-cursor: pointer; clicked => { AvatarDialogState.select-option(item.key); } }
                                         if item.image.width > 0 : Image {
                                             x: 4px; y: 4px; width: parent.width - 8px; height: parent.height - 8px;
@@ -143,7 +143,7 @@ export component AvatarDialog inherits Rectangle {
                                         if item.image.width <= 0 : Text {
                                             width: 100%; height: 100%;
                                             text: AvatarDialogState.agent-initial;
-                                            color: #ff9448; font-size: 16px; font-weight: 700;
+                                            color: Theme.accent; font-size: 16px; font-weight: 700;
                                             horizontal-alignment: center; vertical-alignment: center;
                                         }
                                     }
@@ -151,17 +151,17 @@ export component AvatarDialog inherits Rectangle {
                             }
                             HorizontalLayout { height: 30px; spacing: 8px;
                                 ExpertButton { width: 84px; label: I18n.av_page_prev; enabled: AvatarDialogState.page > 1; clicked => { AvatarDialogState.prev-page(); } }
-                                Rectangle { horizontal-stretch: 1; Text { width: 100%; text: I18n.av_page_prefix + AvatarDialogState.page + I18n.av_page_suffix; color: ExpertTheme.text; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; } }
+                                Rectangle { horizontal-stretch: 1; Text { width: 100%; text: I18n.av_page_prefix + AvatarDialogState.page + I18n.av_page_suffix; color: Theme.text; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; } }
                                 ExpertButton { width: 84px; label: I18n.av_page_next; enabled: AvatarDialogState.page < AvatarDialogState.page-count; clicked => { AvatarDialogState.next-page(); } }
                             }
-                            Text { height: 18px; text: I18n.av_bg_color; color: ExpertTheme.text; font-size: 13px; font-weight: 700; }
+                            Text { height: 18px; text: I18n.av_bg_color; color: Theme.text; font-size: 13px; font-weight: 700; }
                             HorizontalLayout { height: 30px; spacing: 8px; alignment: start;
                                 for chip[index] in AvatarDialogState.palette : Rectangle {
                                     property <bool> picked: AvatarDialogState.color == chip.hex;
                                     width: 26px; height: 26px; border-radius: 13px;
                                     background: chip.brush;
                                     border-width: self.picked ? 3px : 1px;
-                                    border-color: self.picked ? #303133 : #ffffffcc;
+                                    border-color: self.picked ? Theme.text : #ffffffcc;
                                     TouchArea { mouse-cursor: pointer; clicked => { AvatarDialogState.set-color(chip.hex); } }
                                 }
                             }
@@ -172,16 +172,16 @@ export component AvatarDialog inherits Rectangle {
                         horizontal-scrollbar-policy: always-off;
                         VerticalLayout { spacing: 12px; padding-right: 4px;
                             HorizontalLayout { height: 30px; spacing: 8px; alignment: start;
-                                Text { width: 100px; text: I18n.av_dynamic_title; color: ExpertTheme.text; font-size: 13px; font-weight: 700; vertical-alignment: center; }
+                                Text { width: 100px; text: I18n.av_dynamic_title; color: Theme.text; font-size: 13px; font-weight: 700; vertical-alignment: center; }
                                 Rectangle { horizontal-stretch: 1; }
                                 ExpertButton { width: 92px; label: I18n.av_companion_import; icon: @image-url("../assets/icons/upload.svg"); clicked => { AvatarDialogState.import-companion(); } }
                             }
                             for companion in AvatarDialogState.companions : Rectangle {
                                 height: 64px; width: grid-width;
                                 border-radius: 12px;
-                                background: AvatarDialogState.companion-id == companion.id ? #fff1e5 : ExpertTheme.soft;
+                                background: AvatarDialogState.companion-id == companion.id ? Theme.accent-soft : Theme.panel;
                                 border-width: AvatarDialogState.companion-id == companion.id ? 2px : 1px;
-                                border-color: AvatarDialogState.companion-id == companion.id ? #ff9448 : Theme.border;
+                                border-color: AvatarDialogState.companion-id == companion.id ? Theme.accent : Theme.border;
                                 HorizontalLayout { padding: 6px; padding-left: 10px; spacing: 10px;
                                     Rectangle {
                                         width: 50px; height: 50px; border-radius: 25px;
@@ -190,8 +190,8 @@ export component AvatarDialog inherits Rectangle {
                                         if companion.preview.width <= 0 : Text { width: 100%; height: 100%; text: companion.glyph; color: white; font-size: 18px; horizontal-alignment: center; vertical-alignment: center; }
                                     }
                                     VerticalLayout { horizontal-stretch: 1; spacing: 4px;
-                                        Text { height: 18px; text: companion.name; color: ExpertTheme.text; font-size: 12px; font-weight: 700; overflow: elide; }
-                                        Text { vertical-stretch: 1; text: companion.description; color: ExpertTheme.muted; font-size: 10px; overflow: elide; wrap: word-wrap; }
+                                        Text { height: 18px; text: companion.name; color: Theme.text; font-size: 12px; font-weight: 700; overflow: elide; }
+                                        Text { vertical-stretch: 1; text: companion.description; color: Theme.muted; font-size: 10px; overflow: elide; wrap: word-wrap; }
                                     }
                                     Action { width: 30px; icon: @image-url("../assets/icons/trash.svg"); clicked => { AvatarDialogState.delete-companion(companion.id); } }
                                 }
@@ -199,25 +199,25 @@ export component AvatarDialog inherits Rectangle {
                             }
                             if AvatarDialogState.companions.length == 0 : Text {
                                 height: 40px; width: grid-width;
-                                text: I18n.av_companion_empty; color: ExpertTheme.muted; font-size: 12px;
+                                text: I18n.av_companion_empty; color: Theme.muted; font-size: 12px;
                                 vertical-alignment: center; wrap: word-wrap;
                             }
                             HorizontalLayout { height: 30px; spacing: 12px;
-                                Text { width: 100px; text: I18n.av_companion_show; color: ExpertTheme.text; font-size: 12px; font-weight: 600; vertical-alignment: center; }
+                                Text { width: 100px; text: I18n.av_companion_show; color: Theme.text; font-size: 12px; font-weight: 600; vertical-alignment: center; }
                                 Switch { checked <=> AvatarDialogState.companion-show; }
                             }
                             HorizontalLayout { height: 30px; spacing: 12px;
-                                Text { width: 100px; text: I18n.av_companion_hints; color: ExpertTheme.text; font-size: 12px; font-weight: 600; vertical-alignment: center; }
+                                Text { width: 100px; text: I18n.av_companion_hints; color: Theme.text; font-size: 12px; font-weight: 600; vertical-alignment: center; }
                                 Switch { checked <=> AvatarDialogState.companion-hints; }
                             }
                             HorizontalLayout { height: 32px; spacing: 12px;
-                                Text { width: 100px; text: I18n.av_companion_scale; color: ExpertTheme.text; font-size: 12px; font-weight: 600; vertical-alignment: center; }
+                                Text { width: 100px; text: I18n.av_companion_scale; color: Theme.text; font-size: 12px; font-weight: 600; vertical-alignment: center; }
                                 ComboBox { width: 110px; model: root.scale-list; current-index <=> AvatarDialogState.companion-scale-index; }
                             }
                         }
                     }
                 }
-                if AvatarDialogState.status != "" : Text { height: 16px; text: AvatarDialogState.status; color: #d97706; font-size: 11px; overflow: elide; }
+                if AvatarDialogState.status != "" : Text { height: 16px; text: AvatarDialogState.status; color: Theme.warning; font-size: 11px; overflow: elide; }
                 // ---- footer ----
                 HorizontalLayout { height: 32px; spacing: 8px;
                     ExpertButton { width: 76px; label: I18n.av_reset; clicked => { AvatarDialogState.reset(); } }

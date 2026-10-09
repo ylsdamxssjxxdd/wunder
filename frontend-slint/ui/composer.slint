@@ -251,7 +251,7 @@ export component ContextUsageIcon inherits Rectangle {
     accessible-role: button;
     accessible-label: I18n.cp_context_usage;
     accessible-action-default => { root.open = !root.open; }
-    private property <color> usage-color: root.usage >= 0.9 ? Theme.danger : root.usage >= 0.75 ? #d97706 : Theme.accent;
+    private property <color> usage-color: root.usage >= 0.9 ? Theme.danger : root.usage >= 0.75 ? Theme.warning : Theme.accent;
     Image {
         x: 3px; y: 6px; width: 18px; height: 18px;
         source: @image-url("../assets/icons/brain.svg"); colorize: Theme.muted;
@@ -417,12 +417,12 @@ export component StatusDock inherits Rectangle {
                 // numbers read as a patch summary rather than plain counts.
                 if root.files-changed > 0 : Text {
                     height: parent.height; text: "+" + root.added-lines;
-                    color: #d64545; font-size: Theme.font-xs; font-weight: 600;
+                    color: Theme.danger; font-size: Theme.font-xs; font-weight: 600;
                     vertical-alignment: center;
                 }
                 if root.files-changed > 0 : Text {
                     height: parent.height; text: "-" + root.deleted-lines;
-                    color: #2f9e44; font-size: Theme.font-xs; font-weight: 600;
+                    color: Theme.success; font-size: Theme.font-xs; font-weight: 600;
                     vertical-alignment: center;
                 }
             }
@@ -915,7 +915,7 @@ key-pressed(event) => {
                 Rectangle {
                     width: parent.width * min(root.context-usage, 1.0);
                     height: parent.height; border-radius: 3px;
-                    background: root.context-usage >= 0.9 ? Theme.danger : root.context-usage >= 0.75 ? #d97706 : Theme.accent;
+                    background: root.context-usage >= 0.9 ? Theme.danger : root.context-usage >= 0.75 ? Theme.warning : Theme.accent;
                 }
             }
             if root.context-known : Text {

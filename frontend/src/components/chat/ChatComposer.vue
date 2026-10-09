@@ -245,6 +245,48 @@
               </div>
             </template>
 
+            <div
+              v-if="showApprovalModeSelector"
+              class="composer-plus-row"
+              @mouseenter="hoverPlusSubmenu('approval')"
+            >
+              <button
+                class="composer-plus-item"
+                type="button"
+                :class="{ 'is-active': approvalMenuVisible }"
+                :disabled="approvalModeSyncing"
+                :aria-expanded="approvalMenuVisible"
+                @click.stop="toggleApprovalMenu"
+              >
+                <i :class="[approvalTriggerIcon, 'composer-plus-item-icon']" aria-hidden="true"></i>
+                <span class="composer-plus-item-label">{{ approvalModeLabel }}</span>
+                <i class="fa-solid fa-chevron-right composer-plus-item-caret" aria-hidden="true"></i>
+              </button>
+              <!-- 审批模式子面板：与命令/预设同级的右侧呼出，选项列表复用原下拦内容。 -->
+              <div v-if="approvalMenuVisible" class="composer-plus-flyout" role="menu">
+                <div class="composer-panel-title">{{ t('chat.composer.approval') }}</div>
+                <button
+                  v-for="option in approvalOptions"
+                  :key="option.value"
+                  class="composer-panel-item composer-panel-item--radio"
+                  :class="{ 'is-selected': option.value === approvalModeValue }"
+                  type="button"
+                  role="menuitemradio"
+                  :aria-checked="option.value === approvalModeValue"
+                  @click="selectApprovalMode(option.value)"
+                >
+                  <span class="composer-panel-radio" aria-hidden="true">
+                    <i v-if="option.value === approvalModeValue" class="fa-solid fa-check"></i>
+                  </span>
+                  <span class="composer-panel-main">
+                    <span class="composer-panel-item-label">{{ option.label }}</span>
+                    <span class="composer-panel-desc">{{ option.description }}</span>
+                  </span>
+                </button>
+                <div class="composer-panel-hint">{{ t('chat.composer.approval.hint') }}</div>
+              </div>
+            </div>
+
             <div class="composer-plus-row" @mouseenter="hoverPlusSubmenu('none')">
               <button
                 v-if="voiceSupported"
@@ -276,45 +318,6 @@
         </div>
 
         <ComposerStatusBar :workspace-name="workspaceName" />
-
-        <div v-if="showApprovalModeSelector" ref="approvalMenuAnchorRef" class="composer-anchor">
-          <button
-            class="composer-approval-trigger"
-            type="button"
-            :class="{ 'is-active': approvalMenuVisible }"
-            :title="approvalTriggerTitle"
-            :aria-label="approvalTriggerTitle"
-            :aria-expanded="approvalMenuVisible"
-            :disabled="approvalModeSyncing"
-            @click.stop="toggleApprovalMenu"
-          >
-            <i :class="[approvalTriggerIcon, 'composer-approval-icon']" aria-hidden="true"></i>
-            <span class="composer-approval-label">{{ approvalModeLabel }}</span>
-            <i class="fa-solid fa-chevron-down composer-caret" aria-hidden="true"></i>
-          </button>
-          <div v-if="approvalMenuVisible" class="composer-panel composer-panel--approval" @click.stop>
-            <div class="composer-panel-title">{{ t('chat.composer.approval') }}</div>
-            <button
-              v-for="option in approvalOptions"
-              :key="option.value"
-              class="composer-panel-item composer-panel-item--radio"
-              :class="{ 'is-selected': option.value === approvalModeValue }"
-              type="button"
-              role="menuitemradio"
-              :aria-checked="option.value === approvalModeValue"
-              @click="selectApprovalMode(option.value)"
-            >
-              <span class="composer-panel-radio" aria-hidden="true">
-                <i v-if="option.value === approvalModeValue" class="fa-solid fa-check"></i>
-              </span>
-              <span class="composer-panel-main">
-                <span class="composer-panel-item-label">{{ option.label }}</span>
-                <span class="composer-panel-desc">{{ option.description }}</span>
-              </span>
-            </button>
-            <div class="composer-panel-hint">{{ t('chat.composer.approval.hint') }}</div>
-          </div>
-        </div>
       </div>
 
         <div class="composer-action-group composer-action-group--end">
@@ -335,9 +338,6 @@
               <span class="composer-model-name">{{ modelTriggerLabel }}</span>
               <span v-if="reasoningEffortCompactLabel" class="composer-model-effort">
                 {{ reasoningEffortCompactLabel }}
-              </span>
-              <span class="composer-model-usage" :class="contextUsage.level" data-testid="composer-context-percent">
-                {{ contextUsage.percentText }}
               </span>
               <span v-if="modelSwitching" class="composer-model-spinner" aria-hidden="true"></span>
               <i v-else class="fa-solid fa-chevron-down composer-caret" aria-hidden="true"></i>
@@ -530,7 +530,6 @@ const attachmentBusy = ref(0);
 const workspaceDropBusy = ref(0);
 const dragActive = ref(false);
 const dragCounter = ref(0);
-const approvalMenuAnchorRef = ref<HTMLElement | null>(null);
 const modelMenuAnchorRef = ref<HTMLElement | null>(null);
 const plusMenuAnchorRef = ref<HTMLElement | null>(null);
 const approvalMenuVisible = ref(false);
@@ -845,11 +844,6 @@ const approvalTriggerIcon = computed(
 );
 const showApprovalModeSelector = computed(() => Boolean(props.approvalModeEditable));
 const approvalModeSyncing = computed(() => props.approvalModeSyncing);
-const approvalTriggerTitle = computed(() =>
-  approvalModeSyncing.value
-    ? t('chat.composer.approval.syncing')
-    : `${t('chat.composer.approval')}: ${approvalModeLabel.value}`
-);
 const voiceSupported = computed(() => Boolean(props.voiceSupported));
 const voiceRecording = computed(() => Boolean(props.voiceRecording));
 const voiceTranscribing = computed(() => Boolean(props.voiceTranscribing));
@@ -2107,21 +2101,24 @@ const closeOtherPanels = (keep: 'plus' | 'command' | 'approval' | 'model' | 'pre
   if (keep !== 'approval') approvalMenuVisible.value = false;
   if (keep !== 'model') modelMenuVisible.value = false;
   if (keep !== 'preset') presetMenuVisible.value = false;
-  if (keep !== 'plus' && keep !== 'command' && keep !== 'preset') plusMenuVisible.value = false;
+  if (keep !== 'plus' && keep !== 'command' && keep !== 'preset' && keep !== 'approval') {
+    plusMenuVisible.value = false;
+  }
 };
 
 /**
  * 「+」面板的可见性：点加号，或被 `/` 建议与预设列表任一分支点亮时都要在。
- * 命令与预设在面板内各自开合，因此它们任一为真也代表面板开着。
+ * 命令、预设与审批模式在面板内各自开合，因此它们任一为真也代表面板开着。
  */
 const plusPanelVisible = computed(() =>
   plusMenuVisible.value ||
   commandMenuOpen.value ||
   presetMenuVisible.value ||
+  approvalMenuVisible.value ||
   commandSuggestionsVisible.value
 );
 
-// 加号只开合面板；面板内的三段各自负责自己的开合。
+// 加号只开合面板；面板内的四段各自负责自己的开合。
 const togglePlusMenu = () => {
   const next = !plusPanelVisible.value;
   closeOtherPanels('plus');
@@ -2129,6 +2126,7 @@ const togglePlusMenu = () => {
   if (!next) {
     commandMenuOpen.value = false;
     presetMenuVisible.value = false;
+    approvalMenuVisible.value = false;
   }
 };
 
@@ -2152,22 +2150,31 @@ const togglePresetMenu = () => {
 
 /**
  * 「+」菜单的级联形态：悬停行就从右侧呼出子面板，移开不自动收起。
- * 语音行没有子面板，指过去即把两个子面板关掉。
+ * 语音行没有子面板，指过去即把其余子面板关掉。
  */
-const hoverPlusSubmenu = (target: 'command' | 'preset' | 'none') => {
+const hoverPlusSubmenu = (target: 'command' | 'preset' | 'approval' | 'none') => {
   if (!plusPanelVisible.value) return;
   if (target === 'none') {
     commandMenuOpen.value = false;
     presetMenuVisible.value = false;
+    approvalMenuVisible.value = false;
     return;
   }
   if (target === 'preset') {
     if (stopButtonActive.value) return;
     commandMenuOpen.value = false;
+    approvalMenuVisible.value = false;
     presetMenuVisible.value = true;
     return;
   }
+  if (target === 'approval') {
+    commandMenuOpen.value = false;
+    presetMenuVisible.value = false;
+    if (!approvalModeSyncing.value) approvalMenuVisible.value = true;
+    return;
+  }
   presetMenuVisible.value = false;
+  approvalMenuVisible.value = false;
   // 输入 `/` 的候选已经挂在同一份子面板上，别再切成全量命令表。
   if (commandSuggestionsVisible.value) return;
   commandMenuOpen.value = true;
@@ -2362,13 +2369,12 @@ const hasOpenComposerPanel = (): boolean =>
 
 const handleDocumentPointerDown = (event: PointerEvent) => {
   const target = event.target as Node | null;
+  // 审批模式子面板挂在加号锚点内，加号分支关面板时会一并收掉。
   if (plusPanelVisible.value && !isPointerInside(plusMenuAnchorRef.value, target)) {
     commandMenuOpen.value = false;
     presetMenuVisible.value = false;
-    plusMenuVisible.value = false;
-  }
-  if (approvalMenuVisible.value && !isPointerInside(approvalMenuAnchorRef.value, target)) {
     approvalMenuVisible.value = false;
+    plusMenuVisible.value = false;
   }
   if (modelMenuVisible.value && !isPointerInside(modelMenuAnchorRef.value, target)) {
     modelMenuVisible.value = false;
@@ -2383,6 +2389,7 @@ const handleDocumentKeydown = (event: KeyboardEvent) => {
 
 onMounted(async () => {
   await nextTick();
+  resizeInput();
   if (typeof document !== 'undefined') {
     document.addEventListener('pointerdown', handleDocumentPointerDown);
     document.addEventListener('keydown', handleDocumentKeydown);
@@ -2406,6 +2413,12 @@ watch(
     commandMenuIndex.value = 0;
   }
 );
+
+// 任何来源的文本变化（草稿回填、预设问题、命令插入、发送清空）都重算输入框高度，
+// 不能只靠 @input：程序化赋值不触发 input 事件。
+watch(inputText, () => {
+  void nextTick(resizeInput);
+});
 
 watch(
   () => commandSuggestions.value.length,

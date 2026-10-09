@@ -1,29 +1,15 @@
 fn main() {
-    for file in [
-        "main.slint",
-        "theme.slint",
-        "components.slint",
-        "i18n.slint",
-        "expert_widgets.slint",
-        "expert_data.slint",
-        "channels_page.slint",
-        "thread_log.slint",
-        "cron_page.slint",
-        "entity_pages.slint",
-        "tools_page.slint",
-        "tools_widgets.slint",
-        "tools_theme.slint",
-        "composer.slint",
-        "timeline.slint",
-        "markdown.slint",
-        "patch_diff_card.slint",
-        "workflow_detail.slint",
-        "runtime_status.slint",
-        "tray.slint",
-        "tray-notice.slint",
-        "screenshot_overlay.slint",
-    ] {
-        println!("cargo:rerun-if-changed=ui/{file}");
+    // Every stylesheet in ui/ can change the generated shell. A directory
+    // watch would only fire when files are added or removed, so each sheet is
+    // watched by name and the list is read from disk instead of hand-kept.
+    if let Ok(entries) = std::fs::read_dir("ui") {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) == Some("slint") {
+                let name = path.file_name().unwrap().to_string_lossy();
+                println!("cargo:rerun-if-changed=ui/{name}");
+            }
+        }
     }
     // Composer tool glyphs are embedded straight from disk, so an icon-only
     // edit must also invalidate the generated resource table.

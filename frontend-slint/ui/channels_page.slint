@@ -1,4 +1,4 @@
-import { ExpertTheme, ExpertButton } from "expert_widgets.slint";
+import { ExpertButton } from "expert_widgets.slint";
 import { I18n } from "i18n.slint";
 import { Theme, ChannelAccountCard, ChannelBindingCard, ChannelCatalogCard, ChannelLogCard } from "theme.slint";
 import { Action, FormField, PageState, PageStateKind } from "components.slint";
@@ -77,11 +77,11 @@ export component ChannelsPage inherits Rectangle {
         padding-top: 12px;
         Rectangle {
             width: parent.width * 0.30;
-            border-width: 1px; border-color: #e6e8ed; border-radius: 12px;
+            border-width: 1px; border-color: Theme.border; border-radius: 12px;
             background: white;
             VerticalLayout {
                 spacing: 0px;
-                HorizontalLayout { height: 42px; padding: 10px; Text { text: "我的渠道账号"; color: #303133; font-size: 14px; font-weight: 600; } Action { width: 48px; icon: @image-url("../assets/icons/plus.svg"); label: "新增"; show-label: true; clicked => { root.open-creator(); } } Action { width: 48px; icon: @image-url("../assets/icons/rotate-right.svg"); label: "刷新"; show-label: true; clicked => { root.refresh(); } } }
+                HorizontalLayout { height: 42px; padding: 10px; Text { text: "我的渠道账号"; color: Theme.text; font-size: 14px; font-weight: 600; } Action { width: 48px; icon: @image-url("../assets/icons/plus.svg"); label: "新增"; show-label: true; clicked => { root.open-creator(); } } Action { width: 48px; icon: @image-url("../assets/icons/rotate-right.svg"); label: "刷新"; show-label: true; clicked => { root.refresh(); } } }
                 Rectangle { height: 6px; }
                 ScrollView {
                     vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
@@ -90,9 +90,9 @@ export component ChannelsPage inherits Rectangle {
                             height: 64px;
                             Rectangle {
                                 x: 8px; y: 2px; width: parent.width - 16px; height: 60px; border-radius: Theme.radius-lg;
-                                background: root.selected == index ? #fff3e8 : transparent; border-width: 1px; border-color: #ffcca7;
+                                background: root.selected == index ? Theme.accent-soft : transparent; border-width: 1px; border-color: Theme.accent-secondary;
                                 Action { width: parent.width; height: parent.height; label: account.name; clicked => { root.select-account(index); } }
-                                Text { x: 12px; y: 9px; width: parent.width - 24px; height: 19px; text: account.name == "" ? account.account-id : account.name; color: ExpertTheme.text; font-size: Theme.font-md; font-weight: 600; overflow: elide; }
+                                Text { x: 12px; y: 9px; width: parent.width - 24px; height: 19px; text: account.name == "" ? account.account-id : account.name; color: Theme.text; font-size: Theme.font-md; font-weight: 600; overflow: elide; }
                                 Text { x: 12px; y: 34px; width: parent.width - 24px; height: 16px; text: account.channel + " · " + (account.configured ? I18n.ch_configured : I18n.ch_pending_config); color: account.configured ? Theme.success : Theme.muted; font-size: Theme.font-2xs; overflow: elide; }
                             }
                         }
@@ -102,7 +102,7 @@ export component ChannelsPage inherits Rectangle {
             }
         }
         Rectangle {
-            border-width: 1px; border-color: #e6e8ed; border-radius: 12px;
+            border-width: 1px; border-color: Theme.border; border-radius: 12px;
             horizontal-stretch: 1;
             VerticalLayout {
                 spacing: 0px;
@@ -122,35 +122,35 @@ export component ChannelsPage inherits Rectangle {
                 if root.selected >= 0 : ScrollView {
                     vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
                     VerticalLayout { alignment: start; padding: 12px; spacing: 10px;
-                        Rectangle { height: 130px; border-radius: 12px; border-width: 1px; border-color: ExpertTheme.border; background: #fafafa;
+                        Rectangle { height: 130px; border-radius: 12px; border-width: 1px; border-color: Theme.border; background: Theme.panel;
                             VerticalLayout { padding: 12px; spacing: 10px;
-                                Text { text: "账号信息"; color: ExpertTheme.text; font-size: 14px; font-weight: 600; }
+                                Text { text: "账号信息"; color: Theme.text; font-size: 14px; font-weight: 600; }
                                 HorizontalLayout { spacing: 24px;
-                                    VerticalLayout { horizontal-stretch: 1; Text { text: "渠道"; color: ExpertTheme.muted; font-size: 11px; } Text { text: root.current.channel == "weixin" ? "Weixin iLink (New)" : root.current.channel; color: ExpertTheme.text; font-size: 14px; } }
-                                    VerticalLayout { horizontal-stretch: 1; Text { text: "账号 ID"; color: ExpertTheme.muted; font-size: 11px; } Text { text: root.current.account-id; color: ExpertTheme.text; font-size: 13px; overflow: elide; } }
+                                    VerticalLayout { horizontal-stretch: 1; Text { text: "渠道"; color: Theme.muted; font-size: 11px; } Text { text: root.current.channel == "weixin" ? "Weixin iLink (New)" : root.current.channel; color: Theme.text; font-size: 14px; } }
+                                    VerticalLayout { horizontal-stretch: 1; Text { text: "账号 ID"; color: Theme.muted; font-size: 11px; } Text { text: root.current.account-id; color: Theme.text; font-size: 13px; overflow: elide; } }
                                 }
-                                Text { text: "配置状态"; color: ExpertTheme.muted; font-size: 11px; }
-                                Text { text: root.current.configured ? "已配置" : "待配置"; color: ExpertTheme.text; font-size: 13px; }
+                                Text { text: "配置状态"; color: Theme.muted; font-size: 11px; }
+                                Text { text: root.current.configured ? "已配置" : "待配置"; color: Theme.text; font-size: 13px; }
                             }
                         }
-                        Rectangle { height: 150px; border-radius: 12px; border-width: 1px; border-color: ExpertTheme.border; background: #fafafa;
+                        Rectangle { height: 150px; border-radius: 12px; border-width: 1px; border-color: Theme.border; background: Theme.panel;
                             VerticalLayout { padding: 12px; spacing: 10px;
-                                Text { text: "渠道配置"; color: ExpertTheme.text; font-size: 14px; font-weight: 600; }
-                                Rectangle { height: 72px; border-radius: 10px; border-width: 1px; border-color: ExpertTheme.border; background: white;
+                                Text { text: "渠道配置"; color: Theme.text; font-size: 14px; font-weight: 600; }
+                                Rectangle { height: 72px; border-radius: 10px; border-width: 1px; border-color: Theme.border; background: white;
                                     VerticalLayout { padding: 10px; spacing: 8px;
-                                        Text { text: root.current.channel == "weixin" ? "扫码登录" : "账号连接配置"; color: ExpertTheme.muted; font-size: 11px; }
+                                        Text { text: root.current.channel == "weixin" ? "扫码登录" : "账号连接配置"; color: Theme.muted; font-size: 11px; }
                                         HorizontalLayout { ExpertButton { width: 88px; label: root.current.channel == "weixin" ? "生成二维码" : "编辑配置"; clicked => { if root.current.channel == "weixin" { root.start-qr(); } else { root.edit-account(); } } } Rectangle { horizontal-stretch: 1; } }
                                     }
                                 }
                                 HorizontalLayout { ExpertButton { width: 88px; label: "高级选项"; clicked => { root.edit-account(); } } Rectangle { horizontal-stretch: 1; } }
                             }
                         }
-                        Rectangle { height: 300px; border-radius: 12px; border-width: 1px; border-color: ExpertTheme.border; background: #fafafa;
+                        Rectangle { height: 300px; border-radius: 12px; border-width: 1px; border-color: Theme.border; background: Theme.panel;
                             VerticalLayout { padding: 12px; spacing: 10px;
-                                HorizontalLayout { height: 30px; Text { text: "渠道运行日志"; color: ExpertTheme.text; font-size: 14px; font-weight: 600; } Rectangle { horizontal-stretch: 1; } ExpertButton { width: 98px; label: "写入测试日志"; enabled: !root.logs-loading; clicked => { root.probe-logs(); } } ExpertButton { width: 52px; label: "清空"; clicked => { root.clear-logs(); } } ExpertButton { width: 52px; label: "刷新"; enabled: !root.logs-loading; clicked => { root.open-logs(); } } }
+                                HorizontalLayout { height: 30px; Text { text: "渠道运行日志"; color: Theme.text; font-size: 14px; font-weight: 600; } Rectangle { horizontal-stretch: 1; } ExpertButton { width: 98px; label: "写入测试日志"; enabled: !root.logs-loading; clicked => { root.probe-logs(); } } ExpertButton { width: 52px; label: "清空"; clicked => { root.clear-logs(); } } ExpertButton { width: 52px; label: "刷新"; enabled: !root.logs-loading; clicked => { root.open-logs(); } } }
                                 ScrollView { horizontal-scrollbar-policy: always-off; VerticalLayout { alignment: start; spacing: 8px;
-                                    for entry in root.logs : Rectangle { height: 56px; border-radius: 10px; background: white; border-width: 1px; border-color: ExpertTheme.border; VerticalLayout { padding: 8px; spacing: 6px; HorizontalLayout { Text { text: entry.level; color: ExpertTheme.muted; font-size: 10px; } Rectangle { horizontal-stretch: 1; } Text { text: entry.time; color: ExpertTheme.muted; font-size: 10px; } } Text { text: entry.message; color: ExpertTheme.text; font-size: 12px; overflow: elide; } } }
-                                    if root.logs.length == 0 : Text { text: root.logs-loading ? "正在加载…" : "暂无运行日志"; color: ExpertTheme.muted; font-size: 12px; }
+                                    for entry in root.logs : Rectangle { height: 56px; border-radius: 10px; background: white; border-width: 1px; border-color: Theme.border; VerticalLayout { padding: 8px; spacing: 6px; HorizontalLayout { Text { text: entry.level; color: Theme.muted; font-size: 10px; } Rectangle { horizontal-stretch: 1; } Text { text: entry.time; color: Theme.muted; font-size: 10px; } } Text { text: entry.message; color: Theme.text; font-size: 12px; overflow: elide; } } }
+                                    if root.logs.length == 0 : Text { text: root.logs-loading ? "正在加载…" : "暂无运行日志"; color: Theme.muted; font-size: 12px; }
                                 } }
                             }
                         }

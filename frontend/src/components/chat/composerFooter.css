@@ -33,6 +33,17 @@
   box-shadow: none;
 }
 
+/* 旧暗色主题 `.chat-shell textarea`（0,1,1）会漏进 17px 字号 / 48px 最小高 / 220px 上限，
+   这里用 (0,2,0) 压回去：B4 输入卡默认单行、随内容长高（脚本 resizeInput 同步写 inline height），
+   到 INPUT_MAX_HEIGHT(168px) 后转内部滚动。 */
+.chat-shell .composer-textarea {
+  min-height: 22px;
+  max-height: 168px;
+  overflow-y: hidden;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
 /* ------------------------------------------------------------ action row */
 
 /* 工具行在输入卡**之外**（参考形态）：卡只包输入框，这一行直接落在页面底色上，
@@ -122,17 +133,17 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* ------------------------------------------------------ approval + model */
+/* ------------------------------------------------------------- model 触发器 */
 
-/* 桌面的审批 chip 与模型触发器都是「无边框、悬停填充」的幽灵按钮
-   （composer.slint:529-544 / :62-95），高度与其余按钮同为 30px。 */
-.composer-approval-trigger,
+/* 模型触发器是「无边框、悬停填充」的幽灵按钮（composer.slint:62-95），
+   高度与其余按钮同为 30px；审批模式入口已并入「+」菜单行。 */
 .composer-model-trigger {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   min-width: 0;
   height: 30px;
+  max-width: min(320px, 46vw);
   padding: 0 8px;
   border: 0;
   border-radius: 8px;
@@ -144,36 +155,23 @@
   transition: background-color 120ms ease, color 120ms ease;
 }
 
-.composer-model-trigger {
-  max-width: min(320px, 46vw);
-}
-
-.composer-approval-trigger:hover:not(:disabled),
 .composer-model-trigger:hover:not(:disabled) {
   background: var(--mz-hover, #f1efec);
 }
 
-.composer-approval-trigger.is-active,
 .composer-model-trigger.is-active {
   background: var(--mz-primary-tint, #f6e9e3);
   color: var(--mz-primary, #c96443);
 }
 
-.composer-approval-trigger:disabled,
 .composer-model-trigger:disabled {
   cursor: progress;
   opacity: 0.75;
 }
 
-.composer-approval-trigger:focus-visible,
 .composer-model-trigger:focus-visible {
   outline: 2px solid var(--mz-primary-soft, #dfac9a);
   outline-offset: 1px;
-}
-
-.composer-approval-icon {
-  font-size: 12px;
-  flex-shrink: 0;
 }
 
 /* 模型触发器上的大脑就是上下文占用图标（桌面 ContextUsageIcon 的填充语义）：
@@ -185,32 +183,14 @@
   line-height: 16px;
 }
 
-/* 占用百分比与模型名同排，分档颜色由占用投影给出。 */
-.composer-model-usage {
-  flex-shrink: 0;
-  color: var(--mz-text-muted, #8a8f99);
-  font-size: 11px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-
-.composer-model-usage.is-warning {
-  color: var(--mz-warning, #c98a2b);
-}
-
-.composer-model-usage.is-danger {
-  color: var(--mz-danger, #d04a43);
-}
-
-.composer-approval-label,
+/* 模型名 / 思考等级共用 18px 行盒，配合 align-items:center 保证二者中线一致；
+   触发器里不再显示占用百分比，数字与进度在模型浮层里展开。 */
 .composer-model-name {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.composer-model-name {
+  line-height: 18px;
   font-size: 13px;
   font-weight: 600;
 }
@@ -220,6 +200,8 @@
   color: var(--mz-text-muted, #8a8f99);
   font-size: 11px;
   font-weight: 500;
+  line-height: 18px;
+  white-space: nowrap;
 }
 
 .composer-model-spinner {
@@ -246,17 +228,17 @@
 /* ------------------------------------------------------------ "+" 菜单 */
 
 /* 参考形态：加号是与发送键同尺寸的方形描边按钮（白底 + 浅描边 + 极淡投影），
-   展开时图标转 45° 成「×」。 */
+   展开时图标转 45° 成「×」。28px 小尺寸贴齐参考主页面底部工具键。 */
 .composer-plus-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  width: 34px;
-  height: 34px;
+  width: 28px;
+  height: 28px;
   padding: 0;
   border: 1px solid var(--mz-border-strong, #d8d5d0);
-  border-radius: 10px;
+  border-radius: 8px;
   background: var(--mz-surface, #ffffff);
   box-shadow: 0 1px 2px rgba(31, 35, 41, 0.06);
   color: var(--mz-text-secondary, #3d3d3d);
@@ -286,7 +268,7 @@
 }
 
 .composer-plus-icon {
-  font-size: 14px;
+  font-size: 12px;
   transition: transform 160ms ease;
 }
 
@@ -395,18 +377,18 @@
 
 /* ------------------------------------------------------------------ send */
 
-/* 参考形态：34px 圆角方形主色按钮 + 白色上箭头，圆角与「+」同为 10px（不是正圆），
+/* 参考形态：28px 圆角方形主色按钮 + 白色上箭头，圆角与「+」同为 8px（不是正圆），
    带一层同色柔影才有"按得下去"的质感。 */
 .composer-send-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  width: 34px;
-  height: 34px;
+  width: 28px;
+  height: 28px;
   padding: 0;
   border: 0;
-  border-radius: 10px;
+  border-radius: 8px;
   background: var(--ui-accent, var(--mz-primary, #c96443));
   box-shadow: 0 2px 6px rgba(var(--ui-accent-rgb, 201, 100, 67), 0.28);
   color: #ffffff;
@@ -430,7 +412,7 @@
 }
 
 .composer-send-icon {
-  font-size: 14px;
+  font-size: 12px;
 }
 
 /* ------------------------------------------------------------- voice hint */
@@ -495,10 +477,6 @@
   border-radius: 12px;
   background: var(--mz-surface, #ffffff);
   box-shadow: 0 12px 32px rgba(31, 35, 41, 0.16);
-}
-
-.composer-panel--approval {
-  width: 268px;
 }
 
 .composer-panel-title {
@@ -618,18 +596,10 @@
   .composer-model-effort {
     display: none;
   }
-
-  .composer-approval-label {
-    max-width: 72px;
-  }
 }
 
 @container (max-width: 420px) {
   .composer-model-name {
     max-width: 76px;
-  }
-
-  .composer-approval-icon {
-    display: none;
   }
 }

@@ -1,4 +1,5 @@
 import { I18n } from "i18n.slint";
+import { Theme } from "theme.slint";
 // Frozen-screen region selector. Rust owns the captured frame and receives
 // only the final logical selection rectangle.
 
@@ -11,8 +12,8 @@ component OverlayButton inherits Rectangle {
     height: 28px;
     border-radius: 5px;
     border-width: 1px;
-    border-color: root.primary ? #f08b43 : #ffffff70;
-    background: button.has-hover ? (root.primary ? #ff9d55 : #4b4b4b) : (root.primary ? #e5792e : #333333);
+    border-color: root.primary ? Theme.accent : #ffffff70;
+    background: button.has-hover ? (root.primary ? Theme.accent : #4b4b4b) : (root.primary ? Theme.accent-deep : #333333);
     Text { text: root.label; color: #ffffff; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; }
     button := TouchArea { mouse-cursor: pointer; clicked => { root.triggered(); } }
 }
@@ -47,7 +48,7 @@ export component ScreenshotOverlay inherits Window {
     if root.has-selection : Rectangle {
         x: root.sel-x * 1px; y: root.sel-y * 1px; width: root.sel-w * 1px; height: root.sel-h * 1px; clip: true;
         Image { x: -(root.sel-x * 1px); y: -(root.sel-y * 1px); width: root.width; height: root.height; source: root.screen-image; image-fit: fill; }
-        Rectangle { background: transparent; border-width: 2px; border-color: #ff9448; }
+        Rectangle { background: transparent; border-width: 2px; border-color: Theme.accent; }
     }
     touch := TouchArea {
         mouse-cursor: crosshair;

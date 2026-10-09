@@ -210,10 +210,17 @@ impl NativeDesktop {
         font_size: i32,
     ) -> Result<DesktopSettings> {
         let theme = theme.trim();
+        // A profile saved before the neutral base stopped following the theme
+        // carries a legacy name; it is the same base, so store the current one
+        // instead of rejecting a save the user did not trigger on this field.
+        let theme = match theme {
+            "light" | "eva-orange" => "terracotta",
+            other => other,
+        };
         let send_key = send_key.trim();
         if !matches!(
             theme,
-            "light" | "eva-orange" | "hula-green" | "minimal" | "tech-blue"
+            "terracotta" | "hula-green" | "minimal" | "tech-blue"
         ) {
             bail!("暂不支持该主题");
         }

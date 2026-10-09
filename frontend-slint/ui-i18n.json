@@ -4653,9 +4653,9 @@
   "en": "Pick the primary accent style"
  },
  {
-  "key": "st_palette_eva",
-  "zh": "EVA 橙",
-  "en": "EVA orange"
+  "key": "st_palette_terracotta",
+  "zh": "赭橙（蜂巢基调）",
+  "en": "Terracotta (hive base)"
  },
  {
   "key": "st_palette_hula",

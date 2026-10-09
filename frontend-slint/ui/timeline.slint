@@ -421,7 +421,13 @@ export component TimelineRowView inherits Rectangle {
     callback download-text(string);
     callback open-resource(string);
     width: 100%;
-    visible: root.entry.visible;
+    // A batch entry belongs to its bar: folding the bar takes the entries with
+    // it, which is what `toggle` writes into `group-open` across the group. The
+    // bar itself is the handle and always stays laid out.
+    visible: root.entry.visible
+        && (root.entry.kind == EntryKind.group
+            || root.entry.group-idx == -1
+            || root.entry.group-open);
     // The column sizes every row from its own content, so an unfold or a
     // wrapped line simply makes the timeline taller.
     height: cell.preferred-height;

@@ -1,5 +1,4 @@
 import { Theme, ToolCard, FileCard } from "theme.slint";
-import { ToolsTheme } from "tools_theme.slint";
 import { ToolText, ToolButton, ToolNavigation, ToolGroup } from "tools_widgets.slint";
 import { I18n } from "i18n.slint";
 import { ModalDialog, ConfirmDialog, FormField } from "components.slint";
@@ -99,7 +98,7 @@ export global ToolsDialog {
 component FormFieldLabel inherits ToolText {
     height: 20px;
     font-size: 13px;
-    color: #6b7280;
+    color: Theme.muted;
 }
 
 // Multiline form area with a bordered box, used for description / headers /
@@ -120,8 +119,8 @@ component FormArea inherits Rectangle {
             vertical-stretch: 1;
             border-radius: 8px;
             border-width: 1px;
-            border-color: edit.has-focus ? ToolsTheme.accent : root.read-only ? #e8e8e8 : #dcdcdc;
-            background: root.read-only ? #f7f7f7 : white;
+            border-color: edit.has-focus ? Theme.accent : root.read-only ? Theme.border : Theme.border-strong;
+            background: root.read-only ? Theme.panel : white;
             clip: true;
             edit := TextEdit {
                 x: 10px; y: 6px;
@@ -129,7 +128,6 @@ component FormArea inherits Rectangle {
                 height: parent.height - 12px;
                 placeholder-text: root.placeholder;
                 read-only: root.read-only;
-                font-family: ToolsTheme.font;
                 font-size: 13px;
                 edited => { root.edited(); }
             }
@@ -159,23 +157,23 @@ component FormDialog inherits Rectangle {
         border-radius: 12px;
         background: white;
         border-width: 1px;
-        border-color: #e5e5e5;
+        border-color: Theme.border;
         TouchArea { }
         VerticalLayout {
             spacing: 0px;
             HorizontalLayout {
                 padding-left: 24px; padding-right: 16px; padding-top: 18px; padding-bottom: 14px;
-                ToolText { height: 30px; text: root.title; font-size: 20px; font-weight: 700; color: #252525; }
+                ToolText { height: 30px; text: root.title; font-size: 20px; font-weight: 700; color: Theme.text; }
                 Rectangle { horizontal-stretch: 1; }
                 ToolButton { icon: @image-url("../assets/icons/xmark.svg"); label: I18n.tm_close; clicked => { root.dismissed(); } }
             }
-            Rectangle { height: 1px; background: #ececec; }
+            Rectangle { height: 1px; background: Theme.border; }
             VerticalLayout {
                 vertical-stretch: 1;
                 padding-left: 24px; padding-right: 24px; padding-top: 18px; padding-bottom: 8px;
                 @children
             }
-            Rectangle { height: 1px; background: #ececec; }
+            Rectangle { height: 1px; background: Theme.border; }
             HorizontalLayout {
                 padding-left: 24px; padding-right: 24px; padding-top: 12px; padding-bottom: 16px; spacing: 10px;
                 Rectangle { horizontal-stretch: 1; }
@@ -248,16 +246,16 @@ export component ToolsPage inherits Rectangle {
             width: Theme.middle-width; background: Theme.middle;
             VerticalLayout {
                 padding-left: 8px; padding-right: 8px; spacing: 0px; alignment: start;
-                ToolText { height: 34px; text: I18n.tm_admin; color: ToolsTheme.muted; }
+                ToolText { height: 34px; text: I18n.tm_admin; color: Theme.muted; }
                 ToolNavigation { title: I18n.tm_admin; subtitle: I18n.tm_admin_desc; icon: @image-url("../assets/icons/shield.svg"); selected: root.tab == 0; clicked => { root.switch-tab(0); } }
-                ToolText { height: 42px; text: I18n.tm_custom; color: ToolsTheme.muted; }
+                ToolText { height: 42px; text: I18n.tm_custom; color: Theme.muted; }
                 ToolNavigation { title: I18n.tl_cat_mcp; subtitle: I18n.tm_mcp_desc; icon: @image-url("../assets/icons/plug.svg"); selected: root.tab == 1; clicked => { root.switch-tab(1); } }
                 Rectangle { height: 4px; }
                 ToolNavigation { title: I18n.tm_skills; subtitle: I18n.tm_skills_desc; icon: @image-url("../assets/icons/book.svg"); selected: root.tab == 2; clicked => { root.switch-tab(2); } }
                 Rectangle { height: 4px; }
                 ToolNavigation { title: I18n.tm_knowledge; subtitle: I18n.tm_knowledge_desc; icon: @image-url("../assets/icons/database.svg"); selected: root.tab == 3; clicked => { root.switch-tab(3); } }
                 Rectangle { vertical-stretch: 1; }
-                if root.loading || root.working : ToolText { height: 24px; text: I18n.tl_loading; color: ToolsTheme.muted; }
+                if root.loading || root.working : ToolText { height: 24px; text: I18n.tl_loading; color: Theme.muted; }
             }
         }
         Rectangle {
@@ -266,12 +264,12 @@ export component ToolsPage inherits Rectangle {
                 padding-left: 20px; padding-right: 20px; padding-top: 16px; padding-bottom: 22px;
                 Rectangle {
                     border-radius: 12px; border-width: 1px;
-                    border-color: root.tab == 0 ? #dfdfdf : #ffe1cb;
-                    background: root.tab == 0 ? white : ToolsTheme.panel;
+                    border-color: root.tab == 0 ? Theme.border-strong : Theme.accent-secondary;
+                    background: root.tab == 0 ? white : Theme.panel;
                     VerticalLayout {
                         padding: root.tab == 0 ? 12px : 10px; spacing: 8px;
-                        ToolText { height: 20px; text: root.tab == 0 ? I18n.tm_admin : root.tab == 1 ? I18n.tl_cat_mcp : root.tab == 2 ? I18n.tl_cat_skills : I18n.tl_cat_kb; font-size: 16px; font-weight: 700; color: root.tab == 0 ? #252525 : ToolsTheme.text; }
-                        ToolText { height: 20px; text: root.tab == 0 ? I18n.tm_admin_desc : root.tab == 1 ? I18n.tm_mcp_tip : root.tab == 2 ? I18n.tm_skill_tip : I18n.tm_kb_tip; color: root.tab == 0 ? #676767 : ToolsTheme.muted; }
+                        ToolText { height: 20px; text: root.tab == 0 ? I18n.tm_admin : root.tab == 1 ? I18n.tl_cat_mcp : root.tab == 2 ? I18n.tl_cat_skills : I18n.tl_cat_kb; font-size: 16px; font-weight: 700; color: root.tab == 0 ? Theme.text : Theme.text; }
+                        ToolText { height: 20px; text: root.tab == 0 ? I18n.tm_admin_desc : root.tab == 1 ? I18n.tm_mcp_tip : root.tab == 2 ? I18n.tm_skill_tip : I18n.tm_kb_tip; color: root.tab == 0 ? #676767 : Theme.muted; }
                         if root.tab == 0 : ScrollView {
                             vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
                             VerticalLayout { alignment: start; spacing: 10px;
@@ -297,19 +295,19 @@ export component ToolsPage inherits Rectangle {
                                     if root.tab == 3 : ToolButton { icon: @image-url("../assets/icons/trash.svg"); danger: true; label: I18n.common_delete; enabled: root.active && !root.working; clicked => { root.deleting = true; } }
                                 }
                                 Rectangle {
-                                    vertical-stretch: 1; background: root.tab == 2 ? #f9f9f9 : white; border-radius: 10px; border-width: 1px; border-color: ToolsTheme.border;
+                                    vertical-stretch: 1; background: root.tab == 2 ? #f9f9f9 : white; border-radius: 10px; border-width: 1px; border-color: Theme.border;
                                     ListView { x: 10px; y: 10px; width: parent.width - 20px; height: parent.height - 20px;
                                         for item[index] in root.resources : Rectangle {
                                             height: root.tab == 2 ? 64px : 58px;
-                                            Rectangle { height: parent.height - 8px; border-radius: 10px; border-width: 1px; border-color: root.selected == index ? #ffc99e : ToolsTheme.border; background: root.selected == index ? ToolsTheme.soft : white;
-                                                ToolText { x: 10px; y: 7px; height: 18px; width: parent.width - (root.tab == 2 ? 68px : 20px); text: item.name; font-weight: 700; color: #303030; }
-                                                if root.tab == 2 : ToolText { x: parent.width - 48px; y: 7px; width: 42px; height: 18px; text: item.readonly ? I18n.tm_global : I18n.tm_local; font-size: 11px; font-weight: 600; color: item.readonly ? #303030 : #65a7ff; }
-                                                ToolText { x: 10px; y: 31px; height: 17px; width: parent.width - 20px; text: item.description; color: ToolsTheme.muted; }
+                                            Rectangle { height: parent.height - 8px; border-radius: 10px; border-width: 1px; border-color: root.selected == index ? #ffc99e : Theme.border; background: root.selected == index ? Theme.accent-soft : white;
+                                                ToolText { x: 10px; y: 7px; height: 18px; width: parent.width - (root.tab == 2 ? 68px : 20px); text: item.name; font-weight: 700; color: Theme.text; }
+                                                if root.tab == 2 : ToolText { x: parent.width - 48px; y: 7px; width: 42px; height: 18px; text: item.readonly ? I18n.tm_global : I18n.tm_local; font-size: 11px; font-weight: 600; color: item.readonly ? Theme.text : #65a7ff; }
+                                                ToolText { x: 10px; y: 31px; height: 17px; width: parent.width - 20px; text: item.description; color: Theme.muted; }
                                                 TouchArea { enabled: !root.working; mouse-cursor: pointer; clicked => { root.selected = index; root.file-path = ""; root.content = ""; root.select-resource(root.tab, index); } }
                                             }
                                         }
                                     }
-                                    if root.resources.length == 0 : ToolText { x: 8px; y: 8px; width: parent.width - 16px; height: 20px; text: root.loading ? I18n.tl_loading : root.tab == 1 ? I18n.tm_no_servers : root.tab == 2 ? I18n.tm_no_skills : I18n.tm_no_kb; color: ToolsTheme.muted; }
+                                    if root.resources.length == 0 : ToolText { x: 8px; y: 8px; width: parent.width - 16px; height: 20px; text: root.loading ? I18n.tl_loading : root.tab == 1 ? I18n.tm_no_servers : root.tab == 2 ? I18n.tm_no_skills : I18n.tm_no_kb; color: Theme.muted; }
                                 }
                             }
                             if root.tab == 1 : VerticalLayout {
@@ -320,16 +318,16 @@ export component ToolsPage inherits Rectangle {
                                     ToolButton { width: 48px; label: I18n.tm_edit; show-label: true; enabled: root.active && !root.working; clicked => { root.open-mcp-dialog(false); } }
                                     ToolButton { width: 48px; label: I18n.common_delete; show-label: true; danger: true; enabled: root.active && !root.working; clicked => { root.deleting = true; } }
                                 }
-                                ToolText { height: 18px; text: I18n.tm_mcp_tools_tip; color: ToolsTheme.muted; }
-                                Rectangle { vertical-stretch: 1; background: white; border-radius: 10px; border-width: 1px; border-color: ToolsTheme.border;
+                                ToolText { height: 18px; text: I18n.tm_mcp_tools_tip; color: Theme.muted; }
+                                Rectangle { vertical-stretch: 1; background: white; border-radius: 10px; border-width: 1px; border-color: Theme.border;
                                     ListView { x: 10px; y: 10px; width: parent.width - 20px; height: parent.height - 20px;
                                         for tool in root.server-tools : Rectangle { height: 62px;
                                             ToolText { height: 22px; text: tool.name; font-weight: 600; }
-                                            ToolText { y: 24px; height: 32px; text: tool.description; wrap: word-wrap; color: ToolsTheme.muted; }
+                                            ToolText { y: 24px; height: 32px; text: tool.description; wrap: word-wrap; color: Theme.muted; }
                                             TouchArea { mouse-cursor: pointer; clicked => { root.inspect(tool.name, tool.description); } }
                                         }
                                     }
-                                    if root.server-tools.length == 0 : ToolText { x: 10px; y: 10px; height: 20px; text: I18n.tm_select_tool; color: ToolsTheme.muted; }
+                                    if root.server-tools.length == 0 : ToolText { x: 10px; y: 10px; height: 20px; text: I18n.tm_select_tool; color: Theme.muted; }
                                 }
                             }
                             if root.tab == 2 || root.tab == 3 : VerticalLayout {
@@ -339,8 +337,8 @@ export component ToolsPage inherits Rectangle {
                                 max-width: root.tab == 3 ? 280px : 100000px;
                                 spacing: 8px;
                                 HorizontalLayout { height: 28px; spacing: 8px;
-                                    if root.tab == 2 : Image { width: 20px; height: 20px; source: @image-url("../assets/icons/box-archive.svg"); colorize: ToolsTheme.deep; }
-                                    ToolText { horizontal-stretch: 1; text: root.tab == 3 ? I18n.tm_files : root.active ? root.resources[root.selected].name : I18n.tm_select_skill; color: root.tab == 2 ? #6b7280 : ToolsTheme.text; font-weight: root.tab == 2 ? 600 : 400; }
+                                    if root.tab == 2 : Image { width: 20px; height: 20px; source: @image-url("../assets/icons/box-archive.svg"); colorize: Theme.accent-deep; }
+                                    ToolText { horizontal-stretch: 1; text: root.tab == 3 ? I18n.tm_files : root.active ? root.resources[root.selected].name : I18n.tm_select_skill; color: root.tab == 2 ? Theme.muted : Theme.text; font-weight: root.tab == 2 ? 600 : 400; }
                                     ToolButton { icon: @image-url("../assets/icons/upload.svg"); label: I18n.tm_upload; enabled: root.active && !root.readonly && !root.working; clicked => { root.edit("upload"); } }
                                     ToolButton { icon: root.tab == 3 ? @image-url("../assets/icons/plus.svg") : @image-url("../assets/icons/rotate-right.svg"); label: root.tab == 3 ? I18n.tm_add : I18n.common_refresh; enabled: root.active && !root.working; clicked => { if root.tab == 3 { root.edit("file"); } else { root.select-resource(root.tab, root.selected); } } }
                                     if root.tab == 2 : ToolButton { icon: @image-url("../assets/icons/trash.svg"); label: I18n.common_delete; enabled: root.active && !root.readonly && !root.working; clicked => { root.deleting = true; } }
@@ -360,7 +358,7 @@ export component ToolsPage inherits Rectangle {
                                         MenuItem { title: root.tab == 3 ? I18n.tm_add : I18n.tm_save; activated => { if root.tab == 3 { root.edit("file"); } } }
                                         MenuItem { title: I18n.common_refresh; activated => { root.refresh(); } }
                                     }
-                                    Rectangle { background: white; border-radius: 10px; border-width: 1px; border-color: ToolsTheme.border;
+                                    Rectangle { background: white; border-radius: 10px; border-width: 1px; border-color: Theme.border;
                                         ListView { x: 8px; y: 8px; width: parent.width - 16px; height: parent.height - 16px;
                                             for file in root.files : ContextMenuArea {
                                                 height: 30px;
@@ -370,18 +368,18 @@ export component ToolsPage inherits Rectangle {
                                                     MenuItem { title: I18n.common_refresh; activated => { root.refresh(); } }
                                                 }
                                                 Rectangle {
-                                                    background: file-touch.has-hover || root.file-path == file.path ? ToolsTheme.soft : transparent;
+                                                    background: file-touch.has-hover || root.file-path == file.path ? Theme.accent-soft : transparent;
                                                     HorizontalLayout { padding-left: 4px; padding-right: 4px; spacing: 8px; cross-axis-alignment: center;
-                                                        Image { width: 12px; height: 12px; source: @image-url("../assets/icons/chevron-right.svg"); visible: file.entry-type == "dir"; colorize: ToolsTheme.muted; }
+                                                        Image { width: 12px; height: 12px; source: @image-url("../assets/icons/chevron-right.svg"); visible: file.entry-type == "dir"; colorize: Theme.muted; }
                                                         Image { width: 18px; height: 18px; source: file.icon; }
-                                                        ToolText { horizontal-stretch: 1; text: file.name; color: #333333; font-size: 14px; }
-                                                        ToolText { text: file.entry-type == "dir" ? I18n.tm_folder : file.size; color: ToolsTheme.muted; font-size: 10px; }
+                                                        ToolText { horizontal-stretch: 1; text: file.name; color: Theme.text; font-size: 14px; }
+                                                        ToolText { text: file.entry-type == "dir" ? I18n.tm_folder : file.size; color: Theme.muted; font-size: 10px; }
                                                     }
                                                     file-touch := TouchArea { enabled: !root.working; mouse-cursor: pointer; clicked => { root.open-file(file.path, file.entry-type == "dir"); } }
                                                 }
                                             }
                                         }
-                                        if !root.active : ToolText { x: 8px; y: 8px; height: 20px; text: root.tab == 3 ? I18n.tm_select_kb : I18n.tm_select_skill; color: ToolsTheme.muted; }
+                                        if !root.active : ToolText { x: 8px; y: 8px; height: 20px; text: root.tab == 3 ? I18n.tm_select_kb : I18n.tm_select_skill; color: Theme.muted; }
                                     }
                                 }
                                 if root.has-more : Button { text: I18n.tm_more; enabled: !root.working; clicked => { root.more-files(); } }
@@ -392,8 +390,8 @@ export component ToolsPage inherits Rectangle {
                                     ToolText { horizontal-stretch: 1; text: root.file-path == "" ? I18n.tm_select_file : root.file-path; font-size: 16px; font-weight: 700; }
                                     ToolButton { icon: @image-url("../assets/icons/save.svg"); primary: true; label: I18n.tm_save; enabled: root.file-path != "" && !root.working; clicked => { root.action("save", root.file-path, root.content); } }
                                 }
-                                Rectangle { vertical-stretch: 1; background: #f7f7f7; border-width: 1px; border-color: #e0e0e0; border-radius: 10px;
-                                    if root.file-path == "" : ToolText { x: 12px; y: 12px; height: 20px; text: I18n.tm_select_file; color: #b19380; }
+                                Rectangle { vertical-stretch: 1; background: Theme.panel; border-width: 1px; border-color: Theme.border-strong; border-radius: 10px;
+                                    if root.file-path == "" : ToolText { x: 12px; y: 12px; height: 20px; text: I18n.tm_select_file; color: Theme.muted; }
                                     if root.file-path != "" : TextEdit { x: 8px; y: 8px; width: parent.width - 16px; height: parent.height - 16px; text <=> root.content; read-only: root.working; }
                                 }
                             }
@@ -408,7 +406,7 @@ export component ToolsPage inherits Rectangle {
         ToolText { height: 24px; text: root.file-path; font-weight: 700; }
         TextEdit { vertical-stretch: 1; text <=> root.content; read-only: root.readonly || root.working; }
         HorizontalLayout { height: 30px; spacing: 8px;
-            ToolText { horizontal-stretch: 1; text: root.readonly ? I18n.tm_readonly : ""; color: ToolsTheme.muted; }
+            ToolText { horizontal-stretch: 1; text: root.readonly ? I18n.tm_readonly : ""; color: Theme.muted; }
             Button { text: I18n.common_close; clicked => { root.file-path = ""; } }
             Button { text: I18n.tm_save; enabled: !root.readonly && !root.working; clicked => { root.action("save", root.file-path, root.content); } }
         }
@@ -453,7 +451,7 @@ export component ToolsPage inherits Rectangle {
                 }
                 FormArea { label: I18n.tm_desc; placeholder: I18n.tm_desc_ph; text <=> ToolsDialog.mcp-description; edited => { ToolsDialog.refresh-mcp-feedback(); } }
                 FormArea { label: I18n.tm_headers; placeholder: "{\"Authorization\":\"Bearer ...\"}"; text <=> ToolsDialog.mcp-headers; edited => { ToolsDialog.refresh-mcp-feedback(); } }
-                if ToolsDialog.mcp-headers-error != "" : ToolText { height: 16px; text: ToolsDialog.mcp-headers-error; color: #d54c65; }
+                if ToolsDialog.mcp-headers-error != "" : ToolText { height: 16px; text: ToolsDialog.mcp-headers-error; color: Theme.danger; }
                 FormArea { label: I18n.tm_struct_preview; placeholder: I18n.tm_struct_ph; text <=> ToolsDialog.mcp-preview; read-only: true; height: 150px; }
             }
         }
@@ -486,17 +484,17 @@ export component ToolsPage inherits Rectangle {
                     Rectangle {
                         height: 44px;
                         border-radius: 10px;
-                        background: #f7f7f7;
+                        background: Theme.panel;
                         border-width: 1px;
-                        border-color: #ececec;
+                        border-color: Theme.border;
                         HorizontalLayout {
                             padding-left: 14px; padding-right: 12px; spacing: 8px;
-                            ToolText { height: parent.height; text: I18n.tm_advanced; font-size: 14px; font-weight: 700; color: #303030; }
+                            ToolText { height: parent.height; text: I18n.tm_advanced; font-size: 14px; font-weight: 700; color: Theme.text; }
                             Rectangle { horizontal-stretch: 1; }
                             Image {
                                 width: 12px; height: 12px;
                                 source: @image-url("../assets/icons/chevron-down.svg");
-                                colorize: #606060;
+                                colorize: Theme.text-secondary;
                                 transform-rotation: ToolsDialog.kb-advanced-open ? 180deg : 0deg;
                             }
                         }
@@ -508,13 +506,13 @@ export component ToolsPage inherits Rectangle {
                             FormField { label: I18n.tm_chunk_size; placeholder: I18n.tm_chunk_size_ph; horizontal-stretch: 1; text <=> ToolsDialog.kb-chunk-size; }
                             FormField { label: I18n.tm_chunk_overlap; placeholder: I18n.tm_chunk_overlap_ph; horizontal-stretch: 1; text <=> ToolsDialog.kb-chunk-overlap; }
                         }
-                        ToolText { height: 18px; text: I18n.tm_kb_vector_tip; color: ToolsTheme.muted; }
+                        ToolText { height: 18px; text: I18n.tm_kb_vector_tip; color: Theme.muted; }
                     }
                     if ToolsDialog.kb-advanced-open && ToolsDialog.kb-type-index == 2 : VerticalLayout { spacing: 14px;
                         FormField { label: I18n.tm_dataset_id; placeholder: I18n.tm_dataset_ph; text <=> ToolsDialog.kb-dataset-id; }
-                        ToolText { height: 18px; text: I18n.tm_kb_ragflow_tip; color: ToolsTheme.muted; }
+                        ToolText { height: 18px; text: I18n.tm_kb_ragflow_tip; color: Theme.muted; }
                     }
-                    if ToolsDialog.kb-advanced-open && ToolsDialog.kb-type-index == 1 : ToolText { height: 18px; text: I18n.tm_kb_literal_tip; color: ToolsTheme.muted; }
+                    if ToolsDialog.kb-advanced-open && ToolsDialog.kb-type-index == 1 : ToolText { height: 18px; text: I18n.tm_kb_literal_tip; color: Theme.muted; }
                 }
             }
         }

@@ -37,7 +37,7 @@ export component CronPage inherits Rectangle {
     private property <CronCard> current: root.selected >= 0 && root.selected < root.jobs.length ? root.jobs[root.selected] : { id: "", name: "", enabled: false, schedule: "", next-run: "", last-status: "", last-error: "" };
     background: white; border-radius: 12px;
     HorizontalLayout { x: 12px; y: 12px; width: parent.width - 24px; height: 30px;
-        Text { text: "查看与管理智能体定时任务"; color: #909399; font-size: 12px; }
+        Text { text: "查看与管理智能体定时任务"; color: Theme.muted; font-size: 12px; }
         Rectangle { horizontal-stretch: 1; }
         Action { icon: @image-url("../assets/icons/rotate-right.svg"); label: "刷新"; show-label: true; clicked => { root.refresh(); } }
         Action { icon: @image-url("../assets/icons/plus.svg"); label: "新建定时任务"; show-label: true; selected: true; clicked => { root.open-creator(); } }
@@ -48,7 +48,7 @@ export component CronPage inherits Rectangle {
         padding-top: 54px;
         Rectangle {
             width: parent.width * 0.25;
-            border-width: 1px; border-color: #e6e8ed; border-radius: 12px;
+            border-width: 1px; border-color: Theme.border; border-radius: 12px;
             background: white;
             VerticalLayout {
                 spacing: 0px;
@@ -73,7 +73,7 @@ export component CronPage inherits Rectangle {
             }
         }
         Rectangle {
-            border-width: 1px; border-color: #e6e8ed; border-radius: 12px;
+            border-width: 1px; border-color: Theme.border; border-radius: 12px;
             horizontal-stretch: 1;
             VerticalLayout {
                 spacing: 0px;

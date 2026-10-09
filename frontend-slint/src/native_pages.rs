@@ -1300,14 +1300,15 @@ fn to_model_card(model: wunder_desktop::ModelRecord) -> crate::ModelCard {
     }
 }
 
-/// Map a persisted theme value onto a Theme palette name; the legacy "light"
-/// value renders as the default EVA orange palette.
+/// Map a persisted theme value onto a `Theme.palette` name. Only the accent
+/// family is selectable: the legacy "light"/"eva-orange" values, and anything
+/// unrecognised, resolve to the 蜂巢 terracotta default.
 fn normalize_palette(theme: &str) -> &'static str {
     match theme.trim() {
         "hula-green" => "hula-green",
         "minimal" => "minimal",
         "tech-blue" => "tech-blue",
-        _ => "eva-orange",
+        _ => "terracotta",
     }
 }
 

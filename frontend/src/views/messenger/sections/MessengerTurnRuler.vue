@@ -14,6 +14,8 @@
     :data-turn-ruler-metrics="`${measureStats.runs}|${measureStats.skipped}|${measureStats.last}`"
     :style="rulerStyle"
     @click="handleStripClick"
+    @mousemove="handleStripHover"
+    @mouseleave="hoverIndex = -1"
     @wheel="handleStripWheel"
   >
     <span
@@ -28,6 +30,16 @@
         '--turn-ruler-tick-height': `${tickHitHeight()}px`
       }"
     ></span>
+    <!-- 悬停预览卡：标题取该轮次的用户消息，摘要取助手回复（参考主页面刻度交互）。 -->
+    <div
+      v-if="hoverMark && (hoverTitle || hoverSnippet)"
+      class="messenger-turn-ruler-preview"
+      :data-turn-ruler-preview="hoverIndex"
+      :style="{ top: `${previewTop}px` }"
+    >
+      <div v-if="hoverTitle" class="messenger-turn-ruler-preview-title">{{ hoverTitle }}</div>
+      <div v-if="hoverSnippet" class="messenger-turn-ruler-preview-body">{{ hoverSnippet }}</div>
+    </div>
   </div>
 </template>
 
@@ -78,9 +90,23 @@ const resolveScrollContainer = (): HTMLElement | null =>
  * 所以这里取「完整行数」当分母、并用窗口起点还原绝对行号——与桌面端
  * `timeline.rs:187-203` 的「行号 / 总行数」口径一致。
  */
-const conversationRows = computed<Array<{ kind?: string; rootTurnId?: string; key?: string }>>(() => {
+const conversationRows = computed<Array<{
+  kind?: string;
+  rootTurnId?: string;
+  key?: string;
+  user?: { message?: Record<string, unknown> };
+  assistant?: { message?: Record<string, unknown> };
+}>>(() => {
   const rows = readController<unknown>('agentConversationRows');
-  return Array.isArray(rows) ? rows as Array<{ kind?: string; rootTurnId?: string; key?: string }> : [];
+  return Array.isArray(rows)
+    ? rows as Array<{
+      kind?: string;
+      rootTurnId?: string;
+      key?: string;
+      user?: { message?: Record<string, unknown> };
+      assistant?: { message?: Record<string, unknown> };
+    }>
+    : [];
 });
 const conversationRowCount = computed(() => conversationRows.value.length);
 const rowOffset = computed(() => {
@@ -376,6 +402,58 @@ const handleStripClick = (event: MouseEvent): void => {
   centerTurnRow(mark.rowIndex, mark.rootTurnId);
 };
 
+// --- 悬停预览 -------------------------------------------------------------
+
+const hoverIndex = ref(-1);
+const hoverMark = computed(() => (hoverIndex.value >= 0 ? marks.value[hoverIndex.value] || null : null));
+
+/** 行内容按 mark.key 查找：rowIndex 在窗口装配下未必等于完整数组下标，key 是稳定标识。 */
+const rowsByKey = computed(() => {
+  const map = new Map<string, (typeof conversationRows.value)[number]>();
+  conversationRows.value.forEach((row) => {
+    const key = String(row?.key || '');
+    if (key && !map.has(key)) {
+      map.set(key, row);
+    }
+  });
+  return map;
+});
+
+const messageText = (slot: { message?: Record<string, unknown> } | undefined): string => {
+  const content = slot?.message?.content;
+  return String(typeof content === 'string' ? content : '').replace(/\s+/g, ' ').trim();
+};
+
+const hoverTitle = computed(() => {
+  const row = hoverMark.value ? rowsByKey.value.get(hoverMark.value.key) : undefined;
+  return row ? messageText(row.user).slice(0, 160) : '';
+});
+
+const hoverSnippet = computed(() => {
+  const row = hoverMark.value ? rowsByKey.value.get(hoverMark.value.key) : undefined;
+  return row ? messageText(row.assistant).slice(0, 200) : '';
+});
+
+/** 预览卡中心 = 悬停刻度槽位中心，上下夹在条体范围内避免溢出视口。 */
+const previewTop = computed(() => {
+  const center = tickTop(Math.max(0, hoverIndex.value)) + tickHitHeight() / 2;
+  const margin = 48;
+  return Math.min(Math.max(center, margin), Math.max(margin, stripHeight.value - margin));
+});
+
+/** 槽位算法与点击一致：命中区按条体高度均分，mousemove 里不额外监听每个刻度。 */
+const handleStripHover = (event: MouseEvent): void => {
+  const count = marks.value.length;
+  const slot = count > 0 ? stripHeight.value / count : 0;
+  if (!(slot > 0)) {
+    hoverIndex.value = -1;
+    return;
+  }
+  const strip = rulerRef.value;
+  const top = strip ? strip.getBoundingClientRect().top : 0;
+  hoverIndex.value = Math.min(count - 1, Math.max(0, Math.floor((event.clientY - top) / slot)));
+};
+
 /**
  * 桌面端在刻度条上滚轮时把手势还给聊天（`timeline.slint:503` 明确 reject）。
  * 条体挂在滚动容器**外面**，事件不会冒泡到它，因此显式转发一次并让事件继续冒泡。
@@ -442,5 +520,46 @@ const handleStripWheel = (event: WheelEvent): void => {
   width: 13px;
   height: 3px;
   background: var(--mz-primary, #c96443);
+}
+
+/* 悬停预览卡：贴在刻度条左侧，对齐参考主页面的最小卡片形态。
+   pointer-events 关掉，避免卡片盖住聊天内容时抢走悬停/点击。 */
+.messenger-turn-ruler-preview {
+  position: absolute;
+  right: calc(100% + 12px);
+  transform: translateY(-50%);
+  box-sizing: border-box;
+  width: 264px;
+  padding: 10px 12px;
+  border: 1px solid var(--mz-border, #e3e0db);
+  border-radius: 10px;
+  background: var(--mz-surface, #ffffff);
+  box-shadow: 0 8px 24px rgba(31, 35, 41, 0.12);
+  pointer-events: none;
+  z-index: 7;
+}
+
+.messenger-turn-ruler-preview-title {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  color: var(--mz-text, #1f2329);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.messenger-turn-ruler-preview-body {
+  display: -webkit-box;
+  overflow: hidden;
+  margin-top: 4px;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  color: var(--mz-text-secondary, #6b7280);
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: break-word;
 }
 </style>
