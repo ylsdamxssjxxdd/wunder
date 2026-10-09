@@ -63,18 +63,19 @@ component DashedFrame inherits Rectangle {
 }
 
 // One icon choice; the selected cell gets the light primary fill plus the
-// primary outline (§6.1).
+// primary outline (§6.1). Cells stay compact so all fifteen choices fit on
+// one line, matching the Slack-style picker.
 component IconCell inherits Rectangle {
     in property <int> index;
     in property <string> icon-key;
-    width: 44px; height: 44px;
-    border-radius: Theme.radius-md;
+    width: 26px; height: 26px;
+    border-radius: 6px;
     background: WorkspaceDialogState.icon-index == index ? Theme.accent-soft
         : touch.has-hover ? Theme.hover : transparent;
     border-width: 1px;
     border-color: WorkspaceDialogState.icon-index == index ? Theme.accent : transparent;
     Image {
-        width: 22px; height: 22px;
+        width: 16px; height: 16px;
         x: (parent.width - self.width) / 2;
         y: (parent.height - self.height) / 2;
         source: WorkspaceVisual.icon(root.icon-key);
@@ -165,7 +166,7 @@ export component WorkspaceDialog inherits Rectangle {
         TouchArea { }
         Rectangle {
             width: min(480px, parent.width - 48px);
-            height: 600px;
+            height: 500px;
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
             border-radius: Theme.radius-xl;
@@ -290,28 +291,17 @@ export component WorkspaceDialog inherits Rectangle {
                     color: Theme.muted; font-size: Theme.font-xs;
                     vertical-alignment: center;
                 }
+                // One line of compact icon cells; the loop keeps the picker
+                // in sync with `WorkspaceVisual.icon-keys()` without hand
+                // written rows.
                 VerticalLayout {
                     spacing: 6px;
-                    HorizontalLayout { spacing: 6px;
-                        IconCell { index: 0; icon-key: "folder"; }
-                        IconCell { index: 1; icon-key: "coffee"; }
-                        IconCell { index: 2; icon-key: "filter"; }
-                        IconCell { index: 3; icon-key: "cake"; }
-                        IconCell { index: 4; icon-key: "moon"; }
-                    }
-                    HorizontalLayout { spacing: 6px;
-                        IconCell { index: 5; icon-key: "knight"; }
-                        IconCell { index: 6; icon-key: "robot"; }
-                        IconCell { index: 7; icon-key: "flower"; }
-                        IconCell { index: 8; icon-key: "gear"; }
-                        IconCell { index: 9; icon-key: "swan"; }
-                    }
-                    HorizontalLayout { spacing: 6px;
-                        IconCell { index: 10; icon-key: "bear"; }
-                        IconCell { index: 11; icon-key: "ghost"; }
-                        IconCell { index: 12; icon-key: "alien"; }
-                        IconCell { index: 13; icon-key: "bell"; }
-                        IconCell { index: 14; icon-key: "flask"; }
+                    HorizontalLayout {
+                        spacing: 3px;
+                        for key[idx] in WorkspaceVisual.icon-keys() : IconCell {
+                            index: idx;
+                            icon-key: key;
+                        }
                     }
                 }
                 Text {

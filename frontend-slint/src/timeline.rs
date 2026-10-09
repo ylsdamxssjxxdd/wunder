@@ -18,7 +18,6 @@ pub const KIND_BODY: i32 = 1;
 pub const KIND_REASON: i32 = 2;
 pub const KIND_TOOL: i32 = 3;
 pub const KIND_GROUP: i32 = 4;
-pub const KIND_DIVIDER: i32 = 5;
 /// Status kinds: 0 done, 1 running, 2 failed.
 pub const STATUS_DONE: i32 = 0;
 pub const STATUS_RUNNING: i32 = 1;
@@ -27,10 +26,10 @@ pub const STATUS_FAILED: i32 = 2;
 pub const NO_GROUP: i32 = -1;
 /// Entries and bounded fields kept per turn.
 const MAX_GROUP_ENTRIES: usize = 24;
-/// Completed turns the user may hold open at once. The view lays out every
-/// visible row, so this is the real bound on a frame's layout work: 8 turns x
-/// (divider + bubble + batch bar + 24 entries + body) stays under 250 rows.
-const MAX_OPEN_TURNS: usize = 8;
+/// Batch bars the history projection leaves open by default, matching the
+/// web messenger: only the newest turns read as expanded, older batches stay
+/// folded bars the user can still open.
+pub const MAX_OPEN_TURNS: usize = 8;
 
 pub fn status_kind(state: &str) -> i32 {
     match state {
@@ -246,8 +245,9 @@ impl Timeline {
     }
 
     /// Start a new user turn with its bubble. The previous turn is already
-    /// frozen by `finish`, so this only resets the builder state. The divider
-    /// stays hidden until a later turn folds this one behind it.
+    /// frozen by `finish`, so this only resets the builder state. The bubble
+    /// carries the turn identity: it is the anchor the durable snapshot
+    /// matches when it takes the settled turn over.
     pub fn begin_turn(&mut self, root: &str, text: &str) -> usize {
         self.body = None;
         self.thinking = None;
@@ -258,16 +258,10 @@ impl Timeline {
         self.reasons = 0;
         self.turn = Some(root.to_string());
         self.settled = false;
-        let index = self.push(blank(KIND_DIVIDER, format!("turn-{root}")));
-        self.patch(index, |row| {
-            row.visible = false;
-            row.payload = index as i32;
-        });
-        let mut user = blank(KIND_USER, format!("user-{}", self.model.row_count()));
+        let mut user = blank(KIND_USER, format!("user-turn-{root}"));
         user.text = text.into();
         user.blocks = crate::message_blocks::from_text(text);
-        self.push(user);
-        index
+        self.push(user)
     }
 
     /// Begin the next assistant body block; the runtime registers exactly one
@@ -608,21 +602,21 @@ impl Timeline {
 
     /// Publish the durable history in front of the live turn. The two share one
     /// model, so a reload may only replace what the snapshot actually covers:
-    /// rows from the live turn's own divider onward stay, and stop staying the
-    /// moment the snapshot carries that divider. Replacing the whole model
+    /// rows from the live turn's own bubble onward stay, and stop staying the
+    /// moment the snapshot carries that bubble. Replacing the whole model
     /// instead is what made a finished answer drop its thinking and tool
     /// entries before the durable rows arrived for them.
     pub fn publish_history(&mut self, rows: Vec<TimelineRow>) {
-        let divider = self
+        let anchor = self
             .turn
             .as_ref()
-            .map(|root| format!("turn-{root}"))
+            .map(|root| format!("user-turn-{root}"))
             .unwrap_or_default();
         let count = self.model.row_count();
         let start = (0..count).find(|index| {
             self.model
                 .row_data(*index)
-                .is_some_and(|row| row.id == divider)
+                .is_some_and(|row| row.kind == KIND_USER && row.id == anchor)
         });
         let Some(start) = start else {
             // Either there is no live turn, or the model no longer holds its
@@ -631,7 +625,7 @@ impl Timeline {
             self.model.set_vec(rows);
             return;
         };
-        if divider.is_empty() || rows.iter().any(|row| row.id == divider)
+        if anchor.is_empty() || rows.iter().any(|row| row.id == anchor)
             || (self.settled && self.snapshot_moved_past(rows.as_slice(), start))
         {
             // The snapshot carries this turn's own rows: the live builder is
@@ -648,7 +642,7 @@ impl Timeline {
             };
             // Fold handles address their row by index, so the tail keeps
             // toggling itself after the prefix moved.
-            if matches!(row.kind, KIND_DIVIDER | KIND_GROUP | KIND_REASON | KIND_TOOL) {
+            if matches!(row.kind, KIND_GROUP | KIND_REASON | KIND_TOOL) {
                 row.payload = (index as isize + delta) as i32;
             }
             published.push(row);
@@ -662,20 +656,20 @@ impl Timeline {
     /// keyed by session and a durable turn by its root message, so the two ids
     /// never meet and ownership has to be read off the turn tail. A bounded
     /// turn list also drops its oldest turns, which moves the count without
-    /// moving the newest divider, so both are compared.
+    /// moving the newest bubble, so both are compared.
     fn snapshot_moved_past(&self, rows: &[TimelineRow], start: usize) -> bool {
         let mut held = (0usize, slint::SharedString::default());
         for index in 0..start {
             if let Some(row) = self.model.row_data(index) {
-                if row.kind == KIND_DIVIDER {
+                if row.kind == KIND_USER {
                     held.0 += 1;
-                    held.1 = row.id;
+                    held.1 = row.id.clone();
                 }
             }
         }
         let mut next = (0usize, slint::SharedString::default());
         for row in rows {
-            if row.kind == KIND_DIVIDER {
+            if row.kind == KIND_USER {
                 next.0 += 1;
                 next.1 = row.id.clone();
             }
@@ -716,9 +710,9 @@ impl Timeline {
     }
 
     /// Fold toggle: `payload` is the row the user clicked. Reasoning and tool
-    /// entries toggle themselves, a batch bar toggles its batch, and a turn
-    /// divider reveals or hides its whole turn. Fold state is never re-derived
-    /// from the reducer, so a click costs one bounded model scan.
+    /// entries toggle themselves, and a batch bar toggles its batch. Fold
+    /// state is never re-derived from the reducer, so a click costs one
+    /// bounded model scan.
     pub fn toggle(&self, payload: i32) {
         let Ok(payload) = usize::try_from(payload) else {
             return;
@@ -744,10 +738,6 @@ impl Timeline {
                     self.model.set_row_data(index, target);
                 }
             }
-            KIND_DIVIDER => {
-                let open = !row.open;
-                self.toggle_turn(payload, open);
-            }
             _ => {
                 let mut row = row;
                 row.open = !row.open;
@@ -772,72 +762,10 @@ impl Timeline {
                     self.patch(index, |row| row.stats = stats);
                     return;
                 }
-                // A divider marks the turn boundary; nothing to attach to.
-                KIND_DIVIDER => return,
+                // A user bubble marks the turn boundary; nothing to attach to.
+                KIND_USER => return,
                 _ => {}
             }
-        }
-    }
-
-    /// Reveal or hide a completed turn: every row up to the next divider. The
-    /// limit is applied first, so the column never briefly holds one turn more
-    /// than it may lay out.
-    fn toggle_turn(&self, divider: usize, open: bool) {
-        if open {
-            self.bound_open_turns(divider);
-        }
-        self.set_turn_open(divider, open, !open);
-    }
-
-    /// Set one turn's own rows to `open` and its divider to `divider_visible`.
-    /// A turn the user opened keeps its divider as the fold handle; a turn the
-    /// reducer folded back gets the same state the projection gives a completed
-    /// turn, so it costs that single divider row again.
-    fn set_turn_open(&self, divider: usize, open: bool, divider_visible: bool) {
-        let count = self.model.row_count();
-        self.patch(divider, |row| {
-            row.open = open;
-            row.visible = divider_visible;
-        });
-        for cursor in divider + 1..count {
-            let Some(row) = self.model.row_data(cursor) else {
-                break;
-            };
-            if row.kind == KIND_DIVIDER {
-                break;
-            }
-            let mut row = row;
-            row.visible = open;
-            row.group_open = false;
-            row.open = false;
-            self.model.set_row_data(cursor, row);
-        }
-    }
-
-    /// The timeline lays every visible row out, so the number of open turns is
-    /// what bounds a frame. Opening a turn past this limit folds the oldest open
-    /// turn back behind its divider: the history stays readable turn by turn and
-    /// a frame never has to lay out the whole transcript at once.
-    fn bound_open_turns(&self, opening: usize) {
-        let mut open: Vec<usize> = Vec::new();
-        let count = self.model.row_count();
-        for index in 0..count {
-            let Some(row) = self.model.row_data(index) else {
-                continue;
-            };
-            // Count on the fold state alone: a turn the cap already folded back
-            // stays `open` while its divider is hidden, and counting visibility
-            // here would fold the next turn on every pass.
-            if row.kind == KIND_DIVIDER && row.open && index != opening {
-                open.push(index);
-            }
-        }
-        if open.len() < MAX_OPEN_TURNS {
-            return;
-        }
-        // Oldest first, so the history recedes in reading order.
-        for index in open.drain(..open.len() - MAX_OPEN_TURNS + 1) {
-            self.set_turn_open(index, false, false);
         }
     }
 }
@@ -860,36 +788,33 @@ fn highlight_code(blocks: &mut crate::message_blocks::Blocks) -> ModelRc<TextBlo
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Instant;
 
-    /// One turn the way `project_history` lays it out: a divider, a user bubble,
-    /// a batch bar, `entries` tool rows and an answer body. A completed turn is
-    /// folded, so only its divider is visible; the newest turn is open and its
-    /// divider stays hidden.
+    /// One turn the way `project_history` lays it out: a user bubble, a batch
+    /// bar, `entries` tool rows and an answer body. Every row of every turn
+    /// stays visible — the web form — so this fixture also fixes the layout
+    /// bound the view actually pays.
     fn history(turns: usize, entries: usize) -> Timeline {
         let mut rows = Vec::new();
         for turn in 0..turns {
-            let current = turn + 1 == turns;
-            let mut divider = blank(KIND_DIVIDER, format!("turn-{turn}"));
-            divider.visible = !current;
-            divider.foldable = true;
-            divider.payload = rows.len() as i32;
-            rows.push(divider);
-            for (kind, label) in [
-                (KIND_USER, ""),
-                (KIND_GROUP, "执行工具 24 次"),
-                (KIND_BODY, "回答正文"),
-            ] {
-                let mut row = blank(kind, format!("{kind}-{turn}-{}", rows.len()));
-                row.text = label.into();
-                row.visible = current;
-                rows.push(row);
-            }
+            let group = turn as i32;
+            let mut bar = blank(KIND_GROUP, format!("group-{turn}"));
+            bar.text = "执行工具 24 次".into();
+            bar.group_idx = group;
+            bar.group_open = true;
+            bar.open = true;
+            bar.payload = rows.len() as i32;
+            rows.push(bar);
+            let user = blank(KIND_USER, format!("user-turn-root-{turn}"));
+            rows.push(user);
+            let mut body = blank(KIND_BODY, format!("body-{turn}"));
+            body.text = "回答正文".into();
+            rows.push(body);
             for entry in 0..entries {
                 let mut row = blank(KIND_TOOL, format!("tool-{turn}-{entry}"));
                 row.tool_name = "读取文件".into();
-                row.visible = current;
                 row.foldable = true;
+                row.group_idx = group;
+                row.group_open = true;
                 row.payload = rows.len() as i32;
                 rows.push(row);
             }
@@ -903,14 +828,15 @@ mod tests {
         timeline.model().iter().filter(|row| row.visible).count()
     }
 
-    /// Two rows per turn: the divider carries the turn identity the observer
+    /// Two rows per turn: the bubble carries the turn identity the observer
     /// matches a live turn against.
     fn durable_rows(turns: usize) -> Vec<TimelineRow> {
         (0..turns)
             .flat_map(|turn| {
-                let mut divider = blank(KIND_DIVIDER, format!("turn-{turn}"));
-                divider.foldable = true;
-                vec![divider, blank(KIND_BODY, format!("body-{turn}"))]
+                vec![
+                    blank(KIND_USER, format!("user-turn-root-{turn}")),
+                    blank(KIND_BODY, format!("body-{turn}")),
+                ]
             })
             .collect()
     }
@@ -932,24 +858,24 @@ mod tests {
         timeline.publish_history(durable_rows(4));
         let model = timeline.model();
         assert_eq!(
-            model.iter().filter(|row| row.id == "turn-live").count(),
+            model.iter().filter(|row| row.id == "user-turn-live").count(),
             1,
-            "the live turn keeps exactly one divider"
+            "the live turn keeps exactly one bubble"
         );
-        assert_eq!(model.row_count(), 11, "four durable turns plus the live turn");
+        assert_eq!(model.row_count(), 10, "four durable turns plus the live turn");
         assert_eq!(
             timeline.last_answer(),
             "直播中的答案",
             "the live block survives the reload"
         );
-        let divider = model
+        let bubble = model
             .iter()
-            .position(|row| row.id == "turn-live")
-            .expect("live divider");
+            .position(|row| row.id == "user-turn-live")
+            .expect("live bubble");
         assert_eq!(
-            model.row_data(divider).expect("live divider").payload,
-            divider as i32,
-            "the fold handle still addresses its own row after the prefix moved"
+            model.row_data(bubble).expect("live bubble").text,
+            "Fixture input",
+            "the anchor bubble survived the prefix move"
         );
         drop(model);
         // The reducer's own indices moved with the prefix, so a later frame still
@@ -960,21 +886,20 @@ mod tests {
 
         // Once storage carries the live turn, its durable rows take over.
         let mut settled = durable_rows(4);
-        settled.push(blank(KIND_DIVIDER, "turn-live".into()));
-        settled.push(blank(KIND_USER, String::new()));
+        settled.push(blank(KIND_USER, "user-turn-live".into()));
         let mut durable_answer = blank(KIND_BODY, "body-live".into());
         durable_answer.text = "durable-answer".into();
         settled.push(durable_answer);
         timeline.publish_history(settled);
         let model = timeline.model();
         assert_eq!(
-            model.iter().filter(|row| row.id == "turn-live").count(),
+            model.iter().filter(|row| row.id == "user-turn-live").count(),
             1,
             "the live copy is replaced, not appended"
         );
-        assert_eq!(model.row_count(), 11);
+        assert_eq!(model.row_count(), 10);
         assert_eq!(
-            model.row_data(10).expect("settled body").text,
+            model.row_data(9).expect("settled body").text,
             "durable-answer",
             "the durable rows are the authority once they arrive"
         );
@@ -995,14 +920,13 @@ mod tests {
 
         // Storage carries that very turn, under its own root id.
         let mut settled = durable_rows(1);
-        settled.push(blank(KIND_DIVIDER, "turn-root-9".into()));
-        settled.push(blank(KIND_USER, String::new()));
+        settled.push(blank(KIND_USER, "user-turn-root-9".into()));
         settled.push(blank(KIND_BODY, "body-root-9".into()));
         timeline.publish_history(settled.clone());
 
         let model = timeline.model();
         assert_eq!(
-            model.iter().filter(|row| row.id == "turn-session-x").count(),
+            model.iter().filter(|row| row.id == "user-turn-session-x").count(),
             0,
             "the live copy is gone once storage owns the turn"
         );
@@ -1011,81 +935,65 @@ mod tests {
             2,
             "one durable answer per turn, not an extra live bubble"
         );
-        assert_eq!(model.row_count(), 5);
+        assert_eq!(model.row_count(), 4);
         drop(model);
 
         // The handoff is final: the next snapshot of the same shape cannot
         // append the turn a second time.
         timeline.publish_history(settled);
-        assert_eq!(timeline.model().row_count(), 5);
+        assert_eq!(timeline.model().row_count(), 4);
     }
 
-    /// §十二.2: the view lays out every row the projection marks visible, so the
-    /// reducer has to bound that count. Unfolding a whole history may not hand
-    /// the view a four-digit row count.
+    /// The web-form history lays out every turn, so a click on a batch bar is
+    /// the only fold left: it must toggle exactly its own entries and cost one
+    /// bounded model scan.
     #[test]
-    fn unfolding_the_whole_history_stays_inside_the_open_turn_limit() {
-        let turns = 50;
-        let entries = 24;
+    fn toggling_a_batch_bar_folds_only_its_own_entries() {
+        let turns = 6;
+        let entries = 4;
         let timeline = history(turns, entries);
         let total = timeline.row_count();
-        assert_eq!(total, turns * (entries + 4), "divider + bubble + bar + entries + body");
+        assert_eq!(total, turns * (entries + 3), "bubble + bar + entries + body");
+        assert_eq!(visible(&timeline), total, "every history row stays laid out");
 
-        let dividers: Vec<i32> = timeline
+        // The newest batch bar of turn 0 is the fourth row (bubble, bar, tools,
+        // body per turn). Toggle it and only its group follows.
+        let bar = timeline
             .model()
             .iter()
-            .filter(|row| row.kind == KIND_DIVIDER && row.visible)
-            .map(|row| row.payload)
-            .collect();
-        assert_eq!(dividers.len(), turns - 1, "every completed turn folds");
-
-        let started = Instant::now();
-        for divider in &dividers {
-            timeline.toggle(*divider);
-        }
-        let unfolded = started.elapsed();
-
+            .position(|row| row.kind == KIND_GROUP)
+            .expect("a batch bar");
+        let group = timeline.model().row_data(bar).unwrap().group_idx;
+        timeline.toggle(bar as i32);
         let model = timeline.model();
-        let open = model
-            .iter()
-            .filter(|row| row.kind == KIND_DIVIDER && row.open)
-            .count();
-        let exposed = model.iter().filter(|row| row.visible).count();
-        // Folded-back turns keep their divider hidden, exactly like the turns the
-        // projection folded in the first place, so they cost one row each again.
-        let shown_dividers = model
-            .iter()
-            .filter(|row| row.kind == KIND_DIVIDER && row.visible)
-            .count();
-        println!(
-            "timeline open-turn limit: turns={turns} entries={entries} rows={total} \
-             open={open} exposed={exposed} fold_handles={shown_dividers} \
-             unfold_all={unfolded:?}",
+        assert_eq!(
+            model.iter().filter(|row| row.group_idx == group).count(),
+            entries + 1,
+            "the bar plus its own entries share one group"
         );
-        // The bound the view actually pays: the open turns plus the live one.
-        assert_eq!(open, MAX_OPEN_TURNS, "the limit leaves exactly its turns open");
-        assert_eq!(exposed, (MAX_OPEN_TURNS + 1) * (entries + 3));
         assert!(
-            exposed <= 250,
-            "the unfolded column must stay near 250 laid-out rows, got {exposed}",
+            model
+                .iter()
+                .filter(|row| row.group_idx == group && row.kind == KIND_TOOL)
+                .all(|row| !row.group_open),
+            "folding the bar hides its entries"
         );
-        assert!(visible(&timeline) == exposed);
-
-        // The user keeps control of every open turn. Folding one gives its rows
-        // back to the column and leaves only its divider behind; opening it again
-        // restores exactly the bounded column.
-        let newest = dividers[dividers.len() - 1];
-        timeline.toggle(newest);
-        assert_eq!(
-            visible(&timeline) + entries + 2,
-            exposed,
-            "folding a turn back must drop the rows it owns",
+        assert!(
+            model
+                .iter()
+                .filter(|row| row.group_idx != group && row.kind == KIND_TOOL)
+                .all(|row| row.group_open),
+            "other batches stay open"
         );
-        timeline.toggle(newest);
-        assert_eq!(
-            visible(&timeline),
-            exposed,
-            "reopening a turn must restore the same bounded column",
+        drop(model);
+        timeline.toggle(bar as i32);
+        assert!(
+            timeline
+                .model()
+                .iter()
+                .filter(|row| row.group_idx == group)
+                .all(|row| row.group_open),
+            "reopening restores the batch"
         );
     }
 }

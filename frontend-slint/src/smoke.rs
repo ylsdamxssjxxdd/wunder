@@ -152,15 +152,17 @@ pub fn measure_timeline(
         let published = rows.len();
         let mut timeline = crate::timeline::Timeline::new();
         timeline.set_history(rows);
-        // Reach the opened state the way a user reaches it: open one turn at a
+        // Reach the opened state the way a user reaches it: open one batch at a
         // time, measuring every click. A fixture that just marks everything
-        // visible would measure a state the bounded reducer can no longer produce.
+        // open would measure a state the default projection does not produce.
         let mut opened_ms = 0.0f64;
         if unfold {
             let handles: Vec<i32> = timeline
                 .model()
                 .iter()
-                .filter(|row| row.kind == crate::timeline::KIND_DIVIDER && row.visible)
+                .filter(|row| {
+                    row.kind == crate::timeline::KIND_GROUP && !row.group_open
+                })
                 .map(|row| row.payload)
                 .collect();
             for handle in &handles {
@@ -188,12 +190,20 @@ pub fn measure_timeline(
             .iter()
             .filter(|row| slint::Model::row_count(&row.blocks) > 0 || row.visible)
             .count();
-        // Slint lays out a row exactly when the projection marked it visible, so
-        // this is the row count the frame above actually paid for.
-        let laid_out = model.iter().filter(|row| row.visible).count();
+        // Slint lays out a row exactly when the projection marked it visible and
+        // its batch is open, so this is the row count the frame above paid for.
+        let laid_out = model
+            .iter()
+            .filter(|row| {
+                row.visible
+                    && (row.kind == crate::timeline::KIND_GROUP
+                        || row.group_idx == crate::timeline::NO_GROUP
+                        || row.group_open)
+            })
+            .count();
         let open_turns = model
             .iter()
-            .filter(|row| row.kind == crate::timeline::KIND_DIVIDER && row.open)
+            .filter(|row| row.kind == crate::timeline::KIND_GROUP && row.open)
             .count();
         drop(model);
         let mut frames = Vec::new();

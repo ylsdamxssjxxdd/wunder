@@ -600,6 +600,14 @@
   text-align: center;
 }
 
+/* VSCode 彩色主题图标（文件行），目录仍走 FA。 */
+.workspace-file-icon-img {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  object-fit: contain;
+}
+
 .workspace-file-row.is-dir .workspace-file-icon {
   color: var(--mz-warning);
 }
@@ -1040,11 +1048,20 @@
 
 /* -------------------------------------------------------------- chat pane */
 
-/* 用户轮次刻度条（`.messenger-turn-ruler`）是 `.messenger-main` 的绝对定位子层：
-   `.messenger-chat-body` 是滚动容器，刻度条挂在它外面才不会跟着内容滚走。
-   条体几何与刻度线样式都在 `sections/MessengerTurnRuler.vue` 的 scoped 样式里。 */
+/* 用户轮次刻度条（`.messenger-turn-ruler`）与滚动视口同排：
+   `.messenger-chat-lane` 给刻度单独留出 18px 通道（对齐桌面端
+   `timeline.slint` 里 marks-strip 的独占矩形），刻度不再悬浮在
+   `.messenger-chat-body` 右缘的滚动条上，也不需要运行期几何测量。 */
+.messenger-chat-lane {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
 .messenger-main .messenger-chat-body {
   flex: 1;
+  min-width: 0;
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;

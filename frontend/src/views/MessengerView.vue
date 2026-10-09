@@ -74,19 +74,22 @@
           <i class="fa-solid fa-angles-up" aria-hidden="true"></i>
         </button>
 
-        <div
-          ref="messageListRef"
-          class="messenger-chat-body"
-          data-testid="messenger-message-list"
-          :class="{ 'is-messages': hasActiveThread }"
-          @scroll.passive="handleMessageListScroll"
-          @click="handleMessageContentClick"
-        >
-          <MessengerMessagePanel v-if="hasActiveThread" :controller="controller" />
-        </div>
+        <!-- 刻度与滚动视口同排：`.messenger-chat-lane` 给刻度留出独立通道，
+             刻度不再悬浮在滚动容器右缘的滚动条上。 -->
+        <div class="messenger-chat-lane">
+          <div
+            ref="messageListRef"
+            class="messenger-chat-body"
+            data-testid="messenger-message-list"
+            :class="{ 'is-messages': hasActiveThread }"
+            @scroll.passive="handleMessageListScroll"
+            @click="handleMessageContentClick"
+          >
+            <MessengerMessagePanel v-if="hasActiveThread" :controller="controller" />
+          </div>
 
-        <!-- 用户轮次刻度：滚动容器之外（绝对定位），因此不会跟着内容滚走。 -->
-        <MessengerTurnRuler v-if="hasActiveThread" :controller="controller" />
+          <MessengerTurnRuler v-if="hasActiveThread" :controller="controller" />
+        </div>
 
         <footer
           v-if="showChatComposerFooter"

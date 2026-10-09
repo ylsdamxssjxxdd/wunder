@@ -262,24 +262,15 @@ fn demo_timeline() -> Vec<TimelineRow> {
                 1,
                 "已完成目录检查，并整理了可以继续使用的文件。",
             );
-            // The settled turn is folded behind its divider.
-            body.visible = false;
             body.foldable = true;
             body.stats = demo_stats("8.2s", "42.5/s", "8.4k", "1.2k", "2");
             body
         },
-        {
-            let mut divider = fixture_row(crate::timeline::KIND_DIVIDER, 2, "");
-            divider.open = false;
-            divider.foldable = true;
-            divider.payload = 2;
-            divider
-        },
-        fixture_row(crate::timeline::KIND_USER, 3, "检查文件内容并给出结论"),
+        fixture_row(crate::timeline::KIND_USER, 2, "检查文件内容并给出结论"),
         {
             let mut body = fixture_row(
                 crate::timeline::KIND_BODY,
-                4,
+                3,
                 "目录结构正常，文本内容可读取，未发现格式问题。",
             );
             body.foldable = true;
@@ -287,17 +278,30 @@ fn demo_timeline() -> Vec<TimelineRow> {
             body
         },
         {
-            let mut bar = fixture_row(crate::timeline::KIND_GROUP, 5, "执行工具 3 次");
+            let mut bar = fixture_row(crate::timeline::KIND_GROUP, 4, "执行工具 3 次");
             bar.open = true;
             bar.group_idx = 0;
-            bar.payload = 5;
+            bar.payload = 4;
             bar
         },
         {
-            let mut row = fixture_row(crate::timeline::KIND_REASON, 6, "");
+            let mut row = fixture_row(crate::timeline::KIND_REASON, 5, "");
             row.tool_name = "已思考".into();
             row.summary = "先读取目录清单，确认文件类型，再检查文本内容是否可用。".into();
             row.detail = row.summary.clone();
+            row.group_idx = 0;
+            row.group_open = true;
+            row.payload = 5;
+            row.foldable = true;
+            row
+        },
+        {
+            let mut row = fixture_row(crate::timeline::KIND_TOOL, 6, "");
+            row.tool_name = "读取文件".into();
+            row.tool_icon = "file-lines".into();
+            row.target = "示例/项目/readme.md".into();
+            row.summary = "完成 · 已读取 42 行".into();
+            row.detail = "读取 · 完成\n示例/项目/readme.md\n演示内容".into();
             row.group_idx = 0;
             row.group_open = true;
             row.payload = 6;
@@ -306,26 +310,13 @@ fn demo_timeline() -> Vec<TimelineRow> {
         },
         {
             let mut row = fixture_row(crate::timeline::KIND_TOOL, 7, "");
-            row.tool_name = "读取文件".into();
-            row.tool_icon = "file-lines".into();
-            row.target = "示例/项目/readme.md".into();
-            row.summary = "完成 · 已读取 42 行".into();
-            row.detail = "读取 · 完成\n示例/项目/readme.md\n演示内容".into();
-            row.group_idx = 0;
-            row.group_open = true;
-            row.payload = 7;
-            row.foldable = true;
-            row
-        },
-        {
-            let mut row = fixture_row(crate::timeline::KIND_TOOL, 8, "");
             row.tool_name = "编辑文件".into();
             row.tool_icon = "file-pen".into();
             row.target = "示例/项目/main.rs".into();
             row.summary = "完成 · 更新 +41 −41".into();
             row.group_idx = 0;
             row.group_open = true;
-            row.payload = 8;
+            row.payload = 7;
             row.foldable = true;
             row.open = true;
             row.patch = ModelRc::from(Rc::new(VecModel::from(vec![crate::PatchCard {
@@ -384,13 +375,10 @@ pub(crate) fn near_limit_rows(turns: usize, entries: usize, unfold: bool) -> Vec
         .join("\n\n");
     let mut rows = Vec::new();
     for turn in 0..turns {
-        let last = turn + 1 == turns;
-        let visible = last || unfold;
-        let mut divider = fixture_row(crate::timeline::KIND_DIVIDER, rows.len(), "");
-        divider.visible = !last;
-        divider.foldable = true;
-        divider.payload = rows.len() as i32;
-        rows.push(divider);
+        // The web form: every row of every turn is laid out; `unfold` only
+        // decides whether the batch bars are open.
+        let visible = true;
+        let open = unfold || turn + 8 > turns;
         let mut user = fixture_row(
             crate::timeline::KIND_USER,
             rows.len(),
@@ -407,8 +395,8 @@ pub(crate) fn near_limit_rows(turns: usize, entries: usize, unfold: bool) -> Vec
             &format!("执行工具 {entries} 次"),
         );
         bar.payload = base as i32;
-        bar.open = visible;
-        bar.group_open = visible;
+        bar.open = open;
+        bar.group_open = open;
         bar.visible = visible;
         rows.push(bar);
         for slot in 0..entries {
@@ -430,8 +418,8 @@ pub(crate) fn near_limit_rows(turns: usize, entries: usize, unfold: bool) -> Vec
             row.visible = visible;
             row.foldable = true;
             row.group_idx = base as i32;
-            row.group_open = visible;
-            row.open = visible && slot + 1 == entries;
+            row.group_open = open;
+            row.open = open && slot + 1 == entries;
             row.payload = index as i32;
             if slot + 1 == entries {
                 row.patch = patch_card();

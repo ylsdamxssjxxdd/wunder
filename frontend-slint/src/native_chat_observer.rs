@@ -163,57 +163,78 @@ pub(super) fn install(app: &MainWindow, state: Rc<RefCell<State>>) {
     );
 }
 
-/// Durable history as timeline rows, in the shape the live reducer produces: one
-/// folded divider per completed turn, its user bubble, then per model round a
-/// batch (bar, thinking, tool entries) and that round's answer block. Thinking
-/// and every round's text are part of the durable snapshot, so a reloaded turn
-/// keeps the entries it showed while it streamed. The newest turn carries its
-/// divider hidden and everything unfolded.
+/// Durable history as timeline rows, in the web messenger's form: every turn
+/// stays laid out — its bubble, per model round a batch (bar, thinking, tool
+/// entries) and that round's answer block. Only the batch bars fold, and the
+/// newest `MAX_OPEN_TURNS` turns read with their last batch open, matching the
+/// web default; older batches stay folded bars the user can still open.
 pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
-    let last = turns.len().saturating_sub(1);
     let mut rows = Vec::new();
     // Batch identity is model-wide: `toggle` folds by `group_idx`, so no two
     // batches may share one, not even across turns.
     let mut batch = 0i32;
+    // Walk from the newest turn, spending the open quota on turns that carry
+    // at least one batch.
+    let mut open_quota = crate::timeline::MAX_OPEN_TURNS as isize;
+    let mut turn_open = vec![false; turns.len()];
+    for index in (0..turns.len()).rev() {
+        let active = turns[index]
+            .rounds
+            .iter()
+            .any(|round| !round.reasoning.is_empty() || !round.items.is_empty());
+        if active && open_quota > 0 {
+            turn_open[index] = true;
+            open_quota -= 1;
+        }
+    }
     for (index, turn) in turns.iter().enumerate() {
-        let current = index == last;
         let turn_start = rows.len();
-        let mut divider = blank_row(
-            crate::timeline::KIND_DIVIDER,
-            format!("turn-{}", turn.root_id),
-        );
-        divider.visible = !current;
-        divider.foldable = true;
-        divider.payload = turn_start as i32;
-        rows.push(divider);
-        rows.push(history_user(&turn.user));
-        for round in &turn.rounds {
-            let group = batch;
-            batch += 1;
+        let turn_open = turn_open[index];
+        // Within a turn only the last batch opens, as on the web.
+        let last_active_round = turn
+            .rounds
+            .iter()
+            .rposition(|round| !round.reasoning.is_empty() || !round.items.is_empty());
+        let mut user = history_user(&turn.user);
+        // The bubble carries the turn identity: it is the anchor the reducer's
+        // live rows are matched against when the durable snapshot takes over.
+        user.id = format!("user-turn-{}", turn.root_id).into();
+        rows.push(user);
+        for (round_index, round) in turn.rounds.iter().enumerate() {
             let tools = round.items.len() as i32;
             let activity = !round.reasoning.is_empty() || tools > 0;
-            // The folded bar reads out the newest entry of its batch, exactly as
-            // the live reducer stamps it.
-            let mut bar_at: Option<usize> = None;
-            let mut latest = slint::SharedString::default();
-            if activity {
-                let mut bar = blank_row(
-                    crate::timeline::KIND_GROUP,
-                    format!("history-{index}-group-{}", round.round),
-                );
-                bar.text = crate::timeline_text::tool_calls(tools).into();
-                // The newest turn reads exactly as it did while it streamed:
-                // its batches start open. Older turns stay folded, both behind
-                // their divider and behind their bars.
-                bar.open = current;
-                bar.payload = rows.len() as i32;
-                bar.group_idx = group;
-                bar.group_open = current;
-                bar.visible = current;
-                bar.foldable = true;
-                bar_at = Some(rows.len());
-                rows.push(bar);
+            if !activity {
+                // A plain-text round has no batch: the answer alone carries it.
+                if !round.text.is_empty() {
+                    let mut body = blank_row(
+                        crate::timeline::KIND_BODY,
+                        format!("history-{index}-body-{}", round.round),
+                    );
+                    body.text = round.text.as_str().into();
+                    body.blocks = crate::message_blocks::from_text(&round.text);
+                    body.foldable = true;
+                    rows.push(body);
+                }
+                continue;
             }
+            let open = turn_open && Some(round_index) == last_active_round;
+            let group = batch;
+            batch += 1;
+            // The folded bar reads out the newest entry of its batch, exactly
+            // as the live reducer stamps it.
+            let bar_at = rows.len();
+            let mut latest = slint::SharedString::default();
+            let mut bar = blank_row(
+                crate::timeline::KIND_GROUP,
+                format!("history-{index}-group-{}", round.round),
+            );
+            bar.text = crate::timeline_text::tool_calls(tools).into();
+            bar.open = open;
+            bar.payload = bar_at as i32;
+            bar.group_idx = group;
+            bar.group_open = open;
+            bar.foldable = true;
+            rows.push(bar);
             if !round.reasoning.is_empty() {
                 let mut reason = blank_row(
                     crate::timeline::KIND_REASON,
@@ -226,8 +247,7 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
                 reason.detail = round.reasoning.as_str().into();
                 reason.payload = rows.len() as i32;
                 reason.group_idx = group;
-                reason.group_open = current;
-                reason.visible = current;
+                reason.group_open = open;
                 reason.foldable = true;
                 rows.push(reason);
             }
@@ -239,7 +259,6 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
                 body.text = round.text.as_str().into();
                 body.blocks = crate::message_blocks::from_text(&round.text);
                 body.foldable = true;
-                body.visible = current;
                 rows.push(body);
             }
             for item in &round.items {
@@ -267,14 +286,11 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
                 };
                 row.payload = rows.len() as i32;
                 row.group_idx = group;
-                row.group_open = current;
-                row.visible = current;
+                row.group_open = open;
                 row.foldable = true;
                 rows.push(row);
             }
-            if let Some(at) = bar_at {
-                rows[at].summary = latest;
-            }
+            rows[bar_at].summary = latest;
         }
         // The metrics belong to the turn and ride on the body row that ends it,
         // which is also the row that owns the copy and save actions: the same
@@ -283,13 +299,6 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
             rows[*index].kind == crate::timeline::KIND_BODY
         }) {
             rows[body].stats = turn_stats(&turn.assistant);
-        }
-        if !current {
-            // A completed turn folds behind its divider: the divider stays as
-            // the fold handle, everything else of that turn is not laid out.
-            for row in &mut rows[turn_start + 1..] {
-                row.visible = false;
-            }
         }
     }
     rows
@@ -521,7 +530,6 @@ mod tests {
         assert_eq!(
             kinds,
             vec![
-                crate::timeline::KIND_DIVIDER,
                 crate::timeline::KIND_USER,
                 crate::timeline::KIND_GROUP,
                 crate::timeline::KIND_REASON,
@@ -532,27 +540,26 @@ mod tests {
                 crate::timeline::KIND_BODY,
             ],
         );
-        // The divider carries the turn identity the live tail is matched on.
-        assert_eq!(rows[0].id, "turn-fixture-rounds");
+        // The bubble carries the turn identity the live tail is matched on.
+        assert_eq!(rows[0].id, "user-turn-fixture-rounds");
         // Each round folds as its own batch, and thinking keeps its full text.
-        assert_eq!(rows[2].group_idx, rows[3].group_idx);
-        assert_eq!(rows[2].group_idx, rows[5].group_idx);
-        assert_ne!(rows[2].group_idx, rows[6].group_idx);
-        assert_eq!(rows[3].detail, "先想想第一步");
+        assert_eq!(rows[1].group_idx, rows[2].group_idx);
+        assert_eq!(rows[1].group_idx, rows[4].group_idx);
+        assert_ne!(rows[1].group_idx, rows[5].group_idx);
+        assert_eq!(rows[2].detail, "先想想第一步");
         assert_eq!(
-            rows[3].tool_name.as_str(),
+            rows[2].tool_name.as_str(),
             crate::timeline_text::thought_done()
         );
-        assert_eq!(rows[4].text, "第一步说明");
-        assert_eq!(rows[8].text, "结论");
+        assert_eq!(rows[3].text, "第一步说明");
+        assert_eq!(rows[7].text, "结论");
         // A fold handle always addresses its own row, or toggling would move a
         // different entry. A body block has no handle: for it `foldable` means
         // "frozen", which is what shows its metrics and actions line.
         for row in rows.iter().filter(|row| {
             matches!(
                 row.kind,
-                crate::timeline::KIND_DIVIDER
-                    | crate::timeline::KIND_GROUP
+                crate::timeline::KIND_GROUP
                     | crate::timeline::KIND_REASON
                     | crate::timeline::KIND_TOOL
             )
@@ -562,6 +569,10 @@ mod tests {
                 "a foldable row must point at itself"
             );
         }
+        // The newest turn opens its last batch; earlier batches of the same
+        // turn stay folded, matching the web default.
+        assert!(!rows[1].group_open, "the first batch stays folded");
+        assert!(rows[5].group_open, "the last batch opens");
     }
 
     /// §12.2 evidence: the bounded worst case is measured, not estimated. Both
@@ -582,39 +593,48 @@ mod tests {
         timeline.set_history(rows.clone());
         let published = started.elapsed();
 
-        // Worst honest case: unfold every completed turn, so nothing is skipped
-        // by the visibility filter. A folded turn is represented by a *visible*
-        // divider while everything it owns stays hidden, so those visible
-        // dividers are the fold handles the user clicks.
-        let folded: Vec<i32> = rows
-            .iter()
-            .filter(|row| row.kind == crate::timeline::KIND_DIVIDER && row.visible)
-            .map(|row| row.payload)
-            .collect();
+        // Before the user touches anything, only the newest turns read with
+        // their last batch open: 50 turns x 3 base rows plus the newest
+        // MAX_OPEN_TURNS batches' entries.
+        let entries_per_turn = turns[0].rounds[0].items.len();
+        let laid_out = |model: &slint::ModelRc<TimelineRow>| {
+            model
+                .iter()
+                .filter(|row| {
+                    row.visible
+                        && (row.kind == crate::timeline::KIND_GROUP
+                            || row.group_idx == crate::timeline::NO_GROUP
+                            || row.group_open)
+                })
+                .count()
+        };
+        assert_eq!(
+            laid_out(&timeline.model()),
+            50 * 3 + 8 * entries_per_turn,
+            "the default column is the base rows plus the open batches",
+        );
+
+        // Reach the fully opened column the way a user does: one batch at a
+        // time. Every toggle is a bounded scan, so the whole history opens in
+        // bounded clicks.
         let started = Instant::now();
         let mut opened = 0usize;
-        for divider in &folded {
-            timeline.toggle(*divider);
-            opened += 1;
+        for row in rows.iter() {
+            if row.kind == crate::timeline::KIND_GROUP && !row.group_open {
+                timeline.toggle(row.payload);
+                opened += 1;
+            }
         }
         let unfolded = started.elapsed();
 
         let rows = timeline.model();
-        let exposed = rows.iter().filter(|row| row.visible).count();
-        let hidden: Vec<i32> = rows
-            .iter()
-            .filter(|row| !row.visible)
-            .map(|row| row.kind)
-            .collect();
-        let hidden_dividers = hidden
-            .iter()
-            .filter(|kind| **kind == crate::timeline::KIND_DIVIDER)
-            .count();
-        let mut kinds = [0usize; 6];
+        let exposed = laid_out(&rows);
+        assert_eq!(opened, 42, "the oldest batches start folded");
+        assert_eq!(exposed, 1350, "every batch the user opened lays out");
+        let mut kinds = [0usize; 5];
         for row in rows.iter() {
             kinds[row.kind as usize] += 1;
         }
-        let entries_per_turn = turns[0].rounds[0].items.len();
         println!(
             "timeline worst case: turns={} entries/turn={} rows={} exposed={} \
              build={built:?} project={projected:?} publish={published:?} unfold={unfolded:?}",
@@ -627,55 +647,9 @@ mod tests {
         assert_eq!(kinds[1], 50, "one answer block per turn");
         assert_eq!(kinds[3], 1200, "24 tool entries x 50 turns");
         assert_eq!(kinds[4], 50, "one batch bar per turn");
-        assert_eq!(kinds[5], 50, "one turn divider per turn");
         // Rows are one flat vector: 50 turns x (1 bubble + 1 body + 1 batch bar
-        // + 24 tool entries + 1 divider) = 1400, with no nesting or duplication.
-        assert_eq!(rows.row_count(), 1400);
-        // Opening turns past the reducer's limit folds the oldest ones back, so
-        // unfolding the whole history must not expose every row it owns: that is
-        // exactly the regression this guards against. A folded-back turn costs
-        // one invisible divider, and the live turn's divider is the other one.
-        assert!(
-            hidden_dividers > 1,
-            "the cap must have folded turns back, leaving their dividers hidden",
-        );
-        // The hidden rows are the turns that were folded back plus the live
-        // turn's divider, so they carry every kind a turn is made of.
-        assert!(
-            hidden.contains(&crate::timeline::KIND_USER)
-                && hidden.contains(&crate::timeline::KIND_TOOL)
-                && hidden.contains(&crate::timeline::KIND_BODY),
-            "the rows folded back must be whole turns, not stray entries",
-        );
-        let per_turn = entries_per_turn + 3;
-        let open_turns = rows
-            .iter()
-            .filter(|row| row.kind == crate::timeline::KIND_DIVIDER && row.open)
-            .count();
-        let max_open = 8;
-        assert_eq!(
-            open_turns, max_open,
-            "the cap must leave exactly its limit of turns open",
-        );
-        assert!(
-            exposed <= max_open * (per_turn + 1) + per_turn,
-            "opening every turn laid out {exposed} rows; the cap must hold it near \
-             {max_open} turns",
-        );
-        assert!(
-            exposed < rows.row_count(),
-            "an open history must still fold most of its rows",
-        );
-        // The turns that are open are open completely: the reducer never hides a
-        // row inside a turn it reports as open.
-        assert!(
-            exposed >= per_turn,
-            "at least the live turn must be fully laid out",
-        );
-        assert!(
-            opened > 0,
-            "the fixture must start with folded turns or this proves nothing",
-        );
+        // + 24 tool entries) = 1350, with no nesting or duplication.
+        assert_eq!(rows.row_count(), 1350);
         // The projection is O(rows); keep a loose ceiling so a future change that
         // makes it quadratic fails here instead of on the user's machine.
         assert!(
@@ -747,10 +721,10 @@ mod tests {
         );
         assert_eq!(
             rows.iter()
-                .filter(|row| row.kind == crate::timeline::KIND_DIVIDER)
+                .filter(|row| row.kind == crate::timeline::KIND_BODY)
                 .count(),
             2,
-            "the live divider goes with the live copy"
+            "one durable answer per turn"
         );
         drop(rows);
         assert_eq!(timeline.last_answer(), "Latest answer");
@@ -773,14 +747,14 @@ mod tests {
 
         timeline.begin_turn("fixture-live", "Fixture input");
         timeline.start_body(1);
-        // Header cost of one live turn: divider + user bubble + first body
-        // block. Captured rather than guessed, so a reducer change that adds a
+        // Header cost of one live turn: user bubble + first body block.
+        // Captured rather than guessed, so a reducer change that adds a
         // row shows up as a deliberate update here instead of a silent drift.
         let after_header = timeline.model().row_count();
         assert_eq!(
             after_header,
-            before.len() + 3,
-            "a live turn header is divider + bubble + body block",
+            before.len() + 2,
+            "a live turn header is bubble + body block",
         );
         let mut frames = 0usize;
         let started = Instant::now();
@@ -832,26 +806,25 @@ mod tests {
     }
 
     #[test]
-    fn history_folds_older_turns_and_keeps_the_latest_open() {
+    fn history_keeps_every_turn_laid_out_and_opens_only_the_newest_batch() {
+        // Both turns are plain text: bubble + body, no batch bar at all.
         let rows = project_history(&[
             fixture("fixture-old", "Earlier answer", "任务完成"),
             fixture("fixture-new", "Latest answer", "任务完成"),
         ]);
-        assert_eq!(rows.len(), 6);
-        // The folded turn keeps its divider as the only laid-out row.
-        assert_eq!(rows[0].kind, crate::timeline::KIND_DIVIDER);
-        assert!(rows[0].visible);
-        assert_eq!(rows[0].payload, 0);
-        assert_eq!(rows[1].kind, crate::timeline::KIND_USER);
-        assert!(!rows[1].visible);
-        assert_eq!(rows[2].kind, crate::timeline::KIND_BODY);
-        assert!(!rows[2].visible);
-        assert_eq!(rows[3].kind, crate::timeline::KIND_DIVIDER);
-        assert!(!rows[3].visible, "the newest turn needs no divider");
-        assert_eq!(rows[4].kind, crate::timeline::KIND_USER);
-        assert!(rows[4].visible);
-        assert_eq!(rows[5].kind, crate::timeline::KIND_BODY);
-        assert_eq!(rows[5].text, "Latest answer");
+        assert_eq!(rows.len(), 4);
+        for row in &rows {
+            assert!(row.visible, "no history row is hidden");
+        }
+        assert_eq!(rows[0].kind, crate::timeline::KIND_USER);
+        assert_eq!(rows[0].id, "user-turn-fixture-old");
+        assert_eq!(rows[1].kind, crate::timeline::KIND_BODY);
+        assert_eq!(rows[2].kind, crate::timeline::KIND_USER);
+        assert_eq!(rows[2].id, "user-turn-fixture-new");
+        assert_eq!(rows[3].kind, crate::timeline::KIND_BODY);
+        assert_eq!(rows[3].text, "Latest answer");
+        // The metrics ride on the newest answer.
+        assert_eq!(rows[1].stats.row_count(), 0, "no metrics renders no footer");
     }
 
     #[test]
@@ -867,13 +840,12 @@ mod tests {
                 &serde_json::json!({"status":"failed", "error_message":"fixture failure"}),
             ));
         let rows = project_history(&[turn]);
-        assert_eq!(rows.len(), 4);
-        assert_eq!(rows[0].kind, crate::timeline::KIND_DIVIDER);
-        assert_eq!(rows[1].kind, crate::timeline::KIND_USER);
-        assert_eq!(rows[2].kind, crate::timeline::KIND_GROUP);
-        assert_eq!(rows[2].text, "执行工具 1 次");
-        assert_eq!(rows[3].kind, crate::timeline::KIND_TOOL);
-        assert_eq!(rows[3].status_kind, crate::timeline::STATUS_FAILED);
-        assert!(rows[3].detail.contains("fixture failure"));
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].kind, crate::timeline::KIND_USER);
+        assert_eq!(rows[1].kind, crate::timeline::KIND_GROUP);
+        assert_eq!(rows[1].text, "执行工具 1 次");
+        assert_eq!(rows[2].kind, crate::timeline::KIND_TOOL);
+        assert_eq!(rows[2].status_kind, crate::timeline::STATUS_FAILED);
+        assert!(rows[2].detail.contains("fixture failure"));
     }
 }

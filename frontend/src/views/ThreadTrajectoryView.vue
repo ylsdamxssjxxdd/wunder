@@ -168,17 +168,12 @@
             </template>
           </tbody>
         </table>
-        <div v-if="hasMore && !loading" class="thread-trajectory-more">
-          <button class="tt-text-btn" type="button" :disabled="loadingMore" @click="loadEarlier">
-            {{ loadingMore ? t('common.loading') : t('messenger.trajectory.loadEarlier') }}
-          </button>
-        </div>
       </div>
 
       <aside v-if="selectedRecord" class="thread-trajectory-inspector" :style="{ width: `${INSPECTOR_WIDTH}px` }">
         <div class="tt-inspector-tabs">
           <button
-            v-for="tab in INSPECTOR_TABS"
+            v-for="tab in inspectorTabs"
             :key="tab.key"
             class="tt-inspector-tab"
             :class="{ 'is-active': activeTab === tab.key }"
@@ -194,39 +189,104 @@
         </div>
         <div class="tt-inspector-body">
           <template v-if="activeTab === 'overview'">
-            <div v-for="row in overviewRows" :key="row.label" class="tt-inspector-row">
-              <span class="tt-inspector-label">{{ row.label }}</span>
-              <span class="tt-inspector-value">{{ row.value }}</span>
+            <dl class="tt-inspector-list">
+              <div class="tt-inspector-row">
+                <dt class="tt-inspector-label">{{ t('messenger.trajectory.details.status') }}</dt>
+                <dd class="tt-inspector-value" :class="{ 'is-error': selectedRecord.isError }">{{ statusText(selectedRecord.status) }}</dd>
+              </div>
+              <template v-if="selectedRecord.kind === 'message'">
+                <div class="tt-inspector-row">
+                  <dt class="tt-inspector-label">{{ t('messenger.trajectory.usage.tokens') }}</dt>
+                  <dd class="tt-inspector-value">{{ tokenUnit(selectedRecord.usage ? selectedRecord.usage.output : null) }}</dd>
+                </div>
+                <div v-if="selectedRecord.usage && selectedRecord.usage.reasoning > 0" class="tt-inspector-row is-sub">
+                  <dt class="tt-inspector-label">{{ t('messenger.trajectory.usage.reasoning') }}</dt>
+                  <dd class="tt-inspector-value">{{ tokenUnit(selectedRecord.usage.reasoning) }}</dd>
+                </div>
+                <div v-if="contentTokens(selectedRecord) !== null" class="tt-inspector-row is-sub">
+                  <dt class="tt-inspector-label">{{ t('messenger.trajectory.usage.content') }}</dt>
+                  <dd class="tt-inspector-value">{{ tokenUnit(contentTokens(selectedRecord)) }}</dd>
+                </div>
+              </template>
+              <div v-if="selectedRecord.kind === 'user' || selectedRecord.kind === 'context'" class="tt-inspector-row">
+                <dt class="tt-inspector-label">{{ t('messenger.trajectory.timing.duration') }}</dt>
+                <dd class="tt-inspector-value">{{ formatSeconds(selectedRecord.timeSeconds) }}</dd>
+              </div>
+              <div v-if="selectedRecord.toolName" class="tt-inspector-row">
+                <dt class="tt-inspector-label">{{ t('messenger.trajectory.overview.tool') }}</dt>
+                <dd class="tt-inspector-value">{{ selectedRecord.toolName }}</dd>
+              </div>
+              <div v-if="selectedRecord.callId" class="tt-inspector-row">
+                <dt class="tt-inspector-label">{{ t('messenger.trajectory.overview.callId') }}</dt>
+                <dd class="tt-inspector-value">{{ selectedRecord.callId }}</dd>
+              </div>
+              <div class="tt-inspector-row">
+                <dt class="tt-inspector-label">{{ t('messenger.trajectory.overview.turn') }}</dt>
+                <dd class="tt-inspector-value">{{ selectedRecord.turn === null ? '—' : selectedRecord.turn }}</dd>
+              </div>
+              <div class="tt-inspector-row">
+                <dt class="tt-inspector-label">{{ t('messenger.trajectory.overview.step') }}</dt>
+                <dd class="tt-inspector-value">{{ selectedRecord.step === null ? '—' : selectedRecord.step + 1 }}</dd>
+              </div>
+            </dl>
+            <div class="tt-inspector-sections">
+              <section v-if="selectedRecord.inputDetail" class="tt-inspector-block">
+                <button class="tt-inspector-block-title" type="button" @click="activeTab = 'input'">
+                  {{ t('messenger.trajectory.inspector.payload') }}
+                </button>
+                <pre class="tt-inspector-pre">{{ truncate(selectedRecord.inputDetail, 600) }}</pre>
+              </section>
+              <section v-if="selectedRecord.outputDetail" class="tt-inspector-block">
+                <button class="tt-inspector-block-title" type="button" @click="activeTab = 'output'">
+                  {{ t('messenger.trajectory.inspector.result') }}
+                </button>
+                <pre class="tt-inspector-pre">{{ truncate(selectedRecord.outputDetail, 600) }}</pre>
+              </section>
+              <section class="tt-inspector-block">
+                <button class="tt-inspector-block-title" type="button" @click="activeTab = 'schema'">
+                  {{ t('messenger.trajectory.inspector.schema') }}
+                </button>
+                <p class="tt-inspector-hint">{{ t('messenger.trajectory.record.schemaUnavailable') }}</p>
+              </section>
+              <section class="tt-inspector-block">
+                <button class="tt-inspector-block-title" type="button" @click="activeTab = 'timing'">
+                  {{ t('messenger.trajectory.inspector.timing') }}
+                </button>
+                <dl class="tt-inspector-list">
+                  <div v-for="row in timingRows" :key="row.label" class="tt-inspector-row">
+                    <dt class="tt-inspector-label">{{ row.label }}</dt>
+                    <dd class="tt-inspector-value">{{ row.value }}</dd>
+                  </div>
+                </dl>
+              </section>
             </div>
           </template>
-          <template v-else-if="activeTab === 'timing'">
-            <div v-for="row in timingRows" :key="row.label" class="tt-inspector-row">
-              <span class="tt-inspector-label">{{ row.label }}</span>
-              <span class="tt-inspector-value">{{ row.value }}</span>
-            </div>
+
+          <template v-else-if="activeTab === 'input'">
+            <pre v-if="selectedRecord.inputDetail" class="tt-inspector-pre is-block">{{ selectedRecord.inputDetail }}</pre>
+            <p v-else class="tt-inspector-hint">{{ t('messenger.trajectory.record.noPayload') }}</p>
           </template>
-          <template v-else-if="activeTab === 'usage'">
-            <div v-for="row in usageRows" :key="row.label" class="tt-inspector-row">
-              <span class="tt-inspector-label">{{ row.label }}</span>
-              <span class="tt-inspector-value">{{ row.value }}</span>
-            </div>
+
+          <template v-else-if="activeTab === 'output'">
+            <pre
+              v-if="selectedRecord.outputDetail"
+              class="tt-inspector-pre is-block"
+              :class="{ 'is-error': selectedRecord.isError }"
+            >{{ selectedRecord.outputDetail }}</pre>
+            <p v-else class="tt-inspector-hint">{{ t('messenger.trajectory.record.noResult') }}</p>
           </template>
+
+          <template v-else-if="activeTab === 'schema'">
+            <p class="tt-inspector-hint">{{ t('messenger.trajectory.record.schemaUnavailable') }}</p>
+          </template>
+
           <template v-else>
-            <template v-if="selectedRecord.inputDetail">
-              <div class="tt-inspector-section">{{ t('messenger.trajectory.payload.input') }}</div>
-              <pre class="tt-inspector-pre">{{ selectedRecord.inputDetail }}</pre>
-            </template>
-            <template v-if="selectedRecord.thinkingDetail">
-              <div class="tt-inspector-section">{{ t('messenger.trajectory.payload.thinking') }}</div>
-              <pre class="tt-inspector-pre">{{ selectedRecord.thinkingDetail }}</pre>
-            </template>
-            <template v-if="selectedRecord.outputDetail">
-              <div class="tt-inspector-section">{{ t('messenger.trajectory.payload.output') }}</div>
-              <pre class="tt-inspector-pre">{{ selectedRecord.outputDetail }}</pre>
-            </template>
-            <div v-if="!selectedRecord.inputDetail && !selectedRecord.thinkingDetail && !selectedRecord.outputDetail" class="tt-inspector-row">
-              <span class="tt-inspector-value">{{ t('messenger.trajectory.emptyValue') }}</span>
-            </div>
+            <dl class="tt-inspector-list">
+              <div v-for="row in timingRows" :key="row.label" class="tt-inspector-row">
+                <dt class="tt-inspector-label">{{ row.label }}</dt>
+                <dd class="tt-inspector-value">{{ row.value }}</dd>
+              </div>
+            </dl>
           </template>
         </div>
       </aside>
@@ -238,13 +298,13 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
-import { getThreadLogTurns } from '@/api/chat';
+import { getThreadLogSnapshot } from '@/api/chat';
 import { useI18n } from '@/i18n';
 
 type Json = Record<string, unknown>;
 
 type TrajKind = 'system' | 'user' | 'context' | 'compacted' | 'message' | 'tool' | 'subtool';
-type InspectorTab = 'overview' | 'timing' | 'usage' | 'payload';
+type InspectorTab = 'overview' | 'input' | 'output' | 'schema' | 'timing';
 
 interface TrajUsage {
   input: number;
@@ -274,6 +334,8 @@ interface TrajCell {
   inputDetail: string;
   outputDetail: string;
   thinkingDetail: string;
+  schemaDetail: string;
+  generationSeconds: number | null;
   resultPreview: string;
   usage: TrajUsage | null;
   searchText: string;
@@ -310,20 +372,13 @@ interface TimelineSpan {
   startedAt: number | null;
 }
 
-const TURNS_LIMIT = 100;
-const HISTORY_TURNS_PAGE = 50;
 const INSPECTOR_WIDTH = 360;
 const TIMELINE_LANES = [
   { labelKey: 'messenger.trajectory.lane.input', top: 7 },
   { labelKey: 'messenger.trajectory.lane.model', top: 21 },
   { labelKey: 'messenger.trajectory.lane.tools', top: 35 }
 ];
-const INSPECTOR_TABS: Array<{ key: InspectorTab; labelKey: string }> = [
-  { key: 'overview', labelKey: 'messenger.trajectory.inspector.overview' },
-  { key: 'timing', labelKey: 'messenger.trajectory.inspector.timing' },
-  { key: 'usage', labelKey: 'messenger.trajectory.inspector.usage' },
-  { key: 'payload', labelKey: 'messenger.trajectory.inspector.payload' }
-];
+// 检查器页签按记录动态生成（见 inspectorTabs）：概述 → 参数 → 结果 → Schema → 计时。
 const KIND_LABEL_KEY: Record<TrajKind, string> = {
   system: 'messenger.trajectory.kind.system',
   user: 'messenger.trajectory.kind.user',
@@ -354,10 +409,7 @@ const sessionId = computed(() => {
 
 const rawTurns = ref<Json[]>([]);
 const loading = ref(false);
-const loadingMore = ref(false);
 const loadError = ref('');
-const hasMore = ref(false);
-const nextBefore = ref<number | null>(null);
 
 const collapsedTurns = ref<Set<string>>(new Set());
 const collapseCalls = ref(false);
@@ -479,24 +531,32 @@ const extractUsage = (source: Json): TrajUsage | null => {
 };
 
 const buildCell = (item: Json, index: number, turnNo: number | null, isFirstOfTurn: boolean): TrajCell => {
-  const payload = asJson(item.payload);
+  // user_message 的 payload 可能是裸字符串，其余为对象；统一归一到对象再取字段。
+  const rawPayload = item.payload;
+  const payload: Json = typeof rawPayload === 'string' ? { content: rawPayload } : asJson(rawPayload);
   const metrics: Json = {
     ...payload,
     ...asJson(payload.stats),
     ...asJson(asJson(payload.meta).message_stats)
   };
   const kind = mapKind(asText(item.kind));
+  const isToolKind = kind === 'tool' || kind === 'subtool';
   const toolName = pickText(metrics, ['tool', 'tool_name', 'name', 'toolName', 'tool_display_name']);
   const status = pickText(item, ['status']) || pickText(payload, ['status']);
   const isError =
     ['failed', 'error', 'cancelled', 'interrupted'].includes(status.toLowerCase()) ||
     asText(payload.error) !== '' ||
-    payload.is_error === true;
+    payload.is_error === true ||
+    payload.ok === false;
 
   const question = contentToText(payload.content);
   const reasoning = contentToText(payload.reasoning ?? payload.thinking ?? payload.reasoning_content);
   const args = pickText(payload, ['args', 'arguments', 'input']);
-  const result = contentToText(payload.result ?? payload.output ?? payload.content);
+  // 工具结果真实字段是 data（+ model_observation / meta），无 result/output 键；
+  // 助手文本才在 content/result/output。
+  const result = isToolKind
+    ? pickText(payload, ['data', 'result', 'output', 'model_observation'])
+    : contentToText(payload.result ?? payload.output ?? payload.content);
 
   let text = '';
   let inputDetail = '';
@@ -509,8 +569,9 @@ const buildCell = (item: Json, index: number, turnNo: number | null, isFirstOfTu
   } else if (kind === 'message') {
     text = truncate(question || reasoning, 220);
     outputDetail = question;
-  } else if (kind === 'tool' || kind === 'subtool') {
-    text = [toolName || t('messenger.trajectory.kind.tool'), truncate(question, 120)].filter(Boolean).join(' · ');
+  } else if (isToolKind) {
+    const argsPreview = truncate(args.replace(/\s+/g, ' '), 120);
+    text = [toolName || t('messenger.trajectory.kind.tool'), argsPreview].filter(Boolean).join(' · ');
     inputDetail = args || question;
     outputDetail = result;
     resultPreview = truncate(result.replace(/\s+/g, ' '), 120);
@@ -538,6 +599,7 @@ const buildCell = (item: Json, index: number, turnNo: number | null, isFirstOfTu
   }
 
   const usage = extractUsage(payload);
+  const schemaDetail = pickText(payload, ['schema', 'schema_detail', 'input_schema', 'parameters']);
   const searchText = [text, inputDetail, outputDetail, toolName, kind]
     .join(' ')
     .toLowerCase();
@@ -562,6 +624,8 @@ const buildCell = (item: Json, index: number, turnNo: number | null, isFirstOfTu
     inputDetail,
     outputDetail,
     thinkingDetail: reasoning,
+    schemaDetail,
+    generationSeconds: decodeSeconds,
     resultPreview,
     usage,
     searchText
@@ -911,42 +975,64 @@ const recordClasses = (record: TrajCell): Record<string, boolean> => {
   };
 };
 
-const overviewRows = computed(() => {
+const inspectorTabs = computed<Array<{ key: InspectorTab; labelKey: string }>>(() => {
   const record = selectedRecord.value;
-  if (!record) return [];
-  return [
-    { label: t('messenger.trajectory.overview.kind'), value: t(kindLabelKey(record.kind)) },
-    { label: t('messenger.trajectory.overview.turn'), value: record.turn === null ? '—' : String(record.turn) },
-    { label: t('messenger.trajectory.overview.step'), value: record.step === null ? '—' : String(record.step + 1) },
-    { label: t('messenger.trajectory.overview.status'), value: record.status || '—' },
-    { label: t('messenger.trajectory.overview.tool'), value: record.toolName || '—' },
-    { label: t('messenger.trajectory.overview.callId'), value: record.callId || '—' },
-    { label: t('messenger.trajectory.overview.duration'), value: formatSeconds(record.timeSeconds) }
+  const tabs: Array<{ key: InspectorTab; labelKey: string }> = [
+    { key: 'overview', labelKey: 'messenger.trajectory.inspector.overview' }
   ];
+  if (record?.inputDetail) tabs.push({ key: 'input', labelKey: 'messenger.trajectory.inspector.payload' });
+  if (record?.outputDetail) tabs.push({ key: 'output', labelKey: 'messenger.trajectory.inspector.result' });
+  tabs.push({ key: 'schema', labelKey: 'messenger.trajectory.inspector.schema' });
+  tabs.push({ key: 'timing', labelKey: 'messenger.trajectory.inspector.timing' });
+  return tabs;
 });
+
+const statusText = (status: string): string => {
+  const key = status.trim().toLowerCase();
+  if (!key) return '—';
+  if (key === 'completed' || key === 'complete' || key === 'ok' || key === 'success') {
+    return t('messenger.trajectory.status.completed');
+  }
+  if (key === 'running' || key === 'pending' || key === 'streaming') {
+    return t('messenger.trajectory.status.running');
+  }
+  if (key === 'failed' || key === 'error') return t('messenger.trajectory.status.failed');
+  if (key === 'cancelled' || key === 'canceled') return t('messenger.trajectory.status.cancelled');
+  if (key === 'interrupted') return t('messenger.trajectory.status.interrupted');
+  return status;
+};
+
+const tokenUnit = (value: number | null | undefined): string =>
+  value === null || value === undefined ? '—' : t('messenger.trajectory.unit.tokens', { value });
+
+const contentTokens = (record: TrajCell): number | null => {
+  const usage = record.usage;
+  if (!usage || usage.output <= 0) return null;
+  return Math.max(0, usage.output - usage.reasoning);
+};
 
 const timingRows = computed(() => {
   const record = selectedRecord.value;
   if (!record) return [];
+  if (record.kind === 'message') {
+    return [
+      { label: t('messenger.trajectory.timing.started'), value: formatTimestamp(record.startedAt) },
+      { label: t('messenger.trajectory.timing.totalDuration'), value: formatSeconds(record.timeSeconds) },
+      { label: t('messenger.trajectory.timing.ttft'), value: formatMillis(record.ttftMs) },
+      { label: t('messenger.trajectory.timing.generation'), value: formatSeconds(record.generationSeconds) },
+      { label: t('messenger.trajectory.timing.throughput'), value: formatSpeed(record.decodeSpeed) }
+    ];
+  }
   return [
-    { label: t('messenger.trajectory.timing.startedAt'), value: formatTimestamp(record.startedAt) },
-    { label: t('messenger.trajectory.timing.completedAt'), value: formatTimestamp(record.completedAt) },
-    { label: t('messenger.trajectory.timing.total'), value: formatSeconds(record.timeSeconds) },
-    { label: t('messenger.trajectory.timing.ttft'), value: formatMillis(record.ttftMs) },
-    { label: t('messenger.trajectory.timing.decode'), value: formatSpeed(record.decodeSpeed) }
-  ];
-});
-
-const usageRows = computed(() => {
-  const record = selectedRecord.value;
-  const usage = record?.usage ?? null;
-  if (!usage) return [{ label: t('messenger.trajectory.usage.total'), value: '—' }];
-  return [
-    { label: t('messenger.trajectory.usage.input'), value: usage.input.toLocaleString('en-US') },
-    { label: t('messenger.trajectory.usage.cacheRead'), value: usage.cacheRead.toLocaleString('en-US') },
-    { label: t('messenger.trajectory.usage.cacheWrite'), value: usage.cacheWrite.toLocaleString('en-US') },
-    { label: t('messenger.trajectory.usage.output'), value: usage.output.toLocaleString('en-US') },
-    { label: t('messenger.trajectory.usage.reasoning'), value: usage.reasoning.toLocaleString('en-US') }
+    { label: t('messenger.trajectory.timing.started'), value: formatTimestamp(record.startedAt) },
+    { label: t('messenger.trajectory.timing.duration'), value: formatSeconds(record.timeSeconds) },
+    {
+      label: t('messenger.trajectory.timing.source'),
+      value:
+        record.timeSeconds === null
+          ? t('messenger.trajectory.timing.notAvailable')
+          : t('messenger.trajectory.timing.sessionTimestamps')
+    }
   ];
 });
 
@@ -959,11 +1045,26 @@ const extractPayload = (response: unknown): Json => {
   return first;
 };
 
-const applyTurnsPayload = (payload: Json, mode: 'replace' | 'prepend'): void => {
+// 列表接口 /thread-log/turns 的 turn 不含 items，直接读 rawTurn.items 会永远为空。
+// 快照接口 /thread-log/snapshot 一次返回 turns + items（原子一致），按 turn_id 归组后再挂回各轮。
+const applySnapshotPayload = (payload: Json): void => {
   const turns = Array.isArray(payload.turns) ? payload.turns.map(asJson) : [];
-  rawTurns.value = mode === 'prepend' ? [...turns, ...rawTurns.value] : turns;
-  hasMore.value = payload.has_more === true;
-  nextBefore.value = asNum(payload.next_before) ?? null;
+  const items = Array.isArray(payload.items) ? payload.items.map(asJson) : [];
+  const itemsByTurn = new Map<string, Json[]>();
+  items.forEach((item) => {
+    const turnId = asText(item.turn_id);
+    if (!turnId) return;
+    const bucket = itemsByTurn.get(turnId);
+    if (bucket) {
+      bucket.push(item);
+    } else {
+      itemsByTurn.set(turnId, [item]);
+    }
+  });
+  rawTurns.value = turns.map((turn) => {
+    const turnId = asText(turn.turn_id);
+    return { ...turn, items: turnId ? itemsByTurn.get(turnId) ?? [] : [] };
+  });
 };
 
 const load = async (): Promise<void> => {
@@ -975,28 +1076,12 @@ const load = async (): Promise<void> => {
   loading.value = true;
   loadError.value = '';
   try {
-    const response = await getThreadLogTurns(id, { limit: TURNS_LIMIT });
-    applyTurnsPayload(extractPayload(response), 'replace');
+    const response = await getThreadLogSnapshot(id);
+    applySnapshotPayload(extractPayload(response));
   } catch {
     loadError.value = t('messenger.trajectory.loadFailed');
   } finally {
     loading.value = false;
-  }
-};
-
-const loadEarlier = async (): Promise<void> => {
-  const id = sessionId.value;
-  if (!id || loadingMore.value) return;
-  loadingMore.value = true;
-  try {
-    const params: Record<string, string | number> = { limit: HISTORY_TURNS_PAGE };
-    if (nextBefore.value !== null) params.before = nextBefore.value;
-    const response = await getThreadLogTurns(id, params);
-    applyTurnsPayload(extractPayload(response), 'prepend');
-  } catch {
-    // 保留已有数据，静默失败。
-  } finally {
-    loadingMore.value = false;
   }
 };
 
@@ -1017,6 +1102,13 @@ watch(sessionId, (value) => {
   rawTurns.value = [];
   clearSelection();
   void load();
+});
+
+// 切换记录或页签集合变化时，回退到仍然存在的页签（避免停留在已隐藏的页签）。
+watch([inspectorTabs, selectedRecordId], () => {
+  if (!inspectorTabs.value.some((tab) => tab.key === activeTab.value)) {
+    activeTab.value = 'overview';
+  }
 });
 
 onMounted(() => {

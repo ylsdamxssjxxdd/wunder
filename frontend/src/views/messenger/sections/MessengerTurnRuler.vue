@@ -4,15 +4,10 @@
     v-show="hasStrip"
     class="messenger-turn-ruler"
     aria-hidden="true"
-    :data-turn-ruler-strip="`${stripWidth}x${stripHeight}`"
-    :data-turn-ruler-span="`${rulerStyle.top};${rulerStyle.left};${rulerStyle.width};${rulerStyle.height}`"
     :data-turn-ruler-marks="marks.length"
     :data-turn-ruler-total="conversationRowCount"
-    :data-turn-ruler-height="measureTickHeight()"
-    :data-turn-ruler-row-offset="rowOffset"
     :data-turn-ruler-last="lastJumpPath"
-    :data-turn-ruler-metrics="`${measureStats.runs}|${measureStats.skipped}|${measureStats.last}`"
-    :style="rulerStyle"
+    :style="{ '--turn-ruler-slot-count': Math.max(1, marks.length), '--turn-ruler-slot-max': `${SLOT_MAX_PX}px` }"
     @click="handleStripClick"
     @mousemove="handleStripHover"
     @mouseleave="hoverIndex = -1"
@@ -26,8 +21,8 @@
       :data-turn-ruler-turn-id="mark.rootTurnId"
       :data-turn-ruler-row="mark.rowIndex"
       :style="{
-        '--turn-ruler-tick-top': `${tickTop(index)}px`,
-        '--turn-ruler-tick-height': `${tickHitHeight()}px`
+        '--turn-ruler-tick-offset': `${index + 0.5 - marks.length / 2}`,
+        '--turn-ruler-tick-w': `${tickWidth(index)}px`
       }"
     ></span>
     <!-- 悬停预览卡：标题取该轮次的用户消息，摘要取助手回复（参考主页面刻度交互）。 -->
@@ -35,7 +30,7 @@
       v-if="hoverMark && (hoverTitle || hoverSnippet)"
       class="messenger-turn-ruler-preview"
       :data-turn-ruler-preview="hoverIndex"
-      :style="{ top: `${previewTop}px` }"
+      :style="{ '--turn-ruler-preview-offset': previewOffset }"
     >
       <div v-if="hoverTitle" class="messenger-turn-ruler-preview-title">{{ hoverTitle }}</div>
       <div v-if="hoverSnippet" class="messenger-turn-ruler-preview-body">{{ hoverSnippet }}</div>
@@ -45,35 +40,37 @@
 
 <script setup lang="ts">
 /**
- * 聊天区右缘的「用户轮次刻度」（对齐桌面端 `frontend-slint/ui/timeline.slint:481-506`）。
+ * 聊天区右缘的「用户轮次刻度」（对齐桌面端 `frontend-slint/ui/timeline.slint:541-566`）。
  *
- * 规格（照抄桌面端数字）：
- * - 条体：`x = 容器宽 - 18px`、`y = 10px`、`width = 18px`、`height = 容器高 - 20px`；刻度数 > 1 才可见；
- * - 命中区：宽占满 18px，高 `min(14px, 容器高 / 刻度数)`，`y = (i + 0.5) * 容器高 / 刻度数 - 自身高 / 2`
- *   （**均匀分布**：桌面端注释写明 marathon thread 上按比例摆会挤成一团）；
- * - 刻度线：右对齐（距条体右边 3px），垂直居中，`hover ? 13x3 : 6x2`，圆角 1px，
- *   `hover ? --mz-primary : --mz-border-strong`；悬浮态全部交给 CSS `:hover`，不监听每个刻度。
+ * 布局：组件是 `.messenger-chat-lane` 里滚动容器的**同级 flex 通道**，独占 18px 宽
+ * （桌面端 marks-strip 同款独占矩形），上下留 10px——空间由布局分配，不依赖
+ * 运行期测量，也不会压到滚动条上。
+ *
+ * 规格：
+ * - 刻度数 > 1 才可见；
+ * - 紧凑排布：槽位间距 `min(条体高 / 刻度数, 12px)`，刻度组贴成一列、围绕条体
+ *   垂直中点居中（刻度极多时退回全高均分避免溢出）；
+ * - 波感：悬停时以所在刻度为中心向外宽度递减（14 → 11 → 8 → 6px），宽度由
+ *   `hoverIndex` 的距离算出并经 CSS transition 平滑，形成从中心向外的波浪；
+ * - 刻度线：右对齐（距条体右边 3px），垂直居中，悬停刻度 3px 高 / --mz-primary，
+ *   其余 2px / --mz-border-strong；点击/悬停槽位映射与 CSS 同式。
  *
  * 性能：刻度只由 `buildTurnMarks` 在 `computed` 里算一次（O(轮次数)），滚动回调不参与；
- * 条体几何只用 `ResizeObserver` 量一次（并且只在页签可见时量，避免历史用例断言隐藏元素几何时被强制布局破坏）。
+ * 悬停只更新 `hoverIndex` 一个 ref（≤100 个刻度的宽度样式），没有几何测量、
+ * 没有 ResizeObserver、没有任何滚动监听。
  */
-import { computed, onBeforeUnmount, onMounted, ref, unref, watch, type CSSProperties } from 'vue';
+import { computed, ref, unref } from 'vue';
 import type { MessengerControllerContext } from '../controller/messengerControllerContext';
 import { buildTurnMarks } from '@/views/messenger/timelineTurnMarks';
 
 const props = defineProps<{ controller: MessengerControllerContext }>();
 
-/** 桌面端 `timeline.slint:485-486` 的条体尺寸。 */
-const STRIP_WIDTH = 18;
-const STRIP_INSET_Y = 10;
-/** 桌面端 `timeline.slint:489`：单个命中区高度上限。 */
-const MAX_TICK_HIT_HEIGHT = 14;
-
-const caliper = ref({ top: 0, left: 0, width: 0, height: 0 });
-/** 最近一次跳转走的是哪条路径：`row` = 目标行在 DOM 里精确居中，`ratio` = 虚拟化退化估算。 */
-const lastJumpPath = ref('none');
-const stripHeight = computed(() => (caliper.value.height > 0 ? caliper.value.height : 200));
-const stripWidth = STRIP_WIDTH;
+/** 槽位间距上限：刻度紧贴成一列、围绕条体中点居中，极多刻度时退回全高均分。 */
+const SLOT_MAX_PX = 12;
+/** 波感宽度：悬停刻度最长，相邻按 3px 递减，最近的保底 6px。 */
+const TICK_WAVE_MAX_PX = 14;
+const TICK_WAVE_STEP_PX = 3;
+const TICK_WAVE_MIN_PX = 6;
 
 /**
  * 控制器里的响应式字段可能是 ref，也可能被外层拆成普通值；
@@ -117,129 +114,12 @@ const marks = computed(() => buildTurnMarks(conversationRows.value, {
   rowOffset: rowOffset.value,
   totalRows: conversationRowCount.value
 }));
-/** 桌面端 `timeline.slint:486`：刻度数 > 1 才可见。 */
-const hasStrip = computed(() => marks.value.length > 1 && caliper.value.width > 0);
+/** 桌面端 `timeline.slint:546`：刻度数 > 1 才可见。 */
+const hasStrip = computed(() => marks.value.length > 1);
 
-const rulerStyle = computed<CSSProperties>(() => ({
-  top: `${caliper.value.top + STRIP_INSET_Y}px`,
-  left: `${caliper.value.left + Math.max(0, caliper.value.width - STRIP_WIDTH)}px`,
-  width: `${STRIP_WIDTH}px`,
-  height: `${Math.max(0, caliper.value.height - STRIP_INSET_Y * 2)}px`
-}));
-
-/** 命中区高 = `min(14px, 容器高 / 刻度数)`。 */
-const tickHitHeight = (): number => {
-  const count = marks.value.length;
-  if (count <= 0) {
-    return MAX_TICK_HIT_HEIGHT;
-  }
-  return Math.max(2, Math.min(MAX_TICK_HIT_HEIGHT, stripHeight.value / count));
-};
-
-/** `y = (i + 0.5) * 容器高 / 刻度数 - 自身高 / 2`（均匀分布，不按小数比例摆）。 */
-const tickTop = (index: number): number => {
-  const count = marks.value.length;
-  if (count <= 0) {
-    return 0;
-  }
-  const slot = stripHeight.value / count;
-  return (index + 0.5) * slot - tickHitHeight() / 2;
-};
-
-const measureTickHeight = (): number => Math.round(tickHitHeight() * 100) / 100;
-
-// --- 几何测量：只在页签可见时量，避免隐藏状态下的强制布局 ---------------
-
+/** 最近一次跳转走的是哪条路径：`row` = 目标行在 DOM 里精确居中，`ratio` = 虚拟化退化估算。 */
+const lastJumpPath = ref('none');
 const rulerRef = ref<HTMLElement | null>(null);
-/**
- * 几何测点（`data-turn-ruler-metrics` = `测量次数|跳过次数|最近一次读数`）。
- * 条体的挂点/尺寸依赖运行期布局，这个属性是真机上定位「刻度条没出现 / 量到 0」的第一手证据。
- */
-const measureStats = ref({ runs: 0, skipped: 0, last: '' });
-let measureFrame: number | null = null;
-let resizeObserver: ResizeObserver | null = null;
-
-const measureStrip = (): void => {
-  const container = resolveScrollContainer();
-  const main = rulerRef.value?.parentElement || null;
-  if (!container || !main || typeof document === 'undefined' || document.hidden) {
-    measureStats.value = {
-      runs: measureStats.value.runs + 1,
-      skipped: measureStats.value.skipped + 1,
-      last: 'skipped'
-    };
-    return;
-  }
-  const containerRect = container.getBoundingClientRect();
-  const mainRect = main.getBoundingClientRect();
-  const next = {
-    top: containerRect.top - mainRect.top,
-    left: containerRect.left - mainRect.left,
-    width: containerRect.width,
-    height: containerRect.height
-  };
-  measureStats.value = {
-    runs: measureStats.value.runs + 1,
-    skipped: measureStats.value.skipped,
-    last: `${Math.round(next.left)},${Math.round(next.top)} ${Math.round(next.width)}x${Math.round(next.height)}`
-  };
-  const current = caliper.value;
-  if (
-    Math.abs(current.top - next.top) < 0.5 &&
-    Math.abs(current.left - next.left) < 0.5 &&
-    Math.abs(current.width - next.width) < 0.5 &&
-    Math.abs(current.height - next.height) < 0.5
-  ) {
-    return;
-  }
-  caliper.value = next;
-};
-
-const scheduleMeasure = (): void => {
-  if (measureFrame !== null || typeof window === 'undefined') {
-    return;
-  }
-  measureFrame = window.requestAnimationFrame(() => {
-    measureFrame = null;
-    measureStrip();
-  });
-};
-
-const handleDocumentVisibility = (): void => {
-  if (!document.hidden) {
-    scheduleMeasure();
-  }
-};
-
-onMounted(() => {
-  scheduleMeasure();
-  // 观察父层与滚动容器本身：条体的高度是从滚动容器量出来的，
-  // 只观察条体自己会陷入「高 0 → 条体高 0 → 不再触发观察」的死循环。
-  if (typeof ResizeObserver !== 'undefined') {
-    resizeObserver = new ResizeObserver(scheduleMeasure);
-    if (rulerRef.value?.parentElement) {
-      resizeObserver.observe(rulerRef.value.parentElement);
-    }
-    const container = resolveScrollContainer();
-    if (container) {
-      resizeObserver.observe(container);
-    }
-  }
-  document.addEventListener('visibilitychange', handleDocumentVisibility);
-});
-
-// 轮次结构变化（新会话 / 新轮次 / 切换线程）后重新量一次几何。
-watch(marks, scheduleMeasure);
-
-onBeforeUnmount(() => {
-  if (measureFrame !== null && typeof window !== 'undefined') {
-    window.cancelAnimationFrame(measureFrame);
-    measureFrame = null;
-  }
-  resizeObserver?.disconnect();
-  resizeObserver = null;
-  document.removeEventListener('visibilitychange', handleDocumentVisibility);
-});
 
 // --- 交互 ---------------------------------------------------------------
 
@@ -376,20 +256,34 @@ const centerTurnRow = (rowIndex: number, turnId: string, attempt = 0): void => {
   scrollContainerTo(offset - container.clientHeight / 2 + targetHeight / 2);
 };
 
-const handleStripClick = (event: MouseEvent): void => {
+/**
+ * 槽位算法与 CSS 同式：间距 `min(条体高 / 刻度数, SLOT_MAX_PX)`，刻度组以条体中点
+ * 为中心排开；组外空白（上下两端的留空）就近夹到首/末刻度。
+ */
+const resolveSlotIndex = (clientY: number): number => {
+  const strip = rulerRef.value;
+  if (!strip) {
+    return -1;
+  }
   const count = marks.value.length;
   if (count <= 0) {
-    return;
+    return -1;
   }
-  // 命中区按条体高度均分（与桌面端逐个 TouchArea 的槽位一致）。
-  const height = stripHeight.value;
-  const slot = height / count;
+  const rect = strip.getBoundingClientRect();
+  const slot = Math.min(rect.height / count, SLOT_MAX_PX);
   if (!(slot > 0)) {
+    return -1;
+  }
+  const start = (rect.height - slot * count) / 2;
+  const position = clientY - rect.top - start;
+  return Math.min(count - 1, Math.max(0, Math.floor(position / slot)));
+};
+
+const handleStripClick = (event: MouseEvent): void => {
+  const index = resolveSlotIndex(event.clientY);
+  if (index < 0) {
     return;
   }
-  const strip = rulerRef.value;
-  const top = strip ? strip.getBoundingClientRect().top : 0;
-  const index = Math.min(count - 1, Math.max(0, Math.floor((event.clientY - top) / slot)));
   const mark = marks.value[index];
   if (!mark) {
     return;
@@ -434,29 +328,31 @@ const hoverSnippet = computed(() => {
   return row ? messageText(row.assistant).slice(0, 200) : '';
 });
 
-/** 预览卡中心 = 悬停刻度槽位中心，上下夹在条体范围内避免溢出视口。 */
-const previewTop = computed(() => {
-  const center = tickTop(Math.max(0, hoverIndex.value)) + tickHitHeight() / 2;
-  const margin = 48;
-  return Math.min(Math.max(center, margin), Math.max(margin, stripHeight.value - margin));
-});
+/** 预览卡垂直位置 = 悬停刻度槽位中心相对条体中点的偏移（槽位数），clamp 交给 CSS。 */
+const previewOffset = computed(() => `${Math.max(0, hoverIndex.value) + 0.5 - marks.value.length / 2}`);
 
-/** 槽位算法与点击一致：命中区按条体高度均分，mousemove 里不额外监听每个刻度。 */
 const handleStripHover = (event: MouseEvent): void => {
-  const count = marks.value.length;
-  const slot = count > 0 ? stripHeight.value / count : 0;
-  if (!(slot > 0)) {
-    hoverIndex.value = -1;
-    return;
-  }
-  const strip = rulerRef.value;
-  const top = strip ? strip.getBoundingClientRect().top : 0;
-  hoverIndex.value = Math.min(count - 1, Math.max(0, Math.floor((event.clientY - top) / slot)));
+  hoverIndex.value = resolveSlotIndex(event.clientY);
 };
 
 /**
- * 桌面端在刻度条上滚轮时把手势还给聊天（`timeline.slint:503` 明确 reject）。
- * 条体挂在滚动容器**外面**，事件不会冒泡到它，因此显式转发一次并让事件继续冒泡。
+ * 波感宽度：悬停刻度最长（TICK_WAVE_MAX_PX），按距离每格递减 STEP，保底 MIN；
+ * 未悬停时全部回到基础宽度。宽度变化经 CSS transition 平滑。
+ */
+const tickWidth = (index: number): number => {
+  if (hoverIndex.value < 0) {
+    return TICK_WAVE_MIN_PX;
+  }
+  const distance = Math.abs(index - hoverIndex.value);
+  return Math.max(
+    TICK_WAVE_MIN_PX,
+    TICK_WAVE_MAX_PX - distance * TICK_WAVE_STEP_PX
+  );
+};
+
+/**
+ * 桌面端在刻度条上滚轮时把手势还给聊天（`timeline.slint:563` 明确 reject）。
+ * 通道在滚动容器外面，事件不会冒泡到它，因此显式转发一次。
  */
 const handleStripWheel = (event: WheelEvent): void => {
   const container = resolveScrollContainer();
@@ -477,34 +373,43 @@ const handleStripWheel = (event: WheelEvent): void => {
 </script>
 
 <style scoped>
-/* 条体本身不可见：只有刻度线。挂点是 `.messenger-main`（相对定位），
-   因此 `.messenger-chat-body` 滚动时刻度条不会跟着内容滚走。 */
+/* 通道本体：`.messenger-chat-lane` 里的固定 18px 列，上下留 10px。
+   没有刻度时 `v-show` 收起，flex 布局自动把空间还给滚动视口。
+   槽位间距 = `min(条体高 / 刻度数, 12px)`：刻度贴成一列、围绕条体垂直中点居中，
+   刻度极多时间距被条体高度压小（退回全高均分），不会溢出。 */
 .messenger-turn-ruler {
-  position: absolute;
+  --turn-ruler-slot: min(
+    calc(100% / var(--turn-ruler-slot-count, 1)),
+    var(--turn-ruler-slot-max, 12px)
+  );
+  position: relative;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  width: 18px;
+  margin: 10px 0;
   z-index: 6;
-  pointer-events: auto;
 }
 
-/* 命中区：宽度占满 18px（`left: 0; right: 0`），高度与 y 由内联样式给出。
-   悬浮放大/变色只用 CSS `:hover`，不用 JS 监听每个刻度。 */
+/* 命中区：宽度占满 18px（`left: 0; right: 0`），高 = 槽位间距（贴在一起），
+   中心在条体中点两侧按 `--turn-ruler-tick-offset`（槽位数）排开。
+   刻度线宽度由 `--turn-ruler-tick-w`（波感）给出，悬浮变色只用 CSS `:hover`。 */
 .messenger-turn-ruler-tick {
   position: absolute;
-  top: var(--turn-ruler-tick-top, 0);
+  top: calc(50% + var(--turn-ruler-tick-offset, 0) * var(--turn-ruler-slot));
   right: 0;
   left: 0;
-  /* 空 span 的 auto 高度是 0，命中区高度必须显式给（桌面端用固定 height 的 Rectangle）。 */
-  height: var(--turn-ruler-tick-height, 2px);
-  border-radius: 1px;
+  height: var(--turn-ruler-slot);
+  transform: translateY(-50%);
   cursor: pointer;
 }
 
-/* 刻度线：右对齐（距条体右缘 3px）、垂直居中，默认 6x2px / --mz-border-strong。 */
+/* 刻度线：右对齐（距条体右缘 3px）、垂直居中，宽度 = 波感值，默认 2px 高。 */
 .messenger-turn-ruler-tick::after {
   content: '';
   position: absolute;
   top: 50%;
   right: 3px;
-  width: 6px;
+  width: var(--turn-ruler-tick-w, 6px);
   height: 2px;
   border-radius: 1px;
   background: var(--mz-border-strong, #d8d5d0);
@@ -515,17 +420,22 @@ const handleStripWheel = (event: WheelEvent): void => {
     background-color 120ms ease;
 }
 
-/* 悬浮：13x3px / --mz-primary（桌面端 Theme.accent）。 */
+/* 悬停刻度：加高并染主色（宽度波感由 JS 距离给出）。 */
 .messenger-turn-ruler-tick:hover::after {
-  width: 13px;
   height: 3px;
   background: var(--mz-primary, #c96443);
 }
 
-/* 悬停预览卡：贴在刻度条左侧，对齐参考主页面的最小卡片形态。
+/* 悬停预览卡：贴在刻度通道左侧，垂直位置由 `--turn-ruler-preview-offset`
+   （槽位中心相对条体中点的槽位数 × 槽位间距）给出，clamp 在通道范围内避免溢出。
    pointer-events 关掉，避免卡片盖住聊天内容时抢走悬停/点击。 */
 .messenger-turn-ruler-preview {
   position: absolute;
+  top: clamp(
+    48px,
+    calc(50% + var(--turn-ruler-preview-offset, 0) * var(--turn-ruler-slot)),
+    calc(100% - 48px)
+  );
   right: calc(100% + 12px);
   transform: translateY(-50%);
   box-sizing: border-box;

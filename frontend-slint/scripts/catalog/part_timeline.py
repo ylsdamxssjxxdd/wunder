@@ -8,7 +8,6 @@ ENTRIES = [
     ("tl_stat_quota", "上下文消耗", "Consumed tokens"),
     ("tl_stat_tools", "工具调用次数", "Tool calls"),
 
-    ("tl_processed", "已处理", "Processed"),
     ("tl_thought_done", "已思考", "Thought"),
     ("tl_thought_running", "正在思考…", "Thinking…"),
     ("tl_thought_failed", "思考中断", "Thinking interrupted"),

@@ -889,8 +889,8 @@ key-pressed(event) => {
             }
             if !root.generating || root.terminal-mode || root.draft.starts-with("/") : Action { width: 40px; icon: @image-url("../assets/icons/paper-plane.svg"); icon-size: 16px; label: root.busy ? I18n.cp_sending : I18n.cp_send; primary: true; enabled: root.terminal-mode ? (root.draft != "" && !root.busy) : ((root.draft != "" || root.attachments.length > 0) && (!root.busy || root.draft.starts-with("/"))); clicked => { root.send(); } }
         }
-        // ---- status line (§8.5): branch + context usage; the workspace name
-        // moved into the toolbar and the local badge is gone. ----
+        // ---- status line (§8.5): branch only; the context gauge lives in
+        // the toolbar's brain glyph and the old labelled bar is gone. ----
         HorizontalLayout {
             height: 16px; spacing: 6px;
             if root.branch-name != "" : Image {
@@ -901,29 +901,6 @@ key-pressed(event) => {
                 height: parent.height; width: self.preferred-width;
                 text: root.branch-name; color: Theme.muted; font-size: Theme.font-xs;
                 vertical-alignment: center; overflow: elide;
-            }
-            Rectangle { horizontal-stretch: 1; }
-            // Context usage as a labelled bar, mirroring the brain gauge.
-            if root.context-known : Text {
-                height: parent.height; width: self.preferred-width;
-                text: I18n.cp_context_usage; color: Theme.muted; font-size: Theme.font-xs;
-                vertical-alignment: center;
-            }
-            if root.context-known : Rectangle {
-                y: 5px; width: 72px; height: 6px; border-radius: 3px;
-                background: Theme.border;
-                Rectangle {
-                    width: parent.width * min(root.context-usage, 1.0);
-                    height: parent.height; border-radius: 3px;
-                    background: root.context-usage >= 0.9 ? Theme.danger : root.context-usage >= 0.75 ? Theme.warning : Theme.accent;
-                }
-            }
-            if root.context-known : Text {
-                height: parent.height; width: self.preferred-width;
-                text: round(root.context-usage * 100.0) + "%";
-                color: root.context-usage >= 0.9 ? Theme.danger : Theme.muted;
-                font-size: Theme.font-xs; font-weight: 600;
-                vertical-alignment: center;
             }
         }
     }

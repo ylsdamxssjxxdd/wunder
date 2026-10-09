@@ -43,7 +43,6 @@ export global EntryKind {
     out property <int> reason: 2;
     out property <int> tool: 3;
     out property <int> group: 4;
-    out property <int> divider: 5;
 }
 
 // One shared rotation driver for every running spinner; a single timer in the
@@ -397,29 +396,6 @@ component GroupBar inherits Rectangle {
     }
 }
 
-// ---- "已处理" fold of a finished turn (§7.3 D) ----
-component TurnDivider inherits Rectangle {
-    in property <TimelineRow> data;
-    callback toggle(int);
-    height: 30px;
-    HorizontalLayout {
-        padding-left: Theme.timeline-padding; padding-right: Theme.timeline-padding;
-        spacing: 6px;
-        divider-hit := Rectangle {
-            width: divider-label.preferred-width + 40px; height: 24px; y: 3px;
-            border-radius: 6px; background: divider-area.has-hover ? Theme.hover : transparent;
-            FoldCaret { x: 8px; y: 6px; open: root.data.open; }
-            divider-label := Text {
-                x: 26px; y: 0px; width: self.preferred-width; height: parent.height;
-                text: I18n.tl_processed; color: Theme.muted; font-size: Theme.font-sm;
-                vertical-alignment: center;
-            }
-            divider-area := TouchArea { mouse-cursor: pointer; clicked => { root.toggle(root.data.payload); } }
-        }
-        Rectangle { horizontal-stretch: 1; }
-    }
-}
-
 export component TimelineRowView inherits Rectangle {
     in property <TimelineRow> entry;
     callback toggle(int);
@@ -459,10 +435,6 @@ export component TimelineRowView inherits Rectangle {
             open-resource(id) => { root.open-resource(id); }
         }
         if root.entry.kind == EntryKind.group : GroupBar {
-            data: root.entry;
-            toggle(index) => { root.toggle(index); }
-        }
-        if root.entry.kind == EntryKind.divider : TurnDivider {
             data: root.entry;
             toggle(index) => { root.toggle(index); }
         }

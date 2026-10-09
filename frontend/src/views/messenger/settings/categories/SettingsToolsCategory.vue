@@ -123,18 +123,25 @@
       </div>
     </section>
 
-    <template v-if="visitedTabs.has('knowledge')">
-      <section v-show="activeTab === 'knowledge'" class="messenger-settings-card messenger-settings-card--pane">
-        <div class="messenger-tools-pane-host user-tools-dialog messenger-settings-tools-host">
-          <UserKnowledgePane />
-        </div>
-      </section>
-      <section v-show="activeTab === 'knowledge'" class="messenger-settings-card messenger-settings-card--pane">
-        <div class="messenger-tools-pane-host user-tools-dialog messenger-settings-tools-host">
-          <UserSkillPane />
-        </div>
-      </section>
-    </template>
+    <section
+      v-if="visitedTabs.has('skill')"
+      v-show="activeTab === 'skill'"
+      class="messenger-settings-card messenger-settings-card--pane"
+    >
+      <div class="messenger-tools-pane-host user-tools-dialog messenger-settings-tools-host">
+        <UserSkillPane />
+      </div>
+    </section>
+
+    <section
+      v-if="visitedTabs.has('knowledge')"
+      v-show="activeTab === 'knowledge'"
+      class="messenger-settings-card messenger-settings-card--pane"
+    >
+      <div class="messenger-tools-pane-host user-tools-dialog messenger-settings-tools-host">
+        <UserKnowledgePane />
+      </div>
+    </section>
   </div>
 </template>
 
@@ -162,12 +169,13 @@ const UserSkillPane = defineRecoverableAsyncComponent(
   () => import('@/components/user-tools/UserSkillPane.vue')
 );
 
-type ToolsTabId = 'builtin' | 'mcp' | 'knowledge';
+type ToolsTabId = 'builtin' | 'mcp' | 'skill' | 'knowledge';
 
 const TOOLS_TABS: Array<{ id: ToolsTabId; icon: string; titleKey: string }> = [
-  { id: 'builtin', icon: 'fa-solid fa-screwdriver-wrench', titleKey: 'messenger.settingsPage.tools.tabBuiltin' },
+  { id: 'builtin', icon: 'fa-solid fa-toolbox', titleKey: 'messenger.settingsPage.tools.tabBuiltin' },
   { id: 'mcp', icon: 'fa-solid fa-plug', titleKey: 'messenger.settingsPage.tools.tabMcp' },
-  { id: 'knowledge', icon: 'fa-solid fa-book', titleKey: 'messenger.settingsPage.tools.tabKnowledge' }
+  { id: 'skill', icon: 'fa-solid fa-book', titleKey: 'messenger.settingsPage.tools.tabSkill' },
+  { id: 'knowledge', icon: 'fa-solid fa-database', titleKey: 'messenger.settingsPage.tools.tabKnowledge' }
 ];
 
 /** 内置工具单页行数：清单由管理员开放，分页 + 搜索避免一次性渲染。 */

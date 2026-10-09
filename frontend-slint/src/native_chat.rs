@@ -2377,7 +2377,6 @@ mod turn_tests {
         assert_eq!(
             kinds,
             vec![
-                crate::timeline::KIND_DIVIDER,
                 crate::timeline::KIND_USER,
                 crate::timeline::KIND_GROUP,
                 crate::timeline::KIND_REASON,
@@ -2385,17 +2384,17 @@ mod turn_tests {
                 crate::timeline::KIND_BODY,
             ]
         );
-        let group = &rows[2];
+        let group = &rows[1];
         assert_eq!(group.text, "执行工具 1 次");
         assert!(group.open && group.group_idx == 0);
-        assert_eq!(rows[3].tool_name, "已思考");
+        assert_eq!(rows[2].tool_name, "已思考");
+        assert_eq!(rows[2].status_kind, crate::timeline::STATUS_DONE);
+        assert!(rows[2].detail.contains("Fixture thinking"));
+        assert_eq!(rows[3].tool_name, "读取文件");
+        assert_eq!(rows[3].target, "example.txt");
         assert_eq!(rows[3].status_kind, crate::timeline::STATUS_DONE);
-        assert!(rows[3].detail.contains("Fixture thinking"));
-        assert_eq!(rows[4].tool_name, "读取文件");
-        assert_eq!(rows[4].target, "example.txt");
-        assert_eq!(rows[4].status_kind, crate::timeline::STATUS_DONE);
-        assert_eq!(rows[4].payload, 4);
-        assert_eq!(rows[5].text, "Fixture answer");
+        assert_eq!(rows[3].payload, 3);
+        assert_eq!(rows[4].text, "Fixture answer");
         // A second round freezes the first block and opens a new batch.
         drop(live);
         reduce(
@@ -2413,12 +2412,12 @@ mod turn_tests {
         timeline.borrow_mut().flush();
         let live = timeline.borrow();
         let rows: Vec<_> = live.model().iter().collect();
-        assert_eq!(rows.len(), 9);
-        assert!(rows[5].foldable, "the first answer block freezes");
-        assert_eq!(rows[6].kind, crate::timeline::KIND_GROUP);
-        assert_eq!(rows[6].group_idx, 1);
-        assert_eq!(rows[8].kind, crate::timeline::KIND_BODY);
-        assert_eq!(rows[8].text, "Second answer");
+        assert_eq!(rows.len(), 8);
+        assert!(rows[4].foldable, "the first answer block freezes");
+        assert_eq!(rows[5].kind, crate::timeline::KIND_GROUP);
+        assert_eq!(rows[5].group_idx, 1);
+        assert_eq!(rows[7].kind, crate::timeline::KIND_BODY);
+        assert_eq!(rows[7].text, "Second answer");
     }
 
     /// A stopped turn keeps the partial answer and marks the tail, and later

@@ -83,7 +83,14 @@
             ></i>
           </span>
           <span v-else class="workspace-file-twisty is-placeholder" aria-hidden="true"></span>
-          <i :class="['workspace-file-icon', rowIconClass(row)]" aria-hidden="true"></i>
+          <img
+            v-if="row.kind !== 'dir' && rowIconPath(row)"
+            class="workspace-file-icon-img"
+            :src="rowIconPath(row)"
+            alt=""
+            aria-hidden="true"
+          />
+          <i v-else :class="['workspace-file-icon', rowIconClass(row)]" aria-hidden="true"></i>
           <span class="workspace-file-name">{{ row.name }}</span>
           <span v-if="row.loading" class="workspace-files-spinner" aria-hidden="true"></span>
           <button
@@ -129,6 +136,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
 import { useI18n } from '@/i18n';
+import { loadWorkspaceThemeIconResolver } from '@/components/chat/workspaceIcons';
 import {
   WORKSPACE_ROW_HEIGHT,
   WORKSPACE_ROW_OVERSCAN,
@@ -307,6 +315,17 @@ onMounted(() => {
 });
 
 // ------------------------------------------------------------------ helpers
+
+// 文件行用 VSCode 彩色图标主题（与 chat 工作面板同源），FA 图标仅作主题未就绪时的兜底。
+const themeIconResolver = ref<Awaited<ReturnType<typeof loadWorkspaceThemeIconResolver>> | null>(null);
+void loadWorkspaceThemeIconResolver().then((resolver) => {
+  themeIconResolver.value = resolver;
+});
+
+const rowIconPath = (row: WorkspaceVisibleRow): string => {
+  if (row.kind === 'dir') return '';
+  return themeIconResolver.value?.resolveFileIconPath(row.name, workspaceFileExtension(row.name)) || '';
+};
 
 const rowIconClass = (row: WorkspaceVisibleRow): string => {
   if (row.kind === 'dir') {

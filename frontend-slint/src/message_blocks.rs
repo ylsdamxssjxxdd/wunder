@@ -7,7 +7,7 @@
 //! StyledText rendering for syntax colours.
 use crate::TextBlock;
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
-use slint::{Model, ModelRc, StyledText, VecModel};
+use slint::{ModelRc, StyledText, VecModel};
 use std::rc::Rc;
 
 const DISPLAY_BYTES: usize = 16 * 1024;
@@ -530,6 +530,7 @@ pub fn reasoning_preview(text: &str) -> slint::SharedString {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use slint::Model;
     #[test]
     fn final_render_supports_common_elements_and_stream_is_plain() {
         let source = "# 标题\n\n段落含 **粗体**、*斜体*、`代码` 和 [链接](https://example.invalid)。\n\n> 引用\n\n- 项目一\n1. 项目二\n\n```rust\nlet value = 1;\n```\n\n| 名称 | 数值 |\n| --- | ---: |\n| A | 1 |\n\n---\n\n![说明](image.png)";

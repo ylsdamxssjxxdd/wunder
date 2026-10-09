@@ -352,8 +352,11 @@ pub async fn execute_tool(
                 }
             }
             if let Some(Value::String(content)) = map.get("content").cloned() {
+                // 先把命令串里的单数 `/workspace` 别名对齐到规范根 `/workspaces`，
+                // 使 `cd /workspace/<user>/... && ...` 与文件工具落到同一挂载点。
+                let aligned = replace_root_in_text(&content, "/workspace", "/workspaces");
                 let rewritten =
-                    replace_root_in_text(&content, &public_root, &container_workspace_root);
+                    replace_root_in_text(&aligned, &public_root, &container_workspace_root);
                 if rewritten != content {
                     map.insert("content".to_string(), Value::String(rewritten));
                 }

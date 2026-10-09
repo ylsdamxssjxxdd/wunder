@@ -23,8 +23,8 @@ pub const WORKSPACE_ROOT_MISSING: &str = "工作区文件夹不存在或不可�
 /// Icon choices offered by the workspace dialog; stored values outside this
 /// set fall back to the default icon at read time.
 pub const WORKSPACE_ICONS: &[&str] = &[
-    "folder", "coffee", "filter", "cake", "moon", "knight", "robot", "flower", "gear", "swan",
-    "bear", "ghost", "alien", "bell", "flask",
+    "folder", "monitor", "martini", "cake", "cookie", "pyramid", "alien", "camera", "gear",
+    "coffee", "heart", "robot", "ghost", "bell", "flask",
 ];
 
 /// Palette choices offered by the workspace dialog.

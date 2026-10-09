@@ -559,13 +559,53 @@ pub(crate) fn normalize_read_path_for_workspace(raw_path: &str, workspace_id: &s
         }
     }
 
-    for prefix in ["/workspace/", "workspace/"] {
-        if let Some(value) = normalized.strip_prefix(prefix) {
-            return value.trim_matches('/').trim().to_string();
+    // `/workspace/<...>`（单数、带前导斜杠）是逻辑公共根 `/workspaces/<...>` 的常见别名，
+    // 统一映射到规范根，避免落到不存在的目录导致 TOOL_READ_NOT_FOUND。
+    // 注意：裸相对路径 `workspace/...` 必须原样保留——智能体云端目录下真实存在名为
+    // `workspace` 的子目录，剥离它会把 `workspace/heart.py` 破坏成 `heart.py` 这样的错误位置。
+    if let Some(value) = normalized.strip_prefix("/workspace/") {
+        let candidate = value.trim_matches('/').trim();
+        if candidate.is_empty() {
+            return String::new();
         }
+        return format!("/workspaces/{candidate}");
     }
 
     trimmed.to_string()
+}
+
+#[cfg(test)]
+mod normalize_read_path_tests {
+    use super::normalize_read_path_for_workspace;
+
+    #[test]
+    fn keeps_bare_relative_workspace_subdir() {
+        // 智能体云端目录下 `workspace/` 是真实子目录，不能被当作根别名剥离成 `heart.py`
+        assert_eq!(
+            normalize_read_path_for_workspace("workspace/heart.py", "sjxx"),
+            "workspace/heart.py"
+        );
+    }
+
+    #[test]
+    fn maps_singular_absolute_root_to_canonical() {
+        assert_eq!(
+            normalize_read_path_for_workspace("/workspace/sjxx/workspace/heart.py", "sjxx"),
+            "/workspaces/sjxx/workspace/heart.py"
+        );
+    }
+
+    #[test]
+    fn keeps_plural_public_root() {
+        assert_eq!(
+            normalize_read_path_for_workspace("workspaces/sjxx/workspace/heart.py", "sjxx"),
+            "/workspaces/sjxx/workspace/heart.py"
+        );
+        assert_eq!(
+            normalize_read_path_for_workspace("/workspaces/sjxx/workspace/heart.py", "sjxx"),
+            "/workspaces/sjxx/workspace/heart.py"
+        );
+    }
 }
 
 fn parse_line_number(value: &Value) -> Option<usize> {

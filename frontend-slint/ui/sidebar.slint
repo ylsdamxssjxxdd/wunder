@@ -16,16 +16,16 @@ import { DragRow } from "drag_row.slint";
 // sidebar and the chat top bar both call.
 export global WorkspaceVisual {
     public pure function icon(name: string) -> image {
-        name == "coffee" ? @image-url("../assets/icons/workspace/coffee.svg")
-        : name == "filter" ? @image-url("../assets/icons/workspace/filter.svg")
+        name == "monitor" ? @image-url("../assets/icons/workspace/monitor.svg")
+        : name == "martini" ? @image-url("../assets/icons/workspace/martini.svg")
+        : name == "cookie" ? @image-url("../assets/icons/workspace/cookie.svg")
+        : name == "pyramid" ? @image-url("../assets/icons/workspace/pyramid.svg")
+        : name == "camera" ? @image-url("../assets/icons/workspace/camera.svg")
+        : name == "heart" ? @image-url("../assets/icons/workspace/heart.svg")
         : name == "cake" ? @image-url("../assets/icons/workspace/cake.svg")
-        : name == "moon" ? @image-url("../assets/icons/workspace/moon.svg")
-        : name == "knight" ? @image-url("../assets/icons/workspace/knight.svg")
         : name == "robot" ? @image-url("../assets/icons/workspace/robot.svg")
-        : name == "flower" ? @image-url("../assets/icons/workspace/flower.svg")
         : name == "gear" ? @image-url("../assets/icons/workspace/gear.svg")
-        : name == "swan" ? @image-url("../assets/icons/workspace/swan.svg")
-        : name == "bear" ? @image-url("../assets/icons/workspace/bear.svg")
+        : name == "coffee" ? @image-url("../assets/icons/workspace/coffee.svg")
         : name == "ghost" ? @image-url("../assets/icons/workspace/ghost.svg")
         : name == "alien" ? @image-url("../assets/icons/workspace/alien.svg")
         : name == "bell" ? @image-url("../assets/icons/workspace/bell.svg")
@@ -55,8 +55,8 @@ export global WorkspaceVisual {
     }
 
     public pure function icon-keys() -> [string] {
-        ["folder", "coffee", "filter", "cake", "moon", "knight", "robot", "flower", "gear",
-         "swan", "bear", "ghost", "alien", "bell", "flask"]
+        ["folder", "monitor", "martini", "cake", "cookie", "pyramid", "alien", "camera", "gear",
+         "coffee", "heart", "robot", "ghost", "bell", "flask"]
     }
 
     public pure function color-keys() -> [string] {

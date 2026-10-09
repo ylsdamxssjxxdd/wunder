@@ -256,19 +256,18 @@ export component MainWindow inherits Window {
     in-out property <string> active-thread-status: "idle";
     // This preview timeline is replaced immediately by the native projection.
     // It intentionally exercises every entry type in slint-viewer: user bubble,
-    // body block, folded turn divider, tool group bar and one unfolded diff.
+    // body block, tool group bar and one unfolded diff.
     // `h` is the height the native layout measured for each row; the fixture
     // states it because the viewer has no projection to report one.
     in-out property <[TimelineRow]> timeline: [
         { kind: 0, visible: true, text: I18n.main_preview_step_title2, foldable: false, group-idx: -1, group-open: false, payload: 0 },
-        { kind: 5, visible: true, open: false, foldable: false, group-idx: -1, group-open: false, payload: 1 },
-        { kind: 1, visible: false, text: I18n.main_preview_answer, foldable: true, group-idx: -1, group-open: false, payload: 2 },
-        { kind: 0, visible: true, text: I18n.main_preview_prompt, foldable: false, group-idx: -1, group-open: false, payload: 3 },
-        { kind: 1, visible: true, text: I18n.main_preview_answer, foldable: true, group-idx: -1, group-open: false, payload: 4 },
-        { kind: 4, visible: true, text: I18n.tl_tool_calls(2), open: true, foldable: false, group-idx: 0, group-open: true, payload: 5 },
-        { kind: 2, visible: true, tool-name: I18n.msg_thought, summary: I18n.main_preview_reasoning, detail: I18n.main_preview_reasoning, status-kind: 0, open: false, foldable: true, group-idx: 0, group-open: true, payload: 6 },
-        { kind: 3, visible: true, tool-name: I18n.main_preview_step_title1, tool-icon: "folder-open", target: I18n.ws_preview_root_a, detail: I18n.main_preview_detail1, status-kind: 0, open: false, foldable: true, group-idx: 0, group-open: true, payload: 7 },
-        { kind: 3, visible: true, tool-name: I18n.main_preview_step_title2, tool-icon: "file-pen", target: I18n.pd_preview_path, status-kind: 0, open: true, foldable: true, group-idx: 0, group-open: true, payload: 8,
+        { kind: 1, visible: true, text: I18n.main_preview_answer, foldable: true, group-idx: -1, group-open: false, payload: 1 },
+        { kind: 0, visible: true, text: I18n.main_preview_prompt, foldable: false, group-idx: -1, group-open: false, payload: 2 },
+        { kind: 1, visible: true, text: I18n.main_preview_answer, foldable: true, group-idx: -1, group-open: false, payload: 3 },
+        { kind: 4, visible: true, text: I18n.tl_tool_calls(2), open: true, foldable: false, group-idx: 0, group-open: true, payload: 4 },
+        { kind: 2, visible: true, tool-name: I18n.msg_thought, summary: I18n.main_preview_reasoning, detail: I18n.main_preview_reasoning, status-kind: 0, open: false, foldable: true, group-idx: 0, group-open: true, payload: 5 },
+        { kind: 3, visible: true, tool-name: I18n.main_preview_step_title1, tool-icon: "folder-open", target: I18n.ws_preview_root_a, detail: I18n.main_preview_detail1, status-kind: 0, open: false, foldable: true, group-idx: 0, group-open: true, payload: 6 },
+        { kind: 3, visible: true, tool-name: I18n.main_preview_step_title2, tool-icon: "file-pen", target: I18n.pd_preview_path, status-kind: 0, open: true, foldable: true, group-idx: 0, group-open: true, payload: 7,
             patch: [{
                 path: I18n.pd_preview_path, action: I18n.pd_action_update, added: "41", deleted: "41",
                 lines: [

@@ -5736,11 +5736,6 @@
   "en": "Tool calls"
  },
  {
-  "key": "tl_processed",
-  "zh": "已处理",
-  "en": "Processed"
- },
- {
   "key": "tl_thought_done",
   "zh": "已思考",
   "en": "Thought"

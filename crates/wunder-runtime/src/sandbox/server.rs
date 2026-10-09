@@ -2280,6 +2280,12 @@ fn normalize_container_visible_path(input: &str) -> String {
     if let Some(rest) = without_current.strip_prefix("workspaces/") {
         return format!("/workspaces/{rest}");
     }
+    // `/workspace/<...>`（单数、带前导斜杠）是逻辑公共根 `/workspaces/<...>` 的常见别名，
+    // 统一映射到规范根，使写入/执行与读取落点一致；裸相对 `workspace/...` 保持不变，
+    // 因为它是智能体工作区根下真实存在的子目录名。
+    if let Some(rest) = normalized.strip_prefix("/workspace/") {
+        return format!("/workspaces/{rest}");
+    }
     normalized
 }
 
@@ -2383,6 +2389,24 @@ mod tests {
         assert_eq!(
             resolve_path(&context, "./workspaces/admin__c__1/report.txt").expect("dot public path"),
             PathBuf::from("/workspaces/admin__c__1/report.txt")
+        );
+    }
+
+    #[test]
+    fn normalize_container_visible_path_maps_singular_workspace_alias() {
+        assert_eq!(
+            normalize_container_visible_path("/workspace/admin__c__1/a.txt"),
+            "/workspaces/admin__c__1/a.txt"
+        );
+        // 复数规范根不应被单数规则二次改写
+        assert_eq!(
+            normalize_container_visible_path("/workspaces/admin__c__1/a.txt"),
+            "/workspaces/admin__c__1/a.txt"
+        );
+        // 裸相对 `workspace/...` 是工作区根下真实子目录，保持原样
+        assert_eq!(
+            normalize_container_visible_path("workspace/heart.py"),
+            "workspace/heart.py"
         );
     }
 }
