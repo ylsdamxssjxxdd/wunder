@@ -163,7 +163,15 @@ component BodyBlock inherits Rectangle {
     callback open-resource(string);
     height: body-column.preferred-height;
     background: body-hover.has-hover ? Theme.hover.transparentize(0.45) : transparent;
-    body-hover := TouchArea { }
+    // The block's own content is a *child* of this TouchArea, not a sibling:
+    // the hover-revealed copy and save buttons are touch areas too, and a
+    // sibling overlay hands the hover path over to them the moment the pointer
+    // reaches one. The buttons then hide, the path comes back, and the whole
+    // answer block flashes at the rate the pointer moves. As an ancestor the
+    // block keeps its hover while any descendant holds the pointer.
+    body-hover := TouchArea {
+        @children
+    }
     body-column := VerticalLayout {
         padding-left: Theme.timeline-padding; padding-right: Theme.timeline-padding; padding-top: 6px; padding-bottom: 6px;
         spacing: 8px;
@@ -212,7 +220,7 @@ component BodyBlock inherits Rectangle {
                 // The web messenger keeps the actions out of the reading flow
                 // until the block is hovered; the metrics line stays put.
                 opacity: body-hover.has-hover ? 1 : 0;
-                background: copy-area.has-hover ? Theme.hover : transparent;
+                background: copy-area.has-hover ? Theme.selected : transparent;
                 Image {
                     x: 8px; y: 5px; width: 12px; height: 12px;
                     source: @image-url("../assets/icons/copy.svg"); colorize: Theme.muted; image-fit: contain;
@@ -227,7 +235,7 @@ component BodyBlock inherits Rectangle {
             save-hit := Rectangle {
                 width: 52px; height: 22px; border-radius: Theme.radius-tag;
                 opacity: body-hover.has-hover ? 1 : 0;
-                background: save-area.has-hover ? Theme.hover : transparent;
+                background: save-area.has-hover ? Theme.selected : transparent;
                 Image {
                     x: 8px; y: 5px; width: 12px; height: 12px;
                     source: @image-url("../assets/icons/save.svg"); colorize: Theme.muted; image-fit: contain;

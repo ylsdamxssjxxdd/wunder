@@ -97,11 +97,11 @@ test('壳体无横条：占用统计只在模型触发器一处', async ({ page,
   expect(bodyBox, 'chat body bounding box').not.toBeNull();
   expect(Math.abs(bodyBox!.y - mainBox!.y)).toBeLessThanOrEqual(1);
 
-  // 占用面只有一处：模型触发器里的大脑 + 百分比。
+  // 占用面只有一处：模型触发器里的大脑；百分比读数在浮层顶部，行上不重复展示。
   const modelTrigger = page.locator('.composer-model-trigger').first();
   await expect(modelTrigger).toBeVisible();
   await expect(modelTrigger.locator('.context-usage-icon')).toHaveCount(1);
-  await expect(modelTrigger.locator('[data-testid="composer-context-percent"]')).toBeVisible();
+  await expect(modelTrigger).not.toContainText(/%/);
   expect(await page.locator('.context-usage-icon').count()).toBe(1);
   // 输入框不再有占位文字。
   await expect(page.locator('[data-testid="chat-composer-input"]').first()).toHaveAttribute(

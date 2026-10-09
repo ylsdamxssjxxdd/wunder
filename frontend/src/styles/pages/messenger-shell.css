@@ -115,55 +115,13 @@
   --el-color-primary-light-9: var(--mz-primary-tint);
 }
 
-.messenger-sidebar-top {
-  display: flex;
-  flex-shrink: 0;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 8px;
-  padding: 12px var(--mz-sidebar-padding) 0;
-}
-
-/* 「新任务」是左栏顶部一行轻量入口，不是主色大按钮（参考形态：小图标 + 文字）。 */
-.messenger-sidebar-new-task {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  box-sizing: border-box;
-  height: 28px;
-  margin-left: -8px;
-  padding: 0 8px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--mz-text-secondary, #3d3d3d);
-  font: inherit;
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: background-color 120ms ease, color 120ms ease;
-}
-
-.messenger-sidebar-new-task i {
-  font-size: 12px;
-  color: var(--mz-text-muted, #8a8f99);
-}
-
-.messenger-sidebar-new-task:hover:not(:disabled) {
-  background: var(--mz-timeline-hover, #f6f5f3);
-  color: var(--mz-text, #1f2329);
-}
-
-.messenger-sidebar-new-task:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-/* Upper region: workspace row + thread tree. Keeps its own scroll area. */
+/* Upper region: workspace row + thread tree. Keeps its own scroll area.
+   顶部留白原本是「新任务」那一行给的，按钮移除后由本区自己补，避免组标题贴到窗口顶边。 */
 .messenger-sidebar-workspace-region {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  padding-top: 12px;
   overflow: hidden;
 }
 
@@ -224,9 +182,15 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* 「新建线程」是这里唯一的入口，常驻可见（此前是悬停行才浮出的 0 透明按钮）。 */
 .messenger-sidebar-workspace-menu {
+  display: inline-flex;
   flex-shrink: 0;
-  padding: 2px 6px;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
   border: 0;
   border-radius: var(--mz-radius-tag);
   color: var(--mz-text-muted);
@@ -234,17 +198,18 @@
   font: inherit;
   font-size: var(--mz-font-sm);
   cursor: pointer;
-  opacity: 0;
+  transition: background-color 120ms ease, color 120ms ease;
 }
 
-.messenger-sidebar-workspace-row:hover .messenger-sidebar-workspace-menu,
-.messenger-sidebar-workspace-menu:focus-visible {
-  opacity: 1;
-}
-
-.messenger-sidebar-workspace-menu:hover {
+.messenger-sidebar-workspace-menu:hover:not(:disabled) {
   color: var(--mz-primary);
   background: var(--mz-surface);
+}
+
+.messenger-sidebar-workspace-menu:disabled {
+  color: var(--mz-text-muted);
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 /* Thread tree -------------------------------------------------------------- */

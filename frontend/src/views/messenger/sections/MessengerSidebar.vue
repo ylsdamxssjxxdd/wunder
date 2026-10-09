@@ -5,19 +5,6 @@
     data-testid="messenger-sidebar"
     :aria-label="t('messenger.sidebar.workspaceGroup')"
   >
-    <div class="messenger-sidebar-top">
-      <button
-        class="messenger-sidebar-new-task"
-        type="button"
-        :disabled="newTaskDisabled"
-        :title="t('messenger.sidebar.newTask')"
-        @click="emit('new-task')"
-      >
-        <i class="fa-solid fa-plus" aria-hidden="true"></i>
-        <span>{{ t('messenger.sidebar.newTask') }}</span>
-      </button>
-    </div>
-
     <div ref="workspaceRegionEl" class="messenger-sidebar-workspace-region" :style="workspaceRegionStyle">
       <div class="messenger-sidebar-group-title">{{ t('messenger.sidebar.workspaceGroup') }}</div>
       <div
@@ -32,9 +19,11 @@
         <i class="fa-solid fa-cloud messenger-sidebar-workspace-icon" aria-hidden="true"></i>
         <span class="messenger-sidebar-workspace-name" :title="workspaceName">{{ workspaceName }}</span>
         <span class="messenger-sidebar-workspace-meta">{{ workspaceMetaLabel }}</span>
+        <!-- 唯一的「新建线程」入口（左栏顶部的「新任务」按钮已移除），所以常驻可见、不再悬停才出现。 -->
         <button
           class="messenger-sidebar-workspace-menu"
           type="button"
+          :disabled="newTaskDisabled"
           :title="t('chat.newSession')"
           :aria-label="t('chat.newSession')"
           @click.stop="emit('new-task')"

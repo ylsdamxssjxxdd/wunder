@@ -80,15 +80,15 @@ test('B4 输入区：悬浮卡片 + 模型浮层 + 审批模式 + 引用注入 +
   expect(overflow.overflowY).toBe('auto');
   await textarea.fill('');
 
-  // §8.2 发送按钮：34×34 圆角方形主色按钮（radius 10px，与「+」同档，不是正圆）
+  // §8.2 发送按钮：28×28 圆角方形主色按钮（radius 8px，与「+」同档，不是正圆）
   const sendButton = page.locator('[data-testid="chat-composer-send"]').first();
   const sendGeometry = await sendButton.evaluate((el) => {
     const style = getComputedStyle(el);
     return { width: style.width, height: style.height, radius: style.borderTopLeftRadius };
   });
-  expect(sendGeometry.width).toBe('34px');
-  expect(sendGeometry.height).toBe('34px');
-  expect(sendGeometry.radius).toBe('10px');
+  expect(sendGeometry.width).toBe('28px');
+  expect(sendGeometry.height).toBe('28px');
+  expect(sendGeometry.radius).toBe('8px');
   await expect(sendButton).toBeDisabled();
   await textarea.fill('你好');
   await expect(sendButton).toBeEnabled();
@@ -103,24 +103,15 @@ test('B4 输入区：悬浮卡片 + 模型浮层 + 审批模式 + 引用注入 +
   await expect(statusBar.locator('.context-usage-icon')).toHaveCount(0);
   await expect(statusBar).not.toContainText(/%/);
 
-  // §8.2 审批模式三档 + 即时回传
-  const approvalTrigger = page.locator('.composer-approval-trigger').first();
-  await expect(approvalTrigger).toContainText(/自动执行|Run automatically/);
-  await approvalTrigger.click();
-  const approvalPanel = page.locator('.composer-panel--approval').first();
-  await expect(approvalPanel).toBeVisible();
-  await expect(approvalPanel).toContainText(/工具需确认|Confirm tools/);
-  await expect(approvalPanel).toContainText(/全部需确认|Confirm everything/);
-  await approvalPanel.locator('.composer-panel-item--radio').nth(1).click();
-  await expect(approvalTrigger).toContainText(/工具需确认|Confirm tools/);
-  await expect(page.locator('[data-testid="composer-b4-log"]')).toContainText('approval-mode:auto_edit');
+  // §8.2 审批模式三档已收进「+」的级联行（行上常驻触发器与 .composer-panel--approval 均已下线），
+  // 相关走查放在下方「+」菜单区块里，避免在此重复打开面板。
 
   // §8.3 模型浮层：300px、12px 圆角、锚在触发器上方、上下文占用明细 + 推理强度 + 当前模型打勾。
-  // 触发器本身就是占用面（星形按占用填充 + 百分比），浮层里再给容量数字。
+  // 触发器上只剩占用图标 + 模型名，百分比读数归到浮层顶部（一处占用面，不在行上重复）。
   const modelTrigger = page.locator('.composer-model-trigger').first();
   await expect(modelTrigger).toContainText('harness-model-a');
   await expect(modelTrigger.locator('.context-usage-icon')).toHaveCount(1);
-  await expect(modelTrigger.locator('[data-testid="composer-context-percent"]')).toBeVisible();
+  await expect(modelTrigger).not.toContainText(/%/);
   await modelTrigger.click();
   const popover = page.locator('.composer-model-popover').first();
   await expect(popover).toBeVisible();
@@ -143,6 +134,8 @@ test('B4 输入区：悬浮卡片 + 模型浮层 + 审批模式 + 引用注入 +
   const contextBlock = popover.locator('.composer-model-context');
   await expect(contextBlock).toBeVisible();
   await expect(contextBlock).toHaveText(/占用|Occupancy/);
+  // 占用读数（容量 · 百分比）在浮层里，行上不重复展示；无数据时降级为占位符。
+  await expect(popover.locator('[data-testid="model-popover-usage"]')).toHaveText(/\S/);
   expect(await popover.evaluate((el) => el.firstElementChild?.className)).toContain('composer-model-context');
   await expect(popover.locator('.composer-model-context-track, .composer-model-context-fill')).toHaveCount(0);
   // 模型清单不再有搜索框，也没有「设为我的默认」（默认模型归设置页管理）。
@@ -184,7 +177,7 @@ test('B4 输入区：悬浮卡片 + 模型浮层 + 审批模式 + 引用注入 +
   expect(await page.locator('.composer-action-group .composer-icon-btn').count()).toBe(0);
   const plusButton = page.locator('[data-testid="chat-composer-plus"]');
   await expect(plusButton).toHaveAttribute('aria-label', /更多操作|More actions/);
-  await expect(plusButton).toHaveCSS('border-radius', '10px');
+  await expect(plusButton).toHaveCSS('border-radius', '8px');
   await expect(page.locator('.composer-panel--plus')).toHaveCount(0);
   await plusButton.click();
   const plusPanel = page.locator('.composer-panel--plus');
@@ -196,6 +189,30 @@ test('B4 输入区：悬浮卡片 + 模型浮层 + 审批模式 + 引用注入 +
   expect(Math.abs(plusPanelBox!.x - plusBox!.x)).toBeLessThanOrEqual(2);
   // 命令 + 预设问题恒在，录音行取决于运行环境是否支持 MediaRecorder。
   expect(await plusPanel.locator('.composer-plus-item').count()).toBeGreaterThanOrEqual(2);
+
+  // 审批模式三档 + 即时回传：触发器就是「+」里的一行，悬停从右侧呼出档位子面板。
+  // 行上只显示当前档位文案，所以换档后要按新文案重新定位（旧的按档位文本的过滤条件会失效）。
+  const approvalRow = plusPanel
+    .locator('.composer-plus-row')
+    .filter({ hasText: /自动执行|Run automatically/ })
+    .first();
+  await expect(approvalRow).toBeVisible();
+  await approvalRow.hover();
+  const approvalFlyout = approvalRow.locator('.composer-plus-flyout');
+  await expect(approvalFlyout).toBeVisible();
+  await expect(approvalFlyout).toContainText(/工具需确认|Confirm tools/);
+  await expect(approvalFlyout).toContainText(/全部需确认|Confirm everything/);
+  const approvalRowBox = await approvalRow.boundingBox();
+  const approvalFlyoutBox = await approvalFlyout.boundingBox();
+  expect(approvalFlyoutBox!.x).toBeGreaterThan(approvalRowBox!.x + approvalRowBox!.width - 2);
+  await approvalFlyout.locator('.composer-panel-item--radio').nth(1).click();
+  await expect(
+    plusPanel.locator('.composer-plus-item-label').filter({ hasText: /工具需确认|Confirm tools/ }).first()
+  ).toBeVisible();
+  await expect(page.locator('[data-testid="composer-b4-log"]')).toContainText('approval-mode:auto_edit');
+  // 选档只收起子面板，「+」菜单本身保持展开。
+  await expect(plusPanel.locator('.composer-plus-flyout')).toHaveCount(0);
+  await expect(plusPanel).toBeVisible();
 
   // 命令：悬停行就从右侧呼出子面板（级联形态，不向下挤开菜单），点选只填草稿不发送。
   const commandRow = plusPanel.locator('.composer-plus-row').filter({ hasText: /命令|Commands/ }).first();
