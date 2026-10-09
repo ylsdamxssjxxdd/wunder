@@ -34,11 +34,6 @@
         </button>
       </span>
       <span v-if="entry.summary" class="tl-entry-summary" :title="entry.summary">{{ entry.summary }}</span>
-      <i
-        v-if="interactive"
-        :class="['fa-solid', open ? 'fa-chevron-down' : 'fa-chevron-right', 'tl-entry-toggle']"
-        aria-hidden="true"
-      ></i>
     </component>
 
     <div v-if="interactive && open" class="tl-entry-body">
@@ -123,7 +118,7 @@ const revealTarget = (path: string): void => {
  * §7.3 B/C 工具条目行（对齐桌面端 `timeline.slint` 的 `FoldEntry`）：
  * 行高 26px、间距 8px、图标 13px、工具名 13px `text-secondary`、
  * 目标 chip 18px/圆角 6/底 `hover`/字 12px muted/最宽 180px、
- * 摘要 12px muted 单行省略、右侧展开箭头 12px。
+ * 摘要 12px muted 单行省略、行首状态点 12px（不显示右侧展开箭头）。
  * 行首是 20px 沟槽：1px 连接线居中 + 6px 节点圆点（y=9px）。
  */
 .tl-entry {
@@ -199,17 +194,18 @@ button.tl-entry-head:focus-visible {
   background: var(--mz-danger, #d04a43);
 }
 
-/* 状态点 16px：完成 = 实心 + 白勾，运行 = 环形 + 旋转图标，失败/取消 = 红底白叉。 */
+/* 状态点 12px（对齐截图里「小小的」打勾）：完成 = 实心 + 白勾，
+   运行 = 环形 + 旋转图标，失败/取消 = 红底白叉。 */
 .tl-entry-status {
   flex: 0 0 auto;
-  width: 16px;
-  height: 16px;
+  width: 12px;
+  height: 12px;
   box-sizing: border-box;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  font-size: 9px;
+  font-size: 7px;
   line-height: 1;
   color: #ffffff;
   background: var(--mz-thought, #3e9c7e);
@@ -217,7 +213,7 @@ button.tl-entry-head:focus-visible {
 
 .tl-entry-status.is-loading {
   background: transparent;
-  border: 2px solid rgba(62, 156, 126, 0.26);
+  border: 1.5px solid rgba(62, 156, 126, 0.32);
   color: var(--mz-thought, #3e9c7e);
 }
 
@@ -279,13 +275,6 @@ button.tl-entry-head:focus-visible {
 .tl-entry-chip:hover {
   background: var(--mz-selected, #f1efec);
   color: var(--mz-text-secondary, #3d3d3d);
-}
-
-.tl-entry-toggle {
-  flex: 0 0 auto;
-  width: 12px;
-  font-size: 10px;
-  color: var(--mz-text-muted, #8a8f99);
 }
 
 /* 展开内容左内边距保持 24px（沟槽 20px + 24px = 44px），不被分组沟槽挤压。 */

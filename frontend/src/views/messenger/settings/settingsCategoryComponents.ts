@@ -1,9 +1,10 @@
+// AI生成
 /**
  * 设置页分类内容组件的按需加载表（方案 §九 性能要求）。
  *
- * 12 个分类都是独立异步 chunk：切到哪个分类才加载并挂载它，覆盖层与其它分类
+ * 13 个分类都是独立异步 chunk：切到哪个分类才加载并挂载它，覆盖层与其它分类
  * 不会被重建；`MessengerSettingsHost` 用 `<KeepAlive :max="3">` 只保留最近 3 个
- * 已访问分类的实例，避免 12 个面板同时初始化。
+ * 已访问分类的实例，避免 13 个面板同时初始化。
  */
 
 import type { Component } from 'vue';
@@ -17,6 +18,9 @@ const lazy = <T extends object>(loader: () => Promise<T>) =>
 
 export const SettingsGeneralCategory = lazy(
   () => import('@/views/messenger/settings/categories/SettingsGeneralCategory.vue')
+);
+export const SettingsAccountCategory = lazy(
+  () => import('@/views/messenger/settings/categories/SettingsAccountCategory.vue')
 );
 export const SettingsModelsCategory = lazy(
   () => import('@/views/messenger/settings/categories/SettingsModelsCategory.vue')
@@ -54,6 +58,7 @@ export const SettingsHelpCategory = lazy(
 
 export const SETTINGS_CATEGORY_COMPONENTS: Record<SettingsCategoryId, Component> = {
   general: SettingsGeneralCategory,
+  account: SettingsAccountCategory,
   models: SettingsModelsCategory,
   tools: SettingsToolsCategory,
   agent: SettingsAgentCategory,

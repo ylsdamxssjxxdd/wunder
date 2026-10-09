@@ -3,63 +3,15 @@
     class="messenger-settings-frame-category"
     data-testid="settings-category-general"
   >
+    <!-- 外观 / 行为 / 版本：直接复用既有 MessengerSettingsPanel（不重写业务逻辑）。
+         账号资料编辑已拆到独立的「账号」分类（SettingsAccountCategory）。 -->
     <section class="messenger-settings-card">
       <div class="messenger-settings-group-head">
-        <div class="messenger-settings-title">{{ t('messenger.settingsPage.general.accountGroup') }}</div>
-        <div class="messenger-settings-subtitle">{{ t('messenger.settingsPage.general.accountHint') }}</div>
-      </div>
-      <div class="messenger-settings-row">
-        <div class="messenger-settings-page-row-main">
-          <i class="fa-solid fa-user messenger-settings-page-row-icon" aria-hidden="true"></i>
-          <div>
-            <div class="messenger-settings-label">{{ currentUsername || t('user.guest') }}</div>
-            <div class="messenger-settings-hint">
-              {{ t('profile.idLabel', { id: currentUserId || '-' }) }}
-            </div>
-          </div>
-        </div>
-        <div class="messenger-settings-page-row-actions">
-          <button
-            class="messenger-settings-action ghost"
-            type="button"
-            data-testid="settings-open-profile"
-            @click="openProfilePanel"
-          >
-            {{ t('messenger.settingsPage.general.editProfile') }}
-          </button>
-        </div>
-      </div>
-      <div class="messenger-settings-row">
-        <div class="messenger-settings-page-row-main">
-          <i class="fa-solid fa-key messenger-settings-page-row-icon" aria-hidden="true"></i>
-          <div>
-            <div class="messenger-settings-label">{{ t('profile.edit.newPassword') }}</div>
-            <div class="messenger-settings-hint">{{ t('messenger.settingsPage.general.passwordHint') }}</div>
-          </div>
-        </div>
-        <div class="messenger-settings-page-row-actions">
-          <button class="messenger-settings-action ghost" type="button" @click="openProfilePanel">
-            {{ t('messenger.settingsPage.general.modifyPassword') }}
-          </button>
-        </div>
-      </div>
-    </section>
-
-    <!-- 外观 / 行为 / 版本：直接复用既有 MessengerSettingsPanel（不重写业务逻辑）。 -->
-    <section class="messenger-settings-card">
-      <div class="messenger-settings-group-head">
-        <div class="messenger-settings-title">
-          {{ profileMode ? t('profile.edit.title') : t('messenger.settingsPage.general.appearanceGroup') }}
-        </div>
+        <div class="messenger-settings-title">{{ t('messenger.settingsPage.general.appearanceGroup') }}</div>
         <div class="messenger-settings-subtitle">{{ t('messenger.settingsPage.general.appearanceHint') }}</div>
       </div>
-      <div v-if="profileMode" class="messenger-settings-page-row-actions">
-        <button class="messenger-settings-action ghost" type="button" @click="closeProfilePanel">
-          {{ t('messenger.settingsPage.general.backToGeneral') }}
-        </button>
-      </div>
       <MessengerSettingsPanel
-        :mode="panelMode"
+        mode="general"
         :username="currentUsername"
         :user-id="currentUserId"
         :language-label="currentLanguageLabel"
@@ -139,7 +91,6 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 
 import type { MessengerControllerContext } from '@/views/messenger/controller/messengerControllerContext';
@@ -149,30 +100,6 @@ import { exportClientDiagnostics } from '@/utils/clientDiagnostics';
 
 const props = defineProps<{ controller: MessengerControllerContext }>();
 const { t } = useI18n();
-
-const panelModeRef = props.controller.generalSettingsPanelMode;
-const panelMode = ref<'general' | 'profile'>(panelModeRef?.value === 'profile' ? 'profile' : 'general');
-watch(
-  () => String(panelModeRef?.value || 'general'),
-  (mode) => {
-    panelMode.value = mode === 'profile' ? 'profile' : 'general';
-  }
-);
-const profileMode = computed(() => panelMode.value === 'profile');
-
-const openProfilePanel = () => {
-  panelMode.value = 'profile';
-  if (props.controller.settingsPanelMode) {
-    props.controller.settingsPanelMode.value = 'profile';
-  }
-};
-
-const closeProfilePanel = () => {
-  panelMode.value = 'general';
-  if (props.controller.settingsPanelMode) {
-    props.controller.settingsPanelMode.value = 'general';
-  }
-};
 
 const currentUsername = props.controller.currentUsername;
 const currentUserId = props.controller.currentUserId;

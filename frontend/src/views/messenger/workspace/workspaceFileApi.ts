@@ -1,3 +1,4 @@
+// AI生成
 /**
  * Thin request layer for the sidebar cloud-directory area (B2).
  *
@@ -147,11 +148,19 @@ export const createWorkspaceDirectory = async (parentPath: string, name: string)
   await createWorkspaceDir({ path: joinWorkspacePath(parentPath, name) });
 };
 
-/** Empty content lets `/workspace/file` substitute an Office template for xlsx/docx/pptx. */
-export const createWorkspaceFile = async (parentPath: string, name: string): Promise<void> => {
+/**
+ * Creates a workspace file at `parentPath/name`.
+ * Empty content lets `/workspace/file` substitute an Office template for xlsx/docx/pptx;
+ * text-like types (md/drawio/...) pass their starter content explicitly.
+ */
+export const createWorkspaceFile = async (
+  parentPath: string,
+  name: string,
+  content = ''
+): Promise<void> => {
   await saveWorkspaceFile({
     path: joinWorkspacePath(parentPath, name),
-    content: '',
+    content,
     create_if_missing: true
   });
 };

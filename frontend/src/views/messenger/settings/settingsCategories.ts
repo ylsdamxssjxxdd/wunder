@@ -1,5 +1,6 @@
+// AI生成
 /**
- * 设置页 12 分类注册表（方案 §九.2）。
+ * 设置页 13 分类注册表（方案 §九.2 + 账号分类拆分）。
  *
  * 只描述「导航结构 + 搜索关键词」，不承载业务逻辑：每个分类的内容组件
  * 在 `settingsCategoryComponents.ts` 里按需异步加载。
@@ -10,6 +11,7 @@
 
 export type SettingsCategoryId =
   | 'general'
+  | 'account'
   | 'models'
   | 'tools'
   | 'agent'
@@ -34,9 +36,10 @@ export type SettingsCategoryMeta = {
   keywords: string[];
 };
 
-/** Navigation order is the contract from 方案 §九.2 (1 → 12). */
+/** Navigation order is the contract from 方案 §九.2 (1 → 13，账号紧随常规之后). */
 export const SETTINGS_CATEGORY_IDS: SettingsCategoryId[] = [
   'general',
+  'account',
   'models',
   'tools',
   'agent',
@@ -57,10 +60,6 @@ const META: Record<SettingsCategoryId, Omit<SettingsCategoryMeta, 'id'>> = {
     descKey: 'messenger.settingsPage.cat.general.desc',
     keywords: [
       '常规',
-      '账号',
-      '昵称',
-      '头像',
-      '密码',
       '语言',
       '主题',
       '外观',
@@ -69,15 +68,29 @@ const META: Record<SettingsCategoryId, Omit<SettingsCategoryMeta, 'id'>> = {
       '发送键',
       '退出',
       '登录',
-      '资料',
       '诊断',
       'general',
-      'account',
-      'profile',
       'theme',
       'language',
       'logout',
       'font'
+    ]
+  },
+  account: {
+    icon: 'fa-solid fa-id-card',
+    titleKey: 'messenger.settingsPage.cat.account.title',
+    descKey: 'messenger.settingsPage.cat.account.desc',
+    keywords: [
+      '账号',
+      '昵称',
+      '头像',
+      '密码',
+      '资料',
+      '个人信息',
+      'account',
+      'profile',
+      'avatar',
+      'password'
     ]
   },
   models: {

@@ -95,7 +95,7 @@ const CATEGORY_BY_AGENT_MODE: Record<string, SettingsCategoryId> = {
 const categoryByPanelMode = (mode: string): SettingsCategoryId | null => {
   if (mode === 'prompts') return 'prompts';
   if (mode === 'help-manual') return 'help';
-  if (mode === 'profile') return 'general';
+  if (mode === 'profile') return 'account';
   if (mode === 'desktop-models') return 'models';
   if (mode === 'general') return 'general';
   return null;
@@ -133,9 +133,11 @@ const pushControllerState = (category: SettingsCategoryId) => {
       ? 'prompts'
       : category === 'help'
         ? 'help-manual'
-        : category === 'general'
-          ? 'general'
-          : '';
+        : category === 'account'
+          ? 'profile'
+          : category === 'general'
+            ? 'general'
+            : '';
   if (!panelMode) return;
   lastPushedPanelMode = panelMode;
   if (props.controller.settingsPanelMode) {

@@ -1,3 +1,4 @@
+// AI生成
 import { createRouter, createWebHistory } from 'vue-router';
 import type { LocationQuery, LocationQueryRaw, RouteRecordRaw } from 'vue-router';
 
@@ -261,7 +262,12 @@ const routes: RouteRecordRaw[] = [
       { path: 'external/:linkId', name: 'external-app', component: ExternalAppView },
       { path: 'chat', name: 'chat', component: MessengerView },
       { path: 'embed/chat', name: 'embed-chat', component: EmbeddedChatView },
-      { path: 'settings', name: 'settings', component: MessengerView }
+      { path: 'settings', name: 'settings', component: MessengerView },
+      {
+        path: 'trajectory',
+        name: 'trajectory',
+        component: () => import('@/views/ThreadTrajectoryView.vue')
+      }
     ]
   },
   {

@@ -277,7 +277,6 @@ const menuItems = computed<MenuItem[]>(() => {
     return [
       ...createItems(),
       { command: 'archive-root', label: t('messenger.filesArea.archiveCurrent'), icon: 'fa-file-zipper' },
-      { command: 'refresh-stats', label: t('messenger.filesArea.refreshStats'), icon: 'fa-chart-simple' },
       { command: 'clear', label: t('messenger.filesArea.clear'), icon: 'fa-broom', danger: true }
     ];
   }

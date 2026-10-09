@@ -774,6 +774,7 @@ export component MainWindow inherits Window {
                             rows: root.timeline;
                             turn-marks: root.turn-marks;
                             follow-output <=> root.follow-output;
+                            spinning: root.busy;
                             toggle(index) => { root.timeline-toggle(index); }
                             copy-text(text) => { root.copy-raw(text); }
                             download-text(text) => { root.timeline-download(text); }

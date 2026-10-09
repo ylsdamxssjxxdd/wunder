@@ -227,7 +227,7 @@ test('B4 输入区：悬浮卡片 + 模型浮层 + 审批模式 + 引用注入 +
   await commandFlyout.locator('.command-menu-item').first().click();
   await expect(textarea).toHaveValue(/^\/(help|new|stop|goal|compact)\s/);
   await textarea.fill('');
-  // 工具栏右组：模型（星形按占用填充 + 百分比）→ 发送；整屏占用面只有这一处。
+  // 工具栏右组：模型（大脑占用填充 + 百分比）→ 发送；整屏占用面只有这一处。
   expect(await page.locator('.context-usage-icon').count()).toBe(1);
 
   // 预设问题：换成它自己的右侧子面板，命令子面板同时收起；点击填入输入框并收起整个面板。

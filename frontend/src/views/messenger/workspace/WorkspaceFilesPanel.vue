@@ -23,47 +23,6 @@
       </div>
     </div>
 
-    <div class="messenger-sidebar-files-toolbar">
-      <button
-        type="button"
-        :disabled="busy"
-        :title="t('messenger.filesArea.upload')"
-        :aria-label="t('messenger.filesArea.upload')"
-        @click="triggerUpload"
-      >
-        <i class="fa-solid fa-arrow-up-from-bracket" aria-hidden="true"></i>
-      </button>
-      <button
-        type="button"
-        :disabled="busy"
-        :title="t('common.refresh')"
-        :aria-label="t('common.refresh')"
-        @click="handleRefresh"
-      >
-        <i class="fa-solid fa-rotate-right" :class="{ 'fa-spin': refreshing }" aria-hidden="true"></i>
-      </button>
-      <button
-        type="button"
-        class="is-toggle"
-        :class="{ 'is-active': selectionMode }"
-        :title="selectionMode ? t('messenger.filesArea.selectExit') : t('messenger.filesArea.select')"
-        :aria-label="selectionMode ? t('messenger.filesArea.selectExit') : t('messenger.filesArea.select')"
-        :aria-pressed="selectionMode"
-        @click="toggleSelectionMode"
-      >
-        <i class="fa-solid fa-list-check" aria-hidden="true"></i>
-      </button>
-      <input
-        ref="uploadInputRef"
-        class="workspace-files-upload-input"
-        type="file"
-        multiple
-        tabindex="-1"
-        aria-hidden="true"
-        @change="handleUploadInput"
-      />
-    </div>
-
     <div v-if="selectionMode" class="workspace-files-selection">
       <span class="workspace-files-selection-count">
         {{ t('messenger.filesArea.selectedCount', { count: selectedList.length }) }}
@@ -174,6 +133,12 @@
     @update:visible="handleDrawioVisibleChange"
     @saved="handleEditorSaved"
   />
+
+  <WorkspaceNewFileDialog
+    v-model:visible="newFileDialog.visible"
+    :file-type-options="workspaceNewFileTemplates"
+    @confirm="handleNewFileConfirm"
+  />
 </template>
 
 <script setup lang="ts">
@@ -185,6 +150,9 @@ import {
   resolveWorkspacePreviewTooLargeHint,
   resolveWorkspaceResourcePreviewKind
 } from '@/utils/workspaceResourcePreview';
+import WorkspaceNewFileDialog, {
+  type WorkspaceNewFileTemplate
+} from '@/components/chat/WorkspaceNewFileDialog.vue';
 import WorkspaceFilePreviewDialog from './WorkspaceFilePreviewDialog.vue';
 import WorkspaceFileTree from './WorkspaceFileTree.vue';
 import {
@@ -236,6 +204,77 @@ const UPLOAD_MAX_FILES_PER_DROP = 200;
 const STATS_REFRESH_DEBOUNCE_MS = 1500;
 const METAFILE_EXTENSIONS = new Set(['wmf', 'emf']);
 
+// 「新建文件」对话框的六种类型（与旧工作区面板同一套模板）。
+const WORKSPACE_DOC_ICON_BASE = `${(import.meta.env.BASE_URL || '/').replace(/\/+$/, '/')}doc-icons`;
+const WORKSPACE_TEXT_FILE_ICON = `${WORKSPACE_DOC_ICON_BASE}/txt.png`;
+const WORKSPACE_WORD_FILE_ICON = `${WORKSPACE_DOC_ICON_BASE}/docx.png`;
+const WORKSPACE_EXCEL_FILE_ICON = `${WORKSPACE_DOC_ICON_BASE}/xlsx.png`;
+const WORKSPACE_PPT_FILE_ICON = `${WORKSPACE_DOC_ICON_BASE}/pptx.png`;
+const WORKSPACE_DIAGRAM_FILE_ICON = `${WORKSPACE_DOC_ICON_BASE}/processon_flow.png`;
+
+const workspaceNewFileTemplates = computed<WorkspaceNewFileTemplate[]>(() => [
+  {
+    id: 'text',
+    label: t('workspace.createFile.type.text'),
+    extension: 'txt',
+    extensionLabel: '.txt',
+    icon: WORKSPACE_TEXT_FILE_ICON,
+    hint: t('workspace.createFile.typeHint.text'),
+    defaultName: 'untitled.txt',
+    content: ''
+  },
+  {
+    id: 'markdown',
+    label: t('workspace.createFile.type.markdown'),
+    extension: 'md',
+    extensionLabel: '.md',
+    icon: WORKSPACE_TEXT_FILE_ICON,
+    hint: t('workspace.createFile.typeHint.markdown'),
+    defaultName: 'notes.md',
+    content: '# Title\n'
+  },
+  {
+    id: 'word',
+    label: t('workspace.createFile.type.word'),
+    extension: 'docx',
+    extensionLabel: '.docx',
+    icon: WORKSPACE_WORD_FILE_ICON,
+    hint: t('workspace.createFile.typeHint.word'),
+    defaultName: 'document.docx',
+    content: ''
+  },
+  {
+    id: 'sheet',
+    label: t('workspace.createFile.type.sheet'),
+    extension: 'xlsx',
+    extensionLabel: '.xlsx',
+    icon: WORKSPACE_EXCEL_FILE_ICON,
+    hint: t('workspace.createFile.typeHint.sheet'),
+    defaultName: 'sheet.xlsx',
+    content: ''
+  },
+  {
+    id: 'slides',
+    label: t('workspace.createFile.type.slides'),
+    extension: 'pptx',
+    extensionLabel: '.pptx',
+    icon: WORKSPACE_PPT_FILE_ICON,
+    hint: t('workspace.createFile.typeHint.slides'),
+    defaultName: 'slides.pptx',
+    content: ''
+  },
+  {
+    id: 'diagram',
+    label: t('workspace.createFile.type.flowchart'),
+    extension: 'drawio',
+    extensionLabel: '.drawio',
+    icon: WORKSPACE_DIAGRAM_FILE_ICON,
+    hint: t('workspace.createFile.typeHint.flowchart'),
+    defaultName: 'flowchart.drawio',
+    content: '<mxfile><diagram name="Flowchart"></diagram></mxfile>'
+  }
+]);
+
 const tree = useWorkspaceFileTree({
   onError: (message) => {
     if (message) ElMessage.error(message);
@@ -262,7 +301,7 @@ const uploadTarget = ref('');
 const busy = ref(false);
 const refreshing = ref(false);
 const dragActive = ref(false);
-const uploadInputRef = ref<HTMLInputElement | null>(null);
+const newFileDialog = reactive({ visible: false, directory: '' });
 
 const rootLoading = computed(() => Boolean(tree.directories.get('')?.loading));
 const rootError = computed(() => String(tree.directories.get('')?.error || ''));
@@ -331,18 +370,6 @@ const enqueueFiles = (files: File[], targetPath: string) => {
   if (result.rejected > 0) {
     ElMessage.warning(t('messenger.filesArea.uploadQueueFull', { count: result.rejected }));
   }
-};
-
-const triggerUpload = () => {
-  if (busy.value) return;
-  uploadInputRef.value?.click();
-};
-
-const handleUploadInput = (event: Event) => {
-  const input = event.target as HTMLInputElement | null;
-  const files = input?.files ? Array.from(input.files) : [];
-  if (input) input.value = '';
-  enqueueFiles(files, uploadTarget.value);
 };
 
 const handleDragEnter = () => {
@@ -536,11 +563,16 @@ const createTargetPath = (row: WorkspaceVisibleRow | null): string =>
 const handleCreateEntry = async (kind: 'dir' | 'file', row: WorkspaceVisibleRow | null) => {
   if (busy.value) return;
   const directory = createTargetPath(row);
-  const isDir = kind === 'dir';
+  if (kind === 'file') {
+    // 文件类型交给专用对话框选择（文本 / Markdown / Word / 表格 / 演示文稿 / 流程图）。
+    newFileDialog.directory = directory;
+    newFileDialog.visible = true;
+    return;
+  }
   try {
     const { value } = await ElMessageBox.prompt(
-      isDir ? t('messenger.filesArea.newDirPrompt') : t('messenger.filesArea.newFilePrompt'),
-      isDir ? t('messenger.filesArea.newDir') : t('messenger.filesArea.newFile'),
+      t('messenger.filesArea.newDirPrompt'),
+      t('messenger.filesArea.newDir'),
       {
         confirmButtonText: t('common.confirm'),
         cancelButtonText: t('common.cancel'),
@@ -552,14 +584,11 @@ const handleCreateEntry = async (kind: 'dir' | 'file', row: WorkspaceVisibleRow 
     const name = String(value || '').trim();
     if (!name) return;
     busy.value = true;
-    if (isDir) await createWorkspaceDirectory(directory, name);
-    else await createWorkspaceFile(directory, name);
+    await createWorkspaceDirectory(directory, name);
     await refreshDirectory(directory);
     await revealPath(joinWorkspacePath(directory, name));
     scheduleStatsRefresh();
-    ElMessage.success(
-      isDir ? t('messenger.filesArea.newDirSuccess') : t('messenger.filesArea.newFileSuccess')
-    );
+    ElMessage.success(t('messenger.filesArea.newDirSuccess'));
   } catch (error) {
     if (error === 'cancel' || error === 'close') return;
     if (error instanceof Error || (error as { response?: unknown })?.response) {
@@ -570,12 +599,27 @@ const handleCreateEntry = async (kind: 'dir' | 'file', row: WorkspaceVisibleRow 
   }
 };
 
-const toggleSelectionMode = () => {
-  if (selectionMode.value) {
-    exitSelectionMode();
+/** 「新建文件」对话框确认：按所选类型写入带模板内容的新文件。 */
+const handleNewFileConfirm = async (payload: { name: string; content: string; typeId: string }) => {
+  const name = String(payload.name || '').trim();
+  newFileDialog.visible = false;
+  if (!name || !isValidWorkspaceEntryName(name)) {
+    if (name) ElMessage.warning(t('messenger.filesArea.invalidName'));
     return;
   }
-  selectionMode.value = true;
+  const directory = newFileDialog.directory;
+  busy.value = true;
+  try {
+    await createWorkspaceFile(directory, name, payload.content || '');
+    await refreshDirectory(directory);
+    await revealPath(joinWorkspacePath(directory, name));
+    scheduleStatsRefresh();
+    ElMessage.success(t('messenger.filesArea.newFileSuccess'));
+  } catch (error) {
+    ElMessage.error(resolveWorkspaceErrorMessage(error, t('common.requestFailed')));
+  } finally {
+    busy.value = false;
+  }
 };
 
 // -------------------------------------------------------------- row commands
@@ -594,9 +638,6 @@ const handleRowCommand = async (command: string, row: WorkspaceVisibleRow | null
         () => downloadWorkspaceDirectoryArchive(uploadTarget.value),
         t('messenger.filesArea.downloadFailed')
       );
-      return;
-    case 'refresh-stats':
-      await loadStats();
       return;
     case 'clear':
       await handleClearWorkspace();

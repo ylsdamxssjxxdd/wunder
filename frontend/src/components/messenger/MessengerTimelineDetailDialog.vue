@@ -13,6 +13,17 @@
           <span :title="dialogTitle">{{ dialogTitle }}</span>
         </div>
         <div class="messenger-dialog-header-actions">
+          <button
+            class="messenger-inline-btn messenger-timeline-detail-trajectory-btn"
+            type="button"
+            :disabled="!sessionId"
+            :title="t('messenger.trajectory.open')"
+            :aria-label="t('messenger.trajectory.open')"
+            @click="$router.push({ name: 'trajectory', query: { session: sessionId } })"
+          >
+            <i class="fa-solid fa-timeline" aria-hidden="true"></i>
+            <span>{{ t('messenger.trajectory.open') }}</span>
+          </button>
           <button class="messenger-dialog-close" type="button" :aria-label="t('common.close')" @click="dialogVisible = false">
             <i class="fa-solid fa-xmark" aria-hidden="true"></i>
           </button>

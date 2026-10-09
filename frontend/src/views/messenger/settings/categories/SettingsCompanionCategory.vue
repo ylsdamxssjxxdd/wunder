@@ -73,45 +73,6 @@
         </div>
       </div>
 
-      <div class="messenger-settings-row">
-        <div class="messenger-settings-page-row-main">
-          <i class="fa-solid fa-location-crosshairs messenger-settings-page-row-icon" aria-hidden="true"></i>
-          <div>
-            <div class="messenger-settings-label">{{ t('messenger.settingsPage.companion.position') }}</div>
-            <div class="messenger-settings-hint">{{ t('messenger.settingsPage.companion.positionHint') }}</div>
-          </div>
-        </div>
-        <div class="messenger-settings-page-row-actions">
-          <label class="messenger-settings-page-field">
-            <span>X</span>
-            <input
-              class="messenger-settings-page-number"
-              type="number"
-              min="0"
-              :value="settings.position.x"
-              @change="handlePositionChange('x', $event)"
-            />
-          </label>
-          <label class="messenger-settings-page-field">
-            <span>Y</span>
-            <input
-              class="messenger-settings-page-number"
-              type="number"
-              min="0"
-              :value="settings.position.y"
-              @change="handlePositionChange('y', $event)"
-            />
-          </label>
-          <button
-            class="messenger-settings-action ghost"
-            type="button"
-            data-testid="settings-companion-reset-position"
-            @click="handleResetPosition"
-          >
-            {{ t('common.reset') }}
-          </button>
-        </div>
-      </div>
     </section>
 
     <section class="messenger-settings-card">
@@ -177,8 +138,7 @@
             <button
               class="messenger-settings-action ghost compact"
               type="button"
-              :disabled="item.scope === 'global' || item.id === settings.selectedId"
-              :title="item.scope === 'global' ? t('messenger.settingsPage.companion.globalBindHint') : ''"
+              :disabled="item.id === settings.selectedId"
               @click="selectCompanion(item.id)"
             >
               {{ item.id === settings.selectedId ? t('chat.composer.modelCurrent') : t('companions.use') }}
@@ -221,11 +181,7 @@ import { ElMessage } from 'element-plus';
 
 import type { MessengerControllerContext } from '@/views/messenger/controller/messengerControllerContext';
 import CompanionSprite from '@/components/companions/CompanionSprite.vue';
-import {
-  COMPANION_LAYOUT_RESET_EVENT,
-  useCompanionStore,
-  type CompanionPackageRecord
-} from '@/stores/companions';
+import { useCompanionStore, type CompanionPackageRecord } from '@/stores/companions';
 import { useI18n } from '@/i18n';
 import { useAgentStore } from '@/stores/agents';
 import { parseAgentAvatarIconConfig } from '@/utils/agentAvatar';
@@ -234,7 +190,6 @@ import { showApiError } from '@/utils/apiError';
 /** 形象库单页数量：避免一次性渲染大图帧。 */
 const LIBRARY_PAGE_SIZE = 6;
 const PREVIEW_SPRITE_STATE = 'idle' as const;
-const DEFAULT_POSITION = { x: 28, y: 28 };
 
 const props = defineProps<{ controller: MessengerControllerContext }>();
 const { t } = useI18n();
@@ -303,23 +258,6 @@ const handleScaleChange = (event: Event) => {
   });
 };
 
-const handlePositionChange = (axis: 'x' | 'y', event: Event) => {
-  const raw = Number((event.target as HTMLInputElement).value);
-  const value = Number.isFinite(raw) && raw >= 0 ? Math.round(raw) : DEFAULT_POSITION[axis];
-  companionStore.setPosition({
-    x: axis === 'x' ? value : settings.value.position.x,
-    y: axis === 'y' ? value : settings.value.position.y
-  });
-};
-
-const handleResetPosition = () => {
-  companionStore.setPosition({ ...DEFAULT_POSITION });
-  if (typeof window !== 'undefined') {
-    window.dispatchEvent(new CustomEvent(COMPANION_LAYOUT_RESET_EVENT));
-  }
-  ElMessage.success(t('messenger.settingsPage.companion.positionReset'));
-};
-
 const selectCompanion = (id: string) => {
   companionStore.selectCompanion(id);
   ElMessage.success(t('companions.enabledMessage', { name: id }));
@@ -352,8 +290,9 @@ const handleImportFile = async (event: Event) => {
 };
 
 onMounted(() => {
-  void companionStore.hydrate().catch(() => undefined);
+  // 先加载全局形象，再 hydrate：否则 hydrate 会把「已选中的全局形象」判定为未知 id 并清空。
   void companionStore.loadGlobalCompanions().catch(() => undefined);
+  void companionStore.hydrate().catch(() => undefined);
   loadMissingPreviews();
 });
 </script>

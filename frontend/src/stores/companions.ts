@@ -1,3 +1,4 @@
+// AI生成
 import { computed, ref } from 'vue';
 import { defineStore } from 'pinia';
 
@@ -401,7 +402,11 @@ export const useCompanionStore = defineStore('companions', () => {
   const lastError = ref('');
 
   const selectedCompanion = computed(
-    () => companions.value.find((item) => item.id === settings.value.selectedId) || companions.value[0] || null
+    () =>
+      companions.value.find((item) => item.id === settings.value.selectedId) ||
+      globalCompanions.value.find((item) => item.id === settings.value.selectedId) ||
+      companions.value[0] ||
+      null
   );
 
   const enabled = computed(() => settings.value.enabled && Boolean(selectedCompanion.value));
@@ -498,7 +503,11 @@ export const useCompanionStore = defineStore('companions', () => {
         });
         agentOverrides.value = nextOverrides;
       }
-      if (settings.value.selectedId && !companions.value.some((item) => item.id === settings.value.selectedId)) {
+      if (
+        settings.value.selectedId &&
+        !companions.value.some((item) => item.id === settings.value.selectedId) &&
+        !globalCompanions.value.some((item) => item.id === settings.value.selectedId)
+      ) {
         settings.value.selectedId = '';
       }
       if (!settings.value.selectedId && companions.value.length) {
@@ -669,10 +678,19 @@ export const useCompanionStore = defineStore('companions', () => {
   };
 
   const selectCompanion = (id: string): void => {
-    if (!companions.value.some((item) => item.id === id)) {
+    const cleaned = String(id || '').trim();
+    if (!cleaned) {
       return;
     }
-    settings.value.selectedId = id;
+    // 形象库同时展示私有与全局形象：全局形象（scope==='global'）只读取不落库，
+    // 但同样允许被选为当前形象，否则全局条目会全部禁用、用户无从选用。
+    const known =
+      companions.value.some((item) => item.id === cleaned) ||
+      globalCompanions.value.some((item) => item.id === cleaned);
+    if (!known) {
+      return;
+    }
+    settings.value.selectedId = cleaned;
     persistSettings();
   };
 

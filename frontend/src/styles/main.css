@@ -1,3 +1,4 @@
+/* AI生成 */
 @import "./base.css";
 @import "./pages/auth.css";
 @import "./pages/admin.css";
@@ -8,6 +9,7 @@
 @import "./chat/messages.css";
 @import "./chat/workflow.css";
 @import "./chat/input.css";
+@import "./dialogs/user-tools.css";
 @import "./messenger.css";
 /* Two-column messenger shell (site header + sidebar + chat pane). Loaded after
    messenger.css so its .messenger-view flex shell wins over the legacy grid. */
@@ -17,3 +19,5 @@
 @import "./pages/messenger-polish.css";
 /* Full-screen settings page (方案 §九：12 分类左导航 + 右卡片内容). */
 @import "./pages/messenger-settings-page.css";
+/* 线程轨迹页（对齐 dsh ui-trajectory：工具栏 + 时间线概览 + 账本表格 + 检查器）。 */
+@import "./pages/thread-trajectory.css";

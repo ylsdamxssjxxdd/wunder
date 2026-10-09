@@ -21,34 +21,6 @@
               :placeholder="t('portal.agent.form.placeholder.name')"
               :disabled="isAgentNameDisabled"
             />
-            <button
-              class="messenger-agent-avatar-trigger"
-              type="button"
-              :disabled="isInteractionDisabled"
-              :title="t('portal.agent.avatarTitle')"
-              :aria-label="t('portal.agent.avatarTitle')"
-              @click.prevent="openAvatarDialog"
-            >
-              <span class="messenger-agent-avatar-trigger-preview" :style="agentAvatarPreviewStyle" aria-hidden="true">
-                <CompanionSprite
-                  v-if="formCompanionRecord"
-                  class="messenger-agent-avatar-trigger-sprite"
-                  :source="formCompanionRecord.spritesheetDataUrl || formCompanionRecord.spritesheetUrl || ''"
-                  :state="STATIC_COMPANION_AVATAR_STATE"
-                  fit
-                  paused
-                />
-                <img
-                  v-else-if="agentAvatarPreviewImageUrl"
-                  class="messenger-settings-profile-avatar-image"
-                  :src="agentAvatarPreviewImageUrl"
-                  decoding="async"
-                  alt=""
-                />
-                <span v-else>{{ agentAvatarInitial }}</span>
-              </span>
-              <span class="messenger-agent-avatar-trigger-text">{{ t('portal.agent.avatarTitle') }}</span>
-            </button>
           </div>
         </el-form-item>
         <el-form-item class="messenger-agent-form-item">
@@ -171,95 +143,6 @@
           @ignore="ignoreMissingDependencies"
         />
 
-        <el-form-item :label="t('portal.agent.form.base')" class="messenger-agent-form-item messenger-agent-form-item--base">
-          <div class="messenger-agent-base">
-            <div ref="modelSectionRef" class="messenger-agent-base-card">
-              <div class="messenger-agent-base-card-label">{{ t('portal.agent.model.title') }}</div>
-              <div class="messenger-agent-base-control">
-                <el-select
-                  v-model="form.model_name"
-                  class="messenger-agent-base-select"
-                  :disabled="isInteractionDisabled || modelLoading || isPresetFieldLocked('model_name')"
-                >
-                  <el-option
-                    :label="t('portal.agent.model.defaultOption', { name: defaultModelDisplayName })"
-                    value=""
-                  />
-                  <el-option
-                    v-for="model in modelSelectOptions"
-                    :key="model"
-                    :label="model"
-                    :value="model"
-                  />
-                </el-select>
-                <div v-if="isPresetFieldLocked('model_name')" class="messenger-agent-preset-lock">
-                  {{ t('messenger.settingsPage.lockedByAdmin') }}
-                </div>
-                <div class="messenger-agent-base-hint">{{ t('portal.agent.model.hint') }}</div>
-              </div>
-            </div>
-            <div class="messenger-agent-base-card">
-              <div class="messenger-agent-base-card-label">{{ t('portal.agent.sandbox.title') }}</div>
-              <div class="messenger-agent-base-control">
-                <el-select
-                  v-model="form.sandbox_container_id"
-                  class="messenger-agent-base-select"
-                  :disabled="isInteractionDisabled"
-                >
-                  <el-option
-                    v-for="id in sandboxContainerOptions"
-                    :key="id"
-                    :label="t('portal.agent.sandbox.option', { id })"
-                    :value="id"
-                  />
-                </el-select>
-                <div class="messenger-agent-base-hint">{{ t('portal.agent.sandbox.hint') }}</div>
-              </div>
-            </div>
-            <div class="messenger-agent-base-card">
-              <div class="messenger-agent-base-card-label">{{ t('portal.agent.permission.title') }}</div>
-              <div class="messenger-agent-base-control">
-                <el-select
-                  v-model="form.approval_mode"
-                  class="messenger-agent-base-select"
-                  :disabled="isInteractionDisabled || isPresetFieldLocked('approval_mode')"
-                >
-                  <el-option
-                    v-for="item in approvalModeOptions"
-                    :key="item.value"
-                    :label="item.label"
-                    :value="item.value"
-                  />
-                </el-select>
-                <div v-if="isPresetFieldLocked('approval_mode')" class="messenger-agent-preset-lock">
-                  {{ t('messenger.settingsPage.lockedByAdmin') }}
-                </div>
-                <div class="messenger-agent-base-hint">{{ t('portal.agent.permission.hint') }}</div>
-              </div>
-            </div>
-            <div class="messenger-agent-base-card messenger-agent-base-card--switch">
-              <div class="messenger-agent-switch-head">
-                <div class="messenger-agent-base-card-label">{{ t('portal.agent.previewSkill.title') }}</div>
-                <el-switch v-model="form.preview_skill" :disabled="isInteractionDisabled" />
-              </div>
-              <div class="messenger-agent-base-hint">{{ t('portal.agent.previewSkill.hint') }}</div>
-            </div>
-            <div class="messenger-agent-base-card messenger-agent-base-card--switch">
-              <div class="messenger-agent-switch-head">
-                <div class="messenger-agent-base-card-label">{{ t('portal.agent.silent.title') }}</div>
-                <el-switch v-model="form.silent" :disabled="isInteractionDisabled" />
-              </div>
-              <div class="messenger-agent-base-hint">{{ t('portal.agent.silent.hint') }}</div>
-            </div>
-            <div class="messenger-agent-base-card messenger-agent-base-card--switch">
-              <div class="messenger-agent-switch-head">
-                <div class="messenger-agent-base-card-label">{{ t('portal.agent.preferMother.title') }}</div>
-                <el-switch v-model="form.prefer_mother" :disabled="isInteractionDisabled" />
-              </div>
-              <div class="messenger-agent-base-hint">{{ t('portal.agent.preferMother.hint') }}</div>
-            </div>
-          </div>
-        </el-form-item>
         <el-form-item class="messenger-agent-form-item">
           <template #label>
             <div class="messenger-agent-section-head">
@@ -1912,118 +1795,6 @@ onBeforeUnmount(() => {
   align-items: center;
 }
 
-.messenger-agent-avatar-trigger {
-  height: 40px;
-  padding: 0 10px 0 6px;
-  border: 1px solid var(--el-border-color, rgba(148, 163, 184, 0.3));
-  border-radius: 10px;
-  background: var(--el-bg-color, #ffffff);
-  color: var(--el-text-color-regular, #334155);
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  cursor: pointer;
-  transition: border-color 0.18s ease, color 0.18s ease, background-color 0.18s ease;
-}
-
-.messenger-agent-avatar-trigger:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.messenger-agent-avatar-trigger:not(:disabled):hover {
-  border-color: rgba(var(--ui-accent-rgb, 59, 130, 246), 0.36);
-  color: var(--ui-accent-deep, #2563eb);
-  background: rgba(var(--ui-accent-rgb, 59, 130, 246), 0.06);
-}
-
-.messenger-agent-avatar-trigger:focus-visible {
-  outline: 2px solid rgba(var(--ui-accent-rgb, 59, 130, 246), 0.22);
-  outline-offset: 2px;
-}
-
-.messenger-agent-avatar-trigger-preview {
-  width: 26px;
-  height: 26px;
-  border-radius: 50%;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-  color: #ffffff;
-  font-size: 12px;
-  font-weight: 700;
-  line-height: 1;
-  text-transform: uppercase;
-}
-
-.messenger-agent-avatar-trigger-sprite {
-  flex: 0 0 auto;
-}
-
-.messenger-agent-avatar-trigger-text {
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.messenger-agent-base {
-  width: 100%;
-  min-width: 0;
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.messenger-agent-base-card {
-  width: 100%;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 14px 16px;
-  border: 1px solid rgba(148, 163, 184, 0.2);
-  border-radius: 14px;
-  background: rgba(248, 250, 252, 0.9);
-}
-
-.messenger-agent-base-card-label {
-  color: var(--el-text-color-regular, #111827);
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 1.5;
-}
-
-.messenger-agent-base-control {
-  width: 100%;
-  min-width: 0;
-}
-
-.messenger-agent-switch-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 10px;
-}
-
-.messenger-agent-base-hint {
-  color: var(--el-text-color-secondary, #64748b);
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-.messenger-agent-base-select {
-  width: 100%;
-}
-
-.messenger-agent-form-item--base :deep(.el-form-item__content) {
-  display: block;
-  width: 100%;
-  min-width: 0;
-}
-
-.messenger-agent-base-control :deep(.el-select),
-.messenger-agent-base-control :deep(.el-select__wrapper),
-
 .messenger-agent-section-head {
   display: inline-flex;
   align-items: center;
@@ -2295,10 +2066,6 @@ onBeforeUnmount(() => {
 
   .messenger-agent-avatar-trigger {
     width: fit-content;
-  }
-
-  .messenger-agent-base {
-    grid-template-columns: minmax(0, 1fr);
   }
 
   .messenger-agent-companion-head {

@@ -18,10 +18,6 @@
         {{ entry.streaming ? t('chat.timeline.thinkingRunning') : t('chat.timeline.thinkingDone') }}
       </span>
       <span v-if="entry.summary" class="tl-thinking-summary" :title="entry.summary">{{ entry.summary }}</span>
-      <i
-        :class="['fa-solid', open ? 'fa-chevron-down' : 'fa-chevron-right', 'tl-thinking-toggle']"
-        aria-hidden="true"
-      ></i>
     </button>
 
     <div v-if="open" class="tl-thinking-body">
@@ -47,7 +43,7 @@ const { t } = useI18n();
 <style scoped>
 /*
  * §7.3 B 思考条目：与工具条目共用同一套 `FoldEntry` 行度量
- * （行高 26px、间距 8px、沟槽 20px、状态点 16px、箭头 12px）。
+ * （行高 26px、间距 8px、沟槽 20px、状态点 12px，不显示右侧展开箭头）。
  */
 .tl-thinking {
   min-width: 0;
@@ -112,14 +108,14 @@ const { t } = useI18n();
 
 .tl-thinking-status {
   flex: 0 0 auto;
-  width: 16px;
-  height: 16px;
+  width: 12px;
+  height: 12px;
   box-sizing: border-box;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  font-size: 9px;
+  font-size: 7px;
   line-height: 1;
   color: #ffffff;
   background: var(--mz-thought, #3e9c7e);
@@ -127,7 +123,7 @@ const { t } = useI18n();
 
 .tl-thinking-status.is-streaming {
   background: transparent;
-  border: 2px solid rgba(62, 156, 126, 0.26);
+  border: 1.5px solid rgba(62, 156, 126, 0.32);
   color: var(--mz-thought, #3e9c7e);
 }
 
@@ -146,13 +142,6 @@ const { t } = useI18n();
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.tl-thinking-toggle {
-  flex: 0 0 auto;
-  width: 12px;
-  font-size: 10px;
-  color: var(--mz-text-muted, #8a8f99);
 }
 
 /* 展开内容左内边距保持 24px（沟槽 20px + 24px = 44px）。 */

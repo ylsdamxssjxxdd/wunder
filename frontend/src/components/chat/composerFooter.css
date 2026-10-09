@@ -34,10 +34,10 @@
 }
 
 /* 旧暗色主题 `.chat-shell textarea`（0,1,1）会漏进 17px 字号 / 48px 最小高 / 220px 上限，
-   这里用 (0,2,0) 压回去：B4 输入卡默认单行、随内容长高（脚本 resizeInput 同步写 inline height），
+   这里用 (0,2,0) 压回去：B4 输入卡默认双行高度、随内容长高（脚本 resizeInput 同步写 inline height），
    到 INPUT_MAX_HEIGHT(168px) 后转内部滚动。 */
 .chat-shell .composer-textarea {
-  min-height: 22px;
+  min-height: 44px;
   max-height: 168px;
   overflow-y: hidden;
   font-size: 14px;
@@ -402,6 +402,8 @@
 
 .composer-send-btn:disabled {
   background: var(--ui-accent-disabled, #e3ddd9);
+  /* 禁用态去掉主色柔影，避免灰按钮上残留橘黄光晕。 */
+  box-shadow: none;
   color: #ffffff;
   cursor: not-allowed;
 }

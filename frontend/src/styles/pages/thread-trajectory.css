@@ -1,0 +1,600 @@
+/* AI生成 */
+/* 线程轨迹页（对齐 dsh ui-trajectory 的信息架构）：
+   工具栏 + 时间线概览（3 泳道）+ 按轮次账本表格 + 记录检查器。 */
+
+.thread-trajectory {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  background: #ffffff;
+  color: #1f2329;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* ---------------------------------------------------------------- toolbar */
+
+.thread-trajectory-toolbar {
+  flex: none;
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  height: 32px;
+  border-bottom: 1px solid #e5e6eb;
+  background: #ffffff;
+}
+
+.thread-trajectory-toolbar-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: 100%;
+  padding: 0 8px;
+}
+
+.thread-trajectory-toolbar-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.thread-trajectory-title {
+  flex: none;
+  font-weight: 600;
+  font-size: 13px;
+  color: #1f2329;
+}
+
+.thread-trajectory-session {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: #86909c;
+}
+
+.thread-trajectory-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tt-icon-btn,
+.tt-text-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid #e5e6eb;
+  border-radius: 4px;
+  background: #ffffff;
+  color: #4e5969;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.tt-icon-btn {
+  width: 22px;
+  padding: 0;
+}
+
+.tt-icon-btn:hover,
+.tt-text-btn:hover {
+  background: #f2f3f5;
+  color: #1f2329;
+}
+
+.tt-text-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.tt-switch {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid #e5e6eb;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.tt-switch-btn {
+  height: 22px;
+  padding: 0 8px;
+  border: none;
+  background: #ffffff;
+  color: #4e5969;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.tt-switch-btn.is-active {
+  background: #e8f0fe;
+  color: #1d6fdc;
+}
+
+.tt-search {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 1 180px;
+  min-width: 96px;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid #e5e6eb;
+  border-radius: 4px;
+  background: #ffffff;
+  color: #86909c;
+}
+
+.tt-search input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: #1f2329;
+  font-size: 12px;
+}
+
+/* --------------------------------------------------------------- timeline */
+
+.thread-trajectory-timeline {
+  flex: none;
+  display: grid;
+  grid-template-columns: 44px 1fr;
+  align-items: stretch;
+  height: 50px;
+  padding: 0 8px 0 4px;
+  border-bottom: 1px solid #e5e6eb;
+  background: #fafbfc;
+}
+
+.tt-timeline-labels {
+  position: relative;
+  height: 100%;
+}
+
+.tt-timeline-labels span {
+  position: absolute;
+  right: 4px;
+  font-size: 8px;
+  line-height: 1;
+  color: #86909c;
+  white-space: nowrap;
+}
+
+.tt-timeline-track {
+  position: relative;
+  height: 100%;
+  cursor: crosshair;
+  touch-action: none;
+  user-select: none;
+}
+
+.tt-timeline-lanes {
+  position: absolute;
+  inset: 0;
+}
+
+.tt-timeline-span {
+  position: absolute;
+  height: 8px;
+  border-radius: 1px;
+  background: #94b4e6;
+  cursor: pointer;
+}
+
+.tt-timeline-span.is-selected {
+  outline: 1px solid #1d6fdc;
+  outline-offset: 1px;
+}
+
+.tt-timeline-span.is-dimmed {
+  opacity: 0.24;
+}
+
+.tt-timeline-span.is-match {
+  background: #f5a623;
+}
+
+.tt-timeline-span.is-equal {
+  opacity: 0.72;
+}
+
+.tt-timeline-span.is-system,
+.tt-timeline-span.is-context {
+  background: #a9aeb8;
+}
+
+.tt-timeline-span.is-user {
+  background: #4e8ff5;
+}
+
+.tt-timeline-span.is-compacted {
+  background: #b48ef0;
+}
+
+.tt-timeline-span.is-message {
+  background: #3fa66a;
+}
+
+.tt-timeline-span.is-tool {
+  background: #f0a020;
+}
+
+.tt-timeline-span.is-subtool {
+  background: #f0c040;
+}
+
+.tt-timeline-span.is-error {
+  background: #e5484d;
+}
+
+.tt-timeline-boundaries {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.tt-timeline-boundary {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: #e5e6eb;
+}
+
+.tt-timeline-hoverline {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: #c9cdd4;
+  pointer-events: none;
+}
+
+/* ------------------------------------------------------------------ body */
+
+.thread-trajectory-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.thread-trajectory-ledger {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  padding-bottom: 24px;
+}
+
+.thread-trajectory-state {
+  padding: 40px 16px;
+  text-align: center;
+  color: #86909c;
+}
+
+.thread-trajectory-state.is-error {
+  color: #e5484d;
+}
+
+.thread-trajectory-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.thread-trajectory-col-event {
+  width: 84px;
+}
+
+.thread-trajectory-col-content {
+  width: auto;
+}
+
+/* turn header */
+
+.thread-trajectory-turn-row th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  height: 30px;
+  padding: 0 8px;
+  border-bottom: 1px solid #e5e6eb;
+  background: #f5f6f7;
+  text-align: left;
+  font-weight: 500;
+}
+
+.thread-trajectory-turn-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  max-width: 880px;
+  margin: 0 auto;
+}
+
+.thread-trajectory-turn-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  background: transparent;
+  color: #1f2329;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.thread-trajectory-turn-columns {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.thread-trajectory-turn-column {
+  width: 71px;
+  font-size: 12px;
+  color: #86909c;
+  text-align: left;
+}
+
+/* group header */
+
+.thread-trajectory-group-cell {
+  height: 36px;
+  padding: 0 20px;
+  border-bottom: 1px solid #f2f3f5;
+  background: #fbfcfd;
+}
+
+.thread-trajectory-group-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #4e5969;
+}
+
+.thread-trajectory-group-desc {
+  margin-left: 12px;
+  font-size: 12px;
+  color: #86909c;
+}
+
+/* record rows */
+
+.thread-trajectory-record-row {
+  cursor: pointer;
+}
+
+.thread-trajectory-record-row.is-selected td {
+  background: #e8f0fe;
+}
+
+.thread-trajectory-record-row.is-dimmed td {
+  opacity: 0.24;
+}
+
+.thread-trajectory-record-row.is-match td {
+  background: #fff7e6;
+}
+
+.thread-trajectory-record-row:hover td {
+  background: #f7f8fa;
+}
+
+.thread-trajectory-record-row td {
+  height: 30px;
+  padding: 0 8px;
+  border-bottom: 1px solid #f2f3f5;
+  vertical-align: middle;
+}
+
+.thread-trajectory-event-cell {
+  position: relative;
+}
+
+.thread-trajectory-event {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-left: 6px;
+}
+
+.thread-trajectory-record-row.is-first-of-turn .thread-trajectory-event {
+  border-left: 2px solid #4e8ff5;
+  padding-left: 4px;
+}
+
+.thread-trajectory-index {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10px;
+  color: #86909c;
+}
+
+.thread-trajectory-kind {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 19px;
+  padding: 0 6px;
+  border-radius: 3px;
+  background: #f0f1f3;
+  font-size: 10px;
+  font-weight: 650;
+  color: #4e5969;
+}
+
+.thread-trajectory-kind.is-user {
+  background: #e8f0fe;
+  color: #1d6fdc;
+}
+
+.thread-trajectory-kind.is-message {
+  background: #e6f6ec;
+  color: #2f8f52;
+}
+
+.thread-trajectory-kind.is-tool {
+  background: #fdf0d9;
+  color: #a86400;
+}
+
+.thread-trajectory-kind.is-subtool {
+  background: #fbf5dc;
+  color: #8a7300;
+}
+
+.thread-trajectory-kind.is-compacted {
+  background: #f2ecfd;
+  color: #7a4fd0;
+}
+
+.thread-trajectory-content {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.thread-trajectory-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #1f2329;
+}
+
+.thread-trajectory-result {
+  flex: none;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 6px;
+  border-radius: 3px;
+  background: #f5f6f7;
+  font-size: 11px;
+  color: #4e5969;
+}
+
+.thread-trajectory-text.is-error {
+  color: #e5484d;
+}
+
+.thread-trajectory-collapsed-cell {
+  padding: 0 8px 0 42px;
+  font-size: 11px;
+  color: #86909c;
+}
+
+.thread-trajectory-more {
+  display: flex;
+  justify-content: center;
+  padding: 12px 0;
+}
+
+/* -------------------------------------------------------------- inspector */
+
+.thread-trajectory-inspector {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-left: 1px solid #e5e6eb;
+  background: #fafbfc;
+}
+
+.tt-inspector-tabs {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 32px;
+  padding: 0 6px;
+  border-bottom: 1px solid #e5e6eb;
+}
+
+.tt-inspector-tab {
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: #4e5969;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.tt-inspector-tab.is-active {
+  background: #e8f0fe;
+  color: #1d6fdc;
+}
+
+.tt-inspector-spacer {
+  flex: 1;
+}
+
+.tt-inspector-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 10px 20px;
+}
+
+.tt-inspector-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 0;
+  border-bottom: 1px solid #f2f3f5;
+}
+
+.tt-inspector-label {
+  flex: none;
+  color: #86909c;
+  font-size: 12px;
+}
+
+.tt-inspector-value {
+  flex: 1;
+  min-width: 0;
+  word-break: break-all;
+  text-align: right;
+  color: #1f2329;
+  font-size: 12px;
+}
+
+.tt-inspector-pre {
+  margin: 6px 0 12px;
+  padding: 8px;
+  border: 1px solid #e5e6eb;
+  border-radius: 4px;
+  background: #ffffff;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #1f2329;
+  max-height: 280px;
+  overflow: auto;
+}
+
+.tt-inspector-section {
+  margin-top: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #4e5969;
+}

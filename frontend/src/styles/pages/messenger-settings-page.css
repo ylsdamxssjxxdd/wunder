@@ -1,3 +1,4 @@
+/* AI生成 */
 /* ---------------------------------------------------------------------------
    全屏设置页（方案 §九）：左导航 + 右卡片内容。
    入口：左栏底部「设置」；出口：左上「返回应用」。
@@ -208,6 +209,17 @@
   background: var(--mz-surface);
   box-shadow: inset 0 0 0 1px var(--mz-border);
   font-weight: 500;
+}
+
+/* 选项卡面板宿主：复用旧版 `messenger-tools-pane-host`（内含自建工具三面板），
+   在设置卡片内给固定高度，面板内部列表自行滚动。 */
+.messenger-settings-card--pane {
+  padding: 8px;
+}
+
+.messenger-settings-tools-host {
+  flex: 0 0 auto;
+  height: 480px;
 }
 
 /* 选项卡内容卡：与设置窗口其他卡片同构，chip 云自行换行。 */

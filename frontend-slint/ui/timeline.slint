@@ -162,7 +162,9 @@ component BodyBlock inherits Rectangle {
     callback download-text(string);
     callback open-resource(string);
     height: body-column.preferred-height;
-    background: body-hover.has-hover ? Theme.hover.transparentize(0.45) : transparent;
+    // No background tint for this block: an answer can be a screenful of text,
+    // and painting all of it on hover reads as the whole page changing colour.
+    // The hover only reveals the actions, as on the web.
     // The block's own content is a *child* of this TouchArea, not a sibling:
     // the hover-revealed copy and save buttons are touch areas too, and a
     // sibling overlay hands the hover path over to them the moment the pointer
@@ -473,6 +475,10 @@ export component TimelineView inherits Rectangle {
     // strip renders one tick per mark and jumping is proportional.
     in property <[float]> turn-marks: [];
     in-out property <bool> follow-output: true;
+    // A turn is still producing output, so the running entries' rings have to
+    // keep turning. Without this the spin timer ticks for the whole session and
+    // re-evaluates every status dot on screen.
+    in property <bool> spinning: false;
     // Live scroll offset of the timeline viewport, published for the native
     // smoke checks (they assert the position holds while the user reads back).
     out property <length> scroll-y: rows-scroll.content-y;
@@ -499,7 +505,7 @@ export component TimelineView inherits Rectangle {
             rows-scroll.visible-height - rows-scroll.content-height, 0px);
     }
     spin-timer := Timer {
-        interval: 120ms; running: true;
+        interval: 120ms; running: root.spinning;
         triggered => { TimelineSpin.angle = Math.mod(TimelineSpin.angle + 30.0, 360.0); }
     }
     // A streamed line is laid out after the frame that triggered it, so the

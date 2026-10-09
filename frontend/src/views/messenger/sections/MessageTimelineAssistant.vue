@@ -184,7 +184,8 @@
 
     <!--
       轮次统计行（§7.3 A，桌面端 BodyBlock 的 `height: 22px` 尾部行）：
-      左侧是图标 12px + 数值 11px muted 的统计，右侧是 52×22 圆角 6 的复制/下载。
+      左侧是图标 12px + 数值 11px muted 的统计，右侧是 22×22 的复制图标按钮
+      （不再显示保存 / 点赞 / 踩一下 / 播放语音）。
       它刻意留在正文块**之外**：正文为空（排队 / 刚起流）时状态药丸仍要可见，
       这是云端运行时的既有契约。
     -->
@@ -199,17 +200,6 @@
         @click="copyMessageContent(message)"
       >
         <i class="fa-solid fa-clone" aria-hidden="true"></i>
-        <span class="timeline-body-action-label">{{ t('common.copy') }}</span>
-      </button>
-      <button
-        class="timeline-body-action"
-        type="button"
-        :title="t('chat.timeline.downloadMarkdown')"
-        :aria-label="t('chat.timeline.downloadMarkdown')"
-        @click="handleDownload"
-      >
-        <i class="fa-solid fa-download" aria-hidden="true"></i>
-        <span class="timeline-body-action-label">{{ t('common.save') }}</span>
       </button>
       <button
         v-if="shouldShowAgentResumeButton(message)"
@@ -220,27 +210,6 @@
         @click="resumeAgentMessage(message)"
       >
         <i class="fa-solid fa-rotate-right" aria-hidden="true"></i>
-      </button>
-      <MessageFeedbackActions :message="message" />
-      <button
-        class="messenger-message-footer-copy timeline-body-icon-action"
-        :class="{ 'is-active': isMessageTtsPlaying(message, item.sourceIndex, 'agent') }"
-        type="button"
-        :disabled="isMessageTtsLoading(message, item.sourceIndex, 'agent')"
-        :title="resolveMessageTtsActionLabel(message, item.sourceIndex, 'agent')"
-        :aria-label="resolveMessageTtsActionLabel(message, item.sourceIndex, 'agent')"
-        @click="toggleMessageTtsPlayback(message, item.sourceIndex, 'agent')"
-      >
-        <i
-          v-if="isMessageTtsLoading(message, item.sourceIndex, 'agent')"
-          class="fa-solid fa-spinner fa-spin"
-          aria-hidden="true"
-        ></i>
-        <i
-          v-else
-          :class="isMessageTtsPlaying(message, item.sourceIndex, 'agent') ? 'fa-solid fa-pause' : 'fa-solid fa-volume-high'"
-          aria-hidden="true"
-        ></i>
       </button>
     </div>
 
@@ -277,7 +246,6 @@ import type { ToolWorkflowPatchView } from '@/components/chat/toolWorkflowTypes'
 import type { WorkflowItem } from '@/components/chat/toolWorkflowRunModel';
 import type { MessengerControllerContext } from '../controller/messengerControllerContext';
 import { buildAssistantDisplayContent } from '@/utils/assistantFailureNotice';
-import { saveObjectUrlAsFile } from '@/utils/workspaceResourceCards';
 
 /**
  * 助手轮次的时间线条目区（方案 §7.3 / §7.4 / §7.6，形态对齐桌面端
@@ -333,11 +301,6 @@ const resolveUserImageAttachments = controller.resolveUserImageAttachments;
 const resolveUserAudioAttachments = controller.resolveUserAudioAttachments;
 const shouldShowAgentResumeButton = controller.shouldShowAgentResumeButton;
 const resumeAgentMessage = controller.resumeAgentMessage;
-const isMessageTtsLoading = controller.isMessageTtsLoading;
-const isMessageTtsPlaying = controller.isMessageTtsPlaying;
-const resolveMessageTtsActionLabel = controller.resolveMessageTtsActionLabel;
-const toggleMessageTtsPlayback = controller.toggleMessageTtsPlayback;
-const MessageFeedbackActions = controller.MessageFeedbackActions;
 // 问候语（greeting）与既有气泡共用同一套「能力预览」浮层绑定。
 const AbilityTooltipListItem = controller.AbilityTooltipListItem;
 const agentAbilityTooltipRef = ref<unknown>(null);
@@ -404,17 +367,6 @@ const handleHistoryHydrated = (detail: Record<string, unknown>): void => {
     workflowItems_truncated: false,
     subagents_truncated: false
   });
-};
-
-const handleDownload = (): void => {
-  const content = String(displayContent.value || '');
-  if (!content.trim()) return;
-  const objectUrl = URL.createObjectURL(new Blob([content], { type: 'text/markdown;charset=utf-8' }));
-  try {
-    saveObjectUrlAsFile(objectUrl, `reply-${props.item.sourceIndex + 1}.md`);
-  } finally {
-    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 4000);
-  }
 };
 
 // ------------------------------------------------------- 工具/思考条目
@@ -761,7 +713,7 @@ watch(
 }
 
 /* 轮次统计行：高 22px、间距 12px、图标 12px + 数值 11px muted（见 MessageStats 的
-   `.messenger-message-stats`），右侧复制/下载按钮 52×22 圆角 6。 */
+   `.messenger-message-stats`），右侧仅保留「复制」图标按钮 22×22 圆角 6。 */
 .timeline-body-footer {
   display: flex;
   align-items: center;
@@ -815,14 +767,14 @@ watch(
   color: currentColor;
 }
 
+/* 复制按钮：仅图标 22×22（去掉文字标签），hover 才显形。 */
 .timeline-body-action {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 4px;
   box-sizing: border-box;
-  width: 52px;
+  width: 22px;
   height: 22px;
   padding: 0;
   border: 0;
@@ -846,10 +798,6 @@ watch(
   color: var(--mz-text-secondary, #3d3d3d);
 }
 
-.timeline-body-action-label {
-  font-size: 11px;
-}
-
 .timeline-body-footer :deep(.messenger-message-footer-copy.timeline-body-icon-action) {
   width: 22px;
   height: 22px;
@@ -862,19 +810,6 @@ watch(
 .timeline-body-footer :deep(.messenger-message-footer-copy.timeline-body-icon-action:hover) {
   background: var(--mz-timeline-hover, #f6f5f3);
   color: var(--mz-text-secondary, #3d3d3d);
-}
-
-.timeline-body-footer :deep(.messenger-message-feedback-actions) {
-  gap: 4px;
-}
-
-.timeline-body-footer :deep(.messenger-message-feedback-actions .messenger-message-footer-copy) {
-  width: 22px;
-  height: 22px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--mz-text-muted, #8a8f99);
 }
 
 /* 问候语：桌面端 BodyBlock 的等价物——全宽文本、无气泡、无头像。 */
