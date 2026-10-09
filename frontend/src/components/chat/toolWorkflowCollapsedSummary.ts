@@ -1,3 +1,4 @@
+// AI生成
 import type { RawToolRun, WorkflowItem } from './toolWorkflowRunModel';
 
 type WorkflowToolSummary = {
@@ -10,6 +11,9 @@ const VALUE_LIMIT = 104;
 const PATH_KEYS = ['path', 'file_path', 'file', 'filename', 'source_path', 'source'] as const;
 const COMMAND_KEYS = ['content', 'command', 'cmd', 'input', 'script', 'raw'] as const;
 const QUERY_KEYS = ['query', 'question', 'keyword', 'keywords', 'sql'] as const;
+// `web_search` 现在以 `queries: string[]` 批处理调用（对齐 dsh web seam），
+// 数组形态无法被按字符串取值的 readLightweightField 命中，单独读取。
+const QUERY_BATCH_KEYS = ['queries'] as const;
 const URL_KEYS = ['url', 'uri', 'source_url'] as const;
 
 const normalizeToolName = (value: unknown): string => String(value || '').trim().toLowerCase();
@@ -82,6 +86,9 @@ const readEntryField = (items: Array<WorkflowItem | null>, keys: readonly string
     if (!item) continue;
     const record = item as WorkflowItem & Record<string, unknown>;
     for (const key of keys) {
+      // `name` 同时是 WorkflowItem 的工具名字段：直接读记录字段会把工具名
+      // 当成参数渲染；它只能来自调用参数 JSON 内部。
+      if (key === 'name') continue;
       const direct = compactText(record[key]);
       if (direct) return direct;
     }
@@ -96,6 +103,51 @@ const readEntryField = (items: Array<WorkflowItem | null>, keys: readonly string
     if (fromDetail) return fromDetail;
   }
   return '';
+};
+
+/**
+ * 结果/输出侧记录只允许贡献「调用的原始参数」（toolCallRawDetail）：
+ * `detail` 与直取字段都是工具结果文本，进摘要就会把结果当成调用参数展示。
+ * 持久化行会用结果记录顶替缺失的调用记录（保留 invocation JSON），这里兜住该形态。
+ */
+const readCallSideParam = (item: WorkflowItem | null, keys: readonly string[]): string => {
+  if (!item) return '';
+  const rawCall = typeof item.toolCallRawDetail === 'string'
+    ? item.toolCallRawDetail
+    : typeof item.tool_call_raw_detail === 'string'
+      ? item.tool_call_raw_detail
+      : '';
+  return readLightweightField(rawCall, keys);
+};
+
+/**
+ * 读取 `"key": ["a", "b"]` 形态的字符串数组参数，按 `, ` 连接成单行摘要。
+ * dsh 的 search 卡片标题就是 `queries.join(', ')`，这里保持一致。
+ */
+const readLightweightStringArray = (source: string, keys: readonly string[]): string => {
+  if (!source) return '';
+  const sample = source.slice(0, SCAN_LIMIT);
+  for (const key of keys) {
+    const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const match = new RegExp(`"${escapedKey}"\\s*:\\s*\\[([^\\]]*)\\]`, 'i').exec(sample);
+    if (!match?.[1]) continue;
+    const values = match[1]
+      .split(',')
+      .map((part) => compactText(decodeJsonString(part.trim().replace(/^"|"$/g, ''))))
+      .filter(Boolean);
+    if (values.length) return values.join(', ');
+  }
+  return '';
+};
+
+const readCallSideBatchParam = (item: WorkflowItem | null, keys: readonly string[]): string => {
+  if (!item) return '';
+  const rawCall = typeof item.toolCallRawDetail === 'string'
+    ? item.toolCallRawDetail
+    : typeof item.tool_call_raw_detail === 'string'
+      ? item.tool_call_raw_detail
+      : '';
+  return readLightweightStringArray(rawCall, keys);
 };
 
 const compactPath = (value: string): string => {
@@ -119,20 +171,33 @@ export const buildCollapsedToolWorkflowSummary = (
   entry: RawToolRun,
   toolLabel: string
 ): WorkflowToolSummary => {
-  const items = [entry.callItem, entry.outputItem, entry.resultItem];
+  // 摘要只描述「这次调用做了什么」：调用记录全量读，结果/输出记录仅兜底
+  // 其携带的调用原始参数，绝不吃结果正文。
   let brief = '';
   if (isExecuteCommandTool(entry.toolName)) {
-    brief = readEntryField(items, COMMAND_KEYS);
+    brief = readEntryField([entry.callItem], COMMAND_KEYS) || readCallSideParam(entry.resultItem, COMMAND_KEYS);
   } else if (isReadImageWorkflowTool(entry.toolName)) {
-    brief = basenameOfPath(readEntryField(items, PATH_KEYS));
+    brief = basenameOfPath(
+      readEntryField([entry.callItem], PATH_KEYS) || readCallSideParam(entry.resultItem, PATH_KEYS)
+    );
   } else if (isWebFetchTool(entry.toolName)) {
-    brief = readEntryField(items, URL_KEYS) || readEntryField(items, QUERY_KEYS);
+    brief = readEntryField([entry.callItem], URL_KEYS) ||
+      readEntryField([entry.callItem], QUERY_KEYS) ||
+      readCallSideParam(entry.resultItem, URL_KEYS) ||
+      readCallSideParam(entry.resultItem, QUERY_KEYS);
   } else if (isQueryTool(entry.toolName)) {
-    brief = readEntryField(items, QUERY_KEYS) || compactPath(readEntryField(items, PATH_KEYS));
+    brief = readCallSideBatchParam(entry.callItem, QUERY_BATCH_KEYS) ||
+      readCallSideBatchParam(entry.resultItem, QUERY_BATCH_KEYS) ||
+      readEntryField([entry.callItem], QUERY_KEYS) ||
+      compactPath(readEntryField([entry.callItem], PATH_KEYS)) ||
+      readCallSideParam(entry.resultItem, QUERY_KEYS) ||
+      compactPath(readCallSideParam(entry.resultItem, PATH_KEYS));
   } else {
-    brief = compactPath(readEntryField(items, PATH_KEYS)) ||
-      readEntryField(items, QUERY_KEYS) ||
-      readEntryField(items, ['action', 'operation', 'op']);
+    brief = compactPath(readEntryField([entry.callItem], PATH_KEYS)) ||
+      readEntryField([entry.callItem], QUERY_KEYS) ||
+      readEntryField([entry.callItem], ['action', 'operation', 'op']) ||
+      compactPath(readCallSideParam(entry.resultItem, PATH_KEYS)) ||
+      readCallSideParam(entry.resultItem, QUERY_KEYS);
   }
   brief = compactText(brief);
   return {

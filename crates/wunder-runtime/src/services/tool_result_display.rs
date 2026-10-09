@@ -45,6 +45,8 @@ pub fn tool_result_display(tool: &str, payload: &Value, pending: bool) -> String
         "execute_command" | "执行命令" => "执行",
         "search_content" | "搜索内容" => "搜索",
         "list_files" | "列出文件" => "列出",
+        "web_search" | "网页搜索" => "网页搜索",
+        "web_fetch" | "网页抓取" => "网页抓取",
         "" => "工具",
         other => other,
     };
@@ -64,9 +66,27 @@ pub fn tool_result_display(tool: &str, payload: &Value, pending: bool) -> String
         "完成"
     };
     let mut lines = vec![format!("{} · {status}", preview(label))];
-    let target = string(args, &["path", "file_path", "command", "cmd", "query"]);
-    if !target.is_empty() {
-        lines.push(preview(target));
+    let target = string(args, &["path", "file_path", "command", "cmd", "query", "url"]);
+    // `queries` is a batch (`string[]`) and dsh's search card title is the
+    // joined batch, so fall back to it when no single-string target exists.
+    let queries_target: String = args
+        .get("queries")
+        .and_then(Value::as_array)
+        .map(|queries| {
+            queries
+                .iter()
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+        .unwrap_or_default();
+    let target_text = if target.is_empty() {
+        queries_target.as_str()
+    } else {
+        target
+    };
+    if !target_text.is_empty() {
+        lines.push(preview(target_text));
     }
     if pending {
         return lines.join("\n");
@@ -122,6 +142,34 @@ pub fn tool_result_display(tool: &str, payload: &Value, pending: bool) -> String
             if files.len() > 6 {
                 lines.push("…".into());
             }
+        }
+    } else if label == "网页搜索" {
+        // dsh search seam: surface `sources:[{url,title,snippet}]` in order and
+        // tell the reader when the batch was clipped to the result cap.
+        if let Some(sources) = data.get("sources").and_then(Value::as_array) {
+            for source in sources.iter().take(8) {
+                let url = string(source, &["url"]);
+                if url.is_empty() {
+                    continue;
+                }
+                let title = string(source, &["title"]);
+                if title.is_empty() {
+                    lines.push(preview(url));
+                } else {
+                    lines.push(preview(&format!("{title} · {url}")));
+                }
+            }
+            if sources.is_empty() {
+                let text = string(data, &["summary", "message", "content"]);
+                if !text.is_empty() {
+                    lines.push(preview(text));
+                }
+            } else if sources.len() > 8 {
+                lines.push("…".into());
+            }
+        }
+        if data.get("truncated").and_then(Value::as_bool) == Some(true) {
+            lines.push("结果已按上限截断".into());
         }
     } else {
         let text = string(
@@ -223,5 +271,27 @@ mod tests {
         assert!(output.contains("+new"));
         assert!(output.contains("-old"));
         assert!(preview(&"x".repeat(10000)).len() < 2500);
+    }
+    #[test]
+    fn web_tools_surface_sources_and_targets() {
+        let output = tool_result_display(
+            "web_search",
+            &json!({"args":{"queries":["rust","async"]},"data":{"count":2,"truncated":true,"provider":"firecrawl","sources":[{"title":"Rust","url":"https://rust.test"},{"url":"https://async.test"}]}}),
+            false,
+        );
+        assert!(output.contains("网页搜索 · 完成"));
+        assert!(output.contains("rust, async"));
+        assert!(output.contains("Rust · https://rust.test"));
+        assert!(output.contains("https://async.test"));
+        assert!(output.contains("结果已按上限截断"));
+        assert!(!output.contains("firecrawl"));
+        let fetch = tool_result_display(
+            "web_fetch",
+            &json!({"args":{"url":"https://example.test/a"},"data":{"url":"https://example.test/a","status":200,"content":"hello"}}),
+            false,
+        );
+        assert!(fetch.contains("网页抓取 · 完成"));
+        assert!(fetch.contains("https://example.test/a"));
+        assert!(fetch.contains("hello"));
     }
 }

@@ -6,9 +6,11 @@ use crate::config::{Config, WebSearchFirecrawlConfig, WebSearchToolConfig};
 use crate::i18n;
 use anyhow::{anyhow, Result};
 use dashmap::DashMap;
+use futures::future::join_all;
 use reqwest::header::{ACCEPT, CONTENT_TYPE};
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
+use std::collections::HashSet;
 use std::time::{Duration, Instant};
 use tokio::time::timeout;
 use url::Url;
@@ -16,6 +18,10 @@ use url::Url;
 pub const TOOL_WEB_SEARCH: &str = "网页搜索";
 pub const TOOL_WEB_SEARCH_ALIAS: &str = "web_search";
 
+/// Upper bound on the number of queries accepted in a single call, mirroring
+/// the dsh web seam's `maxQueries` default. Extra queries are dropped (not an
+/// error) so a batch never fails just because it was batched too widely.
+const MAX_QUERIES: usize = 4;
 const MIN_COUNT: usize = 1;
 const MAX_COUNT: usize = 10;
 const MIN_MAX_RESULT_CHARS: usize = 120;
@@ -23,7 +29,14 @@ const MAX_MAX_RESULT_CHARS: usize = 4_000;
 
 #[derive(Debug, Deserialize)]
 struct WebSearchArgs {
-    query: String,
+    /// dsh-aligned batch input: one or more independent queries executed
+    /// concurrently and merged. Preferred over the single-query `query` alias.
+    #[serde(default)]
+    queries: Option<Vec<String>>,
+    /// Single-query alias kept for compatibility with earlier callers and the
+    /// historical `query` parameter. Ignored when `queries` carries values.
+    #[serde(default)]
+    query: Option<String>,
     #[serde(default)]
     count: Option<usize>,
     #[serde(default, alias = "siteUrl", alias = "domain")]
@@ -89,14 +102,45 @@ pub fn web_search_enabled(config: &Config) -> bool {
     config.tools.web.search.enabled && config.tools.web.search.provider() == "firecrawl"
 }
 
+/// Resolve the outgoing query batch from `queries` (preferred) or the
+/// single-query `query` alias. Blank entries are dropped, duplicates removed,
+/// and the batch is capped at [`MAX_QUERIES`] so it always matches the dsh
+/// "1..maxQueries" contract without hard-failing on over-wide batches.
+fn resolve_queries(request: &WebSearchArgs) -> Vec<String> {
+    let mut raw: Vec<String> = Vec::new();
+    if let Some(queries) = request.queries.as_ref() {
+        raw.extend(queries.iter().cloned());
+    }
+    if raw.iter().all(|value| value.trim().is_empty()) {
+        if let Some(query) = request.query.as_ref() {
+            raw.push(query.clone());
+        }
+    }
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut resolved: Vec<String> = Vec::new();
+    for value in raw {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if seen.insert(trimmed.to_string()) {
+            resolved.push(trimmed.to_string());
+        }
+        if resolved.len() >= MAX_QUERIES {
+            break;
+        }
+    }
+    resolved
+}
+
 pub async fn tool_web_search(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let request: WebSearchArgs =
         serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
-    let query = request.query.trim();
     let config = &context.config.tools.web.search;
-    if query.is_empty() {
+    let queries = resolve_queries(&request);
+    if queries.is_empty() {
         return Ok(web_search_failure(
-            query,
+            "",
             "validation",
             "TOOL_WEB_SEARCH_EMPTY_QUERY",
             i18n::t("tool.web_search.empty_query"),
@@ -108,12 +152,26 @@ pub async fn tool_web_search(context: &ToolContext<'_>, args: &Value) -> Result<
         .into_value());
     }
     match config.provider().as_str() {
-        "firecrawl" => match search_with_firecrawl(query, &request, config).await {
-            Ok(payload) => Ok(build_search_result(payload)),
-            Err(failure) => Ok(failure.into_value()),
-        },
+        "firecrawl" => {
+            // Run every query concurrently (dsh runs the batch with
+            // Promise.allSettled); the first failure wins and the batch
+            // short-circuits, matching the seam's first-error semantics.
+            let futures = queries
+                .iter()
+                .map(|query| search_with_firecrawl(query, &request, config));
+            let outcomes = join_all(futures).await;
+            let mut payloads = Vec::with_capacity(outcomes.len());
+            for outcome in outcomes {
+                match outcome {
+                    Ok(payload) => payloads.push(payload),
+                    Err(failure) => return Ok(failure.into_value()),
+                }
+            }
+            let cap = resolve_count(request.count, config.count);
+            Ok(build_search_result(payloads, &queries, cap))
+        }
         _ => Ok(web_search_failure(
-            query,
+            &queries.join(" | "),
             "provider",
             "TOOL_WEB_SEARCH_PROVIDER_UNSUPPORTED",
             i18n::t("tool.web_search.provider_unsupported"),
@@ -339,24 +397,99 @@ fn build_firecrawl_search_body(
     Value::Object(body)
 }
 
-fn build_search_result(payload: SearchPayload) -> Value {
-    let count = payload.count;
+/// Round-robin merge across query payloads: take rank 0 from every query, then
+/// rank 1, and so on, de-duplicating by normalized URL and truncating to `cap`.
+/// Returns the merged items plus whether truncation dropped any result, so the
+/// caller can mark `truncated` exactly like the dsh web seam does.
+fn merge_search_items(payloads: &[SearchPayload], cap: usize) -> (Vec<SearchResultItem>, bool) {
+    let max_len = payloads.iter().map(|payload| payload.results.len()).max().unwrap_or(0);
+    let mut items: Vec<SearchResultItem> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    for rank in 0..max_len {
+        for payload in payloads {
+            if let Some(item) = payload.results.get(rank) {
+                let key = item.url.trim().to_ascii_lowercase();
+                if seen.insert(key) {
+                    items.push(item.clone());
+                }
+            }
+        }
+    }
+    let truncated = items.len() > cap;
+    if truncated {
+        items.truncate(cap);
+    }
+    (items, truncated)
+}
+
+/// Render per-query sections (`### <query>` then markdown links with snippets),
+/// available only for multi-query batches so single-query callers keep the
+/// leaner structured payload.
+fn render_query_sections(queries: &[String], payloads: &[SearchPayload]) -> String {
+    let mut sections: Vec<String> = Vec::new();
+    for (index, query) in queries.iter().enumerate() {
+        let mut section = format!("### {query}");
+        if let Some(payload) = payloads.get(index) {
+            for item in &payload.results {
+                let label = if item.title.trim().is_empty() {
+                    item.url.clone()
+                } else {
+                    item.title.clone()
+                };
+                match item.description.as_ref().map(|value| value.trim()) {
+                    Some(snippet) if !snippet.is_empty() => {
+                        section.push_str(&format!("\n- [{}]({}): {}", label, item.url, snippet));
+                    }
+                    _ => {
+                        section.push_str(&format!("\n- [{}]({})", label, item.url));
+                    }
+                }
+            }
+        }
+        sections.push(section);
+    }
+    sections.join("\n\n")
+}
+
+fn build_search_result(payloads: Vec<SearchPayload>, queries: &[String], cap: usize) -> Value {
+    let (items, truncated) = merge_search_items(&payloads, cap);
+    let count = items.len();
     let next_step_hint = if count == 0 {
         "No search results were returned. Do not guess URLs or fabricate sources; retry with a narrower query, change provider settings, or report that web search returned no evidence."
+    } else if truncated {
+        "Showing the first results only. Refine the query for more, then cite the relevant URLs above as markdown links in your answer."
     } else {
-        "Pick concrete result URLs and call web_fetch for source pages that need verification."
+        "Pick concrete result URLs and call web_fetch for source pages that need verification. Cite the relevant URLs above as markdown links in your answer."
     };
-    let data = json!({
-        "query": payload.query,
-        "effective_query": payload.effective_query,
-        "provider": payload.provider,
-        "count": count,
-        "cached": payload.cached,
-        "took_ms": payload.took_ms,
-        "scrape_results": payload.scrape_results,
-        "searched_at": payload.searched_at,
-        "site_filters": payload.site_filters,
-        "results": payload.results.into_iter().map(|item| {
+    let first = payloads.first();
+    let provider = first
+        .map(|payload| payload.provider.clone())
+        .unwrap_or_else(|| "firecrawl".to_string());
+    let cached = !payloads.is_empty() && payloads.iter().all(|payload| payload.cached);
+    let took_ms = payloads.iter().map(|payload| payload.took_ms).max().unwrap_or(0);
+    let searched_at = payloads
+        .iter()
+        .map(|payload| payload.searched_at.clone())
+        .max()
+        .unwrap_or_default();
+    let scrape_results = payloads.iter().any(|payload| payload.scrape_results);
+    let effective_query = payloads
+        .iter()
+        .map(|payload| payload.effective_query.clone())
+        .collect::<Vec<_>>()
+        .join(" | ");
+    let mut site_filters: Vec<String> = Vec::new();
+    for payload in &payloads {
+        for filter in &payload.site_filters {
+            if !site_filters.iter().any(|existing| existing == filter) {
+                site_filters.push(filter.clone());
+            }
+        }
+    }
+
+    let results_json = items
+        .iter()
+        .map(|item| {
             json!({
                 "title": item.title,
                 "url": item.url,
@@ -365,14 +498,53 @@ fn build_search_result(payload: SearchPayload) -> Value {
                 "published": item.published,
                 "site_name": item.site_name,
             })
-        }).collect::<Vec<_>>(),
-        "next_step_hint": next_step_hint,
-    });
+        })
+        .collect::<Vec<_>>();
+    let sources_json = items
+        .iter()
+        .map(|item| {
+            json!({
+                "url": item.url,
+                "title": item.title,
+                "snippet": item.description,
+                "publishedAt": item.published,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let mut data = Map::new();
+    data.insert("query".to_string(), Value::String(queries.join(" | ")));
+    data.insert("queries".to_string(), json!(queries));
+    data.insert(
+        "effective_query".to_string(),
+        Value::String(effective_query),
+    );
+    data.insert("provider".to_string(), Value::String(provider));
+    data.insert("count".to_string(), json!(count));
+    data.insert("truncated".to_string(), json!(truncated));
+    data.insert("cached".to_string(), json!(cached));
+    data.insert("took_ms".to_string(), json!(took_ms));
+    data.insert("scrape_results".to_string(), json!(scrape_results));
+    data.insert("searched_at".to_string(), Value::String(searched_at));
+    data.insert("site_filters".to_string(), json!(site_filters));
+    data.insert("results".to_string(), Value::Array(results_json));
+    data.insert("sources".to_string(), Value::Array(sources_json));
+    if queries.len() > 1 {
+        data.insert(
+            "content".to_string(),
+            Value::String(render_query_sections(queries, &payloads)),
+        );
+    }
+    data.insert(
+        "next_step_hint".to_string(),
+        Value::String(next_step_hint.to_string()),
+    );
+
     build_model_tool_success(
         "web_search",
         "completed",
         format!("Found {count} web results."),
-        data,
+        Value::Object(data),
     )
 }
 
@@ -720,9 +892,10 @@ fn firecrawl_client() -> Result<&'static reqwest::Client> {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_effective_query, build_firecrawl_search_body, firecrawl_requires_api_key,
-        firecrawl_search_endpoint, normalize_site_filters, parse_firecrawl_search_items,
-        resolve_count, site_name, truncate_string,
+        build_effective_query, build_firecrawl_search_body, build_search_result,
+        firecrawl_requires_api_key, firecrawl_search_endpoint, merge_search_items,
+        normalize_site_filters, parse_firecrawl_search_items, resolve_count, resolve_queries,
+        site_name, truncate_string, SearchPayload, SearchResultItem, WebSearchArgs,
     };
     use crate::config::WebSearchToolConfig;
     use serde_json::json;
@@ -809,5 +982,185 @@ mod tests {
             site_name("https://www.example.com/a").as_deref(),
             Some("example.com")
         );
+    }
+
+    fn search_item(title: &str, url: &str, description: Option<&str>) -> SearchResultItem {
+        SearchResultItem {
+            title: title.to_string(),
+            url: url.to_string(),
+            description: description.map(str::to_string),
+            content: None,
+            published: None,
+            site_name: None,
+        }
+    }
+
+    fn search_payload(query: &str, results: Vec<SearchResultItem>) -> SearchPayload {
+        SearchPayload {
+            query: query.to_string(),
+            effective_query: query.to_string(),
+            provider: "firecrawl".to_string(),
+            count: results.len(),
+            cached: false,
+            took_ms: 1,
+            scrape_results: false,
+            searched_at: "2026-05-15T00:00:00Z".to_string(),
+            site_filters: Vec::new(),
+            results,
+        }
+    }
+
+    // dsh `parseSearchArgs`: a batch is preferred over the single alias, blanks
+    // are dropped, duplicates collapse, and the batch never exceeds maxQueries.
+    #[test]
+    fn queries_prefer_batch_and_dedupe_over_single_alias() {
+        let args: WebSearchArgs = serde_json::from_value(json!({
+            "queries": ["rust", " rust ", "Rust", "", "async"],
+            "query": "ignored-when-batch-present"
+        }))
+        .expect("args");
+        assert_eq!(resolve_queries(&args), vec!["rust", "Rust", "async"]);
+    }
+
+    #[test]
+    fn queries_cap_batch_and_fall_back_to_single_alias() {
+        // Over-wide batches are truncated to maxQueries, not rejected.
+        let wide: WebSearchArgs = serde_json::from_value(json!({
+            "queries": ["q1", "q2", "q3", "q4", "q5"]
+        }))
+        .expect("args");
+        assert_eq!(resolve_queries(&wide), vec!["q1", "q2", "q3", "q4"]);
+
+        // An all-blank batch falls back to the historical `query` alias.
+        let legacy: WebSearchArgs = serde_json::from_value(json!({
+            "queries": ["", "   "],
+            "query": "legacy query"
+        }))
+        .expect("args");
+        assert_eq!(resolve_queries(&legacy), vec!["legacy query"]);
+
+        // No usable query at all resolves to an empty batch.
+        let empty: WebSearchArgs =
+            serde_json::from_value(json!({ "queries": ["", ""] })).expect("args");
+        assert!(resolve_queries(&empty).is_empty());
+    }
+
+    // dsh `runSearchQueries`: results are merged round-robin by rank and
+    // de-duplicated by URL (case-insensitive) across queries.
+    #[test]
+    fn merge_round_robins_and_dedupes_by_url() {
+        let payloads = vec![
+            search_payload(
+                "a",
+                vec![
+                    search_item("A0", "https://a.test/0", Some("s0")),
+                    search_item("A1", "https://shared.test/x", None),
+                ],
+            ),
+            search_payload(
+                "b",
+                vec![
+                    search_item("B0", "https://b.test/0", None),
+                    search_item("B1", "https://SHARED.test/x", Some("dup")),
+                ],
+            ),
+        ];
+        let (items, truncated) = merge_search_items(&payloads, 10);
+        assert!(!truncated);
+        let urls: Vec<&str> = items.iter().map(|item| item.url.as_str()).collect();
+        assert_eq!(
+            urls,
+            vec![
+                "https://a.test/0",
+                "https://b.test/0",
+                "https://shared.test/x"
+            ]
+        );
+    }
+
+    #[test]
+    fn merge_truncates_and_flags_when_over_cap() {
+        let payloads = vec![
+            search_payload(
+                "a",
+                vec![
+                    search_item("A0", "https://a.test/0", None),
+                    search_item("A1", "https://a.test/1", None),
+                ],
+            ),
+            search_payload("b", vec![search_item("B0", "https://b.test/0", None)]),
+        ];
+        let (items, truncated) = merge_search_items(&payloads, 2);
+        let urls: Vec<&str> = items.iter().map(|item| item.url.as_str()).collect();
+        assert_eq!(urls, vec!["https://a.test/0", "https://b.test/0"]);
+        assert!(truncated);
+    }
+
+    // dsh seam result shape: `{content?, sources:[{url,title?,snippet?,publishedAt?}], truncated}`.
+    // Multi-query runs keep per-query markdown sections and always nudge the
+    // model to cite sources as markdown links.
+    #[test]
+    fn build_search_result_exposes_sources_and_query_sections() {
+        let payloads = vec![
+            search_payload(
+                "alpha",
+                vec![search_item("Alpha", "https://a.test", Some("snippet"))],
+            ),
+            search_payload("beta", vec![search_item("Beta", "https://b.test", None)]),
+        ];
+        let queries = vec!["alpha".to_string(), "beta".to_string()];
+        let value = build_search_result(payloads, &queries, 8);
+        let data = &value["data"];
+        assert_eq!(data["queries"], json!(["alpha", "beta"]));
+        assert_eq!(data["count"], json!(2));
+        assert_eq!(data["truncated"], json!(false));
+        assert_eq!(data["sources"][0]["url"], json!("https://a.test"));
+        assert_eq!(data["sources"][0]["snippet"], json!("snippet"));
+        let content = data["content"].as_str().expect("multi-query content");
+        assert!(content.contains("### alpha"));
+        assert!(content.contains("### beta"));
+        assert!(content.contains("[Alpha](https://a.test): snippet"));
+        assert!(content.contains("[Beta](https://b.test)"));
+        assert!(data["next_step_hint"]
+            .as_str()
+            .expect("hint")
+            .contains("markdown links"));
+    }
+
+    #[test]
+    fn single_query_result_omits_query_sections() {
+        let payloads = vec![search_payload(
+            "solo",
+            vec![search_item("S", "https://s.test", None)],
+        )];
+        let value = build_search_result(payloads, &["solo".to_string()], 8);
+        assert!(value["data"].get("content").is_none());
+        assert_eq!(value["data"]["queries"], json!(["solo"]));
+    }
+
+    #[test]
+    fn empty_result_hint_discourages_fabrication() {
+        let value = build_search_result(Vec::new(), &["none".to_string()], 8);
+        assert_eq!(value["data"]["count"], json!(0));
+        let hint = value["data"]["next_step_hint"].as_str().expect("hint");
+        assert!(hint.contains("No search results"));
+    }
+
+    #[test]
+    fn truncated_result_hint_asks_to_refine() {
+        let payloads = vec![
+            search_payload(
+                "a",
+                vec![
+                    search_item("A0", "https://a.test/0", None),
+                    search_item("A1", "https://a.test/1", None),
+                ],
+            ),
+            search_payload("b", vec![search_item("B0", "https://b.test/0", None)]),
+        ];
+        let value = build_search_result(payloads, &["a".to_string(), "b".to_string()], 2);
+        assert_eq!(value["data"]["truncated"], json!(true));
+        let hint = value["data"]["next_step_hint"].as_str().expect("hint");
+        assert!(hint.contains("Refine the query"));
     }
 }

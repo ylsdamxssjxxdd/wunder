@@ -2725,12 +2725,46 @@ const resolveQueryToolSummaryTitle = (entry: RawEntry, toolDisplay: string): str
   return truncateSingleLine(toolDisplay);
 };
 
+const isWebSearchTool = (toolName: string): boolean => {
+  const normalized = toolName.trim().toLowerCase();
+  return (
+    normalized === 'web_search' ||
+    normalized === 'websearch' ||
+    normalized.includes('web_search') ||
+    normalized.includes('web search') ||
+    toolName.includes('\u7f51\u9875\u641c\u7d22')
+  );
+};
+
+// `web_search` 现以 `queries: string[]` 批处理调用（对齐 dsh web seam），
+// 摘要标题与 dsh search 卡片一致，取 `queries.join(', ')`。
+const resolveWebSearchSummaryTitle = (entry: RawEntry, toolDisplay: string): string => {
+  const args = extractCallArgs(entry.callItem);
+  const { resultObject, dataObject } = extractResultPayload(entry.resultItem);
+  const batch = Array.isArray(args?.queries)
+    ? (args.queries as unknown[]).map((value) => pickString(value)).filter(Boolean)
+    : [];
+  const query = pickString(
+    batch.join(', '),
+    args?.query,
+    dataObject?.query,
+    resultObject?.query
+  );
+  if (query) {
+    return truncateSingleLine(`${toolDisplay} "${truncateSingleLine(query, 48)}"`, 140);
+  }
+  return truncateSingleLine(toolDisplay);
+};
+
 const resolveFileToolSummaryTitle = (entry: RawEntry, toolDisplay: string, pathHints: string[]): string => {
   if (isPtcTool(entry.toolName)) {
     return resolvePtcSummaryTitle(entry, toolDisplay, pathHints);
   }
   if (isDatabaseQueryTool(entry.toolName) || isKnowledgeQueryTool(entry.toolName)) {
     return resolveQueryToolSummaryTitle(entry, toolDisplay);
+  }
+  if (isWebSearchTool(entry.toolName)) {
+    return resolveWebSearchSummaryTitle(entry, toolDisplay);
   }
   if (isWebFetchTool(entry.toolName)) {
     return resolveWebFetchSummaryTitle(entry, toolDisplay);

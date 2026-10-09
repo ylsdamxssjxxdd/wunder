@@ -132,6 +132,95 @@ pub(super) fn project(tool: &str, payload: &Value, state: &str, fallback: &str) 
             }
             sections.push(section);
         }
+    } else if tool == "web_search" || tool.contains("网页搜索") {
+        // dsh search seam: one section titled by the (joined) query batch, one
+        // line per source, and an explicit note when the batch was clipped.
+        let queries = data["queries"]
+            .as_array()
+            .map(|values| {
+                values
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            })
+            .filter(|value| !value.is_empty())
+            .or_else(|| {
+                let single = text(args, &["query"]);
+                (!single.is_empty()).then_some(single)
+            })
+            .unwrap_or_else(|| "网页搜索".to_string());
+        let count = data["count"].as_u64().unwrap_or_default();
+        let truncated = data["truncated"].as_bool().unwrap_or(false);
+        let mut section = Section {
+            title: queries,
+            meta: if truncated {
+                format!("{count} 条 · 已截断")
+            } else {
+                format!("{count} 条")
+            },
+            kind: "link".into(),
+            ..Default::default()
+        };
+        if let Some(sources) = data["sources"].as_array() {
+            for source in sources.iter().take(20) {
+                let url = text(source, &["url"]);
+                if url.is_empty() {
+                    continue;
+                }
+                let title = text(source, &["title"]);
+                let label = if title.is_empty() {
+                    url
+                } else {
+                    format!("{title} · {url}")
+                };
+                section.lines.push(line(label, "link", String::new()));
+            }
+        }
+        if section.lines.is_empty() {
+            push_body(&mut section, fallback, "context");
+        }
+        sections.push(section);
+    } else if tool == "web_fetch" || tool.contains("网页抓取") {
+        let url = {
+            let from_data = text(data, &["url", "normalized_url"]);
+            if from_data.is_empty() {
+                text(args, &["url"])
+            } else {
+                from_data
+            }
+        };
+        let status = data
+            .get("status")
+            .or_else(|| data.get("status_code"))
+            .or_else(|| data.get("statusCode"))
+            .and_then(Value::as_i64);
+        let truncated = data["truncated"].as_bool().unwrap_or(false);
+        let mut meta = status.map(|value| format!("HTTP {value}")).unwrap_or_default();
+        if truncated {
+            if meta.is_empty() {
+                meta = "已截断".into();
+            } else {
+                meta.push_str(" · 已截断");
+            }
+        }
+        let mut section = Section {
+            title: if url.is_empty() { "网页抓取".into() } else { url },
+            meta,
+            kind: "text".into(),
+            ..Default::default()
+        };
+        let body = data["content"]
+            .as_str()
+            .or_else(|| data["text"].as_str())
+            .or_else(|| data["output"].as_str());
+        if let Some(body) = body {
+            push_body(&mut section, body, "context");
+        }
+        if section.lines.is_empty() {
+            push_body(&mut section, fallback, "context");
+        }
+        sections.push(section);
     }
     if sections.is_empty()
         && !failed
@@ -254,6 +343,27 @@ mod tests {
         assert_eq!(sections[0].title, "$ fixture");
         assert_eq!(sections[0].meta, "exit 1");
         assert_eq!(sections[0].lines[1].kind, "error");
+    }
+    #[test]
+    fn web_search_projects_sources_and_web_fetch_projects_status() {
+        let sections = project(
+            "web_search",
+            &json!({"args":{"queries":["rust","async"]},"result":{"data":{"count":1,"truncated":true,"sources":[{"title":"Rust","url":"https://rust.test"}]}}}),
+            "completed",
+            "fallback",
+        );
+        assert_eq!(sections[0].title, "rust, async");
+        assert_eq!(sections[0].meta, "1 条 · 已截断");
+        assert!(sections[0].lines[0].text.contains("https://rust.test"));
+        let fetch = project(
+            "web_fetch",
+            &json!({"args":{"url":"https://example.test/a"},"result":{"data":{"url":"https://example.test/a","status":200,"content":"hello"}}}),
+            "completed",
+            "fallback",
+        );
+        assert_eq!(fetch[0].title, "https://example.test/a");
+        assert_eq!(fetch[0].meta, "HTTP 200");
+        assert_eq!(fetch[0].lines[0].text, "hello");
     }
 }
 

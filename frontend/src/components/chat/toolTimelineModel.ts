@@ -16,6 +16,7 @@ import {
   type WorkflowItem
 } from './toolWorkflowRunModel';
 import { buildCollapsedToolWorkflowSummary } from './toolWorkflowCollapsedSummary';
+import { isTimelineEditToolRun } from './toolTimelinePatch';
 import {
   buildCompactionDisplay,
   resolveCompactionInstanceLabel,
@@ -39,14 +40,18 @@ export type TimelineToolEntry = {
   /** 工具显示名。 */
   toolLabel: string;
   toolIconClass: string;
-  /** 一行摘要（执行中的实时摘要 / 完成后的结果摘要）。 */
+  /** 一行摘要：只描述调用本身（命令 / 路径 / query 等关键参数）。 */
   summary: string;
+  /** 摘要是否为命令/代码形态（用等宽字体渲染）。 */
+  summaryMono: boolean;
   /** 目标标签（文件名 / 路径），点击在左栏工作目录区定位。 */
   targets: TimelineTargetChip[];
   /** 失败时的错误摘要（可展开查看）。 */
   errorText: string;
   /** 结果正文 / 命令输出等长文本（渲染层限高折叠）。 */
   detailText: string;
+  /** 命令类工具的退出码（其他工具为 null）。 */
+  exitCode: number | null;
   /** 是否存在可展开内容。 */
   expandable: boolean;
   /** 上下文压缩视图（压缩条目专用）。 */
@@ -358,6 +363,51 @@ const resolveRunDetailText = (run: RawToolRun): string => {
   return stderr;
 };
 
+const isExecuteCommandToolName = (toolName: unknown): boolean => {
+  const normalized = String(toolName || '').trim().toLowerCase();
+  return normalized === 'execute_command' || normalized.includes('\u6267\u884c\u547d\u4ee4');
+};
+
+/** 命令类工具的退出码（有界解析，找不到为 null）。 */
+const resolveRunExitCode = (run: RawToolRun): number | null => {
+  const details = [
+    parseDetailObject(run.resultItem?.detail),
+    parseDetailObject(run.outputItem?.detail)
+  ].filter(Boolean) as UnknownObject[];
+  for (const detail of details) {
+    const data = asObject(detail.data) || detail;
+    const nested = asObject(data.result) || data;
+    const exitCode = toOptionalInt(
+      nested.exit_code,
+      nested.exitCode,
+      nested.returncode,
+      nested.return_code,
+      nested.returnCode,
+      data.exit_code,
+      data.exitCode
+    );
+    if (exitCode !== null) return exitCode;
+  }
+  return null;
+};
+
+/**
+ * 输出正文与错误块的去重：命令失败时 stderr 常被同时填进错误摘要与输出正文，
+ * 展开后同一份堆栈渲染两遍。判定为「同一份内容」时丢弃输出正文（错误块已覆盖）。
+ * 双向各自截断到有界窗口再比较，避免大输出进入热路径。
+ */
+const normalizedSample = (text: string): string => text.replace(/\s+/g, ' ').trim().slice(0, 4000);
+
+const detailDuplicatesError = (detailText: string, errorText: string): boolean => {
+  if (!detailText || !errorText) return false;
+  const detail = normalizedSample(detailText);
+  const error = normalizedSample(errorText);
+  // 输出 ⊆ 错误：错误块已完整覆盖，输出是重复拷贝。
+  if (error.includes(detail)) return true;
+  // 错误 ⊆ 输出且错误本身接近全文（不是一行简短摘要）：同样是重复拷贝。
+  return error.length >= 160 && detail.includes(error);
+};
+
 const buildTargets = (run: RawToolRun): TimelineTargetChip[] => {
   const paths = new Set<string>();
   [run.resultItem, run.outputItem, run.callItem].forEach((item) => {
@@ -384,11 +434,11 @@ const buildTargets = (run: RawToolRun): TimelineTargetChip[] => {
     });
 };
 
-const buildSummaryFallback = (run: RawToolRun, toolLabel: string): string => {
-  const fields = [run.callItem, run.resultItem].map((item) => readRawObjectFields(item?.detail));
-  const text = fields.flatMap((item) => item.texts).find(Boolean) || '';
-  if (text) return truncateSingleLine(text);
-  return toolLabel;
+const buildSummaryFallback = (run: RawToolRun): string => {
+  // 兜底同样只吃调用侧参数，避免把工具结果文本填进摘要。
+  const fields = readRawObjectFields(run.callItem?.detail);
+  const text = fields.texts.find(Boolean) || '';
+  return text ? truncateSingleLine(text) : '';
 };
 
 const resolveCompactionEntry = (
@@ -410,9 +460,11 @@ const resolveCompactionEntry = (
     toolLabel,
     toolIconClass: 'fa-compress',
     summary: truncateSingleLine([instanceLabel, display.summaryTitle || display.resultSummary].filter(Boolean).join(' · ')),
+    summaryMono: false,
     targets: [],
     errorText: status === 'failed' ? display.summaryNote || display.resultSummary : '',
     detailText: display.resultBody || display.copyBody || '',
+    exitCode: null,
     expandable: Boolean(display.view) || Boolean(display.resultBody),
     compaction: display,
     run
@@ -432,18 +484,26 @@ export const buildTimelineToolEntry = (
   const collapsed = buildCollapsedToolWorkflowSummary(run, toolLabel);
   const targets = buildTargets(run);
   const errorText = status === 'failed' ? resolveRunErrorText(run) : '';
-  const detailText = resolveRunDetailText(run);
+  const exitCode = resolveRunExitCode(run);
+  const rawDetailText = resolveRunDetailText(run);
+  // 失败时 stderr 与错误摘要重复：输出块不再渲染同一份内容。
+  const detailText = detailDuplicatesError(rawDetailText, errorText) ? '' : rawDetailText;
+  // 摘要只描述调用本身（命令 / 路径 / query），错误与结果留给展开区。
   let summary = truncateSingleLine(collapsed.brief);
   if (!summary) {
     // 折叠摘要只扫有界前缀；没有命中时补一次轻量兜底，避免条目只有工具名。
     summary = status === 'loading'
       ? truncateSingleLine(t('chat.toolWorkflow.pendingToolDetail'))
-      : buildSummaryFallback(run, '');
+      : buildSummaryFallback(run);
   }
-  if (status === 'failed' && errorText) {
-    summary = truncateSingleLine(errorText);
-  }
-  const expandable = Boolean(errorText || detailText || isPatchToolName(run.toolName) || run.resultItem);
+  const expandable = Boolean(
+    errorText ||
+    detailText ||
+    isPatchToolName(run.toolName) ||
+    // 编辑类工具运行中也能给出「待应用」diff 预览，同样可展开。
+    isTimelineEditToolRun(run) ||
+    run.resultItem
+  );
   return {
     kind: 'tool',
     key: run.key,
@@ -451,9 +511,11 @@ export const buildTimelineToolEntry = (
     toolLabel,
     toolIconClass: resolveTimelineToolIcon(run.toolName),
     summary,
+    summaryMono: isExecuteCommandToolName(run.toolName),
     targets,
     errorText,
     detailText,
+    exitCode,
     expandable,
     compaction: null,
     run

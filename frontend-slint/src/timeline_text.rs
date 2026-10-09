@@ -16,6 +16,8 @@ pub fn tool_label(tool: &str) -> String {
         "apply_patch" => "应用补丁",
         "list_files" | "list_file" => "列出文件",
         "search_content" | "search_files" => "搜索内容",
+        "web_search" | "web_search_tool" | "web search" | "websearch" | "网页搜索" => "网页搜索",
+        "web_fetch" | "web_fetch_tool" | "web fetch" | "webfetch" | "网页抓取" => "网页抓取",
         "execute_command" | "run_command" | "shell" => "运行命令",
         "command_session" => "命令会话",
         "context_compaction" | "compact" => "上下文压缩",

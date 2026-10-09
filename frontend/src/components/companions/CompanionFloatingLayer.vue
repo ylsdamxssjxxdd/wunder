@@ -324,56 +324,44 @@ const latestActiveAssistantBubble = computed<Record<string, unknown> | null>(() 
   return null;
 });
 
+// 桌宠与智能体形象彻底解耦：只跟随桌宠设置的选中形象（selectedCompanion），
+// 不再遍历智能体头像绑定；agentId 留空，智能体相关入口（点击打开对话等）自然失效。
 const allVisibleEntries = computed<FloatingEntry[]>(() => {
-  const items: Array<FloatingEntry | null> = allAgents.value
-    .map((agent, index) => {
-      const config = parseAgentAvatarIconConfig(agent.icon);
-      if (config.kind !== 'companion') {
-        return null;
+  const companion = companionStore.selectedCompanion;
+  if (!companion) {
+    return [];
+  }
+  const key = `desktop:${companion.id}`;
+  const override = companionStore.getAgentOverride(key);
+  if (override?.show === false) {
+    return [];
+  }
+  const scale = resolveScaleValue(override?.scale ?? companionStore.settings.scale);
+  const position = positions.value[key] || defaultPosition(0);
+  const hasMessageHints = companionStore.settings.messageHintsEnabled !== false;
+  const runtimeMessage = currentMessage.value;
+  const messageText = hasMessageHints ? String(runtimeMessage?.text || '') : '';
+  return [
+    {
+      key,
+      agentId: '',
+      name: String(companion.displayName || companion.id).trim(),
+      config: {
+        kind: 'companion',
+        show: true,
+        scale
+      } as unknown as AgentAvatarIconConfig,
+      companion,
+      scale,
+      message: messageText,
+      messageKind: runtimeMessage?.kind || 'info',
+      messageVisible: hasMessageHints && Boolean(messageText),
+      style: {
+        left: `${position.x}px`,
+        top: `${position.y}px`
       }
-      const companion = companionStore.findCompanion(config.scope || 'global', config.id || config.name);
-      if (!companion) {
-        return null;
-      }
-      const agentId = String(agent.id || config.id || index).trim();
-      const override = companionStore.getAgentOverride(agentId);
-      const effectiveShow = override?.show ?? config.show;
-      if (effectiveShow === false) {
-        return null;
-      }
-      const key = `${agentId}:${config.scope || 'global'}:${config.id || config.name}`;
-      const scale = resolveScaleValue(
-        override?.scale ?? config.scale ?? companionStore.settings.scale
-      );
-      const position = positions.value[key] || defaultPosition(index);
-      const runtimeMessage = currentMessage.value;
-      const hasMessageHints = config.messageHints !== false && companionStore.settings.messageHintsEnabled !== false;
-      const runtimeMessageAgentId = String(runtimeMessage?.agentId || '').trim();
-      const matchesRuntimeMessage = runtimeMessageAgentId === agentId;
-      const runtimeMessageText = matchesRuntimeMessage ? String(runtimeMessage?.text || '') : '';
-      const messageText = hasMessageHints ? runtimeMessageText : '';
-      const messageVisible = hasMessageHints && Boolean(messageText);
-      return {
-        key,
-        agentId,
-        name: String(agent.name || companion.displayName || agentId).trim(),
-        config: {
-          ...config,
-          show: effectiveShow,
-          scale
-        },
-        companion,
-        scale,
-        message: messageText,
-        messageKind: runtimeMessage?.kind || 'info',
-        messageVisible,
-        style: {
-          left: `${position.x}px`,
-          top: `${position.y}px`
-        }
-      } satisfies FloatingEntry;
-    })
-  return items.filter((item): item is FloatingEntry => Boolean(item));
+    } satisfies FloatingEntry
+  ];
 });
 
 const visibleEntries = computed<FloatingEntry[]>(() => allVisibleEntries.value);
@@ -750,7 +738,8 @@ function resolveCompanionScale(entry: FloatingEntry): number {
 
 async function persistCompanionConfig(entry: FloatingEntry, buildNext: (current: AgentAvatarIconConfig) => AgentAvatarIconConfig): Promise<void> {
   const nextConfig = buildNext(entry.config);
-  companionStore.setAgentOverride(entry.agentId, {
+  // 解耦后按桌宠条目 key（desktop:<id>）存偏好，不再落到智能体 id 上。
+  companionStore.setAgentOverride(entry.key, {
     show: nextConfig.show !== false,
     scale: resolveScaleValue(nextConfig.scale)
   });

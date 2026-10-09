@@ -972,8 +972,14 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
             title: None,
             description: t("tool.spec.web_search.description"),
             input_schema: super::schema::object(vec![
+                super::schema::array("queries")
+                    .desc(t("tool.spec.web_search.args.queries"))
+                    .items(super::schema::string("_"))
+                    .min_items(1)
+                    .max_items(4),
                 super::schema::string("query")
-                    .desc(t("tool.spec.web_search.args.query")),
+                    .desc(t("tool.spec.web_search.args.query"))
+                    .optional(),
                 super::schema::integer("count")
                     .desc(t("tool.spec.web_search.args.count"))
                     .min(1)
@@ -1375,6 +1381,10 @@ fn is_desktop_mode(config: &Config) -> bool {
 }
 
 fn runtime_builtin_tool_allowed(config: &Config, canonical: &str) -> bool {
+    // 临时下架（网页搜索 / ptc）：无论配置是否启用，都不对智能体与用户暴露。
+    if crate::services::default_tool_profile::is_temporarily_hidden_tool_name(canonical) {
+        return false;
+    }
     if web_fetch_tool::is_web_fetch_tool_name(canonical)
         && !web_fetch_tool::web_fetch_enabled(config)
     {
@@ -2262,6 +2272,7 @@ mod tests {
             .expect("web_search spec");
         assert!(spec.description.contains("自然语言关键词"));
         assert!(spec.description.contains("web_fetch"));
+        assert!(spec.input_schema["properties"]["queries"].is_object());
         assert!(spec.input_schema["properties"]["query"].is_object());
         assert!(spec.input_schema["properties"]["count"].is_object());
         assert!(spec.input_schema["properties"]["site"].is_object());
@@ -2269,11 +2280,19 @@ mod tests {
         assert!(spec.input_schema["properties"]["scrape_results"].is_object());
         assert!(spec.input_schema["properties"]["url"].is_null());
         assert_eq!(
+            spec.input_schema["properties"]["queries"]["minItems"].as_u64(),
+            Some(1)
+        );
+        assert_eq!(
+            spec.input_schema["properties"]["queries"]["maxItems"].as_u64(),
+            Some(4)
+        );
+        assert_eq!(
             spec.input_schema["required"]
                 .as_array()
                 .and_then(|items| items.first())
                 .and_then(Value::as_str),
-            Some("query")
+            Some("queries")
         );
         assert_eq!(
             spec.input_schema["additionalProperties"].as_bool(),
@@ -2474,6 +2493,35 @@ mod tests {
             collect_enabled_tool_names_for_catalog(&config, &SkillRegistry::default(), None);
         assert!(!available.contains("web_search"));
         assert!(!available.contains("网页搜索"));
+    }
+
+    #[test]
+    fn temporarily_hidden_tools_stay_hidden_even_when_enabled() {
+        let mut config = Config::default();
+        config.server.mode = "api".to_string();
+        config.tools.builtin.enabled = vec![
+            "网页搜索".to_string(),
+            "web_search".to_string(),
+            "ptc".to_string(),
+            "读取文件".to_string(),
+        ];
+        config.tools.web.search.enabled = true;
+        config.tools.web.search.provider = "firecrawl".to_string();
+
+        let available = collect_available_tool_names(&config, &SkillRegistry::default(), None);
+        for hidden in ["网页搜索", "web_search", "ptc"] {
+            assert!(!available.contains(hidden), "{hidden} should stay hidden");
+        }
+        assert!(available.contains("读取文件"));
+
+        let enabled =
+            collect_enabled_tool_names_for_catalog(&config, &SkillRegistry::default(), None);
+        for hidden in ["网页搜索", "web_search", "ptc"] {
+            assert!(
+                !enabled.contains(hidden),
+                "{hidden} should stay hidden in catalog"
+            );
+        }
     }
 
     #[cfg(not(feature = "web-fetch"))]

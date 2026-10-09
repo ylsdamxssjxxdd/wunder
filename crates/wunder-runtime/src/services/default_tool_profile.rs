@@ -70,6 +70,22 @@ pub fn is_desktop_hidden_tool_name(name: &str) -> bool {
     !cleaned.is_empty() && DESKTOP_HIDDEN_TOOL_NAMES.contains(&cleaned)
 }
 
+/// 产品侧临时下架的工具：暂不对智能体与用户可见（网页搜索与 ptc）。
+/// 属临时隐藏，恢复时移除对应条目即可。按规范名匹配，别名先归一化。
+const TEMPORARILY_HIDDEN_TOOL_NAMES: &[&str] = &["网页搜索", "ptc"];
+
+/// 判断工具是否处于"临时隐藏"状态：无论配置是否启用，智能体与用户都不可见。
+pub fn is_temporarily_hidden_tool_name(name: &str) -> bool {
+    let cleaned = name.trim();
+    if cleaned.is_empty() {
+        return false;
+    }
+    let canonical = crate::tools::resolve_tool_name(cleaned);
+    TEMPORARILY_HIDDEN_TOOL_NAMES
+        .iter()
+        .any(|hidden| *hidden == canonical || *hidden == cleaned)
+}
+
 pub fn curated_default_skill_names(allowed_tool_names: &HashSet<String>) -> Vec<String> {
     dedup_names(
         DEFAULT_SKILL_NAMES
@@ -117,7 +133,7 @@ mod tests {
     use super::{
         curated_default_tool_candidates, curated_default_tool_names,
         curated_default_tool_names_for_config, curated_default_tool_names_with_desktop_extras,
-        is_desktop_hidden_tool_name, Config,
+        is_desktop_hidden_tool_name, is_temporarily_hidden_tool_name, Config,
     };
     use crate::tools::resolve_tool_name;
     use std::collections::HashSet;
@@ -200,5 +216,18 @@ mod tests {
         }
         assert!(!is_desktop_hidden_tool_name("读取文件"));
         assert!(!is_desktop_hidden_tool_name(""));
+    }
+
+    #[test]
+    fn temporarily_hidden_tools_cover_web_search_and_ptc() {
+        for name in ["网页搜索", "web_search", "ptc", "programmatic_tool_call"] {
+            assert!(
+                is_temporarily_hidden_tool_name(name),
+                "{name} should be temporarily hidden"
+            );
+        }
+        assert!(!is_temporarily_hidden_tool_name("读取文件"));
+        assert!(!is_temporarily_hidden_tool_name("网页抓取"));
+        assert!(!is_temporarily_hidden_tool_name(""));
     }
 }

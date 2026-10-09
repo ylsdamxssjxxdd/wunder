@@ -33,7 +33,12 @@
           {{ target.label }}
         </button>
       </span>
-      <span v-if="entry.summary" class="tl-entry-summary" :title="entry.summary">{{ entry.summary }}</span>
+      <span
+        v-if="entry.summary"
+        class="tl-entry-summary"
+        :class="{ 'is-mono': entry.summaryMono }"
+        :title="entry.summary"
+      >{{ entry.summary }}</span>
     </component>
 
     <div v-if="interactive && open" class="tl-entry-body">
@@ -54,7 +59,16 @@
       />
 
       <div v-else-if="outputText" class="tl-entry-output">
-        <div class="tl-entry-output-head">{{ t('chat.timeline.entryOutputTitle') }}</div>
+        <div class="tl-entry-output-head">
+          <span>{{ t('chat.timeline.entryOutputTitle') }}</span>
+          <span
+            v-if="entry.exitCode !== null"
+            class="tl-entry-output-exit"
+            :class="{ 'is-nonzero': entry.exitCode !== 0 }"
+          >
+            {{ t('chat.timeline.entryOutputExitCode', { code: entry.exitCode }) }}
+          </span>
+        </div>
         <pre class="tl-entry-output-body">{{ outputText }}</pre>
       </div>
 
@@ -247,6 +261,12 @@ button.tl-entry-head:focus-visible {
   text-overflow: ellipsis;
 }
 
+/* 命令形态的摘要用等宽字体：与输出面板同一族，读起来是「一条命令」。 */
+.tl-entry-summary.is-mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11.5px;
+}
+
 .tl-entry-chips {
   flex: 0 0 auto;
   display: inline-flex;
@@ -323,9 +343,22 @@ button.tl-entry-head:focus-visible {
 }
 
 .tl-entry-output-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
   color: var(--mz-text-muted, #8a8f99);
   font-size: 11px;
   font-weight: 600;
+}
+
+/* 命令类工具的退出码：数字用等宽、成功弱化、非 0 走危险色。 */
+.tl-entry-output-exit {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-weight: 500;
+}
+
+.tl-entry-output-exit.is-nonzero {
+  color: var(--mz-danger, #d04a43);
 }
 
 .tl-entry-output-body {
