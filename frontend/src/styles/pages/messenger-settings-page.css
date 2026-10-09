@@ -155,27 +155,6 @@
   min-height: 0;
 }
 
-.messenger-settings-frame-content-head {
-  flex-shrink: 0;
-  padding: 20px 24px 12px;
-  border-bottom: 1px solid var(--mz-border);
-}
-
-.messenger-settings-frame-content-title {
-  margin: 0;
-  color: var(--mz-text);
-  font-size: var(--mz-font-title);
-  font-weight: 600;
-  line-height: 1.3;
-}
-
-.messenger-settings-frame-content-desc {
-  margin: 4px 0 0;
-  color: var(--mz-text-muted);
-  font-size: var(--mz-font-md);
-  line-height: 1.5;
-}
-
 .messenger-settings-frame-content-body {
   flex: 1;
   min-height: 0;
@@ -231,15 +210,41 @@
   font-weight: 500;
 }
 
-/* 选项卡面板宿主：复用旧版 `messenger-tools-pane-host`（内含自建工具三面板），
-   在设置卡片内给固定高度，面板内部列表自行滚动。 */
-.messenger-settings-card--pane {
-  padding: 8px;
+/* 选项卡内容卡：与设置窗口其他卡片同构，chip 云自行换行。 */
+.messenger-settings-tools-card {
+  margin-top: 12px;
 }
 
-.messenger-settings-tools-host {
-  flex: 0 0 auto;
-  height: 480px;
+/* chip 药丸云：浅暖底药丸 + 彩色图标方块（AbilityIconBadge）+ 标签。 */
+.messenger-settings-chip-cloud {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.messenger-settings-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  padding: 4px 12px 4px 4px;
+  border: 1px solid var(--mz-border);
+  border-radius: 18px;
+  background: var(--mz-primary-tint);
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+.messenger-settings-chip:hover {
+  border-color: var(--mz-primary-soft);
+  background: var(--mz-surface);
+}
+
+.messenger-settings-chip-label {
+  overflow: hidden;
+  color: var(--mz-text);
+  font-size: var(--mz-font-md);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ------------------------------------------------------- 分组卡片与设置项 */

@@ -254,45 +254,62 @@ component FoldEntry inherits Rectangle {
     private property <bool> expandable: root.data.detail != "" || root.data.patch.length > 0;
     height: entry-column.preferred-height;
     entry-column := VerticalLayout {
-        padding-left: Theme.timeline-padding; padding-right: Theme.timeline-padding; padding-top: 1px; padding-bottom: 1px;
+        padding-left: 0px; padding-right: 0px; padding-top: 1px; padding-bottom: 1px;
         spacing: 0px;
-        HorizontalLayout {
-            height: 26px; spacing: 8px;
-            TimelineGutter {
-                line: root.in-group; node: root.in-group;
-                status: root.data.status-kind;
+        // The head is one full-width button, as on the web: the hover tint is
+        // the head's own background, so it paints under the label. A band
+        // declared after the content would cover the text instead.
+        head := Rectangle {
+            height: 26px;
+            border-radius: Theme.radius-tag;
+            background: head-touch.has-hover ? Theme.hover : transparent;
+            head-touch := TouchArea {
+                x: Theme.timeline-padding + TimelineMetrics.gutter;
+                width: parent.width - Theme.timeline-padding * 2 - TimelineMetrics.gutter;
+                height: parent.height;
+                mouse-cursor: root.expandable ? MouseCursor.pointer : MouseCursor.default;
+                clicked => { if root.expandable { root.toggle(root.data.payload); } }
             }
-            StatusDot { y: 5px; status: root.data.status-kind; phase: root.data.payload; }
-            Image {
-                y: 6.5px; width: 13px; height: 13px;
-                source: ToolIcons.image(root.data.tool-icon);
-                colorize: Theme.muted; image-fit: contain;
-                // A thinking entry has no tool glyph: the web row reads as
-                // status, label, outcome.
-                visible: root.data.tool-icon != "";
+            head-row := HorizontalLayout {
+                x: Theme.timeline-padding; y: 0px;
+                width: parent.width - Theme.timeline-padding * 2; height: parent.height;
+                spacing: 8px;
+                TimelineGutter {
+                    line: root.in-group; node: root.in-group;
+                    status: root.data.status-kind;
+                }
+                StatusDot { y: 5px; status: root.data.status-kind; phase: root.data.payload; }
+                Image {
+                    y: 6.5px; width: 13px; height: 13px;
+                    source: ToolIcons.image(root.data.tool-icon);
+                    colorize: Theme.muted; image-fit: contain;
+                    // A thinking entry has no tool glyph: the web row reads as
+                    // status, label, outcome.
+                    visible: root.data.tool-icon != "";
+                }
+                Text {
+                    width: self.preferred-width; height: parent.height;
+                    text: root.data.tool-name; color: Theme.muted; font-size: Theme.font-md;
+                    vertical-alignment: center; visible: root.data.tool-name != "";
+                }
+                // The target chip belongs to the name; the summary then reads as
+                // the outcome of the call.
+                TargetChip { y: 4px; label: root.data.target; visible: root.data.target != ""; }
+                Text {
+                    horizontal-stretch: 1; min-width: 0px; height: parent.height;
+                    text: root.data.summary; color: Theme.timeline-entry-soft; font-size: Theme.font-sm;
+                    overflow: elide; vertical-alignment: center;
+                }
+                // No detail and no diff means nothing to unfold: the web row drops
+                // its toggle rather than offering an empty body.
+                FoldCaret { y: 7px; open: root.data.open; visible: root.expandable; }
             }
-            Text {
-                width: self.preferred-width; height: parent.height;
-                text: root.data.tool-name; color: Theme.muted; font-size: Theme.font-md;
-                vertical-alignment: center; visible: root.data.tool-name != "";
-            }
-            // The target chip belongs to the name; the summary then reads as
-            // the outcome of the call.
-            TargetChip { y: 4px; label: root.data.target; visible: root.data.target != ""; }
-            Text {
-                horizontal-stretch: 1; min-width: 0px; height: parent.height;
-                text: root.data.summary; color: Theme.timeline-entry-soft; font-size: Theme.font-sm;
-                overflow: elide; vertical-alignment: center;
-            }
-            // No detail and no diff means nothing to unfold: the web row drops
-            // its toggle rather than offering an empty body.
-            FoldCaret { y: 7px; open: root.data.open; visible: root.expandable; }
         }
-        // The expanded payload clears the gutter it hangs from: the column
-        // already carries the 24px page margin, so this adds the 20px gutter.
+        // The expanded payload clears the page margin and the gutter it hangs
+        // from.
         if root.data.open : VerticalLayout {
-            padding-left: TimelineMetrics.gutter;
-            padding-right: 0px;
+            padding-left: Theme.timeline-padding + TimelineMetrics.gutter;
+            padding-right: Theme.timeline-padding;
             padding-top: 4px; padding-bottom: 8px;
             spacing: 8px;
             for card in root.data.patch : PatchDiffCard { card: card; }
@@ -327,25 +344,6 @@ component FoldEntry inherits Rectangle {
             }
         }
     }
-    // The whole header is one click target, and it tints as a unit: the web
-    // head is a full-width button, so hover covers the page margin too. It is a
-    // positioned child of the row rather than of the column: a layout child
-    // would be counted into `preferred-height` and double every row.
-    head-hit := Rectangle {
-        x: 0px;
-        y: 1px;
-        width: parent.width;
-        height: 26px;
-        border-radius: Theme.radius-tag;
-        background: hit-area.has-hover ? Theme.hover : transparent;
-        hit-area := TouchArea {
-            x: Theme.timeline-padding + TimelineMetrics.gutter; y: 0px;
-            width: parent.width - Theme.timeline-padding * 2 - TimelineMetrics.gutter;
-            height: parent.height;
-            mouse-cursor: root.expandable ? MouseCursor.pointer : MouseCursor.default;
-            clicked => { if root.expandable { root.toggle(root.data.payload); } }
-        }
-    }
 }
 
 component GroupBar inherits Rectangle {
@@ -354,6 +352,17 @@ component GroupBar inherits Rectangle {
     // The open bar is the heavier of the two: 32px of 13px secondary text,
     // against 30px of 12px muted text when the batch is folded.
     height: root.data.open ? 32px : 30px;
+    // Same rule as FoldEntry.head: the tint is the bar's own background so it
+    // stays under the label, and the click target is declared first.
+    border-radius: Theme.radius-tag;
+    background: bar-touch.has-hover ? Theme.hover : transparent;
+    bar-touch := TouchArea {
+        x: Theme.timeline-padding + TimelineMetrics.gutter; y: 0px;
+        width: parent.width - Theme.timeline-padding * 2 - TimelineMetrics.gutter;
+        height: parent.height;
+        mouse-cursor: pointer;
+        clicked => { root.toggle(root.data.payload); }
+    }
     HorizontalLayout {
         padding-left: Theme.timeline-padding; padding-right: Theme.timeline-padding;
         spacing: 0px;
@@ -374,19 +383,6 @@ component GroupBar inherits Rectangle {
                 overflow: elide; vertical-alignment: center;
                 visible: !root.data.open && root.data.summary != "";
             }
-        }
-    }
-    // Positioned, not a layout child: see the note on FoldEntry.head-hit.
-    bar-hit := Rectangle {
-        x: 0px; y: 0px; width: parent.width; height: parent.height;
-        border-radius: Theme.radius-tag;
-        background: hit-area.has-hover ? Theme.hover : transparent;
-        hit-area := TouchArea {
-            x: Theme.timeline-padding + TimelineMetrics.gutter; y: 0px;
-            width: parent.width - Theme.timeline-padding * 2 - TimelineMetrics.gutter;
-            height: parent.height;
-            mouse-cursor: pointer;
-            clicked => { root.toggle(root.data.payload); }
         }
     }
 }

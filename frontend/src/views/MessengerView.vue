@@ -8,10 +8,11 @@
       'messenger-view--drawer-open': sidebarDrawerOpen,
       'messenger-view--action-blocked': isMessengerInteractionBlocked
     }"
+    :style="sidebarWidthStyle"
   >
     <div class="messenger-shell">
       <MessengerSidebar
-        v-show="!isEmbeddedChatRoute"
+        v-show="!isEmbeddedChatRoute && !sidebarCollapsed"
         :controller="controller"
         @new-task="startNewSession"
         @select-workspace="selectWorkspace"
@@ -21,6 +22,28 @@
         @archive-thread="archiveTimelineSession"
         @open-settings="openSettingsPage"
       />
+      <!-- 桌面端侧栏拖宽线：悬停/拖拽显色，双击复位；窄视口抽屉模式不显示。 -->
+      <div
+        v-if="!isEmbeddedChatRoute && !isSidebarDrawer && !sidebarCollapsed"
+        class="messenger-sidebar-resizer"
+        :class="{ 'is-dragging': sidebarResizing }"
+        role="separator"
+        aria-orientation="vertical"
+        :aria-label="t('messenger.sidebar.resizeWidth')"
+        @pointerdown.prevent="startSidebarResize"
+        @dblclick.prevent="resetSidebarWidth"
+      >
+        <button
+          class="messenger-sidebar-collapse-btn"
+          type="button"
+          :title="t('messenger.sidebar.toggle')"
+          :aria-label="t('messenger.sidebar.toggle')"
+          @pointerdown.stop
+          @click="collapseSidebar"
+        >
+          <i class="fa-solid fa-chevron-left" aria-hidden="true"></i>
+        </button>
+      </div>
       <div
         v-if="sidebarDrawerOpen"
         class="messenger-sidebar-backdrop"
@@ -29,14 +52,14 @@
       ></div>
 
       <section class="messenger-main">
-        <!-- 壳体不再有顶部条：窄视口的左栏抽屉入口与「回到顶部」都挂在主区浮层上。 -->
+        <!-- 壳体不再有顶部条：窄视口抽屉入口 / 折叠后的展开入口与「回到顶部」都挂在主区浮层上。 -->
         <button
-          v-if="isSidebarDrawer && !sidebarDrawerOpen"
+          v-if="(isSidebarDrawer && !sidebarDrawerOpen) || sidebarCollapsed"
           class="messenger-sidebar-open"
           type="button"
           :title="t('messenger.sidebar.toggle')"
           :aria-label="t('messenger.sidebar.toggle')"
-          @click="sidebarDrawerOpen = true"
+          @click="expandSidebar"
         >
           <i class="fa-solid fa-bars" aria-hidden="true"></i>
         </button>
@@ -55,12 +78,11 @@
           ref="messageListRef"
           class="messenger-chat-body"
           data-testid="messenger-message-list"
-          :class="{ 'is-messages': hasActiveThread, 'is-welcome': !hasActiveThread }"
+          :class="{ 'is-messages': hasActiveThread }"
           @scroll.passive="handleMessageListScroll"
           @click="handleMessageContentClick"
         >
-          <MessengerWelcomePane v-if="!hasActiveThread" :controller="controller" />
-          <MessengerMessagePanel v-else :controller="controller" />
+          <MessengerMessagePanel v-if="hasActiveThread" :controller="controller" />
         </div>
 
         <!-- 用户轮次刻度：滚动容器之外（绝对定位），因此不会跟着内容滚走。 -->
@@ -223,7 +245,6 @@ import { computed as vueComputed, ref as vueRef } from 'vue';
 import { defineRecoverableAsyncComponent } from '@/utils/asyncComponentRecovery';
 import MessengerMessagePanel from '@/views/messenger/sections/MessengerMessagePanel.vue';
 import MessengerSidebar from '@/views/messenger/sections/MessengerSidebar.vue';
-import MessengerWelcomePane from '@/views/messenger/sections/MessengerWelcomePane.vue';
 import MessengerTurnRuler from '@/views/messenger/sections/MessengerTurnRuler.vue';
 import MessengerSettingsOverlay from '@/views/messenger/sections/MessengerSettingsOverlay.vue';
 import MessageGoalBar from '@/components/chat/MessageGoalBar.vue';
@@ -261,6 +282,92 @@ const isSidebarDrawer = vueComputed(() => Number(controller.viewportWidth?.value
 const sidebarDrawerOpen = vueRef(false);
 const closeDrawerOnNarrow = () => {
   if (isSidebarDrawer.value) sidebarDrawerOpen.value = false;
+};
+
+// 桌面端侧栏宽度拖拽与折叠：宽度通过覆盖 --mz-sidebar-width 生效，状态持久化在 localStorage。
+const SIDEBAR_WIDTH_STORAGE_KEY = 'messenger:sidebar:width';
+const SIDEBAR_COLLAPSED_STORAGE_KEY = 'messenger:sidebar:collapsed';
+const SIDEBAR_WIDTH_MIN = 200;
+const SIDEBAR_WIDTH_MAX = 360;
+const SIDEBAR_WIDTH_DEFAULT = 240;
+
+const readStoredSidebarWidth = () => {
+  if (typeof window === 'undefined') return SIDEBAR_WIDTH_DEFAULT;
+  const raw = Number(window.localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY));
+  if (!Number.isFinite(raw) || raw <= 0) return SIDEBAR_WIDTH_DEFAULT;
+  return Math.min(SIDEBAR_WIDTH_MAX, Math.max(SIDEBAR_WIDTH_MIN, raw));
+};
+
+const readStoredSidebarCollapsed = () => {
+  if (typeof window === 'undefined') return false;
+  return window.localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === '1';
+};
+
+const sidebarWidth = vueRef(readStoredSidebarWidth());
+const sidebarCollapsed = vueRef(readStoredSidebarCollapsed());
+const sidebarResizing = vueRef(false);
+
+const sidebarWidthStyle = vueComputed(() => ({
+  '--mz-sidebar-width': `${sidebarWidth.value}px`
+}));
+
+let sidebarResizePointerId = -1;
+const stopSidebarResize = (event: PointerEvent) => {
+  if (event.pointerId !== sidebarResizePointerId) return;
+  sidebarResizePointerId = -1;
+  sidebarResizing.value = false;
+  window.removeEventListener('pointermove', onSidebarResizeMove);
+  window.removeEventListener('pointerup', stopSidebarResize);
+  window.removeEventListener('pointercancel', stopSidebarResize);
+};
+
+const onSidebarResizeMove = (event: PointerEvent) => {
+  if (event.pointerId !== sidebarResizePointerId) return;
+  const rootEl = messengerRootRef.value;
+  if (!rootEl) return;
+  const left = rootEl.getBoundingClientRect().left;
+  sidebarWidth.value = Math.min(
+    SIDEBAR_WIDTH_MAX,
+    Math.max(SIDEBAR_WIDTH_MIN, Math.round(event.clientX - left))
+  );
+};
+
+const startSidebarResize = (event: PointerEvent) => {
+  if (isSidebarDrawer.value || sidebarCollapsed.value) return;
+  sidebarResizePointerId = event.pointerId;
+  sidebarResizing.value = true;
+  window.addEventListener('pointermove', onSidebarResizeMove);
+  window.addEventListener('pointerup', stopSidebarResize);
+  window.addEventListener('pointercancel', stopSidebarResize);
+  onSidebarResizeMove(event);
+};
+
+const persistSidebarWidth = () => {
+  if (typeof window === 'undefined') return;
+  window.localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(sidebarWidth.value));
+};
+
+const resetSidebarWidth = () => {
+  sidebarWidth.value = SIDEBAR_WIDTH_DEFAULT;
+  persistSidebarWidth();
+};
+
+const collapseSidebar = () => {
+  sidebarCollapsed.value = true;
+  if (typeof window !== 'undefined') {
+    window.localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, '1');
+  }
+};
+
+const expandSidebar = () => {
+  sidebarCollapsed.value = false;
+  if (typeof window !== 'undefined') {
+    window.localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, '0');
+  }
+  // 窄视口下同一颗按钮承担「打开抽屉」：折叠态与抽屉态共用展开入口。
+  if (isSidebarDrawer.value) {
+    sidebarDrawerOpen.value = true;
+  }
 };
 
 const openThread = (sessionId: string) => {

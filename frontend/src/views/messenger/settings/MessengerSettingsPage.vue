@@ -38,11 +38,6 @@
     </nav>
 
     <section class="messenger-settings-frame-content" data-testid="settings-content">
-      <header class="messenger-settings-frame-content-head">
-        <h2 class="messenger-settings-frame-content-title">{{ t(activeMeta.titleKey) }}</h2>
-        <p class="messenger-settings-frame-content-desc">{{ t(activeMeta.descKey) }}</p>
-      </header>
-
       <div class="messenger-settings-frame-content-body">
         <!-- 分类内容按需挂载：只有被选中过的分类才会创建实例，最多保留 3 个。 -->
         <KeepAlive :max="SETTINGS_KEEP_ALIVE_MAX">
@@ -66,9 +61,7 @@ import type { MessengerControllerContext } from '@/views/messenger/controller/me
 import { useI18n } from '@/i18n';
 
 import {
-  SETTINGS_CATEGORIES,
   filterSettingsCategories,
-  findSettingsCategory,
   type SettingsCategoryId
 } from './settingsCategories';
 import { SETTINGS_CATEGORY_COMPONENTS } from './settingsCategoryComponents';
@@ -166,7 +159,6 @@ watch(controllerAgentMode, (mode) => {
 const keyword = ref('');
 const visibleCategories = computed(() => filterSettingsCategories(keyword.value, t));
 
-const activeMeta = computed(() => findSettingsCategory(activeCategory.value) || SETTINGS_CATEGORIES[0]);
 const activeComponent = computed(() => SETTINGS_CATEGORY_COMPONENTS[activeCategory.value]);
 
 const selectCategory = (id: SettingsCategoryId) => {

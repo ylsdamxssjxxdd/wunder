@@ -413,7 +413,7 @@ import { emitWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { normalizeWorkspacePath } from '@/utils/workspaceTreeCache';
 import { normalizeAgentPresetQuestions } from '@/utils/agentPresetQuestions';
 import { clearWorkspaceDragPaths, hasWorkspaceDragPaths, readWorkspaceDragPaths } from '@/components/chat/workspaceDrag';
-import { workspaceDisplayNameOverride } from '@/views/messenger/workspaceDisplayName';
+
 import { useSessionContextUsage } from '@/views/messenger/sessionContextUsage';
 // B2 hand-off: the sidebar file area queues workspace references here.
 import {
@@ -748,9 +748,7 @@ const contextUsageTitle = computed(() => {
   return counts ? `${t('profile.stats.contextTokens')} ${counts}` : t('profile.stats.contextTokens');
 });
 // 输入卡的状态面只剩「这次消息发到哪个工作目录」；在线与占用都不再单独占一行。
-const workspaceName = computed(
-  () => String(workspaceDisplayNameOverride.value || '').trim() || t('messenger.workspace.defaultName')
-);
+const workspaceName = computed(() => t('messenger.workspace.defaultName'));
 
 const hasInquirySelection = computed(
   () => Array.isArray(props.inquirySelection) && props.inquirySelection.length > 0

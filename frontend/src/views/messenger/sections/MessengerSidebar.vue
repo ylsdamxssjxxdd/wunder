@@ -13,7 +13,7 @@
         :title="t('messenger.sidebar.newTask')"
         @click="emit('new-task')"
       >
-        <i class="fa-solid fa-arrow-rotate-right" aria-hidden="true"></i>
+        <i class="fa-solid fa-plus" aria-hidden="true"></i>
         <span>{{ t('messenger.sidebar.newTask') }}</span>
       </button>
     </div>
@@ -29,34 +29,18 @@
         @click="emit('select-workspace')"
         @keydown.enter.prevent="emit('select-workspace')"
       >
-        <i class="fa-solid fa-folder-tree messenger-sidebar-workspace-icon" aria-hidden="true"></i>
+        <i class="fa-solid fa-cloud messenger-sidebar-workspace-icon" aria-hidden="true"></i>
         <span class="messenger-sidebar-workspace-name" :title="workspaceName">{{ workspaceName }}</span>
         <span class="messenger-sidebar-workspace-meta">{{ workspaceMetaLabel }}</span>
-        <el-dropdown
-          trigger="click"
-          :teleported="true"
-          placement="bottom-end"
-          popper-class="mz-thread-dropdown"
-          @command="handleWorkspaceCommand"
+        <button
+          class="messenger-sidebar-workspace-menu"
+          type="button"
+          :title="t('chat.newSession')"
+          :aria-label="t('chat.newSession')"
+          @click.stop="emit('new-task')"
         >
-          <button
-            class="messenger-sidebar-workspace-menu"
-            type="button"
-            :title="t('common.more')"
-            :aria-label="t('common.more')"
-            @click.stop
-          >
-            <i class="fa-solid fa-ellipsis" aria-hidden="true"></i>
-          </button>
-          <template #dropdown>
-            <el-dropdown-menu>
-              <el-dropdown-item command="new-thread">{{ t('chat.newSession') }}</el-dropdown-item>
-              <el-dropdown-item command="rename-workspace">
-                {{ t('messenger.sidebar.renameWorkspace') }}
-              </el-dropdown-item>
-            </el-dropdown-menu>
-          </template>
-        </el-dropdown>
+          <i class="fa-solid fa-plus" aria-hidden="true"></i>
+        </button>
       </div>
 
       <MessengerThreadTree
@@ -114,12 +98,10 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref } from 'vue';
-import { ElMessage, ElMessageBox } from 'element-plus';
 import MessengerThreadTree from './MessengerThreadTree.vue';
 import WorkspaceFilesPanel from '@/views/messenger/workspace/WorkspaceFilesPanel.vue';
 import type { MessengerControllerContext } from '../controller/messengerControllerContext';
 import { buildTaskList } from '@/views/messenger/taskList';
-import { setWorkspaceDisplayNameOverride, workspaceDisplayNameOverride } from '@/views/messenger/workspaceDisplayName';
 
 const props = defineProps<{ controller: MessengerControllerContext }>();
 const emit = defineEmits<{
@@ -154,9 +136,7 @@ const MIN_SPLIT = 0.3;
 const MAX_SPLIT = 0.8;
 const DEFAULT_SPLIT = 0.6;
 
-const workspaceName = computed(
-  () => workspaceDisplayNameOverride.value || t('messenger.workspace.defaultName')
-);
+const workspaceName = computed(() => t('messenger.workspace.defaultName'));
 
 // 搜索栏已移除（对齐桌面）：线程树恢复为不过滤。
 // 注意：`controller.keywordInput` 仍是 sessionHub 搜索（中间栏 sections 过滤）的唯一输入源，
@@ -169,38 +149,6 @@ const workspaceMetaLabel = computed(() => {
   if (!total) return t('messenger.status.idle');
   return t('messenger.sidebar.threadCount', { count: total });
 });
-
-const handleWorkspaceCommand = (command: string) => {
-  if (command === 'new-thread') {
-    emit('new-task');
-    return;
-  }
-  if (command === 'rename-workspace') {
-    void renameWorkspace();
-  }
-};
-
-const renameWorkspace = async () => {
-  try {
-    const { value } = await ElMessageBox.prompt(
-      t('messenger.sidebar.renameWorkspacePrompt'),
-      t('messenger.sidebar.renameWorkspace'),
-      {
-        confirmButtonText: t('common.confirm'),
-        cancelButtonText: t('common.cancel'),
-        inputValue: workspaceName.value,
-        inputPlaceholder: t('messenger.workspace.defaultName'),
-        inputValidator: (input: string) => (String(input || '').trim() ? true : t('chat.history.renameRequired'))
-      }
-    );
-    const next = String(value || '').trim();
-    if (!next || next === workspaceName.value) return;
-    setWorkspaceDisplayNameOverride(next);
-    ElMessage.success(t('messenger.sidebar.renameWorkspaceSuccess'));
-  } catch (error) {
-    if (error === 'cancel' || error === 'close') return;
-  }
-};
 
 // ------------------------------------------------------------------ resizer
 

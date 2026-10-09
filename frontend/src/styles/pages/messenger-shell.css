@@ -1126,66 +1126,68 @@
   box-shadow: inset 0 0 0 1px var(--mz-primary-soft, #dfac9a);
 }
 
-/* ------------------------------------------------------------ welcome pane */
+/* ---------------------------------------------------- sidebar resizer/collapse */
 
-.messenger-welcome {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
+/* 侧栏右缘拖宽线：默认隐形占位，悬停/拖拽时显色；折叠按钮吸附在线条中点。 */
+.messenger-sidebar-resizer {
+  position: relative;
+  flex-shrink: 0;
+  width: 5px;
+  margin-left: -5px;
+  z-index: 8;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.messenger-sidebar-resizer::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 2px;
+  width: 1px;
+  background: transparent;
+  transition: background-color 120ms ease;
+}
+
+.messenger-sidebar-resizer:hover::before,
+.messenger-sidebar-resizer.is-dragging::before {
+  background: var(--mz-primary-soft, #dfac9a);
+}
+
+.messenger-sidebar-resizer.is-dragging::before {
+  background: var(--mz-primary, #c96443);
+}
+
+.messenger-sidebar-collapse-btn {
+  position: absolute;
+  top: 50%;
+  left: -1px;
+  transform: translateY(-50%);
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 16px;
-  box-sizing: border-box;
-  min-height: 100%;
-  padding: 32px 24px;
-  text-align: center;
+  width: 18px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--mz-border, #e8e6e3);
+  border-radius: 6px;
+  background: var(--mz-surface, #ffffff);
+  color: var(--mz-text-muted, #8a8f99);
+  font-size: 10px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease, color 120ms ease, border-color 120ms ease;
 }
 
-.messenger-welcome-greeting {
-  color: var(--mz-text);
-  font-size: 22px;
-  font-weight: 600;
-  line-height: 1.4;
+.messenger-sidebar-resizer:hover .messenger-sidebar-collapse-btn,
+.messenger-sidebar-collapse-btn:focus-visible {
+  opacity: 1;
 }
 
-.messenger-welcome-greeting strong {
-  color: var(--mz-primary);
-  font-weight: 600;
-}
-
-.messenger-welcome-hint {
-  max-width: 520px;
-  color: var(--mz-text-muted);
-  font-size: var(--mz-font-base);
-  line-height: 1.7;
-}
-
-.messenger-welcome-card {
-  width: min(520px, 100%);
-  padding: 16px;
-  border: 1px solid var(--mz-border);
-  border-radius: var(--mz-radius-card);
-  background: var(--mz-surface);
-  text-align: left;
-}
-
-.messenger-welcome-card-title {
-  margin-bottom: 8px;
-  color: var(--mz-text);
-  font-size: var(--mz-font-base);
-  font-weight: 600;
-}
-
-.messenger-welcome-card-placeholder {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 12px;
-  border: 1px dashed var(--mz-border-strong);
-  border-radius: var(--mz-radius-btn);
-  color: var(--mz-text-muted);
-  font-size: var(--mz-font-md);
-  line-height: 1.6;
+.messenger-sidebar-collapse-btn:hover {
+  color: var(--mz-primary, #c96443);
+  border-color: var(--mz-primary-soft, #dfac9a);
 }
 
 /* -------------------------------------------------------- settings overlay */

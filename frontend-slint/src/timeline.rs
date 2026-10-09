@@ -123,6 +123,9 @@ pub struct Timeline {
     reasons: usize,
     group_open: bool,
     turn: Option<String>,
+    /// The live turn ran to its end but its rows are still the only copy: the
+    /// durable snapshot has not caught up with it yet.
+    settled: bool,
     /// Whether frozen body blocks get syntax highlighting; the reducer turns
     /// this on for the chat view and off elsewhere.
     highlight: bool,
@@ -148,6 +151,7 @@ impl Timeline {
             reasons: 0,
             group_open: true,
             turn: None,
+            settled: false,
             highlight: false,
         }
     }
@@ -218,6 +222,7 @@ impl Timeline {
         self.reasons = 0;
         self.group_open = true;
         self.turn = None;
+        self.settled = false;
         self.highlight = false;
     }
 
@@ -252,6 +257,7 @@ impl Timeline {
         self.group_open = true;
         self.reasons = 0;
         self.turn = Some(root.to_string());
+        self.settled = false;
         let index = self.push(blank(KIND_DIVIDER, format!("turn-{root}")));
         self.patch(index, |row| {
             row.visible = false;
@@ -527,6 +533,7 @@ impl Timeline {
         if failed {
             self.fail_running();
         }
+        self.settled = true;
     }
 
     /// A cancelled or failed turn must never leave an entry spinning: every row
@@ -611,29 +618,28 @@ impl Timeline {
             .as_ref()
             .map(|root| format!("turn-{root}"))
             .unwrap_or_default();
-        if divider.is_empty() || rows.iter().any(|row| row.id == divider) {
-            // Either there is no live turn, or the snapshot owns it now and its
-            // rows are the authority: the live builder is done with this turn.
-            if !divider.is_empty() {
-                self.turn = None;
-                self.body = None;
-                self.thinking = None;
-                self.tools.clear();
-                self.bars.clear();
-                self.group = NO_GROUP;
-            }
-            self.model.set_vec(rows);
-            return;
-        }
         let count = self.model.row_count();
-        let Some(start) = (0..count).find(|index| {
+        let start = (0..count).find(|index| {
             self.model
                 .row_data(*index)
                 .is_some_and(|row| row.id == divider)
-        }) else {
+        });
+        let Some(start) = start else {
+            // Either there is no live turn, or the model no longer holds its
+            // rows: the snapshot owns everything either way.
+            self.forget_turn();
             self.model.set_vec(rows);
             return;
         };
+        if divider.is_empty() || rows.iter().any(|row| row.id == divider)
+            || (self.settled && self.snapshot_moved_past(rows.as_slice(), start))
+        {
+            // The snapshot carries this turn's own rows: the live builder is
+            // done with it and its copy goes with them.
+            self.forget_turn();
+            self.model.set_vec(rows);
+            return;
+        }
         let mut published = rows;
         let delta = published.len() as isize - start as isize;
         for index in start..count {
@@ -649,6 +655,43 @@ impl Timeline {
         }
         self.model.set_vec(published);
         self.rebase(delta);
+    }
+
+    /// Whether the snapshot's tail is no longer the durable tail the model
+    /// already shows, i.e. it has taken the settled turn over. The live turn is
+    /// keyed by session and a durable turn by its root message, so the two ids
+    /// never meet and ownership has to be read off the turn tail. A bounded
+    /// turn list also drops its oldest turns, which moves the count without
+    /// moving the newest divider, so both are compared.
+    fn snapshot_moved_past(&self, rows: &[TimelineRow], start: usize) -> bool {
+        let mut held = (0usize, slint::SharedString::default());
+        for index in 0..start {
+            if let Some(row) = self.model.row_data(index) {
+                if row.kind == KIND_DIVIDER {
+                    held.0 += 1;
+                    held.1 = row.id;
+                }
+            }
+        }
+        let mut next = (0usize, slint::SharedString::default());
+        for row in rows {
+            if row.kind == KIND_DIVIDER {
+                next.0 += 1;
+                next.1 = row.id.clone();
+            }
+        }
+        held != next
+    }
+
+    /// Release the reducer's hold on a turn the snapshot has taken over.
+    fn forget_turn(&mut self) {
+        self.turn = None;
+        self.settled = false;
+        self.body = None;
+        self.thinking = None;
+        self.tools.clear();
+        self.bars.clear();
+        self.group = NO_GROUP;
     }
 
     /// Move every row index the reducer still holds by the amount the durable
@@ -935,6 +978,46 @@ mod tests {
             "durable-answer",
             "the durable rows are the authority once they arrive"
         );
+    }
+
+    /// The live turn is keyed by the session and a durable turn by its root
+    /// message, so the handoff cannot wait for those two ids to meet: waiting is
+    /// what left a finished answer on screen twice, once live and once durable.
+    #[test]
+    fn a_settled_turn_hands_over_to_durable_rows_under_another_id() {
+        let mut timeline = Timeline::new();
+        timeline.set_history(durable_rows(1));
+        timeline.begin_turn("session-x", "Fixture input");
+        timeline.start_body(1);
+        timeline.append_body("答案").unwrap();
+        timeline.flush();
+        timeline.finish(false);
+
+        // Storage carries that very turn, under its own root id.
+        let mut settled = durable_rows(1);
+        settled.push(blank(KIND_DIVIDER, "turn-root-9".into()));
+        settled.push(blank(KIND_USER, String::new()));
+        settled.push(blank(KIND_BODY, "body-root-9".into()));
+        timeline.publish_history(settled.clone());
+
+        let model = timeline.model();
+        assert_eq!(
+            model.iter().filter(|row| row.id == "turn-session-x").count(),
+            0,
+            "the live copy is gone once storage owns the turn"
+        );
+        assert_eq!(
+            model.iter().filter(|row| row.kind == KIND_BODY).count(),
+            2,
+            "one durable answer per turn, not an extra live bubble"
+        );
+        assert_eq!(model.row_count(), 5);
+        drop(model);
+
+        // The handoff is final: the next snapshot of the same shape cannot
+        // append the turn a second time.
+        timeline.publish_history(settled);
+        assert_eq!(timeline.model().row_count(), 5);
     }
 
     /// §十二.2: the view lays out every row the projection marks visible, so the

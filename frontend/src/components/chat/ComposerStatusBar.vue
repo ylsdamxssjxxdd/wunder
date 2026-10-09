@@ -10,7 +10,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 
-import { workspaceDisplayNameOverride } from '@/views/messenger/workspaceDisplayName';
 import { useI18n } from '@/i18n';
 
 /**
@@ -31,10 +30,7 @@ const props = defineProps({
 const { t } = useI18n();
 
 const displayName = computed(
-  () =>
-    String(props.workspaceName || '').trim() ||
-    String(workspaceDisplayNameOverride.value || '').trim() ||
-    t('messenger.workspace.defaultName')
+  () => String(props.workspaceName || '').trim() || t('messenger.workspace.defaultName')
 );
 </script>
 

@@ -713,6 +713,49 @@ mod tests {
         );
     }
 
+    /// The shipped shape of a finished turn: the send path keys the live turn by
+    /// session while storage keys it by its root message, so the two never share
+    /// an id. Handing the turn over on that difference is what left a second
+    /// bubble on screen after the last reply.
+    #[test]
+    fn a_finished_live_turn_is_published_once() {
+        let mut timeline = crate::timeline::Timeline::new();
+        timeline.set_history(project_history(&[fixture(
+            "fixture-first",
+            "Earlier answer",
+            "任务完成",
+        )]));
+        timeline.begin_turn("fixture-session", "Fixture input");
+        timeline.start_body(1);
+        timeline.append_body("Latest answer").unwrap();
+        timeline.flush();
+        timeline.finish(false);
+
+        // Storage commits the turn the live builder just settled.
+        timeline.publish_history(project_history(&[
+            fixture("fixture-first", "Earlier answer", "任务完成"),
+            fixture("fixture-session-root", "Latest answer", "任务完成"),
+        ]));
+
+        let rows = timeline.model();
+        assert_eq!(
+            rows.iter()
+                .filter(|row| row.kind == crate::timeline::KIND_USER)
+                .count(),
+            2,
+            "one bubble per turn, the finished one not twice"
+        );
+        assert_eq!(
+            rows.iter()
+                .filter(|row| row.kind == crate::timeline::KIND_DIVIDER)
+                .count(),
+            2,
+            "the live divider goes with the live copy"
+        );
+        drop(rows);
+        assert_eq!(timeline.last_answer(), "Latest answer");
+    }
+
     /// §12.2 evidence: the frame flush rewrites only the active tail block. Row
     /// handles of the frozen history must be the very same model instances
     /// before and after streaming, so no frame can rebuild the column.

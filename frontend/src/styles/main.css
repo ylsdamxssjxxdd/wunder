@@ -8,7 +8,6 @@
 @import "./chat/messages.css";
 @import "./chat/workflow.css";
 @import "./chat/input.css";
-@import "./dialogs/user-tools.css";
 @import "./messenger.css";
 /* Two-column messenger shell (site header + sidebar + chat pane). Loaded after
    messenger.css so its .messenger-view flex shell wins over the legacy grid. */
