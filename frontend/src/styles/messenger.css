@@ -2347,8 +2347,8 @@
 @media (max-width: 1024px) {
 
   .messenger-composer-scope.chat-shell .input-box--world {
-    min-height: var(--chat-composer-world-height, 168px);
-    height: var(--chat-composer-world-height, 168px);
+    min-height: 84px;
+    height: auto;
   }
 
   .messenger-world-pop-panel {
@@ -5041,18 +5041,18 @@
   z-index: 24;
 }
 
-/* B4 §8.1: floating card, radius 22px, 1px border, 10x14 padding, auto height
-   (the textarea grows 1-8 rows and then scrolls internally). */
+/* B4 §8.1: the card wraps **only** the input now (工具行在它外面），所以是
+   16px 圆角、1px 细边的紧凑输入框，而不是包住整条工具栏的大卡。 */
 .messenger-composer-scope.chat-shell .input-box--world {
   flex-direction: column;
   align-items: stretch;
   gap: 8px;
   border: 1px solid var(--mz-border, #e8e6e3);
-  border-radius: 22px;
+  border-radius: 16px;
   background: var(--mz-surface, #ffffff);
   min-height: 0;
   height: auto;
-  padding: 10px 14px;
+  padding: 12px 14px;
   position: relative;
   overflow: visible;
 }

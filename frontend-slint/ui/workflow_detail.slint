@@ -12,7 +12,7 @@ export component WorkflowDetail inherits Rectangle {
     column := VerticalLayout {
         height: self.preferred-height; spacing: 8px; alignment: start;
         if root.sections.length == 0 || !root.sections[0].kind.starts-with("compaction") : HorizontalLayout { height: 22px;
-            Text { text: I18n.wf_tool_result; color: Theme.muted; font-size: Theme.font-xs; font-weight: 700; }
+            Text { text: I18n.tl_entry_output; color: Theme.muted; font-size: Theme.font-xs; font-weight: 700; }
             Rectangle { horizontal-stretch: 1; }
             Rectangle { width: 24px; height: 24px; border-radius: 7px; border-width: 1px; border-color: Theme.border; background: copy-area.has-hover ? Theme.hover : transparent;
                 Image { width: 12px; height: 12px; source: @image-url("../assets/icons/copy.svg"); colorize: Theme.muted; image-fit: contain; }

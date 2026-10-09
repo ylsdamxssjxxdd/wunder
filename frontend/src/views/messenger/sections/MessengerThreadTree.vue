@@ -9,9 +9,19 @@
         v-for="item in visibleItems"
         :key="item.id"
         class="mz-thread-row"
-        :class="{ 'is-active': activeSessionId === item.id }"
+        :class="{
+          'is-active': activeSessionId === item.id,
+          'is-dragging': dragId === item.id,
+          'is-drop-before': dropTarget?.id === item.id && dropTarget.position === 'before',
+          'is-drop-after': dropTarget?.id === item.id && dropTarget.position === 'after'
+        }"
+        draggable="true"
         role="treeitem"
         :aria-selected="activeSessionId === item.id ? 'true' : 'false'"
+        @dragstart="handleDragStart($event, item.id)"
+        @dragover="handleDragOver($event, item.id)"
+        @drop="handleDrop($event, item.id)"
+        @dragend="resetDrag"
       >
         <button
           class="mz-thread-select"
@@ -48,7 +58,6 @@
               >
                 {{ t('messenger.tasks.archive') }}
               </el-dropdown-item>
-              <el-dropdown-item command="delete" divided>{{ t('messenger.thread.delete') }}</el-dropdown-item>
             </el-dropdown-menu>
           </template>
         </el-dropdown>
@@ -84,7 +93,6 @@ const emit = defineEmits<{
   detail: [id: string];
   rename: [id: string];
   archive: [id: string];
-  delete: [id: string];
 }>();
 
 const { t } = useI18n();
@@ -150,7 +158,48 @@ const handleAction = (action: string, id: string) => {
   if (action === 'detail') emit('detail', id);
   else if (action === 'rename') emit('rename', id);
   else if (action === 'archive') emit('archive', id);
-  else if (action === 'delete') emit('delete', id);
+};
+
+// -------------------------------------------------- 拖拽排序（本地持久化）
+// 行序由 usePersistentStableListOrder 保存；拖拽只调整已加载条目之间的次序。
+
+const dragId = ref('');
+const dropTarget = ref<{ id: string; position: 'before' | 'after' } | null>(null);
+
+const resetDrag = () => {
+  dragId.value = '';
+  dropTarget.value = null;
+};
+
+const handleDragStart = (event: DragEvent, id: string) => {
+  dragId.value = id;
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', id);
+  }
+};
+
+const handleDragOver = (event: DragEvent, id: string) => {
+  if (!dragId.value || dragId.value === id) return;
+  event.preventDefault();
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+  const position = event.clientY - rect.top < rect.height / 2 ? 'before' : 'after';
+  dropTarget.value = { id, position };
+};
+
+const handleDrop = (event: DragEvent, id: string) => {
+  event.preventDefault();
+  const target = dropTarget.value;
+  if (dragId.value && target && target.id === id) {
+    ordered.moveItem(
+      dragId.value,
+      target.id,
+      target.position,
+      displayItems.value.map((item) => item.id)
+    );
+  }
+  resetDrag();
 };
 
 let observer: ResizeObserver | undefined;
@@ -184,5 +233,18 @@ onBeforeUnmount(() => {
 <style scoped>
 :global(.mz-thread-dropdown .el-dropdown-menu__item) {
   font-size: 13px;
+}
+
+/* 拖拽排序的可视反馈：源行半透明，落点行上下缘高亮。 */
+.mz-thread-row.is-dragging {
+  opacity: 0.45;
+}
+
+.mz-thread-row.is-drop-before {
+  box-shadow: inset 0 2px 0 var(--mz-primary);
+}
+
+.mz-thread-row.is-drop-after {
+  box-shadow: inset 0 -2px 0 var(--mz-primary);
 }
 </style>

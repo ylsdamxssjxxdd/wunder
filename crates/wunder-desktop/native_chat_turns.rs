@@ -2,12 +2,30 @@
 use super::{message_from_value, NativeDesktop, NativeMessage, NativeWorkflowEntry};
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
+use wunder_server::storage::StorageBackend;
+
+/// Tool and compaction entries one turn projects. The timeline lays out every
+/// visible row, so this is a frame-cost bound as well as a display bound.
+const MAX_TURN_ENTRIES: usize = 24;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct NativeChatTurn {
     pub root_id: String,
     pub user: NativeMessage,
     pub assistant: NativeMessage,
+    /// The turn's model rounds in durable order. One round is the unit the
+    /// runtime registers as a single `assistant_message` item, so it carries
+    /// that round's thinking, its answer block and the tools it invoked.
+    pub rounds: Vec<NativeChatRound>,
+}
+
+/// One model round of an assistant turn.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NativeChatRound {
+    pub round: i64,
+    pub reasoning: String,
+    pub text: String,
+    pub items: Vec<NativeWorkflowEntry>,
 }
 
 impl NativeDesktop {
@@ -59,64 +77,68 @@ pub(super) fn load_turn(
             .or_else(|| items.last().and_then(|row| row["item_index"].as_i64()))
             .unwrap_or(after);
     }
-    // Recover the latest stable answer from durable blocks when a stop
-    // happened before the full assistant item was committed.
-    if let Some(item) = items
-        .iter_mut()
-        .rev()
-        .find(|item| stable_answer(item))
-        .filter(|item| {
-            item["payload"]["content"]
+    // A stop can land before an assistant item is committed, leaving that round
+    // with an empty payload while its streamed text is already durable as
+    // blocks. Recover every round's own fields: the timeline is per round, so
+    // reviving only the newest answer silently drops the earlier ones.
+    for item in items.iter_mut().filter(|item| stable_answer(item)) {
+        let item_id = item["item_id"].as_str().unwrap_or_default().to_string();
+        if item_id.is_empty() {
+            continue;
+        }
+        for field in ["content", "reasoning"] {
+            if !item["payload"][field]
                 .as_str()
                 .unwrap_or_default()
                 .is_empty()
-        })
-    {
-        let item_id = item["item_id"].as_str().unwrap_or_default().to_string();
-        let mut blocks = Vec::new();
-        let mut from = 0;
-        for page in 0..64 {
-            let (part, next, more) = storage.list_thread_item_blocks_page(
-                user,
-                session,
-                &item_id,
-                Some("content"),
-                from,
-                100,
-                false,
-            )?;
-            blocks.extend(part);
-            if !more {
-                break;
-            }
-            if page == 63 {
-                return Err(anyhow!("turn block limit exceeded"));
-            }
-            from = next.ok_or_else(|| anyhow!("missing block cursor"))? + 1;
-        }
-        let mut content = String::new();
-        for block in blocks {
-            let data = block.get("data").unwrap_or(&block);
-            if data["field"].as_str().unwrap_or("content") != "content" {
+            {
                 continue;
             }
-            if let Some(text) = data["content"].as_str() {
-                if content.len() + text.len() > 8 * 1024 * 1024 {
-                    return Err(anyhow!("turn text limit exceeded"));
-                }
-                content.push_str(text);
+            let text = recover_text(&**storage, user, session, &item_id, field)?;
+            if !text.is_empty() {
+                item["payload"][field] = json!(text);
             }
-        }
-        if !content.is_empty()
-            && item["payload"]["content"]
-                .as_str()
-                .unwrap_or_default()
-                .is_empty()
-        {
-            item["payload"]["content"] = json!(content);
         }
     }
     Ok(project_turn(root, &items))
+}
+
+/// Concatenate one item's durable text blocks of one field. Bounded by the
+/// storage page size and an 8 MiB ceiling, the same limits the single-answer
+/// recovery carried before it became per-round.
+fn recover_text(
+    storage: &dyn StorageBackend,
+    user: &str,
+    session: &str,
+    item_id: &str,
+    field: &str,
+) -> Result<String> {
+    let mut from = 0;
+    let mut text = String::new();
+    for page in 0..64 {
+        let (blocks, next, more) =
+            storage.list_thread_item_blocks_page(user, session, item_id, Some(field), from, 100, false)?;
+        for block in blocks {
+            let data = block.get("data").unwrap_or(&block);
+            if data["field"].as_str().unwrap_or(field) != field {
+                continue;
+            }
+            if let Some(part) = data["content"].as_str() {
+                if text.len() + part.len() > 8 * 1024 * 1024 {
+                    return Err(anyhow!("turn text limit exceeded"));
+                }
+                text.push_str(part);
+            }
+        }
+        if !more {
+            break;
+        }
+        if page == 63 {
+            return Err(anyhow!("turn block limit exceeded"));
+        }
+        from = next.ok_or_else(|| anyhow!("missing block cursor"))? + 1;
+    }
+    Ok(text)
 }
 
 fn stable_answer(item: &Value) -> bool {
@@ -168,28 +190,59 @@ fn project_turn(root: &Value, items: &[Value]) -> Option<NativeChatTurn> {
             assistant.stats_status = format!("正在排队 · 前方 {ahead} 名");
         }
     }
-    let mut workflow = Vec::new();
-    for item in items
-        .iter()
-        .filter(|item| matches!(item["kind"].as_str(), Some("tool_call" | "compaction")))
-        .take(24)
-    {
+    // Rounds in durable order: every `assistant_message` item is one model
+    // round, and every tool or compaction entry belongs to the round that
+    // admitted it. Keeping that grouping is what lets a reloaded turn rebuild
+    // the same batches and answer blocks the live stream produced.
+    let mut rounds: Vec<NativeChatRound> = Vec::new();
+    let mut entries = 0usize;
+    let mut last_round = 1;
+    for item in items {
+        let kind = item["kind"].as_str().unwrap_or_default();
         let data = &item["payload"];
-        if item["kind"] == "compaction" {
-            let detail = data["summary_text"]
-                .as_str()
-                .unwrap_or_default()
-                .to_string();
-            workflow.push(NativeWorkflowEntry::from_payload(
+        let round = item_round(item).unwrap_or(last_round);
+        if kind == "assistant_message" {
+            if !stable_answer(item) {
+                continue;
+            }
+            last_round = round;
+            let reasoning = data["reasoning"].as_str().unwrap_or_default().to_string();
+            let text = data["content"].as_str().unwrap_or_default().to_string();
+            if reasoning.is_empty() && text.is_empty() {
+                // A round admitted by `llm_request` and never answered carries
+                // no timeline entry of its own.
+                continue;
+            }
+            match rounds.iter_mut().rev().find(|slot| slot.round == round) {
+                Some(slot) => {
+                    slot.text = text;
+                    slot.reasoning = reasoning;
+                }
+                None => rounds.push(NativeChatRound {
+                    round,
+                    reasoning,
+                    text,
+                    items: Vec::new(),
+                }),
+            }
+            continue;
+        }
+        if !matches!(kind, "tool_call" | "compaction") || entries >= MAX_TURN_ENTRIES {
+            continue;
+        }
+        entries += 1;
+        let entry = if kind == "compaction" {
+            let detail = data["summary_text"].as_str().unwrap_or_default().to_string();
+            if latest.is_none() {
+                assistant.text = detail.clone();
+            }
+            NativeWorkflowEntry::from_payload(
                 item["item_id"].as_str().unwrap_or("compaction"),
                 "上下文压缩",
                 detail,
                 item["status"].as_str().unwrap_or_default(),
                 data,
-            ));
-            if latest.is_none() {
-                assistant.text = data["summary_text"].as_str().unwrap_or_default().into();
-            }
+            )
         } else {
             let tool = data["tool"]
                 .as_str()
@@ -201,26 +254,43 @@ fn project_turn(root: &Value, items: &[Value]) -> Option<NativeChatTurn> {
                 data,
                 matches!(item["status"].as_str(), Some("running" | "queued")),
             );
-            workflow.push(NativeWorkflowEntry::from_payload(
+            NativeWorkflowEntry::from_payload(
                 item["item_id"].as_str().unwrap_or(tool),
                 tool,
                 detail,
                 item["status"].as_str().unwrap_or_default(),
                 data,
-            ));
+            )
+        };
+        match rounds.iter_mut().rev().find(|slot| slot.round == round) {
+            Some(slot) => slot.items.push(entry),
+            None => rounds.push(NativeChatRound {
+                round,
+                reasoning: String::new(),
+                text: String::new(),
+                items: vec![entry],
+            }),
         }
     }
-    assistant.workflow_detail = workflow
-        .iter()
-        .map(|entry| entry.detail.as_str())
-        .collect::<Vec<_>>()
-        .join("\n\n");
-    assistant.workflow_items = workflow;
     Some(NativeChatTurn {
         root_id: id.into(),
         user,
         assistant,
+        rounds,
     })
+}
+
+/// The model round a durable item was recorded against. Envelope fields are
+/// kept inside `payload` by thread-log storage; the stable answer identity
+/// repeats the round in its item id, which older records lean on.
+fn item_round(item: &Value) -> Option<i64> {
+    if let Some(round) = item["payload"]["model_round"].as_i64() {
+        return Some(round);
+    }
+    item["item_id"]
+        .as_str()
+        .and_then(|id| id.rsplit(":text-").next())
+        .and_then(|tail| tail.parse::<i64>().ok())
 }
 
 #[cfg(test)]
@@ -233,9 +303,9 @@ mod tests {
             json!({"kind":"compaction", "item_id":"fixture-compact", "turn_id":"fixture-root", "status":"failed", "payload":{"status":"failed", "reason":"manual", "error_message":"fixture failure"}})
         ]).unwrap();
         assert_eq!(turn.user.text, "/compact");
-        assert_eq!(turn.assistant.workflow_items.len(), 1);
-        assert_eq!(turn.assistant.workflow_items[0].state, "failed");
-        assert!(turn.assistant.workflow_items[0]
+        assert_eq!(turn.rounds[0].items.len(), 1);
+        assert_eq!(turn.rounds[0].items[0].state, "failed");
+        assert!(turn.rounds[0].items[0]
             .sections
             .iter()
             .any(|section| section.kind == "error"));
@@ -251,8 +321,34 @@ mod tests {
             }}),
         ];
         let turn = project_turn(&root, &items).unwrap();
-        assert_eq!(turn.assistant.workflow_items[0].tokens, "2.4k token");
-        assert_eq!(turn.assistant.workflow_items[0].duration, "1.2s");
+        assert_eq!(turn.rounds[0].items[0].tokens, "2.4k token");
+        assert_eq!(turn.rounds[0].items[0].duration, "1.2s");
+    }
+
+    /// The timeline is rebuilt per model round: dropping everything but the
+    /// newest answer is what made a finished reply lose its thinking and its
+    /// earlier blocks.
+    #[test]
+    fn replay_keeps_every_rounds_thinking_answer_and_tools() {
+        let root = json!({"turn_id":"fixture-root", "status":"completed"});
+        let items = vec![
+            json!({"kind":"user_message","turn_id":"fixture-root","payload":{"content":"Fixture input"}}),
+            json!({"kind":"assistant_message","item_id":"fixture-root:text-1","turn_id":"fixture-root",
+                   "status":"completed","payload":{"content":"先做第一步", "reasoning":"想想第一步", "model_round":1}}),
+            json!({"kind":"tool_call","item_id":"fixture-tool","turn_id":"fixture-root","status":"completed",
+                   "payload":{"tool":"read_file","model_round":1,"data":{"content":"Fixture output"}}}),
+            json!({"kind":"assistant_message","item_id":"fixture-root:text-2","turn_id":"fixture-root",
+                   "status":"completed","payload":{"content":"结论", "reasoning":"想想第二步", "model_round":2}}),
+        ];
+        let turn = project_turn(&root, &items).unwrap();
+        assert_eq!(turn.rounds.len(), 2);
+        assert_eq!(turn.rounds[0].reasoning, "想想第一步");
+        assert_eq!(turn.rounds[0].text, "先做第一步");
+        assert_eq!(turn.rounds[0].items.len(), 1);
+        assert_eq!(turn.rounds[1].reasoning, "想想第二步");
+        assert_eq!(turn.rounds[1].text, "结论");
+        assert!(turn.rounds[1].items.is_empty());
+        assert_eq!(turn.assistant.text, "结论");
     }
     #[test]
     fn finished_model_action_does_not_settle_running_channel_turn() {

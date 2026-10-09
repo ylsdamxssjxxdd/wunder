@@ -67,7 +67,6 @@
         @detail="emit('thread-detail', $event)"
         @rename="emit('rename-thread', $event)"
         @archive="emit('archive-thread', $event)"
-        @delete="emit('delete-thread', $event)"
       />
     </div>
 
@@ -97,7 +96,7 @@
         :title="t('messenger.sidebar.settings')"
         @click="emit('open-settings')"
       >
-        <!-- 对齐旧网页版：左侧当前用户头像（有图片用图片，否则首字母兜底），右侧仍是「设置」。 -->
+        <!-- 对齐桌面参考主页面：按钮上直接展示当前用户（头像 + 名称），点击呼出设置窗口。 -->
         <span class="messenger-sidebar-avatar" :style="currentUserAvatarStyle" aria-hidden="true">
           <img
             v-if="currentUserAvatarImageUrl"
@@ -107,7 +106,7 @@
           />
           <span v-else class="messenger-sidebar-avatar-text">{{ avatarLabel(currentUsername) }}</span>
         </span>
-        <span>{{ t('messenger.sidebar.settings') }}</span>
+        <span class="messenger-sidebar-settings-name">{{ currentUsername || t('user.guest') }}</span>
       </button>
     </div>
   </aside>
@@ -130,7 +129,6 @@ const emit = defineEmits<{
   'thread-detail': [id: string];
   'rename-thread': [id: string];
   'archive-thread': [id: string];
-  'delete-thread': [id: string];
   'open-settings': [];
 }>();
 

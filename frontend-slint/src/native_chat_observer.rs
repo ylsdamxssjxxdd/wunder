@@ -27,11 +27,11 @@ impl Observation {
         self.ready
     }
 
-    /// Publish history plus the live turn into the shared timeline model. The
-    /// history rows are appended first so a send never has to move them.
+    /// Publish the durable history into the shared model without touching the
+    /// live turn that is already appended to it.
     fn publish(&self, app: &MainWindow, timeline: &Rc<RefCell<crate::timeline::Timeline>>) {
         let mut live = timeline.borrow_mut();
-        live.set_history(self.rows.clone());
+        live.publish_history(self.rows.clone());
         crate::native_chat::publish_timeline(app, &live);
     }
 }
@@ -163,43 +163,98 @@ pub(super) fn install(app: &MainWindow, state: Rc<RefCell<State>>) {
     );
 }
 
-/// Durable history as timeline rows: one folded divider per completed turn,
-/// then its user bubble, tool batch and answer. Reasoning is not part of the
-/// durable snapshot, so it is never invented here. The newest turn carries its
+/// Durable history as timeline rows, in the shape the live reducer produces: one
+/// folded divider per completed turn, its user bubble, then per model round a
+/// batch (bar, thinking, tool entries) and that round's answer block. Thinking
+/// and every round's text are part of the durable snapshot, so a reloaded turn
+/// keeps the entries it showed while it streamed. The newest turn carries its
 /// divider hidden and everything unfolded.
 pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
     let last = turns.len().saturating_sub(1);
     let mut rows = Vec::new();
+    // Batch identity is model-wide: `toggle` folds by `group_idx`, so no two
+    // batches may share one, not even across turns.
+    let mut batch = 0i32;
     for (index, turn) in turns.iter().enumerate() {
         let current = index == last;
         let turn_start = rows.len();
-        let mut divider = blank_row(crate::timeline::KIND_DIVIDER);
+        let mut divider = blank_row(
+            crate::timeline::KIND_DIVIDER,
+            format!("turn-{}", turn.root_id),
+        );
         divider.visible = !current;
         divider.foldable = true;
         divider.payload = turn_start as i32;
         rows.push(divider);
         rows.push(history_user(&turn.user));
-        if !turn.assistant.workflow_items.is_empty() {
-            let mut bar = blank_row(crate::timeline::KIND_GROUP);
-            bar.text = crate::timeline_text::tool_calls(turn.assistant.workflow_items.len() as i32)
-                .into();
-            bar.open = false;
-            bar.payload = rows.len() as i32;
-            bar.group_idx = index as i32;
-            rows.push(bar);
-            for (slot, item) in turn.assistant.workflow_items.iter().enumerate() {
-                let mut row = blank_row(crate::timeline::KIND_TOOL);
+        for round in &turn.rounds {
+            let group = batch;
+            batch += 1;
+            let tools = round.items.len() as i32;
+            let activity = !round.reasoning.is_empty() || tools > 0;
+            // The folded bar reads out the newest entry of its batch, exactly as
+            // the live reducer stamps it.
+            let mut bar_at: Option<usize> = None;
+            let mut latest = slint::SharedString::default();
+            if activity {
+                let mut bar = blank_row(
+                    crate::timeline::KIND_GROUP,
+                    format!("history-{index}-group-{}", round.round),
+                );
+                bar.text = crate::timeline_text::tool_calls(tools).into();
+                bar.open = false;
+                bar.payload = rows.len() as i32;
+                bar.group_idx = group;
+                bar.group_open = false;
+                bar.visible = current;
+                bar.foldable = true;
+                bar_at = Some(rows.len());
+                rows.push(bar);
+            }
+            if !round.reasoning.is_empty() {
+                let mut reason = blank_row(
+                    crate::timeline::KIND_REASON,
+                    format!("history-{index}-reason-{}", round.round),
+                );
+                reason.tool_name = crate::timeline_text::thought_done().into();
+                reason.summary =
+                    crate::message_blocks::reasoning_preview(&round.reasoning).as_str().into();
+                latest = reason.summary.clone();
+                reason.detail = round.reasoning.as_str().into();
+                reason.payload = rows.len() as i32;
+                reason.group_idx = group;
+                reason.group_open = false;
+                reason.visible = current;
+                reason.foldable = true;
+                rows.push(reason);
+            }
+            if !round.text.is_empty() {
+                let mut body = blank_row(
+                    crate::timeline::KIND_BODY,
+                    format!("history-{index}-body-{}", round.round),
+                );
+                body.text = round.text.as_str().into();
+                body.blocks = crate::message_blocks::from_text(&round.text);
+                body.foldable = true;
+                body.visible = current;
+                rows.push(body);
+            }
+            for item in &round.items {
+                let mut row = blank_row(
+                    crate::timeline::KIND_TOOL,
+                    format!("tool-{}", item.id),
+                );
                 let label = crate::timeline_text::tool_label(&item.title);
                 let (target, patch) = crate::timeline_text::target_of(
                     &item.title,
                     item.detail.as_str(),
                     &item.sections,
                 );
-                row.id = format!("history-{index}-tool-{slot}").into();
                 row.tool_name = label.as_str().into();
                 row.tool_icon = crate::tool_icons::workflow_icon(&item.title).into();
                 row.target = target.as_str().into();
                 row.summary = crate::timeline_text::summary(item.detail.as_str()).as_str().into();
+                latest = row.summary.clone();
                 row.detail = crate::timeline_text::copy_text(&item.sections, item.detail.as_str());
                 row.status_kind = crate::timeline::status_kind(&item.state);
                 row.patch = if patch {
@@ -207,31 +262,24 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
                 } else {
                     ModelRc::default()
                 };
-                row.group_idx = index as i32;
+                row.payload = rows.len() as i32;
+                row.group_idx = group;
                 row.group_open = false;
                 row.visible = current;
                 row.foldable = true;
                 rows.push(row);
             }
+            if let Some(at) = bar_at {
+                rows[at].summary = latest;
+            }
         }
-        if !turn.assistant.text.is_empty() {
-            let mut body = blank_row(crate::timeline::KIND_BODY);
-            body.text = turn.assistant.text.as_str().into();
-            body.blocks = crate::message_blocks::from_text(&turn.assistant.text);
-            body.foldable = true;
-            body.visible = current;
-            // The metrics belong to the turn and ride on the body row that ends
-            // it, which is also the row that owns the copy/save actions.
-            body.stats = ModelRc::new(VecModel::from(crate::timeline::stat_metrics(
-                &crate::turn_stats::metrics_from_parts(
-                    turn.assistant.stats_duration.as_str(),
-                    turn.assistant.stats_speed.as_str(),
-                    turn.assistant.stats_context.as_str(),
-                    turn.assistant.stats_quota.as_str(),
-                    turn.assistant.stats_tools.as_str(),
-                ),
-            )));
-            rows.push(body);
+        // The metrics belong to the turn and ride on the body row that ends it,
+        // which is also the row that owns the copy and save actions: the same
+        // owner the live reducer picks with its backward walk.
+        if let Some(body) = (turn_start..rows.len()).rev().find(|index| {
+            rows[*index].kind == crate::timeline::KIND_BODY
+        }) {
+            rows[body].stats = turn_stats(&turn.assistant);
         }
         if !current {
             // A completed turn folds behind its divider: the divider stays as
@@ -244,18 +292,32 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
     rows
 }
 
+/// The turn's statistics footer, projected once per turn and attached to the
+/// body row that carries the durable answer.
+fn turn_stats(assistant: &wunder_desktop::NativeMessage) -> ModelRc<crate::TurnStatMetric> {
+    ModelRc::new(VecModel::from(crate::timeline::stat_metrics(
+        &crate::turn_stats::metrics_from_parts(
+            assistant.stats_duration.as_str(),
+            assistant.stats_speed.as_str(),
+            assistant.stats_context.as_str(),
+            assistant.stats_quota.as_str(),
+            assistant.stats_tools.as_str(),
+        ),
+    )))
+}
+
 fn history_user(message: &wunder_desktop::NativeMessage) -> TimelineRow {
-    let mut row = blank_row(crate::timeline::KIND_USER);
+    let mut row = blank_row(crate::timeline::KIND_USER, String::new());
     row.text = message.text.as_str().into();
     row.blocks = crate::message_blocks::from_text(&message.text);
     row.foldable = false;
     row
 }
 
-fn blank_row(kind: i32) -> TimelineRow {
+fn blank_row(kind: i32, id: String) -> TimelineRow {
     TimelineRow {
         kind,
-        id: Default::default(),
+        id: id.into(),
         visible: true,
         text: Default::default(),
         blocks: ModelRc::default(),
@@ -280,14 +342,12 @@ mod tests {
     use super::*;
     use slint::ModelRc;
     use std::time::Instant;
+    use wunder_desktop::native::NativeChatRound;
 
     fn fixture(root: &str, text: &str, status: &str) -> NativeChatTurn {
         let message = wunder_desktop::NativeMessage {
             turn_id: root.into(),
             text: text.into(),
-            workflow_detail: String::new(),
-            workflow_items: Vec::new(),
-            reasoning: String::new(),
             mine: false,
             created_at: 0.0,
             state: status.into(),
@@ -307,6 +367,12 @@ mod tests {
                 ..message.clone()
             },
             assistant: message,
+            rounds: vec![NativeChatRound {
+                round: 1,
+                reasoning: String::new(),
+                text: text.into(),
+                items: Vec::new(),
+            }],
         }
     }
 
@@ -332,7 +398,7 @@ mod tests {
     }
 
     /// Near-limit history: 50 turns (the observer's own cap) with 24 workflow
-    /// entries each (`native_chat_turns` caps `workflow_items` at 24) and one
+    /// entries each (`native_chat_turns` caps a turn at 24 entries) and one
     /// max-size patch card among them, plus a bounded answer body.
     fn near_limit_turns() -> Vec<NativeChatTurn> {
         let patch = near_limit_patch();
@@ -348,7 +414,7 @@ mod tests {
                     "任务完成",
                 );
                 turn.user.text = format!("第 {index} 轮输入").into();
-                turn.assistant.workflow_items = (0..24)
+                turn.rounds[0].items = (0..24)
                     .map(|slot| {
                         let base = NativeWorkflowEntry::from_payload(
                             &format!("fixture-tool-{index}-{slot}"),
@@ -420,6 +486,81 @@ mod tests {
         assert_eq!(count, 0, "no metrics renders no row");
     }
 
+    /// A reloaded turn rebuilds the entries the live stream showed: per model
+    /// round one batch holding its thinking and its tools, then that round's
+    /// answer block. Collapsing the turn to its newest answer alone is what made
+    /// the timeline look emptied once a reply finished.
+    #[test]
+    fn a_reloaded_turn_keeps_every_rounds_entries() {
+        let mut turn = fixture("fixture-rounds", "结论", "任务完成");
+        turn.rounds = vec![
+            NativeChatRound {
+                round: 1,
+                reasoning: "先想想第一步".into(),
+                text: "第一步说明".into(),
+                items: vec![NativeWorkflowEntry::from_payload(
+                    "fixture-round-tool",
+                    "read_file",
+                    "读取文件 · 完成\nsrc/module_0.rs\nFixture preview".into(),
+                    "completed",
+                    &serde_json::json!({"args":{"path":"src/module_0.rs"}}),
+                )],
+            },
+            NativeChatRound {
+                round: 2,
+                reasoning: "再想想第二步".into(),
+                text: "结论".into(),
+                items: Vec::new(),
+            },
+        ];
+        let rows = project_history(&[turn]);
+        let kinds: Vec<i32> = rows.iter().map(|row| row.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                crate::timeline::KIND_DIVIDER,
+                crate::timeline::KIND_USER,
+                crate::timeline::KIND_GROUP,
+                crate::timeline::KIND_REASON,
+                crate::timeline::KIND_BODY,
+                crate::timeline::KIND_TOOL,
+                crate::timeline::KIND_GROUP,
+                crate::timeline::KIND_REASON,
+                crate::timeline::KIND_BODY,
+            ],
+        );
+        // The divider carries the turn identity the live tail is matched on.
+        assert_eq!(rows[0].id, "turn-fixture-rounds");
+        // Each round folds as its own batch, and thinking keeps its full text.
+        assert_eq!(rows[2].group_idx, rows[3].group_idx);
+        assert_eq!(rows[2].group_idx, rows[5].group_idx);
+        assert_ne!(rows[2].group_idx, rows[6].group_idx);
+        assert_eq!(rows[3].detail, "先想想第一步");
+        assert_eq!(
+            rows[3].tool_name.as_str(),
+            crate::timeline_text::thought_done()
+        );
+        assert_eq!(rows[4].text, "第一步说明");
+        assert_eq!(rows[8].text, "结论");
+        // A fold handle always addresses its own row, or toggling would move a
+        // different entry. A body block has no handle: for it `foldable` means
+        // "frozen", which is what shows its metrics and actions line.
+        for row in rows.iter().filter(|row| {
+            matches!(
+                row.kind,
+                crate::timeline::KIND_DIVIDER
+                    | crate::timeline::KIND_GROUP
+                    | crate::timeline::KIND_REASON
+                    | crate::timeline::KIND_TOOL
+            )
+        }) {
+            assert_eq!(
+                rows[row.payload as usize].id, row.id,
+                "a foldable row must point at itself"
+            );
+        }
+    }
+
     /// §12.2 evidence: the bounded worst case is measured, not estimated. Both
     /// phases are bounded by the projections themselves, so this is the whole
     /// cost the UI thread pays before Slint sees a single row.
@@ -470,7 +611,7 @@ mod tests {
         for row in rows.iter() {
             kinds[row.kind as usize] += 1;
         }
-        let entries_per_turn = turns[0].assistant.workflow_items.len();
+        let entries_per_turn = turns[0].rounds[0].items.len();
         println!(
             "timeline worst case: turns={} entries/turn={} rows={} exposed={} \
              build={built:?} project={projected:?} publish={published:?} unfold={unfolded:?}",
@@ -543,13 +684,13 @@ mod tests {
         // this row count the difference is inside the run-to-run noise.
         let cards = turns
             .iter()
-            .flat_map(|turn| turn.assistant.workflow_items.iter())
+            .flat_map(|turn| turn.rounds.iter().flat_map(|round| round.items.iter()))
             .filter(|entry| !entry.patch_files.is_empty())
             .count();
         let started = Instant::now();
         let mut lines = 0usize;
         for turn in &turns {
-            for entry in &turn.assistant.workflow_items {
+            for entry in turn.rounds.iter().flat_map(|round| round.items.iter()) {
                 for card in crate::timeline_text::patch_cards(&entry.patch_files).iter() {
                     lines += card.lines.row_count();
                 }
@@ -670,8 +811,8 @@ mod tests {
     #[test]
     fn history_keeps_the_compaction_entry_of_a_failed_turn() {
         let mut turn = fixture("fixture-compact", "", "执行失败");
-        turn.assistant
-            .workflow_items
+        turn.rounds[0]
+            .items
             .push(NativeWorkflowEntry::from_payload(
                 "fixture-compact-item",
                 "上下文压缩",

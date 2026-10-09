@@ -1,34 +1,33 @@
 import { test, expect, type APIRequestContext, type Locator, type Page } from '@playwright/test';
 
 /**
- * 云端工作目录（左栏文件区）· 方案 §6.2「文件操作清单」13 项真机逐项走查。
+ * 云端工作目录（左栏文件区）· 方案 §6.2「文件操作清单」真机逐项走查。
  *
- * 为什么要有这条用例：`docs/云端易用重构方案.md` §6.2 的 13 项此前只有"实现存在"，
+ * 为什么要有这条用例：`docs/云端易用重构方案.md` §6.2 的文件操作清单此前只有"实现存在"，
  * 没有一条端到端用例在**真实浏览器 + 真实服务端 + 真实文件系统**上逐项点过。
- * 本用例串行覆盖 13 项，每项都断言**用户可见的结果**（文件树行、用量条数字、
+ * 本用例串行覆盖清单每一项，每项都断言**用户可见的结果**（文件树行、用量读数数字、
  * download 事件、ElMessageBox、预览弹层正文、输入区引用 chip），不靠截图、
  * 不靠"没有报错"，也不用 `waitForTimeout` 兜时间（一律 poll / toBeVisible 轮询）。
  *
  * 关键实现事实（读源码 + 真机核对，供后续维护）：
  * - 文件区根：`.messenger-sidebar-files-region`；面板：`.workspace-files`；
  *   上传 input：`.messenger-sidebar-files-region input[type="file"]`（隐藏，可直接 setInputFiles）。
- * - 工具栏按钮用中文 `aria-label`：上传到当前目录 / 新建目录 / 刷新 / 多选（多选态变「退出多选」）。
+ * - 工具栏按钮用中文 `aria-label`：上传到当前目录 / 刷新 / 多选（多选态变「退出多选」）。
  * - 行菜单是**自绘**的：`contextmenu`（或行内 `⋯` 按钮 `.workspace-file-menu`）打开
  *   `.workspace-files-menu`（Teleport 到 body），菜单项 `.workspace-files-menu-item`。
  *   注意：`.workspace-file-menu` 是行内那个省略号按钮本身，**不是**菜单弹层。
- * - 行菜单命令：文件行 = 预览/下载/重命名/移动到…/复制到…/引用到聊天/删除；
- *   目录行 = 打开/打包下载/重命名/移动到…/复制到…/引用到聊天/删除（**文件行没有「打包下载」**）。
- * - 移动/复制不是「目录选择器弹层」，而是 `ElMessageBox.prompt` 让用户**手输目标目录相对路径**
- *   （留空 = 根目录，placeholder「例如 docs/notes」）。见 §6.2-7/8 的注释。
- * - 头部 `⋯` 是 `el-dropdown`（`.workspace-files-head-menu`）：
- *   打包下载当前目录 / 刷新用量统计 / 清空工作目录。
+ * - 行菜单命令：文件行 = 预览/下载/重命名/引用到聊天/删除；
+ *   目录行 = 打开/打包下载/新建目录/新建文件/重命名/引用到聊天/删除（**文件行没有「打包下载」**）。
+ * - 右击树区**空白处**呼出同一个菜单（没有宿主行）：新建目录/新建文件落在当前目录，
+ *   并承接原头部 `⋯`（已下线）的三项：打包下载当前目录 / 刷新用量统计 / 清空工作目录。
+ * - 移动/复制已从行菜单下线（重命名仍走 `/workspace/move`）；用量读数从底部搬到标题行右侧。
  * - 预览弹层：`.workspace-dialog.workspace-dialog--file-preview`（append-to-body，挂在 body 下），
  *   正文渲染在 CodeMirror 的 `.cm-content`；关闭按钮 `.messenger-dialog-close`；
  *   仅当 `editable`（文本类）时头部才有「保存」按钮（`.workspace-btn--primary`）。
  * - 引用到聊天 → `ChatComposer` 把它变成 `.workspace-quote-item` chip（名称 + `@相对路径`）。
- * - 用量条 `.workspace-files-usage`：「已用 {size} · {N} 个文件」，N 是**递归**统计（服务端 walkdir）。
- * - 云端新用户的工作目录**不是空的**：服务端会写入 `agents/`、`global/`、`knowledge/`、`skills/`
- *   与 worker-card JSON（本用例的"基线文件数"因此从用量条实时读取，不写死）。
+ * - 用量读数 `.workspace-files-usage`：「已用 {size} · {N} 个文件」，N 是**递归**统计（服务端 walkdir）。
+ * - 走查用 `registerAndSeed` 先用 API 铺好「根文件 + 一个含文件的子目录」：新用户根目录里有没有
+ *   服务端预置内容取决于智能体内视层的落地时机，不能当前提（基线文件数仍从用量读数实时取）。
  *
  * 环境：真实请求一律走 baseURL（vite dev server 代理 /wunder），与 shell-layout.spec.ts 一致，
  * 保证页面与接口指向同一个服务端；`ADMIN_E2E_ORIGIN` 只用于排查时对照。
@@ -52,20 +51,14 @@ const rowByName = (page: Page, name: string): Locator =>
   fileRows(page).filter({
     has: page.locator('.workspace-file-name').filter({ hasText: exactText(name) })
   });
-/** 同名行可能有多份（"复制到…"之后原位置与目标位置同名），所以这里有复数版本。 */
-const rowsByName = (page: Page, name: string): Locator => rowByName(page, name);
 const rowNames = (page: Page): Promise<string[]> =>
   filesRegion(page).locator('.workspace-file-name').allInnerTexts();
-/**
- * 同名行的**深度缩进**（px）。WorkspaceFileTree 用 `padding-left: 6 + depth*12` 表达层级，
- * 因此根层 = 6，子目录内 = 18。用于区分"根目录那一份"和"子目录里的副本"。
- */
+/** 行的**深度缩进**（px）。WorkspaceFileTree 用 `padding-left: 6 + depth*12` 表达层级，根层 = 6，子目录内 = 18。 */
 const rowIndents = async (page: Page, name: string): Promise<number[]> =>
-  (await rowsByName(page, name).evaluateAll((nodes) =>
+  (await rowByName(page, name).evaluateAll((nodes) =>
     nodes.map((node) => Number.parseInt((node as HTMLElement).style.paddingLeft || '0', 10))
   )).sort((left, right) => left - right);
 const usageBar = (page: Page): Locator => filesRegion(page).locator('.workspace-files-usage');
-const uploadTargetLabel = (page: Page): Locator => filesRegion(page).locator('.workspace-files-head-path');
 /** 工具栏按钮：容器是 `.messenger-sidebar-files-toolbar`，按钮用中文 aria-label 区分。 */
 const toolbar = (page: Page): Locator => filesRegion(page).locator('.messenger-sidebar-files-toolbar');
 const toolbarButton = (page: Page, label: string): Locator =>
@@ -74,8 +67,6 @@ const toolbarButton = (page: Page, label: string): Locator =>
 const rowMenu = (page: Page): Locator => page.locator('.workspace-files-menu');
 const rowMenuItem = (page: Page, label: string): Locator =>
   rowMenu(page).locator('.workspace-files-menu-item').filter({ hasText: exactText(label) });
-const headMenuItem = (page: Page, label: string): Locator =>
-  page.locator('.el-dropdown-menu__item').filter({ hasText: exactText(label) });
 
 const messageBox = (page: Page): Locator => page.locator('.el-message-box');
 const messageBoxButton = (page: Page, label: string): Locator =>
@@ -87,7 +78,7 @@ const previewDialog = (page: Page): Locator =>
 const toast = (page: Page, text: string): Locator =>
   page.locator('.el-message').filter({ hasText: new RegExp(escapeRegExp(text)) }).last();
 
-/** 用量条上的「N 个文件」→ N（递归口径，含服务端预置的 worker-card 目录）。 */
+/** 用量读数上的「N 个文件」→ N（递归口径，含服务端预置的 worker-card 目录）。 */
 const readFileCount = async (page: Page): Promise<number> => {
   const text = (await usageBar(page).innerText()).replace(/\s+/g, ' ');
   const matched = /(\d+)\s*个文件/.exec(text);
@@ -129,6 +120,64 @@ const runRowCommandForDownload = async (
     runRowCommand(page, name, label)
   ]);
   return download;
+};
+
+/**
+ * 右击文件树**空白处**（最后一行之下）呼出同一个自绘菜单并点击指定项。
+ * 落点刻意取 `.workspace-files-rows` 之下，命中行会弹出行菜单而不是空白菜单。
+ */
+const openBlankMenu = async (page: Page): Promise<Locator> => {
+  const scroller = filesRegion(page).locator('.workspace-files-scroll');
+  await expect(scroller, '文件树滚动容器应存在').toBeVisible({ timeout: 20_000 });
+  const scrollerBox = await scroller.boundingBox();
+  expect(scrollerBox, '应能量出文件树滚动容器的位置').not.toBeNull();
+  const rowsBox = await filesRegion(page).locator('.workspace-files-rows').boundingBox();
+  const blankTop = rowsBox ? rowsBox.y + rowsBox.height - scrollerBox!.y : 8;
+  expect(
+    blankTop < scrollerBox!.height - 4,
+    `文件树内容已铺满滚动区（空白起点 ${blankTop}，高度 ${scrollerBox!.height}），没有空白可右击`
+  ).toBeTruthy();
+  await scroller.click({ button: 'right', position: { x: 20, y: Math.max(8, blankTop + 10) } });
+  const menu = rowMenu(page);
+  await expect(menu, '右击空白处应弹出 .workspace-files-menu').toBeVisible({ timeout: 10_000 });
+  return menu;
+};
+
+const runBlankCommand = async (page: Page, label: string): Promise<void> => {
+  const menu = await openBlankMenu(page);
+  const item = rowMenuItem(page, label);
+  await expect(
+    item,
+    `空白菜单应含「${label}」，实际项：${(await menu.innerText()).replace(/\s+/g, ' ')}`
+  ).toBeVisible();
+  await item.click();
+  await expect(menu, '选择菜单项后菜单应收起').toBeHidden({ timeout: 10_000 });
+};
+
+const runBlankCommandForDownload = async (
+  page: Page,
+  label: string
+): Promise<{ suggestedFilename: () => string }> => {
+  const [download] = await Promise.all([
+    page.waitForEvent('download', { timeout: 30_000 }),
+    runBlankCommand(page, label)
+  ]);
+  return download;
+};
+
+/** 断言行菜单**不含**指定项，然后 Esc 收起（用于钉住已下线的移动/复制）。 */
+const expectRowMenuLacks = async (page: Page, name: string, labels: string[]): Promise<void> => {
+  const row = rowByName(page, name);
+  await expect(row, `文件树应存在行「${name}」`).toBeVisible({ timeout: 20_000 });
+  await row.click({ button: 'right' });
+  const menu = rowMenu(page);
+  await expect(menu).toBeVisible({ timeout: 10_000 });
+  const items = (await menu.innerText()).replace(/\s+/g, ' ');
+  for (const label of labels) {
+    await expect(rowMenuItem(page, label), `行菜单不应再有「${label}」，实际项：${items}`).toHaveCount(0);
+  }
+  await page.keyboard.press('Escape');
+  await expect(menu, 'Esc 应收起行菜单').toBeHidden({ timeout: 10_000 });
 };
 
 /** 从页面存储里读当前 access_token（做服务端复核用，不注入任何 token）。 */
@@ -204,9 +253,56 @@ const closePreview = async (page: Page): Promise<void> => {
   await expect(previewDialog(page), '关闭后预览弹层应消失').toBeHidden({ timeout: 10_000 });
 };
 
+/**
+ * 注册一个新用户，并用 API 铺好最小目录结构：根一个文件 + 一个含文件的子目录。
+ * 走查不能靠服务端预置内容起跑：新账号的工作目录现在可能是空的
+ * （agents/global/knowledge/skills 由智能体内视层在更晚的时机才落地）。
+ */
+type WorkspaceSeed = { rootFile: string; dirName: string; innerFile: string };
+
+const registerAndSeed = async (
+  request: APIRequestContext,
+  username: string
+): Promise<WorkspaceSeed> => {
+  const suffix = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+  const seed: WorkspaceSeed = {
+    rootFile: `seed-${suffix}.md`,
+    dirName: `seed-dir-${suffix}`,
+    innerFile: `seed-inner-${suffix}.md`
+  };
+
+  const registered = await request.post('/wunder/auth/register', {
+    data: { username, password: PASSWORD }
+  });
+  expect(registered.ok(), `register failed: ${registered.status()}`).toBeTruthy();
+  const payload = (await registered.json()) as { data?: { access_token?: string } };
+  const token = String(payload.data?.access_token || '');
+  expect(token, '注册应返回 access_token 以便用 API 铺种子文件').not.toBe('');
+  const headers = { Authorization: `Bearer ${token}` };
+
+  const makeDir = await request.post('/wunder/workspace/dir', { headers, data: { path: seed.dirName } });
+  expect(makeDir.ok(), `种子目录创建失败：${makeDir.status()}`).toBeTruthy();
+
+  const uploads: Array<[string, string]> = [
+    ['', seed.rootFile],
+    [seed.dirName, seed.innerFile]
+  ];
+  for (const [path, name] of uploads) {
+    const uploaded = await request.post('/wunder/workspace/upload', {
+      headers,
+      multipart: {
+        path,
+        files: { name, mimeType: 'text/markdown', buffer: Buffer.from(`# ${name}\n`, 'utf-8') }
+      }
+    });
+    expect(uploaded.ok(), `种子文件 ${name} 上传失败：${uploaded.status()}`).toBeTruthy();
+  }
+  return seed;
+};
+
 // -------------------------------------------------------------------- 用例
 
-test('云端工作目录：§6.2 十三项文件操作逐项真机走查', async ({ page, request }) => {
+test('云端工作目录：§6.2 文件操作清单逐项真机走查', async ({ page, request }) => {
   test.setTimeout(600_000);
 
   const nonce = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
@@ -244,10 +340,7 @@ test('云端工作目录：§6.2 十三项文件操作逐项真机走查', async
   const listCallCount = (path: string): number => listCalls.filter((call) => call.path === path).length;
 
   // ---------------------------------------------------------------- 前置
-  const registered = await request.post('/wunder/auth/register', {
-    data: { username, password: PASSWORD }
-  });
-  expect(registered.ok(), `register failed: ${registered.status()}`).toBeTruthy();
+  const seed = await registerAndSeed(request, username);
 
   await page.addInitScript(() => localStorage.setItem('wunder_language', 'zh-CN'));
   await page.goto('/login');
@@ -283,7 +376,7 @@ test('云端工作目录：§6.2 十三项文件操作逐项真机走查', async
   // `state.entries = ...` / `state.loading = false` 都不会触发视图更新：
   // 文件树会永久停在「加载中...」，直到同一目录被第二次加载（`directories.get()` 这次
   // 返回的是 reactive 代理）为止 —— 也就是用户点一次工具栏「刷新」。
-  // 这里点一次「刷新」以继续走查 13 项（缺陷修好后这一下是无害的多余刷新）；
+  // 这里点一次「刷新」以继续走查（缺陷修好后这一下是无害的多余刷新）；
   // 缺陷本身由末尾的 fixme 用例钉住，并按实测结果打 annotation。
   const rowsAtFirstPaint = await fileRows(page).count();
   test
@@ -305,44 +398,53 @@ test('云端工作目录：§6.2 十三项文件操作逐项真机走查', async
     .toBeGreaterThan(0);
 
   // ============================================================ §6.2-1 列表/浏览 + 目录懒加载
-  // (a) 列表：云端新用户根目录里已有服务端预置的 agents/global/knowledge/skills。
+  // (a) 列表：根目录应列出 API 铺下的种子文件；服务端预置目录何时落地只做记录，不作硬断言。
   const rootNames = await rowNames(page);
-  expect(rootNames, '根目录列表应包含服务端预置目录').toEqual(
-    expect.arrayContaining(['agents', 'global', 'knowledge', 'skills'])
-  );
-  await expect(usageBar(page), '文件区底部应渲染用量条').toBeVisible({ timeout: 20_000 });
+  expect(rootNames, `根目录列表应包含种子文件 ${seed.rootFile}`).toContain(seed.rootFile);
+  const presetDirs = ['agents', 'global', 'knowledge', 'skills'].filter((name) => rootNames.includes(name));
+  test.info().annotations.push({
+    type: '根目录预置内容',
+    description: presetDirs.length
+      ? `服务端预置目录已出现在根：${presetDirs.join('/')}`
+      : '服务端预置目录未出现在根（内视层更晚落地），走查不依赖它'
+  });
+  await expect(usageBar(page), '用量读数应渲染在标题行右侧').toBeVisible({ timeout: 20_000 });
+  await expect(
+    usageBar(page).locator('xpath=..'),
+    '用量读数应已从文件区底部搬进标题行（父级是 .messenger-sidebar-files-head）'
+  ).toHaveClass(/messenger-sidebar-files-head/);
   const baselineFiles = await readFileCount(page);
-  expect(Number.isFinite(baselineFiles), `用量条应能读出文件数，实际：${await usageBar(page).innerText()}`).toBe(
+  expect(Number.isFinite(baselineFiles), `用量读数应能读出文件数，实际：${await usageBar(page).innerText()}`).toBe(
     true
   );
   expect(baselineFiles, '基线文件数应大于 0（预置 worker-card）').toBeGreaterThan(0);
+
+  // 上传/新建/删除都会动递归文件数，用运行计数器断言，避免和「新建文件」的步数耦合。
+  let expectedFiles = baselineFiles;
+  const expectFileCount = async (message: string): Promise<void> => {
+    await expect
+      .poll(() => readFileCount(page), { timeout: 30_000, message: `${message}（应为 ${expectedFiles}）` })
+      .toBe(expectedFiles);
+  };
 
   // ============================================================ §6.2-2 上传
   await uploadFile(page, rootFileA, body(markerA));
   await expect(rowByName(page, rootFileA), `上传后 ${rootFileA} 应出现在文件树`).toBeVisible({
     timeout: 30_000
   });
-  // 上传完成后用量条数字必须变化（这里是递归文件数 +1）。
-  await expect
-    .poll(() => readFileCount(page), {
-      timeout: 30_000,
-      message: `上传 ${rootFileA} 后用量条文件数应为 ${baselineFiles + 1}`
-    })
-    .toBe(baselineFiles + 1);
+  // 上传完成后用量数字必须变化（这里是递归文件数 +1）。
+  expectedFiles += 1;
+  await expectFileCount(`上传 ${rootFileA} 后`);
 
   await uploadFile(page, rootFileB, body(`BODYROOTB${nonce}`));
   await expect(rowByName(page, rootFileB), `上传后 ${rootFileB} 应出现在文件树`).toBeVisible({
     timeout: 30_000
   });
-  await expect
-    .poll(() => readFileCount(page), {
-      timeout: 30_000,
-      message: '第二次上传后用量条文件数应再 +1'
-    })
-    .toBe(baselineFiles + 2);
+  expectedFiles += 1;
+  await expectFileCount('第二次上传后');
 
-  // ============================================================ §6.2-5 新建目录
-  await toolbarButton(page, '新建目录').click();
+  // ============================================================ §6.2-5 新建目录（空白右键菜单）
+  await runBlankCommand(page, '新建目录');
   await answerPrompt(page, '确认', dirName);
   await expect(rowByName(page, dirName), `新建目录后 ${dirName} 应出现在文件树`).toBeVisible({
     timeout: 20_000
@@ -362,19 +464,14 @@ test('云端工作目录：§6.2 十三项文件操作逐项真机走查', async
       message: `展开 ${dirName} 时应按需请求该目录（GET /wunder/workspace?path=${dirName}）`
     })
     .toBeGreaterThan(0);
-  await expect(uploadTargetLabel(page), '点击目录行后上传目标应切到该目录').toContainText(`/${dirName}`);
 
   // 展开后往里上传：子文件行应出现在目录行**之后**（深度缩进更大）。
   await uploadFile(page, innerFile, body(markerInner));
   await expect(rowByName(page, innerFile), `上传后子目录内应看到 ${innerFile}`).toBeVisible({
     timeout: 30_000
   });
-  await expect
-    .poll(() => readFileCount(page), {
-      timeout: 30_000,
-      message: '子目录上传后用量条文件数应为「基线 + 3」（递归统计）'
-    })
-    .toBe(baselineFiles + 3);
+  expectedFiles += 1;
+  await expectFileCount('子目录上传后');
 
   const domOrder = await rowNames(page);
   expect(domOrder.indexOf(innerFile), `${innerFile} 应排在 ${dirName} 之后（子行缩进）`).toBeGreaterThan(
@@ -401,6 +498,29 @@ test('云端工作目录：§6.2 十三项文件操作逐项真机走查', async
     callsBeforeCollapse
   );
 
+  // ============================================================ §6.2-5b 新建文件（目录行右键菜单）
+  const createdFile = `created-${nonce}.md`;
+  await runRowCommand(page, dirName, '新建文件');
+  await answerPrompt(page, '确认', createdFile);
+  await expect(rowByName(page, createdFile), `新建文件后 ${createdFile} 应出现在 ${dirName} 内`).toBeVisible({
+    timeout: 20_000
+  });
+  await expect(toast(page, '文件已创建'), '新建文件应有成功提示').toBeVisible({ timeout: 10_000 });
+  expect(
+    await rowIndents(page, createdFile),
+    `新建的行应落在 ${dirName} 内（缩进 18），而不是根层`
+  ).toEqual([18]);
+  expectedFiles += 1;
+  await expectFileCount(`新建 ${createdFile} 后`);
+  expect(await serverEntryNames(page, request, dirName), `服务端 ${dirName} 应有新建的文件`).toContain(
+    createdFile
+  );
+
+  // ============================================================ §6.2-7/8 移动到…／复制到…（已下线）
+  // 行菜单不再提供跨目录移动/复制（重命名仍走 /workspace/move）；这里钉住菜单项边界。
+  await expectRowMenuLacks(page, rootFileB, ['移动到…', '复制到…']);
+  await expectRowMenuLacks(page, dirName, ['移动到…', '复制到…']);
+
   // ============================================================ §6.2-3 下载单文件
   const single = await runRowCommandForDownload(page, rootFileA, '下载');
   expect(single.suggestedFilename(), '单文件下载的 suggestedFilename 应含该文件名').toContain(
@@ -408,19 +528,16 @@ test('云端工作目录：§6.2 十三项文件操作逐项真机走查', async
   );
   expect(single.suggestedFilename()).toMatch(/\.md$/);
 
-  // ============================================================ §6.2-4 打包下载（目录行 + 当前目录）
+  // ============================================================ §6.2-4 打包下载（目录行 + 空白菜单当前目录）
   const dirArchive = await runRowCommandForDownload(page, dirName, '打包下载');
   expect(dirArchive.suggestedFilename(), '目录行打包下载的文件名应以 .zip 结尾').toMatch(/\.zip$/i);
   expect(dirArchive.suggestedFilename()).toContain(dirName);
 
-  await filesRegion(page).locator('.workspace-files-head-menu').click();
-  const archiveHeadItem = headMenuItem(page, '打包下载当前目录');
-  await expect(archiveHeadItem, '头部⋯菜单应有「打包下载当前目录」').toBeVisible({ timeout: 10_000 });
-  const [currentArchive] = await Promise.all([
-    page.waitForEvent('download', { timeout: 30_000 }),
-    archiveHeadItem.click()
-  ]);
-  expect(currentArchive.suggestedFilename(), '头部菜单打包下载的文件名应以 .zip 结尾').toMatch(/\.zip$/i);
+  const currentArchive = await runBlankCommandForDownload(page, '打包下载当前目录');
+  expect(
+    currentArchive.suggestedFilename(),
+    '空白菜单「打包下载当前目录」应触发 zip 下载'
+  ).toMatch(/\.zip$/i);
 
   // ============================================================ §6.2-6 重命名
   await runRowCommand(page, rootFileA, '重命名');
@@ -430,48 +547,7 @@ test('云端工作目录：§6.2 十三项文件操作逐项真机走查', async
   });
   await expect(rowByName(page, rootFileA), `重命名后旧名 ${rootFileA} 应消失`).toHaveCount(0);
   await expect(toast(page, '已重命名')).toBeVisible({ timeout: 10_000 });
-
-  // ============================================================ §6.2-7 复制到…
-  // 真机实现：ElMessageBox.prompt 让用户**手输目标目录相对路径**（不是目录选择器弹层）。
-  await runRowCommand(page, rootFileB, '复制到…');
-  await answerPrompt(page, '确认', dirName);
-  await expect(toast(page, '已复制')).toBeVisible({ timeout: 10_000 });
-  await expandDir(page, dirName);
-  // 复制之后同名行有两份：一份留在根层（缩进 6），一份落在目标目录内（缩进 18）。
-  await expect
-    .poll(() => rowsByName(page, rootFileB).count(), {
-      timeout: 20_000,
-      message: `复制到… 之后 ${rootFileB} 应同时存在于根目录与 ${dirName}`
-    })
-    .toBe(2);
-  expect(await rowIndents(page, rootFileB), `${rootFileB} 应一份在根层、一份在子目录内`).toEqual([6, 18]);
-  // 服务端复核：两边都真的有这个文件。
-  expect(await serverEntryNames(page, request), `服务端根目录应有 ${rootFileB}`).toContain(rootFileB);
-  expect(await serverEntryNames(page, request, dirName), `服务端 ${dirName} 应有副本`).toContain(rootFileB);
-
-  // ============================================================ §6.2-8 移动到…
-  await runRowCommand(page, renamedFile, '移动到…');
-  await answerPrompt(page, '确认', dirName);
-  await expect(toast(page, '已移动')).toBeVisible({ timeout: 10_000 });
-  await expandDir(page, dirName);
-  await expect(rowByName(page, renamedFile), `移动后目标目录内应出现 ${renamedFile}`).toBeVisible({
-    timeout: 20_000
-  });
-  await expect
-    .poll(() => rowsByName(page, renamedFile).count(), {
-      timeout: 20_000,
-      message: `移动后 ${renamedFile} 在树里只应剩一份`
-    })
-    .toBe(1);
-  expect(
-    (await rowIndents(page, renamedFile))[0],
-    `移动后 ${renamedFile} 应落在子目录内（缩进 18 而不是根层 6）`
-  ).toBe(18);
-  // 服务端复核：原位置（根）真的没有它了。
-  expect(await serverEntryNames(page, request), `服务端根目录不应再有 ${renamedFile}`).not.toContain(
-    renamedFile
-  );
-  expect(await serverEntryNames(page, request, dirName), `服务端 ${dirName} 应有 ${renamedFile}`).toContain(
+  expect(await serverEntryNames(page, request), `服务端根目录应有重命名后的 ${renamedFile}`).toContain(
     renamedFile
   );
 
@@ -482,43 +558,40 @@ test('云端工作目录：§6.2 十三项文件操作逐项真机走查', async
   await expect(selectToggle, '进入多选后按钮应变为「退出多选」').toHaveAttribute('aria-label', '退出多选');
   await expect(selectToggle).toHaveAttribute('aria-pressed', 'true');
 
-  // 勾选目录内的两项（名字唯一，避免同名行歧义）：innerFile 与刚移进来的 renamedFile。
+  // 只勾目录内的 innerFile，验证未被勾选的行不被误删。
+  await expandDir(page, dirName);
   const checkOf = (name: string) => rowByName(page, name).locator('input.workspace-file-check');
   await expect(checkOf(innerFile), '多选态下每行应有复选框').toHaveCount(1);
   await checkOf(innerFile).click();
-  await checkOf(renamedFile).click();
   await expect(checkOf(innerFile)).toBeChecked();
-  await expect(checkOf(renamedFile)).toBeChecked();
-  await expect(filesRegion(page).locator('.workspace-files-selection-count')).toContainText('已选 2 项');
+  await expect(filesRegion(page).locator('.workspace-files-selection-count')).toContainText('已选 1 项');
 
   await filesRegion(page).locator('.workspace-files-selection button.is-danger').click();
   await answerConfirm(page, '删除');
   await expect(rowByName(page, innerFile), `批量删除后 ${innerFile} 应消失`).toHaveCount(0, {
     timeout: 20_000
   });
-  await expect(rowByName(page, renamedFile), `批量删除后 ${renamedFile} 应消失`).toHaveCount(0, {
+  await expect(rowByName(page, createdFile), '未被勾选的新建文件不应被批量删除带走').toBeVisible({
     timeout: 20_000
   });
-  // 未勾选的行不能被误删：同名两份（根目录那份 + 目录内副本）都还在，目录本身也在。
-  await expect
-    .poll(() => rowsByName(page, rootFileB).count(), {
-      timeout: 20_000,
-      message: '未被勾选的同名文件（根目录那份与目录内副本）都不应被批量删除带走'
-    })
-    .toBe(2);
-  expect(await rowIndents(page, rootFileB), '两份同名文件应分别在根层与子目录内').toEqual([6, 18]);
   await expect(rowByName(page, dirName), '目录本身不应被删除').toBeVisible();
-  expect(await serverEntryNames(page, request, dirName), `服务端 ${dirName} 应只剩副本`).toEqual([
-    rootFileB
+  expectedFiles -= 1;
+  await expectFileCount(`批量删除 ${innerFile} 后`);
+  expect(await serverEntryNames(page, request, dirName), `服务端 ${dirName} 应只剩 ${createdFile}`).toEqual([
+    createdFile
   ]);
   await expect(selectToggle, '批量删除后应自动退出多选').toHaveAttribute('aria-label', '多选');
 
   // ============================================================ §6.2-10 删除单文件
   // 先补两个文件：delFile 用于单文件删除，editFile 留给后面的预览/编辑/引用。
+  // 左击一个根层文件行把上传目标钉回根目录（点目录行会把目标切到该目录）。
+  await rowByName(page, rootFileB).click();
   await uploadFile(page, editFile, body(`BODYEDIT${nonce}`));
   await expect(rowByName(page, editFile)).toBeVisible({ timeout: 30_000 });
   await uploadFile(page, delFile, body(`BODYDEL${nonce}`));
   await expect(rowByName(page, delFile)).toBeVisible({ timeout: 30_000 });
+  expectedFiles += 2;
+  await expectFileCount('补传 editFile / delFile 后');
 
   await runRowCommand(page, delFile, '删除');
   await expect(messageBox(page), '删除单文件应弹二次确认，且确认文案含文件名').toContainText(delFile);
@@ -526,9 +599,9 @@ test('云端工作目录：§6.2 十三项文件操作逐项真机走查', async
   await expect(rowByName(page, delFile), `删除后 ${delFile} 应消失`).toHaveCount(0, { timeout: 20_000 });
   await expect(rowByName(page, editFile), '删除只应影响目标文件').toBeVisible();
   await expect(toast(page, '已删除')).toBeVisible({ timeout: 10_000 });
-  expect(await serverEntryNames(page, request, dirName), `服务端 ${dirName} 不应再有 ${delFile}`).not.toContain(
-    delFile
-  );
+  expectedFiles -= 1;
+  await expectFileCount(`删除 ${delFile} 后`);
+  expect(await serverEntryNames(page, request), `服务端根目录不应再有 ${delFile}`).not.toContain(delFile);
 
   // ============================================================ §6.2-12 预览
   await runRowCommand(page, editFile, '预览');
@@ -540,7 +613,7 @@ test('云端工作目录：§6.2 十三项文件操作逐项真机走查', async
     `BODYEDIT${nonce}`,
     { timeout: 20_000 }
   );
-  await expect(dialog.locator('.workspace-preview-hint')).toContainText(`${dirName}/${editFile}`);
+  await expect(dialog.locator('.workspace-preview-hint')).toContainText(editFile);
 
   // ============================================================ §6.2-13 在线编辑 + 引用到聊天
   const saveButton = dialog.locator('.workspace-btn--primary');
@@ -570,18 +643,15 @@ test('云端工作目录：§6.2 十三项文件操作逐项真机走查', async
   const quoteChip = page.locator('.workspace-quote-item');
   await expect(quoteChip, '聊天输入区应出现引用 chip').toHaveCount(1, { timeout: 20_000 });
   await expect(quoteChip).toContainText(editFile);
-  await expect(quoteChip.locator('.upload-preview-meta')).toContainText(`@${dirName}/${editFile}`);
+  await expect(quoteChip.locator('.upload-preview-meta')).toContainText(`@${editFile}`);
 
   // ============================================================ §6.2-11 清空工作目录（放最后，它会清空整根）
-  await filesRegion(page).locator('.workspace-files-head-menu').click();
-  const clearItem = headMenuItem(page, '清空工作目录');
-  await expect(clearItem, '头部⋯菜单应有「清空工作目录」').toBeVisible({ timeout: 10_000 });
-  await clearItem.click();
+  await runBlankCommand(page, '清空工作目录');
   await expect(messageBox(page), '清空应弹出高危险确认框（含确认语要求）').toContainText('清空');
   await answerPrompt(page, '确认', '清空');
 
   await expect(toast(page, '工作目录已清空')).toBeVisible({ timeout: 20_000 });
-  // 用量条会立刻回到 0（那是另一条数据通路，正常）。
+  // 用量读数会立刻回到 0（那是另一条数据通路，正常）。
   await expect(usageBar(page)).toContainText('已用 0 B', { timeout: 20_000 });
   // 但文件树本身又卡在「加载中...」：清空走的是 `tree.reset()` + `loadDirectory('')`，
   // 与首屏完全相同的路径 —— 首次创建 state 又是 raw 对象，所以同样不会自动刷新。
@@ -599,7 +669,7 @@ test('云端工作目录：§6.2 十三项文件操作逐项真机走查', async
   await expect
     .poll(() => readFileCount(page), {
       timeout: 30_000,
-      message: '清空后用量条应保持 0 个文件'
+      message: '清空后用量读数应保持 0 个文件'
     })
     .toBe(0);
 
@@ -618,10 +688,10 @@ test('云端工作目录：§6.2 十三项文件操作逐项真机走查', async
  * `<div class="workspace-files-state">…加载中...</div>`，一行都不出；点一次工具栏「刷新」后
  * 4 行才出现。
  *
- * 现象 2（任何目录的首次展开）：根目录刷新好之后，点开服务端预置的 `agents/`
- * （内含 2 个 worker-card 文件），`aria-expanded` 变 true、列表请求也发了，但 6 秒后
- * 行数仍是 4（只有根层 4 个目录行），**子项一个都不出**；再点一次「刷新」才变成 6 行、
- * worker-card 文件才出现。即：目录懒加载的第一次展开等于白点。
+ * 现象 2（任何目录的首次展开）：根目录刷新好之后，点开一个内含子文件的目录
+ * （当时是服务端预置的 `agents/`，现改用 API 铺的 seed 目录），`aria-expanded` 变 true、
+ * 列表请求也发了，但 6 秒后行数不变，**子项一个都不出**；再点一次「刷新」才出现。
+ * 即：目录懒加载的第一次展开等于白点。
  *
  * 根因（frontend/src/views/messenger/workspace/workspaceFileTree.ts `ensureDirectory`）：
  *   const state = directories.get(key);           // 命中 → Vue 返回 reactive 代理
@@ -644,10 +714,7 @@ test('回归门：无需手动刷新即可渲染文件树与首次展开的目�
   request
 }) => {
   const username = `e2e_ops_first_${Date.now().toString(36)}`;
-  const registered = await request.post('/wunder/auth/register', {
-    data: { username, password: PASSWORD }
-  });
-  expect(registered.ok(), `register failed: ${registered.status()}`).toBeTruthy();
+  const seed = await registerAndSeed(request, username);
 
   await page.addInitScript(() => localStorage.setItem('wunder_language', 'zh-CN'));
   await page.goto('/login');
@@ -662,16 +729,19 @@ test('回归门：无需手动刷新即可渲染文件树与首次展开的目�
   });
   await expect(filesRegion(page).locator('.workspace-files-state')).toHaveCount(0);
 
-  // 现象 2：第一次展开 `agents/`（服务端预置目录，内含 worker-card 文件）就该看到子项。
+  // 现象 2：第一次展开 API 铺的 seed 目录（内含一个子文件）就该看到子项。
   await expect(usageBar(page)).toContainText('个文件');
   const rootRowsBefore = await fileRows(page).count();
-  await rowByName(page, 'agents').click();
-  await expect(rowByName(page, 'agents')).toHaveAttribute('aria-expanded', 'true');
+  await rowByName(page, seed.dirName).click();
+  await expect(rowByName(page, seed.dirName)).toHaveAttribute('aria-expanded', 'true');
   await expect
     .poll(async () => fileRows(page).count(), {
       timeout: 20_000,
-      message: '首次展开 agents 后应出现其子项（当前缺陷：必须再手动刷新一次）'
+      message: `首次展开 ${seed.dirName} 后应出现其子项（原缺陷：必须再手动刷新一次）`
     })
     .toBeGreaterThan(rootRowsBefore);
+  await expect(rowByName(page, seed.innerFile), '首次展开后子文件行应直接可见').toBeVisible({
+    timeout: 20_000
+  });
 });
 

@@ -35,14 +35,15 @@
 
 /* ------------------------------------------------------------ action row */
 
-/* 对齐桌面 composer.slint:513-664：30px 高、6px 间距的按钮行，
-   左组（工作目录 / 审批 / 命令 / 预设问题 / 语音）与右组（模型+占用 / 发送）分列两端。 */
+/* 工具行在输入卡**之外**（参考形态）：卡只包输入框，这一行直接落在页面底色上，
+   与卡留 8px 间距；30px 高的按钮行，左组（+ / 工作目录 / 审批）与右组（模型 / 发送）分列两端。 */
 .composer-action-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
   min-width: 0;
+  margin-top: 8px;
 }
 
 .composer-action-group {
@@ -62,14 +63,6 @@
   display: inline-flex;
   align-items: center;
   min-width: 0;
-}
-
-/* The model popover attaches above the whole input card (§8.3), not above its
-   trigger: keeping this anchor static makes the card the containing block.
-   The command panel uses the same trick (`.command-menu` is card-width). */
-.composer-anchor--card,
-.composer-anchor--static {
-  position: static;
 }
 
 .composer-icon-btn {
@@ -250,20 +243,172 @@
   }
 }
 
+/* ------------------------------------------------------------ "+" 菜单 */
+
+/* 参考形态：加号是与发送键同尺寸的方形描边按钮（白底 + 浅描边 + 极淡投影），
+   展开时图标转 45° 成「×」。 */
+.composer-plus-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid var(--mz-border-strong, #d8d5d0);
+  border-radius: 10px;
+  background: var(--mz-surface, #ffffff);
+  box-shadow: 0 1px 2px rgba(31, 35, 41, 0.06);
+  color: var(--mz-text-secondary, #3d3d3d);
+  cursor: pointer;
+  transition: border-color 140ms ease, color 140ms ease, background-color 140ms ease;
+}
+
+.composer-plus-btn:hover:not(:disabled) {
+  border-color: var(--mz-primary-soft, #dfac9a);
+  background: var(--mz-hover, #f1efec);
+}
+
+.composer-plus-btn.is-active {
+  border-color: rgba(var(--ui-accent-rgb), 0.5);
+  background: var(--ui-accent-soft, #f7e9e4);
+  color: var(--mz-primary, #c96443);
+}
+
+.composer-plus-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.composer-plus-btn:focus-visible {
+  outline: 2px solid var(--mz-primary-soft, #dfac9a);
+  outline-offset: 2px;
+}
+
+.composer-plus-icon {
+  font-size: 14px;
+  transition: transform 160ms ease;
+}
+
+.composer-plus-btn.is-active .composer-plus-icon {
+  transform: rotate(45deg);
+}
+
+/* 菜单本体不再滚动也不限高，否则右侧呼出的子面板会被裁掉。
+   两个类并列才能压过文件后面的 `.composer-panel` 基类（同为一段作用域属性，靠特异度取胜）。 */
+.composer-panel.composer-panel--plus {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 220px;
+  max-height: none;
+  overflow: visible;
+}
+
+.composer-plus-row {
+  position: relative;
+}
+
+/* 级联子面板：贴着所属行从右侧呼出（参考形态），不向下挤开菜单。
+   菜单恒在屏幕下方，所以子面板按**底边**对齐所属行向上长——顶边对齐会在矮窗口里掉出视口。 */
+.composer-plus-flyout {
+  position: absolute;
+  bottom: -7px;
+  left: calc(100% + 6px);
+  z-index: 41;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  box-sizing: border-box;
+  width: 268px;
+  max-width: calc(100vw - 48px);
+  max-height: 240px;
+  padding: 4px;
+  overflow-y: auto;
+  border: 1px solid var(--mz-border, #e8e6e3);
+  border-radius: 10px;
+  background: var(--mz-surface, #ffffff);
+  box-shadow: 0 12px 32px rgba(31, 35, 41, 0.16);
+}
+
+.composer-plus-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--mz-text, #1f2329);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.composer-plus-item:hover:not(:disabled),
+.composer-plus-item.is-active {
+  background: var(--mz-hover, #f1efec);
+}
+
+.composer-plus-item:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.composer-plus-item-icon {
+  flex: 0 0 auto;
+  width: 16px;
+  color: var(--mz-text-muted, #8a8f99);
+  font-size: 13px;
+  text-align: center;
+}
+
+.composer-plus-item.is-active .composer-plus-item-icon,
+.composer-plus-item.is-recording .composer-plus-item-icon {
+  color: var(--mz-primary, #c96443);
+}
+
+.composer-plus-item.is-recording {
+  color: var(--mz-danger, #d04a43);
+}
+
+.composer-plus-item-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-plus-item-caret {
+  flex: 0 0 auto;
+  font-size: 10px;
+  opacity: 0.55;
+}
+
+.composer-plus-item.is-active .composer-plus-item-caret {
+  opacity: 1;
+}
+
 /* ------------------------------------------------------------------ send */
 
-/* 对齐桌面：40px 宽 × 30px 高的主色按钮（composer.slint:657-663）。 */
+/* 参考形态：34px 圆角方形主色按钮 + 白色上箭头，圆角与「+」同为 10px（不是正圆），
+   带一层同色柔影才有"按得下去"的质感。 */
 .composer-send-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  width: 40px;
-  height: 30px;
+  width: 34px;
+  height: 34px;
   padding: 0;
   border: 0;
-  border-radius: 8px;
+  border-radius: 10px;
   background: var(--ui-accent, var(--mz-primary, #c96443));
+  box-shadow: 0 2px 6px rgba(var(--ui-accent-rgb, 201, 100, 67), 0.28);
   color: #ffffff;
   cursor: pointer;
   transition: background-color 140ms ease, opacity 140ms ease;

@@ -40,13 +40,12 @@
   /* §5.2 sidebar metrics */
   --mz-sidebar-width: 240px;
   --mz-sidebar-padding: 12px;
-  --mz-new-task-height: 38px;
   --mz-search-height: 34px;
   --mz-group-title-height: 24px;
   --mz-workspace-row-height: 34px;
   --mz-thread-row-height: 28px;
   --mz-thread-indent: 28px;
-  --mz-settings-btn-height: 40px;
+  --mz-settings-btn-height: 32px;
 
   /* §11.2 typography / §11.3 radii */
   --mz-font-xs: 11px;
@@ -120,34 +119,43 @@
   display: flex;
   flex-shrink: 0;
   flex-direction: column;
+  align-items: flex-start;
   gap: 8px;
   padding: 12px var(--mz-sidebar-padding) 0;
 }
 
+/* 「新任务」是左栏顶部一行轻量入口，不是主色大按钮（参考形态：小图标 + 文字）。 */
 .messenger-sidebar-new-task {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  justify-content: center;
-  gap: 8px;
+  gap: 6px;
   box-sizing: border-box;
-  height: var(--mz-new-task-height);
-  padding: 0 12px;
+  height: 28px;
+  margin-left: -8px;
+  padding: 0 8px;
   border: 0;
-  border-radius: var(--mz-radius-btn);
-  color: #ffffff;
-  background: var(--mz-primary);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--mz-text-secondary, #3d3d3d);
   font: inherit;
-  font-size: var(--mz-font-base);
+  font-size: 13px;
   font-weight: 500;
   cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.messenger-sidebar-new-task i {
+  font-size: 12px;
+  color: var(--mz-text-muted, #8a8f99);
 }
 
 .messenger-sidebar-new-task:hover:not(:disabled) {
-  background: var(--mz-primary-hover);
+  background: var(--mz-timeline-hover, #f6f5f3);
+  color: var(--mz-text, #1f2329);
 }
 
 .messenger-sidebar-new-task:disabled {
-  opacity: 0.55;
+  opacity: 0.5;
   cursor: not-allowed;
 }
 
@@ -471,34 +479,6 @@
 
 .workspace-files-head-title {
   flex-shrink: 0;
-}
-
-.workspace-files-head-path {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--mz-text-secondary);
-  font-size: var(--mz-font-xs);
-  text-align: right;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.workspace-files-head-menu {
-  flex-shrink: 0;
-  padding: 2px 5px;
-  border: 0;
-  border-radius: var(--mz-radius-tag);
-  color: var(--mz-text-muted);
-  background: transparent;
-  font: inherit;
-  font-size: var(--mz-font-sm);
-  cursor: pointer;
-}
-
-.workspace-files-head-menu:hover {
-  color: var(--mz-primary);
-  background: var(--mz-surface);
 }
 
 .messenger-sidebar-files-toolbar {
@@ -921,17 +901,27 @@
   color: var(--mz-primary);
 }
 
-/* ----------------------------------------------------------- usage bar */
+/* ----------------------------------------------------------- usage meter */
 
+/* 用量读数住在分组标题行右侧（原上传目标位），只吃剩余宽度；配额条压成固定小刻度。 */
 .workspace-files-usage {
   display: flex;
-  flex-shrink: 0;
+  flex: 1;
+  min-width: 0;
   align-items: center;
+  justify-content: flex-end;
   gap: 5px;
-  margin: 4px var(--mz-sidebar-padding) 8px;
+  overflow: hidden;
   color: var(--mz-text-muted);
   font-size: var(--mz-font-xs);
   font-variant-numeric: tabular-nums;
+}
+
+.workspace-files-usage > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .workspace-files-usage-value {
@@ -939,12 +929,12 @@
 }
 
 .workspace-files-usage-sep {
+  flex-shrink: 0;
   color: var(--mz-border-strong);
 }
 
 .workspace-files-usage-track {
-  flex: 1;
-  min-width: 24px;
+  flex: 0 0 32px;
   height: 4px;
   border-radius: 2px;
   background: var(--mz-border);
@@ -1023,14 +1013,23 @@
   box-sizing: border-box;
   width: 100%;
   height: var(--mz-settings-btn-height);
-  padding: 0 10px;
+  padding: 0 8px;
   border: 0;
   border-radius: var(--mz-radius-btn);
   color: var(--mz-text-secondary);
   background: transparent;
   font: inherit;
-  font-size: var(--mz-font-base);
+  font-size: var(--mz-font-md);
   cursor: pointer;
+}
+
+/* 按钮上的当前用户名：溢出省略，保持与参考主页面一致的单行形态。 */
+.messenger-sidebar-settings-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
 }
 
 .messenger-sidebar-settings:hover,
@@ -1191,14 +1190,82 @@
 
 /* -------------------------------------------------------- settings overlay */
 
+/* 对齐桌面端：设置是浮动窗口（带标题栏与关闭按钮），不再整页覆盖。 */
 .messenger-settings-overlay {
   position: absolute;
   inset: 0;
   z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(31, 35, 41, 0.32);
+}
+
+.messenger-settings-window {
   display: flex;
   flex-direction: column;
+  width: min(960px, 100%);
+  height: min(680px, 100%);
   min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--mz-border);
+  border-radius: 14px;
   background: var(--mz-bg);
+  box-shadow: 0 24px 64px rgba(31, 35, 41, 0.28);
+}
+
+.messenger-settings-window-head {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+  height: 44px;
+  padding: 0 10px 0 16px;
+  border-bottom: 1px solid var(--mz-border);
+  background: var(--mz-sidebar);
+}
+
+.messenger-settings-window-gear {
+  color: var(--mz-text-muted);
+  font-size: 14px;
+}
+
+.messenger-settings-window-title {
+  color: var(--mz-text);
+  font-size: var(--mz-font-base);
+  font-weight: 600;
+}
+
+.messenger-settings-window-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin-left: auto;
+  border: 0;
+  border-radius: var(--mz-radius-btn);
+  color: var(--mz-text-secondary);
+  background: transparent;
+  font-size: 15px;
+  cursor: pointer;
+}
+
+.messenger-settings-window-close:hover {
+  color: var(--mz-text);
+  background: var(--mz-hover);
+}
+
+.messenger-settings-window-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.messenger-settings-window-body .messenger-settings-frame {
+  flex: 1;
+  min-height: 0;
 }
 
 /* 覆盖层内部的左导航 / 右卡片布局见 `messenger-settings-page.css`。 */
@@ -1209,6 +1276,10 @@
   /* 抽屉入口浮在主区左上角，消息区顶部让出它的高度，避免压住首行。 */
   .messenger-main .messenger-chat-body {
     padding-top: 52px;
+  }
+
+  .messenger-settings-overlay {
+    padding: 12px;
   }
 
   .messenger-sidebar {

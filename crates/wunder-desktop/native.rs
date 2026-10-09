@@ -43,7 +43,7 @@ mod observer;
 #[path = "native_stream.rs"]
 mod stream;
 pub use crate::runtime::RuntimeToolStatus;
-pub use chat_turns::NativeChatTurn;
+pub use chat_turns::{NativeChatRound, NativeChatTurn};
 pub use observer::{NativeThreadUpdate, NativeThreadWatch};
 pub use stream::{NativeChatEvent, NativeStream};
 #[path = "native_catalog.rs"]
@@ -144,9 +144,6 @@ pub struct NativeSession {
 #[derive(Debug, Clone, PartialEq)]
 pub struct NativeMessage {
     pub turn_id: String,
-    pub workflow_detail: String,
-    pub workflow_items: Vec<NativeWorkflowEntry>,
-    pub reasoning: String,
     pub text: String,
     pub mine: bool,
     pub created_at: f64,
@@ -684,14 +681,6 @@ fn message_from_value(value: Value) -> Option<NativeMessage> {
     Some(NativeMessage {
         turn_id: value
             .get("turn_id")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string(),
-        workflow_detail: String::new(),
-        workflow_items: Vec::new(),
-        reasoning: value
-            .get("reasoning")
-            .or_else(|| value.get("reasoning_content"))
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_string(),

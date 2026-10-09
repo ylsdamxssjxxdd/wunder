@@ -40,6 +40,9 @@ export global Theme {
     // an expanded tool group, and the monospace diff card cells.
     out property <color> timeline-bubble: palette == "terracotta" ? #F3F2F0 : #f6ece4;
     out property <color> timeline-line: palette == "terracotta" ? #E2DFDA : #ecd9c9;
+    // The one-line outcome of a thinking or tool entry: a step softer than the
+    // label, so a row reads as name first, result second.
+    out property <color> timeline-entry-soft: palette == "terracotta" ? #9BA0A8 : #b08a72;
     out property <color> diff-header: palette == "terracotta" ? #F5F4F2 : #f7ece2;
     out property <color> diff-add-bg: palette == "terracotta" ? #EAF7F0 : #e6f5ee;
     out property <color> diff-add-text: palette == "terracotta" ? #14532D : #14532d;
@@ -82,6 +85,7 @@ export global Theme {
     out property <length> font-display: 24px * font-scale;
 
     // Corner radii. Circular avatars keep their half-width literals.
+    out property <length> radius-tag: 6px;
     out property <length> radius-sm: 8px;
     out property <length> radius-md: 10px;
     out property <length> radius-lg: 12px;

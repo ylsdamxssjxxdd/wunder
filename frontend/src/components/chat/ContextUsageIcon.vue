@@ -6,8 +6,8 @@
     :title="title || undefined"
     :aria-label="title || undefined"
   >
-    <i class="fa-solid fa-brain context-usage-icon-base"></i>
-    <i class="fa-solid fa-brain context-usage-icon-liquid"></i>
+    <i class="fa-solid fa-star-of-life context-usage-icon-base" aria-hidden="true"></i>
+    <i class="fa-solid fa-star-of-life context-usage-icon-liquid" aria-hidden="true"></i>
   </span>
 </template>
 

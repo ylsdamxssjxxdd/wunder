@@ -38,8 +38,12 @@ pub fn thought_failed() -> &'static str {
     "思考中断"
 }
 
-/// The tool batch bar label of §7.3 D.
+/// The tool batch bar label of §7.3 D. A batch that only holds thinking has no
+/// tool count to show, and reads as the settled verb instead.
 pub fn tool_calls(count: i32) -> String {
+    if count <= 0 {
+        return "已处理".into();
+    }
     format!("执行工具 {count} 次")
 }
 

@@ -374,7 +374,7 @@ fn scroll_to_end(app: &MainWindow) {
 
 /// Worst case the projections allow, for the `--smoke-check` timeline
 /// measurement: 50 turns (the observer's cap), 24 entries each
-/// (`native_chat_turns` caps `workflow_items` at 24) and one fully expanded
+/// (`native_chat_turns` caps a turn at 24 entries) and one fully expanded
 /// 8x200 patch card. `unfold` marks every row of every completed turn visible,
 /// which is what the user gets after unfolding all the history.
 pub(crate) fn near_limit_rows(turns: usize, entries: usize, unfold: bool) -> Vec<TimelineRow> {

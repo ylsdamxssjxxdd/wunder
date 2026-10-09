@@ -365,7 +365,6 @@ export global I18n {
     out property <string> rs_queueing: zh ? "正在排队" : "Queuing";
     out property <string> rs_waiting: zh ? "等待" : "Waiting";
     out property <string> rs_output_ended: zh ? "输出已结束" : "Output finished";
-    out property <string> wf_tool_result: zh ? "工具结果" : "Tool result";
     out property <string> ep_import_failed: zh ? "导入失败" : "Import failed";
     out property <string> ch_write_test_log: zh ? "写入测试日志" : "Write test log";
     out property <string> ch_pending_setup: zh ? "待配置" : "Pending setup";
@@ -1154,6 +1153,7 @@ export global I18n {
     out property <string> tl_thought_running: zh ? "正在思考…" : "Thinking…";
     out property <string> tl_thought_failed: zh ? "思考中断" : "Thinking interrupted";
     public pure function tl_tool_calls(count: string) -> string { return zh ? "执行工具 " + count + " 次" : "Ran " + count + " tools"; }
+    out property <string> tl_entry_output: zh ? "输出" : "Output";
     out property <string> tl_patch_pending: zh ? "待应用" : "Pending";
     public pure function tl_patch_lines_omitted(count: string) -> string { return zh ? "另有 " + count + " 行未展示" : "" + count + " more lines hidden"; }
     public pure function tl_patch_files_omitted(count: string) -> string { return zh ? "另有 " + count + " 个文件未展示" : "" + count + " more files hidden"; }

@@ -8,6 +8,7 @@
     @scroll.passive="handleScroll"
     @keydown.esc.prevent="emit('exit-selection')"
     @click="closeMenu"
+    @contextmenu.prevent.stop="openMenu(null, $event)"
   >
     <div v-if="loading && !rows.length" class="workspace-files-state">
       <span class="workspace-files-spinner" aria-hidden="true"></span>
@@ -155,7 +156,7 @@ const emit = defineEmits<{
   'toggle-select': [path: string];
   'exit-selection': [];
   retry: [];
-  command: [command: string, row: WorkspaceVisibleRow];
+  command: [command: string, row: WorkspaceVisibleRow | null];
 }>();
 
 const { t } = useI18n();
@@ -252,8 +253,8 @@ const handleMenuKeydown = (event: KeyboardEvent) => {
   if (event.key === 'Escape') closeMenu();
 };
 
-const openMenu = (row: WorkspaceVisibleRow, event: MouseEvent | Event) => {
-  if (row.kind === 'more') return;
+const openMenu = (row: WorkspaceVisibleRow | null, event: MouseEvent | Event) => {
+  if (row?.kind === 'more') return;
   const source = event as MouseEvent;
   const x = Number.isFinite(source.clientX) && source.clientX > 0 ? source.clientX : 24;
   const y = Number.isFinite(source.clientY) && source.clientY > 0 ? source.clientY : 24;
@@ -264,20 +265,32 @@ const openMenu = (row: WorkspaceVisibleRow, event: MouseEvent | Event) => {
 
 type MenuItem = { command: string; label: string; icon: string; danger?: boolean };
 
+const createItems = (): MenuItem[] => [
+  { command: 'new-dir', label: t('messenger.filesArea.newDir'), icon: 'fa-folder-plus' },
+  { command: 'new-file', label: t('messenger.filesArea.newFile'), icon: 'fa-file-circle-plus' }
+];
+
 const menuItems = computed<MenuItem[]>(() => {
   const row = menu.value.row;
-  if (!row) return [];
+  // 空白区没有宿主行，菜单落在当前目录上，并承接已下线头部 ⋯ 的三个动作。
+  if (!row) {
+    return [
+      ...createItems(),
+      { command: 'archive-root', label: t('messenger.filesArea.archiveCurrent'), icon: 'fa-file-zipper' },
+      { command: 'refresh-stats', label: t('messenger.filesArea.refreshStats'), icon: 'fa-chart-simple' },
+      { command: 'clear', label: t('messenger.filesArea.clear'), icon: 'fa-broom', danger: true }
+    ];
+  }
   const items: MenuItem[] = [];
   if (row.kind === 'dir') {
     items.push({ command: 'toggle', label: t('messenger.filesArea.menu.open'), icon: 'fa-folder-open' });
     items.push({ command: 'archive', label: t('messenger.filesArea.menu.archive'), icon: 'fa-file-zipper' });
+    items.push(...createItems());
   } else {
     items.push({ command: 'preview', label: t('messenger.filesArea.menu.preview'), icon: 'fa-eye' });
     items.push({ command: 'download', label: t('common.download'), icon: 'fa-download' });
   }
   items.push({ command: 'rename', label: t('messenger.filesArea.menu.rename'), icon: 'fa-i-cursor' });
-  items.push({ command: 'move', label: t('messenger.filesArea.menu.move'), icon: 'fa-arrow-right-arrow-left' });
-  items.push({ command: 'copy', label: t('messenger.filesArea.menu.copy'), icon: 'fa-copy' });
   items.push({ command: 'quote', label: t('messenger.filesArea.menu.quote'), icon: 'fa-comment-dots' });
   items.push({ command: 'delete', label: t('common.delete'), icon: 'fa-trash-can', danger: true });
   return items;
@@ -286,7 +299,6 @@ const menuItems = computed<MenuItem[]>(() => {
 const chooseMenuItem = (command: string) => {
   const row = menu.value.row;
   closeMenu();
-  if (!row) return;
   emit('command', command, row);
 };
 

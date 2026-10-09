@@ -13,7 +13,6 @@ import type { AxiosProgressEvent } from 'axios';
 import {
   batchWorkspaceAction,
   clearWorkspace,
-  copyWorkspaceEntry,
   createWorkspaceDir,
   deleteWorkspaceEntry,
   downloadWorkspaceArchive,
@@ -148,15 +147,17 @@ export const createWorkspaceDirectory = async (parentPath: string, name: string)
   await createWorkspaceDir({ path: joinWorkspacePath(parentPath, name) });
 };
 
-export const moveWorkspacePath = async (source: string, destination: string): Promise<void> => {
-  await moveWorkspaceEntry({
-    source: normalizeWorkspaceRelativePath(source),
-    destination: normalizeWorkspaceRelativePath(destination)
+/** Empty content lets `/workspace/file` substitute an Office template for xlsx/docx/pptx. */
+export const createWorkspaceFile = async (parentPath: string, name: string): Promise<void> => {
+  await saveWorkspaceFile({
+    path: joinWorkspacePath(parentPath, name),
+    content: '',
+    create_if_missing: true
   });
 };
 
-export const copyWorkspacePath = async (source: string, destination: string): Promise<void> => {
-  await copyWorkspaceEntry({
+export const moveWorkspacePath = async (source: string, destination: string): Promise<void> => {
+  await moveWorkspaceEntry({
     source: normalizeWorkspaceRelativePath(source),
     destination: normalizeWorkspaceRelativePath(destination)
   });

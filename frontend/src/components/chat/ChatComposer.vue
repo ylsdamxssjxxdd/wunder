@@ -170,7 +170,7 @@
       <div class="composer-action-group">
         <!-- 命令 / 预设问题 / 录音 收进「+」：常驻行只留工作目录与审批模式。
              输入 `/` 仍就地展开命令列表；面板内三段各自开合，互不遮挡。 -->
-        <div ref="plusMenuAnchorRef" class="composer-anchor composer-anchor--static">
+        <div ref="plusMenuAnchorRef" class="composer-anchor">
           <button
             class="composer-plus-btn"
             type="button"
@@ -185,89 +185,93 @@
           </button>
 
           <div v-if="plusPanelVisible" class="composer-panel composer-panel--plus" @click.stop>
-            <button
-              class="composer-plus-item"
-              type="button"
-              :class="{ 'is-active': commandMenuOpen }"
-              :aria-expanded="commandMenuOpen"
-              @click.stop="toggleCommandMenu"
-            >
-              <i class="fa-solid fa-terminal composer-plus-item-icon" aria-hidden="true"></i>
-              <span class="composer-plus-item-label">{{ t('chat.composer.commands') }}</span>
-              <i
-                class="fa-solid fa-chevron-down composer-plus-item-caret"
-                :class="{ 'is-open': commandMenuOpen }"
-                aria-hidden="true"
-              ></i>
-            </button>
-            <div v-if="commandPanelVisible" class="command-menu command-menu--inline" role="listbox">
-              <button
-                v-for="(item, index) in commandPanelItems"
-                :key="item.command"
-                class="command-menu-item"
-                :class="{ active: !commandMenuOpen && index === commandMenuIndex }"
-                type="button"
-                role="option"
-                :aria-selected="!commandMenuOpen && index === commandMenuIndex"
-                @mousedown.prevent="applyCommandSuggestion(index)"
-                @mouseenter="setCommandMenuIndex(index)"
-              >
-                <span class="command-menu-name">{{ item.command }}</span>
-                <span class="command-menu-desc">{{ item.description }}</span>
-              </button>
-              <div class="command-menu-hint">{{ t('chat.commandMenu.hint') }}</div>
-            </div>
-
-            <template v-if="presetQuestionItems.length">
+            <div class="composer-plus-row" @mouseenter="hoverPlusSubmenu('command')">
               <button
                 class="composer-plus-item"
                 type="button"
-                :class="{ 'is-active': presetMenuVisible }"
-                :disabled="stopButtonActive"
-                :aria-expanded="presetMenuVisible"
-                @click.stop="togglePresetMenu"
+                :class="{ 'is-active': commandMenuOpen }"
+                :aria-expanded="commandMenuOpen"
+                @click.stop="toggleCommandMenu"
               >
-                <i class="fa-solid fa-wand-magic-sparkles composer-plus-item-icon" aria-hidden="true"></i>
-                <span class="composer-plus-item-label">{{ t('chat.commandMenu.presetQuestions') }}</span>
-                <i
-                  class="fa-solid fa-chevron-down composer-plus-item-caret"
-                  :class="{ 'is-open': presetMenuVisible }"
-                  aria-hidden="true"
-                ></i>
+                <i class="fa-solid fa-terminal composer-plus-item-icon" aria-hidden="true"></i>
+                <span class="composer-plus-item-label">{{ t('chat.composer.commands') }}</span>
+                <i class="fa-solid fa-chevron-right composer-plus-item-caret" aria-hidden="true"></i>
               </button>
-              <ComposerPresetQuestions
-                v-if="presetMenuVisible"
-                :items="presetQuestionItems"
-                :disabled="stopButtonActive"
-                @pick="applyPresetQuestion"
-              />
+              <div v-if="commandPanelVisible && !presetMenuVisible" class="composer-plus-flyout" role="listbox">
+                <button
+                  v-for="(item, index) in commandPanelItems"
+                  :key="item.command"
+                  class="command-menu-item"
+                  :class="{ active: !commandMenuOpen && index === commandMenuIndex }"
+                  type="button"
+                  role="option"
+                  :aria-selected="!commandMenuOpen && index === commandMenuIndex"
+                  @mousedown.prevent="applyCommandSuggestion(index)"
+                  @mouseenter="setCommandMenuIndex(index)"
+                >
+                  <span class="command-menu-name">{{ item.command }}</span>
+                  <span class="command-menu-desc">{{ item.description }}</span>
+                </button>
+                <div class="command-menu-hint">{{ t('chat.commandMenu.hint') }}</div>
+              </div>
+            </div>
+
+            <template v-if="presetQuestionItems.length">
+              <div class="composer-plus-row" @mouseenter="hoverPlusSubmenu('preset')">
+                <button
+                  class="composer-plus-item"
+                  type="button"
+                  :class="{ 'is-active': presetMenuVisible }"
+                  :disabled="stopButtonActive"
+                  :aria-expanded="presetMenuVisible"
+                  @click.stop="togglePresetMenu"
+                >
+                  <i
+                    class="fa-solid fa-wand-magic-sparkles composer-plus-item-icon"
+                    aria-hidden="true"
+                  ></i>
+                  <span class="composer-plus-item-label">{{
+                    t('chat.commandMenu.presetQuestions')
+                  }}</span>
+                  <i class="fa-solid fa-chevron-right composer-plus-item-caret" aria-hidden="true"></i>
+                </button>
+                <ComposerPresetQuestions
+                  v-if="presetMenuVisible"
+                  class="composer-plus-flyout"
+                  :items="presetQuestionItems"
+                  :disabled="stopButtonActive"
+                  @pick="applyPresetQuestion"
+                />
+              </div>
             </template>
 
-            <button
-              v-if="voiceSupported"
-              class="composer-plus-item"
-              type="button"
-              :class="{ 'is-recording': voiceRecording }"
-              :disabled="composerBusy > 0 || stopButtonActive || voiceTranscribing"
-              :title="voiceButtonTitle"
-              @click.stop="handleToggleVoiceRecord"
-            >
-              <i
-                :class="[
-                  voiceRecording
-                    ? 'fa-solid fa-stop'
-                    : voiceTranscribing
-                      ? 'fa-solid fa-waveform-lines'
-                      : 'fa-solid fa-microphone',
-                  'composer-plus-item-icon'
-                ]"
-                aria-hidden="true"
-              ></i>
-              <span class="composer-plus-item-label">{{ t('messenger.world.voice.title') }}</span>
-              <span v-if="voiceRecording" class="composer-voice-timer" :title="voiceRecordingLabel">
-                {{ formatVoiceDurationLabel(props.voiceDurationMs) }}
-              </span>
-            </button>
+            <div class="composer-plus-row" @mouseenter="hoverPlusSubmenu('none')">
+              <button
+                v-if="voiceSupported"
+                class="composer-plus-item"
+                type="button"
+                :class="{ 'is-recording': voiceRecording }"
+                :disabled="composerBusy > 0 || stopButtonActive || voiceTranscribing"
+                :title="voiceButtonTitle"
+                @click.stop="handleToggleVoiceRecord"
+              >
+                <i
+                  :class="[
+                    voiceRecording
+                      ? 'fa-solid fa-stop'
+                      : voiceTranscribing
+                        ? 'fa-solid fa-waveform-lines'
+                        : 'fa-solid fa-microphone',
+                    'composer-plus-item-icon'
+                  ]"
+                  aria-hidden="true"
+                ></i>
+                <span class="composer-plus-item-label">{{ t('messenger.world.voice.title') }}</span>
+                <span v-if="voiceRecording" class="composer-voice-timer" :title="voiceRecordingLabel">
+                  {{ formatVoiceDurationLabel(props.voiceDurationMs) }}
+                </span>
+              </button>
+            </div>
           </div>
         </div>
 
@@ -317,7 +321,7 @@
           <!-- 右组（对齐桌面 composer.slint:637-663）：模型 + 上下文占用 → 发送/停止。
                占用统计不再单独占一个图标位：触发器上的大脑就是占用图标（按占用率填充），
                数字与进度在浮层里展开。数据仍取自**唯一**一份投影 sessionContextUsage.ts。 -->
-          <div ref="modelMenuAnchorRef" class="composer-anchor composer-anchor--card">
+          <div ref="modelMenuAnchorRef" class="composer-anchor">
             <button
               class="composer-model-trigger"
               type="button"
@@ -368,7 +372,6 @@
             <i v-if="stopButtonActive" class="fa-solid fa-stop composer-send-icon" aria-hidden="true"></i>
             <i v-else class="fa-solid fa-arrow-up composer-send-icon" aria-hidden="true"></i>
           </button>
-        </div>
       </div>
     </div>
   </div>
@@ -529,11 +532,11 @@ const dragActive = ref(false);
 const dragCounter = ref(0);
 const approvalMenuAnchorRef = ref<HTMLElement | null>(null);
 const modelMenuAnchorRef = ref<HTMLElement | null>(null);
-const commandMenuAnchorRef = ref<HTMLElement | null>(null);
-const presetMenuAnchorRef = ref<HTMLElement | null>(null);
+const plusMenuAnchorRef = ref<HTMLElement | null>(null);
 const approvalMenuVisible = ref(false);
 const modelMenuVisible = ref(false);
 const presetMenuVisible = ref(false);
+const plusMenuVisible = ref(false);
 // 命令按钮把命令面板钉住（桌面 `root.command-open`）；输入即交回 `/` 建议链路。
 const commandMenuOpen = ref(false);
 const modelSwitching = ref(false);
@@ -923,9 +926,7 @@ const commandPanelItems = computed(() =>
   commandMenuOpen.value ? allCommandItems.value : commandSuggestions.value
 );
 const commandPanelVisible = computed(() => commandMenuOpen.value || commandSuggestionsVisible.value);
-const commandTriggerTitle = computed(() => t('chat.composer.commands'));
 const presetQuestionItems = computed(() => normalizeAgentPresetQuestions(props.presetQuestions));
-const presetTriggerTitle = computed(() => t('chat.commandMenu.presetQuestions'));
 
 const buildAttachmentId = () => `${Date.now()}_${Math.random().toString(16).slice(2)}`;
 
@@ -2098,13 +2099,37 @@ const closeComposerPanels = () => {
   approvalMenuVisible.value = false;
   modelMenuVisible.value = false;
   presetMenuVisible.value = false;
+  plusMenuVisible.value = false;
 };
 
-const closeOtherPanels = (keep: 'command' | 'approval' | 'model' | 'preset') => {
+const closeOtherPanels = (keep: 'plus' | 'command' | 'approval' | 'model' | 'preset') => {
   if (keep !== 'command') commandMenuOpen.value = false;
   if (keep !== 'approval') approvalMenuVisible.value = false;
   if (keep !== 'model') modelMenuVisible.value = false;
   if (keep !== 'preset') presetMenuVisible.value = false;
+  if (keep !== 'plus' && keep !== 'command' && keep !== 'preset') plusMenuVisible.value = false;
+};
+
+/**
+ * 「+」面板的可见性：点加号，或被 `/` 建议与预设列表任一分支点亮时都要在。
+ * 命令与预设在面板内各自开合，因此它们任一为真也代表面板开着。
+ */
+const plusPanelVisible = computed(() =>
+  plusMenuVisible.value ||
+  commandMenuOpen.value ||
+  presetMenuVisible.value ||
+  commandSuggestionsVisible.value
+);
+
+// 加号只开合面板；面板内的三段各自负责自己的开合。
+const togglePlusMenu = () => {
+  const next = !plusPanelVisible.value;
+  closeOtherPanels('plus');
+  plusMenuVisible.value = next;
+  if (!next) {
+    commandMenuOpen.value = false;
+    presetMenuVisible.value = false;
+  }
 };
 
 // 命令按钮只开面板、不发送：选中项填入草稿（与桌面 `root.draft = command.value` 一致）。
@@ -2112,15 +2137,41 @@ const toggleCommandMenu = () => {
   const next = !commandMenuOpen.value;
   closeOtherPanels('command');
   commandMenuOpen.value = next;
+  if (next) plusMenuVisible.value = true;
   if (next) commandMenuIndex.value = 0;
 };
 
-// 预设问题按钮：只开合浮层，选中项由 applyPresetQuestion 填入草稿。
+// 预设问题：只开合列表，选中项由 applyPresetQuestion 填入草稿。
 const togglePresetMenu = () => {
   if (stopButtonActive.value) return;
   const next = !presetMenuVisible.value;
   closeOtherPanels('preset');
   presetMenuVisible.value = next;
+  if (next) plusMenuVisible.value = true;
+};
+
+/**
+ * 「+」菜单的级联形态：悬停行就从右侧呼出子面板，移开不自动收起。
+ * 语音行没有子面板，指过去即把两个子面板关掉。
+ */
+const hoverPlusSubmenu = (target: 'command' | 'preset' | 'none') => {
+  if (!plusPanelVisible.value) return;
+  if (target === 'none') {
+    commandMenuOpen.value = false;
+    presetMenuVisible.value = false;
+    return;
+  }
+  if (target === 'preset') {
+    if (stopButtonActive.value) return;
+    commandMenuOpen.value = false;
+    presetMenuVisible.value = true;
+    return;
+  }
+  presetMenuVisible.value = false;
+  // 输入 `/` 的候选已经挂在同一份子面板上，别再切成全量命令表。
+  if (commandSuggestionsVisible.value) return;
+  commandMenuOpen.value = true;
+  commandMenuIndex.value = 0;
 };
 
 const toggleApprovalMenu = () => {
@@ -2303,6 +2354,7 @@ const isPointerInside = (element: HTMLElement | null, target: Node | null): bool
   Boolean(element && target && element.contains(target));
 
 const hasOpenComposerPanel = (): boolean =>
+  plusPanelVisible.value ||
   commandMenuOpen.value ||
   approvalMenuVisible.value ||
   modelMenuVisible.value ||
@@ -2310,14 +2362,13 @@ const hasOpenComposerPanel = (): boolean =>
 
 const handleDocumentPointerDown = (event: PointerEvent) => {
   const target = event.target as Node | null;
-  if (commandMenuOpen.value && !isPointerInside(commandMenuAnchorRef.value, target)) {
+  if (plusPanelVisible.value && !isPointerInside(plusMenuAnchorRef.value, target)) {
     commandMenuOpen.value = false;
+    presetMenuVisible.value = false;
+    plusMenuVisible.value = false;
   }
   if (approvalMenuVisible.value && !isPointerInside(approvalMenuAnchorRef.value, target)) {
     approvalMenuVisible.value = false;
-  }
-  if (presetMenuVisible.value && !isPointerInside(presetMenuAnchorRef.value, target)) {
-    presetMenuVisible.value = false;
   }
   if (modelMenuVisible.value && !isPointerInside(modelMenuAnchorRef.value, target)) {
     modelMenuVisible.value = false;

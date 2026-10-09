@@ -25,28 +25,6 @@
   background: var(--mz-sidebar);
 }
 
-.messenger-settings-frame-back {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  align-self: flex-start;
-  height: 32px;
-  padding: 0 12px;
-  border: 1px solid var(--mz-border);
-  border-radius: var(--mz-radius-btn);
-  color: var(--mz-text-secondary);
-  background: var(--mz-surface);
-  font: inherit;
-  font-size: var(--mz-font-md);
-  cursor: pointer;
-}
-
-.messenger-settings-frame-back:hover {
-  color: var(--mz-primary);
-  border-color: var(--mz-primary-soft);
-  background: var(--mz-primary-tint);
-}
-
 .messenger-settings-frame-search {
   display: flex;
   align-items: center;
@@ -210,6 +188,58 @@
   flex-direction: column;
   gap: 16px;
   max-width: 880px;
+}
+
+/* ------------------------------------------------------- 工具管理选项卡 */
+
+/* 对齐桌面端：工具管理以「内置工具 / MCP / 知识与资源」选项卡组织。 */
+.messenger-settings-tools-tabs {
+  display: flex;
+  flex-shrink: 0;
+  width: fit-content;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--mz-border);
+  border-radius: var(--mz-radius-btn);
+  background: var(--mz-bg);
+}
+
+.messenger-settings-tools-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 8px;
+  color: var(--mz-text-secondary);
+  background: transparent;
+  font: inherit;
+  font-size: var(--mz-font-md);
+  cursor: pointer;
+}
+
+.messenger-settings-tools-tab:hover {
+  color: var(--mz-text);
+  background: var(--mz-hover);
+}
+
+.messenger-settings-tools-tab.is-active {
+  color: var(--mz-text);
+  background: var(--mz-surface);
+  box-shadow: inset 0 0 0 1px var(--mz-border);
+  font-weight: 500;
+}
+
+/* 选项卡面板宿主：复用旧版 `messenger-tools-pane-host`（内含自建工具三面板），
+   在设置卡片内给固定高度，面板内部列表自行滚动。 */
+.messenger-settings-card--pane {
+  padding: 8px;
+}
+
+.messenger-settings-tools-host {
+  flex: 0 0 auto;
+  height: 480px;
 }
 
 /* ------------------------------------------------------- 分组卡片与设置项 */

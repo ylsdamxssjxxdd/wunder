@@ -1,16 +1,6 @@
 <template>
   <div class="messenger-settings-frame">
     <nav class="messenger-settings-frame-nav" :aria-label="t('messenger.sidebar.settings')">
-      <button
-        class="messenger-settings-frame-back"
-        type="button"
-        data-testid="settings-back"
-        @click="emit('close')"
-      >
-        <i class="fa-solid fa-arrow-left" aria-hidden="true"></i>
-        <span>{{ t('messenger.settings.backToApp') }}</span>
-      </button>
-
       <div class="messenger-settings-frame-search">
         <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
         <input

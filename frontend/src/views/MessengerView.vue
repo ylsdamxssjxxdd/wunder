@@ -19,7 +19,6 @@
         @thread-detail="openTimelineSessionDetail"
         @rename-thread="renameTimelineSession"
         @archive-thread="archiveTimelineSession"
-        @delete-thread="deleteThread"
         @open-settings="openSettingsPage"
       />
       <div
@@ -222,8 +221,6 @@ import { onUpdated as trackShellUpdate } from 'vue';
 import { chatPerf } from '@/utils/chatPerf';
 import { computed as vueComputed, ref as vueRef } from 'vue';
 import { defineRecoverableAsyncComponent } from '@/utils/asyncComponentRecovery';
-import { ElMessage, ElMessageBox } from 'element-plus';
-import { showApiError } from '@/utils/apiError';
 import MessengerMessagePanel from '@/views/messenger/sections/MessengerMessagePanel.vue';
 import MessengerSidebar from '@/views/messenger/sections/MessengerSidebar.vue';
 import MessengerWelcomePane from '@/views/messenger/sections/MessengerWelcomePane.vue';
@@ -283,27 +280,6 @@ const openSettingsPage = () => {
 
 const closeSettingsPage = () => {
   controller.switchSection?.('messages');
-};
-
-const deleteThread = async (sessionId: string) => {
-  const targetId = String(sessionId || '').trim();
-  if (!targetId) return;
-  try {
-    await ElMessageBox.confirm(t('messenger.thread.deleteConfirm'), t('messenger.thread.delete'), {
-      confirmButtonText: t('common.confirm'),
-      cancelButtonText: t('common.cancel'),
-      type: 'warning'
-    });
-  } catch (error) {
-    if (error === 'cancel' || error === 'close') return;
-    return;
-  }
-  try {
-    await chatStore.deleteSession(targetId);
-    ElMessage.success(t('messenger.thread.deleteSuccess'));
-  } catch (error) {
-    showApiError(error, t('messenger.thread.deleteFailed'));
-  }
 };
 
 // -------------------------------------------------------------- controller

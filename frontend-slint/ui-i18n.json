@@ -1818,11 +1818,6 @@
   "en": "Output finished"
  },
  {
-  "key": "wf_tool_result",
-  "zh": "工具结果",
-  "en": "Tool result"
- },
- {
   "key": "ep_import_failed",
   "zh": "导入失败",
   "en": "Import failed"
@@ -5767,6 +5762,11 @@
   "params": [
    "count"
   ]
+ },
+ {
+  "key": "tl_entry_output",
+  "zh": "输出",
+  "en": "Output"
  },
  {
   "key": "tl_patch_pending",

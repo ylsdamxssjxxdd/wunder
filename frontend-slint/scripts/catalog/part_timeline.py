@@ -13,6 +13,7 @@ ENTRIES = [
     ("tl_thought_running", "正在思考…", "Thinking…"),
     ("tl_thought_failed", "思考中断", "Thinking interrupted"),
     ("tl_tool_calls", "执行工具 {} 次", "Ran {} tools", ["count"]),
+    ("tl_entry_output", "输出", "Output"),
     ("tl_patch_pending", "待应用", "Pending"),
     ("tl_patch_lines_omitted", "另有 {} 行未展示", "{} more lines hidden", ["count"]),
     ("tl_patch_files_omitted", "另有 {} 个文件未展示", "{} more files hidden", ["count"]),

@@ -34,8 +34,6 @@ ENTRIES = [
     ("rs_queueing", "正在排队", "Queuing"),
     ("rs_waiting", "等待", "Waiting"),
     ("rs_output_ended", "输出已结束", "Output finished"),
-    # workflow_detail.slint
-    ("wf_tool_result", "工具结果", "Tool result"),
     # entity_pages.slint
     ("ep_import_failed", "导入失败", "Import failed"),
     # channels_page.slint

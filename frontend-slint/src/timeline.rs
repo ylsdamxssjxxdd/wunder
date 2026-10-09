@@ -100,11 +100,13 @@ struct ToolItem {
     /// The `apply_patch`-family result renders as a diff card.
     patch: bool,
 }
-/// One batch bar and its entry count, kept while the turn lives so a late
+/// One batch bar and its bounded readout, kept while the turn lives so a late
 /// result frame still updates the bar it belongs to.
 struct BatchBar {
     index: usize,
     entries: usize,
+    /// The newest entry of the batch, read out while the bar is folded.
+    latest: slint::SharedString,
 }
 
 /// The live turn reducer.
@@ -348,8 +350,11 @@ impl Timeline {
         let index = thinking.index;
         let summary = thinking.summary.clone();
         self.patch(index, |row| {
-            row.summary = summary;
+            row.summary = summary.clone();
         });
+        if let Some(bar) = self.bars.last_mut() {
+            bar.latest = summary;
+        }
         Ok(())
     }
 
@@ -392,6 +397,7 @@ impl Timeline {
         self.bars.push(BatchBar {
             index: bar,
             entries: 0,
+            latest: Default::default(),
         });
         self.group = group;
     }
@@ -399,12 +405,15 @@ impl Timeline {
     /// Rewrite the bar label of the batch the last upsert landed in. The count
     /// is the batch's own entry count, not the open batch's.
     fn refresh_batch_label(&mut self) {
-        let Some((bar, entries)) = self.bars.last().map(|bar| (bar.index, bar.entries)) else {
+        let Some((bar, entries, latest)) =
+            self.bars.last().map(|bar| (bar.index, bar.entries, bar.latest.clone()))
+        else {
             return;
         };
         let label = crate::timeline_text::tool_calls(entries as i32);
         self.patch(bar, |row| {
             row.text = label.as_str().into();
+            row.summary = latest;
         });
     }
 
@@ -443,6 +452,12 @@ impl Timeline {
                 row.status_kind = status;
                 row.patch = cards.clone();
             });
+            // A settling result rewrites what the folded bar reads out, even
+            // though the batch count stayed the same.
+            if let Some(bar) = self.bars.last_mut() {
+                bar.latest = summary.as_str().into();
+            }
+            self.refresh_batch_label();
             return;
         }
         if self.tools.len() >= MAX_GROUP_ENTRIES {
@@ -482,6 +497,7 @@ impl Timeline {
         // published the fresh bar, so the first entry of a batch only counts.
         if let Some(bar) = self.bars.last_mut() {
             bar.entries += 1;
+            bar.latest = summary.as_str().into();
         }
         self.refresh_batch_label();
     }
@@ -577,10 +593,83 @@ impl Timeline {
         });
     }
 
-    /// Replace the durable history rows in the shared model. Called by the
-    /// observer before a live turn appends, so the two never interleave.
+    /// Replace the whole model with durable history rows. Only for a timeline
+    /// that holds no live turn: tests, probes and the thread-log column.
     pub fn set_history(&mut self, rows: Vec<TimelineRow>) {
         self.model.set_vec(rows);
+    }
+
+    /// Publish the durable history in front of the live turn. The two share one
+    /// model, so a reload may only replace what the snapshot actually covers:
+    /// rows from the live turn's own divider onward stay, and stop staying the
+    /// moment the snapshot carries that divider. Replacing the whole model
+    /// instead is what made a finished answer drop its thinking and tool
+    /// entries before the durable rows arrived for them.
+    pub fn publish_history(&mut self, rows: Vec<TimelineRow>) {
+        let divider = self
+            .turn
+            .as_ref()
+            .map(|root| format!("turn-{root}"))
+            .unwrap_or_default();
+        if divider.is_empty() || rows.iter().any(|row| row.id == divider) {
+            // Either there is no live turn, or the snapshot owns it now and its
+            // rows are the authority: the live builder is done with this turn.
+            if !divider.is_empty() {
+                self.turn = None;
+                self.body = None;
+                self.thinking = None;
+                self.tools.clear();
+                self.bars.clear();
+                self.group = NO_GROUP;
+            }
+            self.model.set_vec(rows);
+            return;
+        }
+        let count = self.model.row_count();
+        let Some(start) = (0..count).find(|index| {
+            self.model
+                .row_data(*index)
+                .is_some_and(|row| row.id == divider)
+        }) else {
+            self.model.set_vec(rows);
+            return;
+        };
+        let mut published = rows;
+        let delta = published.len() as isize - start as isize;
+        for index in start..count {
+            let Some(mut row) = self.model.row_data(index) else {
+                continue;
+            };
+            // Fold handles address their row by index, so the tail keeps
+            // toggling itself after the prefix moved.
+            if matches!(row.kind, KIND_DIVIDER | KIND_GROUP | KIND_REASON | KIND_TOOL) {
+                row.payload = (index as isize + delta) as i32;
+            }
+            published.push(row);
+        }
+        self.model.set_vec(published);
+        self.rebase(delta);
+    }
+
+    /// Move every row index the reducer still holds by the amount the durable
+    /// prefix grew or shrank.
+    fn rebase(&mut self, delta: isize) {
+        if delta == 0 {
+            return;
+        }
+        let shift = |index: usize| (index as isize + delta).max(0) as usize;
+        if let Some(body) = self.body.as_mut() {
+            body.index = shift(body.index);
+        }
+        if let Some(thinking) = self.thinking.as_mut() {
+            thinking.index = shift(thinking.index);
+        }
+        for tool in self.tools.iter_mut() {
+            tool.index = shift(tool.index);
+        }
+        for bar in self.bars.iter_mut() {
+            bar.index = shift(bar.index);
+        }
     }
 
     /// Fold toggle: `payload` is the row the user clicked. Reasoning and tool
@@ -769,6 +858,83 @@ mod tests {
 
     fn visible(timeline: &Timeline) -> usize {
         timeline.model().iter().filter(|row| row.visible).count()
+    }
+
+    /// Two rows per turn: the divider carries the turn identity the observer
+    /// matches a live turn against.
+    fn durable_rows(turns: usize) -> Vec<TimelineRow> {
+        (0..turns)
+            .flat_map(|turn| {
+                let mut divider = blank(KIND_DIVIDER, format!("turn-{turn}"));
+                divider.foldable = true;
+                vec![divider, blank(KIND_BODY, format!("body-{turn}"))]
+            })
+            .collect()
+    }
+
+    /// The durable snapshot and the live turn share one model, so a reload may
+    /// only replace the prefix it actually covers. Replacing the whole model is
+    /// what made a finished answer lose its own entries before its durable rows
+    /// arrived for them.
+    #[test]
+    fn publish_history_replaces_only_the_durable_prefix() {
+        let mut timeline = Timeline::new();
+        timeline.set_history(durable_rows(2));
+        timeline.begin_turn("live", "Fixture input");
+        timeline.start_body(1);
+        timeline.append_body("直播中的答案").unwrap();
+        timeline.flush();
+
+        // More turns land in storage while this one is still live.
+        timeline.publish_history(durable_rows(4));
+        let model = timeline.model();
+        assert_eq!(
+            model.iter().filter(|row| row.id == "turn-live").count(),
+            1,
+            "the live turn keeps exactly one divider"
+        );
+        assert_eq!(model.row_count(), 11, "four durable turns plus the live turn");
+        assert_eq!(
+            timeline.last_answer(),
+            "直播中的答案",
+            "the live block survives the reload"
+        );
+        let divider = model
+            .iter()
+            .position(|row| row.id == "turn-live")
+            .expect("live divider");
+        assert_eq!(
+            model.row_data(divider).expect("live divider").payload,
+            divider as i32,
+            "the fold handle still addresses its own row after the prefix moved"
+        );
+        drop(model);
+        // The reducer's own indices moved with the prefix, so a later frame still
+        // patches its own row instead of an older history row.
+        timeline.append_body("续写").unwrap();
+        timeline.flush();
+        assert_eq!(timeline.last_answer(), "直播中的答案续写");
+
+        // Once storage carries the live turn, its durable rows take over.
+        let mut settled = durable_rows(4);
+        settled.push(blank(KIND_DIVIDER, "turn-live".into()));
+        settled.push(blank(KIND_USER, String::new()));
+        let mut durable_answer = blank(KIND_BODY, "body-live".into());
+        durable_answer.text = "durable-answer".into();
+        settled.push(durable_answer);
+        timeline.publish_history(settled);
+        let model = timeline.model();
+        assert_eq!(
+            model.iter().filter(|row| row.id == "turn-live").count(),
+            1,
+            "the live copy is replaced, not appended"
+        );
+        assert_eq!(model.row_count(), 11);
+        assert_eq!(
+            model.row_data(10).expect("settled body").text,
+            "durable-answer",
+            "the durable rows are the authority once they arrive"
+        );
     }
 
     /// §十二.2: the view lays out every row the projection marks visible, so the

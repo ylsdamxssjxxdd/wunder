@@ -9,30 +9,18 @@
   >
     <div class="messenger-sidebar-files-head">
       <span class="workspace-files-head-title">{{ t('messenger.filesArea.group') }}</span>
-      <span class="workspace-files-head-path" :title="uploadTargetTitle">{{ uploadTargetLabel }}</span>
-      <el-dropdown
-        trigger="click"
-        :teleported="true"
-        placement="bottom-end"
-        popper-class="mz-thread-dropdown"
-        @command="handleHeadCommand"
-      >
-        <button
-          class="workspace-files-head-menu"
-          type="button"
-          :title="t('common.more')"
-          :aria-label="t('common.more')"
-        >
-          <i class="fa-solid fa-ellipsis" aria-hidden="true"></i>
-        </button>
-        <template #dropdown>
-          <el-dropdown-menu>
-            <el-dropdown-item command="archive">{{ t('messenger.filesArea.archiveCurrent') }}</el-dropdown-item>
-            <el-dropdown-item command="refresh-stats">{{ t('messenger.filesArea.refreshStats') }}</el-dropdown-item>
-            <el-dropdown-item command="clear" divided>{{ t('messenger.filesArea.clear') }}</el-dropdown-item>
-          </el-dropdown-menu>
-        </template>
-      </el-dropdown>
+      <div v-if="statsVisible" class="workspace-files-usage" :title="statsTitle">
+        <span class="workspace-files-usage-value">{{ t('messenger.filesArea.statsUsed', { size: statsUsedLabel }) }}</span>
+        <span class="workspace-files-usage-sep">·</span>
+        <span>{{ t('messenger.filesArea.statsFiles', { count: stats?.files || 0 }) }}</span>
+        <!-- No quota is configured (quota_bytes === null): never fake a denominator. -->
+        <span v-if="statsHasQuota" class="workspace-files-usage-track" aria-hidden="true">
+          <span class="workspace-files-usage-bar" :style="{ width: `${statsRatio}%` }"></span>
+        </span>
+        <span v-if="stats?.truncated" class="workspace-files-usage-flag">
+          {{ t('messenger.filesArea.statsTruncated') }}
+        </span>
+      </div>
     </div>
 
     <div class="messenger-sidebar-files-toolbar">
@@ -44,15 +32,6 @@
         @click="triggerUpload"
       >
         <i class="fa-solid fa-arrow-up-from-bracket" aria-hidden="true"></i>
-      </button>
-      <button
-        type="button"
-        :disabled="busy"
-        :title="t('messenger.filesArea.newDir')"
-        :aria-label="t('messenger.filesArea.newDir')"
-        @click="handleCreateDirectory"
-      >
-        <i class="fa-solid fa-folder-plus" aria-hidden="true"></i>
       </button>
       <button
         type="button"
@@ -153,19 +132,6 @@
         </span>
       </div>
     </div>
-
-    <div v-if="statsVisible" class="workspace-files-usage" :title="statsTitle">
-      <span class="workspace-files-usage-value">{{ t('messenger.filesArea.statsUsed', { size: statsUsedLabel }) }}</span>
-      <span class="workspace-files-usage-sep">·</span>
-      <span>{{ t('messenger.filesArea.statsFiles', { count: stats?.files || 0 }) }}</span>
-      <!-- No quota is configured (quota_bytes === null): never fake a denominator. -->
-      <span v-if="statsHasQuota" class="workspace-files-usage-track" aria-hidden="true">
-        <span class="workspace-files-usage-bar" :style="{ width: `${statsRatio}%` }"></span>
-      </span>
-      <span v-if="stats?.truncated" class="workspace-files-usage-flag">
-        {{ t('messenger.filesArea.statsTruncated') }}
-      </span>
-    </div>
   </div>
 
   <WorkspaceFilePreviewDialog
@@ -224,13 +190,13 @@ import WorkspaceFileTree from './WorkspaceFileTree.vue';
 import {
   clearWorkspaceRoot,
   createWorkspaceDirectory,
+  createWorkspaceFile,
   deleteWorkspacePath,
   deleteWorkspacePaths,
   downloadWorkspaceDirectoryArchive,
   downloadWorkspacePath,
   fetchWorkspacePathBlob,
   fetchWorkspaceStatsSnapshot,
-  copyWorkspacePath,
   isWorkspaceEndpointMissing,
   moveWorkspacePath,
   readWorkspaceFileContent,
@@ -300,11 +266,6 @@ const uploadInputRef = ref<HTMLInputElement | null>(null);
 
 const rootLoading = computed(() => Boolean(tree.directories.get('')?.loading));
 const rootError = computed(() => String(tree.directories.get('')?.error || ''));
-
-const uploadTargetLabel = computed(() =>
-  uploadTarget.value ? `/${uploadTarget.value}` : t('messenger.filesArea.uploadRoot')
-);
-const uploadTargetTitle = computed(() => `${t('messenger.filesArea.uploadTarget')}${uploadTargetLabel.value}`);
 
 // ------------------------------------------------------------------ uploads
 
@@ -568,12 +529,18 @@ const handleRefresh = async () => {
   }
 };
 
-const handleCreateDirectory = async () => {
+/** Menu target: a directory row creates inside it, anything else uses the current folder. */
+const createTargetPath = (row: WorkspaceVisibleRow | null): string =>
+  row && row.kind === 'dir' ? row.path : uploadTarget.value;
+
+const handleCreateEntry = async (kind: 'dir' | 'file', row: WorkspaceVisibleRow | null) => {
   if (busy.value) return;
+  const directory = createTargetPath(row);
+  const isDir = kind === 'dir';
   try {
     const { value } = await ElMessageBox.prompt(
-      t('messenger.filesArea.newDirPrompt'),
-      t('messenger.filesArea.newDir'),
+      isDir ? t('messenger.filesArea.newDirPrompt') : t('messenger.filesArea.newFilePrompt'),
+      isDir ? t('messenger.filesArea.newDir') : t('messenger.filesArea.newFile'),
       {
         confirmButtonText: t('common.confirm'),
         cancelButtonText: t('common.cancel'),
@@ -585,9 +552,14 @@ const handleCreateDirectory = async () => {
     const name = String(value || '').trim();
     if (!name) return;
     busy.value = true;
-    await createWorkspaceDirectory(uploadTarget.value, name);
-    await refreshDirectory(uploadTarget.value);
-    ElMessage.success(t('messenger.filesArea.newDirSuccess'));
+    if (isDir) await createWorkspaceDirectory(directory, name);
+    else await createWorkspaceFile(directory, name);
+    await refreshDirectory(directory);
+    await revealPath(joinWorkspacePath(directory, name));
+    scheduleStatsRefresh();
+    ElMessage.success(
+      isDir ? t('messenger.filesArea.newDirSuccess') : t('messenger.filesArea.newFileSuccess')
+    );
   } catch (error) {
     if (error === 'cancel' || error === 'close') return;
     if (error instanceof Error || (error as { response?: unknown })?.response) {
@@ -608,7 +580,31 @@ const toggleSelectionMode = () => {
 
 // -------------------------------------------------------------- row commands
 
-const handleRowCommand = async (command: string, row: WorkspaceVisibleRow) => {
+const handleRowCommand = async (command: string, row: WorkspaceVisibleRow | null) => {
+  // 空白区菜单没有宿主行：创建落在当前目录，其余三项承接自已下线的头部 ⋯。
+  switch (command) {
+    case 'new-dir':
+      await handleCreateEntry('dir', row);
+      return;
+    case 'new-file':
+      await handleCreateEntry('file', row);
+      return;
+    case 'archive-root':
+      await runAction(
+        () => downloadWorkspaceDirectoryArchive(uploadTarget.value),
+        t('messenger.filesArea.downloadFailed')
+      );
+      return;
+    case 'refresh-stats':
+      await loadStats();
+      return;
+    case 'clear':
+      await handleClearWorkspace();
+      return;
+    default:
+      break;
+  }
+  if (!row) return;
   switch (command) {
     case 'toggle':
       await toggleDirectory(row.path);
@@ -627,12 +623,6 @@ const handleRowCommand = async (command: string, row: WorkspaceVisibleRow) => {
       return;
     case 'rename':
       await renameEntry(row);
-      return;
-    case 'move':
-      await relocateEntry(row, 'move');
-      return;
-    case 'copy':
-      await relocateEntry(row, 'copy');
       return;
     case 'quote':
       quoteEntryToChat(row);
@@ -674,40 +664,6 @@ const renameEntry = async (row: WorkspaceVisibleRow) => {
     removePaths([row.path]);
     await refreshDirectory(parent);
     ElMessage.success(t('messenger.filesArea.renameSuccess'));
-  } catch (error) {
-    if (error === 'cancel' || error === 'close') return;
-    if ((error as { response?: unknown })?.response || error instanceof Error) {
-      ElMessage.error(resolveWorkspaceErrorMessage(error, t('common.requestFailed')));
-    }
-  } finally {
-    busy.value = false;
-  }
-};
-
-const relocateEntry = async (row: WorkspaceVisibleRow, mode: 'move' | 'copy') => {
-  const title = mode === 'move' ? t('messenger.filesArea.menu.move') : t('messenger.filesArea.menu.copy');
-  try {
-    const { value } = await ElMessageBox.prompt(t('messenger.filesArea.destinationPrompt'), title, {
-      confirmButtonText: t('common.confirm'),
-      cancelButtonText: t('common.cancel'),
-      inputValue: workspaceParentPath(row.path),
-      inputPlaceholder: t('messenger.filesArea.destinationPlaceholder')
-    });
-    const destinationDir = normalizeWorkspaceRelativePath(value);
-    const destination = joinWorkspacePath(destinationDir, mode === 'copy' ? `${row.name}` : row.name);
-    if (destination === row.path) return;
-    busy.value = true;
-    if (mode === 'move') {
-      await moveWorkspacePath(row.path, destination);
-      removePaths([row.path]);
-    } else {
-      await copyWorkspacePath(row.path, destination);
-    }
-    await refreshDirectory(destinationDir);
-    if (mode === 'move' && workspaceParentPath(row.path) !== destinationDir) {
-      await refreshDirectory(workspaceParentPath(row.path));
-    }
-    ElMessage.success(mode === 'move' ? t('messenger.filesArea.moveSuccess') : t('messenger.filesArea.copySuccess'));
   } catch (error) {
     if (error === 'cancel' || error === 'close') return;
     if ((error as { response?: unknown })?.response || error instanceof Error) {
@@ -978,24 +934,7 @@ const handleEditorSaved = async (payload?: { path?: string }) => {
   scheduleStatsRefresh();
 };
 
-// ---------------------------------------------------------------- head menu
-
-const handleHeadCommand = async (command: string) => {
-  if (command === 'archive') {
-    await runAction(
-      () => downloadWorkspaceDirectoryArchive(uploadTarget.value),
-      t('messenger.filesArea.downloadFailed')
-    );
-    return;
-  }
-  if (command === 'refresh-stats') {
-    await loadStats();
-    return;
-  }
-  if (command === 'clear') {
-    await handleClearWorkspace();
-  }
-};
+// ------------------------------------------------------------ clear workspace
 
 const handleClearWorkspace = async () => {
   const phrase = t('messenger.filesArea.clearPhrase');

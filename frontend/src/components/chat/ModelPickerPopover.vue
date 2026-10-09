@@ -430,12 +430,6 @@ const resolveModelTags = (item: ComposerModelOption): Array<{
   font-size: 11px;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .composer-model-context-fill {
-    transition: none;
-  }
-}
-
 .composer-model-effort {
   display: flex;
   flex-wrap: wrap;
