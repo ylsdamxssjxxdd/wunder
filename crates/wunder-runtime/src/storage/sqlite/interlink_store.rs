@@ -116,6 +116,10 @@ impl SqliteInterlinkStorage for SqliteStorage {
             sets.push("last_tunnel_at = ?");
             values.push(SqlValue::from(last_tunnel_at));
         }
+        if let Some(rotated_at) = patch.secret_rotated_at {
+            sets.push("secret_rotated_at = ?");
+            values.push(SqlValue::from(rotated_at));
+        }
         if sets.is_empty() {
             return Ok(());
         }

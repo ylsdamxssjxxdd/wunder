@@ -41,6 +41,8 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 const WS_ENDPOINT: &str = "/wunder/chat/ws";
+/// Node label of a hive browser session on this endpoint (docs §2.4).
+const WEB_NODE_LABEL: &str = "web·chat";
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new().route("/wunder/chat/ws", get(chat_ws))
@@ -204,6 +206,17 @@ async fn handle_ws(
         &connection_id,
         Utc::now().timestamp_millis() as f64 / 1000.0,
     );
+    // I2 unified presence: one volatile `web` node per accepted browser session
+    // (docs §2.4). The lease is the liveness signal - holding it here for the
+    // whole handler is enough, so presence costs nothing per message.
+    let web_node = state.control.presence.nodes().register_web(
+        &user.user_id,
+        &connection_id,
+        WEB_NODE_LABEL,
+        Utc::now().timestamp_millis() as f64 / 1000.0,
+    );
+    let web_node_id = web_node.node_id().to_string();
+    let presence = state.control.presence.clone();
     log_ws_open(WS_ENDPOINT, &connection_id, &user.user_id, &conn_meta);
     let now_ts = Utc::now().timestamp_millis() as f64 / 1000.0;
     let protocol = ws_protocol_info();
@@ -390,6 +403,12 @@ async fn handle_ws(
                             Some(&request_id),
                             Some(&session_id),
                         );
+                        // User activity on this session: clears the idle/away
+                        // state (docs §5.1) without any per-token work.
+                        presence.nodes().touch_web(
+                            &connection_id,
+                            Utc::now().timestamp_millis() as f64 / 1000.0,
+                        );
                         let stream = payload.stream.unwrap_or(true);
                         let mut request = match build_chat_request(
                             &state,
@@ -483,7 +502,11 @@ async fn handle_ws(
                                 let resume_task_id = task_id.clone();
                                 let resume_tasks = tasks.clone();
                                 let resume_request_id_cleanup = request_id.clone();
+                                // A queued turn keeps the session busy until its
+                                // queue-scoped feeder reaches a terminal event.
+                                let queued_busy = presence.nodes().begin_busy(&web_node_id);
                                 long_task::spawn("api.chat_ws.queued_auto_resume", async move {
+                                    let _queued_busy = queued_busy;
                                     resume_queued_thread_changes_v2(
                                         resume_state,
                                         resume_session,
@@ -529,7 +552,11 @@ async fn handle_ws(
                                 session_id_cleanup.clone(),
                             ),
                         );
+                        // The turn owns one busy marker; dropping the guard at
+                        // the end of the task releases it (docs §5.1 `busy`).
+                        let stream_busy = presence.nodes().begin_busy(&web_node_id);
                         long_task::spawn("api.chat_ws.stream_request", async move {
+                            let _stream_busy = stream_busy;
                             let _lease = lease;
                             match state_snapshot.kernel.orchestrator.stream(request).await {
                                 Ok(stream) => {

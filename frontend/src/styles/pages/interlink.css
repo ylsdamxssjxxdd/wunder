@@ -1,0 +1,632 @@
+/* AI生成
+   互通（interlink）蜂巢侧样式：我的设备卡片、工作区节点切换器、影子工作区与远程会话视图。
+   对齐舰桥/蜂巢既有的 --mz-* token（定义见 pages/messenger-shell.css），
+   信息密度优先，不引入营销化装饰。 */
+
+/* ------------------------------------------------------------------ 状态点 */
+
+.interlink-status-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--mz-text-muted, #9aa1ab);
+  box-shadow: 0 0 0 2px rgb(0 0 0 / 6%);
+}
+
+.interlink-status-dot.is-online {
+  background: var(--mz-success, #2f9e44);
+}
+
+.interlink-status-dot.is-busy {
+  background: var(--mz-warning, #d9822b);
+}
+
+.interlink-status-dot.is-away {
+  background: color-mix(in srgb, var(--mz-warning, #d9822b) 45%, transparent);
+}
+
+.interlink-status-dot.is-offline {
+  background: transparent;
+  box-shadow: inset 0 0 0 2px var(--mz-border-strong, #c3c9d2);
+}
+
+.interlink-status-dot.is-reconnecting {
+  background: var(--mz-primary, #2f6fed);
+  animation: interlink-dot-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes interlink-dot-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .interlink-status-dot.is-reconnecting {
+    animation: none;
+  }
+}
+
+/* -------------------------------------------------------- 工作区节点切换器 */
+
+.interlink-node-switcher {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.interlink-node-select {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: 100%;
+}
+
+.interlink-node-refresh {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--mz-border);
+  border-radius: var(--mz-radius-btn, 6px);
+  background: var(--mz-surface, #fff);
+  color: var(--mz-text-secondary, #5b6472);
+  cursor: pointer;
+}
+
+.interlink-node-refresh:hover:not(:disabled) {
+  border-color: var(--mz-primary-soft, #9dbaf5);
+  color: var(--mz-primary, #2f6fed);
+}
+
+.interlink-node-refresh:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.interlink-node-switcher-hint {
+  flex-basis: 100%;
+  padding-top: 2px;
+  color: var(--mz-text-muted, #8b93a1);
+  font-size: var(--mz-font-xs, 11px);
+  line-height: 1.4;
+}
+
+.interlink-node-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.interlink-node-option-icon {
+  color: var(--mz-text-muted, #8b93a1);
+}
+
+.interlink-node-option-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--mz-text, #1f2430);
+}
+
+.interlink-node-option-tag,
+.interlink-node-option-status {
+  flex: none;
+  padding: 0 4px;
+  border-radius: var(--mz-radius-tag, 4px);
+  background: var(--mz-primary-tint, #eef3fd);
+  color: var(--mz-text-secondary, #5b6472);
+  font-size: var(--mz-font-xs, 11px);
+}
+
+/* 宿主：侧栏云端目录区 + 通用工作区面板，两处共用同一切换器。 */
+.workspace-files-node-switcher {
+  margin: 0 0 6px;
+}
+
+.workspace-node-switcher {
+  flex: 0 1 210px;
+  min-width: 120px;
+}
+
+.workspace-remote-host {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* --------------------------------------------------------------- 影子工作区 */
+
+.interlink-remote-panel {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.interlink-remote-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 4px 2px 6px;
+  border-bottom: 1px dashed var(--mz-border);
+  font-size: var(--mz-font-sm, 12px);
+}
+
+.interlink-remote-node {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.interlink-remote-node strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--mz-text, #1f2430);
+}
+
+.interlink-remote-node-type,
+.interlink-remote-node-status {
+  color: var(--mz-text-muted, #8b93a1);
+}
+
+.interlink-remote-btn,
+.interlink-remote-link,
+.interlink-remote-session-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border: 1px solid var(--mz-border);
+  border-radius: var(--mz-radius-btn, 6px);
+  background: var(--mz-surface, #fff);
+  color: var(--mz-text-secondary, #5b6472);
+  font-size: var(--mz-font-xs, 11px);
+  cursor: pointer;
+}
+
+.interlink-remote-btn:hover:not(:disabled),
+.interlink-remote-link:hover:not(:disabled),
+.interlink-remote-session-btn:hover:not(:disabled) {
+  border-color: var(--mz-primary-soft, #9dbaf5);
+  color: var(--mz-primary, #2f6fed);
+}
+
+.interlink-remote-btn:disabled,
+.interlink-remote-link:disabled,
+.interlink-remote-session-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.interlink-remote-btn.is-primary {
+  border-color: var(--mz-primary, #2f6fed);
+  background: var(--mz-primary, #2f6fed);
+  color: #fff;
+}
+
+.interlink-remote-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 6px 0 2px;
+}
+
+.interlink-remote-tab {
+  padding: 2px 10px;
+  border: 1px solid var(--mz-border);
+  border-radius: var(--mz-radius-btn, 6px);
+  background: transparent;
+  color: var(--mz-text-secondary, #5b6472);
+  font-size: var(--mz-font-xs, 11px);
+  cursor: pointer;
+}
+
+.interlink-remote-tab.is-active {
+  border-color: var(--mz-primary-soft, #9dbaf5);
+  background: var(--mz-primary-tint, #eef3fd);
+  color: var(--mz-text, #1f2430);
+}
+
+.interlink-remote-notice,
+.interlink-remote-note {
+  margin: 6px 0 0;
+  padding: 4px 8px;
+  border-radius: var(--mz-radius-btn, 6px);
+  background: var(--mz-primary-tint, #eef3fd);
+  color: var(--mz-text-secondary, #5b6472);
+  font-size: var(--mz-font-xs, 11px);
+  line-height: 1.5;
+}
+
+.interlink-remote-notice.is-warn,
+.interlink-remote-note.is-warn {
+  background: var(--mz-warning-bg, #fdf3e5);
+  color: var(--mz-warning, #a76516);
+}
+
+.interlink-remote-watermark {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 2px;
+  color: var(--mz-text-muted, #8b93a1);
+  font-size: var(--mz-font-xs, 11px);
+}
+
+.interlink-remote-watermark-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.interlink-remote-link {
+  flex: none;
+  padding: 0 4px;
+  border: none;
+  background: transparent;
+  color: var(--mz-primary, #2f6fed);
+  text-decoration: underline;
+}
+
+.interlink-remote-empty {
+  padding: 18px 8px;
+  color: var(--mz-text-muted, #8b93a1);
+  font-size: var(--mz-font-sm, 12px);
+  text-align: center;
+}
+
+.interlink-remote-thread-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 2px 0 8px;
+}
+
+.interlink-remote-thread-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--mz-radius-btn, 6px);
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.interlink-remote-thread-row:hover:not(:disabled) {
+  border-color: var(--mz-border);
+  background: var(--mz-hover, #f5f7fb);
+}
+
+.interlink-remote-thread-row:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.interlink-remote-thread-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--mz-text, #1f2430);
+  font-size: var(--mz-font-sm, 12px);
+}
+
+.interlink-remote-thread-meta {
+  color: var(--mz-text-muted, #8b93a1);
+  font-size: var(--mz-font-xs, 11px);
+}
+
+/* 远程会话视图覆盖在影子工作区之上，顶栏常驻（§7.4）。 */
+.interlink-remote-session-host {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+}
+
+/* --------------------------------------------------------------- 远程会话视图 */
+
+.interlink-remote-session {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--mz-surface, #fff);
+}
+
+.interlink-remote-session-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--mz-border);
+  background: var(--mz-primary-tint, #eef3fd);
+  font-size: var(--mz-font-xs, 11px);
+}
+
+.interlink-remote-session-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 600;
+  color: var(--mz-text, #1f2430);
+}
+
+.interlink-remote-session-thread {
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--mz-text-secondary, #5b6472);
+}
+
+.interlink-remote-session-feed {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--mz-text-muted, #8b93a1);
+}
+
+.interlink-remote-session-spacer {
+  flex: 1 1 auto;
+}
+
+.interlink-remote-session-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+}
+
+.interlink-remote-session-empty {
+  padding: 20px 8px;
+  color: var(--mz-text-muted, #8b93a1);
+  font-size: var(--mz-font-sm, 12px);
+  text-align: center;
+}
+
+.interlink-remote-session-note {
+  padding: 2px 6px;
+  color: var(--mz-text-muted, #8b93a1);
+  font-size: var(--mz-font-xs, 11px);
+}
+
+.interlink-remote-message {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  border-radius: var(--mz-radius-input, 8px);
+  background: var(--mz-bg, #f7f8fb);
+}
+
+.interlink-remote-message.is-user {
+  background: var(--mz-primary-tint, #eef3fd);
+}
+
+.interlink-remote-message.is-tool,
+.interlink-remote-message.is-system {
+  background: var(--mz-hover, #f5f7fb);
+}
+
+.interlink-remote-message-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--mz-text-muted, #8b93a1);
+  font-size: var(--mz-font-xs, 11px);
+}
+
+.interlink-remote-message-text {
+  margin: 0;
+  color: var(--mz-text, #1f2430);
+  font-family: inherit;
+  font-size: var(--mz-font-sm, 12px);
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.interlink-remote-session-compose {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px 8px;
+  border-top: 1px solid var(--mz-border);
+}
+
+.interlink-remote-send-state {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--mz-text-muted, #8b93a1);
+  font-size: var(--mz-font-xs, 11px);
+}
+
+.interlink-remote-send-state.is-pending {
+  color: var(--mz-warning, #a76516);
+}
+
+.interlink-remote-send-state.is-disabled {
+  color: var(--mz-danger, #c0392b);
+}
+
+.interlink-remote-session-input {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--mz-border);
+  border-radius: var(--mz-radius-input, 8px);
+  background: var(--mz-surface, #fff);
+  color: var(--mz-text, #1f2430);
+  font-family: inherit;
+  font-size: var(--mz-font-sm, 12px);
+  resize: vertical;
+}
+
+.interlink-remote-session-input:focus {
+  outline: none;
+  border-color: var(--mz-primary-soft, #9dbaf5);
+}
+
+.interlink-remote-session-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+/* ------------------------------------------------------------- 我的设备卡片 */
+
+.interlink-devices-aggregate {
+  margin-right: 8px;
+  color: var(--mz-text-secondary, #5b6472);
+  font-size: var(--mz-font-sm, 12px);
+}
+
+.interlink-device-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 10px;
+  padding-top: 10px;
+}
+
+.interlink-device-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--mz-border);
+  border-radius: var(--mz-radius-card, 10px);
+  background: var(--mz-surface, #fff);
+}
+
+.interlink-device-card.is-offline {
+  background: var(--mz-bg, #f7f8fb);
+  color: var(--mz-text-muted, #8b93a1);
+}
+
+.interlink-device-card-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.interlink-device-card-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--mz-text, #1f2430);
+  font-size: var(--mz-font-base, 13px);
+}
+
+.interlink-device-card-badge,
+.interlink-device-card-status,
+.interlink-device-shadow-rev {
+  flex: none;
+  padding: 0 5px;
+  border-radius: var(--mz-radius-tag, 4px);
+  background: var(--mz-primary-tint, #eef3fd);
+  color: var(--mz-text-secondary, #5b6472);
+  font-size: var(--mz-font-xs, 11px);
+}
+
+.interlink-device-card-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  font-size: var(--mz-font-xs, 11px);
+}
+
+.interlink-device-meta-row {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+}
+
+.interlink-device-meta-row dt {
+  flex: none;
+  width: 84px;
+  color: var(--mz-text-muted, #8b93a1);
+}
+
+.interlink-device-meta-row dd {
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--mz-text, #1f2430);
+}
+
+.interlink-device-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-top: 4px;
+  border-top: 1px dashed var(--mz-border);
+}
+
+.interlink-device-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: auto;
+  color: var(--mz-text-secondary, #5b6472);
+  font-size: var(--mz-font-xs, 11px);
+}
+
+.messenger-settings-action.is-danger {
+  color: var(--mz-danger, #c0392b);
+}
+
+.interlink-devices-more {
+  margin-top: 10px;
+  padding: 4px 12px;
+  border: 1px solid var(--mz-border);
+  border-radius: var(--mz-radius-btn, 6px);
+  background: var(--mz-surface, #fff);
+  color: var(--mz-text-secondary, #5b6472);
+  font-size: var(--mz-font-sm, 12px);
+  cursor: pointer;
+}
+
+.interlink-devices-more:hover:not(:disabled) {
+  border-color: var(--mz-primary-soft, #9dbaf5);
+  color: var(--mz-primary, #2f6fed);
+}
+
+.interlink-devices-more:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

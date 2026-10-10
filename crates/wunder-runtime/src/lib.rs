@@ -49,7 +49,7 @@ pub use services::worker_card_settings;
 pub use services::{
     admin_skills, agent_management, attachment, browser, cloud, cron, default_agent_protocol,
     default_tool_profile, desktop_lan, desktop_runtime_recovery, doc2md, drawio, goal, history,
-    knowledge, llm, mcp, memory, multimodal_models, onlyoffice, org_units, presence, prompting,
+    interlink, knowledge, llm, mcp, memory, multimodal_models, onlyoffice, org_units, presence, prompting,
     ragflow_knowledge, runtime, skills, tools, user_access, user_leveling, user_prompt_templates,
     user_store, user_tools, user_world, vector_knowledge, virtual_llm, workspace,
 };

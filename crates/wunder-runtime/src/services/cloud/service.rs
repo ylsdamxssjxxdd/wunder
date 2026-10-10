@@ -737,6 +737,7 @@ impl CloudService {
             account: None,
             log_report: Default::default(),
             preferences_sync_enabled: true,
+            interlink: super::session::InterlinkSessionConfig::default(),
         };
         session.account = Some(CloudAccountSnapshot {
             max_concurrent_calls,
@@ -994,6 +995,98 @@ impl CloudService {
                 .await,
             Ok(response) if response.status().is_success()
         )
+    }
+
+    // ------------------------------------------------------------------
+    // Interlink user plane (互通方案 I9/I10): the local form drives cloud
+    // targets through the same REST endpoints the CLI and the web use.
+    // ------------------------------------------------------------------
+
+    async fn interlink_data(
+        &self,
+        build: impl Fn(&CloudSessionFile) -> reqwest::RequestBuilder,
+        what: &'static str,
+    ) -> Result<Value> {
+        let response = self.authed_send(build).await?;
+        let status = response.status();
+        let body = read_json(response).await;
+        if !status.is_success() {
+            return Err(anyhow!("cloud interlink {what} failed: {status} {}", error_message(&body)));
+        }
+        Ok(body.get("data").cloned().unwrap_or(Value::Null))
+    }
+
+    /// Device fleet with tunnel-aware presence, as the user sees it.
+    pub async fn interlink_nodes(&self) -> Result<Value> {
+        self.interlink_data(
+            |session| {
+                self.http
+                    .get(format!("{}/wunder/interlink/nodes", session.server))
+                    .bearer_auth(&session.token)
+            },
+            "nodes",
+        )
+        .await
+    }
+
+    /// Issue one interlink command to `cloud` or `device:<id>`; returns the
+    /// ledger record head (`command_id`, `status`, `approval_state`, ...).
+    pub async fn interlink_issue_command(
+        &self,
+        to_node: &str,
+        kind: &str,
+        args: Value,
+    ) -> Result<Value> {
+        let to_node = to_node.to_string();
+        let kind = kind.to_string();
+        self.interlink_data(
+            |session| {
+                self.http
+                    .post(format!("{}/wunder/interlink/commands", session.server))
+                    .bearer_auth(&session.token)
+                    .json(&json!({"to": to_node, "kind": kind, "args": args}))
+            },
+            "command issue",
+        )
+        .await
+    }
+
+    /// One command ledger record (status, approval_state, result, ...).
+    pub async fn interlink_command(&self, command_id: &str) -> Result<Value> {
+        let command_id = command_id.to_string();
+        self.interlink_data(
+            |session| {
+                self.http
+                    .get(format!(
+                        "{}/wunder/interlink/commands/{}",
+                        session.server,
+                        urlencode_component(&command_id)
+                    ))
+                    .bearer_auth(&session.token)
+            },
+            "command query",
+        )
+        .await
+    }
+
+    /// Decide a cloud-target approval ticket as the account owner.
+    pub async fn interlink_decide(&self, command_id: &str, approved: bool) -> Result<Value> {
+        let command_id = command_id.to_string();
+        let decision = if approved { "approved" } else { "rejected" }.to_string();
+        self.interlink_data(
+            |session| {
+                self.http
+                    .post(format!(
+                        "{}/wunder/interlink/commands/{}/approval",
+                        session.server,
+                        urlencode_component(&command_id)
+                    ))
+                    .bearer_auth(&session.token)
+                    .json(&json!({"decision": decision}))
+            },
+            "approval decide",
+        )
+        .await
     }
 
     // ------------------------------------------------------------------
@@ -1291,6 +1384,19 @@ fn error_message(body: &Value) -> String {
         .chars()
         .take(200)
         .collect()
+}
+
+/// Percent-encode one path/query component (RFC 3986 unreserved set passes).
+fn urlencode_component(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    for byte in raw.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
+            out.push(byte as char);
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    out
 }
 
 fn normalize_client(client: &str) -> String {

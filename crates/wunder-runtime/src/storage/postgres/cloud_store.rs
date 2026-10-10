@@ -1,11 +1,18 @@
 use super::PostgresStorage;
 use crate::storage::{
-    CloudCallRecord, CloudDeviceLogRecord, CloudDeviceRecord, CloudLogInsertResult,
-    ListCloudDeviceLogsQuery, ListCloudRecordsQuery, StorageLifecycle,
+    CloudCallRecord, CloudDeviceInterlinkPatch, CloudDeviceLogRecord, CloudDeviceRecord,
+    CloudLogInsertResult, ListCloudDeviceLogsQuery, ListCloudRecordsQuery, StorageLifecycle,
 };
 use anyhow::Result;
 use tokio_postgres::types::ToSql;
 use tokio_postgres::Row;
+
+/// Column order shared by every `cloud_devices` reader: the base device fields
+/// followed by the interlink extension in `CloudDeviceInterlinkPatch` order.
+/// `map_cloud_device_row` maps these positions, so the two must stay in sync.
+const CLOUD_DEVICE_COLUMNS: &str = "device_id, user_id, client, name, os, arch, app_version, \
+    last_seen_at, created_at, revoked, node_secret_hash, secret_version, interlink_enabled, \
+    capabilities, policy_overrides, tunnel_connected, last_tunnel_at, secret_rotated_at";
 
 pub(super) trait PostgresCloudStorage {
     fn find_cloud_device_by_identity_impl(
@@ -51,6 +58,18 @@ pub(super) trait PostgresCloudStorage {
 }
 
 fn map_cloud_device_row(row: &Row) -> CloudDeviceRecord {
+    // The interlink extension is read with the base row (`CLOUD_DEVICE_COLUMNS`):
+    // both backends expose the same patch, only flags are BOOLEAN here.
+    let interlink = CloudDeviceInterlinkPatch {
+        node_secret_hash: row.get(10),
+        secret_version: row.get::<_, Option<i64>>(11).unwrap_or(0),
+        interlink_enabled: row.get::<_, Option<bool>>(12),
+        capabilities: row.get(13),
+        policy_overrides: row.get(14),
+        tunnel_connected: row.get::<_, Option<bool>>(15),
+        last_tunnel_at: row.get(16),
+        secret_rotated_at: row.get(17),
+    };
     CloudDeviceRecord {
         device_id: row.get(0),
         user_id: row.get(1),
@@ -62,7 +81,7 @@ fn map_cloud_device_row(row: &Row) -> CloudDeviceRecord {
         last_seen_at: row.get::<_, Option<f64>>(7).unwrap_or(0.0),
         created_at: row.get::<_, Option<f64>>(8).unwrap_or(0.0),
         revoked: row.get::<_, bool>(9),
-        interlink: None,
+        interlink: Some(Box::new(interlink)),
     }
 }
 
@@ -96,11 +115,11 @@ impl PostgresCloudStorage for PostgresStorage {
             return Ok(None);
         }
         let mut conn = self.conn()?;
-        let row = conn.query_opt(
-            "SELECT device_id, user_id, client, name, os, arch, app_version, last_seen_at, created_at, revoked \
-             FROM cloud_devices WHERE user_id = $1 AND client = $2 AND name = $3",
-            &[&cleaned_user, &cleaned_client, &cleaned_name],
-        )?;
+        let sql = format!(
+            "SELECT {CLOUD_DEVICE_COLUMNS} FROM cloud_devices \
+             WHERE user_id = $1 AND client = $2 AND name = $3"
+        );
+        let row = conn.query_opt(&sql, &[&cleaned_user, &cleaned_client, &cleaned_name])?;
         Ok(row.map(|row| map_cloud_device_row(&row)))
     }
 
@@ -142,11 +161,8 @@ impl PostgresCloudStorage for PostgresStorage {
             return Ok(None);
         }
         let mut conn = self.conn()?;
-        let row = conn.query_opt(
-            "SELECT device_id, user_id, client, name, os, arch, app_version, last_seen_at, created_at, revoked \
-             FROM cloud_devices WHERE device_id = $1",
-            &[&cleaned],
-        )?;
+        let sql = format!("SELECT {CLOUD_DEVICE_COLUMNS} FROM cloud_devices WHERE device_id = $1");
+        let row = conn.query_opt(&sql, &[&cleaned])?;
         Ok(row.map(|row| map_cloud_device_row(&row)))
     }
 
@@ -201,7 +217,7 @@ impl PostgresCloudStorage for PostgresStorage {
         let total: i64 = conn.query_one(&count_sql, &count_refs)?.get(0);
         let mut rows = Vec::new();
         if limit > 0 {
-            let mut sql = "SELECT device_id, user_id, client, name, os, arch, app_version, last_seen_at, created_at, revoked FROM cloud_devices".to_string();
+            let mut sql = format!("SELECT {CLOUD_DEVICE_COLUMNS} FROM cloud_devices");
             if !filters.is_empty() {
                 sql.push_str(" WHERE ");
                 sql.push_str(&filters.join(" AND "));

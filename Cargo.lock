@@ -5699,6 +5699,7 @@ dependencies = [
  "syntect",
  "textwrap",
  "tokio",
+ "tokio-tungstenite 0.24.0",
  "toml_edit",
  "tracing",
  "tracing-subscriber",

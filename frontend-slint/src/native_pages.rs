@@ -19,6 +19,7 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
     bind_settings(app, api.clone());
     bind_cloud(app, api.clone());
     bind_profile(app, api.clone());
+    crate::native_interlink::install(app, api.clone());
     crate::cron_ui::install(app, api.clone());
     crate::channel_ui::install(app, api.clone());
     crate::expert_ui::install(app, api.clone());

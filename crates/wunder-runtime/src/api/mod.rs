@@ -1,5 +1,6 @@
 pub mod admin;
 pub mod admin_bridge;
+pub mod admin_interlink;
 pub mod admin_multimodal;
 pub mod admin_prompt_templates;
 pub(crate) mod attachment_convert;
@@ -24,6 +25,8 @@ pub mod external_links;
 pub mod external_workflows;
 pub mod gateway_ws;
 pub mod interlink;
+pub mod interlink_cloud_exec;
+pub mod interlink_remote;
 pub mod interlink_ws;
 pub mod onlyoffice;
 pub(crate) mod skill_fs;
@@ -63,12 +66,14 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .merge(gateway_ws::router())
         .merge(interlink::router())
         .merge(interlink_ws::router())
+        .merge(interlink_remote::router())
         .merge(temp_dir::router())
         .merge(drawio::router())
         .merge(onlyoffice::router())
         .merge(workspace::router())
         .merge(admin::router())
         .merge(admin_bridge::router())
+        .merge(admin_interlink::router())
         .merge(admin_multimodal::router())
         .merge(admin_prompt_templates::router())
         .merge(benchmark::router())

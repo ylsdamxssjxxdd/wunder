@@ -86,6 +86,17 @@ ENTRIES = [
     ("cp_goal_edit_hint", "输入新的目标内容，回车保存", "Edit the goal, Enter to save"),
     ("cp_goal_edit", "编辑目标", "Edit goal"),
     ("cp_goal_clear", "清除目标", "Clear goal"),
+    # ---- 发送队列 (composer queue strip) ----
+    ("cp_queue_title", "等待发送", "Waiting to send"),
+    ("cp_queue_hint", "拖动把手调整顺序", "Drag the handle to reorder"),
+    ("cp_queue_interject", "插话", "Interject"),
+    ("cp_queue_interjected", "已插话", "Interjected"),
+    ("cp_queue_edit_hint", "撤下并回填输入框", "Withdraw and refill the input"),
+    ("cp_queue_remove_hint", "撤下这条排队轮次", "Withdraw this queued turn"),
+    ("cp_queue_more", "还有 {} 条未显示", "{} more not shown", ["count"]),
+    ("cp_queue_attachment_only", "仅附件", "Attachment only"),
+    ("cp_queue_attachments", "附件 {}", "{} attachment(s)", ["count"]),
+    ("cp_queue_send", "加入等待发送", "Add to the send queue"),
 
     # ---- status bar (§8.5) ----
     ("cp_status_local", "本地", "Local"),

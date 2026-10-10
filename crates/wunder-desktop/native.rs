@@ -42,14 +42,24 @@ mod chat_turns;
 mod observer;
 #[path = "native_stream.rs"]
 mod stream;
+#[path = "native_queue.rs"]
+mod queue;
 pub use crate::runtime::RuntimeToolStatus;
 pub use chat_turns::{NativeChatRound, NativeChatTurn};
 pub use observer::{NativeThreadUpdate, NativeThreadWatch};
+pub use queue::{NativeQueueTurn, NATIVE_QUEUE_LIMIT};
 pub use stream::{NativeChatEvent, NativeStream};
 #[path = "native_catalog.rs"]
 mod catalog;
 #[path = "native_cloud.rs"]
 mod cloud;
+
+#[path = "native_interlink.rs"]
+mod interlink;
+pub use interlink::{
+    NativeInterlinkApproval, NativeInterlinkEntry, NativeInterlinkListing, NativeInterlinkNode,
+    NativeInterlinkStatus,
+};
 #[path = "native_companion_overlay.rs"]
 mod companion_overlay;
 #[path = "native_companions.rs"]
@@ -139,6 +149,9 @@ pub struct NativeSession {
     pub runtime_status: String,
     pub locked: bool,
     pub reasoning_effort: String,
+    /// Remote origin of the thread (`cloud` / `device:<id>`), from the
+    /// session row's `spawned_by`; `None` for locally created threads.
+    pub origin: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -240,6 +253,29 @@ impl NativeDesktop {
                 .cloud
                 .startup_probe(&desktop.state.config_store),
         );
+        // Interlink tunnel (互通方案 I9): one shared client per process. A
+        // no-session start stays a cheap poller; the loop picks up the session
+        // after a later login on its own. `start` takes a blocking lock, so it
+        // must run outside the async executor's worker threads.
+        {
+            let state = Arc::clone(&desktop.state);
+            let user_id = desktop.user_id.clone();
+            runtime
+                .block_on(async {
+                    tokio::task::spawn_blocking(move || {
+                        wunder_server::interlink::client::start_with_options(
+                            state,
+                            wunder_server::interlink::client::InterlinkLocalOptions {
+                                local_user_id: user_id,
+                                workspace_id: None,
+                                session_base_dir: wunder_server::cloud::session::wunder_home_dir(),
+                            },
+                        );
+                    })
+                    .await
+                })
+                .ok();
+        }
         // A console for the shell, when the host ships winpty next to its git.
         let settings = load_desktop_settings(&desktop.settings_path).unwrap_or_default();
         let terminal = NativeTerminal::new(
@@ -379,6 +415,11 @@ impl NativeDesktop {
                 .and_then(Value::as_str)
                 .unwrap_or("done")
                 .to_string(),
+            origin: record
+                .spawned_by
+                .as_deref()
+                .and_then(|source| source.strip_prefix("remote:"))
+                .map(str::to_string),
             locked: false,
             reasoning_effort,
         }

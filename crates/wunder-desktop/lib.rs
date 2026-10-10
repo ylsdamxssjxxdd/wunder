@@ -14,10 +14,10 @@ pub use native::{
     LanPeerRecord, LanSettings, ModelEdit, ModelProbeOutcome, ModelRecord,
     NativeChannelAccountEdit, NativeChannelBindingEdit, NativeChatAttachment, NativeChatEvent,
     NativeChatInput, NativeContextUsage, NativeCronJobEdit, NativeDesktop, NativeMessage,
-    NativeNavigationOrder, NativePatchFile, NativePatchLine, NativeProfile, NativeSession,
-    NativeStream, NativeTerminalFrame, NativeTerminalSpec, NativeWorkflowEntry, NativeWorkflowLine,
-    NativeWorkflowSection, NativeWorkspace, PromptPackInfo, PromptSegmentContent,
-    RuntimeToolStatus, ToolRecord, WorkspaceDeleteSummary, WorkspaceEdit, WorkspacePathReport,
-    DEFAULT_AGENT_ID, WORKSPACE_COLORS, WORKSPACE_ICONS,
+    NativeNavigationOrder, NativePatchFile, NativePatchLine, NativeProfile, NativeQueueTurn,
+    NativeSession, NativeStream, NativeTerminalFrame, NativeTerminalSpec, NativeWorkflowEntry,
+    NativeWorkflowLine, NativeWorkflowSection, NativeWorkspace, PromptPackInfo,
+    PromptSegmentContent, RuntimeToolStatus, ToolRecord, WorkspaceDeleteSummary, WorkspaceEdit,
+    WorkspacePathReport, DEFAULT_AGENT_ID, WORKSPACE_COLORS, WORKSPACE_ICONS,
 };
 pub use runtime::DesktopRuntime;

@@ -4,7 +4,7 @@ import { ExpertToolGroup } from "expert_widgets.slint";
 export { ExpertToolGroup }
 import { RuntimeStatus } from "runtime_status.slint";
 import { I18n } from "i18n.slint";
-import { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, TextBlock, WorkflowLine, WorkflowSection, ToolWorkflowEntry, TimelineRow, TimelineCounts, TurnStatMetric, PatchCard, PatchLine, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, LanPeerCard, ThreadLogEvent, CronCard, CronRunCard, PromptPackCard, ChannelCatalogCard, ChannelAccountCard, ChannelBindingCard, ChannelLogCard, AvatarOption, AvatarColorChip, CompanionCard, PlanStep, InquiryQuestion } from "theme.slint";
+import { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, TextBlock, WorkflowLine, WorkflowSection, ToolWorkflowEntry, TimelineRow, TimelineCounts, TurnStatMetric, PatchCard, PatchLine, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, LanPeerCard, ThreadLogEvent, CronCard, CronRunCard, PromptPackCard, ChannelCatalogCard, ChannelAccountCard, ChannelBindingCard, ChannelLogCard, AvatarOption, AvatarColorChip, CompanionCard, PlanStep, InquiryQuestion, QueueTurn, DraftRecall, InterlinkStatus, InterlinkNode, InterlinkEntry, InterlinkApproval } from "theme.slint";
 import { Action, EdgeToggle, RailButton, Avatar, FormField, MiddleHeader, MiddleFooter, ConfirmDialog, InfoDialog, ToastHost, ToastState } from "components.slint";
 import { Composer, GoalBanner, InquiryPanel, StatusDock } from "composer.slint";
 import { TerminalView, TermSpan } from "terminal_view.slint";
@@ -25,18 +25,18 @@ import { ModelPresets } from "model_presets.slint";
 export { ModelPresets }
 // `TimelineView` is deliberately absent: nothing in Rust names it, and an
 // exported component that does not inherit Window only earns a build warning.
-export { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, TextBlock, WorkflowLine, WorkflowSection, ToolWorkflowEntry, TimelineRow, TimelineCounts, TurnStatMetric, PatchCard, PatchLine, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, LanPeerCard, ThreadLogEvent, CronCard, CronRunCard, PromptPackCard, ChannelCatalogCard, ChannelBindingCard, ChannelLogCard, AvatarOption, AvatarColorChip, CompanionCard, PlanStep }
+export { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, TextBlock, WorkflowLine, WorkflowSection, ToolWorkflowEntry, TimelineRow, TimelineCounts, TurnStatMetric, PatchCard, PatchLine, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, LanPeerCard, ThreadLogEvent, CronCard, CronRunCard, PromptPackCard, ChannelCatalogCard, ChannelBindingCard, ChannelLogCard, AvatarOption, AvatarColorChip, CompanionCard, PlanStep, InterlinkStatus, InterlinkNode, InterlinkEntry, InterlinkApproval }
 export { AppTray } from "tray.slint";
 export { TrayNotice } from "tray-notice.slint";
 export { ScreenshotOverlay } from "screenshot_overlay.slint";
 
 export component MainWindow inherits Window {
     in-out property <[SidebarRow]> sidebar-rows: [
-        { kind: 0, workspace-id: "ws-preview-a", name: I18n.ws_preview_default, icon: "folder", color: "blue", thread-count: 2, expanded: true, selected: true, thread-id: "", title: "", status: "", active: false, payload: 0 },
-        { kind: 1, workspace-id: "ws-preview-a", name: "", icon: "", color: "", thread-count: 0, expanded: false, selected: false, thread-id: "t1", title: I18n.main_preview_prompt, status: "done", active: true, payload: 0 },
-        { kind: 1, workspace-id: "ws-preview-a", name: "", icon: "", color: "", thread-count: 0, expanded: false, selected: false, thread-id: "t2", title: I18n.main_preview_step_title2, status: "idle", active: false, payload: 1 },
-        { kind: 0, workspace-id: "ws-preview-b", name: I18n.ws_preview_docs, icon: "coffee", color: "orange", thread-count: 1, expanded: true, selected: false, thread-id: "", title: "", status: "", active: false, payload: 1 },
-        { kind: 1, workspace-id: "ws-preview-b", name: "", icon: "", color: "", thread-count: 0, expanded: false, selected: false, thread-id: "t3", title: I18n.main_preview_step_title1, status: "running", active: false, payload: 2 }
+        { kind: 0, workspace-id: "ws-preview-a", name: I18n.ws_preview_default, icon: "folder", color: "blue", thread-count: 2, expanded: true, selected: true, thread-id: "", title: "", status: "", active: false, payload: 0, origin: "" },
+        { kind: 1, workspace-id: "ws-preview-a", name: "", icon: "", color: "", thread-count: 0, expanded: false, selected: false, thread-id: "t1", title: I18n.main_preview_prompt, status: "done", active: true, payload: 0, origin: "" },
+        { kind: 1, workspace-id: "ws-preview-a", name: "", icon: "", color: "", thread-count: 0, expanded: false, selected: false, thread-id: "t2", title: I18n.main_preview_step_title2, status: "idle", active: false, payload: 1, origin: "cloud" },
+        { kind: 0, workspace-id: "ws-preview-b", name: I18n.ws_preview_docs, icon: "coffee", color: "orange", thread-count: 1, expanded: true, selected: false, thread-id: "", title: "", status: "", active: false, payload: 1, origin: "" },
+        { kind: 1, workspace-id: "ws-preview-b", name: "", icon: "", color: "", thread-count: 0, expanded: false, selected: false, thread-id: "t3", title: I18n.main_preview_step_title1, status: "running", active: false, payload: 2, origin: "device:demo" }
     ];
     in-out property <[WorkspaceCard]> workspaces: [
         { workspace-id: "ws-preview-a", name: I18n.ws_preview_default, icon: "folder", color: "blue", root-path: I18n.ws_preview_root_a, thread-count: 2, expanded: true, selected: true },
@@ -232,6 +232,11 @@ export component MainWindow inherits Window {
     in-out property <bool> saving: false;
     in-out property <string> draft;
     in-out property <[ChatAttachment]> pending-attachments: [];
+    // Parked turns of the active thread, projected from the engine's queue in
+    // dispatch order. `queue-overflow` counts the rows Rust left out, so the
+    // strip's height stays bounded whatever the feeder parked.
+    in-out property <[QueueTurn]> queue-turns: [];
+    in-out property <int> queue-overflow: 0;
     in-out property <string> status: I18n.chat_demo_status;
     in-out property <string> dialog-title;
     in-out property <string> dialog-text;
@@ -452,6 +457,26 @@ export component MainWindow inherits Window {
     callback cloud-logout();
     callback cloud-refresh-account();
     callback cloud-toggle-sync(bool);
+    // ---- interlink (设备互通, §I9) ----
+    // The 2s poll owns the tunnel status and the approval queue; devices and
+    // cloud listings are fetched on demand. The approval card shows one pending
+    // remote command at a time, so the native side keeps the queue.
+    in-out property <InterlinkStatus> interlink-status;
+    in-out property <[InterlinkNode]> interlink-nodes: [];
+    in-out property <bool> interlink-loading: false;
+    in-out property <string> interlink-cloud-path;
+    in-out property <[InterlinkEntry]> interlink-entries: [];
+    in-out property <string> interlink-cloud-note;
+    in-out property <bool> interlink-cloud-pending: false;
+    in-out property <bool> interlink-cloud-busy: false;
+    in-out property <InterlinkApproval> interlink-approval;
+    in-out property <bool> interlink-approval-open: false;
+    callback interlink-refresh();
+    callback interlink-open(string);
+    callback interlink-cloud-up();
+    callback interlink-cloud-decide(bool);
+    callback interlink-approve();
+    callback interlink-reject();
     in-out property <string> selected-model-key;
     in-out property <string> selected-model-provider;
     in-out property <string> selected-model-name;
@@ -515,6 +540,14 @@ export component MainWindow inherits Window {
     copy-buffer := TextInput { width: 0px; height: 0px; }
     copy-raw(raw) => { copy-buffer.text = raw; copy-buffer.select-all(); copy-buffer.copy(); copy-buffer.text = ""; }
     callback send-message();
+    // ---- 发送队列 (§发送队列) ----
+    callback queue-interject(string);
+    callback queue-edit(string);
+    callback queue-remove(string);
+    callback queue-move-by(string, int);
+    // ArrowUp/ArrowDown recall: (direction, cursor byte offset, anchor byte
+    // offset, draft) in, the draft to show (or the unchanged one) back.
+    callback recall-history(int, int, int, string) -> DraftRecall;
     callback capture-screenshot(bool, bool);
     callback record-voice();
     callback remove-attachment(int);
@@ -659,7 +692,7 @@ export component MainWindow inherits Window {
     // query is filtered natively and the matching categories come back as one
     // flag per category, in §9.2 order.
     in-out property <string> settings-query: "";
-    in-out property <[bool]> settings-category-flags: [true, true, true, true, true, true, true, true, true, true, true, true];
+    in-out property <[bool]> settings-category-flags: [true, true, true, true, true, true, true, true, true, true, true, true, true];
     callback filter-settings-categories(string);
     // Actions the embedded category pages raise that had no shell entry point
     // while those pages were unmounted.
@@ -849,6 +882,15 @@ export component MainWindow inherits Window {
                         permission-mode <=> root.permission-mode;
                         permission-changed(value) => { root.save-permission-mode(value); }
                         attachments: root.pending-attachments;
+                        queue-turns: root.queue-turns;
+                        queue-overflow: root.queue-overflow;
+                        queue-interject(queue-id) => { root.queue-interject(queue-id); }
+                        queue-edit(queue-id) => { root.queue-edit(queue-id); }
+                        queue-remove(queue-id) => { root.queue-remove(queue-id); }
+                        queue-move-by(queue-id, delta) => { root.queue-move-by(queue-id, delta); }
+                        recall-history(direction, cursor-offset, anchor-offset, draft) => {
+                            return root.recall-history(direction, cursor-offset, anchor-offset, draft);
+                        }
                         generating: root.busy || root.goal-active; stopping: root.stopping; stop => { root.stop-generation(); }
                         recording: root.recording; transcribing: root.transcribing; recording-elapsed: root.recording-elapsed; recording-pulse: root.recording-pulse;
                         send => { root.send-message(); }
@@ -956,6 +998,19 @@ export component MainWindow inherits Window {
         cloud-logout => { root.cloud-logout(); }
         cloud-refresh-account => { root.cloud-refresh-account(); }
         cloud-toggle-sync(enabled) => { root.cloud-toggle-sync(enabled); }
+        // ---- interlink (设备互通, category 12) ----
+        interlink-status: root.interlink-status;
+        interlink-nodes: root.interlink-nodes;
+        interlink-loading: root.interlink-loading;
+        interlink-cloud-path <=> root.interlink-cloud-path;
+        interlink-entries: root.interlink-entries;
+        interlink-cloud-note: root.interlink-cloud-note;
+        interlink-cloud-pending: root.interlink-cloud-pending;
+        interlink-cloud-busy: root.interlink-cloud-busy;
+        interlink-refresh => { root.interlink-refresh(); }
+        interlink-open(path) => { root.interlink-open(path); }
+        interlink-cloud-up => { root.interlink-cloud-up(); }
+        interlink-cloud-decide(approve) => { root.interlink-cloud-decide(approve); }
         model-creating <=> root.model-creating;
         model-key-draft <=> root.model-key-draft;
         model-provider-draft <=> root.model-provider-draft;
@@ -1206,6 +1261,37 @@ export component MainWindow inherits Window {
         danger: true;
         confirmed => { root.agent-leave-confirm-open = false; root.agent-leave-confirmed(); }
         canceled => { root.agent-leave-confirm-open = false; root.agent-leave-canceled(); }
+    }
+    // ---- interlink approval (§I9): one remote command at a time ----
+    // ConfirmDialog has no meta line, so this is a light self-drawn modal: the
+    // command kind is the title, the prompt is the body and level / risk /
+    // source ride on the subline. The poll only opens the card when it is
+    // closed, so a visible card is never replaced mid-read.
+    if root.interlink-approval-open : Rectangle {
+        z: 240;
+        background: Theme.overlay;
+        TouchArea { clicked => { /* remote asks must be answered, not dismissed */ } }
+        Rectangle {
+            width: min(460px, parent.width - 48px);
+            height: 240px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            border-radius: Theme.radius-xl;
+            background: Theme.surface;
+            border-width: 1px;
+            border-color: Theme.border;
+            TouchArea { }
+            VerticalLayout { padding: 20px; spacing: 10px;
+                Text { height: 24px; text: root.interlink-approval.kind; color: Theme.text; font-size: 17px; font-weight: 600; overflow: elide; }
+                Text { vertical-stretch: 1; text: root.interlink-approval.prompt; color: Theme.text-secondary; font-size: Theme.font-sm; wrap: word-wrap; }
+                Text { height: 18px; text: I18n.il_ap_meta_level + root.interlink-approval.level + " · " + I18n.il_ap_meta_risk + root.interlink-approval.risk + " · " + I18n.il_ap_meta_from + root.interlink-approval.from-node; color: Theme.muted; font-size: Theme.font-xs; overflow: elide; }
+                HorizontalLayout { height: 32px; spacing: 8px;
+                    Action { width: 96px; label: I18n.il_ap_reject; show-label: true; danger: true; clicked => { root.interlink-approval-open = false; root.interlink-reject(); } }
+                    Rectangle { horizontal-stretch: 1; }
+                    Action { width: 96px; label: I18n.il_ap_approve; show-label: true; primary: true; clicked => { root.interlink-approval-open = false; root.interlink-approve(); } }
+                }
+            }
+        }
     }
     if root.profile-edit-open : Rectangle {
         z: 100; background: Theme.overlay; TouchArea { clicked => { root.profile-edit-open = false; } }

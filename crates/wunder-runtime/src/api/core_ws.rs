@@ -161,6 +161,14 @@ async fn handle_ws(
         &connection_id,
         Utc::now().timestamp_millis() as f64 / 1000.0,
     );
+    // Unified presence: one volatile `web` node per browser session (docs §2.4).
+    // The lease is the liveness signal, held for the whole handler.
+    let _web_node = state.control.presence.nodes().register_web(
+        &user.user_id,
+        &connection_id,
+        "web·core",
+        Utc::now().timestamp_millis() as f64 / 1000.0,
+    );
     log_ws_open(WS_ENDPOINT, &connection_id, &user.user_id, &conn_meta);
     let now_ts = Utc::now().timestamp_millis() as f64 / 1000.0;
     let protocol = ws_protocol_info();
@@ -193,6 +201,12 @@ async fn handle_ws(
     let mut close_logged = false;
 
     while let Some(Ok(message)) = WsStreamExt::next(&mut ws_receiver).await {
+        if matches!(message, Message::Text(_)) {
+            state.control.presence.nodes().touch_web(
+                &connection_id,
+                Utc::now().timestamp_millis() as f64 / 1000.0,
+            );
+        }
         match message {
             Message::Text(text) => {
                 let envelope: WsEnvelope = match serde_json::from_str(&text) {

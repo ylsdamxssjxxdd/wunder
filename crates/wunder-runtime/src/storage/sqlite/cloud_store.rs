@@ -1,11 +1,18 @@
 use super::SqliteStorage;
 use crate::storage::{
-    CloudCallRecord, CloudDeviceLogRecord, CloudDeviceRecord, CloudLogInsertResult,
-    ListCloudDeviceLogsQuery, ListCloudRecordsQuery, StorageLifecycle,
+    CloudCallRecord, CloudDeviceInterlinkPatch, CloudDeviceLogRecord, CloudDeviceRecord,
+    CloudLogInsertResult, ListCloudDeviceLogsQuery, ListCloudRecordsQuery, StorageLifecycle,
 };
 use anyhow::Result;
 use rusqlite::types::Value as SqlValue;
 use rusqlite::{params, params_from_iter, OptionalExtension, TransactionBehavior};
+
+/// Column order shared by every `cloud_devices` reader: the base device fields
+/// followed by the interlink extension in `CloudDeviceInterlinkPatch` order.
+/// `read_cloud_device` maps these positions, so the two must stay in sync.
+const CLOUD_DEVICE_COLUMNS: &str = "device_id, user_id, client, name, os, arch, app_version, \
+    last_seen_at, created_at, revoked, node_secret_hash, secret_version, interlink_enabled, \
+    capabilities, policy_overrides, tunnel_connected, last_tunnel_at, secret_rotated_at";
 
 pub(super) trait SqliteCloudStorage {
     fn find_cloud_device_by_identity_impl(
@@ -65,10 +72,13 @@ impl SqliteCloudStorage for SqliteStorage {
             return Ok(None);
         }
         let conn = self.open()?;
+        let sql = format!(
+            "SELECT {CLOUD_DEVICE_COLUMNS} FROM cloud_devices \
+             WHERE user_id = ? AND client = ? AND name = ?"
+        );
         let row = conn
             .query_row(
-                "SELECT device_id, user_id, client, name, os, arch, app_version, last_seen_at, created_at, revoked \
-                 FROM cloud_devices WHERE user_id = ? AND client = ? AND name = ?",
+                &sql,
                 params![cleaned_user, cleaned_client, cleaned_name],
                 |row| Self::read_cloud_device(row),
             )
@@ -113,13 +123,9 @@ impl SqliteCloudStorage for SqliteStorage {
             return Ok(None);
         }
         let conn = self.open()?;
+        let sql = format!("SELECT {CLOUD_DEVICE_COLUMNS} FROM cloud_devices WHERE device_id = ?");
         let row = conn
-            .query_row(
-                "SELECT device_id, user_id, client, name, os, arch, app_version, last_seen_at, created_at, revoked \
-                 FROM cloud_devices WHERE device_id = ?",
-                params![cleaned],
-                |row| Self::read_cloud_device(row),
-            )
+            .query_row(&sql, params![cleaned], |row| Self::read_cloud_device(row))
             .optional()?;
         Ok(row)
     }
@@ -180,8 +186,8 @@ impl SqliteCloudStorage for SqliteStorage {
         let mut rows = Vec::new();
         if limit > 0 {
             let mut sql = format!(
-                "SELECT device_id, user_id, client, name, os, arch, app_version, last_seen_at, created_at, revoked \
-                 FROM cloud_devices{where_clause} ORDER BY last_seen_at DESC"
+                "SELECT {CLOUD_DEVICE_COLUMNS} FROM cloud_devices{where_clause} \
+                 ORDER BY last_seen_at DESC"
             );
             sql.push_str(" LIMIT ? OFFSET ?");
             params_list.push(SqlValue::from(limit));
@@ -451,6 +457,18 @@ impl SqliteCloudStorage for SqliteStorage {
 
 impl SqliteStorage {
     fn read_cloud_device(row: &rusqlite::Row<'_>) -> rusqlite::Result<CloudDeviceRecord> {
+        // The interlink extension is read with the base row (`CLOUD_DEVICE_COLUMNS`):
+        // flags are INTEGER 0/1 here and stay nullable where the patch allows it.
+        let interlink = CloudDeviceInterlinkPatch {
+            node_secret_hash: row.get(10)?,
+            secret_version: row.get::<_, Option<i64>>(11)?.unwrap_or(0),
+            interlink_enabled: row.get::<_, Option<i64>>(12)?.map(|value| value != 0),
+            capabilities: row.get(13)?,
+            policy_overrides: row.get(14)?,
+            tunnel_connected: row.get::<_, Option<i64>>(15)?.map(|value| value != 0),
+            last_tunnel_at: row.get(16)?,
+            secret_rotated_at: row.get(17)?,
+        };
         Ok(CloudDeviceRecord {
             device_id: row.get(0)?,
             user_id: row.get(1)?,
@@ -462,7 +480,7 @@ impl SqliteStorage {
             last_seen_at: row.get::<_, Option<f64>>(7)?.unwrap_or(0.0),
             created_at: row.get::<_, Option<f64>>(8)?.unwrap_or(0.0),
             revoked: row.get::<_, i64>(9)? != 0,
-            interlink: None,
+            interlink: Some(Box::new(interlink)),
         })
     }
 

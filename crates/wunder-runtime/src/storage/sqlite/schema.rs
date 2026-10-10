@@ -59,7 +59,7 @@ impl SqliteStorage {
         if columns.is_empty() {
             return Ok(());
         }
-        let additions: [(&str, &str); 7] = [
+        let additions: [(&str, &str); 8] = [
             ("node_secret_hash", "ALTER TABLE cloud_devices ADD COLUMN node_secret_hash TEXT"),
             ("secret_version", "ALTER TABLE cloud_devices ADD COLUMN secret_version INTEGER NOT NULL DEFAULT 0"),
             ("interlink_enabled", "ALTER TABLE cloud_devices ADD COLUMN interlink_enabled INTEGER"),
@@ -67,6 +67,7 @@ impl SqliteStorage {
             ("policy_overrides", "ALTER TABLE cloud_devices ADD COLUMN policy_overrides TEXT"),
             ("tunnel_connected", "ALTER TABLE cloud_devices ADD COLUMN tunnel_connected INTEGER NOT NULL DEFAULT 0"),
             ("last_tunnel_at", "ALTER TABLE cloud_devices ADD COLUMN last_tunnel_at REAL"),
+            ("secret_rotated_at", "ALTER TABLE cloud_devices ADD COLUMN secret_rotated_at REAL"),
         ];
         for (column, ddl) in additions {
             if !columns.contains(column) {

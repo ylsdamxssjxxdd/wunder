@@ -15,6 +15,7 @@
 import { computed, reactive, ref } from 'vue';
 
 import { fetchWorkspaceDirectory, isWorkspaceRequestCancelled } from './workspaceFileApi';
+import type { WorkspaceDirectoryPage } from './workspaceFileApi';
 import {
   WORKSPACE_DIRECTORY_PAGE_SIZE,
   appendWorkspacePage,
@@ -39,8 +40,18 @@ export type WorkspaceDirectoryState = {
   error: string;
 };
 
+/**
+ * 目录页加载器：默认走云端 `/workspace` 列表；本地节点（互通 §6.3）注入
+ * 「一条 `workspace.list` 命令」的实现，行渲染与分页语义完全复用。
+ */
+export type WorkspaceDirectoryPageLoader = (
+  path: string,
+  options: { offset: number; limit: number }
+) => Promise<WorkspaceDirectoryPage>;
+
 export type UseWorkspaceFileTreeOptions = {
   pageSize?: number;
+  loadPage?: WorkspaceDirectoryPageLoader;
   onError?: (message: string, error?: unknown) => void;
 };
 
@@ -58,6 +69,7 @@ const createDirectoryState = (path: string, pageSize: number): WorkspaceDirector
 
 export const useWorkspaceFileTree = (options: UseWorkspaceFileTreeOptions = {}) => {
   const pageSize = Math.max(1, Number(options.pageSize) || WORKSPACE_DIRECTORY_PAGE_SIZE);
+  const loadPage: WorkspaceDirectoryPageLoader = options.loadPage || fetchWorkspaceDirectory;
 
   /** path -> directory node. `''` is the workspace root. */
   const directories = reactive(new Map<string, WorkspaceDirectoryState>());
@@ -119,7 +131,7 @@ export const useWorkspaceFileTree = (options: UseWorkspaceFileTreeOptions = {}) 
 
     const task = (async () => {
       try {
-        const page = await fetchWorkspaceDirectory(key, { offset, limit: pageSize });
+        const page = await loadPage(key, { offset, limit: pageSize });
         // Patch this directory node only; other directories are untouched.
         state.entries = append
           ? appendWorkspacePage(state.entries, page.entries)

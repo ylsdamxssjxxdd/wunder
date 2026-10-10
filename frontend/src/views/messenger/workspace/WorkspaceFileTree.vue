@@ -94,6 +94,7 @@
           <span class="workspace-file-name">{{ row.name }}</span>
           <span v-if="row.loading" class="workspace-files-spinner" aria-hidden="true"></span>
           <button
+            v-if="!readOnly"
             class="workspace-file-menu"
             type="button"
             :title="t('common.more')"
@@ -146,15 +147,20 @@ import {
   type WorkspaceVisibleRow
 } from './workspaceFileModel';
 
-const props = defineProps<{
-  rows: WorkspaceVisibleRow[];
-  activePath: string;
-  highlightedPath: string;
-  loading: boolean;
-  error: string;
-  selectionMode: boolean;
-  selectedPaths: string[];
-}>();
+const props = withDefaults(
+  defineProps<{
+    rows: WorkspaceVisibleRow[];
+    activePath: string;
+    highlightedPath: string;
+    loading: boolean;
+    error: string;
+    selectionMode: boolean;
+    selectedPaths: string[];
+    /** 只读投影（互通远程节点）：隐藏写操作菜单，只留预览/展开。 */
+    readOnly?: boolean;
+  }>(),
+  { readOnly: false }
+);
 
 const emit = defineEmits<{
   'toggle-dir': [path: string];
@@ -262,6 +268,7 @@ const handleMenuKeydown = (event: KeyboardEvent) => {
 };
 
 const openMenu = (row: WorkspaceVisibleRow | null, event: MouseEvent | Event) => {
+  if (props.readOnly && !row) return;
   if (row?.kind === 'more') return;
   const source = event as MouseEvent;
   const x = Number.isFinite(source.clientX) && source.clientX > 0 ? source.clientX : 24;
@@ -280,6 +287,13 @@ const createItems = (): MenuItem[] => [
 
 const menuItems = computed<MenuItem[]>(() => {
   const row = menu.value.row;
+  // 只读投影：只给「打开目录 / 预览」，写类动作在远程节点上不存在。
+  if (props.readOnly) {
+    if (!row || row.kind === 'more') return [];
+    return row.kind === 'dir'
+      ? [{ command: 'toggle', label: t('messenger.filesArea.menu.open'), icon: 'fa-folder-open' }]
+      : [{ command: 'preview', label: t('messenger.filesArea.menu.preview'), icon: 'fa-eye' }];
+  }
   // 空白区没有宿主行，菜单落在当前目录上，并承接已下线头部 ⋯ 的三个动作。
   if (!row) {
     return [

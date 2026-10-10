@@ -116,6 +116,7 @@ fn rebuild_rows(app: &MainWindow) {
                 status: "".into(),
                 active: false,
                 payload: wi as i32,
+                origin: "".into(),
             });
             if !expanded {
                 continue;
@@ -158,6 +159,7 @@ fn rebuild_rows(app: &MainWindow) {
                     status: conv.runtime_status.clone(),
                     active: conv.id == active,
                     payload: ci as i32,
+                    origin: conv.origin.clone(),
                 });
             }
         }

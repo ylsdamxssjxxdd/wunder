@@ -107,23 +107,12 @@
       >
         <button
           class="messenger-message-footer-copy"
-          :class="{ 'is-active': isMessageTtsPlaying(item.message, item.sourceIndex, 'agent') }"
           type="button"
-          :disabled="isMessageTtsLoading(item.message, item.sourceIndex, 'agent')"
-          :title="resolveMessageTtsActionLabel(item.message, item.sourceIndex, 'agent')"
-          :aria-label="resolveMessageTtsActionLabel(item.message, item.sourceIndex, 'agent')"
-          @click="toggleMessageTtsPlayback(item.message, item.sourceIndex, 'agent')"
+          :title="t('chat.message.copy')"
+          :aria-label="t('chat.message.copy')"
+          @click="copyMessageContent(item.message)"
         >
-          <i
-            v-if="isMessageTtsLoading(item.message, item.sourceIndex, 'agent')"
-            class="fa-solid fa-spinner fa-spin"
-            aria-hidden="true"
-          ></i>
-          <i
-            v-else
-            :class="isMessageTtsPlaying(item.message, item.sourceIndex, 'agent') ? 'fa-solid fa-pause' : 'fa-solid fa-volume-high'"
-            aria-hidden="true"
-          ></i>
+          <i class="fa-solid fa-clone" aria-hidden="true"></i>
         </button>
       </div>
     </div>
@@ -159,16 +148,17 @@ const emit = defineEmits<{ (event: 'activity', active: boolean): void }>();
 const defaultOpen = computed(() => props.defaultOpen === true);
 const isUser = computed(() => String(props.item.message?.role || '') === 'user');
 
+const translate = props.controller.t;
+const t = (key: string, params?: Record<string, unknown>): string =>
+  String(translate(key, params) ?? key);
+
 const chatStore = props.controller.chatStore;
+const copyMessageContent = props.controller.copyMessageContent;
 const currentContainerId = props.controller.currentContainerId;
 const handleMessageMarkdownRendered = props.controller.handleMessageMarkdownRendered;
 const hasMessageContent = props.controller.hasMessageContent;
 const hasUserAudioAttachments = props.controller.hasUserAudioAttachments;
 const hasUserImageAttachments = props.controller.hasUserImageAttachments;
-const isMessageTtsLoading = props.controller.isMessageTtsLoading;
-const isMessageTtsPlaying = props.controller.isMessageTtsPlaying;
-const resolveMessageTtsActionLabel = props.controller.resolveMessageTtsActionLabel;
-const toggleMessageTtsPlayback = props.controller.toggleMessageTtsPlayback;
 const MARKDOWN_STREAM_THROTTLE_MS = props.controller.MARKDOWN_STREAM_THROTTLE_MS;
 const MessageKnowledgeCitation = props.controller.MessageKnowledgeCitation;
 const openResourcePreview = props.controller.openResourcePreview;

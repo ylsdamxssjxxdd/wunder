@@ -491,7 +491,8 @@ mod tests {
             .reorder_queued_tasks("user-a", "session-a", &["task-c".into(), "task-a".into()])
             .await
             .expect("reorder");
-        assert_eq!(reordered["reordered"], json!(2));
+        // 未列出的 task-b 按原派发序垫后，位次重写覆盖整个队列。
+        assert_eq!(reordered["reordered"], json!(3));
 
         // 重排只改派发位次，created_at 保持不变；列表按派发序返回。
         let items = list_items(&state, "user-a", "session-a").await;

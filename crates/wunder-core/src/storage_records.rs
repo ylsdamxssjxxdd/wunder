@@ -886,7 +886,7 @@ pub struct CloudDeviceLogRecord {
 
 /// Extended interlink columns on `cloud_devices` (Pz: nullable to keep
 /// existing rows valid after migration).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct CloudDeviceInterlinkPatch {
     pub node_secret_hash: Option<String>,
     pub secret_version: i64,
@@ -895,6 +895,9 @@ pub struct CloudDeviceInterlinkPatch {
     pub policy_overrides: Option<String>,
     pub tunnel_connected: Option<bool>,
     pub last_tunnel_at: Option<f64>,
+    /// Instant of the last secret rotation; the previous `secret_version` stays
+    /// acceptable for a dual-key grace window (24h) from this moment.
+    pub secret_rotated_at: Option<f64>,
 }
 
 /// One live (or recently closed) interlink tunnel channel.

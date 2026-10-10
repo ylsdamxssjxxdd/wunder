@@ -37,7 +37,7 @@ impl PostgresStorage {
             return Ok(0);
         }
         let mut conn = self.conn()?;
-        let tx = conn.transaction()?;
+        let mut tx = conn.transaction()?;
         // retry_at 是派发序里排在 created_at 之前的位次键：越靠前越小，且必须不晚于 now 才可领取。
         let total = task_ids.len();
         let mut changed = 0usize;

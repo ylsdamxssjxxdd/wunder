@@ -74,6 +74,17 @@ async fn run_server(runtime_threads: runtime_tuning::ServerRuntimeThreads) -> an
         hydrate_enabled_mcp_tool_specs(state.clone()),
     );
 
+    // 统一在线状态：网页会话节点的租约回收（docs §5.1）。
+    state
+        .control
+        .presence
+        .clone()
+        .spawn_maintenance(state.config_store.clone());
+    // 互通面维护：陈旧隧道、命令超时、审批过期与台账/审计保留（docs §4.4、§9.4）。
+    if config.interlink.enabled {
+        wunder_server::interlink::janitor::spawn(state.clone());
+    }
+
     // 挂载 API 路由与静态资源入口。
     let app = api::build_router(state.clone());
     let app = mount_simple_chat_disabled(app);

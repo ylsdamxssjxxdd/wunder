@@ -1,7 +1,8 @@
 import { I18n } from "i18n.slint";
-import { Theme, ChatAttachment, ModelCard, PlanStep, InquiryQuestion } from "theme.slint";
+import { Theme, ChatAttachment, ModelCard, PlanStep, InquiryQuestion, QueueTurn, DraftRecall } from "theme.slint";
 import { Action, TerminalAction } from "components.slint";
 import { TextEditBase } from "textedit-base.slint";
+import { DragPreview } from "drag_row.slint";
 
 // Slint has neither top-level functions nor module-level constants, so the
 // reasoning ladder lives in a global. Model search deliberately does *not* live
@@ -769,6 +770,202 @@ export component GoalBanner inherits Rectangle {
     }
 }
 
+// One quiet icon control of a queue row; the tint stays neutral until the
+// pointer is on it, and the caller decides whether the tone is danger.
+component QueueTool inherits Rectangle {
+    in property <image> icon;
+    in property <string> tip;
+    in property <color> tint: Theme.muted;
+    in property <color> active-tint: Theme.danger;
+    in property <bool> enabled: true;
+    callback clicked();
+    width: 24px; height: 24px;
+    border-radius: 6px;
+    background: root.enabled && hit.has-hover ? Theme.hover : transparent;
+    accessible-role: button;
+    accessible-label: root.tip;
+    accessible-enabled: root.enabled;
+    accessible-action-default => { if root.enabled { root.clicked(); } }
+    Image {
+        x: 5px; y: 5px; width: 14px; height: 14px;
+        source: root.icon; image-fit: contain;
+        colorize: root.enabled ? (hit.has-hover ? root.active-tint : root.tint) : Theme.border;
+    }
+    hit := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: root.enabled ? MouseCursor.pointer : MouseCursor.default;
+        clicked => { if root.enabled { root.clicked(); } }
+    }
+}
+
+// One parked turn. The grip on the left is the only drag handle, so a click on
+// the text or on an action never turns into a reorder: the drag distance is
+// measured from the grip's own geometry and a row move is only emitted on
+// release past the 6px threshold (same contract as the sidebar rows).
+component QueueRow inherits Rectangle {
+    in property <QueueTurn> turn;
+    callback interject(string);
+    callback edit(string);
+    callback remove(string);
+    callback move-by(string, int);
+    height: 28px;
+    private property <length> drag-start: 0px;
+    private property <bool> dragging: false;
+    private property <bool> drop-before: DragPreview.active
+        && DragPreview.source-y != root.absolute-position.y
+        && DragPreview.pointer-y >= root.absolute-position.y
+        && DragPreview.pointer-y < root.absolute-position.y + root.height / 2;
+    private property <bool> drop-after: DragPreview.active
+        && DragPreview.source-y != root.absolute-position.y
+        && DragPreview.pointer-y >= root.absolute-position.y + root.height / 2
+        && DragPreview.pointer-y < root.absolute-position.y + root.height;
+    border-radius: Theme.radius-sm;
+    background: root.dragging ? Theme.accent-soft : drop-before || drop-after ? Theme.hover : transparent;
+    accessible-role: list-item;
+    accessible-label: root.turn.text;
+
+    grip := TouchArea {
+        x: 0px; y: 0px; width: 22px; height: parent.height;
+        mouse-cursor: root.dragging ? MouseCursor.move : MouseCursor.grab;
+        pointer-event(event) => {
+            if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
+                root.drag-start = self.mouse-y;
+                root.dragging = false;
+                DragPreview.active = false;
+                DragPreview.source-y = root.absolute-position.y;
+                DragPreview.pointer-y = root.absolute-position.y + self.mouse-y;
+            }
+            if event.kind == PointerEventKind.up && event.button == PointerEventButton.left {
+                if root.dragging {
+                    root.move-by(root.turn.queue-id, round((self.mouse-y - root.drag-start) / root.height));
+                }
+                root.dragging = false;
+                DragPreview.active = false;
+                DragPreview.source-y = -1px;
+            }
+            if event.kind == PointerEventKind.cancel {
+                root.dragging = false;
+                DragPreview.active = false;
+                DragPreview.source-y = -1px;
+            }
+        }
+        moved => {
+            DragPreview.pointer-y = root.absolute-position.y + self.mouse-y;
+            if self.pressed && abs(self.mouse-y - root.drag-start) > 6px {
+                root.dragging = true;
+                DragPreview.active = true;
+            }
+        }
+    }
+    // Grip dots: no asset carries this glyph and six rects cost nothing.
+    for dot in [{x: 6px, y: 8px}, {x: 12px, y: 8px}, {x: 6px, y: 13px}, {x: 12px, y: 13px}, {x: 6px, y: 18px}, {x: 12px, y: 18px}] : Rectangle {
+        x: dot.x; y: dot.y; width: 3px; height: 3px;
+        border-radius: 1.5px;
+        background: grip.has-hover || root.dragging ? Theme.accent : Theme.border-strong;
+    }
+
+    HorizontalLayout {
+        padding-left: 24px; padding-right: 2px; spacing: 8px;
+        Text {
+            horizontal-stretch: 1; min-width: 0px;
+            height: parent.height;
+            text: root.turn.text != "" ? root.turn.text : I18n.cp_queue_attachment_only;
+            color: root.turn.text != "" ? Theme.text : Theme.muted;
+            font-size: Theme.font-sm;
+            vertical-alignment: center; overflow: elide;
+        }
+        if root.turn.attachments > 0 : Text {
+            height: parent.height;
+            text: I18n.cp_queue_attachments(root.turn.attachments);
+            color: Theme.muted; font-size: Theme.font-2xs;
+            vertical-alignment: center;
+        }
+        Action {
+            width: 76px; height: 24px; y: 2px;
+            icon: @image-url("../assets/icons/arrow-up.svg");
+            icon-size: 13px;
+            label: root.turn.interjected ? I18n.cp_queue_interjected : I18n.cp_queue_interject;
+            show-label: true;
+            enabled: !root.turn.interjected;
+            icon-color: root.turn.interjected ? Theme.border : Theme.accent;
+            clicked => { root.interject(root.turn.queue-id); }
+        }
+        QueueTool {
+            y: 2px;
+            icon: @image-url("../assets/icons/pen.svg");
+            tip: I18n.cp_queue_edit_hint;
+            tint: Theme.muted;
+            active-tint: Theme.text;
+            clicked => { root.edit(root.turn.queue-id); }
+        }
+        QueueTool {
+            y: 2px;
+            icon: @image-url("../assets/icons/trash.svg");
+            tip: I18n.cp_queue_remove_hint;
+            clicked => { root.remove(root.turn.queue-id); }
+        }
+    }
+
+    // Insertion seam, same affordance as the sidebar rows: a line at the edge
+    // the dragged row would land against.
+    if root.drop-before || root.drop-after : Rectangle {
+        x: 2px;
+        y: root.drop-after ? parent.height - 2px : 0px;
+        width: parent.width - 4px;
+        height: 2px;
+        z: 100;
+        background: Theme.accent;
+        opacity: 0.96;
+        animate y { duration: 110ms; easing: ease-out; }
+    }
+}
+
+// §发送队列: the turns the engine parked for this thread while a run is in
+// flight. Rust publishes at most `QueueStrip.max-rows` of them plus the count
+// it left out, so the card height stays exact and never grows with the queue.
+export component QueueStrip inherits Rectangle {
+    in property <[QueueTurn]> turns: [];
+    in property <int> overflow: 0;
+    callback interject(string);
+    callback edit(string);
+    callback remove(string);
+    callback move-by(string, int);
+    height: card-body.preferred-height;
+    frame := Rectangle {
+        x: 0px; y: 0px; width: parent.width; height: parent.height;
+        border-radius: Theme.radius-lg; background: Theme.surface;
+        border-width: 1px; border-color: Theme.border;
+        clip: true;
+    }
+    card-body := VerticalLayout {
+        padding-left: 10px; padding-right: 8px; padding-top: 6px; padding-bottom: 6px;
+        spacing: 2px;
+        HorizontalLayout {
+            height: 20px; padding-left: 14px; spacing: 6px;
+            Text { text: I18n.cp_queue_title; color: Theme.muted; font-size: Theme.font-2xs; font-weight: 700; vertical-alignment: center; }
+            Text { text: "" + root.turns.length + (root.overflow > 0 ? "+" : ""); color: Theme.text-secondary; font-size: Theme.font-2xs; vertical-alignment: center; }
+            Rectangle { horizontal-stretch: 1; }
+            Text { text: I18n.cp_queue_hint; color: Theme.border-strong; font-size: Theme.font-2xs; vertical-alignment: center; }
+        }
+        for turn in root.turns : QueueRow {
+            turn: turn;
+            interject(queue-id) => { root.interject(queue-id); }
+            edit(queue-id) => { root.edit(queue-id); }
+            remove(queue-id) => { root.remove(queue-id); }
+            move-by(queue-id, delta) => { root.move-by(queue-id, delta); }
+        }
+        if root.overflow > 0 : Rectangle {
+            height: 16px;
+            Text {
+                x: 14px; width: parent.width - 28px; height: parent.height;
+                text: I18n.cp_queue_more(root.overflow);
+                color: Theme.muted; font-size: Theme.font-2xs;
+                vertical-alignment: center;
+            }
+        }
+    }
+}
+
 export component Composer inherits Rectangle {
     in-out property <string> draft <=> editor.text;
     in property <bool> busy: false;
@@ -828,6 +1025,34 @@ export component Composer inherits Rectangle {
     // send semantics change; the backend decides where the text goes.
     in property <bool> terminal-mode: false;
     callback screenshot(bool, bool);
+    // ---- 发送队列 (§发送队列) ----
+    // Parked turns come straight from the engine's queue projection; the strip
+    // never keeps its own copy, so a reorder or a withdraw that raced with a
+    // feeder wake is corrected by the next publish.
+    in property <[QueueTurn]> queue-turns: [];
+    in property <int> queue-overflow: 0;
+    callback queue-interject(string);
+    callback queue-edit(string);
+    callback queue-remove(string);
+    callback queue-move-by(string, int);
+    // ArrowUp/ArrowDown recall of already-sent messages. The decision needs the
+    // caret's byte offsets, which only Rust can compare against the draft's byte
+    // length, so the editor forwards them and takes back what Rust returns.
+    callback recall-history(int, int, int, string) -> DraftRecall;
+    private property <bool> queue-open: root.queue-turns.length > 0;
+    // A running turn no longer swallows the send: the engine parks the turn and
+    // the strip above the input shows it. What still blocks is a slash command
+    // in flight or a thread that is still loading.
+    private property <bool> send-blocked: root.busy && !root.generating;
+    // Exact card height: 6+6 padding, a 20px header, 28px rows, the optional
+    // overflow line and 2px between every item.
+    private property <int> queue-items: root.queue-open
+        ? 1 + root.queue-turns.length + (root.queue-overflow > 0 ? 1 : 0) : 0;
+    private property <length> queue-height: root.queue-open
+        ? 12px + 20px + root.queue-turns.length * 28px
+            + (root.queue-overflow > 0 ? 16px : 0px) + (root.queue-items - 1) * 2px + 6px
+        : 0px;
+    height: (root.attachments.length > 0 ? 240px : 204px) + root.queue-height;
     private property <bool> preset-open: false;
     private property <bool> command-open: false;
     private property <bool> screenshot-open: false;
@@ -839,11 +1064,18 @@ export component Composer inherits Rectangle {
     private property <string> permission-label: root.permission-mode == "auto_edit" ? I18n.cp_permission_write
         : root.permission-mode == "suggest" ? I18n.cp_permission_command
         : I18n.cp_permission_full;
-    height: root.attachments.length > 0 ? 240px : 204px;
     background: Theme.composer;
     Rectangle { y: 0px; height: 1px; background: Theme.border; }
     VerticalLayout {
         padding: 14px; padding-top: 8px; spacing: 6px;
+        if root.queue-open : QueueStrip {
+            turns: root.queue-turns;
+            overflow: root.queue-overflow;
+            interject(queue-id) => { root.queue-interject(queue-id); }
+            edit(queue-id) => { root.queue-edit(queue-id); }
+            remove(queue-id) => { root.queue-remove(queue-id); }
+            move-by(queue-id, delta) => { root.queue-move-by(queue-id, delta); }
+        }
         if root.attachments.length > 0 : HorizontalLayout {
             height: 30px; spacing: 6px;
             for attachment[index] in root.attachments : Rectangle {
@@ -880,15 +1112,30 @@ key-pressed(event) => {
                     root.interrupt();
                     return accept;
                 }
+                // ArrowUp / ArrowDown recall the messages this thread already
+                // sent (Slint's key code points: U+F700 up, U+F701 down). The
+                // caret test needs byte offsets, so Rust owns the decision, the
+                // walk index and the stash; `handled` is what eats the key.
+                if event.text == "\u{F700}" || event.text == "\u{F701}" {
+                    let recalled = root.recall-history(
+                        event.text == "\u{F700}" ? 1 : -1,
+                        self.cursor-offset, self.anchor-offset, root.draft);
+                    if recalled.handled {
+                        root.draft = recalled.text;
+                        self.set-selection-offsets(recalled.caret, recalled.caret);
+                        return accept;
+                    }
+                    return reject;
+                }
                 // The send key preference: "enter" sends on plain Enter;
                 // "ctrl_enter" sends only with Ctrl+Enter; "none" leaves all
                 // newlines to the editor and sends via the button only.
                 if event.text == "\n" && !event.modifiers.shift && !event.modifiers.control {
-                    if root.send-key == "enter" && (!root.busy || root.draft.starts-with("/") || root.inquiry-ready) { root.send(); }
+                    if root.send-key == "enter" && !root.send-blocked { root.send(); }
                     return root.send-key == "enter" ? accept : reject;
                 }
                 if event.text == "\n" && event.modifiers.control {
-                    if root.send-key == "ctrl_enter" && (!root.busy || root.draft.starts-with("/") || root.inquiry-ready) { root.send(); return accept; }
+                    if root.send-key == "ctrl_enter" && !root.send-blocked { root.send(); return accept; }
                     return reject;
                 }
                 return reject;
@@ -1046,7 +1293,9 @@ key-pressed(event) => {
                 primary: true; enabled: !root.stopping;
                 clicked => { root.stop(); }
             }
-            if !root.generating || root.terminal-mode || root.inquiry-ready || root.draft.starts-with("/") : Action { width: 40px; icon: @image-url("../assets/icons/paper-plane.svg"); icon-size: 16px; label: root.busy ? I18n.cp_sending : I18n.cp_send; primary: true; enabled: root.terminal-mode ? (root.draft != "" && !root.busy) : ((root.draft != "" || root.attachments.length > 0 || root.inquiry-ready) && (!root.busy || root.draft.starts-with("/"))); clicked => { root.send(); } }
+            // The send control stays visible while a turn runs: a message sent
+            // then is parked by the engine, which is what the strip above shows.
+            Action { width: 40px; icon: @image-url("../assets/icons/paper-plane.svg"); icon-size: 16px; label: root.generating ? I18n.cp_queue_send : (root.send-blocked ? I18n.cp_sending : I18n.cp_send); primary: true; enabled: root.terminal-mode ? (root.draft != "" && !root.send-blocked) : ((root.draft != "" || root.attachments.length > 0 || root.inquiry-ready) && !root.send-blocked); clicked => { root.send(); } }
         }
         // ---- status line (§8.5): branch only; the context gauge lives in
         // the toolbar's brain glyph and the old labelled bar is gone. ----

@@ -207,6 +207,25 @@ impl Timeline {
         marks
     }
 
+    /// Messages this thread already sent, newest first — the walk behind the
+    /// composer's ArrowUp recall. Consecutive repeats are collapsed so a
+    /// resend does not make the user press the key twice for the same text.
+    pub fn recent_user_texts(&self, limit: usize) -> Vec<String> {
+        let mut texts: Vec<String> = self
+            .model
+            .iter()
+            .filter(|row| row.kind == KIND_USER)
+            .map(|row| row.text.to_string())
+            .filter(|text| !text.trim().is_empty())
+            .collect();
+        // Slint's model iterator is not double-ended, so the newest-first order
+        // the walk needs is made by reversing the collected rows.
+        texts.reverse();
+        texts.dedup();
+        texts.truncate(limit);
+        texts
+    }
+
     /// Drop the whole timeline, e.g. when another thread is opened.
     #[allow(dead_code)]
     pub fn clear(&mut self) {

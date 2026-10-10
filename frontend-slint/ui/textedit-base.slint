@@ -18,6 +18,11 @@ export component TextEditBase inherits Rectangle {
     out property <length> visible-width <=> scroll-view.visible-width;
     out property <length> visible-height <=> scroll-view.visible-height;
     in-out property <string> text <=> text-input.text;
+    // Caret geometry, in UTF-8 bytes. The composer needs "is the caret glued to
+    // one end of the draft" to decide whether ArrowUp/ArrowDown may recall a
+    // previous message; Rust does the byte math, this only forwards the offsets.
+    out property <int> cursor-offset: text-input.cursor-position-byte-offset;
+    out property <int> anchor-offset: text-input.anchor-position-byte-offset;
     in-out property <length> content-x <=> scroll-view.content-x;
     in-out property <length> content-y <=> scroll-view.content-y;
     in-out property <length> content-width <=> scroll-view.content-width;

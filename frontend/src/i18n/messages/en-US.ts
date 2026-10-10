@@ -2540,6 +2540,8 @@ export default {
   'messenger.settingsPage.cat.memory.desc': 'Review and edit memory fragments',
   'messenger.settingsPage.cat.channels.title': 'Channels',
   'messenger.settingsPage.cat.channels.desc': 'Channel accounts and connection state',
+  'messenger.settingsPage.cat.devices.title': 'My devices',
+  'messenger.settingsPage.cat.devices.desc': 'Device interlink switch and cloud shadow projection',
   'messenger.settingsPage.cat.runtime.title': 'Runtime records',
   'messenger.settingsPage.cat.runtime.desc': 'Runtime, usage and tool call stats',
   'messenger.settingsPage.cat.prompts.title': 'Prompt packs',

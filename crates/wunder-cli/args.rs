@@ -279,6 +279,87 @@ pub enum CloudSubcommand {
 
     /// Device log reporting diagnostics / 设备日志上报诊断。
     Logs(CloudLogsCommand),
+
+    /// List the account's interlink nodes / 列出本账号互通节点。
+    Devices,
+
+    /// Show the cloud workspace / 查看云端工作区。
+    Ws(CloudWsCommand),
+
+    /// Drive a cloud or local thread through the interlink ledger / 经互通台账驱动线程。
+    Send(CloudSendCommand),
+
+    /// Watch one thread's live events through the server relay / 经舰体中继旁观线程事件流。
+    Watch(CloudWatchCommand),
+
+    /// Show the account's interlink audit trail / 查看本账号互通审计。
+    Audit(CloudAuditCommand),
+
+    /// Decide a pending interlink approval / 处理待决定审批。
+    Approve(CloudApproveCommand),
+}
+
+#[derive(Debug, Args)]
+pub struct CloudWsCommand {
+    /// Relative path to list; defaults to the workspace root / 相对路径，缺省列根目录。
+    #[arg(value_name = "PATH")]
+    pub path: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct CloudSendCommand {
+    /// Target node: `cloud` or `device:<id>` / 目标节点：cloud 或 device:<id>。
+    #[arg(long, default_value = "cloud")]
+    pub to: String,
+
+    /// Existing thread id; omitted with --title creates one / 既有线程 id；与 --title 同用可新建。
+    #[arg(long)]
+    pub thread: Option<String>,
+
+    /// Title for a new thread / 新线程标题。
+    #[arg(long)]
+    pub title: Option<String>,
+
+    /// Message text (prompt) / 消息文本。
+    #[arg(value_name = "MESSAGE")]
+    pub message: String,
+}
+
+#[derive(Debug, Args)]
+pub struct CloudWatchCommand {
+    /// Device owning the thread (`device:<id>` or `cloud`) / 线程所属节点。
+    #[arg(long, default_value = "cloud")]
+    pub to: String,
+
+    /// Thread id to watch / 要旁观的线程 id。
+    #[arg(long)]
+    pub thread: String,
+
+    /// Stop after N seconds / N 秒后自动退出。
+    #[arg(long, default_value_t = 300)]
+    pub seconds: u64,
+}
+
+#[derive(Debug, Args)]
+pub struct CloudAuditCommand {
+    /// Page size (server caps at 100) / 每页条数（服务端上限 100）。
+    #[arg(long)]
+    pub limit: Option<i64>,
+
+    /// Emit CSV instead of a table / 输出 CSV。
+    #[arg(long, default_value_t = false)]
+    pub csv: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct CloudApproveCommand {
+    /// Command id carrying the pending ticket / 携带待审工单的命令 id。
+    #[arg(value_name = "COMMAND_ID")]
+    pub command_id: String,
+
+    /// Approve instead of reject / 批准而非拒绝。
+    #[arg(long, default_value_t = false)]
+    pub yes: bool,
 }
 
 #[derive(Debug, Args)]
@@ -664,6 +745,73 @@ mod tests {
             panic!("cloud logs expected");
         };
         assert!(!logs.flush);
+
+        // Interlink subcommands (plan I10): defaults and required arguments.
+        let cli = parse(&["wunder-cli", "cloud", "devices"]);
+        let Some(Command::Cloud(command)) = cli.command else {
+            panic!("cloud subcommand expected");
+        };
+        assert!(matches!(command.command, CloudSubcommand::Devices));
+
+        let cli = parse(&["wunder-cli", "cloud", "ws", "docs"]);
+        let Some(Command::Cloud(command)) = cli.command else {
+            panic!("cloud subcommand expected");
+        };
+        let CloudSubcommand::Ws(ws) = command.command else {
+            panic!("cloud ws expected");
+        };
+        assert_eq!(ws.path.as_deref(), Some("docs"));
+
+        let cli = parse(&[
+            "wunder-cli",
+            "cloud",
+            "send",
+            "--to",
+            "device:abc",
+            "--thread",
+            "t1",
+            "hello",
+        ]);
+        let Some(Command::Cloud(command)) = cli.command else {
+            panic!("cloud subcommand expected");
+        };
+        let CloudSubcommand::Send(send) = command.command else {
+            panic!("cloud send expected");
+        };
+        assert_eq!(send.to, "device:abc");
+        assert_eq!(send.thread.as_deref(), Some("t1"));
+        assert_eq!(send.message, "hello");
+
+        let cli = parse(&["wunder-cli", "cloud", "watch", "--thread", "t1"]);
+        let Some(Command::Cloud(command)) = cli.command else {
+            panic!("cloud subcommand expected");
+        };
+        let CloudSubcommand::Watch(watch) = command.command else {
+            panic!("cloud watch expected");
+        };
+        assert_eq!(watch.to, "cloud");
+        assert_eq!(watch.thread, "t1");
+        assert_eq!(watch.seconds, 300);
+
+        let cli = parse(&["wunder-cli", "cloud", "audit", "--csv", "--limit", "20"]);
+        let Some(Command::Cloud(command)) = cli.command else {
+            panic!("cloud subcommand expected");
+        };
+        let CloudSubcommand::Audit(audit) = command.command else {
+            panic!("cloud audit expected");
+        };
+        assert_eq!(audit.limit, Some(20));
+        assert!(audit.csv);
+
+        let cli = parse(&["wunder-cli", "cloud", "approve", "cmd-1", "--yes"]);
+        let Some(Command::Cloud(command)) = cli.command else {
+            panic!("cloud subcommand expected");
+        };
+        let CloudSubcommand::Approve(approve) = command.command else {
+            panic!("cloud approve expected");
+        };
+        assert_eq!(approve.command_id, "cmd-1");
+        assert!(approve.yes);
     }
 
     #[test]

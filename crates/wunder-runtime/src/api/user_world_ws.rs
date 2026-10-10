@@ -121,6 +121,13 @@ async fn handle_ws(
         .control
         .presence
         .connect_client(&user_id, &connection_id, connected_at);
+    // Unified presence: one volatile `web` node per browser session (docs §2.4).
+    let _web_node = state.control.presence.nodes().register_web(
+        &user_id,
+        &connection_id,
+        "web·world",
+        connected_at,
+    );
     let now_ts = Utc::now().timestamp_millis() as f64 / 1000.0;
     let ready_payload = WsReadyPayload {
         connection_id: connection_id.clone(),

@@ -15,7 +15,7 @@ mod follow;
 
 const CAPACITY: usize = 128;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum NativeChatEvent {
     Event(Value),
     Queued,

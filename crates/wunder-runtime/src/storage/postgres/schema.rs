@@ -1905,6 +1905,7 @@ impl PostgresSchemaStorage for PostgresStorage {
                 ALTER TABLE cloud_devices ADD COLUMN IF NOT EXISTS policy_overrides TEXT;
                 ALTER TABLE cloud_devices ADD COLUMN IF NOT EXISTS tunnel_connected BOOLEAN NOT NULL DEFAULT FALSE;
                 ALTER TABLE cloud_devices ADD COLUMN IF NOT EXISTS last_tunnel_at DOUBLE PRECISION;
+                ALTER TABLE cloud_devices ADD COLUMN IF NOT EXISTS secret_rotated_at DOUBLE PRECISION;
                 CREATE TABLE IF NOT EXISTS interlink_channels (
                   channel_id TEXT PRIMARY KEY,
                   device_id TEXT NOT NULL,

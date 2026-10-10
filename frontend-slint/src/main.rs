@@ -21,6 +21,7 @@ mod timeline_text;
 mod turn_stats;
 mod code_highlight;
 mod native_chat;
+mod native_interlink;
 mod native_pages;
 mod native_runtime;
 mod native_restore;

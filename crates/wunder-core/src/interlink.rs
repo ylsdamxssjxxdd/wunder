@@ -187,6 +187,9 @@ pub const CMD_WORKSPACE_COPY: &str = "workspace.copy";
 pub const CMD_WORKSPACE_DELETE: &str = "workspace.delete";
 pub const CMD_TOOL_EXEC: &str = "tool.exec";
 pub const CMD_AGENT_SPAWN: &str = "agent.spawn";
+/// Control frame kind the server uses to cancel an in-flight command; it is not
+/// a user-facing operation and never appears in the §7.1 catalog.
+pub const CMD_COMMAND_CANCEL: &str = "command.cancel";
 
 // Directions.
 pub const DIRECTION_C2L: &str = "c2l";
@@ -258,6 +261,85 @@ pub const AUDIT_APPROVAL_DECIDE: &str = "approval.decide";
 pub const AUDIT_FILE_READ: &str = "file.read";
 pub const AUDIT_FILE_WRITE: &str = "file.write";
 pub const AUDIT_SHADOW_SYNC: &str = "shadow.sync";
+
+// ---------------------------------------------------------------------------
+// Event payload kinds (`event` frames, docs §4.4 / §5.3 / §7.4)
+// ---------------------------------------------------------------------------
+
+/// Lightweight application heartbeat `{status, active_threads, cpu_load}`.
+pub const EVENT_PRESENCE: &str = "presence";
+/// Thread event forwarded for a remote session view (docs §7.4).
+pub const EVENT_THREAD: &str = "thread_event";
+/// A node joined the directory; broadcast to the user's other live nodes.
+pub const EVENT_NODE_JOINED: &str = "node.joined";
+/// The node asks its user for an approval decision (docs §7.3).
+pub const EVENT_APPROVAL_REQUEST: &str = "approval.request";
+
+// ---------------------------------------------------------------------------
+// Data-plane binary frames (docs §4.2)
+//
+// Layout: `stream_id(u64 be) + flags(u32 be) + offset(u32 be)` then payload.
+// ---------------------------------------------------------------------------
+
+pub const DATA_HEADER_BYTES: usize = 16;
+/// Last chunk of the stream.
+pub const DATA_FLAG_LAST: u32 = 0x1;
+/// Producer aborted the stream; the consumer must drop the buffer.
+pub const DATA_FLAG_ERROR: u32 = 0x2;
+
+// ---------------------------------------------------------------------------
+// Structural error codes (docs §4.3 / §10.3)
+// ---------------------------------------------------------------------------
+
+pub const ERR_NODE_OFFLINE: &str = "NODE_OFFLINE";
+pub const ERR_NODE_BUSY: &str = "NODE_BUSY";
+pub const ERR_QUEUE_FULL: &str = "QUEUE_FULL";
+pub const ERR_CAP_DENIED: &str = "CAP_DENIED";
+pub const ERR_APPROVAL_REQUIRED: &str = "APPROVAL_REQUIRED";
+pub const ERR_APPROVAL_REJECTED: &str = "APPROVAL_REJECTED";
+pub const ERR_APPROVAL_EXPIRED: &str = "APPROVAL_EXPIRED";
+pub const ERR_TIMEOUT: &str = "TIMEOUT";
+pub const ERR_CHANNEL_SUPERSEDED: &str = "CHANNEL_SUPERSEDED";
+pub const ERR_UNKNOWN_KIND: &str = "UNKNOWN_KIND";
+
+/// Terminal command states: the first one to arrive wins (docs §4.3).
+pub fn is_terminal_command_status(status: &str) -> bool {
+    matches!(
+        status,
+        COMMAND_STATUS_SUCCEEDED
+            | COMMAND_STATUS_FAILED
+            | COMMAND_STATUS_CANCELED
+            | COMMAND_STATUS_TIMEOUT
+    )
+}
+
+/// Operation tier of a command kind (docs §7.1). `L0` is read-only, `L2`/`L3`
+/// mutate or execute locally and can never bypass on-device approval.
+pub fn command_level(kind: &str) -> &'static str {
+    match kind {
+        CMD_NODE_SUMMARY | CMD_SHADOW_REFRESH | CMD_WORKSPACE_LIST | CMD_WORKSPACE_READ
+        | CMD_WORKSPACE_SEARCH | CMD_WORKSPACE_STAT | CMD_THREADS_LIST | CMD_THREADS_GET => "L0",
+        CMD_THREAD_CREATE | CMD_THREAD_MESSAGE | CMD_THREAD_CANCEL | CMD_THREAD_ANSWER => "L1",
+        CMD_WORKSPACE_WRITE | CMD_WORKSPACE_MKDIR | CMD_WORKSPACE_MOVE | CMD_WORKSPACE_COPY
+        | CMD_WORKSPACE_DELETE => "L2",
+        CMD_TOOL_EXEC | CMD_AGENT_SPAWN => "L3",
+        _ => "L3",
+    }
+}
+
+/// Offline targets only accept non-mutating commands (docs §4.3: the offline
+/// queue never holds L2/L3, they require the user to be present).
+pub fn is_queueable_when_offline(kind: &str) -> bool {
+    matches!(command_level(kind), "L0" | "L1")
+}
+
+/// Remote session view frame types on `WS /wunder/interlink/remote_ws`.
+pub const REMOTE_FRAME_SNAPSHOT: &str = "snapshot";
+pub const REMOTE_FRAME_DELTA: &str = "delta";
+pub const REMOTE_FRAME_ERROR: &str = "error";
+pub const REMOTE_FRAME_CLOSE: &str = "close";
+pub const REMOTE_WS_PROTOCOL: &str = "wunder-interlink-remote";
+pub const TUNNEL_WS_PROTOCOL: &str = "wunder-interlink";
 
 #[cfg(test)]
 mod tests {

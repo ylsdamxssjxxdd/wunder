@@ -23,6 +23,26 @@
       </div>
     </div>
 
+    <!-- §6.3 工作区节点切换器：默认「☁ 云端工作区」，选中本地设备后整块换成影子视图。 -->
+    <WorkspaceNodeSwitcher
+      class="workspace-files-node-switcher"
+      :model-value="interlinkTarget"
+      :nodes="interlinkNodeItems"
+      :loading="interlinkNodesLoading"
+      @update:model-value="selectInterlinkNode"
+      @refresh="refreshInterlinkNodes"
+    />
+
+    <RemoteWorkspacePanel
+      v-if="remoteInterlinkActive"
+      class="workspace-files-remote"
+      :node="remoteInterlinkNode"
+      :device-id="remoteInterlinkDeviceId"
+      :target="interlinkTarget"
+      @back-to-cloud="backToCloudWorkspace"
+    />
+
+    <template v-else>
     <div v-if="selectionMode" class="workspace-files-selection">
       <span class="workspace-files-selection-count">
         {{ t('messenger.filesArea.selectedCount', { count: selectedList.length }) }}
@@ -91,6 +111,7 @@
         </span>
       </div>
     </div>
+    </template>
   </div>
 
   <WorkspaceFilePreviewDialog
@@ -155,6 +176,10 @@ import WorkspaceNewFileDialog, {
 } from '@/components/chat/WorkspaceNewFileDialog.vue';
 import WorkspaceFilePreviewDialog from './WorkspaceFilePreviewDialog.vue';
 import WorkspaceFileTree from './WorkspaceFileTree.vue';
+import RemoteWorkspacePanel from '@/views/messenger/interlink/RemoteWorkspacePanel.vue';
+import WorkspaceNodeSwitcher from '@/views/messenger/interlink/WorkspaceNodeSwitcher.vue';
+import { useInterlinkNodeTarget } from '@/views/messenger/interlink/interlinkNodeTarget';
+import { useInterlinkNodes } from '@/views/messenger/interlink/useInterlinkNodes';
 import {
   clearWorkspaceRoot,
   createWorkspaceDirectory,
@@ -306,6 +331,35 @@ const newFileDialog = reactive({ visible: false, directory: '' });
 const rootLoading = computed(() => Boolean(tree.directories.get('')?.loading));
 const rootError = computed(() => String(tree.directories.get('')?.error || ''));
 
+// ---------------------------------------------------------- 互通远程节点（§6.3）
+
+const interlink = useInterlinkNodes({});
+const {
+  target: interlinkTarget,
+  deviceId: remoteInterlinkDeviceId,
+  isRemote: interlinkIsRemote,
+  writeTarget: writeInterlinkTarget,
+  backToCloud: backToCloudWorkspace
+} = useInterlinkNodeTarget();
+
+/** 选中本地设备＝云端目录整块让位给影子视图（默认云端行为零变化）。 */
+const remoteInterlinkActive = computed(() => interlinkIsRemote.value);
+const interlinkNodeItems = computed(() => interlink.nodes.value);
+const interlinkNodesLoading = computed(() => interlink.loading.value);
+const remoteInterlinkNode = computed(() => {
+  const deviceId = remoteInterlinkDeviceId.value;
+  if (!deviceId) return null;
+  return interlink.nodes.value.find((item) => item.node_id === deviceId) || null;
+});
+
+const selectInterlinkNode = (value: string): void => {
+  writeInterlinkTarget(value);
+};
+
+const refreshInterlinkNodes = (): void => {
+  interlink.refresh();
+};
+
 // ------------------------------------------------------------------ uploads
 
 let statsTimer: number | null = null;
@@ -373,6 +427,8 @@ const enqueueFiles = (files: File[], targetPath: string) => {
 };
 
 const handleDragEnter = () => {
+  // 远程节点是只读投影，不接受拖拽上传（写入要走 workspace.write + 本地审批）。
+  if (remoteInterlinkActive.value) return;
   dragActive.value = true;
 };
 
@@ -390,6 +446,7 @@ const handleDragLeave = (event: DragEvent) => {
 
 const handleDrop = async (event: DragEvent) => {
   dragActive.value = false;
+  if (remoteInterlinkActive.value) return;
   const transfer = event.dataTransfer;
   if (!transfer) return;
   const collected: File[] = [];
@@ -467,7 +524,9 @@ const collectDroppedEntries = async (
 const stats = ref<WorkspaceStatsSnapshot | null>(null);
 const statsDisabled = ref(false);
 
-const statsVisible = computed(() => !statsDisabled.value && Boolean(stats.value));
+const statsVisible = computed(
+  () => !statsDisabled.value && !remoteInterlinkActive.value && Boolean(stats.value)
+);
 const statsHasQuota = computed(() => {
   const quota = Number(stats.value?.quotaBytes);
   return Number.isFinite(quota) && quota > 0;
@@ -490,7 +549,7 @@ const statsTitle = computed(() => {
 });
 
 const loadStats = async () => {
-  if (statsDisabled.value) return;
+  if (statsDisabled.value || remoteInterlinkActive.value) return;
   try {
     const snapshot = await fetchWorkspaceStatsSnapshot('');
     stats.value = snapshot;
@@ -1024,6 +1083,12 @@ watch(
   async () => {
     const request = pendingWorkspaceReveal.value;
     if (!request) return;
+    // 远程投影里没有云端路径可定位，直接消费掉请求，不触发云端目录分页拉取。
+    if (remoteInterlinkActive.value) {
+      clearWorkspaceReveal(request.token);
+      ElMessage.info(t('messenger.filesArea.revealMissing'));
+      return;
+    }
     const found = await revealPath(request.path);
     if (!found) ElMessage.info(t('messenger.filesArea.revealMissing'));
     clearWorkspaceReveal(request.token);
@@ -1032,7 +1097,16 @@ watch(
 
 onMounted(() => {
   window.addEventListener('keydown', handleWindowKeydown);
-  void loadDirectory('');
+  if (!remoteInterlinkActive.value) {
+    void loadDirectory('');
+    void loadStats();
+  }
+});
+
+// 从远程节点切回云端：目录没加载过就补一次，加载过用既有缓存。
+watch(remoteInterlinkActive, (remote) => {
+  if (remote) return;
+  if (!tree.directories.get('')?.loaded) void loadDirectory('');
   void loadStats();
 });
 

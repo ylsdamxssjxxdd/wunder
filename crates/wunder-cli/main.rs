@@ -1,6 +1,7 @@
 mod args;
 mod attachments;
 mod cloud_command;
+mod cloud_interlink;
 mod command_session_display;
 mod empty_state_animation;
 mod error_display;

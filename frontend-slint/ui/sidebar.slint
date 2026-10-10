@@ -119,6 +119,22 @@ component ThreadRow inherits Rectangle {
             overflow: elide;
             horizontal-stretch: 1;
         }
+        // Remote-origin badge (§I9): threads created in the cloud or by another
+        // device carry a small chip so local rows stay unmarked. Uses the same
+        // accent-soft pill recipe as the cloud-quota badge.
+        if !root.editing && data.origin != "" : Rectangle {
+            height: 16px;
+            width: min(origin-chip-text.preferred-width + 12px, 72px);
+            border-radius: 8px;
+            background: Theme.accent-soft;
+            origin-chip-text := Text {
+                x: 6px; width: parent.width - 12px; height: parent.height;
+                text: data.origin == "cloud" ? I18n.sb_origin_cloud : I18n.sb_origin_device;
+                color: Theme.accent;
+                font-size: Theme.font-2xs; font-weight: 600;
+                horizontal-alignment: center; vertical-alignment: center; overflow: elide;
+            }
+        }
         if !root.editing : Rectangle {
             // Rename and archive appear only while the row is hovered; they
             // stay fully hidden otherwise, including on the active thread.

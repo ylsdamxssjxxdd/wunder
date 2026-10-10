@@ -58,6 +58,10 @@ name = "auth_profile_routes"
 required-features = ["sqlite-storage"]
 
 [[test]]
+name = "interlink_loopback"
+required-features = ["sqlite-storage"]
+
+[[test]]
 name = "auth_refresh_routes"
 required-features = ["sqlite-storage"]
 

@@ -185,18 +185,35 @@ impl ConnectionPresenceService {
         if now - state.last_gc_at < GC_INTERVAL_SECS {
             return;
         }
-        state.last_gc_at = now;
-        state.entries.retain(|_, entry| {
-            !entry.connection_ids.is_empty() || now - entry.last_seen_at <= self.retain_secs
-        });
-        state.connection_owners.retain(|connection_id, user_id| {
-            state
-                .entries
-                .get(user_id)
-                .map(|entry| entry.connection_ids.contains(connection_id))
-                .unwrap_or(false)
-        });
+        run_gc(state, now, self.retain_secs);
     }
+
+    /// Force the bounded cleanup pass without waiting for the next access.
+    /// Driven by the presence housekeeping loop so a disconnected client cannot
+    /// leave an entry behind forever; returns the number of dropped users.
+    pub fn prune(&self, now: f64) -> usize {
+        let now = normalized_now(now);
+        let Some(mut guard) = self.state.write().ok() else {
+            return 0;
+        };
+        let before = guard.entries.len();
+        run_gc(&mut guard, now, self.retain_secs);
+        before - guard.entries.len()
+    }
+}
+
+fn run_gc(state: &mut ConnectionPresenceState, now: f64, retain_secs: f64) {
+    state.last_gc_at = now;
+    state.entries.retain(|_, entry| {
+        !entry.connection_ids.is_empty() || now - entry.last_seen_at <= retain_secs
+    });
+    state.connection_owners.retain(|connection_id, user_id| {
+        state
+            .entries
+            .get(user_id)
+            .map(|entry| entry.connection_ids.contains(connection_id))
+            .unwrap_or(false)
+    });
 }
 
 impl Default for ConnectionPresenceService {
@@ -230,7 +247,7 @@ fn normalized_now(now: f64) -> f64 {
     }
 }
 
-fn now_ts() -> f64 {
+pub(crate) fn now_ts() -> f64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs_f64())

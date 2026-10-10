@@ -2,9 +2,9 @@
 /**
  * 设置页分类内容组件的按需加载表（方案 §九 性能要求）。
  *
- * 13 个分类都是独立异步 chunk：切到哪个分类才加载并挂载它，覆盖层与其它分类
+ * 14 个分类都是独立异步 chunk：切到哪个分类才加载并挂载它，覆盖层与其它分类
  * 不会被重建；`MessengerSettingsHost` 用 `<KeepAlive :max="3">` 只保留最近 3 个
- * 已访问分类的实例，避免 13 个面板同时初始化。
+ * 已访问分类的实例，避免 14 个面板同时初始化。
  */
 
 import type { Component } from 'vue';
@@ -43,6 +43,9 @@ export const SettingsMemoryCategory = lazy(
 export const SettingsChannelsCategory = lazy(
   () => import('@/views/messenger/settings/categories/SettingsChannelsCategory.vue')
 );
+export const SettingsDevicesCategory = lazy(
+  () => import('@/views/messenger/settings/categories/SettingsDevicesCategory.vue')
+);
 export const SettingsRuntimeCategory = lazy(
   () => import('@/views/messenger/settings/categories/SettingsRuntimeCategory.vue')
 );
@@ -66,6 +69,7 @@ export const SETTINGS_CATEGORY_COMPONENTS: Record<SettingsCategoryId, Component>
   cron: SettingsCronCategory,
   memory: SettingsMemoryCategory,
   channels: SettingsChannelsCategory,
+  devices: SettingsDevicesCategory,
   runtime: SettingsRuntimeCategory,
   prompts: SettingsPromptsCategory,
   archived: SettingsArchivedCategory,

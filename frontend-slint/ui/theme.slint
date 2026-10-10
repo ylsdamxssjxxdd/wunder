@@ -2,14 +2,16 @@
 // every page keeps importing Theme (and the data structs) from theme.slint.
 import { Theme } from "design_tokens.slint";
 export { Theme }
-export struct Conversation { id: string, agent-id: string, workspace-id: string, workspace-name: string, workspace-color: string, title: string, preview: string, time: string, consumed-tokens: string, tool-calls: string, quota-used: string, runtime-status: string, locked: bool, goal-active: bool, goal-objective: string, goal-seconds: int, goal-paused: bool }
+export struct Conversation { id: string, agent-id: string, workspace-id: string, workspace-name: string, workspace-color: string, title: string, preview: string, time: string, consumed-tokens: string, tool-calls: string, quota-used: string, runtime-status: string, locked: bool, goal-active: bool, goal-objective: string, goal-seconds: int, goal-paused: bool, origin: string }
 // One bound user folder in the sidebar tree. `expanded`/`selected` are pure
 // view state owned by the workspace projection, not persisted.
 export struct WorkspaceCard { workspace-id: string, name: string, icon: string, color: string, root-path: string, thread-count: int, expanded: bool, selected: bool }
 // One flat sidebar tree row; kind 0 is a workspace header, kind 1 a thread
 // under it. `payload` is the workspace or thread index the callbacks expect.
 // Built in one bounded Rust pass so the Slint thread never merges models.
-export struct SidebarRow { kind: int, workspace-id: string, name: string, icon: string, color: string, thread-count: int, expanded: bool, selected: bool, thread-id: string, title: string, status: string, active: bool, payload: int }
+// `origin` is the thread's remote birthplace ("cloud" / "device:<id>"); an
+// empty string means locally created and renders no badge.
+export struct SidebarRow { kind: int, workspace-id: string, name: string, icon: string, color: string, thread-count: int, expanded: bool, selected: bool, thread-id: string, title: string, status: string, active: bool, payload: int, origin: string }
 export struct ThreadLogEvent { event-type: string, time: string, summary: string, raw: string, order: int, round: int }
 export struct TextBlock { text: string, styled: styled-text, kind: int, table-cells: [string], table-columns: int, table-rows: [string], image: image, image-source: string, language: string }
 // A bounded, stable projection of one tool invocation. Detail text is only
@@ -81,6 +83,21 @@ export struct InquiryQuestion {
     options: [InquiryOption],
 }
 
+// One parked turn of the composer queue strip (§发送队列). `position` is the
+// engine's dispatch order, `interjected` marks the row that already jumped the
+// queue (the 插话 control then reads as done rather than repeating the call).
+export struct QueueTurn {
+    queue-id: string,
+    text: string,
+    attachments: int,
+    interjected: bool,
+}
+
+// Result of an ArrowUp/ArrowDown history recall in the composer. `handled` is
+// what lets the editor swallow the arrow key; `caret` is a UTF-8 byte offset
+// because Slint strings expose no byte length for the UI to compute one.
+export struct DraftRecall { handled: bool, text: string, caret: int }
+
 // Stable desktop navigation identifiers. The two-column shell has exactly two
 // surfaces: the chat (with its sidebar) and the settings sheet. The old rail
 // pages are gone and their content lives in the sheet's categories, so a page
@@ -143,4 +160,19 @@ export struct ModelCard { key: string, provider: string, model: string, base-url
 // surfaces (the sidebar settings button) paint the brush and print the glyph.
 export struct ProfileCard { user-id: string, username: string, email: string, unit: string, unit-id: string, sessions: string, sessions-last-7d: string, tool-calls: string, tokens: string, agents: string, last-active: string, avatar-icon: string, avatar-glyph: string, avatar-color: string, avatar-brush: color }
 export struct LanPeerCard { peer-id: string, display-name: string, address: string }
+
+// ---- 设备互通 interlink (§I9) ----
+// One node visible through the interlink tunnel. `node-id` is the façade's
+// stable key ("device:<id>" / "cloud" / "web:<conn>"); `state` stays a string
+// because Slint enum defaults are not in the value whitelist.
+export struct InterlinkNode { node-id: string, node-type: string, label: string, status: string, connected: bool, shadow-revision: int }
+// One remote command waiting for local approval. `approval-id` answers the
+// decision call, the rest is display copy.
+export struct InterlinkApproval { approval-id: string, command-id: string, kind: string, level: string, risk: string, from-node: string, prompt: string }
+// One cloud-workspace listing row; `kind` is "dir" | "file".
+export struct InterlinkEntry { name: string, path: string, kind: string, size: int, updated-time: string }
+// Tunnel status the 2s poll pushes; `note` is the human sentence synthesized
+// natively (state text + last error) so the panel renders one line.
+export struct InterlinkStatus { state: string, note: string }
+
 

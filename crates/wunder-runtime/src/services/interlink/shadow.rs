@@ -136,6 +136,83 @@ fn delta_field(payload: &Value, key: &str, previous: Option<String>) -> Option<S
     }
 }
 
+/// Enforce the §6.1 projection budget on a freshly stored shadow.
+///
+/// The node is asked to respect these limits, but the server is the authority:
+/// an over-long thread directory or directory tree is trimmed here and marked
+/// `truncated`, so a misbehaving or older node can never inflate the row.
+pub fn enforce_limits(record: &mut InterlinkShadowRecord, limits: &ShadowLimits) {
+    if let Some(threads) = record.threads.as_deref() {
+        if let Ok(Value::Array(items)) = serde_json::from_str::<Value>(threads) {
+            if items.len() > limits.threads_max {
+                let kept: Vec<Value> = items.into_iter().take(limits.threads_max).collect();
+                record.threads = Some(serde_json::to_string(&kept).unwrap_or_default());
+            }
+        }
+    }
+    if let Some(tasks) = record.tasks.as_deref() {
+        if let Ok(Value::Array(items)) = serde_json::from_str::<Value>(tasks) {
+            if items.len() > TASKS_MAX {
+                let kept: Vec<Value> = items.into_iter().take(TASKS_MAX).collect();
+                record.tasks = Some(serde_json::to_string(&kept).unwrap_or_default());
+            }
+        }
+    }
+    if let Some(workspace) = record.workspace.as_deref() {
+        if let Ok(Value::Object(mut map)) = serde_json::from_str::<Value>(workspace) {
+            if let Some(Value::Array(items)) = map.get("tree").cloned() {
+                let original = items.len();
+                let kept: Vec<Value> = items
+                    .into_iter()
+                    .filter(|entry| within_depth(entry, limits.tree_depth))
+                    .take(limits.tree_max_entries)
+                    .collect();
+                let dropped = original > kept.len();
+                map.insert("tree".to_string(), Value::Array(kept));
+                if dropped {
+                    map.insert("truncated".to_string(), Value::Bool(true));
+                }
+            }
+            record.workspace = Some(serde_json::to_string(&Value::Object(map)).unwrap_or_default());
+        }
+    }
+}
+
+/// The three §6.1 caps, taken from `config.interlink.shadow`.
+#[derive(Debug, Clone, Copy)]
+pub struct ShadowLimits {
+    pub threads_max: usize,
+    pub tree_max_entries: usize,
+    pub tree_depth: usize,
+}
+
+impl Default for ShadowLimits {
+    fn default() -> Self {
+        Self {
+            threads_max: 200,
+            tree_max_entries: 500,
+            tree_depth: 3,
+        }
+    }
+}
+
+/// Scheduled tasks are a fixed budget (docs §6.1: 100 entries).
+pub const TASKS_MAX: usize = 100;
+
+/// A tree entry is in-bounds when its relative path has at most `depth` parts.
+fn within_depth(entry: &Value, depth: usize) -> bool {
+    entry
+        .get("path")
+        .and_then(Value::as_str)
+        .map(|path| {
+            path.split(['/', '\\'])
+                .filter(|part| !part.is_empty() && *part != ".")
+                .count()
+                <= depth.max(1)
+        })
+        .unwrap_or(true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -296,5 +373,96 @@ mod tests {
             ShadowOutcome::Reject(code) => assert_eq!(code, "unknown_frame"),
             other => panic!("expected Reject(unknown_frame), got {other:?}"),
         }
+    }
+
+    fn projected(threads: usize, tasks: usize, tree: Vec<Value>) -> InterlinkShadowRecord {
+        InterlinkShadowRecord {
+            device_id: "d1".to_string(),
+            user_id: "u1".to_string(),
+            revision: 4,
+            summary: Some(json!({"os": "win"}).to_string()),
+            threads: Some(
+                serde_json::to_string(
+                    &(0..threads)
+                        .map(|index| json!({"local_thread_id": format!("th_{index}")}))
+                        .collect::<Vec<_>>(),
+                )
+                .unwrap(),
+            ),
+            tasks: Some(
+                serde_json::to_string(
+                    &(0..tasks)
+                        .map(|index| json!({"id": format!("t{index}")}))
+                        .collect::<Vec<_>>(),
+                )
+                .unwrap(),
+            ),
+            workspace: Some(json!({"tree": tree, "usage": {"bytes": 1}}).to_string()),
+            synced_at: 9.0,
+        }
+    }
+
+    fn tree_entries(count: usize, depth: usize) -> Vec<Value> {
+        (0..count)
+            .map(|index| {
+                let path = (0..depth).map(|level| format!("l{level}")).collect::<Vec<_>>().join("/") + &format!("/f{index}");
+                json!({"path": path, "kind": "file", "size": 3, "mtime": 1.0})
+            })
+            .collect()
+    }
+
+    #[test]
+    fn limits_trim_the_thread_directory_and_tasks() {
+        let limits = ShadowLimits { threads_max: 200, tree_max_entries: 500, tree_depth: 3 };
+        let mut record = projected(420, 160, Vec::new());
+        enforce_limits(&mut record, &limits);
+
+        let threads: Vec<Value> = serde_json::from_str(record.threads.as_deref().unwrap()).unwrap();
+        assert_eq!(threads.len(), 200);
+        let tasks: Vec<Value> = serde_json::from_str(record.tasks.as_deref().unwrap()).unwrap();
+        assert_eq!(tasks.len(), TASKS_MAX);
+        // Nothing was dropped from a field that stays inside the budget.
+        let mut untouched = projected(3, 1, Vec::new());
+        enforce_limits(&mut untouched, &limits);
+        let threads: Vec<Value> = serde_json::from_str(untouched.threads.as_deref().unwrap()).unwrap();
+        assert_eq!(threads.len(), 3);
+    }
+
+    #[test]
+    fn limits_mark_the_tree_as_truncated_and_drop_deep_entries() {
+        let limits = ShadowLimits { threads_max: 200, tree_max_entries: 5, tree_depth: 2 };
+        // 16 entries: 7 within the depth bound, 9 deeper than it.
+        let mut tree = tree_entries(7, 1);
+        tree.extend(tree_entries(9, 4));
+        let mut record = projected(1, 1, tree);
+        enforce_limits(&mut record, &limits);
+
+        let workspace: Value = serde_json::from_str(record.workspace.as_deref().unwrap()).unwrap();
+        let kept = workspace["tree"].as_array().expect("tree array");
+        assert_eq!(kept.len(), 5);
+        assert_eq!(workspace["truncated"], true);
+        assert_eq!(workspace["usage"]["bytes"], 1);
+        for entry in kept {
+            assert_eq!(entry["path"].as_str().unwrap().split('/').count(), 2);
+        }
+
+        // A tree that fits leaves no truncation marker behind.
+        let mut small = projected(1, 1, tree_entries(2, 1));
+        enforce_limits(&mut small, &limits);
+        let workspace: Value = serde_json::from_str(small.workspace.as_deref().unwrap()).unwrap();
+        assert_eq!(workspace["tree"].as_array().expect("tree").len(), 2);
+        assert!(workspace.get("truncated").is_none());
+    }
+
+    #[test]
+    fn limits_ignore_non_json_or_missing_fields() {
+        let mut record = projected(1, 1, Vec::new());
+        record.threads = Some("not json".to_string());
+        record.tasks = None;
+        record.workspace = Some(json!({"usage": 1}).to_string());
+        enforce_limits(&mut record, &ShadowLimits::default());
+        assert_eq!(record.threads.as_deref(), Some("not json"));
+        assert!(record.tasks.is_none());
+        assert_eq!(record.workspace.as_deref(), Some(r#"{"usage":1}"#));
     }
 }

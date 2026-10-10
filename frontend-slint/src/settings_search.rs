@@ -1,5 +1,5 @@
-//! §9.1 settings search: one place that decides which of the twelve categories
-//! a query keeps.
+//! §9.1 settings search: one place that decides which of the thirteen
+//! categories a query keeps.
 //!
 //! The match runs natively because Slint 1.18 strings expose only is-empty /
 //! to-lowercase / starts-with / ends-with / replace-all — there is no substring
@@ -11,7 +11,7 @@
 
 /// Category keywords for the search box. i18n lives on the Slint side, so the
 /// filter keys off the same two languages the shell ships.
-const SETTINGS_CATEGORY_LABELS: [[&str; 3]; 12] = [
+const SETTINGS_CATEGORY_LABELS: [[&str; 3]; 13] = [
     ["常规", "常规设置", "general"],
     ["模型设置", "模型配置", "models"],
     ["工具管理", "工具", "tools"],
@@ -24,6 +24,7 @@ const SETTINGS_CATEGORY_LABELS: [[&str; 3]; 12] = [
     ["提示词包", "提示词", "prompts"],
     ["归档线程", "归档", "archived"],
     ["帮助", "关于", "help"],
+    ["设备互通", "互通", "interlink"],
 ];
 
 /// How many categories §9.2 defines. The shell's initial flag list has to match.
@@ -78,6 +79,6 @@ mod tests {
     /// The shell hard-codes the initial flag list, so the count is a contract.
     #[test]
     fn category_count_matches_the_navigation() {
-        assert_eq!(SETTINGS_CATEGORY_COUNT, 12);
+        assert_eq!(SETTINGS_CATEGORY_COUNT, 13);
     }
 }

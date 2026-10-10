@@ -1633,6 +1633,62 @@
   "en": "Clear goal"
  },
  {
+  "key": "cp_queue_title",
+  "zh": "等待发送",
+  "en": "Waiting to send"
+ },
+ {
+  "key": "cp_queue_hint",
+  "zh": "拖动把手调整顺序",
+  "en": "Drag the handle to reorder"
+ },
+ {
+  "key": "cp_queue_interject",
+  "zh": "插话",
+  "en": "Interject"
+ },
+ {
+  "key": "cp_queue_interjected",
+  "zh": "已插话",
+  "en": "Interjected"
+ },
+ {
+  "key": "cp_queue_edit_hint",
+  "zh": "撤下并回填输入框",
+  "en": "Withdraw and refill the input"
+ },
+ {
+  "key": "cp_queue_remove_hint",
+  "zh": "撤下这条排队轮次",
+  "en": "Withdraw this queued turn"
+ },
+ {
+  "key": "cp_queue_more",
+  "zh": "还有 {} 条未显示",
+  "en": "{} more not shown",
+  "params": [
+   "count"
+  ]
+ },
+ {
+  "key": "cp_queue_attachment_only",
+  "zh": "仅附件",
+  "en": "Attachment only"
+ },
+ {
+  "key": "cp_queue_attachments",
+  "zh": "附件 {}",
+  "en": "{} attachment(s)",
+  "params": [
+   "count"
+  ]
+ },
+ {
+  "key": "cp_queue_send",
+  "zh": "加入等待发送",
+  "en": "Add to the send queue"
+ },
+ {
   "key": "cp_status_local",
   "zh": "本地",
   "en": "Local"
@@ -4321,6 +4377,186 @@
   "key": "stc_help_note",
   "zh": "快捷键、关于与诊断导出",
   "en": "Shortcuts, about and diagnostics"
+ },
+ {
+  "key": "stc_interlink",
+  "zh": "设备互通",
+  "en": "Devices & interlink"
+ },
+ {
+  "key": "stc_interlink_note",
+  "zh": "隧道状态、设备与云端工作区",
+  "en": "Tunnel status, devices and cloud workspace"
+ },
+ {
+  "key": "il_tunnel_title",
+  "zh": "互通隧道",
+  "en": "Interlink tunnel"
+ },
+ {
+  "key": "il_state_connected",
+  "zh": "已连接",
+  "en": "Connected"
+ },
+ {
+  "key": "il_state_connecting",
+  "zh": "正在接入",
+  "en": "Connecting"
+ },
+ {
+  "key": "il_state_reconnecting",
+  "zh": "重连中",
+  "en": "Reconnecting"
+ },
+ {
+  "key": "il_state_disabled",
+  "zh": "未启用",
+  "en": "Disabled"
+ },
+ {
+  "key": "il_devices_title",
+  "zh": "设备列表",
+  "en": "Devices"
+ },
+ {
+  "key": "il_devices_note",
+  "zh": "通过互通隧道可见的本机与其他设备",
+  "en": "This machine and other devices visible through the tunnel"
+ },
+ {
+  "key": "il_devices_empty",
+  "zh": "暂无设备，接入舰体后此处会列出可见节点。",
+  "en": "No devices yet; nodes appear here once the tunnel is up."
+ },
+ {
+  "key": "il_col_label",
+  "zh": "名称",
+  "en": "Name"
+ },
+ {
+  "key": "il_col_type",
+  "zh": "类型",
+  "en": "Type"
+ },
+ {
+  "key": "il_col_status",
+  "zh": "状态",
+  "en": "Status"
+ },
+ {
+  "key": "il_col_link",
+  "zh": "连接",
+  "en": "Link"
+ },
+ {
+  "key": "il_connected_yes",
+  "zh": "在线",
+  "en": "Online"
+ },
+ {
+  "key": "il_connected_no",
+  "zh": "离线",
+  "en": "Offline"
+ },
+ {
+  "key": "il_refresh",
+  "zh": "刷新",
+  "en": "Refresh"
+ },
+ {
+  "key": "il_loading",
+  "zh": "加载中…",
+  "en": "Loading…"
+ },
+ {
+  "key": "il_browse_title",
+  "zh": "云端工作区",
+  "en": "Cloud workspace"
+ },
+ {
+  "key": "il_browse_hint",
+  "zh": "输入云端路径浏览舰体上的工作区文件，点击文件夹进入。",
+  "en": "Enter a cloud path to browse workspace files; click a folder to open it."
+ },
+ {
+  "key": "il_browse_path_hint",
+  "zh": "例如 / 或 /workspace",
+  "en": "e.g. / or /workspace"
+ },
+ {
+  "key": "il_browse_open",
+  "zh": "打开",
+  "en": "Open"
+ },
+ {
+  "key": "il_browse_up",
+  "zh": "上一级",
+  "en": "Up one level"
+ },
+ {
+  "key": "il_browse_empty",
+  "zh": "此目录为空。",
+  "en": "This folder is empty."
+ },
+ {
+  "key": "il_browse_pending",
+  "zh": "等待云端审批",
+  "en": "Waiting for cloud approval"
+ },
+ {
+  "key": "il_approve",
+  "zh": "批准",
+  "en": "Approve"
+ },
+ {
+  "key": "il_reject",
+  "zh": "拒绝",
+  "en": "Reject"
+ },
+ {
+  "key": "il_kind_dir",
+  "zh": "文件夹",
+  "en": "Folder"
+ },
+ {
+  "key": "il_kind_file",
+  "zh": "文件",
+  "en": "File"
+ },
+ {
+  "key": "il_ap_meta_level",
+  "zh": "级别 ",
+  "en": "Level "
+ },
+ {
+  "key": "il_ap_meta_risk",
+  "zh": "风险 ",
+  "en": "Risk "
+ },
+ {
+  "key": "il_ap_meta_from",
+  "zh": "来源 ",
+  "en": "From "
+ },
+ {
+  "key": "il_ap_approve",
+  "zh": "批准执行",
+  "en": "Approve"
+ },
+ {
+  "key": "il_ap_reject",
+  "zh": "拒绝",
+  "en": "Reject"
+ },
+ {
+  "key": "sb_origin_cloud",
+  "zh": "☁ 云端",
+  "en": "Cloud"
+ },
+ {
+  "key": "sb_origin_device",
+  "zh": "设备",
+  "en": "Device"
  },
  {
   "key": "stc_local_note",

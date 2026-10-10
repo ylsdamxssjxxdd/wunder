@@ -24,6 +24,14 @@ pub(crate) async fn handle_cloud(
         CloudSubcommand::Models => cloud_models(runtime, global).await,
         CloudSubcommand::Refresh => cloud_refresh(runtime, global).await,
         CloudSubcommand::Logs(command) => cloud_logs(runtime, global, command).await,
+        interlink @ (CloudSubcommand::Devices
+        | CloudSubcommand::Ws(_)
+        | CloudSubcommand::Send(_)
+        | CloudSubcommand::Watch(_)
+        | CloudSubcommand::Audit(_)
+        | CloudSubcommand::Approve(_)) => {
+            crate::cloud_interlink::handle_cloud_interlink(runtime, global, interlink).await
+        }
     }
 }
 

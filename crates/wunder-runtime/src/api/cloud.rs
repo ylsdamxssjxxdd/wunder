@@ -1536,12 +1536,36 @@ async fn admin_revoke_device(
         ));
     }
     let storage = state.storage.clone();
+    let revoke_id = device_id.clone();
     blocking::run_db("api.cloud.revoke_device", move || {
-        storage.set_cloud_device_revoked(&device_id, true)
+        storage.set_cloud_device_revoked(&revoke_id, true)
     })
     .await
     .map_err(internal_error)?;
+    // Revocation is a hard cut (docs §9.5, §13.5 18): the tunnel drops right
+    // now, its watchers go with it, its shadow and buffered file chunks are
+    // purged, and every unfinished command against it fails structurally.
+    crate::api::interlink_ws::close_tunnel(&device_id, "device_revoked").await;
+    crate::services::interlink::remote::hub().close_node(&device_id);
+    let storage = state.storage.clone();
+    let lookup = device_id.clone();
+    let _ =
+        blocking::run_db("api.cloud.purge_shadow", move || storage.delete_interlink_shadow(&lookup))
+            .await;
+    let _ = crate::services::interlink::commands::fail_device_commands(
+        state.storage.clone(),
+        &device_id,
+        now_seconds(),
+    )
+    .await;
     Ok(Json(json!({ "data": { "revoked": true } })))
+}
+
+fn now_seconds() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs_f64())
+        .unwrap_or(0.0)
 }
 
 // ---------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 // AI生成
 /**
- * 设置页 13 分类注册表（方案 §九.2 + 账号分类拆分）。
+ * 设置页 14 分类注册表（方案 §九.2 + 账号分类拆分 + 互通「我的设备」§5.3）。
  *
  * 只描述「导航结构 + 搜索关键词」，不承载业务逻辑：每个分类的内容组件
  * 在 `settingsCategoryComponents.ts` 里按需异步加载。
@@ -19,6 +19,7 @@ export type SettingsCategoryId =
   | 'cron'
   | 'memory'
   | 'channels'
+  | 'devices'
   | 'runtime'
   | 'prompts'
   | 'archived'
@@ -36,7 +37,7 @@ export type SettingsCategoryMeta = {
   keywords: string[];
 };
 
-/** Navigation order is the contract from 方案 §九.2 (1 → 13，账号紧随常规之后). */
+/** Navigation order is the contract from 方案 §九.2 (1 → 13) + 互通「我的设备」(§5.3). */
 export const SETTINGS_CATEGORY_IDS: SettingsCategoryId[] = [
   'general',
   'account',
@@ -47,6 +48,7 @@ export const SETTINGS_CATEGORY_IDS: SettingsCategoryId[] = [
   'cron',
   'memory',
   'channels',
+  'devices',
   'runtime',
   'prompts',
   'archived',
@@ -134,6 +136,23 @@ const META: Record<SettingsCategoryId, Omit<SettingsCategoryMeta, 'id'>> = {
     titleKey: 'messenger.settingsPage.cat.channels.title',
     descKey: 'messenger.settingsPage.cat.channels.desc',
     keywords: ['渠道', '扫码', '绑定', '重连', 'channel', 'qr', 'bind']
+  },
+  devices: {
+    icon: 'fa-solid fa-satellite-dish',
+    titleKey: 'messenger.settingsPage.cat.devices.title',
+    descKey: 'messenger.settingsPage.cat.devices.desc',
+    keywords: [
+      '设备',
+      '我的设备',
+      '互通',
+      '互联',
+      '影子',
+      '远程工作区',
+      'device',
+      'interlink',
+      'sync',
+      'remote'
+    ]
   },
   runtime: {
     icon: 'fa-solid fa-chart-line',

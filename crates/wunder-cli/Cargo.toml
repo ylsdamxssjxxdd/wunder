@@ -35,6 +35,7 @@ serde_yaml.workspace = true
 shell-words.workspace = true
 textwrap.workspace = true
 tokio.workspace = true
+tokio-tungstenite.workspace = true
 toml_edit = { version = "0.23", default-features = false, features = ["parse", "display"] }
 tracing.workspace = true
 tracing-subscriber.workspace = true

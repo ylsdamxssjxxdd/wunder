@@ -45,6 +45,12 @@ pub fn is_admin_path(path: &str) -> bool {
     if path_is_prefix_or_child(path, "/wunder/agents") {
         return false;
     }
+    // Interlink user plane (nodes, tunnels, remote view, per-account command
+    // ledger) is same-account scope; the admin surface lives under
+    // `/wunder/admin/interlink` and stays admin-gated.
+    if path_is_prefix_or_child(path, "/wunder/interlink") {
+        return false;
+    }
     // Cloud user-plane endpoints for logged-in local clients; sibling prefixes
     // such as `/wunder/cloudx` must stay admin-gated.
     if path_is_prefix_or_child(path, "/wunder/cloud") {
@@ -138,6 +144,9 @@ mod tests {
         assert!(!is_admin_path("/wunder/cloud/v1/models"));
         assert!(!is_admin_path("/wunder/cloud/v1/chat/completions"));
         assert!(!is_admin_path("/wunder/cloud/logs"));
+        assert!(!is_admin_path("/wunder/interlink/nodes"));
+        assert!(!is_admin_path("/wunder/interlink/remote_ws"));
+        assert!(is_admin_path("/wunder/admin/interlink/audit"));
         assert!(is_admin_path("/wunder"));
         assert!(is_admin_path("/wunder/mcp"));
         assert!(is_admin_path("/wunder/cloudx"));

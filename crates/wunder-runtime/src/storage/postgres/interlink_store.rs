@@ -202,6 +202,11 @@ impl PostgresInterlinkStorage for PostgresStorage {
             sets.push(format!("last_tunnel_at = ${idx}"));
             idx += 1;
         }
+        if let Some(rotated_at) = patch.secret_rotated_at {
+            values.push(Box::new(rotated_at));
+            sets.push(format!("secret_rotated_at = ${idx}"));
+            idx += 1;
+        }
         if sets.is_empty() {
             return Ok(());
         }
