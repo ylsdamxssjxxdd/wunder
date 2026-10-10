@@ -61,6 +61,63 @@
       </div>
     </section>
 
+    <section class="messenger-settings-card">
+      <div class="messenger-settings-group-head">
+        <div class="messenger-settings-title">{{ t('messenger.settingsPage.general.stressGroup') }}</div>
+        <div class="messenger-settings-subtitle">{{ t('messenger.settingsPage.general.stressHint') }}</div>
+      </div>
+      <div class="messenger-settings-row messenger-settings-stress-row">
+        <div class="messenger-settings-label">
+          {{ t('messenger.settingsPage.general.stressUserRounds') }}
+        </div>
+        <input
+          v-model.number="stressUserRounds"
+          class="messenger-settings-number-input"
+          type="number"
+          min="1"
+          max="2000"
+          step="1"
+          data-testid="settings-stress-user-rounds"
+          :disabled="stressJobRunning"
+        />
+      </div>
+      <div class="messenger-settings-row messenger-settings-stress-row">
+        <div class="messenger-settings-label">
+          {{ t('messenger.settingsPage.general.stressModelRounds') }}
+        </div>
+        <input
+          v-model.number="stressModelRounds"
+          class="messenger-settings-number-input"
+          type="number"
+          min="1"
+          max="2000"
+          step="1"
+          data-testid="settings-stress-model-rounds"
+          :disabled="stressJobRunning"
+        />
+      </div>
+      <div class="messenger-settings-row messenger-settings-stress-row">
+        <div class="messenger-settings-hint">
+          {{ stressStatusText || t('messenger.settingsPage.general.stressScaleHint') }}
+        </div>
+        <div class="messenger-settings-page-row-actions">
+          <button
+            class="messenger-settings-action ghost"
+            type="button"
+            data-testid="settings-stress-generate"
+            :disabled="stressJobRunning"
+            @click="generateStressThread"
+          >
+            {{
+              stressJobRunning
+                ? t('messenger.settingsPage.general.stressGenerating')
+                : t('messenger.settingsPage.general.stressGenerate')
+            }}
+          </button>
+        </div>
+      </div>
+    </section>
+
     <section class="messenger-settings-card messenger-settings-card--danger">
       <div class="messenger-settings-group-head">
         <div class="messenger-settings-title">{{ t('messenger.settingsPage.general.sessionGroup') }}</div>
@@ -91,12 +148,15 @@
 </template>
 
 <script setup lang="ts">
+import { onBeforeUnmount, ref } from 'vue';
+
 import { ElMessage } from 'element-plus';
 
 import type { MessengerControllerContext } from '@/views/messenger/controller/messengerControllerContext';
 import { useI18n } from '@/i18n';
 import { confirmWithFallback } from '@/utils/confirm';
 import { exportClientDiagnostics } from '@/utils/clientDiagnostics';
+import { getStressThreadJob, startStressThread } from '@/api/stressThreads';
 
 const props = defineProps<{ controller: MessengerControllerContext }>();
 const { t } = useI18n();
@@ -150,5 +210,95 @@ const handleLogout = async () => {
   );
   if (!confirmed) return;
   void handleSettingsLogout?.();
+};
+
+const stressUserRounds = ref<number>(1000);
+const stressModelRounds = ref<number>(1000);
+const stressJobRunning = ref(false);
+const stressStatusText = ref('');
+let stressJobTimer: number | null = null;
+
+const stopStressJobPolling = () => {
+  if (stressJobTimer !== null) {
+    window.clearInterval(stressJobTimer);
+    stressJobTimer = null;
+  }
+};
+
+onBeforeUnmount(stopStressJobPolling);
+
+const refreshStressJob = async (jobId: string) => {
+  try {
+    const { data } = await getStressThreadJob(jobId);
+    const status = (data?.status || {}) as {
+      state?: string;
+      done_rounds?: number;
+      items_written?: number;
+      error?: string;
+    };
+    if (status.state === 'completed') {
+      stopStressJobPolling();
+      stressJobRunning.value = false;
+      stressStatusText.value = '';
+      ElMessage.success(
+        t('messenger.settingsPage.general.stressDone', {
+          items: Number(status.items_written ?? 0)
+        })
+      );
+      void props.controller.chatStore?.loadSessions?.();
+    } else if (status.state === 'failed') {
+      stopStressJobPolling();
+      stressJobRunning.value = false;
+      stressStatusText.value = '';
+      ElMessage.error(
+        t('messenger.settingsPage.general.stressFailed', {
+          message: String(status.error || '')
+        })
+      );
+    } else {
+      stressStatusText.value = t('messenger.settingsPage.general.stressProgress', {
+        done: Number(status.done_rounds ?? 0),
+        total: Number(data?.total_rounds ?? 0)
+      });
+    }
+  } catch {
+    // 轮询瞬时失败直接忽略，等待下一轮。
+  }
+};
+
+const generateStressThread = async () => {
+  if (stressJobRunning.value) return;
+  const userRounds = Math.floor(Number(stressUserRounds.value) || 0);
+  const modelRounds = Math.floor(Number(stressModelRounds.value) || 0);
+  if (userRounds < 1 || userRounds > 2000) {
+    ElMessage.warning(t('messenger.settingsPage.general.stressInvalidUserRounds'));
+    return;
+  }
+  if (modelRounds < 1 || modelRounds > 2000) {
+    ElMessage.warning(t('messenger.settingsPage.general.stressInvalidModelRounds'));
+    return;
+  }
+  try {
+    const { data } = await startStressThread({
+      user_rounds: userRounds,
+      model_rounds: modelRounds
+    });
+    const jobId = String(data?.job_id || '');
+    if (!jobId) {
+      ElMessage.error(t('messenger.settingsPage.general.stressStartFailed'));
+      return;
+    }
+    stressJobRunning.value = true;
+    stressStatusText.value = t('messenger.settingsPage.general.stressProgress', {
+      done: 0,
+      total: userRounds
+    });
+    stopStressJobPolling();
+    stressJobTimer = window.setInterval(() => {
+      void refreshStressJob(jobId);
+    }, 800);
+  } catch {
+    ElMessage.error(t('messenger.settingsPage.general.stressStartFailed'));
+  }
 };
 </script>

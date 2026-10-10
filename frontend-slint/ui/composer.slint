@@ -1,5 +1,5 @@
 import { I18n } from "i18n.slint";
-import { Theme, ChatAttachment, ModelCard, PlanStep } from "theme.slint";
+import { Theme, ChatAttachment, ModelCard, PlanStep, InquiryQuestion } from "theme.slint";
 import { Action, TerminalAction } from "components.slint";
 import { TextEditBase } from "textedit-base.slint";
 
@@ -324,113 +324,48 @@ component DockSpinner inherits Rectangle {
     }
 }
 
-// §StatusDock: the floating capsule above the goal banner that mirrors the
-// live turn (state phrase, plan progress, file-change stats). Hovering the
-// capsule opens the plan card, which overlaps the timeline via negative y —
-// the same layering trick the composer popovers use. The dock is mounted
-// only while a turn is active, so idle hides the whole row.
+// §StatusDock: the plan capsule above the goal banner. It exists only while the
+// 计划面板 tool has published steps — the turn's phase text (thinking / tools /
+// generating) already reads on the timeline rows, so repeating it here would
+// just duplicate what the user sees above. The checklist card sits over the
+// timeline via negative y, the same layering trick the composer popovers use,
+// and stays up for as long as the plan does.
 export component StatusDock inherits Rectangle {
-    in property <bool> active: false;
-    in property <string> status-text: "";
+    in property <bool> running: false;
     in property <int> steps-done: 0;
     in property <int> steps-total: 0;
-    in property <int> files-changed: 0;
-    in property <int> added-lines: 0;
-    in property <int> deleted-lines: 0;
     in property <string> plan-explanation: "";
     in property <[PlanStep]> plan-steps: [];
     callback plan-dismiss();
-    // Bounded checklist: a plan longer than this collapses into a summary
-    // row, keeping the card inside its height budget on the soft renderer.
-    private property <int> max-shown-steps: 8;
-    private property <int> shown-steps: min(root.plan-steps.length, root.max-shown-steps);
-    out property <length> card-height: 47px
-        + (root.plan-explanation != "" ? 36px : 0px)
-        + root.shown-steps * 22px
-        + (root.plan-steps.length > root.max-shown-steps ? 22px : 0px);
-    // The bridge covers capsule + gap + card so the pointer can travel into
-    // the card without the card closing mid-flight; enabled latches on
-    // has-hover, which is what keeps it alive once the capsule is left.
-    bridge := TouchArea {
-        x: (parent.width - 340px) / 2; y: -root.card-height - 8px;
-        width: 340px; height: root.card-height + 36px;
-        enabled: capsule-touch.has-hover || self.has-hover;
-    }
-    out property <bool> plan-open: root.plan-steps.length > 0
-        && (capsule-touch.has-hover || bridge.has-hover);
-    // The runtime publishes Chinese state phrases; map the known ones to the
-    // active locale and fall back to the raw phrase for error strings, whose
-    // detail cannot be enumerated here.
-    public pure function localize(text: string) -> string {
-        if text.starts-with(I18n.dock_state_thinking) { return I18n.dock_state_thinking; }
-        if text.starts-with(I18n.dock_state_generating) { return I18n.dock_state_generating; }
-        if text.starts-with(I18n.dock_state_tool) { return I18n.dock_state_tool; }
-        if text.starts-with(I18n.dock_state_compaction) { return I18n.dock_state_compaction; }
-        if text.starts-with(I18n.dock_state_queue) { return I18n.dock_state_queue; }
-        if text.starts-with(I18n.dock_state_await) { return I18n.dock_state_await; }
-        return text;
-    }
+    // The plan tool bounds a plan at 12 steps, so the card never needs a
+    // collapse budget: every row is shown and the height is exact.
+    out property <length> card-height: 30px
+        + (root.plan-explanation != "" ? 34px : 0px)
+        + root.plan-steps.length * 24px;
     height: 28px;
     HorizontalLayout {
         alignment: center;
-        capsule := Rectangle {
-            // Sized by the centering layout from its own content; a fixed
-            // elide cap on the status text keeps pathological phrases (raw
-            // runtime errors) from pushing the capsule past the chat width
-            // without tying the width back to the parent (binding loop).
+        Rectangle {
+            // Sized by the centering layout from its own content.
             height: 26px;
             border-radius: 13px;
             background: Theme.surface;
             border-width: 1px; border-color: Theme.border;
             drop-shadow-color: #00000018; drop-shadow-blur: 8px; drop-shadow-offset-y: 2px;
-            capsule-row := HorizontalLayout {
+            HorizontalLayout {
                 padding-left: 12px; padding-right: 12px; spacing: 6px;
-                if root.active : DockSpinner { y: (parent.height - self.height) / 2; }
-                if root.active : Text {
-                    height: parent.height;
-                    max-width: 360px;
-                    text: root.localize(root.status-text);
-                    color: Theme.text-secondary; font-size: Theme.font-xs; font-weight: 600;
-                    vertical-alignment: center; overflow: elide;
-                }
-                if root.active && (root.steps-total > 0 || root.files-changed > 0) : Text {
-                    height: parent.height; text: "·";
-                    color: Theme.muted; font-size: Theme.font-xs; vertical-alignment: center;
-                }
-                if root.steps-total > 0 : Text {
+                if root.running : DockSpinner { y: (parent.height - self.height) / 2; }
+                Text {
                     height: parent.height;
                     text: I18n.dock_steps + " " + root.steps-done + " / " + root.steps-total;
                     color: Theme.text-secondary; font-size: Theme.font-xs;
                     vertical-alignment: center;
                 }
-                if root.steps-total > 0 && root.files-changed > 0 : Text {
-                    height: parent.height; text: "·";
-                    color: Theme.muted; font-size: Theme.font-xs; vertical-alignment: center;
-                }
-                if root.files-changed > 0 : Text {
-                    height: parent.height;
-                    text: root.files-changed + I18n.dock_files_suffix;
-                    color: Theme.text-secondary; font-size: Theme.font-xs;
-                    vertical-alignment: center;
-                }
-                // Diff-tone pair: additions in red, deletions in green, so the
-                // numbers read as a patch summary rather than plain counts.
-                if root.files-changed > 0 : Text {
-                    height: parent.height; text: "+" + root.added-lines;
-                    color: Theme.danger; font-size: Theme.font-xs; font-weight: 600;
-                    vertical-alignment: center;
-                }
-                if root.files-changed > 0 : Text {
-                    height: parent.height; text: "-" + root.deleted-lines;
-                    color: Theme.success; font-size: Theme.font-xs; font-weight: 600;
-                    vertical-alignment: center;
-                }
             }
-            capsule-touch := TouchArea { mouse-cursor: root.plan-steps.length > 0 ? MouseCursor.pointer : MouseCursor.default; }
         }
     }
-    if root.plan-open : Rectangle {
-        width: 320px; height: root.card-height;
+    Rectangle {
+        width: 420px; height: root.card-height;
         x: (parent.width - self.width) / 2;
         y: -self.height - 8px;
         z: 30;
@@ -440,66 +375,45 @@ export component StatusDock inherits Rectangle {
         clip: true;
         VerticalLayout {
             padding: 8px; spacing: 4px;
-            HorizontalLayout {
-                height: 22px;
-                Text {
-                    text: I18n.dock_plan_title;
-                    color: Theme.text; font-size: Theme.font-sm; font-weight: 700;
-                    vertical-alignment: center;
-                }
-                Rectangle { horizontal-stretch: 1; }
-                Rectangle {
-                    width: 22px; height: 22px; border-radius: 6px;
-                    background: close-touch.has-hover ? Theme.hover : transparent;
-                    Image {
-                        x: 4px; y: 4px; width: 14px; height: 14px;
-                        source: @image-url("../assets/icons/xmark.svg");
-                        colorize: close-touch.has-hover ? Theme.danger : Theme.muted;
-                        image-fit: contain;
-                    }
-                    close-touch := TouchArea {
-                        mouse-cursor: pointer;
-                        clicked => { root.plan-dismiss(); }
-                    }
-                }
-            }
             if root.plan-explanation != "" : Text {
                 height: 32px;
                 text: root.plan-explanation;
-                color: Theme.text-secondary; font-size: Theme.font-xs;
+                color: Theme.muted; font-size: Theme.font-xs;
                 wrap: word-wrap; overflow: elide; vertical-alignment: top;
             }
-            Rectangle { height: 1px; background: Theme.border; }
             VerticalLayout {
                 alignment: start; spacing: 0px;
-                for step[index] in root.plan-steps : Rectangle {
-                    // Rows past the display budget collapse to zero height
-                    // instead of being dropped, which keeps the for-loop flat
-                    // (Slint forbids chaining `for` and `if` in one element).
-                    height: index < root.max-shown-steps ? 22px : 0px;
-                    visible: index < root.max-shown-steps;
+                for step in root.plan-steps : Rectangle {
+                    height: 24px;
                     border-radius: Theme.radius-sm;
                     background: step-touch.has-hover ? Theme.hover : transparent;
                     HorizontalLayout {
-                        padding-left: 4px; padding-right: 4px; spacing: 8px;
+                        padding-left: 4px; padding-right: 4px; spacing: 10px;
+                        // Thin-ring tri-state: the ring carries the status color
+                        // and only the active states get a glyph, matching the
+                        // web client's inline-svg markers.
                         Rectangle {
-                            width: 16px;
+                            y: 4px; width: 16px; height: 16px; border-radius: 8px;
+                            border-width: 1.5px;
+                            border-color: step.status == "completed" ? Theme.success
+                                : step.status == "in_progress" ? Theme.warning
+                                : Theme.border-strong;
                             if step.status == "completed" : Image {
-                                x: 2px; y: 5px; width: 12px; height: 12px;
-                                source: @image-url("../assets/icons/check.svg");
-                                colorize: Theme.accent; image-fit: contain;
+                                x: 3px; y: 5px; width: 10px; height: 6px;
+                                source: @image-url("../assets/icons/status-check.svg");
+                                colorize: Theme.success; image-fit: contain;
                             }
-                            if step.status == "in_progress" : DockSpinner { x: 2px; y: 5px; }
-                            if step.status != "completed" && step.status != "in_progress" : Rectangle {
-                                x: 3px; y: 6px; width: 10px; height: 10px;
-                                border-radius: 5px;
-                                border-width: 1.5px; border-color: Theme.border-strong;
+                            if step.status == "in_progress" : Image {
+                                x: 4px; y: 3px; width: 8px; height: 10px;
+                                source: @image-url("../assets/icons/status-pause.svg");
+                                colorize: Theme.warning; image-fit: contain;
                             }
                         }
                         Text {
                             height: parent.height;
                             text: step.step;
-                            color: Theme.text; font-size: Theme.font-xs;
+                            color: step.status == "in_progress" ? Theme.text : Theme.text-secondary;
+                            font-size: Theme.font-sm;
                             vertical-alignment: center; overflow: elide;
                         }
                     }
@@ -508,9 +422,250 @@ export component StatusDock inherits Rectangle {
                     }
                 }
             }
-            if root.plan-steps.length > root.max-shown-steps : Text {
+        }
+        // Dismiss stays reachable but quiet: the card has no header row, so the
+        // close affordance floats in its corner and only answers the pointer.
+        Rectangle {
+            width: 22px; height: 22px;
+            x: parent.width - self.width - 6px; y: 6px;
+            z: 2;
+            border-radius: 6px;
+            background: close-touch.has-hover ? Theme.hover : transparent;
+            Image {
+                x: 4px; y: 4px; width: 14px; height: 14px;
+                source: @image-url("../assets/icons/xmark.svg");
+                colorize: close-touch.has-hover ? Theme.danger : Theme.muted;
+                image-fit: contain;
+            }
+            close-touch := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.plan-dismiss(); }
+            }
+        }
+    }
+}
+
+// §InquiryPanel: the 问询面板 card above the composer. One question per page
+// with a ‹ N/M › pager, option rows (square marks for multi-select, round for
+// single), a 推荐 badge, the option's own description on the same line, and a
+// free-text row with a 无偏好 shortcut. Selection state lives in Rust: every
+// click republishes the page, and the answer goes out with the composer's send
+// button (same gesture as the web client) rather than a second submit control.
+export component InquiryPanel inherits Rectangle {
+    in property <InquiryQuestion> question;
+    in property <int> page: 0;
+    in property <int> total: 1;
+    in-out property <string> other;
+    callback option-clicked(int);
+    callback no-preference();
+    callback page-move(int);
+    callback dismiss();
+    // Full width comes from the mounting layout; a component root cannot read
+    // `parent`.
+    height: card.height;
+    card := Rectangle {
+        width: min(560px, parent.width);
+        height: card-body.preferred-height;
+        x: (parent.width - self.width) / 2;
+        y: parent.height - self.height;
+        border-radius: Theme.radius-lg; background: Theme.surface;
+        border-width: 1px; border-color: Theme.border;
+        drop-shadow-color: #0000001f; drop-shadow-blur: 14px; drop-shadow-offset-y: 3px;
+        clip: true;
+        card-body := VerticalLayout {
+            padding-left: 16px; padding-right: 12px; padding-top: 12px; padding-bottom: 10px;
+            spacing: 2px;
+            HorizontalLayout {
+                height: max(24px, head-text.preferred-height);
+                spacing: 8px;
+                head-text := Text {
+                    horizontal-stretch: 1;
+                    text: root.question.question;
+                    color: Theme.text; font-size: Theme.font-md; font-weight: 700;
+                    wrap: word-wrap; vertical-alignment: top;
+                }
+                if root.total > 1 : Rectangle {
+                    width: 24px; height: 24px;
+                    y: (parent.height - self.height) / 2;
+                    border-radius: 6px;
+                    background: prev-touch.has-hover && root.page > 0 ? Theme.hover : transparent;
+                    Image {
+                        x: 6px; y: 6px; width: 12px; height: 12px;
+                        source: @image-url("../assets/icons/chevron-left.svg");
+                        colorize: root.page > 0 ? Theme.text-secondary : Theme.border-strong;
+                        image-fit: contain;
+                    }
+                    prev-touch := TouchArea {
+                        mouse-cursor: root.page > 0 ? MouseCursor.pointer : MouseCursor.default;
+                        enabled: root.page > 0;
+                        clicked => { root.page-move(-1); }
+                    }
+                }
+                if root.total > 1 : Text {
+                    width: 40px; height: max(24px, self.preferred-height);
+                    text: (root.page + 1) + " / " + root.total;
+                    color: Theme.text-secondary; font-size: Theme.font-xs;
+                    horizontal-alignment: center; vertical-alignment: center;
+                }
+                if root.total > 1 : Rectangle {
+                    width: 24px; height: 24px;
+                    y: (parent.height - self.height) / 2;
+                    border-radius: 6px;
+                    background: next-touch.has-hover ? Theme.hover : transparent;
+                    Image {
+                        x: 6px; y: 6px; width: 12px; height: 12px;
+                        source: @image-url("../assets/icons/chevron-right.svg");
+                        colorize: root.page < root.total - 1 ? Theme.text-secondary : Theme.border-strong;
+                        image-fit: contain;
+                    }
+                    next-touch := TouchArea {
+                        mouse-cursor: pointer;
+                        enabled: root.page < root.total - 1;
+                        clicked => { root.page-move(1); }
+                    }
+                }
+                Rectangle {
+                    width: 24px; height: 24px;
+                    y: (parent.height - self.height) / 2;
+                    border-radius: 6px;
+                    background: dismiss-touch.has-hover ? Theme.hover : transparent;
+                    Image {
+                        x: 5px; y: 5px; width: 14px; height: 14px;
+                        source: @image-url("../assets/icons/xmark.svg");
+                        colorize: dismiss-touch.has-hover ? Theme.danger : Theme.muted;
+                        image-fit: contain;
+                    }
+                    dismiss-touch := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.dismiss(); }
+                    }
+                }
+            }
+            VerticalLayout {
+                spacing: 0px;
+                for option[index] in root.question.options : Rectangle {
+                    height: 30px;
+                    border-radius: Theme.radius-sm;
+                    background: option-touch.has-hover ? Theme.hover : transparent;
+                    HorizontalLayout {
+                        padding-left: 4px; padding-right: 4px; spacing: 10px;
+                        Rectangle {
+                            width: 18px;
+                            Rectangle {
+                                x: 0px; y: (parent.height - self.height) / 2;
+                                width: 18px; height: 18px;
+                                border-radius: root.question.multiple ? 5px : 9px;
+                                border-width: 1.5px;
+                                border-color: option.selected ? Theme.accent : Theme.border-strong;
+                                background: option.selected ? Theme.accent : Theme.surface;
+                                Image {
+                                    x: 4px; y: 6px; width: 10px; height: 7px;
+                                    source: @image-url("../assets/icons/status-check.svg");
+                                    colorize: Theme.surface; image-fit: contain;
+                                    visible: option.selected;
+                                }
+                            }
+                        }
+                        Text {
+                            height: parent.height;
+                            text: option.label;
+                            color: option.selected ? Theme.accent-deep : Theme.text;
+                            font-size: Theme.font-sm; font-weight: 600;
+                            vertical-alignment: center; overflow: elide;
+                        }
+                        if option.recommended : Rectangle {
+                            width: badge-text.preferred-width + 16px;
+                            height: 18px; y: (parent.height - self.height) / 2;
+                            border-radius: 9px; background: Theme.hover;
+                            badge-text := Text {
+                                x: 8px; width: self.preferred-width; height: parent.height;
+                                text: I18n.inquiry_recommended;
+                                color: Theme.muted; font-size: Theme.font-2xs;
+                                vertical-alignment: center;
+                            }
+                        }
+                        Text {
+                            height: parent.height; horizontal-stretch: 1;
+                            text: option.description;
+                            color: Theme.muted; font-size: Theme.font-xs;
+                            vertical-alignment: center; overflow: elide;
+                        }
+                    }
+                    // The row itself is the hit area; the mark is decoration.
+                    option-touch := TouchArea {
+                        x: 0px; y: 0px; width: parent.width; height: parent.height;
+                        mouse-cursor: pointer;
+                        clicked => { root.option-clicked(index); }
+                    }
+                }
+            }
+            HorizontalLayout {
+                height: 32px;
+                spacing: 10px;
+                Rectangle {
+                    width: 18px;
+                    Rectangle {
+                        x: 0px; y: (parent.height - self.height) / 2;
+                        width: 18px; height: 18px;
+                        border-radius: root.question.multiple ? 5px : 9px;
+                        border-width: 1.5px;
+                        border-color: root.other != "" ? Theme.accent : Theme.border-strong;
+                        background: root.other != "" ? Theme.accent : Theme.surface;
+                        Image {
+                            x: 4px; y: 6px; width: 10px; height: 7px;
+                            source: @image-url("../assets/icons/status-check.svg");
+                            colorize: Theme.surface; image-fit: contain;
+                            visible: root.other != "";
+                        }
+                    }
+                }
+                // Raw Slint TextInput has no placeholder of its own, and the
+                // std LineEdit would restyle the row; the hint is a plain Text
+                // overlay (Text has no input path, so typing stays unaffected).
+                Rectangle {
+                    horizontal-stretch: 1;
+                    height: parent.height;
+                    TextInput {
+                        x: 0px; y: 0px; width: parent.width; height: parent.height;
+                        text <=> root.other;
+                        color: Theme.text; font-size: Theme.font-sm;
+                        vertical-alignment: center;
+                    }
+                    Text {
+                        x: 1px; y: 0px; width: parent.width; height: parent.height;
+                        text: I18n.inquiry_other_placeholder;
+                        color: Theme.muted; font-size: Theme.font-sm;
+                        vertical-alignment: center;
+                        visible: root.other == "";
+                    }
+                    Rectangle {
+                        y: parent.height - 1px; width: parent.width; height: 1px;
+                        background: Theme.border-strong;
+                    }
+                }
+                Rectangle {
+                    width: pref-text.preferred-width + 24px;
+                    height: 26px; y: (parent.height - self.height) / 2;
+                    border-radius: Theme.radius-sm;
+                    background: root.question.no_preference ? Theme.accent-soft
+                        : pref-touch.has-hover ? Theme.hover : Theme.panel;
+                    pref-text := Text {
+                        width: self.preferred-width; height: parent.height;
+                        x: 12px;
+                        text: I18n.inquiry_no_preference;
+                        color: root.question.no_preference ? Theme.accent-deep : Theme.text-secondary;
+                        font-size: Theme.font-sm; font-weight: 600;
+                        vertical-alignment: center;
+                    }
+                    pref-touch := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.no-preference(); }
+                    }
+                }
+            }
+            Text {
                 height: 18px;
-                text: I18n.dock_plan_more_prefix + (root.plan-steps.length - root.max-shown-steps) + I18n.dock_plan_more_suffix;
+                text: I18n.inquiry_send_hint;
                 color: Theme.muted; font-size: Theme.font-2xs;
                 vertical-alignment: center;
             }
@@ -617,6 +772,10 @@ export component GoalBanner inherits Rectangle {
 export component Composer inherits Rectangle {
     in-out property <string> draft <=> editor.text;
     in property <bool> busy: false;
+    // A live 问询面板 whose current page has an answer: the send button and the
+    // send key then work with an empty draft, because the choices themselves
+    // are the message.
+    in property <bool> inquiry-ready: false;
     in property <bool> generating;
     in property <bool> stopping;
     in property <bool> recording: false;
@@ -725,11 +884,11 @@ key-pressed(event) => {
                 // "ctrl_enter" sends only with Ctrl+Enter; "none" leaves all
                 // newlines to the editor and sends via the button only.
                 if event.text == "\n" && !event.modifiers.shift && !event.modifiers.control {
-                    if root.send-key == "enter" && (!root.busy || root.draft.starts-with("/")) { root.send(); }
+                    if root.send-key == "enter" && (!root.busy || root.draft.starts-with("/") || root.inquiry-ready) { root.send(); }
                     return root.send-key == "enter" ? accept : reject;
                 }
                 if event.text == "\n" && event.modifiers.control {
-                    if root.send-key == "ctrl_enter" && (!root.busy || root.draft.starts-with("/")) { root.send(); return accept; }
+                    if root.send-key == "ctrl_enter" && (!root.busy || root.draft.starts-with("/") || root.inquiry-ready) { root.send(); return accept; }
                     return reject;
                 }
                 return reject;
@@ -887,7 +1046,7 @@ key-pressed(event) => {
                 primary: true; enabled: !root.stopping;
                 clicked => { root.stop(); }
             }
-            if !root.generating || root.terminal-mode || root.draft.starts-with("/") : Action { width: 40px; icon: @image-url("../assets/icons/paper-plane.svg"); icon-size: 16px; label: root.busy ? I18n.cp_sending : I18n.cp_send; primary: true; enabled: root.terminal-mode ? (root.draft != "" && !root.busy) : ((root.draft != "" || root.attachments.length > 0) && (!root.busy || root.draft.starts-with("/"))); clicked => { root.send(); } }
+            if !root.generating || root.terminal-mode || root.inquiry-ready || root.draft.starts-with("/") : Action { width: 40px; icon: @image-url("../assets/icons/paper-plane.svg"); icon-size: 16px; label: root.busy ? I18n.cp_sending : I18n.cp_send; primary: true; enabled: root.terminal-mode ? (root.draft != "" && !root.busy) : ((root.draft != "" || root.attachments.length > 0 || root.inquiry-ready) && (!root.busy || root.draft.starts-with("/"))); clicked => { root.send(); } }
         }
         // ---- status line (§8.5): branch only; the context gauge lives in
         // the toolbar's brain glyph and the old labelled bar is gone. ----

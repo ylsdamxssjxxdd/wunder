@@ -883,6 +883,65 @@ fn bind_agents(app: &MainWindow, api: Arc<NativeDesktop>) {
 }
 
 fn bind_settings(app: &MainWindow, api: Arc<NativeDesktop>) {
+    // 线程渲染压测：解析两个轮次输入后交给 facade 同步生成，工作线程把节流后的
+    // 进度推回状态行；完成后刷新线程列表，让新线程立即可见。
+    let weak = app.as_weak();
+    let stress_api = api.clone();
+    app.on_generate_stress_thread(move || {
+        let Some(app) = weak.upgrade() else { return };
+        if app.get_stress_running() || app.get_saving() || app.get_settings_loading() {
+            return;
+        }
+        let Ok(user_rounds) = app.get_stress_user_rounds().trim().parse::<i64>() else {
+            app.set_stress_status("⚠ 用户轮次必须是正整数".into());
+            return;
+        };
+        let Ok(model_rounds) = app.get_stress_model_rounds().trim().parse::<i64>() else {
+            app.set_stress_status("⚠ 每轮模型轮次必须是正整数".into());
+            return;
+        };
+        app.set_stress_running(true);
+        app.set_stress_status(format!("正在生成 {user_rounds}×{model_rounds} 压测线程…").into());
+        let weak = app.as_weak();
+        let api = stress_api.clone();
+        std::thread::spawn(move || {
+            let total = user_rounds;
+            let progress_app = weak.clone();
+            let mut last_report = std::time::Instant::now();
+            let result = api.generate_stress_thread(user_rounds, model_rounds, move |done, items| {
+                // 节流到约每 300ms 一次；批量写入在两次报告之间全速进行。
+                let now = std::time::Instant::now();
+                if done >= total || now.duration_since(last_report).as_millis() >= 300 {
+                    last_report = now;
+                    let weak = progress_app.clone();
+                    let _ = weak.upgrade_in_event_loop(move |app| {
+                        app.set_stress_status(
+                            format!("正在生成… 已完成 {done}/{total} 轮次，写入 {items} 条消息").into(),
+                        );
+                    });
+                }
+            });
+            let _ = weak.upgrade_in_event_loop(move |app| {
+                app.set_stress_running(false);
+                match result {
+                    Ok(stats) => {
+                        let text = format!(
+                            "已生成 {} 轮次 / {} 条消息 / {} 次工具调用",
+                            stats.user_turns, stats.items, stats.tool_calls
+                        );
+                        app.set_stress_status(text.clone().into());
+                        app.set_dialog_title("压测线程已生成".into());
+                        app.set_dialog_text(format!("{text}\n会话 ID：{}", stats.session_id).into());
+                        app.set_dialog_open(true);
+                        app.invoke_refresh_chat();
+                    }
+                    Err(error) => {
+                        app.set_stress_status(format!("⚠ 生成失败：{error}").into());
+                    }
+                }
+            });
+        });
+    });
     // §8.3 model search: the popover hands over its query and gets the filtered
     // catalogue back in `models`.
     let weak = app.as_weak();

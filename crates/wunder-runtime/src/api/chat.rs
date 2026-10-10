@@ -37,6 +37,7 @@ mod events;
 mod media;
 mod prompt;
 mod sessions;
+mod stress;
 
 use sessions::{has_active_queue_task, is_session_stream_active_or_queued};
 
@@ -46,6 +47,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .merge(media::router())
         .merge(prompt::router())
         .merge(sessions::router())
+        .merge(stress::router())
         .route(
             "/wunder/chat/sessions/{session_id}/subagents",
             get(list_session_subagents),

@@ -14,7 +14,7 @@ updated_at: 2026-09-28
 
 - it supports `dry_run`
 - it enforces execution budgets and output guards
-- it automatically intercepts patch text and reroutes it to `apply_patch`
+- it automatically intercepts patch text and reroutes it to the patch form of `Text Edit`
 
 ## Minimum arguments
 
@@ -141,7 +141,7 @@ On timeouts or non-zero exits, `data.results` still keeps the collected stdout a
 
 ## Special behavior: patch text sent by mistake
 
-If `content` is not a command but a complete `*** Begin Patch ... *** End Patch` block, the system automatically redirects execution to `apply_patch` and adds:
+If `content` is not a command but a complete `*** Begin Patch ... *** End Patch` block, the system automatically redirects execution to the patch form of `Text Edit` and adds:
 
 ```json
 {
@@ -151,6 +151,6 @@ If `content` is not a command but a complete `*** Begin Patch ... *** End Patch`
 
 ## When not to use it
 
-- If you only need a small file edit, use [Apply Patch](/docs/en/tools/apply-patch/)
-- If you need a temporary Python helper, use [ptc](/docs/en/tools/ptc/)
+- If you only need a small file edit, use [Text Edit (patch form)](/docs/en/tools/apply-patch/)
+- If you need a temporary Python helper, run a script with [Execute Command](/docs/en/tools/exec/) (`ptc` has been removed)
 - If you only want to read code, use [Workspace Files](/docs/en/tools/workspace-files/)

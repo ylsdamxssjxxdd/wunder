@@ -62,6 +62,25 @@ export struct TimelineCounts { rows: int, answers: int }
 // runtime's own vocabulary: "pending" | "in_progress" | "completed".
 export struct PlanStep { step: string, status: string }
 
+// 问询面板 (§InquiryPanel): one published page. Rust owns the selection state
+// and republishes the page after every interaction, so the panel stays a pure
+// projection. `selected` is derived from that state, never edited here. The
+// page's free text lives on the panel property, not in the struct: a struct
+// field cannot carry a two-way TextInput binding.
+export struct InquiryOption {
+    label: string,
+    description: string,
+    recommended: bool,
+    selected: bool,
+}
+
+export struct InquiryQuestion {
+    question: string,
+    multiple: bool,
+    no_preference: bool,
+    options: [InquiryOption],
+}
+
 // Stable desktop navigation identifiers. The two-column shell has exactly two
 // surfaces: the chat (with its sidebar) and the settings sheet. The old rail
 // pages are gone and their content lives in the sheet's categories, so a page

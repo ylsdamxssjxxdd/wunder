@@ -4192,6 +4192,34 @@
   gap: 8px;
 }
 
+.messenger-settings-stress-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.messenger-settings-number-input {
+  width: 120px;
+  height: 34px;
+  border: 1px solid #d7d7d7;
+  border-radius: 9px;
+  background: #ffffff;
+  color: var(--ui-text-strong, #333333);
+  padding: 0 10px;
+  font-size: inherit;
+}
+
+.messenger-settings-number-input:focus {
+  outline: none;
+  border-color: rgba(var(--ui-accent-rgb), 0.55);
+}
+
+.messenger-settings-number-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .messenger-settings-range-wrap {
   display: inline-flex;
   align-items: center;
@@ -5678,7 +5706,6 @@
 
 .workspace-dialog,
 .workflow-dialog,
-.plan-dialog,
 .session-tools-dialog,
 .system-prompt-dialog,
 .image-preview-dialog {
@@ -5711,7 +5738,6 @@
 
 .workspace-dialog.el-dialog,
 .workflow-dialog.el-dialog,
-.plan-dialog.el-dialog,
 .session-tools-dialog.el-dialog,
 .system-prompt-dialog.el-dialog,
 .image-preview-dialog.el-dialog {
@@ -6280,7 +6306,6 @@ body.desktop-shell-active .workspace-editor-shell {
 
 .workspace-dialog .el-dialog__header,
 .workflow-dialog .el-dialog__header,
-.plan-dialog .el-dialog__header,
 .session-tools-dialog .el-dialog__header,
 .system-prompt-dialog .el-dialog__header,
 .image-preview-dialog .el-dialog__header {
@@ -6289,14 +6314,12 @@ body.desktop-shell-active .workspace-editor-shell {
 
 .workspace-dialog .el-dialog__footer,
 .workflow-dialog .el-dialog__footer,
-.plan-dialog .el-dialog__footer,
 .session-tools-dialog .el-dialog__footer {
   border-top: 1px solid #ececec;
 }
 
 .workspace-dialog .workspace-btn,
 .workflow-dialog .workspace-btn,
-.plan-dialog .workspace-btn,
 .session-tools-dialog .el-button {
   border-color: #d8d8d8;
   background: #f7f7f7;
@@ -6305,7 +6328,6 @@ body.desktop-shell-active .workspace-editor-shell {
 
 .workspace-dialog .workspace-btn:not(:disabled):hover,
 .workflow-dialog .workspace-btn:not(:disabled):hover,
-.plan-dialog .workspace-btn:not(:disabled):hover,
 .session-tools-dialog .el-button:not(:disabled):hover {
   border-color: rgba(var(--ui-accent-rgb), 0.4);
   background: var(--ui-accent-soft);
@@ -7374,9 +7396,7 @@ body.desktop-shell-active .workspace-editor-shell {
   color: var(--ui-accent-deep);
 }
 
-.messenger-view .chat-shell .plan-panel,
-.messenger-view .chat-shell .plan-tab,
-.messenger-view .chat-shell .inquiry-panel-route,
+.messenger-view .chat-shell .inquiry-option,
 .messenger-view .chat-shell .input-icon-btn,
 .messenger-view .chat-shell .workspace-btn,
 .messenger-view .chat-shell .workspace-item,

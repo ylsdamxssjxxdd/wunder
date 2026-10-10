@@ -1526,8 +1526,12 @@ test('chat runtime render adapter materializes projected plan and question panel
       payload: {
         source_event_type: 'question_panel',
         data: {
-          question: 'Pick a route',
-          routes: [{ label: 'Fast', recommended: true }]
+          questions: [
+            {
+              question: 'Pick a route',
+              options: [{ label: 'Fast', recommended: true }]
+            }
+          ]
         }
       }
     }
@@ -1536,15 +1540,17 @@ test('chat runtime render adapter materializes projected plan and question panel
   const materialized = materializeChatRuntimeMessages(projection, 'session-1');
   const message = materialized[0] as {
     plan?: { explanation?: string; steps?: Array<{ step?: string; status?: string }> };
-    questionPanel?: { question?: string; routes?: Array<{ label?: string; recommended?: boolean }> };
+    questionPanel?: {
+      questions?: Array<{ question?: string; options?: Array<{ label?: string; recommended?: boolean }> }>;
+    };
     workflowItems?: Array<Record<string, unknown>>;
   };
 
   assert.equal(materialized.length, 1);
   assert.equal(message.plan?.explanation, 'planned route');
   assert.equal(message.plan?.steps?.[0]?.step, 'collect input');
-  assert.equal(message.questionPanel?.question, 'Pick a route');
-  assert.equal(message.questionPanel?.routes?.[0]?.recommended, true);
+  assert.equal(message.questionPanel?.questions?.[0]?.question, 'Pick a route');
+  assert.equal(message.questionPanel?.questions?.[0]?.options?.[0]?.recommended, true);
   assert.equal(message.workflowItems?.some((item) => item.eventType === 'plan_update'), true);
   assert.equal(message.workflowItems?.some((item) => item.eventType === 'question_panel'), true);
 });

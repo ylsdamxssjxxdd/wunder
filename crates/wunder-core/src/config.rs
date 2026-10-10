@@ -740,6 +740,9 @@ pub struct ToolVisibilityRule {
 pub struct BrowserConfig {
     #[serde(default)]
     pub enabled: bool,
+    /// Active browser provider id; see `services::browser::provider`.
+    #[serde(default = "default_browser_provider")]
+    pub provider: String,
     #[serde(default = "default_browser_deployment")]
     pub deployment: String,
     #[serde(default = "default_browser_profile")]
@@ -1065,6 +1068,7 @@ impl Default for BrowserConfig {
     fn default() -> Self {
         Self {
             enabled: false,
+            provider: default_browser_provider(),
             deployment: default_browser_deployment(),
             default_profile: default_browser_profile(),
             control: BrowserControlConfig::default(),
@@ -1266,6 +1270,10 @@ impl Default for DesktopControllerConfig {
 
 fn default_browser_headless() -> bool {
     true
+}
+
+fn default_browser_provider() -> String {
+    "playwright".to_string()
 }
 
 fn default_browser_deployment() -> String {

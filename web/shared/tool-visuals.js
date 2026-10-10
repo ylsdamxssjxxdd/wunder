@@ -7,7 +7,7 @@ const TOOL_ICON_RULES = [
   { keywords: ["计划面板", "计划看板", "update_plan", "plan board"], icon: "fa-table-columns" },
   { keywords: ["问询面板", "question_panel", "ask_panel", "question panel"], icon: "fa-circle-question" },
   { keywords: ["目标态", "目标工具", "goal", "goal mode"], icon: "fa-bullseye" },
-  { keywords: ["浏览器", "browser", "browser_navigate", "browser_click", "browser_type", "browser_screenshot", "browser_read_page"], icon: "fa-window-maximize" },
+  { keywords: ["浏览器", "browser", "browser_navigate", "browser_navigate_back", "browser_tabs", "browser_snapshot", "browser_click", "browser_type", "browser_hover", "browser_select_option", "browser_drag", "browser_press_key", "browser_evaluate", "browser_wait_for", "browser_take_screenshot", "browser_read_page", "browser_batch", "browser_close", "browser_status"], icon: "fa-window-maximize" },
   { keywords: ["技能调用", "skill_call", "skill_get"], icon: "fa-book-open" },
   { keywords: ["子智能体控制", "subagent_control"], icon: "fa-diagram-project" },
   { keywords: ["会话线程控制", "thread_control", "session_thread"], icon: "fa-code-branch" },

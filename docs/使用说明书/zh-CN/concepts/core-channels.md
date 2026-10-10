@@ -107,4 +107,4 @@ wunder 支持多种使用入口：
 
 - [系统架构](/docs/zh-CN/concepts/architecture/) —— 三层架构详解
 - [渠道管理指南](/docs/zh-CN/ops/channel-runtime/) —— 运维和排障
-- [渠道工具](/docs/zh-CN/tools/channel/) —— 渠道相关工具说明
+- [渠道工具（已移除）](/docs/zh-CN/tools/channel/) —— 渠道相关工具说明

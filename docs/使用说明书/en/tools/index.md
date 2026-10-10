@@ -9,7 +9,7 @@ source_docs:
   - src/services/tools/catalog.rs
   - src/services/tools/tool_error.rs
   - docs/工具返回内容优化表.md
-updated_at: 2026-04-10
+updated_at: 2026-10-10
 ---
 
 # Tools Overview
@@ -105,9 +105,9 @@ When reading failures, prioritize:
 
 These tools still need to be remembered individually.
 
-### `final_response`
+### `final_response` (removed)
 
-This is not a standard tool result. It is a very thin termination signal:
+This tool has been removed from wunder and is not visible to the agent or users; its historical return shape is kept below for troubleshooting only:
 
 ```json
 {
@@ -149,13 +149,13 @@ This tool currently uses a compact scheduling result rather than the unified `ok
 }
 ```
 
-### `browser`
+### Browser tool group (`browser_*`)
 
-The browser tool mainly forwards browser-runtime results. Successful calls often include `ok: true`, but they do not always come wrapped in a unified `summary/data` shell. The returned fields vary significantly by action.
+The browser is no longer a single tool but a group of 17 native tools prefixed with `browser_` (for example `browser_navigate`, `browser_click`, `browser_take_screenshot`; see [Browser](/docs/en/tools/browser/)). Successful results use an MCP-style content-block structure (`content` plus a `provider` field) rather than the unified `ok/action/state/summary/data` shell.
 
-### `web_search`
+### `web_search` (removed)
 
-`web_search` searches the public web with keywords. It is disabled by default and requires a configured search provider. When enabled, successful calls use the unified envelope and return result items in `data.results`:
+`web_search` used to search the public web with keywords, returning result items in `data.results`. **This tool has been removed and is not visible to the agent or users**; its historical return shape is kept below for troubleshooting only:
 
 ```json
 {
@@ -177,7 +177,7 @@ The browser tool mainly forwards browser-runtime results. Successful calls often
 }
 ```
 
-Use it to discover candidate URLs. When a source needs verification or full reading, pass the concrete URL to `web_fetch`.
+Historically it was used to discover candidate URLs; it has now been removed, so use `web_fetch` directly when you need webpage content.
 
 ### `web_fetch`
 
@@ -201,15 +201,15 @@ Use it to discover candidate URLs. When a source needs verification or full read
 }
 ```
 
-### `apply_patch`
+### `文本编辑` (formerly `apply_patch`)
 
-`apply_patch` already uses the unified success envelope, but on failure it exposes its own patch-specific error codes and hints. Its error semantics are stricter than those of ordinary file tools.
+`文本编辑` (canonical `edit_file2`) uses the unified success envelope; in its `apply_patch` form, failures surface extra patch-specific error codes and hints, so its error semantics are stricter than those of ordinary file tools.
 
 ## Current tool groups
 
 ## 1. Turn finishing and frontend coordination
 
-- [Final Response](/docs/en/tools/final-response/)
+- [Final Response (removed)](/docs/en/tools/final-response/)
 - [Panels and a2ui](/docs/en/tools/panels-and-a2ui/)
 - [Sessions Yield](/docs/en/tools/sleep/): `sessions_yield` belongs to turn-control semantics
 
@@ -217,8 +217,8 @@ Use it to discover candidate URLs. When a source needs verification or full read
 
 - [Workspace Files](/docs/en/tools/workspace-files/)
 - [Execute Command](/docs/en/tools/exec/)
-- [Apply Patch](/docs/en/tools/apply-patch/)
-- [ptc](/docs/en/tools/ptc/)
+- [Apply Patch (merged into Text Edit)](/docs/en/tools/apply-patch/)
+- [ptc (removed)](/docs/en/tools/ptc/)
 - [Skill Call](/docs/en/tools/skill-call/)
 - [Read Image](/docs/en/tools/read-image/)
 
@@ -238,15 +238,15 @@ Use it to discover candidate URLs. When a source needs verification or full read
 - [Self Status](/docs/en/tools/self-status/)
 - [Memory Manager](/docs/en/tools/memory-manager/)
 - [User World](/docs/en/tools/user-world/)
-- [Channel Tool](/docs/en/tools/channel/)
-- [A2A Tools](/docs/en/tools/a2a-tools/)
+- [Channel Tool (removed)](/docs/en/tools/channel/)
+- [A2A Tools (removed)](/docs/en/tools/a2a-tools/)
 - [Schedule Task](/docs/en/tools/schedule-task/)
 
 ## Selection guidance
 
 ### Only have keywords and need web sources
 
-Use `web_search` from [Web Fetch](/docs/en/tools/web-fetch/) to find candidate URLs, then fetch concrete pages.
+`web_search` has been removed; when you already have a URL, read the page directly with [Web Fetch](/docs/en/tools/web-fetch/).
 
 ### Read the main content of a public webpage
 
@@ -265,12 +265,12 @@ The usual sequence is:
 
 ### Edit code
 
-- For small and precise edits, use [Apply Patch](/docs/en/tools/apply-patch/)
-- For one exact text replacement, use `edit_file2`
-- For complex replacement logic, use [ptc](/docs/en/tools/ptc/) or `programmatic_tool_call`
+- For small, precise, context-matched edits, use [Apply Patch (merged into Text Edit)](/docs/en/tools/apply-patch/) (the patch form of `文本编辑`)
+- For one exact text replacement, use `文本编辑` (`edit_file2`)
+- For complex replacement logic, run a script with [Execute Command](/docs/en/tools/exec/) (`ptc` has been removed)
 - For full-file creation or replacement, use `write_file` from [Workspace Files](/docs/en/tools/workspace-files/)
 - For compilation, tests, or scripts, use [Execute Command](/docs/en/tools/exec/)
-- For a temporary Python helper, use [ptc](/docs/en/tools/ptc/)
+- For a temporary Python helper, prefer [Execute Command](/docs/en/tools/exec/) (`ptc` has been removed)
 
 ### Coordinate multiple workers
 
@@ -283,7 +283,7 @@ The usual sequence is:
 - `data` is now the primary payload carrier
 - Many tool schemas are noticeably tighter, with flatter inputs, explicit fields, and `additionalProperties: false`
 - `subagent_control` and `thread_control` now follow a clear style: explicit action, explicit state, and explicit follow-up hints
-- `schedule_task`, `browser`, `web_fetch`, `final_response`, and `a2ui` remain deliberate exceptions that must be remembered separately
+- `schedule_task`, the browser tool group (`browser_*`), `web_fetch`, and `a2ui` remain deliberate exceptions that must be remembered separately
 
 ## Next
 

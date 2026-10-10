@@ -27,13 +27,18 @@ fn parallel_safe_builtin_names() -> &'static HashSet<String> {
             "read_image",
             "web_search",
             "web_fetch",
-            "browser",
             "self_status",
         ]
         .into_iter()
         .map(resolve_tool_name)
         .filter(|name| !name.trim().is_empty())
         .collect();
+        // Browser tools come from the active provider's native surface.
+        for name in crate::services::browser::provider::registered_tool_names() {
+            if !name.trim().is_empty() {
+                names.insert(name);
+            }
+        }
         // 合并工具注册表里声明的并行安全工具，保持单一事实来源。
         for canonical in crate::tools::registry::parallel_safe_canonicals() {
             let resolved = resolve_tool_name(canonical);

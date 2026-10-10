@@ -109,7 +109,6 @@
           <div v-if="resolvedMessageConversationKind === 'agent'" class="messenger-agent-composer messenger-composer-scope chat-shell">
             <ComposerStatusDock
               :loading="agentSessionLoading"
-              :messages="agentRenderableMessages"
               :plan="activeAgentPlan"
               @remove="dismissActiveAgentPlan"
             />

@@ -10,6 +10,8 @@ updated_at: 2026-04-10
 
 # Channel Tool
 
+> **Removed**: This tool has been removed from wunder and is not visible to the agent or users; this page is kept as a historical reference.
+
 `channel_tool` mainly has two actions:
 
 - `list_contacts`

@@ -384,11 +384,38 @@ struct InquiryRoute {
     recommended: bool,
 }
 
+/// 一题：问题正文 + 候选路线 + 是否多选。一次问询可含多题，终端里按全局编号
+/// 连续出题，蜂巢前端则按页展示。
 #[derive(Debug, Clone)]
-struct InquiryPanelState {
+struct InquiryQuestion {
     question: String,
     routes: Vec<InquiryRoute>,
     multiple: bool,
+}
+
+#[derive(Debug, Clone)]
+struct InquiryPanelState {
+    questions: Vec<InquiryQuestion>,
+}
+
+impl InquiryPanelState {
+    /// 展平后的 (题序, 路线)，供全局编号、上下键移动与越界校验使用。
+    fn flat_routes(&self) -> Vec<(usize, &InquiryRoute)> {
+        self.questions
+            .iter()
+            .enumerate()
+            .flat_map(|(question_index, question)| {
+                question
+                    .routes
+                    .iter()
+                    .map(move |route| (question_index, route))
+            })
+            .collect()
+    }
+
+    fn route_count(&self) -> usize {
+        self.questions.iter().map(|item| item.routes.len()).sum()
+    }
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
@@ -1627,43 +1654,82 @@ impl TuiApp {
 
     pub fn inquiry_modal_lines(&self) -> Option<Vec<String>> {
         let panel = self.active_inquiry_panel.as_ref()?;
-        if panel.routes.is_empty() {
+        let flat = panel.flat_routes();
+        if flat.is_empty() {
             return None;
         }
-        let selected = self
-            .inquiry_selected_index
-            .min(panel.routes.len().saturating_sub(1));
-        let mut lines = vec![panel.question.clone(), String::new()];
-        for (index, route) in panel.routes.iter().enumerate() {
-            let marker = if index == selected { "›" } else { " " };
-            let mut title = route.label.clone();
-            if route.recommended {
-                if self.is_zh_language() {
-                    title.push_str("（推荐）");
+        let selected = self.inquiry_selected_index.min(flat.len() - 1);
+        let question_total = panel.questions.len();
+        let mut lines = Vec::new();
+        let mut global_index = 0usize;
+        for (question_index, question) in panel.questions.iter().enumerate() {
+            if !question.routes.is_empty() {
+                if !lines.is_empty() {
+                    lines.push(String::new());
+                }
+                lines.push(if question_total > 1 {
+                    self.format_inquiry_question_label(question_index, question_total, &question.question)
                 } else {
-                    title.push_str(" (recommended)");
-                }
+                    question.question.clone()
+                });
+                lines.push(String::new());
             }
-            let body = match route.description.as_deref() {
-                Some(description) if !description.trim().is_empty() => {
-                    format!("{title}  {description}")
+            for route in &question.routes {
+                let marker = if global_index == selected { "›" } else { " " };
+                let mut title = route.label.clone();
+                if route.recommended {
+                    if self.is_zh_language() {
+                        title.push_str("（推荐）");
+                    } else {
+                        title.push_str(" (recommended)");
+                    }
                 }
-                _ => title,
-            };
-            lines.push(format!("{marker} {}. {body}", index + 1));
+                let body = match route.description.as_deref() {
+                    Some(description) if !description.trim().is_empty() => {
+                        format!("{title}  {description}")
+                    }
+                    _ => title,
+                };
+                lines.push(format!("{marker} {}. {body}", global_index + 1));
+                global_index += 1;
+            }
         }
         Some(lines)
     }
 
+    fn format_inquiry_question_label(
+        &self,
+        question_index: usize,
+        question_total: usize,
+        question: &str,
+    ) -> String {
+        if self.is_zh_language() {
+            format!("问题 {}/{}：{}", question_index + 1, question_total, question)
+        } else {
+            format!(
+                "Question {}/{}: {}",
+                question_index + 1,
+                question_total,
+                question
+            )
+        }
+    }
+
     fn is_same_inquiry_panel(&self, left: &InquiryPanelState, right: &InquiryPanelState) -> bool {
-        if left.question.trim() != right.question.trim() || left.routes.len() != right.routes.len()
-        {
+        if left.questions.len() != right.questions.len() {
             return false;
         }
-        left.routes
-            .iter()
-            .zip(right.routes.iter())
-            .all(|(a, b)| a.label == b.label && a.description == b.description)
+        left.questions.iter().zip(right.questions.iter()).all(
+            |(a, b)| {
+                a.question.trim() == b.question.trim()
+                    && a.multiple == b.multiple
+                    && a.routes.len() == b.routes.len()
+                    && a.routes
+                        .iter()
+                        .zip(b.routes.iter())
+                        .all(|(x, y)| x.label == y.label && x.description == y.description)
+            },
+        )
     }
 
     fn activate_inquiry_panel(&mut self, panel: InquiryPanelState, emit_log: bool) {
@@ -1673,8 +1739,9 @@ impl TuiApp {
             .map(|existing| self.is_same_inquiry_panel(existing, &panel))
             .unwrap_or(false);
         let recommended_index = panel
-            .routes
+            .questions
             .iter()
+            .flat_map(|question| question.routes.iter())
             .position(|route| route.recommended)
             .unwrap_or(0);
         self.inquiry_selected_index = recommended_index;
@@ -1689,6 +1756,22 @@ impl TuiApp {
     }
 
     fn parse_inquiry_panel_state(&self, payload: &Value) -> Option<InquiryPanelState> {
+        let raw_items: Vec<Value> = match payload.get("questions").and_then(Value::as_array) {
+            Some(items) => items.clone(),
+            // 旧版扁平单题写法（含历史线程里的面板）。
+            None => vec![payload.clone()],
+        };
+        let questions = raw_items
+            .iter()
+            .filter_map(|item| self.parse_inquiry_question(item))
+            .collect::<Vec<_>>();
+        if questions.is_empty() {
+            return None;
+        }
+        Some(InquiryPanelState { questions })
+    }
+
+    fn parse_inquiry_question(&self, payload: &Value) -> Option<InquiryQuestion> {
         let question = payload
             .get("question")
             .or_else(|| payload.get("prompt"))
@@ -1698,8 +1781,8 @@ impl TuiApp {
             .trim()
             .to_string();
         let routes = payload
-            .get("routes")
-            .or_else(|| payload.get("options"))
+            .get("options")
+            .or_else(|| payload.get("routes"))
             .or_else(|| payload.get("choices"))
             .and_then(Value::as_array)?;
         let mut normalized_routes = Vec::new();
@@ -1760,7 +1843,7 @@ impl TuiApp {
             .or_else(|| payload.get("multi"))
             .and_then(Value::as_bool)
             .unwrap_or(false);
-        Some(InquiryPanelState {
+        Some(InquiryQuestion {
             question,
             routes: normalized_routes,
             multiple,
@@ -1787,48 +1870,78 @@ impl TuiApp {
     }
 
     fn show_inquiry_panel_prompt(&mut self, panel: &InquiryPanelState) {
-        if self.is_zh_language() {
-            self.push_log(LogKind::Inquiry, format!("[问询面板] {}", panel.question));
-        } else {
-            self.push_log(
-                LogKind::Inquiry,
-                format!("[Inquiry Panel] {}", panel.question),
-            );
-        }
-        for (index, route) in panel.routes.iter().enumerate() {
-            let badge = if route.recommended {
+        let question_total = panel.questions.len();
+        let mut global_index = 0usize;
+        for (question_index, question) in panel.questions.iter().enumerate() {
+            let header = if question_index == 0 && question_total == 1 {
                 if self.is_zh_language() {
-                    "（推荐）"
+                    format!("[问询面板] {}", question.question)
                 } else {
-                    " (recommended)"
+                    format!("[Inquiry Panel] {}", question.question)
                 }
             } else {
-                ""
+                self.format_inquiry_question_label(
+                    question_index,
+                    question_total,
+                    &question.question,
+                )
             };
-            let line = if let Some(description) = route.description.as_deref() {
-                if self.is_zh_language() {
-                    format!("  {}. {}{}：{}", index + 1, route.label, badge, description)
+            self.push_log(LogKind::Inquiry, header);
+            for route in &question.routes {
+                let badge = if route.recommended {
+                    if self.is_zh_language() {
+                        "（推荐）"
+                    } else {
+                        " (recommended)"
+                    }
                 } else {
-                    format!("  {}. {}{}: {}", index + 1, route.label, badge, description)
-                }
-            } else {
-                format!("  {}. {}{}", index + 1, route.label, badge)
-            };
-            self.push_log(LogKind::Inquiry, line);
+                    ""
+                };
+                let line = if let Some(description) = route.description.as_deref() {
+                    if self.is_zh_language() {
+                        format!(
+                            "  {}. {}{}：{}",
+                            global_index + 1,
+                            route.label,
+                            badge,
+                            description
+                        )
+                    } else {
+                        format!(
+                            "  {}. {}{}: {}",
+                            global_index + 1,
+                            route.label,
+                            badge,
+                            description
+                        )
+                    }
+                } else {
+                    format!("  {}. {}{}", global_index + 1, route.label, badge)
+                };
+                self.push_log(LogKind::Inquiry, line);
+                global_index += 1;
+            }
         }
-        let hint = if panel.multiple {
+        let mut hint = if panel.questions.iter().any(|item| item.multiple) {
             crate::locale::tr(
                 self.display_language.as_str(),
-                "输入多个路由编号并用逗号分隔（如 1,3）后回车；也可以直接输入自由文本继续。",
-                "Type route numbers for multi-select (e.g. 1,3) then Enter; or send free text to continue.",
+                "输入多个编号并用逗号分隔（如 1,3）后回车；也可以直接输入自由文本继续。",
+                "Type option numbers separated by commas (e.g. 1,3) then Enter; or send free text to continue.",
             )
         } else {
             crate::locale::tr(
                 self.display_language.as_str(),
-                "输入路由编号（如 1）后回车；也可以直接输入自由文本继续。",
-                "Type a route number (e.g. 1) then Enter; or send free text to continue.",
+                "输入编号（如 1）后回车；也可以直接输入自由文本继续。",
+                "Type an option number (e.g. 1) then Enter; or send free text to continue.",
             )
         };
+        if question_total > 1 {
+            hint.push_str(if self.is_zh_language() {
+                " 编号跨题连续，未作答的题记为无偏好。"
+            } else {
+                " Numbers run across questions; questions left blank count as no preference."
+            });
+        }
         self.push_log(LogKind::Inquiry, hint);
     }
 
@@ -1837,7 +1950,7 @@ impl TuiApp {
         if !self.input.trim().is_empty() {
             return None;
         }
-        let route_len = panel.routes.len();
+        let route_len = panel.route_count();
         if route_len == 0 {
             return None;
         }
@@ -1906,7 +2019,8 @@ impl TuiApp {
 
     fn try_convert_inquiry_input(&mut self, input: &str) -> Option<String> {
         let panel = self.active_inquiry_panel.clone()?;
-        let selected_indexes = self.parse_inquiry_selection_indexes(input, panel.routes.len())?;
+        let route_len = panel.route_count();
+        let selected_indexes = self.parse_inquiry_selection_indexes(input, route_len)?;
         if selected_indexes.is_empty() {
             self.push_log(
                 LogKind::Error,
@@ -1918,27 +2032,64 @@ impl TuiApp {
             );
             return Some(String::new());
         }
-        if !panel.multiple && selected_indexes.len() > 1 {
-            self.push_log(
-                LogKind::Error,
-                crate::locale::tr(
-                    self.display_language.as_str(),
-                    "当前问询仅支持单选，请只提供一个编号。",
-                    "this inquiry panel is single-select; provide one index only.",
-                ),
-            );
-            return Some(String::new());
+        // 全局编号 → (题序, 选项序)
+        let mut flat: Vec<(usize, usize)> = Vec::with_capacity(route_len);
+        for (question_index, question) in panel.questions.iter().enumerate() {
+            for route_index in 0..question.routes.len() {
+                flat.push((question_index, route_index));
+            }
         }
+        let mut picks: Vec<Vec<usize>> = vec![Vec::new(); panel.questions.len()];
+        for index in selected_indexes {
+            if let Some((question_index, route_index)) = flat.get(index) {
+                picks[*question_index].push(*route_index);
+            }
+        }
+        for (question_index, routes) in picks.iter().enumerate() {
+            if routes.len() > 1 && !panel.questions[question_index].multiple {
+                let message = if self.is_zh_language() {
+                    format!("第 {} 题仅支持单选，请只提供一个编号。", question_index + 1)
+                } else {
+                    format!(
+                        "question {} is single-select; provide one index only.",
+                        question_index + 1
+                    )
+                };
+                self.push_log(LogKind::Error, message);
+                return Some(String::new());
+            }
+        }
+        let question_total = panel.questions.len();
         let mut lines = Vec::new();
         if self.is_zh_language() {
             lines.push("[问询面板选择]".to_string());
-            lines.push(format!("问题：{}", panel.question));
         } else {
             lines.push("[Inquiry Panel Selection]".to_string());
-            lines.push(format!("Question: {}", panel.question));
         }
-        for index in selected_indexes {
-            if let Some(route) = panel.routes.get(index) {
+        for (question_index, question) in panel.questions.iter().enumerate() {
+            lines.push(if question_total > 1 {
+                self.format_inquiry_question_label(
+                    question_index,
+                    question_total,
+                    &question.question,
+                )
+            } else if self.is_zh_language() {
+                format!("问题：{}", question.question)
+            } else {
+                format!("Question: {}", question.question)
+            });
+            if picks[question_index].is_empty() {
+                lines.push(if self.is_zh_language() {
+                    "- 无偏好".to_string()
+                } else {
+                    "- No preference".to_string()
+                });
+                continue;
+            }
+            for route_index in &picks[question_index] {
+                let Some(route) = question.routes.get(*route_index) else {
+                    continue;
+                };
                 if let Some(description) = route.description.as_deref() {
                     if self.is_zh_language() {
                         lines.push(format!("- {}：{}", route.label, description));

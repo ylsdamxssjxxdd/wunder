@@ -1,66 +1,91 @@
+//! Browser tool surface (provider driven, dsh parity).
+//!
+//! wunder no longer exposes a single opaque `浏览器` tool. Instead the active
+//! [`BrowserProvider`] contributes its native tool surface (`browser_navigate`,
+//! `browser_click`, ...) and every call returns MCP-style content blocks.
+//!
+//! The runtime keeps its own safety defaults (URL allow-list, private-network and
+//! `file://` blocking, timeout / download limits) because calls still go through
+//! [`crate::services::browser::runtime::BrowserControlService`].
+
 use super::ToolContext;
 use crate::config::Config;
-use crate::services::browser::{
-    browser_service, browser_tools_enabled as browser_tools_enabled_impl, BrowserSessionScope,
-};
+use crate::schemas::ToolSpec;
+use crate::services::browser::browser_tools_enabled as browser_tools_enabled_impl;
+use crate::services::browser::provider::{active_provider, browser_registry};
 use anyhow::{anyhow, Result};
 use base64::Engine;
 use serde_json::{json, Value};
+use std::collections::HashSet;
+use std::sync::OnceLock;
 
 const BROWSER_SCREENSHOT_DIR: &str = "browser/screenshots";
 
-pub const TOOL_BROWSER: &str = "浏览器";
-pub const TOOL_BROWSER_NAVIGATE: &str = "浏览器导航";
-pub const TOOL_BROWSER_CLICK: &str = "浏览器点击";
-pub const TOOL_BROWSER_TYPE: &str = "浏览器输入";
-pub const TOOL_BROWSER_SCREENSHOT: &str = "浏览器截图";
-pub const TOOL_BROWSER_READ_PAGE: &str = "浏览器读页";
-pub const TOOL_BROWSER_CLOSE: &str = "浏览器关闭";
-
+/// Whether browser tools are enabled for the given config.
 pub fn browser_tools_enabled(config: &Config) -> bool {
     browser_tools_enabled_impl(config)
 }
 
-pub fn is_browser_tool_name(name: &str) -> bool {
-    matches!(
-        name,
-        TOOL_BROWSER
-            | TOOL_BROWSER_NAVIGATE
-            | TOOL_BROWSER_CLICK
-            | TOOL_BROWSER_TYPE
-            | TOOL_BROWSER_SCREENSHOT
-            | TOOL_BROWSER_READ_PAGE
-            | TOOL_BROWSER_CLOSE
-    )
+/// Native tool specs contributed by the active provider.
+pub fn browser_tool_specs() -> Vec<ToolSpec> {
+    browser_registry()
+        .provider()
+        .map(|provider| provider.tool_specs())
+        .unwrap_or_default()
 }
 
+/// Native tool names contributed by the active provider.
+pub fn browser_tool_names() -> Vec<String> {
+    browser_tool_specs()
+        .into_iter()
+        .map(|spec| spec.name)
+        .collect()
+}
+
+fn browser_tool_name_set() -> &'static HashSet<String> {
+    static NAMES: OnceLock<HashSet<String>> = OnceLock::new();
+    NAMES.get_or_init(|| browser_tool_names().into_iter().collect())
+}
+
+/// Whether `name` is one of the provider's native browser tools.
+pub fn is_browser_tool_name(name: &str) -> bool {
+    let trimmed = name.trim();
+    !trimmed.is_empty() && browser_tool_name_set().contains(trimmed)
+}
+
+/// Dispatch one browser tool call through the active provider.
 pub async fn tool_browser(
     context: &ToolContext<'_>,
     tool_name: &str,
     args: &Value,
 ) -> Result<Value> {
     ensure_browser_available(context.config)?;
-    let action = args
-        .get("action")
-        .and_then(Value::as_str)
-        .or_else(|| action_from_tool_name(tool_name))
-        .ok_or_else(|| anyhow!("Missing 'action' parameter"))?;
-    let mut action_args = args.clone();
-    if action.trim().eq_ignore_ascii_case("screenshot") {
-        if let Value::Object(map) = &mut action_args {
-            map.insert("save_to_workspace".to_string(), Value::Bool(true));
+    let provider = active_provider(context.config)
+        .ok_or_else(|| anyhow!("No browser provider is registered"))?;
+    if !provider.owns_tool(tool_name) {
+        return Err(anyhow!("Unknown browser tool '{tool_name}'"));
+    }
+    let outcome = provider.call(context, tool_name, args).await?;
+    let mut value = outcome.to_value();
+    if let Some(map) = value.as_object_mut() {
+        map.insert("provider".to_string(), json!(provider.id()));
+    }
+    if tool_name.trim() == crate::services::browser::providers::playwright::TOOL_STATUS {
+        if let Some(data) = value.get_mut("data") {
+            sanitize_browser_status_for_model(data);
         }
     }
-    let mut result = browser_service(context.config)
-        .execute(&scope_from_context(context, args), action, &action_args)
-        .await?;
-    if action.trim().eq_ignore_ascii_case("status") {
-        sanitize_browser_status_for_model(&mut result);
+    persist_image_blocks(context, args, &mut value)?;
+    Ok(value)
+}
+
+fn ensure_browser_available(config: &Config) -> Result<()> {
+    if browser_tools_enabled(config) {
+        return Ok(());
     }
-    if action.trim().eq_ignore_ascii_case("screenshot") {
-        persist_screenshot_to_workspace(context, args, &mut result)?;
-    }
-    Ok(result)
+    Err(anyhow!(
+        "Browser tools are disabled. Enable tools.browser.enabled together with browser.enabled (or legacy desktop mode)."
+    ))
 }
 
 fn sanitize_browser_status_for_model(result: &mut Value) {
@@ -70,154 +95,120 @@ fn sanitize_browser_status_for_model(result: &mut Value) {
     map.remove("control");
 }
 
-fn persist_screenshot_to_workspace(
-    context: &ToolContext<'_>,
-    args: &Value,
-    result: &mut Value,
-) -> Result<()> {
-    let Some(image_base64) = result.get("image_base64").and_then(Value::as_str) else {
+/// Persist every inline image block into the workspace and rewrite it as an
+/// attachment reference (dsh parity: images are delivered as attachments).
+fn persist_image_blocks(context: &ToolContext<'_>, args: &Value, value: &mut Value) -> Result<()> {
+    let Some(blocks) = value.get_mut("content").and_then(Value::as_array_mut) else {
         return Ok(());
     };
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(image_base64)
-        .map_err(|err| anyhow!("Browser screenshot base64 decode failed: {err}"))?;
-    let relative = args
-        .get("path")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToString::to_string)
-        .unwrap_or_else(|| {
+    let mut index = 0usize;
+    for block in blocks.iter_mut() {
+        let Value::Object(map) = block else {
+            continue;
+        };
+        if map.get("type").and_then(Value::as_str) != Some("image") {
+            continue;
+        }
+        let Some(encoded) = map
+            .get("data")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+        else {
+            continue;
+        };
+        let mime_type = map
+            .get("mime_type")
+            .and_then(Value::as_str)
+            .unwrap_or("image/png")
+            .to_string();
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(encoded.as_bytes())
+            .map_err(|err| anyhow!("Browser image base64 decode failed: {err}"))?;
+        let extension = image_extension(&mime_type);
+        let requested = if index == 0 {
+            args.get("path")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string)
+        } else {
+            None
+        };
+        let relative = requested.unwrap_or_else(|| {
             format!(
-                "{BROWSER_SCREENSHOT_DIR}/browser_shot_{}.png",
+                "{BROWSER_SCREENSHOT_DIR}/browser_shot_{}.{extension}",
                 uuid::Uuid::new_v4().simple()
             )
         });
-    let relative = ensure_png_extension(relative);
-    let target = context
-        .workspace
-        .resolve_path(context.workspace_id, &relative)?;
-    if let Some(parent) = target.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|err| anyhow!("Create browser screenshot directory failed: {err}"))?;
-    }
-    std::fs::write(&target, &bytes)
-        .map_err(|err| anyhow!("Write browser screenshot to workspace failed: {err}"))?;
-    context.workspace.mark_tree_dirty(context.workspace_id);
+        let relative = ensure_extension(relative, extension);
+        let target = context
+            .workspace
+            .resolve_path(context.workspace_id, &relative)?;
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|err| anyhow!("Create browser screenshot directory failed: {err}"))?;
+        }
+        std::fs::write(&target, &bytes)
+            .map_err(|err| anyhow!("Write browser screenshot to workspace failed: {err}"))?;
+        context.workspace.mark_tree_dirty(context.workspace_id);
 
-    if let Value::Object(map) = result {
-        map.remove("image_base64");
+        let normalized = relative.replace('\\', "/");
+        map.remove("data");
+        map.remove("mime_type");
         map.insert(
-            "filename".to_string(),
-            json!(target
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("browser_screenshot.png")),
+            "attachment".to_string(),
+            json!({
+                "filename": target
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("browser_screenshot.png"),
+                "path": normalized,
+                "workspace_relative_path": normalized,
+                "url": context.workspace.display_path(context.workspace_id, &target),
+                "mime_type": mime_type,
+                "bytes": bytes.len(),
+                "saved_to": "workspace",
+            }),
         );
-        map.insert("path".to_string(), json!(relative.replace('\\', "/")));
-        map.insert(
-            "workspace_relative_path".to_string(),
-            json!(relative.replace('\\', "/")),
-        );
-        map.insert(
-            "public_path".to_string(),
-            json!(context
-                .workspace
-                .display_path(context.workspace_id, &target)),
-        );
-        map.insert("saved_to".to_string(), json!("workspace"));
-        map.insert("bytes".to_string(), json!(bytes.len()));
+        index += 1;
     }
     Ok(())
 }
 
-fn ensure_png_extension(path: String) -> String {
+fn image_extension(mime_type: &str) -> &'static str {
+    match mime_type.trim().to_ascii_lowercase().as_str() {
+        "image/jpeg" | "image/jpg" => "jpg",
+        "image/webp" => "webp",
+        "image/gif" => "gif",
+        _ => "png",
+    }
+}
+
+fn ensure_extension(path: String, extension: &str) -> String {
     let normalized = path.replace('\\', "/");
-    let extension = std::path::Path::new(&normalized)
+    let existing = std::path::Path::new(&normalized)
         .extension()
         .and_then(|value| value.to_str())
         .unwrap_or("")
         .trim()
         .to_ascii_lowercase();
-    if extension.is_empty() {
-        format!("{normalized}.png")
+    if existing.is_empty() {
+        format!("{normalized}.{extension}")
     } else {
         normalized
     }
 }
 
-pub async fn tool_browser_navigate(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
-    tool_browser(context, TOOL_BROWSER_NAVIGATE, args).await
-}
-
-pub async fn tool_browser_click(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
-    tool_browser(context, TOOL_BROWSER_CLICK, args).await
-}
-
-pub async fn tool_browser_type(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
-    tool_browser(context, TOOL_BROWSER_TYPE, args).await
-}
-
-pub async fn tool_browser_screenshot(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
-    tool_browser(context, TOOL_BROWSER_SCREENSHOT, args).await
-}
-
-pub async fn tool_browser_read_page(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
-    tool_browser(context, TOOL_BROWSER_READ_PAGE, args).await
-}
-
-pub async fn tool_browser_close(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
-    if !browser_tools_enabled(context.config) {
-        return Ok(serde_json::json!({ "ok": true, "closed": true }));
-    }
-    tool_browser(context, TOOL_BROWSER_CLOSE, args).await
-}
-
-fn ensure_browser_available(config: &Config) -> Result<()> {
-    if browser_tools_enabled(config) {
-        return Ok(());
-    }
-    Err(anyhow!(
-        "浏览器工具未启用。请同时开启 tools.browser.enabled，并启用 browser.enabled 或使用 legacy desktop 模式。"
-    ))
-}
-
-fn action_from_tool_name(name: &str) -> Option<&'static str> {
-    match name.trim() {
-        TOOL_BROWSER_NAVIGATE | "browser_navigate" => Some("navigate"),
-        TOOL_BROWSER_CLICK | "browser_click" => Some("click"),
-        TOOL_BROWSER_TYPE | "browser_type" => Some("type"),
-        TOOL_BROWSER_SCREENSHOT | "browser_screenshot" => Some("screenshot"),
-        TOOL_BROWSER_READ_PAGE | "browser_read_page" => Some("read_page"),
-        TOOL_BROWSER_CLOSE | "browser_close" => Some("stop"),
-        TOOL_BROWSER => None,
-        _ => None,
-    }
-}
-
-fn scope_from_context(context: &ToolContext<'_>, args: &Value) -> BrowserSessionScope {
-    BrowserSessionScope {
-        user_id: context.user_id.to_string(),
-        session_id: context.session_id.to_string(),
-        agent_id: context.agent_id.map(ToString::to_string),
-        profile: args
-            .get("profile")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(ToString::to_string),
-        browser_session_id: args
-            .get("browser_session_id")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(ToString::to_string),
-    }
+fn ensure_png_extension(path: String) -> String {
+    ensure_extension(path, "png")
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{ensure_png_extension, sanitize_browser_status_for_model};
+    use super::{
+        browser_tool_names, ensure_png_extension, is_browser_tool_name,
+        sanitize_browser_status_for_model,
+    };
     use serde_json::json;
 
     #[test]
@@ -251,5 +242,18 @@ mod tests {
             ensure_png_extension("browser\\screenshots\\capture.jpg".to_string()),
             "browser/screenshots/capture.jpg"
         );
+    }
+
+    #[test]
+    fn native_surface_replaces_the_legacy_single_tool() {
+        let names = browser_tool_names();
+        assert!(names.iter().any(|name| name == "browser_navigate"));
+        assert!(names.iter().any(|name| name == "browser_take_screenshot"));
+        assert!(is_browser_tool_name("browser_navigate"));
+        assert!(is_browser_tool_name("browser_status"));
+        // The legacy opaque surface is gone.
+        assert!(!is_browser_tool_name("浏览器"));
+        assert!(!is_browser_tool_name("browser"));
+        assert!(!is_browser_tool_name("浏览器导航"));
     }
 }

@@ -51,6 +51,7 @@ pub mod runtime;
 pub mod skill_archive;
 pub mod skills;
 pub mod stream_events;
+pub mod stress_thread;
 pub mod subagents;
 pub mod thread_catalog;
 pub mod thread_change_feeder;

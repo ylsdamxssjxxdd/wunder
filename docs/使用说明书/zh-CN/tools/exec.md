@@ -14,7 +14,7 @@ updated_at: 2026-09-28
 
 - 支持 `dry_run`
 - 支持命令预算与输出守卫
-- 会把误传入的 patch 文本自动拦截到 `apply_patch`
+- 会把误传入的 patch 文本自动拦截到 `文本编辑`（补丁形态）
 
 ## 最小参数
 
@@ -158,7 +158,7 @@ updated_at: 2026-09-28
 
 ## 特殊行为：误把 patch 文本传进来
 
-如果 `content` 里不是命令，而是完整的 `*** Begin Patch ... *** End Patch`，系统会自动转去执行 `apply_patch`，并在结果上补一个字段：
+如果 `content` 里不是命令，而是完整的 `*** Begin Patch ... *** End Patch`，系统会自动转去执行 `文本编辑` 的补丁形态，并在结果上补一个字段：
 
 ```json
 {
@@ -168,6 +168,6 @@ updated_at: 2026-09-28
 
 ## 不适用场景
 
-- 只想小范围改文件：用 [应用补丁](/docs/zh-CN/tools/apply-patch/)
-- 纯 Python 临时程序：用 [ptc](/docs/zh-CN/tools/ptc/)
+- 只想小范围改文件：用 [文本编辑（补丁形态）](/docs/zh-CN/tools/apply-patch/)
+- 纯 Python 临时程序：用 [执行命令](/docs/zh-CN/tools/exec/) 跑脚本（`ptc` 已移除）
 - 只是想读代码：用 [工作区文件](/docs/zh-CN/tools/workspace-files/)

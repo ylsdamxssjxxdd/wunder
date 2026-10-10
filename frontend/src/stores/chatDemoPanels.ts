@@ -337,18 +337,14 @@ export const isRecommendedLabel = (label) => {
   const normalized = String(label || '').trim();
   if (!normalized) return false;
   const lowered = normalized.toLowerCase();
-  const keywords = new Set(['鎺ㄨ崘', 'recommended', t('chat.inquiry.recommended')]);
-  for (const keyword of keywords) {
-    if (!keyword) continue;
-    if (lowered.includes(String(keyword).toLowerCase())) {
-      return true;
-    }
-  }
-  return false;
+  const keywords = ['推荐', 'recommended', t('chat.inquiry.recommended')];
+  return keywords.some(
+    (keyword) => Boolean(keyword) && lowered.includes(String(keyword).toLowerCase())
+  );
 };
 
-export const normalizeInquiryRoutes = (routes) =>
-  (Array.isArray(routes) ? routes : [])
+const normalizeInquiryOptions = (options) =>
+  (Array.isArray(options) ? options : [])
     .map((item) => {
       if (!item) return null;
       if (typeof item === 'string') {
@@ -368,29 +364,39 @@ export const normalizeInquiryRoutes = (routes) =>
     })
     .filter(Boolean);
 
-export const normalizeInquiryPanelPayload = (payload) => {
-  if (!payload || typeof payload !== 'object') return null;
+const normalizeInquiryQuestion = (record) => {
+  if (!record || typeof record !== 'object') return null;
   const question = String(
-    payload.question ?? payload.prompt ?? payload.title ?? payload.header ?? ''
+    record.question ?? record.prompt ?? record.title ?? record.header ?? ''
   ).trim();
-  let normalizedRoutes = normalizeInquiryRoutes(payload.routes);
-  if (!normalizedRoutes.length) {
-    normalizedRoutes = normalizeInquiryRoutes(payload.options);
-  }
-  if (!normalizedRoutes.length) {
-    normalizedRoutes = normalizeInquiryRoutes(payload.choices);
-  }
-  normalizedRoutes = Array.isArray(normalizedRoutes) ? normalizedRoutes.filter(Boolean) : [];
-  if (normalizedRoutes.length === 0) {
-    return null;
-  }
-  const keepOpenRaw = payload.keep_open ?? payload.keepOpen ?? payload.awaiting;
-  const keepOpen = keepOpenRaw === undefined ? true : keepOpenRaw === true;
+  const options = normalizeInquiryOptions(record.options ?? record.routes ?? record.choices);
+  if (!options.length) return null;
   return {
     question: question || t('chat.inquiry.defaultQuestion'),
-    routes: normalizedRoutes,
-    multiple: payload.multiple === true || payload.allow_multiple === true || payload.multi === true,
-    keepOpen
+    options,
+    multiple: record.multiple === true || record.allow_multiple === true || record.multi === true
+  };
+};
+
+/** 面板最多分页展示的问题数，与「问询面板」工具 schema 的 maxItems 对齐。 */
+export const INQUIRY_QUESTION_LIMIT = 4;
+
+export const normalizeInquiryPanelPayload = (payload) => {
+  if (!payload || typeof payload !== 'object') return null;
+  const rawQuestions =
+    Array.isArray(payload.questions) && payload.questions.length
+      ? payload.questions
+      : // 旧版扁平单题写法，历史线程里仍然要能渲染。
+        [payload];
+  const questions = rawQuestions
+    .map(normalizeInquiryQuestion)
+    .filter(Boolean)
+    .slice(0, INQUIRY_QUESTION_LIMIT);
+  if (!questions.length) return null;
+  const keepOpenRaw = payload.keep_open ?? payload.keepOpen ?? payload.awaiting;
+  return {
+    questions,
+    keepOpen: keepOpenRaw === undefined ? true : keepOpenRaw === true
   };
 };
 
@@ -401,6 +407,18 @@ export const normalizeInquiryPanelStatus = (value) => {
   return 'pending';
 };
 
+const normalizeInquiryAnswerList = (answers) =>
+  (Array.isArray(answers) ? answers : [])
+    .map((item) => ({
+      question: String(item?.question ?? '').trim(),
+      labels: (Array.isArray(item?.labels) ? item.labels : [])
+        .map((label) => String(label ?? '').trim())
+        .filter(Boolean),
+      other: String(item?.other ?? '').trim(),
+      noPreference: item?.noPreference === true
+    }))
+    .filter((item) => item.labels.length > 0 || Boolean(item.other) || item.noPreference);
+
 export const normalizeInquiryPanelState = (panel) => {
   const normalized = normalizeInquiryPanelPayload(panel);
   if (!normalized) return null;
@@ -408,7 +426,7 @@ export const normalizeInquiryPanelState = (panel) => {
   const selected = Array.isArray(panel?.selected)
     ? panel.selected.map((item) => String(item || '').trim()).filter(Boolean)
     : [];
-  return { ...normalized, status, selected };
+  return { ...normalized, status, selected, answers: normalizeInquiryAnswerList(panel?.answers) };
 };
 
 export const dismissStaleInquiryPanels = (messages = []) => {
@@ -443,7 +461,7 @@ export const dismissStaleInquiryPanels = (messages = []) => {
 export const isQuestionPanelToolName = (name) => {
   const raw = String(name || '').trim();
   if (!raw) return false;
-  if (raw === '闂闈㈡澘') return true;
+  if (raw === '问询面板') return true;
   const lower = raw.toLowerCase();
   return lower === 'question_panel' || lower === 'ask_panel';
 };

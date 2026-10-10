@@ -89,21 +89,10 @@ pub async fn execute_builtin_tool(
         "会话线程控制" => execute_thread_control_tool(context, args).await,
         web_search_tool::TOOL_WEB_SEARCH => web_search_tool::tool_web_search(context, args).await,
         web_fetch_tool::TOOL_WEB_FETCH => web_fetch_tool::tool_web_fetch(context, args).await,
-        browser_tool::TOOL_BROWSER => {
-            browser_tool::tool_browser(context, browser_tool::TOOL_BROWSER, args).await
+        // Browser calls are routed to the active provider by native tool name.
+        other if browser_tool::is_browser_tool_name(other) => {
+            browser_tool::tool_browser(context, other, args).await
         }
-        browser_tool::TOOL_BROWSER_NAVIGATE => {
-            browser_tool::tool_browser_navigate(context, args).await
-        }
-        browser_tool::TOOL_BROWSER_CLICK => browser_tool::tool_browser_click(context, args).await,
-        browser_tool::TOOL_BROWSER_TYPE => browser_tool::tool_browser_type(context, args).await,
-        browser_tool::TOOL_BROWSER_SCREENSHOT => {
-            browser_tool::tool_browser_screenshot(context, args).await
-        }
-        browser_tool::TOOL_BROWSER_READ_PAGE => {
-            browser_tool::tool_browser_read_page(context, args).await
-        }
-        browser_tool::TOOL_BROWSER_CLOSE => browser_tool::tool_browser_close(context, args).await,
         desktop_control::TOOL_DESKTOP_CONTROLLER => {
             desktop_control::tool_desktop_controller(context, args).await
         }

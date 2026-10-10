@@ -56,9 +56,13 @@ Tool surface 决定了当前线程、当前模型能看到哪些工具。它由�
 | `dispatch.rs` | 工具路由分发 |
 | `context.rs` | 工具上下文 |
 | `tool_error.rs` | 工具错误类型 |
-| `apply_patch_tool.rs` | 文件补丁应用 |
+| `edit_tool.rs` / `str_replace_editor_tool.rs` | 文本编辑 |
+| `apply_patch_tool/` | 结构化补丁（并入文本编辑能力） |
 | `browser_tool.rs` | 浏览器控制 |
-| `channel_tool.rs` | 渠道消息工具 |
+| `command_tool.rs` | 命令执行 |
+| `command_sessions/` | 命令会话 |
+| `glob_tool.rs` | 文件名匹配 |
+| `panel_tools.rs` | 面板工具（问询 / 计划） |
 | `command_options.rs` | 命令选项 |
 | `command_output_guard.rs` | 命令输出守卫 |
 | `desktop_control.rs` | 桌面控制 |
@@ -78,54 +82,61 @@ Tool surface 决定了当前线程、当前模型能看到哪些工具。它由�
 
 ### 5.2 默认启用工具画像
 
-以下“默认启用”按当前 `crates/wunder-runtime/src/services/default_tool_profile.rs` 与 `config/wunder-example.yaml` 整理，表示默认智能体的初始勾选集合，不等于运行时唯一可见工具集合。
+以下“默认启用”按当前 `crates/wunder-runtime/src/services/default_tool_profile.rs` 的 `DEFAULT_BUILTIN_TOOL_NAMES` 整理，表示默认智能体的初始勾选集合，不等于运行时唯一可见工具集合。
 
 | 工具名 | 常用别名 | 主要作用 |
 | --- | --- | --- |
-| `最终回复` | `final_response` | 输出最终答复并结束当前工具链。 |
 | `定时任务` | `schedule_task` | 创建、更新、查询和执行定时任务。 |
 | `记忆管理` | `memory_manager` `memory_manage` | 管理长期记忆条目与记忆状态。 |
 | `执行命令` | `execute_command` | 执行 shell/终端命令。 |
-| `ptc` | `programmatic_tool_call` | 执行程序化工具调用脚本。 |
+| `命令会话` | `command_session` `write_command_stdin` | 轮询长驻命令会话、写入其 stdin。 |
+| `ptc` | `programmatic_tool_call` | 执行程序化工具调用脚本（现已移除，对智能体与用户不可见）。 |
 | `列出文件` | `list_files` | 浏览工作区目录和文件树。 |
+| `glob` | - | 按 glob 模式匹配文件名与路径。 |
 | `搜索内容` | `search_content` | 在文件中按关键字或正则搜索内容。 |
 | `读取文件` | `read_file` | 读取文件全文或指定片段。 |
 | `网页抓取` | `web_fetch` | 抓取网页正文与低噪声摘要。 |
 | `技能调用` | `skill_call` `skill_get` | 读取或调用 Skill 的操作说明与内容。 |
 | `写入文件` | `write_file` | 创建或覆盖文件内容。 |
-| `应用补丁` | `apply_patch` | 以 patch 方式批量修改文件。 |
+| `文本编辑` | `edit_file` `apply_patch` `str_replace_editor` | 精确文本替换与结构化补丁编辑（兼容旧名 `应用补丁`）。 |
+
+说明：`ptc` 虽仍出现在默认名单中，但现已移除，对智能体与用户均不可见；`最终回复`、`a2ui` 属协议型工具，不在默认内建工具档内（`最终回复` 现已移除）。
 
 另有默认技能 `技能创建器`，但它属于 Skill，不计入内置工具总数。
 
 ### 5.3 内置工具全量总表
 
-当前 model-visible 内置工具按 `crates/wunder-runtime/src/services/tools/catalog.rs` 中的 `builtin_tool_specs_with_language()` 统计，共 **37** 个。
+当前 model-visible 内置工具按 `crates/wunder-runtime/src/services/tools/catalog.rs` 中的 `builtin_tool_specs_with_language()` 统计，共 **32** 个 spec（含 `goal` 三件套 `get_goal`/`create_goal`/`update_goal`）。其中 `网页搜索`、`ptc` 现已移除，对智能体与用户均不可见（实现上仍保留 spec 与别名解析，仅从工具面过滤）；下表按现状列出，已移除项在“默认启用”列标注为“已移除”。`最终回复`、`a2ui` 属协议型工具，按终局/UI 协议特判，不在此函数 spec 内（其中 `最终回复` 现已移除）。
 
 | 工具名 | 常用别名 | 类别 | 默认启用 | 说明 |
 | --- | --- | --- | --- | --- |
-| `最终回复` | `final_response` | 回复控制 | 是 | 输出最终答复并结束当前工具链。 |
-| `a2ui` | - | 回复控制 | 否 | 向前端返回结构化 UI 片段与补充内容。 |
-| `计划面板` | `update_plan` | 回复控制 | 否 | 更新任务计划、步骤和进度状态。 |
-| `问询面板` | `question_panel` `ask_panel` | 回复控制 | 否 | 向用户发起路线选择、确认或澄清。 |
+| `最终回复` | `final_response` | 回复控制 | 否（已移除） | 协议型工具；输出最终答复并结束当前工具链（不在内建 spec 表内；现已移除，对智能体与用户不可见）。 |
+| `a2ui` | - | 回复控制 | 否 | 协议型工具；向前端返回结构化 UI 片段与补充内容（不在内建 spec 表内）。 |
+| `计划面板` | `update_plan` | 回复控制 | 否 | 更新任务计划、步骤和进度状态（仅更新展示，无副作用）。 |
+| `问询面板` | `question_panel` `ask_panel` | 回复控制 | 否 | 向用户发起多题问询（questions[] 1–4 题，每题 options[] 1–4 个，含 label/description/recommended 与 multiple），执行后停轮。 |
 | `会话让出` | `sessions_yield` `yield` | 回复控制 | 否 | 让出当前会话，等待外部恢复或继续执行。 |
 | `定时任务` | `schedule_task` | 调度治理 | 是 | 管理 cron/at/every 定时任务。 |
+| `goal` | `get_goal` `create_goal` `update_goal` | 目标管理 | 否 | 读取/创建/更新常驻目标；update 仅允许 status=complete。 |
 | `用户世界工具` | `user_world` | 平台内协作 | 否 | 在 wunder 用户域内列用户、发消息。 |
-| `渠道工具` | `channel_tool` `channel_send` `channel_contacts` | 外部渠道 | 否 | 查询渠道联系人并向外部对象发消息。 |
+| `渠道工具` | `channel_tool` `channel_send` `channel_contacts` | 外部渠道 | 否（已移除） | 查询渠道联系人并向外部对象发消息（现已移除，对智能体与用户不可见）。 |
 | `记忆管理` | `memory_manager` `memory_manage` | 状态与记忆 | 是 | 管理长期记忆条目、写入与删除。 |
-| `a2a观察` | `a2a_observe` | 外部协作 | 否 | 观察 A2A 服务任务状态与事件。 |
-| `a2a等待` | `a2a_wait` | 外部协作 | 否 | 等待 A2A 服务运行结果。 |
+| `a2a观察` | `a2a_observe` | 外部协作 | 否（已移除） | 观察 A2A 服务任务状态与事件（现已移除，对智能体与用户不可见）。 |
+| `a2a等待` | `a2a_wait` | 外部协作 | 否（已移除） | 等待 A2A 服务运行结果（现已移除，对智能体与用户不可见）。 |
 | `执行命令` | `execute_command` | 文件与代码 | 是 | 执行终端命令，受审批、沙盒和白名单控制。 |
-| `ptc` | `programmatic_tool_call` | 文件与代码 | 是 | 执行本地程序化脚本工具。 |
+| `命令会话` | `command_session` `write_command_stdin` | 文件与代码 | 是 | 轮询长驻命令会话、写入其 stdin。 |
+| `ptc` | `programmatic_tool_call` | 文件与代码 | 否（已移除） | 执行本地程序化脚本工具（现已移除，对智能体与用户不可见）。 |
 | `列出文件` | `list_files` | 文件与代码 | 是 | 列出目录结构和文件树。 |
+| `glob` | - | 文件与代码 | 是 | 按 glob 模式匹配文件名与路径。 |
 | `搜索内容` | `search_content` | 文件与代码 | 是 | 搜索代码、配置或文本内容。 |
 | `读取文件` | `read_file` | 文件与代码 | 是 | 读取文件全文、多段范围或缩进块。 |
 | `读图工具` | `read_image` `view_image` | 文件与代码 | 否 | 读取本地图片供视觉模型理解。 |
+| `文本编辑` | `edit_file` `apply_patch` `str_replace_editor` | 文件与代码 | 是 | 精确文本替换与结构化 patch 修改（兼容旧名 `应用补丁`）。 |
 | `技能调用` | `skill_call` `skill_get` | 能力组织 | 是 | 读取 Skill 手册或调起技能能力。 |
 | `写入文件` | `write_file` | 文件与代码 | 是 | 写入、创建或覆盖文件。 |
-| `应用补丁` | `apply_patch` | 文件与代码 | 是 | 以结构化 patch 修改一个或多个文件。 |
 | `子智能体控制` | `subagent_control` | 智能体协作 | 否 | 派生、发送、等待单个子智能体。 |
 | `会话线程控制` | `thread_control` `session_thread` | 智能体协作 | 否 | 枚举、切换、创建和等待会话线程。 |
 | `网页抓取` | `web_fetch` | 外部信息 | 是 | 抓取网页正文、链接与页面摘要。 |
+| `网页搜索` | `web_search` | 外部信息 | 否（已移除） | 关键词搜索公开网页（现已移除，对智能体与用户不可见）；需要正文改用 `网页抓取`。 |
 | `浏览器` | `browser` `browser_tool` | 外部信息 | 否 | 控制浏览器会话、页面导航、交互与截图；兼容 `browser_navigate`、`browser_click`、`browser_type`、`browser_screenshot`、`browser_read_page`、`browser_close`。 |
 | `桌面控制器` | `desktop_controller` `controller` | 桌面能力 | 否 | 执行桌面点击、输入、快捷键等控制动作。 |
 | `桌面监视器` | `desktop_monitor` `monitor` | 桌面能力 | 否 | 监视桌面画面、截图和变化状态。 |

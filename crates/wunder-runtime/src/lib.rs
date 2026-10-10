@@ -30,6 +30,7 @@ pub use ops::{benchmark, monitor, performance, throughput};
 pub use orchestrator::constants as orchestrator_constants;
 pub use services::runtime::thread::{ThreadCancelSettlement, ThreadSubmitOutcome};
 pub use services::skill_archive;
+pub use services::stress_thread::{validate_stress_params, MAX_MODEL_ROUNDS, MAX_USER_ROUNDS};
 pub use services::subagents::list_parent_subagents;
 pub use services::thread_catalog::{
     StatusSignals, ThreadCatalogService, ThreadListQuery, ThreadPage, ThreadPendingReason,

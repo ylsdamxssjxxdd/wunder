@@ -24,7 +24,7 @@ use args::{
     DoctorCommand, ExecCommand, GlobalArgs, McpAddCommand, McpCommand, McpGetCommand,
     McpListCommand, McpLoginCommand, McpNameCommand, McpSubcommand, ResumeCommand,
     SkillNameCommand, SkillsCommand, SkillsListCommand, SkillsSubcommand, SkillsUploadCommand,
-    ToolCallModeArg, ToolCommand, ToolRunCommand, ToolSubcommand,
+    StressThreadCommand, ToolCallModeArg, ToolCommand, ToolRunCommand, ToolSubcommand,
 };
 use chrono::{Local, TimeZone};
 use clap::CommandFactory;
@@ -122,6 +122,7 @@ fn dispatch_command<'a>(
         Command::Mcp(cmd) => Box::pin(handle_mcp(runtime, global, cmd)),
         Command::Skills(cmd) => Box::pin(handle_skills(runtime, global, cmd)),
         Command::Config(cmd) => Box::pin(handle_config(runtime, global, cmd)),
+        Command::StressThread(cmd) => Box::pin(handle_stress_thread(runtime, global, cmd)),
         Command::Doctor(cmd) => Box::pin(handle_doctor(runtime, global, cmd)),
         Command::Cloud(cmd) => Box::pin(cloud_command::handle_cloud(runtime, global, cmd)),
         Command::Completion(cmd) => Box::pin(handle_completion(cmd)),
@@ -131,6 +132,59 @@ fn dispatch_command<'a>(
 async fn handle_completion(command: CompletionCommand) -> Result<()> {
     let mut cmd = Cli::command();
     generate(command.shell, &mut cmd, "wunder-cli", &mut io::stdout());
+    Ok(())
+}
+
+/// 生成线程渲染压测线程：同步批量写入本地库，进度按固定间隔打到 stderr。
+async fn handle_stress_thread(
+    runtime: &CliRuntime,
+    _global: &GlobalArgs,
+    command: StressThreadCommand,
+) -> Result<()> {
+    wunder_server::validate_stress_params(command.user_rounds, command.model_rounds)
+        .map_err(|message| anyhow!("{message}"))?;
+    let config = runtime.state.config_store.get().await;
+    let db_path = config.storage.db_path.clone();
+    drop(config);
+    let user_id = runtime.user_id.clone();
+    let title = command
+        .title
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| {
+            format!(
+                "渲染压测 {}×{}",
+                command.user_rounds, command.model_rounds
+            )
+        });
+    let spec = wunder_server::storage::StressThreadSpec {
+        session_id: uuid::Uuid::new_v4().to_string(),
+        title: title.clone(),
+        user_rounds: command.user_rounds,
+        model_rounds_per_turn: command.model_rounds,
+    };
+    let report_every = (command.user_rounds / 50).clamp(1, 100);
+    let started = std::time::Instant::now();
+    let stats = tokio::task::spawn_blocking(move || {
+        let storage = wunder_server::storage::SqliteStorage::new(db_path);
+        storage.generate_stress_thread(&user_id, &spec, |done, items| {
+            if done % report_every == 0 {
+                eprint!("\r  已生成 {done} 用户轮次 / {items} 条消息…");
+                let _ = io::stderr().flush();
+            }
+        })
+    })
+    .await
+    .map_err(|error| anyhow!("生成线程崩溃: {error}"))?;
+    let elapsed = started.elapsed();
+    eprintln!();
+    let stats = stats.map_err(|error| anyhow!("生成失败: {error}"))?;
+    println!("会话已生成：{title}");
+    println!("  会话 ID: {}", stats.session_id);
+    println!("  用户轮次: {}", stats.user_turns);
+    println!("  消息条目: {}", stats.items);
+    println!("  工具调用: {}", stats.tool_calls);
+    println!("  耗时: {:.1}s", elapsed.as_secs_f64());
     Ok(())
 }
 

@@ -9,7 +9,7 @@ source_docs:
   - src/services/tools/catalog.rs
   - src/services/tools/tool_error.rs
   - docs/工具返回内容优化表.md
-updated_at: 2026-04-10
+updated_at: 2026-10-10
 ---
 
 # 工具总览
@@ -105,9 +105,9 @@ wunder 的内置工具大多收敛到统一返回骨架，不再是每个工具�
 
 下面这些工具要单独记：
 
-### `final_response`
+### `final_response`（已移除）
 
-它是一个非常薄的终结信号：
+该工具已从 wunder 中移除，对智能体与用户均不可见；以下为其历史返回结构，仅供排查参考：
 
 ```json
 {
@@ -149,13 +149,13 @@ wunder 的内置工具大多收敛到统一返回骨架，不再是每个工具�
 }
 ```
 
-### `browser`
+### 浏览器工具组（`browser_*`）
 
-浏览器工具主要透传浏览器运行时返回，成功时通常会有 `ok: true`，但不一定带统一的 `summary/data` 外壳。不同动作的字段差异很大。
+浏览器不再是单个工具，而是一组以 `browser_` 开头的原生工具（共 17 个，如 `browser_navigate`、`browser_click`、`browser_take_screenshot`，详见 [浏览器](/docs/zh-CN/tools/browser/)）。成功结果采用 MCP 风格内容块结构（`content` + `provider` 字段），不使用统一的 `ok/action/state/summary/data` 骨架。
 
-### `web_search`
+### `web_search`（已移除）
 
-`web_search` 用关键词搜索公开网页。它默认不启用，需要先配置可用搜索 provider。启用后成功返回统一骨架，结果在 `data.results`：
+`web_search` 曾用于用关键词搜索公开网页，结果在 `data.results`。**该工具已移除，对智能体与用户不可见**；以下为其历史返回结构，仅供排查参考：
 
 ```json
 {
@@ -177,7 +177,7 @@ wunder 的内置工具大多收敛到统一返回骨架，不再是每个工具�
 }
 ```
 
-它用于找候选 URL。需要验证来源或阅读正文时，再把具体 URL 交给 `web_fetch`。
+历史上它用于找候选 URL；现已移除，需要网页正文时直接用 `web_fetch`。
 
 ### `web_fetch`
 
@@ -201,15 +201,15 @@ wunder 的内置工具大多收敛到统一返回骨架，不再是每个工具�
 }
 ```
 
-### `apply_patch`
+### `文本编辑`（旧名 `apply_patch`）
 
-`apply_patch` 成功时已经走统一骨架，但失败时会有自己额外的 patch 错误码和 hint，错误语义比普通文件工具更严格。
+`文本编辑`（canonical `edit_file2`）成功时走统一骨架；其 `apply_patch` 形态失败时会有自己额外的 patch 错误码和 hint，错误语义比普通文件工具更严格。
 
 ## 工具分层
 
 ### 1. 基础收尾与前端协同
 
-- [最终回复](/docs/zh-CN/tools/final-response/)
+- [最终回复（已移除）](/docs/zh-CN/tools/final-response/)
 - [面板与 a2ui](/docs/zh-CN/tools/panels-and-a2ui/)
 - [会话让出](/docs/zh-CN/tools/sleep/)：`sessions_yield` 归入回合控制思路
 
@@ -217,8 +217,8 @@ wunder 的内置工具大多收敛到统一返回骨架，不再是每个工具�
 
 - [工作区文件](/docs/zh-CN/tools/workspace-files/)
 - [执行命令](/docs/zh-CN/tools/exec/)
-- [应用补丁](/docs/zh-CN/tools/apply-patch/)
-- [ptc](/docs/zh-CN/tools/ptc/)
+- [应用补丁（已并入 文本编辑）](/docs/zh-CN/tools/apply-patch/)
+- [ptc（已移除）](/docs/zh-CN/tools/ptc/)
 - [技能调用](/docs/zh-CN/tools/skill-call/)
 - [读图工具](/docs/zh-CN/tools/read-image/)
 
@@ -238,15 +238,15 @@ wunder 的内置工具大多收敛到统一返回骨架，不再是每个工具�
 - [自我状态](/docs/zh-CN/tools/self-status/)
 - [记忆管理](/docs/zh-CN/tools/memory-manager/)
 - [用户世界工具](/docs/zh-CN/tools/user-world/)
-- [渠道工具](/docs/zh-CN/tools/channel/)
-- [A2A 工具](/docs/zh-CN/tools/a2a-tools/)
+- [渠道工具（已移除）](/docs/zh-CN/tools/channel/)
+- [A2A 工具（已移除）](/docs/zh-CN/tools/a2a-tools/)
 - [定时任务](/docs/zh-CN/tools/schedule-task/)
 
 ## 选型建议
 
 ### 只有关键词，需要找网页来源
 
-先用 [网页抓取](/docs/zh-CN/tools/web-fetch/) 中的 `web_search` 找候选 URL，再抓具体页面。
+`web_search` 已移除；直接给出 URL 时用 [网页抓取](/docs/zh-CN/tools/web-fetch/) 读取正文即可。
 
 ### 只读网页正文
 
@@ -265,12 +265,12 @@ wunder 的内置工具大多收敛到统一返回骨架，不再是每个工具�
 
 ### 要改代码
 
-- 小而精确的修改：用 [应用补丁](/docs/zh-CN/tools/apply-patch/)
-- 一次精确文本替换：用 [工作区文件](/docs/zh-CN/tools/workspace-files/) 里的 `edit_file2`
-- 复杂替换逻辑：用 [ptc](/docs/zh-CN/tools/ptc/) 或 `programmatic_tool_call` 写 Python 脚本
+- 小而精确、带上下文匹配的修改：用 [应用补丁（已并入 文本编辑）](/docs/zh-CN/tools/apply-patch/)（即 `文本编辑` 的 patch 形态）
+- 一次精确文本替换：用 [工作区文件](/docs/zh-CN/tools/workspace-files/) 里的 `文本编辑`（`edit_file2`）
+- 复杂替换逻辑：用 [执行命令](/docs/zh-CN/tools/exec/) 跑脚本（`ptc` 已移除）
 - 整文件重写：用 [工作区文件](/docs/zh-CN/tools/workspace-files/) 里的 `write_file`
 - 要编译、测试、跑脚本：用 [执行命令](/docs/zh-CN/tools/exec/)
-- 纯 Python 临时程序：用 [ptc](/docs/zh-CN/tools/ptc/)
+- 纯 Python 临时程序：优先用 [执行命令](/docs/zh-CN/tools/exec/)（`ptc` 已移除）
 
 ### 要做协作
 
@@ -283,7 +283,7 @@ wunder 的内置工具大多收敛到统一返回骨架，不再是每个工具�
 - `data` 成为主要结果承载区
 - 很多工具的 schema 明显收紧，模型侧更强调扁平、显式、`additionalProperties: false`
 - `subagent_control`、`thread_control` 都已经转成“动作明确、状态明确、后续 hint 明确”的风格
-- `schedule_task`、`browser`、`web_fetch`、`final_response`、`a2ui` 仍然属于需要单独记忆的例外
+- `schedule_task`、浏览器工具组（`browser_*`）、`web_fetch`、`a2ui` 仍然属于需要单独记忆的例外
 
 ## 下一步
 

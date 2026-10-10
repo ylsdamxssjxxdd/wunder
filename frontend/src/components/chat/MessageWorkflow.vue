@@ -107,8 +107,9 @@ const formatWorkflowTitle = (rawTitle: unknown) => {
   if (!title) return '';
   if (title === '模型输出') return t('chat.workflow.modelOutput');
   if (title === '最终回复') return t('chat.workflow.finalResponse');
-  if (title === '问询面板') return t('chat.workflow.questionPanel');
-  if (title === '计划更新') return t('chat.workflow.planUpdate');
+  // runtime 投影对这两类事件给的是英文标题，历史线程里是中文，两种都要能翻。
+  if (title === '问询面板' || title === 'Question panel') return t('chat.workflow.questionPanel');
+  if (title === '计划更新' || title === 'Plan update') return t('chat.workflow.planUpdate');
   if (title === '模型请求体') return t('chat.workflow.modelRequest');
   if (title === '模型请求摘要') return t('chat.workflow.modelRequestSummary');
   if (title === '进度更新') return t('chat.workflow.progressUpdate');

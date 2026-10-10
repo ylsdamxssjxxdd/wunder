@@ -106,7 +106,7 @@ These endpoints can all be mounted under the same service domain—don't wait un
 
 The admin-side system status CPU, memory, process, load, and disk metrics depend on the `host-metrics` Rust feature, and the `web_fetch` tool depends on the `web-fetch` feature. Compose now defaults to `WUNDER_SERVER_FEATURES=mcp,host-metrics,web-fetch`; if you override this variable in `.env`, keep both `host-metrics` and `web-fetch` or host resource metrics will degrade to zero values and the user-side agent tool list will not show `web_fetch`.
 
-The admin-side Firecrawl settings are also synced to `web_search`. When the fetch provider is `firecrawl`, or is `auto` with a Firecrawl API key/custom URL configured, the user-side agent tool list will show `web_search`.
+The admin-side Firecrawl settings are also synced to `web_search`. However, `web_search` has been removed, so the user-side agent tool list will not show it even when the fetch provider is `firecrawl` (or is `auto` with a Firecrawl API key/custom URL configured).
 
 ## Browser Runtime Under Docker
 
@@ -126,7 +126,7 @@ Current Compose keeps the `wunder-sandbox` container root filesystem writable by
 - Put long-term business data into the `config/data/` runtime directory
 - Admin system status resource metrics show zero because `WUNDER_SERVER_FEATURES` was overridden without `host-metrics`
 - User-side agents do not show `web_fetch` because `WUNDER_SERVER_FEATURES` was overridden without `web-fetch`
-- User-side agents do not show `web_search` because Firecrawl search provider is not enabled
+- User-side agents do not show `web_search` because `web_search` has been removed (independent of Firecrawl configuration) — this is expected
 - Sandbox file tools still fail with `Read-only file system` because an old `wunder-sandbox` container was created with Docker `read_only: true`
 - Mistakenly treated desktop local mode as a server deployment method
 

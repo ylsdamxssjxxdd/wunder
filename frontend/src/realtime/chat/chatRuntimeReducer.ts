@@ -6136,31 +6136,69 @@ const normalizeProjectedPlanStatus = (value: unknown): string => {
   return 'pending';
 };
 
+// 面板最多分页展示的问题数，与「问询面板」工具 schema 的 maxItems 对齐。
+const INQUIRY_QUESTION_LIMIT = 4;
+
 const normalizeProjectedQuestionPanel = (
   payload: Record<string, unknown>
 ): Record<string, unknown> | null => {
-  const routes =
-    normalizeProjectedInquiryRoutes(payload.routes).length > 0
-      ? normalizeProjectedInquiryRoutes(payload.routes)
-      : normalizeProjectedInquiryRoutes(payload.options).length > 0
-        ? normalizeProjectedInquiryRoutes(payload.options)
-        : normalizeProjectedInquiryRoutes(payload.choices);
-  if (routes.length === 0) return null;
+  const rawQuestions =
+    Array.isArray(payload.questions) && payload.questions.length > 0
+      ? payload.questions
+      : // 旧版扁平单题写法，历史线程里仍然要能渲染。
+        [payload];
+  const questions = rawQuestions
+    .map((item) => normalizeProjectedInquiryQuestion(asRecord(item)))
+    .filter((item): item is Record<string, unknown> => Boolean(item))
+    .slice(0, INQUIRY_QUESTION_LIMIT);
+  if (questions.length === 0) return null;
   const keepOpenRaw = payload.keep_open ?? payload.keepOpen ?? payload.awaiting;
   return {
-    question: firstText(payload.question, payload.prompt, payload.title, payload.header) || 'Please choose one option',
-    routes,
-    multiple: payload.multiple === true || payload.allow_multiple === true || payload.multi === true,
+    questions,
     keepOpen: keepOpenRaw === undefined ? true : keepOpenRaw === true,
     status: normalizeProjectedInquiryStatus(payload.status),
     selected: Array.isArray(payload.selected)
       ? payload.selected.map((item) => firstText(item)).filter(Boolean)
-      : []
+      : [],
+    answers: normalizeProjectedInquiryAnswers(payload.answers)
   };
 };
 
-const normalizeProjectedInquiryRoutes = (routes: unknown): Array<Record<string, unknown>> =>
-  (Array.isArray(routes) ? routes : [])
+const normalizeProjectedInquiryQuestion = (
+  record: Record<string, unknown>
+): Record<string, unknown> | null => {
+  const options = normalizeProjectedInquiryOptions(
+    record.options ?? record.routes ?? record.choices
+  );
+  if (options.length === 0) return null;
+  return {
+    question: firstText(record.question, record.prompt, record.title, record.header) || 'Please choose one option',
+    options,
+    multiple:
+      normalizeFlag(record.multiple) || normalizeFlag(record.allow_multiple) || normalizeFlag(record.multi)
+  };
+};
+
+const normalizeProjectedInquiryAnswers = (answers: unknown): Array<Record<string, unknown>> =>
+  (Array.isArray(answers) ? answers : [])
+    .map((item) => {
+      const record = asRecord(item);
+      return {
+        question: firstText(record.question),
+        labels: (Array.isArray(record.labels) ? record.labels : [])
+          .map((label) => firstText(label))
+          .filter(Boolean),
+        other: firstText(record.other),
+        noPreference: normalizeFlag(record.noPreference) || normalizeFlag(record.no_preference)
+      };
+    })
+    .filter(
+      (item) =>
+        item.labels.length > 0 || Boolean(item.other) || Boolean(item.noPreference)
+    );
+
+const normalizeProjectedInquiryOptions = (options: unknown): Array<Record<string, unknown>> =>
+  (Array.isArray(options) ? options : [])
     .map((item): Record<string, unknown> | null => {
       if (typeof item === 'string') {
         const label = item.trim();

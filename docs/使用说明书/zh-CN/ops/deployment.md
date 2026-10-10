@@ -87,7 +87,7 @@ summary: 部署前先想清楚用哪种形态、准备什么环境。舰体（se
 
 管理员侧系统状态中的 CPU、内存、进程、负载和磁盘指标依赖 `host-metrics` 编译特性，`网页抓取` 依赖 `web-fetch` 编译特性。当前 Compose 默认使用 `WUNDER_SERVER_FEATURES=mcp,host-metrics,web-fetch`；如果在 `.env` 中手动覆盖该变量，需要保留 `host-metrics` 和 `web-fetch`，否则系统资源指标会以 0 值降级显示，或用户侧智能体工具列表不会显示 `网页抓取`。
 
-管理员侧 Firecrawl 设置会同步给 `网页搜索`：当抓取 provider 为 `firecrawl`，或为 `auto` 且已经配置 Firecrawl API Key/自定义地址时，用户侧智能体工具列表会显示 `网页搜索`。
+管理员侧 Firecrawl 设置会同步给 `网页搜索`；不过 `网页搜索`（web_search）已移除，即使抓取 provider 为 `firecrawl`（或为 `auto` 且已配置 Firecrawl API Key/自定义地址），用户侧智能体工具列表也不会显示它。
 
 ### Docker 下的浏览器
 
@@ -116,7 +116,7 @@ summary: 部署前先想清楚用哪种形态、准备什么环境。舰体（se
 | 临时文件堆积 | 没有清理策略 | 配置定期清理任务 |
 | 舰桥系统状态资源指标为 0 | `WUNDER_SERVER_FEATURES` 覆盖后缺少 `host-metrics` | 恢复为 `mcp,host-metrics,web-fetch` 并重建 server/sandbox |
 | 用户侧看不到网页抓取 | `WUNDER_SERVER_FEATURES` 覆盖后缺少 `web-fetch` | 恢复为 `mcp,host-metrics,web-fetch` 并重建 server/sandbox |
-| 用户侧看不到网页搜索 | Firecrawl 搜索 provider 未启用 | 在管理员侧将网页抓取 provider 设为 `firecrawl`，或使用 `auto` 并配置 Firecrawl 地址/API Key |
+| 用户侧看不到网页搜索 | `网页搜索` 已移除（与 Firecrawl 配置无关） | 属于当前预期行为，无需处理 |
 | 浏览器工具不可用 | Docker 未安装 Chromium | 检查镜像构建配置 |
 | 文件工具根路径写入失败 | sandbox 容器仍是只读根文件系统 | 确认 `WUNDER_SANDBOX_DOCKER_READ_ONLY=false` 并重建 sandbox 容器 |
 

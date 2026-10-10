@@ -3854,12 +3854,21 @@ test('canonical plan and question panel events project visible display state', (
       data: {
         user_round: 1,
         model_round: 1,
-        question: 'Pick a route',
-        routes: [
-          { label: 'Fast', description: 'Use default settings', recommended: true },
-          { label: 'Careful', description: 'Use extended checks' }
-        ],
-        multiple: false
+        questions: [
+          {
+            question: 'Pick a route',
+            options: [
+              { label: 'Fast', description: 'Use default settings', recommended: true },
+              { label: 'Careful', description: 'Use extended checks' }
+            ],
+            multiple: false
+          },
+          {
+            question: 'Which checks',
+            options: [{ label: 'Unit' }, { label: 'E2E' }],
+            multiple: true
+          }
+        ]
       }
     }
   }).forEach((event) => applyChatRuntimeEvent(projection, event));
@@ -3870,12 +3879,46 @@ test('canonical plan and question panel events project visible display state', (
   assert.equal(assistant.display?.plan?.explanation, 'planned route');
   assert.equal(Array.isArray((assistant.display?.plan as { steps?: unknown[] } | undefined)?.steps), true);
   assert.equal((assistant.display?.plan as { steps?: Array<{ status?: string }> })?.steps?.[1]?.status, 'in_progress');
-  assert.equal(assistant.display?.questionPanel?.question, 'Pick a route');
   assert.equal((assistant.display?.questionPanel as { status?: string })?.status, 'pending');
-  assert.equal((assistant.display?.questionPanel as { routes?: Array<{ label?: string; recommended?: boolean }> })?.routes?.[0]?.label, 'Fast');
-  assert.equal((assistant.display?.questionPanel as { routes?: Array<{ label?: string; recommended?: boolean }> })?.routes?.[0]?.recommended, true);
+  const panelQuestions = (assistant.display?.questionPanel as {
+    questions?: Array<{ question?: string; multiple?: boolean; options?: Array<{ label?: string; recommended?: boolean }> }>;
+  })?.questions;
+  assert.equal(panelQuestions?.length, 2);
+  assert.equal(panelQuestions?.[0]?.question, 'Pick a route');
+  assert.equal(panelQuestions?.[0]?.multiple, false);
+  assert.equal(panelQuestions?.[0]?.options?.[0]?.label, 'Fast');
+  assert.equal(panelQuestions?.[0]?.options?.[0]?.recommended, true);
+  assert.equal(panelQuestions?.[1]?.multiple, true);
   assert.equal(assistant.workflowItems?.some((item) => item.eventType === 'plan_update'), true);
   assert.equal(assistant.workflowItems?.some((item) => item.eventType === 'question_panel'), true);
+});
+
+test('legacy flat question panel payload still projects as a single question', () => {
+  const projection = createChatRuntimeProjection();
+
+  buildCanonicalChatRuntimeEvents({
+    sessionId: 'session-1',
+    eventType: 'question_panel',
+    eventId: 52,
+    requestId: 'req-panels-legacy',
+    payload: {
+      data: {
+        user_round: 1,
+        model_round: 1,
+        question: 'Legacy route pick',
+        routes: [{ label: 'Keep' }, { label: 'Rewrite（推荐）' }]
+      }
+    }
+  }).forEach((event) => applyChatRuntimeEvent(projection, event));
+
+  const visible = selectVisibleMessageProjections(projection, 'session-1');
+  const assistant = visible.find((message) => message.role === 'assistant');
+  const questions = (assistant?.display?.questionPanel as {
+    questions?: Array<{ question?: string; options?: Array<{ label?: string; recommended?: boolean }> }>;
+  })?.questions;
+  assert.equal(questions?.length, 1);
+  assert.equal(questions?.[0]?.question, 'Legacy route pick');
+  assert.equal(questions?.[0]?.options?.[1]?.recommended, true);
 });
 
 test('canonical usage and context events project assistant stats display state', () => {

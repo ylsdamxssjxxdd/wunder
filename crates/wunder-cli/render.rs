@@ -681,50 +681,79 @@ fn render_question_panel_lines(payload: &Value, to_stderr: bool) -> bool {
             println!("{line}");
         }
     };
-    let question = payload
-        .get("question")
-        .or_else(|| payload.get("prompt"))
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .trim()
-        .to_string();
-    let routes = payload
-        .get("routes")
-        .or_else(|| payload.get("options"))
-        .or_else(|| payload.get("choices"))
-        .and_then(Value::as_array);
-    let has_routes = routes.map(|value| !value.is_empty()).unwrap_or(false);
-    if !has_routes && question.is_empty() {
+    let raw_items: Vec<Value> = match payload.get("questions").and_then(Value::as_array) {
+        Some(items) if !items.is_empty() => items.clone(),
+        // 旧版扁平单题写法（含历史线程里已落盘的面板）。
+        _ => vec![payload.clone()],
+    };
+    let mut questions: Vec<(String, Vec<Value>, bool)> = Vec::new();
+    for item in raw_items {
+        let question = item
+            .get("question")
+            .or_else(|| item.get("prompt"))
+            .or_else(|| item.get("title"))
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let options = item
+            .get("options")
+            .or_else(|| item.get("routes"))
+            .or_else(|| item.get("choices"))
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let multiple = item
+            .get("multiple")
+            .or_else(|| item.get("allow_multiple"))
+            .or_else(|| item.get("multi"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        if question.is_empty() && options.is_empty() {
+            continue;
+        }
+        questions.push((question, options, multiple));
+    }
+    if questions.is_empty() {
         return false;
     }
 
-    let is_zh = looks_like_zh(question.as_str())
-        || routes
-            .map(|items| {
-                items.iter().any(|item| {
-                    item.get("label")
-                        .or_else(|| item.get("title"))
-                        .or_else(|| item.get("name"))
-                        .and_then(Value::as_str)
-                        .map(looks_like_zh)
-                        .unwrap_or(false)
-                })
+    let is_zh = questions.iter().any(|(question, options, _)| {
+        looks_like_zh(question.as_str())
+            || options.iter().any(|item| {
+                item.get("label")
+                    .or_else(|| item.get("title"))
+                    .or_else(|| item.get("name"))
+                    .and_then(Value::as_str)
+                    .map(looks_like_zh)
+                    .unwrap_or(false)
             })
-            .unwrap_or(false);
-    let display_question = if question.is_empty() {
-        if is_zh {
-            "请选择一条路线继续"
-        } else {
-            "Choose a route to continue"
-        }
-    } else {
-        question.as_str()
-    };
-    emit(format!("[question_panel] {display_question}"));
+    });
 
-    if let Some(routes) = routes {
-        for (index, route) in routes.iter().enumerate() {
-            let (label, description, recommended) = match route {
+    let question_total = questions.len();
+    let mut number = 0usize;
+    for (index, (question, options, multiple)) in questions.iter().enumerate() {
+        let mut heading = if question.is_empty() {
+            if is_zh {
+                "请选择一条路线继续".to_string()
+            } else {
+                "Choose a route to continue".to_string()
+            }
+        } else if question_total > 1 {
+            if is_zh {
+                format!("问题 {}/{}：{}", index + 1, question_total, question)
+            } else {
+                format!("Question {}/{}: {}", index + 1, question_total, question)
+            }
+        } else {
+            question.clone()
+        };
+        if *multiple {
+            heading.push_str(if is_zh { "（可多选）" } else { " (multi-select)" });
+        }
+        emit(format!("[question_panel] {heading}"));
+        for option in options {
+            let (label, description, recommended) = match option {
                 Value::String(value) => (value.trim().to_string(), String::new(), false),
                 Value::Object(map) => {
                     let label = map
@@ -756,6 +785,7 @@ fn render_question_panel_lines(payload: &Value, to_stderr: bool) -> bool {
             if label.is_empty() {
                 continue;
             }
+            number += 1;
             let recommended_tag = if recommended {
                 if is_zh {
                     "（推荐）"
@@ -766,16 +796,12 @@ fn render_question_panel_lines(payload: &Value, to_stderr: bool) -> bool {
                 ""
             };
             if description.is_empty() {
-                emit(format!("  {}. {}{}", index + 1, label, recommended_tag));
+                emit(format!("  {}. {}{}", number, label, recommended_tag));
             } else {
                 let separator = if is_zh { "：" } else { ": " };
                 emit(format!(
                     "  {}. {}{}{}{}",
-                    index + 1,
-                    label,
-                    recommended_tag,
-                    separator,
-                    description
+                    number, label, recommended_tag, separator, description
                 ));
             }
         }

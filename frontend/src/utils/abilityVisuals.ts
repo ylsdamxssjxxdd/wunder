@@ -52,11 +52,11 @@ const ABILITY_RULES: AbilityRule[] = [
   { keywords: ['update_plan', 'plan board', '计划面板', '计划看板'], icon: 'fa-table-columns', tone: 'automation' },
   { keywords: ['question_panel', 'ask_panel', 'question panel', '问询面板'], icon: 'fa-circle-question', tone: 'general' },
   {
-    keywords: ['browser_navigate', 'browser_click', 'browser_type', 'browser_screenshot', 'browser_read_page'],
+    keywords: ['browser_navigate', 'browser_navigate_back', 'browser_tabs', 'browser_snapshot', 'browser_click', 'browser_type', 'browser_hover', 'browser_select_option', 'browser_drag', 'browser_press_key', 'browser_evaluate', 'browser_wait_for', 'browser_take_screenshot', 'browser_read_page', 'browser_batch', 'browser_close', 'browser_status'],
     icon: 'fa-window-maximize',
     tone: 'search'
   },
-  { keywords: ['browser', '浏览器'], icon: 'fa-window-maximize', tone: 'search' },
+  { keywords: ['browser_'], icon: 'fa-window-maximize', tone: 'search' },
   { keywords: ['a2a_observe', 'a2a observe', 'a2a观察'], icon: 'fa-glasses', tone: 'automation' },
   { keywords: ['a2a_wait', 'a2a wait', 'a2a等待'], icon: 'fa-clock', tone: 'automation' },
   { keywords: ['subagent_control', '子智能体控制'], icon: 'fa-diagram-project', tone: 'automation' },

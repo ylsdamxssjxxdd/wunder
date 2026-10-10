@@ -270,9 +270,9 @@ updated_at: 2026-04-10
 
 ### 不适用场景
 
-- 要做复杂替换、正则替换、跨多段编辑或带条件逻辑时，改用 `programmatic_tool_call` 写 Python 脚本。
+- 要做复杂替换、正则替换、跨多段编辑或带条件逻辑时，改用 `执行命令` 写 Python 脚本（`ptc` 已移除）。
 - 要整文件生成或覆盖时，改用 `write_file`。
-- 要小范围代码补丁且需要上下文审查时，改用 [应用补丁](/docs/zh-CN/tools/apply-patch/)。
+- 要小范围代码补丁且需要上下文审查时，改用 [文本编辑（补丁形态）](/docs/zh-CN/tools/apply-patch/)。
 
 ## `write_file`
 
@@ -313,7 +313,7 @@ updated_at: 2026-04-10
 
 ### 不适用场景
 
-- 小范围精确修改代码，不要用 `write_file`，改用 [应用补丁](/docs/zh-CN/tools/apply-patch/)
+- 小范围精确修改代码，不要用 `write_file`，改用 [文本编辑（补丁形态）](/docs/zh-CN/tools/apply-patch/)
 - 要执行脚本、跑构建，不要用它，改用 [执行命令](/docs/zh-CN/tools/exec/)
 
 ## 失败返回的阅读

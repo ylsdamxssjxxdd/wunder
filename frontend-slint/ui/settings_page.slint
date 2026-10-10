@@ -120,6 +120,12 @@ export component SettingsPage inherits Rectangle {
     callback pick-python-path();
     callback pick-git-path();
     callback pick-rg-path();
+    // ---- 线程渲染压测：用户手动触发，写入本地库一条模拟线程 ----
+    in-out property <bool> stress-running: false;
+    in-out property <string> stress-user-rounds: "1000";
+    in-out property <string> stress-model-rounds: "1000";
+    in-out property <string> stress-status;
+    callback generate-stress-thread();
     in-out property <bool> lan-enabled: false;
     in-out property <string> lan-name;
     in property <string> lan-peer-id;
@@ -865,6 +871,21 @@ export component SettingsPage inherits Rectangle {
                                         toggled => { root.cloud-toggle-sync(root.cloud-sync-enabled); }
                                     }
                                 }
+                            }
+                            // ---- 线程渲染压测（用户手动触发） ----
+                            SettingsCard {
+                                SettingsCardHeader { title: I18n.st_stress_title; subtitle: I18n.st_stress_note; }
+                                HorizontalLayout { spacing: 10px;
+                                    FormField { horizontal-stretch: 1; label: I18n.st_stress_user_rounds; placeholder: "1000"; text <=> root.stress-user-rounds; read-only: root.stress-running || root.saving || root.loading; }
+                                    FormField { horizontal-stretch: 1; label: I18n.st_stress_model_rounds; placeholder: "1000"; text <=> root.stress-model-rounds; read-only: root.stress-running || root.saving || root.loading; }
+                                }
+                                Text { height: 18px; text: I18n.st_stress_hint; color: Theme.muted; font-size: Theme.font-xs; overflow: elide; }
+                                Rectangle { height: 8px; }
+                                HorizontalLayout { height: 34px;
+                                    Action { width: 150px; label: root.stress-running ? I18n.st_stress_running : I18n.st_stress_generate; show-label: true; primary: true; enabled: !root.stress-running && !root.saving && !root.loading; clicked => { root.generate-stress-thread(); } }
+                                    Rectangle { horizontal-stretch: 1; }
+                                }
+                                Text { height: 18px; visible: root.stress-status != ""; text: root.stress-status; color: root.stress-status.starts-with("⚠") ? Theme.danger : Theme.muted; font-size: Theme.font-xs; overflow: elide; }
                             }
                             SettingsCard {
                                 SettingsCardHeader { title: I18n.st_reset_title; subtitle: I18n.st_reset_note; title-color: Theme.danger; }

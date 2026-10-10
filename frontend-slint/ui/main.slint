@@ -4,9 +4,9 @@ import { ExpertToolGroup } from "expert_widgets.slint";
 export { ExpertToolGroup }
 import { RuntimeStatus } from "runtime_status.slint";
 import { I18n } from "i18n.slint";
-import { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, TextBlock, WorkflowLine, WorkflowSection, ToolWorkflowEntry, TimelineRow, TimelineCounts, TurnStatMetric, PatchCard, PatchLine, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, LanPeerCard, ThreadLogEvent, CronCard, CronRunCard, PromptPackCard, ChannelCatalogCard, ChannelAccountCard, ChannelBindingCard, ChannelLogCard, AvatarOption, AvatarColorChip, CompanionCard, PlanStep } from "theme.slint";
+import { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, TextBlock, WorkflowLine, WorkflowSection, ToolWorkflowEntry, TimelineRow, TimelineCounts, TurnStatMetric, PatchCard, PatchLine, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, LanPeerCard, ThreadLogEvent, CronCard, CronRunCard, PromptPackCard, ChannelCatalogCard, ChannelAccountCard, ChannelBindingCard, ChannelLogCard, AvatarOption, AvatarColorChip, CompanionCard, PlanStep, InquiryQuestion } from "theme.slint";
 import { Action, EdgeToggle, RailButton, Avatar, FormField, MiddleHeader, MiddleFooter, ConfirmDialog, InfoDialog, ToastHost, ToastState } from "components.slint";
-import { Composer, GoalBanner, StatusDock } from "composer.slint";
+import { Composer, GoalBanner, InquiryPanel, StatusDock } from "composer.slint";
 import { TerminalView, TermSpan } from "terminal_view.slint";
 import { TimelineView } from "timeline.slint";
 import { Sidebar, WorkspaceVisual } from "sidebar.slint";
@@ -161,17 +161,13 @@ export component MainWindow inherits Window {
     callback goal-save(string);
     callback goal-pause-toggle();
     callback goal-clear();
-    // ---- status dock (activity capsule above the goal banner) ----
-    // The preview defaults exist so slint-viewer renders the dock without a
-    // backend; the native projection resets them on connect and overwrites
-    // them from the live turn on every flush frame.
-    in-out property <bool> activity-active: true;
-    in-out property <string> activity-text: I18n.dock_queue_prefix + 2 + I18n.dock_queue_suffix;
-    in-out property <int> activity-steps-done: 0;
+    // ---- status dock (plan capsule above the goal banner) ----
+    // The dock only exists while the plan tool has steps, so the preview
+    // defaults carry a plan; slint-viewer then renders it without a backend and
+    // the native projection overwrites the values from the live turn.
+    in-out property <bool> activity-running: true;
+    in-out property <int> activity-steps-done: 1;
     in-out property <int> activity-steps-total: 3;
-    in-out property <int> activity-files-changed: 2;
-    in-out property <int> activity-added-lines: 118;
-    in-out property <int> activity-deleted-lines: 12;
     in-out property <string> activity-plan-explanation: I18n.dock_demo_explain;
     in-out property <[PlanStep]> activity-plan-steps: [
         { step: I18n.dock_demo_step_1, status: "completed" },
@@ -181,6 +177,25 @@ export component MainWindow inherits Window {
     // Dismissal clears through the Rust side (plan cache + turn state) so the
     // next flush frame cannot silently restore the checklist.
     callback activity-plan-dismiss();
+    // ---- inquiry panel (问询面板 card above the composer) ----
+    // Rust owns the questions, the selection state and the page; the card is a
+    // pure projection and every interaction is answered by a republish. No
+    // preview defaults: an unpublished panel must never render.
+    in-out property <bool> inquiry-visible: false;
+    // Thread the projection belongs to: archiving or leaving the active thread
+    // must drop the card even when nothing republishes it.
+    in-out property <string> inquiry-session;
+    in-out property <InquiryQuestion> inquiry-question;
+    in-out property <string> inquiry-other;
+    in-out property <int> inquiry-page: 0;
+    in-out property <int> inquiry-total: 1;
+    // The composer's send button unlocks with an answer in hand, even with an
+    // empty draft, because the choices themselves are the message.
+    in-out property <bool> inquiry-ready: false;
+    callback inquiry-option-clicked(int);
+    callback inquiry-no-preference();
+    callback inquiry-page-move(int);
+    callback inquiry-dismiss();
     // Fractional offset of every user turn for the right-edge ruler. The
     // preview marks match the fixture timeline (user rows at 0 and 3 of 6).
     in-out property <[float]> turn-marks: [0.0, 0.5];
@@ -535,6 +550,12 @@ export component MainWindow inherits Window {
     callback confirm-delete-prompt-pack();
     callback export-diagnostics();
     callback reset-work-state();
+    // 线程渲染压测：设置页常规卡片的手动入口。
+    callback generate-stress-thread();
+    in-out property <bool> stress-running: false;
+    in-out property <string> stress-user-rounds: "1000";
+    in-out property <string> stress-model-rounds: "1000";
+    in-out property <string> stress-status;
     callback run-cron-now(string);
     callback open-cron-runs(string);
     callback close-cron-runs();
@@ -772,19 +793,16 @@ export component MainWindow inherits Window {
                             measured-rows <=> root.terminal-measured-rows;
                         }
                     }
-                    // Status dock: the activity capsule sits between the
-                    // timeline and the goal banner; its plan card overlaps the
-                    // timeline via negative y. Queue position is folded into
-                    // the activity text by the native projection, so the old
-                    // cloud-queue banner is gone.
-                    if root.activity-active : StatusDock {
-                        active: root.activity-active;
-                        status-text: root.activity-text;
+                    // Status dock: the plan capsule sits between the timeline
+                    // and the goal banner; its checklist card overlaps the
+                    // timeline via negative y. It shows up only while the plan
+                    // tool has steps — the turn's phase text already reads on
+                    // the timeline rows, and queue position is folded into the
+                    // timeline too, so the old banners are gone.
+                    if root.activity-steps-total > 0 : StatusDock {
+                        running: root.activity-running;
                         steps-done: root.activity-steps-done;
                         steps-total: root.activity-steps-total;
-                        files-changed: root.activity-files-changed;
-                        added-lines: root.activity-added-lines;
-                        deleted-lines: root.activity-deleted-lines;
                         plan-explanation: root.activity-plan-explanation;
                         plan-steps: root.activity-plan-steps;
                         plan-dismiss => { root.activity-plan-dismiss(); }
@@ -799,8 +817,19 @@ export component MainWindow inherits Window {
                         pause-toggle => { root.goal-pause-toggle(); }
                         clear => { root.goal-clear(); }
                     }
+                    if root.inquiry-visible && root.inquiry-session == root.active-session-id : InquiryPanel {
+                        question: root.inquiry-question;
+                        page: root.inquiry-page;
+                        total: root.inquiry-total;
+                        other <=> root.inquiry-other;
+                        option-clicked(index) => { root.inquiry-option-clicked(index); }
+                        no-preference => { root.inquiry-no-preference(); }
+                        page-move(delta) => { root.inquiry-page-move(delta); }
+                        dismiss => { root.inquiry-dismiss(); }
+                    }
                     Composer {
                         draft <=> root.draft; busy: root.command-pending || root.busy || root.session-loading || root.creating-session || root.chat-loading;
+                        inquiry-ready: root.inquiry-ready;
                         terminal-mode: root.terminal-mode;
                         command => { root.terminal-mode = !root.terminal-mode; root.terminal-toggled(root.terminal-mode); }
                         send-key: root.runtime-send-key;
@@ -888,6 +917,11 @@ export component MainWindow inherits Window {
         pick-python-path => { root.pick-python-path(); }
         pick-git-path => { root.pick-git-path(); }
         pick-rg-path => { root.pick-rg-path(); }
+        stress-running <=> root.stress-running;
+        stress-user-rounds <=> root.stress-user-rounds;
+        stress-model-rounds <=> root.stress-model-rounds;
+        stress-status <=> root.stress-status;
+        generate-stress-thread => { root.generate-stress-thread(); }
         lan-enabled <=> root.lan-enabled; lan-name <=> root.lan-name; lan-peer-id: root.lan-peer-id; lan-endpoint: root.lan-endpoint; lan-peer-count: root.lan-peer-count; lan-peers: root.lan-peers;
         save-runtime(workspace, language, python, git, rg) => { root.save-runtime(workspace, language, python, git, rg); }
         save-lan(enabled, name) => { root.save-lan(enabled, name); }

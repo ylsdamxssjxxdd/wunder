@@ -811,10 +811,6 @@
     "en-US": "ok",
     "zh-CN": "ok"
   },
-  "prompt.engineer.ptc_guidance": {
-    "en-US": "- If ptc is available, prefer ptc to complete tasks directly instead of saving scripts first.",
-    "zh-CN": "- 若已挂载 ptc，优先使用 ptc 完成任务，不需要先写脚本保存到本地然后再去执行，提高效率。"
-  },
   "prompt.skills.header": {
     "en-US": "[Skill Usage]",
     "zh-CN": "[技能使用协议]"
@@ -1067,9 +1063,9 @@
     "en-US": "Which route should we take next?",
     "zh-CN": "接下来希望从哪个方向推进？"
   },
-  "tool.question_panel.routes_required": {
-    "en-US": "At least one route is required.",
-    "zh-CN": "至少提供一条路线。"
+  "tool.question_panel.options_required": {
+    "en-US": "Every question needs at least one option.",
+    "zh-CN": "每个问题至少要给出一个选项。"
   },
   "tool.memory_manager.invalid_action": {
     "en-US": "Invalid memory action. Use list/search/get/add/update/remove/clear.",
@@ -2139,33 +2135,37 @@
     "en-US": "Update the plan board with steps and their status.",
     "zh-CN": "更新计划看板，写入步骤与状态。"
   },
-  "tool.spec.question_panel.args.question": {
-    "en-US": "Optional. Short question or prompt to show above the routes.",
-    "zh-CN": "可选，展示在路线列表上方的问题或提示。"
+  "tool.spec.question_panel.args.questions": {
+    "en-US": "Questions to ask in this inquiry, 1-4 items. The client shows them one page at a time and the user answers each page. Use a single-element array when there is only one question.",
+    "zh-CN": "本次问询的问题列表，1-4 题。前端按页展示，用户逐题作答；只有一题时也用单元素数组。"
   },
-  "tool.spec.question_panel.args.routes": {
-    "en-US": "Route list for the inquiry panel.",
-    "zh-CN": "问询面板的路线列表。"
+  "tool.spec.question_panel.args.questions.question": {
+    "en-US": "Question text shown to the user. One sentence stating what has to be decided; do not list the options here.",
+    "zh-CN": "展示给用户的问题正文。一句话说清要决定什么，不要把选项写进问题里。"
   },
-  "tool.spec.question_panel.args.routes.label": {
-    "en-US": "Short route label.",
-    "zh-CN": "路线标题。"
+  "tool.spec.question_panel.args.options": {
+    "en-US": "Options for this question, 1-4 items. Keep each label short (a few words) and put the reasoning in description.",
+    "zh-CN": "该题的选项列表，1-4 项。标题保持几个词的短度，理由与影响写进 description。"
   },
-  "tool.spec.question_panel.args.routes.description": {
-    "en-US": "Route explanation or scope.",
-    "zh-CN": "路线说明或范围。"
+  "tool.spec.question_panel.args.options.label": {
+    "en-US": "Short option label.",
+    "zh-CN": "选项标题。"
   },
-  "tool.spec.question_panel.args.routes.recommended": {
+  "tool.spec.question_panel.args.options.description": {
+    "en-US": "Optional explanation of what this option means or implies.",
+    "zh-CN": "可选，说明该选项的含义或选了之后会怎样。"
+  },
+  "tool.spec.question_panel.args.options.recommended": {
     "en-US": "Mark as recommended.",
-    "zh-CN": "是否推荐该路线。"
+    "zh-CN": "是否推荐该选项。"
   },
   "tool.spec.question_panel.args.multiple": {
-    "en-US": "Allow multiple selections.",
-    "zh-CN": "允许多选。"
+    "en-US": "Allow selecting more than one option for this question. Defaults to single choice.",
+    "zh-CN": "该题是否允许多选，默认单选。"
   },
   "tool.spec.question_panel.description": {
-    "en-US": "Show a route panel and pause for the user to choose the next step. Prefer 2-4 short routes and mark one as recommended when helpful.",
-    "zh-CN": "展示路线面板并暂停，等待用户选择下一步。建议 2-4 条简短路线，必要时标注推荐项。"
+    "en-US": "Ask the user questions in a panel and end this turn, waiting for the answer. Put every question that needs a user decision in one call instead of asking turn by turn. Mark one option as recommended when there is a preferred route; the user can always type a free-text answer instead of choosing.",
+    "zh-CN": "用问询面板向用户提问并结束本轮，等待用户作答。需要用户拍板的问题一次问完，不要一轮一题。有倾向性时把其中一个选项标为推荐；用户也可以不选项、直接输入自由回答。"
   },
   "tool.spec.schedule_task.args.action": {
     "en-US": "Action to perform: add, update, remove, enable, disable, get, list, run, or status.",

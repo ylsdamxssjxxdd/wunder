@@ -1447,21 +1447,8 @@ fn apply_desktop_defaults(
     ensure_desktop_builtin_tool(&mut config.tools.builtin.enabled, "桌面控制器");
     ensure_desktop_builtin_tool(&mut config.tools.builtin.enabled, "桌面监视器");
     config.tools.browser.enabled = true;
-    let legacy_browser_tools = [
-        "浏览器导航",
-        "浏览器点击",
-        "浏览器输入",
-        "浏览器截图",
-        "浏览器读页",
-        "浏览器关闭",
-    ];
-    config.tools.builtin.enabled.retain(|name| {
-        let canonical = wunder_server::tools::resolve_tool_name(name.trim());
-        !legacy_browser_tools
-            .iter()
-            .any(|legacy| canonical == *legacy)
-    });
-    ensure_desktop_builtin_tool(&mut config.tools.builtin.enabled, "浏览器");
+    // Browser tools now come from the active provider's native surface and are
+    // auto-registered, so the legacy Chinese sub-tool whitelist entries are gone.
 
     let mut allow_paths = config
         .security

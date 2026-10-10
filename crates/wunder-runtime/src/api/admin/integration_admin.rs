@@ -16,6 +16,7 @@ use crate::services::admin_skills::{
 use crate::services::skill_archive::{import_skill_archive, is_supported_skill_archive_filename};
 use crate::skills::{load_skills, SkillSpec};
 use crate::state::AppState;
+use crate::services::tools::{browser_tool_names, is_browser_tool_name};
 use crate::tools::{builtin_aliases, builtin_tool_specs, resolve_tool_name};
 use anyhow::anyhow;
 use axum::body::Body;
@@ -1341,27 +1342,32 @@ fn admin_browser_tool_name() -> String {
     resolve_tool_name("browser")
 }
 
+/// 判断某个工具名是否代表浏览器工具组（含历史遗留的组名与当前 provider 原生工具名）。
+fn is_admin_browser_entry(name: &str) -> bool {
+    is_browser_tool_name(name) || name == admin_browser_tool_name()
+}
+
 fn admin_enabled_builtin_names(config: &Config) -> HashSet<String> {
-    let browser_tool_name = admin_browser_tool_name();
     let mut enabled: HashSet<String> = config
         .tools
         .builtin
         .enabled
         .iter()
         .map(|name| resolve_tool_name(name))
-        .filter(|name| !name.is_empty() && name != &browser_tool_name)
+        .filter(|name| !name.is_empty() && !is_admin_browser_entry(name))
         .collect();
     if config.tools.browser.enabled {
-        enabled.insert(browser_tool_name);
+        for name in browser_tool_names() {
+            enabled.insert(name);
+        }
     }
     enabled
 }
 
 fn apply_builtin_tools_update(config: &mut Config, enabled: &[String]) {
-    let browser_tool_name = admin_browser_tool_name();
     let mut normalized = normalize_builtin_enabled(enabled);
-    let browser_enabled = normalized.iter().any(|name| name == &browser_tool_name);
-    normalized.retain(|name| name != &browser_tool_name);
+    let browser_enabled = normalized.iter().any(|name| is_admin_browser_entry(name));
+    normalized.retain(|name| !is_admin_browser_entry(name));
     config.tools.browser.enabled = browser_enabled;
     config.tools.builtin.enabled = normalized;
 }
@@ -1439,7 +1445,7 @@ mod tests {
     #[test]
     fn build_builtin_tools_payload_uses_browser_visibility_flag() {
         let mut config = Config::default();
-        let browser_tool = admin_browser_tool_name();
+        let browser_tool = resolve_tool_name("browser_navigate");
 
         config.tools.builtin.enabled = vec![browser_tool.clone()];
         config.tools.browser.enabled = false;

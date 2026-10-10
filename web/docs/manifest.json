@@ -1,9 +1,9 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-10-07T13:38:36.969739+00:00",
+  "generated_at": "2026-10-10T01:44:07.852135+00:00",
   "site": {
     "name": "使用说明书",
-    "description": "wunder is an agent orchestration system for organizations and individual users. / wunder 是一个面向组织和个人用户的智能体调度系统。",
+    "description": "wunder is an agent orchestration platform: Honeycomb (desktop) is the local AI workbench, Beehive (web) is the cloud AI workbench, Helm (cli) is the manual local entry point, and the Hull (server) is the user and agent management platform. / wunder 是一个智能体调度平台：蜂窝（desktop）是本地 AI 工作台，蜂巢（web）是云端 AI 工作台，舵机（cli）是手工本地操作入口，舰体（server）是用户与智能体管理平台。",
     "default_language": "zh-CN",
     "home_page": "zh-CN/index",
     "home_url": "/docs/",
@@ -31,7 +31,7 @@
                   {
                     "slug": "zh-CN/index",
                     "title": "wunder 心舰",
-                    "summary": "wunder 是会执行任务的智能体系统。用户在蜂巢里描述目标，智能体拆解任务、调用工具、交付结果。",
+                    "summary": "wunder 是智能体调度平台。下载蜂窝（desktop）本地 AI 工作台，描述目标，智能体拆解任务、调用工具、交付结果。",
                     "url": "/docs/"
                   }
                 ]
@@ -42,25 +42,30 @@
                   {
                     "slug": "zh-CN/start/quickstart",
                     "title": "快速开始",
-                    "summary": "用最短路径打开蜂巢、配置模型、跑通第一个任务。",
+                    "summary": "用最短路径下载蜂窝、配置模型、跑通第一个任务。",
                     "url": "/docs/zh-CN/start/quickstart/"
                   },
                   {
                     "slug": "zh-CN/start/desktop",
                     "title": "蜂窝（desktop）入门",
-                    "summary": "个人用户优先看这页。下载安装即可使用，不需要先搭服务器。",
+                    "summary": "wunder 的默认使用方式。下载安装即可使用，不需要先搭服务器。",
                     "url": "/docs/zh-CN/start/desktop/"
-                  },
+                  }
+                ]
+              },
+              {
+                "group": "进阶（可选形态）",
+                "pages": [
                   {
                     "slug": "zh-CN/start/server",
                     "title": "舰体（server）部署",
-                    "summary": "团队和组织的选择。多用户、权限管理、渠道接入、统一治理。",
+                    "summary": "可选形态。需要多人共用、统一治理时才部署：多用户、权限管理、渠道接入。",
                     "url": "/docs/zh-CN/start/server/"
                   },
                   {
                     "slug": "zh-CN/start/cli",
                     "title": "舵机（cli）使用",
-                    "summary": "开发者和自动化场景的入口。终端驱动、脚本化、JSONL 输出。",
+                    "summary": "可选形态。终端与自动化场景使用：终端驱动、脚本化、JSONL 输出。",
                     "url": "/docs/zh-CN/start/cli/"
                   }
                 ]
@@ -71,7 +76,7 @@
                   {
                     "slug": "zh-CN/start/hubs",
                     "title": "说明书总览",
-                    "summary": "按角色找到需要的文档入口。",
+                    "summary": "从蜂窝开始，按需要进入其他文档。",
                     "url": "/docs/zh-CN/start/hubs/"
                   },
                   {
@@ -124,7 +129,7 @@
                   {
                     "slug": "zh-CN/concepts/core-channels",
                     "title": "渠道",
-                    "summary": "不同入口共享同一套核心能力。无论用蜂窝、网页端还是飞书微信，体验一致。",
+                    "summary": "不同入口共享同一套核心能力。无论用蜂窝、蜂巢还是飞书微信，体验一致。",
                     "url": "/docs/zh-CN/concepts/core-channels/"
                   },
                   {
@@ -223,13 +228,13 @@
                   {
                     "slug": "zh-CN/tools/web-fetch",
                     "title": "网页抓取",
-                    "summary": "`web_search` 与 `web_fetch` 的分工，以及 `web_fetch` 的直接抓取、浏览器回退与成功/失败返回。",
+                    "summary": "`web_fetch` 的直接抓取、浏览器回退与成功/失败返回；关键词搜索工具 `web_search` 已移除。",
                     "url": "/docs/zh-CN/tools/web-fetch/"
                   },
                   {
                     "slug": "zh-CN/tools/browser",
                     "title": "浏览器",
-                    "summary": "浏览器自动化工具的动作、返回特征与和 `web_fetch` 的分工。",
+                    "summary": "浏览器自动化的 17 个原生工具、最小参数、返回结构（content blocks）与和 `web_fetch` 的分工。",
                     "url": "/docs/zh-CN/tools/browser/"
                   },
                   {
@@ -426,7 +431,7 @@
                   {
                     "slug": "zh-CN/surfaces/index",
                     "title": "界面概览",
-                    "summary": "用户在蜂巢里工作，管理员用舰桥治理。蜂巢有蜂窝和网页端两种打开方式。",
+                    "summary": "用户在蜂窝（本地 AI 工作台）或蜂巢（云端 AI 工作台）里工作，管理员用舰桥治理。",
                     "url": "/docs/zh-CN/surfaces/"
                   }
                 ]
@@ -437,19 +442,19 @@
                   {
                     "slug": "zh-CN/surfaces/frontend",
                     "title": "蜂巢界面",
-                    "summary": "蜂巢是用户的工作台。左右两栏：左栏放新任务、搜索、工作区线程树、工作目录区和设置，右栏是聊天。",
+                    "summary": "蜂巢是云端 AI 工作台（web，随舰体提供）。左右两栏：左栏放新任务、搜索、工作区线程树、工作目录区和设置，右栏是聊天。蜂窝（desktop）本地 AI 工作台共用这套布局。",
                     "url": "/docs/zh-CN/surfaces/frontend/"
                   },
                   {
                     "slug": "zh-CN/surfaces/web-admin",
                     "title": "舰桥界面",
-                    "summary": "管理员的后台工作台。模型配置、工具管理、用户治理、渠道接入，都在这里。",
+                    "summary": "舰桥是用户与智能体管理平台（舰体）的管理界面。模型配置、工具管理、用户治理、渠道接入，都在这里。",
                     "url": "/docs/zh-CN/surfaces/web-admin/"
                   },
                   {
                     "slug": "zh-CN/surfaces/desktop-ui",
                     "title": "蜂窝界面",
-                    "summary": "蜂巢的本地桌面形态。本地优先，可以直接访问本机文件，有一键重置功能。",
+                    "summary": "本地 AI 工作台（desktop）。本地优先，可以直接访问本机文件，有一键重置功能。",
                     "url": "/docs/zh-CN/surfaces/desktop-ui/"
                   }
                 ]
@@ -588,7 +593,7 @@
                   {
                     "slug": "zh-CN/concepts/workspaces",
                     "title": "工作区与工作目录",
-                    "summary": "每个用户有且只有一个工作区，对应服务端数据根下属于自己的唯一云端目录；没有容器分层，也不绑定本地文件夹。",
+                    "summary": "每个用户有且只有一个工作区，工具以它为根。蜂窝里是本机上的持久目录，舰体部署时是服务端按用户划分的唯一目录。",
                     "url": "/docs/zh-CN/concepts/workspaces/"
                   },
                   {
@@ -642,7 +647,7 @@
                   {
                     "slug": "zh-CN/concepts/companion",
                     "title": "形象系统",
-                    "summary": "在蜂窝和网页端使用精灵动画形象，让智能体以更生动的方式陪伴用户的工作。",
+                    "summary": "在蜂窝和蜂巢使用精灵动画形象，让智能体以更生动的方式陪伴用户的工作。",
                     "url": "/docs/zh-CN/concepts/companion/"
                   },
                   {
@@ -711,7 +716,7 @@
                   {
                     "slug": "en/index",
                     "title": "wunder",
-                    "summary": "wunder is an agent system that executes tasks. You describe a goal in Beehive, and agents break it down, call tools, and deliver results.",
+                    "summary": "wunder is an agent orchestration platform. Install the desktop app (the local AI workbench), describe a goal, and the agent breaks it down, calls tools, and delivers results.",
                     "url": "/docs/en/"
                   }
                 ]
@@ -722,25 +727,30 @@
                   {
                     "slug": "en/start/quickstart",
                     "title": "Quick Start",
-                    "summary": "The shortest path to open Beehive, configure a model, and complete your first task.",
+                    "summary": "The shortest path to install the desktop app, configure a model, and complete your first task.",
                     "url": "/docs/en/start/quickstart/"
                   },
                   {
                     "slug": "en/start/desktop",
                     "title": "Desktop Guide",
-                    "summary": "The first choice for individual users. Download, install, and start — no server needed.",
+                    "summary": "wunder's default form. Download, install, and start — no server needed.",
                     "url": "/docs/en/start/desktop/"
-                  },
+                  }
+                ]
+              },
+              {
+                "group": "Advanced (Optional Forms)",
+                "pages": [
                   {
                     "slug": "en/start/server",
                     "title": "Server Deployment",
-                    "summary": "The choice for teams and organizations. Multi-user, permission management, channel integration, unified governance.",
+                    "summary": "Optional form. Deploy only for multi-user collaboration, permission management, channel integration, and unified governance.",
                     "url": "/docs/en/start/server/"
                   },
                   {
                     "slug": "en/start/cli",
                     "title": "CLI Usage",
-                    "summary": "The entry point for developers and automation. Terminal-driven, scriptable, JSONL output.",
+                    "summary": "Optional form. For terminals and automation: terminal-driven, scriptable, JSONL output.",
                     "url": "/docs/en/start/cli/"
                   }
                 ]
@@ -751,7 +761,7 @@
                   {
                     "slug": "en/start/hubs",
                     "title": "Documentation Hub",
-                    "summary": "Find the docs you need by role.",
+                    "summary": "Start with the Honeycomb, then dive deeper as needed.",
                     "url": "/docs/en/start/hubs/"
                   },
                   {
@@ -903,13 +913,13 @@
                   {
                     "slug": "en/tools/web-fetch",
                     "title": "Web Fetch",
-                    "summary": "The split between `web_search` and `web_fetch`, plus direct fetch, browser fallback, and success or failure results for `web_fetch`.",
+                    "summary": "Direct fetch, browser fallback, and success or failure results for `web_fetch`; the keyword search tool `web_search` has been removed.",
                     "url": "/docs/en/tools/web-fetch/"
                   },
                   {
                     "slug": "en/tools/browser",
                     "title": "Browser",
-                    "summary": "The actions, return characteristics, and division of labor between browser automation and `web_fetch`.",
+                    "summary": "The 17 native browser-automation tools, their minimum arguments, return shape (content blocks), and the division of labor with `web_fetch`.",
                     "url": "/docs/en/tools/browser/"
                   },
                   {
@@ -1106,7 +1116,7 @@
                   {
                     "slug": "en/surfaces/index",
                     "title": "Interface Overview",
-                    "summary": "Users work in Beehive; admins govern in the admin interface. Beehive opens via the desktop app or a web browser.",
+                    "summary": "Users work in the Honeycomb (local AI workbench) or the Beehive (cloud AI workbench); admins govern with the Bridge.",
                     "url": "/docs/en/surfaces/"
                   }
                 ]
@@ -1117,19 +1127,19 @@
                   {
                     "slug": "en/surfaces/frontend",
                     "title": "Beehive Interface",
-                    "summary": "Beehive is your workbench. Two columns: the left sidebar holds new task, search, the workspace thread tree, the working directory, and settings; the right side is chat.",
+                    "summary": "Beehive is the cloud AI workbench (web, provided with the Hull). Two columns: the left sidebar holds new task, search, the workspace thread tree, the working directory, and settings; the right side is chat. The Honeycomb (desktop, the local AI workbench) shares this layout.",
                     "url": "/docs/en/surfaces/frontend/"
                   },
                   {
                     "slug": "en/surfaces/web-admin",
                     "title": "Admin Interface",
-                    "summary": "The admin's backend workbench. Model configuration, tool management, user governance, channel integration — all here.",
+                    "summary": "The Bridge is the management UI of the user and agent management platform (the Hull). Model configuration, tool management, user governance, channel integration — all here.",
                     "url": "/docs/en/surfaces/web-admin/"
                   },
                   {
                     "slug": "en/surfaces/desktop-ui",
                     "title": "Desktop Interface",
-                    "summary": "Beehive's desktop form. Local-first, with direct file access and one-click reset.",
+                    "summary": "The local AI workbench (desktop). Local-first, with direct file access and one-click reset.",
                     "url": "/docs/en/surfaces/desktop-ui/"
                   }
                 ]
@@ -1267,8 +1277,8 @@
                   },
                   {
                     "slug": "en/concepts/workspaces",
-                    "title": "Workspaces and Working Directory",
-                    "summary": "Each user has exactly one workspace: a single cloud directory under the server data root. There are no container layers and no local folder binding.",
+                    "title": "Workspaces and the Working Directory",
+                    "summary": "Each user has exactly one workspace, the root for all file tools. In the Honeycomb it is a persistent local directory; in Hull deployments it is a single per-user directory on the server.",
                     "url": "/docs/en/concepts/workspaces/"
                   },
                   {
@@ -1322,7 +1332,7 @@
                   {
                     "slug": "en/concepts/companion",
                     "title": "Companion System",
-                    "summary": "Use sprite-animated companions on desktop and web so agents accompany your work in a livelier way.",
+                    "summary": "Use sprite-animated companions in the Honeycomb (desktop) and the Beehive (web) so agents accompany your work in a livelier way.",
                     "url": "/docs/en/concepts/companion/"
                   },
                   {
@@ -1568,15 +1578,14 @@
       "slug": "zh-CN/index",
       "language": "zh-CN",
       "title": "wunder 心舰",
-      "summary": "wunder 是会执行任务的智能体系统。用户在蜂巢里描述目标，智能体拆解任务、调用工具、交付结果。",
-      "updated_at": "2026-10-07",
+      "summary": "wunder 是智能体调度平台。下载蜂窝（desktop）本地 AI 工作台，描述目标，智能体拆解任务、调用工具、交付结果。",
+      "updated_at": "2026-10-09",
       "read_when": [
         "第一次了解 wunder",
         "需要快速判断从哪里开始"
       ],
       "source_docs": [
-        "README.md",
-        "docs/设计文档/01-系统总体设计.md"
+        "README.md"
       ],
       "tab": "开始",
       "group": "首页",
@@ -1593,7 +1602,7 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "蜂巢：用户的工作台"
+          "text": "蜂窝：你的本地 AI 工作台"
         },
         {
           "id": "section-3",
@@ -1603,17 +1612,17 @@
         {
           "id": "section-4",
           "level": 2,
-          "text": "工作台与系统结构"
+          "text": "工作台结构"
         },
         {
           "id": "section-5",
           "level": 2,
-          "text": "按角色选入口"
+          "text": "核心特性"
         },
         {
           "id": "section-6",
           "level": 2,
-          "text": "核心特性"
+          "text": "需要更多？三个可选形态"
         },
         {
           "id": "section-7",
@@ -1635,15 +1644,14 @@
       "slug": "zh-CN/start/quickstart",
       "language": "zh-CN",
       "title": "快速开始",
-      "summary": "用最短路径打开蜂巢、配置模型、跑通第一个任务。",
-      "updated_at": "2026-10-06",
+      "summary": "用最短路径下载蜂窝、配置模型、跑通第一个任务。",
+      "updated_at": "2026-10-09",
       "read_when": [
         "用户第一次使用 wunder",
         "用户需要快速跑通一个可验证结果"
       ],
       "source_docs": [
-        "README.md",
-        "docs/设计文档/01-系统总体设计.md"
+        "README.md"
       ],
       "tab": "开始",
       "group": "入门",
@@ -1660,70 +1668,45 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "第一步：打开蜂巢"
+          "text": "4 步跑通"
         },
         {
           "id": "section-3",
-          "level": 2,
-          "text": "最短路径：蜂窝"
+          "level": 3,
+          "text": "1. 下载安装"
         },
         {
           "id": "section-4",
           "level": 3,
-          "text": "4 步跑通"
+          "text": "2. 配置模型"
         },
         {
           "id": "section-5",
           "level": 3,
-          "text": "蜂窝额外能力"
+          "text": "3. 发起第一次对话"
         },
         {
           "id": "section-6",
-          "level": 2,
-          "text": "团队路径：网页端"
+          "level": 3,
+          "text": "4. 观察执行过程"
         },
         {
           "id": "section-7",
-          "level": 3,
-          "text": "启动前准备"
+          "level": 2,
+          "text": "蜂窝开箱能力"
         },
         {
           "id": "section-8",
-          "level": 3,
-          "text": "3 步部署"
+          "level": 2,
+          "text": "其他使用方式"
         },
         {
           "id": "section-9",
-          "level": 3,
-          "text": "舰体形态能力"
-        },
-        {
-          "id": "section-10",
-          "level": 2,
-          "text": "开发路径：舵机"
-        },
-        {
-          "id": "section-11",
-          "level": 3,
-          "text": "安装与运行"
-        },
-        {
-          "id": "section-12",
-          "level": 3,
-          "text": "第一次会话"
-        },
-        {
-          "id": "section-13",
-          "level": 3,
-          "text": "舵机特有能力"
-        },
-        {
-          "id": "section-14",
           "level": 2,
           "text": "验收清单"
         },
         {
-          "id": "section-15",
+          "id": "section-10",
           "level": 2,
           "text": "下一步"
         }
@@ -1737,7 +1720,7 @@
       "slug": "zh-CN/start/desktop",
       "language": "zh-CN",
       "title": "蜂窝（desktop）入门",
-      "summary": "个人用户优先看这页。下载安装即可使用，不需要先搭服务器。",
+      "summary": "wunder 的默认使用方式。下载安装即可使用，不需要先搭服务器。",
       "updated_at": "2026-04-10",
       "read_when": [
         "要先把 wunder 用起来",
@@ -1845,7 +1828,7 @@
       "slug": "zh-CN/start/server",
       "language": "zh-CN",
       "title": "舰体（server）部署",
-      "summary": "团队和组织的选择。多用户、权限管理、渠道接入、统一治理。",
+      "summary": "可选形态。需要多人共用、统一治理时才部署：多用户、权限管理、渠道接入。",
       "updated_at": "2026-04-10",
       "read_when": [
         "需要多人共用 wunder",
@@ -1856,9 +1839,9 @@
         "packaging/docker/"
       ],
       "tab": "开始",
-      "group": "入门",
+      "group": "进阶（可选形态）",
       "group_path": [
-        "入门"
+        "进阶（可选形态）"
       ],
       "url": "/docs/zh-CN/start/server/",
       "headings": [
@@ -1947,7 +1930,7 @@
       "slug": "zh-CN/start/cli",
       "language": "zh-CN",
       "title": "舵机（cli）使用",
-      "summary": "开发者和自动化场景的入口。终端驱动、脚本化、JSONL 输出。",
+      "summary": "可选形态。终端与自动化场景使用：终端驱动、脚本化、JSONL 输出。",
       "updated_at": "2026-04-10",
       "read_when": [
         "需要在终端中使用 wunder",
@@ -1958,9 +1941,9 @@
         "crates/wunder-cli/tui/"
       ],
       "tab": "开始",
-      "group": "入门",
+      "group": "进阶（可选形态）",
       "group_path": [
-        "入门"
+        "进阶（可选形态）"
       ],
       "url": "/docs/zh-CN/start/cli/",
       "headings": [
@@ -2024,14 +2007,14 @@
       "slug": "zh-CN/start/hubs",
       "language": "zh-CN",
       "title": "说明书总览",
-      "summary": "按角色找到需要的文档入口。",
-      "updated_at": "2026-10-07",
+      "summary": "从蜂窝开始，按需要进入其他文档。",
+      "updated_at": "2026-10-09",
       "read_when": [
         "用户不确定先看哪一页",
-        "用户希望按角色快速进入正确文档"
+        "用户希望快速进入正确文档"
       ],
       "source_docs": [
-        "docs/wunder补全文档落地方案.md"
+        "docs/使用说明书/zh-CN/index.md"
       ],
       "tab": "开始",
       "group": "导航",
@@ -2048,17 +2031,17 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "我是普通用户"
+          "text": "先看这里：用起来"
         },
         {
           "id": "section-3",
           "level": 2,
-          "text": "我是管理员"
+          "text": "用得更深"
         },
         {
           "id": "section-4",
           "level": 2,
-          "text": "我是开发者 / 集成人员"
+          "text": "可选形态：管理与部署"
         },
         {
           "id": "section-5",
@@ -2081,7 +2064,7 @@
       "language": "zh-CN",
       "title": "常用说明目录",
       "summary": "按用途列出的文档索引，帮助快速定位到具体页面。",
-      "updated_at": "2026-10-07",
+      "updated_at": "2026-10-09",
       "read_when": [
         "知道想看什么但不确定在哪",
         "想了解文档全貌"
@@ -2147,7 +2130,7 @@
       "language": "zh-CN",
       "title": "核心概览",
       "summary": "理解 wunder，先抓住 10 个核心。它们定义的是系统必须守住的设计原则，而非功能清单。",
-      "updated_at": "2026-10-07",
+      "updated_at": "2026-10-09",
       "read_when": [],
       "source_docs": [],
       "tab": "核心",
@@ -2611,8 +2594,8 @@
       "slug": "zh-CN/concepts/core-channels",
       "language": "zh-CN",
       "title": "渠道",
-      "summary": "不同入口共享同一套核心能力。无论用蜂窝、网页端还是飞书微信，体验一致。",
-      "updated_at": "2026-10-06",
+      "summary": "不同入口共享同一套核心能力。无论用蜂窝、蜂巢还是飞书微信，体验一致。",
+      "updated_at": "2026-10-10",
       "read_when": [],
       "source_docs": [],
       "tab": "核心",
@@ -3263,7 +3246,7 @@
       "language": "zh-CN",
       "title": "工具总览",
       "summary": "当前 wunder 工具体系、统一返回骨架、状态语义、例外项与选型建议。",
-      "updated_at": "2026-04-10",
+      "updated_at": "2026-10-10",
       "read_when": [
         "要先判断该用哪一类工具",
         "要理解工具最新的返回结构"
@@ -3314,7 +3297,7 @@
         {
           "id": "section-7",
           "level": 3,
-          "text": "finalresponse"
+          "text": "finalresponse（已移除）"
         },
         {
           "id": "section-8",
@@ -3329,12 +3312,12 @@
         {
           "id": "section-10",
           "level": 3,
-          "text": "browser"
+          "text": "浏览器工具组（browser）"
         },
         {
           "id": "section-11",
           "level": 3,
-          "text": "websearch"
+          "text": "websearch（已移除）"
         },
         {
           "id": "section-12",
@@ -3344,7 +3327,7 @@
         {
           "id": "section-13",
           "level": 3,
-          "text": "applypatch"
+          "text": "文本编辑（旧名 applypatch）"
         },
         {
           "id": "section-14",
@@ -3879,13 +3862,12 @@
       "slug": "zh-CN/tools/web-fetch",
       "language": "zh-CN",
       "title": "网页抓取",
-      "summary": "`web_search` 与 `web_fetch` 的分工，以及 `web_fetch` 的直接抓取、浏览器回退与成功/失败返回。",
-      "updated_at": "2026-05-15",
+      "summary": "`web_fetch` 的直接抓取、浏览器回退与成功/失败返回；关键词搜索工具 `web_search` 已移除。",
+      "updated_at": "2026-10-10",
       "read_when": [
         "用户要读取公开网页正文，而不是操控浏览器"
       ],
       "source_docs": [
-        "src/services/tools/web_search_tool.rs",
         "src/services/tools/web_fetch_tool.rs"
       ],
       "tab": "工具",
@@ -3950,13 +3932,15 @@
       "slug": "zh-CN/tools/browser",
       "language": "zh-CN",
       "title": "浏览器",
-      "summary": "浏览器自动化工具的动作、返回特征与和 `web_fetch` 的分工。",
-      "updated_at": "2026-07-02",
+      "summary": "浏览器自动化的 17 个原生工具、最小参数、返回结构（content blocks）与和 `web_fetch` 的分工。",
+      "updated_at": "2026-10-10",
       "read_when": [
         "用户要打开网页、点击、输入、截图或读取动态页面"
       ],
       "source_docs": [
         "src/services/tools/browser_tool.rs",
+        "src/services/browser/provider.rs",
+        "src/services/browser/providers/playwright.rs",
         "src/services/browser/runtime.rs"
       ],
       "tab": "工具",
@@ -3974,12 +3958,12 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "适用场景"
+          "text": "工具清单"
         },
         {
           "id": "section-3",
           "level": 2,
-          "text": "常用动作"
+          "text": "适用场景"
         },
         {
           "id": "section-4",
@@ -3994,25 +3978,20 @@
         {
           "id": "section-6",
           "level": 3,
-          "text": "status"
+          "text": "browserstatus"
         },
         {
           "id": "section-7",
           "level": 3,
-          "text": "stop"
+          "text": "browsertakescreenshot"
         },
         {
           "id": "section-8",
           "level": 3,
-          "text": "screenshot"
+          "text": "其他动作"
         },
         {
           "id": "section-9",
-          "level": 3,
-          "text": "readpage / snapshot / navigate / tabs"
-        },
-        {
-          "id": "section-10",
           "level": 2,
           "text": "与 webfetch 的区别"
         }
@@ -4154,6 +4133,11 @@
         },
         {
           "id": "section-9",
+          "level": 3,
+          "text": "兼容与作答"
+        },
+        {
+          "id": "section-10",
           "level": 2,
           "text": "重点"
         }
@@ -5773,8 +5757,8 @@
       "slug": "zh-CN/surfaces/index",
       "language": "zh-CN",
       "title": "界面概览",
-      "summary": "用户在蜂巢里工作，管理员用舰桥治理。蜂巢有蜂窝和网页端两种打开方式。",
-      "updated_at": "2026-10-07",
+      "summary": "用户在蜂窝（本地 AI 工作台）或蜂巢（云端 AI 工作台）里工作，管理员用舰桥治理。",
+      "updated_at": "2026-10-09",
       "read_when": [],
       "source_docs": [],
       "tab": "界面",
@@ -5792,7 +5776,7 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "蜂巢：用户工作台"
+          "text": "两个工作台"
         },
         {
           "id": "section-3",
@@ -5807,30 +5791,35 @@
         {
           "id": "section-5",
           "level": 2,
-          "text": "蜂巢的左右两栏"
+          "text": "工作台的左右两栏"
         },
         {
           "id": "section-6",
           "level": 2,
-          "text": "按角色选择"
+          "text": "按场景选择"
         },
         {
           "id": "section-7",
           "level": 3,
-          "text": "普通用户"
+          "text": "个人用户"
         },
         {
           "id": "section-8",
           "level": 3,
-          "text": "管理员"
+          "text": "团队成员"
         },
         {
           "id": "section-9",
+          "level": 3,
+          "text": "管理员"
+        },
+        {
+          "id": "section-10",
           "level": 2,
           "text": "常见误区"
         },
         {
-          "id": "section-10",
+          "id": "section-11",
           "level": 2,
           "text": "延伸阅读"
         }
@@ -5844,8 +5833,8 @@
       "slug": "zh-CN/surfaces/frontend",
       "language": "zh-CN",
       "title": "蜂巢界面",
-      "summary": "蜂巢是用户的工作台。左右两栏：左栏放新任务、搜索、工作区线程树、工作目录区和设置，右栏是聊天。",
-      "updated_at": "2026-10-07",
+      "summary": "蜂巢是云端 AI 工作台（web，随舰体提供）。左右两栏：左栏放新任务、搜索、工作区线程树、工作目录区和设置，右栏是聊天。蜂窝（desktop）本地 AI 工作台共用这套布局。",
+      "updated_at": "2026-10-09",
       "read_when": [],
       "source_docs": [],
       "tab": "界面",
@@ -5960,8 +5949,8 @@
       "slug": "zh-CN/surfaces/web-admin",
       "language": "zh-CN",
       "title": "舰桥界面",
-      "summary": "管理员的后台工作台。模型配置、工具管理、用户治理、渠道接入，都在这里。",
-      "updated_at": "2026-10-07",
+      "summary": "舰桥是用户与智能体管理平台（舰体）的管理界面。模型配置、工具管理、用户治理、渠道接入，都在这里。",
+      "updated_at": "2026-10-09",
       "read_when": [],
       "source_docs": [],
       "tab": "界面",
@@ -6036,8 +6025,8 @@
       "slug": "zh-CN/surfaces/desktop-ui",
       "language": "zh-CN",
       "title": "蜂窝界面",
-      "summary": "蜂巢的本地桌面形态。本地优先，可以直接访问本机文件，有一键重置功能。",
-      "updated_at": "2026-10-07",
+      "summary": "本地 AI 工作台（desktop）。本地优先，可以直接访问本机文件，有一键重置功能。",
+      "updated_at": "2026-10-09",
       "read_when": [],
       "source_docs": [],
       "tab": "界面",
@@ -6254,7 +6243,7 @@
       "language": "zh-CN",
       "title": "部署与运行",
       "summary": "部署前先想清楚用哪种形态、准备什么环境。舰体（server）部署至少需要数据库、工作区和后端服务。",
-      "updated_at": "2026-10-06",
+      "updated_at": "2026-10-10",
       "read_when": [],
       "source_docs": [],
       "tab": "运维",
@@ -7167,7 +7156,7 @@
       "language": "zh-CN",
       "title": "功能与能力速查",
       "summary": "wunder 能做什么，每个能力在哪使用。按功能类别组织，方便快速定位。",
-      "updated_at": "2026-10-07",
+      "updated_at": "2026-10-09",
       "read_when": [],
       "source_docs": [],
       "tab": "参考",
@@ -7999,7 +7988,7 @@
       "language": "zh-CN",
       "title": "系统架构",
       "summary": "wunder 的整体结构：用户在蜂巢里工作，蜂巢背后是同一套引擎与数据地基。",
-      "updated_at": "2026-10-07",
+      "updated_at": "2026-10-09",
       "read_when": [],
       "source_docs": [],
       "tab": "参考",
@@ -8087,7 +8076,7 @@
         {
           "id": "section-16",
           "level": 3,
-          "text": "为什么蜂窝和网页端看起来一样？"
+          "text": "为什么蜂窝和蜂巢看起来一样？"
         },
         {
           "id": "section-17",
@@ -8114,8 +8103,8 @@
       "slug": "zh-CN/concepts/workspaces",
       "language": "zh-CN",
       "title": "工作区与工作目录",
-      "summary": "每个用户有且只有一个工作区，对应服务端数据根下属于自己的唯一云端目录；没有容器分层，也不绑定本地文件夹。",
-      "updated_at": "2026-10-07",
+      "summary": "每个用户有且只有一个工作区，工具以它为根。蜂窝里是本机上的持久目录，舰体部署时是服务端按用户划分的唯一目录。",
+      "updated_at": "2026-10-09",
       "read_when": [],
       "source_docs": [],
       "tab": "参考",
@@ -8143,60 +8132,65 @@
         {
           "id": "section-4",
           "level": 3,
-          "text": "关键约定"
+          "text": "工作区在哪"
         },
         {
           "id": "section-5",
+          "level": 3,
+          "text": "关键约定"
+        },
+        {
+          "id": "section-6",
           "level": 2,
           "text": "作用"
         },
         {
-          "id": "section-6",
+          "id": "section-7",
           "level": 3,
           "text": "数据隔离"
         },
         {
-          "id": "section-7",
+          "id": "section-8",
           "level": 3,
           "text": "文件持久化"
         },
         {
-          "id": "section-8",
+          "id": "section-9",
           "level": 3,
           "text": "智能体可见配置的根"
         },
         {
-          "id": "section-9",
+          "id": "section-10",
           "level": 2,
           "text": "实践"
         },
         {
-          "id": "section-10",
+          "id": "section-11",
           "level": 3,
           "text": "访问工作区"
         },
         {
-          "id": "section-11",
+          "id": "section-12",
           "level": 3,
           "text": "文件组织建议"
         },
         {
-          "id": "section-12",
+          "id": "section-13",
           "level": 3,
           "text": "用量与空间"
         },
         {
-          "id": "section-13",
+          "id": "section-14",
           "level": 3,
-          "text": "本地形态的差别"
+          "text": "蜂窝的本地边界"
         },
         {
-          "id": "section-14",
+          "id": "section-15",
           "level": 2,
           "text": "常见误区"
         },
         {
-          "id": "section-15",
+          "id": "section-16",
           "level": 2,
           "text": "延伸阅读"
         }
@@ -8711,7 +8705,7 @@
       "language": "zh-CN",
       "title": "长期记忆",
       "summary": "智能体如何\"记住\"用户的偏好、背景和长期资料？结构化记忆碎片，初始化注入一次，运行期补充检索。",
-      "updated_at": "2026-10-07",
+      "updated_at": "2026-10-08",
       "read_when": [],
       "source_docs": [],
       "tab": "参考",
@@ -9058,8 +9052,8 @@
       "slug": "zh-CN/concepts/companion",
       "language": "zh-CN",
       "title": "形象系统",
-      "summary": "在蜂窝和网页端使用精灵动画形象，让智能体以更生动的方式陪伴用户的工作。",
-      "updated_at": "2026-10-07",
+      "summary": "在蜂窝和蜂巢使用精灵动画形象，让智能体以更生动的方式陪伴用户的工作。",
+      "updated_at": "2026-10-09",
       "read_when": [],
       "source_docs": [],
       "tab": "参考",
@@ -9092,7 +9086,7 @@
         {
           "id": "section-5",
           "level": 3,
-          "text": "网页端"
+          "text": "蜂巢（web）"
         },
         {
           "id": "section-6",
@@ -9606,7 +9600,7 @@
       "language": "zh-CN",
       "title": "术语表",
       "summary": "wunder 文档里的核心术语，用大白话解释，避免混淆。",
-      "updated_at": "2026-10-07",
+      "updated_at": "2026-10-10",
       "read_when": [
         "用户第一次系统性阅读 wunder 文档",
         "用户发现很多词看起来相近但不知道区别"
@@ -9727,15 +9721,14 @@
       "slug": "en/index",
       "language": "en",
       "title": "wunder",
-      "summary": "wunder is an agent system that executes tasks. You describe a goal in Beehive, and agents break it down, call tools, and deliver results.",
-      "updated_at": "2026-10-07",
+      "summary": "wunder is an agent orchestration platform. Install the desktop app (the local AI workbench), describe a goal, and the agent breaks it down, calls tools, and delivers results.",
+      "updated_at": "2026-10-09",
       "read_when": [
         "First time learning about wunder",
         "Need to quickly decide where to start"
       ],
       "source_docs": [
-        "README.md",
-        "docs/设计文档/01-系统总体设计.md"
+        "README.md"
       ],
       "tab": "Getting Started",
       "group": "Home",
@@ -9752,7 +9745,7 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "Beehive: your workbench"
+          "text": "The Honeycomb: your local AI workbench"
         },
         {
           "id": "section-3",
@@ -9762,17 +9755,17 @@
         {
           "id": "section-4",
           "level": 2,
-          "text": "Workbench and system structure"
+          "text": "Workbench structure"
         },
         {
           "id": "section-5",
           "level": 2,
-          "text": "Pick your entry by role"
+          "text": "Key features"
         },
         {
           "id": "section-6",
           "level": 2,
-          "text": "Key features"
+          "text": "Need more? Three optional forms"
         },
         {
           "id": "section-7",
@@ -9794,8 +9787,8 @@
       "slug": "en/start/quickstart",
       "language": "en",
       "title": "Quick Start",
-      "summary": "The shortest path to open Beehive, configure a model, and complete your first task.",
-      "updated_at": "2026-10-06",
+      "summary": "The shortest path to install the desktop app, configure a model, and complete your first task.",
+      "updated_at": "2026-10-09",
       "read_when": [
         "You're using wunder for the first time",
         "You need to verify a working setup"
@@ -9818,70 +9811,45 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "Step 1: Open Beehive"
+          "text": "4 steps to get running"
         },
         {
           "id": "section-3",
-          "level": 2,
-          "text": "Shortest path: Desktop app"
+          "level": 3,
+          "text": "1. Download and install"
         },
         {
           "id": "section-4",
           "level": 3,
-          "text": "5 steps to get running"
+          "text": "2. Configure the model"
         },
         {
           "id": "section-5",
           "level": 3,
-          "text": "Desktop-only capabilities"
+          "text": "3. Start your first conversation"
         },
         {
           "id": "section-6",
-          "level": 2,
-          "text": "Team path: Web browser"
+          "level": 3,
+          "text": "4. Watch it work"
         },
         {
           "id": "section-7",
-          "level": 3,
-          "text": "Prerequisites"
+          "level": 2,
+          "text": "Out-of-the-box capabilities"
         },
         {
           "id": "section-8",
-          "level": 3,
-          "text": "3 steps to deploy"
+          "level": 2,
+          "text": "Other ways to use wunder"
         },
         {
           "id": "section-9",
-          "level": 3,
-          "text": "Server core capabilities"
-        },
-        {
-          "id": "section-10",
-          "level": 2,
-          "text": "Developer path: CLI"
-        },
-        {
-          "id": "section-11",
-          "level": 3,
-          "text": "Install and run"
-        },
-        {
-          "id": "section-12",
-          "level": 3,
-          "text": "First session"
-        },
-        {
-          "id": "section-13",
-          "level": 3,
-          "text": "CLI-only capabilities"
-        },
-        {
-          "id": "section-14",
           "level": 2,
           "text": "Verification checklist"
         },
         {
-          "id": "section-15",
+          "id": "section-10",
           "level": 2,
           "text": "Next steps"
         }
@@ -9895,11 +9863,11 @@
       "slug": "en/start/desktop",
       "language": "en",
       "title": "Desktop Guide",
-      "summary": "The first choice for individual users. Download, install, and start — no server needed.",
-      "updated_at": "2026-10-07",
+      "summary": "wunder's default form. Download, install, and start — no server needed.",
+      "updated_at": "2026-10-09",
       "read_when": [
         "You want to get wunder running right away",
-        "You care more about Beehive's desktop form than deploying a full server"
+        "You want the local AI workbench rather than deploying a full server"
       ],
       "source_docs": [
         "docs/API文档.md",
@@ -10003,7 +9971,7 @@
       "slug": "en/start/server",
       "language": "en",
       "title": "Server Deployment",
-      "summary": "The choice for teams and organizations. Multi-user, permission management, channel integration, unified governance.",
+      "summary": "Optional form. Deploy only for multi-user collaboration, permission management, channel integration, and unified governance.",
       "updated_at": "2026-04-10",
       "read_when": [
         "You need multiple people sharing wunder",
@@ -10013,9 +9981,9 @@
         "docs/API文档.md"
       ],
       "tab": "Getting Started",
-      "group": "Onboarding",
+      "group": "Advanced (Optional Forms)",
       "group_path": [
-        "Onboarding"
+        "Advanced (Optional Forms)"
       ],
       "url": "/docs/en/start/server/",
       "headings": [
@@ -10104,7 +10072,7 @@
       "slug": "en/start/cli",
       "language": "en",
       "title": "CLI Usage",
-      "summary": "The entry point for developers and automation. Terminal-driven, scriptable, JSONL output.",
+      "summary": "Optional form. For terminals and automation: terminal-driven, scriptable, JSONL output.",
       "updated_at": "2026-04-10",
       "read_when": [
         "You want to use wunder in the terminal",
@@ -10114,9 +10082,9 @@
         "crates/wunder-cli/main.rs"
       ],
       "tab": "Getting Started",
-      "group": "Onboarding",
+      "group": "Advanced (Optional Forms)",
       "group_path": [
-        "Onboarding"
+        "Advanced (Optional Forms)"
       ],
       "url": "/docs/en/start/cli/",
       "headings": [
@@ -10180,14 +10148,14 @@
       "slug": "en/start/hubs",
       "language": "en",
       "title": "Documentation Hub",
-      "summary": "Find the docs you need by role.",
-      "updated_at": "2026-10-07",
+      "summary": "Start with the Honeycomb, then dive deeper as needed.",
+      "updated_at": "2026-10-09",
       "read_when": [
         "You're not sure where to start",
-        "You want to jump to the right docs by role"
+        "You want to jump to the right docs quickly"
       ],
       "source_docs": [
-        "docs/wunder补全文档落地方案.md"
+        "docs/使用说明书/en/index.md"
       ],
       "tab": "Getting Started",
       "group": "Navigation",
@@ -10204,22 +10172,22 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "I'm a regular user"
+          "text": "Start here: get running"
         },
         {
           "id": "section-3",
           "level": 2,
-          "text": "I'm an administrator"
+          "text": "Go deeper"
         },
         {
           "id": "section-4",
           "level": 2,
-          "text": "I'm a developer / integrator"
+          "text": "Optional forms: admin & deployment"
         },
         {
           "id": "section-5",
           "level": 2,
-          "text": "I'm troubleshooting"
+          "text": "Troubleshooting"
         },
         {
           "id": "section-6",
@@ -10237,7 +10205,7 @@
       "language": "en",
       "title": "Docs Directory",
       "summary": "Documentation index by purpose. Quickly locate the page you need.",
-      "updated_at": "2026-10-07",
+      "updated_at": "2026-10-09",
       "read_when": [
         "You know what you want but aren't sure where it is",
         "You want an overview of all documentation"
@@ -10303,7 +10271,7 @@
       "language": "en",
       "title": "Core Concepts",
       "summary": "The ten core concepts are not ten feature bullets. They are the structural boundaries wunder establishes for long-running threads, concurrent users, and multiple entry surfaces.",
-      "updated_at": "2026-10-07",
+      "updated_at": "2026-10-09",
       "read_when": [
         "You are trying to understand wunder systematically for the first time",
         "You are preparing for integration, operations, or tool development and need one shared perspective",
@@ -11240,7 +11208,7 @@
       "language": "en",
       "title": "Tools Overview",
       "summary": "The current wunder tool system, the unified result envelope, state semantics, notable exceptions, and tool-selection guidance.",
-      "updated_at": "2026-04-10",
+      "updated_at": "2026-10-10",
       "read_when": [
         "You need to decide which category of tool to use first",
         "You need to understand the latest tool result structure"
@@ -11291,7 +11259,7 @@
         {
           "id": "section-7",
           "level": 3,
-          "text": "finalresponse"
+          "text": "finalresponse (removed)"
         },
         {
           "id": "section-8",
@@ -11306,12 +11274,12 @@
         {
           "id": "section-10",
           "level": 3,
-          "text": "browser"
+          "text": "Browser tool group (browser)"
         },
         {
           "id": "section-11",
           "level": 3,
-          "text": "websearch"
+          "text": "websearch (removed)"
         },
         {
           "id": "section-12",
@@ -11321,7 +11289,7 @@
         {
           "id": "section-13",
           "level": 3,
-          "text": "applypatch"
+          "text": "文本编辑 (formerly applypatch)"
         },
         {
           "id": "section-14",
@@ -11856,13 +11824,12 @@
       "slug": "en/tools/web-fetch",
       "language": "en",
       "title": "Web Fetch",
-      "summary": "The split between `web_search` and `web_fetch`, plus direct fetch, browser fallback, and success or failure results for `web_fetch`.",
-      "updated_at": "2026-05-15",
+      "summary": "Direct fetch, browser fallback, and success or failure results for `web_fetch`; the keyword search tool `web_search` has been removed.",
+      "updated_at": "2026-10-10",
       "read_when": [
         "You need to read public webpage content rather than drive a browser"
       ],
       "source_docs": [
-        "src/services/tools/web_search_tool.rs",
         "src/services/tools/web_fetch_tool.rs"
       ],
       "tab": "Tools",
@@ -11927,13 +11894,15 @@
       "slug": "en/tools/browser",
       "language": "en",
       "title": "Browser",
-      "summary": "The actions, return characteristics, and division of labor between browser automation and `web_fetch`.",
-      "updated_at": "2026-07-02",
+      "summary": "The 17 native browser-automation tools, their minimum arguments, return shape (content blocks), and the division of labor with `web_fetch`.",
+      "updated_at": "2026-10-10",
       "read_when": [
         "You need to open a webpage, click, type, take screenshots, or read dynamic pages"
       ],
       "source_docs": [
         "src/services/tools/browser_tool.rs",
+        "src/services/browser/provider.rs",
+        "src/services/browser/providers/playwright.rs",
         "src/services/browser/runtime.rs"
       ],
       "tab": "Tools",
@@ -11951,12 +11920,12 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "When to use it"
+          "text": "Tool list"
         },
         {
           "id": "section-3",
           "level": 2,
-          "text": "Common actions"
+          "text": "When to use it"
         },
         {
           "id": "section-4",
@@ -11966,30 +11935,25 @@
         {
           "id": "section-5",
           "level": 2,
-          "text": "How to read its result shape"
+          "text": "How to read the result shape"
         },
         {
           "id": "section-6",
           "level": 3,
-          "text": "status"
+          "text": "browserstatus"
         },
         {
           "id": "section-7",
           "level": 3,
-          "text": "stop"
+          "text": "browsertakescreenshot"
         },
         {
           "id": "section-8",
           "level": 3,
-          "text": "screenshot"
+          "text": "Other actions"
         },
         {
           "id": "section-9",
-          "level": 3,
-          "text": "readpage, snapshot, navigate, tabs"
-        },
-        {
-          "id": "section-10",
           "level": 2,
           "text": "Difference from webfetch"
         }
@@ -12131,6 +12095,11 @@
         },
         {
           "id": "section-9",
+          "level": 3,
+          "text": "Compatibility and answers"
+        },
+        {
+          "id": "section-10",
           "level": 2,
           "text": "Key points"
         }
@@ -13725,8 +13694,8 @@
       "slug": "en/surfaces/index",
       "language": "en",
       "title": "Interface Overview",
-      "summary": "Users work in Beehive; admins govern in the admin interface. Beehive opens via the desktop app or a web browser.",
-      "updated_at": "2026-10-07",
+      "summary": "Users work in the Honeycomb (local AI workbench) or the Beehive (cloud AI workbench); admins govern with the Bridge.",
+      "updated_at": "2026-10-09",
       "read_when": [],
       "source_docs": [],
       "tab": "Surfaces",
@@ -13744,45 +13713,50 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "Beehive: user work surface"
+          "text": "Two workbenches"
         },
         {
           "id": "section-3",
           "level": 2,
-          "text": "Admin interface: governance backend"
+          "text": "The Bridge: governance backend"
         },
         {
           "id": "section-4",
           "level": 2,
-          "text": "Surface entries"
+          "text": "Interface entries"
         },
         {
           "id": "section-5",
           "level": 2,
-          "text": "Beehive's two-column layout"
+          "text": "The two-column layout"
         },
         {
           "id": "section-6",
           "level": 2,
-          "text": "Pick by role"
+          "text": "Choose by scenario"
         },
         {
           "id": "section-7",
           "level": 3,
-          "text": "Regular users"
+          "text": "Individual users"
         },
         {
           "id": "section-8",
           "level": 3,
-          "text": "Administrators"
+          "text": "Team members"
         },
         {
           "id": "section-9",
-          "level": 2,
-          "text": "Common misconceptions"
+          "level": 3,
+          "text": "Administrators"
         },
         {
           "id": "section-10",
+          "level": 2,
+          "text": "Common pitfalls"
+        },
+        {
+          "id": "section-11",
           "level": 2,
           "text": "Further reading"
         }
@@ -13796,8 +13770,8 @@
       "slug": "en/surfaces/frontend",
       "language": "en",
       "title": "Beehive Interface",
-      "summary": "Beehive is your workbench. Two columns: the left sidebar holds new task, search, the workspace thread tree, the working directory, and settings; the right side is chat.",
-      "updated_at": "2026-10-07",
+      "summary": "Beehive is the cloud AI workbench (web, provided with the Hull). Two columns: the left sidebar holds new task, search, the workspace thread tree, the working directory, and settings; the right side is chat. The Honeycomb (desktop, the local AI workbench) shares this layout.",
+      "updated_at": "2026-10-09",
       "read_when": [],
       "source_docs": [],
       "tab": "Surfaces",
@@ -13912,8 +13886,8 @@
       "slug": "en/surfaces/web-admin",
       "language": "en",
       "title": "Admin Interface",
-      "summary": "The admin's backend workbench. Model configuration, tool management, user governance, channel integration — all here.",
-      "updated_at": "2026-10-07",
+      "summary": "The Bridge is the management UI of the user and agent management platform (the Hull). Model configuration, tool management, user governance, channel integration — all here.",
+      "updated_at": "2026-10-09",
       "read_when": [],
       "source_docs": [],
       "tab": "Surfaces",
@@ -13988,8 +13962,8 @@
       "slug": "en/surfaces/desktop-ui",
       "language": "en",
       "title": "Desktop Interface",
-      "summary": "Beehive's desktop form. Local-first, with direct file access and one-click reset.",
-      "updated_at": "2026-10-07",
+      "summary": "The local AI workbench (desktop). Local-first, with direct file access and one-click reset.",
+      "updated_at": "2026-10-09",
       "read_when": [],
       "source_docs": [],
       "tab": "Surfaces",
@@ -14182,7 +14156,7 @@
       "language": "en",
       "title": "Deployment and Running",
       "summary": "Before deploying wunder, distinguish between desktop, local development, and server paths, then discuss startup commands.",
-      "updated_at": "2026-10-06",
+      "updated_at": "2026-10-10",
       "read_when": [
         "You need to deploy wunder",
         "You need to confirm where to place databases, MCP, sandbox, and workspaces"
@@ -15480,7 +15454,7 @@
       "language": "en",
       "title": "Architecture",
       "summary": "wunder uses one unified orchestration engine. Beehive is how users reach that engine; the deployment form decides where the engine runs.",
-      "updated_at": "2026-10-07",
+      "updated_at": "2026-10-09",
       "read_when": [
         "You want to understand wunder as a whole system",
         "You need to see how APIs, orchestration, tools, frontends, and storage cooperate"
@@ -15503,7 +15477,7 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "Beehive and deployment forms"
+          "text": "Forms and positioning"
         },
         {
           "id": "section-3",
@@ -15574,17 +15548,11 @@
     "en/concepts/workspaces": {
       "slug": "en/concepts/workspaces",
       "language": "en",
-      "title": "Workspaces and Working Directory",
-      "summary": "Each user has exactly one workspace: a single cloud directory under the server data root. There are no container layers and no local folder binding.",
-      "updated_at": "2026-10-07",
-      "read_when": [
-        "You want to understand why files are isolated by user only",
-        "You need to know the relationship between a user, an agent instance, and the working directory"
-      ],
-      "source_docs": [
-        "docs/设计文档/01-系统总体设计.md",
-        "docs/API文档.md"
-      ],
+      "title": "Workspaces and the Working Directory",
+      "summary": "Each user has exactly one workspace, the root for all file tools. In the Honeycomb it is a persistent local directory; in Hull deployments it is a single per-user directory on the server.",
+      "updated_at": "2026-10-08",
+      "read_when": [],
+      "source_docs": [],
       "tab": "Reference",
       "group": "Deep Dives",
       "group_path": [
@@ -15595,70 +15563,80 @@
         {
           "id": "section-1",
           "level": 1,
-          "text": "Workspaces and Working Directory"
+          "text": "Workspaces and the Working Directory"
         },
         {
           "id": "section-2",
           "level": 2,
-          "text": "One layer of isolation"
+          "text": "How it works"
         },
         {
           "id": "section-3",
-          "level": 2,
-          "text": "Key conventions"
+          "level": 3,
+          "text": "One layer of isolation"
         },
         {
           "id": "section-4",
-          "level": 2,
-          "text": "What it is for"
+          "level": 3,
+          "text": "Where the workspace lives"
         },
         {
           "id": "section-5",
           "level": 3,
-          "text": "Data isolation"
+          "text": "Key rules"
         },
         {
           "id": "section-6",
-          "level": 3,
-          "text": "File persistence"
+          "level": 2,
+          "text": "What it does"
         },
         {
           "id": "section-7",
           "level": 3,
-          "text": "Root of agent-visible configuration"
+          "text": "Data isolation"
         },
         {
           "id": "section-8",
-          "level": 2,
-          "text": "In practice"
+          "level": 3,
+          "text": "File persistence"
         },
         {
           "id": "section-9",
           "level": 3,
-          "text": "Reaching the workspace"
+          "text": "Root of agent-visible configuration"
         },
         {
           "id": "section-10",
-          "level": 3,
-          "text": "How to organize files"
+          "level": 2,
+          "text": "In practice"
         },
         {
           "id": "section-11",
           "level": 3,
-          "text": "Usage and space"
+          "text": "Accessing the workspace"
         },
         {
           "id": "section-12",
           "level": 3,
-          "text": "How the local form differs"
+          "text": "Organizing files"
         },
         {
           "id": "section-13",
-          "level": 2,
-          "text": "Common misconceptions"
+          "level": 3,
+          "text": "Usage and space"
         },
         {
           "id": "section-14",
+          "level": 3,
+          "text": "The Honeycomb's local boundary"
+        },
+        {
+          "id": "section-15",
+          "level": 2,
+          "text": "Common pitfalls"
+        },
+        {
+          "id": "section-16",
           "level": 2,
           "text": "Further reading"
         }
@@ -15942,7 +15920,7 @@
       "language": "en",
       "title": "Tool System",
       "summary": "wunder is not built around \"the model answers.\" It is built around \"the model selects and orchestrates tools to finish work.\"",
-      "updated_at": "2026-10-07",
+      "updated_at": "2026-10-10",
       "read_when": [
         "You need to understand why wunder is more than chat",
         "You need to understand tool sources, boundaries, and orchestration"
@@ -16451,8 +16429,8 @@
       "slug": "en/concepts/companion",
       "language": "en",
       "title": "Companion System",
-      "summary": "Use sprite-animated companions on desktop and web so agents accompany your work in a livelier way.",
-      "updated_at": "2026-10-07",
+      "summary": "Use sprite-animated companions in the Honeycomb (desktop) and the Beehive (web) so agents accompany your work in a livelier way.",
+      "updated_at": "2026-10-09",
       "read_when": [],
       "source_docs": [],
       "tab": "Reference",
@@ -16608,7 +16586,7 @@
       "language": "en",
       "title": "Boundary Handling",
       "summary": "wunder's handling strategies and recovery mechanisms for edge cases such as context overflow, network interruption, tool failure, and system exceptions.",
-      "updated_at": "2026-10-05",
+      "updated_at": "2026-10-10",
       "read_when": [
         "You need to understand system behavior under exceptional conditions",
         "You need to design fault tolerance and recovery logic",
@@ -17125,7 +17103,7 @@
       "language": "en",
       "title": "Glossary",
       "summary": "Core terms in wunder documentation, explained in plain language.",
-      "updated_at": "2026-10-07",
+      "updated_at": "2026-10-10",
       "read_when": [
         "You're reading wunder docs for the first time",
         "You find terms that look similar but aren't sure of the difference"
@@ -17148,85 +17126,90 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "User"
+          "text": "Product and Form Names"
         },
         {
           "id": "section-3",
           "level": 2,
-          "text": "Agent"
+          "text": "User"
         },
         {
           "id": "section-4",
           "level": 2,
-          "text": "Preset Agent"
+          "text": "Agent"
         },
         {
           "id": "section-5",
           "level": 2,
-          "text": "Thread"
+          "text": "Preset Agent"
         },
         {
           "id": "section-6",
           "level": 2,
-          "text": "Subagent"
+          "text": "Thread"
         },
         {
           "id": "section-7",
           "level": 2,
-          "text": "User Turn"
+          "text": "Subagent"
         },
         {
           "id": "section-8",
           "level": 2,
-          "text": "Model Turn"
+          "text": "User Turn"
         },
         {
           "id": "section-9",
           "level": 2,
-          "text": "Workspace"
+          "text": "Model Turn"
         },
         {
           "id": "section-10",
           "level": 2,
-          "text": "Working Directory"
+          "text": "Workspace"
         },
         {
           "id": "section-11",
           "level": 2,
-          "text": "Skill"
+          "text": "Working Directory"
         },
         {
           "id": "section-12",
           "level": 2,
-          "text": "MCP"
+          "text": "Skill"
         },
         {
           "id": "section-13",
           "level": 2,
-          "text": "A2A"
+          "text": "MCP"
         },
         {
           "id": "section-14",
           "level": 2,
-          "text": "Channel"
+          "text": "A2A"
         },
         {
           "id": "section-15",
           "level": 2,
-          "text": "Token"
+          "text": "Channel"
         },
         {
           "id": "section-16",
           "level": 2,
-          "text": "Context Compression"
+          "text": "Token"
         },
         {
           "id": "section-17",
           "level": 2,
-          "text": "Long-term Memory"
+          "text": "Context Compression"
         },
         {
           "id": "section-18",
+          "level": 2,
+          "text": "Long-term Memory"
+        },
+        {
+          "id": "section-19",
           "level": 2,
           "text": "Further Reading"
         }

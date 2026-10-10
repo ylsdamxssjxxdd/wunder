@@ -11,6 +11,8 @@ updated_at: 2026-09-21
 
 # ptc
 
+> **已移除**：该工具已从 wunder 中移除，对智能体与用户均不可见；本页仅作历史参考。
+
 `ptc` 是 programmatic tool call，定位是：
 
 - 把一段完整 Python 脚本写到临时文件

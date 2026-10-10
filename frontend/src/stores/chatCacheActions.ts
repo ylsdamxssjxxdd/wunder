@@ -573,7 +573,8 @@ export const chatCacheActions = {
       message.questionPanel = {
         ...panel,
         status: normalizeInquiryPanelStatus(patch.status ?? panel.status),
-        selected: Array.isArray(patch.selected) ? patch.selected : panel.selected
+        selected: Array.isArray(patch.selected) ? patch.selected : panel.selected,
+        answers: patch.answers ?? panel.answers
       };
       this.scheduleSnapshot(true);
     },

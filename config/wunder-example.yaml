@@ -235,6 +235,7 @@ hooks: # 工具生命周期钩子（对齐 dsh hooks/hook-protocol；默认关�
 
 browser:
   enabled: ${WUNDER_BROWSER_ENABLED:-false}
+  provider: playwright
   docker:
     enabled: ${WUNDER_BROWSER_DOCKER_ENABLED:-false}
   security:

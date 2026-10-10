@@ -63,6 +63,7 @@ mod web_fetch_tool;
 mod web_fetch_tool_impl;
 mod web_search_tool;
 
+pub use browser_tool::browser_tool_names;
 pub use catalog::{
     browser_tools_available, build_desktop_followup_user_message, build_mcp_tool_alias_entries,
     build_mcp_tool_alias_entries_for_names, build_read_image_followup_user_message,
@@ -71,6 +72,7 @@ pub use catalog::{
     collect_prompt_tool_specs, collect_prompt_tool_specs_with_language, desktop_tools_available,
     filter_tool_names_by_model_capability, is_browser_tool_name, is_desktop_control_tool_name,
     is_read_image_tool_name, resolve_runtime_tool_display_name, resolve_tool_name,
+    runtime_tool_schema,
 };
 pub(crate) use compact::{compact_tool_spec_for_model, compact_tool_specs_for_model};
 pub use context::{build_tool_roots, ToolContext, ToolEventEmitter, ToolRoots};

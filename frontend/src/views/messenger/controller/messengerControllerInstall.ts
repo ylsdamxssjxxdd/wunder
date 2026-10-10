@@ -215,9 +215,28 @@ type WorldRenderableMessage = {
   message: Record<string, unknown>;
 };
 
-type AgentInquiryPanelRoute = { label: string; description?: string };
+type AgentInquiryPanelOption = { label: string; description?: string; recommended?: boolean };
 
-type AgentInquiryPanelData = { question?: string; routes?: AgentInquiryPanelRoute[]; status?: string };
+type AgentInquiryPanelQuestion = {
+  question: string;
+  options: AgentInquiryPanelOption[];
+  multiple: boolean;
+};
+
+/** 一题的作答结果：选中项标签、自由文本，或明确「无偏好」。 */
+type AgentInquiryPanelAnswer = {
+  questionIndex: number;
+  labels: string[];
+  other: string;
+  noPreference: boolean;
+};
+
+type AgentInquiryPanelData = {
+  questions?: AgentInquiryPanelQuestion[];
+  status?: string;
+  selected?: string[];
+  answers?: AgentInquiryPanelAnswer[];
+};
 
 type ActiveAgentInquiryPanel = { message: Record<string, unknown>; panel: AgentInquiryPanelData };
 
@@ -662,7 +681,7 @@ function installMessengerControllerStateRefs(ctx: MessengerControllerContext): v
 
   ctx.autoStickToBottom = ref(true);
 
-  ctx.agentInquirySelection = ref<number[]>([]);
+  ctx.agentInquirySelection = ref<AgentInquiryPanelAnswer[]>([]);
 
   ctx.dismissedPlanMessages = ref<WeakSet<Record<string, unknown>>>(new WeakSet());
 
@@ -1205,9 +1224,28 @@ type WorldRenderableMessage = {
   message: Record<string, unknown>;
 };
 
-type AgentInquiryPanelRoute = { label: string; description?: string };
+type AgentInquiryPanelOption = { label: string; description?: string; recommended?: boolean };
 
-type AgentInquiryPanelData = { question?: string; routes?: AgentInquiryPanelRoute[]; status?: string };
+type AgentInquiryPanelQuestion = {
+  question: string;
+  options: AgentInquiryPanelOption[];
+  multiple: boolean;
+};
+
+/** 一题的作答结果：选中项标签、自由文本，或明确「无偏好」。 */
+type AgentInquiryPanelAnswer = {
+  questionIndex: number;
+  labels: string[];
+  other: string;
+  noPreference: boolean;
+};
+
+type AgentInquiryPanelData = {
+  questions?: AgentInquiryPanelQuestion[];
+  status?: string;
+  selected?: string[];
+  answers?: AgentInquiryPanelAnswer[];
+};
 
 type ActiveAgentInquiryPanel = { message: Record<string, unknown>; panel: AgentInquiryPanelData };
 
@@ -1585,9 +1623,28 @@ type MessageVirtualSpacer = {
   height: number;
 };
 
-type AgentInquiryPanelRoute = { label: string; description?: string };
+type AgentInquiryPanelOption = { label: string; description?: string; recommended?: boolean };
 
-type AgentInquiryPanelData = { question?: string; routes?: AgentInquiryPanelRoute[]; status?: string };
+type AgentInquiryPanelQuestion = {
+  question: string;
+  options: AgentInquiryPanelOption[];
+  multiple: boolean;
+};
+
+/** 一题的作答结果：选中项标签、自由文本，或明确「无偏好」。 */
+type AgentInquiryPanelAnswer = {
+  questionIndex: number;
+  labels: string[];
+  other: string;
+  noPreference: boolean;
+};
+
+type AgentInquiryPanelData = {
+  questions?: AgentInquiryPanelQuestion[];
+  status?: string;
+  selected?: string[];
+  answers?: AgentInquiryPanelAnswer[];
+};
 
 type ActiveAgentInquiryPanel = { message: Record<string, unknown>; panel: AgentInquiryPanelData };
 
@@ -2363,9 +2420,28 @@ type WorldRenderableMessage = {
   message: Record<string, unknown>;
 };
 
-type AgentInquiryPanelRoute = { label: string; description?: string };
+type AgentInquiryPanelOption = { label: string; description?: string; recommended?: boolean };
 
-type AgentInquiryPanelData = { question?: string; routes?: AgentInquiryPanelRoute[]; status?: string };
+type AgentInquiryPanelQuestion = {
+  question: string;
+  options: AgentInquiryPanelOption[];
+  multiple: boolean;
+};
+
+/** 一题的作答结果：选中项标签、自由文本，或明确「无偏好」。 */
+type AgentInquiryPanelAnswer = {
+  questionIndex: number;
+  labels: string[];
+  other: string;
+  noPreference: boolean;
+};
+
+type AgentInquiryPanelData = {
+  questions?: AgentInquiryPanelQuestion[];
+  status?: string;
+  selected?: string[];
+  answers?: AgentInquiryPanelAnswer[];
+};
 
 type ActiveAgentInquiryPanel = { message: Record<string, unknown>; panel: AgentInquiryPanelData };
 
@@ -3219,9 +3295,28 @@ type WorldRenderableMessage = {
   message: Record<string, unknown>;
 };
 
-type AgentInquiryPanelRoute = { label: string; description?: string };
+type AgentInquiryPanelOption = { label: string; description?: string; recommended?: boolean };
 
-type AgentInquiryPanelData = { question?: string; routes?: AgentInquiryPanelRoute[]; status?: string };
+type AgentInquiryPanelQuestion = {
+  question: string;
+  options: AgentInquiryPanelOption[];
+  multiple: boolean;
+};
+
+/** 一题的作答结果：选中项标签、自由文本，或明确「无偏好」。 */
+type AgentInquiryPanelAnswer = {
+  questionIndex: number;
+  labels: string[];
+  other: string;
+  noPreference: boolean;
+};
+
+type AgentInquiryPanelData = {
+  questions?: AgentInquiryPanelQuestion[];
+  status?: string;
+  selected?: string[];
+  answers?: AgentInquiryPanelAnswer[];
+};
 
 type ActiveAgentInquiryPanel = { message: Record<string, unknown>; panel: AgentInquiryPanelData };
 
@@ -3984,9 +4079,28 @@ type WorldRenderableMessage = {
   message: Record<string, unknown>;
 };
 
-type AgentInquiryPanelRoute = { label: string; description?: string };
+type AgentInquiryPanelOption = { label: string; description?: string; recommended?: boolean };
 
-type AgentInquiryPanelData = { question?: string; routes?: AgentInquiryPanelRoute[]; status?: string };
+type AgentInquiryPanelQuestion = {
+  question: string;
+  options: AgentInquiryPanelOption[];
+  multiple: boolean;
+};
+
+/** 一题的作答结果：选中项标签、自由文本，或明确「无偏好」。 */
+type AgentInquiryPanelAnswer = {
+  questionIndex: number;
+  labels: string[];
+  other: string;
+  noPreference: boolean;
+};
+
+type AgentInquiryPanelData = {
+  questions?: AgentInquiryPanelQuestion[];
+  status?: string;
+  selected?: string[];
+  answers?: AgentInquiryPanelAnswer[];
+};
 
 type ActiveAgentInquiryPanel = { message: Record<string, unknown>; panel: AgentInquiryPanelData };
 
@@ -4566,9 +4680,28 @@ type WorldRenderableMessage = {
   message: Record<string, unknown>;
 };
 
-type AgentInquiryPanelRoute = { label: string; description?: string };
+type AgentInquiryPanelOption = { label: string; description?: string; recommended?: boolean };
 
-type AgentInquiryPanelData = { question?: string; routes?: AgentInquiryPanelRoute[]; status?: string };
+type AgentInquiryPanelQuestion = {
+  question: string;
+  options: AgentInquiryPanelOption[];
+  multiple: boolean;
+};
+
+/** 一题的作答结果：选中项标签、自由文本，或明确「无偏好」。 */
+type AgentInquiryPanelAnswer = {
+  questionIndex: number;
+  labels: string[];
+  other: string;
+  noPreference: boolean;
+};
+
+type AgentInquiryPanelData = {
+  questions?: AgentInquiryPanelQuestion[];
+  status?: string;
+  selected?: string[];
+  answers?: AgentInquiryPanelAnswer[];
+};
 
 type ActiveAgentInquiryPanel = { message: Record<string, unknown>; panel: AgentInquiryPanelData };
 
@@ -4618,27 +4751,57 @@ function installMessengerControllerMessagePanelsPresentation(ctx: MessengerContr
           return;
       }
       ctx.agentInquirySelection.value = selected
-          .map((item) => Number(item))
-          .filter((item) => Number.isInteger(item) && item >= 0);
+          .map((item) => {
+              const record = (item || {}) as Record<string, unknown>;
+              const labels = Array.isArray(record.labels)
+                  ? record.labels.map((label) => String(label || '').trim()).filter(Boolean)
+                  : [];
+              return {
+                  questionIndex: Number.isInteger(Number(record.questionIndex))
+                      ? Number(record.questionIndex)
+                      : -1,
+                  labels,
+                  other: String(record.other || '').trim(),
+                  noPreference: record.noPreference === true
+              };
+          })
+          .filter(
+              (item) =>
+                  item.labels.length > 0 || Boolean(item.other) || item.noPreference
+          );
   };
 
-  ctx.resolveAgentInquirySelectionRoutes = (panel: AgentInquiryPanelData | null | undefined, selected: number[]): AgentInquiryPanelRoute[] => {
-      if (!panel || !Array.isArray(selected) || !selected.length) {
-          return [];
+  ctx.buildAgentInquiryReply = (panel: AgentInquiryPanelData, answers: AgentInquiryPanelAnswer[]): string => {
+      const questions = Array.isArray(panel?.questions) ? panel.questions : [];
+      if (!questions.length) {
+          return '';
       }
-      return selected
-          .map((index) => panel.routes?.[index])
-          .filter((route): route is AgentInquiryPanelRoute => Boolean(route?.label));
-  };
-
-  ctx.buildAgentInquiryReply = (panel: AgentInquiryPanelData, routes: AgentInquiryPanelRoute[]): string => {
-      const header = ctx.t('chat.askPanelPrefix');
-      const question = panel?.question ? ctx.t('chat.askPanelQuestion', { question: panel.question }) : '';
-      const lines = routes.map((route) => {
-          const detail = route.description ? `：${route.description}` : '';
-          return `- ${route.label}${detail}`;
+      const join = ctx.t('chat.inquiry.answerJoin');
+      const lines: string[] = [ctx.t('chat.askPanelPrefix')];
+      questions.forEach((question, index) => {
+          lines.push(questions.length > 1
+              ? ctx.t('chat.askPanelQuestionIndexed', {
+                  index: index + 1,
+                  total: questions.length,
+                  question: question.question
+              })
+              : ctx.t('chat.askPanelQuestion', { question: question.question }));
+          const answer = answers.find((item) => item.questionIndex === index);
+          const parts: string[] = [];
+          if (answer?.labels.length) {
+              parts.push(answer.labels.join(join));
+          }
+          if (answer?.other) {
+              parts.push(answer.other);
+          }
+          const answerText = parts.length
+              ? parts.join('；')
+              : answer?.noPreference
+                  ? ctx.t('chat.inquiry.noPreference')
+                  : ctx.t('chat.inquiry.unanswered');
+          lines.push(ctx.t('chat.askPanelAnswer', { answer: answerText }));
       });
-      return [header, question, ...lines].filter(Boolean).join('\n');
+      return lines.filter(Boolean).join('\n');
   };
 
   ctx.avatarLabel = (value: unknown): string => {
@@ -4866,9 +5029,28 @@ type WorldRenderableMessage = {
   message: Record<string, unknown>;
 };
 
-type AgentInquiryPanelRoute = { label: string; description?: string };
+type AgentInquiryPanelOption = { label: string; description?: string; recommended?: boolean };
 
-type AgentInquiryPanelData = { question?: string; routes?: AgentInquiryPanelRoute[]; status?: string };
+type AgentInquiryPanelQuestion = {
+  question: string;
+  options: AgentInquiryPanelOption[];
+  multiple: boolean;
+};
+
+/** 一题的作答结果：选中项标签、自由文本，或明确「无偏好」。 */
+type AgentInquiryPanelAnswer = {
+  questionIndex: number;
+  labels: string[];
+  other: string;
+  noPreference: boolean;
+};
+
+type AgentInquiryPanelData = {
+  questions?: AgentInquiryPanelQuestion[];
+  status?: string;
+  selected?: string[];
+  answers?: AgentInquiryPanelAnswer[];
+};
 
 type ActiveAgentInquiryPanel = { message: Record<string, unknown>; panel: AgentInquiryPanelData };
 
@@ -6136,9 +6318,28 @@ type WorldRenderableMessage = {
   message: Record<string, unknown>;
 };
 
-type AgentInquiryPanelRoute = { label: string; description?: string };
+type AgentInquiryPanelOption = { label: string; description?: string; recommended?: boolean };
 
-type AgentInquiryPanelData = { question?: string; routes?: AgentInquiryPanelRoute[]; status?: string };
+type AgentInquiryPanelQuestion = {
+  question: string;
+  options: AgentInquiryPanelOption[];
+  multiple: boolean;
+};
+
+/** 一题的作答结果：选中项标签、自由文本，或明确「无偏好」。 */
+type AgentInquiryPanelAnswer = {
+  questionIndex: number;
+  labels: string[];
+  other: string;
+  noPreference: boolean;
+};
+
+type AgentInquiryPanelData = {
+  questions?: AgentInquiryPanelQuestion[];
+  status?: string;
+  selected?: string[];
+  answers?: AgentInquiryPanelAnswer[];
+};
 
 type ActiveAgentInquiryPanel = { message: Record<string, unknown>; panel: AgentInquiryPanelData };
 
@@ -6525,9 +6726,28 @@ type WorldRenderableMessage = {
   message: Record<string, unknown>;
 };
 
-type AgentInquiryPanelRoute = { label: string; description?: string };
+type AgentInquiryPanelOption = { label: string; description?: string; recommended?: boolean };
 
-type AgentInquiryPanelData = { question?: string; routes?: AgentInquiryPanelRoute[]; status?: string };
+type AgentInquiryPanelQuestion = {
+  question: string;
+  options: AgentInquiryPanelOption[];
+  multiple: boolean;
+};
+
+/** 一题的作答结果：选中项标签、自由文本，或明确「无偏好」。 */
+type AgentInquiryPanelAnswer = {
+  questionIndex: number;
+  labels: string[];
+  other: string;
+  noPreference: boolean;
+};
+
+type AgentInquiryPanelData = {
+  questions?: AgentInquiryPanelQuestion[];
+  status?: string;
+  selected?: string[];
+  answers?: AgentInquiryPanelAnswer[];
+};
 
 type ActiveAgentInquiryPanel = { message: Record<string, unknown>; panel: AgentInquiryPanelData };
 
@@ -6833,9 +7053,28 @@ type WorldRenderableMessage = {
   message: Record<string, unknown>;
 };
 
-type AgentInquiryPanelRoute = { label: string; description?: string };
+type AgentInquiryPanelOption = { label: string; description?: string; recommended?: boolean };
 
-type AgentInquiryPanelData = { question?: string; routes?: AgentInquiryPanelRoute[]; status?: string };
+type AgentInquiryPanelQuestion = {
+  question: string;
+  options: AgentInquiryPanelOption[];
+  multiple: boolean;
+};
+
+/** 一题的作答结果：选中项标签、自由文本，或明确「无偏好」。 */
+type AgentInquiryPanelAnswer = {
+  questionIndex: number;
+  labels: string[];
+  other: string;
+  noPreference: boolean;
+};
+
+type AgentInquiryPanelData = {
+  questions?: AgentInquiryPanelQuestion[];
+  status?: string;
+  selected?: string[];
+  answers?: AgentInquiryPanelAnswer[];
+};
 
 type ActiveAgentInquiryPanel = { message: Record<string, unknown>; panel: AgentInquiryPanelData };
 
@@ -7138,9 +7377,28 @@ type WorldRenderableMessage = {
   message: Record<string, unknown>;
 };
 
-type AgentInquiryPanelRoute = { label: string; description?: string };
+type AgentInquiryPanelOption = { label: string; description?: string; recommended?: boolean };
 
-type AgentInquiryPanelData = { question?: string; routes?: AgentInquiryPanelRoute[]; status?: string };
+type AgentInquiryPanelQuestion = {
+  question: string;
+  options: AgentInquiryPanelOption[];
+  multiple: boolean;
+};
+
+/** 一题的作答结果：选中项标签、自由文本，或明确「无偏好」。 */
+type AgentInquiryPanelAnswer = {
+  questionIndex: number;
+  labels: string[];
+  other: string;
+  noPreference: boolean;
+};
+
+type AgentInquiryPanelData = {
+  questions?: AgentInquiryPanelQuestion[];
+  status?: string;
+  selected?: string[];
+  answers?: AgentInquiryPanelAnswer[];
+};
 
 type ActiveAgentInquiryPanel = { message: Record<string, unknown>; panel: AgentInquiryPanelData };
 
@@ -7609,9 +7867,28 @@ type WorldRenderableMessage = {
   message: Record<string, unknown>;
 };
 
-type AgentInquiryPanelRoute = { label: string; description?: string };
+type AgentInquiryPanelOption = { label: string; description?: string; recommended?: boolean };
 
-type AgentInquiryPanelData = { question?: string; routes?: AgentInquiryPanelRoute[]; status?: string };
+type AgentInquiryPanelQuestion = {
+  question: string;
+  options: AgentInquiryPanelOption[];
+  multiple: boolean;
+};
+
+/** 一题的作答结果：选中项标签、自由文本，或明确「无偏好」。 */
+type AgentInquiryPanelAnswer = {
+  questionIndex: number;
+  labels: string[];
+  other: string;
+  noPreference: boolean;
+};
+
+type AgentInquiryPanelData = {
+  questions?: AgentInquiryPanelQuestion[];
+  status?: string;
+  selected?: string[];
+  answers?: AgentInquiryPanelAnswer[];
+};
 
 type ActiveAgentInquiryPanel = { message: Record<string, unknown>; panel: AgentInquiryPanelData };
 
@@ -8526,9 +8803,28 @@ type WorldRenderableMessage = {
   message: Record<string, unknown>;
 };
 
-type AgentInquiryPanelRoute = { label: string; description?: string };
+type AgentInquiryPanelOption = { label: string; description?: string; recommended?: boolean };
 
-type AgentInquiryPanelData = { question?: string; routes?: AgentInquiryPanelRoute[]; status?: string };
+type AgentInquiryPanelQuestion = {
+  question: string;
+  options: AgentInquiryPanelOption[];
+  multiple: boolean;
+};
+
+/** 一题的作答结果：选中项标签、自由文本，或明确「无偏好」。 */
+type AgentInquiryPanelAnswer = {
+  questionIndex: number;
+  labels: string[];
+  other: string;
+  noPreference: boolean;
+};
+
+type AgentInquiryPanelData = {
+  questions?: AgentInquiryPanelQuestion[];
+  status?: string;
+  selected?: string[];
+  answers?: AgentInquiryPanelAnswer[];
+};
 
 type ActiveAgentInquiryPanel = { message: Record<string, unknown>; panel: AgentInquiryPanelData };
 
@@ -8848,9 +9144,28 @@ type WorldRenderableMessage = {
   message: Record<string, unknown>;
 };
 
-type AgentInquiryPanelRoute = { label: string; description?: string };
+type AgentInquiryPanelOption = { label: string; description?: string; recommended?: boolean };
 
-type AgentInquiryPanelData = { question?: string; routes?: AgentInquiryPanelRoute[]; status?: string };
+type AgentInquiryPanelQuestion = {
+  question: string;
+  options: AgentInquiryPanelOption[];
+  multiple: boolean;
+};
+
+/** 一题的作答结果：选中项标签、自由文本，或明确「无偏好」。 */
+type AgentInquiryPanelAnswer = {
+  questionIndex: number;
+  labels: string[];
+  other: string;
+  noPreference: boolean;
+};
+
+type AgentInquiryPanelData = {
+  questions?: AgentInquiryPanelQuestion[];
+  status?: string;
+  selected?: string[];
+  answers?: AgentInquiryPanelAnswer[];
+};
 
 type ActiveAgentInquiryPanel = { message: Record<string, unknown>; panel: AgentInquiryPanelData };
 
@@ -9388,9 +9703,28 @@ type WorldRenderableMessage = {
   message: Record<string, unknown>;
 };
 
-type AgentInquiryPanelRoute = { label: string; description?: string };
+type AgentInquiryPanelOption = { label: string; description?: string; recommended?: boolean };
 
-type AgentInquiryPanelData = { question?: string; routes?: AgentInquiryPanelRoute[]; status?: string };
+type AgentInquiryPanelQuestion = {
+  question: string;
+  options: AgentInquiryPanelOption[];
+  multiple: boolean;
+};
+
+/** 一题的作答结果：选中项标签、自由文本，或明确「无偏好」。 */
+type AgentInquiryPanelAnswer = {
+  questionIndex: number;
+  labels: string[];
+  other: string;
+  noPreference: boolean;
+};
+
+type AgentInquiryPanelData = {
+  questions?: AgentInquiryPanelQuestion[];
+  status?: string;
+  selected?: string[];
+  answers?: AgentInquiryPanelAnswer[];
+};
 
 type ActiveAgentInquiryPanel = { message: Record<string, unknown>; panel: AgentInquiryPanelData };
 
@@ -9842,9 +10176,28 @@ type WorldRenderableMessage = {
   message: Record<string, unknown>;
 };
 
-type AgentInquiryPanelRoute = { label: string; description?: string };
+type AgentInquiryPanelOption = { label: string; description?: string; recommended?: boolean };
 
-type AgentInquiryPanelData = { question?: string; routes?: AgentInquiryPanelRoute[]; status?: string };
+type AgentInquiryPanelQuestion = {
+  question: string;
+  options: AgentInquiryPanelOption[];
+  multiple: boolean;
+};
+
+/** 一题的作答结果：选中项标签、自由文本，或明确「无偏好」。 */
+type AgentInquiryPanelAnswer = {
+  questionIndex: number;
+  labels: string[];
+  other: string;
+  noPreference: boolean;
+};
+
+type AgentInquiryPanelData = {
+  questions?: AgentInquiryPanelQuestion[];
+  status?: string;
+  selected?: string[];
+  answers?: AgentInquiryPanelAnswer[];
+};
 
 type ActiveAgentInquiryPanel = { message: Record<string, unknown>; panel: AgentInquiryPanelData };
 
@@ -10192,9 +10545,28 @@ type WorldRenderableMessage = {
   message: Record<string, unknown>;
 };
 
-type AgentInquiryPanelRoute = { label: string; description?: string };
+type AgentInquiryPanelOption = { label: string; description?: string; recommended?: boolean };
 
-type AgentInquiryPanelData = { question?: string; routes?: AgentInquiryPanelRoute[]; status?: string };
+type AgentInquiryPanelQuestion = {
+  question: string;
+  options: AgentInquiryPanelOption[];
+  multiple: boolean;
+};
+
+/** 一题的作答结果：选中项标签、自由文本，或明确「无偏好」。 */
+type AgentInquiryPanelAnswer = {
+  questionIndex: number;
+  labels: string[];
+  other: string;
+  noPreference: boolean;
+};
+
+type AgentInquiryPanelData = {
+  questions?: AgentInquiryPanelQuestion[];
+  status?: string;
+  selected?: string[];
+  answers?: AgentInquiryPanelAnswer[];
+};
 
 type ActiveAgentInquiryPanel = { message: Record<string, unknown>; panel: AgentInquiryPanelData };
 
@@ -11042,9 +11414,28 @@ type WorldRenderableMessage = {
   message: Record<string, unknown>;
 };
 
-type AgentInquiryPanelRoute = { label: string; description?: string };
+type AgentInquiryPanelOption = { label: string; description?: string; recommended?: boolean };
 
-type AgentInquiryPanelData = { question?: string; routes?: AgentInquiryPanelRoute[]; status?: string };
+type AgentInquiryPanelQuestion = {
+  question: string;
+  options: AgentInquiryPanelOption[];
+  multiple: boolean;
+};
+
+/** 一题的作答结果：选中项标签、自由文本，或明确「无偏好」。 */
+type AgentInquiryPanelAnswer = {
+  questionIndex: number;
+  labels: string[];
+  other: string;
+  noPreference: boolean;
+};
+
+type AgentInquiryPanelData = {
+  questions?: AgentInquiryPanelQuestion[];
+  status?: string;
+  selected?: string[];
+  answers?: AgentInquiryPanelAnswer[];
+};
 
 type ActiveAgentInquiryPanel = { message: Record<string, unknown>; panel: AgentInquiryPanelData };
 
@@ -11845,9 +12236,28 @@ type WorldRenderableMessage = {
   message: Record<string, unknown>;
 };
 
-type AgentInquiryPanelRoute = { label: string; description?: string };
+type AgentInquiryPanelOption = { label: string; description?: string; recommended?: boolean };
 
-type AgentInquiryPanelData = { question?: string; routes?: AgentInquiryPanelRoute[]; status?: string };
+type AgentInquiryPanelQuestion = {
+  question: string;
+  options: AgentInquiryPanelOption[];
+  multiple: boolean;
+};
+
+/** 一题的作答结果：选中项标签、自由文本，或明确「无偏好」。 */
+type AgentInquiryPanelAnswer = {
+  questionIndex: number;
+  labels: string[];
+  other: string;
+  noPreference: boolean;
+};
+
+type AgentInquiryPanelData = {
+  questions?: AgentInquiryPanelQuestion[];
+  status?: string;
+  selected?: string[];
+  answers?: AgentInquiryPanelAnswer[];
+};
 
 type ActiveAgentInquiryPanel = { message: Record<string, unknown>; panel: AgentInquiryPanelData };
 
@@ -12212,9 +12622,28 @@ type WorldRenderableMessage = {
   message: Record<string, unknown>;
 };
 
-type AgentInquiryPanelRoute = { label: string; description?: string };
+type AgentInquiryPanelOption = { label: string; description?: string; recommended?: boolean };
 
-type AgentInquiryPanelData = { question?: string; routes?: AgentInquiryPanelRoute[]; status?: string };
+type AgentInquiryPanelQuestion = {
+  question: string;
+  options: AgentInquiryPanelOption[];
+  multiple: boolean;
+};
+
+/** 一题的作答结果：选中项标签、自由文本，或明确「无偏好」。 */
+type AgentInquiryPanelAnswer = {
+  questionIndex: number;
+  labels: string[];
+  other: string;
+  noPreference: boolean;
+};
+
+type AgentInquiryPanelData = {
+  questions?: AgentInquiryPanelQuestion[];
+  status?: string;
+  selected?: string[];
+  answers?: AgentInquiryPanelAnswer[];
+};
 
 type ActiveAgentInquiryPanel = { message: Record<string, unknown>; panel: AgentInquiryPanelData };
 
@@ -12611,9 +13040,28 @@ type WorldRenderableMessage = {
   message: Record<string, unknown>;
 };
 
-type AgentInquiryPanelRoute = { label: string; description?: string };
+type AgentInquiryPanelOption = { label: string; description?: string; recommended?: boolean };
 
-type AgentInquiryPanelData = { question?: string; routes?: AgentInquiryPanelRoute[]; status?: string };
+type AgentInquiryPanelQuestion = {
+  question: string;
+  options: AgentInquiryPanelOption[];
+  multiple: boolean;
+};
+
+/** 一题的作答结果：选中项标签、自由文本，或明确「无偏好」。 */
+type AgentInquiryPanelAnswer = {
+  questionIndex: number;
+  labels: string[];
+  other: string;
+  noPreference: boolean;
+};
+
+type AgentInquiryPanelData = {
+  questions?: AgentInquiryPanelQuestion[];
+  status?: string;
+  selected?: string[];
+  answers?: AgentInquiryPanelAnswer[];
+};
 
 type ActiveAgentInquiryPanel = { message: Record<string, unknown>; panel: AgentInquiryPanelData };
 
@@ -12987,8 +13435,8 @@ function installMessengerControllerAgentMessageCommands(ctx: MessengerController
           payload?.approvalMode || ctx.composerApprovalMode?.value || 'full_auto'
       );
       const activeInquiry = ctx.activeAgentInquiryPanel.value;
-      const selectedRoutes = ctx.resolveAgentInquirySelectionRoutes(activeInquiry?.panel, ctx.agentInquirySelection.value);
-      const hasInquirySelection = selectedRoutes.length > 0;
+      const inquiryAnswers = ctx.agentInquirySelection.value;
+      const hasInquirySelection = inquiryAnswers.length > 0;
       if (!content && attachments.length === 0 && !hasInquirySelection)
           return;
       const localCommand = ctx.parseAgentLocalCommand(content);
@@ -13020,9 +13468,12 @@ function installMessengerControllerAgentMessageCommands(ctx: MessengerController
           if (hasInquirySelection) {
               ctx.chatStore.resolveInquiryPanel(activeInquiry.message, {
                   status: 'answered',
-                  selected: selectedRoutes.map((route) => route.label)
+                  selected: inquiryAnswers.flatMap((item) =>
+                      item.labels.length ? item.labels : [item.other || ctx.t('chat.inquiry.noPreference')]
+                  ),
+                  answers: inquiryAnswers
               });
-              const selectionText = ctx.buildAgentInquiryReply(activeInquiry.panel, selectedRoutes);
+              const selectionText = ctx.buildAgentInquiryReply(activeInquiry.panel, inquiryAnswers);
               if (content) {
                   finalContent = `${selectionText}\n\n${ctx.t('chat.askPanelUserAppend', { content })}`;
               }
@@ -13272,9 +13723,28 @@ type WorldRenderableMessage = {
   message: Record<string, unknown>;
 };
 
-type AgentInquiryPanelRoute = { label: string; description?: string };
+type AgentInquiryPanelOption = { label: string; description?: string; recommended?: boolean };
 
-type AgentInquiryPanelData = { question?: string; routes?: AgentInquiryPanelRoute[]; status?: string };
+type AgentInquiryPanelQuestion = {
+  question: string;
+  options: AgentInquiryPanelOption[];
+  multiple: boolean;
+};
+
+/** 一题的作答结果：选中项标签、自由文本，或明确「无偏好」。 */
+type AgentInquiryPanelAnswer = {
+  questionIndex: number;
+  labels: string[];
+  other: string;
+  noPreference: boolean;
+};
+
+type AgentInquiryPanelData = {
+  questions?: AgentInquiryPanelQuestion[];
+  status?: string;
+  selected?: string[];
+  answers?: AgentInquiryPanelAnswer[];
+};
 
 type ActiveAgentInquiryPanel = { message: Record<string, unknown>; panel: AgentInquiryPanelData };
 
@@ -13653,9 +14123,28 @@ type WorldRenderableMessage = {
   message: Record<string, unknown>;
 };
 
-type AgentInquiryPanelRoute = { label: string; description?: string };
+type AgentInquiryPanelOption = { label: string; description?: string; recommended?: boolean };
 
-type AgentInquiryPanelData = { question?: string; routes?: AgentInquiryPanelRoute[]; status?: string };
+type AgentInquiryPanelQuestion = {
+  question: string;
+  options: AgentInquiryPanelOption[];
+  multiple: boolean;
+};
+
+/** 一题的作答结果：选中项标签、自由文本，或明确「无偏好」。 */
+type AgentInquiryPanelAnswer = {
+  questionIndex: number;
+  labels: string[];
+  other: string;
+  noPreference: boolean;
+};
+
+type AgentInquiryPanelData = {
+  questions?: AgentInquiryPanelQuestion[];
+  status?: string;
+  selected?: string[];
+  answers?: AgentInquiryPanelAnswer[];
+};
 
 type ActiveAgentInquiryPanel = { message: Record<string, unknown>; panel: AgentInquiryPanelData };
 

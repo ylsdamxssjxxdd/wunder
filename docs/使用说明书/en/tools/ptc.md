@@ -11,6 +11,8 @@ updated_at: 2026-09-21
 
 # ptc
 
+> **Removed**: This tool has been removed from wunder and is not visible to the agent or users; this page is kept as a historical reference.
+
 `ptc` stands for programmatic tool call. Its job is to:
 
 - write a complete Python script into a temporary file

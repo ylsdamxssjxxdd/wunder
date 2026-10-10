@@ -36,3 +36,5 @@ pub use postgres::PostgresStorage;
 pub use records::*;
 #[cfg(any(feature = "sqlite-storage", test))]
 pub use sqlite::SqliteStorage;
+#[cfg(any(feature = "sqlite-storage", test))]
+pub use sqlite::stress_thread::{StressThreadSpec, StressThreadStats};

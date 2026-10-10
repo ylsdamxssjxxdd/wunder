@@ -241,9 +241,6 @@ impl PromptComposer {
             let workspace_version = tree_snapshot.version;
             let cache_key = format!("{base_key}|{workspace_version}");
             let workspace_tree = tree_snapshot.tree;
-            let include_ptc = allowed_tool_names
-                .iter()
-                .any(|name| resolve_tool_name(name) == "ptc");
             let tool_specs = if tool_call_mode != ToolCallMode::FunctionCall
                 && !allowed_tool_names.is_empty()
             {
@@ -296,7 +293,6 @@ impl PromptComposer {
                 allowed_tool_names,
                 tool_call_mode,
                 &tool_specs,
-                include_ptc,
                 &workdir_display,
                 &workspace_tree,
                 &builtin_skills_for_prompt,
@@ -538,7 +534,6 @@ fn build_system_prompt_skeleton(
     allowed_tool_names: &HashSet<String>,
     tool_call_mode: ToolCallMode,
     tools: &[ToolSpec],
-    include_ptc: bool,
     workdir_display: &str,
     workspace_tree: &str,
     builtin_skills: &[SkillSpec],
@@ -557,7 +552,6 @@ fn build_system_prompt_skeleton(
     let is_local = is_local_runtime_mode(&config.server.mode);
     engineering_flags.insert("RUNTIME_LOCAL".to_string(), is_local);
     engineering_flags.insert("RUNTIME_SERVER".to_string(), !is_local);
-    engineering_flags.insert("HAS_PTC".to_string(), include_ptc);
 
     let engineering_template = read_prompt_template_from_scope(
         config,

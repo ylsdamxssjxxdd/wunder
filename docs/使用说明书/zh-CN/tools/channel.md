@@ -10,6 +10,8 @@ updated_at: 2026-04-10
 
 # 渠道工具
 
+> **已移除**：该工具已从 wunder 中移除，对智能体与用户均不可见；本页仅作历史参考。
+
 `channel_tool` 主要有两个动作：
 
 - `list_contacts`

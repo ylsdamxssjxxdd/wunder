@@ -1380,3 +1380,115 @@ async fn a_slow_client_stops_the_feed_and_catches_up_by_replay() {
     );
     app.active_stream_sessions.remove(&session);
 }
+
+async fn inquiry_fixture_app(root: &Path) -> TuiApp {
+    let global = Cli::parse_from([
+        "wunder-cli",
+        "--lang",
+        "en-US",
+        "--user",
+        "snapshot_user",
+        "--temp-root",
+        root.to_string_lossy().as_ref(),
+    ])
+    .global;
+    let runtime = fixture_runtime(root);
+    let (requester, _notifications) = spawn_frame_scheduler();
+    TuiApp::new(runtime, global, Some("inquiry-thread".to_string()), requester)
+        .await
+        .expect("app")
+}
+
+/// §问询面板: a multi-question payload numbers its routes globally, maps an
+/// answer back to its own question and keeps the legacy flat shape readable.
+#[tokio::test]
+async fn inquiry_panel_numbers_routes_across_questions_and_answers_each_one() {
+    let root = TempRoot::new("inquiry_panel");
+    let mut app = inquiry_fixture_app(root.path()).await;
+    let panel = app
+        .parse_inquiry_panel_state(&json!({
+            "questions": [
+                {"question": "Pick a cadence", "multiple": true, "options": [
+                    {"label": "Fixed", "description": "matches the frame pump", "recommended": true},
+                    {"label": "Adaptive"},
+                ]},
+                {"question": "Pick a scope", "options": [
+                    {"label": "Cards"}, {"label": "Rows"},
+                ]},
+            ]
+        }))
+        .expect("panel");
+    assert_eq!(panel.route_count(), 4, "the numbering runs past one question");
+    app.activate_inquiry_panel(panel, false);
+
+    let lines = app.inquiry_modal_lines().expect("modal lines");
+    assert_eq!(
+        lines.first().map(String::as_str),
+        Some("Question 1/2: Pick a cadence")
+    );
+    assert!(
+        lines.iter().any(|line| line.starts_with("› 1. Fixed")),
+        "the recommended route starts highlighted: {lines:?}"
+    );
+    assert!(
+        lines.iter().any(|line| line.ends_with("4. Rows")),
+        "the second question keeps the global numbering: {lines:?}"
+    );
+
+    // Global indexes map back to the question they came from; the untouched
+    // question answers with 无偏好 instead of swallowing the whole reply.
+    assert_eq!(
+        app.try_convert_inquiry_input("1, 4"),
+        Some(
+            "[Inquiry Panel Selection]\nQuestion 1/2: Pick a cadence\n- Fixed: matches the frame pump\nQuestion 2/2: Pick a scope\n- Rows"
+                .to_string()
+        )
+    );
+    assert!(
+        app.active_inquiry_panel.is_none(),
+        "an answered panel closes"
+    );
+}
+
+/// A single-select question rejects two picks, and the pre-multi payload (one
+/// flat question, `routes` as the option key) still drives the same modal.
+#[tokio::test]
+async fn inquiry_panel_keeps_single_select_honest_and_reads_legacy_payloads() {
+    let root = TempRoot::new("inquiry_legacy");
+    let mut app = inquiry_fixture_app(root.path()).await;
+    let panel = app
+        .parse_inquiry_panel_state(&json!({
+            "question": "Pick one",
+            "routes": [{"label": "Alpha"}, {"label": "Beta", "recommended": true}],
+        }))
+        .expect("legacy panel");
+    assert_eq!(panel.questions.len(), 1);
+    app.activate_inquiry_panel(panel, false);
+
+    assert_eq!(
+        app.try_convert_inquiry_input("1, 2"),
+        Some(String::new()),
+        "two picks of one single-select question are not an answer"
+    );
+    assert_eq!(
+        app.logs.last().map(|entry| entry.kind),
+        Some(LogKind::Error)
+    );
+    assert!(
+        app.active_inquiry_panel.is_some(),
+        "a rejected answer keeps the panel open"
+    );
+
+    // Enter answers with the highlighted route, which is the recommended one.
+    assert_eq!(
+        app.try_handle_inquiry_panel_navigation_key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::NONE
+        )),
+        Some(Some("2".to_string()))
+    );
+    assert_eq!(
+        app.try_convert_inquiry_input("2"),
+        Some("[Inquiry Panel Selection]\nQuestion: Pick one\n- Beta".to_string())
+    );
+}

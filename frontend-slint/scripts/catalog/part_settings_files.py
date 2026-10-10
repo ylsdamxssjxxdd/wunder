@@ -226,6 +226,15 @@ ENTRIES = [
     ("st_reset_title", "重置工作状态", "Reset work state"),
     ("st_reset_note", "清理运行状态、队列与临时投影；保留资产、配置、文件与历史。",
      "Clears run state, queues and temporary projections; keeps assets, settings, files and history."),
+    ("st_stress_title", "线程渲染压测", "Thread render stress"),
+    ("st_stress_note", "在本地库生成一条模拟线程，验证消息呈现与长列表性能。",
+     "Generates one synthetic local thread to verify message rendering and long-list performance."),
+    ("st_stress_user_rounds", "用户轮次", "User rounds"),
+    ("st_stress_model_rounds", "每轮模型轮次", "Model rounds / turn"),
+    ("st_stress_hint", "默认 1000×1000，生成耗时较长；可先用小规模验证渲染。",
+     "Defaults to 1000×1000 and takes a while; try a smaller scale first."),
+    ("st_stress_generate", "生成压测线程", "Generate stress thread"),
+    ("st_stress_running", "生成中…", "Generating…"),
 
     # ---- prompt packs ----
     ("pm_readonly_builtin", "内置只读", "Built-in (read-only)"),
@@ -334,25 +343,21 @@ ENTRIES = [
     ("st_cl_login_needed", "登录后可用", "Sign in to use"),
     ("st_cl_queue_prefix", "云端排队中，前方 ", "Cloud queue — "),
     ("st_cl_queue_suffix", " 人", " ahead"),
-    # ---- status dock (activity capsule above the goal banner) ----
-    # The runtime publishes Chinese state phrases; the dock matches them by
-    # their zh prefix (I18n values) to re-render in the active locale.
-    ("dock_state_queue", "模型请求正在排队", "Model request queued"),
-    ("dock_state_thinking", "正在思考…", "Thinking…"),
-    ("dock_state_generating", "正在生成…", "Generating…"),
-    ("dock_state_tool", "正在执行工具…", "Running tools…"),
-    ("dock_state_compaction", "上下文压缩中…", "Compacting context…"),
-    ("dock_state_await", "模型响应中", "Waiting for the model"),
-    ("dock_queue_prefix", "模型请求正在排队 · 前方 ", "Model request queued — "),
-    ("dock_queue_suffix", " 个任务", " tasks ahead"),
+    # ---- status dock (plan capsule above the goal banner) ----
     ("dock_steps", "步骤", "Steps"),
-    ("dock_files_suffix", " 个文件已修改", " files changed"),
-    ("dock_plan_title", "执行计划", "Execution plan"),
-    ("dock_plan_more_prefix", "…等 ", "…and "),
-    ("dock_plan_more_suffix", " 步", " more steps"),
+    # runtime_status.slint classifies the runtime's Chinese phrases by prefix,
+    # so those phrases need a catalog entry even though no widget labels with
+    # them any more (the plan capsule is the only dock left).
+    ("runtime_status_await", "模型响应中", "Waiting for the model"),
+    ("runtime_status_queue", "模型请求正在排队", "Model request queued"),
     # slint-viewer demo values; the native projection replaces them on connect.
     ("dock_demo_explain", "已根据目标拆解为以下步骤，将逐项执行并汇报。", "The goal is broken into the steps below; they run one by one and report back."),
     ("dock_demo_step_1", "梳理需求并拆解任务", "Review the request and break it down"),
     ("dock_demo_step_2", "修改相关文件", "Modify the relevant files"),
     ("dock_demo_step_3", "运行检查并汇报结果", "Run checks and report the result"),
+    # ---- inquiry panel (问询面板 card above the composer) ----
+    ("inquiry_recommended", "推荐", "Recommended"),
+    ("inquiry_other_placeholder", "输入其他答案", "Type another answer"),
+    ("inquiry_no_preference", "无偏好", "No preference"),
+    ("inquiry_send_hint", "选好答案后按发送键提交", "Send to submit your choices"),
 ]

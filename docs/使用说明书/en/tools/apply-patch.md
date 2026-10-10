@@ -11,6 +11,8 @@ updated_at: 2026-05-14
 
 # Apply Patch
 
+> **Removed**: `Apply Patch` (`apply_patch`) has been merged into `Text Edit` (`edit_file`) and is no longer exposed as a standalone tool. Only the legacy invocation name is still resolved. This page is kept as a historical reference.
+
 `apply_patch` is currently the best tool for edits that involve a small number of files, a small number of hunks, and explicit surrounding context.
 
 Its role is narrow by design:

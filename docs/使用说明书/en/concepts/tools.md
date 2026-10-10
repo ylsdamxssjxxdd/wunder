@@ -43,7 +43,7 @@ Built-in tools carry the most basic and most stable execution surface.
 Common examples include:
 
 - files and workspace: reading files, writing files, applying patches, searching content, listing files
-- runtime operations: command execution, `ptc`, and sleep or wait
+- runtime operations: command execution, and sleep or wait
 - web and desktop: `web_fetch`, browser automation, and desktop control
 - sessions and collaboration: thread control, subagent control, and memory management
 

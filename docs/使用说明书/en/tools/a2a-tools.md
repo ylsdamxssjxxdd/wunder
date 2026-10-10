@@ -10,6 +10,8 @@ updated_at: 2026-04-10
 
 # A2A Tools
 
+> **Removed**: This tool group has been removed from wunder and is not visible to the agent or users; this page is kept as a historical reference.
+
 A2A is currently a small tool group:
 
 - `a2a@service-name`

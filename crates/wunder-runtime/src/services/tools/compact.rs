@@ -70,7 +70,7 @@ fn compact_tool_description(name: &str, original: &str) -> String {
         ),
         "网页搜索" | "web_search" => Some("搜索网页；query 必填，结果限量。"),
         "网页抓取" | "web_fetch" => Some("抓取明确 URL；不是搜索，不猜测 URL。"),
-        "浏览器" | "browser" => Some("操作浏览器；受会话、域名和超时限制。"),
+        other if other.starts_with("browser_") => Some("操作浏览器；受会话、域名和超时限制。"),
         _ if canonical.contains("数据库导出")
             || canonical.starts_with("db_export")
             || (original.contains("导出") && original.contains("SQL")) =>

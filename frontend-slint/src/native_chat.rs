@@ -1,7 +1,10 @@
 //! Native chat projection for the in-process desktop runtime.
 use wunder_desktop::native::NativeWorkflowEntry;
 
-use crate::{terminal_grid, Conversation, MainWindow, PlanStep, TermSpan, TimelineRow};
+use crate::{
+    terminal_grid, Conversation, InquiryOption, InquiryQuestion, MainWindow, PlanStep, TermSpan,
+    TimelineRow,
+};
 use serde_json::Value;
 use slint::{ComponentHandle, Model, ModelRc, Timer, TimerMode, VecModel};
 use std::{
@@ -53,13 +56,9 @@ struct TurnOutput {
     /// result once it settles.
     command_output: std::collections::HashMap<String, String>,
     /// Execution-plan checklist (step text, status) published by `plan_update`
-    /// events. Session-scoped in spirit, so a new turn resumes the last plan;
-    /// file-change counters start at zero every turn.
+    /// events. Session-scoped in spirit, so a new turn resumes the last plan.
     plan_steps: Vec<(String, String)>,
     plan_explanation: String,
-    files_changed: i64,
-    lines_added: i64,
-    lines_deleted: i64,
 }
 
 impl TurnOutput {
@@ -75,9 +74,6 @@ impl TurnOutput {
             command_output: std::collections::HashMap::new(),
             plan_steps: Vec::new(),
             plan_explanation: String::new(),
-            files_changed: 0,
-            lines_added: 0,
-            lines_deleted: 0,
         }
     }
 
@@ -144,6 +140,172 @@ impl std::ops::DerefMut for Active {
     }
 }
 
+/// One option of a published 问询面板 question, carrying the user's tick.
+#[derive(Clone, Default)]
+struct InquiryOptionState {
+    label: String,
+    description: String,
+    recommended: bool,
+    selected: bool,
+}
+
+/// One question of the panel. `other` is the free-text row and `no_preference`
+/// its shortcut; both live here so paging never loses an answer.
+#[derive(Clone, Default)]
+struct InquiryQuestionState {
+    question: String,
+    multiple: bool,
+    no_preference: bool,
+    other: String,
+    options: Vec<InquiryOptionState>,
+}
+
+/// The live panel of one thread. The tool bounds a payload at four questions of
+/// four options, so the whole panel is small enough to keep verbatim and the UI
+/// only ever sees the current page.
+#[derive(Clone, Default)]
+struct InquiryState {
+    questions: Vec<InquiryQuestionState>,
+    page: usize,
+}
+
+impl InquiryState {
+    fn current_index(&self) -> usize {
+        self.page.min(self.questions.len().saturating_sub(1))
+    }
+
+    fn current_mut(&mut self) -> Option<&mut InquiryQuestionState> {
+        let index = self.current_index();
+        self.questions.get_mut(index)
+    }
+
+    /// A question counts as answered by a tick, the free text or the 无偏好
+    /// shortcut; the send button unlocks only once every question is.
+    fn is_answered(question: &InquiryQuestionState) -> bool {
+        question.no_preference
+            || !question.other.trim().is_empty()
+            || question.options.iter().any(|option| option.selected)
+    }
+
+    fn ready(&self) -> bool {
+        !self.questions.is_empty()
+            && self.questions.iter().all(|question| {
+                Self::is_answered(question)
+            })
+    }
+
+    fn toggle_option(&mut self, option: usize) {
+        let index = self.current_index();
+        let Some(question) = self.questions.get_mut(index) else {
+            return;
+        };
+        if option >= question.options.len() {
+            return;
+        }
+        question.no_preference = false;
+        if question.multiple {
+            question.options[option].selected = !question.options[option].selected;
+            return;
+        }
+        // Single choice: re-picking the active option clears it, so the question
+        // can go back to unanswered.
+        let next = !question.options[option].selected;
+        for candidate in question.options.iter_mut() {
+            candidate.selected = false;
+        }
+        question.options[option].selected = next;
+    }
+
+    fn toggle_no_preference(&mut self) {
+        let index = self.current_index();
+        let Some(question) = self.questions.get_mut(index) else {
+            return;
+        };
+        question.no_preference = !question.no_preference;
+        if !question.no_preference {
+            return;
+        }
+        // 无偏好 replaces every other choice of this question, ticks included.
+        question.other.clear();
+        for option in question.options.iter_mut() {
+            option.selected = false;
+        }
+    }
+
+    fn move_page(&mut self, delta: i32) {
+        let last = self.questions.len().saturating_sub(1) as i32;
+        self.page = (self.page as i32 + delta).clamp(0, last).max(0) as usize;
+    }
+
+    /// The message the choices turn into: one question line and one answer line
+    // each, in the same shape the web client sends.
+    fn reply(&self) -> String {
+        let total = self.questions.len();
+        let mut lines = vec!["【问询面板选择】".to_string()];
+        for (index, question) in self.questions.iter().enumerate() {
+            lines.push(if total > 1 {
+                format!("问题 {}/{total}：{}", index + 1, question.question)
+            } else {
+                format!("问题：{}", question.question)
+            });
+            let answer = if question.no_preference {
+                "无偏好".to_string()
+            } else {
+                let mut parts: Vec<String> = question
+                    .options
+                    .iter()
+                    .filter(|option| option.selected)
+                    .map(|option| option.label.clone())
+                    .collect();
+                let other = question.other.trim();
+                if !other.is_empty() {
+                    parts.push(other.to_string());
+                }
+                parts.join("、")
+            };
+            lines.push(format!("答案：{answer}"));
+        }
+        lines.join("\n")
+    }
+}
+
+/// Project a `question_panel` payload into panel state. The tool already
+/// normalizes and bounds the payload; `None` means there is nothing to show.
+fn inquiry_from_payload(data: &Value) -> Option<InquiryState> {
+    let questions: Vec<InquiryQuestionState> = data["questions"]
+        .as_array()?
+        .iter()
+        .filter_map(|entry| {
+            let options: Vec<InquiryOptionState> = entry["options"]
+                .as_array()?
+                .iter()
+                .filter_map(|option| {
+                    let label = option["label"].as_str()?;
+                    Some(InquiryOptionState {
+                        label: label.to_string(),
+                        description: option["description"].as_str().unwrap_or_default().to_string(),
+                        recommended: option["recommended"].as_bool().unwrap_or(false),
+                        selected: false,
+                    })
+                })
+                .take(4)
+                .collect();
+            if options.is_empty() {
+                return None;
+            }
+            Some(InquiryQuestionState {
+                question: entry["question"].as_str()?.to_string(),
+                multiple: entry["multiple"].as_bool().unwrap_or(false),
+                no_preference: false,
+                other: String::new(),
+                options,
+            })
+        })
+        .take(4)
+        .collect();
+    (!questions.is_empty()).then_some(InquiryState { questions, page: 0 })
+}
+
 struct State {
     timer: Timer,
     observation: observer::Observation,
@@ -184,6 +346,9 @@ struct State {
     /// Change key of the plan model last published to the UI; the flush runs
     /// per frame, so the slint model is only rebuilt when the plan moved.
     plan_sig: String,
+    /// Live 问询面板 per thread: the panel outlives the turn that published it,
+    /// and an entry is dropped as soon as it is answered or dismissed.
+    inquiries: std::collections::HashMap<String, InquiryState>,
 }
 
 /// A running interactive shell started by the terminal mode.
@@ -242,6 +407,7 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
         terminal_restored: false,
         plans: std::collections::HashMap::new(),
         plan_sig: String::new(),
+        inquiries: std::collections::HashMap::new(),
     }));
     observer::install(app, state.clone());
     bind_refresh(app, state.clone());
@@ -255,6 +421,7 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
     bind_stop(app, state.clone());
     bind_goal(app, state.clone());
     bind_activity(app, state.clone());
+    bind_inquiry(app, state.clone());
     start_goal_clock(app.as_weak());
     crate::thread_log_ui::install(app, desktop_preview.clone());
     crate::navigation_ui::install(app, desktop_preview.clone());
@@ -348,17 +515,13 @@ pub(crate) fn publish_timeline(app: &MainWindow, live: &crate::timeline::Timelin
     app.set_turn_marks(ModelRc::new(VecModel::from(marks)));
 }
 
-/// Reset the status-dock attributes for a thread without a live turn. The
+/// Reset the status-dock attributes for a thread without a live plan. The
 /// slint-viewer demo values (and any previous thread's state) must never leak
 /// into the view of an idle session.
 fn reset_activity(app: &MainWindow) {
-    app.set_activity_active(false);
-    app.set_activity_text("".into());
+    app.set_activity_running(false);
     app.set_activity_steps_done(0);
     app.set_activity_steps_total(0);
-    app.set_activity_files_changed(0);
-    app.set_activity_added_lines(0);
-    app.set_activity_deleted_lines(0);
     app.set_activity_plan_explanation("".into());
     app.set_activity_plan_steps(ModelRc::default());
 }
@@ -381,17 +544,16 @@ fn plan_signature(explanation: &str, steps: &[(String, String)]) -> String {
     sig
 }
 
-/// Publish the status-dock projection from the live turn: capsule state, plan
-/// progress and file-change counters. Returns the plan signature so the
-/// caller can persist it (plus the session plan) without recomputing.
+/// Publish the status-dock projection from the live turn: the plan capsule and
+/// its checklist. Returns the plan signature so the caller can persist it
+/// (plus the session plan) without recomputing.
 fn publish_activity(app: &MainWindow, active: &TurnOutput, last_sig: &str) -> String {
-    // Terminal states hide the capsule; plan data stays for the next turn.
+    // Terminal states stop the spinner; plan data stays for the next turn.
     let idle = matches!(
         active.state.as_str(),
         "任务完成" | "已停止" | "执行失败" | "思考中断" | "等待用户输入"
     );
-    app.set_activity_active(!idle);
-    app.set_activity_text(active.state.as_str().into());
+    app.set_activity_running(!idle);
     let total = active.plan_steps.len() as i32;
     let done = active
         .plan_steps
@@ -400,9 +562,6 @@ fn publish_activity(app: &MainWindow, active: &TurnOutput, last_sig: &str) -> St
         .count() as i32;
     app.set_activity_steps_done(done);
     app.set_activity_steps_total(total);
-    app.set_activity_files_changed(active.files_changed.clamp(0, i32::MAX as i64) as i32);
-    app.set_activity_added_lines(active.lines_added.clamp(0, i32::MAX as i64) as i32);
-    app.set_activity_deleted_lines(active.lines_deleted.clamp(0, i32::MAX as i64) as i32);
     app.set_activity_plan_explanation(active.plan_explanation.as_str().into());
     let sig = plan_signature(&active.plan_explanation, &active.plan_steps);
     if sig != last_sig {
@@ -438,6 +597,104 @@ fn bind_activity(app: &MainWindow, state: Rc<RefCell<State>>) {
             turn.output.plan_steps.clear();
             turn.output.plan_explanation.clear();
         }
+    });
+}
+
+/// Publish one thread's 问询面板: the card is a pure projection of the current
+/// page, and an absent panel always means "hidden".
+fn publish_inquiry(app: &MainWindow, session: &str, state: &State) {
+    let Some(panel) = state
+        .inquiries
+        .get(session)
+        .filter(|panel| !panel.questions.is_empty())
+    else {
+        app.set_inquiry_visible(false);
+        app.set_inquiry_ready(false);
+        app.set_inquiry_session(session.into());
+        return;
+    };
+    let question = &panel.questions[panel.current_index()];
+    app.set_inquiry_visible(true);
+    app.set_inquiry_session(session.into());
+    app.set_inquiry_page(panel.current_index() as i32);
+    app.set_inquiry_total(panel.questions.len() as i32);
+    app.set_inquiry_ready(panel.ready());
+    app.set_inquiry_other(question.other.as_str().into());
+    app.set_inquiry_question(InquiryQuestion {
+        question: question.question.as_str().into(),
+        multiple: question.multiple,
+        no_preference: question.no_preference,
+        options: ModelRc::new(VecModel::from(
+            question
+                .options
+                .iter()
+                .map(|option| InquiryOption {
+                    label: option.label.as_str().into(),
+                    description: option.description.as_str().into(),
+                    recommended: option.recommended,
+                    selected: option.selected,
+                })
+                .collect::<Vec<_>>(),
+        )),
+    });
+}
+
+/// Take the live free-text row back into state before the card is republished:
+/// the UI owns the caret, Rust owns the answer.
+fn sync_inquiry_other(app: &MainWindow, panel: &mut InquiryState) {
+    let text = app.get_inquiry_other().to_string();
+    if let Some(question) = panel.current_mut() {
+        question.other = text;
+    }
+}
+
+/// One panel interaction: pull the live free text in, apply `change`, then
+/// republish the page. The card owns nothing, so a republish is the whole
+/// update path.
+fn inquiry_interaction(
+    weak: &slint::Weak<MainWindow>,
+    state: &RefCell<State>,
+    change: &dyn Fn(&mut InquiryState),
+) {
+    let Some(app) = weak.upgrade() else { return };
+    let session = app.get_active_session_id().to_string();
+    let mut current = state.borrow_mut();
+    let Some(panel) = current.inquiries.get_mut(&session) else {
+        return;
+    };
+    sync_inquiry_other(&app, panel);
+    change(panel);
+    publish_inquiry(&app, &session, &current);
+}
+
+fn bind_inquiry(app: &MainWindow, state: Rc<RefCell<State>>) {
+    let weak = app.as_weak();
+    app.on_inquiry_option_clicked({
+        let weak = weak.clone();
+        let state = state.clone();
+        move |option| {
+            inquiry_interaction(&weak, &state, &move |panel| {
+                panel.toggle_option(option.max(0) as usize)
+            });
+        }
+    });
+    app.on_inquiry_no_preference({
+        let weak = weak.clone();
+        let state = state.clone();
+        move || inquiry_interaction(&weak, &state, &|panel| panel.toggle_no_preference())
+    });
+    app.on_inquiry_page_move({
+        let weak = weak.clone();
+        let state = state.clone();
+        move |delta| {
+            inquiry_interaction(&weak, &state, &move |panel| panel.move_page(delta));
+        }
+    });
+    app.on_inquiry_dismiss(move || {
+        let Some(app) = weak.upgrade() else { return };
+        let session = app.get_active_session_id().to_string();
+        state.borrow_mut().inquiries.remove(&session);
+        publish_inquiry(&app, &session, &state.borrow());
     });
 }
 
@@ -567,6 +824,10 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
             reset_activity(&app);
             state.borrow_mut().plan_sig.clear();
         }
+        // The inquiry card follows the same ownership rule as the dock: it
+        // belongs to the thread that was asked, so switching shows that
+        // thread's pending panel and hides any other one.
+        publish_inquiry(&app, &id, &state.borrow());
         {
             let mut current = state.borrow_mut();
             // Navigation is independent from execution: switching away demotes
@@ -1138,6 +1399,27 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
         }
         let session = app.get_active_session_id().to_string();
         let content = app.get_draft().trim().to_string();
+        // A fully answered 问询面板 *is* the message: the choices go out first
+        // and the draft follows as the user's own note. An unanswered card is
+        // left alone, so a plain message cannot silently consume a question the
+        // user has not answered yet.
+        let answered = state
+            .borrow()
+            .inquiries
+            .get(&session)
+            .filter(|panel| panel.ready())
+            .cloned();
+        let content = match answered {
+            Some(panel) => {
+                let reply = panel.reply();
+                if content.is_empty() {
+                    reply
+                } else {
+                    format!("{reply}\n\n用户补充：{content}")
+                }
+            }
+            None => content,
+        };
         let attachments = app
             .get_pending_attachments()
             .iter()
@@ -1191,6 +1473,9 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
         }
         app.set_draft("".into());
         app.set_pending_attachments(ModelRc::default());
+        // The answered panel has been carried out by this turn.
+        state.borrow_mut().inquiries.remove(&session);
+        publish_inquiry(&app, &session, &state.borrow());
         app.set_busy(true);
         // A fresh turn starts without a stale queue banner.
         app.set_cloud_queue_position(-1);
@@ -1705,6 +1990,24 @@ fn start_timer(app: &MainWindow, state: Rc<RefCell<State>>) {
                         } else if app.get_cloud_queue_position() >= 0 {
                             app.set_cloud_queue_position(-1);
                         }
+                        // The 问询面板 tool publishes its questions once and the
+                        // turn ends right after, so the card is driven straight
+                        // from this event rather than from the per-frame flush.
+                        if event["event"].as_str() == Some("question_panel") {
+                            if let Some(panel) = inquiry_from_payload(&event["data"]) {
+                                let session = active.session.clone();
+                                // One live panel per thread, and threads are
+                                // bounded by the conversation list; drop the
+                                // oldest extras rather than grow without limit.
+                                if state.inquiries.len() > 64 {
+                                    state.inquiries.clear();
+                                }
+                                state.inquiries.insert(session.clone(), panel);
+                                if app.get_active_session_id() == session.as_str() {
+                                    publish_inquiry(&app, &session, &state);
+                                }
+                            }
+                        }
                         match apply_event(active, &mut timeline.borrow_mut(), &event) {
                             Ok(changed) => dirty |= changed,
                             Err(error) => {
@@ -1768,9 +2071,9 @@ fn start_timer(app: &MainWindow, state: Rc<RefCell<State>>) {
                 set_session_status(&app, &active.session, &active.state);
                 app.set_busy(false);
                 app.set_stopping(false);
-                // Idle hides the whole dock row; plan and file stats stay in
-                // the attributes and reappear with the next turn's flush.
-                app.set_activity_active(false);
+                // Idle stops the capsule spinner; the plan attributes stay and
+                // reappear with the next turn's flush.
+                app.set_activity_running(false);
                 app.set_status(active.state.as_str().into());
                 state.timer.stop();
                 let _ = desktop;
@@ -2004,13 +2307,6 @@ fn apply_event(
                 .as_str()
                 .or_else(|| data["tool_name"].as_str())
                 .unwrap_or("工具");
-            // apply_patch results carry the patch summary; the dock's file
-            // counters accumulate across the turn (missing fields count as 0).
-            if kind == "tool_result" && tool == "apply_patch" {
-                active.files_changed += data["changed_files"].as_i64().unwrap_or(0);
-                active.lines_added += data["added_lines"].as_i64().unwrap_or(0);
-                active.lines_deleted += data["deleted_lines"].as_i64().unwrap_or(0);
-            }
             let detail = event
                 .get("display_result")
                 .and_then(Value::as_str)
@@ -2480,5 +2776,124 @@ mod turn_tests {
             .collect();
         assert_eq!(bodies.len(), 1);
         assert_eq!(bodies[0].text, "Fixture partial");
+    }
+
+    fn fixture_panel() -> InquiryState {
+        inquiry_from_payload(&json!({
+            "questions": [
+                {"question": "Fixture question one", "multiple": true, "options": [
+                    {"label": "First", "description": "fixture note", "recommended": true},
+                    {"label": "Second"},
+                ]},
+                {"question": "Fixture question two", "options": [
+                    {"label": "Alpha"}, {"label": "Beta"},
+                ]},
+                {"question": "Fixture question three", "options": []},
+            ]
+        }))
+        .expect("a payload with questions projects a panel")
+    }
+
+    /// The card is a projection of the payload: every question survives, an
+    /// option-less one is dropped instead of rendering an empty page, and an
+    /// empty payload means there is no card at all.
+    #[test]
+    fn inquiry_payload_projects_every_question() {
+        let panel = fixture_panel();
+        assert_eq!(panel.questions.len(), 2);
+        assert!(panel.questions[0].multiple);
+        assert!(!panel.questions[1].multiple);
+        assert_eq!(panel.questions[0].options.len(), 2);
+        assert_eq!(panel.questions[0].options[0].label, "First");
+        assert_eq!(panel.questions[0].options[0].description, "fixture note");
+        assert!(panel.questions[0].options[0].recommended);
+        assert_eq!(panel.questions[1].options[1].label, "Beta");
+        assert_eq!(panel.page, 0);
+        assert!(inquiry_from_payload(&json!({"questions": []})).is_none());
+        assert!(inquiry_from_payload(&json!({"questions": [{"question": "x"}]})).is_none());
+    }
+
+    /// The send button unlocks only when every question has an answer, and the
+    /// answers become one message in the shape the model is fed.
+    #[test]
+    fn inquiry_answers_gate_the_send_and_compose_one_message() {
+        let mut panel = fixture_panel();
+        assert!(!panel.ready(), "an untouched panel is not an answer");
+
+        panel.move_page(1);
+        panel.toggle_option(1);
+        assert!(!panel.questions[0].options.iter().any(|o| o.selected));
+        assert!(!panel.ready(), "the first question is still unanswered");
+
+        panel.move_page(-1);
+        panel.toggle_option(0);
+        panel.toggle_option(1);
+        assert!(
+            panel.questions[0].options.iter().all(|o| o.selected),
+            "a multi choice keeps both ticks"
+        );
+        assert!(panel.ready());
+        assert_eq!(
+            panel.reply(),
+            "【问询面板选择】\n问题 1/2：Fixture question one\n答案：First、Second\n问题 2/2：Fixture question two\n答案：Beta"
+        );
+
+        // Re-picking the only single choice takes the answer back off.
+        panel.move_page(1);
+        panel.toggle_option(1);
+        assert!(!panel.ready());
+        panel.toggle_option(0);
+        assert!(panel.questions[1].options[0].selected);
+        assert!(!panel.questions[1].options[1].selected);
+    }
+
+    /// 无偏好 is a full answer for its own question and nothing else, and the
+    /// free text rides along with the ticks the user kept.
+    #[test]
+    fn inquiry_no_preference_and_free_text_answer_one_question() {
+        let mut panel = fixture_panel();
+        panel.toggle_option(0);
+        assert!(!InquiryState::is_answered(&panel.questions[1]));
+        panel.current_mut().unwrap().other = "  Fixture extra  ".into();
+        assert!(
+            InquiryState::is_answered(&panel.questions[0]),
+            "free text alone answers a question"
+        );
+        assert!(panel.reply().contains("答案：First、Fixture extra"));
+
+        panel.toggle_no_preference();
+        assert!(panel.questions[0].no_preference);
+        assert!(
+            panel.questions[0].options.iter().all(|option| !option.selected),
+            "无偏好 replaces the ticks of its own question"
+        );
+        assert!(panel.questions[0].other.is_empty());
+        panel.move_page(1);
+        panel.toggle_option(0);
+        assert!(panel.ready());
+        assert_eq!(
+            panel.reply(),
+            "【问询面板选择】\n问题 1/2：Fixture question one\n答案：无偏好\n问题 2/2：Fixture question two\n答案：Alpha"
+        );
+        panel.move_page(-1);
+        panel.toggle_no_preference();
+        assert!(!panel.questions[0].no_preference);
+        assert!(!panel.ready());
+    }
+
+    /// Paging is a cursor, not a reset: each question keeps what was chosen and
+    /// the index never leaves the panel.
+    #[test]
+    fn inquiry_paging_keeps_answers_and_stays_in_range() {
+        let mut panel = fixture_panel();
+        panel.toggle_option(1);
+        panel.move_page(4);
+        assert_eq!(panel.page, 1, "the cursor clamps at the last question");
+        panel.current_mut().unwrap().other = "fixture note".into();
+        panel.move_page(-3);
+        assert_eq!(panel.page, 0);
+        assert!(panel.questions[0].options[1].selected);
+        assert_eq!(panel.questions[1].other, "fixture note");
+        assert_eq!(panel.current_index(), 0);
     }
 }

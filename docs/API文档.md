@@ -32,7 +32,7 @@ wunder 是一个**智能体调度平台**：蜂窝（desktop）是本地 AI 工�
 - 沙盒命令流：`POST /sandboxes/execute_command_stream` 返回 NDJSON（`command_start`、`delta`、`command_exit`、`final`）；`WUNDER_SANDBOX_TIMEOUT_S` 覆盖连接、响应头与响应体读取，执行端也限制整次流的生命周期。客户端断开时取消执行并回收直接子进程与输出读取任务。
 - 沙盒重试：仅连接建立失败或命令流路由明确返回 404/405 时允许候选地址切换/非流式兼容回退；请求可能已执行后的超时、断流、非法响应或服务端错误返回 `data.error_meta.code=SANDBOX_EXECUTION_INTERRUPTED`、`retryable=false`、`outcome_unknown=true`，不自动重放。执行端总超时使用 `SANDBOX_COMMAND_TIMEOUT`。调用方应先核对工作区结果再决定是否重新执行。
 - 沙盒文件工具：存储在受控阻塞池中单次初始化，失败后短暂退避再重试；上下文按容器根、工作区根和工作区标识隔离，最多缓存 128 项，访问时回收空闲超过 300 秒的项。文件工具复用相同运行时实现，不额外启动存储写线程和 LSP 清理任务。
-- `ptc` 的脚本保存路径为 `ptc_temp/<invocation_id>/<filename>`，本地与沙盒一致；每次调用使用独立目录避免同名脚本覆盖，实际路径以返回的 `path` 为准，`workdir` 语义保持不变。
+- `ptc` 已移除（对智能体与用户不可见）。其历史脚本保存路径为 `ptc_temp/<invocation_id>/<filename>`，本地与沙盒一致；每次调用使用独立目录避免同名脚本覆盖，实际路径以返回的 `path` 为准，`workdir` 语义保持不变。
 - 工具清单与提示词注入复用统一的工具规格构建逻辑：`tool_call/freeform_call` 模式会注入工具协议片段，`function_call` 模式不注入工具提示词，工具清单仅用于 tools 协议。
 - 智能体线程首次解析出的 `tool_call_mode` 会随线程冻结，后续轮次不会因模型配置变更在 `function_call/tool_call/freeform_call` 之间静默切换；旧线程若已有冻结 system prompt，会先从该 prompt 推断原工具模式。`function_call` 仍尊重用户显式配置，但在本地 llama.cpp 类服务中，native `tools` 可能由服务端 chat template 注入到非消息前缀位置，调试事件的 `context_cache_probe.tool_transport= native_tools` 会标记这一缓存风险。
 - 当 `tool_call_mode=freeform_call` 且模型走 OpenAI Responses API 时，服务端会把 `apply_patch` 这类语法工具下发为原生 `type=custom` 工具（携带 `format={type:grammar,syntax:lark,definition}`），普通 JSON 工具继续走 `type=function`；工具结果会按 `custom_tool_call_output/function_call_output` 回填历史，避免仅靠 XML 提示词驱动。
@@ -250,7 +250,7 @@ wunder 是一个**智能体调度平台**：蜂窝（desktop）是本地 AI 工�
 - 约束：直接用户聊天的全局并发上限由 `server.max_active_sessions` 控制，超过上限的请求会排队等待；管理员从用户侧聊天入口发起的请求同样受该可见队列约束。
 - 约束：同一轮同类工具连续失败达到 `server.tool_failure_guard_threshold`（默认 5）会触发 `tool_failure_guard` 并停止自动重试；同一工具命中同一个明确的不可重试错误时，也默认在第 5 次相同失败后触发保护，避免模型持续硬撞同一错误。
 - 说明：直接调用编排器的管理员运维/评测/内部任务仍可跳过会话锁、额度余额或并发上限；用户侧聊天入口不因管理员身份绕过 `server.max_active_sessions`。
-- 说明：当 `tool_names` 显式包含 `a2ui` 时，系统会剔除“最终回复”工具并改为输出 A2UI 消息；SSE 将追加 `a2ui` 事件，非流式响应会携带 `uid`/`a2ui` 字段。
+- 说明：`最终回复`（final_response）工具已移除。当 `tool_names` 显式包含 `a2ui` 时，系统改为输出 A2UI 消息；SSE 将追加 `a2ui` 事件，非流式响应会携带 `uid`/`a2ui` 字段。
 - 流式异常事件：`error` 事件现在会统一附带 `error_meta`（`category/severity/retryable/retry_after_ms/source_stage/recovery_action`），便于前端与调用方区分“可重试失败”和“需人工修正失败”。
 - 流式终结事件：新增 `turn_terminal`，作为每轮执行的唯一终结语义，`status` 取值包括 `completed/failed/cancelled/rejected`；`final.stop_reason` 现可能为 `yield`，表示模型主动调用 `sessions_yield` 结束本轮并转入后台子智能体续跑；调用方不应再仅靠 `final/error` 自行猜测一轮是否已结束。
 - 审批闭环事件：新增 `approval_resolved`，表示待审批请求已进入终态；`approval_result` 保持兼容，但新接入方应优先消费 `approval_resolved`。
@@ -343,10 +343,10 @@ wunder 是一个**智能体调度平台**：蜂窝（desktop）是本地 AI 工�
 - 工具结果默认允许约 `20000` 字符级别内容进入 `tool_result`/observation（管理员会话同样生效）；若仍因上下文预算被裁剪，系统会在顶层直接返回 `truncated/observation_output_chars/continuation_required/continuation_hint`（不再放入 `meta`）；数据体中可能出现 `data.truncated/original_chars/preview`、表格级 `rows_sampled/rows_omitted`，或数组级 `{"__truncated":true,"omitted_items":N}` 标记，表示当前结果为片段/样本而非全量。
 - `执行命令` 支持预算与预演参数：`dry_run`、`time_budget_ms`、`output_budget_bytes`、`max_commands`（也可放入 `budget` 对象）；`dry_run=true` 时仅返回执行计划与预算，不落地执行。
 - `执行命令` 失败结果的管理员事件通道会在 `data.diagnostics` 保留最多 4 条有界诊断（命令、序号、退出码和输出尾部）；模型 observation 仍只接收精简错误文本，避免把多命令 stderr 再次写入上下文。
-- `写入文件`、`应用补丁` 与 `文本编辑` 支持 `dry_run` 预演：返回目标文件与变更摘要，不写磁盘；传入相对 `path` 或补丁内相对文件路径时，会按当前智能体工作目录解析，不会落到服务进程 cwd。
-- `应用补丁` 的 `input` 现支持多层 JSON 包裹自动解包（如 `{"input":"{\"input\":\"*** Begin Patch ... *** End Patch\"}"}`），降低模型重复封装导致的格式失败。
-- `应用补丁` 的 `dry_run` 与正式执行共用暂存、冲突检查和上下文匹配逻辑，不写磁盘、不触发工作区版本更新或 LSP 写入通知。`data.files[].diff_blocks` 为有界预览：每文件最多 80 行，每调用最多 320 行、24 KiB 行正文；超预算整行省略。`data` 与 `files[]` 同时提供准确的 `added_lines/deleted_lines` 和 `diff_lines_omitted`，前端不能从预览行数推算实际变更量。模型 observation 保留准确增删行数与文件摘要，省略 diff 正文；事件与工具日志保留有界预览。
-- 当 `应用补丁` 返回 `PATCH_CONTEXT_NOT_FOUND` 时，`error_meta.hint` 会包含“期望旧片段 + 邻近源码 + 最相似窗口差异示例”，便于模型按上下文重新生成补丁。
+- `写入文件` 与 `文本编辑`（含其补丁形态，原 `应用补丁`）支持 `dry_run` 预演：返回目标文件与变更摘要，不写磁盘；传入相对 `path` 或补丁内相对文件路径时，会按当前智能体工作目录解析，不会落到服务进程 cwd。
+- 文本编辑的补丁形态（原 `应用补丁`）的 `input` 现支持多层 JSON 包裹自动解包（如 `{"input":"{\"input\":\"*** Begin Patch ... *** End Patch\"}"}`），降低模型重复封装导致的格式失败。
+- 文本编辑的补丁形态（原 `应用补丁`）的 `dry_run` 与正式执行共用暂存、冲突检查和上下文匹配逻辑，不写磁盘、不触发工作区版本更新或 LSP 写入通知。`data.files[].diff_blocks` 为有界预览：每文件最多 80 行，每调用最多 320 行、24 KiB 行正文；超预算整行省略。`data` 与 `files[]` 同时提供准确的 `added_lines/deleted_lines` 和 `diff_lines_omitted`，前端不能从预览行数推算实际变更量。模型 observation 保留准确增删行数与文件摘要，省略 diff 正文；事件与工具日志保留有界预览。
+- 当文本编辑的补丁形态（原 `应用补丁`）返回 `PATCH_CONTEXT_NOT_FOUND` 时，`error_meta.hint` 会包含“期望旧片段 + 邻近源码 + 最相似窗口差异示例”，便于模型按上下文重新生成补丁。
 - `搜索内容` 返回保留兼容字段 `matches`，同时提供结构化 `hits`、`matched_files/matched_file_count/returned_match_count`、`summary` 与 `meta.search`。其中 `summary` 会给出实际采用的策略、顶部相关文件、命中词、`focus_points` 和下一步提示；`meta.search` 额外包含 `query_source`、`query_mode_inferred`、`strategy`、`attempts_tried`、`requested_engine/resolved_engine/rg_program/fallback/elapsed_ms/timeout_hit` 等信息，便于前端与调度层做可观测优化。
 - `搜索内容` 支持预算与预演参数：`dry_run`、`time_budget_ms`、`output_budget_bytes`（也可放入 `budget`，并支持 `budget.max_files/max_matches/max_candidates`）；超预算时会在 `meta.search.output_budget_hit` 标记结果裁剪。
 - `读取文件` 支持预算与预演参数：`dry_run`、`time_budget_ms`、`output_budget_bytes`、`max_files`（也可放入 `budget`）；结果在 `meta.read` 返回 `timeout_hit/output_budget_hit/budget_file_limit_hit`。当本次只返回了默认大窗口前缀、文件安全截断前缀，或读取结果在外层继续可细化续取时，数据体会显式补 `continuation_required/continuation_hint`，提示模型应先 `search_content` 定位标题或改读更窄的行范围，而不是反复整篇重读。
@@ -375,7 +375,7 @@ wunder 是一个**智能体调度平台**：蜂窝（desktop）是本地 AI 工�
 - 推荐的 Codex 风格子智能体调用路径更新为：`subagent_control.spawn/batch_spawn -> sessions_yield -> 子智能体自动回流唤醒 -> status/wait(按需)`；其中 `sessions_yield` 是显式“本轮先结束”的一级原语。
 - `会话线程控制` 的 `create/switch/back/ 可同时更新任务线程绑定；当工具通过流式通道返回 `thread_control` 事件时，蜂巢会先合并会话摘要，再按 payload 决定是否切换到目标线程。
 - 新增内置工具 `用户世界工具`（英文别名 `user_world`），通过 `action=list_users|send_message` 获取用户列表或发送私信（消息会在用户世界页面可见）。
-- 新增内置工具 `渠道工具`（英文别名 `channel_tool`），通过 `action=list_contacts|send_message` 查询渠道可联系对象并向指定渠道对象发送消息（支持工作区文件引用转下载链接后发送）。
+- `渠道工具`（英文别名 `channel_tool`）已移除（对智能体与用户不可见）。其历史能力为通过 `action=list_contacts|send_message` 查询渠道可联系对象并向指定渠道对象发送消息（支持工作区文件引用转下载链接后发送）。
 - `渠道工具.list_contacts` 默认融合会话历史与 XMPP roster（若可用），返回 `source=session_history|roster|session_history+roster`；可传 `refresh=true` 强制刷新 roster 缓存。
 - `渠道工具.send_message` 参数已简化：不再强制 `channel/account_id/to` 同时必填；可直接传 `text`（或 `content`/`attachments`）并由系统从会话/默认账号自动补全。`list_contacts` 返回 `contact` 对象，可直接回传给 `send_message`。
 - `渠道工具.send_message` 附件投递能力（2026-03-18）：Feishu/XMPP/QQBot 优先走渠道原生附件链路；若目标渠道不支持对应类型则自动回退为文本链接，不阻断投递。
@@ -385,7 +385,7 @@ wunder 是一个**智能体调度平台**：蜂窝（desktop）是本地 AI 工�
 - 内置工具 `网页抓取`（英文别名 `web_fetch`）支持 `extract_mode=markdown|text` 与 `max_chars`；直接通过 HTTP 抓取网页并输出低噪声正文，不用于本地文件或关键词搜索，并会对明显的前端壳页/验证页返回结构化失败或自动切换浏览器兜底。
 - `网页抓取` 默认执行正文清洗与去噪，移除导航、页脚、广告、评论等低价值片段；同时内置重定向复校验、响应体大小限制与短 TTL 缓存。私网/内网目标默认拦截，但现可通过 `tools.web.fetch.allow_private_network=true` 全量放开，或用 `tools.web.fetch.hostname_allowlist` 按主机名/IP 精确放行。
 - `网页抓取` 运行时支持 `tools.web.fetch.provider=direct|auto|firecrawl`：`direct` 使用 Wunder 内置 HTTP 抓取，`firecrawl` 调用外部 Firecrawl `/v2/scrape`，`auto` 在配置 Firecrawl API Key 或自定义 `base_url` 时优先使用 Firecrawl、失败后回退 direct。Firecrawl 配置位于 `tools.web.fetch.firecrawl.*`，也可通过 `WUNDER_WEB_FETCH_PROVIDER`、`FIRECRAWL_BASE_URL`、`FIRECRAWL_API_KEY` 覆盖；官方云端 `https://api.firecrawl.dev` 需要 API Key。
-- 管理员侧“系统设置 / Firecrawl 网页抓取”保存后会将 Firecrawl 连接参数同步到 `tools.web.search.firecrawl.*`；当抓取 provider 为 `firecrawl`，或为 `auto` 且已配置 Firecrawl API Key/自定义地址时，`tools.web.search.enabled=true` 且 `provider=firecrawl`，用户侧智能体工具列表会显示 `网页搜索`。
+- 管理员侧“系统设置 / Firecrawl 网页抓取”保存后会将 Firecrawl 连接参数同步到 `tools.web.search.firecrawl.*`；当抓取 provider 为 `firecrawl`，或为 `auto` 且已配置 Firecrawl API Key/自定义地址时，`tools.web.search.enabled=true` 且 `provider=firecrawl`。注意 `网页搜索`（web_search）已移除，用户侧智能体工具列表不再显示它。
 - Docker compose 默认不再内置 Firecrawl 自托管服务组；默认部署回退为 Wunder 内置 `direct` 网页抓取，降低启动依赖和队列数据库复杂度。管理员侧“系统设置 / Firecrawl 网页抓取”只保存 Wunder 连接外部 Firecrawl 的参数，不负责启动、停止或修改 Docker 服务。
 - `网页抓取` 可以抓取 Bing/Google/DuckDuckGo/百度等搜索结果页作为线索页，但最终证据应继续抓取具体来源页面，不要把搜索结果摘要当成结论来源。
 - `网页抓取` 的失败结果现结构化暴露 `phase`（如 `validation/dns_lookup/request/response_body/extract`）、`failure_summary`、`next_step_hint` 与 `error_meta`；浏览器桥启动失败也会在 ready 前返回结构化 JSON，便于工作流区域直接展示真实故障原因（例如缺少 Playwright 浏览器二进制）。
@@ -399,7 +399,7 @@ wunder 是一个**智能体调度平台**：蜂窝（desktop）是本地 AI 工�
 - `action=list` 返回当前在线节点清单（含 `node_id/commands/caps/scopes` 等信息）；`action=invoke` 需要 `node_id + command`，可选 `args/timeout_s/metadata`。
 - 兼容旧入参：未传 `action` 但同时提供 `node_id + command` 时仍按 `invoke` 处理。
 - A2A 服务工具命名为 `a2a@service`，服务由管理员配置并启用。
-- 内置提供 `a2a观察`/`a2a等待`，用于观察任务状态与等待结果。
+- 内置 `a2a观察`/`a2a等待` 已移除（对智能体与用户不可见）；其历史用途为观察任务状态与等待结果。
 
 ### 4.1.2A 智能体应用与模型选择（`/wunder/agents`）
 
@@ -915,7 +915,7 @@ wunder 是一个**智能体调度平台**：蜂窝（desktop）是本地 AI 工�
 - 说明：管理员开放工具与用户自建工具已拆分为独立区域。舰体/云端模式下管理员开放工具是否可见由管理员配置决定；用户自建 MCP/技能/知识库只要已配置就会进入对应区域，不再依赖用户侧额外“启用”开关。
 - 说明：`items[]` 是目录接口的统一能力视图：`group` 用于前端分组展示，`kind` 用于区分工具/技能；旧字段继续保留用于兼容。
 - 说明：desktop 本地模式下，`builtin_tools/admin_builtin_tools` 默认返回全部内置工具（按运行能力过滤），不再依赖 `tools.builtin.enabled` 白名单。
-- 说明：`default_agent_tool_names` 当前固定收敛为默认画像：`最终回复/定时任务/记忆管理/执行命令/命令会话/ptc/列出文件/搜索内容/读取文件/技能调用/写入文件/应用补丁`，以及默认技能 `技能创建器`；MCP/知识库默认不勾选。`execute_command` 默认阻塞返回结果，设置 `run_in_background=true` 转后台后必须使用 `命令会话` 轮询。
+- 说明：`default_agent_tool_names` 当前固定收敛为默认画像：`定时任务/记忆管理/执行命令/命令会话/列出文件/glob/搜索内容/读取文件/网页抓取/技能调用/写入文件/文本编辑`，以及默认技能 `技能创建器`；MCP/知识库默认不勾选。`最终回复`/`ptc`/`网页搜索`/`渠道工具`/`a2a观察`/`a2a等待`/`应用补丁` 已移除（其中 `应用补丁` 并入 `文本编辑`）。`execute_command` 默认阻塞返回结果，设置 `run_in_background=true` 转后台后必须使用 `命令会话` 轮询。
 
 ### 4.1.2.22 `/wunder/user_tools/shared_tools`
 
@@ -2302,8 +2302,8 @@ wunder 是一个**智能体调度平台**：蜂窝（desktop）是本地 AI 工�
   - `default_identity_strategy`
   - `username_policy`
   - `description`
-  - `shared_channels[]`：可选的批量写入能力；当前单个渠道舰桥节点只允许一个渠道，舰桥页面默认不走一次性保存，而是通过“渠道设置”弹窗维护单条绑定
-- 说明：管理员用它创建或更新一个“全渠道入口 -> 默认预设智能体”的渠道舰桥节点。页面当前采用“监控主页面 + 中心配置弹窗 + 渠道设置弹窗”模式。
+  - `shared_channels[]`：可选的批量写入能力；当前单个渠道舰桥节点只允许一个渠道，通常改为通过单条绑定接口维护，不再依赖一次性保存
+- 说明：管理员用它创建或更新一个“全渠道入口 -> 默认预设智能体”的渠道舰桥节点。该能力当前无独立前端页面，由管理接口或脚本调用。
 
 ### 4.1.25.8 `/wunder/admin/bridge/centers/{center_id}`
 
@@ -2327,7 +2327,7 @@ wunder 是一个**智能体调度平台**：蜂窝（desktop）是本地 AI 工�
   - `thread_strategy`
   - `reply_strategy`
   - `default_preset_agent_name_override`
-- 说明：底层仍保留独立渠道绑定接口，便于脚本化接线；当前单个渠道舰桥节点只允许绑定一个渠道账号。舰桥页面会先通过 `/wunder/admin/channels/accounts?status=active` 拉取现有可用账号，再用此接口写入桥接绑定。
+- 说明：底层仍保留独立渠道绑定接口，便于脚本化接线；当前单个渠道舰桥节点只允许绑定一个渠道账号。典型流程是先通过 `/wunder/admin/channels/accounts?status=active` 拉取现有可用账号，再用此接口写入桥接绑定。
 
 ### 4.1.25.10 `/wunder/admin/bridge/accounts/{center_account_id}`
 
@@ -2774,7 +2774,7 @@ wunder 是一个**智能体调度平台**：蜂窝（desktop）是本地 AI 工�
     - `error`：错误信息（可选）
 - 说明：
   - `prompt_build`：系统提示词构建耗时。
-  - `file_ops`：列出文件/写入/读取/搜索/应用补丁组合耗时。
+  - `file_ops`：列出文件/写入/读取/搜索/文本编辑（含补丁形态）组合耗时。
   - `command_exec`：内置工具“执行命令”的耗时。
   - `tool_access`：用户工具绑定与权限解析的耗时。
   - `log_write`：写入工具日志耗时。
@@ -3461,7 +3461,7 @@ Slint 程序默认链接 `wunder-desktop` library；不拉起 bridge，不通过
 ### 保留说明
 
 - 子智能体工具（`subagent_control`）**保留**：子智能体是主智能体在任务中临时创建的工作单元，与蜂群无关，接口语义不变，仍见上文「子智能体池与级联中断」「子智能体运行中消息」等条目。
-- 其他智能体工具（`thread_control`、`memory_manager`、`channel_tool`、`self_status` 等）不受影响。
+- 其他智能体工具（`thread_control`、`memory_manager`、`self_status` 等）不受影响（`channel_tool` 已移除）。
 - 渠道、网关、定时任务与评估（wunderbench）链路不受影响：渠道桥、定时任务与模型评估中引用预设智能体的部分照常工作。
 - 用户侧只保留唯一智能体实例，由预设绑定生成；工作区为唯一云端目录，工具以该目录为根。
 - 移除前运行中的 `team_runs` 数据应清理或归档导出；`hives` / `team_runs` / `team_tasks` 表在升级时按迁移流程删除。
@@ -3614,7 +3614,7 @@ Slint 程序默认链接 `wunder-desktop` library；不拉起 bridge，不通过
 - `unbind` 必须显式给出新的 `preset_id`，保证每个用户任意时刻**只有一个**智能体实例、且绑定唯一。
 - `sync` 的 `mode`：`safe` 只覆盖用户未改动过的字段（`skipped_customized` 为被跳过的自定义项数量）；`force` 全字段覆盖。两者均**不改写已冻结线程的 system prompt**，只影响新建线程；长期记忆仍只在线程初始化时注入一次。
 - `sync` 支持 `dry_run`，用于同步前预览影响用户数；非 dry-run 需二次确认并返回结果计数。
-- 用户开户（含渠道舰桥中心自动开户、外部嵌入首登）时从默认预设创建唯一实例；预设表单不再包含蜂群字段（`hive_id`）与容器 ID 字段。
+- 用户开户（含渠道舰桥节点自动开户、外部嵌入首登）时从默认预设创建唯一实例；预设表单不再包含蜂群字段（`hive_id`）与容器 ID 字段。
 - 上述列表接口一律分页（`page` / `page_size`，上限固定），禁止无分页全量返回。
 
 ### 与本次收敛相关的其他说明

@@ -96,78 +96,73 @@
         <div v-else-if="!visibleTurns.length" class="thread-trajectory-state">
           {{ t('messenger.trajectory.empty') }}
         </div>
-        <table v-else class="thread-trajectory-table">
-          <colgroup>
-            <col class="thread-trajectory-col-event" />
-            <col class="thread-trajectory-col-content" />
-          </colgroup>
-          <tbody>
-            <template v-for="turn in visibleTurns" :key="turn.key">
-              <tr class="thread-trajectory-turn-row">
-                <th colspan="2">
-                  <div class="thread-trajectory-turn-inner">
-                    <button class="thread-trajectory-turn-toggle" type="button" @click="toggleTurn(turn.key)">
-                      <i
-                        :class="turn.collapsed ? 'fa-solid fa-caret-right' : 'fa-solid fa-caret-down'"
-                        aria-hidden="true"
-                      ></i>
-                      <span>{{ turn.label }}</span>
-                    </button>
-                    <div class="thread-trajectory-turn-columns">
-                      <span class="thread-trajectory-turn-column">{{ formatNumber(turn.usage.input) }}</span>
-                      <span class="thread-trajectory-turn-column">{{ formatNumber(turn.usage.output) }}</span>
-                      <span class="thread-trajectory-turn-column">{{ formatNumber(turn.usage.reasoning) }}</span>
-                      <span class="thread-trajectory-turn-column">{{ formatSeconds(turn.timeSeconds) }}</span>
-                    </div>
-                  </div>
-                </th>
-              </tr>
-              <template v-if="!turn.collapsed">
-                <template v-for="group in turn.groups" :key="group.key">
-                  <tr class="thread-trajectory-group-row">
-                    <td colspan="2" class="thread-trajectory-group-cell">
-                      <span class="thread-trajectory-group-title">{{ group.title }}</span>
-                      <span v-if="group.description" class="thread-trajectory-group-desc">{{ group.description }}</span>
-                    </td>
-                  </tr>
-                  <tr
-                    v-for="record in group.records"
-                    :key="record.recordId"
-                    class="thread-trajectory-record-row"
-                    :class="recordClasses(record)"
-                    @click="selectRecord(record.recordId)"
-                  >
-                    <td class="thread-trajectory-event-cell">
-                      <div class="thread-trajectory-event">
-                        <span class="thread-trajectory-index">#{{ record.index }}</span>
-                        <span class="thread-trajectory-kind" :class="`is-${record.kind}`">
-                          <i :class="kindIcon(record.kind)" aria-hidden="true"></i>
-                          <span>{{ t(kindLabelKey(record.kind)) }}</span>
-                        </span>
-                      </div>
-                    </td>
-                    <td class="thread-trajectory-content-cell">
-                      <div class="thread-trajectory-content">
-                        <span class="thread-trajectory-text" :class="{ 'is-error': record.isError }">
-                          {{ record.text || t('messenger.trajectory.emptyValue') }}
-                        </span>
-                        <span v-if="record.resultPreview" class="thread-trajectory-result" :title="record.resultPreview">
-                          {{ record.resultPreview }}
-                        </span>
-                      </div>
-                    </td>
-                  </tr>
-                  <tr v-if="collapseCalls && group.toolCount > 0" class="thread-trajectory-group-row">
-                    <td colspan="2" class="thread-trajectory-collapsed-cell">
-                      {{ t('messenger.trajectory.collapsed.callsSummary', { count: group.toolCount }) }}
-                      <template v-if="group.description"> · {{ group.description }}</template>
-                    </td>
-                  </tr>
-                </template>
+        <div v-else class="tt-turns">
+          <section v-for="turn in visibleTurns" :key="turn.key" class="tt-turn">
+            <header class="tt-turn-header">
+              <div class="tt-turn-header-inner">
+                <button class="tt-turn-title" type="button" @click="toggleTurn(turn.key)">
+                  <i
+                    :class="turn.collapsed ? 'fa-solid fa-caret-right' : 'fa-solid fa-caret-down'"
+                    aria-hidden="true"
+                  ></i>
+                  <span>{{ turn.label }}</span>
+                </button>
+                <div class="tt-turn-columns">
+                  <span class="tt-turn-column">{{ formatNumber(turn.usage.input) }}</span>
+                  <span class="tt-turn-column">{{ formatNumber(turn.usage.output) }}</span>
+                  <span class="tt-turn-column">{{ formatNumber(turn.usage.reasoning) }}</span>
+                  <span class="tt-turn-column">{{ formatSeconds(turn.timeSeconds) }}</span>
+                </div>
+              </div>
+            </header>
+            <div v-if="!turn.collapsed" class="tt-turn-body">
+              <template v-for="group in turn.groups" :key="group.key">
+                <div class="tt-group-header">
+                  <span class="tt-group-title">{{ group.title }}</span>
+                  <span v-if="group.description" class="tt-group-desc">{{ group.description }}</span>
+                </div>
+                <div
+                  v-for="record in group.records"
+                  :key="record.recordId"
+                  class="tt-cell"
+                  :class="recordClasses(record)"
+                  @click="selectRecord(record.recordId)"
+                >
+                  <span class="tt-cell-index">#{{ record.index }}</span>
+                  <span class="tt-cell-tag-slot">
+                    <span class="tt-cell-tag" :class="`is-${record.kind}`">
+                      <i :class="kindIcon(record.kind)" aria-hidden="true"></i>
+                      <span>{{ t(recordLabelKey(record)) }}</span>
+                    </span>
+                  </span>
+                  <span class="tt-cell-body">
+                    <span class="tt-cell-text" :class="{ 'is-error': record.isError }">
+                      {{ record.text || t('messenger.trajectory.emptyValue') }}
+                    </span>
+                    <span v-if="record.metaChips.length" class="tt-cell-chips">
+                      <span v-for="chip in record.metaChips" :key="chip" class="tt-cell-chip">{{ chip }}</span>
+                    </span>
+                    <span v-if="record.resultPreview" class="tt-cell-result" :title="record.resultPreview">
+                      {{ record.resultPreview }}
+                    </span>
+                  </span>
+                  <span class="tt-cell-trailing">
+                    <template v-if="record.kind === 'message'">
+                      <span class="tt-cell-metric">{{ formatNumber(record.usage ? record.usage.input : 0) }}</span>
+                      <span class="tt-cell-metric">{{ formatNumber(record.usage ? record.usage.output : 0) }}</span>
+                      <span class="tt-cell-metric">{{ formatNumber(record.usage ? record.usage.reasoning : 0) }}</span>
+                    </template>
+                    <span class="tt-cell-time">{{ formatSeconds(record.timeSeconds) }}</span>
+                  </span>
+                </div>
+                <div v-if="collapseCalls && group.toolCount > 0" class="tt-cell-collapsed">
+                  {{ t('messenger.trajectory.collapsed.callsSummary', { count: group.toolCount }) }}
+                  <template v-if="group.description"> · {{ group.description }}</template>
+                </div>
               </template>
-            </template>
-          </tbody>
-        </table>
+            </div>
+          </section>
+        </div>
       </div>
 
       <aside v-if="selectedRecord" class="thread-trajectory-inspector" :style="{ width: `${INSPECTOR_WIDTH}px` }">
@@ -212,6 +207,10 @@
                 <dt class="tt-inspector-label">{{ t('messenger.trajectory.timing.duration') }}</dt>
                 <dd class="tt-inspector-value">{{ formatSeconds(selectedRecord.timeSeconds) }}</dd>
               </div>
+              <div v-if="selectedRecord.kind === 'context' && selectedRecord.eventType" class="tt-inspector-row">
+                <dt class="tt-inspector-label">{{ t('messenger.trajectory.overview.source') }}</dt>
+                <dd class="tt-inspector-value">{{ selectedRecord.eventType }}</dd>
+              </div>
               <div v-if="selectedRecord.toolName" class="tt-inspector-row">
                 <dt class="tt-inspector-label">{{ t('messenger.trajectory.overview.tool') }}</dt>
                 <dd class="tt-inspector-value">{{ selectedRecord.toolName }}</dd>
@@ -219,6 +218,12 @@
               <div v-if="selectedRecord.callId" class="tt-inspector-row">
                 <dt class="tt-inspector-label">{{ t('messenger.trajectory.overview.callId') }}</dt>
                 <dd class="tt-inspector-value">{{ selectedRecord.callId }}</dd>
+              </div>
+              <div v-if="selectedRecord.kind === 'tool' || selectedRecord.kind === 'subtool'" class="tt-inspector-row">
+                <dt class="tt-inspector-label">{{ t('messenger.trajectory.overview.schema') }}</dt>
+                <dd class="tt-inspector-value" :class="{ 'is-muted': !selectedRecord.schemaDetail }">
+                  {{ selectedRecord.schemaDetail ? t('messenger.trajectory.overview.available') : t('messenger.trajectory.record.schemaUnavailable') }}
+                </dd>
               </div>
               <div class="tt-inspector-row">
                 <dt class="tt-inspector-label">{{ t('messenger.trajectory.overview.turn') }}</dt>
@@ -242,11 +247,12 @@
                 </button>
                 <pre class="tt-inspector-pre">{{ truncate(selectedRecord.outputDetail, 600) }}</pre>
               </section>
-              <section class="tt-inspector-block">
+              <section v-if="selectedRecord.kind === 'tool' || selectedRecord.kind === 'subtool'" class="tt-inspector-block">
                 <button class="tt-inspector-block-title" type="button" @click="activeTab = 'schema'">
                   {{ t('messenger.trajectory.inspector.schema') }}
                 </button>
-                <p class="tt-inspector-hint">{{ t('messenger.trajectory.record.schemaUnavailable') }}</p>
+                <pre v-if="selectedRecord.schemaDetail" class="tt-inspector-pre">{{ truncate(selectedRecord.schemaDetail, 600) }}</pre>
+                <p v-else class="tt-inspector-hint">{{ t('messenger.trajectory.record.schemaUnavailable') }}</p>
               </section>
               <section class="tt-inspector-block">
                 <button class="tt-inspector-block-title" type="button" @click="activeTab = 'timing'">
@@ -277,7 +283,13 @@
           </template>
 
           <template v-else-if="activeTab === 'schema'">
-            <p class="tt-inspector-hint">{{ t('messenger.trajectory.record.schemaUnavailable') }}</p>
+            <pre v-if="selectedRecord.schemaDetail" class="tt-inspector-pre is-block">{{ selectedRecord.schemaDetail }}</pre>
+            <p v-else class="tt-inspector-hint">{{ t('messenger.trajectory.record.schemaUnavailable') }}</p>
+          </template>
+
+          <template v-else-if="activeTab === 'raw'">
+            <pre v-if="selectedRecord.rawDetail" class="tt-inspector-pre is-block">{{ selectedRecord.rawDetail }}</pre>
+            <p v-else class="tt-inspector-hint">{{ t('messenger.trajectory.record.noPayload') }}</p>
           </template>
 
           <template v-else>
@@ -304,7 +316,7 @@ import { useI18n } from '@/i18n';
 type Json = Record<string, unknown>;
 
 type TrajKind = 'system' | 'user' | 'context' | 'compacted' | 'message' | 'tool' | 'subtool';
-type InspectorTab = 'overview' | 'input' | 'output' | 'schema' | 'timing';
+type InspectorTab = 'overview' | 'input' | 'output' | 'schema' | 'raw' | 'timing';
 
 interface TrajUsage {
   input: number;
@@ -339,6 +351,14 @@ interface TrajCell {
   resultPreview: string;
   usage: TrajUsage | null;
   searchText: string;
+  /** 原始事件类型（如 queue/plan/approval/terminal），用于上下文的细分标签。 */
+  eventType: string;
+  /** 事件列徽标的 i18n key；为空时回退到 kind 级标签。 */
+  subLabelKey: string;
+  /** 内容列右侧的元信息胶囊（token/耗时/状态）。 */
+  metaChips: string[];
+  /** 检查器“原始内容”页签展示的 payload 摘要（剔除内部字段）。 */
+  rawDetail: string;
 }
 
 interface TrajGroup {
@@ -497,12 +517,21 @@ const mapKind = (itemKind: string): TrajKind => {
     case 'tool_call':
     case 'tool_result':
       return 'tool';
+    // 子智能体投递的消息归入子调用轨道。
     case 'subagent_run':
+    case 'subagent_message':
       return 'subtool';
     case 'compaction':
       return 'compacted';
     case 'system_message':
       return 'system';
+    // 上下文类：队列/计划/审批/终端等注入或生命周期条目。
+    case 'queue':
+    case 'plan':
+    case 'approval':
+    case 'terminal':
+    case 'context':
+      return 'context';
     default:
       return 'context';
   }
@@ -540,6 +569,7 @@ const buildCell = (item: Json, index: number, turnNo: number | null, isFirstOfTu
     ...asJson(asJson(payload.meta).message_stats)
   };
   const kind = mapKind(asText(item.kind));
+  const eventType = asText(item.event_type) || asText(payload.event_type);
   const isToolKind = kind === 'tool' || kind === 'subtool';
   const toolName = pickText(metrics, ['tool', 'tool_name', 'name', 'toolName', 'tool_display_name']);
   const status = pickText(item, ['status']) || pickText(payload, ['status']);
@@ -550,6 +580,19 @@ const buildCell = (item: Json, index: number, turnNo: number | null, isFirstOfTu
     payload.ok === false;
 
   const question = contentToText(payload.content);
+  // 上下文类条目没有统一正文键，按优先级取第一个可读字段。
+  const contextText =
+    question ||
+    pickText(payload, [
+      'summary',
+      'message',
+      'text',
+      'detail',
+      'description',
+      'title',
+      'reason',
+      'stop_reason'
+    ]);
   const reasoning = contentToText(payload.reasoning ?? payload.thinking ?? payload.reasoning_content);
   const args = pickText(payload, ['args', 'arguments', 'input']);
   // 工具结果真实字段是 data（+ model_observation / meta），无 result/output 键；
@@ -577,10 +620,14 @@ const buildCell = (item: Json, index: number, turnNo: number | null, isFirstOfTu
     resultPreview = truncate(result.replace(/\s+/g, ' '), 120);
   } else if (kind === 'compacted') {
     text = t('messenger.trajectory.kind.compacted');
-    inputDetail = truncate(question, 4000);
+    inputDetail = truncate(contextText, 4000);
+  } else if (kind === 'system') {
+    text = truncate(contextText || t('messenger.trajectory.kind.system'), 220);
+    inputDetail = contextText;
   } else {
-    text = truncate(question, 220);
-    inputDetail = question;
+    // 上下文类：queue/plan/approval/terminal 等注入或生命周期条目。
+    text = truncate(contextText, 220);
+    inputDetail = contextText;
   }
 
   const startedAt =
@@ -600,7 +647,32 @@ const buildCell = (item: Json, index: number, turnNo: number | null, isFirstOfTu
 
   const usage = extractUsage(payload);
   const schemaDetail = pickText(payload, ['schema', 'schema_detail', 'input_schema', 'parameters']);
-  const searchText = [text, inputDetail, outputDetail, toolName, kind]
+  const subLabelKey = kind === 'context' ? EVENT_LABEL_KEY[eventType] ?? '' : '';
+  const metaChips: string[] = [];
+  if (kind === 'message') {
+    if (usage && usage.output > 0) metaChips.push(tokenUnit(usage.output));
+    if (timeSeconds !== null) metaChips.push(formatSeconds(timeSeconds));
+  } else if (isToolKind) {
+    if (timeSeconds !== null) metaChips.push(formatSeconds(timeSeconds));
+    if (isError) metaChips.push(statusText(status));
+  } else if (status) {
+    metaChips.push(statusText(status));
+  }
+  const rawDetail = (() => {
+    const clone: Json = { ...payload };
+    delete clone.event_type;
+    delete clone.session_id;
+    delete clone.item_id;
+    delete clone.kind;
+    delete clone.status;
+    delete clone.visibility;
+    try {
+      return JSON.stringify(clone, null, 2);
+    } catch {
+      return '';
+    }
+  })();
+  const searchText = [text, inputDetail, outputDetail, toolName, kind, eventType, subLabelKey ? t(subLabelKey) : '']
     .join(' ')
     .toLowerCase();
 
@@ -628,7 +700,11 @@ const buildCell = (item: Json, index: number, turnNo: number | null, isFirstOfTu
     generationSeconds: decodeSeconds,
     resultPreview,
     usage,
-    searchText
+    searchText,
+    eventType,
+    subLabelKey,
+    metaChips,
+    rawDetail
   };
 };
 
@@ -963,6 +1039,16 @@ const formatSpeed = (value: number | null): string =>
 const kindLabelKey = (kind: TrajKind): string => KIND_LABEL_KEY[kind];
 const kindIcon = (kind: TrajKind): string => KIND_ICON[kind];
 
+// 上下文类记录按原始事件类型细分标签（队列/计划/审批/终端…），
+// 让“上下文”这一大类内部的信息也能区分开。
+const EVENT_LABEL_KEY: Record<string, string> = {
+  queue: 'messenger.trajectory.kind.queue',
+  plan: 'messenger.trajectory.kind.plan',
+  approval: 'messenger.trajectory.kind.approval',
+  terminal: 'messenger.trajectory.kind.terminal'
+};
+const recordLabelKey = (record: TrajCell): string => record.subLabelKey || kindLabelKey(record.kind);
+
 const recordClasses = (record: TrajCell): Record<string, boolean> => {
   const focused = focusedIndexes.value;
   const query = normalizedQuery.value;
@@ -980,9 +1066,17 @@ const inspectorTabs = computed<Array<{ key: InspectorTab; labelKey: string }>>((
   const tabs: Array<{ key: InspectorTab; labelKey: string }> = [
     { key: 'overview', labelKey: 'messenger.trajectory.inspector.overview' }
   ];
-  if (record?.inputDetail) tabs.push({ key: 'input', labelKey: 'messenger.trajectory.inspector.payload' });
-  if (record?.outputDetail) tabs.push({ key: 'output', labelKey: 'messenger.trajectory.inspector.result' });
-  tabs.push({ key: 'schema', labelKey: 'messenger.trajectory.inspector.schema' });
+  const isToolKind = record?.kind === 'tool' || record?.kind === 'subtool';
+  if (isToolKind) {
+    if (record?.inputDetail) tabs.push({ key: 'input', labelKey: 'messenger.trajectory.inspector.payload' });
+    if (record?.outputDetail) tabs.push({ key: 'output', labelKey: 'messenger.trajectory.inspector.result' });
+    tabs.push({ key: 'schema', labelKey: 'messenger.trajectory.inspector.schema' });
+  } else {
+    if (record?.inputDetail || record?.outputDetail) {
+      tabs.push({ key: 'input', labelKey: 'messenger.trajectory.inspector.preview' });
+    }
+    tabs.push({ key: 'raw', labelKey: 'messenger.trajectory.inspector.raw' });
+  }
   tabs.push({ key: 'timing', labelKey: 'messenger.trajectory.inspector.timing' });
   return tabs;
 });

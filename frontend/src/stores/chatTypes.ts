@@ -198,9 +198,17 @@ export type NormalizedUsagePayload = {
   estimated?: boolean;
 };
 
+export type InquiryPanelAnswer = {
+  question?: unknown;
+  labels?: unknown[];
+  other?: unknown;
+  noPreference?: unknown;
+};
+
 export type InquiryPanelPatch = {
   status?: unknown;
   selected?: unknown[];
+  answers?: InquiryPanelAnswer[];
 };
 
 export type MessageSubagentItem = {

@@ -1118,6 +1118,9 @@ impl Orchestrator {
                                 Value::String(tool_call_id.to_string()),
                             );
                         }
+                        if let Some(schema) = crate::tools::runtime_tool_schema(&planned.name) {
+                            map.insert("schema".to_string(), schema);
+                        }
                         round_info.insert_into(map);
                     }
                     emitter.emit("tool_call", tool_payload).await;

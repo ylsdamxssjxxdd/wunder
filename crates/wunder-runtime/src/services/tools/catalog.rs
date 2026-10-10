@@ -248,31 +248,43 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
             name: "问询面板".to_string(),
             title: None,
             description: t("tool.spec.question_panel.description"),
-            input_schema: super::schema::object(vec![
-                super::schema::string("question")
-                    .desc(t("tool.spec.question_panel.args.question"))
-                    .optional(),
-                super::schema::array("routes")
-                    .desc(t("tool.spec.question_panel.args.routes"))
-                    .min_items(1)
-                    .max_items(4)
-                    .items(
-                        super::schema::object_param("_")
-                            .props(vec![
-                                super::schema::string("label")
-                                    .desc(t("tool.spec.question_panel.args.routes.label")),
-                                super::schema::string("description")
-                                    .desc(t("tool.spec.question_panel.args.routes.description"))
-                                    .optional(),
-                                super::schema::boolean("recommended")
-                                    .desc(t("tool.spec.question_panel.args.routes.recommended"))
-                                    .optional(),
-                            ])
-                            .closed(),
-                    ),
-                super::schema::boolean("multiple")
-                    .desc(t("tool.spec.question_panel.args.multiple"))
-                    .optional(),
+            input_schema: super::schema::object(vec![super::schema::array("questions")
+                .desc(t("tool.spec.question_panel.args.questions"))
+                .min_items(1)
+                .max_items(4)
+                .items(
+                    super::schema::object_param("_")
+                        .props(vec![
+                            super::schema::string("question")
+                                .desc(t("tool.spec.question_panel.args.questions.question")),
+                            super::schema::array("options")
+                                .desc(t("tool.spec.question_panel.args.options"))
+                                .min_items(1)
+                                .max_items(4)
+                                .items(
+                                    super::schema::object_param("_")
+                                        .props(vec![
+                                            super::schema::string("label")
+                                                .desc(t("tool.spec.question_panel.args.options.label")),
+                                            super::schema::string("description")
+                                                .desc(t(
+                                                    "tool.spec.question_panel.args.options.description",
+                                                ))
+                                                .optional(),
+                                            super::schema::boolean("recommended")
+                                                .desc(t(
+                                                    "tool.spec.question_panel.args.options.recommended",
+                                                ))
+                                                .optional(),
+                                        ])
+                                        .closed(),
+                                ),
+                            super::schema::boolean("multiple")
+                                .desc(t("tool.spec.question_panel.args.multiple"))
+                                .optional(),
+                        ])
+                        .closed(),
+                ),
             ]),
         },
         ToolSpec {
@@ -1028,78 +1040,6 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
             ]),
         },
         ToolSpec {
-            name: browser_tool::TOOL_BROWSER.to_string(),
-            title: None,
-            description: t("tool.spec.browser.description"),
-            input_schema: super::schema::object(vec![
-                super::schema::string("action")
-                    .desc(t("tool.spec.browser.args.action"))
-                    .enums(vec![
-                        "status",
-                        "profiles",
-                        "start",
-                        "stop",
-                        "tabs",
-                        "open",
-                        "focus",
-                        "close",
-                        "navigate",
-                        "snapshot",
-                        "click",
-                        "type",
-                        "press",
-                        "hover",
-                        "wait",
-                        "screenshot",
-                        "read_page",
-                    ]),
-                super::schema::string("browser_session_id")
-                    .desc(t("tool.spec.browser.args.browser_session_id"))
-                    .optional(),
-                super::schema::string("target_id")
-                    .desc(t("tool.spec.browser.args.target_id"))
-                    .optional(),
-                super::schema::string("url")
-                    .desc(t("tool.spec.browser.args.url"))
-                    .optional(),
-                super::schema::string("path")
-                    .desc(t("tool.spec.browser.args.path"))
-                    .optional(),
-                super::schema::string("format")
-                    .desc(t("tool.spec.browser.args.format"))
-                    .optional(),
-                super::schema::string("ref")
-                    .desc(t("tool.spec.browser.args.ref"))
-                    .optional(),
-                super::schema::string("selector")
-                    .desc(t("tool.spec.browser.args.selector"))
-                    .optional(),
-                super::schema::string("text")
-                    .desc(t("tool.spec.browser.args.text"))
-                    .optional(),
-                super::schema::string("key")
-                    .desc(t("tool.spec.browser.args.key"))
-                    .optional(),
-                super::schema::boolean("full_page")
-                    .desc(t("tool.spec.browser.args.full_page"))
-                    .optional(),
-                super::schema::integer("max_chars")
-                    .desc(t("tool.spec.browser.args.max_chars"))
-                    .min(1)
-                    .optional(),
-                super::schema::integer("timeout_ms")
-                    .desc(t("tool.spec.browser.args.timeout_ms"))
-                    .min(1)
-                    .max(120000)
-                    .optional(),
-                super::schema::integer("timeout_secs")
-                    .desc(t("tool.spec.browser.args.timeout_secs"))
-                    .min(1)
-                    .max(120)
-                    .optional(),
-            ]),
-        },
-        ToolSpec {
             name: desktop_control::TOOL_DESKTOP_CONTROLLER.to_string(),
             title: None,
             description: t("tool.spec.desktop_controller.description"),
@@ -1195,6 +1135,8 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         },
     ];
     specs.extend(goal::goal_tool_specs());
+    // Browser tools come from the active provider's native surface (dsh parity).
+    specs.extend(browser_tool::browser_tool_specs());
     for spec in specs.iter_mut() {
         if spec.title.is_none() {
             if let Some(title) = localized_tool_title(&spec.name, language) {
@@ -1295,14 +1237,6 @@ pub fn builtin_aliases() -> HashMap<String, String> {
         web_fetch_tool::TOOL_WEB_FETCH.to_string(),
     );
     map.insert(
-        "browser".to_string(),
-        browser_tool::TOOL_BROWSER.to_string(),
-    );
-    map.insert(
-        "browser_tool".to_string(),
-        browser_tool::TOOL_BROWSER.to_string(),
-    );
-    map.insert(
         desktop_control::TOOL_DESKTOP_CONTROLLER_ALIAS.to_string(),
         desktop_control::TOOL_DESKTOP_CONTROLLER.to_string(),
     );
@@ -1317,30 +1251,6 @@ pub fn builtin_aliases() -> HashMap<String, String> {
     map.insert(
         desktop_control::TOOL_DESKTOP_MONITOR_ALIAS_SHORT.to_string(),
         desktop_control::TOOL_DESKTOP_MONITOR.to_string(),
-    );
-    map.insert(
-        "browser_navigate".to_string(),
-        browser_tool::TOOL_BROWSER_NAVIGATE.to_string(),
-    );
-    map.insert(
-        "browser_click".to_string(),
-        browser_tool::TOOL_BROWSER_CLICK.to_string(),
-    );
-    map.insert(
-        "browser_type".to_string(),
-        browser_tool::TOOL_BROWSER_TYPE.to_string(),
-    );
-    map.insert(
-        "browser_screenshot".to_string(),
-        browser_tool::TOOL_BROWSER_SCREENSHOT.to_string(),
-    );
-    map.insert(
-        "browser_read_page".to_string(),
-        browser_tool::TOOL_BROWSER_READ_PAGE.to_string(),
-    );
-    map.insert(
-        "browser_close".to_string(),
-        browser_tool::TOOL_BROWSER_CLOSE.to_string(),
     );
     map
 }
@@ -1470,6 +1380,20 @@ pub fn resolve_tool_name(name: &str) -> String {
         .unwrap_or_else(|| name.to_string())
 }
 
+/// 线程轨迹展示工具调用所需的 schema 描述：`{name, description, parameters}`。
+/// 与提示词暴露给模型的规格同源；仅覆盖内置工具，外部/MCP 工具返回 None。
+pub fn runtime_tool_schema(tool_name: &str) -> Option<Value> {
+    let canonical = resolve_tool_name(tool_name);
+    let spec = builtin_tool_specs()
+        .into_iter()
+        .find(|spec| spec.name == tool_name || spec.name == canonical)?;
+    Some(json!({
+        "name": spec.name,
+        "description": spec.description,
+        "parameters": spec.input_schema,
+    }))
+}
+
 pub fn build_runtime_tool_display_map(config: &Config) -> HashMap<String, String> {
     let language = i18n::get_language();
     let prefer_alias = language.to_lowercase().starts_with("en");
@@ -1532,7 +1456,6 @@ fn preferred_english_alias(canonical: &str) -> Option<&'static str> {
         "记忆管理" => Some("memory_manager"),
         web_search_tool::TOOL_WEB_SEARCH => Some(web_search_tool::TOOL_WEB_SEARCH_ALIAS),
         web_fetch_tool::TOOL_WEB_FETCH => Some(web_fetch_tool::TOOL_WEB_FETCH_ALIAS),
-        browser_tool::TOOL_BROWSER => Some("browser"),
         desktop_control::TOOL_DESKTOP_CONTROLLER => Some("desktop_controller"),
         desktop_control::TOOL_DESKTOP_MONITOR => Some("desktop_monitor"),
         self_status_tool::TOOL_SELF_STATUS => Some(self_status_tool::TOOL_SELF_STATUS_ALIAS),
@@ -1600,10 +1523,12 @@ pub fn collect_available_tool_names(
         }
     }
     if browser_tool::browser_tools_enabled(config) {
-        // Browser visibility is controlled by tools.browser.enabled, so it should not require
-        // a duplicated entry in tools.builtin.enabled.
-        enabled_builtin.insert(browser_tool::TOOL_BROWSER.to_string());
-        names.insert(browser_tool::TOOL_BROWSER.to_string());
+        // Browser tools are auto-registered from the active provider's native
+        // surface, so they do not need a duplicated entry in tools.builtin.enabled.
+        for name in browser_tool::browser_tool_names() {
+            enabled_builtin.insert(name.clone());
+            names.insert(name);
+        }
     }
     for server in &config.mcp.servers {
         if !server.enabled {
@@ -1684,8 +1609,10 @@ pub fn collect_enabled_tool_names_for_catalog(
         }
     }
     if browser_tool::browser_tools_enabled(config) {
-        enabled_builtin.insert(browser_tool::TOOL_BROWSER.to_string());
-        names.insert(browser_tool::TOOL_BROWSER.to_string());
+        for name in browser_tool::browser_tool_names() {
+            enabled_builtin.insert(name.clone());
+            names.insert(name);
+        }
     }
     for server in &config.mcp.servers {
         if !server.enabled {
@@ -2207,7 +2134,7 @@ mod tests {
     }
 
     #[test]
-    fn panel_schemas_bound_route_and_plan_item_shapes() {
+    fn panel_schemas_bound_question_and_plan_item_shapes() {
         let plan_canonical = resolve_tool_name("update_plan");
         let plan_spec = builtin_tool_specs_with_language("zh-CN")
             .into_iter()
@@ -2232,11 +2159,24 @@ mod tests {
             .find(|spec| spec.name == question_panel_canonical)
             .expect("question panel spec");
         assert_eq!(
-            question_spec.input_schema["properties"]["routes"]["maxItems"].as_i64(),
+            question_spec.input_schema["properties"]["questions"]["maxItems"].as_i64(),
             Some(4)
         );
         assert_eq!(
-            question_spec.input_schema["properties"]["routes"]["items"]["additionalProperties"]
+            question_spec.input_schema["properties"]["questions"]["items"]["required"]
+                .as_array()
+                .map(|items| items.len()),
+            Some(2)
+        );
+        assert_eq!(
+            question_spec.input_schema["properties"]["questions"]["items"]["properties"]["options"]
+                ["maxItems"]
+                .as_i64(),
+            Some(4)
+        );
+        assert_eq!(
+            question_spec.input_schema["properties"]["questions"]["items"]["properties"]["options"]
+                ["items"]["additionalProperties"]
                 .as_bool(),
             Some(false)
         );
@@ -2397,29 +2337,24 @@ mod tests {
     }
 
     #[test]
-    fn browser_schema_hides_generic_request_mode_from_model_side() {
-        let spec = builtin_tool_specs_with_language("zh-CN")
-            .into_iter()
-            .find(|spec| spec.name == "浏览器")
-            .expect("browser spec");
-        assert!(spec.description.contains("start -> open/navigate"));
-        let actions = spec.input_schema["properties"]["action"]["enum"]
-            .as_array()
-            .expect("action enum");
-        assert!(actions.iter().all(|item| item != "act"));
-        assert!(spec.input_schema["properties"]["profile"].is_null());
-        assert!(spec.input_schema["properties"]["request"].is_null());
-        assert!(spec.input_schema["allOf"].is_null());
-        assert!(spec.input_schema["properties"]["selector"].is_object());
-        assert!(spec.input_schema["properties"]["url"].is_object());
-        assert!(spec.input_schema["properties"]["path"].is_object());
-        assert!(spec.input_schema["properties"]["timeout_ms"].is_object());
-        assert!(spec.input_schema["properties"]["timeout_secs"].is_object());
-        assert!(spec.description.contains("先用 start"));
-        assert_eq!(
-            spec.input_schema["additionalProperties"].as_bool(),
-            Some(false)
+    fn browser_provider_tools_replace_the_legacy_single_surface() {
+        let specs = builtin_tool_specs_with_language("zh-CN");
+        assert!(
+            specs
+                .iter()
+                .all(|spec| spec.name != "浏览器" && spec.name != "浏览器导航"),
+            "legacy browser tool names must be gone"
         );
+        let navigate = specs
+            .iter()
+            .find(|spec| spec.name == "browser_navigate")
+            .expect("provider browser_navigate spec must be exposed");
+        let required = navigate.input_schema["required"]
+            .as_array()
+            .expect("required array");
+        assert!(required.iter().any(|item| item == "url"));
+        assert!(specs.iter().any(|spec| spec.name == "browser_take_screenshot"));
+        assert!(specs.iter().any(|spec| spec.name == "browser_status"));
     }
 
     #[test]
@@ -2563,8 +2498,9 @@ mod tests {
         config.tools.browser.enabled = true;
 
         let available = collect_available_tool_names(&config, &SkillRegistry::default(), None);
-        assert!(available.contains(super::browser_tool::TOOL_BROWSER));
-        assert!(available.contains("browser"));
+        assert!(available.contains("browser_navigate"));
+        assert!(available.contains("browser_status"));
+        assert!(!available.contains("浏览器"));
     }
 
     #[test]

@@ -1,17 +1,45 @@
 ---
 title: 浏览器
-summary: 浏览器自动化工具的动作、返回特征与和 `web_fetch` 的分工。
+summary: 浏览器自动化的 17 个原生工具、最小参数、返回结构（content blocks）与和 `web_fetch` 的分工。
 read_when:
   - 用户要打开网页、点击、输入、截图或读取动态页面
 source_docs:
   - src/services/tools/browser_tool.rs
+  - src/services/browser/provider.rs
+  - src/services/browser/providers/playwright.rs
   - src/services/browser/runtime.rs
-updated_at: 2026-07-02
+updated_at: 2026-10-10
 ---
 
 # 浏览器
 
-浏览器工具的成功结果主要透传浏览器运行时，不统一包一层 `summary/data`，看返回时不要机械套统一骨架。
+浏览器能力是一组**原生工具**（工具面与上游 harness 对齐），而不是一个带 `action` 开关的单一工具。每个动作都是一个独立工具名，模型直接按名字调用。
+
+工具由 `BrowserProvider` 驱动，默认实现是 `playwright`（复用既有 Playwright 桥接引擎）。可通过配置 `browser.provider` 切换 provider；未知 provider 会回退到默认实现并打印警告。
+
+## 工具清单
+
+| 工具 | 作用 | 最小参数 |
+| --- | --- | --- |
+| `browser_navigate` | 当前标签跳转到 URL | `url` |
+| `browser_navigate_back` | 后退 | 无 |
+| `browser_tabs` | 列出 / 新建 / 选择 / 关闭标签 | `action`（`list`/`new`/`select`/`close`） |
+| `browser_snapshot` | 抓无障碍快照，产出可供 click/type 使用的元素 ref | 无 |
+| `browser_click` | 点击元素 | `ref` 或 `selector` |
+| `browser_type` | 向元素输入文本 | `text`（配合 `ref`/`selector`） |
+| `browser_hover` | 悬停元素 | `ref` 或 `selector` |
+| `browser_select_option` | 选择 `<select>` 选项 | `ref`/`selector` + `value` |
+| `browser_drag` | 拖拽一个元素到另一个 | `from_ref`/`from_selector` + `to_ref`/`to_selector` |
+| `browser_press_key` | 按键，如 `Enter`、`Tab`、`ArrowDown` | `key` |
+| `browser_evaluate` | 在页面上下文执行 JS 表达式并返回值 | `expression` |
+| `browser_wait_for` | 等待固定时长、加载状态或文本出现 | `wait_ms` / `load_state` / `text` 之一 |
+| `browser_take_screenshot` | 截图并以图片块返回 | 无（可选 `path`、`full_page`） |
+| `browser_read_page` | 以 Markdown / 文本读取当前页 | 无（可选 `max_chars`） |
+| `browser_batch` | 按顺序执行一批交互步骤（最多 10 步） | `steps` |
+| `browser_close` | 关闭当前会话的浏览器 | 无 |
+| `browser_status` | 上报运行时状态与已打开的会话 | 无 |
+
+多标签操作（`browser_navigate_back` / `browser_click` / `browser_type` 等）默认作用于当前活动标签；需要指定标签时传 `target_id`。
 
 ## 适用场景
 
@@ -20,53 +48,31 @@ updated_at: 2026-07-02
 - 需要浏览器截图
 - `web_fetch` 抓不到有效正文
 
-## 常用动作
-
-- `status`
-- `profiles`
-- `start`
-- `stop`
-- `tabs`
-- `open`
-- `focus`
-- `close`
-- `navigate`
-- `snapshot`
-- `act`
-- `screenshot`
-- `read_page`
-- 快捷动作：`click`、`type`、`press`、`hover`、`wait`
-
 ## 最小参数示例
-
-预热会话：
-
-```json
-{
-  "action": "start",
-  "browser_session_id": "sess_xxx"
-}
-```
-
-打开慢页面：
-
-```json
-{
-  "action": "open",
-  "browser_session_id": "sess_xxx",
-  "url": "https://example.com",
-  "timeout_ms": 60000
-}
-```
 
 导航：
 
 ```json
 {
-  "action": "navigate",
-  "browser_session_id": "sess_xxx",
-  "url": "https://example.com",
-  "timeout_ms": 60000
+  "url": "https://example.com"
+}
+```
+
+抓快照后再点击（ref 来自快照）：
+
+```json
+{
+  "ref": "e12"
+}
+```
+
+输入并提交：
+
+```json
+{
+  "ref": "e3",
+  "text": "hello",
+  "submit": true
 }
 ```
 
@@ -74,17 +80,53 @@ updated_at: 2026-07-02
 
 ```json
 {
-  "action": "read_page",
-  "browser_session_id": "sess_xxx",
   "max_chars": 12000
+}
+```
+
+截图到指定工作区相对路径：
+
+```json
+{
+  "path": "browser/screenshots/home.png",
+  "full_page": true
+}
+```
+
+一次批量交互：
+
+```json
+{
+  "steps": [
+    { "kind": "click", "ref": "e1" },
+    { "kind": "type", "ref": "e2", "text": "wunder" }
+  ]
 }
 ```
 
 ## 返回结构解读
 
-### `status`
+成功结果采用 MCP 风格的内容块结构，并额外带一个 `provider` 字段标识实际使用的 provider：
 
-更像运行时状态：
+```json
+{
+  "provider": "playwright",
+  "ok": true,
+  "content": [
+    { "type": "text", "text": "Navigated to https://example.com." }
+  ],
+  "data": { "...": "provider 透传的运行时数据" }
+}
+```
+
+- `content`：内容块数组。文本块为 `{ "type": "text", "text": "..." }`；图片块为 `{ "type": "image", "data": "<base64>", "mime_type": "image/png" }`。
+- `error`：失败时出现的错误信息。
+- `data`：provider 透传的原始运行时数据，字段随动作而定。
+- 文本内容过长时会被截断，并在文本中标记已截断。
+
+### `browser_status`
+
+更像运行时状态，`data` 中通常包含：
 
 ```json
 {
@@ -102,43 +144,22 @@ updated_at: 2026-07-02
 
 模型侧浏览器工具不会返回本地控制端点字段。舰桥 HTTP 状态接口可能包含 `control.host` / `control.port`，它们只是 wunder 内部浏览器控制配置，不是文件下载地址，也不应让模型拿去访问。
 
-### `stop`
+### `browser_take_screenshot`
 
-```json
-{
-  "ok": true,
-  "closed": true,
-  "browser_session_id": "sess_xxx"
-}
-```
-
-### `screenshot`
-
-通过智能体工具调用时，会把桥接层回传的 `image_base64` 保存到当前智能体工作区，默认路径为 `browser/screenshots/browser_shot_<id>.png`；也可以传 `path` 指定工作区相对路径。典型字段包括：
-
-```json
-{
-  "ok": true,
-  "filename": "browser_shot_xxx.png",
-  "path": "browser/screenshots/browser_shot_xxx.png",
-  "public_path": "/workspaces/<workspace_id>/browser/screenshots/browser_shot_xxx.png",
-  "saved_to": "workspace",
-  "...": "other browser runtime fields"
-}
-```
+截图会以图片内容块返回，同时把桥接层回传的图片保存到当前智能体工作区，默认路径为 `browser/screenshots/browser_shot_<id>.png`；可传 `path` 指定工作区相对路径（自动补 `.png` 扩展名）。
 
 如果直接调用浏览器 HTTP 控制接口 `/wunder/browser/screenshot`，返回仍会写入 `temp_dir` 并提供 `/wunder/temp_dir/download?...` 下载链接，用于舰桥或调试端临时取图。
 
-### `read_page` / `snapshot` / `navigate` / `tabs`
+### 其他动作
 
-这些字段由浏览器桥接层决定，通常至少会有 `ok: true` 和动作相关数据。
+`browser_read_page` / `browser_snapshot` / `browser_navigate` / `browser_tabs` 等的具体字段由 provider / 桥接层决定，通常至少包含 `ok: true` 与动作相关数据，统一放在 `data` 中。
 
 ## 与 `web_fetch` 的区别
 
 - `web_fetch`：优先读静态正文，成本更低
-- `browser`：优先解决交互、动态渲染、页面自动化
+- 浏览器工具：优先解决交互、动态渲染、页面自动化
 
 如果只是读公开网页正文，先用 [网页抓取](/docs/zh-CN/tools/web-fetch/)。  
 只有在页面依赖前端渲染、验证流程或必须交互时，再切到浏览器。
 
-浏览器动作默认超时为 60 秒。对容易超时的页面，优先先执行 `start` 预热或复用已有会话，再执行 `open` 或 `navigate`，并按需传 `timeout_ms` 或 `timeout_secs` 覆盖单次调用。
+浏览器动作默认超时为 60 秒。对容易超时的页面，优先复用已有会话，再执行 `browser_navigate`，并按需传 `timeout_ms` 覆盖单次调用。

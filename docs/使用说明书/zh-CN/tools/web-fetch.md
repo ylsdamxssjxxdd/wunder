@@ -1,22 +1,21 @@
 ---
 title: 网页抓取
-summary: `web_search` 与 `web_fetch` 的分工，以及 `web_fetch` 的直接抓取、浏览器回退与成功/失败返回。
+summary: `web_fetch` 的直接抓取、浏览器回退与成功/失败返回；关键词搜索工具 `web_search` 已移除。
 read_when:
   - 用户要读取公开网页正文，而不是操控浏览器
 source_docs:
-  - src/services/tools/web_search_tool.rs
   - src/services/tools/web_fetch_tool.rs
-updated_at: 2026-05-15
+updated_at: 2026-10-10
 ---
 
 # 网页抓取
 
 ## 先分清搜索和抓取
 
-- `web_search`：输入关键词，返回候选网页的标题、URL 和摘要。
+- `web_search`：输入关键词，返回候选网页的标题、URL 和摘要。已移除，不可用。
 - `web_fetch`：输入一个已确认的具体 URL，读取该网页正文。
 
-只有关键词时，先用 `web_search`：
+`web_search` 的历史用法如下（已移除，不可用）：
 
 ```json
 {
@@ -78,7 +77,7 @@ updated_at: 2026-05-15
 
 ## Provider
 
-Docker compose 默认只启用 wunder 内置网页抓取，不再启动 Firecrawl 自托管服务组。`tools.web.search.enabled` 默认关闭；需要关键词搜索时，可先配置可用搜索 provider，再显式启用 `web_search`。未配置搜索 provider 时，也可以直接用 `web_fetch` 抓取搜索结果页作为线索页。
+Docker compose 默认只启用 wunder 内置网页抓取，不再启动 Firecrawl 自托管服务组。`tools.web.search.enabled` 默认关闭，且 `web_search` 已移除；可以先用 `web_fetch` 抓取搜索结果页作为线索页。
 
 `tools.web.fetch.provider` 支持 `direct`、`auto`、`firecrawl`。默认值是 `direct`，使用 wunder 内置 HTTP 抓取器。`auto` 会在配置了 `FIRECRAWL_API_KEY` 或 `FIRECRAWL_BASE_URL` 时优先使用外部 Firecrawl，否则回退到内置抓取器。
 
@@ -109,6 +108,6 @@ Firecrawl Cloud 使用 `https://api.firecrawl.dev`，并且需要 API Key。管�
 
 ## 不适用场景
 
-- 有搜索关键词但没有具体 URL：先用 `web_search`
+- 有搜索关键词但没有具体 URL：`web_search` 已移除，请自行获得具体 URL 后再用 `web_fetch`
 - 要点击、输入、滚动：用 [浏览器](/docs/zh-CN/tools/browser/)
 - 要看本地 HTML 文件：这不是它的场景

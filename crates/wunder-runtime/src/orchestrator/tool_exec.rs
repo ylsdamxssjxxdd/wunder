@@ -314,6 +314,11 @@ impl Orchestrator {
         if result.sandbox {
             payload["sandbox"] = Value::Bool(true);
         }
+        // 工具结果与工具调用共用同一 timeline item（后者覆盖前者），因此结果事件
+        // 必须再次携带 schema，否则调用级 schema 会在落库时被覆盖丢失。
+        if let Some(schema) = crate::tools::runtime_tool_schema(tool_name) {
+            payload["schema"] = schema;
+        }
         round_info.insert_into(payload.as_object_mut().expect("tool payload object"));
         if let Some(turn_id) = round_info.thread_turn_id {
             let tool_id = payload

@@ -316,6 +316,33 @@ impl NativeDesktop {
         Ok(path)
     }
 
+    /// Generate a synthetic stress-test thread through the same bulk writer the
+    /// HTTP API and the CLI use. Runs synchronously on the caller's thread (the
+    /// shell offloads it); `progress` receives `(done user turns, written items)`
+    /// so the UI can project a live status line. One dedicated write connection
+    /// keeps the bulk inserts from contending with the runtime's pooled storage.
+    pub fn generate_stress_thread(
+        &self,
+        user_rounds: i64,
+        model_rounds: i64,
+        progress: impl FnMut(i64, i64) + Send,
+    ) -> Result<wunder_server::storage::StressThreadStats> {
+        wunder_server::validate_stress_params(user_rounds, model_rounds)
+            .map_err(|message| anyhow!("{message}"))?;
+        let user_id = self.user_id().to_string();
+        let db_path = self.runtime.block_on(async {
+            self.state().config_store.get().await.storage.db_path.clone()
+        });
+        let spec = wunder_server::storage::StressThreadSpec {
+            session_id: uuid::Uuid::new_v4().to_string(),
+            title: format!("渲染压测 {user_rounds}×{model_rounds}"),
+            user_rounds,
+            model_rounds_per_turn: model_rounds,
+        };
+        let storage = wunder_server::storage::SqliteStorage::new(db_path);
+        storage.generate_stress_thread(&user_id, &spec, progress)
+    }
+
     pub fn save_lan(&self, enabled: bool, display_name: &str) -> Result<DesktopSettings> {
         if display_name.chars().any(char::is_control) || display_name.chars().count() > 80 {
             bail!("内网名称无效");

@@ -236,6 +236,9 @@ pub enum Command {
     /// Inspect and update runtime config / 查看与修改运行配置。
     Config(ConfigCommand),
 
+    /// Generate a synthetic thread for rendering stress tests / 生成线程渲染压测线程。
+    StressThread(StressThreadCommand),
+
     /// Diagnose local runtime environment / 诊断本地运行环境。
     Doctor(DoctorCommand),
 
@@ -282,6 +285,21 @@ pub struct CloudLoginCommand {
     /// Username / 用户名；缺省时交互输入。
     #[arg(short = 'u', long)]
     pub username: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct StressThreadCommand {
+    /// User rounds to generate / 生成的用户轮次数量。
+    #[arg(long, default_value_t = 1000)]
+    pub user_rounds: i64,
+
+    /// Model rounds inside each user round / 每个用户轮次内的模型轮次数量。
+    #[arg(long, default_value_t = 1000)]
+    pub model_rounds: i64,
+
+    /// Optional session title / 可选会话标题。
+    #[arg(long)]
+    pub title: Option<String>,
 }
 
 #[derive(Debug, Args)]

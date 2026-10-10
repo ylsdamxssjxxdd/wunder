@@ -11,6 +11,8 @@ updated_at: 2026-04-10
 
 # Final Response
 
+> **Removed**: This tool has been removed from wunder and is not visible to the agent or users; this page is kept as a historical reference.
+
 `final_response` is not a normal business tool. It is only a termination signal.
 
 ## Input

@@ -19,6 +19,7 @@ source_docs:
 | Engine | `wunder-runtime` | Code execution layer: orchestrator, thread runtime, tools, channels, gateway. The Honeycomb and the Helm depend on the Engine directly, not on the Hull. |
 | Hull | `wunder-server` | The **user and agent management platform**: the server form for teams and organizations, handling users, permissions, and channels, and providing the Beehive (web). |
 | Bridge | `web/` | The governance frontend — the admin's management UI for system configuration, users, and channels. |
+| Bridge node | `bridge node` (`bridge_center`) | A channel bridging node carrying channel account ingress and message routing, managed by the backend admin API (`/wunder/admin/bridge/*`); it currently has no standalone frontend page. Not to be confused with the governance frontend "Bridge". |
 | Beehive | `frontend/` | The **cloud AI workbench** (web): the web UI provided with the Hull, accessed in a browser. |
 | Honeycomb | `wunder-desktop` | The **local AI workbench** (desktop): the desktop form and the default entry for individual users, running locally with direct access to local files. |
 | Helm | `wunder-cli` | The **manual local entry point** (cli): the command-line form for hands-on work, developers, and automation, terminal-driven. |

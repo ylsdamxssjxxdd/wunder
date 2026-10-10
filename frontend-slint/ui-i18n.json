@@ -5616,69 +5616,19 @@
   "en": " ahead"
  },
  {
-  "key": "dock_state_queue",
-  "zh": "模型请求正在排队",
-  "en": "Model request queued"
- },
- {
-  "key": "dock_state_thinking",
-  "zh": "正在思考…",
-  "en": "Thinking…"
- },
- {
-  "key": "dock_state_generating",
-  "zh": "正在生成…",
-  "en": "Generating…"
- },
- {
-  "key": "dock_state_tool",
-  "zh": "正在执行工具…",
-  "en": "Running tools…"
- },
- {
-  "key": "dock_state_compaction",
-  "zh": "上下文压缩中…",
-  "en": "Compacting context…"
- },
- {
-  "key": "dock_state_await",
-  "zh": "模型响应中",
-  "en": "Waiting for the model"
- },
- {
-  "key": "dock_queue_prefix",
-  "zh": "模型请求正在排队 · 前方 ",
-  "en": "Model request queued — "
- },
- {
-  "key": "dock_queue_suffix",
-  "zh": " 个任务",
-  "en": " tasks ahead"
- },
- {
   "key": "dock_steps",
   "zh": "步骤",
   "en": "Steps"
  },
  {
-  "key": "dock_files_suffix",
-  "zh": " 个文件已修改",
-  "en": " files changed"
+  "key": "runtime_status_await",
+  "zh": "模型响应中",
+  "en": "Waiting for the model"
  },
  {
-  "key": "dock_plan_title",
-  "zh": "执行计划",
-  "en": "Execution plan"
- },
- {
-  "key": "dock_plan_more_prefix",
-  "zh": "…等 ",
-  "en": "…and "
- },
- {
-  "key": "dock_plan_more_suffix",
-  "zh": " 步",
-  "en": " more steps"
+  "key": "runtime_status_queue",
+  "zh": "模型请求正在排队",
+  "en": "Model request queued"
  },
  {
   "key": "dock_demo_explain",
@@ -5699,6 +5649,26 @@
   "key": "dock_demo_step_3",
   "zh": "运行检查并汇报结果",
   "en": "Run checks and report the result"
+ },
+ {
+  "key": "inquiry_recommended",
+  "zh": "推荐",
+  "en": "Recommended"
+ },
+ {
+  "key": "inquiry_other_placeholder",
+  "zh": "输入其他答案",
+  "en": "Type another answer"
+ },
+ {
+  "key": "inquiry_no_preference",
+  "zh": "无偏好",
+  "en": "No preference"
+ },
+ {
+  "key": "inquiry_send_hint",
+  "zh": "选好答案后按发送键提交",
+  "en": "Send to submit your choices"
  },
  {
   "key": "tl_stat_duration",

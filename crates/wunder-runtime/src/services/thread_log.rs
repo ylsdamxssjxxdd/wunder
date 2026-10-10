@@ -238,7 +238,44 @@ pub fn event_item(session_id: &str, event_type: &str, data: &Value) -> Option<Va
     if event_type == "llm_request" {
         item["visibility"] = json!("admin");
     }
+    // 上下文类事件（queue/plan/approval/terminal/compaction/subagent_message）只有
+    // 结构化字段、没有可读正文；轨迹 UI 渲染 `content`，这里补出最贴切的文本，
+    // 对齐 dsh 中每种 kind 都有可读内容的做法。
+    if item.get("content").is_none() {
+        if let Some(text) = derive_context_text(event_type, data) {
+            item["content"] = json!(text);
+        }
+    }
     Some(item)
+}
+
+/// 从上下文类事件的结构化字段中提取一段人类可读文本。
+fn derive_context_text(event_type: &str, data: &Value) -> Option<String> {
+    let pick = |keys: &[&str]| -> Option<String> {
+        keys.iter()
+            .find_map(|key| data.get(*key).and_then(Value::as_str))
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    };
+    match event_type {
+        "queue_enter" | "queue_update" | "queue_start" => {
+            pick(&["reason", "summary", "queue_state"])
+        }
+        "plan_update" => pick(&["summary", "title", "reason"]).or_else(|| {
+            data.get("plan").map(|value| match value {
+                Value::String(text) => text.clone(),
+                other => other.to_string(),
+            })
+        }),
+        "approval_request" | "approval_result" | "approval_resolved" => {
+            pick(&["summary", "reason", "status"])
+        }
+        "turn_terminal" => pick(&["stop_reason", "status", "reason"]),
+        "subagent_message" => pick(&["message", "summary", "content"]),
+        "compaction" => pick(&["summary", "reason", "status"]),
+        _ => None,
+    }
 }
 
 /// Only the active tail is copied on a flush. Completed blocks stay immutable.

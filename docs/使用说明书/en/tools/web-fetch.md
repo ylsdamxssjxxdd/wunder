@@ -1,22 +1,21 @@
 ---
 title: Web Fetch
-summary: The split between `web_search` and `web_fetch`, plus direct fetch, browser fallback, and success or failure results for `web_fetch`.
+summary: Direct fetch, browser fallback, and success or failure results for `web_fetch`; the keyword search tool `web_search` has been removed.
 read_when:
   - You need to read public webpage content rather than drive a browser
 source_docs:
-  - src/services/tools/web_search_tool.rs
   - src/services/tools/web_fetch_tool.rs
-updated_at: 2026-05-15
+updated_at: 2026-10-10
 ---
 
 # Web Fetch
 
 ## Search vs. fetch
 
-- `web_search`: takes keywords and returns candidate result titles, URLs, and snippets.
+- `web_search`: takes keywords and returns candidate result titles, URLs, and snippets. Has been removed and is unavailable.
 - `web_fetch`: takes one confirmed URL and reads that page's main content.
 
-When you only have keywords, start with `web_search`:
+How `web_search` was used (removed; unavailable):
 
 ```json
 {
@@ -80,7 +79,7 @@ On success, it returns the fetched result object directly rather than the unifie
 
 ## Providers
 
-Docker compose now defaults to wunder's built-in web fetcher and does not start a self-hosted Firecrawl group. `tools.web.search.enabled` is disabled by default; if you want keyword search, configure a search provider and enable `web_search` explicitly. Without a search provider, `web_fetch` can still fetch search-result pages as lead pages.
+Docker compose now defaults to wunder's built-in web fetcher and does not start a self-hosted Firecrawl group. `tools.web.search.enabled` is disabled by default, and `web_search` has been removed; you can still fetch search-result pages as lead pages with `web_fetch`.
 
 `web_fetch` keeps the model-facing arguments small. Provider selection is configured by the system:
 
@@ -125,6 +124,6 @@ On failure, the tool falls back to the unified failure envelope and adds fetch d
 
 ## When not to use it
 
-- If you have search keywords, use a search tool first. `web_fetch` rejects search-result URLs such as `bing.com/search?...`.
+- If you have search keywords but no concrete URL: `web_search` has been removed, so obtain a concrete URL first and then use `web_fetch`. `web_fetch` rejects search-result URLs such as `bing.com/search?...`.
 - If you need to click, type, or scroll, use [Browser](/docs/en/tools/browser/)
 - If you need to inspect a local HTML file, this is not the right tool

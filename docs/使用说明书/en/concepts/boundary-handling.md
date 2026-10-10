@@ -151,7 +151,7 @@ The model can decide based on these signals to:
 
 ### 3.3 Atomic Write Strategy
 
-Tools involving file writes (`write_file`, `apply_patch`) use **temp file + atomic replace** strategy:
+Tools involving file writes (`write_file`, and `Text Edit`'s patch form, formerly `apply_patch`) use **temp file + atomic replace** strategy:
 
 ```
 1. Write to temp file: file.tmp

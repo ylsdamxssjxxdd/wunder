@@ -73,17 +73,27 @@ Recommended message shapes:
 
 ### Minimum arguments
 
+One inquiry carries up to 4 questions. The web client pages through them (`1/4`); the CLI numbers every option across questions.
+
 ```json
 {
-  "question": "Choose how to proceed",
-  "routes": [
+  "questions": [
     {
-      "label": "Conservative fix",
-      "description": "Start with the smallest safe repair",
-      "recommended": true
+      "question": "Choose how to proceed",
+      "options": [
+        {
+          "label": "Conservative fix",
+          "description": "Start with the smallest safe repair",
+          "recommended": true
+        },
+        {
+          "label": "Full refactor",
+          "description": "Fix it at the source, backend first"
+        }
+      ],
+      "multiple": false
     }
-  ],
-  "multiple": false
+  ]
 }
 ```
 
@@ -96,18 +106,32 @@ Recommended message shapes:
   "state": "awaiting_input",
   "summary": "Opened a question panel and is waiting for user input.",
   "data": {
-    "question": "Choose how to proceed",
-    "routes": [
+    "questions": [
       {
-        "label": "Conservative fix",
-        "description": "Start with the smallest safe repair",
-        "recommended": true
+        "question": "Choose how to proceed",
+        "options": [
+          {
+            "label": "Conservative fix",
+            "description": "Start with the smallest safe repair",
+            "recommended": true
+          },
+          {
+            "label": "Full refactor",
+            "description": "Fix it at the source, backend first"
+          }
+        ],
+        "multiple": false
       }
-    ],
-    "multiple": false
+    ]
   }
 }
 ```
+
+### Compatibility and answers
+
+- The legacy flat single-question form (top-level `question` plus `routes`/`options` and `multiple`) is still parsed as one question, so stored threads keep rendering. New calls use `questions`.
+- The answer returns to the session as the next user message, shaped as question then answer; a question left blank reads as "no preference".
+- The panel always offers a free-text row, so the user can answer without picking any option.
 
 ## Key points
 

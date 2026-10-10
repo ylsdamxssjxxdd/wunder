@@ -48,7 +48,6 @@ import { initPresetAgentsPanel, loadPresetAgents } from "./modules/preset-agents
 import { initCompanionsPanel, loadCompanions } from "./modules/companions.js?v=20260506-01";
 import { initOrgUnitsPanel, loadOrgUnits } from "./modules/org-units.js?v=20260215-01";
 import { initChannelsPanel, loadChannelAccounts } from "./modules/channels.js?v=20260215-01";
-import { initBridgeCenterPanel, loadBridgeCenters } from "./modules/bridge-center.js?v=20260324-06";
 import { initCloudPanel, loadCloudPanel } from "./modules/cloud.js?v=20261008-01";
 
 import { initMcpPanel, loadMcpServers } from "./modules/mcp.js?v=20260215-01";
@@ -170,7 +169,6 @@ const panelMap = {
   orgUnits: { panel: elements.orgUnitsPanel, nav: elements.navOrgUnits },
 
   channels: { panel: elements.channelsPanel, nav: elements.navChannels },
-  bridgeCenter: { panel: elements.bridgeCenterPanel, nav: elements.navBridgeCenter },
   cloud: { panel: elements.cloudPanel, nav: elements.navCloud },
 
   llm: { panel: elements.llmPanel, nav: elements.navLlm },
@@ -531,20 +529,6 @@ const bindNavigation = () => {
       }
     }
   });
-
-  if (elements.navBridgeCenter) {
-    elements.navBridgeCenter.addEventListener("click", async () => {
-      switchPanel("bridgeCenter");
-      if (!state.panelLoaded.bridgeCenter) {
-        try {
-          await loadBridgeCenters({ silent: true });
-          state.panelLoaded.bridgeCenter = true;
-        } catch (error) {
-          appendLog(`渠道舰桥中心加载失败: ${error.message}`);
-        }
-      }
-    });
-  }
 
   if (elements.navCloud) {
     elements.navCloud.addEventListener("click", async () => {
@@ -1217,7 +1201,6 @@ const bootstrap = async () => {
   initCompanionsPanel();
   initOrgUnitsPanel();
   initChannelsPanel();
-  initBridgeCenterPanel();
   initCloudPanel();
 
   initMcpPanel();
@@ -1370,16 +1353,6 @@ const bootstrap = async () => {
 
     });
 
-  }
-
-  if (initialPanel === "bridgeCenter") {
-    loadBridgeCenters({ silent: true })
-      .then(() => {
-        state.panelLoaded.bridgeCenter = true;
-      })
-      .catch((error) => {
-        appendLog(`渠道舰桥中心加载失败: ${error.message}`);
-      });
   }
 
   if (initialPanel === "presetAgents") {
