@@ -233,7 +233,6 @@ export component SettingsPage inherits Rectangle {
     in-out property <string> theme;
     in-out property <string> send-key;
     in-out property <float> font-size: 14;
-    in property <string> app-version: "";
     in property <[PromptPackCard]> prompt-packs;
     in property <[string]> prompt-pack-names;
     in property <string> prompt-active;
@@ -688,12 +687,6 @@ export component SettingsPage inherits Rectangle {
                 Rectangle { height: 1px; background: Theme.border; }
                     if root.settings-tab == 0 : ScrollView { vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
                         VerticalLayout { padding: 24px; spacing: 14px; alignment: start;
-                            SettingsCard {
-                                SettingsCardHeader { title: I18n.st_version_title; subtitle: I18n.st_version_latest; }
-                                SettingRow { label: I18n.st_version_number; last: true;
-                                    Text { text: root.app-version; color: Theme.text; font-size: Theme.font-md; font-weight: 700; vertical-alignment: center; }
-                                }
-                            }
                             SettingsCard {
                                 SettingsCardHeader { title: I18n.st_tab_general; subtitle: I18n.st_nav_subtitle; }
                                 SettingRow { label: I18n.st_send_key; note: root.send-key == "ctrl_enter" ? I18n.st_send_enter_newline : root.send-key == "none" ? I18n.st_send_button_note : I18n.st_send_enter_direct;

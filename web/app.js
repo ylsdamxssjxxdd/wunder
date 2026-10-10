@@ -49,6 +49,7 @@ import { initCompanionsPanel, loadCompanions } from "./modules/companions.js?v=2
 import { initOrgUnitsPanel, loadOrgUnits } from "./modules/org-units.js?v=20260215-01";
 import { initChannelsPanel, loadChannelAccounts } from "./modules/channels.js?v=20260215-01";
 import { initCloudPanel, loadCloudPanel } from "./modules/cloud.js?v=20261008-01";
+import { initInterlinkPanel, loadInterlinkFleet } from "./modules/interlink.js?v=20261010-01";
 
 import { initMcpPanel, loadMcpServers } from "./modules/mcp.js?v=20260215-01";
 import {
@@ -170,6 +171,12 @@ const panelMap = {
 
   channels: { panel: elements.channelsPanel, nav: elements.navChannels },
   cloud: { panel: elements.cloudPanel, nav: elements.navCloud },
+
+  // 互通舰队（I3）：DOM 由 index.html 提供，此处按 id 直接取，避免改动 elements.js
+  interlink: {
+    panel: document.getElementById("interlinkPanel"),
+    nav: document.getElementById("navInterlink"),
+  },
 
   llm: { panel: elements.llmPanel, nav: elements.navLlm },
 
@@ -539,6 +546,21 @@ const bindNavigation = () => {
           state.panelLoaded.cloud = true;
         } catch (error) {
           appendLog(t("app.panelLoadFailed", { panel: t("panel.cloud"), message: error.message }));
+        }
+      }
+    });
+  }
+
+  // 互通舰队（I3）：首次进入时拉取 /wunder/interlink/nodes
+  if (panelMap.interlink?.nav) {
+    panelMap.interlink.nav.addEventListener("click", async () => {
+      switchPanel("interlink");
+      if (!state.panelLoaded.interlink) {
+        try {
+          await loadInterlinkFleet();
+          state.panelLoaded.interlink = true;
+        } catch (error) {
+          appendLog(t("app.panelLoadFailed", { panel: t("panel.interlink"), message: error.message }));
         }
       }
     });
@@ -1202,6 +1224,7 @@ const bootstrap = async () => {
   initOrgUnitsPanel();
   initChannelsPanel();
   initCloudPanel();
+  initInterlinkPanel();
 
   initMcpPanel();
 

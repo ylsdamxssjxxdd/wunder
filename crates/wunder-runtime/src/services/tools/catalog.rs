@@ -1154,6 +1154,11 @@ pub fn builtin_tool_specs() -> Vec<ToolSpec> {
 
 pub fn builtin_aliases() -> HashMap<String, String> {
     let mut map = HashMap::new();
+    // 浏览器整组工具在用户侧是一条聚合条目，英文名与管理员侧的组条目同名。
+    map.insert(
+        browser_tool::BROWSER_GROUP_NAME_ALIAS.to_string(),
+        browser_tool::BROWSER_GROUP_NAME.to_string(),
+    );
     map.insert(
         self_status_tool::TOOL_SELF_STATUS_ALIAS.to_string(),
         self_status_tool::TOOL_SELF_STATUS.to_string(),
@@ -1259,6 +1264,44 @@ pub fn is_browser_tool_name(name: &str) -> bool {
     browser_tool::is_browser_tool_name(name)
 }
 
+pub fn is_browser_group_name(name: &str) -> bool {
+    browser_tool::is_browser_group_name(name)
+}
+
+/// 授权清单以聚合条目放行时，补上成员工具名，避免交集把整组工具判没了。
+pub fn with_browser_group_members(names: &mut HashSet<String>) {
+    if !names.iter().any(|name| is_browser_group_name(name)) {
+        return;
+    }
+    for member in browser_tool::browser_tool_names() {
+        names.insert(member);
+    }
+}
+
+/// 选择结果里的聚合「浏览器」条目代表整组 provider 工具，交给模型前换成细粒度
+/// 工具名。`universe` 是当前真正可用的工具名集合：未启用的成员不会被补进来。
+pub fn expand_browser_group_selection(
+    names: HashSet<String>,
+    universe: &HashSet<String>,
+) -> HashSet<String> {
+    if !names.iter().any(|name| is_browser_group_name(name)) {
+        return names;
+    }
+    let mut expanded = HashSet::new();
+    for name in names {
+        if !is_browser_group_name(&name) {
+            expanded.insert(name);
+            continue;
+        }
+        for member in browser_tool::browser_tool_names() {
+            if universe.contains(&member) {
+                expanded.insert(member);
+            }
+        }
+    }
+    expanded
+}
+
 pub fn browser_tools_available(config: &Config) -> bool {
     browser_tool::browser_tools_enabled(config)
 }
@@ -1305,7 +1348,9 @@ fn runtime_builtin_tool_allowed(config: &Config, canonical: &str) -> bool {
     {
         return false;
     }
-    if browser_tool::is_browser_tool_name(canonical) && !browser_tool::browser_tools_enabled(config)
+    if (browser_tool::is_browser_tool_name(canonical)
+        || browser_tool::is_browser_group_name(canonical))
+        && !browser_tool::browser_tools_enabled(config)
     {
         return false;
     }
@@ -1529,6 +1574,9 @@ pub fn collect_available_tool_names(
             enabled_builtin.insert(name.clone());
             names.insert(name);
         }
+        // 聚合条目名可被选择与授权，实际调用前再展开为成员工具。
+        enabled_builtin.insert(browser_tool::BROWSER_GROUP_NAME.to_string());
+        names.insert(browser_tool::BROWSER_GROUP_NAME.to_string());
     }
     for server in &config.mcp.servers {
         if !server.enabled {
@@ -1613,6 +1661,8 @@ pub fn collect_enabled_tool_names_for_catalog(
             enabled_builtin.insert(name.clone());
             names.insert(name);
         }
+        enabled_builtin.insert(browser_tool::BROWSER_GROUP_NAME.to_string());
+        names.insert(browser_tool::BROWSER_GROUP_NAME.to_string());
     }
     for server in &config.mcp.servers {
         if !server.enabled {
@@ -1837,7 +1887,7 @@ mod tests {
     use super::{
         build_mcp_tool_alias_entries, builtin_tool_specs_with_language,
         collect_available_tool_names, collect_enabled_tool_names_for_catalog,
-        collect_prompt_tool_specs_with_language, resolve_tool_name,
+        collect_prompt_tool_specs_with_language, expand_browser_group_selection, resolve_tool_name,
     };
     use crate::config::Config;
 
@@ -2500,7 +2550,57 @@ mod tests {
         let available = collect_available_tool_names(&config, &SkillRegistry::default(), None);
         assert!(available.contains("browser_navigate"));
         assert!(available.contains("browser_status"));
-        assert!(!available.contains("浏览器"));
+        // 「浏览器」是用户侧的聚合条目名：可选、可授权，英文别名同源。
+        assert!(available.contains("浏览器"));
+        assert!(available.contains("browser"));
+        assert_eq!(resolve_tool_name("browser"), "浏览器");
+    }
+
+    #[test]
+    fn browser_group_entry_expands_into_the_provider_surface_when_selected() {
+        let mut config = Config::default();
+        config.server.mode = "api".to_string();
+        config.browser.enabled = true;
+        config.tools.browser.enabled = true;
+        let available = collect_available_tool_names(&config, &SkillRegistry::default(), None);
+
+        let selected: HashSet<String> = ["浏览器", "执行命令"]
+            .iter()
+            .map(|name| name.to_string())
+            .collect();
+        let expanded = expand_browser_group_selection(selected, &available);
+        assert!(
+            expanded.contains("browser_navigate"),
+            "the aggregate entry must grant the whole browser family"
+        );
+        assert!(expanded.contains("browser_status"));
+        assert!(expanded.contains("执行命令"));
+        assert!(
+            !expanded.contains("浏览器"),
+            "the aggregate entry is not a callable tool name"
+        );
+    }
+
+    #[test]
+    fn browser_group_entry_grants_nothing_when_the_family_is_unavailable() {
+        let config = Config::default();
+        let available = collect_available_tool_names(&config, &SkillRegistry::default(), None);
+        assert!(
+            !available.contains("浏览器"),
+            "the aggregate entry only exists together with the browser family"
+        );
+
+        let selected: HashSet<String> = ["浏览器", "执行命令"]
+            .iter()
+            .map(|name| name.to_string())
+            .collect();
+        let expanded = expand_browser_group_selection(selected, &available);
+        assert!(!expanded.contains("浏览器"));
+        assert!(
+            expanded.iter().all(|name| !name.starts_with("browser_")),
+            "disabled browser tools must not be granted: {expanded:?}"
+        );
+        assert!(expanded.contains("执行命令"));
     }
 
     #[test]

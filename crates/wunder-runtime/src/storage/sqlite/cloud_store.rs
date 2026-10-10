@@ -462,6 +462,7 @@ impl SqliteStorage {
             last_seen_at: row.get::<_, Option<f64>>(7)?.unwrap_or(0.0),
             created_at: row.get::<_, Option<f64>>(8)?.unwrap_or(0.0),
             revoked: row.get::<_, i64>(9)? != 0,
+            interlink: None,
         })
     }
 

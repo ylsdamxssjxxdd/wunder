@@ -157,6 +157,14 @@ export const updateSessionReasoningEffort = (id: string, payload: unknown) =>
   api.post(`/chat/sessions/${id}/reasoning-effort`, payload);
 export const controlSessionSubagents = (id: string, payload: unknown) =>
   api.post(`/chat/sessions/${id}/subagents/control`, payload);
+export const getSessionQueue = (id: string, options: { signal?: AbortSignal } = {}) =>
+  api.get(`/chat/sessions/${id}/queue`, options);
+export const prioritizeQueuedTurn = (id: string, queueId: string) =>
+  api.post(`/chat/sessions/${id}/queue/${encodeURIComponent(queueId)}/prioritize`);
+export const cancelQueuedTurn = (id: string, queueId: string) =>
+  api.post(`/chat/sessions/${id}/queue/${encodeURIComponent(queueId)}/cancel`);
+export const reorderSessionQueue = (id: string, payload: unknown) =>
+  api.post(`/chat/sessions/${id}/queue/reorder`, payload);
 export const convertChatAttachment = (file: File) => {
   const formData = new FormData();
   formData.append('file', file);

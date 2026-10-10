@@ -131,21 +131,8 @@
     </template>
 
     <template v-else>
-      <section class="messenger-settings-card">
-        <div class="messenger-settings-head">
-          <div>
-            <div class="messenger-settings-title">{{ t('messenger.settings.versionTitle') }}</div>
-            <div class="messenger-settings-subtitle">{{ t('messenger.settings.versionHint') }}</div>
-          </div>
-          <button class="messenger-settings-action" type="button" @click="$emit('check-update')">
-            <i class="fa-solid fa-rotate" aria-hidden="true"></i>
-            <span>{{ t('messenger.settings.checkUpdate') }}</span>
-          </button>
-        </div>
-        <div class="messenger-settings-row">
-          <div class="messenger-settings-label">{{ t('messenger.settings.versionNumber') }}</div>
-          <div class="messenger-settings-label">{{ appVersion }}</div>
-        </div>
+      <!-- 常规页由宿主卡片提供标题与边框，这里只出行，不再套一层卡片。 -->
+      <section class="messenger-settings-panel-rows">
         <div class="messenger-settings-row">
           <div class="messenger-settings-label">{{ t('messenger.settings.sendKey') }}</div>
           <select v-model="sendKey" class="messenger-settings-select">
@@ -174,20 +161,6 @@
         </div>
         <div class="messenger-settings-row">
           <div>
-            <div class="messenger-settings-label">{{ t('messenger.settings.debugTools') }}</div>
-            <div class="messenger-settings-hint">{{ t('messenger.settings.debugHint') }}</div>
-          </div>
-          <button
-            class="messenger-settings-action"
-            type="button"
-            :disabled="!devtoolsAvailable"
-            @click="$emit('toggle-devtools')"
-          >
-            {{ t('messenger.settings.openDebug') }}
-          </button>
-        </div>
-        <div class="messenger-settings-row">
-          <div>
             <div class="messenger-settings-label">{{ t('messenger.settings.fontSize') }}</div>
             <div class="messenger-settings-hint">{{ t('messenger.settings.fontHint') }}</div>
           </div>
@@ -201,7 +174,6 @@
           </div>
         </div>
       </section>
-      <ChatPerformanceCapture />
     </template>
 
     <el-dialog
@@ -389,14 +361,12 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 import { updateProfile } from '@/api/auth';
-import { APP_VERSION } from '@/config/appVersion';
 import { useI18n } from '@/i18n';
 import { useAgentStore } from '@/stores/agents';
 import { useAuthStore } from '@/stores/auth';
 import { useChatStore } from '@/stores/chat';
 import { showApiError } from '@/utils/apiError';
 import { sumConversationConsumedTokens } from '@/utils/messageStats';
-import ChatPerformanceCapture from '@/components/messenger/ChatPerformanceCapture.vue';
 import UserAvatarGlyph from '@/components/messenger/UserAvatarGlyph.vue';
 import { normalizeThemePalette, type ThemePalette } from '@/utils/themeAppearance';
 
@@ -440,8 +410,6 @@ const props = withDefaults(
     usernameSaving?: boolean;
     desktopLocalMode?: boolean;
     uiFontSize?: number;
-    devtoolsAvailable?: boolean;
-    updateAvailable?: boolean;
     profileAvatarIcon?: string;
     profileAvatarColor?: string;
     profileAvatarOptions?: ProfileAvatarOption[];
@@ -457,8 +425,6 @@ const props = withDefaults(
     usernameSaving: false,
     desktopLocalMode: false,
     uiFontSize: 14,
-    devtoolsAvailable: false,
-    updateAvailable: false,
     profileAvatarIcon: 'initial',
     profileAvatarColor: 'var(--ui-accent)',
     profileAvatarOptions: () => [],
@@ -468,8 +434,6 @@ const props = withDefaults(
 
 const emit = defineEmits<{
   (event: 'toggle-language'): void;
-  (event: 'check-update'): void;
-  (event: 'toggle-devtools'): void;
   (event: 'logout'): void;
   (event: 'update:send-key', value: SendKeyMode): void;
   (event: 'update:theme-palette', value: ThemePalette): void;
@@ -483,7 +447,6 @@ const { t } = useI18n();
 const agentStore = useAgentStore();
 const authStore = useAuthStore();
 const chatStore = useChatStore();
-const appVersion = APP_VERSION;
 const sendKey = ref<SendKeyMode>('enter');
 const themePalette = ref<ThemePalette>('eva-orange');
 const usernameDraft = ref('');

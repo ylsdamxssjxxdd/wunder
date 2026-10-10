@@ -67,6 +67,8 @@ pub struct Config {
     pub project_doc: ProjectDocConfig,
     #[serde(default)]
     pub cloud: CloudConfig,
+    #[serde(default)]
+    pub interlink: InterlinkConfig,
 }
 
 /// Cloud access for local clients (desktop/cli logging into this server):
@@ -141,6 +143,150 @@ fn default_cloud_queue_max_wait_s() -> u64 {
 
 fn default_cloud_queue_max_queue_per_user() -> usize {
     32
+}
+
+/// Cloud<->local interlink (unified presence, tunnel, workspace shadows,
+/// remote commands). See docs/云端本地互通方案.md.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InterlinkConfig {
+    #[serde(default = "default_interlink_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_interlink_max_channels_per_device")]
+    pub max_channels_per_device: usize,
+    #[serde(default = "default_interlink_heartbeat_s")]
+    pub heartbeat_s: u64,
+    #[serde(default = "default_interlink_presence_ttl_s")]
+    pub presence_ttl_s: u64,
+    #[serde(default = "default_interlink_command_timeout_s")]
+    pub command_timeout_s: u64,
+    #[serde(default = "default_interlink_inflight_per_node")]
+    pub inflight_per_node: usize,
+    #[serde(default = "default_interlink_offline_queue_per_user")]
+    pub offline_queue_per_user: usize,
+    /// Command kinds that always require on-device approval.
+    #[serde(default = "default_interlink_require_approval_defaults")]
+    pub require_approval_defaults: Vec<String>,
+    #[serde(default = "default_interlink_file_chunk_kb")]
+    pub file_chunk_kb: usize,
+    #[serde(default)]
+    pub shadow: InterlinkShadowConfig,
+    /// Retention for the command ledger and the audit trail.
+    #[serde(default = "default_interlink_command_retention_days")]
+    pub command_retention_days: u32,
+    #[serde(default = "default_interlink_audit_retention_days")]
+    pub audit_retention_days: u32,
+}
+
+impl Default for InterlinkConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_interlink_enabled(),
+            max_channels_per_device: default_interlink_max_channels_per_device(),
+            heartbeat_s: default_interlink_heartbeat_s(),
+            presence_ttl_s: default_interlink_presence_ttl_s(),
+            command_timeout_s: default_interlink_command_timeout_s(),
+            inflight_per_node: default_interlink_inflight_per_node(),
+            offline_queue_per_user: default_interlink_offline_queue_per_user(),
+            require_approval_defaults: default_interlink_require_approval_defaults(),
+            file_chunk_kb: default_interlink_file_chunk_kb(),
+            shadow: InterlinkShadowConfig::default(),
+            command_retention_days: default_interlink_command_retention_days(),
+            audit_retention_days: default_interlink_audit_retention_days(),
+        }
+    }
+}
+
+fn default_interlink_enabled() -> bool {
+    true
+}
+
+fn default_interlink_max_channels_per_device() -> usize {
+    1
+}
+
+fn default_interlink_heartbeat_s() -> u64 {
+    25
+}
+
+fn default_interlink_presence_ttl_s() -> u64 {
+    90
+}
+
+fn default_interlink_command_timeout_s() -> u64 {
+    120
+}
+
+fn default_interlink_inflight_per_node() -> usize {
+    8
+}
+
+fn default_interlink_offline_queue_per_user() -> usize {
+    32
+}
+
+fn default_interlink_require_approval_defaults() -> Vec<String> {
+    vec![
+        "thread.create".to_string(),
+        "thread.message".to_string(),
+        "workspace.write".to_string(),
+        "workspace.mkdir".to_string(),
+        "workspace.move".to_string(),
+        "workspace.copy".to_string(),
+        "workspace.delete".to_string(),
+        "tool.exec".to_string(),
+        "agent.spawn".to_string(),
+    ]
+}
+
+fn default_interlink_file_chunk_kb() -> usize {
+    256
+}
+
+fn default_interlink_command_retention_days() -> u32 {
+    180
+}
+
+fn default_interlink_audit_retention_days() -> u32 {
+    365
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InterlinkShadowConfig {
+    #[serde(default = "default_interlink_shadow_threads_max")]
+    pub threads_max: usize,
+    #[serde(default = "default_interlink_shadow_tree_max_entries")]
+    pub tree_max_entries: usize,
+    #[serde(default = "default_interlink_shadow_tree_depth")]
+    pub tree_depth: usize,
+    #[serde(default = "default_interlink_shadow_interval_s")]
+    pub interval_s: u64,
+}
+
+impl Default for InterlinkShadowConfig {
+    fn default() -> Self {
+        Self {
+            threads_max: default_interlink_shadow_threads_max(),
+            tree_max_entries: default_interlink_shadow_tree_max_entries(),
+            tree_depth: default_interlink_shadow_tree_depth(),
+            interval_s: default_interlink_shadow_interval_s(),
+        }
+    }
+}
+
+fn default_interlink_shadow_threads_max() -> usize {
+    200
+}
+
+fn default_interlink_shadow_tree_max_entries() -> usize {
+    500
+}
+
+fn default_interlink_shadow_tree_depth() -> usize {
+    3
+}
+
+fn default_interlink_shadow_interval_s() -> u64 {
+    300
 }
 
 /// Project instruction documents (`AGENTS.md`) folded into a thread prompt.

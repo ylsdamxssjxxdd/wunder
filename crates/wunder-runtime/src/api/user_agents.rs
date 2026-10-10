@@ -8,8 +8,9 @@ use crate::services::agent_abilities::{
     resolve_record_declared_names,
 };
 use crate::services::default_agent_protocol::{
-    default_agent_config_from_record, default_agent_meta_key, is_builtin_default_agent_name,
-    DefaultAgentConfig, DEFAULT_AGENT_NAME,
+    default_agent_config_from_record, default_agent_meta_key, default_agent_preset_questions,
+    is_builtin_default_agent_name, normalize_default_agent_preset_questions, DefaultAgentConfig,
+    DEFAULT_AGENT_NAME,
 };
 use crate::services::default_tool_profile::curated_default_tool_names_for_config;
 use crate::services::llm::is_llm_model;
@@ -44,9 +45,6 @@ const DEFAULT_AGENT_STATUS: &str = "active";
 const DEFAULT_AGENT_DESCRIPTION: &str =
     "我是wunder，很高兴帮助你，试着把整理资料，分析数据，写文章等工作交给我吧~";
 const DEFAULT_AGENT_SYSTEM_PROMPT: &str = "你是一个乐于助人的智能体";
-const DEFAULT_AGENT_PRESET_QUESTION_DRAW_GIF: &str = "制作一个骑自行车的鹈鹕gif";
-const LEGACY_AGENT_PRESET_QUESTION_DRAW_HEART: &str = "绘制一个爱心到本地";
-const DEFAULT_AGENT_PRESET_QUESTION_TRAVEL_GUIDE: &str = "用公文写作技能写一篇广州旅游攻略";
 const DEFAULT_RUNTIME_WINDOW_DAYS: i64 = 14;
 const MAX_RUNTIME_WINDOW_DAYS: i64 = 90;
 const MAX_RUNTIME_RECORD_LIMIT: i64 = 5000;
@@ -1983,21 +1981,7 @@ fn normalize_default_agent_config(config: &mut DefaultAgentConfig) {
         normalize_tool_list(std::mem::take(&mut config.declared_skill_names));
     config.preset_questions =
         normalize_preset_questions(std::mem::take(&mut config.preset_questions));
-    for question in &mut config.preset_questions {
-        if question == LEGACY_AGENT_PRESET_QUESTION_DRAW_HEART {
-            *question = DEFAULT_AGENT_PRESET_QUESTION_DRAW_GIF.to_string();
-        }
-    }
-    if config.preset_questions.is_empty() {
-        config.preset_questions = default_agent_preset_questions();
-    }
-}
-
-fn default_agent_preset_questions() -> Vec<String> {
-    vec![
-        DEFAULT_AGENT_PRESET_QUESTION_DRAW_GIF.to_string(),
-        DEFAULT_AGENT_PRESET_QUESTION_TRAVEL_GUIDE.to_string(),
-    ]
+    normalize_default_agent_preset_questions(&mut config.preset_questions);
 }
 
 async fn load_default_agent_config(

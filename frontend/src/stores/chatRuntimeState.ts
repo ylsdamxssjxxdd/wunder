@@ -1,6 +1,7 @@
 import { getChatThreadStatus } from '@/realtime/chat/chatThreadRuntime';
 import { emitSubagentPoolChanged } from '@/utils/subagentPoolEvents';
 import { applySessionQuotaUsage } from './chatSessionQuota';
+import { noteChatQueueRuntimeEvent } from './chatQueueState';
 import { defineStore } from 'pinia';
 import { markRaw, toRaw } from 'vue';
 import { isSessionUnavailable, markSessionUnavailable } from './chatSessionAvailability';
@@ -1176,6 +1177,8 @@ export function applySessionRuntimeSnapshot(runtime, snapshot) {
 export function applySessionRuntimeEvent(store, sessionId, payload, eventType = 'thread_status') {
   const targetId = resolveRuntimeSessionId(sessionId, payload);
   if (!targetId) return null;
+  // 排队条是引擎队列表的投影：任何 queue_* 事件都按会话去补水一次。
+  noteChatQueueRuntimeEvent(targetId, eventType);
   const runtime = ensureRuntime(targetId);
   if (!runtime) return null;
   // Durable turns own liveness; a delayed monitor control cannot reopen them.

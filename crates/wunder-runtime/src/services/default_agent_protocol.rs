@@ -7,6 +7,46 @@ pub const DEFAULT_AGENT_ID_ALIAS: &str = "__default__";
 pub const DEFAULT_AGENT_LEGACY_ENGLISH_NAME: &str = "Default Agent";
 pub const DEFAULT_AGENT_NAME: &str = "默认智能体";
 
+pub const DEFAULT_AGENT_PRESET_QUESTION_DRAW_GIF: &str = "制作一个骑自行车的鹈鹕gif";
+pub const DEFAULT_AGENT_PRESET_QUESTION_TRAVEL_GUIDE: &str = "用公文写作技能写一篇广州旅游攻略";
+pub const DEFAULT_AGENT_PRESET_QUESTION_DEEPER_ISSUE: &str =
+    "在我跟你反复讨论的问题当中，有没有一个更深层次的问题我一直绕着走，但是没有问出来。";
+pub const DEFAULT_AGENT_PRESET_QUESTION_FULL_EFFORT: &str =
+    "拿出你的全部本事，用上你能用的一切，帮我……";
+const LEGACY_AGENT_PRESET_QUESTION_DRAW_HEART: &str = "绘制一个爱心到本地";
+/// Questions shipped before the current default set; a stored list holding nothing
+/// else counts as untouched and is upgraded in place.
+const INHERITED_AGENT_PRESET_QUESTIONS: &[&str] = &[
+    DEFAULT_AGENT_PRESET_QUESTION_DRAW_GIF,
+    DEFAULT_AGENT_PRESET_QUESTION_TRAVEL_GUIDE,
+];
+
+pub fn default_agent_preset_questions() -> Vec<String> {
+    [
+        DEFAULT_AGENT_PRESET_QUESTION_DRAW_GIF,
+        DEFAULT_AGENT_PRESET_QUESTION_TRAVEL_GUIDE,
+        DEFAULT_AGENT_PRESET_QUESTION_DEEPER_ISSUE,
+        DEFAULT_AGENT_PRESET_QUESTION_FULL_EFFORT,
+    ]
+    .iter()
+    .map(|question| (*question).to_string())
+    .collect()
+}
+
+pub fn normalize_default_agent_preset_questions(questions: &mut Vec<String>) {
+    for question in questions.iter_mut() {
+        if question == LEGACY_AGENT_PRESET_QUESTION_DRAW_HEART {
+            *question = DEFAULT_AGENT_PRESET_QUESTION_DRAW_GIF.to_string();
+        }
+    }
+    let inherited_only = questions
+        .iter()
+        .all(|question| INHERITED_AGENT_PRESET_QUESTIONS.contains(&question.as_str()));
+    if inherited_only {
+        *questions = default_agent_preset_questions();
+    }
+}
+
 pub fn is_builtin_default_agent_name(name: &str) -> bool {
     let cleaned = name.trim();
     cleaned.is_empty()
@@ -123,12 +163,36 @@ pub fn record_from_default_agent_config(
 #[cfg(test)]
 mod tests {
     use super::{
-        default_agent_config_from_record, default_agent_meta_key, record_from_default_agent_config,
+        default_agent_config_from_record, default_agent_meta_key, default_agent_preset_questions,
+        normalize_default_agent_preset_questions, record_from_default_agent_config,
         DefaultAgentConfig,
     };
     #[test]
     fn builds_trimmed_default_agent_meta_key() {
         assert_eq!(default_agent_meta_key(" user-a "), "default_agent:user-a");
+    }
+
+    #[test]
+    fn inherited_preset_questions_are_upgraded_to_the_current_defaults() {
+        let expected = default_agent_preset_questions();
+        for mut stored in [
+            Vec::new(),
+            vec![
+                "制作一个骑自行车的鹈鹕gif".to_string(),
+                "用公文写作技能写一篇广州旅游攻略".to_string(),
+            ],
+            vec!["绘制一个爱心到本地".to_string()],
+        ] {
+            normalize_default_agent_preset_questions(&mut stored);
+            assert_eq!(stored, expected);
+        }
+    }
+
+    #[test]
+    fn customized_preset_questions_are_left_alone() {
+        let mut stored = vec!["自定义问题".to_string()];
+        normalize_default_agent_preset_questions(&mut stored);
+        assert_eq!(stored, vec!["自定义问题".to_string()]);
     }
 
     #[test]

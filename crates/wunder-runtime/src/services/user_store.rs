@@ -1,6 +1,7 @@
 use crate::org_units;
 use crate::services::default_agent_protocol::{
-    default_agent_meta_key, is_builtin_default_agent_name, record_from_default_agent_config,
+    default_agent_meta_key, is_builtin_default_agent_name,
+    normalize_default_agent_preset_questions, record_from_default_agent_config,
     DefaultAgentConfig as DefaultAgentConfigSnapshot, DEFAULT_AGENT_NAME,
 };
 use crate::services::user_leveling::{build_user_level_snapshot, normalize_total_experience};
@@ -38,9 +39,6 @@ const DEFAULT_AGENT_ACCESS_LEVEL: &str = "A";
 const DEFAULT_AGENT_DESCRIPTION: &str =
     "我是wunder，很高兴帮助你，试着把整理资料，分析数据，写文章等工作交给我吧~";
 const DEFAULT_AGENT_SYSTEM_PROMPT: &str = "你是一个乐于助人的智能体";
-const DEFAULT_AGENT_PRESET_QUESTION_DRAW_GIF: &str = "制作一个骑自行车的鹈鹕gif";
-const LEGACY_AGENT_PRESET_QUESTION_DRAW_HEART: &str = "绘制一个爱心到本地";
-const DEFAULT_AGENT_PRESET_QUESTION_TRAVEL_GUIDE: &str = "用公文写作技能写一篇广州旅游攻略";
 const SESSION_TIME_EPSILON_MICROS: u64 = 1;
 const DEFAULT_SESSION_SCOPE: &str = "default";
 const SESSION_SCOPE_MAX_LEN: usize = 32;
@@ -1195,14 +1193,7 @@ fn normalize_default_agent_record(existing: &mut UserAgentRecord) {
     if existing.system_prompt.trim().is_empty() {
         existing.system_prompt = DEFAULT_AGENT_SYSTEM_PROMPT.to_string();
     }
-    if existing.preset_questions.is_empty() {
-        existing.preset_questions = default_agent_preset_questions();
-    }
-    for question in &mut existing.preset_questions {
-        if question == LEGACY_AGENT_PRESET_QUESTION_DRAW_HEART {
-            *question = DEFAULT_AGENT_PRESET_QUESTION_DRAW_GIF.to_string();
-        }
-    }
+    normalize_default_agent_preset_questions(&mut existing.preset_questions);
     existing.is_shared = false;
 }
 
@@ -1237,14 +1228,7 @@ fn normalize_default_agent_snapshot(config: &mut DefaultAgentConfigSnapshot) {
     config.preset_questions = crate::services::user_agent_presets::normalize_preset_questions(
         std::mem::take(&mut config.preset_questions),
     );
-    for question in &mut config.preset_questions {
-        if question == LEGACY_AGENT_PRESET_QUESTION_DRAW_HEART {
-            *question = DEFAULT_AGENT_PRESET_QUESTION_DRAW_GIF.to_string();
-        }
-    }
-    if config.preset_questions.is_empty() {
-        config.preset_questions = default_agent_preset_questions();
-    }
+    normalize_default_agent_preset_questions(&mut config.preset_questions);
     config.sandbox_container_id = normalize_sandbox_container_id(config.sandbox_container_id);
     let now = now_ts();
     if config.created_at <= 0.0 {
@@ -1253,13 +1237,6 @@ fn normalize_default_agent_snapshot(config: &mut DefaultAgentConfigSnapshot) {
     if config.updated_at <= 0.0 {
         config.updated_at = config.created_at;
     }
-}
-
-fn default_agent_preset_questions() -> Vec<String> {
-    vec![
-        DEFAULT_AGENT_PRESET_QUESTION_DRAW_GIF.to_string(),
-        DEFAULT_AGENT_PRESET_QUESTION_TRAVEL_GUIDE.to_string(),
-    ]
 }
 
 fn next_session_issued_at(last_login_at: Option<f64>) -> f64 {

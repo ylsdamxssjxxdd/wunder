@@ -395,7 +395,6 @@ export component MainWindow inherits Window {
     in-out property <string> runtime-theme;
     in-out property <string> runtime-send-key;
     in-out property <float> runtime-font-size: 14;
-    in-out property <string> app-version: "dev";
     in-out property <string> runtime-python;
     in-out property <string> runtime-git;
     in-out property <string> runtime-rg;
@@ -994,7 +993,6 @@ export component MainWindow inherits Window {
         theme <=> root.runtime-theme;
         send-key <=> root.runtime-send-key;
         font-size <=> root.runtime-font-size;
-        app-version: root.app-version;
         save-preferences => { root.save-preferences(); }
         prompt-packs: root.prompt-packs;
         prompt-pack-names: root.prompt-pack-names;

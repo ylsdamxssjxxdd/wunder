@@ -9,9 +9,9 @@ use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
-use uuid::Uuid;
 
 pub mod capabilities;
+mod random_sim;
 mod replay_cache;
 mod replay_selection;
 pub mod request;
@@ -27,13 +27,6 @@ const MAX_VIRTUAL_LLM_JSONL_BYTES: u64 = 32 * 1024 * 1024;
 const DEFAULT_MODEL_NAME: &str = "default";
 const RANDOM_REPLAY_LOG_ID: &str = "virtual_random";
 const RANDOM_REPLAY_FORMAT: &str = "virtual_random";
-const RANDOM_REPLY_KEYS: &[&str] = &[
-    "virtual_llm.random.reply.ready",
-    "virtual_llm.random.reply.processing",
-    "virtual_llm.random.reply.received",
-    "virtual_llm.random.reply.placeholder",
-    "virtual_llm.random.reply.no_log",
-];
 const SIMPLE_REPLAY_FORMAT: &str = "simple_dialogue";
 const WUNDER_REPLAY_FORMAT: &str = "wunder_session_export";
 
@@ -275,58 +268,51 @@ pub async fn set_log_enabled(config: Config, log_id: String, enabled: bool) -> R
 pub async fn load_turn_for_round(
     config: Config,
     model: &LlmModelConfig,
+    session_seed: &str,
     user_round: Option<i64>,
     model_round: Option<i64>,
+    tools: Option<&[Value]>,
 ) -> Result<VirtualReplayTurn> {
     let target_log_id = resolve_virtual_model_id(model);
-    let explicit_log_id = model
-        .model
-        .as_deref()
-        .is_some_and(|value| !value.trim().is_empty());
     let round = user_round.unwrap_or(1).max(1) as usize;
     let model_round = model_round
         .filter(|value| *value > 0)
-        .map(|value| value as usize);
+        .map(|value| value as usize)
+        .unwrap_or(1);
+    let session_seed = session_seed.to_string();
+    // Tool references only live in this function body; extract owned summaries
+    // before moving state into the blocking closure.
+    let tool_summaries = random_sim::tool_summaries(tools);
     blocking::run_fs("virtual_llm.load_turn", move || {
-        let log = config
+        if let Some(log) = config
             .llm
             .virtual_replay
             .enabled_logs
             .iter()
             .find(|log| log.enabled && log.id == target_log_id)
-            .cloned();
-        let Some(log) = log else {
-            if !explicit_log_id {
-                return Ok(random_virtual_turn(round, model_round));
-            }
-            return Err(anyhow!("virtual llm replay log is missing or disabled"));
-        };
-        let logs_root = resolve_logs_root_from_config(&config)?;
-        let path = resolve_log_file(&logs_root, &log.file)?;
-        let parsed = replay_cache::load(&path)?;
-        let mut turn = replay_selection::select(&parsed, round, model_round.unwrap_or(1))?.clone();
-        turn.source_log_id = log.id;
-        turn.source_log_name = log.name;
-        Ok(turn)
+            .cloned()
+        {
+            let logs_root = resolve_logs_root_from_config(&config)?;
+            let path = resolve_log_file(&logs_root, &log.file)?;
+            let parsed = replay_cache::load(&path)?;
+            let mut turn = replay_selection::select(&parsed, round, model_round)?.clone();
+            turn.source_log_id = log.id;
+            turn.source_log_name = log.name;
+            return Ok(turn);
+        }
+        // No replay log is available: the random simulator still produces a
+        // full model-round sequence (1-100 planned rounds with harmless
+        // read-only tool calls) without spending any real API quota.
+        let total_rounds = random_sim::plan_rounds(&session_seed, round);
+        Ok(random_sim::build_turn(
+            &session_seed,
+            round,
+            model_round,
+            total_rounds,
+            &tool_summaries,
+        ))
     })
     .await
-}
-
-fn random_virtual_turn(round: usize, model_round: Option<usize>) -> VirtualReplayTurn {
-    let random_index = (Uuid::new_v4().as_u128() as usize) % RANDOM_REPLY_KEYS.len();
-    let content = crate::i18n::t(RANDOM_REPLY_KEYS[random_index]);
-    VirtualReplayTurn {
-        finish_reason: None,
-        content,
-        reasoning: crate::i18n::t("virtual_llm.random.reasoning"),
-        usage: None,
-        tool_calls: None,
-        source_log_id: RANDOM_REPLAY_LOG_ID.to_string(),
-        source_log_name: crate::i18n::t("virtual_llm.random.log_name"),
-        source_round: round,
-        source_model_round: model_round.or(Some(1)),
-        format: RANDOM_REPLAY_FORMAT.to_string(),
-    }
 }
 
 pub fn estimate_virtual_usage(input_messages: &[Value], turn: &VirtualReplayTurn) -> TokenUsage {
@@ -717,15 +703,14 @@ mod tests {
     }
 
     #[test]
-    fn random_virtual_turn_marks_virtual_random_source() {
-        let turn = random_virtual_turn(3, Some(2));
+    fn random_sim_turn_marks_virtual_random_source() {
+        let turn = random_sim::build_turn("session-a", 3, 2, 5, &[]);
 
-        assert!(!turn.content.trim().is_empty());
         assert_eq!(turn.source_log_id, RANDOM_REPLAY_LOG_ID);
         assert_eq!(turn.source_round, 3);
         assert_eq!(turn.source_model_round, Some(2));
         assert_eq!(turn.format, RANDOM_REPLAY_FORMAT);
-        assert!(turn.tool_calls.is_none());
+        assert!(!turn.content.trim().is_empty() || turn.tool_calls.is_some());
     }
 
     #[tokio::test]
@@ -737,7 +722,7 @@ mod tests {
             ..Default::default()
         };
 
-        let turn = load_turn_for_round(config, &model, Some(2), Some(3))
+        let turn = load_turn_for_round(config, &model, "session-a", Some(2), Some(3), None)
             .await
             .expect("random virtual turn");
 
@@ -750,5 +735,23 @@ mod tests {
         assert_eq!(turn.source_round, 2);
         assert_eq!(turn.source_model_round, Some(3));
         assert_eq!(turn.format, RANDOM_REPLAY_FORMAT);
+    }
+
+    #[tokio::test]
+    async fn load_turn_falls_back_to_random_when_named_log_is_missing() {
+        let config = Config::default();
+        let model = LlmModelConfig {
+            provider: Some(VIRTUAL_REPLAY_PROVIDER.to_string()),
+            model: Some("missing_log".into()),
+            ..Default::default()
+        };
+
+        let turn = load_turn_for_round(config, &model, "session-a", Some(1), Some(1), None)
+            .await
+            .expect("random fallback for missing log");
+
+        assert_eq!(turn.source_log_id, RANDOM_REPLAY_LOG_ID);
+        assert_eq!(turn.format, RANDOM_REPLAY_FORMAT);
+        assert!(!turn.content.trim().is_empty());
     }
 }

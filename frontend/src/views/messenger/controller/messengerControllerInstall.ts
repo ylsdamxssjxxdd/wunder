@@ -1309,10 +1309,6 @@ function installMessengerControllerShellLayoutState(ctx: MessengerControllerCont
 
   ctx.settingsLogoutDisabled = computed(() => false);
 
-  ctx.debugToolsAvailable = computed(() => typeof ctx.getDesktopBridge()?.toggleDevTools === 'function');
-
-  ctx.desktopUpdateAvailable = computed(() => typeof ctx.getDesktopBridge()?.checkForUpdates === 'function');
-
 
   ctx.detectAudioRecordingSupport = (): boolean => {
       try {
@@ -13986,23 +13982,6 @@ function installMessengerControllerClientPreferenceActions(ctx: MessengerControl
           window.localStorage.setItem(MESSENGER_UI_FONT_SIZE_STORAGE_KEY, String(normalized));
       }
       ctx.applyUiFontSize(normalized);
-  };
-
-  ctx.openDebugTools = async () => {
-      if (typeof window === 'undefined')
-          return;
-      try {
-          const bridge = ctx.getDesktopBridge();
-          if (typeof bridge?.toggleDevTools === 'function') {
-              await bridge.toggleDevTools();
-              return;
-          }
-      }
-      catch {
-          ElMessage.warning(ctx.t('desktop.common.saveFailed'));
-          return;
-      }
-      ElMessage.info(ctx.t('messenger.settings.debugHint'));
   };
 
   ctx.shouldReuseAgentMetaResult = (loadedAt: number, force = false): boolean => !force && loadedAt > 0 && Date.now() - loadedAt < ctx.AGENT_META_REQUEST_CACHE_MS;

@@ -26,3 +26,5 @@ export const startStressThread = (payload: StressThreadStartPayload) =>
 
 export const getStressThreadJob = (jobId: string) =>
   api.get(`/chat/stress-threads/${encodeURIComponent(jobId)}`);
+
+export const listStressThreads = () => api.get('/chat/stress-threads');

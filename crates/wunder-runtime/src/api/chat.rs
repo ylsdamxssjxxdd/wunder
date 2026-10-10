@@ -36,6 +36,7 @@ const CHAT_SESSION_STATUS_ARCHIVED: &str = "archived";
 mod events;
 mod media;
 mod prompt;
+mod queue;
 mod sessions;
 mod stress;
 
@@ -46,6 +47,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .merge(events::router())
         .merge(media::router())
         .merge(prompt::router())
+        .merge(queue::router())
         .merge(sessions::router())
         .merge(stress::router())
         .route(

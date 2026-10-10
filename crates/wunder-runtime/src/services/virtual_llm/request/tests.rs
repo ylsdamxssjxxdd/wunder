@@ -1,7 +1,22 @@
 use super::*;
-use crate::services::virtual_llm::{capabilities::*, random_virtual_turn};
+use crate::services::virtual_llm::capabilities::*;
 use serde_json::json;
 use wunder_core::virtual_model::VirtualModelOptions;
+
+fn bare_turn() -> crate::services::virtual_llm::VirtualReplayTurn {
+    crate::services::virtual_llm::VirtualReplayTurn {
+        finish_reason: None,
+        content: String::new(),
+        reasoning: String::new(),
+        usage: None,
+        tool_calls: None,
+        source_log_id: "test".into(),
+        source_log_name: "test".into(),
+        source_round: 1,
+        source_model_round: Some(1),
+        format: "replay".into(),
+    }
+}
 
 fn model() -> LlmModelConfig {
     LlmModelConfig {
@@ -111,7 +126,7 @@ fn replay_protocol_follows_selected_call_mode_and_does_not_invent_calls() {
     let tools =
         [json!({"type":"function","function":{"name":"test_tool","parameters":{"type":"object"}}})];
     let mut config = model();
-    let mut turn = random_virtual_turn(1, Some(1));
+    let mut turn = bare_turn();
     assert!(prepare_turn(turn.clone(), &config, &[], Some(&tools))
         .unwrap()
         .tool_calls
@@ -175,7 +190,7 @@ fn output_budget_truncates_utf8_and_never_executes_partial_tool_json() {
         support_reasoning: false,
         ..Default::default()
     });
-    let mut turn = random_virtual_turn(1, Some(1));
+    let mut turn = bare_turn();
     turn.content = "字🙂".repeat(10);
     let trimmed = prepare_turn(turn.clone(), &config, &[], None).unwrap();
     assert_eq!(

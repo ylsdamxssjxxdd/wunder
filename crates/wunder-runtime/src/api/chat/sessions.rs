@@ -1235,12 +1235,24 @@ fn list_active_queue_tasks(
         })
         .unwrap_or_default();
     tasks.sort_by(|left, right| {
-        left.created_at
-            .partial_cmp(&right.created_at)
-            .unwrap_or(std::cmp::Ordering::Equal)
+        // 与派发序一致（优先级 → retry_at → created_at → task_id），
+        // 否则插话/拖拽排序后的展示顺序会与实际执行顺序相反。
+        let priority_of = |task: &crate::storage::AgentTaskRecord| {
+            task.request_payload
+                .get("queue_priority")
+                .and_then(Value::as_i64)
+                .unwrap_or(0)
+        };
+        priority_of(right)
+            .cmp(&priority_of(left))
+            .then(
+                left.retry_at
+                    .partial_cmp(&right.retry_at)
+                    .unwrap_or(std::cmp::Ordering::Equal),
+            )
             .then_with(|| {
-                left.updated_at
-                    .partial_cmp(&right.updated_at)
+                left.created_at
+                    .partial_cmp(&right.created_at)
                     .unwrap_or(std::cmp::Ordering::Equal)
             })
             .then_with(|| left.task_id.cmp(&right.task_id))

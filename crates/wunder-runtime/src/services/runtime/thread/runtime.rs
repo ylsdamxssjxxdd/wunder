@@ -24,6 +24,8 @@ use uuid::Uuid;
 mod agent_messages;
 #[path = "queue_admin.rs"]
 mod queue_admin;
+#[path = "queue_tasks.rs"]
+mod queue_tasks;
 
 const DEFAULT_SESSION_TITLE: &str = "新会话";
 

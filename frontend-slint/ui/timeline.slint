@@ -110,20 +110,32 @@ component TargetChip inherits Rectangle {
 }
 
 // A 20px gutter holding the connector and, for batched entries, the node dot.
+// A group bar hangs its disclosure caret here instead of a dot, so the toggle
+// sits on the same rail the batched entries hang from.
 component TimelineGutter inherits Rectangle {
     in property <bool> line: false;
     in property <bool> node: false;
     in property <int> status: 0;
+    in property <bool> caret: false;
+    in property <bool> caret-open: false;
     width: TimelineMetrics.gutter;
     Rectangle {
         visible: root.line;
-        x: (TimelineMetrics.gutter - 1px) / 2; y: 0px; width: 1px; height: parent.height;
+        x: (TimelineMetrics.gutter - 1px) / 2;
+        y: root.caret ? parent.height / 2 + 7px : 0px;
+        width: 1px;
+        height: root.caret ? parent.height / 2 - 7px : parent.height;
         background: Theme.timeline-line;
     }
     Rectangle {
         visible: root.node;
         x: (TimelineMetrics.gutter - 6px) / 2; y: 9px; width: 6px; height: 6px; border-radius: 3px;
         background: root.status == 2 ? Theme.danger : root.status == 1 ? Theme.thought : Theme.thought.transparentize(0.35);
+    }
+    if root.caret : FoldCaret {
+        x: (TimelineMetrics.gutter - 12px) / 2;
+        y: (parent.height - 12px) / 2;
+        open: root.caret-open;
     }
 }
 
@@ -366,8 +378,8 @@ component GroupBar inherits Rectangle {
     border-radius: Theme.radius-tag;
     background: bar-touch.has-hover ? Theme.hover : transparent;
     bar-touch := TouchArea {
-        x: Theme.timeline-padding + TimelineMetrics.gutter; y: 0px;
-        width: parent.width - Theme.timeline-padding * 2 - TimelineMetrics.gutter;
+        x: Theme.timeline-padding; y: 0px;
+        width: parent.width - Theme.timeline-padding * 2;
         height: parent.height;
         mouse-cursor: pointer;
         clicked => { root.toggle(root.data.payload); }
@@ -375,10 +387,9 @@ component GroupBar inherits Rectangle {
     HorizontalLayout {
         padding-left: Theme.timeline-padding; padding-right: Theme.timeline-padding;
         spacing: 0px;
-        TimelineGutter { line: root.data.open; }
+        TimelineGutter { line: root.data.open; caret: true; caret-open: root.data.open; }
         bar-row := HorizontalLayout {
             height: parent.height; spacing: 8px;
-            FoldCaret { y: (parent.height - 12px) / 2; open: root.data.open; }
             Text {
                 width: self.preferred-width; height: parent.height;
                 text: root.data.text; color: root.data.open ? Theme.text-secondary : Theme.muted;

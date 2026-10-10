@@ -66,6 +66,10 @@
                 <i class="fa-solid fa-cloud"></i>
                 <span data-i18n="panel.cloud">云端接入</span>
               </button>
+              <button id="navInterlink" class="nav-btn">
+                <i class="fa-solid fa-satellite-dish"></i>
+                <span data-i18n="panel.interlink">互通舰队</span>
+              </button>
             </div>
           </div>
           <div class="nav-group" data-group="agent">
@@ -1417,6 +1421,27 @@
               </div>
             </div>
           </div>
+        </section>
+        <!-- 舰桥「互通舰队」总览页（I3）：数据来自 GET /wunder/interlink/nodes（见 web/modules/interlink.js） -->
+        <section id="interlinkPanel" class="panel">
+          <div class="list-header">
+            <h1 data-i18n="interlink.title">互通舰队</h1>
+            <div class="header-actions">
+              <button
+                id="interlinkRefreshBtn"
+                class="secondary btn-with-icon btn-compact icon-only"
+                type="button"
+                data-i18n-title="common.refresh"
+                data-i18n-aria-label="common.refresh"
+              >
+                <i class="fa-solid fa-arrows-rotate"></i>
+              </button>
+            </div>
+          </div>
+          <div class="tips" data-i18n="interlink.tip">
+            查看跨端节点的在线状态、客户端分布与最近活跃；隧道质量与 24h 在线率热图待管理端点接入。
+          </div>
+          <div id="interlinkBody" class="interlink-body"></div>
         </section>
         <section id="externalLinksPanel" class="panel">
           <div class="list-header">

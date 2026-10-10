@@ -30,6 +30,7 @@ pub mod external_auth;
 pub mod goal;
 pub mod history;
 pub mod inner_visible;
+pub mod interlink;
 pub mod knowledge;
 pub mod llm;
 pub mod mcp;

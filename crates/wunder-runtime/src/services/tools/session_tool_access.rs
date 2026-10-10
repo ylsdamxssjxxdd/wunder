@@ -1,4 +1,7 @@
-use super::{collect_available_tool_names, ToolContext, TOOL_OVERRIDE_NONE};
+use super::{
+    collect_available_tool_names, expand_browser_group_selection, with_browser_group_members,
+    ToolContext, TOOL_OVERRIDE_NONE,
+};
 use crate::config::Config;
 use crate::i18n;
 use crate::services::agent_abilities::resolve_agent_runtime_tool_names;
@@ -28,11 +31,12 @@ pub(crate) fn collect_user_allowed_tools(
             .as_ref()
             .filter(|items| !items.is_empty())
         {
-            let allowed_set: HashSet<String> = allowed_tools
+            let mut allowed_set: HashSet<String> = allowed_tools
                 .iter()
                 .map(|name| name.trim().to_string())
                 .filter(|name| !name.is_empty())
                 .collect();
+            with_browser_group_members(&mut allowed_set);
             allowed = allowed
                 .intersection(&allowed_set)
                 .cloned()
@@ -137,7 +141,7 @@ pub(crate) fn apply_tool_overrides(
             }
         }
     }
-    filtered
+    expand_browser_group_selection(filtered, &allowed)
 }
 
 pub(crate) fn resolve_override_name_with_allowed(

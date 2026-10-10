@@ -1524,6 +1524,7 @@ fn build_user_tools_summary(
 
     let mut builtin_tools = Vec::new();
     let mut seen_builtin = HashSet::new();
+    let mut browser_summarized = false;
     for spec in builtin_tool_specs() {
         // Goal 工具由 orchestrator 强制注入，属运行时能力，不在用户工具清单中展示。
         if crate::services::goal::is_goal_tool_name(&spec.name) {
@@ -1536,6 +1537,14 @@ fn build_user_tools_summary(
         let enabled =
             allowed.contains(&spec.name) || aliases.iter().any(|alias| allowed.contains(alias));
         if !enabled {
+            continue;
+        }
+        // provider 的细粒度浏览器工具只供模型调用，用户清单里收成一条「浏览器」。
+        if crate::tools::is_browser_tool_name(&spec.name) {
+            if !browser_summarized {
+                browser_summarized = true;
+                builtin_tools.push(crate::tools::browser_tool_summary_spec(&language));
+            }
             continue;
         }
         let name = if language.starts_with("en") {

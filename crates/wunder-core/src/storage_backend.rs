@@ -381,6 +381,9 @@ pub trait SessionLockStore {
 pub trait AgentRuntimeStore {
     fn claim_agent_task(&self, task_id: &str, now: f64) -> Result<bool>;
     fn promote_agent_task(&self, task_id: &str, now: f64) -> Result<bool>;
+    /// Rewrite the dispatch rank (retry_at) of not-yet-started tasks to the given
+    /// order; returns how many rows were re-ranked.
+    fn reorder_agent_tasks(&self, task_ids: &[String], now: f64) -> Result<usize>;
     fn update_agent_task_queue_payload(&self, task_id: &str, payload: &Value) -> Result<bool>;
     fn set_session_lock_suspended(
         &self,
@@ -1319,9 +1322,78 @@ pub trait CloudStore {
     fn cleanup_cloud_device_logs(&self, retention_days: u32) -> Result<u64>;
 }
 
+/// Interlink (cloud <-> local) persistence: node-secret, tunnel channels,
+/// workspace shadows, command ledger, approvals and audit trail.
+pub trait InterlinkStore {
+    // --- device interlink extension ---
+    fn update_cloud_device_interlink(
+        &self,
+        device_id: &str,
+        patch: &CloudDeviceInterlinkPatch,
+    ) -> Result<()>;
+
+    // --- channels ---
+    fn upsert_interlink_channel(&self, record: &InterlinkChannelRecord) -> Result<()>;
+    fn get_interlink_channel(&self, channel_id: &str) -> Result<Option<InterlinkChannelRecord>>;
+    fn close_interlink_channel(&self, channel_id: &str, closed_reason: &str) -> Result<()>;
+    fn list_interlink_channels(
+        &self,
+        user_id: Option<&str>,
+        offset: i64,
+        limit: i64,
+    ) -> Result<(Vec<InterlinkChannelRecord>, i64)>;
+
+    // --- workspace shadows ---
+    fn upsert_interlink_shadow(&self, record: &InterlinkShadowRecord) -> Result<()>;
+    fn get_interlink_shadow(&self, device_id: &str) -> Result<Option<InterlinkShadowRecord>>;
+    fn get_interlink_shadow_revision(&self, device_id: &str) -> Result<i64>;
+    fn delete_interlink_shadow(&self, device_id: &str) -> Result<()>;
+
+    // --- commands ---
+    fn insert_interlink_command(&self, record: &InterlinkCommandRecord) -> Result<bool>;
+    fn update_interlink_command_status(
+        &self,
+        command_id: &str,
+        status: &str,
+        acked_at: Option<f64>,
+        finished_at: Option<f64>,
+        error_code: Option<&str>,
+        error_summary: Option<&str>,
+    ) -> Result<()>;
+    fn set_interlink_command_approval(&self, command_id: &str, approval_state: &str)
+        -> Result<()>;
+    fn get_interlink_command(&self, command_id: &str) -> Result<Option<InterlinkCommandRecord>>;
+    fn list_interlink_commands(
+        &self,
+        query: ListInterlinkCommandsQuery<'_>,
+    ) -> Result<(Vec<InterlinkCommandRecord>, i64)>;
+    fn cleanup_interlink_commands(&self, retention_days: u32) -> Result<u64>;
+
+    // --- approvals ---
+    fn insert_interlink_approval(&self, record: &InterlinkApprovalRecord) -> Result<()>;
+    fn decide_interlink_approval(
+        &self,
+        approval_id: &str,
+        state: &str,
+        decided_by: &str,
+        decided_at: f64,
+    ) -> Result<()>;
+    fn get_interlink_approval(&self, approval_id: &str)
+        -> Result<Option<InterlinkApprovalRecord>>;
+
+    // --- audit ---
+    fn insert_interlink_audit(&self, record: &InterlinkAuditRecord) -> Result<()>;
+    fn list_interlink_audit(
+        &self,
+        query: ListInterlinkAuditQuery<'_>,
+    ) -> Result<(Vec<InterlinkAuditRecord>, i64)>;
+    fn cleanup_interlink_audit(&self, retention_days: u32) -> Result<u64>;
+}
+
 /// Complete storage surface kept for existing runtime call paths.
 pub trait StorageBackend:
     StorageLifecycle
+    + InterlinkStore
     + MetaStore
     + ConversationLogStore
     + ThreadLogStore
@@ -1350,6 +1422,7 @@ pub trait StorageBackend:
     + QuotaBalanceStore
     + TerminalTranscriptStore
     + CloudStore
+    + InterlinkStore
     + Send
     + Sync
 {
@@ -1386,6 +1459,7 @@ impl<T> StorageBackend for T where
         + QuotaBalanceStore
         + TerminalTranscriptStore
         + CloudStore
+    + InterlinkStore
         + Send
         + Sync
 {

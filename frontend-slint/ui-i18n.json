@@ -4673,21 +4673,6 @@
   "en": "Font size for chat content"
  },
  {
-  "key": "st_version_title",
-  "zh": "当前版本",
-  "en": "Current version"
- },
- {
-  "key": "st_version_latest",
-  "zh": "已是最新版本",
-  "en": "You are on the latest version"
- },
- {
-  "key": "st_version_number",
-  "zh": "版本号",
-  "en": "Version"
- },
- {
   "key": "st_workspace_root",
   "zh": "工作区根目录",
   "en": "Workspace root"
@@ -5121,6 +5106,41 @@
   "key": "st_reset_note",
   "zh": "清理运行状态、队列与临时投影；保留资产、配置、文件与历史。",
   "en": "Clears run state, queues and temporary projections; keeps assets, settings, files and history."
+ },
+ {
+  "key": "st_stress_title",
+  "zh": "线程渲染压测",
+  "en": "Thread render stress"
+ },
+ {
+  "key": "st_stress_note",
+  "zh": "在本地库生成一条模拟线程，验证消息呈现与长列表性能。",
+  "en": "Generates one synthetic local thread to verify message rendering and long-list performance."
+ },
+ {
+  "key": "st_stress_user_rounds",
+  "zh": "用户轮次",
+  "en": "User rounds"
+ },
+ {
+  "key": "st_stress_model_rounds",
+  "zh": "每轮模型轮次",
+  "en": "Model rounds / turn"
+ },
+ {
+  "key": "st_stress_hint",
+  "zh": "默认 1000×1000，生成耗时较长；可先用小规模验证渲染。",
+  "en": "Defaults to 1000×1000 and takes a while; try a smaller scale first."
+ },
+ {
+  "key": "st_stress_generate",
+  "zh": "生成压测线程",
+  "en": "Generate stress thread"
+ },
+ {
+  "key": "st_stress_running",
+  "zh": "生成中…",
+  "en": "Generating…"
  },
  {
   "key": "pm_readonly_builtin",

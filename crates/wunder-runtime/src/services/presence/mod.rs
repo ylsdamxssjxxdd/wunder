@@ -1,19 +1,28 @@
 mod connection;
+mod nodes;
 
 pub use connection::UserPresenceView;
+pub use nodes::{aggregate_status, derive_device_status, online_count, NodeRegistry};
 
 use connection::ConnectionPresenceService;
 use std::collections::HashMap;
 
 pub struct PresenceService {
     connections: ConnectionPresenceService,
+    nodes: NodeRegistry,
 }
 
 impl PresenceService {
     pub fn new() -> Self {
         Self {
             connections: ConnectionPresenceService::new(),
+            nodes: NodeRegistry::new(),
         }
+    }
+
+    /// Volatile interlink node registry (web sessions + activity overlay).
+    pub fn nodes(&self) -> &NodeRegistry {
+        &self.nodes
     }
 
     pub fn touch_user(&self, user_id: &str, now: f64) {

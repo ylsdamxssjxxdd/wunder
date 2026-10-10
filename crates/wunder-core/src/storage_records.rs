@@ -835,6 +835,8 @@ pub struct CloudDeviceRecord {
     pub last_seen_at: f64,
     pub created_at: f64,
     pub revoked: bool,
+    /// Interlink extension (nullable; see CloudDeviceInterlinkPatch).
+    pub interlink: Option<Box<CloudDeviceInterlinkPatch>>,
 }
 
 /// One cloud-proxied model call made by a local client. Created at admission
@@ -875,6 +877,128 @@ pub struct CloudDeviceLogRecord {
     pub message: Option<String>,
     pub local_session_id: Option<String>,
     pub created_at: f64,
+}
+
+// ---------------------------------------------------------------------------
+// Interlink (cloud <-> local): tunnel channels, workspace shadows, remote
+// commands, approvals and audit trail. docs/云端本地互通方案.md
+// ---------------------------------------------------------------------------
+
+/// Extended interlink columns on `cloud_devices` (Pz: nullable to keep
+/// existing rows valid after migration).
+#[derive(Debug, Clone, Default)]
+pub struct CloudDeviceInterlinkPatch {
+    pub node_secret_hash: Option<String>,
+    pub secret_version: i64,
+    pub interlink_enabled: Option<bool>,
+    pub capabilities: Option<String>,
+    pub policy_overrides: Option<String>,
+    pub tunnel_connected: Option<bool>,
+    pub last_tunnel_at: Option<f64>,
+}
+
+/// One live (or recently closed) interlink tunnel channel.
+#[derive(Debug, Clone)]
+pub struct InterlinkChannelRecord {
+    pub channel_id: String,
+    pub device_id: String,
+    pub user_id: String,
+    pub client: String,
+    pub instance_id: String,
+    pub protocol_version: i64,
+    pub caps: Option<String>,
+    pub connected_at: f64,
+    pub last_seen_at: f64,
+    pub rtt_ms: Option<i64>,
+    pub resumed_count: i64,
+    pub closed_reason: Option<String>,
+}
+
+/// Workspace shadow: one row per persistent node, `revision` bumps on change.
+#[derive(Debug, Clone)]
+pub struct InterlinkShadowRecord {
+    pub device_id: String,
+    pub user_id: String,
+    pub revision: i64,
+    /// JSON: node summary (os/arch/versions/models/usage).
+    pub summary: Option<String>,
+    /// JSON array: thread directory entries (no message bodies).
+    pub threads: Option<String>,
+    /// JSON array: scheduled tasks.
+    pub tasks: Option<String>,
+    /// JSON: workspace tree digest (relative paths only) + usage.
+    pub workspace: Option<String>,
+    pub synced_at: f64,
+}
+
+/// Remote command ledger entry (idempotency anchor; args stored digested).
+#[derive(Debug, Clone)]
+pub struct InterlinkCommandRecord {
+    pub command_id: String,
+    pub direction: String,
+    pub actor_user_id: String,
+    pub from_node: String,
+    pub to_node: String,
+    pub kind: String,
+    pub args_digest: Option<String>,
+    pub approval_state: String,
+    pub status: String,
+    pub created_at: f64,
+    pub acked_at: Option<f64>,
+    pub finished_at: Option<f64>,
+    pub error_code: Option<String>,
+    pub error_summary: Option<String>,
+}
+
+/// Approval ticket for human-in-the-loop decisions.
+#[derive(Debug, Clone)]
+pub struct InterlinkApprovalRecord {
+    pub approval_id: String,
+    pub command_id: String,
+    pub device_id: String,
+    pub user_id: String,
+    pub prompt: String,
+    pub risk_level: String,
+    pub state: String,
+    pub decided_by: Option<String>,
+    pub decided_at: Option<f64>,
+    pub expires_at: f64,
+}
+
+/// Append-only audit event.
+#[derive(Debug, Clone)]
+pub struct InterlinkAuditRecord {
+    pub seq: i64,
+    pub command_id: Option<String>,
+    pub approval_id: Option<String>,
+    pub actor: String,
+    pub from_node: Option<String>,
+    pub to_node: Option<String>,
+    pub action: String,
+    pub detail_digest: Option<String>,
+    pub created_at: f64,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ListInterlinkCommandsQuery<'a> {
+    pub user_id: Option<&'a str>,
+    pub device_id: Option<&'a str>,
+    pub kind: Option<&'a str>,
+    pub status: Option<&'a str>,
+    pub direction: Option<&'a str>,
+    pub offset: i64,
+    pub limit: i64,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ListInterlinkAuditQuery<'a> {
+    pub user_id: Option<&'a str>,
+    pub device_id: Option<&'a str>,
+    pub action: Option<&'a str>,
+    pub since: Option<f64>,
+    pub until: Option<f64>,
+    pub offset: i64,
+    pub limit: i64,
 }
 
 #[derive(Debug, Clone, Copy)]

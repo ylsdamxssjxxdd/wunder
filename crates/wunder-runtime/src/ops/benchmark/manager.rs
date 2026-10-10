@@ -19,7 +19,10 @@ use crate::orchestrator::Orchestrator;
 use crate::schemas::WunderRequest;
 use crate::skills::SkillRegistry;
 use crate::storage::{StorageBackend, DEFAULT_SANDBOX_CONTAINER_ID};
-use crate::tools::{builtin_aliases, collect_available_tool_names, resolve_tool_name};
+use crate::tools::{
+    builtin_aliases, collect_available_tool_names, expand_browser_group_selection,
+    resolve_tool_name,
+};
 use crate::user_tools::{UserToolBindings, UserToolManager};
 use crate::workspace::WorkspaceManager;
 use anyhow::{anyhow, Result};
@@ -857,10 +860,13 @@ fn resolve_allowed_tool_names(
         available
     } else {
         let expanded = expand_requested_tool_names(requested);
-        available
-            .into_iter()
-            .filter(|name| expanded.contains(name))
-            .collect()
+        let selected: HashSet<String> = available
+            .iter()
+            .filter(|name| expanded.contains(*name))
+            .cloned()
+            .collect();
+        // 聚合条目名（浏览器）换成整组成员，基准跑的是真实可调用的工具面。
+        expand_browser_group_selection(selected, &available)
     };
     if default_mode {
         allowed.remove("a2ui");

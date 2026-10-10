@@ -19,13 +19,11 @@
         :theme-palette="themeStore.palette"
         :ui-font-size="uiFontSize"
         :username-saving="usernameSaving"
-        :devtools-available="debugToolsAvailable"
         :profile-avatar-icon="currentUserAvatarIcon"
         :profile-avatar-color="currentUserAvatarColor"
         :profile-avatar-options="profileAvatarOptions"
         :profile-avatar-colors="profileAvatarColors"
         @toggle-language="toggleLanguage"
-        @toggle-devtools="openDebugTools"
         @update:send-key="updateSendKey"
         @update:theme-palette="updateThemePalette"
         @update:ui-font-size="updateUiFontSize"
@@ -33,32 +31,6 @@
         @update:profile-avatar-icon="updateCurrentUserAvatarIcon"
         @update:profile-avatar-color="updateCurrentUserAvatarColor"
       />
-    </section>
-
-    <section class="messenger-settings-card">
-      <div class="messenger-settings-group-head">
-        <div class="messenger-settings-title">{{ t('messenger.settingsPage.general.dataGroup') }}</div>
-        <div class="messenger-settings-subtitle">{{ t('messenger.settingsPage.general.dataHint') }}</div>
-      </div>
-      <div class="messenger-settings-row">
-        <div class="messenger-settings-page-row-main">
-          <i class="fa-solid fa-file-arrow-down messenger-settings-page-row-icon" aria-hidden="true"></i>
-          <div>
-            <div class="messenger-settings-label">{{ t('messenger.settingsPage.exportDiagnostics') }}</div>
-            <div class="messenger-settings-hint">{{ t('messenger.settingsPage.exportDiagnosticsHint') }}</div>
-          </div>
-        </div>
-        <div class="messenger-settings-page-row-actions">
-          <button
-            class="messenger-settings-action ghost"
-            type="button"
-            data-testid="settings-export-diagnostics"
-            @click="handleExportDiagnostics"
-          >
-            {{ t('common.export') }}
-          </button>
-        </div>
-      </div>
     </section>
 
     <section class="messenger-settings-card">
@@ -148,15 +120,19 @@
 </template>
 
 <script setup lang="ts">
-import { onBeforeUnmount, ref } from 'vue';
+import { onBeforeUnmount, onMounted, ref } from 'vue';
 
 import { ElMessage } from 'element-plus';
 
 import type { MessengerControllerContext } from '@/views/messenger/controller/messengerControllerContext';
 import { useI18n } from '@/i18n';
 import { confirmWithFallback } from '@/utils/confirm';
-import { exportClientDiagnostics } from '@/utils/clientDiagnostics';
-import { getStressThreadJob, startStressThread } from '@/api/stressThreads';
+import {
+  getStressThreadJob,
+  listStressThreads,
+  startStressThread,
+  type StressThreadJobSnapshot
+} from '@/api/stressThreads';
 
 const props = defineProps<{ controller: MessengerControllerContext }>();
 const { t } = useI18n();
@@ -168,13 +144,11 @@ const messengerSendKey = props.controller.messengerSendKey;
 const themeStore = props.controller.themeStore;
 const uiFontSize = props.controller.uiFontSize;
 const usernameSaving = props.controller.usernameSaving;
-const debugToolsAvailable = props.controller.debugToolsAvailable;
 const currentUserAvatarIcon = props.controller.currentUserAvatarIcon;
 const currentUserAvatarColor = props.controller.currentUserAvatarColor;
 const profileAvatarOptions = props.controller.profileAvatarOptions;
 const profileAvatarColors = props.controller.profileAvatarColors;
 const toggleLanguage = props.controller.toggleLanguage;
-const openDebugTools = props.controller.openDebugTools;
 const updateSendKey = props.controller.updateSendKey;
 const updateThemePalette = props.controller.updateThemePalette;
 const updateUiFontSize = props.controller.updateUiFontSize;
@@ -184,19 +158,6 @@ const updateCurrentUserAvatarColor = props.controller.updateCurrentUserAvatarCol
 const settingsLogoutDisabled = props.controller.settingsLogoutDisabled;
 const handleSettingsLogout = props.controller.handleSettingsLogout;
 const MessengerSettingsPanel = props.controller.MessengerSettingsPanel;
-
-const handleExportDiagnostics = () => {
-  const filename = exportClientDiagnostics({
-    language: String(currentLanguageLabel?.value || ''),
-    themePalette: String(themeStore?.palette || ''),
-    uiFontSize: Number(uiFontSize?.value || 0),
-    sendKey: String(messengerSendKey?.value || ''),
-    settingsCategory: 'general',
-    section: String(props.controller.sessionHub?.activeSection || ''),
-    authenticated: Boolean(props.controller.authStore?.isAuthenticated)
-  });
-  ElMessage.success(t('messenger.settingsPage.exportDiagnosticsDone', { name: filename }));
-};
 
 const handleLogout = async () => {
   const confirmed = await confirmWithFallback(
@@ -227,44 +188,87 @@ const stopStressJobPolling = () => {
 
 onBeforeUnmount(stopStressJobPolling);
 
-const refreshStressJob = async (jobId: string) => {
-  try {
-    const { data } = await getStressThreadJob(jobId);
-    const status = (data?.status || {}) as {
-      state?: string;
-      done_rounds?: number;
-      items_written?: number;
-      error?: string;
-    };
-    if (status.state === 'completed') {
-      stopStressJobPolling();
-      stressJobRunning.value = false;
-      stressStatusText.value = '';
+const startStressJobPolling = (jobId: string) => {
+  stopStressJobPolling();
+  stressJobTimer = window.setInterval(() => {
+    void refreshStressJob(jobId);
+  }, 800);
+};
+
+// 统一套用任务快照：运行中恢复轮询，完成/失败展示结果并刷新会话列表。
+// notify 仅在"本次进入页面后观察到状态变化"时弹全局提示，恢复展示保持安静。
+const applyStressSnapshot = (job: StressThreadJobSnapshot, notify: boolean) => {
+  const status = (job?.status || {}) as {
+    state?: string;
+    done_rounds?: number;
+    items_written?: number;
+    items?: number;
+    error?: string;
+  };
+  if (status.state === 'running') {
+    stressJobRunning.value = true;
+    stressStatusText.value = t('messenger.settingsPage.general.stressProgress', {
+      done: Number(status.done_rounds ?? 0),
+      total: Number(job.total_rounds ?? 0)
+    });
+    startStressJobPolling(job.job_id);
+  } else if (status.state === 'completed') {
+    stopStressJobPolling();
+    stressJobRunning.value = false;
+    stressStatusText.value = t('messenger.settingsPage.general.stressDone', {
+      items: Number(status.items ?? status.items_written ?? 0)
+    });
+    if (notify) {
       ElMessage.success(
         t('messenger.settingsPage.general.stressDone', {
-          items: Number(status.items_written ?? 0)
+          items: Number(status.items ?? status.items_written ?? 0)
         })
       );
-      void props.controller.chatStore?.loadSessions?.();
-    } else if (status.state === 'failed') {
-      stopStressJobPolling();
-      stressJobRunning.value = false;
-      stressStatusText.value = '';
+    }
+    void props.controller.chatStore?.loadSessions?.();
+  } else if (status.state === 'failed') {
+    stopStressJobPolling();
+    stressJobRunning.value = false;
+    stressStatusText.value = t('messenger.settingsPage.general.stressFailed', {
+      message: String(status.error || '')
+    });
+    if (notify) {
       ElMessage.error(
         t('messenger.settingsPage.general.stressFailed', {
           message: String(status.error || '')
         })
       );
-    } else {
-      stressStatusText.value = t('messenger.settingsPage.general.stressProgress', {
-        done: Number(status.done_rounds ?? 0),
-        total: Number(data?.total_rounds ?? 0)
-      });
     }
+  }
+};
+
+const refreshStressJob = async (jobId: string) => {
+  try {
+    const { data } = await getStressThreadJob(jobId);
+    applyStressSnapshot(data as StressThreadJobSnapshot, true);
   } catch {
     // 轮询瞬时失败直接忽略，等待下一轮。
   }
 };
+
+// 重新进入设置页时恢复任务可见性：后端任务注册表仍在，避免"退出页面进度即丢"。
+onMounted(async () => {
+  try {
+    const { data } = await listStressThreads();
+    const jobs = (data?.jobs || []) as StressThreadJobSnapshot[];
+    const running = jobs.find((job) => job?.status?.state === 'running');
+    if (running) {
+      applyStressSnapshot(running, false);
+      return;
+    }
+    const latest = jobs[0];
+    if (latest && (latest.status?.state === 'completed' || latest.status?.state === 'failed')) {
+      applyStressSnapshot(latest, false);
+    }
+  } catch {
+    // 任务接口不可用时静默跳过，不影响设置页其他能力。
+  }
+});
 
 const generateStressThread = async () => {
   if (stressJobRunning.value) return;
@@ -293,10 +297,7 @@ const generateStressThread = async () => {
       done: 0,
       total: userRounds
     });
-    stopStressJobPolling();
-    stressJobTimer = window.setInterval(() => {
-      void refreshStressJob(jobId);
-    }, 800);
+    startStressJobPolling(jobId);
   } catch {
     ElMessage.error(t('messenger.settingsPage.general.stressStartFailed'));
   }

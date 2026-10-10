@@ -1370,8 +1370,8 @@ fn admin_enabled_builtin_names(config: &Config) -> HashSet<String> {
 /// 管理员侧“浏览器”分组条目：代表整组 browser_* 原生工具，开关映射到 `tools.browser.enabled`。
 fn admin_browser_group_entry(name: &str, english: bool, enabled: bool) -> Value {
     let label = if english { "Browser" } else { "浏览器" };
-    let mut description = i18n::t("tool.spec.browser.description");
-    if description.is_empty() || description == "tool.spec.browser.description" {
+    let mut description = i18n::t("tool.spec.browser_group.description");
+    if description.is_empty() || description == "tool.spec.browser_group.description" {
         description = if english {
             "Browser automation tool group (browser_* native tools).".to_string()
         } else {

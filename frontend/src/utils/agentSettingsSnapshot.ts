@@ -2,6 +2,7 @@ const DESKTOP_CONTROLLER_TOOL_NAME = '\u684c\u9762\u63a7\u5236\u5668';
 const DESKTOP_MONITOR_TOOL_NAME = '\u684c\u9762\u76d1\u89c6\u5668';
 const WEB_FETCH_TOOL_NAME = '\u7f51\u9875\u6293\u53d6';
 const WEB_SEARCH_TOOL_NAME = '\u7f51\u9875\u641c\u7d22';
+const BROWSER_GROUP_TOOL_NAME = '\u6d4f\u89c8\u5668';
 
 const DESKTOP_CONTROLLER_CANONICAL = DESKTOP_CONTROLLER_TOOL_NAME;
 const DESKTOP_MONITOR_CANONICAL = DESKTOP_MONITOR_TOOL_NAME;
@@ -46,8 +47,21 @@ export const resolveWebToolKind = (value: unknown): 'fetch' | 'search' | '' => {
   return '';
 };
 
+// 浏览器工具面在用户侧只有一条聚合条目：provider 的 browser_* 成员与英文别名
+// 都归一到同一个规范名，历史选择记录也能落在同一条目上。
+const isBrowserFamilyToolName = (value: unknown): boolean => {
+  const text = normalizeText(value);
+  if (!text) return false;
+  if (text === BROWSER_GROUP_TOOL_NAME) return true;
+  const alias = normalizeAlias(text);
+  return alias === 'browser' || alias.startsWith('browser_');
+};
+
 export const canonicalizeAgentToolName = (value: unknown): string => {
   const text = normalizeText(value);
+  if (isBrowserFamilyToolName(text)) {
+    return BROWSER_GROUP_TOOL_NAME;
+  }
   const desktopKind = resolveDesktopToolKind(text);
   if (desktopKind === 'controller') {
     return DESKTOP_CONTROLLER_CANONICAL;

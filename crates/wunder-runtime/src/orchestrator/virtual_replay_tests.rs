@@ -249,3 +249,104 @@ async fn virtual_replay_works_at_zero_balance_without_spending_or_granting_token
         json!(0)
     );
 }
+
+/// 模拟模型输出必须与真实模型走同一条持久化链路：assistant 文本块与
+/// thread item 全部落库，会话历史里可见。
+#[tokio::test]
+async fn random_simulation_persists_records_like_real_models() {
+    let root = tempfile::tempdir().unwrap();
+    let mut config = Config::default();
+    config.storage.backend = "sqlite".into();
+    config.storage.db_path = root.path().join("state.db").to_string_lossy().into_owned();
+    config.workspace.root = root.path().join("workspace").to_string_lossy().into_owned();
+    let store = ConfigStore::new(root.path().join("config.yaml"));
+    store
+        .update(|current| *current = config.clone())
+        .await
+        .unwrap();
+    let state =
+        AppState::new_with_options(store, config, AppStateInitOptions::cli_default()).unwrap();
+    let user = state
+        .user_store
+        .create_user(
+            "user_1",
+            None,
+            "test-password",
+            None,
+            None,
+            vec!["user".into()],
+            "active",
+            false,
+        )
+        .unwrap();
+    state
+        .monitor
+        .register("session_1", &user.user_id, "agent_1", "input", false);
+    let committer = state.kernel.orchestrator.committer.clone();
+    let emitter = EventEmitter::new(
+        "session_1".into(),
+        user.user_id.clone(),
+        None,
+        None,
+        state.monitor.clone(),
+        false,
+        None,
+    )
+    .with_committer(committer.clone());
+    let accepted = committer
+        .accept_turn(
+            &user.user_id,
+            "session_1",
+            &json!({"role":"user","content":"你好","client_message_id":"cm_random_sim_1"}),
+        )
+        .await
+        .unwrap();
+    let turn_id = accepted["turn_id"].as_str().unwrap().to_string();
+    let user_round = accepted["user_turn_index"].as_i64().unwrap_or(1);
+    emitter.bind_turn(&turn_id, user_round);
+    let model = LlmModelConfig {
+        provider: Some("virtual_replay".into()),
+        ..Default::default()
+    };
+    let result = state
+        .kernel
+        .orchestrator
+        .call_llm(
+            &model,
+            &[json!({"role":"user","content":"你好"})],
+            &user.user_id,
+            false,
+            &emitter,
+            "session_1",
+            true,
+            RoundInfo::new(user_round, 1),
+            true,
+            false,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    assert!(!result.0.trim().is_empty());
+
+    // 文本块与 assistant item 均已持久化，重新加载会话可见。
+    let item_id = format!("{turn_id}:text-1");
+    let blocks = state
+        .storage
+        .list_thread_item_blocks(&user.user_id, "session_1", &item_id, 0, 20, false)
+        .unwrap();
+    assert!(
+        !blocks.is_empty(),
+        "simulated assistant text blocks must be persisted like real ones"
+    );
+    let context_items = state
+        .storage
+        .load_thread_context_items(&user.user_id, "session_1", 20, false)
+        .unwrap();
+    assert!(
+        context_items
+            .iter()
+            .any(|item| item["kind"] == json!("assistant_message")),
+        "assistant_message item must appear in thread context"
+    );
+}

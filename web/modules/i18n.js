@@ -1968,6 +1968,10 @@ const LOCALES = {
     "debug.round.titleWithTime": "总 {total} · 用户 {user} · 模型 {model} · {time}",
 
     "panel.cloud": "云端接入",
+    "panel.interlink": "互通舰队",
+    "interlink.title": "互通舰队",
+    "interlink.tip":
+      "查看跨端节点的在线状态、客户端分布与最近活跃；隧道质量与 24h 在线率热图待管理端点接入。",
     "cloud.title": "云端接入",
     "cloud.tip": "查看本地设备接入、云端调用记账与设备日志；吊销设备将阻止其继续使用云端。",
     "cloud.tab.devices": "设备",
@@ -3997,6 +4001,10 @@ const LOCALES = {
     "debug.round.titleWithTime": "Total {total} · User {user} · Model {model} · {time}",
 
     "panel.cloud": "Cloud Access",
+    "panel.interlink": "Interlink Fleet",
+    "interlink.title": "Interlink Fleet",
+    "interlink.tip":
+      "Inspect cross-endpoint node presence, client distribution and last activity; tunnel quality and the 24h online heatmap land with the admin endpoint.",
     "cloud.title": "Cloud Access",
     "cloud.tip":
       "Inspect local devices, cloud call records and device logs; revoking a device blocks its cloud access.",

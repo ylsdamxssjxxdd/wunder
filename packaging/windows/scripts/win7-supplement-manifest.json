@@ -23,11 +23,6 @@
       "wheelSpec": "wheel<0.46"
     },
     "profiles": {
-      "minimal": {
-        "description": "Base embeddable Python only, without extra third-party packages.",
-        "requirementsPath": "",
-        "validateImports": []
-      },
       "common": {
         "description": "Slim Win7-friendly common package set with networking, office/video document IO, fonts, map/weather tooling, database access, and plotting.",
         "requirementsPath": "packaging/python/requirements-win7-common.txt",

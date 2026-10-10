@@ -213,6 +213,7 @@ async fn wunder_tools(
         .filter(|name| !name.is_empty())
         .collect();
     let mut builtin_tools = Vec::new();
+    let mut browser_summarized = false;
     let alias_map = crate::tools::builtin_aliases();
     let mut canonical_aliases: std::collections::HashMap<String, Vec<String>> =
         std::collections::HashMap::new();
@@ -228,6 +229,14 @@ async fn wunder_tools(
             continue;
         }
         if !enabled_builtin.contains(&spec.name) {
+            continue;
+        }
+        // provider 的细粒度浏览器工具只供模型调用，用户清单里收成一条「浏览器」。
+        if crate::tools::is_browser_tool_name(&spec.name) {
+            if !browser_summarized {
+                browser_summarized = true;
+                builtin_tools.push(crate::tools::browser_tool_summary_spec(&language));
+            }
             continue;
         }
         let english_alias = if language.starts_with("en") {

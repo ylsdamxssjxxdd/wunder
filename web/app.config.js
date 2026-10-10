@@ -20,12 +20,16 @@ const APP_CONFIG_DEFAULTS = {
       "写一个AI辩论的程序，可以设置不同的AI角色，给他们一个主题让他们参与辩论，要有美观的界面，使用html/js/css实现",
       "制作一个骑自行车的鹈鹕gif",
       "用公文格式技能写一篇作文，题目是《我的一天》",
+      "在我跟你反复讨论的问题当中，有没有一个更深层次的问题我一直绕着走，但是没有问出来。",
+      "拿出你的全部本事，用上你能用的一切，帮我……",
     ],
     "en-US": [
       "Hi, introduce wunder's core capabilities.",
       "List the available tools and explain their purposes.",
       "Use Python to draw a heart and save it as a local PNG.",
       "What's the weather in Guangzhou today?",
+      "Among the topics we keep circling back to, is there a deeper question I have been avoiding but never asked?",
+      "Use every skill and tool you have, and help me …",
     ],
   },
 

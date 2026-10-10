@@ -48,7 +48,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut arguments = std::env::args_os().skip(1);
     let first_argument = arguments.next();
     let app = MainWindow::new()?;
-    app.set_app_version(env!("CARGO_PKG_VERSION").into());
     let close_weak = app.as_weak();
     app.window().on_close_requested(move || {
         if let Some(app) = close_weak.upgrade() {

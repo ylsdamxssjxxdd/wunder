@@ -52,6 +52,31 @@ impl SqliteStorage {
         tx.commit()?;
         Ok(())
     }
+    fn ensure_cloud_device_interlink_columns(&self, conn: &Connection) -> Result<()> {
+        let tx =
+            rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
+        let columns = load_table_columns(&tx, "cloud_devices")?;
+        if columns.is_empty() {
+            return Ok(());
+        }
+        let additions: [(&str, &str); 7] = [
+            ("node_secret_hash", "ALTER TABLE cloud_devices ADD COLUMN node_secret_hash TEXT"),
+            ("secret_version", "ALTER TABLE cloud_devices ADD COLUMN secret_version INTEGER NOT NULL DEFAULT 0"),
+            ("interlink_enabled", "ALTER TABLE cloud_devices ADD COLUMN interlink_enabled INTEGER"),
+            ("capabilities", "ALTER TABLE cloud_devices ADD COLUMN capabilities TEXT"),
+            ("policy_overrides", "ALTER TABLE cloud_devices ADD COLUMN policy_overrides TEXT"),
+            ("tunnel_connected", "ALTER TABLE cloud_devices ADD COLUMN tunnel_connected INTEGER NOT NULL DEFAULT 0"),
+            ("last_tunnel_at", "ALTER TABLE cloud_devices ADD COLUMN last_tunnel_at REAL"),
+        ];
+        for (column, ddl) in additions {
+            if !columns.contains(column) {
+                tx.execute(ddl, [])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     fn ensure_user_account_quota_columns(&self, conn: &Connection) -> Result<()> {
         let tx =
             rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
@@ -1498,6 +1523,85 @@ impl SqliteSchemaStorage for SqliteStorage {
             );
             CREATE INDEX IF NOT EXISTS idx_cloud_device_logs_user_created
               ON cloud_device_logs (user_id, created_at);
+            CREATE TABLE IF NOT EXISTS interlink_channels (
+              channel_id TEXT PRIMARY KEY,
+              device_id TEXT NOT NULL,
+              user_id TEXT NOT NULL,
+              client TEXT,
+              instance_id TEXT NOT NULL DEFAULT 'local',
+              protocol_version INTEGER NOT NULL DEFAULT 1,
+              caps TEXT,
+              connected_at REAL,
+              last_seen_at REAL,
+              rtt_ms INTEGER,
+              resumed_count INTEGER NOT NULL DEFAULT 0,
+              closed_reason TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_interlink_channels_device
+              ON interlink_channels (device_id, connected_at);
+            CREATE INDEX IF NOT EXISTS idx_interlink_channels_user
+              ON interlink_channels (user_id, connected_at);
+            CREATE TABLE IF NOT EXISTS interlink_node_shadows (
+              device_id TEXT PRIMARY KEY,
+              user_id TEXT NOT NULL,
+              revision INTEGER NOT NULL DEFAULT 0,
+              summary TEXT,
+              threads TEXT,
+              tasks TEXT,
+              workspace TEXT,
+              synced_at REAL
+            );
+            CREATE INDEX IF NOT EXISTS idx_interlink_shadows_user
+              ON interlink_node_shadows (user_id, synced_at);
+            CREATE TABLE IF NOT EXISTS interlink_commands (
+              command_id TEXT PRIMARY KEY,
+              direction TEXT NOT NULL,
+              actor_user_id TEXT NOT NULL,
+              from_node TEXT NOT NULL,
+              to_node TEXT NOT NULL,
+              kind TEXT NOT NULL,
+              args_digest TEXT,
+              approval_state TEXT NOT NULL DEFAULT 'none',
+              status TEXT NOT NULL DEFAULT 'issued',
+              created_at REAL,
+              acked_at REAL,
+              finished_at REAL,
+              error_code TEXT,
+              error_summary TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_interlink_commands_user_created
+              ON interlink_commands (actor_user_id, created_at);
+            CREATE INDEX IF NOT EXISTS idx_interlink_commands_to_node
+              ON interlink_commands (to_node, created_at);
+            CREATE TABLE IF NOT EXISTS interlink_approvals (
+              approval_id TEXT PRIMARY KEY,
+              command_id TEXT NOT NULL,
+              device_id TEXT NOT NULL,
+              user_id TEXT NOT NULL,
+              prompt TEXT,
+              risk_level TEXT,
+              state TEXT NOT NULL DEFAULT 'pending',
+              decided_by TEXT,
+              decided_at REAL,
+              expires_at REAL
+            );
+            CREATE INDEX IF NOT EXISTS idx_interlink_approvals_command
+              ON interlink_approvals (command_id);
+            CREATE TABLE IF NOT EXISTS interlink_audit (
+              seq INTEGER PRIMARY KEY AUTOINCREMENT,
+              command_id TEXT,
+              approval_id TEXT,
+              actor TEXT,
+              from_node TEXT,
+              to_node TEXT,
+              action TEXT NOT NULL,
+              detail_digest TEXT,
+              created_at REAL
+            );
+            CREATE INDEX IF NOT EXISTS idx_interlink_audit_created
+              ON interlink_audit (created_at);
+            CREATE INDEX IF NOT EXISTS idx_interlink_audit_actor
+              ON interlink_audit (actor, created_at);
             CREATE TABLE IF NOT EXISTS user_agents (
               agent_id TEXT PRIMARY KEY,
               user_id TEXT NOT NULL,
@@ -1592,6 +1696,7 @@ impl SqliteSchemaStorage for SqliteStorage {
         self.ensure_user_world_group_columns(&conn)?;
         self.ensure_cron_columns(&conn)?;
         self.ensure_memory_fragment_columns(&conn)?;
+        self.ensure_cloud_device_interlink_columns(&conn)?;
         if self
             .auto_vacuum_upgrade_pending
             .swap(false, Ordering::SeqCst)

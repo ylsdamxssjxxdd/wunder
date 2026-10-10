@@ -5,6 +5,7 @@
 - `opt/python`：给智能体、本地脚本与 Python 工具调用使用的内置 Python
 - `opt/git`：给 `git clone`、`git status`、补丁应用与仓库操作使用的内置 Git
 - `opt/rg`：给 `search_content` 与命令行检索使用的内置 ripgrep
+- `opt/ffmpeg`：随包附带的静态 ffmpeg（Windows 补充包专用；当前桌面运行时只自动接线 python/git/rg）
 
 补充包设计目标：**直接解压到桌面安装目录即可生效**。
 
@@ -31,12 +32,7 @@
 powershell -ExecutionPolicy Bypass -File packaging/windows/scripts/build_win7_desktop_supplement.ps1 -Arch ia32
 ```
 
-- 该默认入口会产出 `common` 档位补充包，并默认通过清华 Tuna 简单索引安装 `packaging/python/requirements-win7-common.txt` 中的依赖。
-- 如果只想保留基础 Python + Git，不安装第三方 Python 依赖，请显式切到 `minimal`：
-
-```powershell
-powershell -ExecutionPolicy Bypass -File packaging/windows/scripts/build_win7_desktop_supplement.ps1 -Arch ia32 -PythonProfile minimal
-```
+- 该默认入口会产出 `common` 档位补充包（当前唯一档位），并默认通过清华 Tuna 简单索引安装 `packaging/python/requirements-win7-common.txt` 中的依赖。
 
 如需重新下载官方压缩包：
 
@@ -67,7 +63,6 @@ powershell -ExecutionPolicy Bypass -File packaging/windows/scripts/build_win7_de
 - 下载缓存：`temp_dir/win7-gnu-lab/win7-supplement/downloads/`
 - 展开目录：`temp_dir/win7-gnu-lab/win7-supplement/stage/package-root/`
 - 默认压缩包：`temp_dir/win7-gnu-lab/win7-supplement/dist/wunder-supplement-win7-ia32-common.zip`
-- `minimal` 档位压缩包：`temp_dir/win7-gnu-lab/win7-supplement/dist/wunder-supplement-win7-ia32.zip`
 
 压缩包内部目录结构是：
 
@@ -76,6 +71,7 @@ opt/
   python/
   git/
   rg/
+  ffmpeg/
 README-win7-supplement.txt
 wunder-win7-supplement.json
 ```
@@ -88,6 +84,7 @@ wunder-win7-supplement.json
    - `opt/python`
    - `opt/git`
    - `opt/rg`
+   - `opt/ffmpeg`
 4. 重新启动桌面端。
 
 原生 Win7 桌面程序启动时会自动：
@@ -100,8 +97,7 @@ wunder-win7-supplement.json
 ## 兼容性提示
 
 - Python 3.8 embeddable package 在 Win7 上建议配合 `KB2533623` 与 Universal CRT 更新使用。
-- 默认 `common` 档位会额外内置 `pip / setuptools / wheel`，并按 `packaging/python/requirements-win7-common.txt` 预装办公文档、数据库、轻量视频、地图/雷达与绘图库。
-- `minimal` 档位提供的是 **基础 Python + 基础 Git + ripgrep**，尽量控制体积。
+- `common` 档位（当前唯一档位）会额外内置 `pip / setuptools / wheel`，并按 `packaging/python/requirements-win7-common.txt` 预装办公文档、数据库、轻量视频、地图/雷达与绘图库。
 - 默认 Python 包索引为清华 Tuna：`https://pypi.tuna.tsinghua.edu.cn/simple`；如需切回官方源，可使用 `-PythonPackageIndexUrl https://pypi.org/simple`。
 - 两个档位都保持 Win7 友好，优先使用二进制 wheel，避免现场编译依赖。
 

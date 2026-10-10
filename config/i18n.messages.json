@@ -1811,6 +1811,10 @@
     "en-US": "Automate a browser session. Start the session first to warm up or reuse it, then open/navigate; the common flow is start -> open/navigate -> snapshot/read_page -> click/type/press -> wait/screenshot. Screenshots are saved to the workspace by default.",
     "zh-CN": "浏览器自动化工具。先用 start 预热或复用会话，再 open/navigate；常用流程：start -> open/navigate -> snapshot/read_page -> click/type/press -> wait/screenshot。截图默认保存到工作区。"
   },
+  "tool.spec.browser_group.description": {
+    "en-US": "Browser automation as one user-facing capability: it stands for the whole native browser_* tool family (navigate, read page, click, type, wait, screenshot) and is bounded by the session, the allowed domains and the timeout limits.",
+    "zh-CN": "浏览器自动化能力的整组条目：代表 browser_* 一组原生工具（打开页面、读取内容、点击输入、等待、截图），受会话、允许域名与超时限制。"
+  },
   "tool.spec.browser.args.action": {
     "en-US": "Action: status/profiles/start/stop/tabs/open/focus/close/navigate/snapshot/act/click/type/press/hover/wait/screenshot/read_page.",
     "zh-CN": "动作类型：status/profiles/start/stop/tabs/open/focus/close/navigate/snapshot/act/click/type/press/hover/wait/screenshot/read_page。"

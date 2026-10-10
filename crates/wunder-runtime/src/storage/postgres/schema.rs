@@ -1898,6 +1898,92 @@ impl PostgresSchemaStorage for PostgresStorage {
                 );
                 CREATE INDEX IF NOT EXISTS idx_cloud_device_logs_user_created
                   ON cloud_device_logs (user_id, created_at);
+                ALTER TABLE cloud_devices ADD COLUMN IF NOT EXISTS node_secret_hash TEXT;
+                ALTER TABLE cloud_devices ADD COLUMN IF NOT EXISTS secret_version BIGINT NOT NULL DEFAULT 0;
+                ALTER TABLE cloud_devices ADD COLUMN IF NOT EXISTS interlink_enabled BOOLEAN;
+                ALTER TABLE cloud_devices ADD COLUMN IF NOT EXISTS capabilities TEXT;
+                ALTER TABLE cloud_devices ADD COLUMN IF NOT EXISTS policy_overrides TEXT;
+                ALTER TABLE cloud_devices ADD COLUMN IF NOT EXISTS tunnel_connected BOOLEAN NOT NULL DEFAULT FALSE;
+                ALTER TABLE cloud_devices ADD COLUMN IF NOT EXISTS last_tunnel_at DOUBLE PRECISION;
+                CREATE TABLE IF NOT EXISTS interlink_channels (
+                  channel_id TEXT PRIMARY KEY,
+                  device_id TEXT NOT NULL,
+                  user_id TEXT NOT NULL,
+                  client TEXT,
+                  instance_id TEXT NOT NULL DEFAULT 'local',
+                  protocol_version BIGINT NOT NULL DEFAULT 1,
+                  caps TEXT,
+                  connected_at DOUBLE PRECISION,
+                  last_seen_at DOUBLE PRECISION,
+                  rtt_ms BIGINT,
+                  resumed_count BIGINT NOT NULL DEFAULT 0,
+                  closed_reason TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_interlink_channels_device
+                  ON interlink_channels (device_id, connected_at);
+                CREATE INDEX IF NOT EXISTS idx_interlink_channels_user
+                  ON interlink_channels (user_id, connected_at);
+                CREATE TABLE IF NOT EXISTS interlink_node_shadows (
+                  device_id TEXT PRIMARY KEY,
+                  user_id TEXT NOT NULL,
+                  revision BIGINT NOT NULL DEFAULT 0,
+                  summary TEXT,
+                  threads TEXT,
+                  tasks TEXT,
+                  workspace TEXT,
+                  synced_at DOUBLE PRECISION
+                );
+                CREATE INDEX IF NOT EXISTS idx_interlink_shadows_user
+                  ON interlink_node_shadows (user_id, synced_at);
+                CREATE TABLE IF NOT EXISTS interlink_commands (
+                  command_id TEXT PRIMARY KEY,
+                  direction TEXT NOT NULL,
+                  actor_user_id TEXT NOT NULL,
+                  from_node TEXT NOT NULL,
+                  to_node TEXT NOT NULL,
+                  kind TEXT NOT NULL,
+                  args_digest TEXT,
+                  approval_state TEXT NOT NULL DEFAULT 'none',
+                  status TEXT NOT NULL DEFAULT 'issued',
+                  created_at DOUBLE PRECISION,
+                  acked_at DOUBLE PRECISION,
+                  finished_at DOUBLE PRECISION,
+                  error_code TEXT,
+                  error_summary TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_interlink_commands_user_created
+                  ON interlink_commands (actor_user_id, created_at);
+                CREATE INDEX IF NOT EXISTS idx_interlink_commands_to_node
+                  ON interlink_commands (to_node, created_at);
+                CREATE TABLE IF NOT EXISTS interlink_approvals (
+                  approval_id TEXT PRIMARY KEY,
+                  command_id TEXT NOT NULL,
+                  device_id TEXT NOT NULL,
+                  user_id TEXT NOT NULL,
+                  prompt TEXT,
+                  risk_level TEXT,
+                  state TEXT NOT NULL DEFAULT 'pending',
+                  decided_by TEXT,
+                  decided_at DOUBLE PRECISION,
+                  expires_at DOUBLE PRECISION
+                );
+                CREATE INDEX IF NOT EXISTS idx_interlink_approvals_command
+                  ON interlink_approvals (command_id);
+                CREATE TABLE IF NOT EXISTS interlink_audit (
+                  seq BIGSERIAL PRIMARY KEY,
+                  command_id TEXT,
+                  approval_id TEXT,
+                  actor TEXT,
+                  from_node TEXT,
+                  to_node TEXT,
+                  action TEXT NOT NULL,
+                  detail_digest TEXT,
+                  created_at DOUBLE PRECISION
+                );
+                CREATE INDEX IF NOT EXISTS idx_interlink_audit_created
+                  ON interlink_audit (created_at);
+                CREATE INDEX IF NOT EXISTS idx_interlink_audit_actor
+                  ON interlink_audit (actor, created_at);
                 CREATE TABLE IF NOT EXISTS user_agents (
                   agent_id TEXT PRIMARY KEY,
                   user_id TEXT NOT NULL,

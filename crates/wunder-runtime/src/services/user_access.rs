@@ -7,7 +7,8 @@ use crate::storage::{
     UserAccountRecord, UserAgentAccessRecord, UserAgentRecord, UserToolAccessRecord,
 };
 use crate::tools::{
-    collect_available_tool_names, collect_enabled_tool_names_for_catalog, resolve_tool_name,
+    collect_available_tool_names, collect_enabled_tool_names_for_catalog,
+    with_browser_group_members, resolve_tool_name,
 };
 use crate::user_tools::UserToolBindings;
 use std::collections::HashSet;
@@ -76,11 +77,12 @@ pub fn compute_allowed_tool_names(
             .as_ref()
             .filter(|items| !items.is_empty())
         {
-            let allowed_set: HashSet<String> = allowed_tools
+            let mut allowed_set: HashSet<String> = allowed_tools
                 .iter()
                 .map(|name| name.trim().to_string())
                 .filter(|name| !name.is_empty())
                 .collect();
+            with_browser_group_members(&mut allowed_set);
             allowed = allowed
                 .intersection(&allowed_set)
                 .cloned()
@@ -130,11 +132,12 @@ pub fn compute_allowed_tool_names_for_catalog(
             .as_ref()
             .filter(|items| !items.is_empty())
         {
-            let allowed_set: HashSet<String> = allowed_tools
+            let mut allowed_set: HashSet<String> = allowed_tools
                 .iter()
                 .map(|name| name.trim().to_string())
                 .filter(|name| !name.is_empty())
                 .collect();
+            with_browser_group_members(&mut allowed_set);
             allowed = allowed
                 .intersection(&allowed_set)
                 .cloned()

@@ -40,6 +40,7 @@ export const state = {
     companions: false,
     orgUnits: false,
     memory: false,
+    interlink: false,
     channels: false,
     throughput: false,
     performance: false,

@@ -78,18 +78,17 @@ fn simple_dialogue_retains_tool_only_turns_and_user_round_gaps() {
 }
 
 #[tokio::test]
-async fn explicit_missing_or_disabled_logs_fail_instead_of_random_fallback() {
+async fn missing_or_disabled_logs_fall_back_to_random_simulation() {
     let model = LlmModelConfig {
         provider: Some(VIRTUAL_REPLAY_PROVIDER.into()),
         model: Some("log_1".into()),
         ..Default::default()
     };
     let mut config = Config::default();
-    assert!(
-        load_turn_for_round(config.clone(), &model, Some(1), Some(1))
-            .await
-            .is_err()
-    );
+    let turn = load_turn_for_round(config.clone(), &model, "session-a", Some(1), Some(1), None)
+        .await
+        .expect("missing log falls back to random simulation");
+    assert_eq!(turn.source_log_id, RANDOM_REPLAY_LOG_ID);
     config
         .llm
         .virtual_replay
@@ -104,14 +103,15 @@ async fn explicit_missing_or_disabled_logs_fail_instead_of_random_fallback() {
             size_bytes: 0,
             uploaded_at: String::new(),
         });
-    assert!(load_turn_for_round(config, &model, Some(1), Some(1))
+    let turn = load_turn_for_round(config, &model, "session-a", Some(1), Some(1), None)
         .await
-        .is_err());
+        .expect("disabled log falls back to random simulation");
+    assert_eq!(turn.source_log_id, RANDOM_REPLAY_LOG_ID);
 }
 
 #[tokio::test]
 async fn stream_emits_reasoning_before_content_and_propagates_cancellation() {
-    let mut turn = random_virtual_turn(1, Some(1));
+    let mut turn = random_sim::build_turn("session-a", 1, 1, 1, &[]);
     turn.content = "A".into();
     turn.reasoning = "B".into();
     let mut deltas = Vec::new();
@@ -144,7 +144,7 @@ async fn stream_emits_reasoning_before_content_and_propagates_cancellation() {
 
 #[tokio::test]
 async fn simulation_preserves_utf8_and_nonstream_generation_still_takes_time() {
-    let mut turn = random_virtual_turn(1, Some(1));
+    let mut turn = random_sim::build_turn("session-a", 1, 1, 1, &[]);
     assert!(!turn.reasoning.trim().is_empty());
     turn.reasoning = "字🙂".repeat(5);
     turn.content = "abcd".repeat(5);

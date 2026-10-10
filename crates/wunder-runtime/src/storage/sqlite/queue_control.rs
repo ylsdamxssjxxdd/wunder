@@ -46,6 +46,31 @@ impl SqliteStorage {
         )? == 1)
     }
 
+    pub(super) fn reorder_agent_tasks_impl(
+        &self,
+        task_ids: &[String],
+        now: f64,
+    ) -> Result<usize> {
+        self.ensure_initialized()?;
+        if task_ids.is_empty() {
+            return Ok(0);
+        }
+        let mut conn = self.open()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        // retry_at 是派发序里排在 created_at 之前的位次键：越靠前越小，且必须不晚于 now 才可领取。
+        let total = task_ids.len();
+        let mut changed = 0usize;
+        for (index, task_id) in task_ids.iter().enumerate() {
+            let rank_at = now - (total - index) as f64;
+            changed += tx.execute(
+                "UPDATE agent_tasks SET priority=0, retry_at=?, updated_at=?, request_payload=json_set(request_payload, '$.queue_priority', 0, '$.queue_rank', ?) WHERE task_id=? AND status IN ('pending','retry')",
+                params![rank_at, now, index as i64, task_id],
+            )?;
+        }
+        tx.commit()?;
+        Ok(changed)
+    }
+
     pub(super) fn update_agent_task_queue_payload_impl(
         &self,
         task_id: &str,

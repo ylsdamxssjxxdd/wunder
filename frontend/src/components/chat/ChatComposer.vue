@@ -142,6 +142,9 @@
       </div>
     </div>
 
+    <!-- 排队条：当前轮还在跑时发出的消息先停在引擎队列里，可插话 / 编辑 / 删除 / 拖动排序。 -->
+    <ComposerQueueStrip :session-id="activeQueueSessionId" @edit="handleQueueTurnEdit" />
+
     <!-- 输入框是唯一的「卡片」：白底 + 细边 + 圆角；工具行不再共用这张底。 -->
     <div class="input-box input-box--world">
       <textarea
@@ -407,6 +410,8 @@ import {
   type ComposerReference
 } from '@/components/chat/composerReferences';
 import { useI18n } from '@/i18n';
+import ComposerQueueStrip from '@/components/chat/ComposerQueueStrip.vue';
+import { scheduleChatQueueRefresh } from '@/stores/chatQueueState';
 import { useChatStore } from '@/stores/chat';
 import { chatDebugLog } from '@/utils/chatDebug';
 import { emitWorkspaceRefresh } from '@/utils/workspaceEvents';
@@ -1194,6 +1199,7 @@ const handleInput = () => {
   commandMenuDismissed.value = false;
   // 一旦开始输入，命令面板交回 `/` 建议链路，避免钉住的面板抢走 Enter/Tab。
   commandMenuOpen.value = false;
+  resetHistoryRecall();
   resizeInput();
   syncCaretPosition();
 };
@@ -1211,6 +1217,110 @@ const focusComposerInputAtEnd = () => {
     }
     caretPosition.value = cursor;
   });
+};
+
+const activeQueueSessionId = computed(() => String(chatStore.activeSessionId || '').trim());
+
+// 排队条目被「编辑」撤下后放回输入框：文本追加，附件按已转换的媒体条目还原。
+const handleQueueTurnEdit = (item: { content?: string; attachments?: unknown[] }) => {
+  const content = String(item?.content || '').trim();
+  const restored = (Array.isArray(item?.attachments) ? item.attachments : [])
+    .map((entry) => normalizeProcessedMediaAttachment(entry))
+    .filter(Boolean) as ComposerDraftAttachment[];
+  if (content) {
+    const draft = String(inputText.value || '');
+    inputText.value = draft.trim() ? `${draft}\n${content}` : content;
+  }
+  if (restored.length) {
+    attachments.value = [...attachments.value, ...restored];
+  }
+  void nextTick(() => {
+    resizeInput();
+    syncVideoAttachmentDrafts();
+  });
+  focusComposerInputAtEnd();
+};
+
+const recallableUserMessages = computed<string[]>(() => {
+  const list = Array.isArray(props.contextMessages) ? props.contextMessages : [];
+  const output: string[] = [];
+  for (const message of list) {
+    if (!message || typeof message !== 'object') continue;
+    const source = message as Record<string, unknown>;
+    if (String(source.role || '').toLowerCase() !== 'user') continue;
+    const status = String(source.status || '').trim().toLowerCase();
+    if (status === 'queued' || status === 'failed' || status === 'cancelled') continue;
+    const content = String(source.content || '').trim();
+    if (!content) continue;
+    if (output[output.length - 1] === content) continue;
+    output.push(content);
+  }
+  return output;
+});
+
+const historyRecallIndex = ref(-1);
+const historyRecallStash = ref('');
+
+const resetHistoryRecall = () => {
+  historyRecallIndex.value = -1;
+  historyRecallStash.value = '';
+};
+
+const isCaretAtInputStart = () => {
+  const el = inputRef.value;
+  if (!el || typeof el.selectionStart !== 'number') return caretPosition.value <= 0;
+  return el.selectionStart === el.selectionEnd && el.selectionStart <= 0;
+};
+
+const isCaretAtInputEnd = () => {
+  const el = inputRef.value;
+  const length = String(inputText.value || '').length;
+  if (!el || typeof el.selectionStart !== 'number') return caretPosition.value >= length;
+  return el.selectionStart === el.selectionEnd && el.selectionStart >= length;
+};
+
+const applyHistoryRecall = (index: number) => {
+  const value = recallableUserMessages.value[index];
+  if (typeof value !== 'string') return;
+  historyRecallIndex.value = index;
+  inputText.value = value;
+  commandMenuDismissed.value = false;
+  void nextTick(() => resizeInput());
+  focusComposerInputAtEnd();
+};
+
+// 上箭头逐条找回本会话发过的消息，下箭头往回走；命令面板可见时仍归面板使用。
+const handleHistoryRecallKey = (event) => {
+  const history = recallableUserMessages.value;
+  if (!history.length) return false;
+  const recalling = historyRecallIndex.value >= 0;
+  if (event.key === 'ArrowUp') {
+    if (!recalling && String(inputText.value || '').trim() && !isCaretAtInputStart()) {
+      return false;
+    }
+    const next = historyRecallIndex.value + 1;
+    if (next >= history.length) return false;
+    if (!recalling) historyRecallStash.value = inputText.value;
+    event.preventDefault();
+    applyHistoryRecall(next);
+    return true;
+  }
+  if (event.key === 'ArrowDown') {
+    if (!recalling || !isCaretAtInputEnd()) return false;
+    event.preventDefault();
+    const next = historyRecallIndex.value - 1;
+    if (next < 0) {
+      const stash = historyRecallStash.value;
+      resetHistoryRecall();
+      inputText.value = stash;
+      void nextTick(() => resizeInput());
+      focusComposerInputAtEnd();
+      return true;
+    }
+    applyHistoryRecall(next);
+    return true;
+  }
+  return false;
 };
 
 const focusComposerInputAt = (cursor: number) => {
@@ -1324,6 +1434,9 @@ const handleInputKeydown = async (event) => {
     }
   }
   if (!commandSuggestionsVisible.value) {
+    if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+      handleHistoryRecallKey(event);
+    }
     return;
   }
   if (event.key === 'ArrowDown') {
@@ -2285,7 +2398,7 @@ const applyPresetQuestion = (question: string) => {
 };
 
 const handleSend = async () => {
-  if (stopButtonActive.value) return;
+  // 会话在跑时不再静默吞掉发送：引擎会把这一轮挂进队列，输入区上方出现排队条。
   if (voiceRecording.value) return;
   closeComposerPanels();
   if (commandSuggestionsVisible.value && applyCommandSuggestion()) {
@@ -2323,11 +2436,14 @@ const handleSend = async () => {
   inputText.value = '';
   commandMenuDismissed.value = false;
   caretPosition.value = 0;
+  resetHistoryRecall();
   resetInputHeight();
   clearAttachments();
   references.value = [];
   flushPersistDraftState();
   focusComposerInputAtEnd();
+  // 排队补水：这一轮若被挂进队列，排队条要立刻跟上（防抖内合并多次发送）。
+  scheduleChatQueueRefresh(activeQueueSessionId.value);
 };
 
 const handleSendOrStop = async () => {

@@ -47,6 +47,7 @@ fn exercise_cloud(storage: Arc<dyn StorageBackend>) {
         last_seen_at: 100.0,
         created_at: 100.0,
         revoked: false,
+        interlink: None,
     };
     storage.upsert_cloud_device(&device).unwrap();
 
@@ -104,6 +105,7 @@ fn exercise_cloud(storage: Arc<dyn StorageBackend>) {
         last_seen_at: 250.0,
         created_at: 250.0,
         revoked: false,
+        interlink: None,
     };
     storage.upsert_cloud_device(&second).unwrap();
     let (rows, total) = storage.list_cloud_devices(Some(user), 0, 10).unwrap();

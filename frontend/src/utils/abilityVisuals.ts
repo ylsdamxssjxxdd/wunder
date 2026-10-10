@@ -57,6 +57,7 @@ const ABILITY_RULES: AbilityRule[] = [
     tone: 'search'
   },
   { keywords: ['browser_'], icon: 'fa-window-maximize', tone: 'search' },
+  { keywords: ['浏览器'], icon: 'fa-window-maximize', tone: 'search' },
   { keywords: ['a2a_observe', 'a2a observe', 'a2a观察'], icon: 'fa-glasses', tone: 'automation' },
   { keywords: ['a2a_wait', 'a2a wait', 'a2a等待'], icon: 'fa-clock', tone: 'automation' },
   { keywords: ['subagent_control', '子智能体控制'], icon: 'fa-diagram-project', tone: 'automation' },

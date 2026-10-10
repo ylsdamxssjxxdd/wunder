@@ -23,6 +23,8 @@ pub mod errors;
 pub mod external_links;
 pub mod external_workflows;
 pub mod gateway_ws;
+pub mod interlink;
+pub mod interlink_ws;
 pub mod onlyoffice;
 pub(crate) mod skill_fs;
 pub mod temp_dir;
@@ -59,6 +61,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .merge(doc2md::router())
         .merge(external_workflows::router())
         .merge(gateway_ws::router())
+        .merge(interlink::router())
+        .merge(interlink_ws::router())
         .merge(temp_dir::router())
         .merge(drawio::router())
         .merge(onlyoffice::router())

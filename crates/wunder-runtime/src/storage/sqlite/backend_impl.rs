@@ -2,8 +2,12 @@ use super::*;
 use crate::storage::{
     AgentDirectoryStore, AgentRuntimeStore, BenchmarkStore, BridgeStore, ChannelDirectoryStore,
     ChannelRuntimeStore, ChatSessionStore, CloudCallRecord, CloudDeviceLogRecord,
-    CloudDeviceRecord, CloudLogInsertResult, CloudStore, ConversationLogStore, CronStore,
-    GatewayStore, ListCloudDeviceLogsQuery, ListCloudRecordsQuery, LogStatsStore, MediaStore,
+    CloudDeviceInterlinkPatch, CloudDeviceRecord, CloudLogInsertResult, CloudStore,
+    ConversationLogStore, CronStore,
+    GatewayStore, InterlinkApprovalRecord, InterlinkAuditRecord, InterlinkChannelRecord,
+    InterlinkCommandRecord, InterlinkShadowRecord, InterlinkStore, ListCloudDeviceLogsQuery,
+    ListCloudRecordsQuery, ListInterlinkAuditQuery, ListInterlinkCommandsQuery, LogStatsStore,
+    MediaStore,
     MemoryRecordStore, MetaStore, MonitorStore, QuotaBalanceStore, RetentionStore,
     SessionGoalStore, SessionLockStore, SessionRunStore, StorageLifecycle, TerminalTranscriptStore,
     ThreadLogStore, UserAccountStore, UserRefreshTokenRecord, UserRefreshTokenStore,
@@ -408,6 +412,9 @@ impl AgentRuntimeStore for SqliteStorage {
     }
     fn promote_agent_task(&self, task_id: &str, now: f64) -> Result<bool> {
         self.promote_agent_task_impl(task_id, now)
+    }
+    fn reorder_agent_tasks(&self, task_ids: &[String], now: f64) -> Result<usize> {
+        self.reorder_agent_tasks_impl(task_ids, now)
     }
     fn update_agent_task_queue_payload(&self, task_id: &str, payload: &Value) -> Result<bool> {
         self.update_agent_task_queue_payload_impl(task_id, payload)
@@ -1732,6 +1739,120 @@ impl TerminalTranscriptStore for SqliteStorage {
         keep_chunks: i64,
     ) -> Result<()> {
         self.prune_terminal_transcript_impl(user_id, session_id, keep_chunks)
+    }
+}
+
+impl InterlinkStore for SqliteStorage {
+    fn update_cloud_device_interlink(
+        &self,
+        device_id: &str,
+        patch: &CloudDeviceInterlinkPatch,
+    ) -> Result<()> {
+        self.update_cloud_device_interlink_impl(device_id, patch)
+    }
+
+    fn upsert_interlink_channel(&self, record: &InterlinkChannelRecord) -> Result<()> {
+        self.upsert_interlink_channel_impl(record)
+    }
+    fn get_interlink_channel(&self, channel_id: &str) -> Result<Option<InterlinkChannelRecord>> {
+        self.get_interlink_channel_impl(channel_id)
+    }
+    fn close_interlink_channel(&self, channel_id: &str, closed_reason: &str) -> Result<()> {
+        self.close_interlink_channel_impl(channel_id, closed_reason)
+    }
+    fn list_interlink_channels(
+        &self,
+        user_id: Option<&str>,
+        offset: i64,
+        limit: i64,
+    ) -> Result<(Vec<InterlinkChannelRecord>, i64)> {
+        self.list_interlink_channels_impl(user_id, offset, limit)
+    }
+
+    fn upsert_interlink_shadow(&self, record: &InterlinkShadowRecord) -> Result<()> {
+        self.upsert_interlink_shadow_impl(record)
+    }
+    fn get_interlink_shadow(&self, device_id: &str) -> Result<Option<InterlinkShadowRecord>> {
+        self.get_interlink_shadow_impl(device_id)
+    }
+    fn get_interlink_shadow_revision(&self, device_id: &str) -> Result<i64> {
+        self.get_interlink_shadow_revision_impl(device_id)
+    }
+    fn delete_interlink_shadow(&self, device_id: &str) -> Result<()> {
+        self.delete_interlink_shadow_impl(device_id)
+    }
+
+    fn insert_interlink_command(&self, record: &InterlinkCommandRecord) -> Result<bool> {
+        self.insert_interlink_command_impl(record)
+    }
+    fn update_interlink_command_status(
+        &self,
+        command_id: &str,
+        status: &str,
+        acked_at: Option<f64>,
+        finished_at: Option<f64>,
+        error_code: Option<&str>,
+        error_summary: Option<&str>,
+    ) -> Result<()> {
+        self.update_interlink_command_status_impl(
+            command_id,
+            status,
+            acked_at,
+            finished_at,
+            error_code,
+            error_summary,
+        )
+    }
+    fn set_interlink_command_approval(
+        &self,
+        command_id: &str,
+        approval_state: &str,
+    ) -> Result<()> {
+        self.set_interlink_command_approval_impl(command_id, approval_state)
+    }
+    fn get_interlink_command(&self, command_id: &str) -> Result<Option<InterlinkCommandRecord>> {
+        self.get_interlink_command_impl(command_id)
+    }
+    fn list_interlink_commands(
+        &self,
+        query: ListInterlinkCommandsQuery<'_>,
+    ) -> Result<(Vec<InterlinkCommandRecord>, i64)> {
+        self.list_interlink_commands_impl(query)
+    }
+    fn cleanup_interlink_commands(&self, retention_days: u32) -> Result<u64> {
+        self.cleanup_interlink_commands_impl(retention_days)
+    }
+
+    fn insert_interlink_approval(&self, record: &InterlinkApprovalRecord) -> Result<()> {
+        self.insert_interlink_approval_impl(record)
+    }
+    fn decide_interlink_approval(
+        &self,
+        approval_id: &str,
+        state: &str,
+        decided_by: &str,
+        decided_at: f64,
+    ) -> Result<()> {
+        self.decide_interlink_approval_impl(approval_id, state, decided_by, decided_at)
+    }
+    fn get_interlink_approval(
+        &self,
+        approval_id: &str,
+    ) -> Result<Option<InterlinkApprovalRecord>> {
+        self.get_interlink_approval_impl(approval_id)
+    }
+
+    fn insert_interlink_audit(&self, record: &InterlinkAuditRecord) -> Result<()> {
+        self.insert_interlink_audit_impl(record)
+    }
+    fn list_interlink_audit(
+        &self,
+        query: ListInterlinkAuditQuery<'_>,
+    ) -> Result<(Vec<InterlinkAuditRecord>, i64)> {
+        self.list_interlink_audit_impl(query)
+    }
+    fn cleanup_interlink_audit(&self, retention_days: u32) -> Result<u64> {
+        self.cleanup_interlink_audit_impl(retention_days)
     }
 }
 

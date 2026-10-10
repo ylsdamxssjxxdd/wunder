@@ -26,6 +26,7 @@
     "test:chat-final-replay": "node scripts/run-regression-tests.mjs chat-final-replay-regression.test.ts",
     "test:chat-realtime-message-protection": "node scripts/run-regression-tests.mjs chat-realtime-message-protection-regression.test.ts",
     "test:chat-watchdog-reconcile": "node scripts/run-regression-tests.mjs chat-watchdog-reconcile-regression.test.ts",
+    "test:chat-queue-projection": "node scripts/run-regression-tests.mjs chat-queue-projection-regression.test.ts",
     "test:chat-runtime-reducer": "node scripts/run-regression-tests.mjs chat-runtime-reducer-regression.test.ts",
     "test:chat-runtime-shadow": "node scripts/run-regression-tests.mjs chat-runtime-shadow-regression.test.ts",
     "test:chat-runtime-render-adapter": "node scripts/run-regression-tests.mjs chat-runtime-render-adapter-regression.test.ts",

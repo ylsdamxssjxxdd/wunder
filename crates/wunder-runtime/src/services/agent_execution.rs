@@ -1,6 +1,7 @@
 //! Shared agent execution settings for interactive and scheduled requests.
 use crate::services::agent_abilities::resolve_agent_runtime_tool_names;
 use crate::services::llm::is_llm_model;
+use crate::tools::expand_browser_group_selection;
 use std::collections::HashSet;
 const TOOL_OVERRIDE_NONE: &str = "__no_tools__";
 
@@ -129,7 +130,7 @@ pub(crate) fn apply_tool_overrides(
             filtered.insert(mapped);
         }
     }
-    filtered
+    expand_browser_group_selection(filtered, &allowed)
 }
 
 pub(crate) fn resolve_override_name_with_allowed(

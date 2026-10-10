@@ -11,6 +11,7 @@ pub mod config;
 pub mod drawio_config;
 pub mod exec_policy;
 pub mod i18n;
+pub mod interlink;
 pub mod json_schema;
 pub mod llm_speed;
 pub mod onlyoffice_config;

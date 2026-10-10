@@ -5,7 +5,11 @@
     data-chat-measure
     :data-virtual-key="turn.key"
   >
-    <div class="messenger-turn-user" data-turn-slot="user">
+    <div
+      v-if="!isUserTurnOwnedByQueueStrip(turn.user.message)"
+      class="messenger-turn-user"
+      data-turn-slot="user"
+    >
       <MessengerAgentBubble
         :controller="controller"
         :item="turn.user"
@@ -27,6 +31,18 @@ import { ref } from 'vue';
 import MessengerAgentBubble from './MessengerAgentBubble.vue';
 import type { MessengerControllerContext } from '../controller/messengerControllerContext';
 import { MAX_OPEN_TURNS } from '@/components/chat/timelineGroupState';
+import { chatQueueState } from '@/stores/chatQueueState';
+
+// 排队中的用户轮次由输入区上方的排队条承载；只有排队条确实拿到这一条时才收起时间线里的
+// 气泡，避免排队接口不可用时两头都不显示。
+const PROJECTED_QUEUE_USER_ID = /^queue:(.+):user$/;
+const isUserTurnOwnedByQueueStrip = (message: Record<string, any> | undefined): boolean => {
+  if (String(message?.status || '').trim().toLowerCase() !== 'queued') return false;
+  const messageId = String(message?.message_id ?? message?.messageId ?? '').trim();
+  const queueId = PROJECTED_QUEUE_USER_ID.exec(messageId)?.[1] || '';
+  if (!queueId) return false;
+  return chatQueueState.items.some((item) => item.queueId === queueId);
+};
 
 /**
  * 单个用户轮次：用户气泡 + 助手全宽时间线。

@@ -307,6 +307,51 @@ fn catalog_can_expose_user_custom_skills_even_when_not_allowed() {
 }
 
 #[test]
+fn user_catalog_collapses_provider_browser_tools_into_one_entry() {
+    let dir = tempdir().expect("tempdir");
+    let db_path = dir.path().join("user-tools-browser-summary.db");
+    let storage: Arc<dyn StorageBackend> =
+        Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+    let browser_names = crate::tools::browser_tool_names();
+    assert!(
+        !browser_names.is_empty(),
+        "the browser provider must contribute a native tool surface"
+    );
+    let mut allowed: HashSet<String> = browser_names.into_iter().collect();
+    allowed.insert("执行命令".to_string());
+    let context = UserToolContext {
+        config: Config::default(),
+        skills: SkillRegistry::default(),
+        bindings: UserToolBindings::default(),
+        tool_access: None,
+        org_units: Vec::new(),
+    };
+
+    let summary = build_user_tools_summary("alice", &allowed, &context, true, storage.as_ref());
+    let names: Vec<&str> = summary
+        .builtin_tools
+        .iter()
+        .map(|spec| spec.name.as_str())
+        .collect();
+    assert_eq!(
+        names
+            .iter()
+            .filter(|name| **name == crate::tools::BROWSER_GROUP_NAME)
+            .count(),
+        1,
+        "the browser surface must read as exactly one user-facing entry: {names:?}"
+    );
+    assert!(
+        names.iter().all(|name| !name.starts_with("browser_")),
+        "provider tool names must stay out of the user catalog: {names:?}"
+    );
+    assert!(
+        names.contains(&"执行命令"),
+        "collapsing the browser surface must not drop other tools: {names:?}"
+    );
+}
+
+#[test]
 fn desktop_catalog_includes_all_builtin_skills_for_agent_settings() {
     let _guard = builtin_skills_env_lock()
         .lock()

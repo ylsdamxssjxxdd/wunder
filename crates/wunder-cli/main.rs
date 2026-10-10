@@ -50,7 +50,8 @@ use wunder_server::schemas::{AttachmentPayload, WunderRequest};
 use wunder_server::skills::{load_skills, SkillSpec};
 use wunder_server::storage::ChatSessionRecord;
 use wunder_server::tools::{
-    build_tool_roots, collect_available_tool_names, execute_tool, ToolContext,
+    build_tool_roots, collect_available_tool_names, execute_tool, is_browser_group_name,
+    ToolContext,
 };
 use wunder_server::user_tools::UserMcpServer;
 use zip::ZipArchive;
@@ -1829,6 +1830,7 @@ async fn handle_tool_list(runtime: &CliRuntime) -> Result<()> {
     let mut names: Vec<String> =
         collect_available_tool_names(&config, &skills_snapshot, Some(&bindings))
             .into_iter()
+            .filter(|name| !is_browser_group_name(name))
             .collect();
     names.sort();
     for name in names {

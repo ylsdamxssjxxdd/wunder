@@ -120,9 +120,6 @@ ENTRIES = [
     ("st_palette_tech", "科技蓝", "Tech blue"),
     ("st_font_size", "字体大小", "Font size"),
     ("st_font_size_note", "聊天内容的字体大小", "Font size for chat content"),
-    ("st_version_title", "当前版本", "Current version"),
-    ("st_version_latest", "已是最新版本", "You are on the latest version"),
-    ("st_version_number", "版本号", "Version"),
 
     # ---- runtime ----
     ("st_workspace_root", "工作区根目录", "Workspace root"),

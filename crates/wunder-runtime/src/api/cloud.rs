@@ -570,6 +570,7 @@ async fn register_device(
             last_seen_at: now,
             created_at: now,
             revoked: false,
+        interlink: None,
         },
     };
     let storage = state.storage.clone();

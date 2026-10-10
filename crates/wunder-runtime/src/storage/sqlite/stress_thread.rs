@@ -2,23 +2,95 @@
 //!
 //! Writes the same SQLite schema the runtime reads, but bypasses the per-event
 //! commit path on purpose: one bulk connection with relaxed journal settings
-//! and one transaction per user turn. Timestamps are simulated backwards from
-//! "now" so the generated thread looks like it happened in the recent past.
-//! Sampling lives in the shared, storage-agnostic `stress_model` module.
+//! and one transaction per user turn. Rows are buffered and flushed as
+//! multi-row `INSERT ... VALUES (?,?,...)` statements (800 rows per statement
+//! stays well under the 32766 bound-parameter limit of bundled SQLite), which
+//! is the difference between minutes and hours at the default 1000×1000 scale.
+//! Timestamps are simulated backwards from "now" so the generated thread looks
+//! like it happened in the recent past. Sampling lives in the shared,
+//! storage-agnostic `stress_model` module.
 
 use super::SqliteStorage;
 use crate::storage::stress_model::{
     committed_item_json, fill_template, plan_timeline, profile_hint, base_seed, build_answer_text,
     build_reasoning_text, build_tool_args, build_tool_result, sample_turn_plans,
-    StressThreadSpec, StressThreadStats, MAX_USER_ROUNDS,
+    StressThreadSpec, StressThreadStats,
 };
 use anyhow::{ensure, Result};
 use chrono::{Local, TimeZone};
-use rusqlite::{params, Connection, TransactionBehavior};
+use rusqlite::{params, params_from_iter, Connection, ToSql, Transaction, TransactionBehavior};
 use serde_json::{json, Value};
 use std::time::Duration;
 use uuid::Uuid;
 use wunder_core::storage_backend::StorageLifecycle;
+
+/// Rows per multi-row INSERT. 800 × 13 = 10400 parameters, well under the
+/// 32766 bind-parameter limit of bundled SQLite, and a comfortable payload
+/// size per statement.
+const BATCH_ROWS: usize = 800;
+
+/// A buffered parameter value for bulk inserts.
+enum P {
+    S(String),
+    I(i64),
+    F(f64),
+    N(Option<String>),
+}
+
+impl ToSql for P {
+    fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
+        match self {
+            P::S(v) => v.to_sql(),
+            P::I(v) => v.to_sql(),
+            P::F(v) => v.to_sql(),
+            P::N(None) => rusqlite::types::Null.to_sql(),
+            P::N(Some(v)) => v.to_sql(),
+        }
+    }
+}
+
+fn multirow_sql(table: &str, columns: &str, row_width: usize, rows: usize) -> String {
+    let mut sql = String::with_capacity(96 + rows * row_width * 4);
+    sql.push_str("INSERT INTO ");
+    sql.push_str(table);
+    sql.push('(');
+    sql.push_str(columns);
+    sql.push_str(") VALUES ");
+    for r in 0..rows {
+        if r > 0 {
+            sql.push(',');
+        }
+        sql.push('(');
+        for c in 0..row_width {
+            if c > 0 {
+                sql.push(',');
+            }
+            sql.push('?');
+        }
+        sql.push(')');
+    }
+    sql
+}
+
+const ITEM_COLUMNS: &str = "session_id,item_id,turn_id,root_turn_id,visibility,user_id,item_index,kind,status,payload,created_time,updated_time,created_seq";
+const CHANGE_COLUMNS: &str = "session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time";
+const TOOL_LOG_COLUMNS: &str = "user_id,session_id,tool,ok,error,args,data,timestamp,payload,created_time";
+
+fn flush_batch(
+    tx: &Transaction<'_>,
+    table: &str,
+    columns: &str,
+    row_width: usize,
+    rows: &mut Vec<Vec<P>>,
+) -> Result<()> {
+    if rows.is_empty() {
+        return Ok(());
+    }
+    let sql = multirow_sql(table, columns, row_width, rows.len());
+    tx.execute(&sql, params_from_iter(rows.iter().flatten()))?;
+    rows.clear();
+    Ok(())
+}
 
 impl SqliteStorage {
     /// Generate one complete synthetic thread in bulk. Progress is reported
@@ -95,6 +167,12 @@ impl SqliteStorage {
         let mut tool_calls_total: i64 = 0;
         let mut turn_rng = crate::storage::stress_model::Rng::new(0xC0FF_EE00 ^ seed);
 
+        // Buffered rows: item / change / tool_log batches are flushed inside
+        // the current turn transaction and whenever they reach BATCH_ROWS.
+        let mut item_rows: Vec<Vec<P>> = Vec::with_capacity(BATCH_ROWS);
+        let mut change_rows: Vec<Vec<P>> = Vec::with_capacity(BATCH_ROWS);
+        let mut tool_rows: Vec<Vec<P>> = Vec::with_capacity(BATCH_ROWS);
+
         for (offset, cost) in plan.costs.iter().enumerate() {
             let turn_index = offset as i64 + 1;
             clock += cost.gap_before_s;
@@ -128,24 +206,24 @@ impl SqliteStorage {
             // turn_upsert change row mirrors accept_thread_turn.
             seq += 1;
             if seq > plan.change_tail_cutoff {
-                tx.execute(
-                    "INSERT INTO thread_log_changes(session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time) VALUES(?,?,?,'turn_upsert',?,NULL,1,?,?)",
-                    params![
-                        session_id,
-                        seq,
-                        user_id,
-                        turn_id,
-                        serde_json::to_string(&json!({
-                            "turn_id": turn_id,
-                            "root_turn_id": turn_id,
-                            "trigger_kind": "user",
-                            "status": "queued",
-                            "user_round": turn_index,
-                            "client_message_id": client_message_id,
-                        }))?,
-                        turn_start,
-                    ],
-                )?;
+                change_rows.push(vec![
+                    P::S(session_id.to_string()),
+                    P::I(seq),
+                    P::S(user_id.to_string()),
+                    P::S("turn_upsert".into()),
+                    P::S(turn_id.clone()),
+                    P::N(None),
+                    P::I(1),
+                    P::S(serde_json::to_string(&json!({
+                        "turn_id": turn_id,
+                        "root_turn_id": turn_id,
+                        "trigger_kind": "user",
+                        "status": "queued",
+                        "user_round": turn_index,
+                        "client_message_id": client_message_id,
+                    }))?),
+                    P::F(turn_start),
+                ]);
             }
 
             // User bubble item.
@@ -160,46 +238,48 @@ impl SqliteStorage {
                 "item_id": user_item_id,
                 "status": "completed",
             }))?;
-            tx.execute(
-                "INSERT INTO thread_items(session_id,item_id,turn_id,root_turn_id,visibility,user_id,item_index,kind,status,payload,created_time,updated_time,created_seq) \
-                 VALUES(?,?,?,?,'user',?,0,'user_message','completed',?,?,?,?)",
-                params![
-                    session_id,
-                    user_item_id,
-                    turn_id,
-                    turn_id,
-                    user_id,
-                    user_payload,
-                    turn_start,
-                    turn_start,
-                    seq,
-                ],
-            )?;
+            item_rows.push(vec![
+                P::S(session_id.to_string()),
+                P::S(user_item_id.clone()),
+                P::S(turn_id.clone()),
+                P::S(turn_id.clone()),
+                P::S("user".into()),
+                P::S(user_id.to_string()),
+                P::I(0),
+                P::S("user_message".into()),
+                P::S("completed".into()),
+                P::S(user_payload.clone()),
+                P::F(turn_start),
+                P::F(turn_start),
+                P::I(seq),
+            ]);
             items_written += 1;
+            if item_rows.len() >= BATCH_ROWS {
+                flush_batch(&tx, "thread_items", ITEM_COLUMNS, 13, &mut item_rows)?;
+            }
             seq += 1;
             if seq > plan.change_tail_cutoff {
-                tx.execute(
-                    "INSERT INTO thread_log_changes(session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time) VALUES(?,?,?,'item_upsert',?,?,1,?,?)",
-                    params![
-                        session_id,
-                        seq,
-                        user_id,
-                        turn_id,
-                        user_item_id,
-                        committed_item_json(
-                            &user_item_id,
-                            0,
-                            "user_message",
-                            "completed",
-                            &user_payload,
-                            turn_start,
-                            turn_start,
-                            &turn_id,
-                            seq,
-                        )?,
+                change_rows.push(vec![
+                    P::S(session_id.to_string()),
+                    P::I(seq),
+                    P::S(user_id.to_string()),
+                    P::S("item_upsert".into()),
+                    P::S(turn_id.clone()),
+                    P::S(user_item_id.clone()),
+                    P::I(1),
+                    P::S(committed_item_json(
+                        &user_item_id,
+                        0,
+                        "user_message",
+                        "completed",
+                        &user_payload,
                         turn_start,
-                    ],
-                )?;
+                        turn_start,
+                        &turn_id,
+                        seq,
+                    )?),
+                    P::F(turn_start),
+                ]);
             }
 
             let mut item_index: i64 = 0;
@@ -266,65 +346,72 @@ impl SqliteStorage {
                     let payload_text = serde_json::to_string(&payload)?;
                     item_index += 1;
                     seq += 1;
-                    tx.execute(
-                        "INSERT INTO thread_items(session_id,item_id,turn_id,root_turn_id,visibility,user_id,item_index,kind,status,payload,created_time,updated_time,created_seq) \
-                         VALUES(?,?,?,?,'user',?,?, 'tool_call',?,?,?,?,?)",
-                        params![
-                            session_id,
-                            item_id,
-                            turn_id,
-                            turn_id,
-                            user_id,
-                            item_index,
-                            if failed { "failed" } else { "completed" },
-                            payload_text,
-                            tool_done,
-                            tool_done,
-                            seq,
-                        ],
-                    )?;
+                    item_rows.push(vec![
+                        P::S(session_id.to_string()),
+                        P::S(item_id.clone()),
+                        P::S(turn_id.clone()),
+                        P::S(turn_id.clone()),
+                        P::S("user".into()),
+                        P::S(user_id.to_string()),
+                        P::I(item_index),
+                        P::S("tool_call".into()),
+                        P::S(if failed { "failed".into() } else { "completed".to_string() }),
+                        P::S(payload_text.clone()),
+                        P::F(tool_done),
+                        P::F(tool_done),
+                        P::I(seq),
+                    ]);
                     items_written += 1;
                     tool_calls_total += 1;
+                    if item_rows.len() >= BATCH_ROWS {
+                        flush_batch(&tx, "thread_items", ITEM_COLUMNS, 13, &mut item_rows)?;
+                    }
                     if seq > plan.change_tail_cutoff {
-                        tx.execute(
-                            "INSERT INTO thread_log_changes(session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time) VALUES(?,?,?,'item_upsert',?,?,1,?,?)",
-                            params![
-                                session_id,
-                                seq,
-                                user_id,
-                                turn_id,
-                                item_id,
-                                committed_item_json(
-                                    &item_id,
-                                    item_index,
-                                    "tool_call",
-                                    if failed { "failed" } else { "completed" },
-                                    &payload_text,
-                                    tool_done,
-                                    tool_done,
-                                    &turn_id,
-                                    seq,
-                                )?,
+                        change_rows.push(vec![
+                            P::S(session_id.to_string()),
+                            P::I(seq),
+                            P::S(user_id.to_string()),
+                            P::S("item_upsert".into()),
+                            P::S(turn_id.clone()),
+                            P::S(item_id.clone()),
+                            P::I(1),
+                            P::S(committed_item_json(
+                                &item_id,
+                                item_index,
+                                "tool_call",
+                                if failed { "failed" } else { "completed" },
+                                &payload_text,
                                 tool_done,
-                            ],
-                        )?;
+                                tool_done,
+                                &turn_id,
+                                seq,
+                            )?),
+                            P::F(tool_done),
+                        ]);
                     }
                     // tool_logs mirrors append_tool_log's payload column.
-                    tx.execute(
-                        "INSERT INTO tool_logs(user_id,session_id,tool,ok,error,args,data,timestamp,payload,created_time) VALUES(?,?,?,?,?,?,?,?,?,?)",
-                        params![
-                            user_id,
-                            session_id,
-                            profile.name,
-                            if failed { 0 } else { 1 },
-                            error,
-                            serde_json::to_string(&args)?,
-                            serde_json::to_string(&payload["data"])?,
-                            Local.timestamp_millis_opt((tool_done * 1000.0) as i64).single().map(|t| t.to_rfc3339()).unwrap_or_default(),
-                            serde_json::to_string(&payload)?,
-                            tool_done,
-                        ],
-                    )?;
+                    tool_rows.push(vec![
+                        P::S(user_id.to_string()),
+                        P::S(session_id.to_string()),
+                        P::S(profile.name.to_string()),
+                        P::I(if failed { 0 } else { 1 }),
+                        P::S(error),
+                        P::S(serde_json::to_string(&args)?),
+                        P::S(serde_json::to_string(&payload["data"])?),
+                        P::S(Local
+                            .timestamp_millis_opt((tool_done * 1000.0) as i64)
+                            .single()
+                            .map(|t| t.to_rfc3339())
+                            .unwrap_or_default()),
+                        P::S(serde_json::to_string(&payload)?),
+                        P::F(tool_done),
+                    ]);
+                    if change_rows.len() >= BATCH_ROWS {
+                        flush_batch(&tx, "thread_log_changes", CHANGE_COLUMNS, 9, &mut change_rows)?;
+                    }
+                    if tool_rows.len() >= BATCH_ROWS {
+                        flush_batch(&tx, "tool_logs", TOOL_LOG_COLUMNS, 10, &mut tool_rows)?;
+                    }
                 }
 
                 // Assistant message closes the round.
@@ -392,46 +479,47 @@ impl SqliteStorage {
                 item_index += 1;
                 seq += 1;
                 let item_id = format!("{turn_id}:text-{model_round}");
-                tx.execute(
-                    "INSERT INTO thread_items(session_id,item_id,turn_id,root_turn_id,visibility,user_id,item_index,kind,status,payload,created_time,updated_time,created_seq) \
-                     VALUES(?,?,?,?,'user',?,?,'assistant_message','completed',?,?,?,?)",
-                    params![
-                        session_id,
-                        item_id,
-                        turn_id,
-                        turn_id,
-                        user_id,
-                        item_index,
-                        payload,
-                        done_at,
-                        done_at,
-                        seq,
-                    ],
-                )?;
+                item_rows.push(vec![
+                    P::S(session_id.to_string()),
+                    P::S(item_id.clone()),
+                    P::S(turn_id.clone()),
+                    P::S(turn_id.clone()),
+                    P::S("user".into()),
+                    P::S(user_id.to_string()),
+                    P::I(item_index),
+                    P::S("assistant_message".into()),
+                    P::S("completed".into()),
+                    P::S(payload.clone()),
+                    P::F(done_at),
+                    P::F(done_at),
+                    P::I(seq),
+                ]);
                 items_written += 1;
+                if item_rows.len() >= BATCH_ROWS {
+                    flush_batch(&tx, "thread_items", ITEM_COLUMNS, 13, &mut item_rows)?;
+                }
                 if seq > plan.change_tail_cutoff {
-                    tx.execute(
-                        "INSERT INTO thread_log_changes(session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time) VALUES(?,?,?,'item_upsert',?,?,1,?,?)",
-                        params![
-                            session_id,
-                            seq,
-                            user_id,
-                            turn_id,
-                            item_id,
-                            committed_item_json(
-                                &item_id,
-                                item_index,
-                                "assistant_message",
-                                "completed",
-                                &payload,
-                                done_at,
-                                done_at,
-                                &turn_id,
-                                seq,
-                            )?,
+                    change_rows.push(vec![
+                        P::S(session_id.to_string()),
+                        P::I(seq),
+                        P::S(user_id.to_string()),
+                        P::S("item_upsert".into()),
+                        P::S(turn_id.clone()),
+                        P::S(item_id.clone()),
+                        P::I(1),
+                        P::S(committed_item_json(
+                            &item_id,
+                            item_index,
+                            "assistant_message",
+                            "completed",
+                            &payload,
                             done_at,
-                        ],
-                    )?;
+                            done_at,
+                            &turn_id,
+                            seq,
+                        )?),
+                        P::F(done_at),
+                    ]);
                 }
             }
 
@@ -439,25 +527,27 @@ impl SqliteStorage {
             let turn_end = turn_clock;
             seq += 1;
             if seq > plan.change_tail_cutoff {
-                tx.execute(
-                    "INSERT INTO thread_log_changes(session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time) VALUES(?,?,?,'turn_upsert',?,NULL,?, ?,?)",
-                    params![
-                        session_id,
-                        seq,
-                        user_id,
-                        turn_id,
-                        seq,
-                        serde_json::to_string(&json!({
-                            "turn_id": turn_id,
-                            "status": "completed",
-                            "root_turn_id": turn_id,
-                            "trigger_kind": "user",
-                            "user_round": turn_index,
-                        }))?,
-                        turn_end,
-                    ],
-                )?;
+                change_rows.push(vec![
+                    P::S(session_id.to_string()),
+                    P::I(seq),
+                    P::S(user_id.to_string()),
+                    P::S("turn_upsert".into()),
+                    P::S(turn_id.clone()),
+                    P::N(None),
+                    P::I(seq),
+                    P::S(serde_json::to_string(&json!({
+                        "turn_id": turn_id,
+                        "status": "completed",
+                        "root_turn_id": turn_id,
+                        "trigger_kind": "user",
+                        "user_round": turn_index,
+                    }))?),
+                    P::F(turn_end),
+                ]);
             }
+            flush_batch(&tx, "thread_items", ITEM_COLUMNS, 13, &mut item_rows)?;
+            flush_batch(&tx, "thread_log_changes", CHANGE_COLUMNS, 9, &mut change_rows)?;
+            flush_batch(&tx, "tool_logs", TOOL_LOG_COLUMNS, 10, &mut tool_rows)?;
             tx.execute(
                 "UPDATE thread_turns SET updated_time=? WHERE session_id=? AND turn_id=?",
                 params![turn_end, session_id, turn_id],

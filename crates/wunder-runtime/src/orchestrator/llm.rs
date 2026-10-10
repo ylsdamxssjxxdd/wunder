@@ -617,8 +617,10 @@ impl Orchestrator {
             let turn = crate::services::virtual_llm::load_turn_for_round(
                 app_config,
                 &effective_config,
+                session_id,
                 round_info.user_round,
                 round_info.model_round,
+                tools,
             )
             .await
             .map_err(|err| {
@@ -812,7 +814,11 @@ impl Orchestrator {
                 prefill_duration_s,
                 decode_duration_s,
             );
-            let output = OutputDiagnostics::new(&effective_config, None, &usage);
+            let output = OutputDiagnostics::new(
+                &effective_config,
+                virtual_turn.finish_reason.clone(),
+                &usage,
+            );
             if emit_events {
                 let mut output_payload = json!({
                     "content": content,
@@ -832,6 +838,9 @@ impl Orchestrator {
                     }
                     round_info.insert_into(map);
                     round_speed.insert_into_map(map);
+                    // Same diagnostics block as real provider responses so the
+                    // persisted record shape stays identical.
+                    output.insert_into(&mut output_payload);
                 }
                 emitter.emit("llm_output", output_payload).await;
                 let mut usage_payload = json!({

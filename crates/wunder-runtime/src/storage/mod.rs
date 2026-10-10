@@ -18,7 +18,7 @@ mod records;
 #[cfg(test)]
 mod refresh_token_tests;
 pub(crate) mod stress_model;
-#[cfg(any(feature = "sqlite-storage", test))]
+#[cfg(any(feature = "sqlite-storage", feature = "postgres-storage", test))]
 mod session_cleanup;
 #[cfg(any(feature = "sqlite-storage", test))]
 mod sqlite;

@@ -164,6 +164,20 @@ impl NativeDesktop {
                     }
                 })
                 .collect::<Vec<_>>();
+            // provider 的 browser_* 成员只供模型调用；本地清单与网页版同口径，
+            // 整组浏览器能力只保留一条聚合条目。
+            if records
+                .iter()
+                .any(|record| tools::is_browser_tool_name(&record.name))
+            {
+                records.retain(|record| !tools::is_browser_tool_name(&record.name));
+                let summary = tools::browser_tool_summary_spec("zh-CN");
+                records.push(ToolRecord {
+                    name: summary.name,
+                    description: summary.description,
+                    category: "内置工具".into(),
+                });
+            }
             // 提示词工具规格不包含技能本体（技能经 skill_call 调度），这里与
             // 网页版工具目录对齐：把对当前用户开放的技能以"技能"分类补入，
             // 让设置页的工具区能看到并勾选技能。

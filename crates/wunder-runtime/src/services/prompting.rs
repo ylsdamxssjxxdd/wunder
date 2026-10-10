@@ -13,7 +13,8 @@ use crate::skills::{SkillRegistry, SkillSpec};
 use crate::storage::USER_PRIVATE_CONTAINER_ID;
 use crate::tools::{
     builtin_aliases, collect_available_tool_names, collect_prompt_tool_specs,
-    compact_tool_specs_for_model, render_prompt_tool_spec, resolve_tool_name,
+    compact_tool_specs_for_model, expand_browser_group_selection, render_prompt_tool_spec,
+    resolve_tool_name,
 };
 use crate::user_tools::UserToolBindings;
 use crate::workspace::WorkspaceManager;
@@ -337,10 +338,11 @@ impl PromptComposer {
             return HashSet::new();
         }
         let available = collect_available_tool_names(config, skills, user_tool_bindings);
-        selected
+        let selected: HashSet<String> = selected
             .into_iter()
             .filter(|name| available.contains(name))
-            .collect::<HashSet<_>>()
+            .collect();
+        expand_browser_group_selection(selected, &available)
     }
 
     fn get_cached_prompt(&self, key: &str, now: f64) -> Option<String> {
