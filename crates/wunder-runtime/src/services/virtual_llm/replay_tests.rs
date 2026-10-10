@@ -85,7 +85,7 @@ async fn missing_or_disabled_logs_fall_back_to_random_simulation() {
         ..Default::default()
     };
     let mut config = Config::default();
-    let turn = load_turn_for_round(config.clone(), &model, "session-a", Some(1), Some(1), None)
+    let turn = load_turn_for_round(config.clone(), &model, "session-a", Some(1), Some(1), None, true)
         .await
         .expect("missing log falls back to random simulation");
     assert_eq!(turn.source_log_id, RANDOM_REPLAY_LOG_ID);
@@ -103,7 +103,7 @@ async fn missing_or_disabled_logs_fall_back_to_random_simulation() {
             size_bytes: 0,
             uploaded_at: String::new(),
         });
-    let turn = load_turn_for_round(config, &model, "session-a", Some(1), Some(1), None)
+    let turn = load_turn_for_round(config, &model, "session-a", Some(1), Some(1), None, true)
         .await
         .expect("disabled log falls back to random simulation");
     assert_eq!(turn.source_log_id, RANDOM_REPLAY_LOG_ID);
@@ -111,7 +111,7 @@ async fn missing_or_disabled_logs_fall_back_to_random_simulation() {
 
 #[tokio::test]
 async fn stream_emits_reasoning_before_content_and_propagates_cancellation() {
-    let mut turn = random_sim::build_turn("session-a", 1, 1, 1, &[]);
+    let mut turn = random_sim::build_turn("session-a", 1, 1, 1, &[], None);
     turn.content = "A".into();
     turn.reasoning = "B".into();
     let mut deltas = Vec::new();
@@ -144,7 +144,7 @@ async fn stream_emits_reasoning_before_content_and_propagates_cancellation() {
 
 #[tokio::test]
 async fn simulation_preserves_utf8_and_nonstream_generation_still_takes_time() {
-    let mut turn = random_sim::build_turn("session-a", 1, 1, 1, &[]);
+    let mut turn = random_sim::build_turn("session-a", 1, 1, 1, &[], None);
     assert!(!turn.reasoning.trim().is_empty());
     turn.reasoning = "字🙂".repeat(5);
     turn.content = "abcd".repeat(5);

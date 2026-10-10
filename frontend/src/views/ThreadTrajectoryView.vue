@@ -1,1216 +1,1293 @@
 <template>
-  <div class="thread-trajectory">
-    <div class="thread-trajectory-toolbar" role="toolbar" :aria-label="t('messenger.trajectory.title')">
-      <div class="thread-trajectory-toolbar-inner">
-        <div class="thread-trajectory-toolbar-head">
-          <button
-            class="tt-icon-btn"
-            type="button"
-            :title="t('messenger.trajectory.back')"
-            :aria-label="t('messenger.trajectory.back')"
-            @click="goBack"
-          >
-            <i class="fa-solid fa-arrow-left" aria-hidden="true"></i>
-          </button>
-          <span class="thread-trajectory-title">{{ t('messenger.trajectory.title') }}</span>
-          <span v-if="sessionId" class="thread-trajectory-session" :title="sessionId">{{ sessionId }}</span>
-        </div>
-        <div class="thread-trajectory-toolbar-actions">
-          <div class="tt-switch" role="group">
-            <button
-              class="tt-switch-btn"
-              :class="{ 'is-active': !durationMode }"
-              type="button"
-              @click="durationMode = false"
-            >
-              {{ t('messenger.trajectory.toolbar.sequence') }}
-            </button>
-            <button
-              class="tt-switch-btn"
-              :class="{ 'is-active': durationMode }"
-              type="button"
-              @click="durationMode = true"
-            >
-              {{ t('messenger.trajectory.toolbar.duration') }}
-            </button>
-          </div>
-          <button class="tt-text-btn" type="button" @click="toggleAllTurns">
-            {{ allTurnsCollapsed ? t('messenger.trajectory.toolbar.expandTurns') : t('messenger.trajectory.toolbar.collapseTurns') }}
-          </button>
-          <button class="tt-text-btn" type="button" @click="toggleAllCalls">
-            {{ collapseCalls ? t('messenger.trajectory.toolbar.expandCalls') : t('messenger.trajectory.toolbar.collapseCalls') }}
-          </button>
-          <label class="tt-search">
-            <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
-            <input
-              v-model="searchQuery"
-              type="search"
-              :placeholder="t('messenger.trajectory.toolbar.search')"
-            />
-          </label>
-        </div>
+  <div class="tt-root">
+    <header class="tt-toolbar">
+      <button
+        class="tt-icon-button"
+        type="button"
+        :title="t('messenger.trajectory.back')"
+        :aria-label="t('messenger.trajectory.back')"
+        @click="goBack"
+      >
+        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+          <path d="M10 3.5 5.5 8l4.5 4.5" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+      </button>
+      <button
+        class="tt-toggle"
+        type="button"
+        :class="{ 'tt-toggle-active': showDuration }"
+        :aria-pressed="showDuration"
+        @click="showDuration = !showDuration"
+      >
+        <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+          <circle cx="8" cy="8" r="5.25" fill="none" stroke="currentColor" stroke-width="1.25" />
+          <path d="M8 4.75V8l2.25 1.5" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" />
+        </svg>
+        <span>{{ t('messenger.trajectory.duration') }}</span>
+      </button>
+      <button
+        class="tt-toggle"
+        type="button"
+        :class="{ 'tt-toggle-active': showTurns }"
+        :aria-pressed="showTurns"
+        @click="showTurns = !showTurns"
+      >
+        <span class="tt-toggle-glyph">⊞</span>
+        <span>{{ t('messenger.trajectory.turns') }}</span>
+      </button>
+      <button
+        class="tt-toggle"
+        type="button"
+        :class="{ 'tt-toggle-active': showCalls }"
+        :aria-pressed="showCalls"
+        @click="showCalls = !showCalls"
+      >
+        <span class="tt-toggle-glyph">⊟</span>
+        <span>{{ t('messenger.trajectory.calls') }}</span>
+      </button>
+      <div class="tt-toolbar-spacer" />
+      <div class="tt-search">
+        <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+          <circle cx="7" cy="7" r="4.4" fill="none" stroke="currentColor" stroke-width="1.25" />
+          <path d="m10.4 10.4 3 3" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" />
+        </svg>
+        <input
+          v-model="searchQuery"
+          class="tt-search-input"
+          type="text"
+          :placeholder="t('messenger.trajectory.searchTrajectory')"
+          spellcheck="false"
+        >
       </div>
-    </div>
+    </header>
 
-    <div class="thread-trajectory-timeline">
-      <div class="tt-timeline-labels">
-        <span v-for="lane in TIMELINE_LANES" :key="lane.labelKey" :style="{ top: `${lane.top}px` }">
-          {{ t(lane.labelKey) }}
+    <div
+      v-if="timeline"
+      ref="timelineEl"
+      class="tt-timeline"
+      :class="{ 'tt-panning': panning, 'tt-dragging': dragging }"
+      @wheel.prevent="onTimelineWheel"
+      @contextmenu.prevent
+      @pointerdown="onTimelinePointerDown"
+      @pointermove="onTimelinePointerMove"
+      @pointerup="onTimelinePointerUp"
+      @pointerleave="onTimelineLeave"
+      @dblclick="clearSelection"
+    >
+      <div class="tt-axis">
+        <span
+          v-for="tick in timelineTicks"
+          :key="tick.value"
+          class="tt-axis-tick"
+          :style="{ left: `${tick.x}px` }"
+        >{{ tick.label }}</span>
+      </div>
+      <div ref="trackEl" class="tt-track">
+        <span class="tt-lane-label tt-lane-0">{{ t('messenger.trajectory.laneInput') }}</span>
+        <span class="tt-lane-label tt-lane-1">{{ t('messenger.trajectory.laneModel') }}</span>
+        <span class="tt-lane-label tt-lane-2">{{ t('messenger.trajectory.laneTool') }}</span>
+        <span
+          v-for="boundary in projectedBoundaries"
+          :key="`b${boundary.turn}`"
+          class="tt-turn-boundary"
+          :style="{ left: `${boundary.x}px` }"
+        />
+        <span v-if="hoverX !== null" class="tt-hoverline" :style="{ left: `${hoverX}px` }" />
+        <span
+          v-for="span in projectedSpans"
+          :key="span.key"
+          class="tt-span"
+          :class="spanClasses(span)"
+          :style="spanStyle(span)"
+          @pointerdown.stop
+          @pointerenter="onSpanEnter(span, $event)"
+          @pointerleave="onSpanLeave"
+          @click.stop="selectIndex(span.model.index)"
+        />
+        <span
+          v-if="selection"
+          class="tt-selection"
+          :style="selectionStyle"
+        >
+          <span class="tt-selection-edge tt-selection-edge-start" />
+          <span class="tt-selection-edge tt-selection-edge-end" />
         </span>
       </div>
       <div
-        ref="trackRef"
-        class="tt-timeline-track"
-        @pointerdown="onTrackPointerDown"
-        @pointermove="onTrackPointerMove"
-        @pointerleave="onTrackPointerLeave"
-        @dblclick="clearSelection"
+        v-if="tooltip.visible"
+        class="tt-tooltip"
+        :style="{ left: `${tooltip.x}px`, top: `${tooltip.y}px` }"
       >
-        <div class="tt-timeline-lanes">
-          <span
-            v-for="span in timelineSpans"
-            :key="span.recordId"
-            class="tt-timeline-span"
-            :class="spanClasses(span)"
-            :style="spanStyle(span)"
-            :title="spanTooltip(span)"
-            @click.stop="focusSpan(span)"
-          ></span>
-        </div>
-        <div class="tt-timeline-boundaries">
-          <span
-            v-for="boundary in timelineBoundaries"
-            :key="boundary.turnKey"
-            class="tt-timeline-boundary"
-            :style="{ left: `${boundary.left}%` }"
-          ></span>
-        </div>
-        <div v-if="hoverLine !== null" class="tt-timeline-hoverline" :style="{ left: `${hoverLine}%` }"></div>
+        <div v-for="(line, i) in tooltip.lines" :key="i" class="tt-tooltip-line">{{ line }}</div>
       </div>
     </div>
 
-    <div class="thread-trajectory-body">
-      <div class="thread-trajectory-ledger">
-        <div v-if="loading" class="thread-trajectory-state">{{ t('common.loading') }}</div>
-        <div v-else-if="loadError" class="thread-trajectory-state is-error">{{ loadError }}</div>
-        <div v-else-if="!visibleTurns.length" class="thread-trajectory-state">
-          {{ t('messenger.trajectory.empty') }}
+    <div class="tt-body" :class="{ 'tt-has-details': selectedCell }">
+      <div
+        ref="ledgerEl"
+        class="tt-ledger"
+        @scroll.passive="onLedgerScroll"
+        @pointerdown.self="clearSelection"
+      >
+        <div class="tt-ledger-canvas" :style="{ height: `${ledgerHeight}px` }">
+          <table
+            class="tt-table"
+            :style="{ transform: `translateY(${windowTopPx}px)` }"
+          >
+            <colgroup>
+              <col class="tt-col-event">
+              <col>
+            </colgroup>
+            <tbody>
+              <tr
+                v-for="row in windowRows"
+                :key="row.key"
+                class="tt-row"
+                :class="rowClasses(row.record)"
+                :data-timeline-focus="focusAttr(row.record)"
+                :data-record-index="row.record.cell.index"
+                @click="selectIndex(row.record.cell.index)"
+                @dblclick.stop="onRowDoubleClick(row.record)"
+              >
+                <td class="tt-event-cell">
+                  <button
+                    v-if="requestDotFor(row.record)"
+                    class="tt-request-dot"
+                    type="button"
+                    :style="{ left: `${requestDotFor(row.record)!.left}px` }"
+                    :title="t('messenger.trajectory.requestLabel', { request: requestDotFor(row.record)!.request.number })"
+                    @click.stop="selectIndex(requestDotFor(row.record)!.request.assistantIndex)"
+                  >
+                    <span class="tt-request-dot-label">
+                      {{ t('messenger.trajectory.requestLabel', { request: requestDotFor(row.record)!.request.number }) }}
+                    </span>
+                  </button>
+                  <span v-if="row.record.turnStart && row.record.turn !== null" class="tt-turn-label">
+                    {{ t('messenger.trajectory.turnLabel', { turn: row.record.turn }) }}
+                  </span>
+                </td>
+                <td class="tt-content-cell">
+                  <template v-if="row.record.collapsedSummary">
+                    <div class="tt-collapsed-summary" :class="`tt-collapsed-${row.record.collapsedSummaryKind}`">
+                      {{ row.record.collapsedSummary }}
+                    </div>
+                  </template>
+                  <template v-else>
+                    <div class="tt-kind-slot">
+                      <span class="tt-kind-tag" :class="`tt-kind-${row.record.cell.kind}`">
+                        {{ kindLabel(row.record.cell.kind) }}
+                      </span>
+                    </div>
+                    <div class="tt-record-content">
+                      <template v-if="row.record.cell.kind === 'tool' || row.record.cell.kind === 'subtool'">
+                        <span class="tt-tool-name">{{ row.record.cell.text }}</span>
+                        <span v-if="argsPreview(row.record.cell)" class="tt-tool-args">{{ argsPreview(row.record.cell) }}</span>
+                        <span v-if="row.record.cell.resultPreviewMarkdown" class="tt-tool-result">
+                          <span class="tt-tool-result-arrow">→</span>{{ row.record.cell.resultPreviewMarkdown }}
+                        </span>
+                        <span v-if="row.record.cell.isError" class="tt-state-chip tt-state-error">
+                          {{ t('messenger.trajectory.stateFailed') }}
+                        </span>
+                      </template>
+                      <template v-else-if="row.record.cell.toolCallOnly">
+                        <span class="tt-record-empty">{{ t('messenger.trajectory.toolCallsOnly') }}</span>
+                      </template>
+                      <template v-else-if="row.record.cell.text">
+                        <span class="tt-record-text">{{ row.record.cell.text }}</span>
+                      </template>
+                      <template v-else>
+                        <span class="tt-record-empty">{{ t('messenger.trajectory.noContent') }}</span>
+                      </template>
+                    </div>
+                  </template>
+                </td>
+              </tr>
+            </tbody>
+          </table>
         </div>
-        <div v-else class="tt-turns">
-          <section v-for="turn in visibleTurns" :key="turn.key" class="tt-turn">
-            <header class="tt-turn-header">
-              <div class="tt-turn-header-inner">
-                <button class="tt-turn-title" type="button" @click="toggleTurn(turn.key)">
-                  <i
-                    :class="turn.collapsed ? 'fa-solid fa-caret-right' : 'fa-solid fa-caret-down'"
-                    aria-hidden="true"
-                  ></i>
-                  <span>{{ turn.label }}</span>
-                </button>
-                <div class="tt-turn-columns">
-                  <span class="tt-turn-column">{{ formatNumber(turn.usage.input) }}</span>
-                  <span class="tt-turn-column">{{ formatNumber(turn.usage.output) }}</span>
-                  <span class="tt-turn-column">{{ formatNumber(turn.usage.reasoning) }}</span>
-                  <span class="tt-turn-column">{{ formatSeconds(turn.timeSeconds) }}</span>
-                </div>
-              </div>
-            </header>
-            <div v-if="!turn.collapsed" class="tt-turn-body">
-              <template v-for="group in turn.groups" :key="group.key">
-                <div class="tt-group-header">
-                  <span class="tt-group-title">{{ group.title }}</span>
-                  <span v-if="group.description" class="tt-group-desc">{{ group.description }}</span>
-                </div>
-                <div
-                  v-for="record in group.records"
-                  :key="record.recordId"
-                  class="tt-cell"
-                  :class="recordClasses(record)"
-                  @click="selectRecord(record.recordId)"
-                >
-                  <span class="tt-cell-index">#{{ record.index }}</span>
-                  <span class="tt-cell-tag-slot">
-                    <span class="tt-cell-tag" :class="`is-${record.kind}`">
-                      <i :class="kindIcon(record.kind)" aria-hidden="true"></i>
-                      <span>{{ t(recordLabelKey(record)) }}</span>
-                    </span>
-                  </span>
-                  <span class="tt-cell-body">
-                    <span class="tt-cell-text" :class="{ 'is-error': record.isError }">
-                      {{ record.text || t('messenger.trajectory.emptyValue') }}
-                    </span>
-                    <span v-if="record.metaChips.length" class="tt-cell-chips">
-                      <span v-for="chip in record.metaChips" :key="chip" class="tt-cell-chip">{{ chip }}</span>
-                    </span>
-                    <span v-if="record.resultPreview" class="tt-cell-result" :title="record.resultPreview">
-                      {{ record.resultPreview }}
-                    </span>
-                  </span>
-                  <span class="tt-cell-trailing">
-                    <template v-if="record.kind === 'message'">
-                      <span class="tt-cell-metric">{{ formatNumber(record.usage ? record.usage.input : 0) }}</span>
-                      <span class="tt-cell-metric">{{ formatNumber(record.usage ? record.usage.output : 0) }}</span>
-                      <span class="tt-cell-metric">{{ formatNumber(record.usage ? record.usage.reasoning : 0) }}</span>
-                    </template>
-                    <span class="tt-cell-time">{{ formatSeconds(record.timeSeconds) }}</span>
-                  </span>
-                </div>
-                <div v-if="collapseCalls && group.toolCount > 0" class="tt-cell-collapsed">
-                  {{ t('messenger.trajectory.collapsed.callsSummary', { count: group.toolCount }) }}
-                  <template v-if="group.description"> · {{ group.description }}</template>
-                </div>
-              </template>
-            </div>
-          </section>
+        <div v-if="records.length === 0" class="tt-empty">
+          {{ loadError ? t('messenger.trajectory.loadFailed') : t('messenger.trajectory.empty') }}
         </div>
       </div>
 
-      <aside v-if="selectedRecord" class="thread-trajectory-inspector" :style="{ width: `${INSPECTOR_WIDTH}px` }">
-        <div class="tt-inspector-tabs">
-          <button
-            v-for="tab in inspectorTabs"
-            :key="tab.key"
-            class="tt-inspector-tab"
-            :class="{ 'is-active': activeTab === tab.key }"
-            type="button"
-            @click="activeTab = tab.key"
-          >
-            {{ t(tab.labelKey) }}
-          </button>
-          <span class="tt-inspector-spacer"></span>
-          <button class="tt-icon-btn" type="button" :title="t('messenger.trajectory.inspector.close')" @click="clearSelection">
-            <i class="fa-solid fa-xmark" aria-hidden="true"></i>
-          </button>
-        </div>
-        <div class="tt-inspector-body">
-          <template v-if="activeTab === 'overview'">
-            <dl class="tt-inspector-list">
-              <div class="tt-inspector-row">
-                <dt class="tt-inspector-label">{{ t('messenger.trajectory.details.status') }}</dt>
-                <dd class="tt-inspector-value" :class="{ 'is-error': selectedRecord.isError }">{{ statusText(selectedRecord.status) }}</dd>
-              </div>
-              <template v-if="selectedRecord.kind === 'message'">
-                <div class="tt-inspector-row">
-                  <dt class="tt-inspector-label">{{ t('messenger.trajectory.usage.tokens') }}</dt>
-                  <dd class="tt-inspector-value">{{ tokenUnit(selectedRecord.usage ? selectedRecord.usage.output : null) }}</dd>
+      <template v-if="selectedCell && selectedRecord">
+        <div class="tt-resize-handle" @pointerdown="startResize" @dblclick="detailsWidth = null" />
+        <aside class="tt-details" :style="detailsStyle">
+          <div class="tt-details-header">
+            <span class="tt-kind-tag" :class="`tt-kind-${selectedCell.kind}`">
+              {{ kindLabel(selectedCell.kind) }}
+            </span>
+            <span class="tt-details-location">{{ detailsLocation }}</span>
+            <button
+              class="tt-details-close"
+              type="button"
+              :title="t('messenger.trajectory.closeDetails')"
+              @click="clearSelection"
+            >
+              <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+                <path d="m4 4 8 8m0-8-8 8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
+              </svg>
+            </button>
+          </div>
+          <div class="tt-detail-tabs">
+            <button
+              v-for="tab in detailTabs"
+              :key="tab"
+              class="tt-detail-tab"
+              :class="{ 'tt-detail-tab-active': activeTab === tab }"
+              type="button"
+              @click="activeTab = tab"
+            >{{ tab }}</button>
+          </div>
+          <div class="tt-detail-body">
+            <!-- 概述 -->
+            <div v-if="activeTab === overviewTab" class="tt-detail-body-summary">
+              <dl class="tt-overview">
+                <div class="tt-overview-row">
+                  <dt>{{ t('messenger.trajectory.status') }}</dt>
+                  <dd>{{ statusLabel(selectedCell) }}</dd>
                 </div>
-                <div v-if="selectedRecord.usage && selectedRecord.usage.reasoning > 0" class="tt-inspector-row is-sub">
-                  <dt class="tt-inspector-label">{{ t('messenger.trajectory.usage.reasoning') }}</dt>
-                  <dd class="tt-inspector-value">{{ tokenUnit(selectedRecord.usage.reasoning) }}</dd>
+                <div v-if="hierarchyLinks.length > 0" class="tt-overview-row">
+                  <dt>{{ t('messenger.trajectory.hierarchy') }}</dt>
+                  <dd>
+                    <button
+                      v-for="link in hierarchyLinks"
+                      :key="link.label"
+                      class="tt-link"
+                      type="button"
+                      @click="link.action"
+                    >{{ link.label }} ›</button>
+                  </dd>
                 </div>
-                <div v-if="contentTokens(selectedRecord) !== null" class="tt-inspector-row is-sub">
-                  <dt class="tt-inspector-label">{{ t('messenger.trajectory.usage.content') }}</dt>
-                  <dd class="tt-inspector-value">{{ tokenUnit(contentTokens(selectedRecord)) }}</dd>
+                <div v-if="selectedCell.toolName" class="tt-overview-row">
+                  <dt>{{ t('messenger.trajectory.kindTool') }}</dt>
+                  <dd class="tt-mono">{{ selectedCell.toolName }}</dd>
+                </div>
+                <template v-if="selectedCell.usage">
+                  <div class="tt-overview-row">
+                    <dt>{{ t('messenger.trajectory.token') }}</dt>
+                    <dd>{{ formatTokens(selectedCell.usage.output) }}</dd>
+                  </div>
+                  <div class="tt-overview-row">
+                    <dt>{{ t('messenger.trajectory.reasoning') }}</dt>
+                    <dd>{{ formatTokens(selectedCell.usage.think) }}</dd>
+                  </div>
+                </template>
+                <div v-else-if="selectedCell.kind === 'message'" class="tt-overview-row">
+                  <dt>{{ t('messenger.trajectory.token') }}</dt>
+                  <dd>{{ t('messenger.trajectory.usageNotReported') }}</dd>
+                </div>
+                <div v-if="selectedCell.kind !== 'message'" class="tt-overview-row">
+                  <dt>{{ t('messenger.trajectory.duration') }}</dt>
+                  <dd>{{ durationValue(selectedCell.timeSeconds) }}</dd>
+                </div>
+                <div v-for="row in timingRows" :key="row.label" class="tt-overview-row">
+                  <dt>{{ row.label }}</dt>
+                  <dd :class="{ 'tt-dd-clickable': row.toggleable }" @click="row.toggleable ? toggleTimestampMode() : undefined">
+                    {{ row.value }}
+                  </dd>
+                </div>
+              </dl>
+              <template v-if="selectedCell.kind === 'message'">
+                <div v-if="selectedCell.inputDetail" class="tt-overview-section">
+                  <button class="tt-section-title" type="button" @click="toggleSection('input')">
+                    {{ t('messenger.trajectory.input') }}
+                    <span class="tt-section-chevron" :class="{ 'tt-section-chevron-open': openSections.input }">›</span>
+                  </button>
+                  <div v-if="openSections.input" class="tt-section-scroll">
+                    <div class="tt-markdown-payload" v-html="inputMarkdown" />
+                  </div>
+                </div>
+                <div v-if="selectedCell.outputDetail" class="tt-overview-section">
+                  <button class="tt-section-title" type="button" @click="toggleSection('output')">
+                    {{ t('messenger.trajectory.output') }}
+                    <span class="tt-section-chevron" :class="{ 'tt-section-chevron-open': openSections.output }">›</span>
+                  </button>
+                  <div v-if="openSections.output" class="tt-section-scroll">
+                    <div class="tt-markdown-payload" v-html="outputMarkdown" />
+                  </div>
                 </div>
               </template>
-              <div v-if="selectedRecord.kind === 'user' || selectedRecord.kind === 'context'" class="tt-inspector-row">
-                <dt class="tt-inspector-label">{{ t('messenger.trajectory.timing.duration') }}</dt>
-                <dd class="tt-inspector-value">{{ formatSeconds(selectedRecord.timeSeconds) }}</dd>
-              </div>
-              <div v-if="selectedRecord.kind === 'context' && selectedRecord.eventType" class="tt-inspector-row">
-                <dt class="tt-inspector-label">{{ t('messenger.trajectory.overview.source') }}</dt>
-                <dd class="tt-inspector-value">{{ selectedRecord.eventType }}</dd>
-              </div>
-              <div v-if="selectedRecord.toolName" class="tt-inspector-row">
-                <dt class="tt-inspector-label">{{ t('messenger.trajectory.overview.tool') }}</dt>
-                <dd class="tt-inspector-value">{{ selectedRecord.toolName }}</dd>
-              </div>
-              <div v-if="selectedRecord.callId" class="tt-inspector-row">
-                <dt class="tt-inspector-label">{{ t('messenger.trajectory.overview.callId') }}</dt>
-                <dd class="tt-inspector-value">{{ selectedRecord.callId }}</dd>
-              </div>
-              <div v-if="selectedRecord.kind === 'tool' || selectedRecord.kind === 'subtool'" class="tt-inspector-row">
-                <dt class="tt-inspector-label">{{ t('messenger.trajectory.overview.schema') }}</dt>
-                <dd class="tt-inspector-value" :class="{ 'is-muted': !selectedRecord.schemaDetail }">
-                  {{ selectedRecord.schemaDetail ? t('messenger.trajectory.overview.available') : t('messenger.trajectory.record.schemaUnavailable') }}
-                </dd>
-              </div>
-              <div class="tt-inspector-row">
-                <dt class="tt-inspector-label">{{ t('messenger.trajectory.overview.turn') }}</dt>
-                <dd class="tt-inspector-value">{{ selectedRecord.turn === null ? '—' : selectedRecord.turn }}</dd>
-              </div>
-              <div class="tt-inspector-row">
-                <dt class="tt-inspector-label">{{ t('messenger.trajectory.overview.step') }}</dt>
-                <dd class="tt-inspector-value">{{ selectedRecord.step === null ? '—' : selectedRecord.step + 1 }}</dd>
-              </div>
-            </dl>
-            <div class="tt-inspector-sections">
-              <section v-if="selectedRecord.inputDetail" class="tt-inspector-block">
-                <button class="tt-inspector-block-title" type="button" @click="activeTab = 'input'">
-                  {{ t('messenger.trajectory.inspector.payload') }}
-                </button>
-                <pre class="tt-inspector-pre">{{ truncate(selectedRecord.inputDetail, 600) }}</pre>
-              </section>
-              <section v-if="selectedRecord.outputDetail" class="tt-inspector-block">
-                <button class="tt-inspector-block-title" type="button" @click="activeTab = 'output'">
-                  {{ t('messenger.trajectory.inspector.result') }}
-                </button>
-                <pre class="tt-inspector-pre">{{ truncate(selectedRecord.outputDetail, 600) }}</pre>
-              </section>
-              <section v-if="selectedRecord.kind === 'tool' || selectedRecord.kind === 'subtool'" class="tt-inspector-block">
-                <button class="tt-inspector-block-title" type="button" @click="activeTab = 'schema'">
-                  {{ t('messenger.trajectory.inspector.schema') }}
-                </button>
-                <pre v-if="selectedRecord.schemaDetail" class="tt-inspector-pre">{{ truncate(selectedRecord.schemaDetail, 600) }}</pre>
-                <p v-else class="tt-inspector-hint">{{ t('messenger.trajectory.record.schemaUnavailable') }}</p>
-              </section>
-              <section class="tt-inspector-block">
-                <button class="tt-inspector-block-title" type="button" @click="activeTab = 'timing'">
-                  {{ t('messenger.trajectory.inspector.timing') }}
-                </button>
-                <dl class="tt-inspector-list">
-                  <div v-for="row in timingRows" :key="row.label" class="tt-inspector-row">
-                    <dt class="tt-inspector-label">{{ row.label }}</dt>
-                    <dd class="tt-inspector-value">{{ row.value }}</dd>
-                  </div>
-                </dl>
-              </section>
             </div>
-          </template>
-
-          <template v-else-if="activeTab === 'input'">
-            <pre v-if="selectedRecord.inputDetail" class="tt-inspector-pre is-block">{{ selectedRecord.inputDetail }}</pre>
-            <p v-else class="tt-inspector-hint">{{ t('messenger.trajectory.record.noPayload') }}</p>
-          </template>
-
-          <template v-else-if="activeTab === 'output'">
-            <pre
-              v-if="selectedRecord.outputDetail"
-              class="tt-inspector-pre is-block"
-              :class="{ 'is-error': selectedRecord.isError }"
-            >{{ selectedRecord.outputDetail }}</pre>
-            <p v-else class="tt-inspector-hint">{{ t('messenger.trajectory.record.noResult') }}</p>
-          </template>
-
-          <template v-else-if="activeTab === 'schema'">
-            <pre v-if="selectedRecord.schemaDetail" class="tt-inspector-pre is-block">{{ selectedRecord.schemaDetail }}</pre>
-            <p v-else class="tt-inspector-hint">{{ t('messenger.trajectory.record.schemaUnavailable') }}</p>
-          </template>
-
-          <template v-else-if="activeTab === 'raw'">
-            <pre v-if="selectedRecord.rawDetail" class="tt-inspector-pre is-block">{{ selectedRecord.rawDetail }}</pre>
-            <p v-else class="tt-inspector-hint">{{ t('messenger.trajectory.record.noPayload') }}</p>
-          </template>
-
-          <template v-else>
-            <dl class="tt-inspector-list">
-              <div v-for="row in timingRows" :key="row.label" class="tt-inspector-row">
-                <dt class="tt-inspector-label">{{ row.label }}</dt>
-                <dd class="tt-inspector-value">{{ row.value }}</dd>
+            <!-- 预览 -->
+            <div v-else-if="activeTab === previewTab" class="tt-markdown-preview">
+              <div class="tt-markdown-payload" v-html="previewMarkdown" />
+            </div>
+            <!-- 原始内容 -->
+            <div v-else-if="activeTab === rawTab" class="tt-payload-stack">
+              <pre v-if="selectedCell.thinkingDetail" class="tt-payload-pre"><code>{{ selectedCell.thinkingDetail }}</code></pre>
+              <pre v-if="selectedCell.inputDetail" class="tt-payload-pre"><code>{{ selectedCell.inputDetail }}</code></pre>
+              <div v-if="!selectedCell.inputDetail && !selectedCell.thinkingDetail" class="tt-no-payload">
+                {{ t('messenger.trajectory.noContent') }}
               </div>
-            </dl>
-          </template>
-        </div>
-      </aside>
+            </div>
+            <!-- 参数 -->
+            <div v-else-if="activeTab === paramsTab" class="tt-payload-stack">
+              <TrajectoryJsonTree
+                v-if="selectedArgs"
+                :data="selectedArgs"
+                :collapsed-string-lines="12"
+              />
+              <pre v-else-if="selectedCell.inputDetail" class="tt-payload-pre"><code>{{ selectedCell.inputDetail }}</code></pre>
+              <div v-else class="tt-no-payload">{{ t('messenger.trajectory.paramUnavailable') }}</div>
+            </div>
+            <!-- 结果 -->
+            <div v-else-if="activeTab === resultTab" class="tt-payload-stack">
+              <TrajectoryJsonTree
+                v-if="selectedResult"
+                :data="selectedResult"
+                :collapsed-string-lines="12"
+              />
+              <pre v-else-if="selectedCell.result" class="tt-payload-pre"><code>{{ selectedCell.result }}</code></pre>
+              <div v-else class="tt-no-payload">{{ t('messenger.trajectory.noOutput') }}</div>
+            </div>
+            <!-- Schema -->
+            <div v-else-if="activeTab === schemaTab" class="tt-payload-stack">
+              <pre v-if="selectedCell.schemaDetail" class="tt-payload-pre"><code>{{ selectedCell.schemaDetail }}</code></pre>
+              <div v-else class="tt-no-payload">{{ t('messenger.trajectory.schemaUnavailable') }}</div>
+            </div>
+            <!-- 计时 -->
+            <div v-else class="tt-detail-body-summary">
+              <dl class="tt-overview">
+                <div v-for="row in fullTimingRows" :key="row.label" class="tt-overview-row">
+                  <dt>{{ row.label }}</dt>
+                  <dd :class="{ 'tt-dd-clickable': row.toggleable }" @click="row.toggleable ? toggleTimestampMode() : undefined">
+                    {{ row.value }}
+                  </dd>
+                </div>
+              </dl>
+            </div>
+          </div>
+        </aside>
+      </template>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { useRoute, useRouter } from 'vue-router';
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { useI18n } from '@/i18n'
+import { getThreadLogSnapshot } from '@/api/chat'
+import { renderMarkdown } from '@/utils/markdown'
+import TrajectoryJsonTree from './trajectory/TrajectoryJsonTree.vue'
+import {
+  buildRequestNumbers,
+  buildTrajectoryLayout,
+  collapseTurnRecords,
+  deriveTimeline,
+  filterRecords,
+  flattenRecords,
+  formatClock,
+  formatDurationMillis,
+  formatElapsedSeconds,
+  formatStartedAt,
+  groupVirtualRows,
+  requestIdentity,
+  timelineFocusIndexes,
+} from './trajectory/trajectoryModel'
+import type {
+  TableRecord,
+  TimelineSpan,
+  TrajCell,
+  TrajKind,
+  TrajRequestNumber,
+  Translate,
+} from './trajectory/trajectoryModel'
 
-import { getThreadLogSnapshot } from '@/api/chat';
-import { useI18n } from '@/i18n';
+const OVERSCAN_PX = 360
+const VIRTUAL_THRESHOLD = 100
+const MIN_VIEWPORT_MS = 20
+const MIN_VIEWPORT_OPS = 4
+const EDGE_PAN_FRACTION = 0.08
+const TOOLTIP_DELAY_MS = 500
 
-type Json = Record<string, unknown>;
+const route = useRoute()
+const router = useRouter()
+const { t } = useI18n()
 
-type TrajKind = 'system' | 'user' | 'context' | 'compacted' | 'message' | 'tool' | 'subtool';
-type InspectorTab = 'overview' | 'input' | 'output' | 'schema' | 'raw' | 'timing';
+const modelT: Translate = (key, params) => t(`messenger.${key}`, params as never)
 
-interface TrajUsage {
-  input: number;
-  cacheRead: number;
-  cacheWrite: number;
-  output: number;
-  reasoning: number;
-}
+const loading = ref(true)
+const loadError = ref(false)
+const rawTurns = ref<unknown[]>([])
 
-interface TrajCell {
-  index: number;
-  recordId: string;
-  kind: TrajKind;
-  text: string;
-  turn: number | null;
-  step: number | null;
-  startedAt: number | null;
-  completedAt: number | null;
-  timeSeconds: number | null;
-  ttftMs: number | null;
-  decodeSpeed: number | null;
-  isError: boolean;
-  isFirstOfTurn: boolean;
-  toolName: string;
-  callId: string;
-  status: string;
-  inputDetail: string;
-  outputDetail: string;
-  thinkingDetail: string;
-  schemaDetail: string;
-  generationSeconds: number | null;
-  resultPreview: string;
-  usage: TrajUsage | null;
-  searchText: string;
-  /** 原始事件类型（如 queue/plan/approval/terminal），用于上下文的细分标签。 */
-  eventType: string;
-  /** 事件列徽标的 i18n key；为空时回退到 kind 级标签。 */
-  subLabelKey: string;
-  /** 内容列右侧的元信息胶囊（token/耗时/状态）。 */
-  metaChips: string[];
-  /** 检查器“原始内容”页签展示的 payload 摘要（剔除内部字段）。 */
-  rawDetail: string;
-}
+const showDuration = ref(true)
+const showTime = ref(false)
+const showTurns = ref(false)
+const showCalls = ref(false)
+const searchQuery = ref('')
 
-interface TrajGroup {
-  key: string;
-  title: string;
-  description: string;
-  toolCount: number;
-  records: TrajCell[];
-}
+const selectedIndex = ref<number | null>(null)
+const activeTab = ref('')
+const detailsWidth = ref<number | null>(null)
+const openSections = reactive({ input: true, output: true })
+const timestampMode = ref<'local' | 'unix'>('local')
 
-interface TrajTurn {
-  key: string;
-  label: string;
-  collapsed: boolean;
-  usage: TrajUsage;
-  timeSeconds: number | null;
-  recordCount: number;
-  groups: TrajGroup[];
-}
+const collapsedTurns = ref(new Set<number | null>())
+const collapsedAssistants = ref(new Set<string>())
 
-interface TimelineSpan {
-  recordId: string;
-  index: number;
-  kind: TrajKind;
-  lane: number;
-  left: number;
-  width: number;
-  isError: boolean;
-  equalDuration: boolean;
-  durationSeconds: number | null;
-  startedAt: number | null;
-}
+const trackEl = ref<HTMLElement | null>(null)
+const ledgerEl = ref<HTMLElement | null>(null)
+const scrollTop = ref(0)
+const ledgerViewport = ref(360)
+const trackWidth = ref(600)
 
-const INSPECTOR_WIDTH = 360;
-const TIMELINE_LANES = [
-  { labelKey: 'messenger.trajectory.lane.input', top: 7 },
-  { labelKey: 'messenger.trajectory.lane.model', top: 21 },
-  { labelKey: 'messenger.trajectory.lane.tools', top: 35 }
-];
-// 检查器页签按记录动态生成（见 inspectorTabs）：概述 → 参数 → 结果 → Schema → 计时。
-const KIND_LABEL_KEY: Record<TrajKind, string> = {
-  system: 'messenger.trajectory.kind.system',
-  user: 'messenger.trajectory.kind.user',
-  context: 'messenger.trajectory.kind.context',
-  compacted: 'messenger.trajectory.kind.compacted',
-  message: 'messenger.trajectory.kind.message',
-  tool: 'messenger.trajectory.kind.tool',
-  subtool: 'messenger.trajectory.kind.subtool'
-};
-const KIND_ICON: Record<TrajKind, string> = {
-  system: 'fa-solid fa-gear',
-  user: 'fa-solid fa-user',
-  context: 'fa-solid fa-layer-group',
-  compacted: 'fa-solid fa-compress',
-  message: 'fa-solid fa-comment-dots',
-  tool: 'fa-solid fa-wrench',
-  subtool: 'fa-solid fa-diagram-project'
-};
+const viewStart = ref(0)
+const viewSpan = ref(0)
+const hoverX = ref<number | null>(null)
+const panning = ref(false)
+const dragging = ref(false)
+const selection = ref<{ start: number; end: number } | null>(null)
+const tooltip = reactive({ visible: false, x: 0, y: 0, lines: [] as string[] })
 
-const { t } = useI18n();
-const route = useRoute();
-const router = useRouter();
+let dragState: {
+  kind: 'select' | 'pan'
+  anchorX: number
+  anchorValue: number
+  moved: boolean
+  panStart: number
+} | null = null
+let tooltipTimer: number | null = null
+let resizeState: { startX: number; startWidth: number } | null = null
 
-const sessionId = computed(() => {
-  const raw = Array.isArray(route.query.session) ? route.query.session[0] : route.query.session;
-  return typeof raw === 'string' ? raw.trim() : '';
-});
+const timelineMode = computed(() => {
+  if (showDuration.value && showTime.value) return 'actual' as const
+  if (showDuration.value) return 'duration' as const
+  if (showTime.value) return 'time' as const
+  return 'sequence' as const
+})
 
-const rawTurns = ref<Json[]>([]);
-const loading = ref(false);
-const loadError = ref('');
+const turns = computed(() => buildTrajectoryLayout(rawTurns.value, modelT))
+const requests = computed(() => buildRequestNumbers(turns.value))
+const allRecords = computed(() => flattenRecords(turns.value))
+const filteredRecords = computed(() => filterRecords(allRecords.value, searchQuery.value))
+const records = computed(() => collapseTurnRecords(
+  filteredRecords.value,
+  collapsedTurns.value,
+  collapsedAssistants.value,
+  modelT,
+))
+const layout = computed(() => groupVirtualRows(records.value))
+const rows = computed(() => layout.value.rows)
+const ledgerHeight = computed(() =>
+  rows.value.reduce((total, row) => total + row.height, 0))
+const virtual = computed(() => ledgerHeight.value > VIRTUAL_THRESHOLD)
 
-const collapsedTurns = ref<Set<string>>(new Set());
-const collapseCalls = ref(false);
-const durationMode = ref(true);
-const searchQuery = ref('');
-const selectedRecordId = ref<string | null>(null);
-const timelineFocus = ref<Set<number> | null>(null);
-const activeTab = ref<InspectorTab>('overview');
-const hoverLine = ref<number | null>(null);
-const trackRef = ref<HTMLElement | null>(null);
+const rowPrefix = computed<number[]>(() => {
+  const prefix: number[] = [0]
+  for (const row of rows.value) prefix.push(prefix[prefix.length - 1] + row.height)
+  return prefix
+})
 
-const asJson = (value: unknown): Json =>
-  value && typeof value === 'object' && !Array.isArray(value) ? (value as Json) : {};
-const asText = (value: unknown): string => {
-  if (value === null || value === undefined) return '';
-  if (typeof value === 'string') return value;
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return '';
+const windowRange = computed(() => {
+  if (!virtual.value) return { start: 0, end: rows.value.length }
+  const top = Math.max(0, scrollTop.value - OVERSCAN_PX)
+  const bottom = scrollTop.value + ledgerViewport.value + OVERSCAN_PX
+  let start = 0
+  while (start < rows.value.length && rowPrefix.value[start + 1]! <= top) start += 1
+  let end = start
+  while (end < rows.value.length && rowPrefix.value[end]! < bottom) end += 1
+  return { start, end }
+})
+
+const windowRows = computed(() =>
+  rows.value.slice(windowRange.value.start, windowRange.value.end))
+
+const windowTopPx = computed(() => {
+  if (!virtual.value) return 0
+  return rowPrefix.value[windowRange.value.start] ?? 0
+})
+
+const timeline = computed(() => deriveTimeline(turns.value, timelineMode.value))
+
+const domain = computed(() => {
+  const model = timeline.value
+  if (!model) return { start: 0, end: 1 }
+  return { start: model.start, end: Math.max(model.end, model.start + 1) }
+})
+
+watch(timeline, (model) => {
+  if (!model) return
+  viewStart.value = model.start
+  viewSpan.value = Math.max(1, model.end - model.start)
+})
+
+const searchNeedle = computed(() => searchQuery.value.trim().toLowerCase())
+const searchMatched = computed<ReadonlySet<number>>(() => {
+  const needle = searchNeedle.value
+  if (!needle) return new Set()
+  const matched = new Set<number>()
+  for (const record of allRecords.value) {
+    if (recordNeedleText(record).includes(needle)) matched.add(record.cell.index)
   }
-};
-const asNum = (value: unknown): number | null => {
-  if (typeof value === 'number' && Number.isFinite(value)) return value;
-  if (typeof value === 'string' && value.trim()) {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-  return null;
-};
-const pickText = (source: Json, keys: string[]): string => {
-  for (const key of keys) {
-    const text = asText(source[key]);
-    if (text) return text;
-  }
-  return '';
-};
-const pickNum = (source: Json, keys: string[]): number | null => {
-  for (const key of keys) {
-    const value = asNum(source[key]);
-    if (value !== null) return value;
-  }
-  return null;
-};
-const pickValue = (source: Json, keys: string[]): unknown => {
-  for (const key of keys) {
-    if (source[key] !== undefined && source[key] !== null) return source[key];
-  }
-  return undefined;
-};
-const contentToText = (value: unknown): string => {
-  if (typeof value === 'string') return value;
-  if (Array.isArray(value)) {
-    return value
-      .map((part) => {
-        if (typeof part === 'string') return part;
-        const record = asJson(part);
-        return asText(record.text ?? record.content ?? '');
-      })
-      .filter(Boolean)
-      .join('\n');
-  }
-  const record = asJson(value);
-  if (Object.keys(record).length) return contentToText(record.text ?? record.content);
-  return '';
-};
-const toMillis = (value: unknown): number | null => {
-  const numeric = asNum(value);
-  if (numeric !== null) return numeric < 1e12 ? Math.round(numeric * 1000) : Math.round(numeric);
-  if (typeof value === 'string' && value.trim()) {
-    const parsed = Date.parse(value);
-    if (Number.isFinite(parsed)) return parsed;
-  }
-  return null;
-};
-const truncate = (text: string, limit: number): string => (text.length > limit ? `${text.slice(0, limit)}…` : text);
+  return matched
+})
 
-const mapKind = (itemKind: string): TrajKind => {
-  switch (itemKind) {
-    case 'user_message':
-      return 'user';
-    case 'assistant_message':
-      return 'message';
-    case 'tool_call':
-    case 'tool_result':
-      return 'tool';
-    // 子智能体投递的消息归入子调用轨道。
-    case 'subagent_run':
-    case 'subagent_message':
-      return 'subtool';
-    case 'compaction':
-      return 'compacted';
-    case 'system_message':
-      return 'system';
-    // 上下文类：队列/计划/审批/终端等注入或生命周期条目。
-    case 'queue':
-    case 'plan':
-    case 'approval':
-    case 'terminal':
-    case 'context':
-      return 'context';
-    default:
-      return 'context';
-  }
-};
-
-const extractUsage = (source: Json): TrajUsage | null => {
-  const candidates: Json[] = [];
-  candidates.push(asJson(source.stats));
-  candidates.push(asJson(asJson(source.meta).message_stats));
-  candidates.push(asJson(pickValue(source, ['usage', 'round_usage'])));
-  for (const candidate of candidates) {
-    const nested = asJson(candidate.usage);
-    const usage = Object.keys(nested).length ? nested : candidate;
-    const input = pickNum(usage, ['input', 'input_tokens', 'prompt_tokens']);
-    const output = pickNum(usage, ['output', 'output_tokens', 'completion_tokens']);
-    if (input === null && output === null) continue;
-    return {
-      input: input ?? 0,
-      cacheRead: pickNum(usage, ['cache_read', 'cacheRead', 'cache_read_tokens']) ?? 0,
-      cacheWrite: pickNum(usage, ['cache_write', 'cacheWrite', 'cache_write_tokens']) ?? 0,
-      output: output ?? 0,
-      reasoning: pickNum(usage, ['reasoning', 'reasoning_tokens', 'think_tokens']) ?? 0
-    };
-  }
-  return null;
-};
-
-const buildCell = (item: Json, index: number, turnNo: number | null, isFirstOfTurn: boolean): TrajCell => {
-  // user_message 的 payload 可能是裸字符串，其余为对象；统一归一到对象再取字段。
-  const rawPayload = item.payload;
-  const payload: Json = typeof rawPayload === 'string' ? { content: rawPayload } : asJson(rawPayload);
-  const metrics: Json = {
-    ...payload,
-    ...asJson(payload.stats),
-    ...asJson(asJson(payload.meta).message_stats)
-  };
-  const kind = mapKind(asText(item.kind));
-  const eventType = asText(item.event_type) || asText(payload.event_type);
-  const isToolKind = kind === 'tool' || kind === 'subtool';
-  const toolName = pickText(metrics, ['tool', 'tool_name', 'name', 'toolName', 'tool_display_name']);
-  const status = pickText(item, ['status']) || pickText(payload, ['status']);
-  const isError =
-    ['failed', 'error', 'cancelled', 'interrupted'].includes(status.toLowerCase()) ||
-    asText(payload.error) !== '' ||
-    payload.is_error === true ||
-    payload.ok === false;
-
-  const question = contentToText(payload.content);
-  // 上下文类条目没有统一正文键，按优先级取第一个可读字段。
-  const contextText =
-    question ||
-    pickText(payload, [
-      'summary',
-      'message',
-      'text',
-      'detail',
-      'description',
-      'title',
-      'reason',
-      'stop_reason'
-    ]);
-  const reasoning = contentToText(payload.reasoning ?? payload.thinking ?? payload.reasoning_content);
-  const args = pickText(payload, ['args', 'arguments', 'input']);
-  // 工具结果真实字段是 data（+ model_observation / meta），无 result/output 键；
-  // 助手文本才在 content/result/output。
-  const result = isToolKind
-    ? pickText(payload, ['data', 'result', 'output', 'model_observation'])
-    : contentToText(payload.result ?? payload.output ?? payload.content);
-
-  let text = '';
-  let inputDetail = '';
-  let outputDetail = '';
-  let resultPreview = '';
-
-  if (kind === 'user') {
-    text = truncate(question, 220);
-    inputDetail = question;
-  } else if (kind === 'message') {
-    text = truncate(question || reasoning, 220);
-    outputDetail = question;
-  } else if (isToolKind) {
-    const argsPreview = truncate(args.replace(/\s+/g, ' '), 120);
-    text = [toolName || t('messenger.trajectory.kind.tool'), argsPreview].filter(Boolean).join(' · ');
-    inputDetail = args || question;
-    outputDetail = result;
-    resultPreview = truncate(result.replace(/\s+/g, ' '), 120);
-  } else if (kind === 'compacted') {
-    text = t('messenger.trajectory.kind.compacted');
-    inputDetail = truncate(contextText, 4000);
-  } else if (kind === 'system') {
-    text = truncate(contextText || t('messenger.trajectory.kind.system'), 220);
-    inputDetail = contextText;
-  } else {
-    // 上下文类：queue/plan/approval/terminal 等注入或生命周期条目。
-    text = truncate(contextText, 220);
-    inputDetail = contextText;
-  }
-
-  const startedAt =
-    toMillis(pickValue(metrics, ['started_at', 'start_time', 'startedAt'])) ??
-    toMillis(pickValue(item, ['created_time']));
-  const completedAt =
-    toMillis(pickValue(metrics, ['completed_at', 'end_time', 'completedAt'])) ??
-    toMillis(pickValue(item, ['updated_time']));
-  const decodeSeconds = pickNum(metrics, ['decode_duration_s', 'decode_duration']);
-  const prefillSeconds = pickNum(metrics, ['prefill_duration_s', 'prefill_duration']);
-  let timeSeconds: number | null = null;
-  if (decodeSeconds !== null || prefillSeconds !== null) {
-    timeSeconds = (decodeSeconds ?? 0) + (prefillSeconds ?? 0);
-  } else if (startedAt !== null && completedAt !== null && completedAt >= startedAt) {
-    timeSeconds = (completedAt - startedAt) / 1000;
-  }
-
-  const usage = extractUsage(payload);
-  const schemaDetail = pickText(payload, ['schema', 'schema_detail', 'input_schema', 'parameters']);
-  const subLabelKey = kind === 'context' ? EVENT_LABEL_KEY[eventType] ?? '' : '';
-  const metaChips: string[] = [];
-  if (kind === 'message') {
-    if (usage && usage.output > 0) metaChips.push(tokenUnit(usage.output));
-    if (timeSeconds !== null) metaChips.push(formatSeconds(timeSeconds));
-  } else if (isToolKind) {
-    if (timeSeconds !== null) metaChips.push(formatSeconds(timeSeconds));
-    if (isError) metaChips.push(statusText(status));
-  } else if (status) {
-    metaChips.push(statusText(status));
-  }
-  const rawDetail = (() => {
-    const clone: Json = { ...payload };
-    delete clone.event_type;
-    delete clone.session_id;
-    delete clone.item_id;
-    delete clone.kind;
-    delete clone.status;
-    delete clone.visibility;
-    try {
-      return JSON.stringify(clone, null, 2);
-    } catch {
-      return '';
-    }
-  })();
-  const searchText = [text, inputDetail, outputDetail, toolName, kind, eventType, subLabelKey ? t(subLabelKey) : '']
-    .join(' ')
-    .toLowerCase();
-
-  return {
-    index,
-    recordId: asText(item.item_id) || `${asText(item.turn_id) || 'turn'}:${index}`,
-    kind,
-    text,
-    turn: turnNo,
-    step: pickNum(item, ['model_round']) ?? pickNum(payload, ['model_round']),
-    startedAt,
-    completedAt,
-    timeSeconds,
-    ttftMs: pickNum(metrics, ['ttft_ms', 'ttftMs', 'first_token_ms']),
-    decodeSpeed: pickNum(metrics, ['decode_speed_tps', 'visible_decode_speed_tps', 'decodeSpeedTps']),
-    isError,
-    isFirstOfTurn,
-    toolName,
-    callId: pickText(metrics, ['tool_call_id', 'toolCallId', 'call_id', 'callId']),
-    status,
-    inputDetail,
-    outputDetail,
-    thinkingDetail: reasoning,
-    schemaDetail,
-    generationSeconds: decodeSeconds,
-    resultPreview,
-    usage,
-    searchText,
-    eventType,
-    subLabelKey,
-    metaChips,
-    rawDetail
-  };
-};
-
-const toolHistogram = (records: TrajCell[]): string => {
-  const counts = new Map<string, number>();
-  records.forEach((record) => {
-    if (record.kind !== 'tool' && record.kind !== 'subtool') return;
-    const name = record.toolName || record.kind;
-    counts.set(name, (counts.get(name) ?? 0) + 1);
-  });
-  return Array.from(counts.entries())
-    .map(([name, count]) => `${name}×${count}`)
-    .join(' ');
-};
-
-const buildTrajectory = (input: Json[]): TrajTurn[] => {
-  const ordered = [...input].sort((a, b) => {
-    const ra = asNum(a.user_turn_index) ?? asNum(a.user_round) ?? 0;
-    const rb = asNum(b.user_turn_index) ?? asNum(b.user_round) ?? 0;
-    return ra - rb;
-  });
-  let cursor = 0;
-  const output: TrajTurn[] = [];
-  ordered.forEach((rawTurn, turnPosition) => {
-    const turnNo = asNum(rawTurn.user_turn_index) ?? asNum(rawTurn.user_round);
-    const turnKey = asText(rawTurn.turn_id) || `turn-${turnPosition}`;
-    const items = (Array.isArray(rawTurn.items) ? rawTurn.items : [])
-      .map(asJson)
-      .sort((a, b) => (asNum(a.created_seq) ?? 0) - (asNum(b.created_seq) ?? 0));
-
-    const usage: TrajUsage = { input: 0, cacheRead: 0, cacheWrite: 0, output: 0, reasoning: 0 };
-    const groups: TrajGroup[] = [];
-    let currentGroup: TrajGroup | null = null;
-    let timeSeconds = 0;
-    let hasTime = false;
-    let recordCount = 0;
-
-    const ensureGroup = (title: string): TrajGroup => {
-      const group: TrajGroup = {
-        key: `${turnKey}:g${groups.length}`,
-        title,
-        description: '',
-        toolCount: 0,
-        records: []
-      };
-      groups.push(group);
-      return group;
-    };
-
-    items.forEach((item) => {
-      const kind = mapKind(asText(item.kind));
-      const cell = buildCell(item, cursor, turnNo, recordCount === 0);
-      cursor += 1;
-      recordCount += 1;
-      if (cell.usage) {
-        usage.input += cell.usage.input;
-        usage.cacheRead += cell.usage.cacheRead;
-        usage.cacheWrite += cell.usage.cacheWrite;
-        usage.output += cell.usage.output;
-        usage.reasoning += cell.usage.reasoning;
-      }
-      if (cell.timeSeconds !== null) {
-        timeSeconds += cell.timeSeconds;
-        hasTime = true;
-      }
-
-      if (kind === 'user' || kind === 'system' || kind === 'context') {
-        currentGroup = ensureGroup(t('messenger.trajectory.group.message'));
-        currentGroup.records.push(cell);
-        return;
-      }
-      if (kind === 'compacted') {
-        currentGroup = ensureGroup(t('messenger.trajectory.group.compaction'));
-        currentGroup.records.push(cell);
-        return;
-      }
-      if (kind === 'message') {
-        const step = cell.step;
-        const title = step === null ? t('messenger.trajectory.group.message') : `${t('messenger.trajectory.group.step')} ${step + 1}`;
-        currentGroup = ensureGroup(title);
-        currentGroup.records.push(cell);
-        return;
-      }
-      if (!currentGroup) {
-        currentGroup = ensureGroup(t('messenger.trajectory.group.step'));
-      }
-      currentGroup.toolCount += 1;
-      currentGroup.records.push(cell);
-    });
-
-    groups.forEach((group) => {
-      const groupSeconds = group.records.reduce((acc, record) => acc + (record.timeSeconds ?? 0), 0);
-      const histogram = toolHistogram(group.records);
-      const timing = group.records.some((record) => record.timeSeconds !== null) ? `${groupSeconds.toFixed(1)} s` : '';
-      group.description = [timing, histogram].filter(Boolean).join('  ');
-    });
-
-    output.push({
-      key: turnKey,
-      label: turnNo === null ? t('messenger.trajectory.group.message') : `${t('messenger.trajectory.turn.label')} ${turnNo}`,
-      collapsed: false,
-      usage,
-      timeSeconds: hasTime ? timeSeconds : null,
-      recordCount,
-      groups
-    });
-  });
-  return output;
-};
-
-const trajectory = computed(() => buildTrajectory(rawTurns.value));
-const allCells = computed(() => trajectory.value.flatMap((turn) => turn.groups.flatMap((group) => group.records)));
-
-const normalizedQuery = computed(() => searchQuery.value.trim().toLowerCase());
-
-const visibleTurns = computed(() =>
-  trajectory.value
-    .map((turn) => {
-      const query = normalizedQuery.value;
-      const groups = turn.groups
-        .map((group) => {
-          let records = group.records;
-          if (collapseCalls.value) {
-            records = records.filter((record) => record.kind !== 'tool' && record.kind !== 'subtool');
-          }
-          if (query) {
-            records = records.filter((record) => record.searchText.includes(query));
-          }
-          return { ...group, records };
-        })
-        .filter((group) => group.records.length > 0);
-      return { ...turn, collapsed: collapsedTurns.value.has(turn.key), groups };
-    })
-    .filter((turn) => !normalizedQuery.value || turn.groups.length > 0)
-);
-
-const allTurnsCollapsed = computed(() => {
-  const turns = trajectory.value;
-  return turns.length > 0 && turns.every((turn) => collapsedTurns.value.has(turn.key));
-});
-
-const laneOf = (kind: TrajKind): number => {
-  if (kind === 'tool' || kind === 'subtool') return 2;
-  if (kind === 'message' || kind === 'compacted') return 1;
-  return 0;
-};
-
-const focusedIndexes = computed(() => timelineFocus.value ?? new Set<number>());
-
-const timelineLayout = computed(() => {
-  const cells = allCells.value;
-  if (!cells.length) {
-    return { spans: [] as TimelineSpan[], boundaries: [] as Array<{ turnKey: string; left: number }>, useDuration: false };
-  }
-  const timed = cells.filter((cell) => cell.startedAt !== null && cell.timeSeconds !== null);
-  const useDuration = durationMode.value && timed.length === cells.length;
-
-  const starts: number[] = [];
-  if (useDuration) {
-    timed.forEach((cell) => starts.push(cell.startedAt as number));
-  }
-  const start = useDuration ? Math.min(...starts) : 0;
-  let end = 0;
-  if (useDuration) {
-    cells.forEach((cell, position) => {
-      end = Math.max(end, (cell.startedAt as number) + (cell.timeSeconds as number) * 1000);
-    });
-  }
-
-  const spans: TimelineSpan[] = [];
-  const total = cells.length;
-  cells.forEach((cell, position) => {
-    let left: number;
-    let width: number;
-    let spanStart: number | null = null;
-    if (useDuration) {
-      const span = Math.max(end - start, 1);
-      const cellStart = cell.startedAt as number;
-      const cellEnd = cellStart + (cell.timeSeconds as number) * 1000;
-      left = ((cellStart - start) / span) * 100;
-      width = Math.max(((cellEnd - cellStart) / span) * 100, 0.4);
-      spanStart = cellStart;
-    } else {
-      left = (position / total) * 100;
-      width = Math.max(100 / total, 0.4);
-    }
-    spans.push({
-      recordId: cell.recordId,
-      index: cell.index,
-      kind: cell.kind,
-      lane: laneOf(cell.kind),
-      left,
-      width,
-      isError: cell.isError,
-      equalDuration: !useDuration,
-      durationSeconds: cell.timeSeconds,
-      startedAt: spanStart
-    });
-  });
-
-  const boundaries: Array<{ turnKey: string; left: number }> = [];
-  let position = 0;
-  trajectory.value.forEach((turn) => {
-    const count = turn.groups.reduce((acc, group) => acc + group.records.length, 0);
-    if (count > 0) {
-      const boundaryPosition = position;
-      const left = useDuration
-        ? spans[boundaryPosition]
-          ? spans[boundaryPosition].left
-          : 0
-        : (boundaryPosition / Math.max(cells.length, 1)) * 100;
-      boundaries.push({ turnKey: turn.key, left });
-    }
-    position += count;
-  });
-
-  return { spans, boundaries, useDuration };
-});
-
-const timelineSpans = computed(() => timelineLayout.value.spans);
-const timelineBoundaries = computed(() => timelineLayout.value.boundaries);
-
-const selectedRecord = computed(() => allCells.value.find((cell) => cell.recordId === selectedRecordId.value) ?? null);
-
-const spanClasses = (span: TimelineSpan): Record<string, boolean> => {
-  const focused = focusedIndexes.value;
-  const query = normalizedQuery.value;
-  const cell = allCells.value[span.index];
-  return {
-    [`is-${span.kind}`]: true,
-    'is-error': span.isError,
-    'is-selected': selectedRecordId.value === span.recordId,
-    'is-dimmed': focused.size > 0 && !focused.has(span.index),
-    'is-match': Boolean(query) && Boolean(cell && cell.searchText.includes(query)),
-    'is-equal': span.equalDuration
-  };
-};
-
-const spanStyle = (span: TimelineSpan): Record<string, string> => ({
-  left: `${span.left}%`,
-  width: `${span.width}%`,
-  top: `${span.lane * 14}px`
-});
-
-const spanTooltip = (span: TimelineSpan): string => {
-  const parts = [
-    t(kindLabelKey(span.kind)),
-    span.durationSeconds === null ? '' : `${span.durationSeconds.toFixed(2)} s`,
-    span.startedAt === null ? '' : formatTimestamp(span.startedAt)
-  ];
-  return parts.filter(Boolean).join(' · ');
-};
-
-const percentFromEvent = (event: PointerEvent): number => {
-  const element = trackRef.value;
-  if (!element) return 0;
-  const rect = element.getBoundingClientRect();
-  if (!rect.width) return 0;
-  return Math.min(100, Math.max(0, ((event.clientX - rect.left) / rect.width) * 100));
-};
-
-const indexesInRange = (from: number, to: number): number[] => {
-  const low = Math.min(from, to);
-  const high = Math.max(from, to);
-  return timelineSpans.value
-    .filter((span) => span.left + span.width >= low && span.left <= high)
-    .map((span) => span.index);
-};
-
-let dragStartX: number | null = null;
-let dragging = false;
-
-const onTrackPointerDown = (event: PointerEvent): void => {
-  dragStartX = percentFromEvent(event);
-  dragging = false;
-};
-const onTrackPointerMove = (event: PointerEvent): void => {
-  hoverLine.value = percentFromEvent(event);
-  if (dragStartX === null) return;
-  const current = percentFromEvent(event);
-  if (!dragging && Math.abs(current - dragStartX) < 1) return;
-  dragging = true;
-  timelineFocus.value = new Set(indexesInRange(dragStartX, current));
-};
-const onTrackPointerLeave = (): void => {
-  hoverLine.value = null;
-  dragStartX = null;
-  dragging = false;
-};
-
-const focusSpan = (span: TimelineSpan): void => {
-  timelineFocus.value = new Set([span.index]);
-  selectedRecordId.value = span.recordId;
-};
-
-const clearSelection = (): void => {
-  timelineFocus.value = null;
-  selectedRecordId.value = null;
-};
-
-const selectRecord = (recordId: string): void => {
-  const cell = allCells.value.find((item) => item.recordId === recordId);
-  if (!cell) return;
-  selectedRecordId.value = recordId;
-  timelineFocus.value = new Set([cell.index]);
-};
-
-const toggleTurn = (key: string): void => {
-  const next = new Set(collapsedTurns.value);
-  if (next.has(key)) next.delete(key);
-  else next.add(key);
-  collapsedTurns.value = next;
-};
-
-const toggleAllTurns = (): void => {
-  collapsedTurns.value = allTurnsCollapsed.value
-    ? new Set()
-    : new Set(trajectory.value.map((turn) => turn.key));
-};
-
-const toggleAllCalls = (): void => {
-  collapseCalls.value = !collapseCalls.value;
-};
-
-const formatNumber = (value: number): string => (value > 0 ? value.toLocaleString('en-US') : '—');
-const formatSeconds = (value: number | null): string => (value === null ? '—' : `${value.toFixed(value < 10 ? 2 : 1)} s`);
-const formatMillis = (value: number | null): string => (value === null ? '—' : `${Math.round(value)} ms`);
-const formatTimestamp = (value: number | null): string => (value === null ? '—' : new Date(value).toLocaleString());
-const formatSpeed = (value: number | null): string =>
-  value === null ? '—' : `${value.toFixed(1)} ${t('messenger.trajectory.unit.tokensPerSecond')}`;
-
-const kindLabelKey = (kind: TrajKind): string => KIND_LABEL_KEY[kind];
-const kindIcon = (kind: TrajKind): string => KIND_ICON[kind];
-
-// 上下文类记录按原始事件类型细分标签（队列/计划/审批/终端…），
-// 让“上下文”这一大类内部的信息也能区分开。
-const EVENT_LABEL_KEY: Record<string, string> = {
-  queue: 'messenger.trajectory.kind.queue',
-  plan: 'messenger.trajectory.kind.plan',
-  approval: 'messenger.trajectory.kind.approval',
-  terminal: 'messenger.trajectory.kind.terminal'
-};
-const recordLabelKey = (record: TrajCell): string => record.subLabelKey || kindLabelKey(record.kind);
-
-const recordClasses = (record: TrajCell): Record<string, boolean> => {
-  const focused = focusedIndexes.value;
-  const query = normalizedQuery.value;
-  return {
-    'is-selected': selectedRecordId.value === record.recordId,
-    'is-error': record.isError,
-    'is-first-of-turn': record.isFirstOfTurn,
-    'is-dimmed': focused.size > 0 && !focused.has(record.index),
-    'is-match': Boolean(query) && record.searchText.includes(query)
-  };
-};
-
-const inspectorTabs = computed<Array<{ key: InspectorTab; labelKey: string }>>(() => {
-  const record = selectedRecord.value;
-  const tabs: Array<{ key: InspectorTab; labelKey: string }> = [
-    { key: 'overview', labelKey: 'messenger.trajectory.inspector.overview' }
-  ];
-  const isToolKind = record?.kind === 'tool' || record?.kind === 'subtool';
-  if (isToolKind) {
-    if (record?.inputDetail) tabs.push({ key: 'input', labelKey: 'messenger.trajectory.inspector.payload' });
-    if (record?.outputDetail) tabs.push({ key: 'output', labelKey: 'messenger.trajectory.inspector.result' });
-    tabs.push({ key: 'schema', labelKey: 'messenger.trajectory.inspector.schema' });
-  } else {
-    if (record?.inputDetail || record?.outputDetail) {
-      tabs.push({ key: 'input', labelKey: 'messenger.trajectory.inspector.preview' });
-    }
-    tabs.push({ key: 'raw', labelKey: 'messenger.trajectory.inspector.raw' });
-  }
-  tabs.push({ key: 'timing', labelKey: 'messenger.trajectory.inspector.timing' });
-  return tabs;
-});
-
-const statusText = (status: string): string => {
-  const key = status.trim().toLowerCase();
-  if (!key) return '—';
-  if (key === 'completed' || key === 'complete' || key === 'ok' || key === 'success') {
-    return t('messenger.trajectory.status.completed');
-  }
-  if (key === 'running' || key === 'pending' || key === 'streaming') {
-    return t('messenger.trajectory.status.running');
-  }
-  if (key === 'failed' || key === 'error') return t('messenger.trajectory.status.failed');
-  if (key === 'cancelled' || key === 'canceled') return t('messenger.trajectory.status.cancelled');
-  if (key === 'interrupted') return t('messenger.trajectory.status.interrupted');
-  return status;
-};
-
-const tokenUnit = (value: number | null | undefined): string =>
-  value === null || value === undefined ? '—' : t('messenger.trajectory.unit.tokens', { value });
-
-const contentTokens = (record: TrajCell): number | null => {
-  const usage = record.usage;
-  if (!usage || usage.output <= 0) return null;
-  return Math.max(0, usage.output - usage.reasoning);
-};
-
-const timingRows = computed(() => {
-  const record = selectedRecord.value;
-  if (!record) return [];
-  if (record.kind === 'message') {
-    return [
-      { label: t('messenger.trajectory.timing.started'), value: formatTimestamp(record.startedAt) },
-      { label: t('messenger.trajectory.timing.totalDuration'), value: formatSeconds(record.timeSeconds) },
-      { label: t('messenger.trajectory.timing.ttft'), value: formatMillis(record.ttftMs) },
-      { label: t('messenger.trajectory.timing.generation'), value: formatSeconds(record.generationSeconds) },
-      { label: t('messenger.trajectory.timing.throughput'), value: formatSpeed(record.decodeSpeed) }
-    ];
-  }
+function recordNeedleText(record: TableRecord): string {
   return [
-    { label: t('messenger.trajectory.timing.started'), value: formatTimestamp(record.startedAt) },
-    { label: t('messenger.trajectory.timing.duration'), value: formatSeconds(record.timeSeconds) },
-    {
-      label: t('messenger.trajectory.timing.source'),
-      value:
-        record.timeSeconds === null
-          ? t('messenger.trajectory.timing.notAvailable')
-          : t('messenger.trajectory.timing.sessionTimestamps')
-    }
-  ];
-});
+    record.cell.text,
+    record.cell.toolName ?? '',
+    record.cell.inputDetail ?? '',
+    record.cell.outputDetail ?? '',
+    record.cell.result ?? '',
+  ].join('\n').toLowerCase()
+}
 
-const extractPayload = (response: unknown): Json => {
-  const first = asJson(response);
-  const body = asJson(first.data);
-  const inner = asJson(body.data);
-  if (Object.keys(inner).length) return inner;
-  if (Object.keys(body).length) return body;
-  return first;
-};
+const focusSet = computed<ReadonlySet<number> | null>(() => {
+  if (!selection.value) return null
+  return timelineFocusIndexes(turns.value, selection.value, timelineMode.value)
+})
 
-// 列表接口 /thread-log/turns 的 turn 不含 items，直接读 rawTurn.items 会永远为空。
-// 快照接口 /thread-log/snapshot 一次返回 turns + items（原子一致），按 turn_id 归组后再挂回各轮。
-const applySnapshotPayload = (payload: Json): void => {
-  const turns = Array.isArray(payload.turns) ? payload.turns.map(asJson) : [];
-  const items = Array.isArray(payload.items) ? payload.items.map(asJson) : [];
-  const itemsByTurn = new Map<string, Json[]>();
-  items.forEach((item) => {
-    const turnId = asText(item.turn_id);
-    if (!turnId) return;
-    const bucket = itemsByTurn.get(turnId);
-    if (bucket) {
-      bucket.push(item);
-    } else {
-      itemsByTurn.set(turnId, [item]);
-    }
-  });
-  rawTurns.value = turns.map((turn) => {
-    const turnId = asText(turn.turn_id);
-    return { ...turn, items: turnId ? itemsByTurn.get(turnId) ?? [] : [] };
-  });
-};
+const projectedSpans = computed(() => {
+  const model = timeline.value
+  if (!model) return []
+  const width = trackWidth.value || 600
+  const span = Math.max(1e-9, viewSpan.value)
+  const matched = searchMatched.value
+  return model.spans
+    .map((modelSpan, i) => {
+      const left = ((modelSpan.start - viewStart.value) / span) * width
+      const pw = ((modelSpan.end - modelSpan.start) / span) * width
+      const gap = Math.min(pw * 0.08, 1)
+      return {
+        key: `${modelSpan.index}-${i}`,
+        model: modelSpan,
+        left: left + gap,
+        width: Math.max(2, pw - gap * 2),
+        dimmed: searchNeedle.value ? !matched.has(modelSpan.index) : false,
+        outside: focusSet.value ? !focusSet.value.has(modelSpan.index) : false,
+      }
+    })
+    .filter(span => span.left + span.width > 0 && span.left < width)
+})
 
-const load = async (): Promise<void> => {
-  const id = sessionId.value;
-  if (!id) {
-    loadError.value = t('messenger.trajectory.empty');
-    return;
+const projectedBoundaries = computed(() => {
+  const model = timeline.value
+  if (!model || !showTurns.value) return []
+  const width = trackWidth.value || 600
+  const span = Math.max(1e-9, viewSpan.value)
+  return model.turnBoundaries
+    .map(boundary => ({ turn: boundary.turn, x: ((boundary.time - viewStart.value) / span) * width }))
+    .filter(boundary => boundary.x >= 0 && boundary.x <= width)
+})
+
+const timelineTicks = computed(() => {
+  const width = trackWidth.value || 600
+  if (width <= 0) return []
+  const span = Math.max(1e-9, viewSpan.value)
+  const targetCount = Math.max(2, Math.floor(width / 120))
+  const raw = span / targetCount
+  const magnitude = 10 ** Math.floor(Math.log10(raw))
+  const residual = raw / magnitude
+  const step = (residual >= 5 ? 5 : residual >= 2 ? 2 : 1) * magnitude
+  const timed = timelineMode.value !== 'sequence'
+  const ticks: { value: number; x: number; label: string }[] = []
+  const first = Math.ceil(viewStart.value / step) * step
+  for (let value = first; value <= viewStart.value + span; value += step) {
+    const x = ((value - viewStart.value) / span) * width
+    ticks.push({
+      value,
+      x,
+      label: timed ? formatAxisDuration(value - domain.value.start) : String(Math.round(value)),
+    })
   }
-  loading.value = true;
-  loadError.value = '';
+  return ticks
+})
+
+function pad2(value: number): string {
+  return String(value).padStart(2, '0')
+}
+
+function formatAxisDuration(ms: number): string {
+  const abs = Math.abs(ms)
+  if (abs < 1000) return `${Math.round(abs)} ms`
+  if (abs < 60_000) return `${(abs / 1000).toFixed(abs < 10_000 ? 1 : 0)} s`
+  if (abs < 3_600_000) {
+    const minutes = Math.floor(abs / 60_000)
+    const seconds = Math.round((abs % 60_000) / 1000)
+    return seconds > 0 ? `${minutes}m ${pad2(seconds)}s` : `${minutes}m`
+  }
+  const hours = Math.floor(abs / 3_600_000)
+  const minutes = Math.round((abs % 3_600_000) / 60_000)
+  return `${hours}h ${pad2(minutes)}m`
+}
+
+/* ---------------------------------------------------------------- */
+/* 数据加载                                                          */
+/* ---------------------------------------------------------------- */
+
+async function load(): Promise<void> {
+  const sessionId = String(route.query.session ?? '').trim()
+  if (!sessionId) {
+    loading.value = false
+    loadError.value = true
+    return
+  }
+  loading.value = true
+  loadError.value = false
   try {
-    const response = await getThreadLogSnapshot(id);
-    applySnapshotPayload(extractPayload(response));
+    const snapshot = await getThreadLogSnapshot(sessionId)
+    const payload = snapshot?.data
+    rawTurns.value = Array.isArray(payload?.turns) ? payload.turns : []
   } catch {
-    loadError.value = t('messenger.trajectory.loadFailed');
+    loadError.value = true
+    rawTurns.value = []
   } finally {
-    loading.value = false;
+    loading.value = false
   }
-};
+}
 
-const goBack = (): void => {
-  if (window.history.length > 1) {
-    router.back();
-    return;
+function goBack(): void {
+  router.back()
+}
+
+function onKeyDown(event: KeyboardEvent): void {
+  if (event.key === 'Escape') {
+    selection.value = null
+    dragging.value = false
   }
-  void router.push('/app/home');
-};
+}
 
-const onKeyDown = (event: KeyboardEvent): void => {
-  if (event.key === 'Escape') clearSelection();
-};
-
-watch(sessionId, (value) => {
-  if (!value) return;
-  rawTurns.value = [];
-  clearSelection();
-  void load();
-});
-
-// 切换记录或页签集合变化时，回退到仍然存在的页签（避免停留在已隐藏的页签）。
-watch([inspectorTabs, selectedRecordId], () => {
-  if (!inspectorTabs.value.some((tab) => tab.key === activeTab.value)) {
-    activeTab.value = 'overview';
-  }
-});
+function updateSizes(): void {
+  if (trackEl.value) trackWidth.value = trackEl.value.clientWidth
+  if (ledgerEl.value) ledgerViewport.value = ledgerEl.value.clientHeight
+}
 
 onMounted(() => {
-  window.addEventListener('keydown', onKeyDown);
-  void load();
-});
+  void load()
+  window.addEventListener('keydown', onKeyDown)
+  window.addEventListener('pointermove', onWindowPointerMove)
+  window.addEventListener('pointerup', onWindowPointerUp)
+  window.addEventListener('resize', updateSizes)
+  updateSizes()
+})
 
 onBeforeUnmount(() => {
-  window.removeEventListener('keydown', onKeyDown);
-});
+  window.removeEventListener('keydown', onKeyDown)
+  window.removeEventListener('pointermove', onWindowPointerMove)
+  window.removeEventListener('pointerup', onWindowPointerUp)
+  window.removeEventListener('resize', updateSizes)
+  if (tooltipTimer !== null) window.clearTimeout(tooltipTimer)
+})
+
+/* ---------------------------------------------------------------- */
+/* 台账                                                              */
+/* ---------------------------------------------------------------- */
+
+function onLedgerScroll(): void {
+  if (!ledgerEl.value) return
+  scrollTop.value = ledgerEl.value.scrollTop
+  ledgerViewport.value = ledgerEl.value.clientHeight
+}
+
+function rowClasses(record: TableRecord): Record<string, boolean> {
+  return {
+    'tt-row-selected': selectedCell.value?.index === record.cell.index,
+    'tt-row-turn-start': record.turnStart,
+    'tt-row-turn-end': record.turnEnd,
+    'tt-row-summary': Boolean(record.collapsedSummary),
+    [`tt-row-${record.cell.kind}`]: true,
+    'tt-row-error': record.cell.isError === true,
+  }
+}
+
+function focusAttr(record: TableRecord): string | undefined {
+  if (!focusSet.value) return undefined
+  return focusSet.value.has(record.cell.index) ? 'inside' : 'outside'
+}
+
+function kindLabel(kind: TrajKind): string {
+  const labels: Record<TrajKind, string> = {
+    system: t('messenger.trajectory.kindSystem'),
+    user: t('messenger.trajectory.kindUser'),
+    context: t('messenger.trajectory.kindContext'),
+    compacted: t('messenger.trajectory.kindCompacted'),
+    message: t('messenger.trajectory.kindAssistant'),
+    tool: t('messenger.trajectory.kindTool'),
+    subtool: t('messenger.trajectory.kindSubtool'),
+  }
+  return labels[kind]
+}
+
+function argsPreview(cell: TrajCell): string {
+  const raw = cell.inputDetail
+  if (!raw) return ''
+  const single = raw.replace(/\s+/g, ' ').trim()
+  return single.length > 160 ? `${single.slice(0, 160)}…` : single
+}
+
+interface RequestDot { request: TrajRequestNumber; left: number }
+
+const dotsByAssistantIndex = computed(() => {
+  const map = new Map<number, RequestDot>()
+  const perTurn = new Map<number | null, number>()
+  for (const request of requests.value) {
+    const count = perTurn.get(request.turn) ?? 0
+    perTurn.set(request.turn, count + 1)
+    map.set(request.assistantIndex, { request, left: 12 + (count % 4) * 8 })
+  }
+  return map
+})
+
+function requestDotFor(record: TableRecord): RequestDot | null {
+  return dotsByAssistantIndex.value.get(record.cell.index) ?? null
+}
+
+function onRowDoubleClick(record: TableRecord): void {
+  if (record.collapsedSummary) return
+  if (record.turnStart) {
+    const next = new Set(collapsedTurns.value)
+    if (next.has(record.turn)) next.delete(record.turn)
+    else next.add(record.turn)
+    collapsedTurns.value = next
+    return
+  }
+  if (record.groupStart && record.group) {
+    const key = requestIdentity(record.turn, record.group)
+    const next = new Set(collapsedAssistants.value)
+    if (next.has(key)) next.delete(key)
+    else next.add(key)
+    collapsedAssistants.value = next
+  }
+}
+
+watch([showTurns, showCalls], ([turnsOn, callsOn]) => {
+  if (!turnsOn) collapsedTurns.value = new Set()
+  if (!callsOn) collapsedAssistants.value = new Set()
+})
+
+/* ---------------------------------------------------------------- */
+/* 选中与详情                                                        */
+/* ---------------------------------------------------------------- */
+
+function selectIndex(index: number): void {
+  selectedIndex.value = index
+  const cell = findCell(index)
+  activeTab.value = defaultTabFor(cell)
+  openSections.input = true
+  openSections.output = true
+}
+
+function findCell(index: number): TrajCell | null {
+  for (const turn of turns.value) {
+    for (const group of turn.groups) {
+      for (const cell of group.cells) {
+        if (cell.index === index) return cell
+      }
+    }
+  }
+  return null
+}
+
+function findRecordOf(cell: TrajCell): TableRecord | null {
+  return allRecords.value.find(record => record.cell.index === cell.index) ?? null
+}
+
+const selectedCell = computed<TrajCell | null>(() =>
+  selectedIndex.value === null ? null : findCell(selectedIndex.value))
+const selectedRecord = computed<TableRecord | null>(() => {
+  const cell = selectedCell.value
+  return cell ? findRecordOf(cell) : null
+})
+
+function requestIdentityForCell(cell: TrajCell): string {
+  const record = findRecordOf(cell)
+  return record ? requestIdentity(record.turn, record.group) : ''
+}
+
+const requestForCell = computed<TrajRequestNumber | null>(() => {
+  const cell = selectedCell.value
+  if (!cell) return null
+  const direct = requests.value.find(request => request.assistantIndex === cell.index)
+  if (direct) return direct
+  if (cell.kind === 'tool' || cell.kind === 'subtool') {
+    const identity = requestIdentityForCell(cell)
+    return requests.value.find(request => request.identity === identity) ?? null
+  }
+  return null
+})
+
+const hierarchyLinks = computed(() => {
+  const cell = selectedCell.value
+  const links: { label: string; action: () => void }[] = []
+  if (!cell) return links
+  const request = requestForCell.value
+  if ((cell.kind === 'tool' || cell.kind === 'subtool') && request) {
+    links.push({
+      label: t('messenger.trajectory.assistantMessage'),
+      action: () => selectIndex(request.assistantIndex),
+    })
+  }
+  if (request) {
+    links.push({
+      label: t('messenger.trajectory.requestLabel', { request: request.number }),
+      action: () => selectIndex(request.assistantIndex),
+    })
+  }
+  return links
+})
+
+function statusLabel(cell: TrajCell): string {
+  if (cell.isError) return t('messenger.trajectory.stateFailed')
+  if (cell.kind === 'message' || cell.kind === 'tool' || cell.kind === 'subtool') {
+    return cell.metrics?.timingRecorded || cell.timeSeconds !== null
+      ? t('messenger.trajectory.stateCompleted')
+      : t('messenger.trajectory.stateWaiting')
+  }
+  return t('messenger.trajectory.stateCompleted')
+}
+
+interface TimingRow { label: string; value: string; toggleable?: boolean }
+
+function startedAtValue(ms: number | null): string {
+  if (ms === null) return t('messenger.trajectory.notRecorded')
+  if (timestampMode.value === 'unix') return String(Math.round(ms))
+  return formatStartedAt(ms) || t('messenger.trajectory.unavailable')
+}
+
+const timingRows = computed<TimingRow[]>(() => {
+  const cell = selectedCell.value
+  if (!cell) return []
+  if (cell.kind === 'user' || cell.kind === 'context' || cell.kind === 'system') return []
+  const metrics = cell.metrics
+  const rowsOut: TimingRow[] = []
+  if (cell.kind === 'message' && (!metrics || !metrics.timingRecorded)) {
+    return [{ label: t('messenger.trajectory.timingSource'), value: t('messenger.trajectory.notRecorded') }]
+  }
+  if (cell.kind === 'message' && metrics) {
+    rowsOut.push({
+      label: t('messenger.trajectory.startedAt'),
+      value: startedAtValue(metrics.stepStartTime),
+      toggleable: true,
+    })
+    rowsOut.push({
+      label: t('messenger.trajectory.totalDuration'),
+      value: metrics.completedTime !== null && metrics.stepStartTime !== null
+        ? formatDurationMillis(metrics.completedTime - metrics.stepStartTime, modelT)
+        : t('messenger.trajectory.notRecorded'),
+    })
+    if (metrics.firstTokenTime !== null && metrics.stepStartTime !== null) {
+      rowsOut.push({
+        label: t('messenger.trajectory.firstToken'),
+        value: formatDurationMillis(metrics.firstTokenTime - metrics.stepStartTime, modelT),
+      })
+    }
+    const decode = decodeSeconds(cell)
+    if (decode !== null) {
+      rowsOut.push({
+        label: t('messenger.trajectory.generation'),
+        value: formatDurationMillis(decode * 1000, modelT),
+      })
+    }
+    const throughput = decodeThroughput(cell)
+    if (throughput !== null) {
+      rowsOut.push({
+        label: t('messenger.trajectory.throughput'),
+        value: t('messenger.trajectory.tokensPerSecond', { value: throughput.toFixed(1) }),
+      })
+    }
+  }
+  if (cell.kind === 'tool' || cell.kind === 'subtool') {
+    rowsOut.push({
+      label: t('messenger.trajectory.startedAt'),
+      value: startedAtValue(cell.startedAt),
+      toggleable: true,
+    })
+    rowsOut.push({
+      label: t('messenger.trajectory.duration'),
+      value: durationValue(cell.timeSeconds),
+    })
+  }
+  return rowsOut
+})
+
+const fullTimingRows = computed<TimingRow[]>(() => {
+  const cell = selectedCell.value
+  if (!cell) return []
+  const rowsOut: TimingRow[] = [...timingRows.value]
+  if (cell.kind === 'message') {
+    rowsOut.push({
+      label: t('messenger.trajectory.sessionTimestamp'),
+      value: timestampMode.value === 'local'
+        ? t('messenger.trajectory.showUnixTimestamp')
+        : t('messenger.trajectory.showLocalTime'),
+      toggleable: true,
+    })
+  }
+  return rowsOut
+})
+
+/** 时长展示：未记录的时间戳不伪造 0 值。 */
+function durationValue(seconds: number | null): string {
+  return seconds === null
+    ? t('messenger.trajectory.notRecorded')
+    : formatElapsedSeconds(seconds, modelT)
+}
+
+function decodeSeconds(cell: TrajCell): number | null {
+  const metrics = cell.metrics
+  if (!metrics?.timingRecorded || metrics.firstTokenTime === null || metrics.completedTime === null) {
+    return null
+  }
+  return Math.max(0, (metrics.completedTime - metrics.firstTokenTime) / 1000)
+}
+
+function decodeThroughput(cell: TrajCell): number | null {
+  const decode = decodeSeconds(cell)
+  const tokens = cell.usage?.output
+  if (decode === null || decode <= 0 || tokens === undefined || tokens <= 0) return null
+  return tokens / decode
+}
+
+function toggleTimestampMode(): void {
+  timestampMode.value = timestampMode.value === 'local' ? 'unix' : 'local'
+}
+
+function toggleSection(key: 'input' | 'output'): void {
+  openSections[key] = !openSections[key]
+}
+
+const overviewTab = computed(() => t('messenger.trajectory.tabOverview'))
+const previewTab = computed(() => t('messenger.trajectory.tabPreview'))
+const rawTab = computed(() => t('messenger.trajectory.tabRaw'))
+const paramsTab = computed(() => t('messenger.trajectory.tabParams'))
+const resultTab = computed(() => t('messenger.trajectory.tabResult'))
+const schemaTab = computed(() => t('messenger.trajectory.tabSchema'))
+
+const detailTabs = computed<string[]>(() => {
+  const cell = selectedCell.value
+  if (!cell) return []
+  if (cell.kind === 'system') {
+    return [overviewTab.value, t('messenger.trajectory.tabRaw')]
+  }
+  if (cell.kind === 'compacted') {
+    return [overviewTab.value, t('messenger.trajectory.tabRawOutput')]
+  }
+  if (cell.kind === 'tool' || cell.kind === 'subtool') {
+    return [
+      overviewTab.value,
+      paramsTab.value,
+      resultTab.value,
+      schemaTab.value,
+      t('messenger.trajectory.tabTiming'),
+    ]
+  }
+  return [overviewTab.value, previewTab.value, rawTab.value]
+})
+
+function defaultTabFor(cell: TrajCell | null): string {
+  if (cell?.kind === 'tool' || cell?.kind === 'subtool') return paramsTab.value
+  return overviewTab.value
+}
+
+watch(detailTabs, (tabs) => {
+  if (!tabs.includes(activeTab.value)) activeTab.value = tabs[0] ?? ''
+})
+
+const detailsLocation = computed(() => {
+  const record = selectedRecord.value
+  const cell = selectedCell.value
+  if (!record || !cell) return ''
+  const turnPart = record.turn === null
+    ? t('messenger.trajectory.betweenTurns')
+    : t('messenger.trajectory.turnTitle', { turn: record.turn })
+  const stepMatch = record.group ? /(\d+)/.exec(record.group) : null
+  if (stepMatch) {
+    return `${turnPart} · ${t('messenger.trajectory.stepLabel', { step: Number(stepMatch[1]) })}`
+  }
+  if (cell.kind === 'compacted') return `${turnPart} · ${t('messenger.trajectory.compaction')}`
+  if (record.group) return `${turnPart} · ${record.group}`
+  return turnPart
+})
+
+function safeParse(raw: string | undefined): unknown {
+  if (!raw) return null
+  try {
+    return JSON.parse(raw)
+  } catch {
+    return null
+  }
+}
+
+const selectedArgs = computed(() => safeParse(selectedCell.value?.inputDetail))
+const selectedResult = computed(() => safeParse(selectedCell.value?.result))
+
+function renderCellMarkdown(raw: string | undefined): string {
+  if (!raw) return ''
+  try {
+    return renderMarkdown(raw)
+  } catch {
+    return ''
+  }
+}
+
+const previewMarkdown = computed(() => renderCellMarkdown(selectedCell.value?.previewMarkdown))
+const inputMarkdown = computed(() => renderCellMarkdown(selectedCell.value?.inputDetail))
+const outputMarkdown = computed(() => renderCellMarkdown(selectedCell.value?.outputDetail))
+
+const detailsStyle = computed(() =>
+  detailsWidth.value === null ? undefined : { width: `${detailsWidth.value}px` })
+
+function startResize(event: PointerEvent): void {
+  event.preventDefault()
+  const target = event.currentTarget as HTMLElement
+  const aside = target.parentElement?.querySelector<HTMLElement>('.tt-details')
+  if (!aside) return
+  resizeState = {
+    startX: event.clientX,
+    startWidth: aside.getBoundingClientRect().width,
+  }
+  target.setPointerCapture(event.pointerId)
+}
+
+function onWindowPointerMove(event: PointerEvent): void {
+  if (resizeState) {
+    const delta = resizeState.startX - event.clientX
+    const maxWidth = Math.max(320, window.innerWidth - 280)
+    detailsWidth.value = Math.min(720, Math.max(320, Math.min(maxWidth, resizeState.startWidth + delta)))
+  }
+  handleTimelineMove(event)
+}
+
+function onWindowPointerUp(): void {
+  resizeState = null
+  finishTimelinePointer()
+}
+
+/* ---------------------------------------------------------------- */
+/* 时间线交互                                                        */
+/* ---------------------------------------------------------------- */
+
+function clampViewport(start: number, span: number): { start: number; span: number } {
+  const { start: domainStart, end: domainEnd } = domain.value
+  const domainSpan = Math.max(1e-9, domainEnd - domainStart)
+  const nextSpan = Math.min(Math.max(span, minSpan()), domainSpan)
+  const maxStart = domainEnd - nextSpan
+  return {
+    start: Math.min(Math.max(start, domainStart), Math.max(domainStart, maxStart)),
+    span: nextSpan,
+  }
+}
+
+function minSpan(): number {
+  return timelineMode.value === 'sequence' ? MIN_VIEWPORT_OPS : MIN_VIEWPORT_MS
+}
+
+function valueAt(clientX: number): number {
+  const rect = trackEl.value?.getBoundingClientRect()
+  if (!rect || rect.width <= 0) return viewStart.value
+  const fraction = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width))
+  return viewStart.value + fraction * viewSpan.value
+}
+
+function onTimelineWheel(event: WheelEvent): void {
+  const anchor = valueAt(event.clientX)
+  const factor = event.deltaY > 0 ? 1.25 : 0.8
+  const nextSpan = viewSpan.value * factor
+  const fraction = (anchor - viewStart.value) / Math.max(1e-9, viewSpan.value)
+  const nextStart = anchor - fraction * nextSpan
+  const clamped = clampViewport(nextStart, nextSpan)
+  viewStart.value = clamped.start
+  viewSpan.value = clamped.span
+}
+
+function onTimelinePointerDown(event: PointerEvent): void {
+  if (!trackEl.value) return
+  const value = valueAt(event.clientX)
+  if (event.button === 2) {
+    dragState = {
+      kind: 'pan',
+      anchorX: event.clientX,
+      anchorValue: value,
+      moved: false,
+      panStart: viewStart.value,
+    }
+    panning.value = true
+    return
+  }
+  if (event.button !== 0) return
+  dragState = {
+    kind: 'select',
+    anchorX: event.clientX,
+    anchorValue: value,
+    moved: false,
+    panStart: viewStart.value,
+  }
+  dragging.value = true
+  selection.value = null
+}
+
+function onTimelinePointerMove(event: PointerEvent): void {
+  if (trackEl.value) {
+    const rect = trackEl.value.getBoundingClientRect()
+    hoverX.value = event.clientX >= rect.left && event.clientX <= rect.right
+      ? event.clientX - rect.left
+      : null
+  }
+  handleTimelineMove(event)
+}
+
+function handleTimelineMove(event: PointerEvent): void {
+  if (!dragState || !trackEl.value) return
+  if (dragState.kind === 'pan') {
+    const dx = event.clientX - dragState.anchorX
+    if (Math.abs(dx) > 2) dragState.moved = true
+    const rect = trackEl.value.getBoundingClientRect()
+    const perPx = viewSpan.value / Math.max(1, rect.width)
+    const clamped = clampViewport(dragState.panStart - dx * perPx, viewSpan.value)
+    viewStart.value = clamped.start
+    viewSpan.value = clamped.span
+    return
+  }
+  const rect = trackEl.value.getBoundingClientRect()
+  if (Math.abs(event.clientX - dragState.anchorX) >= 3) dragState.moved = true
+  edgePan(event.clientX, rect)
+  const anchor = valueAt(dragState.anchorX)
+  const current = valueAt(event.clientX)
+  selection.value = {
+    start: Math.min(anchor, current),
+    end: Math.max(anchor, current),
+  }
+}
+
+function edgePan(clientX: number, rect: DOMRect): void {
+  const edge = rect.width * EDGE_PAN_FRACTION
+  let shift = 0
+  if (clientX - rect.left < edge) shift = -viewSpan.value * 0.03
+  else if (rect.right - clientX < edge) shift = viewSpan.value * 0.03
+  if (shift !== 0) {
+    const clamped = clampViewport(viewStart.value + shift, viewSpan.value)
+    viewStart.value = clamped.start
+    viewSpan.value = clamped.span
+  }
+}
+
+function finishTimelinePointer(): void {
+  if (!dragState) return
+  const state = dragState
+  dragState = null
+  dragging.value = false
+  panning.value = false
+  if (state.kind !== 'select') return
+  if (!state.moved) {
+    // 视为点击：聚焦时间上最近的记录。
+    const model = timeline.value
+    if (model && model.spans.length > 0) {
+      let best = model.spans[0]!
+      let bestDistance = Number.POSITIVE_INFINITY
+      for (const span of model.spans) {
+        const center = (span.start + span.end) / 2
+        const distance = Math.abs(center - state.anchorValue)
+        if (distance < bestDistance) {
+          bestDistance = distance
+          best = span
+        }
+      }
+      selection.value = null
+      selectIndex(best.index)
+    }
+    return
+  }
+  if (selection.value && selection.value.end - selection.value.start < 1e-9) {
+    selection.value = null
+  }
+}
+
+function onTimelinePointerUp(): void {
+  finishTimelinePointer()
+}
+
+function onTimelineLeave(): void {
+  hoverX.value = null
+}
+
+function onSpanEnter(span: { model: TimelineSpan }, event: PointerEvent): void {
+  if (tooltipTimer !== null) window.clearTimeout(tooltipTimer)
+  const clientX = event.clientX
+  const clientY = event.clientY
+  tooltipTimer = window.setTimeout(() => {
+    const cell = findCell(span.model.index)
+    const lines: string[] = [kindLabel(span.model.kind)]
+    if (span.model.label) {
+      lines.push(span.model.label.length > 64 ? `${span.model.label.slice(0, 64)}…` : span.model.label)
+    }
+    if (cell) {
+      if (cell.startedAt !== null) {
+        const end = cell.startedAt + (cell.timeSeconds ?? 0) * 1000
+        lines.push(`${formatClock(cell.startedAt)} → ${formatClock(end)}`)
+      }
+      if (cell.timeSeconds !== null && cell.timeSeconds > 0) {
+        lines.push(t('messenger.trajectory.totalDurationValue', {
+          duration: formatDurationMillis(cell.timeSeconds * 1000, modelT),
+        }))
+      }
+      const decode = decodeSeconds(cell)
+      const metrics = cell.metrics
+      const ttft = metrics?.firstTokenTime != null && metrics.stepStartTime != null
+        ? metrics.firstTokenTime - metrics.stepStartTime
+        : null
+      if (ttft !== null && decode !== null) {
+        lines.push(t('messenger.trajectory.tooltipTtft', {
+          ttft: formatDurationMillis(ttft, modelT),
+          decoding: formatDurationMillis(decode * 1000, modelT),
+        }))
+      }
+    }
+    tooltip.lines = lines
+    tooltip.x = clientX
+    tooltip.y = clientY
+    tooltip.visible = true
+  }, TOOLTIP_DELAY_MS)
+}
+
+function onSpanLeave(): void {
+  if (tooltipTimer !== null) window.clearTimeout(tooltipTimer)
+  tooltip.visible = false
+}
+
+function clearSelection(): void {
+  selection.value = null
+  selectedIndex.value = null
+  activeTab.value = ''
+}
+
+function spanClasses(span: { model: TimelineSpan; dimmed: boolean; outside: boolean }): Record<string, boolean> {
+  return {
+    [`tt-span-${span.model.kind}`]: true,
+    'tt-span-error': span.model.isError,
+    'tt-span-dimmed': span.dimmed,
+    'tt-span-outside': span.outside,
+  }
+}
+
+function spanStyle(span: { model: TimelineSpan; left: number; width: number }): Record<string, string> {
+  const style: Record<string, string> = {
+    left: `${span.left}px`,
+    width: `${span.width}px`,
+    top: `${span.model.lane * 14}px`,
+  }
+  if (span.model.kind === 'message' && span.model.ttftFraction !== null && span.width > 6) {
+    const split = Math.round(span.width * span.model.ttftFraction)
+    style.background = `linear-gradient(90deg, rgba(65,118,230,0.92) ${split}px, rgba(65,118,230,0.45) ${split}px)`
+  }
+  return style
+}
+
+const selectionStyle = computed(() => {
+  if (!selection.value) return {}
+  const width = trackWidth.value || 600
+  const span = Math.max(1e-9, viewSpan.value)
+  const left = ((selection.value.start - viewStart.value) / span) * width
+  const right = ((selection.value.end - viewStart.value) / span) * width
+  return {
+    left: `${Math.max(0, left)}px`,
+    width: `${Math.max(2, right - left)}px`,
+  }
+})
+
+function formatTokens(value: number | undefined): string {
+  if (value === undefined || !Number.isFinite(value)) return t('messenger.trajectory.unavailable')
+  return t('messenger.trajectory.tokens', { value: Math.round(value).toLocaleString('en-US') })
+}
 </script>

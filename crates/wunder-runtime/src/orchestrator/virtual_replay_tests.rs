@@ -197,8 +197,15 @@ async fn virtual_replay_works_at_zero_balance_without_spending_or_granting_token
         .get_user_by_id(&user.user_id)
         .unwrap()
         .unwrap();
+    use wunder_core::virtual_model::VirtualModelOptions;
     let model = LlmModelConfig {
         provider: Some("virtual_replay".into()),
+        // Disable simulated faults so this test stays fully deterministic.
+        simulation: Some(VirtualModelOptions {
+            error_rate: 0.0,
+            disconnect_rate: 0.0,
+            ..Default::default()
+        }),
         ..Default::default()
     };
     state
@@ -304,8 +311,15 @@ async fn random_simulation_persists_records_like_real_models() {
     let turn_id = accepted["turn_id"].as_str().unwrap().to_string();
     let user_round = accepted["user_turn_index"].as_i64().unwrap_or(1);
     emitter.bind_turn(&turn_id, user_round);
+    use wunder_core::virtual_model::VirtualModelOptions;
     let model = LlmModelConfig {
         provider: Some("virtual_replay".into()),
+        // Disable simulated faults so this test stays fully deterministic.
+        simulation: Some(VirtualModelOptions {
+            error_rate: 0.0,
+            disconnect_rate: 0.0,
+            ..Default::default()
+        }),
         ..Default::default()
     };
     let result = state

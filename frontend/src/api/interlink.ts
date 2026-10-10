@@ -232,7 +232,9 @@ const normalizeNode = (raw: Record<string, unknown>): InterlinkNode => {
   const meta = asRecord(raw.meta);
   const enabledRaw = meta.interlink_enabled ?? meta.enabled ?? raw.interlink_enabled;
   return {
-    node_id: asText(raw.node_id),
+    // 服务端把设备节点报成 `device:<id>`；本仓库所有消费方（影子/开关/清除按
+    // `/nodes/{device_id}/...` 取数，命令目标另加前缀）都用裸 id，这里统一剥前缀。
+    node_id: interlinkDeviceIdOf(asText(raw.node_id)),
     node_type: asText(raw.node_type),
     user_id: asText(raw.user_id),
     label: asText(raw.label),

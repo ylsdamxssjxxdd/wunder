@@ -18,6 +18,8 @@ pub mod request;
 mod streaming;
 pub mod timing;
 mod tool_protocol;
+pub mod faults;
+pub use faults::{disconnect_delta_limit, is_simulated_turn, sample_fault, SimulatedFault};
 pub use streaming::emit_virtual_deltas;
 #[cfg(test)]
 mod replay_tests;
@@ -272,6 +274,7 @@ pub async fn load_turn_for_round(
     user_round: Option<i64>,
     model_round: Option<i64>,
     tools: Option<&[Value]>,
+    goal_entry_allowed: bool,
 ) -> Result<VirtualReplayTurn> {
     let target_log_id = resolve_virtual_model_id(model);
     let round = user_round.unwrap_or(1).max(1) as usize;
@@ -283,6 +286,9 @@ pub async fn load_turn_for_round(
     // Tool references only live in this function body; extract owned summaries
     // before moving state into the blocking closure.
     let tool_summaries = random_sim::tool_summaries(tools);
+    let goal_entry = goal_entry_allowed
+        .then(|| random_sim::goal_entry_candidate(tools))
+        .flatten();
     blocking::run_fs("virtual_llm.load_turn", move || {
         if let Some(log) = config
             .llm
@@ -302,7 +308,9 @@ pub async fn load_turn_for_round(
         }
         // No replay log is available: the random simulator still produces a
         // full model-round sequence (1-100 planned rounds with harmless
-        // read-only tool calls) without spending any real API quota.
+        // read-only tool calls) without spending any real API quota. Human turns
+        // may additionally arm a long-running goal so the goal driver keeps
+        // producing rounds until the operator stops it.
         let total_rounds = random_sim::plan_rounds(&session_seed, round);
         Ok(random_sim::build_turn(
             &session_seed,
@@ -310,6 +318,7 @@ pub async fn load_turn_for_round(
             model_round,
             total_rounds,
             &tool_summaries,
+            goal_entry.as_ref(),
         ))
     })
     .await
@@ -704,7 +713,7 @@ mod tests {
 
     #[test]
     fn random_sim_turn_marks_virtual_random_source() {
-        let turn = random_sim::build_turn("session-a", 3, 2, 5, &[]);
+        let turn = random_sim::build_turn("session-a", 3, 2, 5, &[], None);
 
         assert_eq!(turn.source_log_id, RANDOM_REPLAY_LOG_ID);
         assert_eq!(turn.source_round, 3);
@@ -722,7 +731,7 @@ mod tests {
             ..Default::default()
         };
 
-        let turn = load_turn_for_round(config, &model, "session-a", Some(2), Some(3), None)
+        let turn = load_turn_for_round(config, &model, "session-a", Some(2), Some(3), None, true)
             .await
             .expect("random virtual turn");
 
@@ -746,7 +755,7 @@ mod tests {
             ..Default::default()
         };
 
-        let turn = load_turn_for_round(config, &model, "session-a", Some(1), Some(1), None)
+        let turn = load_turn_for_round(config, &model, "session-a", Some(1), Some(1), None, true)
             .await
             .expect("random fallback for missing log");
 

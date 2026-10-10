@@ -31,6 +31,11 @@ enum LlmFailureKind {
 const LLM_UNAVAILABLE_MIN_RETRIES: u32 = 5;
 const LLM_UNAVAILABLE_RETRY_DELAYS_MS: [u64; 5] = [1_200, 3_000, 6_000, 12_000, 20_000];
 const DEFAULT_LLM_MAX_ATTEMPTS: u32 = 2;
+/// Synthetic-fault retry policy for the virtual (simulated) provider. Kept short
+/// so a simulated hiccup resolves quickly while a persistent fault still
+/// surfaces as `llm_unavailable` after the final attempt.
+const VIRTUAL_MAX_ATTEMPTS: u32 = 3;
+const VIRTUAL_RETRY_DELAYS_MS: [u64; 3] = [300, 800, 1_500];
 
 impl OutputTiming {
     fn mark_output(&mut self, now: Instant, content_delta_len: usize, reasoning_delta_len: usize) {
@@ -621,6 +626,7 @@ impl Orchestrator {
                 round_info.user_round,
                 round_info.model_round,
                 tools,
+                !round_info.is_goal_round,
             )
             .await
             .map_err(|err| {
@@ -697,6 +703,96 @@ impl Orchestrator {
             self.resolve_llm_timeout_s(&effective_config)
         };
         if let Some(virtual_turn) = virtual_turn {
+            let fault_options = effective_config.simulation.clone().unwrap_or_default();
+            let simulated_turn = crate::services::virtual_llm::is_simulated_turn(&virtual_turn);
+            let fault_user_round = round_info.user_round.unwrap_or(0).max(0) as usize;
+            let fault_model_round = round_info.model_round.unwrap_or(0).max(0) as usize;
+            let mut virtual_attempt = 0u32;
+            loop {
+            self.ensure_not_cancelled(session_id)?;
+            virtual_attempt += 1;
+            if simulated_turn {
+                if let Some(fault) = crate::services::virtual_llm::sample_fault(
+                    session_id,
+                    fault_user_round,
+                    fault_model_round,
+                    virtual_attempt,
+                    &fault_options,
+                ) {
+                    let last_attempt = virtual_attempt >= VIRTUAL_MAX_ATTEMPTS;
+                    let index =
+                        (virtual_attempt as usize - 1).min(VIRTUAL_RETRY_DELAYS_MS.len() - 1);
+                    let delay_ms = VIRTUAL_RETRY_DELAYS_MS[index];
+                    let partial_limit = match fault {
+                        crate::services::virtual_llm::SimulatedFault::ApiError { code } => {
+                            if last_attempt {
+                                return Err(OrchestratorError::llm_unavailable(format!(
+                                    "simulated virtual provider error: {code}"
+                                )));
+                            }
+                            None
+                        }
+                        crate::services::virtual_llm::SimulatedFault::Disconnect => {
+                            if last_attempt {
+                                return Err(OrchestratorError::llm_unavailable(
+                                    "simulated virtual provider disconnect".to_string(),
+                                ));
+                            }
+                            if initial_will_stream {
+                                Some(crate::services::virtual_llm::disconnect_delta_limit(
+                                    session_id,
+                                    fault_user_round,
+                                    fault_model_round,
+                                    virtual_attempt,
+                                ))
+                            } else {
+                                None
+                            }
+                        }
+                    };
+                    // Show a partial answer before dropping so the retry looks real.
+                    if let Some(limit) = partial_limit {
+                        let simulation_speed =
+                            effective_config.simulation_speed.unwrap_or_default();
+                        let mut seen = 0usize;
+                        let _ = crate::services::virtual_llm::emit_virtual_deltas(
+                            &virtual_turn,
+                            true,
+                            simulation_speed,
+                            move |_delta: String, _reasoning: String| {
+                                seen += 1;
+                                let fail = seen >= limit;
+                                async move {
+                                    if fail {
+                                        Err(anyhow::anyhow!("simulated stream disconnect"))
+                                    } else {
+                                        Ok::<(), anyhow::Error>(())
+                                    }
+                                }
+                            },
+                        )
+                        .await;
+                    }
+                    if emit_events {
+                        let mut payload = json!({
+                            "attempt": virtual_attempt,
+                            "max_attempts": VIRTUAL_MAX_ATTEMPTS,
+                            "delay_s": delay_ms as f64 / 1000.0,
+                            "retry_reason": "simulated_provider_fault",
+                            "stream": initial_will_stream,
+                            "will_retry": true,
+                            "error": "simulated virtual provider fault",
+                        });
+                        if let Value::Object(ref mut map) = payload {
+                            round_info.insert_into(map);
+                        }
+                        emitter.emit("llm_stream_retry", payload).await;
+                    }
+                    self.sleep_or_cancel(session_id, Duration::from_millis(delay_ms))
+                        .await?;
+                    continue;
+                }
+            }
             let request_started_at = Instant::now();
             let simulation_speed = effective_config.simulation_speed.unwrap_or_default();
             // Replay usage may describe an older prompt. Simulate prefill from this request.
@@ -865,6 +961,7 @@ impl Orchestrator {
                 .await?;
             // Recorded/estimated usage is diagnostic only; replay never spends user quota.
             return Ok((content, reasoning, usage, tool_calls, round_speed, output));
+            }
         }
         let mut attempt = 0u32;
         let mut last_err: anyhow::Error;

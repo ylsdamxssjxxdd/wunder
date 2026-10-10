@@ -23,7 +23,21 @@ const BLOCKED_HINTS: &[&str] = &[
 ];
 /// 单轮最多同时发出的工具调用数。
 const MAX_CALLS_PER_ROUND: usize = 2;
-const SAMPLE_WORDS: &[&str] = &["配置", "结构", "说明", "结果", "摘要", "示例"];
+const SAMPLE_WORDS: &[&str] = &[
+    "配置", "结构", "说明", "结果", "摘要", "示例", "入口", "依赖", "日志", "错误", "步骤",
+    "参数", "目录", "缓存", "接口", "状态",
+];
+/// 人类发起的轮次中，平均每多少轮登记一次长程目标（1/N 概率）。
+const GOAL_ENTRY_ONE_IN: u64 = 3;
+/// 目标轮次上限上限：足够大以便被目标持续驱动，直到人工停止。
+const GOAL_MAX_ROUNDS: i64 = 10_000;
+/// 合成的长程目标描述，贴近真实的可持续推进任务。
+const GOAL_OBJECTIVES: &[&str] = &[
+    "持续跟踪当前仓库的关键变更，并逐轮汇总进展，直到我要求停止。",
+    "以一个较长的调研目标为线索，循环执行只读检查并输出阶段性结论。",
+    "围绕当前主题持续推进，边查证边产出结论，直到我手动中断。",
+    "把它当成一个需要长期推进的任务：每轮都往前推进一步并记录状态。",
+];
 
 /// 从请求提供的工具中筛选可安全随机调用的只读工具摘要 (名称, 参数 schema)。
 /// 必须在进入 'static 闭包前完成提取，结果为 owned 数据。
@@ -65,6 +79,52 @@ pub(super) fn tool_summaries(tools: Option<&[Value]>) -> Vec<(String, Value)> {
     summaries
 }
 
+/// 请求中提供的 `create_goal` 工具（若运行时暴露了它）。
+///
+/// `create_goal` 会被 [`tool_summaries`] 的写操作过滤掉（名字里含 create），
+/// 但目标编排是运行时级能力，这里单独取出来供目标入口使用，并沿用模型实际
+/// 看到的工具名（可能是本地化别名），确保 tool_call 能通过在册校验。
+pub(super) fn goal_entry_candidate(tools: Option<&[Value]>) -> Option<(String, Value)> {
+    let items = tools?;
+    items.iter().find_map(|tool| {
+        let name = tool
+            .pointer("/function/name")
+            .or_else(|| tool.get("name"))
+            .and_then(Value::as_str)?;
+        let canonical = crate::tools::resolve_tool_name(name);
+        let is_create_goal = canonical.trim() == crate::services::goal::TOOL_CREATE_GOAL
+            || name.trim() == crate::services::goal::TOOL_CREATE_GOAL;
+        if !is_create_goal {
+            return None;
+        }
+        let schema = tool
+            .pointer("/function/parameters")
+            .or_else(|| tool.get("input_schema"))
+            .cloned()
+            .filter(Value::is_object)
+            .unwrap_or_else(|| json!({}));
+        Some((name.to_string(), schema))
+    })
+}
+
+/// 构造 `create_goal` 的合法参数：必需 objective + 一个把轮次上限顶到天花板的
+/// `max_goal_rounds`，从而实现“被目标持续驱动直到人工停止”。
+fn goal_create_arguments(schema: &Value, rng: &mut u64) -> Value {
+    let mut arguments = Map::new();
+    arguments.insert("objective".to_string(), json!(pick(GOAL_OBJECTIVES, rng)));
+    let declares_limit = schema
+        .get("properties")
+        .and_then(|properties| properties.get("max_goal_rounds"))
+        .is_some();
+    if declares_limit {
+        arguments.insert(
+            "max_goal_rounds".to_string(),
+            json!(GOAL_MAX_ROUNDS),
+        );
+    }
+    Value::Object(arguments)
+}
+
 /// 同一 (session, user_round) 的计划轮次数：1-100 均匀分布，跨模型轮次稳定。
 pub(super) fn plan_rounds(session_seed: &str, user_round: usize) -> usize {
     let seed = mix(session_seed, user_round as u64);
@@ -77,10 +137,11 @@ pub(super) fn build_turn(
     model_round: usize,
     total_rounds: usize,
     tools: &[(String, Value)],
+    goal_entry: Option<&(String, Value)>,
 ) -> VirtualReplayTurn {
     let mut rng = mix(session_seed, ((round as u64) << 32) | model_round as u64).max(1);
     if model_round < total_rounds && !tools.is_empty() {
-        build_tool_turn(round, model_round, total_rounds, tools, &mut rng)
+        build_tool_turn(round, model_round, total_rounds, tools, goal_entry, &mut rng)
     } else {
         build_final_turn(round, model_round, total_rounds, &mut rng)
     }
@@ -91,11 +152,32 @@ fn build_tool_turn(
     model_round: usize,
     total_rounds: usize,
     candidates: &[(String, Value)],
+    goal_entry: Option<&(String, Value)>,
     rng: &mut u64,
 ) -> VirtualReplayTurn {
-    let call_count = 1 + (next_u64(rng) as usize) % MAX_CALLS_PER_ROUND;
-    let mut calls = Vec::with_capacity(call_count);
-    for index in 0..call_count {
+    let mut calls = Vec::with_capacity(MAX_CALLS_PER_ROUND);
+    // 确定性抽样的部分轮次会登记一个长程目标，让目标驱动器持续排轮次，直到
+    // 人工停止。目标管理需要直接的人类授权，因此只在人类发起的轮次触发
+    // （驱动器派发的目标轮里 goal_entry 为 None）。
+    let opens_goal = model_round == 1
+        && goal_entry.is_some()
+        && next_u64(rng) % GOAL_ENTRY_ONE_IN == 0;
+    if opens_goal {
+        if let Some((name, schema)) = goal_entry {
+            let args = goal_create_arguments(schema, rng);
+            calls.push(json!({
+                "id": format!("sim_{round}_{model_round}_goal"),
+                "type": "function",
+                "function": {"name": name, "arguments": args.to_string()},
+            }));
+        }
+    }
+    let read_only_calls = if opens_goal {
+        1
+    } else {
+        1 + (next_u64(rng) as usize) % MAX_CALLS_PER_ROUND
+    };
+    for index in 0..read_only_calls {
         let (name, schema) = &candidates[(next_u64(rng) as usize) % candidates.len()];
         let args = sample_arguments(schema, rng);
         calls.push(json!({
@@ -104,7 +186,7 @@ fn build_tool_turn(
             "function": {"name": name, "arguments": args.to_string()},
         }));
     }
-    let reasoning = format!(
+    let mut reasoning = format!(
         "{}预计还需 {} 轮完成本组工作。",
         pick(
             &[
@@ -112,23 +194,38 @@ fn build_tool_turn(
                 "需要确认当前状态，避免基于过时信息行动。",
                 "把当前发现整理出来，作为后续输入。",
                 "继续补充信息，确保结论有依据。",
+                "这一步只做只读探查，不会改动任何数据。",
+                "先把范围缩小，避免无关结果干扰判断。",
+                "上一次的结果指向下一处需要核实的位置。",
+                "确认没有遗漏关键上下文后再继续。",
             ],
             rng
         ),
         total_rounds.saturating_sub(model_round)
     );
-    let content = if next_u64(rng) % 2 == 0 {
+    if opens_goal {
+        reasoning = "这是一项需要持续推进的工作，先登记目标，再逐轮展开。".to_string();
+    }
+    let content = if next_u64(rng) % 3 != 0 {
         pick(
             &[
                 "我先检查一下当前的情况。",
                 "正在获取相关数据。",
                 "继续收集信息。",
+                "接下来核对相关的几处细节。",
+                "先读取必要的信息再作判断。",
+                "补充一些上下文，方便后续处理。",
             ],
             rng,
         )
         .to_string()
     } else {
         String::new()
+    };
+    let content = if opens_goal {
+        "我会把它作为一个持续任务来推进，先建立目标。".to_string()
+    } else {
+        content
     };
     VirtualReplayTurn {
         finish_reason: None,
@@ -290,7 +387,7 @@ fn pick<'a>(items: &[&'a str], rng: &mut u64) -> &'a str {
 }
 
 /// FNV 思路的 64bit 混合，同一输入跨重启稳定。
-fn mix(session_seed: &str, nonce: u64) -> u64 {
+pub(super) fn mix(session_seed: &str, nonce: u64) -> u64 {
     let mut hasher = DefaultHasher::new();
     session_seed.hash(&mut hasher);
     nonce.hash(&mut hasher);
@@ -302,7 +399,7 @@ fn mix(session_seed: &str, nonce: u64) -> u64 {
     }
 }
 
-fn next_u64(state: &mut u64) -> u64 {
+pub(super) fn next_u64(state: &mut u64) -> u64 {
     let mut x = *state;
     x ^= x << 13;
     x ^= x >> 7;
@@ -354,7 +451,7 @@ mod tests {
             json!({"type":"object","required":["path"],"properties":{"path":{"type":"string"}}}),
         )];
         for model_round in 1..30 {
-            let turn = build_turn("session-a", 1, model_round, 40, &candidates);
+            let turn = build_turn("session-a", 1, model_round, 40, &candidates, None);
             if model_round < 40 {
                 let calls = turn
                     .tool_calls
@@ -376,7 +473,7 @@ mod tests {
     #[test]
     fn no_tools_means_single_final_turn() {
         for model_round in 1..10 {
-            let turn = build_turn("session-a", 1, model_round, 10, &[]);
+            let turn = build_turn("session-a", 1, model_round, 10, &[], None);
             assert!(turn.tool_calls.is_none());
             assert!(!turn.content.trim().is_empty());
         }
@@ -388,7 +485,7 @@ mod tests {
             "列出文件",
             json!({"type":"object","properties":{"path":{"type":"string"}}}),
         )];
-        let turn = build_turn("session-a", 3, 20, 20, &candidates);
+        let turn = build_turn("session-a", 3, 20, 20, &candidates, None);
         assert!(turn.tool_calls.is_none());
         assert!(turn.content.contains("模型轮次"));
     }
@@ -405,5 +502,73 @@ mod tests {
         assert!(args.get("pattern").and_then(Value::as_str).is_some());
         assert!(args.get("limit").and_then(Value::as_i64).is_some());
         assert!(args.get("recursive").is_none(), "optional fields stay unset");
+    }
+
+    #[test]
+    fn goal_candidate_matches_localized_create_goal() {
+        let tools = vec![
+            json!({"type":"function","function":{"name":"读取文件","parameters":json!({"type":"object"})}}),
+            json!({"type":"function","function":{"name":"create_goal","parameters":json!({"type":"object","required":["objective"],"properties":{"objective":{"type":"string"}}})}}),
+        ];
+        let candidate = goal_entry_candidate(Some(&tools)).expect("create_goal is offered");
+        assert_eq!(candidate.0, "create_goal");
+        assert!(goal_entry_candidate(None).is_none());
+        // create_goal is a goal tool, never treated as a plain read-only tool.
+        assert!(tool_summaries(Some(&tools))
+            .iter()
+            .all(|(name, _)| name != "create_goal"));
+    }
+
+    #[test]
+    fn goal_entry_is_deterministic_and_only_on_first_model_round() {
+        let candidates = vec![summary(
+            "读取文件",
+            json!({"type":"object","required":["path"],"properties":{"path":{"type":"string"}}}),
+        )];
+        let goal = (
+            "create_goal".to_string(),
+            json!({"type":"object","required":["objective"],"properties":{
+                "objective":{"type":"string"},
+                "max_goal_rounds":{"type":"integer"}
+            }}),
+        );
+        let mut opened = 0;
+        for round in 1..=24 {
+            // Later model rounds never re-open a goal.
+            let later = build_turn("session-a", round, 2, 40, &candidates, Some(&goal));
+            let later_calls = later.tool_calls.as_ref().and_then(Value::as_array).expect("calls");
+            assert!(later_calls
+                .iter()
+                .all(|call| call.pointer("/function/name").and_then(Value::as_str) != Some("create_goal")));
+            // The first model round may open a goal, and only deterministically.
+            let first = build_turn("session-a", round, 1, 40, &candidates, Some(&goal));
+            let again = build_turn("session-a", round, 1, 40, &candidates, Some(&goal));
+            assert_eq!(first.tool_calls, again.tool_calls, "goal entry must be reproducible");
+            let calls = first.tool_calls.as_ref().and_then(Value::as_array).expect("calls");
+            assert!(calls.len() <= MAX_CALLS_PER_ROUND);
+            if let Some(call) = calls
+                .iter()
+                .find(|call| call.pointer("/function/name").and_then(Value::as_str) == Some("create_goal"))
+            {
+                opened += 1;
+                let args: Value = serde_json::from_str(
+                    call.pointer("/function/arguments").and_then(Value::as_str).expect("args"),
+                )
+                .expect("goal arguments are json");
+                assert!(args.get("objective").and_then(Value::as_str).is_some());
+                assert_eq!(
+                    args.get("max_goal_rounds").and_then(Value::as_i64),
+                    Some(GOAL_MAX_ROUNDS)
+                );
+            }
+        }
+        assert!(opened > 0, "at least one human turn should arm a goal");
+        assert!(opened < 24, "goal entry stays a deterministic subset, not every turn");
+        // A driver-issued round never sees a goal candidate.
+        let blocked = build_turn("session-a", 1, 1, 40, &candidates, None);
+        let blocked_calls = blocked.tool_calls.as_ref().and_then(Value::as_array).expect("calls");
+        assert!(blocked_calls
+            .iter()
+            .all(|call| call.pointer("/function/name").and_then(Value::as_str) != Some("create_goal")));
     }
 }

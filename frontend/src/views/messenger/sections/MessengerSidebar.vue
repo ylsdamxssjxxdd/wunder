@@ -9,12 +9,12 @@
       <div class="messenger-sidebar-group-title">{{ t('messenger.sidebar.workspaceGroup') }}</div>
       <div
         class="messenger-sidebar-workspace-row"
-        :class="{ 'is-selected': !activeSessionId }"
+        :class="{ 'is-selected': !activeSessionId && !interlinkRemoteSelected }"
         role="button"
         tabindex="0"
         :aria-label="workspaceName"
-        @click="emit('select-workspace')"
-        @keydown.enter.prevent="emit('select-workspace')"
+        @click="handleWorkspaceRowClick"
+        @keydown.enter.prevent="handleWorkspaceRowClick"
       >
         <i class="fa-solid fa-cloud messenger-sidebar-workspace-icon" aria-hidden="true"></i>
         <span class="messenger-sidebar-workspace-name" :title="workspaceName">{{ workspaceName }}</span>
@@ -31,6 +31,28 @@
           <i class="fa-solid fa-plus" aria-hidden="true"></i>
         </button>
       </div>
+
+      <!-- 已连接的本地设备（§6.3）：以工作区行体现，选中后文件区切到该设备的远程目录。 -->
+      <button
+        v-for="node in interlinkDeviceRows"
+        :key="node.node_id"
+        class="messenger-sidebar-workspace-row is-device-row"
+        :class="{ 'is-selected': node.node_id === interlinkSelectedDeviceId }"
+        type="button"
+        :aria-label="t('interlink.workspace.deviceRow', { name: deviceRowLabel(node) })"
+        @click="selectDeviceNode(node)"
+      >
+        <span
+          class="interlink-status-dot messenger-sidebar-device-status"
+          :class="statusDotClass(node.status)"
+          aria-hidden="true"
+        ></span>
+        <i :class="nodeTypeIcon(node.node_type)" class="messenger-sidebar-workspace-icon" aria-hidden="true"></i>
+        <span class="messenger-sidebar-workspace-name" :title="deviceRowLabel(node)">
+          {{ node.label || node.node_id }}
+        </span>
+        <span class="messenger-sidebar-workspace-meta">{{ t(statusLabelKey(node.status)) }}</span>
+      </button>
 
       <MessengerThreadTree
         :items="threads"
@@ -89,6 +111,17 @@
 import { computed, onBeforeUnmount, ref } from 'vue';
 import MessengerThreadTree from './MessengerThreadTree.vue';
 import WorkspaceFilesPanel from '@/views/messenger/workspace/WorkspaceFilesPanel.vue';
+import { useInterlinkNodes } from '@/views/messenger/interlink/useInterlinkNodes';
+import { useInterlinkNodeTarget } from '@/views/messenger/interlink/interlinkNodeTarget';
+import {
+  INTERLINK_NODE_MAX_RENDERED,
+  isDeviceNode,
+  nodeTypeIcon,
+  nodeTypeLabelKey,
+  statusDotClass,
+  statusLabelKey
+} from '@/views/messenger/interlink/interlinkNodeModel';
+import type { InterlinkNode } from '@/api/interlink';
 import type { MessengerControllerContext } from '../controller/messengerControllerContext';
 import { buildTaskList } from '@/views/messenger/taskList';
 
@@ -138,6 +171,34 @@ const workspaceMetaLabel = computed(() => {
   if (!total) return t('messenger.status.idle');
   return t('messenger.sidebar.threadCount', { count: total });
 });
+
+// ------------------------------------------------------- 已连接的本地设备（§6.3）
+
+const interlink = useInterlinkNodes({});
+const {
+  deviceId: interlinkSelectedDeviceId,
+  isRemote: interlinkRemoteSelected,
+  writeTarget: writeInterlinkTarget,
+  backToCloud: backToCloudWorkspace
+} = useInterlinkNodeTarget();
+
+/** 下拉上限同节点目录：渲染最多 60 行，超出部分靠节点分页累加，不一次铺开。 */
+const interlinkDeviceRows = computed(() =>
+  (interlink.nodes.value || []).filter(isDeviceNode).slice(0, INTERLINK_NODE_MAX_RENDERED)
+);
+
+const deviceRowLabel = (node: InterlinkNode): string =>
+  `${node.label || node.node_id} · ${t(nodeTypeLabelKey(node.node_type))}`;
+
+const selectDeviceNode = (node: InterlinkNode): void => {
+  writeInterlinkTarget(`device:${node.node_id}`);
+};
+
+const handleWorkspaceRowClick = (): void => {
+  // 回到云端工作区上下文：文件区跟随 `?node=` 切回云端目录。
+  backToCloudWorkspace();
+  emit('select-workspace');
+};
 
 // ------------------------------------------------------------------ resizer
 

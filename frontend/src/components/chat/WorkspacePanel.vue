@@ -9,16 +9,7 @@
           <div class="workspace-title">{{ panelTitle }}</div>
           <div v-if="showContainerId" class="workspace-container-id">{{ normalizedContainerId }}</div>
         </div>
-        <!-- §6.3 工作区节点切换器：只挂在真实云端工作区上，技能等自定义 fileSystem 不出现。 -->
-        <WorkspaceNodeSwitcher
-          v-if="showInterlinkSwitcher"
-          class="workspace-node-switcher"
-          :model-value="interlinkTarget"
-          :nodes="interlinkNodeItems"
-          :loading="interlinkNodesLoading"
-          @update:model-value="selectInterlinkNode"
-          @refresh="refreshInterlinkNodes"
-        />
+        <!-- 远程工作区目标由侧栏工作区行（URL `?node=`）驱动，面板内不再有手动切换器。 -->
         <div v-if="!remoteInterlinkActive" class="workspace-header-actions">
           <button
             class="workspace-icon-btn"
@@ -631,7 +622,6 @@ import {
 } from '@/utils/workspaceTreeCache';
 import { chatPerf } from '@/utils/chatPerf';
 import RemoteWorkspacePanel from '@/views/messenger/interlink/RemoteWorkspacePanel.vue';
-import WorkspaceNodeSwitcher from '@/views/messenger/interlink/WorkspaceNodeSwitcher.vue';
 import { useInterlinkNodeTarget } from '@/views/messenger/interlink/interlinkNodeTarget';
 import { useInterlinkNodes } from '@/views/messenger/interlink/useInterlinkNodes';
 
@@ -673,11 +663,6 @@ const props = defineProps({
     default: null
   },
   disableWorkspaceEditors: {
-    type: Boolean,
-    default: false
-  },
-  /** 宿主不需要「云端/设备」节点切换器时关闭（例如技能工作区这种自定义文件系统）。 */
-  hideNodeSwitcher: {
     type: Boolean,
     default: false
   }
@@ -1169,12 +1154,10 @@ const supportsWorkspaceEditors = computed(
   () => activeFileSystem.value.supportsWorkspaceEditors === true && props.disableWorkspaceEditors !== true
 );
 
-// ------------------------------------------------------------- 互通节点（§6.3）
+// ------------------------------------------------------------- 互通远程节点（§6.3）
 
-/** 只有真实云端工作区（非自定义文件系统）才挂节点切换器，技能工作区不受影响。 */
-const showInterlinkSwitcher = computed(
-  () => isWorkspaceFileSystem.value && props.hideNodeSwitcher !== true
-);
+/** 远程视图只挂在真实云端工作区上，技能等自定义 fileSystem 不跟随 `?node=`。 */
+const interlinkRemoteAllowed = computed(() => isWorkspaceFileSystem.value);
 
 const interlinkHostVisible = ref(true);
 onActivated(() => {
@@ -1185,7 +1168,7 @@ onDeactivated(() => {
 });
 
 const interlinkHostActive = computed(
-  () => showInterlinkSwitcher.value && interlinkHostVisible.value && sidebarVisible.value !== false
+  () => interlinkRemoteAllowed.value && interlinkHostVisible.value && sidebarVisible.value !== false
 );
 
 const interlink = useInterlinkNodes({ active: interlinkHostActive });
@@ -1193,30 +1176,21 @@ const {
   target: interlinkTarget,
   deviceId: remoteInterlinkDeviceId,
   isRemote: interlinkIsRemote,
-  writeTarget: writeInterlinkTarget,
   backToCloud: backToCloudWorkspace
 } = useInterlinkNodeTarget();
 
 /** 选中本地节点：列表区换成影子视图，云端取数与自动刷新全部停摆。 */
-const remoteInterlinkActive = computed(() => showInterlinkSwitcher.value && interlinkIsRemote.value);
+const remoteInterlinkActive = computed(
+  () => interlinkRemoteAllowed.value && interlinkIsRemote.value
+);
 const interlinkPanelActive = computed(
   () => remoteInterlinkActive.value && interlinkHostVisible.value && sidebarVisible.value !== false
 );
-const interlinkNodeItems = computed(() => interlink.nodes.value);
-const interlinkNodesLoading = computed(() => interlink.loading.value);
 const remoteInterlinkNode = computed(() => {
   const deviceId = remoteInterlinkDeviceId.value;
   if (!deviceId) return null;
   return interlink.nodes.value.find((item) => item.node_id === deviceId) || null;
 });
-
-const selectInterlinkNode = (value: string): void => {
-  writeInterlinkTarget(value);
-};
-
-const refreshInterlinkNodes = (): void => {
-  interlink.refresh();
-};
 
 const listRef = ref(null);
 const uploadInputRef = ref(null);

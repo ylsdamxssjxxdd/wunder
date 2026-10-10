@@ -241,6 +241,7 @@ defineOptions({
 });
 
 import { useMessengerViewController } from '@/views/messenger/useMessengerViewController';
+import { useInterlinkNodeTarget } from '@/views/messenger/interlink/interlinkNodeTarget';
 import { onUpdated as trackShellUpdate } from 'vue';
 import { chatPerf } from '@/utils/chatPerf';
 import { computed as vueComputed, ref as vueRef } from 'vue';
@@ -372,8 +373,13 @@ const expandSidebar = () => {
   }
 };
 
+// 线程驱动的目录切换：打开云端线程时把 `?node=` 归位云端（§6.3）。
+const { backToCloud: backToCloudWorkspace } = useInterlinkNodeTarget();
+
 const openThread = (sessionId: string) => {
   closeDrawerOnNarrow();
+  // 侧栏线程都是云端线程：打开线程＝工作目录跟随切回云端（§6.3 线程驱动切换）。
+  backToCloudWorkspace();
   void controller.handleTimelineDialogActivateSession?.(sessionId);
 };
 

@@ -36,6 +36,10 @@ pub(super) struct RoundInfo {
     pub(super) user_round: Option<i64>,
     pub(super) model_round: Option<i64>,
     pub(super) thread_turn_id: Option<Uuid>,
+    /// True while the runtime drives an armed goal: the turn was admitted by the
+    /// goal driver rather than by a direct human message. Providers use it to
+    /// avoid re-issuing goal-management calls that require human authority.
+    pub(super) is_goal_round: bool,
 }
 
 impl RoundInfo {
@@ -44,6 +48,7 @@ impl RoundInfo {
             user_round: Some(user_round),
             model_round: Some(model_round),
             thread_turn_id: None,
+            is_goal_round: false,
         }
     }
 
@@ -52,6 +57,7 @@ impl RoundInfo {
             user_round: Some(user_round),
             model_round: None,
             thread_turn_id: None,
+            is_goal_round: false,
         }
     }
 
@@ -60,6 +66,7 @@ impl RoundInfo {
             user_round: Some(user_round),
             model_round: None,
             thread_turn_id: Some(thread_turn_id),
+            is_goal_round: false,
         }
     }
 
@@ -68,6 +75,7 @@ impl RoundInfo {
             user_round: self.user_round,
             model_round: Some(model_round),
             thread_turn_id: self.thread_turn_id,
+            is_goal_round: self.is_goal_round,
         }
     }
 

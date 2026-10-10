@@ -161,6 +161,21 @@
   background: var(--mz-selected);
 }
 
+/* 已连接的本地设备行（§6.3）：同一套行样式套在 button 上，补齐 UA 重置。 */
+button.messenger-sidebar-workspace-row {
+  width: calc(100% - 12px);
+  border: 0;
+  background: none;
+  font: inherit;
+  text-align: left;
+}
+
+.messenger-sidebar-device-status {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+}
+
 .messenger-sidebar-workspace-icon {
   flex-shrink: 0;
   color: var(--mz-primary);

@@ -23,16 +23,7 @@
       </div>
     </div>
 
-    <!-- §6.3 工作区节点切换器：默认「☁ 云端工作区」，选中本地设备后整块换成影子视图。 -->
-    <WorkspaceNodeSwitcher
-      class="workspace-files-node-switcher"
-      :model-value="interlinkTarget"
-      :nodes="interlinkNodeItems"
-      :loading="interlinkNodesLoading"
-      @update:model-value="selectInterlinkNode"
-      @refresh="refreshInterlinkNodes"
-    />
-
+    <!-- §6.3 远程工作区：目标由侧栏工作区行的设备选择（URL `?node=`）驱动，面板内不再有手动切换器。 -->
     <RemoteWorkspacePanel
       v-if="remoteInterlinkActive"
       class="workspace-files-remote"
@@ -177,7 +168,6 @@ import WorkspaceNewFileDialog, {
 import WorkspaceFilePreviewDialog from './WorkspaceFilePreviewDialog.vue';
 import WorkspaceFileTree from './WorkspaceFileTree.vue';
 import RemoteWorkspacePanel from '@/views/messenger/interlink/RemoteWorkspacePanel.vue';
-import WorkspaceNodeSwitcher from '@/views/messenger/interlink/WorkspaceNodeSwitcher.vue';
 import { useInterlinkNodeTarget } from '@/views/messenger/interlink/interlinkNodeTarget';
 import { useInterlinkNodes } from '@/views/messenger/interlink/useInterlinkNodes';
 import {
@@ -332,33 +322,23 @@ const rootLoading = computed(() => Boolean(tree.directories.get('')?.loading));
 const rootError = computed(() => String(tree.directories.get('')?.error || ''));
 
 // ---------------------------------------------------------- 互通远程节点（§6.3）
+// 目标节点由路由 `?node=` 决定（侧栏工作区行是唯一入口），面板只跟随。
 
 const interlink = useInterlinkNodes({});
 const {
   target: interlinkTarget,
   deviceId: remoteInterlinkDeviceId,
   isRemote: interlinkIsRemote,
-  writeTarget: writeInterlinkTarget,
   backToCloud: backToCloudWorkspace
 } = useInterlinkNodeTarget();
 
 /** 选中本地设备＝云端目录整块让位给影子视图（默认云端行为零变化）。 */
 const remoteInterlinkActive = computed(() => interlinkIsRemote.value);
-const interlinkNodeItems = computed(() => interlink.nodes.value);
-const interlinkNodesLoading = computed(() => interlink.loading.value);
 const remoteInterlinkNode = computed(() => {
   const deviceId = remoteInterlinkDeviceId.value;
   if (!deviceId) return null;
   return interlink.nodes.value.find((item) => item.node_id === deviceId) || null;
 });
-
-const selectInterlinkNode = (value: string): void => {
-  writeInterlinkTarget(value);
-};
-
-const refreshInterlinkNodes = (): void => {
-  interlink.refresh();
-};
 
 // ------------------------------------------------------------------ uploads
 

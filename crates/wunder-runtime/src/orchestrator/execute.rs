@@ -185,10 +185,13 @@ impl Orchestrator {
             // Monitoring observes the durable round; it never allocates its identity.
             self.monitor.register_continuation(&session_id, &user_id,
                 prepared.agent_id.as_deref().unwrap_or(""), &display_question, is_admin, user_round);
-            let request_round = prepared
+            let mut request_round = prepared
                 .thread_turn_id
                 .map(|turn_id| RoundInfo::user_only_thread(user_round, turn_id))
                 .unwrap_or_else(|| RoundInfo::user_only(user_round));
+            // A runtime-driven goal round is not a direct human turn: providers
+            // must not repeat human-only goal management calls inside it.
+            request_round.is_goal_round = goal_round.is_some();
             if let Some(turn_id) = request_round.thread_turn_id {
                 let payload = json!({
                     "session_id": session_id,
@@ -742,7 +745,17 @@ impl Orchestrator {
                 last_model_usage = Some(usage.clone());
                 // Provider input counts describe this request's prompt (including
                 // cached input). Billing totals also contain generated reasoning/output.
-                let request_context_tokens = super::usage_accounting::request_context_tokens(&usage);
+                // Virtual providers mark usage as estimated (nothing is billed or
+                // charged against the budget), but their input count is an exact
+                // measure of the prompt, so it still drives occupancy + compaction.
+                let request_context_tokens =
+                    super::usage_accounting::request_context_tokens(&usage).or_else(|| {
+                        crate::services::virtual_llm::is_virtual_replay_provider(
+                            llm_config.provider.as_deref(),
+                        )
+                        .then(|| super::usage_accounting::simulated_request_context_tokens(&usage))
+                        .flatten()
+                    });
                 if let Some(tokens) = request_context_tokens {
                     confirmed_context_occupancy_tokens = Some(tokens);
                     persisted_context_tokens = tokens;

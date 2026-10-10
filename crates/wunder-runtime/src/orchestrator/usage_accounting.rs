@@ -5,6 +5,17 @@ pub(super) fn request_context_tokens(usage: &TokenUsage) -> Option<i64> {
     (!usage.estimated && usage.input > 0).then_some(usage.input.min(i64::MAX as u64) as i64)
 }
 
+/// Context occupancy for providers that compute the exact prompt locally.
+///
+/// The virtual simulator marks its usage `estimated = true` because its numbers
+/// are synthesized rather than billed, yet its `input` is a precise count of the
+/// prompt that was actually sent. Treating it as observed lets the simulator
+/// report context occupancy and trigger compaction exactly like a real provider
+/// without flipping `estimated`, which would trip the output-limit heuristic.
+pub(super) fn simulated_request_context_tokens(usage: &TokenUsage) -> Option<i64> {
+    (usage.input > 0).then_some(usage.input.min(i64::MAX as u64) as i64)
+}
+
 impl Orchestrator {
     // Account completed provider responses before validating their tool calls.
     // Invalid calls still consumed tokens; network failures without usage do not.
@@ -65,6 +76,26 @@ mod tests {
         usage.estimated = false;
         usage.input = 0;
         assert_eq!(request_context_tokens(&usage), None);
+    }
+
+    #[test]
+    fn simulated_usage_reports_occupancy_without_losing_its_estimated_flag() {
+        // The simulator keeps `estimated = true` for billing semantics, so the
+        // strict accessor stays silent and the dedicated one carries occupancy.
+        let usage = TokenUsage {
+            input: 321,
+            output: 10,
+            total: 371,
+            reasoning: Some(40),
+            estimated: true,
+        };
+        assert_eq!(request_context_tokens(&usage), None);
+        assert_eq!(simulated_request_context_tokens(&usage), Some(321));
+        let empty = TokenUsage {
+            input: 0,
+            ..Default::default()
+        };
+        assert_eq!(simulated_request_context_tokens(&empty), None);
     }
 
     #[test]
