@@ -212,19 +212,39 @@
 }
 
 /* 选项卡面板宿主：复用旧版 `messenger-tools-pane-host`（内含自建工具三面板），
-   在设置卡片内给固定高度，面板内部列表自行滚动。 */
+   在设置卡片内给固定高度，面板内部列表自行滚动。
+   必须是 flex 列容器：面板根节点靠 `flex: 1 1 auto` 撑高，其左右两栏布局
+   又依赖父级高度，block 容器下两栏会被压成 0 高度。 */
 .messenger-settings-card--pane {
   padding: 8px;
 }
 
 .messenger-settings-tools-host {
   flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
   height: 480px;
+  min-height: 0;
 }
 
-/* 选项卡内容卡：与设置窗口其他卡片同构，chip 云自行换行。 */
-.messenger-settings-tools-card {
-  margin-top: 12px;
+/* 「全局工具」页签的四类分区：分区标题行 + 该类的 chip 云。 */
+.messenger-settings-tools-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.messenger-settings-tools-group-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.messenger-settings-tools-group-title {
+  color: var(--mz-text);
+  font-size: var(--mz-font-md);
+  font-weight: 600;
 }
 
 /* chip 药丸云：浅暖底药丸 + 彩色图标方块（AbilityIconBadge）+ 标签。 */

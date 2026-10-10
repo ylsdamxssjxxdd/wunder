@@ -4,7 +4,7 @@ pub mod server;
 use crate::config::Config;
 use crate::i18n;
 use crate::user_tools::UserToolBindings;
-use crate::workspace::WorkspaceManager;
+use crate::workspace::{AGENT_WORKSPACE_DIR, WorkspaceManager};
 use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::env;
@@ -182,6 +182,37 @@ fn replace_root_in_text(text: &str, from_root: &str, to_root: &str) -> String {
     output
 }
 
+/// 智能体云端作用域的容器内工作区根比公共根多一层 `workspace` 子目录。
+/// 改写时先保护已经是容器路径的片段（前一轮结果回显），避免被二次追加层级。
+fn rewrite_public_to_container(text: &str, public_root: &str, container_root: &str) -> String {
+    if public_root.is_empty() || public_root == container_root {
+        return text.to_string();
+    }
+    let Some(tail) = container_root.strip_prefix(public_root) else {
+        return replace_root_in_text(text, public_root, container_root);
+    };
+    if tail.trim_start_matches('/').is_empty() {
+        return replace_root_in_text(text, public_root, container_root);
+    }
+    const PROTECTED: char = '\u{1}';
+    let protected = text.replace(container_root, &PROTECTED.to_string());
+    let rewritten = replace_root_in_text(&protected, public_root, container_root);
+    rewritten.replace(PROTECTED, container_root)
+}
+
+/// 单个路径的公共根 → 容器根映射；已是容器路径的输入原样返回。
+fn map_public_path_to_container(path: &str, public_root: &str, container_root: &str) -> Option<String> {
+    if public_root.is_empty() || public_root == container_root {
+        return strip_root_prefix(path, public_root)
+            .map(|rest| format!("{container_root}{rest}"));
+    }
+    if container_root.starts_with(public_root) && strip_root_prefix(path, container_root).is_some() {
+        return Some(path.to_string());
+    }
+    let rest = strip_root_prefix(path, public_root)?;
+    Some(format!("{container_root}{rest}"))
+}
+
 fn resolve_container_workspace_root(
     config: &Config,
     workspace: &WorkspaceManager,
@@ -223,7 +254,15 @@ fn resolve_container_workspace_root(
         container_root.to_string()
     };
 
-    join_posix(&base_root, safe_id)
+    // 云端形态：智能体云端目录 = 用户目录下的 workspace 子目录。沙箱内可见根
+    // 必须保留这一层级，否则命令产物会写到用户根目录（global/skills 等所在
+    // 层），智能体工作目录树读的是用户目录下的 workspace，产物会不可见。
+    let scope_relative = if crate::workspace::extract_agent_workspace_user(user_id).is_some() {
+        format!("{safe_id}/{AGENT_WORKSPACE_DIR}")
+    } else {
+        safe_id.to_string()
+    };
+    join_posix(&base_root, &scope_relative)
 }
 
 fn collect_allow_paths(config: &Config, bindings: Option<&UserToolBindings>) -> Vec<String> {
@@ -345,8 +384,9 @@ pub async fn execute_tool(
                 let trimmed = workdir.trim();
                 let path = Path::new(trimmed);
                 if path.is_absolute() {
-                    if let Some(rest) = strip_root_prefix(trimmed, &public_root) {
-                        let mapped = format!("{container_workspace_root}{rest}");
+                    if let Some(mapped) =
+                        map_public_path_to_container(trimmed, &public_root, &container_workspace_root)
+                    {
                         map.insert("workdir".to_string(), Value::String(mapped));
                     }
                 }
@@ -355,8 +395,11 @@ pub async fn execute_tool(
                 // 先把命令串里的单数 `/workspace` 别名对齐到规范根 `/workspaces`，
                 // 使 `cd /workspace/<user>/... && ...` 与文件工具落到同一挂载点。
                 let aligned = replace_root_in_text(&content, "/workspace", "/workspaces");
-                let rewritten =
-                    replace_root_in_text(&aligned, &public_root, &container_workspace_root);
+                let rewritten = rewrite_public_to_container(
+                    &aligned,
+                    &public_root,
+                    &container_workspace_root,
+                );
                 if rewritten != content {
                     map.insert("content".to_string(), Value::String(rewritten));
                 }
@@ -494,14 +537,16 @@ where
             let trimmed = workdir.trim();
             let path = Path::new(trimmed);
             if path.is_absolute() {
-                if let Some(rest) = strip_root_prefix(trimmed, &public_root) {
-                    let mapped = format!("{container_workspace_root}{rest}");
+                if let Some(mapped) =
+                    map_public_path_to_container(trimmed, &public_root, &container_workspace_root)
+                {
                     map.insert("workdir".to_string(), Value::String(mapped));
                 }
             }
         }
         if let Some(Value::String(content)) = map.get("content").cloned() {
-            let rewritten = replace_root_in_text(&content, &public_root, &container_workspace_root);
+            let rewritten =
+                rewrite_public_to_container(&content, &public_root, &container_workspace_root);
             if rewritten != content {
                 map.insert("content".to_string(), Value::String(rewritten));
             }
@@ -599,7 +644,8 @@ pub async fn launch_command_session(
     };
     if let Value::Object(ref mut map) = mapped_args {
         if let Some(Value::String(content)) = map.get("content").cloned() {
-            let rewritten = replace_root_in_text(&content, &public_root, &container_workspace_root);
+            let rewritten =
+                rewrite_public_to_container(&content, &public_root, &container_workspace_root);
             if rewritten != content {
                 map.insert("content".to_string(), Value::String(rewritten));
             }
@@ -807,5 +853,88 @@ mod tests {
 
         let resolved = resolve_container_workspace_root(&config, &workspace, "demo_user");
         assert_eq!(resolved, "/workspaces/demo_user");
+    }
+
+    #[test]
+    fn test_container_workspace_root_keeps_agent_workspace_level() {
+        let root =
+            std::env::temp_dir().join(format!("wunder-workspace-{}", Uuid::new_v4().simple()));
+        let db_path =
+            std::env::temp_dir().join(format!("wunder-test-{}.db", Uuid::new_v4().simple()));
+        let root_text = root.to_string_lossy().to_string();
+        let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        let workspace =
+            WorkspaceManager::new(&root_text, storage, 0, &std::collections::HashMap::new());
+        workspace.set_flatten_agent_scope(true);
+
+        let mut config = Config::default();
+        config.workspace.root = "./config/data/workspaces".to_string();
+
+        // 云端智能体作用域：容器内根必须落在用户目录下的 workspace 层。
+        let resolved = resolve_container_workspace_root(&config, &workspace, "sjxx__aw__");
+        assert_eq!(resolved, "/workspaces/sjxx/workspace");
+    }
+
+    #[test]
+    fn test_rewrite_public_to_container_avoids_double_append() {
+        let public_root = "/workspaces/sjxx";
+        let container_root = "/workspaces/sjxx/workspace";
+
+        // 公共路径改写为容器路径。
+        assert_eq!(
+            rewrite_public_to_container(
+                "savefig('/workspaces/sjxx/爱心.png')",
+                public_root,
+                container_root
+            ),
+            "savefig('/workspaces/sjxx/workspace/爱心.png')"
+        );
+        // 已是容器路径的片段保持原样。
+        assert_eq!(
+            rewrite_public_to_container(
+                "ls /workspaces/sjxx/workspace && cat /workspaces/sjxx/workspace/a.txt",
+                public_root,
+                container_root
+            ),
+            "ls /workspaces/sjxx/workspace && cat /workspaces/sjxx/workspace/a.txt"
+        );
+        // 同一文本里混合两类路径。
+        assert_eq!(
+            rewrite_public_to_container(
+                "cp /workspaces/sjxx/in.png /workspaces/sjxx/workspace/out.png",
+                public_root,
+                container_root
+            ),
+            "cp /workspaces/sjxx/workspace/in.png /workspaces/sjxx/workspace/out.png"
+        );
+        // 相邻用户名不受影响。
+        assert_eq!(
+            rewrite_public_to_container("ls /workspaces/sjxx2", public_root, container_root),
+            "ls /workspaces/sjxx2"
+        );
+    }
+
+    #[test]
+    fn test_map_public_path_to_container() {
+        let public_root = "/workspaces/sjxx";
+        let container_root = "/workspaces/sjxx/workspace";
+        assert_eq!(
+            map_public_path_to_container("/workspaces/sjxx/a.png", public_root, container_root)
+                .as_deref(),
+            Some("/workspaces/sjxx/workspace/a.png")
+        );
+        assert_eq!(
+            map_public_path_to_container(
+                "/workspaces/sjxx/workspace/a.png",
+                public_root,
+                container_root
+            )
+            .as_deref(),
+            Some("/workspaces/sjxx/workspace/a.png")
+        );
+        assert_eq!(
+            map_public_path_to_container("/workspaces/sjxx2/a.png", public_root, container_root),
+            None
+        );
     }
 }

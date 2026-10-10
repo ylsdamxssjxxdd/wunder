@@ -3155,7 +3155,7 @@ fn is_legacy_scope_dir_for(name: &str, safe_user: &str) -> bool {
 }
 
 /// 云端形态智能体云端作用域 id（`{user}__aw__`）中的纯用户部分；非标记 id 返回 None。
-fn extract_agent_workspace_user(user_id: &str) -> Option<&str> {
+pub(crate) fn extract_agent_workspace_user(user_id: &str) -> Option<&str> {
     match user_id.strip_suffix(AGENT_WORKSPACE_SCOPE_MARKER) {
         Some(plain) if !plain.is_empty() => Some(plain),
         _ => None,

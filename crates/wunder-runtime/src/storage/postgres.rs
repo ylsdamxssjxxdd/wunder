@@ -59,6 +59,7 @@ mod session_cleanup;
 mod session_goal;
 mod session_lock_store;
 mod session_run;
+mod stress_thread;
 mod terminal_transcript_store;
 mod thread_log_store;
 mod user_account_store;

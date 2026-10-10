@@ -140,7 +140,7 @@ export type ChatRuntimePendingSequentialEvent = {
  */
 /** 批次内的一行：思考正文（KIND_REASON）或一次工具调用（KIND_TOOL）。 */
 export type ChatRuntimeTimelineActivityRow =
-  | { type: 'reasoning'; itemId: string; text: string }
+  | { type: 'reasoning'; itemId: string; text: string; streaming?: boolean }
   | { type: 'tool'; itemId: string };
 
 export type ChatRuntimeTimelineActivity = {

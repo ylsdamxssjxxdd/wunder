@@ -223,6 +223,10 @@ async fn wunder_tools(
         aliases.sort();
     }
     for spec in builtin_tool_specs() {
+        // Goal 工具由 orchestrator 强制注入，属运行时能力，不在用户工具清单中展示。
+        if crate::services::goal::is_goal_tool_name(&spec.name) {
+            continue;
+        }
         if !enabled_builtin.contains(&spec.name) {
             continue;
         }

@@ -14,6 +14,20 @@ wunder (Xinjian) is an **agent orchestration platform**
 
 The Hull, Bridge, Beehive, Honeycomb, and Helm share one Engine (wunder-runtime): threads, tools, storage abstractions, realtime events, and permission semantics are a single codebase — only the access layer differs.
 
+## Performance Matrix
+
+Performance characteristics of the same engine across forms. Values are to be filled in after measurement; sampling rules and regression thresholds live in [性能标准](docs/性能标准.md), and historical data in [性能基线](docs/性能基线/).
+
+| Icon | Form | Startup speed | Memory usage | CPU usage | Package size | Concurrent agent threads | Chat page performance |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| 🚀 | Hull server | — | — | — | — | — | — |
+| 🐉 | Bridge web | — | — | — | — | — | — |
+| 🐝 | Beehive web | — | — | — | — | — | — |
+| 🍯 | Honeycomb desktop | — | — | — | — | — | — |
+| ⚙️ | Helm cli | — | — | — | — | — | — |
+
+> Collection harness: [scripts/form-bench](scripts/form-bench/README.md) — one run produces every metric above.
+
 ## Tool Matrix
 
 | Tool | Description | Category |
@@ -43,7 +57,6 @@ The Hull, Bridge, Beehive, Honeycomb, and Helm share one Engine (wunder-runtime)
 | Thread control `thread_control` | Manage task threads / forked threads | Threads & sub-agents |
 | Self status `self_status` | Query the agent's own runtime status | System & memory |
 | Memory manager `memory_manager` | Read and write long-term memory | System & memory |
-| User world `user_world` | Access user and organization world info | System & memory |
 | Schedule task `schedule_task` | Create and manage scheduled / periodic tasks | System & memory |
 
 ## Absorbed Matrix

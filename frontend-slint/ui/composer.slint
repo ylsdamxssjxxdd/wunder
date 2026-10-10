@@ -1061,6 +1061,11 @@ key-pressed(event) => {
                 text: root.branch-name; color: Theme.muted; font-size: Theme.font-xs;
                 vertical-alignment: center; overflow: elide;
             }
+            // Slack absorber, not decoration: a row whose children are all rigid
+            // reports a fixed implicit width, and that travels up to the Window,
+            // which then sizes itself to the content and leaves the rest of the
+            // screen empty. Every row in the width chain needs one stretchable item.
+            Rectangle { horizontal-stretch: 1; }
         }
     }
 }

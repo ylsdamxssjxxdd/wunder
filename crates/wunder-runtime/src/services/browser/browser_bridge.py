@@ -1,3 +1,4 @@
+# AI生成
 #!/usr/bin/env python3
 """Wunder browser bridge over JSON-line stdio.
 
@@ -10,9 +11,11 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import os
 import sys
 import traceback
 from collections import OrderedDict
+from pathlib import Path
 
 
 def respond(data):
@@ -36,11 +39,52 @@ class BridgeSession:
             raise SystemExit(0)
         self.pw = sync_playwright().start()
         launch_args = [item for item in args.launch_arg if item]
-        self.browser = self.pw.chromium.launch(
-            headless=args.headless,
-            args=launch_args or None,
-        )
-        self.context = self.browser.new_context(
+        # Launch strategy mirrors deepseek-harness `browser-use`: either launch a
+        # managed browser (optionally on a user-supplied channel / executable) or
+        # attach to an already-running browser over CDP so existing tabs, logins
+        # and the user's own Chromium build are preserved.
+        self.mode = str(getattr(args, "mode", None) or "launch").strip().lower()
+        channel = (getattr(args, "channel", None) or "").strip() or None
+        executable_path = (getattr(args, "executable_path", None) or "").strip() or None
+        attach_endpoint = (getattr(args, "attach_endpoint", None) or "").strip() or None
+        self.channel = channel
+        self.executable_path = executable_path
+        self.attach_endpoint = attach_endpoint
+        self._attached = self.mode == "attach" and bool(attach_endpoint)
+        if self._attached:
+            self.browser = self.pw.chromium.connect_over_cdp(attach_endpoint)
+            if self.browser.contexts:
+                # Reuse the caller's browsing context: keeps tabs and session.
+                self.context = self.browser.contexts[0]
+                self._owns_context = False
+            else:
+                self.context = self._new_context(args)
+                self._owns_context = True
+        else:
+            launch_kwargs = {
+                "headless": args.headless,
+                "args": launch_args or None,
+            }
+            if channel:
+                launch_kwargs["channel"] = channel
+            if executable_path:
+                launch_kwargs["executable_path"] = executable_path
+            self.browser = self.pw.chromium.launch(**launch_kwargs)
+            self.context = self._new_context(args)
+            self._owns_context = True
+        self.pages = OrderedDict()
+        self.refs = {}
+        self.target_counter = 0
+        self.active_target_id = None
+        for page in list(self.context.pages):
+            self._adopt_page(page)
+        if not self.pages:
+            self._new_page()
+        else:
+            self.active_target_id = next(iter(self.pages))
+
+    def _new_context(self, args):
+        return self.browser.new_context(
             viewport={"width": args.width, "height": args.height},
             accept_downloads=True,
             user_agent=(
@@ -48,22 +92,34 @@ class BridgeSession:
                 "(KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36"
             ),
         )
-        self.pages = OrderedDict()
-        self.refs = {}
-        self.target_counter = 0
-        self.active_target_id = None
-        target_id, _ = self._new_page()
-        self.active_target_id = target_id
+
+    def _adopt_page(self, page):
+        self.target_counter += 1
+        target_id = f"tab-{self.target_counter}"
+        try:
+            page.set_default_timeout(self.timeout_ms)
+            page.set_default_navigation_timeout(self.timeout_ms)
+        except Exception:
+            pass
+        self.pages[target_id] = page
+        self.refs[target_id] = {}
+        if self.active_target_id is None:
+            self.active_target_id = target_id
+        return target_id, page
 
     def close(self):
-        try:
-            self.context.close()
-        except Exception:
-            pass
-        try:
-            self.browser.close()
-        except Exception:
-            pass
+        # Never tear down a browser we merely attached to; only drop the context
+        # we created ourselves, then stop the driver.
+        if getattr(self, "_owns_context", True):
+            try:
+                self.context.close()
+            except Exception:
+                pass
+        if not getattr(self, "_attached", False):
+            try:
+                self.browser.close()
+            except Exception:
+                pass
         try:
             self.pw.stop()
         except Exception:
@@ -117,6 +173,7 @@ class BridgeSession:
             "success": True,
             "data": {
                 "status": "ready",
+                "mode": self.mode,
                 "tabs": self._tabs_state(),
                 "active_target_id": self.active_target_id,
             },
@@ -665,7 +722,30 @@ def main():
     parser.add_argument("--max-tabs", type=int, default=8)
     parser.add_argument("--timeout", type=int, default=30)
     parser.add_argument("--launch-arg", action="append", default=[])
+    parser.add_argument("--mode", default="launch")
+    parser.add_argument("--channel", default=None)
+    parser.add_argument("--executable-path", dest="executable_path", default=None)
+    parser.add_argument("--attach-endpoint", dest="attach_endpoint", default=None)
     args = parser.parse_args()
+
+    # Bundled supplements install Playwright browsers under
+    # <python_root>/ms-playwright. Prefer that bundled Chromium by default so
+    # browser tasks never depend on the user's own browser and still run
+    # offline; only fall back to a system browser when the supplement ships none
+    # (supplement browsers are always Chromium, never Google Chrome, because the
+    # branded Chrome build is not redistributable). The interpreter lives either
+    # directly in <python_root> (Windows embeddable) or in <python_root>/bin
+    # (Linux python-build-standalone), so probe both layouts.
+    if not os.environ.get("PLAYWRIGHT_BROWSERS_PATH"):
+        exe_dir = Path(sys.executable).resolve().parent
+        for bundled in (
+            exe_dir / "ms-playwright",
+            exe_dir.parent / "ms-playwright",
+            exe_dir.parent.parent / "ms-playwright",
+        ):
+            if bundled.is_dir():
+                os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(bundled)
+                break
 
     try:
         session = BridgeSession(args)
@@ -684,6 +764,7 @@ def main():
             "success": True,
             "data": {
                 "status": "ready",
+                "mode": session.mode,
                 "tabs": session._tabs_state(),
                 "active_target_id": session.active_target_id,
             },

@@ -26,9 +26,11 @@
           @click="toggleActivity(block.id)"
         >
           <span class="timeline-group-gutter" aria-hidden="true">
+            <i
+              :class="['fa-solid', 'fa-caret-right', 'timeline-group-arrow', { 'is-open': block.open }]"
+            ></i>
             <span v-if="block.open" class="timeline-group-gutter-line"></span>
           </span>
-          <i :class="['fa-solid', 'fa-caret-right', 'timeline-group-arrow', { 'is-open': block.open }]" aria-hidden="true"></i>
           <span class="timeline-group-title">{{ activityTitle(block) }}</span>
           <span v-if="!block.open && block.latestSummary" class="timeline-group-latest">{{ block.latestSummary }}</span>
         </button>
@@ -548,7 +550,12 @@ const renderBlocks = computed<RenderBlock[]>(() => {
           entry: {
             kind: 'reasoning',
             key,
-            streaming: index === lastActivityIndex && Boolean(message.value.reasoningStreaming),
+            // 思考条目的流式状态以条目自身 status 为准（投影层下发）：
+            // 整轮 active 期间思考可能早已结束，跟着整轮转圈会一直显示「正在思考…」。
+            // 旧行没有条目级状态时退回整轮 flag，保持既有表现。
+            streaming: row.streaming === undefined
+              ? index === lastActivityIndex && Boolean(message.value.reasoningStreaming)
+              : Boolean(row.streaming),
             summary: reasoningSummaryOf(text),
             text
           }
@@ -853,7 +860,9 @@ watch(
 }
 
 /* 折叠态是桌面端的「已处理」分隔条（30px、12px muted）；展开态是工具分组条
-   （32px、13px text-secondary），展开时沟槽画连接线。 */
+   （32px、13px text-secondary）。展开箭头压在时间线竖线上（与条目行的节点圆点同
+   一列，桌面端 GroupBar 的箭头在内容列），连接线因此只画箭头以下那一段，标题落在
+   条目行状态图标同一列（x=52）。 */
 .timeline-group-head {
   display: flex;
   align-items: center;
@@ -890,18 +899,24 @@ watch(
 
 .timeline-group-gutter-line {
   position: absolute;
-  top: 0;
+  top: calc(50% + 7px);
   bottom: 0;
   left: 9.5px;
   width: 1px;
   background: var(--mz-timeline-line, #e2dfda);
 }
 
+/* 12px 箭头居中于 20px 沟槽的竖线（竖线中心 10px）。 */
 .timeline-group-arrow {
-  flex: 0 0 auto;
+  position: absolute;
+  top: 50%;
+  left: 4px;
   width: 12px;
-  font-size: 11px;
+  margin-top: -6px;
   color: var(--mz-text-muted, #8a8f99);
+  font-size: 11px;
+  line-height: 12px;
+  text-align: center;
   transition: transform 0.16s ease;
 }
 

@@ -62,10 +62,22 @@ pub fn filter_tool_visibility(
             )
         })
         .collect::<Vec<_>>();
+    // 管理员侧把浏览器工具收敛为单个「浏览器」条目：组名规则应覆盖整组 browser_* 工具。
+    let browser_group_name = crate::tools::resolve_tool_name("browser");
     let mut filtered = HashSet::new();
     for tool_name in allowed {
         let canonical = crate::tools::resolve_tool_name(&tool_name);
-        let Some((_, visible_units)) = rule_map.iter().find(|(name, _)| name == &canonical) else {
+        let matched = rule_map
+            .iter()
+            .find(|(name, _)| name == &canonical)
+            .or_else(|| {
+                if crate::tools::is_browser_tool_name(&canonical) {
+                    rule_map.iter().find(|(name, _)| name == &browser_group_name)
+                } else {
+                    None
+                }
+            });
+        let Some((_, visible_units)) = matched else {
             filtered.insert(tool_name);
             continue;
         };

@@ -239,6 +239,19 @@ impl BrowserBridge {
             .arg(self.config.max_tabs_per_session.to_string())
             .arg("--timeout")
             .arg(self.config.timeout_secs.to_string());
+        let launch_mode = self.config.launch_mode.trim();
+        if !launch_mode.is_empty() {
+            command.arg("--mode").arg(launch_mode);
+        }
+        if let Some(channel) = &self.config.channel {
+            command.arg("--channel").arg(channel);
+        }
+        if let Some(path) = &self.config.executable_path {
+            command.arg("--executable-path").arg(path);
+        }
+        if let Some(endpoint) = &self.config.attach_endpoint {
+            command.arg("--attach-endpoint").arg(endpoint);
+        }
         for arg in self.launch_args() {
             command.arg(format!("--launch-arg={arg}"));
         }

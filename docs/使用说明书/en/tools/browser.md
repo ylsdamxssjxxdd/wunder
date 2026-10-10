@@ -154,6 +154,35 @@ Direct HTTP calls to `/wunder/browser/screenshot` still write to `temp_dir` and 
 
 The exact fields for `browser_read_page`, `browser_snapshot`, `browser_navigate`, `browser_tabs`, and the rest are defined by the provider / bridge. In practice they include at least `ok: true` plus action-specific data, all inside `data`.
 
+## Runtime and dependencies (aligned with dsh)
+
+The browser tools are driven by the `playwright` provider; the bridge process uses Python Playwright to launch or adopt a browser. Use `browser.playwright` to choose the browser source, mirroring dsh's `launch` / `attach` modes:
+
+```yaml
+browser:
+  provider: playwright
+  playwright:
+    mode: launch            # launch=new controlled browser; attach=adopt a running browser
+    channel: null           # reuse a locally installed browser: chrome / msedge / chromium ...
+    executable_path: null   # explicit browser executable (takes precedence over channel)
+    attach_endpoint: null   # CDP endpoint for mode=attach (http(s)://host:port or ws://...)
+    browsers_path: null     # empty = auto-detect <python_root>/ms-playwright (supplement location)
+    headless: true
+    viewport_width: 1280
+    viewport_height: 720
+    timeout_secs: 60
+```
+
+- `mode: launch` (default): start a new controlled browser. **With the defaults (`channel` and `executable_path` left empty) the Chromium bundled inside the supplement is used**, so browser tasks never depend on the user's own browser; set `channel` or `executable_path` only when you want to reuse a locally installed browser.
+- `mode: attach`: connect to an already-running browser (`attach_endpoint`) and reuse its tabs and login state; wunder only adopts pages and will not close the user's own browser.
+- `browser_status` echoes `launch_mode` / `channel` / `executable_path` under `data.playwright`, and reports `attach_endpoint_configured` as a boolean (the raw endpoint is never returned, to avoid leaking embedded tokens).
+
+Dependencies:
+
+- Requires the Python `playwright` driver package. The desktop supplement pins `playwright` in `requirements-*-common.txt`; the Linux supplement also downloads **Chromium** into `opt/python/ms-playwright` and the bridge auto-detects it as the default browser (leave `browsers_path` empty), so browser tasks run offline out of the box without the user installing any browser.
+- The supplement bundles **Chromium** (open source), not the branded Google Chrome build: Chrome binaries are not redistributable under their license, whereas Chromium shares the same engine and can be redistributed freely.
+- The Win7 supplement ships the driver only, not Chromium (Playwright's bundled Chromium needs Windows 10+, which Win7 cannot run). On Win7, reuse a locally installed browser via `mode: attach` or `channel` / `executable_path`; a Windows 10+ x64 supplement would be required to ship a browser for Windows out of the box.
+
 ## Difference from `web_fetch`
 
 - `web_fetch`: prefer this for lower-cost reading of static page content

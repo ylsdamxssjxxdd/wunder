@@ -1,3 +1,4 @@
+// AI生成
 import { elements } from "./elements.js?v=20260518-01";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
@@ -39,9 +40,10 @@ const renderBuiltinTools = () => {
     checkbox.checked = Boolean(tool.enabled);
     checkbox.addEventListener("change", (event) => {
       tool.enabled = event.target.checked;
+      const toolLabel = tool.label || tool.name;
       const actionMessage = tool.enabled
-        ? t("builtin.enabled", { name: tool.name })
-        : t("builtin.disabled", { name: tool.name });
+        ? t("builtin.enabled", { name: toolLabel })
+        : t("builtin.disabled", { name: toolLabel });
       saveBuiltinTools()
         .then(() => {
           appendLog(actionMessage);
@@ -58,7 +60,7 @@ const renderBuiltinTools = () => {
     icon.className = `fa-solid ${resolveToolIconClass(tool.name || tool.description || "")} tool-item-icon`;
     const textWrap = document.createElement("span");
     textWrap.className = "tool-item-info";
-    textWrap.innerHTML = `<strong>${tool.name}</strong><span class="muted">${tool.description || ""}</span>`;
+    textWrap.innerHTML = `<strong>${tool.label || tool.name}</strong><span class="muted">${tool.description || ""}</span>`;
     label.appendChild(icon);
     label.appendChild(textWrap);
     // 点击工具条目查看详情，避免与勾选动作冲突
@@ -71,7 +73,7 @@ const renderBuiltinTools = () => {
         checkbox.checked ? t("builtin.meta.enabled") : t("builtin.meta.disabled"),
       ];
       openToolDetailModal({
-        title: tool.name || t("tool.detail.title"),
+        title: tool.label || tool.name || t("tool.detail.title"),
         meta: metaParts.join(" · "),
         description: tool.description || "",
         schema: getToolInputSchema(tool),

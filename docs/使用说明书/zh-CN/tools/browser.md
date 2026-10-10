@@ -154,6 +154,35 @@ updated_at: 2026-10-10
 
 `browser_read_page` / `browser_snapshot` / `browser_navigate` / `browser_tabs` 等的具体字段由 provider / 桥接层决定，通常至少包含 `ok: true` 与动作相关数据，统一放在 `data` 中。
 
+## 运行时与依赖（对齐 dsh）
+
+浏览器工具由 `playwright` provider 驱动，桥接进程用 Python Playwright 启动或接管浏览器。可通过 `browser.playwright` 选择浏览器来源，行为对齐 dsh 的 `launch` / `attach` 两种模式：
+
+```yaml
+browser:
+  provider: playwright
+  playwright:
+    mode: launch            # launch=另起受控浏览器；attach=接管已在运行的浏览器
+    channel: null           # 复用本机浏览器：chrome / msedge / chromium ...
+    executable_path: null   # 直接指定浏览器可执行文件（优先级高于 channel）
+    attach_endpoint: null   # mode=attach 时的 CDP 端点（http(s)://host:port 或 ws://...）
+    browsers_path: null     # 留空时自动探测 <python_root>/ms-playwright（补充包自带位置）
+    headless: true
+    viewport_width: 1280
+    viewport_height: 720
+    timeout_secs: 60
+```
+
+- `mode: launch`（默认）：另起一个受控浏览器实例。**默认（`channel` / `executable_path` 均留空）即使用补充包内置的 Chromium**，不依赖用户本机浏览器；只有需要复用本机已安装浏览器时才设 `channel` 或 `executable_path`。
+- `mode: attach`：连接到一个已在运行的浏览器（`attach_endpoint`），复用它的标签页与登录态；wunder 只接管页面，不会关闭用户自己的浏览器。
+- `browser_status` 的 `data.playwright` 会回显 `launch_mode` / `channel` / `executable_path`，并以 `attach_endpoint_configured` 布尔值表示是否配置了接管端点（出于安全不返回端点原文，避免泄露内嵌令牌）。
+
+依赖说明：
+
+- 需要 Python 版 `playwright` 驱动包。桌面端「补充包」已在 `requirements-*-common.txt` 中固定 `playwright`；Linux 补充包还会把 **Chromium** 一并下载到 `opt/python/ms-playwright`，并被桥接层自动探测为默认浏览器（`browsers_path` 留空即可），开箱即用、可离线运行，**无需用户另装浏览器**。
+- 补充包内置的是 **Chromium（开源）**，不是 Google Chrome 品牌版：Chrome 二进制受其许可协议限制、不允许随产品再分发，而 Chromium 与 Chrome 同一渲染引擎，可自由分发。
+- Win7 补充包只带驱动、不带 Chromium（Playwright 自带 Chromium 需要 Windows 10+，Win7 无法运行），Win7 上请通过 `mode: attach` 或 `channel` / `executable_path` 复用本机浏览器；若要让 Windows 侧也「开箱自带浏览器」，需另出 Windows 10+ x64 补充包。
+
 ## 与 `web_fetch` 的区别
 
 - `web_fetch`：优先读静态正文，成本更低

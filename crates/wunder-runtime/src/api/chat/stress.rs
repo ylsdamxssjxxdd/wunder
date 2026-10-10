@@ -42,8 +42,10 @@ async fn start_stress_thread(
 ) -> Result<Json<Value>, Response> {
     let resolved = resolve_user(&state, &headers, None).await?;
     let config = state.config_store.get().await;
+    let target = stress_thread::StressStorageTarget::from_config(&config.storage)
+        .map_err(|message| error_response(StatusCode::BAD_REQUEST, message))?;
     stress_thread::start_stress_thread_job(StartStressJobRequest {
-        db_path: config.storage.db_path.clone(),
+        target,
         user_id: resolved.user.user_id.clone(),
         user_rounds: payload.user_rounds,
         model_rounds_per_turn: payload.model_rounds,

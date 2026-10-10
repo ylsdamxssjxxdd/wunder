@@ -1,3 +1,4 @@
+# AI生成
 # Slim Win7-friendly Python package set for Wunder Desktop supplement.
 # Focus: networking, tables/dataframes, office document IO, lightweight video IO, geo/weather plotting, and database access.
 
@@ -27,6 +28,7 @@ openpyxl==3.1.5
 packaging==26.0
 pandas==2.0.3
 pillow==10.4.0
+playwright==1.40.0
 plotly==5.24.1
 pymysql==1.1.1
 pyparsing==3.1.4

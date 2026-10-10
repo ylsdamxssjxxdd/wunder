@@ -236,6 +236,12 @@ hooks: # 工具生命周期钩子（对齐 dsh hooks/hook-protocol；默认关�
 browser:
   enabled: ${WUNDER_BROWSER_ENABLED:-false}
   provider: playwright
+  playwright:
+    mode: launch # launch=另起受控浏览器；attach=接管已在运行的浏览器
+    channel: null # 复用本机浏览器：chrome / msedge / chromium ...
+    executable_path: null # 直接指定浏览器可执行文件（优先于 channel）
+    attach_endpoint: null # mode=attach 时的 CDP 端点（http(s)://host:port 或 ws://...）
+    browsers_path: null # 留空时自动探测并默认使用补充包内置的 Chromium（<python_root>/ms-playwright）
   docker:
     enabled: ${WUNDER_BROWSER_DOCKER_ENABLED:-false}
   security:

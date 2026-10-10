@@ -2096,6 +2096,7 @@ export default {
   'messenger.agent.runtime.series.quota': 'Token 消耗',
   'messenger.agent.runtime.series.tools': '工具调用次数',
   'messenger.tools.adminTitle': '全局工具',
+  'messenger.tools.sharedTitle': '共享工具',
   'messenger.settings.versionTitle': '当前版本',
   'messenger.settings.versionHint': '已是最新版本',
   'messenger.settings.versionNumber': '版本号',
@@ -2569,6 +2570,9 @@ export default {
   'messenger.settingsPage.tools.tabKnowledge': '知识库工具',
   'messenger.settingsPage.tools.countHint': '共 {count} 项',
   'messenger.settingsPage.tools.empty': '暂无可用的工具',
+  'messenger.settingsPage.tools.builtinHint': '管理员开放的内置工具、MCP 工具、技能工具与知识库工具，共 {count} 项',
+  'messenger.settingsPage.tools.searchPlaceholder': '搜索工具名称或说明',
+  'messenger.settingsPage.tools.sharedHint': '勾选后这些工具在当前智能体可用',
 
   'messenger.settingsPage.agent.presetGroup': '预设与授权',
   'messenger.settingsPage.agent.presetHint': '当前智能体由管理员预设模板生成',

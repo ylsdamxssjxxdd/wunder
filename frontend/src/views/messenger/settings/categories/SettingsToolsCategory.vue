@@ -25,9 +25,9 @@
       <section class="messenger-settings-card">
         <div class="messenger-settings-group-head messenger-settings-group-head--row">
           <div>
-            <div class="messenger-settings-title">{{ t('toolManager.system.builtin') }}</div>
+            <div class="messenger-settings-title">{{ t('messenger.settingsPage.tools.tabBuiltin') }}</div>
             <div class="messenger-settings-subtitle">
-              {{ t('messenger.settingsPage.tools.builtinHint', { count: builtinTools.length }) }}
+              {{ t('messenger.settingsPage.tools.builtinHint', { count: openToolTotal }) }}
             </div>
           </div>
           <div class="messenger-settings-page-row-actions">
@@ -57,48 +57,45 @@
               :aria-label="t('messenger.settingsPage.tools.searchPlaceholder')"
             />
           </div>
-          <span class="messenger-settings-hint">
-            {{ t('messenger.settingsPage.models.pageIndicator', { current: safePage, total: pageCount }) }}
-          </span>
         </div>
 
-        <div v-if="toolsCatalogLoading && !builtinTools.length" class="messenger-list-empty">
+        <div v-if="toolsCatalogLoading && !openToolTotal" class="messenger-list-empty">
           {{ t('common.loading') }}
         </div>
-        <div v-else-if="!builtinTools.length" class="messenger-list-empty">
+        <div v-else-if="!openToolTotal" class="messenger-list-empty">
           {{ t('messenger.settingsPage.tools.empty') }}
         </div>
-        <div v-else-if="!filteredTools.length" class="messenger-list-empty">
+        <div v-else-if="!visibleGroups.length" class="messenger-list-empty">
           {{ t('portal.agent.tools.searchEmpty') }}
         </div>
-        <ul v-else class="messenger-settings-page-list">
-          <li v-for="tool in pagedTools" :key="tool.name" class="messenger-settings-page-list-item">
-            <i class="fa-solid fa-wrench messenger-settings-page-row-icon" aria-hidden="true"></i>
-            <div class="messenger-settings-page-list-main">
-              <div class="messenger-settings-label">{{ tool.displayName || tool.name }}</div>
-              <div class="messenger-settings-hint">
-                {{ tool.description || t('common.noDescription') }}
-              </div>
+        <!-- 对齐桌面端「管理员开放工具」：四类工具分区列成条目，说明走悬停标题。 -->
+        <div v-else class="messenger-settings-tools-groups">
+          <div v-for="group in visibleGroups" :key="group.id" class="messenger-settings-tools-group">
+            <div class="messenger-settings-tools-group-head">
+              <span class="messenger-settings-tools-group-title">{{ t(group.titleKey) }}</span>
+              <span class="messenger-settings-hint">
+                {{ t('messenger.settingsPage.tools.countHint', { count: group.tools.length }) }}
+              </span>
             </div>
-          </li>
-        </ul>
-        <div v-if="pageCount > 1" class="messenger-settings-page-pager">
-          <button
-            class="messenger-settings-action ghost compact"
-            type="button"
-            :disabled="safePage <= 1"
-            @click="page = safePage - 1"
-          >
-            {{ t('profile.avatar.pagePrev') }}
-          </button>
-          <button
-            class="messenger-settings-action ghost compact"
-            type="button"
-            :disabled="safePage >= pageCount"
-            @click="page = safePage + 1"
-          >
-            {{ t('profile.avatar.pageNext') }}
-          </button>
+            <div v-if="group.tools.length" class="messenger-settings-chip-cloud">
+              <span
+                v-for="tool in group.tools"
+                :key="tool.name"
+                class="messenger-settings-chip"
+                :title="tool.description || t('common.noDescription')"
+              >
+                <AbilityIconBadge
+                  :name="tool.displayName || tool.name"
+                  :description="tool.description"
+                  :group="group.id"
+                  :kind="group.kind"
+                  size="xs"
+                />
+                <span class="messenger-settings-chip-label">{{ tool.displayName || tool.name }}</span>
+              </span>
+            </div>
+            <div v-else class="messenger-settings-hint">{{ t('messenger.settingsPage.tools.empty') }}</div>
+          </div>
         </div>
       </section>
 
@@ -119,7 +116,7 @@
       class="messenger-settings-card messenger-settings-card--pane"
     >
       <div class="messenger-tools-pane-host user-tools-dialog messenger-settings-tools-host">
-        <UserMcpPane />
+        <UserMcpPane :visible="activeTab === 'mcp'" />
       </div>
     </section>
 
@@ -129,7 +126,7 @@
       class="messenger-settings-card messenger-settings-card--pane"
     >
       <div class="messenger-tools-pane-host user-tools-dialog messenger-settings-tools-host">
-        <UserSkillPane />
+        <UserSkillPane :visible="activeTab === 'skill'" :active="activeTab === 'skill'" />
       </div>
     </section>
 
@@ -139,15 +136,16 @@
       class="messenger-settings-card messenger-settings-card--pane"
     >
       <div class="messenger-tools-pane-host user-tools-dialog messenger-settings-tools-host">
-        <UserKnowledgePane />
+        <UserKnowledgePane :visible="activeTab === 'knowledge'" />
       </div>
     </section>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue';
+import { computed, onMounted, reactive, ref } from 'vue';
 
+import AbilityIconBadge from '@/components/common/AbilityIconBadge.vue';
 import type { MessengerControllerContext } from '@/views/messenger/controller/messengerControllerContext';
 import type { ToolEntry } from '@/views/messenger/model';
 import { useI18n } from '@/i18n';
@@ -178,8 +176,13 @@ const TOOLS_TABS: Array<{ id: ToolsTabId; icon: string; titleKey: string }> = [
   { id: 'knowledge', icon: 'fa-solid fa-database', titleKey: 'messenger.settingsPage.tools.tabKnowledge' }
 ];
 
-/** 内置工具单页行数：清单由管理员开放，分页 + 搜索避免一次性渲染。 */
-const PAGE_SIZE = 8;
+/** 「全局工具」页签的四类分区，标题与桌面端「管理员开放工具」用同一批文案键。 */
+const TOOL_GROUPS: Array<{ id: ToolsTabId; titleKey: string; kind: 'tool' | 'skill' }> = [
+  { id: 'builtin', titleKey: 'toolManager.system.builtin', kind: 'tool' },
+  { id: 'mcp', titleKey: 'toolManager.system.mcp', kind: 'tool' },
+  { id: 'skill', titleKey: 'toolManager.system.skills', kind: 'skill' },
+  { id: 'knowledge', titleKey: 'toolManager.system.knowledge', kind: 'tool' }
+];
 
 const props = defineProps<{ controller: MessengerControllerContext }>();
 const { t } = useI18n();
@@ -194,30 +197,38 @@ const selectTab = (id: ToolsTabId) => {
 };
 
 const keyword = ref('');
-const page = ref(1);
 
-const builtinTools = computed<ToolEntry[]>(() => props.controller.builtinTools?.value || []);
 const toolsCatalogLoading = computed(() => Boolean(props.controller.toolsCatalogLoading?.value));
 
-const filteredTools = computed(() => {
-  const needle = keyword.value.trim().toLowerCase();
-  if (!needle) return builtinTools.value;
-  return builtinTools.value.filter(
-    (tool) =>
-      String(tool.name || '').toLowerCase().includes(needle) ||
-      String(tool.displayName || '').toLowerCase().includes(needle) ||
-      String(tool.description || '').toLowerCase().includes(needle)
-  );
-});
+const groupTools = (id: ToolsTabId): ToolEntry[] => {
+  const lists: Record<ToolsTabId, { value: ToolEntry[] } | undefined> = {
+    builtin: props.controller.builtinTools,
+    mcp: props.controller.mcpTools,
+    skill: props.controller.skillTools,
+    knowledge: props.controller.knowledgeTools
+  };
+  return lists[id]?.value || [];
+};
 
-const pageCount = computed(() => Math.max(1, Math.ceil(filteredTools.value.length / PAGE_SIZE)));
-const safePage = computed(() => Math.min(page.value, pageCount.value));
-const pagedTools = computed(() =>
-  filteredTools.value.slice((safePage.value - 1) * PAGE_SIZE, safePage.value * PAGE_SIZE)
+const openToolTotal = computed(() =>
+  TOOL_GROUPS.reduce((sum, group) => sum + groupTools(group.id).length, 0)
 );
 
-watch(keyword, () => {
-  page.value = 1;
+const visibleGroups = computed(() => {
+  const needle = keyword.value.trim().toLowerCase();
+  const groups = TOOL_GROUPS.map((group) => ({
+    ...group,
+    tools: needle
+      ? groupTools(group.id).filter(
+          (tool) =>
+            String(tool.name || '').toLowerCase().includes(needle) ||
+            String(tool.displayName || '').toLowerCase().includes(needle) ||
+            String(tool.description || '').toLowerCase().includes(needle)
+        )
+      : groupTools(group.id)
+  }));
+  // 空搜索时四类分区常驻（0 项也说明管理员没开放这一类），带关键词时只留有命中的。
+  return needle ? groups.filter((group) => group.tools.length) : groups;
 });
 
 const reloadCatalog = () => {
@@ -225,7 +236,7 @@ const reloadCatalog = () => {
 };
 
 onMounted(() => {
-  if (!builtinTools.value.length) {
+  if (!openToolTotal.value) {
     reloadCatalog();
   }
 });

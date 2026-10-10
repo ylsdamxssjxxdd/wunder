@@ -1525,6 +1525,10 @@ fn build_user_tools_summary(
     let mut builtin_tools = Vec::new();
     let mut seen_builtin = HashSet::new();
     for spec in builtin_tool_specs() {
+        // Goal 工具由 orchestrator 强制注入，属运行时能力，不在用户工具清单中展示。
+        if crate::services::goal::is_goal_tool_name(&spec.name) {
+            continue;
+        }
         let aliases = canonical_aliases
             .get(&spec.name)
             .map(|value| value.as_slice())

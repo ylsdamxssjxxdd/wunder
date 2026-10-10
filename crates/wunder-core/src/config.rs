@@ -819,6 +819,20 @@ pub struct BrowserRuntimePlaywrightConfig {
     pub browsers_path: Option<String>,
     #[serde(default)]
     pub launch_args: Vec<String>,
+    /// Launch strategy aligned with deepseek-harness: "launch" starts a managed
+    /// browser, "attach" connects to a user-provided CDP endpoint.
+    #[serde(default = "default_browser_launch_mode")]
+    pub mode: String,
+    /// Playwright channel name (e.g. "chrome", "msedge") to drive a system
+    /// browser instead of the bundled Chromium.
+    #[serde(default)]
+    pub channel: Option<String>,
+    /// Explicit browser executable path (use the user's own Chromium build).
+    #[serde(default)]
+    pub executable_path: Option<String>,
+    /// CDP endpoint (http(s):// or ws://) used when `mode = "attach"`.
+    #[serde(default)]
+    pub attach_endpoint: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1113,6 +1127,10 @@ impl Default for BrowserRuntimePlaywrightConfig {
             python_path: None,
             browsers_path: None,
             launch_args: Vec::new(),
+            mode: default_browser_launch_mode(),
+            channel: None,
+            executable_path: None,
+            attach_endpoint: None,
         }
     }
 }
@@ -1267,6 +1285,10 @@ impl Default for DesktopControllerConfig {
     }
 }
 
+
+fn default_browser_launch_mode() -> String {
+    "launch".to_string()
+}
 
 fn default_browser_headless() -> bool {
     true

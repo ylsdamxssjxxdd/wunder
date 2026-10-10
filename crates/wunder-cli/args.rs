@@ -25,6 +25,11 @@ pub struct Cli {
 
     #[command(subcommand)]
     pub command: Option<Command>,
+
+    /// Benchmark sentinel: print WUNDER_READY to stdout and exit.
+    /// 性能采集哨兵：向 stdout 打印 WUNDER_READY 后立即退出（供 scripts/form-bench 采集启动耗时）。
+    #[arg(long = "bench-echo", hide = true, default_value_t = false)]
+    pub bench_echo: bool,
 }
 
 #[derive(Debug, Clone, Args)]

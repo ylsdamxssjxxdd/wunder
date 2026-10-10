@@ -1,3 +1,4 @@
+// AI生成
 import { elements } from "./elements.js?v=20260518-01";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
@@ -58,7 +59,7 @@ const renderDetail = () => {
   if (!state.toolVisibility.editingName || state.toolVisibility.editingName !== tool.name) {
     state.toolVisibility.selectedUnitIds = [...unitIds];
   }
-  elements.toolVisibilityDetailTitle.textContent = tool.name;
+  elements.toolVisibilityDetailTitle.textContent = tool.label || tool.name;
   elements.toolVisibilityDetailMeta.textContent = unitIds.length
     ? unitIds.map((item) => unitMap.get(item) || item).join(" | ")
     : t("visibility.all");
@@ -81,7 +82,7 @@ const renderList = () => {
     }
     const label = document.createElement("label");
     const title = document.createElement("strong");
-    title.textContent = tool.name;
+    title.textContent = tool.label || tool.name;
     const meta = document.createElement("span");
     meta.className = "muted";
     meta.textContent = (ruleMap.get(tool.name) || []).length ? t("visibility.scoped") : t("visibility.all");
@@ -183,7 +184,11 @@ const extractAllOpenTools = (payload) => {
       if (!name) {
         return;
       }
-      result.push({ name, description: String(item?.description || "").trim() });
+      result.push({
+        name,
+        label: String(item?.label || "").trim(),
+        description: String(item?.description || "").trim(),
+      });
     });
   };
   pushItems(payload?.tools);
@@ -205,10 +210,14 @@ export const loadToolVisibilityPanel = async () => {
   }
   const toolsPayload = await toolsResponse.json();
   const skillsPayload = await skillsResponse.json();
-  state.toolVisibility.tools = normalizeNameList([
-    ...extractAllOpenTools(toolsPayload).map((item) => item.name),
-    ...extractAllOpenTools(skillsPayload).map((item) => item.name),
-  ]).map((name) => ({ name }));
+  const mergedTools = new Map();
+  [...extractAllOpenTools(toolsPayload), ...extractAllOpenTools(skillsPayload)].forEach((item) => {
+    if (!item.name || mergedTools.has(item.name)) {
+      return;
+    }
+    mergedTools.set(item.name, { name: item.name, label: item.label || "" });
+  });
+  state.toolVisibility.tools = Array.from(mergedTools.values());
   state.toolVisibility.visibilityRules = filterRemovedSwarmToolRules(toolsPayload?.visibility?.rules);
   if (
     !state.toolVisibility.selectedName ||

@@ -1,10 +1,13 @@
 //! Stress-thread generation jobs.
 //!
 //! One background blocking task per job; jobs live in a bounded in-memory
-//! registry so the tool/API can poll progress. Bulk SQL lives in the SQLite
-//! storage layer (`SqliteStorage::generate_stress_thread`); builds without the
-//! sqlite-storage feature keep the tool surface but refuse to start jobs.
+//! registry so the API can poll progress. The bulk writer lives in the storage
+//! layer (`SqliteStorage::generate_stress_thread` /
+//! `PostgresStorage::generate_stress_thread`) and the caller picks the target
+//! from its configured storage backend.
 
+use crate::storage::stress_model::{validate_spec, MAX_TOTAL_ITEMS};
+pub use crate::storage::stress_model::{MAX_MODEL_ROUNDS, MAX_USER_ROUNDS};
 use parking_lot::Mutex;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -12,13 +15,38 @@ use std::sync::{Arc, OnceLock};
 use uuid::Uuid;
 
 const MAX_TRACKED_JOBS: usize = 8;
-pub const MAX_USER_ROUNDS: i64 = 2000;
-pub const MAX_MODEL_ROUNDS: i64 = 2000;
-/// 1000×1000 (the default stress profile) samples at most ~5M items.
-const MAX_TOTAL_ITEMS: i64 = 6_000_000;
+
+/// Where the bulk writer should run. Built by each entry point from its own
+/// storage configuration.
+pub enum StressStorageTarget {
+    /// Local SQLite file (CLI / desktop default backend).
+    Sqlite { db_path: String },
+    /// Server-side PostgreSQL (fleet builds without sqlite-storage).
+    Postgres { dsn: String, connect_timeout_s: u64, pool_size: usize },
+}
+
+impl StressStorageTarget {
+    /// Derive the target from storage config using the same backend
+    /// classification as `factory::build_storage`.
+    pub fn from_config(storage: &crate::config::StorageConfig) -> Result<Self, String> {
+        let backend = storage.backend.trim().to_lowercase();
+        let backend = if backend.is_empty() { "sqlite" } else { backend.as_str() };
+        match backend {
+            "sqlite" | "default" => Ok(Self::Sqlite {
+                db_path: storage.db_path.trim().to_string(),
+            }),
+            "postgres" | "postgresql" | "pg" | "auto" => Ok(Self::Postgres {
+                dsn: storage.postgres.dsn.clone(),
+                connect_timeout_s: storage.postgres.connect_timeout_s,
+                pool_size: storage.postgres.pool_size,
+            }),
+            other => Err(format!("unknown storage backend: {other}")),
+        }
+    }
+}
 
 pub struct StartStressJobRequest {
-    pub db_path: String,
+    pub target: StressStorageTarget,
     pub user_id: String,
     pub user_rounds: i64,
     pub model_rounds_per_turn: i64,
@@ -82,7 +110,7 @@ pub fn validate_stress_params(user_rounds: i64, model_rounds_per_turn: i64) -> R
 /// progress is observable through `stress_job_status`.
 pub fn start_stress_thread_job(request: StartStressJobRequest) -> Result<Value, String> {
     let StartStressJobRequest {
-        db_path,
+        target,
         user_id,
         user_rounds,
         model_rounds_per_turn,
@@ -98,6 +126,15 @@ pub fn start_stress_thread_job(request: StartStressJobRequest) -> Result<Value, 
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| format!("渲染压测 {user_rounds}×{model_rounds_per_turn}"));
+    let spec = crate::storage::StressThreadSpec {
+        session_id: session_id.clone(),
+        title,
+        user_rounds,
+        model_rounds_per_turn,
+    };
+    // The storage layer re-validates against the same caps; fail fast here so
+    // obviously bad requests never create a job entry.
+    validate_spec(&spec).map_err(|error| error.to_string())?;
     let job_id = Uuid::new_v4().to_string();
     let job = Arc::new(Mutex::new(StressJob {
         user_id: user_id.clone(),
@@ -112,82 +149,71 @@ pub fn start_stress_thread_job(request: StartStressJobRequest) -> Result<Value, 
         map.insert(job_id.clone(), Arc::clone(&job));
     }
 
-    #[cfg(any(feature = "sqlite-storage", test))]
-    {
-        let db_path = if db_path.trim().is_empty() {
-            "./config/data/wunder.db".to_string()
-        } else {
-            db_path
-        };
-        let spec = crate::storage::StressThreadSpec {
-            session_id: session_id.clone(),
-            title,
-            user_rounds,
-            model_rounds_per_turn,
-        };
-        let owner = user_id.clone();
-        crate::core::long_task::spawn("stress_thread.generate", async move {
-            // The bulk writer is one long blocking call; keep it off the async
-            // workers via the shared blocking pool. One dedicated storage
-            // instance per job so the write connection never contends with the
-            // runtime's pooled connection.
-            let job_for_progress = Arc::clone(&job);
-            let outcome = crate::core::blocking::run_db(
-                "stress_thread.generate",
-                move || {
+    let owner = user_id.clone();
+    crate::core::long_task::spawn("stress_thread.generate", async move {
+        // The bulk writer is one long blocking call; keep it off the async
+        // workers via the shared blocking pool. One dedicated storage instance
+        // per job so the write connection never contends with the runtime's
+        // pooled connections.
+        let job_for_progress = Arc::clone(&job);
+        let outcome: anyhow::Result<crate::storage::StressThreadStats> =
+            crate::core::blocking::run_db(
+            "stress_thread.generate",
+            move || match target {
+                #[cfg(feature = "sqlite-storage")]
+                StressStorageTarget::Sqlite { db_path } => {
+                    let db_path = if db_path.trim().is_empty() {
+                        "./config/data/wunder.db".to_string()
+                    } else {
+                        db_path
+                    };
                     let storage = crate::storage::SqliteStorage::new(db_path);
-                    storage.generate_stress_thread(
-                        &owner,
-                        &spec,
-                        |done_rounds, items_written| {
-                            let mut state = job_for_progress.lock();
-                            if let StressJobState::Running {
-                                done_rounds: done,
-                                items_written: items,
-                            } = &mut state.state
-                            {
-                                *done = done_rounds;
-                                *items = items_written;
-                            }
-                        },
-                    )
-                },
-            )
-            .await;
-            let mut state = job.lock();
-            match outcome {
-                Ok(stats) => {
-                    state.state = StressJobState::Completed {
-                        stats: json!({
-                            "session_id": stats.session_id,
-                            "user_turns": stats.user_turns,
-                            "items": stats.items,
-                            "tool_calls": stats.tool_calls,
-                        }),
-                    };
+                    storage.generate_stress_thread(&owner, &spec, |done_rounds, items_written| {
+                        update_progress(&job_for_progress, done_rounds, items_written);
+                    })
                 }
-                Err(error) => {
-                    let done = match &state.state {
-                        StressJobState::Running { done_rounds, .. } => *done_rounds,
-                        _ => 0,
-                    };
-                    state.state = StressJobState::Failed {
-                        error: error.to_string(),
-                        done_rounds: done,
-                    };
+                #[cfg(not(feature = "sqlite-storage"))]
+                StressStorageTarget::Sqlite { .. } => Err(anyhow::anyhow!(
+                    "当前构建未启用 sqlite 存储，无法生成压测线程"
+                )),
+                #[cfg(feature = "postgres-storage")]
+                StressStorageTarget::Postgres { dsn, connect_timeout_s, pool_size } => {
+                    let storage = crate::storage::PostgresStorage::new(dsn, connect_timeout_s, pool_size)?;
+                    storage.generate_stress_thread(&owner, &spec, |done_rounds, items_written| {
+                        update_progress(&job_for_progress, done_rounds, items_written);
+                    })
                 }
-            }
-        });
-    }
-    #[cfg(not(any(feature = "sqlite-storage", test)))]
-    {
-        let _ = (db_path, title);
+                #[cfg(not(feature = "postgres-storage"))]
+                StressStorageTarget::Postgres { .. } => Err(anyhow::anyhow!(
+                    "当前构建未启用 postgres 存储，无法生成压测线程"
+                )),
+            },
+        )
+        .await;
         let mut state = job.lock();
-        state.state = StressJobState::Failed {
-            error: "当前构建未启用 sqlite 存储，无法生成压测线程".to_string(),
-            done_rounds: 0,
-        };
-    }
+        match outcome {
+            Ok(stats) => {
+                state.state = StressJobState::Completed {
+                    stats: json!({
+                        "session_id": stats.session_id,
+                        "user_turns": stats.user_turns,
+                        "items": stats.items,
+                        "tool_calls": stats.tool_calls,
+                    }),
+                };
+            }
+            Err(error) => {
+                let done = match &state.state {
+                    StressJobState::Running { done_rounds, .. } => *done_rounds,
+                    _ => 0,
+                };
+                state.state = StressJobState::Failed {
+                    error: error.to_string(),
+                    done_rounds: done,
+                };
+            }
+        }
+    });
 
     Ok(json!({
         "job_id": job_id,
@@ -196,6 +222,18 @@ pub fn start_stress_thread_job(request: StartStressJobRequest) -> Result<Value, 
         "model_rounds": model_rounds_per_turn,
         "state": "running",
     }))
+}
+
+fn update_progress(job: &Arc<Mutex<StressJob>>, done_rounds: i64, items_written: i64) {
+    let mut state = job.lock();
+    if let StressJobState::Running {
+        done_rounds: done,
+        items_written: items,
+    } = &mut state.state
+    {
+        *done = done_rounds;
+        *items = items_written;
+    }
 }
 
 /// Snapshot one job. `requester` must match the launching user; jobs stay

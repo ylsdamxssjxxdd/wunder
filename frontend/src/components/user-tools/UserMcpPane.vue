@@ -316,6 +316,8 @@ const saveVersion = ref(0);
 const saveTimer = ref(null);
 const connectingIndexes = ref(new Set<number>());
 const refreshingAll = ref(false);
+/** 「新增服务器」先落一行草稿，取消时按这个下标回收。 */
+const pendingNewIndex = ref(-1);
 
 const mcpModalVisible = ref(false);
 const importModalVisible = ref(false);
@@ -535,6 +537,7 @@ const loadServers = async () => {
     servers.value = normalized;
     toolsByIndex.value = normalized.map((server) => server.tool_specs || []);
     selectedIndex.value = servers.value.length ? 0 : -1;
+    pendingNewIndex.value = -1;
     loaded.value = true;
   } catch (error) {
     showApiError(error, t('userTools.mcp.loadFailed'));
@@ -657,6 +660,23 @@ const openEditModal = () => {
 
 const closeMcpModal = () => {
   mcpModalVisible.value = false;
+  const index = pendingNewIndex.value;
+  pendingNewIndex.value = -1;
+  if (index < 0) {
+    return;
+  }
+  const draft = servers.value[index];
+  // 只丢弃没填任何关键字段的新增草稿，填过的行保留给用户继续编辑。
+  if (!draft || String(draft.name || '').trim() || String(draft.endpoint || '').trim()) {
+    return;
+  }
+  if (saveTimer.value) {
+    clearTimeout(saveTimer.value);
+    saveTimer.value = null;
+  }
+  servers.value.splice(index, 1);
+  toolsByIndex.value.splice(index, 1);
+  selectedIndex.value = servers.value.length ? Math.min(index, servers.value.length - 1) : -1;
 };
 
 const applyMcpModal = async () => {
@@ -665,6 +685,7 @@ const applyMcpModal = async () => {
     return;
   }
   await saveServers();
+  pendingNewIndex.value = -1;
   closeMcpModal();
   ElMessage.success(t('userTools.mcp.saved'));
 };
@@ -735,6 +756,7 @@ const addServer = () => {
   servers.value.push(next);
   toolsByIndex.value.push([]);
   selectedIndex.value = servers.value.length - 1;
+  pendingNewIndex.value = selectedIndex.value;
   mcpModalTitle.value = t('userTools.mcp.modal.addTitle');
   headersText.value = '';
   headersError.value = '';

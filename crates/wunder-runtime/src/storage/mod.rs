@@ -17,7 +17,8 @@ mod quota_tests;
 mod records;
 #[cfg(test)]
 mod refresh_token_tests;
-#[cfg(any(feature = "postgres-storage", feature = "sqlite-storage", test))]
+pub(crate) mod stress_model;
+#[cfg(any(feature = "sqlite-storage", test))]
 mod session_cleanup;
 #[cfg(any(feature = "sqlite-storage", test))]
 mod sqlite;
@@ -34,7 +35,6 @@ pub use factory::build_storage;
 #[cfg(feature = "postgres-storage")]
 pub use postgres::PostgresStorage;
 pub use records::*;
+pub use stress_model::{StressThreadSpec, StressThreadStats};
 #[cfg(any(feature = "sqlite-storage", test))]
 pub use sqlite::SqliteStorage;
-#[cfg(any(feature = "sqlite-storage", test))]
-pub use sqlite::stress_thread::{StressThreadSpec, StressThreadStats};

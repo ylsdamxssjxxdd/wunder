@@ -1354,20 +1354,57 @@ fn admin_enabled_builtin_names(config: &Config) -> HashSet<String> {
         .enabled
         .iter()
         .map(|name| resolve_tool_name(name))
-        .filter(|name| !name.is_empty() && !is_admin_browser_entry(name))
+        .filter(|name| {
+            !name.is_empty()
+                && !is_admin_browser_entry(name)
+                && !crate::services::goal::is_goal_tool_name(name)
+        })
         .collect();
+    // 管理员侧把整组浏览器工具收敛为单个条目，因此启用集合里只放组名。
     if config.tools.browser.enabled {
-        for name in browser_tool_names() {
-            enabled.insert(name);
-        }
+        enabled.insert(admin_browser_tool_name());
     }
     enabled
+}
+
+/// 管理员侧“浏览器”分组条目：代表整组 browser_* 原生工具，开关映射到 `tools.browser.enabled`。
+fn admin_browser_group_entry(name: &str, english: bool, enabled: bool) -> Value {
+    let label = if english { "Browser" } else { "浏览器" };
+    let mut description = i18n::t("tool.spec.browser.description");
+    if description.is_empty() || description == "tool.spec.browser.description" {
+        description = if english {
+            "Browser automation tool group (browser_* native tools).".to_string()
+        } else {
+            "浏览器自动化工具组：包含 browser_navigate、browser_click、browser_take_screenshot 等原生工具。"
+                .to_string()
+        };
+    }
+    json!({
+        "name": name,
+        "label": label,
+        "description": description,
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "tools": {
+                    "type": "array",
+                    "items": { "type": "string", "enum": browser_tool_names() },
+                    "description": "Included browser_* tools.",
+                }
+            },
+            "additionalProperties": false,
+        },
+        "enabled": enabled,
+    })
 }
 
 fn apply_builtin_tools_update(config: &mut Config, enabled: &[String]) {
     let mut normalized = normalize_builtin_enabled(enabled);
     let browser_enabled = normalized.iter().any(|name| is_admin_browser_entry(name));
-    normalized.retain(|name| !is_admin_browser_entry(name));
+    // Goal 工具由 orchestrator 强制注入，属运行时能力；不要让其回流到管理员维护的启用列表。
+    normalized.retain(|name| {
+        !is_admin_browser_entry(name) && !crate::services::goal::is_goal_tool_name(name)
+    });
     config.tools.browser.enabled = browser_enabled;
     config.tools.builtin.enabled = normalized;
 }
@@ -1379,8 +1416,27 @@ fn build_builtin_tools_payload(config: &Config) -> (Vec<String>, Vec<Value>) {
         canonical_aliases.entry(canonical).or_default().push(alias);
     }
     let prefer_alias = i18n::get_language().to_lowercase().starts_with("en");
+    let browser_group_name = admin_browser_tool_name();
+    let mut browser_group_emitted = false;
     let mut tools = Vec::new();
     for spec in builtin_tool_specs() {
+        // Goal 工具由 orchestrator 强制注入，属运行时能力，不属于用户可配置的内置工具；
+        // 管理员侧完全不展示，避免增加管理员与用户负担。
+        if crate::services::goal::is_goal_tool_name(&spec.name) {
+            continue;
+        }
+        // 浏览器工具面已是一组 browser_* 原生工具；管理员侧收敛成单个“浏览器”条目。
+        if is_browser_tool_name(&spec.name) {
+            if !browser_group_emitted {
+                browser_group_emitted = true;
+                tools.push(admin_browser_group_entry(
+                    &browser_group_name,
+                    prefer_alias,
+                    enabled_set.contains(&browser_group_name),
+                ));
+            }
+            continue;
+        }
         let mut display_name = spec.name.clone();
         if prefer_alias {
             if let Some(aliases) = canonical_aliases.get(&spec.name) {
@@ -1445,7 +1501,7 @@ mod tests {
     #[test]
     fn build_builtin_tools_payload_uses_browser_visibility_flag() {
         let mut config = Config::default();
-        let browser_tool = resolve_tool_name("browser_navigate");
+        let browser_tool = admin_browser_tool_name();
 
         config.tools.builtin.enabled = vec![browser_tool.clone()];
         config.tools.browser.enabled = false;
@@ -1462,6 +1518,57 @@ mod tests {
             .iter()
             .any(|name| resolve_tool_name(name) == browser_tool));
         assert!(tool_enabled(&tools, &browser_tool));
+    }
+
+    #[test]
+    fn build_builtin_tools_payload_hides_goal_tools() {
+        let mut config = Config::default();
+        let read_tool = resolve_tool_name("read_file");
+        config.tools.builtin.enabled = vec![
+            "get_goal".to_string(),
+            "create_goal".to_string(),
+            "update_goal".to_string(),
+            read_tool.clone(),
+        ];
+
+        let (enabled, tools) = build_builtin_tools_payload(&config);
+        for goal_tool in ["get_goal", "create_goal", "update_goal"] {
+            assert!(
+                !tools
+                    .iter()
+                    .any(|tool| tool.get("name").and_then(Value::as_str) == Some(goal_tool)),
+                "goal tool {goal_tool} should not be listed for admins"
+            );
+            assert!(
+                !enabled
+                    .iter()
+                    .any(|name| resolve_tool_name(name) == goal_tool),
+                "goal tool {goal_tool} should not be reported as enabled"
+            );
+        }
+        // 常规内置工具仍照常展示。
+        assert!(tool_enabled(&tools, &read_tool));
+    }
+
+    #[test]
+    fn apply_builtin_tools_update_strips_goal_tools() {
+        let mut config = Config::default();
+        let read_tool = resolve_tool_name("read_file");
+        apply_builtin_tools_update(
+            &mut config,
+            &[
+                "get_goal".to_string(),
+                "create_goal".to_string(),
+                "update_goal".to_string(),
+                "goal".to_string(),
+                read_tool.clone(),
+            ],
+        );
+
+        assert!(!config.tools.builtin.enabled.iter().any(|name| {
+            name == "get_goal" || name == "create_goal" || name == "update_goal"
+        }));
+        assert_eq!(config.tools.builtin.enabled, vec![read_tool]);
     }
 }
 

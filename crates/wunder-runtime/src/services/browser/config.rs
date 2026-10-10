@@ -6,6 +6,8 @@ pub const BROWSER_DEPLOYMENT_DESKTOP_EMBEDDED: &str = "desktop-embedded";
 pub const BROWSER_DEPLOYMENT_SERVER_EMBEDDED: &str = "server-embedded";
 pub const BROWSER_DEPLOYMENT_SIDECAR: &str = "sidecar";
 pub const DEFAULT_BROWSER_PROFILE: &str = "managed";
+pub const BROWSER_LAUNCH_MODE: &str = "launch";
+pub const BROWSER_LAUNCH_MODE_ATTACH: &str = "attach";
 
 #[derive(Debug, Clone)]
 pub struct EffectiveBrowserConfig {
@@ -29,6 +31,10 @@ pub struct EffectiveBrowserConfig {
     pub python_path: Option<String>,
     pub browsers_path: Option<String>,
     pub launch_args: Vec<String>,
+    pub launch_mode: String,
+    pub channel: Option<String>,
+    pub executable_path: Option<String>,
+    pub attach_endpoint: Option<String>,
     pub allow_private_network: bool,
     pub hostname_allowlist: Vec<String>,
     pub deny_file_scheme: bool,
@@ -126,6 +132,26 @@ pub fn effective_browser_config(config: &Config) -> EffectiveBrowserConfig {
         },
         browsers_path: trim_option(config.browser.playwright.browsers_path.clone()),
         launch_args,
+        launch_mode: if legacy_runtime {
+            BROWSER_LAUNCH_MODE.to_string()
+        } else {
+            normalize_browser_launch_mode(&config.browser.playwright.mode)
+        },
+        channel: if legacy_runtime {
+            None
+        } else {
+            trim_option(config.browser.playwright.channel.clone())
+        },
+        executable_path: if legacy_runtime {
+            None
+        } else {
+            trim_option(config.browser.playwright.executable_path.clone())
+        },
+        attach_endpoint: if legacy_runtime {
+            None
+        } else {
+            trim_option(config.browser.playwright.attach_endpoint.clone())
+        },
         allow_private_network,
         hostname_allowlist: config
             .browser
@@ -161,6 +187,15 @@ fn normalize_browser_deployment(value: &str) -> String {
         BROWSER_DEPLOYMENT_SIDECAR.to_string()
     } else {
         BROWSER_DEPLOYMENT_AUTO.to_string()
+    }
+}
+
+fn normalize_browser_launch_mode(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.eq_ignore_ascii_case(BROWSER_LAUNCH_MODE_ATTACH) {
+        BROWSER_LAUNCH_MODE_ATTACH.to_string()
+    } else {
+        BROWSER_LAUNCH_MODE.to_string()
     }
 }
 

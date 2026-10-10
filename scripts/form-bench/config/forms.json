@@ -1,0 +1,128 @@
+{
+  "version": 1,
+  "defaults": {
+    "host": "127.0.0.1",
+    "serverPort": 18000,
+    "baseUrl": "http://127.0.0.1:18000/wunder",
+    "durationSec": 30,
+    "intervalMs": 500,
+    "startupRuns": 5,
+    "startupWarmup": 1,
+    "python": "python",
+    "cargo": "cargo",
+    "note": "serverPort/baseUrl 默认对齐 config/wunder.yaml 的 server.port=18000；CI 里常用 WUNDER_PORT=18001，可用 -Port/-BaseUrl 覆盖。"
+  },
+  "processes": {
+    "server": {
+      "exe": "target/release/wunder-server.exe",
+      "args": [],
+      "env": { "WUNDER_PORT": "18000" },
+      "readyPort": 18000,
+      "startTimeoutMs": 90000
+    },
+    "beehiveDev": {
+      "cwd": "frontend",
+      "exe": "npm",
+      "args": ["run", "dev", "--", "--port", "5173", "--strictPort"],
+      "readyPort": 5173,
+      "startTimeoutMs": 120000
+    }
+  },
+  "forms": [
+    {
+      "id": "hull",
+      "name": "舰体",
+      "nameEn": "Hull",
+      "kind": "server",
+      "summary": "服务端进程 wunder-server（默认 member，共享引擎 wunder-runtime）",
+      "package": {
+        "kind": "file",
+        "target": "target/release/wunder-server.exe",
+        "note": "服务端二进制单文件；整个 target/release 目录含依赖与中间产物，无横向可比性，故按单文件计。如需镜像体积请改 docker 镜像并在此登记 target"
+      },
+      "startup": { "mode": "tcp", "port": 18000, "start": "server" },
+      "process": { "name": "wunder-server" },
+      "concurrency": { "supported": true, "mode": "backend" },
+      "chat": { "supported": false, "mode": "none" }
+    },
+    {
+      "id": "bridge",
+      "name": "舰桥",
+      "nameEn": "Bridge",
+      "kind": "web",
+      "summary": "Web 管理端，由服务端静态托管于 /",
+      "package": { "kind": "dir", "target": "web" },
+      "startup": {
+        "mode": "web",
+        "url": "http://127.0.0.1:18000/",
+        "requires": "server",
+        "navBudgetMs": 3000
+      },
+      "process": { "name": "", "mode": "web", "url": "http://127.0.0.1:18000/" },
+      "concurrency": { "supported": true, "mode": "backend" },
+      "chat": {
+        "supported": true,
+        "mode": "playwright",
+        "spec": "frontend/tests/e2e/chat-durable-stream-performance.spec.ts"
+      }
+    },
+    {
+      "id": "beehive",
+      "name": "蜂巢",
+      "nameEn": "Beehive",
+      "kind": "web",
+      "summary": "Web 用户端 frontend（Vue + Vite）",
+      "package": { "kind": "dir", "target": "frontend/dist" },
+      "startup": {
+        "mode": "web",
+        "url": "http://127.0.0.1:5173/",
+        "requires": "beehiveDev",
+        "navBudgetMs": 3000
+      },
+      "process": { "name": "", "mode": "web", "url": "http://127.0.0.1:5173/" },
+      "concurrency": { "supported": true, "mode": "backend" },
+      "chat": {
+        "supported": true,
+        "mode": "playwright",
+        "spec": "frontend/tests/e2e/chat-bubble-stress-harness.spec.ts"
+      }
+    },
+    {
+      "id": "honeycomb",
+      "name": "蜂窝",
+      "nameEn": "Honeycomb",
+      "kind": "desktop",
+      "summary": "原生桌面端 frontend-slint（Rust + Slint 单进程，内嵌后端）",
+      "package": { "kind": "file", "target": "target/release/wunder-frontend-slint.exe" },
+      "startup": {
+        "mode": "window",
+        "exe": "target/release/wunder-frontend-slint.exe"
+      },
+      "process": { "name": "wunder-frontend-slint" },
+      "concurrency": { "supported": true, "mode": "backend", "note": "内嵌后端，按进程内并发会话计" },
+      "chat": {
+        "supported": true,
+        "mode": "slint",
+        "note": "Slint 原生帧率需在 frontend-slint 加埋点（见 README 待办 T-chat-native）"
+      }
+    },
+    {
+      "id": "helm",
+      "name": "舵机",
+      "nameEn": "Helm",
+      "kind": "cli",
+      "summary": "命令行 TUI wunder-cli",
+      "package": { "kind": "file", "target": "target/release/wunder-cli.exe" },
+      "startup": {
+        "mode": "cli",
+        "exe": "target/release/wunder-cli.exe",
+        "args": ["--bench-echo"],
+        "sentinel": "WUNDER_READY",
+        "note": "需 wunder-cli 支持 --bench-echo：打印哨兵后立即退出"
+      },
+      "process": { "name": "wunder-cli", "args": ["stress-thread"] },
+      "concurrency": { "supported": true, "mode": "backend" },
+      "chat": { "supported": false, "mode": "none" }
+    }
+  ]
+}

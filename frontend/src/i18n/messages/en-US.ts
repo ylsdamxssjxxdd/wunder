@@ -2115,6 +2115,7 @@ export default {
   'messenger.agent.runtime.series.quota': 'Token Consumed',
   'messenger.agent.runtime.series.tools': 'Tool Calls',
   'messenger.tools.adminTitle': 'Global Tools',
+  'messenger.tools.sharedTitle': 'Shared Tools',
   'messenger.settings.versionTitle': 'Current Version',
   'messenger.settings.versionHint': 'Already on the latest release',
   'messenger.settings.versionNumber': 'Version',
@@ -2595,6 +2596,9 @@ export default {
   'messenger.settingsPage.tools.tabKnowledge': 'Knowledge Tools',
   'messenger.settingsPage.tools.countHint': '{count} items',
   'messenger.settingsPage.tools.empty': 'No tools available yet',
+  'messenger.settingsPage.tools.builtinHint': 'Builtin, MCP, skill and knowledge tools opened by the admin ({count} total)',
+  'messenger.settingsPage.tools.searchPlaceholder': 'Search tool name or description',
+  'messenger.settingsPage.tools.sharedHint': 'Selected tools become available in the current agent',
 
   'messenger.settingsPage.agent.presetGroup': 'Preset and permissions',
   'messenger.settingsPage.agent.presetHint': 'This agent was created from an administrator preset',

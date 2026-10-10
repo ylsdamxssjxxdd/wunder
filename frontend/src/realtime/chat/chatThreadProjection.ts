@@ -377,6 +377,8 @@ type TimelineEvent = {
   kind: 'reasoning' | 'body' | 'tool';
   text: string;
   round: number;
+  /** 仅思考行：该条目自身是否仍在流式输出（整轮 active 不代表思考未结束）。 */
+  streaming?: boolean;
 };
 
 const itemSeq = (item: ThreadItemState): number => Number(item.raw?.created_seq) || item.order;
@@ -394,7 +396,15 @@ const buildTurnTimeline = (
     const seq = itemSeq(item);
     const reasoning = composeItemText(state, item.itemId, 'reasoning');
     if (reasoning.trim()) {
-      events.push({ seq, rank: 0, itemId: item.itemId, kind: 'reasoning', text: reasoning, round: item.modelRound });
+      events.push({
+        seq,
+        rank: 0,
+        itemId: item.itemId,
+        kind: 'reasoning',
+        text: reasoning,
+        round: item.modelRound,
+        streaming: isActiveItemStatus(item.status)
+      });
     }
     const content = composeItemText(state, item.itemId, 'content');
     if (content.trim()) {
@@ -426,7 +436,7 @@ const buildTurnTimeline = (
       blocks.push(open);
     }
     open.rows.push(event.kind === 'reasoning'
-      ? { type: 'reasoning', itemId: event.itemId, text: event.text }
+      ? { type: 'reasoning', itemId: event.itemId, text: event.text, streaming: event.streaming }
       : { type: 'tool', itemId: event.itemId });
   }
   return blocks;

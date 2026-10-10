@@ -1,3 +1,4 @@
+# AI生成
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -193,6 +194,23 @@ log "installing Python packages from $(basename "$requirements_path")"
   --index-url "$index_url" \
   -r "$requirements_path"
 
+# Playwright's pip package ships only the browser driver; the browser binaries
+# live outside Python. Pre-download Chromium into the supplement so the
+# browser_* tools work offline. browser_bridge.py auto-detects
+# <python_root>/ms-playwright next to the interpreter, so no runtime wiring is
+# needed. The download is best-effort: an offline builder still ships the
+# driver and can fall back to a locally installed browser.
+install_browser="$(json_field python.installBrowser)"
+if [[ "$install_browser" = "True" || "$install_browser" = "true" ]]; then
+  browsers_path="$python_root/ms-playwright"
+  log "installing Playwright Chromium into $browsers_path"
+  if PLAYWRIGHT_BROWSERS_PATH="$browsers_path" "$python_bin" -m playwright install chromium; then
+    log "Playwright Chromium installed"
+  else
+    log "WARNING: Playwright Chromium download failed; the pip driver is still bundled"
+  fi
+fi
+
 site_packages="$("$python_bin" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
 log "site-packages: $site_packages"
 
@@ -287,6 +305,7 @@ Python: $python_version ($python_flavor)
 Python packages: $(echo "$requirements_entries" | wc -l) pinned requirements (see wunder-linux-supplement.json)
 Git: $git_flavor $git_version
 Ripgrep: $rg_flavor $rg_version
+Browsers: Playwright Chromium in opt/python/ms-playwright (when bundled)
 
 Usage:
 1. Close Wunder Desktop.
@@ -324,6 +343,8 @@ output = {
         "indexUrl": manifest["python"]["defaultPackageIndexUrl"],
         "requirementsPath": requirements_path,
         "packages": requirements,
+        "installBrowser": manifest["python"].get("installBrowser", False),
+        "browsersPath": "opt/python/ms-playwright" if manifest["python"].get("installBrowser") else None,
     },
     "git": {
         "version": manifest["git"]["version"],

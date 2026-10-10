@@ -91,6 +91,12 @@ fn run_cli() -> Result<()> {
         .context("build tokio runtime failed")?;
     runtime.block_on(async move {
         let cli = Cli::parse();
+        if cli.bench_echo {
+            // form-bench startup probe: emit the sentinel and exit before any
+            // config/runtime boot, so the measured time is the fast path.
+            println!("WUNDER_READY");
+            return Ok(());
+        }
         let runtime = CliRuntime::init(&cli.global).await?;
 
         match cli.command {

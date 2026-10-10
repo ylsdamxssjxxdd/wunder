@@ -56,6 +56,10 @@ impl BrowserControlService {
                 "viewport_height": self.config.viewport_height,
                 "timeout_secs": self.config.timeout_secs,
                 "browsers_path": self.config.browsers_path.clone(),
+                "launch_mode": self.config.launch_mode.clone(),
+                "channel": self.config.channel.clone(),
+                "executable_path": self.config.executable_path.clone(),
+                "attach_endpoint_configured": self.config.attach_endpoint.is_some(),
             },
             "docker": {
                 "enabled": self.config.docker_enabled,

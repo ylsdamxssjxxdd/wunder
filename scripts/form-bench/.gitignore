@@ -1,0 +1,3 @@
+# form-bench local output (when -OutDir points inside the script dir)
+out/
+*.local.json
