@@ -398,9 +398,9 @@ export global I18n {
     out property <string> main_preview_step_title2: zh ? "检查文件内容" : "Check file content";
     out property <string> main_preview_step1: zh ? "已读取并整理文件列表" : "File list read and organized";
     out property <string> main_preview_step2: zh ? "已验证文本内容可读取" : "Text content verified readable";
-    out property <string> main_preview_detail1: zh ? "执行完成\n找到 2 个可用文件，目录结构正常。" : "Done\nFound 2 usable files, folder structure is fine.";
-    out property <string> main_preview_detail2: zh ? "执行完成\n文件内容已读取，未发现格式错误。" : "Done\nFile content read, no format issues.";
-    out property <string> main_preview_workflow: zh ? "读取工作目录\n已读取并整理文件列表\n\n检查文件内容\n已验证文本内容可读取" : "Read work folder\nFile list read and organized\n\nCheck file content\nText content verified readable";
+    out property <string> main_preview_detail1: zh ? "执行完成\\n找到 2 个可用文件，目录结构正常。" : "Done\\nFound 2 usable files, folder structure is fine.";
+    out property <string> main_preview_detail2: zh ? "执行完成\\n文件内容已读取，未发现格式错误。" : "Done\\nFile content read, no format issues.";
+    out property <string> main_preview_workflow: zh ? "读取工作目录\\n已读取并整理文件列表\\n\\n检查文件内容\\n已验证文本内容可读取" : "Read work folder\\nFile list read and organized\\n\\nCheck file content\\nText content verified readable";
     out property <string> main_command_failed: zh ? "命令执行失败" : "Command failed";
     out property <string> model_provider_custom: zh ? "自定义（手动填写服务地址）" : "Custom (enter base URL manually)";
     out property <string> ws_preview_default: zh ? "默认工作区" : "Default workspace";
@@ -517,7 +517,7 @@ export global I18n {
     out property <string> tlp_speed_70: zh ? "70.7 token/秒" : "70.7 tokens/s";
     out property <string> tlp_events: zh ? "事件" : "Events";
     out property <string> tlp_all_types: zh ? "全部类型" : "All types";
-    out property <string> tlp_tool_raw: zh ? "工具：read_file\n路径：example.txt\n状态：completed" : "Tool: read_file\nPath: example.txt\nStatus: completed";
+    out property <string> tlp_tool_raw: zh ? "工具：read_file\\n路径：example.txt\\n状态：completed" : "Tool: read_file\\nPath: example.txt\\nStatus: completed";
     out property <string> tlp_done: zh ? "已完成" : "Completed";
     out property <string> tlp_received: zh ? "已接收请求，开始处理。" : "Request received, processing started.";
     out property <string> tlp_organize: zh ? "整理示例文件" : "Organize sample files";
@@ -1388,5 +1388,22 @@ export global I18n {
     out property <string> wf_reload: zh ? "重新加载" : "Reload";
     public pure function wf_more(count: string) -> string { return zh ? "加载更多（剩余 " + count + " 项）" : "Load more (" + count + " remaining)"; }
     out property <string> wf_loading_dir: zh ? "加载中" : "Loading";
-    out property <string> wf_open_hint: zh ? "点击文件拉取到本地工作区并打开" : "Click a file to pull it into the local workspace and open it";
+    out property <string> wf_open_hint: zh ? "点击文件拉取到本地工作区并打开；拖出即下载，拖入即上传" : "Click a file to pull and open it; drag out to download, drag in to upload";
+    out property <string> wf_menu_open: zh ? "打开" : "Open";
+    out property <string> wf_menu_download: zh ? "下载" : "Download";
+    out property <string> wf_menu_rename: zh ? "重命名" : "Rename";
+    out property <string> wf_menu_delete: zh ? "删除" : "Delete";
+    out property <string> wf_menu_reference: zh ? "引用到聊天" : "Reference in chat";
+    out property <string> wf_menu_new_dir: zh ? "新建目录" : "New folder";
+    out property <string> wf_menu_new_file: zh ? "新建文件" : "New file";
+    out property <string> wf_menu_refresh: zh ? "刷新" : "Refresh";
+    out property <string> wf_menu_open_ws: zh ? "打开本地工作区" : "Open local workspace";
+    out property <string> wf_rename_title: zh ? "重命名" : "Rename";
+    out property <string> wf_new_dir_title: zh ? "新建目录" : "New folder";
+    out property <string> wf_new_file_title: zh ? "新建文件" : "New file";
+    out property <string> wf_delete_title: zh ? "删除" : "Delete";
+    out property <string> wf_name_label: zh ? "名称" : "Name";
+    public pure function wf_delete_body(name: string) -> string { return zh ? "删除「" + name + "」？云端文件不可恢复。" : "Delete \"" + name + "\"? Cloud files cannot be recovered."; }
+    out property <string> wf_cloud_confirm_body: zh ? "云端要求确认后才会执行此操作。" : "The cloud asks for confirmation before running this.";
+    out property <string> wf_btn_exec: zh ? "确认执行" : "Confirm";
 }

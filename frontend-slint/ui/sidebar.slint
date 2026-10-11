@@ -219,6 +219,12 @@ export component Sidebar inherits Rectangle {
     callback file-toggle(int);
     callback file-refresh();
     callback file-connect();
+    // Right-click menu action (row index, action code), drag-out on a row,
+    // and the OS drop upload. The shell owns the handlers; the region and
+    // the shell share the DropEvent type.
+    callback file-menu(int, int);
+    callback file-drag(int);
+    callback file-drop(DropEvent);
 
     // Sidebar row currently renamed inline; -1 closes the editor. Only one
     // editor exists at a time, so a single shared draft suffices.
@@ -390,6 +396,9 @@ export component Sidebar inherits Rectangle {
             toggle(index) => { root.file-toggle(index); }
             refresh => { root.file-refresh(); }
             connect => { root.file-connect(); }
+            menu(index, action) => { root.file-menu(index, action); }
+            drag-row(index) => { root.file-drag(index); }
+            drop(event) => { root.file-drop(event); }
         }
         Rectangle { height: 1px; background: Theme.border; }
         // Settings button.

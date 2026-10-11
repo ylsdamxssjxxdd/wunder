@@ -56,12 +56,15 @@ windows-sys = { version = "0.52", features = [
 ] }
 # Folder picker: SHBrowseForFolderW lives behind the Win32_UI_Shell feature,
 # unavailable in the pinned 0.52 binding set above; the dialog path uses its
-# own binding copy instead of widening the shared feature list.
+# own binding copy instead of widening the shared feature list. The same copy
+# also drives the OS drag-out (DoDragDrop with a CF_HDROP), which needs
+# Win32_System_Memory for the HGLOBAL payload.
 windows-sys-dialog = { package = "windows-sys", version = "0.59", features = [
   "Win32_Foundation",
   "Win32_UI_Shell",
   "Win32_UI_Shell_Common",
   "Win32_System_Com",
+  "Win32_System_Memory",
 ] }
 
 [build-dependencies]

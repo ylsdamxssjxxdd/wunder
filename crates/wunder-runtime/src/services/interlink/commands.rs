@@ -996,7 +996,24 @@ pub async fn drain(
             Ok(()) => {
                 hub().reserve(device_id, &item.command_id);
                 hub().track_frame(&item.command_id, &item.frame);
-                update_status(storage.clone(), &item.command_id, COMMAND_STATUS_ISSUED, None, None, None, None).await?;
+                if let Err(err) = update_status(
+                    storage.clone(),
+                    &item.command_id,
+                    COMMAND_STATUS_ISSUED,
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                .await
+                {
+                    // The frame is already on the wire; leaving the row `queued`
+                    // with nothing behind it in the queue would strand it for
+                    // good. Put it back and free the slot before failing.
+                    hub().release(device_id, &item.command_id);
+                    hub().requeue_front(user_id, item);
+                    return Err(err);
+                }
                 delivered += 1;
             }
             Err(_) => {
@@ -1169,16 +1186,11 @@ pub async fn finalize(
     if is_terminal_command_status(&record.status) {
         return Ok(());
     }
-    update_status(
-        storage.clone(),
-        command_id,
-        status,
-        None,
-        finished_at,
-        error_code,
-        error_summary,
-    )
-    .await?;
+    // Audit first, status second: a reader that can already see the terminal
+    // state must also find the `command.finish` row in the trail. The other
+    // order lets an export taken right after a command finishes miss its last
+    // row (docs §13.4 19). The trail is append-only, so a retried finalize can
+    // add a second row rather than lose one.
     write_audit(
         storage.clone(),
         AUDIT_COMMAND_FINISH,
@@ -1190,6 +1202,16 @@ pub async fn finalize(
         ],
     )
     .await;
+    update_status(
+        storage.clone(),
+        command_id,
+        status,
+        None,
+        finished_at,
+        error_code,
+        error_summary,
+    )
+    .await?;
     if let Some(device_id) = target_device(&record) {
         remote::hub().publish_control(&device_id, &lifecycle_json(&record.kind, status, command_id));
     }

@@ -114,7 +114,22 @@ fn register_device(state: &AppState, user_id: &str) {
 /// Minimal OpenAI-compatible upstream so an approved remote turn can be
 /// admitted and drained without a real model.
 async fn spawn_mock_llm() -> String {
-    async fn completions() -> AxumJson<Value> {
+    async fn completions(AxumJson(request): AxumJson<Value>) -> AxumJson<Value> {
+        eprintln!(
+            "[mock-llm] hit, body {} bytes",
+            serde_json::to_string(&request).unwrap_or_default().len()
+        );
+        // A prompt marker buys wall time: §13.4 12 needs a turn that is still
+        // running when the remote cancel arrives, otherwise there is nothing to
+        // interrupt and the cancel settles over a finished thread.
+        if serde_json::to_string(&request)
+            .unwrap_or_default()
+            .contains("loopback-slow")
+        {
+            eprintln!("[mock-llm] stall marker matched, sleeping 6s");
+            tokio::time::sleep(Duration::from_secs(6)).await;
+            eprintln!("[mock-llm] stall over");
+        }
         AxumJson(json!({
             "id": "chatcmpl_loopback",
             "object": "chat.completion",
@@ -216,12 +231,19 @@ async fn build_local_node(server: &Server) -> LocalNode {
             model: Some("provider-default".to_string()),
             timeout_s: Some(15),
             max_output: Some(64),
+            model_type: Some("llm".to_string()),
             ..Default::default()
         },
     );
+    // Every turn re-reads the config store (orchestrator/config.rs), so a model
+    // that only lives in the in-memory `config` argument is invisible to a
+    // remote-driven turn: it fails with "no model configured" before the mock
+    // is ever called. The store must start from this same config.
+    let config_store =
+        wunder_server::config_store::ConfigStore::from_config(dir.path().join("wunder.yaml"), config.clone());
     let state = Arc::new(
         AppState::new_with_options(
-            wunder_server::config_store::ConfigStore::new(dir.path().join("wunder.yaml")),
+            config_store,
             config,
             AppStateInitOptions::cli_default(),
         )
@@ -419,6 +441,37 @@ impl RemoteView {
         );
         value
     }
+
+    /// The first thread-change frame that carries `needle` anywhere in its
+    /// payload. Command lifecycle notices (§7.4) report a command, not thread
+    /// state, so they are skipped. On timeout every frame the view actually got
+    /// is printed, because "the cancel never reached the watcher" is only
+    /// actionable when the received shape is visible.
+    async fn next_change_containing(&mut self, needle: &str, timeout: Duration) -> Value {
+        let deadline = Instant::now() + timeout;
+        let mut seen: Vec<Value> = Vec::new();
+        while Instant::now() < deadline {
+            let Some(frame) = self.read(Duration::from_secs(2)).await else {
+                continue;
+            };
+            match frame["type"].as_str().unwrap_or_default() {
+                "delta" | "snapshot" => {
+                    if frame["payload"].to_string().contains(needle) {
+                        return frame;
+                    }
+                    if seen.len() < 24 {
+                        seen.push(frame);
+                    }
+                }
+                "command" => {}
+                "error" | "close" => panic!("the remote surface ended: {frame}"),
+                other => panic!("unexpected frame type on the remote surface: {other}"),
+            }
+        }
+        panic!(
+            "no thread change mentioning {needle:?} reached the watcher in {timeout:?}; the view saw: {seen:?}"
+        );
+    }
 }
 
 /// A distinctive head of the base64 form, used to prove that encoded bytes
@@ -475,7 +528,8 @@ async fn wait_terminal(server: &Server, command_id: &str, timeout: Duration) -> 
         }
         assert!(
             Instant::now() < deadline,
-            "command {command_id} never reached a terminal state, last record: {record}"
+            "command {command_id} never reached a terminal state, last record: {record}; {}",
+            queue_probe(&record)
         );
         tokio::time::sleep(Duration::from_millis(150)).await;
     }
@@ -515,6 +569,39 @@ async fn wait_disconnected(client: &InterlinkClient, timeout: Duration) {
         );
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
+}
+
+/// Wait until the舰体 no longer holds a live channel for one device.
+async fn wait_channel_gone(device_id: &str, timeout: Duration) {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if wunder_server::interlink::registry()
+            .by_device(device_id)
+            .is_none()
+        {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the server never dropped the tunnel channel for {device_id}"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+/// The queue and inflight counters behind a stuck command: a row that says
+/// `queued` with nothing behind it in the queue is a different defect from a
+/// row that is waiting for capacity.
+fn queue_probe(record: &Value) -> String {
+    let hub = wunder_server::interlink::commands::hub();
+    let target = record["to_node"].as_str().unwrap_or_default();
+    let device = target.strip_prefix("device:").unwrap_or(target);
+    format!(
+        "queue total {}, for {target} {}, inflight {device} {}",
+        hub.queued_depth(None),
+        hub.queued_depth_for_target(target),
+        hub.inflight_count(device)
+    )
 }
 
 /// Bring the tunnel back up after a `stop()` on the **same** client instance:
@@ -559,6 +646,36 @@ fn session_count(state: &AppState) -> usize {
         .expect("list sessions")
         .0
         .len()
+}
+
+/// Wait until the local activity monitor reports this session as running.
+///
+/// The monitor is exactly what `cancel_session_activity` consults, so a remote
+/// turn that never appears here is a remote turn that cannot be cancelled: this
+/// is simultaneously the precondition and the proof of §13.4 12.
+async fn wait_session_active(state: &AppState, session_id: &str, timeout: Duration) {
+    let deadline = Instant::now() + timeout;
+    let started = Instant::now();
+    let mut seen: Vec<Value> = Vec::new();
+    while Instant::now() < deadline {
+        seen = state.monitor.list_sessions(true);
+        if let Some(summary) = seen
+            .iter()
+            .find(|summary| summary["session_id"].as_str() == Some(session_id))
+        {
+            eprintln!(
+                "[gate] {session_id} active as {:?} after {:?}",
+                summary["status"],
+                started.elapsed()
+            );
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    panic!(
+        "the remote turn was not an active session long enough to be cancelled \
+         (did the mock stall marker match?); monitor active sessions: {seen:?}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -897,6 +1014,80 @@ async fn loopback_tunnel_shadow_commands_and_approvals_end_to_end() {
         "driving the same remote thread must not fork a new one"
     );
 
+    // -- §13.4 12: a remote cancel interrupts a live turn and the watcher
+    //    sees the thread settle as cancelled --------------------------------
+    // The mock LLM stalls on this marker, so there is a real running turn to
+    // interrupt; cancelling a finished thread would prove nothing.
+    let slow = issue(
+        &server,
+        &format!("device:{DEVICE_ID}"),
+        "thread.message",
+        json!({"message": "loopback-slow 慢慢说", "local_thread_id": created.session_id}),
+        None,
+    )
+    .await;
+    let slow_approval = wait_prompt(&node.client, &slow, Duration::from_secs(10)).await;
+    assert!(
+        node.client
+            .decide_approval(&slow_approval, wunder_server::interlink::client::Decision::Approve, false),
+        "the slow turn is approved"
+    );
+    // `thread.message` settles at submit and the turn drains in the background
+    // (execute.rs), so the command status says nothing about liveness: wait for
+    // the engine's own activity monitor to report the turn, then cancel it.
+    wait_session_active(&node.state, &created.session_id, Duration::from_secs(10)).await;
+
+    eprintln!(
+        "[gate] active sessions at cancel dispatch: {:?}",
+        node.state
+            .monitor
+            .list_sessions(true)
+            .iter()
+            .map(|summary| (&summary["session_id"], &summary["status"]))
+            .collect::<Vec<_>>()
+    );
+    let cancel = issue(
+        &server,
+        &format!("device:{DEVICE_ID}"),
+        "thread.cancel",
+        json!({"local_thread_id": created.session_id}),
+        None,
+    )
+    .await;
+    let cancel_approval = wait_prompt(&node.client, &cancel, Duration::from_secs(10)).await;
+    assert!(
+        node.client.decide_approval(
+            &cancel_approval,
+            wunder_server::interlink::client::Decision::Approve,
+            false,
+        ),
+        "the cancel prompt is decided"
+    );
+    let cancel_record = wait_terminal(
+        &server,
+        cancel["command_id"].as_str().unwrap(),
+        Duration::from_secs(40),
+    )
+    .await;
+    assert_eq!(
+        cancel_record["status"],
+        json!("succeeded"),
+        "the remote cancel must settle: {cancel_record}"
+    );
+    assert_eq!(
+        cancel_record["result"]["result"]["cancelled"],
+        json!(true),
+        "an active session was actually terminated, not a finished thread: {cancel_record}"
+    );
+    let cancelled_frame = view
+        .next_change_containing("cancel", Duration::from_secs(30))
+        .await;
+    assert_eq!(
+        cancelled_frame["thread_id"],
+        json!(created.session_id),
+        "the cancelled change stays on the watched thread: {cancelled_frame}"
+    );
+
     // -- §13.5 18: an L3 dispatch raises a governance alert in the trail ----
     let l3 = issue(
         &server,
@@ -1024,6 +1215,10 @@ async fn loopback_tunnel_shadow_commands_and_approvals_end_to_end() {
 
     // -- offline queue: a stopped node parks the command -------------------
     node.client.stop();
+    // The舰体 drops the channel asynchronously: issuing while the old channel is
+    // still registered dispatches the command instead of parking it, so the
+    // queue assertion below would race the teardown instead of testing the queue.
+    wait_channel_gone(DEVICE_ID, Duration::from_secs(20)).await;
     let (status, _) = get_json(
         &format!("{}/wunder/interlink/nodes", server.base_url),
         &server.token,

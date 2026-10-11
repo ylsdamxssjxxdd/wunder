@@ -22,6 +22,13 @@ ROOT = os.path.dirname(HERE)
 SKIP_FILES = {"design_tokens.slint", "i18n.slint"}
 
 
+def slint_literal(text):
+    # Slint string literals need embedded quotes escaped. Without this, a catalog
+    # entry whose English text contains a double quote (e.g. `Delete "{}"?`) emits
+    # invalid Slint and the whole UI build fails at build.rs.
+    return text.replace("\\", "\\\\").replace('"', '\\"')
+
+
 def load_catalog():
     entries = []
     seen_keys = {}
@@ -76,12 +83,14 @@ def main():
     ]
     for key, zh, en, params in entries:
         if not params:
-            lines.append(f'    out property <string> {key}: zh ? "{zh}" : "{en}";')
+            lines.append(
+                f'    out property <string> {key}: zh ? "{slint_literal(zh)}" : "{slint_literal(en)}";'
+            )
             continue
         # Parameterized entries become pure formatters: `{}` in the catalog
         # text is replaced by the matching argument.
         signature = ", ".join(f"{name}: string" for name in params)
-        body_zh, body_en = zh, en
+        body_zh, body_en = slint_literal(zh), slint_literal(en)
         for index, name in enumerate(params):
             body_zh = body_zh.replace("{}", '" + ' + name + ' + "', 1)
             body_en = body_en.replace("{}", '" + ' + name + ' + "', 1)

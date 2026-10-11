@@ -1,4 +1,4 @@
-//! `cloud` interlink subcommands (plan I10): drive the interlink ledger from
+﻿//! `cloud` interlink subcommands (plan I10): drive the interlink ledger from
 //! the terminal. Every command is a thin REST client over the user-plane
 //! endpoints — the CLI adds no second execution chain; the server (for
 //! `cloud` targets) or the owning node (for `device:<id>` targets) runs the
@@ -18,6 +18,11 @@ use std::collections::HashMap;
 use std::io::IsTerminal;
 use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use tokio_tungstenite::tungstenite::http::HeaderValue as WsHeaderValue;
+use tokio_tungstenite::tungstenite::http::Request as WsRequest;
+use tokio_tungstenite::tungstenite::Message as WsMessage;
+use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 use wunder_server::cloud::{shared as cloud_shared, CloudSessionFile};
 
 /// Bounded wait for one command to reach a terminal state.
@@ -33,14 +38,37 @@ pub const CLOUD_FILE_CEILING: usize = 1024 * 1024;
 /// One preview line never exceeds this many characters: a single-line multi-kB
 /// file must not dump itself into the terminal.
 pub const CAT_LINE_CHARS: usize = 2000;
-/// `--attach` polls the thread transcript on this cadence; a cloud thread has
-/// no relay to subscribe to (see `watch`), so the transcript is the stream.
+/// `--attach` fallback cadence: used only when the `chat_ws` subscription is
+/// unavailable (older 舰体, device target, refused handshake). Every poll is a
+/// ledger command, so the streaming path is the default (docs §8.1, §8.2).
 const ATTACH_POLL: Duration = Duration::from_millis(1500);
-/// Hard ceiling of one attach window: every poll is a ledger command, so the
-/// window must stay bounded even if a script asks for an hour.
-const ATTACH_WINDOW_MAX_S: u64 = 600;
-/// Transcript window pulled per attach poll.
+/// Transcript window pulled per attach read.
 const ATTACH_HISTORY_LIMIT: i64 = 50;
+/// Budget for the `chat_ws` websocket handshake; on expiry `--attach` degrades.
+const ATTACH_CONNECT_TIMEOUT: Duration = Duration::from_secs(6);
+/// Budget for the `connect` -> `ready` round trip on the same socket.
+const ATTACH_SUBSCRIBE_TIMEOUT: Duration = Duration::from_secs(6);
+/// Keepalive cadence: the handler answers an `{"type":"ping"}` envelope with a
+/// `pong`, which is what keeps an idle cloud turn from being reaped by a proxy.
+const ATTACH_KEEPALIVE: Duration = Duration::from_secs(15);
+/// Cap of the staged print queue: durable frames arrive one per committed text
+/// block, and the queue is flushed every frame, so it never grows past this.
+const ATTACH_PRINT_BATCH: usize = 32;
+/// Transcript items the streaming projection retains; fully echoed items ahead
+/// of the current turn are dropped along with their watermark entries.
+const ATTACH_STREAM_MAX_ITEMS: usize = 120;
+/// Request id of the `watch` subscription, used to recognise its error frames.
+const ATTACH_WATCH_REQUEST_ID: &str = "cli_attach_watch";
+/// Request id of the protocol `connect` frame this client sends once per socket.
+const ATTACH_CONNECT_REQUEST_ID: &str = "cli_attach_connect";
+/// Kinds `threads.get` serves (`load_thread_context_items` filters on these),
+/// so the streamed projection shows exactly the same items as the polling path.
+const ATTACH_TRANSCRIPT_KINDS: [&str; 4] = [
+    "user_message",
+    "assistant_message",
+    "tool_message",
+    "system_message",
+];
 /// Audit page used by `cloud status` when it counts open approvals.
 const STATUS_AUDIT_PAGE: i64 = 100;
 
@@ -96,6 +124,11 @@ fn quick_http() -> Result<reqwest::Client> {
 
 fn base_url(session: &CloudSessionFile) -> String {
     session.server.trim().trim_end_matches('/').to_string()
+}
+
+/// Same origin as the REST base, in websocket scheme (`http`->`ws`, `https`->`wss`).
+fn ws_base(session: &CloudSessionFile) -> String {
+    base_url(session).replacen("http", "ws", 1)
 }
 
 async fn get_json(session: &CloudSessionFile, path: &str) -> Result<Value> {
@@ -1224,9 +1257,15 @@ async fn send(runtime: &CliRuntime, global: &GlobalArgs, command: CloudSendComma
     attach_stream(&session, &to_node, &thread_id, command.seconds, is_zh).await
 }
 
-/// The cloud target has no tunnel data plane, so its thread events never reach
-/// `remote_ws`; the durable thread log is the only stream that exists. Poll it
-/// and print only what arrived since the last poll.
+/// Echo one cloud thread's own turn as it lands (docs §8.2: 流式回显，等价于远程会话视图).
+///
+/// 本控云 stays on the existing 舰体 API (§8.1): one transcript read seeds the
+/// watermark, then the thread's durable change feed is subscribed over
+/// `GET /wunder/chat/ws` (`watch`). Only that first read touches the command
+/// ledger, so a watch window no longer writes one ledger row per poll. A device
+/// target owns its thread log itself (no server-side session to subscribe to),
+/// and any handshake or subscribe failure degrades to the previous ledger
+/// polling; both paths print the identical line format.
 async fn attach_stream(
     session: &CloudSessionFile,
     to_node: &str,
@@ -1235,56 +1274,79 @@ async fn attach_stream(
     is_zh: bool,
 ) -> Result<()> {
     let color = attach_color(std::io::stdout().is_terminal(), std::env::var_os("NO_COLOR").is_some());
-    let deadline = std::time::Instant::now() + Duration::from_secs(seconds.max(1));
-    let mut watermark: HashMap<String, usize> = HashMap::new();
-    let mut printed_sections = 0usize;
-    let mut finished = false;
-    let mut first_poll = true;
-    loop {
-        let record = issue_and_wait(
-            session,
-            to_node,
-            "threads.get",
-            json!({"local_thread_id": thread_id, "limit": ATTACH_HISTORY_LIMIT}),
-        )
-        .await?;
-        let data = data_of(&record);
-        if command_status(data) == "succeeded" {
-            let items = transcript_items(result_payload(data));
-            if first_poll {
-                // Everything before the turn just delivered is history: seed its
-                // watermark so the stream starts at that message, not at the top
-                // of the thread.
-                watermark = attach_seed_watermark(&items);
-            }
-            first_poll = false;
-            let (lines, next) = attach_delta_lines(&items, &watermark, is_zh, color);
-            watermark = next;
-            for line in &lines {
-                println!("{line}");
-            }
-            printed_sections += lines.len();
-            if attach_turn_finished(&items) {
-                finished = true;
-                break;
-            }
-        }
-        if std::time::Instant::now() >= deadline {
-            break;
-        }
-        tokio::time::sleep(ATTACH_POLL).await;
-        if std::time::Instant::now() >= deadline {
-            break;
+    let window = Duration::from_secs(seconds.max(1));
+    let deadline = std::time::Instant::now() + window;
+    let mut run = AttachRun::default();
+    // Order matters: the durable cursor is read *before* the transcript page, so
+    // a change that lands between the two reads is either inside that page
+    // (suppressed by the watermark) or ahead of the cursor (streamed).
+    // Only a cloud thread lives in the 舰体's own session log, so only a cloud
+    // target has a `chat_ws` session to subscribe to; a device node keeps its
+    // log locally and is read through the ledger (docs §7.4).
+    let mut degraded: Option<String> = None;
+    let mut cursor: Option<i64> = None;
+    if to_node == "cloud" {
+        match attach_change_cursor(session, thread_id).await {
+            Ok(Some(value)) => cursor = Some(value.max(0)),
+            Ok(None) => degraded = Some(attach_reason(AttachReason::NoCursor, is_zh)),
+            Err(err) => degraded = Some(err.to_string()),
         }
     }
+    // Seed read: everything before the turn just delivered is history.
+    let seed = attach_transcript(session, to_node, thread_id).await?;
+    if let Some(cursor) = cursor {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        match attach_ws_stream(
+            session,
+            thread_id,
+            cursor,
+            seed.clone(),
+            color,
+            is_zh,
+            remaining,
+            &mut run,
+        )
+        .await
+        {
+            AttachWsStream::Served => {
+                return attach_window_outcome(deadline, thread_id, &mut run, is_zh)
+            }
+            AttachWsStream::Degraded(reason) => degraded = Some(reason),
+        }
+    }
+    // A device target never had a socket to lose, so it says nothing here.
+    if let Some(reason) = degraded {
+        eprintln!("{}", attach_degraded_line(reason.as_str(), is_zh));
+    }
+    attach_poll_stream(
+        session,
+        to_node,
+        thread_id,
+        seed,
+        color,
+        is_zh,
+        deadline.saturating_duration_since(std::time::Instant::now()),
+        &mut run,
+    )
+    .await;
+    attach_window_outcome(deadline, thread_id, &mut run, is_zh)
+}
+
+/// The window's closing line plus its script-visible exit status.
+fn attach_window_outcome(
+    deadline: std::time::Instant,
+    thread_id: &str,
+    run: &mut AttachRun,
+    is_zh: bool,
+) -> Result<()> {
     let remaining = deadline
         .saturating_duration_since(std::time::Instant::now())
         .as_secs();
     println!(
         "{}",
-        attach_final_line(finished, thread_id, printed_sections, remaining, is_zh)
+        attach_final_line(run.finished, thread_id, run.sections, remaining, is_zh)
     );
-    if finished {
+    if run.finished {
         Ok(())
     } else {
         Err(anyhow!(
@@ -1298,6 +1360,700 @@ async fn attach_stream(
     }
 }
 
+/// How much of one attach window was echoed and how it ended. Shared by the
+/// streaming path and the polling fallback so the handover cannot reprint.
+#[derive(Debug, Default)]
+struct AttachRun {
+    finished: bool,
+    sections: usize,
+    /// Per-item count of already-echoed characters (the polling watermark).
+    watermark: HashMap<String, usize>,
+    /// Set once a transcript page seeded the watermark, so a degraded handover
+    /// keeps history as history instead of echoing the whole thread.
+    seeded: bool,
+}
+
+impl AttachRun {
+    /// Echo the tails that have not been printed yet and take the new watermark.
+    fn echo(&mut self, items: &[Value], is_zh: bool, color: bool) -> Vec<String> {
+        let (lines, next) = attach_delta_lines(items, &self.watermark, is_zh, color);
+        self.watermark = next;
+        self.sections += lines.len();
+        lines
+    }
+
+    /// Drop watermark entries the projection no longer tracks, so a long turn
+    /// cannot grow the map without bound.
+    fn forget(&mut self, keep: &HashMap<String, usize>) {
+        self.watermark.retain(|key, _| keep.contains_key(key));
+    }
+}
+
+/// One transcript page through the command ledger (`threads.get`).
+async fn attach_transcript(
+    session: &CloudSessionFile,
+    to_node: &str,
+    thread_id: &str,
+) -> Result<Vec<Value>> {
+    let record = issue_and_wait(
+        session,
+        to_node,
+        "threads.get",
+        json!({"local_thread_id": thread_id, "limit": ATTACH_HISTORY_LIMIT}),
+    )
+    .await?;
+    let data = data_of(&record);
+    if command_status(data) != "succeeded" {
+        return Ok(Vec::new());
+    }
+    Ok(transcript_items(result_payload(data)))
+}
+
+/// Fallback stream: poll the ledger transcript and print only what arrived.
+async fn attach_poll_stream(
+    session: &CloudSessionFile,
+    to_node: &str,
+    thread_id: &str,
+    seed: Vec<Value>,
+    color: bool,
+    is_zh: bool,
+    window: Duration,
+    run: &mut AttachRun,
+) {
+    let deadline = std::time::Instant::now() + window;
+    let mut page = seed;
+    loop {
+        if !run.seeded && !page.is_empty() {
+            run.watermark = attach_seed_watermark(page.as_slice());
+            run.seeded = true;
+        }
+        for line in run.echo(page.as_slice(), is_zh, color) {
+            println!("{line}");
+        }
+        if attach_turn_finished(page.as_slice()) {
+            run.finished = true;
+            return;
+        }
+        if std::time::Instant::now() >= deadline {
+            return;
+        }
+        tokio::time::sleep(ATTACH_POLL).await;
+        if std::time::Instant::now() >= deadline {
+            return;
+        }
+        // A failed page read is not fatal here: the window keeps its watermark
+        // and asks for the same transcript again on the next tick.
+        page = attach_transcript(session, to_node, thread_id)
+            .await
+            .unwrap_or_default();
+    }
+}
+
+/// What one `chat_ws` attach attempt produced.
+enum AttachWsStream {
+    /// The socket served the window: the turn finished or the deadline passed.
+    Served,
+    /// The subscription never came up; polling takes the rest of the window.
+    Degraded(String),
+}
+
+type AttachSocket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
+type AttachSink = futures::stream::SplitSink<AttachSocket, WsMessage>;
+type AttachStream = futures::stream::SplitStream<AttachSocket>;
+
+/// Echo one cloud thread's durable change feed over `GET /wunder/chat/ws`.
+///
+/// The subscription is the handler's `watch` kind: it replays every
+/// `thread_change` row after `cursor` and keeps emitting them, so the window
+/// costs no command-ledger row at all (docs §8.1 keeps 本控云 on the existing
+/// 舰体 API). Nothing is spawned here: the socket, the projection and the
+/// capped print queue all die with this function, and the deadline branch
+/// always ends the loop.
+async fn attach_ws_stream(
+    session: &CloudSessionFile,
+    thread_id: &str,
+    cursor: i64,
+    seed: Vec<Value>,
+    color: bool,
+    is_zh: bool,
+    window: Duration,
+    run: &mut AttachRun,
+) -> AttachWsStream {
+    let request = match build_attach_ws_request(session) {
+        Ok(request) => request,
+        Err(reason) => return AttachWsStream::Degraded(reason),
+    };
+    let socket = match tokio::time::timeout(
+        ATTACH_CONNECT_TIMEOUT,
+        tokio_tungstenite::connect_async(request),
+    )
+    .await
+    {
+        Err(_) => {
+            return AttachWsStream::Degraded(attach_reason(AttachReason::HandshakeTimeout, is_zh))
+        }
+        Ok(Err(err)) => return AttachWsStream::Degraded(err.to_string()),
+        Ok(Ok((socket, _))) => socket,
+    };
+    let (mut sink, mut stream) = socket.split();
+    if let Err(reason) = attach_ws_subscribe(&mut sink, &mut stream, thread_id, cursor, is_zh).await {
+        let _ = sink.close().await;
+        return AttachWsStream::Degraded(reason);
+    }
+    // Live: seed the projection with the transcript page, echo the turn that was
+    // just delivered, and stream everything that follows.
+    let mut projection = AttachProjection::from_items(seed);
+    if !projection.items().is_empty() {
+        run.watermark = attach_seed_watermark(projection.items());
+        run.seeded = true;
+    }
+    let mut pending = run.echo(projection.items(), is_zh, color);
+    projection.trim_window(run);
+    flush_attach_lines(&mut pending);
+    if attach_turn_finished(projection.items()) {
+        // The turn settled before the socket came up: nothing more will arrive.
+        run.finished = true;
+        let _ = sink.close().await;
+        return AttachWsStream::Served;
+    }
+    let deadline = tokio::time::Instant::now() + window;
+    let mut keepalive = tokio::time::interval(ATTACH_KEEPALIVE);
+    keepalive.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    keepalive.tick().await; // an interval's first tick is immediate
+    loop {
+        let effect = tokio::select! {
+            message = stream.next() => match message {
+                Some(Ok(WsMessage::Text(text))) => projection.apply_frame(
+                    &serde_json::from_str::<Value>(text.as_str()).unwrap_or(Value::Null),
+                    ATTACH_WATCH_REQUEST_ID,
+                ),
+                Some(Ok(WsMessage::Close(_))) | None => {
+                    AttachFrameEffect::Failed(attach_reason(AttachReason::Closed, is_zh))
+                }
+                Some(Ok(_)) => AttachFrameEffect::Ignored,
+                Some(Err(err)) => AttachFrameEffect::Failed(err.to_string()),
+            },
+            _ = tokio::time::sleep_until(deadline) => break,
+            _ = keepalive.tick() => {
+                if sink
+                    .send(WsMessage::Text(ws_envelope("ping", None, Value::Null)))
+                    .await
+                    .is_err()
+                {
+                    AttachFrameEffect::Failed(attach_reason(AttachReason::Keepalive, is_zh))
+                } else {
+                    AttachFrameEffect::Ignored
+                }
+            }
+        };
+        if matches!(effect, AttachFrameEffect::Applied) {
+            pending = run.echo(projection.items(), is_zh, color);
+            projection.trim_window(run);
+        }
+        if let AttachFrameEffect::Failed(reason) = effect {
+            let _ = sink.close().await;
+            flush_attach_lines(&mut pending);
+            return AttachWsStream::Degraded(reason);
+        }
+        if matches!(effect, AttachFrameEffect::ReplayRequired) {
+            // The durable window moved under this cursor; the polling path
+            // reloads a transcript page instead of an atomic snapshot.
+            let _ = sink.close().await;
+            flush_attach_lines(&mut pending);
+            return AttachWsStream::Degraded(attach_reason(AttachReason::Snapshot, is_zh));
+        }
+        flush_attach_lines(&mut pending);
+        if attach_turn_finished(projection.items()) {
+            run.finished = true;
+            break;
+        }
+    }
+    let _ = sink.close().await;
+    AttachWsStream::Served
+}
+
+/// The thread's durable cursor, read from the 舰体 session API instead of the
+/// command ledger: `GET /wunder/chat/sessions/{id}` answers
+/// `data.thread_change_cursor`. `None` on a server that predates the field,
+/// which is a degrade signal rather than an error.
+async fn attach_change_cursor(session: &CloudSessionFile, thread_id: &str) -> Result<Option<i64>> {
+    let path = format!("/wunder/chat/sessions/{}?limit=1", urlencode(thread_id));
+    let body = get_json(session, path.as_str()).await?;
+    Ok(body
+        .pointer("/data/thread_change_cursor")
+        .and_then(Value::as_i64))
+}
+
+/// `GET /wunder/chat/ws` handshake with bearer auth: the handler reads the
+/// `Authorization` header before any query token (`apply_ws_auth_headers`), so
+/// the session token never lands in a URL or an access log. The `wunder`
+/// subprotocol is the one the handler offers.
+fn build_attach_ws_request(session: &CloudSessionFile) -> Result<WsRequest<()>, String> {
+    let url = format!("{}/wunder/chat/ws", ws_base(session));
+    let mut request = url
+        .as_str()
+        .into_client_request()
+        .map_err(|err| err.to_string())?;
+    let bearer = format!("Bearer {}", session.token.trim());
+    let authorized = bearer
+        .parse::<WsHeaderValue>()
+        .map_err(|err| err.to_string())?;
+    request.headers_mut().insert("authorization", authorized);
+    let protocol = "wunder"
+        .parse::<WsHeaderValue>()
+        .map_err(|err| err.to_string())?;
+    request
+        .headers_mut()
+        .insert("sec-websocket-protocol", protocol);
+    Ok(request)
+}
+
+/// The inbound envelope the handler parses (`ws_helpers::WsEnvelope`):
+/// `{"type", "request_id", "payload"}`. An absent payload key is omitted, which
+/// the handler reads as `None`.
+fn ws_envelope(kind: &str, request_id: Option<&str>, payload: Value) -> String {
+    let mut map = serde_json::Map::new();
+    map.insert("type".to_string(), json!(kind));
+    if let Some(request_id) = request_id {
+        map.insert("request_id".to_string(), json!(request_id));
+    }
+    if !payload.is_null() {
+        map.insert("payload".to_string(), payload);
+    }
+    Value::Object(map).to_string()
+}
+
+/// The `connect` payload the handler negotiates (`WsConnectPayload`): protocol
+/// version 1, and the client block it only logs.
+fn ws_connect_payload() -> Value {
+    json!({
+        "protocol_version": 1,
+        "client": {
+            "name": "wunder-cli",
+            "version": env!("CARGO_PKG_VERSION"),
+            "platform": std::env::consts::OS,
+            "mode": "attach",
+        },
+    })
+}
+
+/// The `watch` payload the handler requires (`WsWatchPayload`): the session and
+/// the exclusive durable cursor to replay from.
+fn ws_watch_payload(thread_id: &str, cursor: i64) -> Value {
+    json!({"session_id": thread_id, "after_change_seq": cursor})
+}
+
+/// Send `connect`, wait for the `ready` that carries its request id, then send
+/// `watch`. `watch` has no ack of its own: the feed either starts emitting
+/// events or answers with an error frame for the same request id.
+async fn attach_ws_subscribe(
+    sink: &mut AttachSink,
+    stream: &mut AttachStream,
+    thread_id: &str,
+    cursor: i64,
+    is_zh: bool,
+) -> Result<(), String> {
+    sink.send(WsMessage::Text(ws_envelope(
+        "connect",
+        Some(ATTACH_CONNECT_REQUEST_ID),
+        ws_connect_payload(),
+    )))
+    .await
+    .map_err(|err| err.to_string())?;
+    loop {
+        let frame = tokio::time::timeout(ATTACH_SUBSCRIBE_TIMEOUT, stream.next())
+            .await
+            .map_err(|_| attach_reason(AttachReason::NoReady, is_zh))?
+            .ok_or_else(|| attach_reason(AttachReason::Closed, is_zh))?
+            .map_err(|err| err.to_string())?;
+        let WsMessage::Text(text) = frame else {
+            continue;
+        };
+        let frame = serde_json::from_str::<Value>(text.as_str()).unwrap_or(Value::Null);
+        match attach_ready_ack(&frame, ATTACH_CONNECT_REQUEST_ID) {
+            AttachAck::Waiting => continue,
+            AttachAck::Ready => break,
+            AttachAck::Failed(reason) => return Err(reason),
+        }
+    }
+    sink.send(WsMessage::Text(ws_envelope(
+        "watch",
+        Some(ATTACH_WATCH_REQUEST_ID),
+        ws_watch_payload(thread_id, cursor),
+    )))
+    .await
+    .map_err(|err| err.to_string())
+}
+
+/// What one frame of the subscribe phase says.
+#[derive(Debug, PartialEq, Eq)]
+enum AttachAck {
+    Waiting,
+    Ready,
+    Failed(String),
+}
+
+fn attach_ready_ack(frame: &Value, request_id: &str) -> AttachAck {
+    match frame.get("type").and_then(Value::as_str).unwrap_or("") {
+        "ready" if frame.get("request_id").and_then(Value::as_str) == Some(request_id) => {
+            AttachAck::Ready
+        }
+        "error" => AttachAck::Failed(attach_error_reason(frame)),
+        _ => AttachAck::Waiting,
+    }
+}
+
+/// One-line reason of a `{"type":"error"}` frame; `finalize_ws_error_payload`
+/// puts `code` and `message` at the root of the payload.
+fn attach_error_reason(frame: &Value) -> String {
+    let code = frame
+        .pointer("/payload/code")
+        .and_then(Value::as_str)
+        .unwrap_or("ERROR");
+    let message = frame
+        .pointer("/payload/message")
+        .and_then(Value::as_str)
+        .unwrap_or("request rejected");
+    format!("{code} {message}")
+}
+
+/// Why the socket path gave up, in the CLI's own two languages.
+#[derive(Debug, Clone, Copy)]
+enum AttachReason {
+    HandshakeTimeout,
+    Closed,
+    Keepalive,
+    NoReady,
+    NoCursor,
+    Snapshot,
+}
+
+fn attach_reason(reason: AttachReason, is_zh: bool) -> String {
+    let language = if is_zh { "zh" } else { "en" };
+    let (zh, en) = match reason {
+        AttachReason::HandshakeTimeout => ("chat_ws 握手超时", "chat_ws handshake timed out"),
+        AttachReason::Closed => (
+            "chat_ws 连接被服务端关闭",
+            "chat_ws closed by the server",
+        ),
+        AttachReason::Keepalive => ("chat_ws 保活写入失败", "chat_ws keepalive failed"),
+        AttachReason::NoReady => (
+            "chat_ws 未返回 ready",
+            "chat_ws sent no ready frame",
+        ),
+        AttachReason::NoCursor => (
+            "舰体未提供线程变更游标（服务端过旧）",
+            "the server exposes no thread change cursor (older server)",
+        ),
+        AttachReason::Snapshot => (
+            "线程持久窗口已裁剪，需整组快照恢复",
+            "the durable change window was trimmed (snapshot required)",
+        ),
+    };
+    crate::locale::tr(language, zh, en)
+}
+
+/// The one-line notice that `--attach` is not streaming (stderr, so the echo
+/// format on stdout stays machine-readable).
+fn attach_degraded_line(reason: &str, is_zh: bool) -> String {
+    crate::locale::tr(
+        if is_zh { "zh" } else { "en" },
+        format!("流式订阅不可用（{reason}），退回命令台账轮询").as_str(),
+        format!("chat_ws unavailable ({reason}), falling back to ledger polling").as_str(),
+    )
+}
+
+/// Print the staged echo queue in bounded chunks. The queue is flushed every
+/// frame, so it only ever holds what one frame produced, capped here.
+fn flush_attach_lines(pending: &mut Vec<String>) {
+    while !pending.is_empty() {
+        let take = pending.len().min(ATTACH_PRINT_BATCH);
+        for line in pending.drain(..take) {
+            println!("{line}");
+        }
+    }
+}
+
+/// The streaming side of `--attach`: durable `thread_change` frames fold into
+/// the same transcript items `threads.get` serves, so both paths print the same
+/// lines and the window stays bounded.
+#[derive(Debug, Default)]
+struct AttachProjection {
+    /// Transcript items in arrival order, in the `threads.get` item shape.
+    items: Vec<Value>,
+    /// `item_key` -> position in `items`; also the bound of the maps below.
+    position: HashMap<String, usize>,
+    /// Active text block per item: `(block_index, characters before the block)`.
+    tails: HashMap<String, (i64, usize)>,
+}
+
+impl AttachProjection {
+    fn from_items(items: Vec<Value>) -> Self {
+        let mut projection = Self::default();
+        for item in items {
+            projection.replace_item(item);
+        }
+        projection
+    }
+
+    fn items(&self) -> &[Value] {
+        self.items.as_slice()
+    }
+
+    /// Fold one inbound text frame. Kept free of I/O so the wire shape stays
+    /// unit-tested against what `chat_ws` actually emits.
+    fn apply_frame(&mut self, frame: &Value, watch_request_id: &str) -> AttachFrameEffect {
+        match frame.get("type").and_then(Value::as_str).unwrap_or("") {
+            "event" => {
+                let payload = frame.get("payload");
+                let name = payload
+                    .and_then(|value| value.get("event"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                match name {
+                    // Control frames end the durable feed for this cursor; the
+                    // polling path reloads the window instead of replaying it.
+                    "thread_snapshot_required" | "stream_overflow" => {
+                        AttachFrameEffect::ReplayRequired
+                    }
+                    "thread_change" => {
+                        self.apply_change(payload.and_then(|value| value.get("data")))
+                    }
+                    // `heartbeat`, `stream_started` and the ephemeral tails add
+                    // nothing a terminal echo needs.
+                    _ => AttachFrameEffect::Ignored,
+                }
+            }
+            "error" => {
+                if frame.get("request_id").and_then(Value::as_str) == Some(watch_request_id) {
+                    AttachFrameEffect::Failed(attach_error_reason(frame))
+                } else {
+                    AttachFrameEffect::Ignored
+                }
+            }
+            _ => AttachFrameEffect::Ignored,
+        }
+    }
+
+    /// `data` is the durable row: `{change_type, turn_id, item_id, revision,
+    /// cursor, payload}` from `workspace::try_load_thread_changes`.
+    fn apply_change(&mut self, data: Option<&Value>) -> AttachFrameEffect {
+        let Some(data) = data else {
+            return AttachFrameEffect::Ignored;
+        };
+        let Some(row) = data.get("payload") else {
+            return AttachFrameEffect::Ignored;
+        };
+        match data.get("change_type").and_then(Value::as_str).unwrap_or("") {
+            "item_upsert" => {
+                let item_id = attach_str(row, "item_id")
+                    .or_else(|| attach_str(data, "item_id"))
+                    .unwrap_or_default();
+                let kind = attach_str(row, "kind").unwrap_or_default();
+                if item_id.is_empty() || !ATTACH_TRANSCRIPT_KINDS.contains(&kind.as_str()) {
+                    return AttachFrameEffect::Ignored;
+                }
+                let status = attach_str(row, "status").unwrap_or_else(|| "completed".to_string());
+                self.upsert_item(&item_id, &kind, &status, Some(attach_row_text(row)));
+                AttachFrameEffect::Applied
+            }
+            "text_block" => {
+                // Reasoning blocks stay out of the echo: the transcript
+                // projection only serves the content field.
+                if attach_str(row, "field") != Some("content".to_string()) {
+                    return AttachFrameEffect::Ignored;
+                }
+                let item_id = attach_str(row, "item_id")
+                    .or_else(|| attach_str(data, "item_id"))
+                    .unwrap_or_default();
+                if item_id.is_empty() {
+                    return AttachFrameEffect::Ignored;
+                }
+                let block_index = row.get("block_index").and_then(Value::as_i64).unwrap_or(0);
+                let text = row
+                    .get("content")
+                    .and_then(Value::as_str)
+                    .or_else(|| row.pointer("/data/content").and_then(Value::as_str))
+                    .unwrap_or_default()
+                    .to_string();
+                self.apply_text_block(&item_id, block_index, text.as_str());
+                AttachFrameEffect::Applied
+            }
+            // `turn_upsert` and unknown change types carry no echoed text.
+            _ => AttachFrameEffect::Ignored,
+        }
+    }
+
+    /// A durable text block is that block's own cumulative text, re-emitted as
+    /// it grows; the item text is the finalized blocks plus this active tail.
+    fn apply_text_block(&mut self, item_id: &str, block_index: i64, text: &str) {
+        let known = self.tails.get(item_id).copied();
+        if known.is_some_and(|(known_index, _)| block_index < known_index) {
+            return;
+        }
+        let index = self.slot(item_id, "assistant_message");
+        let current = item_text(&self.items[index]);
+        let base = match known {
+            Some((known_index, base)) if block_index == known_index => base,
+            // A higher block finalizes the active tail: it becomes the prefix.
+            Some(_) => current.chars().count(),
+            // The first frame seen for this item: block 0 starts at the top, a
+            // later block appends after whatever the transcript page carried.
+            None if block_index == 0 => 0,
+            None => current.chars().count(),
+        };
+        let mut content = current;
+        let keep = char_prefix_len(content.as_str(), base);
+        content.truncate(keep);
+        content.push_str(text);
+        if let Some(map) = self.items[index].as_object_mut() {
+            map.insert("content".to_string(), json!(content));
+        }
+        self.tails.insert(item_id.to_string(), (block_index, base));
+    }
+
+    fn upsert_item(&mut self, item_id: &str, kind: &str, status: &str, text: Option<String>) {
+        let index = self.slot(item_id, kind);
+        if let Some(map) = self.items[index].as_object_mut() {
+            map.insert("kind".to_string(), json!(kind));
+            map.insert("status".to_string(), json!(status));
+            if let Some(text) = text {
+                map.insert("content".to_string(), json!(text));
+                if attach_status_settled(status) {
+                    // A committed item row is the whole text: no later block of
+                    // the same item may shrink it.
+                    self.tails
+                        .insert(item_id.to_string(), (i64::MAX, text.chars().count()));
+                }
+            }
+        }
+    }
+
+    /// Position of one tracked item, creating it when a text block lands before
+    /// its item row is committed.
+    fn slot(&mut self, item_id: &str, kind: &str) -> usize {
+        if let Some(index) = self.position.get(item_id).copied() {
+            return index;
+        }
+        let item = json!({"item_id": item_id, "kind": kind, "status": "running", "content": ""});
+        let index = self.items.len();
+        self.position.insert(item_id.to_string(), index);
+        self.items.push(item);
+        index
+    }
+
+    fn replace_item(&mut self, item: Value) {
+        let key = item_key(&item, self.items.len());
+        match self.position.get(&key).copied() {
+            Some(index) => self.items[index] = item,
+            None => {
+                self.position.insert(key, self.items.len());
+                self.items.push(item);
+            }
+        }
+    }
+
+    /// Keep the projection bounded: an item that settled and was fully echoed
+    /// keeps only its identity (its length stays counted in the watermark), and
+    /// the window never holds more than [`ATTACH_STREAM_MAX_ITEMS`] items.
+    fn trim_window(&mut self, run: &mut AttachRun) {
+        for (index, item) in self.items.iter_mut().enumerate() {
+            let status = item.get("status").and_then(Value::as_str).unwrap_or("");
+            if !attach_status_settled(status) {
+                continue;
+            }
+            let key = item_key(item, index);
+            let len = item_text(item).chars().count();
+            if len == 0 || run.watermark.get(key.as_str()).copied().unwrap_or(0) < len {
+                continue;
+            }
+            if let Some(map) = item.as_object_mut() {
+                map.insert("content".to_string(), json!(""));
+            }
+        }
+        if self.items.len() <= ATTACH_STREAM_MAX_ITEMS {
+            return;
+        }
+        // History ahead of the current turn goes first; the newest user message
+        // stays pinned because the finished-turn test reads it. A key that
+        // leaves the window leaves the watermark, and the durable feed never
+        // replays an item once it has fallen out of this window.
+        let anchor = self
+            .items
+            .iter()
+            .rposition(|item| item.get("kind").and_then(Value::as_str) == Some("user_message"));
+        let start = self.items.len() - ATTACH_STREAM_MAX_ITEMS + 1;
+        let mut kept: Vec<Value> = Vec::with_capacity(ATTACH_STREAM_MAX_ITEMS);
+        if let Some(index) = anchor.filter(|index| *index < start) {
+            kept.push(self.items[index].clone());
+        }
+        kept.extend_from_slice(&self.items[start..]);
+        self.items = kept;
+        self.position.clear();
+        for (index, item) in self.items.iter().enumerate() {
+            self.position.insert(item_key(item, index), index);
+        }
+        self.tails.retain(|key, _| self.position.contains_key(key));
+        run.forget(&self.position);
+    }
+}
+
+/// What a folded frame means for the attach window.
+#[derive(Debug, PartialEq, Eq)]
+enum AttachFrameEffect {
+    Ignored,
+    Applied,
+    /// The durable feed ended at a control frame and needs a fresh window.
+    ReplayRequired,
+    /// The subscription was refused or the transport broke.
+    Failed(String),
+}
+
+/// A JSON string field as an owned value (the projection keys on it).
+fn attach_str(value: &Value, key: &str) -> Option<String> {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .map(|text| text.to_string())
+}
+
+/// The body of one item row: `threads.get` serves the flat item, while the
+/// durable `item_upsert` frame wraps that same item under `payload`.
+fn attach_row_text(row: &Value) -> String {
+    row.get("payload")
+        .and_then(|inner| {
+            inner
+                .get("content")
+                .and_then(Value::as_str)
+                .or_else(|| inner.get("text").and_then(Value::as_str))
+        })
+        .or_else(|| {
+            row.get("content")
+                .and_then(Value::as_str)
+                .or_else(|| row.get("text").and_then(Value::as_str))
+        })
+        .unwrap_or_default()
+        .to_string()
+}
+
+/// Statuses that will not grow any more text (the mirror of the running states
+/// the finished-turn test refuses).
+fn attach_status_settled(status: &str) -> bool {
+    matches!(
+        status,
+        "completed" | "succeeded" | "failed" | "cancelled" | "canceled" | "rejected" | "stopped"
+            | "interrupted" | "dead"
+    )
+}
+
+/// Byte offset after `chars` characters: the watermark counts characters, the
+/// buffer stores bytes.
+fn char_prefix_len(text: &str, chars: usize) -> usize {
+    text.char_indices()
+        .nth(chars)
+        .map(|(index, _)| index)
+        .unwrap_or(text.len())
+}
 /// Colour only for a real terminal, and never against `NO_COLOR`.
 fn attach_color(stdout_tty: bool, no_color: bool) -> bool {
     stdout_tty && !no_color
@@ -1438,9 +2194,9 @@ async fn watch(
     let _ = runtime;
     let session = session()?;
     let target = normalize_target(&command.to)?;
-    // The relay forwards a node's thread stream; the cloud node keeps its
+    // The relay forwards a device's thread stream; the cloud node keeps its
     // threads in its own durable log, so `--to cloud` has nothing to relay
-    // (docs §7.4). `cloud send --attach` reads that log instead.
+    // (docs §7.4). `cloud send --attach` subscribes to that log over `chat_ws`.
     if target == "cloud" {
         return Err(anyhow!(
             "{}",
@@ -1453,8 +2209,7 @@ async fn watch(
     }
     let url = format!(
         "{}/wunder/interlink/remote_ws?target={}&thread={}&token={}",
-        base_url(&session)
-            .replacen("http", "ws", 1),
+        ws_base(&session),
         urlencode(target.as_str()),
         urlencode(&command.thread),
         urlencode(&session.token),
@@ -2047,5 +2802,363 @@ mod tests {
 
         let items = vec![json!({"created_at": 1.0, "action": "command.issue", "from_node": "web", "to_node": "cloud"})];
         assert!(audit_table(items.as_slice(), true).contains("command.issue"));
+    }
+    /// The exact outbound envelope of `ws_helpers::send_ws_event`: an event name,
+    /// a transport id and the data the durable feeder forwarded.
+    fn ws_event_frame(request_id: &str, event: &str, data: Value) -> Value {
+        json!({
+            "type": "event",
+            "request_id": request_id,
+            "payload": {"event": event, "id": null, "data": data},
+        })
+    }
+
+    /// One durable `thread_change` row as `workspace::try_load_thread_changes`
+    /// builds it: `payload` is the committed row (for `item_upsert` the whole
+    /// item row with its embedded payload copy).
+    fn thread_change_frame(
+        change_type: &str,
+        item_id: &str,
+        row: Value,
+        cursor: i64,
+    ) -> Value {
+        ws_event_frame(
+            ATTACH_WATCH_REQUEST_ID,
+            "thread_change",
+            json!({
+                "change_type": change_type,
+                "turn_id": "turn_1",
+                "item_id": item_id,
+                "revision": 1,
+                "cursor": cursor,
+                "payload": row,
+            }),
+        )
+    }
+
+    fn attach_test_session(port: u16) -> CloudSessionFile {
+        serde_json::from_value(json!({
+            "server": format!("http://127.0.0.1:{port}"),
+            "user_id": "user_test",
+            "username": "tester",
+            "scope": "chat",
+            "token": "test-token",
+            "device_id": "dev_test",
+            "device_name": "test device",
+            "client": "cli",
+            "logged_in_at": 1.0,
+        }))
+        .expect("session fixture")
+    }
+
+    /// A port nothing listens on: the handshake is refused by the stack, which is
+    /// the deterministic version of an unreachable 舰体.
+    fn closed_port() -> u16 {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("free port");
+        let port = listener.local_addr().expect("addr").port();
+        drop(listener);
+        port
+    }
+
+    #[test]
+    fn chat_ws_frames_echo_the_same_lines_as_a_transcript_page() {
+        let mut run = AttachRun::default();
+        let mut projection = AttachProjection::from_items(vec![
+            json!({"item_id": "old:answer", "kind": "assistant_message", "status": "completed", "content": "history"}),
+            json!({"item_id": "turn_1:user", "kind": "user_message", "status": "completed", "content": "ask"}),
+        ]);
+        run.watermark = attach_seed_watermark(projection.items());
+        let mut lines = run.echo(projection.items(), false, false);
+        assert_eq!(lines, vec!["<user>ask".to_string()]);
+
+        // The answer lands as a committed item row on the socket.
+        let frame = thread_change_frame(
+            "item_upsert",
+            "turn_1:text-0",
+            json!({"item_id": "turn_1:text-0", "kind": "assistant_message", "status": "completed",
+                   "revision": 2, "payload": {"role": "assistant", "content": "hel"}}),
+            8,
+        );
+        assert_eq!(
+            projection.apply_frame(&frame, ATTACH_WATCH_REQUEST_ID),
+            AttachFrameEffect::Applied
+        );
+        lines.extend(run.echo(projection.items(), false, false));
+        assert_eq!(
+            lines,
+            vec!["<user>ask".to_string(), "<assistant>hel".to_string()]
+        );
+
+        // The same watermark over the equivalent transcript page prints the
+        // same thing, so the streaming path cannot change the echo format.
+        let page = vec![
+            json!({"item_id": "old:answer", "kind": "assistant_message", "status": "completed", "content": "history"}),
+            json!({"item_id": "turn_1:user", "kind": "user_message", "status": "completed", "content": "ask"}),
+            json!({"item_id": "turn_1:text-0", "kind": "assistant_message", "status": "completed", "content": "hel"}),
+        ];
+        let seeded = attach_seed_watermark(page.as_slice());
+        let (polled, _) = attach_delta_lines(page.as_slice(), &seeded, false, false);
+        assert_eq!(polled, vec!["<user>ask".to_string(), "<assistant>hel".to_string()]);
+        assert!(attach_turn_finished(projection.items()));
+    }
+
+    #[test]
+    fn a_growing_text_block_never_repeats_what_was_echoed() {
+        let mut run = AttachRun::default();
+        let mut projection = AttachProjection::from_items(vec![
+            json!({"item_id": "turn_1:user", "kind": "user_message", "status": "completed", "content": "ask"}),
+        ]);
+        run.watermark = attach_seed_watermark(projection.items());
+        let mut printed = run.echo(projection.items(), false, false);
+        for (text, cursor) in [("hel", 9i64), ("hello", 10), ("hello!", 11)] {
+            let frame = thread_change_frame(
+                "text_block",
+                "turn_1:text-0",
+                json!({"field": "content", "block_index": 0, "content": text, "content_offset": 0}),
+                cursor,
+            );
+            assert_eq!(
+                projection.apply_frame(&frame, ATTACH_WATCH_REQUEST_ID),
+                AttachFrameEffect::Applied
+            );
+            printed.extend(run.echo(projection.items(), false, false));
+        }
+        assert_eq!(
+            printed,
+            vec![
+                "<user>ask".to_string(),
+                "<assistant>hel".to_string(),
+                "<assistant>lo".to_string(),
+                "<assistant>!".to_string(),
+            ]
+        );
+        assert_eq!(run.watermark.get("turn_1:text-0"), Some(&6usize));
+        // A block re-delivered out of order cannot shrink the item again.
+        let stale = thread_change_frame(
+            "text_block",
+            "turn_1:text-0",
+            json!({"field": "content", "block_index": 0, "content": "h"}),
+            8,
+        );
+        projection.apply_frame(&stale, ATTACH_WATCH_REQUEST_ID);
+        assert_eq!(
+            run.echo(projection.items(), false, false),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn the_projection_skips_what_the_transcript_never_shows() {
+        let mut projection = AttachProjection::default();
+        // `threads.get` filters items by kind, so a tool call stays out of it.
+        let tool = thread_change_frame(
+            "item_upsert",
+            "turn_1:tool-1",
+            json!({"item_id": "turn_1:tool-1", "kind": "tool_call", "status": "running",
+                   "payload": {"content": "run"}}),
+            5,
+        );
+        assert_eq!(
+            projection.apply_frame(&tool, ATTACH_WATCH_REQUEST_ID),
+            AttachFrameEffect::Ignored
+        );
+        let reasoning = thread_change_frame(
+            "text_block",
+            "turn_1:text-0",
+            json!({"field": "reasoning", "block_index": 0, "reasoning": "think"}),
+            6,
+        );
+        assert_eq!(
+            projection.apply_frame(&reasoning, ATTACH_WATCH_REQUEST_ID),
+            AttachFrameEffect::Ignored
+        );
+        let turn = thread_change_frame("turn_upsert", "", json!({"turn_id": "turn_1", "status": "queued"}), 4);
+        assert_eq!(
+            projection.apply_frame(&turn, ATTACH_WATCH_REQUEST_ID),
+            AttachFrameEffect::Ignored
+        );
+        let heartbeat = ws_event_frame(ATTACH_WATCH_REQUEST_ID, "heartbeat", json!({"running": true}));
+        assert_eq!(
+            projection.apply_frame(&heartbeat, ATTACH_WATCH_REQUEST_ID),
+            AttachFrameEffect::Ignored
+        );
+        // Another request's error is not ours to act on.
+        let other = json!({"type": "error", "request_id": "req_other", "payload": {"code": "X", "message": "y"}});
+        assert_eq!(
+            projection.apply_frame(&other, ATTACH_WATCH_REQUEST_ID),
+            AttachFrameEffect::Ignored
+        );
+        assert!(projection.items().is_empty());
+    }
+
+    #[test]
+    fn control_and_error_frames_decide_the_degrade_path() {
+        let mut projection = AttachProjection::default();
+        let snapshot = ws_event_frame(ATTACH_WATCH_REQUEST_ID, "thread_snapshot_required", json!({}));
+        assert_eq!(
+            projection.apply_frame(&snapshot, ATTACH_WATCH_REQUEST_ID),
+            AttachFrameEffect::ReplayRequired
+        );
+        let overflow = ws_event_frame(
+            ATTACH_WATCH_REQUEST_ID,
+            "stream_overflow",
+            json!({"session_id": "th_1", "cursor": 3, "resume_recommended": true}),
+        );
+        assert_eq!(
+            projection.apply_frame(&overflow, ATTACH_WATCH_REQUEST_ID),
+            AttachFrameEffect::ReplayRequired
+        );
+        let refused = json!({
+            "type": "error",
+            "request_id": ATTACH_WATCH_REQUEST_ID,
+            "payload": {"code": "SESSION_NOT_FOUND", "message": "session not found", "status": 404},
+        });
+        assert_eq!(
+            projection.apply_frame(&refused, ATTACH_WATCH_REQUEST_ID),
+            AttachFrameEffect::Failed(
+                "SESSION_NOT_FOUND session not found".to_string()
+            )
+        );
+        // Subscribe phase: the first ready has no request id, ours does.
+        assert_eq!(
+            attach_ready_ack(
+                &json!({"type": "ready", "payload": {"connection_id": "ws_1"}}),
+                ATTACH_CONNECT_REQUEST_ID
+            ),
+            AttachAck::Waiting
+        );
+        assert_eq!(
+            attach_ready_ack(
+                &json!({"type": "ready", "request_id": ATTACH_CONNECT_REQUEST_ID,
+                        "payload": {"protocol": {"version": 1, "min": 1, "max": 1}}}),
+                ATTACH_CONNECT_REQUEST_ID
+            ),
+            AttachAck::Ready
+        );
+        assert!(matches!(
+            attach_ready_ack(&refused, ATTACH_CONNECT_REQUEST_ID),
+            AttachAck::Failed(_)
+        ));
+    }
+
+    #[test]
+    fn attach_frames_use_the_handlers_envelope_and_bearer_auth() {
+        assert_eq!(ws_envelope("ping", None, Value::Null), "{\"type\":\"ping\"}");
+        let watch: Value = serde_json::from_str(
+            ws_envelope(
+                "watch",
+                Some(ATTACH_WATCH_REQUEST_ID),
+                ws_watch_payload("th 1", 42),
+            )
+            .as_str(),
+        )
+        .expect("watch envelope");
+        assert_eq!(watch["type"], json!("watch"));
+        assert_eq!(watch["request_id"], json!(ATTACH_WATCH_REQUEST_ID));
+        assert_eq!(watch["payload"]["session_id"], json!("th 1"));
+        assert_eq!(watch["payload"]["after_change_seq"], json!(42));
+        let connect: Value = serde_json::from_str(
+            ws_envelope(
+                "connect",
+                Some(ATTACH_CONNECT_REQUEST_ID),
+                ws_connect_payload(),
+            )
+            .as_str(),
+        )
+        .expect("connect envelope");
+        assert_eq!(connect["payload"]["protocol_version"], json!(1));
+        assert_eq!(connect["payload"]["client"]["name"], json!("wunder-cli"));
+
+        let request = build_attach_ws_request(&attach_test_session(9)).expect("ws request");
+        assert_eq!(request.uri().to_string(), "ws://127.0.0.1:9/wunder/chat/ws");
+        assert_eq!(
+            request
+                .headers()
+                .get("authorization")
+                .and_then(|value| value.to_str().ok()),
+            Some("Bearer test-token")
+        );
+        assert_eq!(
+            request
+                .headers()
+                .get("sec-websocket-protocol")
+                .and_then(|value| value.to_str().ok()),
+            Some("wunder")
+        );
+    }
+
+    #[test]
+    fn a_degraded_attach_says_why_in_one_line() {
+        let zh = attach_degraded_line("SESSION_NOT_FOUND session not found", true);
+        assert!(zh.contains("退回命令台账轮询") && zh.contains("SESSION_NOT_FOUND"), "{zh}");
+        assert!(!zh.contains('\n'), "{zh}");
+        assert_eq!(
+            attach_degraded_line("boom", false),
+            "chat_ws unavailable (boom), falling back to ledger polling"
+        );
+        assert!(attach_reason(AttachReason::NoCursor, false).contains("cursor"));
+        assert_eq!(attach_reason(AttachReason::Snapshot, true), attach_reason(AttachReason::Snapshot, true));
+    }
+
+    #[test]
+    fn the_projection_window_stays_bounded_and_keeps_the_turn_anchor() {
+        let mut run = AttachRun::default();
+        let mut projection = AttachProjection::default();
+        let anchor = thread_change_frame(
+            "item_upsert",
+            "turn_1:user",
+            json!({"item_id": "turn_1:user", "kind": "user_message", "status": "completed",
+                   "payload": {"content": "ask"}}),
+            1,
+        );
+        projection.apply_frame(&anchor, ATTACH_WATCH_REQUEST_ID);
+        run.watermark = attach_seed_watermark(projection.items());
+        for index in 0..(ATTACH_STREAM_MAX_ITEMS + 60) {
+            let frame = thread_change_frame(
+                "text_block",
+                format!("turn_1:text-{index}").as_str(),
+                json!({"field": "content", "block_index": 0, "content": "x"}),
+                index as i64 + 2,
+            );
+            projection.apply_frame(&frame, ATTACH_WATCH_REQUEST_ID);
+            let lines = run.echo(projection.items(), false, false);
+            projection.trim_window(&mut run);
+            assert!(!lines.is_empty() || index > ATTACH_STREAM_MAX_ITEMS);
+        }
+        assert!(projection.items().len() <= ATTACH_STREAM_MAX_ITEMS);
+        assert!(
+            projection
+                .items()
+                .iter()
+                .any(|item| item.get("kind").and_then(Value::as_str) == Some("user_message")),
+            "the turn anchor stays so the window can still end"
+        );
+        assert!(run.watermark.len() <= projection.items().len());
+    }
+
+    #[tokio::test]
+    async fn a_failed_handshake_degrades_to_polling() {
+        let session = attach_test_session(closed_port());
+        let mut run = AttachRun::default();
+        let outcome = attach_ws_stream(
+            &session,
+            "th_1",
+            7,
+            vec![json!({"item_id": "turn_1:user", "kind": "user_message", "status": "completed", "content": "ask"})],
+            false,
+            false,
+            Duration::from_secs(30),
+            &mut run,
+        )
+        .await;
+        let reason = match outcome {
+            AttachWsStream::Degraded(reason) => reason,
+            AttachWsStream::Served => panic!("a refused handshake must degrade, not serve"),
+        };
+        assert!(!reason.is_empty(), "{reason}");
+        // Nothing was echoed yet: the polling path still owns the whole window.
+        assert_eq!(run.sections, 0);
+        assert!(!run.seeded);
+        assert!(!run.finished);
     }
 }

@@ -6,7 +6,7 @@ wunder（心舰）是一个**智能体调度平台**
 
 | 程序图标 | 形态名称 | 技术栈 | 定位 | 运行方式 | 系统支持 |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| 🚀 | 舰体 server | Rust + axum 0.8；PostgreSQL | 用户与智能体管理平台（多租户、组织治理、网关统一接入与调度） | 服务端常驻进程，Docker 部署，HTTP / WebSocket 接入 | Linux / Docker |
+| 🚀 | 舰体 server | Rust + axum 0.8；PostgreSQL | 用户与智能体管理平台，提供API支持） | 服务端常驻进程，Docker 部署，HTTP / WebSocket 接入 | Linux / Docker |
 | 🐉 | 舰桥 web | 原生 HTML + CSS + JavaScript（`web/`，无构建，随舰体下发） | 舰体的管理端（治理后台：用户、单位、渠道、监控、评测） | 浏览器访问，由舰体静态托管 | 跨平台浏览器 |
 | 🐝 | 蜂巢 web | Vue 3 + TypeScript（Vite 构建） | 舰体的用户端（云端 AI 工作台） | 浏览器访问，由舰体静态托管 | 跨平台浏览器 |
 | 🍯 | 蜂窝 desktop | Rust + Slint 1.18（原生界面，软件渲染）；SQLite | 桌面版本地 AI 工作台（主推形态，开箱即用） | 本地桌面进程，进程内直调引擎（不经本机网络） | Windows 7 x86 起；Linux AppImage |

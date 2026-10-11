@@ -2,17 +2,22 @@
 // workspace file tree. One flat row model built by the native projection —
 // directories lazy-load their children, files pull-and-open on click — so the
 // Slint thread only lays out rows, the same division the thread tree above
-// uses. Row metrics follow the web left-rail panel: 26px rows, 12px per
-// depth level, folders in the amber of the web's folder icon.
+// uses. Row metrics follow the web left-rail panel: 26px rows, 12px per depth
+// level, colored vscode-icons file glyphs, folders in the amber of the web's
+// folder icon. Interactions mirror the web tree: a right-click menu per row
+// and on the blank area, drag-out downloads (the native side stages the file
+// and hands it to the OS), drop-in uploads.
 import { Theme, WorkspaceFileRow } from "theme.slint";
 import { I18n } from "i18n.slint";
 import { ListView } from "std-widgets.slint";
+import { ModalDialog } from "components.slint";
 
 export component WorkspaceFilesPanel inherits Rectangle {
     background: transparent;
 
     in property <[WorkspaceFileRow]> rows;
-    // Usage line projected on the Rust side ("已用 X · N 个文件"); empty hides it.
+    // Usage line projected on the Rust side ("已用 X · N 个文件"); rides the
+    // title row, right-aligned, exactly like the web head.
     in property <string> stats;
     // The root listing is in flight (the tree's own placeholder).
     in property <bool> loading;
@@ -26,6 +31,15 @@ export component WorkspaceFilesPanel inherits Rectangle {
     callback toggle(int);
     callback refresh();
     callback connect();
+    // Context-menu actions. 0 open, 1 download, 2 rename, 3 delete,
+    // 4 reference-to-chat; blank-area actions: 5 new-dir, 6 new-file.
+    callback menu(int, int);
+    // A drag gesture crossed the threshold on this row (drag-out download).
+    callback drag-row(int);
+    // OS drop of files from another application (upload). The native side
+    // reads the paths off the event; the panel always answers "copy" — a
+    // drop with nothing uploadable simply does nothing.
+    callback drop(DropEvent);
 
     // Connected, settled and nothing came back: the empty state.
     property <bool> empty:
@@ -34,8 +48,8 @@ export component WorkspaceFilesPanel inherits Rectangle {
     VerticalLayout {
         padding-left: 10px; padding-right: 10px; padding-top: 2px; padding-bottom: 6px;
         spacing: 0px;
-        // Head: title and the refresh affordance, the same pair the workspace
-        // section header above uses.
+        // Head: title, the usage line on the same row (the web layout), and
+        // the refresh affordance.
         HorizontalLayout {
             height: 24px; spacing: 6px;
             Image {
@@ -46,7 +60,12 @@ export component WorkspaceFilesPanel inherits Rectangle {
             Text {
                 height: parent.height; text: I18n.wf_title;
                 color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center;
-                horizontal-stretch: 1;
+            }
+            Rectangle { horizontal-stretch: 1; min-width: 0px; }
+            if root.stats != "" : Text {
+                height: parent.height; text: root.stats;
+                color: Theme.muted; font-size: Theme.font-2xs; vertical-alignment: center;
+                overflow: elide;
             }
             Rectangle {
                 y: 2px; width: 20px; height: 20px; border-radius: 5px;
@@ -63,11 +82,6 @@ export component WorkspaceFilesPanel inherits Rectangle {
                     clicked => { root.refresh(); }
                 }
             }
-        }
-        if root.stats != "" : Text {
-            height: 16px; text: root.stats;
-            color: Theme.muted; font-size: Theme.font-2xs; vertical-alignment: center;
-            overflow: elide;
         }
         // Tunnel down: the region can browse nothing, so it says so and hands
         // the user to the cloud sign-in instead of an eternal spinner.
@@ -97,7 +111,6 @@ export component WorkspaceFilesPanel inherits Rectangle {
                 }
             }
         }
-        // Root failure: the message plus one bounded way out.
         if root.error != "" && !root.offline : VerticalLayout {
             vertical-stretch: 1; alignment: center; spacing: 8px;
             Text {
@@ -140,62 +153,229 @@ export component WorkspaceFilesPanel inherits Rectangle {
                 horizontal-alignment: center; opacity: 0.75; wrap: word-wrap;
             }
         }
-        // The tree. Rows are index-addressed like the thread tree: the native
-        // side owns the model, Slint hands the index back on click.
-        if !root.offline && root.error == "" && !root.loading && !root.empty : ListView {
+        // The tree. The whole body is one DropArea so a drop from Explorer
+        // uploads into the workspace, and one ContextMenuArea so right-click
+        // on the blank space offers the create/refresh actions; rows carry
+        // their own menus, which win over the blank-area one. Rows are
+        // index-addressed like the thread tree: the native side owns the
+        // model, Slint hands the index back.
+        if !root.offline && root.error == "" && !root.loading && !root.empty : DropArea {
             vertical-stretch: 1;
-            horizontal-scrollbar-policy: always-off;
-            for row[index] in root.rows : Rectangle {
-                height: 26px; width: parent.width;
-                background: row-touch.has-hover ? Theme.hover : transparent;
-                row-touch := TouchArea {
-                    mouse-cursor: pointer;
-                    clicked => { root.toggle(index); }
+            enabled: !root.offline;
+            can-drop(event) => {
+                return root.offline ? DragAction.none : DragAction.copy;
+            }
+            dropped(event) => {
+                root.drop(event);
+                DragAction.copy
+            }
+            ContextMenuArea {
+                x: 0px; y: 0px; width: parent.width; height: parent.height;
+                Menu {
+                    MenuItem {
+                        title: I18n.wf_menu_new_dir;
+                        activated => { root.menu(-1, 5); }
+                    }
+                    MenuItem {
+                        title: I18n.wf_menu_new_file;
+                        activated => { root.menu(-1, 6); }
+                    }
+                    MenuItem {
+                        title: I18n.wf_menu_refresh;
+                        activated => { root.refresh(); }
+                    }
                 }
-                HorizontalLayout {
-                    padding-left: 6px + row.depth * 12px;
-                    padding-right: 8px;
-                    spacing: 5px;
-                    // The twisty column keeps file names aligned with the
-                    // directory names above them.
-                    Rectangle {
-                        width: 14px;
-                        if row.kind == 1 : Image {
-                            x: 1px; y: 7px; width: 12px; height: 12px;
-                            source: row.expanded
-                                ? @image-url("../assets/icons/chevron-down.svg")
-                                : @image-url("../assets/icons/chevron-right.svg");
-                            colorize: Theme.muted;
+                ListView {
+                    x: 0px; y: 0px; width: parent.width; height: parent.height;
+                    horizontal-scrollbar-policy: always-off;
+                for row[index] in root.rows : Rectangle {
+                    height: 26px; width: parent.width;
+                    background: row-touch.has-hover ? Theme.hover : transparent;
+                    ContextMenuArea {
+                        // Row menu: files open/download/rename/reference/delete,
+                        // directories open/new/rename/reference/delete — the
+                        // web tree's menu minus the archive entries the
+                        // interlink channel cannot carry.
+                        Menu {
+                            if row.kind == 0 : MenuItem {
+                                title: I18n.wf_menu_open;
+                                activated => { root.menu(index, 0); }
+                            }
+                            if row.kind == 0 : MenuItem {
+                                title: I18n.wf_menu_download;
+                                activated => { root.menu(index, 1); }
+                            }
+                            if row.kind == 1 : MenuItem {
+                                title: I18n.wf_menu_new_dir;
+                                activated => { root.menu(index, 5); }
+                            }
+                            MenuItem {
+                                title: I18n.wf_menu_rename;
+                                activated => { root.menu(index, 2); }
+                            }
+                            MenuItem {
+                                title: I18n.wf_menu_reference;
+                                activated => { root.menu(index, 4); }
+                            }
+                            MenuItem {
+                                title: I18n.wf_menu_delete;
+                                activated => { root.menu(index, 3); }
+                            }
+                        }
+                        row-touch := TouchArea {
+                            mouse-cursor: pointer;
+                            property <length> press-x;
+                            property <length> press-y;
+                            property <bool> drag-out;
+                            pointer-event(event) => {
+                                if event.kind == PointerEventKind.down {
+                                    press-x = self.mouse-x;
+                                    press-y = self.mouse-y;
+                                    drag-out = false;
+                                }
+                            }
+                            moved => {
+                                if self.pressed && !drag-out
+                                    && (Math.abs(self.mouse-x - press-x) > 5px
+                                        || Math.abs(self.mouse-y - press-y) > 5px) {
+                                    drag-out = true;
+                                    root.drag-row(index);
+                                }
+                            }
+                            clicked => {
+                                if !drag-out {
+                                    root.toggle(index);
+                                }
+                            }
+                        }
+                        HorizontalLayout {
+                            padding-left: 6px + row.depth * 12px;
+                            padding-right: 8px;
+                            spacing: 5px;
+                            // The twisty column keeps file names aligned with
+                            // the directory names above them.
+                            Rectangle {
+                                width: 14px;
+                                if row.kind == 1 : Image {
+                                    x: 1px; y: 7px; width: 12px; height: 12px;
+                                    source: row.expanded
+                                        ? @image-url("../assets/icons/chevron-down.svg")
+                                        : @image-url("../assets/icons/chevron-right.svg");
+                                    colorize: Theme.muted;
+                                }
+                            }
+                            if row.kind == 1 : Image {
+                                y: 6px; width: 14px; height: 14px;
+                                source: row.expanded
+                                    ? @image-url("../assets/icons/folder-open.svg")
+                                    : @image-url("../assets/icons/workspace/folder.svg");
+                                colorize: Theme.warning;
+                            }
+                            if row.kind != 1 : Image {
+                                y: 6px; width: 14px; height: 14px;
+                                source: row.icon;
+                                image-fit: contain;
+                            }
+                            Text {
+                                height: parent.height; text: row.name;
+                                color: row.kind == 2 ? Theme.muted : Theme.text-secondary;
+                                font-size: row.kind == 2 ? Theme.font-sm : Theme.font-md;
+                                vertical-alignment: center; overflow: elide;
+                                horizontal-stretch: 1;
+                            }
+                            if row.kind == 1 && row.loading : Text {
+                                height: parent.height; text: I18n.wf_loading_dir;
+                                color: Theme.muted; font-size: Theme.font-2xs;
+                                vertical-alignment: center;
+                            }
+                            if row.kind == 0 && row.size-text != "" : Text {
+                                height: parent.height; text: row.size-text;
+                                color: Theme.muted; font-size: Theme.font-2xs;
+                                vertical-alignment: center;
+                            }
                         }
                     }
-                    if row.kind == 1 : Image {
-                        y: 6.5px; width: 13px; height: 13px;
-                        source: row.expanded
-                            ? @image-url("../assets/icons/folder-open.svg")
-                            : @image-url("../assets/icons/workspace/folder.svg");
-                        colorize: Theme.warning;
-                    }
-                    if row.kind != 1 : Image {
-                        y: 6.5px; width: 13px; height: 13px;
-                        source: row.icon;
-                    }
-                    Text {
-                        height: parent.height; text: row.name;
-                        color: row.kind == 2 ? Theme.muted : Theme.text-secondary;
-                        font-size: row.kind == 2 ? Theme.font-sm : Theme.font-md;
-                        vertical-alignment: center; overflow: elide;
-                        horizontal-stretch: 1;
-                    }
-                    if row.kind == 1 && row.loading : Text {
-                        height: parent.height; text: I18n.wf_loading_dir;
-                        color: Theme.muted; font-size: Theme.font-2xs;
-                        vertical-alignment: center;
-                    }
-                    if row.kind == 0 && row.size-text != "" : Text {
-                        height: parent.height; text: row.size-text;
-                        color: Theme.muted; font-size: Theme.font-2xs;
-                        vertical-alignment: center;
-                    }
+                }
+                }
+            }
+        }
+    }
+}
+
+// One small dialog for the working-directory's bounded interactions: rename,
+// new dir/file (input mode) and the delete / cloud-approval confirmations
+// (confirm mode, danger tone). The native controller owns the state machine.
+export component WorkspacePromptDialog inherits ModalDialog {
+    in property <string> prompt-title;
+    in property <string> prompt-body;
+    // Input mode: a one-line draft with confirm/cancel; confirm mode shows
+    // only the body and the two buttons.
+    in property <bool> input-visible;
+    in-out property <string> prompt-value;
+    in property <string> confirm-label;
+    in property <bool> danger: false;
+    in property <bool> busy: false;
+    callback accepted(string);
+    callback canceled();
+
+    card-width: 360px;
+    card-height: 200px;
+    dismissed => { root.canceled(); }
+    VerticalLayout {
+        Text {
+            text: root.prompt-title; color: Theme.text;
+            font-size: Theme.font-lg; font-weight: 700;
+        }
+        if root.prompt-body != "" : Text {
+            text: root.prompt-body; color: Theme.muted; font-size: Theme.font-sm;
+            wrap: word-wrap;
+        }
+        if root.input-visible : Rectangle {
+            height: 30px; border-radius: Theme.radius-sm;
+            border-width: 1px; border-color: prompt-input.has-focus ? Theme.accent : Theme.border;
+            background: Theme.panel;
+            prompt-input := TextInput {
+                x: 8px; y: 0px; width: parent.width - 16px; height: parent.height;
+                text <=> root.prompt-value;
+                font-size: Theme.font-md; color: Theme.text;
+                single-line: true; vertical-alignment: center;
+                selection-background-color: Theme.accent-soft; selection-foreground-color: Theme.text;
+                accepted => { root.accepted(root.prompt-value); }
+            }
+        }
+        Rectangle { vertical-stretch: 1; }
+        HorizontalLayout {
+            height: 30px; spacing: 8px; alignment: end;
+            Rectangle {
+                width: 64px; height: 30px; border-radius: Theme.radius-sm;
+                border-width: 1px; border-color: Theme.border;
+                background: cancel-touch.has-hover ? Theme.hover : Theme.surface;
+                cancel-touch := TouchArea {
+                    mouse-cursor: pointer;
+                    enabled: !root.busy;
+                    clicked => { root.canceled(); }
+                }
+                Text {
+                    width: 100%; height: 100%; text: I18n.common_cancel;
+                    color: Theme.text-secondary; font-size: Theme.font-md;
+                    horizontal-alignment: center; vertical-alignment: center;
+                }
+            }
+            Rectangle {
+                width: 78px; height: 30px; border-radius: Theme.radius-sm;
+                background: confirm-touch.has-hover
+                    ? (root.danger ? Theme.danger : Theme.accent-deep)
+                    : (root.danger ? Theme.danger : Theme.accent);
+                opacity: root.busy ? 0.5 : 1.0;
+                confirm-touch := TouchArea {
+                    mouse-cursor: pointer;
+                    enabled: !root.busy;
+                    clicked => { root.accepted(root.prompt-value); }
+                }
+                Text {
+                    width: 100%; height: 100%; text: root.confirm-label;
+                    color: white; font-size: Theme.font-md; font-weight: 600;
+                    horizontal-alignment: center; vertical-alignment: center;
                 }
             }
         }

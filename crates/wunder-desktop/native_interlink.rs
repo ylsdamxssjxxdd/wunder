@@ -106,6 +106,19 @@ pub struct NativeInterlinkStats {
     pub truncated: bool,
 }
 
+/// Outcome of one cloud write operation (L2: mkdir/move/delete/write). The
+/// cloud hard-approves this level, so a run can park on an approval ticket
+/// that the desktop decides itself.
+#[derive(Debug, Clone, PartialEq)]
+pub enum CloudOpOutcome {
+    /// Terminal success; the payload is the affected cloud path.
+    Done(String),
+    /// The cloud parked the command: decide it with `interlink_cloud_confirm`.
+    NeedsApproval { command_id: String },
+    /// Terminal failure; the payload is the readable reason.
+    Failed(String),
+}
+
 fn clean(value: Option<&Value>) -> String {
     value
         .and_then(Value::as_str)
@@ -366,6 +379,101 @@ impl NativeDesktop {
         Ok(())
     }
 
+    /// Create one directory in the cloud workspace (`workspace.mkdir`, L2).
+    pub fn interlink_cloud_mkdir(&self, path: &str) -> Result<CloudOpOutcome> {
+        self.run_cloud_op(
+            "workspace.mkdir",
+            serde_json::json!({ "path": cloud_path(path) }),
+        )
+    }
+
+    /// Rename (move within the same parent) one cloud entry
+    /// (`workspace.move`, L2). `name` is the bare new name.
+    pub fn interlink_cloud_rename(&self, source: &str, name: &str) -> Result<CloudOpOutcome> {
+        let source = cloud_path(source);
+        let name = name.trim().trim_matches('/').to_string();
+        anyhow::ensure!(!name.is_empty(), "名称不能为空");
+        anyhow::ensure!(!name.contains('/') && !name.contains('\\'), "名称不能包含路径分隔符");
+        anyhow::ensure!(!name.contains(".."), "名称不能包含路径穿越");
+        let destination = match source.rsplit_once('/') {
+            Some((parent, _)) => format!("{parent}/{name}"),
+            None => name,
+        };
+        self.run_cloud_op(
+            "workspace.move",
+            serde_json::json!({ "source": source, "destination": destination }),
+        )
+    }
+
+    /// Delete one cloud entry (file or directory, recursive)
+    /// (`workspace.delete`, L2).
+    pub fn interlink_cloud_delete(&self, path: &str) -> Result<CloudOpOutcome> {
+        self.run_cloud_op(
+            "workspace.delete",
+            serde_json::json!({ "path": cloud_path(path) }),
+        )
+    }
+
+    /// Write one text file into the cloud workspace (`workspace.write`, L2):
+    /// uploads from the sidebar and new-file creation share this path. The
+    /// interlink write carries text content only, bounded by the inline cap.
+    pub fn interlink_cloud_write(&self, path: &str, content: &str) -> Result<CloudOpOutcome> {
+        anyhow::ensure!(
+            content.len() as u64 <= CLOUD_INLINE_LIMIT,
+            "云端单次写入上限 {} KiB，该内容超出上限",
+            CLOUD_INLINE_LIMIT / 1024
+        );
+        self.run_cloud_op(
+            "workspace.write",
+            serde_json::json!({ "path": cloud_path(path), "content": content }),
+        )
+    }
+
+    /// Approve one parked cloud command and wait for its terminal state.
+    pub fn interlink_cloud_confirm(&self, command_id: &str) -> Result<CloudOpOutcome> {
+        let command_id = command_id.trim();
+        anyhow::ensure!(!command_id.is_empty(), "缺少待确认的云端命令");
+        let cloud = self.state().cloud.clone();
+        self.runtime.block_on(cloud.interlink_decide(command_id, true))?;
+        let deadline = std::time::Instant::now() + CLOUD_POLL_TIMEOUT;
+        Ok(cloud_op_outcome(&self.wait_cloud_command(&cloud, command_id, deadline)?))
+    }
+
+    /// Stage one cloud file for a drag-out: pull it into the local workspace
+    /// (refreshing the cached copy) and return the absolute local path the
+    /// OS drag carries. Blocks up to [`CLOUD_PULL_TIMEOUT`].
+    pub fn interlink_cloud_stage(&self, cloud_path: &str) -> Result<std::path::PathBuf> {
+        let cloud_path = cloud_path.trim();
+        if cloud_path.is_empty() {
+            bail!("未选择云端文件");
+        }
+        let local_rel = validate_local_rel(&file_tail(cloud_path))?;
+        let pulled = self.pull_cloud(cloud_path, &local_rel, true)?;
+        let state = self.state();
+        let root = state.workspace.ensure_user_root(self.user_id())?;
+        let root = root.canonicalize().unwrap_or(root);
+        Ok(root.join(&pulled.local_path))
+    }
+
+    /// Issue one cloud write command and fold the ledger answer into the
+    /// shared outcome: parked approvals surface instead of being swallowed,
+    /// because the desktop is the approver for its own requests.
+    fn run_cloud_op(&self, kind: &str, args: Value) -> Result<CloudOpOutcome> {
+        let cloud = self.state().cloud.clone();
+        let issue = self
+            .runtime
+            .block_on(cloud.interlink_issue_command("cloud", kind, args))?;
+        let command_id = clean(issue.get("command_id"));
+        if command_id.is_empty() {
+            return Err(anyhow!("cloud command issue returned no id"));
+        }
+        if clean(issue.get("approval_state")) == "pending" {
+            return Ok(CloudOpOutcome::NeedsApproval { command_id });
+        }
+        let deadline = std::time::Instant::now() + CLOUD_POLL_TIMEOUT;
+        Ok(cloud_op_outcome(&self.wait_cloud_command(&cloud, &command_id, deadline)?))
+    }
+
     /// Poll one cloud command to its terminal state, bounded by `deadline`.
     fn wait_cloud_command(
         &self,
@@ -480,6 +588,37 @@ fn file_tail(cloud_path: &str) -> String {
         .unwrap_or_default()
         .trim()
         .to_string()
+}
+
+/// Normalize one cloud workspace path: trimmed, separators unified, leading
+/// and trailing slashes dropped, the root collapses to `.` (the executor's
+/// root marker).
+fn cloud_path(raw: &str) -> String {
+    let trimmed = raw.trim().replace('\\', "/");
+    let trimmed = trimmed.trim_matches('/');
+    if trimmed.is_empty() {
+        ".".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+/// Ledger record → one cloud write outcome. Parked approvals never reach
+/// here: `run_cloud_op` surfaces them as [`CloudOpOutcome::NeedsApproval`]
+/// before any wait, and `interlink_cloud_confirm` waits only after deciding.
+fn cloud_op_outcome(record: &Value) -> CloudOpOutcome {
+    if clean(record.get("status")) == "succeeded" {
+        let result = payload_with(record, "path");
+        CloudOpOutcome::Done(clean(result.get("path")))
+    } else {
+        let code = clean(record.get("error_code"));
+        let summary = clean(record.get("error_summary"));
+        if code.is_empty() && summary.is_empty() {
+            CloudOpOutcome::Failed("云端操作失败".to_string())
+        } else {
+            CloudOpOutcome::Failed(format!("{code} {summary}").trim().to_string())
+        }
+    }
 }
 
 /// Structured failure of one pull, mapped from the ledger error pair.
@@ -812,5 +951,44 @@ mod tests {
         }))
         .unwrap_err();
         assert!(error.to_string().contains("WORKSPACE_ERROR"));
+    }
+
+    #[test]
+    fn cloud_paths_normalize_to_the_executor_root_marker() {
+        assert_eq!(cloud_path(""), ".");
+        assert_eq!(cloud_path("  "), ".");
+        assert_eq!(cloud_path("/notes/"), "notes");
+        assert_eq!(cloud_path(r"\notes\sub\"), "notes/sub");
+        assert_eq!(cloud_path("notes/a.md"), "notes/a.md");
+    }
+
+    #[test]
+    fn cloud_op_outcome_folds_the_ledger_answer() {
+        let done = cloud_op_outcome(&json!({
+            "status": "succeeded",
+            "result": {"path": "/notes/plan.md"}
+        }));
+        assert_eq!(done, CloudOpOutcome::Done("notes/plan.md".to_string()));
+        let failed = cloud_op_outcome(&json!({
+            "status": "failed",
+            "error_code": "PATH_NOT_FOUND",
+            "error_summary": "no such entry"
+        }));
+        assert_eq!(
+            failed,
+            CloudOpOutcome::Failed("PATH_NOT_FOUND no such entry".to_string())
+        );
+        let silent = cloud_op_outcome(&json!({"status": "failed"}));
+        assert_eq!(silent, CloudOpOutcome::Failed("云端操作失败".to_string()));
+    }
+
+    #[test]
+    fn rename_targets_the_same_parent() {
+        let destination = |source: &str, name: &str| match source.rsplit_once('/') {
+            Some((parent, _)) => format!("{parent}/{name}"),
+            None => name.to_string(),
+        };
+        assert_eq!(destination("notes/a.md", "b.md"), "notes/b.md");
+        assert_eq!(destination("a.md", "b.md"), "b.md");
     }
 }

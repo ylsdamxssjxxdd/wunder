@@ -6972,7 +6972,95 @@
  },
  {
   "key": "wf_open_hint",
-  "zh": "点击文件拉取到本地工作区并打开",
-  "en": "Click a file to pull it into the local workspace and open it"
+  "zh": "点击文件拉取到本地工作区并打开；拖出即下载，拖入即上传",
+  "en": "Click a file to pull and open it; drag out to download, drag in to upload"
+ },
+ {
+  "key": "wf_menu_open",
+  "zh": "打开",
+  "en": "Open"
+ },
+ {
+  "key": "wf_menu_download",
+  "zh": "下载",
+  "en": "Download"
+ },
+ {
+  "key": "wf_menu_rename",
+  "zh": "重命名",
+  "en": "Rename"
+ },
+ {
+  "key": "wf_menu_delete",
+  "zh": "删除",
+  "en": "Delete"
+ },
+ {
+  "key": "wf_menu_reference",
+  "zh": "引用到聊天",
+  "en": "Reference in chat"
+ },
+ {
+  "key": "wf_menu_new_dir",
+  "zh": "新建目录",
+  "en": "New folder"
+ },
+ {
+  "key": "wf_menu_new_file",
+  "zh": "新建文件",
+  "en": "New file"
+ },
+ {
+  "key": "wf_menu_refresh",
+  "zh": "刷新",
+  "en": "Refresh"
+ },
+ {
+  "key": "wf_menu_open_ws",
+  "zh": "打开本地工作区",
+  "en": "Open local workspace"
+ },
+ {
+  "key": "wf_rename_title",
+  "zh": "重命名",
+  "en": "Rename"
+ },
+ {
+  "key": "wf_new_dir_title",
+  "zh": "新建目录",
+  "en": "New folder"
+ },
+ {
+  "key": "wf_new_file_title",
+  "zh": "新建文件",
+  "en": "New file"
+ },
+ {
+  "key": "wf_delete_title",
+  "zh": "删除",
+  "en": "Delete"
+ },
+ {
+  "key": "wf_name_label",
+  "zh": "名称",
+  "en": "Name"
+ },
+ {
+  "key": "wf_delete_body",
+  "zh": "删除「{}」？云端文件不可恢复。",
+  "en": "Delete \"{}\"? Cloud files cannot be recovered.",
+  "params": [
+   "name"
+  ]
+ },
+ {
+  "key": "wf_cloud_confirm_body",
+  "zh": "云端要求确认后才会执行此操作。",
+  "en": "The cloud asks for confirmation before running this."
+ },
+ {
+  "key": "wf_btn_exec",
+  "zh": "确认执行",
+  "en": "Confirm"
  }
 ]

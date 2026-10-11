@@ -14,6 +14,7 @@ import { SettingsPage } from "settings_page.slint";
 import { I18n } from "i18n.slint";
 import { ThreadTrajectoryDialog } from "thread_trajectory.slint";
 import { SubagentDetailDialog } from "subagent_detail.slint";
+import { WorkspacePromptDialog } from "workspace_files.slint";
 export { I18n }
 import { ToolResource, ToolsDialog, McpServerDraft, KnowledgeInfo } from "tools_page.slint";
 export { ToolResource, ToolsDialog, McpServerDraft, KnowledgeInfo }
@@ -533,6 +534,23 @@ export component MainWindow inherits Window {
     in-out property <bool> ws-file-busy: false;
     callback ws-file-toggle(int);
     callback ws-file-refresh();
+    // Context menu (row index or -1 for the blank area, action code),
+    // drag-out download on a row, and the Explorer drop upload.
+    callback ws-file-menu(int, int);
+    callback ws-file-drag(int);
+    callback ws-file-drop(DropEvent);
+    // The working-directory prompt dialog (rename / new dir / new file /
+    // delete / cloud-approval confirm), driven by the native controller.
+    in-out property <bool> ws-prompt-open: false;
+    in-out property <string> ws-prompt-title;
+    in-out property <string> ws-prompt-body;
+    in-out property <bool> ws-prompt-input: false;
+    in-out property <string> ws-prompt-value;
+    in-out property <string> ws-prompt-confirm: I18n.common_confirm;
+    in-out property <bool> ws-prompt-danger: false;
+    in-out property <bool> ws-prompt-busy: false;
+    callback ws-prompt-accepted(string);
+    callback ws-prompt-canceled();
     in-out property <string> selected-model-key;
     in-out property <string> selected-model-provider;
     in-out property <string> selected-model-name;
@@ -822,6 +840,9 @@ export component MainWindow inherits Window {
                 file-toggle(index) => { root.ws-file-toggle(index); }
                 file-refresh => { root.ws-file-refresh(); }
                 file-connect => { root.more-open = false; root.settings-open = true; root.settings-active-panel = 12; root.refresh-settings(); }
+                file-menu(index, action) => { root.ws-file-menu(index, action); }
+                file-drag(index) => { root.ws-file-drag(index); }
+                file-drop(event) => { root.ws-file-drop(event); }
             }
             // Sidebar width drag handle: press and drag to resize, clamped so
             // the tree never collapses or eats the chat area.
@@ -1082,6 +1103,7 @@ export component MainWindow inherits Window {
         interlink-refresh => { root.interlink-refresh(); }
         interlink-open(path) => { root.interlink-open(path); }
         interlink-cloud-up => { root.interlink-cloud-up(); }
+        interlink-cloud-pull(path) => { root.interlink-cloud-pull(path); }
         interlink-cloud-decide(approve) => { root.interlink-cloud-decide(approve); }
         model-creating <=> root.model-creating;
         model-key-draft <=> root.model-key-draft;
@@ -1331,6 +1353,17 @@ export component MainWindow inherits Window {
         toggle(index) => { root.subagent-toggle(index); }
         download-text(text) => { root.subagent-download(text); }
         open-resource(id) => { root.subagent-open-resource(id); }
+    }
+    if root.ws-prompt-open : WorkspacePromptDialog {
+        prompt-title: root.ws-prompt-title;
+        prompt-body: root.ws-prompt-body;
+        input-visible: root.ws-prompt-input;
+        prompt-value <=> root.ws-prompt-value;
+        confirm-label: root.ws-prompt-confirm;
+        danger: root.ws-prompt-danger;
+        busy: root.ws-prompt-busy;
+        accepted(value) => { root.ws-prompt-accepted(value); }
+        canceled => { root.ws-prompt-canceled(); }
     }
     if root.cron-delete-open : ConfirmDialog {
         title: I18n.cron_delete_title;
