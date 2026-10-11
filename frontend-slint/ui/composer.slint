@@ -1293,9 +1293,10 @@ key-pressed(event) => {
                 primary: true; enabled: !root.stopping;
                 clicked => { root.stop(); }
             }
-            // The send control stays visible while a turn runs: a message sent
-            // then is parked by the engine, which is what the strip above shows.
-            Action { width: 40px; icon: @image-url("../assets/icons/paper-plane.svg"); icon-size: 16px; label: root.generating ? I18n.cp_queue_send : (root.send-blocked ? I18n.cp_sending : I18n.cp_send); primary: true; enabled: root.terminal-mode ? (root.draft != "" && !root.send-blocked) : ((root.draft != "" || root.attachments.length > 0 || root.inquiry-ready) && !root.send-blocked); clicked => { root.send(); } }
+            // Only one accent control occupies this slot: while a reply streams
+            // the stop square above takes it and the send control is hidden.
+            // Parking a follow-up still works from the keyboard (send-key).
+            if !root.generating : Action { width: 40px; icon: @image-url("../assets/icons/paper-plane.svg"); icon-size: 16px; label: root.send-blocked ? I18n.cp_sending : I18n.cp_send; primary: true; enabled: root.terminal-mode ? (root.draft != "" && !root.send-blocked) : ((root.draft != "" || root.attachments.length > 0 || root.inquiry-ready) && !root.send-blocked); clicked => { root.send(); } }
         }
         // ---- status line (§8.5): branch only; the context gauge lives in
         // the toolbar's brain glyph and the old labelled bar is gone. ----

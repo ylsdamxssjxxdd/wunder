@@ -627,10 +627,14 @@ async fn run_generation(
         &[&session_id, &user_id, &spec.user_rounds, &seq, &plan.start_time, &end_time],
     )
     .await?;
+    // metric_value is DOUBLE PRECISION in the Postgres schema; an i64 binding
+    // would be rejected by tokio-postgres ("error serializing parameter"). The
+    // live runtime writes it as `latest_user_turn::double precision` too.
+    let metric_value = spec.user_rounds as f64;
     tx.execute(
         "INSERT INTO thread_log_metrics(session_id,user_id,metric_key,metric_value,updated_time) VALUES($1,$2,'user_turn_total',$3,$4) \
          ON CONFLICT(session_id,metric_key) DO UPDATE SET metric_value=excluded.metric_value,updated_time=excluded.updated_time",
-        &[&session_id, &user_id, &spec.user_rounds, &end_time],
+        &[&session_id, &user_id, &metric_value, &end_time],
     )
     .await?;
     tx.execute(

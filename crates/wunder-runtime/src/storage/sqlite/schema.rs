@@ -78,6 +78,22 @@ impl SqliteStorage {
         Ok(())
     }
 
+    /// The slim workspace list column arrived after the shadow table; existing
+    /// databases get it through the same additive path.
+    fn ensure_interlink_shadow_columns(&self, conn: &Connection) -> Result<()> {
+        let tx =
+            rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
+        let columns = load_table_columns(&tx, "interlink_node_shadows")?;
+        if columns.is_empty() {
+            return Ok(());
+        }
+        if !columns.contains("workspaces") {
+            tx.execute("ALTER TABLE interlink_node_shadows ADD COLUMN workspaces TEXT", [])?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     fn ensure_user_account_quota_columns(&self, conn: &Connection) -> Result<()> {
         let tx =
             rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
@@ -1550,6 +1566,7 @@ impl SqliteSchemaStorage for SqliteStorage {
               threads TEXT,
               tasks TEXT,
               workspace TEXT,
+              workspaces TEXT,
               synced_at REAL
             );
             CREATE INDEX IF NOT EXISTS idx_interlink_shadows_user
@@ -1698,6 +1715,7 @@ impl SqliteSchemaStorage for SqliteStorage {
         self.ensure_cron_columns(&conn)?;
         self.ensure_memory_fragment_columns(&conn)?;
         self.ensure_cloud_device_interlink_columns(&conn)?;
+        self.ensure_interlink_shadow_columns(&conn)?;
         if self
             .auto_vacuum_upgrade_pending
             .swap(false, Ordering::SeqCst)

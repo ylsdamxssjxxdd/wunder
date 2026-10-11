@@ -966,6 +966,10 @@ async fn connect_once(
         inner.stop_token(),
     ));
 
+    // Commands with a `workspace_id` resolve real host folders only when the
+    // bindings are registered; do it before the first command can land.
+    shadow::register_workspace_roots(&inner.state, &inner.options.local_user_id);
+
     // First projection right after the ack (docs §6.2 1).
     send_full_shadow(&inner, &writer, session, revision).await;
 

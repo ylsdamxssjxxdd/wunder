@@ -1,5 +1,5 @@
 use serde::Serialize;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::RwLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -7,17 +7,46 @@ const DEFAULT_ONLINE_TTL_SECS: f64 = 90.0;
 const DEFAULT_RETAIN_SECS: f64 = 24.0 * 60.0 * 60.0;
 const GC_INTERVAL_SECS: f64 = 60.0;
 
+/// Client kinds tracked per connection. The kind is derived from the session
+/// scope so the admin surface can show per-surface online columns.
+pub const CLIENT_WEB: &str = "web";
+pub const CLIENT_DESKTOP: &str = "desktop";
+pub const CLIENT_CLI: &str = "cli";
+
+/// Map a session scope (`user_web` / `admin_web` / `local_desktop` / `local_cli`
+/// / `default` / custom) to a presence client kind.
+pub fn client_kind_from_scope(scope: Option<&str>) -> &'static str {
+    match scope.map(str::trim).unwrap_or("").to_ascii_lowercase().as_str() {
+        "local_desktop" => CLIENT_DESKTOP,
+        "local_cli" => CLIENT_CLI,
+        _ => CLIENT_WEB,
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct UserPresenceView {
     pub online: bool,
     pub last_seen_at: f64,
     pub connection_count: i64,
+    pub web_online: bool,
+    pub desktop_online: bool,
+    pub cli_online: bool,
 }
 
 #[derive(Debug, Clone)]
 struct UserConnectionEntry {
-    connection_ids: HashSet<String>,
+    /// connection_id -> client kind
+    connections: HashMap<String, &'static str>,
     last_seen_at: f64,
+    /// Kind of the most recent connect/disconnect/touch activity; used to keep
+    /// the TTL grace window per kind after the last connection drops.
+    last_kind: &'static str,
+}
+
+impl UserConnectionEntry {
+    fn count_kind(&self, kind: &str) -> usize {
+        self.connections.values().filter(|value| **value == kind).count()
+    }
 }
 
 #[derive(Debug)]
@@ -51,7 +80,7 @@ impl ConnectionPresenceService {
         }
     }
 
-    pub fn touch(&self, user_id: &str, now: f64) {
+    pub fn touch(&self, user_id: &str, kind: &'static str, now: f64) {
         let cleaned = normalize_key(user_id);
         if cleaned.is_empty() {
             return;
@@ -62,13 +91,15 @@ impl ConnectionPresenceService {
         };
         self.gc_if_needed(&mut guard, now);
         let entry = guard.entries.entry(cleaned).or_insert(UserConnectionEntry {
-            connection_ids: HashSet::new(),
+            connections: HashMap::new(),
             last_seen_at: now,
+            last_kind: kind,
         });
         entry.last_seen_at = now;
+        entry.last_kind = kind;
     }
 
-    pub fn connect(&self, user_id: &str, connection_id: &str, now: f64) {
+    pub fn connect(&self, user_id: &str, connection_id: &str, kind: &'static str, now: f64) {
         let cleaned_user_id = normalize_key(user_id);
         let cleaned_connection_id = normalize_key(connection_id);
         if cleaned_user_id.is_empty() || cleaned_connection_id.is_empty() {
@@ -94,11 +125,13 @@ impl ConnectionPresenceService {
             .entries
             .entry(cleaned_user_id)
             .or_insert(UserConnectionEntry {
-                connection_ids: HashSet::new(),
+                connections: HashMap::new(),
                 last_seen_at: now,
+                last_kind: kind,
             });
-        entry.connection_ids.insert(cleaned_connection_id);
+        entry.connections.insert(cleaned_connection_id, kind);
         entry.last_seen_at = now;
+        entry.last_kind = kind;
     }
 
     pub fn disconnect(&self, user_id: &str, connection_id: &str, now: f64) {
@@ -120,8 +153,8 @@ impl ConnectionPresenceService {
     }
 
     pub fn force_offline(&self, user_id: &str, now: f64) {
-        let cleaned_user_id = normalize_key(user_id);
-        if cleaned_user_id.is_empty() {
+        let cleaned = normalize_key(user_id);
+        if cleaned.is_empty() {
             return;
         }
         let now = normalized_now(now);
@@ -129,10 +162,10 @@ impl ConnectionPresenceService {
             return;
         };
         self.gc_if_needed(&mut guard, now);
-        guard.entries.remove(&cleaned_user_id);
+        guard.entries.remove(&cleaned);
         guard
             .connection_owners
-            .retain(|_, owner| owner != &cleaned_user_id);
+            .retain(|_, owner| owner != &cleaned);
     }
 
     pub fn snapshot(&self, user_id: &str, now: f64) -> Option<UserPresenceView> {
@@ -174,10 +207,18 @@ impl ConnectionPresenceService {
 
     fn to_view(&self, entry: &UserConnectionEntry, now: f64) -> UserPresenceView {
         let elapsed = (now - entry.last_seen_at).max(0.0);
+        let has_connections = !entry.connections.is_empty();
+        let within_ttl = elapsed <= self.online_ttl_secs;
+        let kind_online = |kind: &str| {
+            entry.count_kind(kind) > 0 || (!has_connections && within_ttl && entry.last_kind == kind)
+        };
         UserPresenceView {
-            online: !entry.connection_ids.is_empty() || elapsed <= self.online_ttl_secs,
+            online: has_connections || within_ttl,
             last_seen_at: entry.last_seen_at,
-            connection_count: entry.connection_ids.len() as i64,
+            connection_count: entry.connections.len() as i64,
+            web_online: kind_online(CLIENT_WEB),
+            desktop_online: kind_online(CLIENT_DESKTOP),
+            cli_online: kind_online(CLIENT_CLI),
         }
     }
 
@@ -205,13 +246,13 @@ impl ConnectionPresenceService {
 fn run_gc(state: &mut ConnectionPresenceState, now: f64, retain_secs: f64) {
     state.last_gc_at = now;
     state.entries.retain(|_, entry| {
-        !entry.connection_ids.is_empty() || now - entry.last_seen_at <= retain_secs
+        !entry.connections.is_empty() || now - entry.last_seen_at <= retain_secs
     });
     state.connection_owners.retain(|connection_id, user_id| {
         state
             .entries
             .get(user_id)
-            .map(|entry| entry.connection_ids.contains(connection_id))
+            .map(|entry| entry.connections.contains_key(connection_id))
             .unwrap_or(false)
     });
 }
@@ -231,8 +272,10 @@ fn remove_connection_from_user(
     let Some(entry) = entries.get_mut(user_id) else {
         return;
     };
-    entry.connection_ids.remove(connection_id);
-    entry.last_seen_at = now;
+    if let Some(kind) = entry.connections.remove(connection_id) {
+        entry.last_seen_at = now;
+        entry.last_kind = kind;
+    }
 }
 
 fn normalize_key(raw: &str) -> String {

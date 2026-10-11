@@ -929,9 +929,22 @@ pub struct InterlinkShadowRecord {
     pub threads: Option<String>,
     /// JSON array: scheduled tasks.
     pub tasks: Option<String>,
-    /// JSON: workspace tree digest (relative paths only) + usage.
+    /// JSON: workspace projection (per-workspace trees + usage, relative paths only).
     pub workspace: Option<String>,
+    /// JSON array: slim `[{workspace_id, name}]` derived from `workspace`, so
+    /// node listings can show workspace rows without reading the trees.
+    pub workspaces: Option<String>,
     pub synced_at: f64,
+}
+
+/// One shadow row reduced to what a node listing needs: revision plus the slim
+/// workspace list. Read in one batch by the user-facing node endpoint.
+#[derive(Debug, Clone)]
+pub struct InterlinkShadowOverview {
+    pub device_id: String,
+    pub revision: i64,
+    /// JSON array `[{workspace_id, name}]`; `None` when the node never synced.
+    pub workspaces: Option<String>,
 }
 
 /// Remote command ledger entry (idempotency anchor; args stored digested).

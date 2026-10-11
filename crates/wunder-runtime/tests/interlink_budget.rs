@@ -349,9 +349,11 @@ async fn shadow_projection_is_capped_at_500_entries_inside_the_local_budget() {
     let (workspace, truncated) = gather_workspace(&state, &sources, &TreeLimits::default()).await;
     let elapsed = started.elapsed();
 
-    let entries = workspace["tree"]
+    // No named workspaces on this node: the projection carries a single
+    // default-scope entry whose tree honours the entry cap.
+    let entries = workspace["workspaces"][0]["tree"]
         .as_array()
-        .unwrap_or_else(|| panic!("projection carries a tree: {workspace}"));
+        .unwrap_or_else(|| panic!("projection carries a workspace tree: {workspace}"));
     assert_eq!(
         entries.len(),
         SHADOW_MAX_ENTRIES,

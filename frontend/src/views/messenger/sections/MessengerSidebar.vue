@@ -32,26 +32,27 @@
         </button>
       </div>
 
-      <!-- 已连接的本地设备（§6.3）：以工作区行体现，选中后文件区切到该设备的远程目录。 -->
+      <!-- §6.3 本地工作区行：与云端工作区同级、按工作区（而不是设备）区分；
+           点击行把文件区切到该工作区目录（URL `?node=&ws=`）。 -->
       <button
-        v-for="node in interlinkDeviceRows"
-        :key="node.node_id"
+        v-for="row in workspaceRows"
+        :key="row.key"
         class="messenger-sidebar-workspace-row is-device-row"
-        :class="{ 'is-selected': node.node_id === interlinkSelectedDeviceId }"
+        :class="{ 'is-selected': isRowSelected(row) }"
         type="button"
-        :aria-label="t('interlink.workspace.deviceRow', { name: deviceRowLabel(node) })"
-        @click="selectDeviceNode(node)"
+        :aria-label="t('interlink.workspace.rowAria', { name: row.label })"
+        @click="selectWorkspaceRow(row)"
       >
         <span
           class="interlink-status-dot messenger-sidebar-device-status"
-          :class="statusDotClass(node.status)"
+          :class="statusDotClass(row.node.status)"
           aria-hidden="true"
         ></span>
-        <i :class="nodeTypeIcon(node.node_type)" class="messenger-sidebar-workspace-icon" aria-hidden="true"></i>
-        <span class="messenger-sidebar-workspace-name" :title="deviceRowLabel(node)">
-          {{ node.label || node.node_id }}
+        <i :class="nodeTypeIcon(row.node.node_type)" class="messenger-sidebar-workspace-icon" aria-hidden="true"></i>
+        <span class="messenger-sidebar-workspace-name" :title="row.label">
+          {{ row.label }}
         </span>
-        <span class="messenger-sidebar-workspace-meta">{{ t(statusLabelKey(node.status)) }}</span>
+        <span class="messenger-sidebar-workspace-meta">{{ t(statusLabelKey(row.node.status)) }}</span>
       </button>
 
       <MessengerThreadTree
@@ -113,15 +114,14 @@ import MessengerThreadTree from './MessengerThreadTree.vue';
 import WorkspaceFilesPanel from '@/views/messenger/workspace/WorkspaceFilesPanel.vue';
 import { useInterlinkNodes } from '@/views/messenger/interlink/useInterlinkNodes';
 import { useInterlinkNodeTarget } from '@/views/messenger/interlink/interlinkNodeTarget';
+import { interlinkDeviceTarget } from '@/api/interlink';
 import {
-  INTERLINK_NODE_MAX_RENDERED,
-  isDeviceNode,
+  interlinkWorkspaceRows,
   nodeTypeIcon,
-  nodeTypeLabelKey,
   statusDotClass,
-  statusLabelKey
+  statusLabelKey,
+  type InterlinkWorkspaceRow
 } from '@/views/messenger/interlink/interlinkNodeModel';
-import type { InterlinkNode } from '@/api/interlink';
 import type { MessengerControllerContext } from '../controller/messengerControllerContext';
 import { buildTaskList } from '@/views/messenger/taskList';
 
@@ -172,26 +172,27 @@ const workspaceMetaLabel = computed(() => {
   return t('messenger.sidebar.threadCount', { count: total });
 });
 
-// ------------------------------------------------------- 已连接的本地设备（§6.3）
+// ------------------------------------------------- 本地工作区行（§6.3）
 
 const interlink = useInterlinkNodes({});
 const {
-  deviceId: interlinkSelectedDeviceId,
+  target: interlinkTarget,
+  workspaceId: interlinkWorkspaceId,
   isRemote: interlinkRemoteSelected,
   writeTarget: writeInterlinkTarget,
   backToCloud: backToCloudWorkspace
 } = useInterlinkNodeTarget();
 
-/** 下拉上限同节点目录：渲染最多 60 行，超出部分靠节点分页累加，不一次铺开。 */
-const interlinkDeviceRows = computed(() =>
-  (interlink.nodes.value || []).filter(isDeviceNode).slice(0, INTERLINK_NODE_MAX_RENDERED)
-);
+/** 节点 → 工作区行的映射是纯函数；上限在模型里统一收敛，不一次铺开。 */
+const workspaceRows = computed(() => interlinkWorkspaceRows(interlink.nodes.value || []));
 
-const deviceRowLabel = (node: InterlinkNode): string =>
-  `${node.label || node.node_id} · ${t(nodeTypeLabelKey(node.node_type))}`;
+const isRowSelected = (row: InterlinkWorkspaceRow): boolean =>
+  interlinkRemoteSelected.value &&
+  interlinkTarget.value === interlinkDeviceTarget(row.deviceId) &&
+  interlinkWorkspaceId.value === row.workspaceId;
 
-const selectDeviceNode = (node: InterlinkNode): void => {
-  writeInterlinkTarget(`device:${node.node_id}`);
+const selectWorkspaceRow = (row: InterlinkWorkspaceRow): void => {
+  writeInterlinkTarget(interlinkDeviceTarget(row.deviceId), row.workspaceId);
 };
 
 const handleWorkspaceRowClick = (): void => {

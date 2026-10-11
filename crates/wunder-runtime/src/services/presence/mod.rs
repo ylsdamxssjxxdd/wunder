@@ -1,7 +1,9 @@
 mod connection;
 mod nodes;
 
-pub use connection::UserPresenceView;
+pub use connection::{
+    client_kind_from_scope, UserPresenceView, CLIENT_CLI, CLIENT_DESKTOP, CLIENT_WEB,
+};
 pub use nodes::{
     aggregate_status, derive_device_status, derive_device_status_with_tunnel, online_count,
     BusyGuard, NodeRegistry, WebNodeLease, WEB_AWAY_IDLE_SECS,
@@ -49,12 +51,18 @@ impl PresenceService {
         &self.nodes
     }
 
-    pub fn touch_user(&self, user_id: &str, now: f64) {
-        self.connections.touch(user_id, now);
+    pub fn touch_user(&self, user_id: &str, kind: &'static str, now: f64) {
+        self.connections.touch(user_id, kind, now);
     }
 
-    pub fn connect_client(&self, user_id: &str, connection_id: &str, now: f64) {
-        self.connections.connect(user_id, connection_id, now);
+    pub fn connect_client(
+        &self,
+        user_id: &str,
+        connection_id: &str,
+        kind: &'static str,
+        now: f64,
+    ) {
+        self.connections.connect(user_id, connection_id, kind, now);
     }
 
     pub fn disconnect_client(&self, user_id: &str, connection_id: &str, now: f64) {
@@ -162,13 +170,16 @@ mod tests {
     #[test]
     fn client_connections_are_counted_by_connection_id() {
         let service = PresenceService::new();
-        service.connect_client("alice", "conn-1", 10.0);
-        service.connect_client("alice", "conn-1", 12.0);
-        service.connect_client("alice", "conn-2", 13.0);
+        service.connect_client("alice", "conn-1", CLIENT_WEB, 10.0);
+        service.connect_client("alice", "conn-1", CLIENT_WEB, 12.0);
+        service.connect_client("alice", "conn-2", CLIENT_WEB, 13.0);
         let snapshot = service
             .user_snapshot("alice", 14.0)
             .expect("presence should exist");
         assert!(snapshot.online);
+        assert!(snapshot.web_online);
+        assert!(!snapshot.desktop_online);
+        assert!(!snapshot.cli_online);
         assert_eq!(snapshot.connection_count, 2);
         assert_eq!(snapshot.last_seen_at, 13.0);
         service.disconnect_client("alice", "conn-1", 20.0);
@@ -182,12 +193,43 @@ mod tests {
             .expect("presence should remain during ttl");
         assert_eq!(snapshot.connection_count, 0);
         assert!(snapshot.online);
+        assert!(snapshot.web_online);
+        assert!(!snapshot.desktop_online);
+    }
+
+    #[test]
+    fn per_client_kinds_are_tracked_independently() {
+        let service = PresenceService::new();
+        service.connect_client("alice", "conn-web", CLIENT_WEB, 10.0);
+        service.connect_client("alice", "conn-desk", CLIENT_DESKTOP, 10.5);
+        service.connect_client("bob", "conn-cli", CLIENT_CLI, 11.0);
+        let snapshot = service
+            .user_snapshot("alice", 12.0)
+            .expect("alice presence should exist");
+        assert!(snapshot.web_online);
+        assert!(snapshot.desktop_online);
+        assert!(!snapshot.cli_online);
+        let bob = service
+            .user_snapshot("bob", 12.0)
+            .expect("bob presence should exist");
+        assert!(!bob.web_online);
+        assert!(bob.cli_online);
+    }
+
+    #[test]
+    fn client_kind_derives_from_session_scope() {
+        assert_eq!(client_kind_from_scope(Some("user_web")), CLIENT_WEB);
+        assert_eq!(client_kind_from_scope(Some("admin_web")), CLIENT_WEB);
+        assert_eq!(client_kind_from_scope(Some("local_desktop")), CLIENT_DESKTOP);
+        assert_eq!(client_kind_from_scope(Some("local_cli")), CLIENT_CLI);
+        assert_eq!(client_kind_from_scope(Some("default")), CLIENT_WEB);
+        assert_eq!(client_kind_from_scope(None), CLIENT_WEB);
     }
 
     #[test]
     fn force_user_offline_removes_connection_presence_immediately() {
         let service = PresenceService::new();
-        service.connect_client("alice", "conn-1", 10.0);
+        service.connect_client("alice", "conn-1", CLIENT_WEB, 10.0);
         assert!(service.user_snapshot("alice", 11.0).is_some());
 
         service.force_user_offline("alice", 12.0);
@@ -200,13 +242,15 @@ mod tests {
     #[test]
     fn disconnected_user_stays_online_during_ttl_window() {
         let service = PresenceService::new();
-        service.connect_client("alice", "conn-1", 10.0);
+        service.connect_client("alice", "conn-1", CLIENT_WEB, 10.0);
         service.disconnect_client("alice", "conn-1", 20.0);
 
         let snapshot = service
             .user_snapshot("alice", 21.0)
             .expect("presence should remain during ttl");
         assert!(snapshot.online);
+        assert!(snapshot.web_online);
+        assert!(!snapshot.desktop_online);
         assert_eq!(snapshot.connection_count, 0);
         assert_eq!(snapshot.last_seen_at, 20.0);
     }

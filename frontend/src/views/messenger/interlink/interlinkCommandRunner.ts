@@ -195,11 +195,13 @@ export type RemoteFilePayload = {
 
 /**
  * §6.4 云读本：`workspace.read` → 轮询 → 内联结果或 `GET /commands/{id}/blob`。
+ * `workspaceId` 选中设备的某个本地工作区（缺省即该设备默认目录）。
  * 失败/过大时返回 null，由调用方降级为可读提示，绝不留下空白面板。
  */
 export const readRemoteFile = async (options: {
   to: string;
   path: string;
+  workspaceId?: string;
   maxBytes?: number;
   signal?: AbortSignal;
 }): Promise<{ payload: RemoteFilePayload | null; failure: string; errorCode: string }> => {
@@ -208,6 +210,7 @@ export const readRemoteFile = async (options: {
     kind: 'workspace.read',
     args: {
       path: options.path,
+      ...(options.workspaceId ? { workspace_id: options.workspaceId } : {}),
       max_bytes: Math.max(1024, Number(options.maxBytes) || REMOTE_READ_MAX_BYTES)
     },
     signal: options.signal
@@ -287,6 +290,7 @@ const decodeBytesToText = (bytes: Uint8Array): string => {
 export const listRemoteDirectory = async (options: {
   to: string;
   path: string;
+  workspaceId?: string;
   offset?: number;
   limit?: number;
   signal?: AbortSignal;
@@ -296,6 +300,7 @@ export const listRemoteDirectory = async (options: {
     kind: 'workspace.list',
     args: {
       path: options.path,
+      ...(options.workspaceId ? { workspace_id: options.workspaceId } : {}),
       offset: Math.max(0, Number(options.offset) || 0),
       limit: Math.max(1, Number(options.limit) || 200)
     },

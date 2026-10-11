@@ -650,6 +650,7 @@ fn exercise_interlink_channels_and_shadows(storage: Arc<dyn StorageBackend>) {
         threads: Some("[]".to_string()),
         tasks: None,
         workspace: Some(r#"{"files":12}"#.to_string()),
+        workspaces: Some(r#"[{"workspace_id":"ws_a","name":"a"}]"#.to_string()),
         synced_at: 400.0,
     };
     storage.upsert_interlink_shadow(&shadow).unwrap();
@@ -709,6 +710,7 @@ fn exercise_interlink_channels_and_shadows(storage: Arc<dyn StorageBackend>) {
         threads: None,
         tasks: None,
         workspace: None,
+        workspaces: None,
         synced_at,
     };
     for (device, age_days) in [

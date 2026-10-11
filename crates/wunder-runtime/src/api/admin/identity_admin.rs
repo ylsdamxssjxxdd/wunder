@@ -718,10 +718,9 @@ async fn admin_user_accounts_list(
             let profile_id = profile.id.clone();
             let quota_status = UserStore::effective_quota_status(&user, Some(today.as_str()));
             let active_count = active_map.get(&profile.id).copied().unwrap_or(0);
-            let (presence_online, presence_last_seen) = presence_map
-                .get(profile.id.as_str())
-                .map(|snapshot| (snapshot.online, Some(snapshot.last_seen_at)))
-                .unwrap_or((false, None));
+            let presence_snapshot = presence_map.get(profile.id.as_str());
+            let presence_online = presence_snapshot.map(|snapshot| snapshot.online).unwrap_or(false);
+            let presence_last_seen = presence_snapshot.map(|snapshot| snapshot.last_seen_at);
             let activity_series = activity_series_map
                 .get(profile.id.as_str())
                 .cloned()
@@ -733,6 +732,9 @@ async fn admin_user_accounts_list(
                 map.insert("user_id".to_string(), json!(profile_id));
                 map.insert("active_sessions".to_string(), json!(active_count));
                 map.insert("online".to_string(), json!(presence_online));
+                map.insert("online_web".to_string(), json!(presence_snapshot.map(|snapshot| snapshot.web_online).unwrap_or(false)));
+                map.insert("online_desktop".to_string(), json!(presence_snapshot.map(|snapshot| snapshot.desktop_online).unwrap_or(false)));
+                map.insert("online_cli".to_string(), json!(presence_snapshot.map(|snapshot| snapshot.cli_online).unwrap_or(false)));
                 map.insert("last_seen_at".to_string(), json!(presence_last_seen));
                 map.insert("quota_balance".to_string(), json!(quota_status.balance));
                 map.insert(

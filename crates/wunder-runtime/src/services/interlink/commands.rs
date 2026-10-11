@@ -1114,13 +1114,20 @@ pub async fn sweep(storage: Arc<dyn StorageBackend>, limits: &Limits, now: f64) 
     Ok(swept)
 }
 
-/// Fail every unfinished command of a node that just went away (docs §13.2 7).
+/// Fail the commands a node was handed when it went away (docs §13.2 7). Rows
+/// still parked for reconnect and rows awaiting an approval decision are not
+/// in flight and stay as they are.
 pub async fn fail_device_commands(
     storage: Arc<dyn StorageBackend>,
     device_id: &str,
     now: f64,
 ) -> anyhow::Result<usize> {
-    let lookup = device_id.to_string();
+    // The ledger names a node as `device:<id>` (docs §3.1) while the registry and
+    // the in-flight tracker key it by the bare id. Querying the durable column
+    // with the bare id matched no row at all, so a node that vanished left its
+    // delivered commands hanging until the timeout sweep instead of answering
+    // NODE_OFFLINE (docs §13.2 7).
+    let lookup = format!("device:{device_id}");
     let rows = {
         let storage = storage.clone();
         blocking::run_db("interlink.command.device_list", move || {
@@ -1140,6 +1147,12 @@ pub async fn fail_device_commands(
     let mut failed = 0usize;
     for record in rows {
         if is_terminal_command_status(&record.status) {
+            continue;
+        }
+        // Only a command the node actually got is "in flight". The parked backlog
+        // exists to survive this exact moment (docs §4.3: it drains on reconnect),
+        // and an undecided approval has never been dispatched.
+        if record.status == COMMAND_STATUS_QUEUED || record.approval_state == APPROVAL_PENDING {
             continue;
         }
         hub().release(device_id, &record.command_id);
@@ -1634,5 +1647,88 @@ mod tests {
         assert_eq!(limits.inflight_per_node, 8);
         assert_eq!(limits.offline_queue_per_user, 32);
         assert!(limits.require_approval_defaults.iter().any(|kind| kind == CMD_THREAD_MESSAGE));
+    }
+
+    /// Docs §13.2 7: the commands a vanished node was actually handed answer
+    /// `NODE_OFFLINE` at once, while the parked backlog (which exists precisely
+    /// to survive a disconnect) and an undecided approval stay untouched.
+    #[test]
+    fn a_vanished_node_fails_only_the_commands_it_was_handed() {
+        use crate::storage::{ListInterlinkAuditQuery, SqliteStorage};
+        use wunder_core::interlink::APPROVAL_APPROVED;
+
+        let root = tempfile::tempdir().unwrap();
+        let storage: Arc<dyn StorageBackend> = Arc::new(SqliteStorage::new(
+            root.path().join("state.db").to_string_lossy().into_owned(),
+        ));
+        let device = "dev-settle-7";
+        let target = format!("device:{device}");
+        let row = |id: &str, status: &str, approval: &str| InterlinkCommandRecord {
+            command_id: id.to_string(),
+            to_node: target.clone(),
+            status: status.to_string(),
+            approval_state: approval.to_string(),
+            ..record(CMD_WORKSPACE_READ, &target)
+        };
+
+        let delivered = [
+            ("cmd_issued", COMMAND_STATUS_ISSUED),
+            ("cmd_acked", COMMAND_STATUS_ACKED),
+            ("cmd_running", COMMAND_STATUS_RUNNING),
+        ];
+        for (id, status) in delivered {
+            storage.insert_interlink_command(&row(id, status, APPROVAL_NONE)).unwrap();
+            hub().reserve(device, id);
+        }
+        storage.insert_interlink_command(&row("cmd_queued", COMMAND_STATUS_QUEUED, APPROVAL_NONE)).unwrap();
+        storage.insert_interlink_command(&row("cmd_pending", COMMAND_STATUS_ISSUED, APPROVAL_PENDING)).unwrap();
+        storage.insert_interlink_command(&row("cmd_done", COMMAND_STATUS_SUCCEEDED, APPROVAL_APPROVED)).unwrap();
+
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let failed = runtime
+            .block_on(fail_device_commands(Arc::clone(&storage), device, 200.0))
+            .expect("settle");
+        assert_eq!(failed, 3, "only the delivered commands were in flight");
+
+        for (id, _) in delivered {
+            let settled = storage.get_interlink_command(id).unwrap().unwrap();
+            assert_eq!(settled.status, COMMAND_STATUS_FAILED, "{id}");
+            assert_eq!(settled.error_code.as_deref(), Some(ERR_NODE_OFFLINE), "{id}");
+            assert_eq!(settled.finished_at, Some(200.0), "{id}");
+        }
+        for (id, status, approval) in [
+            ("cmd_queued", COMMAND_STATUS_QUEUED, APPROVAL_NONE),
+            ("cmd_pending", COMMAND_STATUS_ISSUED, APPROVAL_PENDING),
+            ("cmd_done", COMMAND_STATUS_SUCCEEDED, APPROVAL_APPROVED),
+        ] {
+            let kept = storage.get_interlink_command(id).unwrap().unwrap();
+            assert_eq!(kept.status, status, "{id} keeps its state");
+            assert_eq!(kept.approval_state, approval, "{id}");
+        }
+
+        // The node's in-flight slots are released with it, so its next tunnel does
+        // not inherit the dead session's capacity.
+        assert_eq!(hub().inflight_count(device), 0);
+
+        // Each settle is an auditable finish row, not a silent update.
+        let (trail, _) = storage
+            .list_interlink_audit(ListInterlinkAuditQuery {
+                user_id: None,
+                device_id: None,
+                action: Some(AUDIT_COMMAND_FINISH),
+                since: None,
+                until: None,
+                offset: 0,
+                limit: 100,
+            })
+            .unwrap();
+        let finished: Vec<&str> = trail
+            .iter()
+            .filter_map(|item| item.command_id.as_deref())
+            .collect();
+        for id in ["cmd_issued", "cmd_acked", "cmd_running"] {
+            assert!(finished.contains(&id), "{id} has no command.finish row");
+        }
+        assert!(!finished.contains(&"cmd_queued"), "the parked backlog was settled");
     }
 }

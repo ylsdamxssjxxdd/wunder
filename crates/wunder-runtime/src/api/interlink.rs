@@ -36,7 +36,8 @@ use crate::services::interlink::{
 };
 use crate::state::AppState;
 use crate::storage::{
-    CloudDeviceInterlinkPatch, CloudDeviceRecord, InterlinkCommandRecord, ListInterlinkAuditQuery,
+    CloudDeviceInterlinkPatch, CloudDeviceRecord, InterlinkCommandRecord, InterlinkShadowOverview,
+    ListInterlinkAuditQuery,
 };
 use crate::api::interlink_cloud_exec;
 use crate::api::interlink_ws;
@@ -95,14 +96,14 @@ async fn list_nodes(State(state): State<Arc<AppState>>, headers: HeaderMap) -> R
 
     let now = now_unix_seconds();
 
-    // Backfill each node's shadow revision (0 = never synced). One blocking
-    // batch read so a page stays a single round trip.
+    // Backfill each node's shadow revision and workspace list (0/empty = never
+    // synced). One blocking batch read so a page stays a single round trip.
     let device_ids: Vec<String> = devices
         .iter()
         .filter(|device| !device.revoked)
         .map(|device| device.device_id.clone())
         .collect();
-    let revisions = shadow_revisions(&state, device_ids).await;
+    let overviews = shadow_overviews(&state, device_ids).await;
     // The live tunnel is the authoritative presence source when it exists
     // (docs §5.1: `online = tunnel up + beat ok`).
     let live_channels: HashMap<String, crate::services::interlink::LiveChannel> = registry()
@@ -113,12 +114,13 @@ async fn list_nodes(State(state): State<Arc<AppState>>, headers: HeaderMap) -> R
 
     let mut persistent: Vec<InterlinkNodeView> = Vec::with_capacity(devices.len() + 1);
     for device in devices.iter().filter(|device| !device.revoked) {
-        let revision = revisions.get(&device.device_id).copied().unwrap_or(0);
+        let overview = overviews.get(&device.device_id);
         persistent.push(device_node(
             device,
             now,
             ttl,
-            revision,
+            overview.map(|overview| overview.revision).unwrap_or(0),
+            overview.and_then(|overview| overview.workspaces.as_deref()),
             live_channels.get(&device.device_id),
         ));
     }
@@ -147,6 +149,7 @@ fn device_node(
     now: f64,
     ttl: f64,
     shadow_revision: i64,
+    workspaces: Option<&str>,
     live: Option<&crate::services::interlink::LiveChannel>,
 ) -> InterlinkNodeView {
     let (capabilities, connected, persisted_tunnel) = match &device.interlink {
@@ -209,7 +212,22 @@ fn device_node(
                 .as_ref()
                 .and_then(|patch| patch.last_tunnel_at)
                 .unwrap_or(0.0),
+            // Slim `[{workspace_id, name}]` from the shadow: the sidebar renders
+            // one workspace row per entry without reading the tree payload.
+            "workspaces": parse_workspace_list(workspaces),
         }),
+    }
+}
+
+/// Parse the stored slim workspace list; anything unreadable becomes an empty
+/// list so the sidebar never renders a broken row.
+fn parse_workspace_list(raw: Option<&str>) -> Value {
+    let Some(text) = raw.map(str::trim).filter(|text| !text.is_empty()) else {
+        return json!([]);
+    };
+    match serde_json::from_str::<Value>(text) {
+        Ok(Value::Array(items)) => Value::Array(items),
+        _ => json!([]),
     }
 }
 
@@ -254,16 +272,20 @@ fn parse_capabilities(raw: &str) -> Vec<String> {
     serde_json::from_str::<Vec<String>>(raw).unwrap_or_else(|_| default_device_capabilities())
 }
 
-/// Batch-read the shadow revision for each device (0 when never synced).
-async fn shadow_revisions(state: &AppState, device_ids: Vec<String>) -> HashMap<String, i64> {
+/// Batch-read each device's shadow overview (revision + slim workspace list;
+/// 0/empty when never synced). One blocking pass so a node page stays a single
+/// round trip instead of two queries per row.
+async fn shadow_overviews(
+    state: &AppState,
+    device_ids: Vec<String>,
+) -> HashMap<String, InterlinkShadowOverview> {
     let storage = state.storage.clone();
-    blocking::run_db("api.interlink.shadow_revisions", move || {
-        let mut map = HashMap::with_capacity(device_ids.len());
-        for device_id in device_ids {
-            let revision = storage.get_interlink_shadow_revision(&device_id)?;
-            map.insert(device_id, revision);
-        }
-        Ok::<HashMap<String, i64>, anyhow::Error>(map)
+    blocking::run_db("api.interlink.shadow_overviews", move || {
+        let overviews = storage.list_interlink_shadow_overviews(&device_ids)?;
+        Ok::<HashMap<String, InterlinkShadowOverview>, anyhow::Error>(overviews
+            .into_iter()
+            .map(|overview| (overview.device_id.clone(), overview))
+            .collect())
     })
     .await
     .unwrap_or_default()

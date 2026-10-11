@@ -14,6 +14,7 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 use wunder_server::storage::WorkspaceRecord;
+use wunder_server::interlink::client::shadow::Sections;
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::process::Command;
@@ -147,11 +148,13 @@ impl NativeDesktop {
             color: color.to_string(),
             ..WorkspaceEdit::default()
         })?;
+        self.publish_workspace_change(&record);
         Ok(native_workspace(&record, 0))
     }
 
     pub fn update_workspace(&self, edit: &WorkspaceEdit) -> Result<NativeWorkspace> {
         let record = self.store_workspace(edit)?;
+        self.publish_workspace_change(&record);
         let thread_count = self
             .state()
             .storage
@@ -186,7 +189,27 @@ impl NativeDesktop {
             summary.archived_threads = self.archive_workspace_threads(cleaned)? as u64;
         }
         storage.delete_workspace(self.user_id(), cleaned)?;
+        self.state().workspace.unregister_workspace_root(cleaned);
+        self.invalidate_workspace_projection();
         Ok(summary)
+    }
+
+    /// Keep the interlink tunnel in step with workspace CRUD: the real folder
+    /// becomes reachable for remote commands right away, and the shadow's
+    /// workspace section re-projects on the next merge window so the cloud
+    /// workspace list stays current without waiting for the periodic full.
+    fn publish_workspace_change(&self, record: &WorkspaceRecord) {
+        self.state().workspace.register_workspace_root(
+            &record.workspace_id,
+            &record.root_path,
+        );
+        self.invalidate_workspace_projection();
+    }
+
+    fn invalidate_workspace_projection(&self) {
+        if let Some(client) = wunder_server::interlink::client::shared() {
+            client.invalidate_shadow(Sections::WORKSPACE);
+        }
     }
 
     /// Persist sidebar ordering; ids not present keep their previous index.

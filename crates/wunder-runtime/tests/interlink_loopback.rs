@@ -1240,12 +1240,42 @@ async fn loopback_run() {
     // still registered dispatches the command instead of parking it, so the
     // queue assertion below would race the teardown instead of testing the queue.
     wait_channel_gone(DEVICE_ID, Duration::from_secs(20)).await;
-    let (status, _) = get_json(
-        &format!("{}/wunder/interlink/nodes", server.base_url),
-        &server.token,
-    )
-    .await;
-    assert_eq!(status, 200);
+
+    // §13.7 7, first clause: a node whose process went away is shown offline
+    // within 30 s. `stop()` is this harness's version of killing the process, and
+    // the bound is the product promise, so it is measured here rather than
+    // assumed from the channel teardown above.
+    let offline_started = Instant::now();
+    let offline_deadline = offline_started + Duration::from_secs(30);
+    loop {
+        let (status, body) = get_json(
+            &format!("{}/wunder/interlink/nodes", server.base_url),
+            &server.token,
+        )
+        .await;
+        assert_eq!(status, 200, "nodes query failed: {body}");
+        let row = data_of(&body)["nodes"]
+            .as_array()
+            .expect("node rows")
+            .iter()
+            .find(|item| item["node_id"] == json!(format!("device:{DEVICE_ID}")))
+            .cloned()
+            .unwrap_or_else(|| panic!("device node left the list entirely: {body}"));
+        if row["connected"] == json!(false) {
+            assert!(
+                offline_started.elapsed() <= Duration::from_secs(30),
+                "offline was shown after {:?}",
+                offline_started.elapsed()
+            );
+            break;
+        }
+        assert!(
+            Instant::now() < offline_deadline,
+            "node never shown offline within 30 s: {row}"
+        );
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+
     let parked = issue(
         &server,
         &format!("device:{DEVICE_ID}"),

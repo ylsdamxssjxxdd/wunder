@@ -21,8 +21,6 @@ This group is oriented toward global governance:
 - System Settings
 - Organization Management
 - User Management
-- Link Management
-- Channel Monitoring
 
 If you need to check runtime state, organizational structure, or global configuration, start here.
 
@@ -34,6 +32,8 @@ The settings dialog in User Management now also handles Quota account governance
 - You can grant or deduct credits with proper accounting semantics
 - Deductions validate the available balance to prevent over-drafting
 - Admin accounts are not subject to these balance restrictions
+
+The user list splits online presence by client: Hive (web), Honeycomb (desktop), and Helm (CLI).
 
 ## Agent Group
 
@@ -102,7 +102,6 @@ Most frequently use:
 
 - System Settings
 - User Management
-- Channel Monitoring
 - User Guide
 
 ### Developers

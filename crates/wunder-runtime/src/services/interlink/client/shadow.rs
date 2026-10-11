@@ -45,6 +45,14 @@ pub const TITLE_MAX_CHARS: usize = 96;
 /// The interlink backup folder lives inside the workspace but is never
 /// projected.
 pub const BACKUP_DIR_NAME: &str = ".interlink_backup";
+/// Named workspaces in one projection. A node that binds more folders than
+/// this keeps the first `WORKSPACE_MAX` by sort order (docs §6.1 budget).
+pub const WORKSPACE_MAX: usize = 20;
+/// Smallest per-workspace tree budget: with many workspaces every entry still
+/// shows a meaningful root listing instead of being squeezed to nothing.
+const WORKSPACE_MIN_ENTRIES: usize = 64;
+/// Workspace names are display labels; the projection keeps them short.
+const WORKSPACE_NAME_MAX_CHARS: usize = 60;
 
 /// Section bit set of the projection; a delta carries only what changed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -623,36 +631,138 @@ pub async fn gather_tasks(
     task_rows(records, want)
 }
 
-/// Build the workspace section: bounded tree walk plus the cached usage
-/// summary of the same scope.
+/// Register every bound folder of the local user so command scopes resolve to
+/// the real host folders even before the first thread touched them (docs §6.4:
+/// a `workspace.list` with a `workspace_id` must not fall back to the plain
+/// user root). Cheap: one bounded read plus in-memory map inserts.
+pub fn register_workspace_roots(state: &Arc<AppState>, local_user_id: &str) {
+    let Ok(records) = state.storage.list_workspaces(local_user_id) else {
+        return;
+    };
+    for record in records.iter().take(WORKSPACE_MAX) {
+        state
+            .workspace
+            .register_workspace_root(&record.workspace_id, &record.root_path);
+    }
+}
+
+/// Bound folder bindings of the local user, stable order, capped.
+async fn workspace_records(
+    state: &Arc<AppState>,
+    local_user_id: &str,
+    only: Option<&str>,
+) -> Vec<wunder_core::storage_records::WorkspaceRecord> {
+    let owner = local_user_id.to_string();
+    let filter = only.map(str::trim).filter(|value| !value.is_empty()).map(str::to_string);
+    let state = Arc::clone(state);
+    let records = blocking::run_db("interlink.client.shadow_workspaces", move || {
+        state.storage.list_workspaces(&owner)
+    })
+    .await
+    .unwrap_or_default();
+    let mut records: Vec<_> = records
+        .into_iter()
+        .filter(|record| {
+            filter
+                .as_deref()
+                .map(|wanted| record.workspace_id == wanted)
+                .unwrap_or(true)
+        })
+        .take(WORKSPACE_MAX)
+        .collect();
+    records.sort_by(|left, right| {
+        left.sort_index
+            .cmp(&right.sort_index)
+            .then_with(|| left.workspace_id.cmp(&right.workspace_id))
+    });
+    records
+}
+
+/// One projection entry: bounded tree + usage of a single scope, workspace-relative paths only.
+async fn gather_workspace_entry(
+    state: &Arc<AppState>,
+    scope: &str,
+    root: &Path,
+    budget: usize,
+    depth: usize,
+) -> (Value, bool) {
+    let walk_limits = TreeLimits {
+        max_entries: budget.max(1),
+        depth,
+        threads_max: 1,
+        tasks_max: 1,
+    };
+    let owned_root = root.to_path_buf();
+    let walk = blocking::run_fs("interlink.client.shadow_tree", move || {
+        Ok::<TreeWalk, anyhow::Error>(walk_tree(&owned_root, &walk_limits))
+    })
+    .await
+    .unwrap_or_default();
+    let usage = usage_summary(state, scope).await;
+    let mut entry = json!({
+        "tree": walk.entries.iter().map(TreeEntry::to_json).collect::<Vec<_>>(),
+        "usage": usage,
+    });
+    if walk.truncated {
+        entry["truncated"] = json!(true);
+    }
+    (entry, walk.truncated)
+}
+
+/// Build the workspace section: one bounded entry per bound folder, plus the
+/// default scope when the node has none. The whole section stays inside the
+/// §6.1 entry budget; per-workspace shares shrink as the count grows.
 pub async fn gather_workspace(
     state: &Arc<AppState>,
     sources: &ShadowSources,
     limits: &TreeLimits,
 ) -> (Value, bool) {
-    let scope = workspace_scope(state, &sources.local_user_id, sources.workspace_id.as_deref());
-    let root = state.workspace.workspace_root(&scope);
-    let walk_limits = TreeLimits {
-        max_entries: limits.max_entries,
-        depth: limits.depth,
-        threads_max: 1,
-        tasks_max: 1,
-    };
-    let walk = blocking::run_fs("interlink.client.shadow_tree", move || {
-        Ok::<TreeWalk, anyhow::Error>(walk_tree(&root, &walk_limits))
-    })
-    .await
-    .unwrap_or_default();
-    let usage = usage_summary(state, &scope).await;
-    let mut workspace = json!({
-        "tree": walk.entries.iter().map(TreeEntry::to_json).collect::<Vec<_>>(),
-        "usage": usage,
-        "roots": 1,
-    });
-    if walk.truncated {
-        workspace["truncated"] = json!(true);
+    let user = sources.local_user_id.trim();
+    let mut truncated = false;
+    let records = workspace_records(state, user, sources.workspace_id.as_deref()).await;
+    if records.is_empty() {
+        // CLI, or a desktop without bound folders: a single default-scope entry.
+        let scope = workspace_scope(state, user, sources.workspace_id.as_deref());
+        let root = state.workspace.workspace_root(&scope);
+        let (mut entry, entry_truncated) =
+            gather_workspace_entry(state, &scope, &root, limits.max_entries, limits.depth).await;
+        truncated |= entry_truncated;
+        entry["workspace_id"] = json!("");
+        entry["name"] = json!("");
+        return (json!({ "workspaces": [entry], "roots": 1 }), truncated);
     }
-    (workspace, walk.truncated)
+    let count = records.len();
+    let per_workspace = (limits.max_entries / count).clamp(WORKSPACE_MIN_ENTRIES, limits.max_entries);
+    let mut entries = Vec::with_capacity(count);
+    let mut used = 0usize;
+    for record in &records {
+        if used >= limits.max_entries {
+            truncated = true;
+            break;
+        }
+        state
+            .workspace
+            .register_workspace_root(&record.workspace_id, &record.root_path);
+        let scope = state
+            .workspace
+            .scoped_user_id_for_workspace(user, &record.workspace_id);
+        let root = state.workspace.workspace_root(&scope);
+        let remaining = limits.max_entries - used;
+        let (mut entry, entry_truncated) = gather_workspace_entry(
+            state,
+            &scope,
+            &root,
+            per_workspace.min(remaining),
+            limits.depth,
+        )
+        .await;
+        truncated |= entry_truncated;
+        used += entry["tree"].as_array().map(Vec::len).unwrap_or(0);
+        entry["workspace_id"] = json!(record.workspace_id);
+        entry["name"] = json!(record.name.chars().take(WORKSPACE_NAME_MAX_CHARS).collect::<String>());
+        entries.push(entry);
+    }
+    (json!({ "workspaces": entries, "roots": entries.len() }), truncated)
 }
 
 async fn usage_summary(state: &Arc<AppState>, scope: &str) -> Value {

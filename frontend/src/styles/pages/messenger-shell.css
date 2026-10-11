@@ -461,48 +461,6 @@ button.messenger-sidebar-workspace-row {
   flex-shrink: 0;
 }
 
-.messenger-sidebar-files-toolbar {
-  display: flex;
-  flex-shrink: 0;
-  gap: 4px;
-  padding: 0 var(--mz-sidebar-padding) 6px;
-}
-
-.messenger-sidebar-files-toolbar button {
-  display: inline-flex;
-  flex: 1;
-  align-items: center;
-  justify-content: center;
-  height: 26px;
-  border: 1px solid var(--mz-border);
-  border-radius: var(--mz-radius-tag);
-  color: var(--mz-text-secondary);
-  background: var(--mz-surface);
-  font: inherit;
-  font-size: var(--mz-font-sm);
-  cursor: pointer;
-}
-
-.messenger-sidebar-files-toolbar button:hover:not(:disabled) {
-  color: var(--mz-primary);
-  border-color: var(--mz-primary-soft);
-  background: var(--mz-primary-tint);
-}
-
-.messenger-sidebar-files-toolbar button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.messenger-sidebar-files-toolbar button.is-toggle.is-active {
-  color: #ffffff;
-  border-color: var(--mz-primary);
-  background: var(--mz-primary);
-}
-
-.workspace-files-upload-input {
-  display: none;
-}
 
 .workspace-files-selection {
   display: flex;
@@ -943,6 +901,16 @@ button.messenger-sidebar-workspace-row {
 .workspace-files-usage-flag {
   flex-shrink: 0;
   color: var(--mz-warning);
+}
+
+/* 远程工作区投影不完整时的提示条（互通 §6.3）。 */
+.workspace-files-remote-note {
+  margin: 0 12px 4px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--mz-warning-soft, rgba(214, 158, 46, 0.14));
+  color: var(--mz-warning, #b07d1a);
+  font-size: var(--mz-font-xs, 12px);
 }
 
 /* --------------------------------------------------- preview modal states

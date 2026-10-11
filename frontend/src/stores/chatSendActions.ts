@@ -648,7 +648,16 @@ export const chatSendActions = {
           // Durable frames are the only source of timeline projection.
           if (
             applyChatThreadServerEvent(this, sessionId, effectiveEventType, payload, {
-              onChangesApplied: (changes) => applyChatThreadEffects(this, sessionId, changes)
+              onChangesApplied: (changes) => applyChatThreadEffects(this, sessionId, changes),
+              // The request-scoped feeder on the send stream stops for good once
+              // it crosses the slow-client watermark (server sends
+              // stream_overflow and returns). Without a recovery hook every
+              // later item_upsert/turn frame is lost: tool entries stay
+              // spinning and later entries never render until a page reload.
+              // Mount the session watcher immediately; it replays from the
+              // last applied durable cursor.
+              onOverflow: () => startSessionWatcher(this, sessionId),
+              onGapOverflow: () => startSessionWatcher(this, sessionId)
             })
           ) {
             return;

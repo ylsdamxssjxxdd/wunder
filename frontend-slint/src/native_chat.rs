@@ -1995,23 +1995,35 @@ fn bind_stop(app: &MainWindow, state: Rc<RefCell<State>>) {
         if app.get_stopping() {
             return;
         }
-        let mut current = state.borrow_mut();
-        if let Some(active) = current.active.as_mut() {
-            app.set_stopping(true);
-            active.stream.cancel();
-            active.state = "已停止".into();
-            active.timeline.borrow_mut().flush();
-            set_session_status(&app, &active.session, &active.state);
+        let session = app.get_active_session_id().to_string();
+        // Branch 1: a stream owned by this process is cancelled in place, so
+        // the borrowed state must be released before the projection below. The
+        // `current` guard lives to the end of this closure, hence the status is
+        // handed out of the block instead of reprojected while it is held — a
+        // second `borrow_mut`/`borrow` here aborts the process.
+        let mut stopped: Option<(String, String)> = None;
+        {
+            let mut current = state.borrow_mut();
+            if let Some(active) = current.active.as_mut() {
+                app.set_stopping(true);
+                active.stream.cancel();
+                active.state = "已停止".into();
+                active.timeline.borrow_mut().flush();
+                stopped = Some((active.session.clone(), active.state.clone()));
+            }
+        }
+        if let Some((stopped_session, stopped_status)) = stopped {
+            set_session_status(&app, &stopped_session, &stopped_status);
             app.set_status("正在停止…".into());
         } else if app.get_busy() || app.get_goal_active() {
             app.set_stopping(true);
-            let desktop = current.desktop.clone();
-            let session = app.get_active_session_id().to_string();
+            let desktop = state.borrow().desktop.clone();
+            let cancel_session = session.clone();
             let weak = app.as_weak();
             std::thread::spawn(move || {
-                let result = desktop.cancel_chat(&session);
+                let result = desktop.cancel_chat(&cancel_session);
                 let _ = weak.upgrade_in_event_loop(move |app| {
-                    if app.get_active_session_id() == session {
+                    if app.get_active_session_id() == cancel_session {
                         app.set_stopping(false);
                         match result {
                             Err(error) => app.set_status(format!("无法停止：{error}").into()),
@@ -2028,7 +2040,6 @@ fn bind_stop(app: &MainWindow, state: Rc<RefCell<State>>) {
         // drops their subscribers. The strip is re-read off the UI thread: the
         // pump may already have stopped, and a stale row would invite a click
         // on a turn the engine no longer has.
-        let session = app.get_active_session_id().to_string();
         {
             let mut current = state.borrow_mut();
             current.parked.retain(|entry| entry.session != session);

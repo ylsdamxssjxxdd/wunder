@@ -11,7 +11,6 @@ import { isRemovedSwarmTool } from "../shared/deprecated-tools.js";
 import { openImpactConfirmModal } from "./preset-agents.js?v=20261007-01";
 import {
   CONTRACT_STATE_UNAVAILABLE,
-  CUSTOMIZABLE_FIELD_LABEL_KEYS,
   getContractState,
   listPresetAgents,
   mutatePresetBindings,
@@ -74,9 +73,6 @@ const ensureUserAccountsState = () => {
   if (typeof state.userAccounts.presetsLoaded !== "boolean") {
     state.userAccounts.presetsLoaded = false;
   }
-  if (typeof state.userAccounts.bindingAvailable !== "boolean") {
-    state.userAccounts.bindingAvailable = false;
-  }
   if (!state.panelLoaded) {
     state.panelLoaded = {};
   }
@@ -120,7 +116,6 @@ const ensureUserAccountElements = () => {
     "userAccountCreatePreset",
     "userAccountRebuildBtn",
     "userAccountRebuildHint",
-    "userAccountBindingNote",
     "userAccountSettingsModal",
     "userAccountSettingsClose",
     "userAccountSettingsCancel",
@@ -180,7 +175,7 @@ const normalizeUserAccount = (item) => {
         })
         .filter(Boolean)
     : [];
-  // 契约 §12.2.1 第 9) 条：绑定预设 / 唯一智能体 / 已自定义字段
+  // 契约 §12.2.1 第 9) 条：绑定预设 / 唯一智能体字段（设置面板重建智能体仍需要）
   const binding = normalizeUserBindingFields(item);
   return {
     id,
@@ -194,8 +189,6 @@ const normalizeUserAccount = (item) => {
     roles: Array.isArray(item?.roles) ? item.roles : [],
     preset_id: binding.preset_id,
     agent_id: binding.agent_id,
-    customized_fields: binding.customized_fields,
-    binding_available: binding.available,
     quota_balance: safeQuotaBalance,
     quota_used_total: safeQuotaUsed,
     quota_granted_total: safeQuotaGranted,
@@ -205,17 +198,11 @@ const normalizeUserAccount = (item) => {
     is_demo: Boolean(item?.is_demo || item?.isDemo),
     active_sessions: Number.isFinite(activeSessions) ? activeSessions : 0,
     online,
+    online_web: item?.online_web === true,
+    online_desktop: item?.online_desktop === true,
+    online_cli: item?.online_cli === true,
     activity_series: activitySeries,
   };
-};
-
-const customizableFieldLabel = (field) => {
-  const key = String(field || "").trim();
-  if (!key) {
-    return "";
-  }
-  const labelKey = CUSTOMIZABLE_FIELD_LABEL_KEYS[key];
-  return labelKey ? t(labelKey) : key;
 };
 
 const formatLoginTime = (value) => {
@@ -289,8 +276,8 @@ const formatQuotaMeta = (user) => {
   });
 };
 
-const formatOnlineStatus = (user) =>
-  user?.online ? t("userAccounts.status.online") : t("userAccounts.status.offline");
+const formatOnlineStatus = (online) =>
+  online ? t("userAccounts.status.online") : t("userAccounts.status.offline");
 
 const formatActivityTooltip = (series) =>
   Array.isArray(series) && series.length
@@ -415,7 +402,6 @@ const renderUserAccountRows = () => {
   if (!state.userAccounts.list.length) {
     elements.userAccountEmpty.textContent = t("userAccounts.empty");
     elements.userAccountEmpty.style.display = "block";
-    renderUserAccountBindingNote();
     renderUserAccountPagination();
     return;
   }
@@ -427,49 +413,20 @@ const renderUserAccountRows = () => {
     const userCell = document.createElement("td");
     userCell.textContent = user.username || user.id || "-";
 
-    const notReadyHint = t("userAccounts.bindings.notReady");
-    const presetCell = document.createElement("td");
-    presetCell.textContent = user.preset_id || "-";
-    if (user.preset_id) {
-      presetCell.title = user.preset_id;
-    } else {
-      presetCell.title = notReadyHint;
-    }
-
-    const agentCell = document.createElement("td");
-    agentCell.textContent = user.agent_id || "-";
-    if (user.agent_id) {
-      agentCell.title = user.agent_id;
-    } else {
-      agentCell.title = notReadyHint;
-    }
-
-    const customizedCell = document.createElement("td");
-    if (user.customized_fields.length) {
-      const wrap = document.createElement("div");
-      wrap.className = "user-account-customized-list";
-      user.customized_fields.forEach((field) => {
-        const tag = document.createElement("span");
-        tag.className = "user-account-customized-tag";
-        tag.textContent = customizableFieldLabel(field);
-        wrap.appendChild(tag);
-      });
-      customizedCell.appendChild(wrap);
-    } else {
-      customizedCell.textContent = user.binding_available
-        ? t("userAccounts.bindings.customizedNone")
-        : "-";
-      if (!user.binding_available) {
-        customizedCell.title = notReadyHint;
-      }
-    }
-
     const unitCell = document.createElement("td");
     unitCell.textContent = resolveUnitLabel(user);
 
     const onlineCell = document.createElement("td");
-    onlineCell.textContent = formatOnlineStatus(user);
-    onlineCell.className = user.online ? "status-online" : "status-offline";
+    onlineCell.textContent = formatOnlineStatus(user.online_web);
+    onlineCell.className = user.online_web ? "status-online" : "status-offline";
+
+    const desktopOnlineCell = document.createElement("td");
+    desktopOnlineCell.textContent = formatOnlineStatus(user.online_desktop);
+    desktopOnlineCell.className = user.online_desktop ? "status-online" : "status-offline";
+
+    const cliOnlineCell = document.createElement("td");
+    cliOnlineCell.textContent = formatOnlineStatus(user.online_cli);
+    cliOnlineCell.className = user.online_cli ? "status-online" : "status-offline";
 
     const quotaCell = document.createElement("td");
     quotaCell.textContent = formatQuotaValue(user);
@@ -517,11 +474,10 @@ const renderUserAccountRows = () => {
     actionCell.appendChild(settingsBtn);
 
     row.appendChild(userCell);
-    row.appendChild(presetCell);
-    row.appendChild(agentCell);
-    row.appendChild(customizedCell);
     row.appendChild(unitCell);
     row.appendChild(onlineCell);
+    row.appendChild(desktopOnlineCell);
+    row.appendChild(cliOnlineCell);
     row.appendChild(quotaCell);
     row.appendChild(loginCell);
     row.appendChild(activityCell);
@@ -530,21 +486,7 @@ const renderUserAccountRows = () => {
     fragment.appendChild(row);
   });
   elements.userAccountTableBody.appendChild(fragment);
-  renderUserAccountBindingNote();
   renderUserAccountPagination();
-};
-
-// 契约未就绪提示：仅当整页都没有绑定字段时展示一次，避免逐行刷屏
-const renderUserAccountBindingNote = () => {
-  const note = elements.userAccountBindingNote;
-  if (!note) {
-    return;
-  }
-  const hasBindingData = state.userAccounts.list.some((item) => item.binding_available);
-  const missing = !hasBindingData && state.userAccounts.list.length > 0;
-  state.userAccounts.bindingAvailable = hasBindingData;
-  note.textContent = missing ? t("userAccounts.bindings.note") : "";
-  note.style.display = missing ? "block" : "none";
 };
 
 const resolveUserFrontendOrigin = () => {

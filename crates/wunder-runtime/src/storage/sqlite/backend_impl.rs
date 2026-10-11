@@ -5,7 +5,8 @@ use crate::storage::{
     CloudDeviceInterlinkPatch, CloudDeviceRecord, CloudLogInsertResult, CloudStore,
     ConversationLogStore, CronStore,
     GatewayStore, InterlinkApprovalRecord, InterlinkAuditRecord, InterlinkChannelRecord,
-    InterlinkCommandRecord, InterlinkShadowRecord, InterlinkStore, ListCloudDeviceLogsQuery,
+    InterlinkCommandRecord, InterlinkShadowOverview, InterlinkShadowRecord, InterlinkStore,
+    ListCloudDeviceLogsQuery,
     ListCloudRecordsQuery, ListInterlinkAuditQuery, ListInterlinkCommandsQuery, LogStatsStore,
     MediaStore,
     MemoryRecordStore, MetaStore, MonitorStore, QuotaBalanceStore, RetentionStore,
@@ -1777,6 +1778,12 @@ impl InterlinkStore for SqliteStorage {
     }
     fn get_interlink_shadow_revision(&self, device_id: &str) -> Result<i64> {
         self.get_interlink_shadow_revision_impl(device_id)
+    }
+    fn list_interlink_shadow_overviews(
+        &self,
+        device_ids: &[String],
+    ) -> Result<Vec<InterlinkShadowOverview>> {
+        self.list_interlink_shadow_overviews_impl(device_ids)
     }
     fn delete_interlink_shadow(&self, device_id: &str) -> Result<()> {
         self.delete_interlink_shadow_impl(device_id)

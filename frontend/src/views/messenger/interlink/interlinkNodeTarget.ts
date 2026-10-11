@@ -1,10 +1,14 @@
 // AI生成
 /**
- * 工作区「节点切换器」的选中态（方案 §6.3：URL 形态 `/workspace?node=device:<id>`）。
+ * 工作区「目标选择」的选中态（方案 §6.3：URL 形态
+ * `/workspace?node=device:<id>&ws=<workspace_id>`）。
  *
  * 唯一事实源是路由 query：蜂巢的工作区面具有两个宿主（侧栏云端目录区与通用工作区
  * 面板），用路由而不是本地状态，天然一致、可分享、支持前进后退，也不需要任何
  * watch / 全局 store（避免本仓库反复出现的多入口状态漂移）。
+ *
+ * `node` 决定哪台本地设备；`ws` 决定该设备上的哪一个本地工作区（缺省即该设备的
+ * 默认目录，舵机没有命名工作区）。本地工作区与云端工作区同级，点击行即切换目录。
  */
 
 import { computed } from 'vue';
@@ -13,8 +17,12 @@ import { useRoute, useRouter, type LocationQueryRaw } from 'vue-router';
 import { INTERLINK_CLOUD_NODE_ID, interlinkDeviceIdOf, interlinkDeviceTarget } from '@/api/interlink';
 
 export const INTERLINK_NODE_QUERY_KEY = 'node';
+export const INTERLINK_WORKSPACE_QUERY_KEY = 'ws';
 
 export type InterlinkNodeTarget = string;
+
+/** 工作区 id 的渲染上限：id 形如 `ws_<hex>`，超长一律视为非法。 */
+const WORKSPACE_ID_MAX_CHARS = 64;
 
 export const CLOUD_NODE_TARGET = INTERLINK_CLOUD_NODE_ID;
 
@@ -32,6 +40,14 @@ export const normalizeNodeTarget = (value: unknown): InterlinkNodeTarget => {
   return interlinkDeviceTarget(text);
 };
 
+/** 工作区 id 只保留安全形态：trim 后限长，空串回落「设备默认目录」。 */
+export const normalizeWorkspaceId = (value: unknown): string => {
+  const raw = Array.isArray(value) ? value[0] : value;
+  return String(raw ?? '')
+    .trim()
+    .slice(0, WORKSPACE_ID_MAX_CHARS);
+};
+
 export const useInterlinkNodeTarget = () => {
   const route = useRoute();
   const router = useRouter();
@@ -41,21 +57,37 @@ export const useInterlinkNodeTarget = () => {
   );
   const isRemote = computed(() => target.value !== CLOUD_NODE_TARGET);
   const deviceId = computed(() => interlinkDeviceIdOf(target.value));
+  const workspaceId = computed(() => normalizeWorkspaceId(route.query[INTERLINK_WORKSPACE_QUERY_KEY]));
 
-  const writeTarget = (next: InterlinkNodeTarget): void => {
+  const writeTarget = (next: InterlinkNodeTarget, nextWorkspaceId = ''): void => {
     const normalized = normalizeNodeTarget(next);
-    const current = normalizeNodeTarget(route.query[INTERLINK_NODE_QUERY_KEY]);
-    if (normalized === current) return;
+    const workspace = normalized === CLOUD_NODE_TARGET ? '' : normalizeWorkspaceId(nextWorkspaceId);
+    const currentTarget = normalizeNodeTarget(route.query[INTERLINK_NODE_QUERY_KEY]);
+    const currentWorkspace =
+      currentTarget === CLOUD_NODE_TARGET ? '' : normalizeWorkspaceId(route.query[INTERLINK_WORKSPACE_QUERY_KEY]);
+    if (normalized === currentTarget && workspace === currentWorkspace) return;
     const query: LocationQueryRaw = { ...route.query };
     if (normalized === CLOUD_NODE_TARGET) {
       delete query[INTERLINK_NODE_QUERY_KEY];
     } else {
       query[INTERLINK_NODE_QUERY_KEY] = normalized;
     }
+    if (workspace) {
+      query[INTERLINK_WORKSPACE_QUERY_KEY] = workspace;
+    } else {
+      delete query[INTERLINK_WORKSPACE_QUERY_KEY];
+    }
     void router
       .replace({ path: route.path, query, hash: route.hash })
       .catch(() => undefined);
   };
 
-  return { target, deviceId, isRemote, writeTarget, backToCloud: () => writeTarget(CLOUD_NODE_TARGET) };
+  return {
+    target,
+    deviceId,
+    workspaceId,
+    isRemote,
+    writeTarget,
+    backToCloud: () => writeTarget(CLOUD_NODE_TARGET)
+  };
 };

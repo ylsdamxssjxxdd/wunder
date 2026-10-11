@@ -1,8 +1,8 @@
 use super::SqliteStorage;
 use crate::storage::{
     CloudDeviceInterlinkPatch, InterlinkApprovalRecord, InterlinkAuditRecord,
-    InterlinkChannelRecord, InterlinkCommandRecord, InterlinkShadowRecord,
-    ListInterlinkAuditQuery, ListInterlinkCommandsQuery, StorageLifecycle,
+    InterlinkChannelRecord, InterlinkCommandRecord, InterlinkShadowOverview,
+    InterlinkShadowRecord, ListInterlinkAuditQuery, ListInterlinkCommandsQuery, StorageLifecycle,
 };
 use anyhow::Result;
 use rusqlite::types::Value as SqlValue;
@@ -41,6 +41,10 @@ pub(super) trait SqliteInterlinkStorage {
     fn get_interlink_shadow_impl(&self, device_id: &str)
         -> Result<Option<InterlinkShadowRecord>>;
     fn get_interlink_shadow_revision_impl(&self, device_id: &str) -> Result<i64>;
+    fn list_interlink_shadow_overviews_impl(
+        &self,
+        device_ids: &[String],
+    ) -> Result<Vec<InterlinkShadowOverview>>;
     fn delete_interlink_shadow_impl(&self, device_id: &str) -> Result<()>;
     fn cleanup_interlink_shadows_impl(&self, retention_days: u32, max_rows: i64) -> Result<u64>;
     fn insert_interlink_command_impl(&self, record: &InterlinkCommandRecord) -> Result<bool>;
@@ -259,12 +263,12 @@ impl SqliteInterlinkStorage for SqliteStorage {
             return Ok(());
         }
         self.open()?.execute(
-            "INSERT INTO interlink_node_shadows(device_id, user_id, revision, summary, threads, tasks, workspace, synced_at) \
-             VALUES(?,?,?,?,?,?,?,?) \
+            "INSERT INTO interlink_node_shadows(device_id, user_id, revision, summary, threads, tasks, workspace, workspaces, synced_at) \
+             VALUES(?,?,?,?,?,?,?,?,?) \
              ON CONFLICT(device_id) DO UPDATE SET \
                user_id=excluded.user_id, revision=excluded.revision, \
                summary=excluded.summary, threads=excluded.threads, tasks=excluded.tasks, \
-               workspace=excluded.workspace, synced_at=excluded.synced_at",
+               workspace=excluded.workspace, workspaces=excluded.workspaces, synced_at=excluded.synced_at",
             params![
                 record.device_id.trim(),
                 record.user_id.trim(),
@@ -273,6 +277,7 @@ impl SqliteInterlinkStorage for SqliteStorage {
                 record.threads,
                 record.tasks,
                 record.workspace,
+                record.workspaces,
                 record.synced_at,
             ],
         )?;
@@ -291,7 +296,7 @@ impl SqliteInterlinkStorage for SqliteStorage {
         let conn = self.open()?;
         let row = conn
             .query_row(
-                "SELECT device_id, user_id, revision, summary, threads, tasks, workspace, synced_at \
+                "SELECT device_id, user_id, revision, summary, threads, tasks, workspace, workspaces, synced_at \
                  FROM interlink_node_shadows WHERE device_id = ?",
                 params![cleaned],
                 |row| Self::read_interlink_shadow(row),
@@ -313,6 +318,49 @@ impl SqliteInterlinkStorage for SqliteStorage {
             |row| row.get(0),
         )?;
         Ok(revision)
+    }
+
+    /// One batched read for the node listing: revision plus the slim workspace
+    /// list, never the tree payload. Unknown ids come back as revision 0.
+    fn list_interlink_shadow_overviews_impl(
+        &self,
+        device_ids: &[String],
+    ) -> Result<Vec<InterlinkShadowOverview>> {
+        self.ensure_initialized()?;
+        let ids: Vec<String> = device_ids
+            .iter()
+            .map(|id| id.trim().to_string())
+            .filter(|id| !id.is_empty())
+            .collect();
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self.open()?;
+        let mut out = Vec::with_capacity(ids.len());
+        // The node list is capped at 60 devices (api layer), so a fixed
+        // per-id lookup stays one round trip in practice and needs no dynamic
+        // IN-list building.
+        for device_id in ids {
+            let row = conn
+                .query_row(
+                    "SELECT revision, workspaces FROM interlink_node_shadows WHERE device_id = ?",
+                    params![device_id],
+                    |row| {
+                        Ok((
+                            row.get::<_, Option<i64>>(0)?.unwrap_or(0),
+                            row.get::<_, Option<String>>(1)?,
+                        ))
+                    },
+                )
+                .optional()?;
+            let (revision, workspaces) = row.unwrap_or((0, None));
+            out.push(InterlinkShadowOverview {
+                device_id,
+                revision,
+                workspaces,
+            });
+        }
+        Ok(out)
     }
 
     fn delete_interlink_shadow_impl(&self, device_id: &str) -> Result<()> {
@@ -761,7 +809,8 @@ impl SqliteStorage {
             threads: row.get(4)?,
             tasks: row.get(5)?,
             workspace: row.get(6)?,
-            synced_at: row.get::<_, Option<f64>>(7)?.unwrap_or(0.0),
+            workspaces: row.get(7)?,
+            synced_at: row.get::<_, Option<f64>>(8)?.unwrap_or(0.0),
         })
     }
 

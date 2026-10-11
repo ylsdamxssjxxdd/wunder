@@ -414,9 +414,8 @@ h1 {
   font-size: 20px;
 }
 
-/* 调试/A2A 面板布局：左右分栏 */
+/* 调试面板布局：左右分栏 */
 .debug-layout,
-.a2a-layout,
 .performance-layout {
   flex: 1 1 0;
   min-height: 0;
@@ -428,7 +427,6 @@ h1 {
 }
 
 .debug-form,
-.a2a-form,
 .performance-form {
   display: flex;
   flex-direction: column;
@@ -568,11 +566,6 @@ h1 {
   justify-content: flex-end;
 }
 
-.a2a-header-actions {
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
-
 .monitor-time-filter {
   display: inline-flex;
   align-items: center;
@@ -615,8 +608,7 @@ h1 {
   padding-right: 4px;
 }
 
-.debug-form-section,
-.a2a-form-section {
+.debug-form-section {
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -776,11 +768,6 @@ textarea {
 }
 
 .debug-actions {
-  justify-content: flex-end;
-  align-items: center;
-}
-
-.a2a-actions {
   justify-content: flex-end;
   align-items: center;
 }
@@ -2484,11 +2471,11 @@ button.btn-with-icon[aria-busy="true"] i {
 }
 
 .user-account-table col.col-user-id {
-  width: 22%;
+  width: 18%;
 }
 
 .user-account-table col.col-user-online {
-  width: 10%;
+  width: 7%;
 }
 
 .user-account-table col.col-user-quota {
@@ -2496,11 +2483,11 @@ button.btn-with-icon[aria-busy="true"] i {
 }
 
 .user-account-table col.col-user-login {
-  width: 16%;
+  width: 14%;
 }
 
 .user-account-table col.col-user-activity {
-  width: 26%;
+  width: 18%;
 }
 
 .user-account-table col.col-user-action {

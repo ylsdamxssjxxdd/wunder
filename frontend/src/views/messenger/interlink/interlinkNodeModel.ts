@@ -11,11 +11,9 @@ import type {
   InterlinkCommandKind,
   InterlinkNode,
   InterlinkNodeStatus,
-  InterlinkShadow,
-  InterlinkShadowTreeEntry,
-  InterlinkShadowThread
+  InterlinkShadowTreeEntry
 } from '@/api/interlink';
-import { INTERLINK_CLOUD_NODE_ID } from '@/api/interlink';
+import { INTERLINK_CLOUD_NODE_ID, interlinkNodeWorkspaces } from '@/api/interlink';
 import type { WorkspaceEntry } from '@/views/messenger/workspace/workspaceFileModel';
 import {
   normalizeWorkspaceEntry,
@@ -32,8 +30,6 @@ export const INTERLINK_POLL_INTERVAL_MS = 20_000;
 /** 手动刷新的去抖窗口，避免连点打爆 nodes 端点。 */
 export const INTERLINK_REFRESH_DEBOUNCE_MS = 500;
 
-/** §6.1 目录树最多 500 条，单页仍按 200 行（与云端工作区同一节奏）。 */
-export const REMOTE_DIRECTORY_PAGE_SIZE = 200;
 /** 单次远程读取上限（§6.4 小文件内联 ≤1MB）。 */
 export const REMOTE_READ_MAX_BYTES = 1024 * 1024;
 /** 预览渲染上限：超过则降级为可读提示，不做整文件下载。 */
@@ -42,12 +38,6 @@ export const REMOTE_PREVIEW_MAX_BYTES = 2 * 1024 * 1024;
 export const REMOTE_COMMAND_POLL_INTERVAL_MS = 800;
 export const REMOTE_COMMAND_TIMEOUT_MS = 60_000;
 export const REMOTE_COMMAND_APPROVAL_TIMEOUT_MS = 135_000;
-/** 影子线程目录渲染上限（§6.1 投影最多 200 条）。 */
-export const REMOTE_THREAD_MAX_RENDERED = 60;
-/** 远程会话消息缓冲上限：只活在组件态里，刷新即重快照（§7.4）。 */
-export const REMOTE_MESSAGE_MAX_RENDERED = 200;
-/** 「更新于 X 分钟前」水印的滴答周期：分钟级文案不需要每帧重算。 */
-export const WATERMARK_TICK_MS = 30_000;
 
 const NODE_STATUSES: InterlinkNodeStatus[] = ['online', 'busy', 'away', 'reconnecting', 'offline'];
 
@@ -88,6 +78,55 @@ export const isNodeReachable = (node: InterlinkNode | null | undefined): boolean
 export const isDeviceNode = (node: InterlinkNode | null | undefined): boolean => {
   const type = String(node?.node_type || '').trim().toLowerCase();
   return type === 'desktop' || type === 'cli';
+};
+
+/**
+ * §6.3 侧栏工作区行：按「本地工作区」而不是设备区分。每台设备的每个命名工作区
+ * 一行（`设备名-工作区名`）；设备没有命名工作区（舵机 / 尚未同步）时整台设备
+ * 折为一行默认目录。渲染行数硬上限沿用节点目录的上限。
+ */
+export type InterlinkWorkspaceRow = {
+  key: string;
+  deviceId: string;
+  /** 空串＝该设备的默认目录（无命名工作区）。 */
+  workspaceId: string;
+  label: string;
+  node: InterlinkNode;
+};
+
+export const workspaceRowLabel = (node: InterlinkNode, workspaceName: string): string => {
+  const device = String(node.label || node.node_id || '').trim();
+  const name = workspaceName.trim();
+  return name && device ? `${device}-${name}` : device || name;
+};
+
+export const interlinkWorkspaceRows = (nodes: InterlinkNode[]): InterlinkWorkspaceRow[] => {
+  const rows: InterlinkWorkspaceRow[] = [];
+  nodes.filter(isDeviceNode).slice(0, INTERLINK_NODE_MAX_RENDERED).forEach((node) => {
+    const deviceId = String(node.node_id || '').trim();
+    if (!deviceId) return;
+    const workspaces = interlinkNodeWorkspaces(node).filter((item) => item.workspace_id);
+    if (!workspaces.length) {
+      rows.push({
+        key: `device:${deviceId}`,
+        deviceId,
+        workspaceId: '',
+        label: workspaceRowLabel(node, ''),
+        node
+      });
+      return;
+    }
+    workspaces.slice(0, INTERLINK_NODE_MAX_RENDERED).forEach((item) => {
+      rows.push({
+        key: `device:${deviceId}@${item.workspace_id}`,
+        deviceId,
+        workspaceId: item.workspace_id,
+        label: workspaceRowLabel(node, item.name),
+        node
+      });
+    });
+  });
+  return rows.slice(0, INTERLINK_NODE_MAX_RENDERED);
 };
 
 export const isCloudNode = (node: InterlinkNode | null | undefined): boolean =>
@@ -170,17 +209,12 @@ const parseTime = (value: unknown): number => {
   return Number.isFinite(parsed) ? parsed : Number.NaN;
 };
 
-export const nodeTimeToMs = (value: unknown): number => parseTime(value);
-
 /** 分钟差：影子水印「更新于 X 分钟前」；无有效时间返回 null（渲染为「未知」）。 */
 export const minutesSince = (value: unknown, now = Date.now()): number | null => {
   const ms = parseTime(value);
   if (!Number.isFinite(ms)) return null;
   return Math.max(0, Math.floor((now - ms) / 60_000));
 };
-
-export const isShadowEmpty = (shadow: InterlinkShadow | null | undefined): boolean =>
-  !shadow || Number(shadow.revision || 0) <= 0;
 
 /**
  * 影子目录树（§6.1 相对路径白名单）→ 按父目录分组的 WorkspaceEntry，
@@ -242,40 +276,4 @@ export const normalizeRemoteDirectoryEntries = (
     result.push(entry);
   });
   return sortEntriesByName(result);
-};
-
-/** 线程目录按更新时间倒序，渲染上限由调用方控制。 */
-export const sortShadowThreads = (
-  threads: InterlinkShadowThread[]
-): InterlinkShadowThread[] =>
-  (Array.isArray(threads) ? threads : [])
-    .slice()
-    .sort((left, right) => parseTime(right.updated_at) - parseTime(left.updated_at));
-
-export const normalizeShadowThreads = (
-  threads: InterlinkShadowThread[]
-): InterlinkShadowThread[] =>
-  (Array.isArray(threads) ? threads : []).filter((item) =>
-    String(item?.local_thread_id || '').trim()
-  );
-
-/** 影子 summary 的常用字段（§6.1 节点概要），缺省返回空串。 */
-export const shadowSummaryText = (
-  shadow: InterlinkShadow | null | undefined,
-  key: string
-): string => {
-  const summary = shadow?.summary;
-  if (!summary || typeof summary !== 'object') return '';
-  const value = (summary as Record<string, unknown>)[key];
-  return value === null || value === undefined ? '' : String(value);
-};
-
-export const shadowUsageNumber = (
-  shadow: InterlinkShadow | null | undefined,
-  key: string
-): number | null => {
-  const usage = shadow?.usage;
-  if (!usage || typeof usage !== 'object') return null;
-  const parsed = Number((usage as Record<string, unknown>)[key]);
-  return Number.isFinite(parsed) ? parsed : null;
 };

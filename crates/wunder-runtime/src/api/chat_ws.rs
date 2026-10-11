@@ -4,8 +4,9 @@ use crate::api::ws_helpers::{
     apply_ws_auth_headers, has_ws_protocol_token, negotiate_ws_protocol, parse_connect_payload,
     parse_payload, resolve_session_id, resume_queued_thread_changes_v2, resume_thread_changes_v2,
     send_ws_error, send_ws_error_payload, send_ws_event, send_ws_pong, send_ws_ready,
-    send_ws_tail_event, ws_error_payload_from_anyhow, ws_protocol_info, WsEnvelope, WsFeatures,
-    WsPolicy, WsQuery, WsReadyPayload, WsSender, WS_MAX_MESSAGE_BYTES, WS_PROTOCOL_VERSION,
+    send_ws_tail_event, try_send_ws_event, ws_error_payload_from_anyhow, ws_protocol_info,
+    WsEnvelope, WsFeatures, WsPolicy, WsQuery, WsReadyPayload, WsSender, WS_MAX_MESSAGE_BYTES,
+    WS_PROTOCOL_VERSION,
 };
 use crate::api::ws_log::{
     log_ws_close, log_ws_handshake, log_ws_handshake_error, log_ws_message, log_ws_open,
@@ -204,6 +205,7 @@ async fn handle_ws(
     state.control.presence.connect_client(
         &user.user_id,
         &connection_id,
+        crate::services::presence::client_kind_from_scope(session_scope.as_deref()),
         Utc::now().timestamp_millis() as f64 / 1000.0,
     );
     // I2 unified presence: one volatile `web` node per accepted browser session
@@ -570,6 +572,7 @@ async fn handle_ws(
                                     // make the start feeder and the later watch
                                     // publish the same change rows concurrently.
                                     let feeder_cancel = cancel.child_token();
+                                    let mut stream_drained = false;
                                     loop {
                                         tokio::select! {
                                             _ = cancel.cancelled() => {
@@ -577,6 +580,7 @@ async fn handle_ws(
                                             }
                                             item = tokio_stream::StreamExt::next(&mut stream) => {
                                                 let Some(item) = item else {
+                                                    stream_drained = true;
                                                     break;
                                                 };
                                                 let event = match item {
@@ -624,6 +628,33 @@ async fn handle_ws(
                                     // request-scoped feeder before the frontend
                                     // installs its session watcher.
                                     feeder_cancel.cancel();
+                                    if stream_drained {
+                                        // v2 durable content is delivered only by
+                                        // the feeder, so the send stream carries no
+                                        // terminal frame of its own. Without one
+                                        // the client can only settle this request
+                                        // through its idle reconcile timer, which
+                                        // keeps the send controller alive and can
+                                        // leave the session watcher unmounted after
+                                        // a feeder overflow. Emit one best-effort
+                                        // terminal frame after the feeder stops so
+                                        // the client resolves the request, runs its
+                                        // settlement path, and mounts the long-lived
+                                        // watch from its durable cursor.
+                                        let final_event = StreamEvent {
+                                            event: "final".into(),
+                                            data: json!({
+                                                "session_id": session_id_cleanup,
+                                            }),
+                                            id: None,
+                                            timestamp: Some(Utc::now()),
+                                        };
+                                        let _ = try_send_ws_event(
+                                            &ws_tx_snapshot,
+                                            Some(&request_id_cleanup),
+                                            final_event,
+                                        );
+                                    }
                                 }
                                 Err(err) => {
                                     if !cancel.is_cancelled() {

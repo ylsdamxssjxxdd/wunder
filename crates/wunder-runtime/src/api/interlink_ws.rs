@@ -1096,6 +1096,17 @@ async fn apply_shadow_frame(
     frame: &InterlinkFrame,
     limits: &shadow::ShadowLimits,
 ) -> Option<&'static str> {
+    // A frame can still be queued after its channel is gone: revocation purges
+    // the projection while the inbound shadow frame is in flight, so writing it
+    // would resurrect exactly what §13.5 18 promises to delete, and a replaced
+    // channel would let a stale socket overwrite the live one. Only the channel
+    // that is currently registered may project.
+    let current_channel = registry()
+        .by_device(&live.device_id)
+        .map(|channel| channel.channel_id);
+    if current_channel.as_deref() != Some(live.channel_id.as_str()) {
+        return Some("stale_channel");
+    }
     let storage = state.storage.clone();
     let lookup = live.device_id.clone();
     let previous = match blocking::run_db("api.interlink_ws.shadow_read", move || {

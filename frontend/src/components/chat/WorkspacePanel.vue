@@ -10,7 +10,7 @@
           <div v-if="showContainerId" class="workspace-container-id">{{ normalizedContainerId }}</div>
         </div>
         <!-- 远程工作区目标由侧栏工作区行（URL `?node=`）驱动，面板内不再有手动切换器。 -->
-        <div v-if="!remoteInterlinkActive" class="workspace-header-actions">
+        <div class="workspace-header-actions">
           <button
             class="workspace-icon-btn"
             type="button"
@@ -54,7 +54,7 @@
           </button>
         </div>
       </div>
-      <div v-if="!remoteInterlinkActive" class="workspace-search workspace-search--header">
+      <div class="workspace-search workspace-search--header">
         <i class="fa-solid fa-magnifying-glass workspace-search-icon" aria-hidden="true"></i>
         <input
           v-model="searchKeyword"
@@ -66,130 +66,117 @@
       </div>
     </div>
 
-    <!-- 远程节点：整块列表区换成影子视图；云端分支保持原样（template 不产生额外 DOM）。 -->
-    <RemoteWorkspacePanel
-      v-if="remoteInterlinkActive"
-      class="workspace-remote-host"
-      :node="remoteInterlinkNode"
-      :device-id="remoteInterlinkDeviceId"
-      :target="interlinkTarget"
-      :active="interlinkPanelActive"
-      @back-to-cloud="backToCloudWorkspace"
-    />
-    <template v-else>
-    <div
-      :class="[
-        'workspace-upload-progress',
-        `is-${uploadProgress.mode}`,
-        { active: uploadProgress.active, indeterminate: uploadProgress.indeterminate }
-      ]"
-      aria-live="polite"
-    >
-      <div class="workspace-upload-bar">
-        <div class="workspace-upload-bar-fill" :style="uploadProgressBarStyle"></div>
-      </div>
-      <div class="workspace-upload-text">{{ uploadProgressText }}</div>
-    </div>
+<div
+  :class="[
+    'workspace-upload-progress',
+    `is-${uploadProgress.mode}`,
+    { active: uploadProgress.active, indeterminate: uploadProgress.indeterminate }
+  ]"
+  aria-live="polite"
+>
+  <div class="workspace-upload-bar">
+    <div class="workspace-upload-bar-fill" :style="uploadProgressBarStyle"></div>
+  </div>
+  <div class="workspace-upload-text">{{ uploadProgressText }}</div>
+</div>
 
+<div
+  ref="listRef"
+  :class="[
+    'workspace-list',
+    {
+      dragover: draggingOver,
+      virtual: workspaceVirtual,
+      refreshing: loading && displayEntries.length > 0
+    }
+  ]"
+  @scroll="handleListScroll"
+  @dragenter="handleListDragEnter"
+  @dragover="handleListDragOver"
+  @dragleave="handleListDragLeave"
+  @drop="handleListDrop"
+  @contextmenu.prevent="openContextMenu($event, null)"
+>
+  <div v-if="loading && displayEntries.length === 0" class="workspace-skeleton" aria-hidden="true"></div>
+  <div v-else-if="displayEntries.length === 0" class="workspace-empty">{{ emptyText }}</div>
+  <template v-else>
     <div
-      ref="listRef"
+      v-if="workspacePaddingTop"
+      class="workspace-spacer"
+      :style="{ height: `${workspacePaddingTop}px` }"
+    ></div>
+    <div
+      v-for="item in workspaceEntries"
+      :key="item.entry.path"
       :class="[
-        'workspace-list',
-        {
-          dragover: draggingOver,
-          virtual: workspaceVirtual,
-          refreshing: loading && displayEntries.length > 0
-        }
+        'workspace-item',
+        item.entry.type === 'dir' ? 'is-folder' : '',
+        state.selectedPaths.has(item.entry.path) ? 'is-selected' : '',
+        selectedEntry && selectedEntry.path === item.entry.path ? 'active' : ''
       ]"
-      @scroll="handleListScroll"
-      @dragenter="handleListDragEnter"
-      @dragover="handleListDragOver"
-      @dragleave="handleListDragLeave"
-      @drop="handleListDrop"
-      @contextmenu.prevent="openContextMenu($event, null)"
+      :style="{ '--workspace-indent': `${item.depth * 16}px` }"
+      :data-workspace-path="item.entry.path"
+      :draggable="state.renamingPath === item.entry.path || isReadonlyFileSystem ? 'false' : 'true'"
+      @click="handleWorkspaceItemClick($event, item.entry)"
+      @dblclick="handleWorkspaceItemDoubleClick(item.entry)"
+      @contextmenu.prevent.stop="openContextMenu($event, item.entry)"
+      @dragstart="handleItemDragStart($event, item.entry)"
+      @dragend="handleItemDragEnd"
+      @dragenter="handleItemDragEnter($event, item.entry)"
+      @dragover="handleItemDragOver($event, item.entry)"
+      @dragleave="handleItemDragLeave($event, item.entry)"
+      @drop="handleItemDrop($event, item.entry)"
     >
-      <div v-if="loading && displayEntries.length === 0" class="workspace-skeleton" aria-hidden="true"></div>
-      <div v-else-if="displayEntries.length === 0" class="workspace-empty">{{ emptyText }}</div>
-      <template v-else>
-        <div
-          v-if="workspacePaddingTop"
-          class="workspace-spacer"
-          :style="{ height: `${workspacePaddingTop}px` }"
-        ></div>
-        <div
-          v-for="item in workspaceEntries"
-          :key="item.entry.path"
-          :class="[
-            'workspace-item',
-            item.entry.type === 'dir' ? 'is-folder' : '',
-            state.selectedPaths.has(item.entry.path) ? 'is-selected' : '',
-            selectedEntry && selectedEntry.path === item.entry.path ? 'active' : ''
-          ]"
-          :style="{ '--workspace-indent': `${item.depth * 16}px` }"
-          :data-workspace-path="item.entry.path"
-          :draggable="state.renamingPath === item.entry.path || isReadonlyFileSystem ? 'false' : 'true'"
-          @click="handleWorkspaceItemClick($event, item.entry)"
-          @dblclick="handleWorkspaceItemDoubleClick(item.entry)"
-          @contextmenu.prevent.stop="openContextMenu($event, item.entry)"
-          @dragstart="handleItemDragStart($event, item.entry)"
-          @dragend="handleItemDragEnd"
-          @dragenter="handleItemDragEnter($event, item.entry)"
-          @dragover="handleItemDragOver($event, item.entry)"
-          @dragleave="handleItemDragLeave($event, item.entry)"
-          @drop="handleItemDrop($event, item.entry)"
+      <div class="workspace-item-main">
+        <button
+          class="workspace-item-caret"
+          :class="{
+            hidden: !isTreeView || item.entry.type !== 'dir',
+            expanded: state.expanded.has(item.entry.path)
+          }"
+          type="button"
+          :aria-label="t('workspace.action.expandDir')"
+          @click.stop="toggleWorkspaceDirectory(item.entry)"
         >
-          <div class="workspace-item-main">
-            <button
-              class="workspace-item-caret"
-              :class="{
-                hidden: !isTreeView || item.entry.type !== 'dir',
-                expanded: state.expanded.has(item.entry.path)
-              }"
-              type="button"
-              :aria-label="t('workspace.action.expandDir')"
-              @click.stop="toggleWorkspaceDirectory(item.entry)"
-            >
-              <i class="fa-solid fa-chevron-right workspace-caret-icon" aria-hidden="true"></i>
-            </button>
-            <span :class="['workspace-item-icon', item.icon.className]" :title="item.icon.label">
-              <img
-                class="workspace-item-icon-img"
-                :src="item.icon.icon"
-                :alt="item.icon.label"
-              />
-            </span>
-            <div
-              class="workspace-item-name"
-              :title="state.renamingPath === item.entry.path ? '' : item.entry.name"
-            >
-              <input
-                v-if="state.renamingPath === item.entry.path"
-                v-model="state.renamingValue"
-                class="workspace-item-rename"
-                type="text"
-                :data-rename-path="item.entry.path"
-                draggable="false"
-                @click.stop
-                @pointerdown.stop
-                @mousedown.stop
-                @keydown.enter.prevent="finishWorkspaceRename(item.entry, state.renamingValue)"
-                @keydown.esc.prevent="cancelWorkspaceRename"
-                @blur="finishWorkspaceRename(item.entry, state.renamingValue)"
-              />
-              <span v-else>{{ item.entry.name }}</span>
-            </div>
-          </div>
-          <div class="workspace-item-meta">{{ getEntryMeta(item.entry) }}</div>
-        </div>
+          <i class="fa-solid fa-chevron-right workspace-caret-icon" aria-hidden="true"></i>
+        </button>
+        <span :class="['workspace-item-icon', item.icon.className]" :title="item.icon.label">
+          <img
+            class="workspace-item-icon-img"
+            :src="item.icon.icon"
+            :alt="item.icon.label"
+          />
+        </span>
         <div
-          v-if="workspacePaddingBottom"
-          class="workspace-spacer"
-          :style="{ height: `${workspacePaddingBottom}px` }"
-        ></div>
-      </template>
+          class="workspace-item-name"
+          :title="state.renamingPath === item.entry.path ? '' : item.entry.name"
+        >
+          <input
+            v-if="state.renamingPath === item.entry.path"
+            v-model="state.renamingValue"
+            class="workspace-item-rename"
+            type="text"
+            :data-rename-path="item.entry.path"
+            draggable="false"
+            @click.stop
+            @pointerdown.stop
+            @mousedown.stop
+            @keydown.enter.prevent="finishWorkspaceRename(item.entry, state.renamingValue)"
+            @keydown.esc.prevent="cancelWorkspaceRename"
+            @blur="finishWorkspaceRename(item.entry, state.renamingValue)"
+          />
+          <span v-else>{{ item.entry.name }}</span>
+        </div>
+      </div>
+      <div class="workspace-item-meta">{{ getEntryMeta(item.entry) }}</div>
     </div>
-
-    </template>
+    <div
+      v-if="workspacePaddingBottom"
+      class="workspace-spacer"
+      :style="{ height: `${workspacePaddingBottom}px` }"
+    ></div>
+  </template>
+    </div>
 
     <input ref="uploadInputRef" type="file" multiple style="display: none" @change="handleUploadInput" />
 
@@ -568,7 +555,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, reactive, ref, shallowRef, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch } from 'vue';
 import type { AxiosProgressEvent } from 'axios';
 import type { WorkspaceThemeIconResolver } from './workspaceIcons';
 import { ElMessage, ElMessageBox } from 'element-plus';
@@ -621,9 +608,6 @@ import {
   writeWorkspaceTreeCache
 } from '@/utils/workspaceTreeCache';
 import { chatPerf } from '@/utils/chatPerf';
-import RemoteWorkspacePanel from '@/views/messenger/interlink/RemoteWorkspacePanel.vue';
-import { useInterlinkNodeTarget } from '@/views/messenger/interlink/interlinkNodeTarget';
-import { useInterlinkNodes } from '@/views/messenger/interlink/useInterlinkNodes';
 
 const props = defineProps({
   agentId: {
@@ -679,10 +663,8 @@ const panelTitle = computed(() => props.title || t('workspace.title'));
 const showContainerId = computed(() => props.showContainerId);
 const preserveDockLayout = computed(() => props.preserveDockLayout);
 const sidebarVisible = computed(() => props.sidebarVisible);
-// 远程节点模式下不跑云端取数与自动刷新（`remoteInterlinkActive` 是懒算的，声明在后面）。
-const shouldRunWorkspaceBackgroundWork = computed(
-  () => sidebarVisible.value !== false && remoteInterlinkActive.value !== true
-);
+// KeepAlive 抽屉隐藏时不跑云端取数与自动刷新。
+const shouldRunWorkspaceBackgroundWork = computed(() => sidebarVisible.value !== false);
 const desktopLocalMode = false;
 const getDesktopBridge = (): {
   openPathWithDefaultApp?: (targetPath: string) => Promise<boolean> | boolean;
@@ -1153,44 +1135,6 @@ const isReadonlyFileSystem = computed(() => activeFileSystem.value.readonly === 
 const supportsWorkspaceEditors = computed(
   () => activeFileSystem.value.supportsWorkspaceEditors === true && props.disableWorkspaceEditors !== true
 );
-
-// ------------------------------------------------------------- 互通远程节点（§6.3）
-
-/** 远程视图只挂在真实云端工作区上，技能等自定义 fileSystem 不跟随 `?node=`。 */
-const interlinkRemoteAllowed = computed(() => isWorkspaceFileSystem.value);
-
-const interlinkHostVisible = ref(true);
-onActivated(() => {
-  interlinkHostVisible.value = true;
-});
-onDeactivated(() => {
-  interlinkHostVisible.value = false;
-});
-
-const interlinkHostActive = computed(
-  () => interlinkRemoteAllowed.value && interlinkHostVisible.value && sidebarVisible.value !== false
-);
-
-const interlink = useInterlinkNodes({ active: interlinkHostActive });
-const {
-  target: interlinkTarget,
-  deviceId: remoteInterlinkDeviceId,
-  isRemote: interlinkIsRemote,
-  backToCloud: backToCloudWorkspace
-} = useInterlinkNodeTarget();
-
-/** 选中本地节点：列表区换成影子视图，云端取数与自动刷新全部停摆。 */
-const remoteInterlinkActive = computed(
-  () => interlinkRemoteAllowed.value && interlinkIsRemote.value
-);
-const interlinkPanelActive = computed(
-  () => remoteInterlinkActive.value && interlinkHostVisible.value && sidebarVisible.value !== false
-);
-const remoteInterlinkNode = computed(() => {
-  const deviceId = remoteInterlinkDeviceId.value;
-  if (!deviceId) return null;
-  return interlink.nodes.value.find((item) => item.node_id === deviceId) || null;
-});
 
 const listRef = ref(null);
 const uploadInputRef = ref(null);

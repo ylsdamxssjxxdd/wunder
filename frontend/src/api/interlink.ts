@@ -68,6 +68,12 @@ export type InterlinkCommandKind =
 
 export type InterlinkCommandDirection = 'c2l' | 'l2c' | (string & {});
 
+/** §6.3 本地工作区行：节点 meta 携带的精简列表（id + 名称，来自影子投影）。 */
+export type InterlinkNodeWorkspace = {
+  workspace_id: string;
+  name: string;
+};
+
 export type InterlinkNode = {
   node_id: string;
   node_type: InterlinkNodeType | string;
@@ -81,6 +87,22 @@ export type InterlinkNode = {
   meta: Record<string, unknown>;
   /** §5.3 kill switch；契约把它放在节点 meta 里，缺省视为允许。 */
   interlink_enabled: boolean;
+};
+
+/** 读取节点 meta 里的本地工作区列表（缺失/损坏一律得到空数组）。 */
+export const interlinkNodeWorkspaces = (node: InterlinkNode | null | undefined): InterlinkNodeWorkspace[] => {
+  const raw = node?.meta?.workspaces;
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((item) => {
+      const record = item && typeof item === 'object' ? (item as Record<string, unknown>) : {};
+      return {
+        workspace_id: String(record.workspace_id ?? '').trim(),
+        name: String(record.name ?? '').trim()
+      };
+    })
+    .filter((item) => item.workspace_id !== '' || item.name !== '')
+    .slice(0, 20);
 };
 
 export type InterlinkNodeListPage = {
@@ -115,15 +137,22 @@ export type InterlinkShadowTreeEntry = {
   mtime: string;
 };
 
+/** §6.1 单个本地工作区的投影：树 + 用量；`workspace_id` 为空表示默认目录。 */
+export type InterlinkShadowWorkspace = {
+  workspace_id: string;
+  name: string;
+  tree: InterlinkShadowTreeEntry[];
+  truncated: boolean;
+  usage: Record<string, unknown>;
+};
+
 export type InterlinkShadow = {
   device_id: string;
   revision: number;
   summary: Record<string, unknown> | null;
   threads: InterlinkShadowThread[];
   tasks: InterlinkShadowTask[];
-  tree: InterlinkShadowTreeEntry[];
-  tree_truncated: boolean;
-  usage: Record<string, unknown>;
+  workspaces: InterlinkShadowWorkspace[];
   synced_at: string;
 };
 
@@ -273,6 +302,7 @@ export const fetchInterlinkNodes = async (
 
 const normalizeShadow = (raw: Record<string, unknown>): InterlinkShadow => {
   const workspace = asRecord(raw.workspace);
+  const workspaceEntries = Array.isArray(workspace.workspaces) ? workspace.workspaces : [];
   return {
     device_id: asText(raw.device_id),
     revision: asNumber(raw.revision),
@@ -292,14 +322,18 @@ const normalizeShadow = (raw: Record<string, unknown>): InterlinkShadow => {
       enabled: asBoolean(item.enabled),
       next_run_at: asText(item.next_run_at)
     })),
-    tree: asList(workspace.tree).map((item) => ({
-      path: asText(item.path),
-      kind: asText(item.kind),
-      size: asNumber(item.size),
-      mtime: asText(item.mtime)
+    workspaces: workspaceEntries.slice(0, 20).map((item) => ({
+      workspace_id: asText(item.workspace_id),
+      name: asText(item.name),
+      tree: asList(item.tree).map((entry) => ({
+        path: asText(entry.path),
+        kind: asText(entry.kind),
+        size: asNumber(entry.size),
+        mtime: asText(entry.mtime)
+      })),
+      truncated: item.truncated === true,
+      usage: asRecord(item.usage)
     })),
-    tree_truncated: workspace.truncated === true,
-    usage: asRecord(workspace.usage),
     synced_at: asText(raw.synced_at)
   };
 };

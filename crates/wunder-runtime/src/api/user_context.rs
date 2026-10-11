@@ -41,6 +41,8 @@ pub async fn resolve_user(
     };
     let token_user = token_auth.as_ref().map(|auth| auth.user.clone());
     let token_session_scope = token_auth.as_ref().map(|auth| auth.session_scope.clone());
+    let token_presence_kind =
+        crate::services::presence::client_kind_from_scope(token_session_scope.as_deref());
     let token_is_admin = token_user
         .as_ref()
         .map(UserStore::is_admin)
@@ -56,7 +58,10 @@ pub async fn resolve_user(
     if let Some(requested) = requested {
         if let Some(user) = token_user.as_ref() {
             if user.user_id == requested {
-                state.control.presence.touch_user(&user.user_id, now_ts());
+                state
+                    .control
+                    .presence
+                    .touch_user(&user.user_id, token_presence_kind, now_ts());
                 return Ok(ResolvedUser {
                     user: user.clone(),
                     session_scope: token_session_scope.clone(),
@@ -65,7 +70,10 @@ pub async fn resolve_user(
             if requested_user_matches_token_scope(requested, &user.user_id) {
                 let mut scoped = user.clone();
                 scoped.user_id = requested.to_string();
-                state.control.presence.touch_user(&user.user_id, now_ts());
+                state
+                    .control
+                    .presence
+                    .touch_user(&user.user_id, token_presence_kind, now_ts());
                 return Ok(ResolvedUser {
                     user: scoped,
                     session_scope: token_session_scope.clone(),
@@ -81,7 +89,10 @@ pub async fn resolve_user(
             .await
             .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
             if let Some(user) = user {
-                state.control.presence.touch_user(&user.user_id, now_ts());
+                state
+                    .control
+                    .presence
+                    .touch_user(&user.user_id, token_presence_kind, now_ts());
                 return Ok(ResolvedUser {
                     user,
                     session_scope: None,
@@ -100,7 +111,10 @@ pub async fn resolve_user(
     }
 
     if let Some(user) = token_user {
-        state.control.presence.touch_user(&user.user_id, now_ts());
+        state
+            .control
+            .presence
+            .touch_user(&user.user_id, token_presence_kind, now_ts());
         return Ok(ResolvedUser {
             user,
             session_scope: token_session_scope,

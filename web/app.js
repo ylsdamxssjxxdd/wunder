@@ -43,13 +43,9 @@ import {
 } from "./modules/monitor.js?v=20261011-01";
 import { initUserManagementPanel, loadUserStats } from "./modules/users.js?v=20260215-01";
 import { initUserAccountsPanel, loadUserAccounts } from "./modules/user-accounts.js?v=20260518-01";
-import { initExternalLinksPanel, loadExternalLinks } from "./modules/external-links.js?v=20260215-01";
 import { initPresetAgentsPanel, loadPresetAgents } from "./modules/preset-agents.js?v=20260518-01";
 import { initCompanionsPanel, loadCompanions } from "./modules/companions.js?v=20260506-01";
 import { initOrgUnitsPanel, loadOrgUnits } from "./modules/org-units.js?v=20260215-01";
-import { initChannelsPanel, loadChannelAccounts } from "./modules/channels.js?v=20260215-01";
-import { initCloudPanel, loadCloudPanel } from "./modules/cloud.js?v=20261008-01";
-import { initInterlinkPanel, loadInterlinkFleet } from "./modules/interlink.js?v=20261011-01";
 
 import { initMcpPanel, loadMcpServers } from "./modules/mcp.js?v=20260215-01";
 import {
@@ -69,11 +65,9 @@ import {
 import { initKnowledgePanel, loadKnowledgeConfig } from "./modules/knowledge.js?v=20260603-02";
 
 import { initLlmPanel, loadLlmConfig } from "./modules/llm.js?v=20260923-04";
-import { initUserTools, resetUserToolsState } from "./modules/user-tools.js?v=20260926-01";
 
 import { initSettingsPanel, loadAdminDefaults } from "./modules/settings.js?v=20260602-01";
 
-import { initA2aServicesPanel, loadA2aServices } from "./modules/a2a-services.js?v=20260215-01";
 import { initApiDocsPanel } from "./modules/api-docs.js?v=20260215-01";
 import { initThroughputPanel, toggleThroughputPolling } from "./modules/throughput.js?v=20260925-07";
 import { initPerformancePanel } from "./modules/performance.js?v=20260215-01";
@@ -164,19 +158,9 @@ const panelMap = {
 
   users: { panel: elements.usersPanel, nav: elements.navUsers },
   userAccounts: { panel: elements.userAccountsPanel, nav: elements.navUserAccounts },
-  externalLinks: { panel: elements.externalLinksPanel, nav: elements.navExternalLinks },
   presetAgents: { panel: elements.presetAgentsPanel, nav: elements.navPresetAgents },
   companions: { panel: elements.companionsPanel, nav: elements.navCompanions },
   orgUnits: { panel: elements.orgUnitsPanel, nav: elements.navOrgUnits },
-
-  channels: { panel: elements.channelsPanel, nav: elements.navChannels },
-  cloud: { panel: elements.cloudPanel, nav: elements.navCloud },
-
-  // 互通舰队（I3）：DOM 由 index.html 提供，此处按 id 直接取，避免改动 elements.js
-  interlink: {
-    panel: document.getElementById("interlinkPanel"),
-    nav: document.getElementById("navInterlink"),
-  },
 
   llm: { panel: elements.llmPanel, nav: elements.navLlm },
 
@@ -187,8 +171,6 @@ const panelMap = {
   mcp: { panel: elements.mcpPanel, nav: elements.navBuiltin },
 
   lsp: { panel: elements.lspPanel, nav: elements.navLsp },
-
-  a2aServices: { panel: elements.a2aServicesPanel, nav: elements.navBuiltin },
 
   skills: { panel: elements.skillsPanel, nav: elements.navBuiltin },
   toolVisibility: { panel: elements.toolVisibilityPanel, nav: elements.navBuiltin },
@@ -213,7 +195,7 @@ const panelMap = {
 
 };
 
-const TOOL_MANAGER_PANELS = new Set(["builtin", "mcp", "knowledge", "a2aServices", "skills", "toolVisibility"]);
+const TOOL_MANAGER_PANELS = new Set(["builtin", "mcp", "knowledge", "skills", "toolVisibility"]);
 
 const syncToolManagerShortcutState = (activePanel) => {
   const currentPanel = TOOL_MANAGER_PANELS.has(activePanel) ? activePanel : "";
@@ -473,18 +455,6 @@ const bindNavigation = () => {
     }
   });
 
-  elements.navExternalLinks.addEventListener("click", async () => {
-    switchPanel("externalLinks");
-    if (!state.panelLoaded.externalLinks) {
-      try {
-        await loadExternalLinks({ silent: true });
-        state.panelLoaded.externalLinks = true;
-      } catch (error) {
-        appendLog(t("app.panelLoadFailed", { panel: t("panel.externalLinks"), message: error.message }));
-      }
-    }
-  });
-
   if (elements.navPresetAgents) {
     elements.navPresetAgents.addEventListener("click", async () => {
       switchPanel("presetAgents");
@@ -525,47 +495,6 @@ const bindNavigation = () => {
     }
   });
 
-  elements.navChannels.addEventListener("click", async () => {
-    switchPanel("channels");
-    if (!state.panelLoaded.channels) {
-      try {
-        await loadChannelAccounts();
-        state.panelLoaded.channels = true;
-      } catch (error) {
-        appendLog(t("app.panelLoadFailed", { panel: t("panel.channels"), message: error.message }));
-      }
-    }
-  });
-
-  if (elements.navCloud) {
-    elements.navCloud.addEventListener("click", async () => {
-      switchPanel("cloud");
-      if (!state.panelLoaded.cloud) {
-        try {
-          await loadCloudPanel();
-          state.panelLoaded.cloud = true;
-        } catch (error) {
-          appendLog(t("app.panelLoadFailed", { panel: t("panel.cloud"), message: error.message }));
-        }
-      }
-    });
-  }
-
-  // 互通舰队（I3）：首次进入时拉取 /wunder/interlink/nodes
-  if (panelMap.interlink?.nav) {
-    panelMap.interlink.nav.addEventListener("click", async () => {
-      switchPanel("interlink");
-      if (!state.panelLoaded.interlink) {
-        try {
-          await loadInterlinkFleet();
-          state.panelLoaded.interlink = true;
-        } catch (error) {
-          appendLog(t("app.panelLoadFailed", { panel: t("panel.interlink"), message: error.message }));
-        }
-      }
-    });
-  }
-
   // 点击侧边栏标题进入系统介绍面板
 
   if (elements.navThroughput) {
@@ -605,32 +534,6 @@ const bindNavigation = () => {
     loadWorkspace();
 
   });
-
-  const openA2aServicesPanel = async () => {
-
-    switchPanel("a2aServices");
-
-    if (!state.panelLoaded.a2aServices) {
-
-      try {
-
-        await loadA2aServices();
-
-        state.panelLoaded.a2aServices = true;
-
-      } catch (error) {
-
-        elements.a2aServiceList.textContent = t("common.loadFailedWithMessage", {
-
-          message: error.message,
-
-        });
-
-      }
-
-    }
-
-  };
 
   const openMcpPanel = async () => {
 
@@ -754,7 +657,6 @@ const bindNavigation = () => {
     builtin: openBuiltinPanel,
     mcp: openMcpPanel,
     knowledge: openKnowledgePanel,
-    a2aServices: openA2aServicesPanel,
     skills: openSkillsPanel,
     toolVisibility: openToolVisibilityPanel,
   };
@@ -763,7 +665,6 @@ const bindNavigation = () => {
     toolManagerOpenBuiltin: "builtin",
     toolManagerOpenMcp: "mcp",
     toolManagerOpenKnowledge: "knowledge",
-    toolManagerOpenA2aServices: "a2aServices",
     toolManagerOpenSkills: "skills",
     toolManagerOpenSkillVisibility: "toolVisibility",
   };
@@ -793,7 +694,6 @@ const bindNavigation = () => {
     const mirrorTargets = [
       elements.mcpPanel,
       elements.knowledgePanel,
-      elements.a2aServicesPanel,
       elements.skillsPanel,
       elements.toolVisibilityPanel,
     ];
@@ -1144,8 +1044,6 @@ const bindGlobalInputs = () => {
 
     resetToolSelection();
 
-    resetUserToolsState();
-
     loadAvailableTools().catch((error) => {
 
       reportToolListLoadFailure(error.message);
@@ -1218,13 +1116,9 @@ const bootstrap = async () => {
 
   initUserManagementPanel();
   initUserAccountsPanel();
-  initExternalLinksPanel();
   initPresetAgentsPanel();
   initCompanionsPanel();
   initOrgUnitsPanel();
-  initChannelsPanel();
-  initCloudPanel();
-  initInterlinkPanel();
 
   initMcpPanel();
 
@@ -1242,11 +1136,7 @@ const bootstrap = async () => {
 
   initPromptPanel();
 
-  initA2aServicesPanel();
-
   initMultimodalDebugPanel();
-
-  initUserTools();
 
   initSettingsPanel();
   initApiDocsPanel();
@@ -1363,16 +1253,6 @@ const bootstrap = async () => {
     loadUserAccounts().catch((error) => {
 
       appendLog(t("app.panelLoadFailed", { panel: t("panel.userAccounts"), message: error.message }));
-
-    });
-
-  }
-
-  if (initialPanel === "externalLinks") {
-
-    loadExternalLinks({ silent: true }).catch((error) => {
-
-      appendLog(t("app.panelLoadFailed", { panel: t("panel.externalLinks"), message: error.message }));
 
     });
 

@@ -628,7 +628,9 @@ async function load(): Promise<void> {
   loadError.value = false
   try {
     const snapshot = await getThreadLogSnapshot(sessionId)
-    const payload = snapshot?.data
+    // 快照端点的 HTTP 体是 { data: { cursor, turns, items, blocks, item_total } }，
+    // 而 http.ts 的拦截器返回完整 AxiosResponse，故需再取一层 .data 才能拿到快照本体。
+    const payload = (snapshot?.data as { data?: unknown } | undefined)?.data
     rawTurns.value = attachTurnItems(payload)
   } catch {
     loadError.value = true

@@ -1347,6 +1347,12 @@ pub trait InterlinkStore {
     fn upsert_interlink_shadow(&self, record: &InterlinkShadowRecord) -> Result<()>;
     fn get_interlink_shadow(&self, device_id: &str) -> Result<Option<InterlinkShadowRecord>>;
     fn get_interlink_shadow_revision(&self, device_id: &str) -> Result<i64>;
+    /// One batched read for the node listing: per device, the shadow revision
+    /// plus the slim workspace list, never the tree payload.
+    fn list_interlink_shadow_overviews(
+        &self,
+        device_ids: &[String],
+    ) -> Result<Vec<InterlinkShadowOverview>>;
     fn delete_interlink_shadow(&self, device_id: &str) -> Result<()>;
     /// Drop shadows whose node has not re-synced for `retention_days`, deleting
     /// at most `max_rows` per call so one maintenance tick stays bounded.

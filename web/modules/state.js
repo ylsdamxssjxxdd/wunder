@@ -32,13 +32,11 @@ export const state = {
     docsSite: false,
     mcp: false,
     lsp: false,
-    a2aServices: false,
     builtin: false,
     skills: false,
     toolVisibility: false,
     knowledge: false,
     llm: false,
-    cloud: false,
   },
   companions: {
     items: [],
@@ -68,24 +66,6 @@ export const state = {
   lsp: {
     config: null,
     status: [],
-  },
-  a2aServices: {
-    services: [],
-    selectedIndex: -1,
-    saveVersion: 0,
-  },
-  channels: {
-    accounts: [],
-    selectedIndex: -1,
-    filters: {
-      keyword: "",
-      status: "",
-      activity: "",
-      issueOnly: false,
-    },
-  },
-  a2aServiceModal: {
-    index: null,
   },
   mcpModal: {
     index: null,
@@ -130,35 +110,6 @@ export const state = {
     sharedTools: [],
     selected: new Set(),
     loaded: false,
-  },
-  userTools: {
-    modal: {
-      activeTab: "mcp",
-    },
-    mcp: {
-      servers: [],
-      toolsByIndex: [],
-      selectedIndex: -1,
-      saveVersion: 0,
-      loaded: false,
-      lastAction: null,
-    },
-    skills: {
-      skills: [],
-      enabled: [],
-      shared: [],
-      detailVersion: 0,
-      loaded: false,
-      lastAction: null,
-    },
-    knowledge: {
-      bases: [],
-      selectedIndex: -1,
-      files: [],
-      activeFile: "",
-      fileContent: "",
-      loaded: false,
-    },
   },
   llm: {
     configs: {},
@@ -241,19 +192,6 @@ export const state = {
       total: 0,
     },
     toolAccess: {},
-  },
-  // 云端接入（设备 / 调用记账 / 设备日志）；子视图由 web/modules/cloud.js 惰性初始化
-  cloud: {
-    activeTab: "devices",
-    devices: null,
-    calls: null,
-    logs: null,
-  },
-  externalLinks: {
-    list: [],
-    selectedId: "",
-    loaded: false,
-    loading: false,
   },
   orgUnits: {
     list: [],

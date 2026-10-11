@@ -23,17 +23,10 @@
       </div>
     </div>
 
-    <!-- §6.3 远程工作区：目标由侧栏工作区行的设备选择（URL `?node=`）驱动，面板内不再有手动切换器。 -->
-    <RemoteWorkspacePanel
-      v-if="remoteInterlinkActive"
-      class="workspace-files-remote"
-      :node="remoteInterlinkNode"
-      :device-id="remoteInterlinkDeviceId"
-      :target="interlinkTarget"
-      @back-to-cloud="backToCloudWorkspace"
-    />
+    <div v-if="remoteTruncated" class="workspace-files-remote-note" aria-live="polite">
+      {{ t('interlink.workspace.treeTruncated') }}
+    </div>
 
-    <template v-else>
     <div v-if="selectionMode" class="workspace-files-selection">
       <span class="workspace-files-selection-count">
         {{ t('messenger.filesArea.selectedCount', { count: selectedList.length }) }}
@@ -51,10 +44,12 @@
       :rows="rows"
       :active-path="activePath"
       :highlighted-path="highlightedPath"
-      :loading="rootLoading"
-      :error="rootError"
+      :loading="filesLoading"
+      :error="filesError"
       :selection-mode="selectionMode"
       :selected-paths="selectedList"
+      :read-only="remoteInterlinkActive"
+      :empty-hint="remoteEmptyHint"
       @toggle-dir="handleToggleDirectory"
       @load-more="handleLoadMore"
       @activate="handleActivateRow"
@@ -65,7 +60,7 @@
       @command="handleRowCommand"
     />
 
-    <div v-if="uploadTasks.length" class="workspace-files-uploads">
+    <div v-if="!remoteInterlinkActive && uploadTasks.length" class="workspace-files-uploads">
       <div class="workspace-files-uploads-head">
         <span>{{ t('messenger.filesArea.uploadingCount', { count: uploadTasks.length }) }}</span>
         <button type="button" @click="uploadQueue.clearSettled()">
@@ -102,7 +97,6 @@
         </span>
       </div>
     </div>
-    </template>
   </div>
 
   <WorkspaceFilePreviewDialog
@@ -158,18 +152,32 @@ import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, reactive, r
 import { ElMessage, ElMessageBox } from 'element-plus';
 
 import { useI18n } from '@/i18n';
+import type { InterlinkShadowWorkspace } from '@/api/interlink';
 import {
+  extractWorkspaceResourceExtension,
+  normalizeWorkspacePreviewBlob,
   resolveWorkspacePreviewTooLargeHint,
+  resolveWorkspacePreviewUnsupportedHint,
   resolveWorkspaceResourcePreviewKind
 } from '@/utils/workspaceResourcePreview';
+import { saveObjectUrlAsFile } from '@/utils/workspaceResourceCards';
 import WorkspaceNewFileDialog, {
   type WorkspaceNewFileTemplate
 } from '@/components/chat/WorkspaceNewFileDialog.vue';
 import WorkspaceFilePreviewDialog from './WorkspaceFilePreviewDialog.vue';
 import WorkspaceFileTree from './WorkspaceFileTree.vue';
-import RemoteWorkspacePanel from '@/views/messenger/interlink/RemoteWorkspacePanel.vue';
 import { useInterlinkNodeTarget } from '@/views/messenger/interlink/interlinkNodeTarget';
 import { useInterlinkNodes } from '@/views/messenger/interlink/useInterlinkNodes';
+import { useInterlinkShadow } from '@/views/messenger/interlink/useInterlinkShadow';
+import { listRemoteDirectory, readRemoteFile } from '@/views/messenger/interlink/interlinkCommandRunner';
+import {
+  DISABLED_REASON_KEY,
+  REMOTE_PREVIEW_MAX_BYTES,
+  groupShadowTreeByDirectory,
+  normalizeRemoteDirectoryEntries,
+  resolveDisabledReason,
+  sortEntriesByName
+} from '@/views/messenger/interlink/interlinkNodeModel';
 import {
   clearWorkspaceRoot,
   createWorkspaceDirectory,
@@ -178,6 +186,7 @@ import {
   deleteWorkspacePaths,
   downloadWorkspaceDirectoryArchive,
   downloadWorkspacePath,
+  fetchWorkspaceDirectory,
   fetchWorkspacePathBlob,
   fetchWorkspaceStatsSnapshot,
   isWorkspaceEndpointMissing,
@@ -197,6 +206,7 @@ import {
   isValidWorkspaceEntryName,
   joinWorkspacePath,
   normalizeWorkspaceRelativePath,
+  workspaceFileExtension,
   workspaceParentPath,
   type WorkspaceVisibleRow
 } from './workspaceFileModel';
@@ -290,9 +300,73 @@ const workspaceNewFileTemplates = computed<WorkspaceNewFileTemplate[]>(() => [
   }
 ]);
 
+// ---------------------------------------------------------- 互通远程节点（§6.3）
+// 目标工作区由路由 `?node=&ws=` 决定（侧栏工作区行是唯一入口），面板只跟随；
+// 云端与远程共用同一棵目录树、同一套行渲染，差异只在数据源与只读状态。
+
+const interlink = useInterlinkNodes({});
+const {
+  target: interlinkTarget,
+  deviceId: remoteInterlinkDeviceId,
+  workspaceId: interlinkWorkspaceId,
+  isRemote: interlinkIsRemote
+} = useInterlinkNodeTarget();
+
+/** 选中本地设备＝云端目录整块让位给影子视图（默认云端行为零变化）。 */
+const remoteInterlinkActive = computed(() => interlinkIsRemote.value);
+const remoteInterlinkNode = computed(() => {
+  const deviceId = remoteInterlinkDeviceId.value;
+  if (!deviceId) return null;
+  return interlink.nodes.value.find((item) => item.node_id === deviceId) || null;
+});
+
+const listBlockedReason = computed(() => {
+  if (!remoteInterlinkActive.value) return '';
+  const reason = resolveDisabledReason(remoteInterlinkNode.value, 'workspace.list');
+  return reason ? t(DISABLED_REASON_KEY[reason]) : '';
+});
+
+const readBlockedReason = computed(() => {
+  if (!remoteInterlinkActive.value) return '';
+  const reason = resolveDisabledReason(remoteInterlinkNode.value, 'workspace.read');
+  return reason ? t(DISABLED_REASON_KEY[reason]) : '';
+});
+
+// 每次切换目标都换一个 controller：旧命令轮询不会继续回填状态。
+let directoryAbort = createAbortHost();
+
+function createAbortHost(): { controller: AbortController; signal: AbortSignal } {
+  const controller = new AbortController();
+  return { controller, signal: controller.signal };
+}
+
 const tree = useWorkspaceFileTree({
   onError: (message) => {
     if (message) ElMessage.error(message);
+  },
+  loadPage: async (path, pageOptions) => {
+    if (!remoteInterlinkActive.value) return fetchWorkspaceDirectory(path, pageOptions);
+    const outcome = await listRemoteDirectory({
+      to: interlinkTarget.value,
+      workspaceId: interlinkWorkspaceId.value || undefined,
+      path,
+      offset: pageOptions.offset,
+      limit: pageOptions.limit,
+      signal: directoryAbort.signal
+    });
+    if (outcome.failure) {
+      const thrown = new Error(outcome.failure) as Error & { code?: string };
+      // 切换目标导致的主动取消不渲染成错误。
+      if (directoryAbort.signal.aborted) thrown.code = 'ERR_CANCELED';
+      throw thrown;
+    }
+    return {
+      path,
+      entries: normalizeRemoteDirectoryEntries(outcome.entries),
+      total: outcome.total,
+      offset: pageOptions.offset,
+      limit: pageOptions.limit
+    };
   }
 });
 const {
@@ -301,7 +375,6 @@ const {
   highlightedPath,
   selectedList,
   selectionMode,
-  toggleDirectory,
   loadMore,
   refreshDirectory,
   loadDirectory,
@@ -321,24 +394,65 @@ const newFileDialog = reactive({ visible: false, directory: '' });
 const rootLoading = computed(() => Boolean(tree.directories.get('')?.loading));
 const rootError = computed(() => String(tree.directories.get('')?.error || ''));
 
-// ---------------------------------------------------------- 互通远程节点（§6.3）
-// 目标节点由路由 `?node=` 决定（侧栏工作区行是唯一入口），面板只跟随。
+// ----------------------------------------------------------------- shadow seed
+// 影子投影（§6.1）负责两件事：离线时仍有可浏览的目录快照；在线时先给内容再换实时列表。
 
-const interlink = useInterlinkNodes({});
-const {
-  target: interlinkTarget,
-  deviceId: remoteInterlinkDeviceId,
-  isRemote: interlinkIsRemote,
-  backToCloud: backToCloudWorkspace
-} = useInterlinkNodeTarget();
+const shadowApi = useInterlinkShadow();
 
-/** 选中本地设备＝云端目录整块让位给影子视图（默认云端行为零变化）。 */
-const remoteInterlinkActive = computed(() => interlinkIsRemote.value);
-const remoteInterlinkNode = computed(() => {
-  const deviceId = remoteInterlinkDeviceId.value;
-  if (!deviceId) return null;
-  return interlink.nodes.value.find((item) => item.node_id === deviceId) || null;
+const remoteShadowWorkspace = computed<InterlinkShadowWorkspace | null>(() => {
+  if (!remoteInterlinkActive.value) return null;
+  const list = shadowApi.shadow.value?.workspaces || [];
+  if (!list.length) return null;
+  const wanted = interlinkWorkspaceId.value;
+  if (wanted) {
+    const found = list.find((item) => item.workspace_id === wanted);
+    if (found) return found;
+  }
+  return list[0];
 });
+
+const remoteTruncated = computed(() => remoteShadowWorkspace.value?.truncated === true);
+const remoteEmptyHint = computed(() =>
+  remoteInterlinkActive.value ? t('interlink.workspace.emptyShadow') : ''
+);
+
+const filesLoading = computed(() => {
+  if (!remoteInterlinkActive.value) return rootLoading.value;
+  return (shadowApi.loading.value || rootLoading.value) && !rows.value.length;
+});
+
+const filesError = computed(() => {
+  if (!remoteInterlinkActive.value) return rootError.value;
+  if (rootError.value || rows.value.length) return rootError.value;
+  return String(shadowApi.error.value || '');
+});
+
+const seedTreeFromShadow = (): void => {
+  const keepExpanded = Array.from(tree.expandedPaths);
+  tree.reset();
+  const entries = remoteShadowWorkspace.value?.tree || [];
+  const groups = groupShadowTreeByDirectory(entries);
+  groups.forEach((list, parent) => {
+    tree.patchDirectoryEntries(parent, sortEntriesByName(list));
+  });
+  // 根节点必须存在，否则行铺平函数走不到任何目录。
+  if (!groups.has('')) tree.patchDirectoryEntries('', []);
+  keepExpanded.forEach((path) => {
+    if (groups.has(path)) tree.expandedPaths.add(path);
+  });
+};
+
+/** 进入一个远程工作区：先铺影子快照，在线时再把根目录换成实时列表。 */
+const enterRemoteWorkspace = async (): Promise<void> => {
+  if (!remoteInterlinkActive.value) return;
+  directoryAbort.controller.abort();
+  directoryAbort = createAbortHost();
+  closePreview();
+  await shadowApi.load(remoteInterlinkDeviceId.value || '');
+  if (!remoteInterlinkActive.value) return;
+  seedTreeFromShadow();
+  if (!listBlockedReason.value) void tree.loadDirectory('', { force: true });
+};
 
 // ------------------------------------------------------------------ uploads
 
@@ -554,11 +668,34 @@ const scheduleStatsRefresh = () => {
 
 // --------------------------------------------------------------- tree wiring
 
+/**
+ * 展开/收起一个目录。云端直接翻树；远程在线展开时把影子快照换成实时列表，
+ * 离线或无能力时只翻种子内容，不发命令。
+ */
+const toggleDirectoryPath = async (path: string): Promise<void> => {
+  if (!remoteInterlinkActive.value) {
+    await tree.toggleDirectory(path);
+    return;
+  }
+  const wasExpanded = tree.isExpanded(path);
+  const seeded = Boolean(tree.getDirectory(path)?.loaded);
+  if (listBlockedReason.value) {
+    if (!seeded) {
+      ElMessage.warning(listBlockedReason.value);
+      return;
+    }
+    if (!wasExpanded) await tree.toggleDirectory(path);
+    return;
+  }
+  await tree.toggleDirectory(path);
+  if (!wasExpanded && seeded) await tree.refreshDirectory(path);
+};
+
 const handleActivateRow = (row: WorkspaceVisibleRow) => {
   setActivePath(row.path);
   if (row.kind === 'dir') {
     uploadTarget.value = row.path;
-    void toggleDirectory(row.path);
+    void toggleDirectoryPath(row.path);
     return;
   }
   uploadTarget.value = workspaceParentPath(row.path);
@@ -567,7 +704,7 @@ const handleActivateRow = (row: WorkspaceVisibleRow) => {
 const handleOpenRow = (row: WorkspaceVisibleRow) => {
   if (row.kind === 'dir') {
     uploadTarget.value = row.path;
-    void toggleDirectory(row.path);
+    void toggleDirectoryPath(row.path);
     return;
   }
   void openPreview(row.path, row.name, row.size);
@@ -575,7 +712,7 @@ const handleOpenRow = (row: WorkspaceVisibleRow) => {
 
 const handleToggleDirectory = (path: string) => {
   uploadTarget.value = normalizeWorkspaceRelativePath(path);
-  void toggleDirectory(path);
+  void toggleDirectoryPath(path);
 };
 
 const handleLoadMore = (path: string) => {
@@ -584,6 +721,15 @@ const handleLoadMore = (path: string) => {
 
 const handleRefresh = async () => {
   if (refreshing.value) return;
+  if (remoteInterlinkActive.value) {
+    refreshing.value = true;
+    try {
+      await enterRemoteWorkspace();
+    } finally {
+      refreshing.value = false;
+    }
+    return;
+  }
   refreshing.value = true;
   try {
     await Promise.all([refreshDirectory(''), loadStats()]);
@@ -664,6 +810,18 @@ const handleNewFileConfirm = async (payload: { name: string; content: string; ty
 // -------------------------------------------------------------- row commands
 
 const handleRowCommand = async (command: string, row: WorkspaceVisibleRow | null) => {
+  // 远程是只读投影：菜单只有「打开目录 / 预览」，写类动作不存在。
+  if (remoteInterlinkActive.value) {
+    if (!row) return;
+    if (command === 'toggle') {
+      await toggleDirectoryPath(row.path);
+      return;
+    }
+    if (command === 'preview') {
+      await openPreview(row.path, row.name, row.size);
+    }
+    return;
+  }
   // 空白区菜单没有宿主行：创建落在当前目录，其余三项承接自已下线的头部 ⋯。
   switch (command) {
     case 'new-dir':
@@ -687,7 +845,7 @@ const handleRowCommand = async (command: string, row: WorkspaceVisibleRow | null
   if (!row) return;
   switch (command) {
     case 'toggle':
-      await toggleDirectory(row.path);
+      await toggleDirectoryPath(row.path);
       return;
     case 'preview':
       await openPreview(row.path, row.name, row.size);
@@ -907,7 +1065,14 @@ const releasePreviewUrl = () => {
   }
 };
 
+let previewAbort: AbortController | null = null;
+let previewSerial = 0;
+
 const openPreview = async (path: string, name: string, size: number) => {
+  if (remoteInterlinkActive.value) {
+    await openRemoteFilePreview(path, name, size);
+    return;
+  }
   const kind = resolveWorkspaceResourcePreviewKind(name, 0) as PreviewKind;
   if (kind === 'onlyoffice') {
     officeDialog.path = path;
@@ -971,19 +1136,132 @@ const openPreview = async (path: string, name: string, size: number) => {
   }
 };
 
+/**
+ * 远程只读预览：内容走一条 L0 `workspace.read` 命令；编辑器类文件
+ * （OnlyOffice/drawio 依赖云端文件端点）降级为提示。
+ */
+const openRemoteFilePreview = async (path: string, name: string, size: number) => {
+  const blocked = readBlockedReason.value;
+  if (blocked) {
+    ElMessage.warning(blocked);
+    return;
+  }
+
+  const extension = extractWorkspaceResourceExtension(name) || workspaceFileExtension(name);
+  previewSerial += 1;
+  const serial = previewSerial;
+  releasePreviewUrl();
+  Object.assign(preview, {
+    visible: true,
+    loading: true,
+    title: name,
+    path,
+    metaLabel: `${path}  ·  ${formatWorkspaceBytes(size)}`,
+    hint: '',
+    error: '',
+    tooLarge: false,
+    editable: false,
+    saving: false,
+    previewKind: 'unsupported' as PreviewKind,
+    previewUrl: '',
+    content: ''
+  });
+
+  if (Number(size) > REMOTE_PREVIEW_MAX_BYTES) {
+    preview.loading = false;
+    preview.tooLarge = true;
+    preview.hint = resolveWorkspacePreviewTooLargeHint();
+    return;
+  }
+
+  const declaredKind = resolveWorkspaceResourcePreviewKind(name, size);
+  const isEditorOnly = declaredKind === 'onlyoffice' || declaredKind === 'drawio';
+
+  const controller = new AbortController();
+  previewAbort = controller;
+  const outcome = await readRemoteFile({
+    to: interlinkTarget.value,
+    path,
+    signal: controller.signal
+  });
+
+  if (serial !== previewSerial) return;
+  previewAbort = null;
+  preview.loading = false;
+
+  if (!outcome.payload) {
+    preview.error = outcome.failure || t('messenger.filesArea.openFailed');
+    preview.previewKind = 'unsupported';
+    return;
+  }
+
+  if (outcome.payload.truncated) {
+    preview.hint = t('interlink.workspace.truncatedHint', {
+      size: formatWorkspaceBytes(outcome.payload.size)
+    });
+  }
+
+  if (isEditorOnly) {
+    preview.previewKind = 'unsupported';
+    preview.hint = t('interlink.workspace.editorUnsupported');
+    return;
+  }
+
+  if (declaredKind === 'text' || declaredKind === 'unsupported') {
+    if (outcome.payload.text) {
+      preview.previewKind = 'text';
+      preview.content = outcome.payload.text;
+      return;
+    }
+    preview.previewKind = 'unsupported';
+    preview.hint = resolveWorkspacePreviewUnsupportedHint();
+    return;
+  }
+
+  const bytes = outcome.payload.bytes;
+  if (!bytes) {
+    preview.error = t('messenger.filesArea.openFailed');
+    preview.previewKind = 'unsupported';
+    return;
+  }
+
+  const blob = normalizeWorkspacePreviewBlob(new Blob([bytes]), declaredKind, extension);
+  preview.previewUrl = URL.createObjectURL(blob);
+  preview.previewKind = declaredKind as PreviewKind;
+};
+
 const closePreview = () => {
   if (preview.saving) return;
+  previewAbort?.abort();
+  previewAbort = null;
+  previewSerial += 1;
   preview.visible = false;
   releasePreviewUrl();
 };
 
 const handlePreviewDownload = async () => {
   if (!preview.path) return;
+  // 远程文件不落云端存储：已取回的内容直接另存为本地文件。
+  if (remoteInterlinkActive.value) {
+    if (preview.previewUrl) {
+      saveObjectUrlAsFile(preview.previewUrl, preview.title || 'download');
+      return;
+    }
+    if (preview.content) {
+      const blob = new Blob([preview.content], { type: 'text/plain;charset=utf-8' });
+      const textUrl = URL.createObjectURL(blob);
+      saveObjectUrlAsFile(textUrl, preview.title || 'download');
+      window.setTimeout(() => URL.revokeObjectURL(textUrl), 1000);
+      return;
+    }
+    ElMessage.warning(t('interlink.workspace.downloadUnavailable'));
+    return;
+  }
   await runAction(() => downloadWorkspacePath(preview.path), t('messenger.filesArea.downloadFailed'));
 };
 
 const handlePreviewSave = async (content: string) => {
-  if (!preview.path || preview.saving) return;
+  if (!preview.path || preview.saving || remoteInterlinkActive.value) return;
   preview.saving = true;
   try {
     await writeWorkspaceFileContent(preview.path, content);
@@ -1077,13 +1355,26 @@ watch(
 
 onMounted(() => {
   window.addEventListener('keydown', handleWindowKeydown);
-  if (!remoteInterlinkActive.value) {
-    void loadDirectory('');
-    void loadStats();
+  if (remoteInterlinkActive.value) {
+    void enterRemoteWorkspace();
+    return;
   }
+  void loadDirectory('');
+  void loadStats();
 });
 
-// 从远程节点切回云端：目录没加载过就补一次，加载过用既有缓存。
+// 目标工作区变化（设备或工作区参数任一变化）：重铺影子快照并尝试实时根目录。
+watch(
+  () =>
+    remoteInterlinkActive.value
+      ? `${remoteInterlinkDeviceId.value || ''}\n${interlinkWorkspaceId.value || ''}`
+      : '',
+  () => {
+    void enterRemoteWorkspace();
+  }
+);
+
+// 从远程工作区切回云端：目录没加载过就补一次，加载过用既有缓存。
 watch(remoteInterlinkActive, (remote) => {
   if (remote) return;
   if (!tree.directories.get('')?.loaded) void loadDirectory('');
@@ -1095,6 +1386,9 @@ onBeforeUnmount(() => {
   if (statsTimer) window.clearTimeout(statsTimer);
   statsTimer = null;
   uploadQueue.dispose();
+  previewAbort?.abort();
+  previewAbort = null;
+  directoryAbort.controller.abort();
   releasePreviewUrl();
 });
 </script>

@@ -1932,8 +1932,10 @@ impl PostgresSchemaStorage for PostgresStorage {
                   threads TEXT,
                   tasks TEXT,
                   workspace TEXT,
+                  workspaces TEXT,
                   synced_at DOUBLE PRECISION
                 );
+                ALTER TABLE interlink_node_shadows ADD COLUMN IF NOT EXISTS workspaces TEXT;
                 CREATE INDEX IF NOT EXISTS idx_interlink_shadows_user
                   ON interlink_node_shadows (user_id, synced_at);
                 CREATE TABLE IF NOT EXISTS interlink_commands (

@@ -9,7 +9,7 @@
 //! (sync). No new frame or ack type is introduced - a rejected frame is answered
 //! with the existing `error` frame.
 
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use wunder_core::interlink::{FRAME_SHADOW_DELTA, FRAME_SHADOW_FULL};
 use wunder_core::storage_records::InterlinkShadowRecord;
@@ -93,6 +93,9 @@ pub fn project_shadow_frame(
             delta_field(payload, "workspace", previous.and_then(|r| r.workspace.clone())),
         )
     };
+    // The slim workspace list is always derived from the (merged) workspace
+    // section, so a node never uploads the same names twice.
+    let workspaces = workspace.as_deref().and_then(slim_workspace_list);
 
     ShadowOutcome::Apply(InterlinkShadowRecord {
         device_id: device_id.to_string(),
@@ -102,6 +105,7 @@ pub fn project_shadow_frame(
         threads,
         tasks,
         workspace,
+        workspaces,
         synced_at: now,
     })
 }
@@ -139,8 +143,8 @@ fn delta_field(payload: &Value, key: &str, previous: Option<String>) -> Option<S
 /// Enforce the §6.1 projection budget on a freshly stored shadow.
 ///
 /// The node is asked to respect these limits, but the server is the authority:
-/// an over-long thread directory or directory tree is trimmed here and marked
-/// `truncated`, so a misbehaving or older node can never inflate the row.
+/// an over-long thread directory or per-workspace tree is trimmed here and
+/// marked `truncated`, so a misbehaving or older node can never inflate the row.
 pub fn enforce_limits(record: &mut InterlinkShadowRecord, limits: &ShadowLimits) {
     if let Some(threads) = record.threads.as_deref() {
         if let Ok(Value::Array(items)) = serde_json::from_str::<Value>(threads) {
@@ -158,24 +162,79 @@ pub fn enforce_limits(record: &mut InterlinkShadowRecord, limits: &ShadowLimits)
             }
         }
     }
+    let mut workspaces_trimmed = false;
     if let Some(workspace) = record.workspace.as_deref() {
         if let Ok(Value::Object(mut map)) = serde_json::from_str::<Value>(workspace) {
-            if let Some(Value::Array(items)) = map.get("tree").cloned() {
-                let original = items.len();
-                let kept: Vec<Value> = items
-                    .into_iter()
-                    .filter(|entry| within_depth(entry, limits.tree_depth))
-                    .take(limits.tree_max_entries)
-                    .collect();
-                let dropped = original > kept.len();
-                map.insert("tree".to_string(), Value::Array(kept));
-                if dropped {
+            if let Some(Value::Array(entries)) = map.get("workspaces").cloned() {
+                // The entry budget is global: workspaces share the same cap a
+                // single tree had, in upload order, so one huge folder cannot
+                // starve the rest of the projection.
+                let mut kept_total = 0usize;
+                let mut trimmed_entries = Vec::with_capacity(entries.len());
+                for mut entry in entries {
+                    if kept_total >= limits.tree_max_entries {
+                        workspaces_trimmed = true;
+                        break;
+                    }
+                    if let Some(Value::Array(tree)) = entry.get("tree").cloned() {
+                        let original = tree.len();
+                        let share = limits.tree_max_entries - kept_total;
+                        let kept: Vec<Value> = tree
+                            .into_iter()
+                            .filter(|entry| within_depth(entry, limits.tree_depth))
+                            .take(share)
+                            .collect();
+                        if original > kept.len() {
+                            workspaces_trimmed = true;
+                            entry["truncated"] = Value::Bool(true);
+                        }
+                        kept_total += kept.len();
+                        entry["tree"] = Value::Array(kept);
+                    }
+                    trimmed_entries.push(entry);
+                }
+                map.insert("workspaces".to_string(), Value::Array(trimmed_entries));
+                if workspaces_trimmed {
                     map.insert("truncated".to_string(), Value::Bool(true));
                 }
             }
             record.workspace = Some(serde_json::to_string(&Value::Object(map)).unwrap_or_default());
         }
     }
+    if workspaces_trimmed {
+        // Keep the slim list in sync with the trimmed section.
+        record.workspaces = record.workspace.as_deref().and_then(slim_workspace_list);
+    }
+}
+
+/// Derive the slim `[{workspace_id, name}]` list a node listing renders, from
+/// the stored workspace section. Bounded: the same caps the projection uses.
+fn slim_workspace_list(workspace: &str) -> Option<String> {
+    let Ok(Value::Object(map)) = serde_json::from_str::<Value>(workspace) else {
+        return None;
+    };
+    let Some(Value::Array(entries)) = map.get("workspaces") else {
+        return None;
+    };
+    let slim: Vec<Value> = entries
+        .iter()
+        .take(WORKSPACE_LIST_MAX)
+        .map(|entry| {
+            json!({
+                "workspace_id": entry
+                    .get("workspace_id")
+                    .and_then(Value::as_str)
+                    .map(|value| value.chars().take(WORKSPACE_ID_MAX_CHARS).collect::<String>())
+                    .unwrap_or_default(),
+                "name": entry
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .map(|value| value.chars().take(WORKSPACE_NAME_MAX_CHARS).collect::<String>())
+                    .unwrap_or_default(),
+            })
+        })
+        .collect();
+    Some(serde_json::to_string(&slim).unwrap_or_default())
 }
 
 /// The three §6.1 caps, taken from `config.interlink.shadow`.
@@ -198,6 +257,11 @@ impl Default for ShadowLimits {
 
 /// Scheduled tasks are a fixed budget (docs §6.1: 100 entries).
 pub const TASKS_MAX: usize = 100;
+/// Workspaces in the slim node-listing list; matches the projection cap.
+pub const WORKSPACE_LIST_MAX: usize = 20;
+/// Stored workspace ids and names stay short; the node list renders them.
+pub const WORKSPACE_ID_MAX_CHARS: usize = 64;
+pub const WORKSPACE_NAME_MAX_CHARS: usize = 60;
 
 /// A tree entry is in-bounds when its relative path has at most `depth` parts.
 fn within_depth(entry: &Value, depth: usize) -> bool {
@@ -227,6 +291,7 @@ mod tests {
             threads: Some("[{\"id\":\"t1\"}]".to_string()),
             tasks: Some("[]".to_string()),
             workspace: Some("{\"roots\":1}".to_string()),
+            workspaces: Some("[{\"workspace_id\":\"\",\"name\":\"\"}]".to_string()),
             synced_at: 100.0,
         }
     }
@@ -397,7 +462,11 @@ mod tests {
                 )
                 .unwrap(),
             ),
-            workspace: Some(json!({"tree": tree, "usage": {"bytes": 1}}).to_string()),
+            workspace: Some(
+                json!({"workspaces": [{"workspace_id": "ws_1", "name": "ws", "tree": tree, "usage": {"bytes": 1}}]})
+                    .to_string(),
+            ),
+            workspaces: None,
             synced_at: 9.0,
         }
     }
@@ -438,20 +507,70 @@ mod tests {
         enforce_limits(&mut record, &limits);
 
         let workspace: Value = serde_json::from_str(record.workspace.as_deref().unwrap()).unwrap();
-        let kept = workspace["tree"].as_array().expect("tree array");
+        let kept = workspace["workspaces"][0]["tree"]
+            .as_array()
+            .expect("tree array");
         assert_eq!(kept.len(), 5);
         assert_eq!(workspace["truncated"], true);
-        assert_eq!(workspace["usage"]["bytes"], 1);
+        assert_eq!(workspace["workspaces"][0]["truncated"], true);
+        assert_eq!(workspace["workspaces"][0]["usage"]["bytes"], 1);
         for entry in kept {
             assert_eq!(entry["path"].as_str().unwrap().split('/').count(), 2);
         }
+        // The slim list survives the trim with names intact.
+        let slim: Vec<Value> = serde_json::from_str(record.workspaces.as_deref().unwrap()).unwrap();
+        assert_eq!(slim[0]["workspace_id"], "ws_1");
+        assert_eq!(slim[0]["name"], "ws");
 
         // A tree that fits leaves no truncation marker behind.
         let mut small = projected(1, 1, tree_entries(2, 1));
         enforce_limits(&mut small, &limits);
         let workspace: Value = serde_json::from_str(small.workspace.as_deref().unwrap()).unwrap();
-        assert_eq!(workspace["tree"].as_array().expect("tree").len(), 2);
+        assert_eq!(
+            workspace["workspaces"][0]["tree"].as_array().expect("tree").len(),
+            2
+        );
         assert!(workspace.get("truncated").is_none());
+    }
+
+    #[test]
+    fn limits_share_the_entry_budget_across_workspaces() {
+        let limits = ShadowLimits { threads_max: 200, tree_max_entries: 8, tree_depth: 3 };
+        let mut record = projected(1, 1, tree_entries(6, 1));
+        let workspace: Value = serde_json::from_str(record.workspace.as_deref().unwrap()).unwrap();
+        let mut second = workspace["workspaces"][0].clone();
+        second["workspace_id"] = json!("ws_2");
+        second["name"] = json!("second");
+        second["tree"] = json!(tree_entries(6, 1));
+        let mut workspace = workspace;
+        workspace["workspaces"] = json!([workspace["workspaces"][0].clone(), second]);
+        record.workspace = Some(workspace.to_string());
+
+        enforce_limits(&mut record, &limits);
+
+        let workspace: Value = serde_json::from_str(record.workspace.as_deref().unwrap()).unwrap();
+        let entries = workspace["workspaces"].as_array().expect("workspaces");
+        let total: usize = entries
+            .iter()
+            .map(|entry| entry["tree"].as_array().map(Vec::len).unwrap_or(0))
+            .sum();
+        assert_eq!(total, 8, "the global entry budget bounds both trees");
+        assert_eq!(workspace["truncated"], true);
+        let slim: Vec<Value> = serde_json::from_str(record.workspaces.as_deref().unwrap()).unwrap();
+        assert_eq!(slim.len(), 2);
+    }
+
+    #[test]
+    fn slim_workspace_list_is_derived_from_the_section() {
+        let record = projected(1, 1, Vec::new());
+        let slim: Vec<Value> =
+            serde_json::from_str(slim_workspace_list(record.workspace.as_deref().unwrap()).unwrap().as_str())
+                .unwrap();
+        assert_eq!(slim.len(), 1);
+        assert_eq!(slim[0]["workspace_id"], "ws_1");
+        assert_eq!(slim[0]["name"], "ws");
+        // A workspace section without the array derives nothing.
+        assert!(slim_workspace_list(r#"{"usage":{}}"#).is_none());
     }
 
     #[test]

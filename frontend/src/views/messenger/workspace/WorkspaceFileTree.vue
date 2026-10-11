@@ -25,7 +25,7 @@
     <div v-else-if="!rows.length" class="workspace-files-state is-empty">
       <i class="fa-regular fa-folder-open" aria-hidden="true"></i>
       <span class="workspace-files-state-text">{{ t('messenger.filesArea.empty') }}</span>
-      <span class="workspace-files-state-hint">{{ t('messenger.filesArea.emptyHint') }}</span>
+      <span class="workspace-files-state-hint">{{ props.emptyHint || t('messenger.filesArea.emptyHint') }}</span>
     </div>
 
     <div v-else class="workspace-files-rows" :style="rowsStyle">
@@ -158,8 +158,10 @@ const props = withDefaults(
     selectedPaths: string[];
     /** 只读投影（互通远程节点）：隐藏写操作菜单，只留预览/展开。 */
     readOnly?: boolean;
+    /** 空态提示覆盖（远程投影与云端拖拽提示语义不同）。 */
+    emptyHint?: string;
   }>(),
-  { readOnly: false }
+  { readOnly: false, emptyHint: '' }
 );
 
 const emit = defineEmits<{
