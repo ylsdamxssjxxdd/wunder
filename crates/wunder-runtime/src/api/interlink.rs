@@ -62,6 +62,10 @@ pub fn router() -> Router<Arc<AppState>> {
         )
         .route("/wunder/interlink/commands/{command_id}/blob", get(get_command_blob))
         .route("/wunder/interlink/audit", get(list_my_audit))
+        .route(
+            "/wunder/interlink/workspace-order",
+            get(get_workspace_order).put(set_workspace_order),
+        )
 }
 
 /// `GET /wunder/interlink/nodes` - unified presence for the caller's account.
@@ -228,6 +232,101 @@ fn parse_workspace_list(raw: Option<&str>) -> Value {
     match serde_json::from_str::<Value>(text) {
         Ok(Value::Array(items)) => Value::Array(items),
         _ => json!([]),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// GET/PUT /wunder/interlink/workspace-order (§6.3 侧栏工作区行排序)
+// ---------------------------------------------------------------------------
+
+/// Per-account workspace row order for the hive sidebar. The order is a pure
+/// cloud-side preference: it never feeds back into the local device, so it
+/// lives in the per-user meta store and works even when interlink is off.
+const WORKSPACE_ORDER_META_PREFIX: &str = "interlink.workspace_order:";
+const WORKSPACE_ORDER_MAX_KEYS: usize = 128;
+const WORKSPACE_ORDER_KEY_MAX_CHARS: usize = 200;
+
+fn workspace_order_meta_key(user_id: &str) -> String {
+    format!("{WORKSPACE_ORDER_META_PREFIX}{user_id}")
+}
+
+/// Trim, drop empties/duplicates/oversize keys, cap the list. Unknown keys are
+/// tolerated on read (the frontend ignores them when merging row sets).
+fn normalize_workspace_order_keys(items: &[Value]) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut keys = Vec::with_capacity(items.len().min(WORKSPACE_ORDER_MAX_KEYS));
+    for item in items {
+        let Some(key) = item.as_str().map(str::trim).filter(|key| !key.is_empty()) else {
+            continue;
+        };
+        if key.chars().count() > WORKSPACE_ORDER_KEY_MAX_CHARS || !seen.insert(key.to_string()) {
+            continue;
+        }
+        keys.push(key.to_string());
+        if keys.len() >= WORKSPACE_ORDER_MAX_KEYS {
+            break;
+        }
+    }
+    keys
+}
+
+fn parse_workspace_order(raw: Option<&str>) -> Vec<String> {
+    let Some(text) = raw.map(str::trim).filter(|text| !text.is_empty()) else {
+        return Vec::new();
+    };
+    match serde_json::from_str::<Value>(text) {
+        Ok(Value::Array(items)) => normalize_workspace_order_keys(&items),
+        _ => Vec::new(),
+    }
+}
+
+async fn get_workspace_order(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    let resolved = match resolve_user(&state, &headers, None).await {
+        Ok(resolved) => resolved,
+        Err(response) => return response,
+    };
+    let user_store = state.user_store.clone();
+    let key = workspace_order_meta_key(&resolved.user.user_id);
+    let raw = match blocking::run_db("api.interlink.workspace_order_get", move || {
+        user_store.get_meta(&key)
+    })
+    .await
+    {
+        Ok(raw) => raw,
+        Err(err) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    };
+    Json(json!({ "keys": parse_workspace_order(raw.as_deref()) })).into_response()
+}
+
+#[derive(Deserialize)]
+struct WorkspaceOrderPayload {
+    #[serde(default)]
+    keys: Vec<Value>,
+}
+
+async fn set_workspace_order(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(payload): Json<WorkspaceOrderPayload>,
+) -> Response {
+    let resolved = match resolve_user(&state, &headers, None).await {
+        Ok(resolved) => resolved,
+        Err(response) => return response,
+    };
+    let keys = normalize_workspace_order_keys(&payload.keys);
+    let user_store = state.user_store.clone();
+    let key = workspace_order_meta_key(&resolved.user.user_id);
+    let stored = match serde_json::to_string(&keys) {
+        Ok(stored) => stored,
+        Err(_) => "[]".to_string(),
+    };
+    match blocking::run_db("api.interlink.workspace_order_set", move || {
+        user_store.set_meta(&key, &stored)
+    })
+    .await
+    {
+        Ok(()) => Json(json!({ "keys": keys })).into_response(),
+        Err(err) => error_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
     }
 }
 
@@ -1376,5 +1475,35 @@ mod tests {
             dispatch_name(&commands::Dispatch::Rejected("NODE_OFFLINE")),
             "rejected"
         );
+    }
+
+    #[test]
+    fn workspace_order_normalizes_trim_dedupe_and_cap() {
+        let keys = normalize_workspace_order_keys(&[
+            json!(" device:pc-01@ws-1 "),
+            json!("device:pc-01@ws-1"),
+            json!(""),
+            json!(7),
+            json!("device:pc-02"),
+        ]);
+        assert_eq!(keys, vec!["device:pc-01@ws-1", "device:pc-02"]);
+
+        let flood: Vec<Value> = (0..WORKSPACE_ORDER_MAX_KEYS + 40)
+            .map(|index| json!(format!("device:d{index}")))
+            .collect();
+        assert_eq!(normalize_workspace_order_keys(&flood).len(), WORKSPACE_ORDER_MAX_KEYS);
+    }
+
+    #[test]
+    fn workspace_order_storage_roundtrip_tolerates_garbage() {
+        assert!(parse_workspace_order(None).is_empty());
+        assert!(parse_workspace_order(Some("")).is_empty());
+        assert!(parse_workspace_order(Some("not json")).is_empty());
+        let stored = serde_json::to_string(&["device:a", "device:b"]).unwrap();
+        assert_eq!(
+            parse_workspace_order(Some(&stored)),
+            vec!["device:a", "device:b"]
+        );
+        assert_eq!(workspace_order_meta_key("u1"), "interlink.workspace_order:u1");
     }
 }

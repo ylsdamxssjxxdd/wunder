@@ -33,15 +33,26 @@
       </div>
 
       <!-- §6.3 本地工作区行：与云端工作区同级、按工作区（而不是设备）区分；
-           点击行把文件区切到该工作区目录（URL `?node=&ws=`）。 -->
+           点击行把文件区切到该工作区目录（URL `?node=&ws=`）。
+           行顺序是蜂巢账号级偏好（云端存储），可拖拽调整，不回写本地设备。 -->
       <button
-        v-for="row in workspaceRows"
+        v-for="row in orderedWorkspaceRows"
         :key="row.key"
         class="messenger-sidebar-workspace-row is-device-row"
-        :class="{ 'is-selected': isRowSelected(row) }"
+        :class="{
+          'is-selected': isRowSelected(row),
+          'is-dragging': dragKey === row.key,
+          'is-drop-target': dropTargetKey === row.key
+        }"
         type="button"
+        draggable="true"
         :aria-label="t('interlink.workspace.rowAria', { name: row.label })"
         @click="selectWorkspaceRow(row)"
+        @dragstart="handleRowDragStart(row, $event)"
+        @dragend="handleRowDragEnd"
+        @dragover.prevent="handleRowDragOver(row)"
+        @dragleave="handleRowDragLeave(row)"
+        @drop.prevent="handleRowDrop(row)"
       >
         <span
           class="interlink-status-dot messenger-sidebar-device-status"
@@ -109,12 +120,16 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import MessengerThreadTree from './MessengerThreadTree.vue';
 import WorkspaceFilesPanel from '@/views/messenger/workspace/WorkspaceFilesPanel.vue';
 import { useInterlinkNodes } from '@/views/messenger/interlink/useInterlinkNodes';
 import { useInterlinkNodeTarget } from '@/views/messenger/interlink/interlinkNodeTarget';
-import { interlinkDeviceTarget } from '@/api/interlink';
+import {
+  fetchInterlinkWorkspaceOrder,
+  interlinkDeviceTarget,
+  saveInterlinkWorkspaceOrder
+} from '@/api/interlink';
 import {
   interlinkWorkspaceRows,
   nodeTypeIcon,
@@ -122,6 +137,10 @@ import {
   statusLabelKey,
   type InterlinkWorkspaceRow
 } from '@/views/messenger/interlink/interlinkNodeModel';
+import {
+  applyWorkspaceOrder,
+  moveWorkspaceRow
+} from '@/views/messenger/interlink/interlinkWorkspaceOrder';
 import type { MessengerControllerContext } from '../controller/messengerControllerContext';
 import { buildTaskList } from '@/views/messenger/taskList';
 
@@ -185,6 +204,73 @@ const {
 
 /** 节点 → 工作区行的映射是纯函数；上限在模型里统一收敛，不一次铺开。 */
 const workspaceRows = computed(() => interlinkWorkspaceRows(interlink.nodes.value || []));
+
+// ---------------------------------------------- 工作区行排序（云端偏好，§6.3）
+
+const workspaceOrder = ref<string[]>([]);
+const orderedWorkspaceRows = computed(() => applyWorkspaceOrder(workspaceRows.value, workspaceOrder.value));
+const dragKey = ref('');
+const dropTargetKey = ref('');
+let orderSaveTimer: number | null = null;
+
+onMounted(() => {
+  // 排序是偏好：加载失败就按自然顺序展示，不阻塞侧栏。
+  void fetchInterlinkWorkspaceOrder()
+    .then((keys) => {
+      workspaceOrder.value = keys;
+    })
+    .catch(() => undefined);
+});
+
+const handleRowDragStart = (row: InterlinkWorkspaceRow, event: DragEvent): void => {
+  dragKey.value = row.key;
+  dropTargetKey.value = '';
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = 'move';
+    // Firefox 需要 setData 才会真正进入拖拽。
+    try {
+      event.dataTransfer.setData('text/plain', row.key);
+    } catch {
+      // 老内核不支持时不影响本地状态驱动的拖拽。
+    }
+  }
+};
+
+const handleRowDragOver = (row: InterlinkWorkspaceRow): void => {
+  if (dragKey.value && row.key !== dragKey.value) dropTargetKey.value = row.key;
+};
+
+const handleRowDragLeave = (row: InterlinkWorkspaceRow): void => {
+  if (dropTargetKey.value === row.key) dropTargetKey.value = '';
+};
+
+const handleRowDragEnd = (): void => {
+  dragKey.value = '';
+  dropTargetKey.value = '';
+};
+
+const handleRowDrop = (row: InterlinkWorkspaceRow): void => {
+  const dragged = dragKey.value;
+  handleRowDragEnd();
+  if (!dragged || dragged === row.key) return;
+  const next = moveWorkspaceRow(
+    orderedWorkspaceRows.value.map((item) => item.key),
+    dragged,
+    row.key
+  );
+  if (!next) return;
+  workspaceOrder.value = next;
+  scheduleOrderSave();
+};
+
+/** 合并保存：连拖多次只落一次库；失败不打断使用（本会话顺序已生效）。 */
+const scheduleOrderSave = (): void => {
+  if (orderSaveTimer) window.clearTimeout(orderSaveTimer);
+  orderSaveTimer = window.setTimeout(() => {
+    orderSaveTimer = null;
+    void saveInterlinkWorkspaceOrder(workspaceOrder.value).catch(() => undefined);
+  }, 600);
+};
 
 const isRowSelected = (row: InterlinkWorkspaceRow): boolean =>
   interlinkRemoteSelected.value &&
@@ -266,5 +352,7 @@ const nudgeResize = (delta: number) => {
 onBeforeUnmount(() => {
   window.removeEventListener('pointermove', handleResizeMove);
   window.removeEventListener('pointerup', stopResize);
+  if (orderSaveTimer) window.clearTimeout(orderSaveTimer);
+  orderSaveTimer = null;
 });
 </script>

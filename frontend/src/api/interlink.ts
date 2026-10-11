@@ -14,8 +14,6 @@
  */
 
 import api from './http';
-import { resolveAccessToken } from '@/api/requestAuth';
-import { resolveApiBase } from '@/config/runtime';
 import type { ApiPayload, QueryParams } from './types';
 
 export type InterlinkNodeType = 'web' | 'desktop' | 'cli' | 'server';
@@ -440,75 +438,37 @@ export const purgeInterlinkShadow = async (deviceId: string): Promise<boolean> =
 };
 
 // ---------------------------------------------------------------------------
-// §7.4 远程会话视图 WS
+// §6.3 侧栏工作区行的云端排序（纯蜂巢偏好，不回写本地设备）
 // ---------------------------------------------------------------------------
 
-export const INTERLINK_REMOTE_SUBPROTOCOL = 'wunder-interlink-remote';
+export const WORKSPACE_ORDER_MAX_KEYS = 128;
+export const WORKSPACE_ORDER_KEY_MAX_CHARS = 200;
 
-// `command` 是设备侧命令生命周期通知（服务端 §7.4 的控制帧）：只有
-// kind/status/command_id，没有 payload 与 seq，不参与会话渲染。
-export type InterlinkRemoteFrameType = 'snapshot' | 'delta' | 'command' | 'error' | 'close';
-
-export type InterlinkRemoteFrame = {
-  v: number;
-  type: InterlinkRemoteFrameType | string;
-  thread_id: string;
-  seq: number;
-  payload: Record<string, unknown>;
-};
-
-const resolveSocketBase = (): string => {
-  const base = resolveApiBase() || '';
-  const trimmed = base.replace(/\/$/, '');
-  if (!trimmed) return '';
-  if (/^https?:\/\//i.test(trimmed)) {
-    return trimmed.replace(/^http/i, 'ws');
+/** 与 api/interlink.rs 的 normalize_workspace_order_keys 同一契约。 */
+export const normalizeWorkspaceOrder = (raw: unknown): string[] => {
+  const items = Array.isArray(raw) ? raw : [];
+  const seen = new Set<string>();
+  const keys: string[] = [];
+  for (const item of items) {
+    // 只收字符串：数字/对象不是宽容转换而是丢弃。
+    if (typeof item !== 'string') continue;
+    const key = item.trim().slice(0, WORKSPACE_ORDER_KEY_MAX_CHARS);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    keys.push(key);
+    if (keys.length >= WORKSPACE_ORDER_MAX_KEYS) break;
   }
-  if (trimmed.startsWith('/')) {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    return `${protocol}//${window.location.host}${trimmed}`;
-  }
-  return trimmed;
+  return keys;
 };
 
-export const buildInterlinkRemoteSocketUrl = (target: string, threadId: string): string => {
-  const params = new URLSearchParams();
-  params.set('target', String(target || '').trim());
-  params.set('thread', String(threadId || '').trim());
-  return `${resolveSocketBase()}/interlink/remote_ws?${params.toString()}`;
+/** 行 key 有序列表：设备工作区行 `device:<id>@<workspace_id>`，兜底行 `device:<id>`。 */
+export const fetchInterlinkWorkspaceOrder = async (
+  options: RequestOptions = {}
+): Promise<string[]> => {
+  const response = await api.get('/interlink/workspace-order', { signal: options.signal });
+  return normalizeWorkspaceOrder(unwrap(response?.data).keys);
 };
 
-/**
- * 远程会话订阅通道。浏览器无法自定义 WS 头，令牌沿用仓库既有子协议携带方式
- * （见 api/chat.ts 的 `wunder-auth.<token>`），声明协议为 §7.4 的
- * `wunder-interlink-remote`。
- */
-export const openInterlinkRemoteSocket = (target: string, threadId: string): WebSocket => {
-  const url = buildInterlinkRemoteSocketUrl(target, threadId);
-  const token = resolveAccessToken();
-  const protocols = token
-    ? [INTERLINK_REMOTE_SUBPROTOCOL, `wunder-auth.${token}`]
-    : [INTERLINK_REMOTE_SUBPROTOCOL];
-  return new WebSocket(url, protocols);
-};
-
-export const parseInterlinkRemoteFrame = (raw: unknown): InterlinkRemoteFrame | null => {
-  let value: unknown = raw;
-  if (typeof raw === 'string') {
-    try {
-      value = JSON.parse(raw);
-    } catch {
-      return null;
-    }
-  }
-  const record = asRecord(value);
-  const type = asText(record.type);
-  if (!type) return null;
-  return {
-    v: asNumber(record.v, 1),
-    type,
-    thread_id: asText(record.thread_id),
-    seq: asNumber(record.seq),
-    payload: asRecord(record.payload)
-  };
+export const saveInterlinkWorkspaceOrder = async (keys: string[]): Promise<void> => {
+  await api.put('/interlink/workspace-order', { keys: normalizeWorkspaceOrder(keys) });
 };
