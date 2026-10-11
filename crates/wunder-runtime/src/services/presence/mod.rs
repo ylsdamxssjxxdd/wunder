@@ -2,7 +2,8 @@ mod connection;
 mod nodes;
 
 pub use connection::{
-    client_kind_from_scope, UserPresenceView, CLIENT_CLI, CLIENT_DESKTOP, CLIENT_WEB,
+    client_kind_from_device, client_kind_from_scope, UserPresenceView, CLIENT_CLI, CLIENT_DESKTOP,
+    CLIENT_WEB,
 };
 pub use nodes::{
     aggregate_status, derive_device_status, derive_device_status_with_tunnel, online_count,
@@ -224,6 +225,17 @@ mod tests {
         assert_eq!(client_kind_from_scope(Some("local_cli")), CLIENT_CLI);
         assert_eq!(client_kind_from_scope(Some("default")), CLIENT_WEB);
         assert_eq!(client_kind_from_scope(None), CLIENT_WEB);
+    }
+
+    #[test]
+    fn client_kind_derives_from_device_client() {
+        assert_eq!(client_kind_from_device("desktop"), CLIENT_DESKTOP);
+        assert_eq!(client_kind_from_device("cli"), CLIENT_CLI);
+        // Matches `api::interlink::map_client`: anything naming a cli is a cli.
+        assert_eq!(client_kind_from_device("CLI"), CLIENT_CLI);
+        assert_eq!(client_kind_from_device("desktop-cli"), CLIENT_CLI);
+        assert_eq!(client_kind_from_device("Desktop"), CLIENT_DESKTOP);
+        assert_eq!(client_kind_from_device(""), CLIENT_DESKTOP);
     }
 
     #[test]

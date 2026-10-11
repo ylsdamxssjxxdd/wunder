@@ -854,6 +854,8 @@ export global I18n {
     out property <string> stc_none_note: zh ? "换个关键词，或清空搜索查看全部分类。" : "Try another keyword, or clear the search to see every category.";
     out property <string> stc_general: zh ? "常规" : "General";
     out property <string> stc_general_note: zh ? "发送、外观、运行环境与诊断" : "Sending, appearance, runtime and diagnostics";
+    out property <string> stc_account: zh ? "账号" : "Account";
+    out property <string> stc_account_note: zh ? "云账号、登录状态与用量统计" : "Cloud account, sign-in state and usage";
     out property <string> stc_models: zh ? "模型设置" : "Models";
     out property <string> stc_models_note: zh ? "模型清单、默认模型与参数" : "Model list, default model and parameters";
     out property <string> stc_tools: zh ? "工具管理" : "Tools";
@@ -1398,6 +1400,11 @@ export global I18n {
     out property <string> wf_menu_new_file: zh ? "新建文件" : "New file";
     out property <string> wf_menu_refresh: zh ? "刷新" : "Refresh";
     out property <string> wf_menu_open_ws: zh ? "打开本地工作区" : "Open local workspace";
+    out property <string> wf_menu_preview: zh ? "预览" : "Preview";
+    out property <string> wf_menu_archive: zh ? "打包下载" : "Download as zip";
+    out property <string> wf_menu_archive_root: zh ? "下载当前目录" : "Download this folder";
+    out property <string> wf_menu_clear: zh ? "清空" : "Clear";
+    public pure function wf_clear_body(name: string) -> string { return zh ? "清空「" + name + "」下的全部内容？云端文件不可恢复。" : "Clear everything under \"" + name + "\"? Cloud files cannot be recovered."; }
     out property <string> wf_rename_title: zh ? "重命名" : "Rename";
     out property <string> wf_new_dir_title: zh ? "新建目录" : "New folder";
     out property <string> wf_new_file_title: zh ? "新建文件" : "New file";

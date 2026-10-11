@@ -82,13 +82,12 @@ export const isDeviceNode = (node: InterlinkNode | null | undefined): boolean =>
 
 /**
  * §6.3 侧栏工作区行：按「本地工作区」而不是设备区分。每台设备的每个命名工作区
- * 一行（`设备名-工作区名`）；设备没有命名工作区（舵机 / 尚未同步）时整台设备
- * 折为一行默认目录。渲染行数硬上限沿用节点目录的上限。
+ * 一行（`设备名-工作区名`）。设备没同步过工作区投影（离线或从未连接）就不出
+ * 条目——侧栏只呈现真实检测到的本地目录。渲染行数硬上限沿用节点目录的上限。
  */
 export type InterlinkWorkspaceRow = {
   key: string;
   deviceId: string;
-  /** 空串＝该设备的默认目录（无命名工作区）。 */
   workspaceId: string;
   label: string;
   node: InterlinkNode;
@@ -106,16 +105,6 @@ export const interlinkWorkspaceRows = (nodes: InterlinkNode[]): InterlinkWorkspa
     const deviceId = String(node.node_id || '').trim();
     if (!deviceId) return;
     const workspaces = interlinkNodeWorkspaces(node).filter((item) => item.workspace_id);
-    if (!workspaces.length) {
-      rows.push({
-        key: `device:${deviceId}`,
-        deviceId,
-        workspaceId: '',
-        label: workspaceRowLabel(node, ''),
-        node
-      });
-      return;
-    }
     workspaces.slice(0, INTERLINK_NODE_MAX_RENDERED).forEach((item) => {
       rows.push({
         key: `device:${deviceId}@${item.workspace_id}`,

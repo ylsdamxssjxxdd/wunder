@@ -51,6 +51,7 @@ use crate::services::interlink::{
     LiveChannel, LiveChannelRegistry, OutboundFrame, alerts, audit, blob, commands, digest,
     registry, remote, secret, shadow,
 };
+use crate::services::presence::client_kind_from_device;
 use crate::state::AppState;
 use crate::storage::{CloudDeviceInterlinkPatch, InterlinkChannelRecord};
 
@@ -465,6 +466,18 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>, ticket: TicketEntry)
     let (outbound_tx, mut outbound_rx) = LiveChannelRegistry::outbound_channel();
     let _superseded = registry().register(live.clone(), outbound_tx);
 
+    // Register the tunnel with the unified presence service so the admin user
+    // list (docs §5.1) marks the owning desktop/cli surface online while the
+    // tunnel is live. Web surfaces are tracked from their websocket
+    // connections; the tunnel is the only liveness signal for a desktop/cli
+    // node, so without this the `online_desktop`/`online_cli` columns stay
+    // false even though the device is connected.
+    let presence_kind = client_kind_from_device(&live.client);
+    state
+        .control
+        .presence
+        .connect_client(&live.user_id, &live.connection_id, presence_kind, now);
+
     // Persist the channel snapshot and flip the device tunnel flag; the node
     // list reads `tunnel_connected` for its `connected` field (docs §5.1).
     upsert_channel(&state, &live).await;
@@ -541,6 +554,12 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>, ticket: TicketEntry)
                     break;
                 }
                 persist_heartbeat(&state, &live.device_id, &channel_id, beat_now).await;
+                // Keep the presence last-seen fresh so the desktop/cli surface
+                // stays online in the admin view across heartbeats.
+                state
+                    .control
+                    .presence
+                    .touch_user(&live.user_id, presence_kind, beat_now);
                 if send_frame(&mut sender, FRAME_PING, Some(&channel_id), None, json!({})).await.is_err() {
                     break;
                 }
@@ -1216,6 +1235,16 @@ async fn broadcast_node_joined(live: &LiveChannel) {
 /// so a superseding channel is never torn down).
 async fn teardown(state: &AppState, live: &LiveChannel, reason: &str) {
     let owned = registry().unregister(&live.device_id, &live.channel_id);
+
+    // Drop the presence registration so the admin user list stops showing the
+    // desktop/cli surface online once the tunnel is gone (docs §5.1). A
+    // superseding channel carries a different connection id, so tearing the old
+    // chain down here never removes the newer registration.
+    state.control.presence.disconnect_client(
+        &live.user_id,
+        &live.connection_id,
+        now_unix_seconds(),
+    );
 
     let storage = state.storage.clone();
     let channel_id = live.channel_id.clone();

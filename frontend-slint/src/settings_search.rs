@@ -1,4 +1,4 @@
-//! §9.1 settings search: one place that decides which of the thirteen
+//! §9.1 settings search: one place that decides which of the twelve
 //! categories a query keeps.
 //!
 //! The match runs natively because Slint 1.18 strings expose only is-empty /
@@ -10,9 +10,12 @@
 //! never disagree about what the search box does.
 
 /// Category keywords for the search box. i18n lives on the Slint side, so the
-/// filter keys off the same two languages the shell ships.
-const SETTINGS_CATEGORY_LABELS: [[&str; 3]; 13] = [
+/// filter keys off the same two languages the shell ships. The order is the
+/// navigation order: general, account, models, tools, agent, companion, cron,
+/// memory, channels, prompts, archived, help.
+const SETTINGS_CATEGORY_LABELS: [[&str; 3]; 12] = [
     ["常规", "常规设置", "general"],
+    ["账号", "个人资料", "account"],
     ["模型设置", "模型配置", "models"],
     ["工具管理", "工具", "tools"],
     ["智能体设置", "智能体", "agent"],
@@ -20,14 +23,13 @@ const SETTINGS_CATEGORY_LABELS: [[&str; 3]; 13] = [
     ["定时任务", "计划任务", "scheduled"],
     ["记忆碎片", "记忆", "memories"],
     ["渠道设置", "渠道", "channels"],
-    ["运行记录", "用量统计", "activity"],
     ["提示词包", "提示词", "prompts"],
     ["归档线程", "归档", "archived"],
     ["帮助", "关于", "help"],
-    ["设备互通", "互通", "interlink"],
 ];
 
-/// How many categories §9.2 defines. The shell's initial flag list has to match.
+/// How many categories the navigation defines. The shell's initial flag list has
+/// to match.
 pub const SETTINGS_CATEGORY_COUNT: usize = SETTINGS_CATEGORY_LABELS.len();
 
 /// One flag per category: an empty query keeps everything, otherwise a category
@@ -62,9 +64,9 @@ mod tests {
     fn query_matches_case_insensitively_across_languages() {
         let models = category_flags("MODEL");
         assert_eq!(models.iter().filter(|flag| **flag).count(), 1);
-        assert!(models[1], "models should match its english keyword");
+        assert!(models[2], "models should match its english keyword");
         let chinese = category_flags("记忆");
-        assert!(chinese[6], "memories should match its chinese label");
+        assert!(chinese[7], "memories should match its chinese label");
         assert!(!chinese[0]);
     }
 
@@ -79,6 +81,6 @@ mod tests {
     /// The shell hard-codes the initial flag list, so the count is a contract.
     #[test]
     fn category_count_matches_the_navigation() {
-        assert_eq!(SETTINGS_CATEGORY_COUNT, 13);
+        assert_eq!(SETTINGS_CATEGORY_COUNT, 12);
     }
 }

@@ -27,6 +27,9 @@ export component WorkspaceFilesPanel inherits Rectangle {
     in property <bool> offline;
     // A listing, refresh or pull is in flight; the refresh button yields.
     in property <bool> busy;
+    // A local workspace folder is browsed read-only: the mutating menu entries
+    // (new / rename / move / delete / archive / clear) are hidden.
+    in property <bool> readonly;
 
     callback toggle(int);
     callback refresh();
@@ -172,15 +175,25 @@ export component WorkspaceFilesPanel inherits Rectangle {
             ContextMenuArea {
                 x: 0px; y: 0px; width: parent.width; height: parent.height;
                 Menu {
-                    MenuItem {
+                    if !root.readonly : MenuItem {
                         title: I18n.wf_menu_new_dir;
                         activated => { root.menu(-1, 5); }
                     }
-                    MenuItem {
+                    if !root.readonly : MenuItem {
                         title: I18n.wf_menu_new_file;
                         activated => { root.menu(-1, 6); }
                     }
-                    MenuItem {
+                    if !root.readonly : MenuItem {
+                        title: I18n.wf_menu_archive_root;
+                        activated => { root.menu(-1, 7); }
+                    }
+                    if !root.readonly : MenuItem {
+                        title: I18n.wf_menu_clear;
+                        activated => { root.menu(-1, 8); }
+                    }
+                    // A local folder is read-only: the blank area only offers
+                    // a reload, mirroring the web read-only tree.
+                    if root.readonly : MenuItem {
                         title: I18n.wf_menu_refresh;
                         activated => { root.refresh(); }
                     }
@@ -192,32 +205,44 @@ export component WorkspaceFilesPanel inherits Rectangle {
                     height: 26px; width: parent.width;
                     background: row-touch.has-hover ? Theme.hover : transparent;
                     ContextMenuArea {
-                        // Row menu: files open/download/rename/reference/delete,
-                        // directories open/new/rename/reference/delete — the
-                        // web tree's menu minus the archive entries the
-                        // interlink channel cannot carry.
+                        // Row menu, aligned with the web left-rail tree:
+                        // files preview/download/rename/reference/delete,
+                        // directories open/archive/new dir/new file/rename/
+                        // reference/delete.
                         Menu {
                             if row.kind == 0 : MenuItem {
+                                title: I18n.wf_menu_preview;
+                                activated => { root.menu(index, 0); }
+                            }
+                            if row.kind == 1 : MenuItem {
                                 title: I18n.wf_menu_open;
                                 activated => { root.menu(index, 0); }
                             }
-                            if row.kind == 0 : MenuItem {
+                            if !root.readonly && row.kind == 0 : MenuItem {
                                 title: I18n.wf_menu_download;
                                 activated => { root.menu(index, 1); }
                             }
-                            if row.kind == 1 : MenuItem {
+                            if !root.readonly && row.kind == 1 : MenuItem {
+                                title: I18n.wf_menu_archive;
+                                activated => { root.menu(index, 7); }
+                            }
+                            if !root.readonly && row.kind == 1 : MenuItem {
                                 title: I18n.wf_menu_new_dir;
                                 activated => { root.menu(index, 5); }
                             }
-                            MenuItem {
+                            if !root.readonly && row.kind == 1 : MenuItem {
+                                title: I18n.wf_menu_new_file;
+                                activated => { root.menu(index, 6); }
+                            }
+                            if !root.readonly : MenuItem {
                                 title: I18n.wf_menu_rename;
                                 activated => { root.menu(index, 2); }
                             }
-                            MenuItem {
+                            if !root.readonly : MenuItem {
                                 title: I18n.wf_menu_reference;
                                 activated => { root.menu(index, 4); }
                             }
-                            MenuItem {
+                            if !root.readonly : MenuItem {
                                 title: I18n.wf_menu_delete;
                                 activated => { root.menu(index, 3); }
                             }

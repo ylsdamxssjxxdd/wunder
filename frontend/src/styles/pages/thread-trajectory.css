@@ -170,18 +170,33 @@
   touch-action: none;
 }
 
-.tt-timeline.tt-panning {
+.tt-timeline.tt-panning,
+.tt-timeline.tt-panning .tt-track {
   cursor: grabbing;
 }
 
-.tt-timeline.tt-dragging {
+.tt-timeline.tt-dragging,
+.tt-timeline.tt-dragging .tt-track {
   cursor: crosshair;
 }
 
+/* 网格布局：44px 通道标签列 + 轨道列，标签与轨迹条互不重叠 */
+.tt-plot {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  grid-template-rows: 16px 50px;
+}
+
+.tt-plot-corner {
+  grid-row: 1;
+  grid-column: 1;
+}
+
 .tt-axis {
+  grid-row: 1;
+  grid-column: 2;
   position: relative;
   height: 16px;
-  margin: 0 8px;
   font-family: var(--tt-mono);
   font-size: 10px;
   line-height: 16px;
@@ -196,25 +211,40 @@
   pointer-events: none;
 }
 
-.tt-track {
+.tt-lane-labels {
+  grid-row: 2;
+  grid-column: 1;
   position: relative;
-  height: 50px;
-  margin: 0 8px;
-  overflow: hidden;
+  border-right: 0.5px solid var(--tt-border-2);
 }
 
 .tt-lane-label {
   position: absolute;
-  left: 0;
+  right: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  height: 8px;
   font-size: 10px;
-  line-height: 12px;
+  line-height: 1;
   color: var(--tt-text-3);
+  white-space: nowrap;
   pointer-events: none;
 }
 
-.tt-lane-0 { top: 1px; }
-.tt-lane-1 { top: 15px; }
-.tt-lane-2 { top: 29px; }
+.tt-lane-label:nth-child(1) { top: 7px; }
+.tt-lane-label:nth-child(2) { top: 21px; }
+.tt-lane-label:nth-child(3) { top: 35px; }
+
+.tt-track {
+  grid-row: 2;
+  grid-column: 2;
+  position: relative;
+  height: 50px;
+  overflow: hidden;
+  touch-action: none;
+  cursor: crosshair;
+}
 
 .tt-turn-boundary {
   position: absolute;

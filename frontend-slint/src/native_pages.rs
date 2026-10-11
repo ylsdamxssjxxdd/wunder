@@ -465,7 +465,13 @@ fn push_cloud_status(app: &MainWindow, status: CloudStatusView) {
         last_success_at,
         next_retry_at,
     } = status;
+    let was_logged_in = app.get_cloud_logged_in();
     app.set_cloud_logged_in(logged_in);
+    // The sidebar pins a "cloud workspace" row while signed in; rebuild it on
+    // the sign-in flip so the row appears/disappears with the account.
+    if was_logged_in != logged_in {
+        crate::navigation_ui::project_sidebar(app, None);
+    }
     app.set_cloud_expired(expired);
     app.set_cloud_username(username.clone().into());
     app.set_cloud_balance(balance.to_string().into());
@@ -501,7 +507,7 @@ fn restart_cloud_status_poll(app_weak: slint::Weak<MainWindow>, api: Arc<NativeD
     CLOUD_POLL_TIMER.with(|timer| {
         timer.start(slint::TimerMode::Repeated, std::time::Duration::from_secs(30), move || {
             let Some(app) = app_weak.upgrade() else { return };
-            if !app.get_settings_open() || app.get_settings_active_panel() != 0 {
+            if !app.get_settings_open() || app.get_settings_active_panel() != 13 {
                 // Page closed or the cloud card's tab is hidden: stop polling.
                 CLOUD_POLL_TIMER.with(slint::Timer::stop);
                 return;

@@ -80,8 +80,12 @@ pub(crate) fn project_sidebar(app: &MainWindow, desktop: Option<&NativeDesktop>)
 
 fn rebuild_rows(app: &MainWindow) {
     let cards_model = app.get_workspaces();
+    // The cloud workspace is a fixed sentinel row pinned above the local
+    // workspaces while the account is signed in.
+    let cloud = app.get_cloud_logged_in().then(|| cloud_row(app));
     if cards_model.row_count() == 0 {
-        app.set_sidebar_rows(ModelRc::default());
+        let rows: Vec<SidebarRow> = cloud.into_iter().collect();
+        app.set_sidebar_rows(ModelRc::new(VecModel::from(rows)));
         return;
     }
     let selected = (usize::try_from(app.get_selected_workspace()).unwrap_or(0))
@@ -91,7 +95,10 @@ fn rebuild_rows(app: &MainWindow) {
     }
     let conversations = app.get_conversations();
     let active = app.get_active_session_id().to_string();
-    let mut rows: Vec<SidebarRow> = Vec::with_capacity(cards_model.row_count() * 4);
+    let mut rows: Vec<SidebarRow> = Vec::with_capacity(cards_model.row_count() * 4 + 1);
+    if let Some(cloud) = cloud {
+        rows.push(cloud);
+    }
     // Manual drag order is session-scoped; un-ordered ids keep facade position.
     let mut cards: Vec<(usize, WorkspaceCard)> = cards_model.iter().enumerate().collect();
     WORKSPACE_ORDER.with(|slot| {
@@ -167,6 +174,28 @@ fn rebuild_rows(app: &MainWindow) {
     app.set_sidebar_rows(ModelRc::new(VecModel::from(rows)));
 }
 
+/// The pinned "cloud workspace" row: a sentinel (kind 2) whose click points
+/// the working-directory panel back at the cloud account workspace.
+fn cloud_row(app: &MainWindow) -> SidebarRow {
+    let zh = app.global::<crate::I18n>().get_zh();
+    SidebarRow {
+        kind: 2,
+        workspace_id: "".into(),
+        name: if zh { "云端工作区".into() } else { "Cloud workspace".into() },
+        icon: "cloud".into(),
+        color: "".into(),
+        thread_count: 0,
+        expanded: true,
+        selected: crate::workspace_files::is_cloud_target(),
+        thread_id: "".into(),
+        title: "".into(),
+        status: "".into(),
+        active: false,
+        payload: -1,
+        origin: "".into(),
+    }
+}
+
 /// Highlight the workspace an opened thread belongs to, so a later new-task
 /// lands in the same workspace.
 pub(crate) fn focus_workspace_of(app: &MainWindow, workspace_id: Option<&str>) {
@@ -181,13 +210,25 @@ pub(crate) fn focus_workspace_of(app: &MainWindow, workspace_id: Option<&str>) {
 
 /// Sidebar interactions and the workspace entry points on the window.
 pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
+    let api = desktop.clone();
     let weak = app.as_weak();
     app.on_select_row(move |index| {
         let Some(app) = weak.upgrade() else { return };
         let Some(row) = app.get_sidebar_rows().row_data(index as usize) else {
             return;
         };
-        if row.kind == 0 {
+        if row.kind == 2 {
+            // Pinned cloud row: point the file panel back at the cloud
+            // workspace and drop the local selection.
+            LAST_SELECTED.with(|slot| *slot.borrow_mut() = -1);
+            app.set_selected_workspace(-1);
+            crate::workspace_files::set_target(
+                &app,
+                api.clone(),
+                crate::workspace_files::Target::Cloud,
+            );
+            crate::navigation_ui::project_sidebar(&app, None);
+        } else if row.kind == 0 {
             let workspace = row.payload;
             let id = row.workspace_id.to_string();
             let repeat = LAST_SELECTED.with(|slot| *slot.borrow() == workspace);
@@ -201,6 +242,17 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
                 });
             }
             app.set_selected_workspace(workspace);
+            // Mirror this workspace's folder in the working-directory panel.
+            if let Some(card) = app.get_workspaces().row_data(workspace as usize) {
+                let root = card.root_path.to_string();
+                if !root.is_empty() {
+                    crate::workspace_files::set_target(
+                        &app,
+                        api.clone(),
+                        crate::workspace_files::Target::Local(root),
+                    );
+                }
+            }
             crate::navigation_ui::project_sidebar(&app, None);
         } else {
             app.invoke_select_conversation(row.payload);

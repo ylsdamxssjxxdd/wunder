@@ -21,8 +21,9 @@ use wunder_desktop::NativeDesktop;
 const REFRESH_DIR_CAP: usize = 12;
 
 /// Context-menu action codes shared with the .slint side (aligned with the
-/// web left-rail menu: open, download, rename, delete, reference, new dir,
-/// new file; refresh is wired inside the panel itself).
+/// web left-rail menu: open/preview, download, rename, delete, reference,
+/// new dir, new file, download-as-zip, clear; refresh is wired inside the
+/// panel header itself).
 const MENU_OPEN: i32 = 0;
 const MENU_DOWNLOAD: i32 = 1;
 const MENU_RENAME: i32 = 2;
@@ -30,6 +31,10 @@ const MENU_DELETE: i32 = 3;
 const MENU_REFERENCE: i32 = 4;
 const MENU_NEW_DIR: i32 = 5;
 const MENU_NEW_FILE: i32 = 6;
+/// 打包下载 / 下载当前目录: zip one cloud directory (blank area = the root).
+const MENU_ARCHIVE: i32 = 7;
+/// 清空: drop everything under the shown root (blank area only).
+const MENU_CLEAR: i32 = 8;
 
 /// Drag-in uploads: one drop stages at most this many text files, each
 /// bounded by the interlink inline cap (1 MiB, binary rejected).
@@ -80,6 +85,90 @@ thread_local! {
     static PROMPT: RefCell<Option<PromptOp>> = const { RefCell::new(None) };
     /// One OS drag at a time: DoDragDrop is modal on its worker thread.
     static DRAG_OUT: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Which workspace the file panel mirrors: the cloud account workspace
+/// (default) or one locally bound workspace folder, keyed by its root path.
+/// Switching targets resets the page cache so no stale row leaks across.
+#[derive(Clone, PartialEq)]
+pub(crate) enum Target {
+    Cloud,
+    Local(String),
+}
+
+thread_local! {
+    static TARGET: RefCell<Target> = const { RefCell::new(Target::Cloud) };
+}
+
+fn current_target() -> Target {
+    TARGET.with(|slot| slot.borrow().clone())
+}
+
+/// True while the panel mirrors the cloud account workspace.
+pub(crate) fn is_cloud_target() -> bool {
+    matches!(current_target(), Target::Cloud)
+}
+
+/// Point the working-directory region at the cloud workspace or a local
+/// workspace folder, then reload it. Called from the sidebar row so the panel
+/// always follows the picked source; a no-op when the target is unchanged.
+pub(crate) fn set_target(app: &MainWindow, api: Arc<NativeDesktop>, target: Target) {
+    let switched = TARGET.with(|slot| {
+        let mut current = slot.borrow_mut();
+        if *current == target {
+            false
+        } else {
+            *current = target;
+            true
+        }
+    });
+    if !switched {
+        return;
+    }
+    reflect_target(app);
+    match current_target() {
+        Target::Cloud => refresh(app, api),
+        Target::Local(_) => load_dir(&app.as_weak(), api, String::new(), 0),
+    }
+}
+
+/// Push the target's chrome: the read-only flag a local folder imposes, the
+/// offline hint (a local folder needs no tunnel) and a cleared usage line.
+fn reflect_target(app: &MainWindow) {
+    let cloud = is_cloud_target();
+    app.set_ws_file_readonly(!cloud);
+    app.set_ws_file_stats("".into());
+    app.set_ws_file_error("".into());
+    if !cloud {
+        app.set_ws_file_offline(false);
+    }
+    // Drop the cached pages so the next listing starts from a clean root.
+    with_panel(|panel| panel.dirs.clear());
+    BOOTED.with(|slot| slot.set(true));
+    crate::navigation_ui::project_sidebar(app, None);
+}
+
+/// List one directory under the active target: the cloud workspace over the
+/// interlink tunnel, or a workspace folder straight off the local disk.
+fn list_dir(
+    api: &Arc<NativeDesktop>,
+    target: &Target,
+    path: &str,
+    offset: u64,
+) -> Result<NativeInterlinkListing> {
+    match target {
+        Target::Cloud => api.interlink_cloud_listing(path, offset),
+        Target::Local(root) => api.workspace_local_listing(root, path, offset),
+    }
+}
+
+/// The error prefix for a failed root read, matching the active target.
+fn read_error() -> &'static str {
+    if is_cloud_target() {
+        "无法读取云端工作目录"
+    } else {
+        "无法读取工作区目录"
+    }
 }
 
 fn with_panel<R>(run: impl FnOnce(&mut Panel) -> R) -> Option<R> {
@@ -141,10 +230,19 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         let row = (index >= 0)
             .then(|| app.get_ws_file_rows().row_data(index as usize))
             .flatten();
+        // A local workspace folder is browsed read-only: only open/expand are
+        // meaningful, so every cloud write action is ignored here.
+        if !is_cloud_target() && action != MENU_OPEN {
+            return;
+        }
         match action {
             MENU_OPEN => {
-                if let Some(row) = row.filter(|row| row.kind == 0) {
-                    open_file(&app, menu_api.clone(), row.path.to_string(), row.name.to_string());
+                if let Some(row) = row {
+                    match row.kind {
+                        0 => open_file(&app, menu_api.clone(), row.path.to_string(), row.name.to_string()),
+                        1 => toggle_dir(&app, menu_api.clone(), row.path.to_string()),
+                        _ => {}
+                    }
                 }
             }
             MENU_DOWNLOAD => {
@@ -182,6 +280,20 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                     .map(|row| target_dir(&row.path, row.kind))
                     .unwrap_or_default();
                 open_prompt(&app, PromptKind::NewFile, dir, String::new());
+            }
+            MENU_ARCHIVE => {
+                // 打包下载：目录行打整棵子树，空白区打当前根。
+                let (path, name) = match row.as_ref() {
+                    Some(row) if row.kind == 1 => (row.path.to_string(), row.name.to_string()),
+                    _ => (String::new(), "workspace".to_string()),
+                };
+                archive_dir(&app, menu_api.clone(), path, name);
+            }
+            MENU_CLEAR => {
+                // 清空只作用于工作目录根（对齐蜂巢空白区菜单）。
+                if row.is_none() {
+                    clear_root(&app, menu_api.clone());
+                }
             }
             _ => {}
         }
@@ -543,6 +655,12 @@ fn done_message(kind: PromptKind, value: &str) -> String {
 /// Tunnel tick from the 2s interlink poll: project the offline state and boot
 /// the tree once the tunnel comes up (re-armed after a disconnect).
 pub fn tunnel_tick(app: &MainWindow, api: &Arc<NativeDesktop>, connected: bool) {
+    // A local folder is served straight from disk and never rides the tunnel,
+    // so the offline hint and the boot guard belong to the cloud target only.
+    if !is_cloud_target() {
+        app.set_ws_file_offline(false);
+        return;
+    }
     app.set_ws_file_offline(!connected);
     if !connected {
         BOOTED.with(|slot| slot.set(false));
@@ -566,6 +684,15 @@ pub fn tunnel_tick(app: &MainWindow, api: &Arc<NativeDesktop>, connected: bool) 
 /// the other shell actions.
 fn open_file(app: &MainWindow, api: Arc<NativeDesktop>, path: String, name: String) {
     if app.get_ws_file_busy() {
+        return;
+    }
+    // A local file opens straight from the workspace folder; the cloud path
+    // pulls a local copy first.
+    if let Target::Local(root) = current_target() {
+        match api.open_workspace_resource(&root, &path) {
+            Ok(()) => app.set_status(format!("已打开 {name}").into()),
+            Err(error) => app.set_status(format!("打开失败：{error}").into()),
+        }
         return;
     }
     app.set_status(format!("正在拉取 {name}…").into());
@@ -596,6 +723,43 @@ fn download_file(app: &MainWindow, api: Arc<NativeDesktop>, path: String, name: 
         let _ = weak.upgrade_in_event_loop(move |app| match result {
             Ok(_) => app.set_status(format!("已下载 {name} 到本地工作区").into()),
             Err(error) => app.set_status(format!("下载失败：{error}").into()),
+        });
+    });
+}
+
+/// 打包下载：请求云端把目录（空白区为当前根）打成 zip，落到本地工作区并交给系统打开。
+fn archive_dir(app: &MainWindow, api: Arc<NativeDesktop>, path: String, name: String) {
+    if app.get_ws_file_busy() {
+        return;
+    }
+    app.set_status(format!("正在打包 {name}…").into());
+    let weak = app.as_weak();
+    std::thread::spawn(move || {
+        let result = api.interlink_cloud_archive(&path, &name);
+        let _ = weak.upgrade_in_event_loop(move |app| match result {
+            Ok(pulled) => app.set_status(
+                format!("已打包下载 {}（{}）", name, format_size(pulled.bytes)).into(),
+            ),
+            Err(error) => app.set_status(format!("打包失败：{error}").into()),
+        });
+    });
+}
+
+/// 清空工作目录根，随后整面板刷新（对齐蜂巢空白区菜单）。
+fn clear_root(app: &MainWindow, api: Arc<NativeDesktop>) {
+    if app.get_ws_file_busy() {
+        return;
+    }
+    app.set_status("正在清空工作目录…".into());
+    let weak = app.as_weak();
+    std::thread::spawn(move || {
+        let result = api.interlink_cloud_clear();
+        let _ = weak.upgrade_in_event_loop(move |app| match result {
+            Ok(()) => {
+                app.set_status("已清空工作目录".into());
+                refresh(&app, api);
+            }
+            Err(error) => app.set_status(format!("清空失败：{error}").into()),
         });
     });
 }
@@ -662,8 +826,9 @@ fn load_dir(weak: &slint::Weak<MainWindow>, api: Arc<NativeDesktop>, path: Strin
     begin_busy(weak);
     rebuild();
     let weak = weak.clone();
+    let target = current_target();
     std::thread::spawn(move || {
-        let result = api.interlink_cloud_listing(&path, offset);
+        let result = list_dir(&api, &target, &path, offset);
         let _ = weak.upgrade_in_event_loop(move |app| {
             apply_listing(&app, path, offset, result);
             end_busy(&app);
@@ -690,12 +855,18 @@ fn refresh(app: &MainWindow, api: Arc<NativeDesktop>) {
     begin_busy(&app.as_weak());
     rebuild();
     let weak = app.as_weak();
+    let target = current_target();
     std::thread::spawn(move || {
-        let stats = api.interlink_cloud_stats().ok();
-        let root = api.interlink_cloud_listing("", 0);
+        // The usage line only exists for the cloud workspace; a local folder
+        // shows none (the stats line is already cleared by `reflect_target`).
+        let stats = match &target {
+            Target::Cloud => api.interlink_cloud_stats().ok(),
+            Target::Local(_) => None,
+        };
+        let root = list_dir(&api, &target, "", 0);
         let mut children = Vec::new();
         for path in &expanded {
-            children.push((path.clone(), api.interlink_cloud_listing(path, 0)));
+            children.push((path.clone(), list_dir(&api, &target, path, 0)));
         }
         let _ = weak.upgrade_in_event_loop(move |app| {
             if let Some(stats) = stats {
@@ -704,7 +875,7 @@ fn refresh(app: &MainWindow, api: Arc<NativeDesktop>) {
             match root {
                 Ok(root) => apply_listing(&app, String::new(), 0, Ok(root)),
                 Err(error) => {
-                    app.set_ws_file_error(format!("无法读取云端工作目录：{error}").into())
+                    app.set_ws_file_error(format!("{}：{error}", read_error()).into())
                 }
             }
             for (path, listing) in children {
@@ -723,7 +894,7 @@ fn apply_listing(app: &MainWindow, path: String, offset: u64, result: Result<Nat
         Ok(listing) => listing,
         Err(error) => {
             if path.is_empty() {
-                app.set_ws_file_error(format!("无法读取云端工作目录：{error}").into());
+                app.set_ws_file_error(format!("{}：{error}", read_error()).into());
             } else {
                 app.set_status(format!("目录加载失败：{error}").into());
             }
@@ -741,6 +912,7 @@ fn apply_listing(app: &MainWindow, path: String, offset: u64, result: Result<Nat
     };
     match listing_status(&result) {
         "succeeded" => {
+
             with_panel(|panel| {
                 let dir = panel.dirs.entry(path.clone()).or_default();
                 dir.loading = false;
@@ -781,7 +953,7 @@ fn apply_listing(app: &MainWindow, path: String, offset: u64, result: Result<Nat
                 }
             });
             if path.is_empty() {
-                app.set_ws_file_error(format!("无法读取云端工作目录：{message}").into());
+                app.set_ws_file_error(format!("{}：{message}", read_error()).into());
             } else {
                 app.set_status(format!("目录加载失败：{message}").into());
             }

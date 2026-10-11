@@ -810,8 +810,12 @@ const handleNewFileConfirm = async (payload: { name: string; content: string; ty
 // -------------------------------------------------------------- row commands
 
 const handleRowCommand = async (command: string, row: WorkspaceVisibleRow | null) => {
-  // 远程是只读投影：菜单只有「打开目录 / 预览」，写类动作不存在。
+  // 远程是只读投影：菜单只有「打开目录 / 预览 / 刷新」，写类动作不存在。
   if (remoteInterlinkActive.value) {
+    if (command === 'refresh') {
+      await handleRefresh();
+      return;
+    }
     if (!row) return;
     if (command === 'toggle') {
       await toggleDirectoryPath(row.path);

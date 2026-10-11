@@ -7,22 +7,23 @@
  * 没记过序的行按自然顺序排在后面，列表里已消失的 key 直接忽略。
  */
 
-import type { InterlinkWorkspaceRow } from './interlinkNodeModel';
-
 // 行 key 与有序列表的存取（GET/PUT /wunder/interlink/workspace-order 及其上限
 // 归一化）在 `@/api/interlink` 的 fetch/saveInterlinkWorkspaceOrder。
 
 /**
  * 按 saved 顺序重排行；saved 里没有的行保持自然顺序排在末尾，
  * saved 里已不存在的 key 丢弃。两个输入都不修改。
+ *
+ * 泛型按 `{ key }` 约束：蜂巢侧栏把云端工作区行与本地工作区行放进同一份
+ * 可拖拽列表（§6.3 工作区即行、同级），云端行与本地行共用这一份排序。
  */
-export const applyWorkspaceOrder = (
-  rows: InterlinkWorkspaceRow[],
+export const applyWorkspaceOrder = <T extends { key: string }>(
+  rows: T[],
   saved: string[]
-): InterlinkWorkspaceRow[] => {
+): T[] => {
   if (!rows.length) return rows;
   const byKey = new Map(rows.map((row) => [row.key, row]));
-  const ordered: InterlinkWorkspaceRow[] = [];
+  const ordered: T[] = [];
   const consumed = new Set<string>();
   saved.forEach((key) => {
     const row = byKey.get(key);

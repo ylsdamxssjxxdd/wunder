@@ -164,11 +164,12 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         let Some(agent) = agent_id(&app) else { return };
         project_tools(&app);
         // The active settings category is the only view selector now that the
-        // expert page's own tab strip is gone: 6 memories, 8 usage, 10 archives.
+        // expert page's own tab strip is gone: 6 memories, 13 account (runtime
+        // usage, folded in from the retired activity category), 10 archives.
         let panel = app.get_settings_active_panel();
         let view = match panel {
             6 => Some(2),
-            8 => Some(4),
+            13 => Some(4),
             10 => Some(5),
             _ => None,
         };

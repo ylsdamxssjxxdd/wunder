@@ -6,7 +6,7 @@
 //! layer owns CRUD, path validation and the one-time local migration; storage
 //! and execution semantics stay in the shared engine.
 
-use super::NativeDesktop;
+use super::{NativeDesktop, NativeInterlinkEntry, NativeInterlinkListing};
 use anyhow::{anyhow, bail, Result};
 use std::{
     collections::HashMap,
@@ -453,6 +453,78 @@ impl NativeDesktop {
             Command::new("open").arg(&target).spawn()?;
         }
         Ok(())
+    }
+
+    /// List one local workspace folder for the working-directory region. Paths
+    /// are relative to the workspace root and cannot escape it; the result uses
+    /// the same shape as the cloud listing so the panel projects either source
+    /// identically. A local folder is read-only through this path.
+    pub fn workspace_local_listing(
+        &self,
+        root_path: &str,
+        path: &str,
+        offset: u64,
+    ) -> Result<NativeInterlinkListing> {
+        const LOCAL_PAGE: usize = 200;
+        let root = normalize_root(root_path)?;
+        if !root.is_dir() {
+            bail!(WORKSPACE_ROOT_MISSING);
+        }
+        // The root page is the workspace folder itself; children resolve under
+        // it through the same boundary check the open path uses.
+        let dir = if path.is_empty() {
+            root.clone()
+        } else {
+            workspace_resource_target(&root, path)?
+        };
+        if !dir.is_dir() {
+            bail!("目录不存在");
+        }
+        let mut entries: Vec<NativeInterlinkEntry> = Vec::new();
+        for item in std::fs::read_dir(&dir)? {
+            let Ok(item) = item else { continue };
+            let name = item.file_name().to_string_lossy().to_string();
+            if name.is_empty() {
+                continue;
+            }
+            let Ok(kind) = item.file_type() else { continue };
+            let is_dir = kind.is_dir();
+            let size = item.metadata().map(|meta| meta.len()).unwrap_or(0);
+            entries.push(NativeInterlinkEntry {
+                name: name.clone(),
+                path: if path.is_empty() {
+                    name
+                } else {
+                    format!("{path}/{name}")
+                },
+                kind: if is_dir { "dir".into() } else { "file".into() },
+                size,
+                updated_time: String::new(),
+            });
+        }
+        // Directories lead, then case-insensitive name order, matching the
+        // cloud listing's projection.
+        entries.sort_by(|a, b| {
+            let a_dir = a.kind == "dir";
+            let b_dir = b.kind == "dir";
+            b_dir
+                .cmp(&a_dir)
+                .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+        });
+        let total = entries.len() as u64;
+        let page = entries
+            .into_iter()
+            .skip(offset as usize)
+            .take(LOCAL_PAGE)
+            .collect();
+        Ok(NativeInterlinkListing {
+            status: "succeeded".into(),
+            path: path.to_string(),
+            entries: page,
+            total,
+            error: None,
+            command_id: None,
+        })
     }
 
     /// Read one workspace image for Markdown rendering after enforcing the

@@ -23,6 +23,18 @@ pub fn client_kind_from_scope(scope: Option<&str>) -> &'static str {
     }
 }
 
+/// Map a persisted cloud device `client` name (`desktop` / `cli`) to a presence
+/// client kind. Used by the interlink tunnel (docs §2.4) so a live tunnel marks
+/// the owning desktop/cli surface online on the admin user list, mirroring the
+/// web surface which is tracked from its websocket connections.
+pub fn client_kind_from_device(client: &str) -> &'static str {
+    if client.to_ascii_lowercase().contains("cli") {
+        CLIENT_CLI
+    } else {
+        CLIENT_DESKTOP
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct UserPresenceView {
     pub online: bool,

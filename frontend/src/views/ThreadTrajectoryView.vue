@@ -63,55 +63,62 @@
 
     <div
       v-if="timeline"
-      ref="timelineEl"
       class="tt-timeline"
       :class="{ 'tt-panning': panning, 'tt-dragging': dragging }"
-      @wheel.prevent="onTimelineWheel"
-      @contextmenu.prevent
-      @pointerdown="onTimelinePointerDown"
-      @pointermove="onTimelinePointerMove"
-      @pointerup="onTimelinePointerUp"
-      @pointerleave="onTimelineLeave"
-      @dblclick="clearSelection"
     >
-      <div class="tt-axis">
-        <span
-          v-for="tick in timelineTicks"
-          :key="tick.value"
-          class="tt-axis-tick"
-          :style="{ left: `${tick.x}px` }"
-        >{{ tick.label }}</span>
-      </div>
-      <div ref="trackEl" class="tt-track">
-        <span class="tt-lane-label tt-lane-0">{{ t('messenger.trajectory.laneInput') }}</span>
-        <span class="tt-lane-label tt-lane-1">{{ t('messenger.trajectory.laneModel') }}</span>
-        <span class="tt-lane-label tt-lane-2">{{ t('messenger.trajectory.laneTool') }}</span>
-        <span
-          v-for="boundary in projectedBoundaries"
-          :key="`b${boundary.turn}`"
-          class="tt-turn-boundary"
-          :style="{ left: `${boundary.x}px` }"
-        />
-        <span v-if="hoverX !== null" class="tt-hoverline" :style="{ left: `${hoverX}px` }" />
-        <span
-          v-for="span in projectedSpans"
-          :key="span.key"
-          class="tt-span"
-          :class="spanClasses(span)"
-          :style="spanStyle(span)"
-          @pointerdown.stop
-          @pointerenter="onSpanEnter(span, $event)"
-          @pointerleave="onSpanLeave"
-          @click.stop="selectIndex(span.model.index)"
-        />
-        <span
-          v-if="selection"
-          class="tt-selection"
-          :style="selectionStyle"
+      <div class="tt-plot">
+        <div class="tt-plot-corner" aria-hidden="true" />
+        <div class="tt-axis">
+          <span
+            v-for="tick in timelineTicks"
+            :key="tick.value"
+            class="tt-axis-tick"
+            :style="{ left: `${tick.x}px` }"
+          >{{ tick.label }}</span>
+        </div>
+        <div class="tt-lane-labels" aria-hidden="true">
+          <span class="tt-lane-label">{{ t('messenger.trajectory.laneInput') }}</span>
+          <span class="tt-lane-label">{{ t('messenger.trajectory.laneModel') }}</span>
+          <span class="tt-lane-label">{{ t('messenger.trajectory.laneTool') }}</span>
+        </div>
+        <div
+          ref="trackEl"
+          class="tt-track"
+          @wheel.prevent="onTimelineWheel"
+          @contextmenu.prevent
+          @pointerdown="onTimelinePointerDown"
+          @pointermove="onTimelinePointerMove"
+          @pointerup="onTimelinePointerUp"
+          @pointerleave="onTimelineLeave"
+          @dblclick="clearSelection"
         >
-          <span class="tt-selection-edge tt-selection-edge-start" />
-          <span class="tt-selection-edge tt-selection-edge-end" />
-        </span>
+          <span
+            v-for="boundary in projectedBoundaries"
+            :key="`b${boundary.turn}`"
+            class="tt-turn-boundary"
+            :style="{ left: `${boundary.x}px` }"
+          />
+          <span v-if="hoverX !== null" class="tt-hoverline" :style="{ left: `${hoverX}px` }" />
+          <span
+            v-for="span in projectedSpans"
+            :key="span.key"
+            class="tt-span"
+            :class="spanClasses(span)"
+            :style="spanStyle(span)"
+            @pointerdown.stop
+            @pointerenter="onSpanEnter(span, $event)"
+            @pointerleave="onSpanLeave"
+            @click.stop="selectIndex(span.model.index)"
+          />
+          <span
+            v-if="selection"
+            class="tt-selection"
+            :style="selectionStyle"
+          >
+            <span class="tt-selection-edge tt-selection-edge-start" />
+            <span class="tt-selection-edge tt-selection-edge-end" />
+          </span>
+        </div>
       </div>
       <div
         v-if="tooltip.visible"
@@ -146,7 +153,7 @@
                 :class="rowClasses(row.record)"
                 :data-timeline-focus="focusAttr(row.record)"
                 :data-record-index="row.record.cell.index"
-                @click="selectIndex(row.record.cell.index)"
+                @click="selectIndex(row.record.cell.index, { fromLedger: true })"
                 @dblclick.stop="onRowDoubleClick(row.record)"
               >
                 <td class="tt-event-cell">
@@ -365,7 +372,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from '@/i18n'
 import { getThreadLogSnapshot } from '@/api/chat'
@@ -511,6 +518,21 @@ watch(timeline, (model) => {
   if (!model) return
   viewStart.value = model.start
   viewSpan.value = Math.max(1, model.end - model.start)
+})
+
+/** 选中变化后，若对应 span 不在时间线视口内则自动平移视口（对齐参考实现）。 */
+watch(selectedIndex, (index) => {
+  if (index === null) return
+  const model = timeline.value
+  if (!model) return
+  const span = model.spans.find(entry => entry.index === index)
+  if (!span) return
+  const viewEnd = viewStart.value + viewSpan.value
+  if (span.start >= viewStart.value && span.end <= viewEnd) return
+  const nextStart = span.end > viewEnd ? span.end - viewSpan.value : span.start
+  const clamped = clampViewport(nextStart, viewSpan.value)
+  viewStart.value = clamped.start
+  viewSpan.value = clamped.span
 })
 
 const searchNeedle = computed(() => searchQuery.value.trim().toLowerCase())
@@ -791,12 +813,53 @@ watch([showTurns, showCalls], ([turnsOn, callsOn]) => {
 /* 选中与详情                                                        */
 /* ---------------------------------------------------------------- */
 
-function selectIndex(index: number): void {
+function selectIndex(index: number, options: { fromLedger?: boolean } = {}): void {
   selectedIndex.value = index
   const cell = findCell(index)
   activeTab.value = defaultTabFor(cell)
   openSections.input = true
   openSections.output = true
+  // 台账内点击不需要滚动；时间线与跳转链接的选中要把目标行带到可视区并高亮。
+  if (!options.fromLedger) revealRecord(index)
+}
+
+/** 把选中的记录滚动到台账可视区中部（对齐参考实现的滚动定位）。 */
+function revealRecord(index: number): void {
+  const record = allRecords.value.find(entry => entry.cell.index === index)
+  if (!record) return
+  const assistantKey = requestIdentity(record.turn, record.group)
+  let changed = false
+  if (collapsedTurns.value.has(record.turn) && !record.turnStart) {
+    const next = new Set(collapsedTurns.value)
+    next.delete(record.turn)
+    collapsedTurns.value = next
+    changed = true
+  }
+  if (collapsedAssistants.value.has(assistantKey)) {
+    const firstOfGroup = allRecords.value.find(entry =>
+      entry.turn === record.turn && entry.group === record.group)
+    if (firstOfGroup?.cell.index !== index) {
+      const next = new Set(collapsedAssistants.value)
+      next.delete(assistantKey)
+      collapsedAssistants.value = next
+      changed = true
+    }
+  }
+  if (changed) {
+    void nextTick(() => scrollLedgerToIndex(index))
+  } else {
+    scrollLedgerToIndex(index)
+  }
+}
+
+function scrollLedgerToIndex(index: number): void {
+  const position = rows.value.findIndex(row => row.record.cell.index === index)
+  if (position === -1) return
+  const top = rowPrefix.value[position] ?? 0
+  const height = rows.value[position]?.height ?? 30
+  const viewport = ledgerEl.value?.clientHeight ?? ledgerViewport.value
+  if (viewport <= 0) return
+  ledgerEl.value?.scrollTo({ top: Math.max(0, top + height / 2 - viewport / 2), behavior: 'smooth' })
 }
 
 function findCell(index: number): TrajCell | null {
@@ -1295,7 +1358,7 @@ function spanStyle(span: { model: TimelineSpan; left: number; width: number }): 
   const style: Record<string, string> = {
     left: `${span.left}px`,
     width: `${span.width}px`,
-    top: `${span.model.lane * 14}px`,
+    top: `${7 + span.model.lane * 14}px`,
   }
   if (span.model.kind === 'message' && span.model.ttftFraction !== null && span.width > 6) {
     const split = Math.round(span.width * span.model.ttftFraction)

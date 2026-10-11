@@ -1089,6 +1089,56 @@ impl CloudService {
         .await
     }
 
+    /// Download the cloud workspace (or one subtree) as a zip blob
+    /// (`GET /wunder/workspace/archive`). The interlink tunnel cannot carry a
+    /// zip, so the desktop asks the cloud REST plane directly.
+    pub async fn cloud_workspace_archive(&self, path: &str) -> Result<Vec<u8>> {
+        let path = urlencode_component(path.trim());
+        let response = self
+            .authed_send(|session| {
+                self.http
+                    .get(format!(
+                        "{}/wunder/workspace/archive?path={}",
+                        session.server, path
+                    ))
+                    .bearer_auth(&session.token)
+                    .header("x-wunder-device-id", &session.device_id)
+            })
+            .await?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = read_json(response).await;
+            return Err(anyhow!(
+                "cloud workspace archive failed: {status} {}",
+                error_message(&body)
+            ));
+        }
+        Ok(response.bytes().await?.to_vec())
+    }
+
+    /// Clear every entry under the cloud workspace root
+    /// (`POST /wunder/workspace/clear`).
+    pub async fn cloud_workspace_clear(&self) -> Result<()> {
+        let response = self
+            .authed_send(|session| {
+                self.http
+                    .post(format!("{}/wunder/workspace/clear", session.server))
+                    .bearer_auth(&session.token)
+                    .header("x-wunder-device-id", &session.device_id)
+                    .json(&json!({}))
+            })
+            .await?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = read_json(response).await;
+            return Err(anyhow!(
+                "cloud workspace clear failed: {status} {}",
+                error_message(&body)
+            ));
+        }
+        Ok(())
+    }
+
     // ------------------------------------------------------------------
     // Cloud model synthesis (§4.2)
     // ------------------------------------------------------------------

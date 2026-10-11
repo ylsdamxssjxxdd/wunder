@@ -459,8 +459,8 @@ export component MainWindow inherits Window {
     // Memory, usage and archive data are pulled on demand: the old expert page's
     // own tab strip is gone, so the active category is what selects the view.
     changed settings-active-panel => {
-        if root.settings-active-panel == 6 || root.settings-active-panel == 8
-            || root.settings-active-panel == 10 {
+        if root.settings-active-panel == 6 || root.settings-active-panel == 10
+            || root.settings-active-panel == 13 {
             root.refresh-expert();
         }
     }
@@ -532,6 +532,9 @@ export component MainWindow inherits Window {
     in-out property <string> ws-file-error;
     in-out property <bool> ws-file-offline: true;
     in-out property <bool> ws-file-busy: false;
+    // A local workspace folder is browsed read-only: the tree hides the
+    // mutating context-menu entries (new / move / delete / archive / clear).
+    in-out property <bool> ws-file-readonly: false;
     callback ws-file-toggle(int);
     callback ws-file-refresh();
     // Context menu (row index or -1 for the blank area, action code),
@@ -837,9 +840,10 @@ export component MainWindow inherits Window {
                 file-error: root.ws-file-error;
                 file-offline: root.ws-file-offline;
                 file-busy: root.ws-file-busy;
+            file-readonly: root.ws-file-readonly;
                 file-toggle(index) => { root.ws-file-toggle(index); }
                 file-refresh => { root.ws-file-refresh(); }
-                file-connect => { root.more-open = false; root.settings-open = true; root.settings-active-panel = 12; root.refresh-settings(); }
+                file-connect => { root.more-open = false; root.settings-open = true; root.settings-active-panel = 13; root.refresh-settings(); }
                 file-menu(index, action) => { root.ws-file-menu(index, action); }
                 file-drag(index) => { root.ws-file-drag(index); }
                 file-drop(event) => { root.ws-file-drop(event); }

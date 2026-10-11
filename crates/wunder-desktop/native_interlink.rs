@@ -455,6 +455,44 @@ impl NativeDesktop {
         Ok(root.join(&pulled.local_path))
     }
 
+    /// Archive one cloud directory (or the whole root when `cloud_path` is
+    /// empty) into a local zip through the cloud REST plane, then hand it to
+    /// the OS. The interlink tunnel cannot carry a zip blob, so this path
+    /// mirrors what the web's 打包下载 does instead of issuing a command.
+    pub fn interlink_cloud_archive(
+        &self,
+        cloud_path: &str,
+        name: &str,
+    ) -> Result<NativeInterlinkPull> {
+        let local_rel = validate_local_rel(&archive_file_name(name))?;
+        let state = self.state();
+        let root = state.workspace.ensure_user_root(self.user_id())?;
+        let target =
+            resolve_local_target(state.workspace.as_ref(), self.user_id(), &root, &local_rel)?;
+        let cloud = state.cloud.clone();
+        let bytes = self
+            .runtime
+            .block_on(cloud.cloud_workspace_archive(cloud_path))?;
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&target, &bytes)?;
+        let root = root.canonicalize().unwrap_or(root);
+        let _ = self.open_workspace_resource(&root.to_string_lossy(), &local_rel);
+        Ok(NativeInterlinkPull {
+            local_path: local_rel,
+            bytes: bytes.len() as u64,
+        })
+    }
+
+    /// Clear every entry under the cloud workspace root, mirroring the web's
+    /// 清空 action (`POST /wunder/workspace/clear`).
+    pub fn interlink_cloud_clear(&self) -> Result<()> {
+        let cloud = self.state().cloud.clone();
+        self.runtime.block_on(cloud.cloud_workspace_clear())?;
+        Ok(())
+    }
+
     /// Issue one cloud write command and fold the ledger answer into the
     /// shared outcome: parked approvals surface instead of being swallowed,
     /// because the desktop is the approver for its own requests.
@@ -588,6 +626,19 @@ fn file_tail(cloud_path: &str) -> String {
         .unwrap_or_default()
         .trim()
         .to_string()
+}
+
+/// Local zip name for one archive request: the entry's own name, or
+/// `workspace` for the root, always with a single `.zip` suffix.
+fn archive_file_name(name: &str) -> String {
+    let base = name.trim().replace('\\', "/");
+    let base = base.trim_matches('/').trim();
+    let base = if base.is_empty() { "workspace" } else { base };
+    if base.ends_with(".zip") {
+        base.to_string()
+    } else {
+        format!("{base}.zip")
+    }
 }
 
 /// Normalize one cloud workspace path: trimmed, separators unified, leading

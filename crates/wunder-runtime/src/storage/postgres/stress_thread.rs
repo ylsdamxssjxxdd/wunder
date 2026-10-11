@@ -3,8 +3,8 @@
 //! Mirrors the SQLite bulk writer: one dedicated pooled connection, one
 //! transaction per user turn, simulated timestamps ending at "now". Rows are
 //! buffered and flushed as multi-row `INSERT ... VALUES (...)` statements
-//! (4000 rows per statement, prepared once and reused across flushes; the
-//! 65535-parameter protocol limit stays at bay), which is the difference
+//! (a fixed batch per statement, prepared once and reused across flushes; the
+//! batch row count is capped by the bind-parameter limit), which is the difference
 //! between minutes and hours at the default 1000×1000 scale. Sampling logic is
 //! shared with the SQLite backend in `stress_model`.
 
@@ -21,9 +21,14 @@ use tokio_postgres::types::ToSql;
 use tokio_postgres::{Statement, Transaction};
 use wunder_core::storage_backend::StorageLifecycle;
 
-/// Rows per multi-row INSERT. 4000 × 13 = 52000 parameters, still under the
-/// 65535 protocol limit, and half as many round-trips/parses per turn.
-const BATCH_ROWS: usize = 4000;
+/// Rows per multi-row INSERT. The wire protocol encodes a statement's
+/// parameter count as a signed 16-bit integer, so one statement carries at most
+/// 32_767 bind parameters. `thread_items` is the widest bulk table (13 columns),
+/// which caps the batch at 2_520 rows; 2_500 keeps a small margin
+/// (2_500 × 13 = 32_500 ≤ 32_767). Oversized batches parse fine but fail on the
+/// first full flush with "error encoding message to server" — generations too
+/// small to ever fill a batch (e.g. 1×1, 2×2) never hit it.
+const BATCH_ROWS: usize = 2_500;
 
 const ITEM_COLUMNS: &str = "session_id,item_id,turn_id,root_turn_id,visibility,user_id,item_index,kind,status,payload,created_time,updated_time,created_seq";
 const CHANGE_COLUMNS: &str = "session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time";
@@ -197,7 +202,7 @@ async fn run_generation(
     let mut tool_rows: Vec<Vec<P>> = Vec::with_capacity(BATCH_ROWS);
 
     // Prepare each fixed full-batch INSERT exactly once. Every full batch then
-    // reuses these statements, so Postgres parses/plans each ~52k-parameter
+    // reuses these statements, so Postgres parses/plans each ~32k-parameter
     // shape a single time instead of once per flush — the dominant cost of the
     // INSERT path at scale.
     let item_stmt = client
@@ -657,4 +662,38 @@ async fn run_generation(
         items: items_written,
         tool_calls: tool_calls_total,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The wire protocol encodes a statement's parameter count as a signed
+    /// 16-bit integer. A full batch must stay at or below `i16::MAX`, otherwise
+    /// the first full flush fails with "error encoding message to server" while
+    /// undersized generations (which never fill a batch) slip through.
+    #[test]
+    fn prepared_batches_stay_within_bind_limit() {
+        for (table, columns, width) in [
+            ("thread_items", ITEM_COLUMNS, 13usize),
+            ("thread_log_changes", CHANGE_COLUMNS, 9usize),
+            ("tool_logs", TOOL_LOG_COLUMNS, 10usize),
+        ] {
+            assert_eq!(
+                columns.split(',').count(),
+                width,
+                "{table}: row width must match the column list"
+            );
+            let params = BATCH_ROWS * width;
+            assert!(
+                params <= i16::MAX as usize,
+                "{table}: {params} parameters exceed the i16::MAX bind limit"
+            );
+            let sql = multirow_sql(table, columns, width, BATCH_ROWS);
+            assert!(
+                sql.contains(&format!("${params}")),
+                "{table}: generated statement should reference ${params}"
+            );
+        }
+    }
 }

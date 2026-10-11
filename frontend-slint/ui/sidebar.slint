@@ -31,6 +31,7 @@ export global WorkspaceVisual {
         : name == "alien" ? @image-url("../assets/icons/workspace/alien.svg")
         : name == "bell" ? @image-url("../assets/icons/workspace/bell.svg")
         : name == "flask" ? @image-url("../assets/icons/workspace/flask.svg")
+        : name == "cloud" ? @image-url("../assets/icons/cloud.svg")
         : @image-url("../assets/icons/workspace/folder.svg");
     }
 
@@ -215,6 +216,9 @@ export component Sidebar inherits Rectangle {
     in property <string> file-error;
     in property <bool> file-offline;
     in property <bool> file-busy;
+    // A local workspace folder is browsed read-only; the panel hides the
+    // mutating menu entries when set.
+    in property <bool> file-readonly;
     in-out property <length> files-height: 220px;
     callback file-toggle(int);
     callback file-refresh();
@@ -256,7 +260,7 @@ export component Sidebar inherits Rectangle {
             vertical-stretch: 1;
             horizontal-scrollbar-policy: always-off;
             for row[ri] in root.rows : Rectangle {
-                height: row.kind == 0 ? 34px : 28px;
+                height: row.kind == 1 ? 28px : 34px;
                 width: parent.width;
                 if row.kind == 0 : ws-drag := DragRow {
                     height: parent.height;
@@ -356,6 +360,35 @@ export component Sidebar inherits Rectangle {
                         open-trajectory => { root.open-trajectory(row.payload); }
                     }
                 }
+                // Pinned "cloud workspace" sentinel: points the working-
+                // directory panel back at the cloud account workspace. It
+                // never drags or renames, so it is a plain clickable row.
+                if row.kind == 2 : Rectangle {
+                    height: parent.height;
+                    width: parent.width;
+                    background: row.selected ? Theme.selected : transparent;
+                    Rectangle { x: 0px; y: 5px; width: 2px; height: 24px; border-radius: 1px; background: row.selected ? Theme.accent : transparent; }
+                    HorizontalLayout {
+                        padding-left: 12px; padding-right: 10px; spacing: 8px;
+                        Rectangle {
+                            y: (parent.height - 22px) / 2;
+                            width: 22px; height: 22px; border-radius: 6px;
+                            background: Theme.accent.transparentize(0.87);
+                            Image { x: 2px; y: 2px; width: 18px; height: 18px; source: WorkspaceVisual.icon("cloud"); colorize: Theme.accent; }
+                        }
+                        Text {
+                            height: parent.height; text: row.name;
+                            color: Theme.text; font-size: Theme.font-lg;
+                            vertical-alignment: center; overflow: elide;
+                            horizontal-stretch: 1;
+                        }
+                    }
+                    cloud-touch := TouchArea {
+                        mouse-cursor: pointer;
+                        accessible-role: button; accessible-label: row.name;
+                        clicked => { root.select-row(ri); }
+                    }
+                }
             }
         }
         // Draggable splitter between the thread tree and the working-directory
@@ -393,6 +426,7 @@ export component Sidebar inherits Rectangle {
             error: root.file-error;
             offline: root.file-offline;
             busy: root.file-busy;
+            readonly: root.file-readonly;
             toggle(index) => { root.file-toggle(index); }
             refresh => { root.file-refresh(); }
             connect => { root.file-connect(); }

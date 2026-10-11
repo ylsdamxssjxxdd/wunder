@@ -259,6 +259,19 @@ function contentToText(value: unknown): string {
   return value === null || value === undefined ? '' : String(value)
 }
 
+/** 历史数据兜底：上下文类条目没有 content 时从结构化字段取可读文本。 */
+function contextFallbackText(payload: RawRecord): string {
+  // 故意不含 status/stop_reason：「completed」「model_response」这类生命周期
+  // 值对时间线没有信息量，宁可显示无内容也不制造噪音。
+  for (const key of [
+    'summary', 'message', 'reason', 'stage', 'description', 'code',
+  ]) {
+    const value = payload[key]
+    if (typeof value === 'string' && value.trim()) return value
+  }
+  return ''
+}
+
 function summarizeToolResult(payload: RawRecord): string {
   const data = payload.data
   if (typeof data === 'string') return data
@@ -404,13 +417,14 @@ function buildCell(item: RawRecord, payload: RawRecord, kind: TrajKind, index: n
       ? Math.max(0, (completedAt - startedAt) / 1000)
       : null
   } else {
-    const contentText = contentToText(payload.content)
+    let contentText = contentToText(payload.content)
+    if (!contentText.trim()) contentText = contextFallbackText(payload)
     cell.text = markdownPreviewText(contentText)
     cell.previewMarkdown = contentText.trim() ? contentText : undefined
     cell.inputDetail = contentText.trim() ? contentText : undefined
-    cell.timeSeconds = startedAt !== null && completedAt !== null
-      ? Math.max(0, (completedAt - startedAt) / 1000)
-      : null
+    // 用户/上下文是瞬时事件（dsh 的输入通道即小刻度）：不用 updated_time
+    // 兜底补时长，否则会被拉成覆盖整轮的长条，时间线输入通道因此总是塞满。
+    cell.timeSeconds = startedAt !== null ? 0 : null
   }
 
   return cell
@@ -472,6 +486,14 @@ export function buildTrajectoryLayout(rawTurns: unknown, t: Translate): TrajTurn
       const item = ordered[i]
       const payload = payloadOf(item)
       const rawKind = rawKindOf(item, payload)
+      // progress/workspace_update/model_usage/llm_stream_retry 是传输态或统计
+      // 通知，成功的轮次终止只是生命周期回执；后端已不再入账，这里跳过历史
+      // 遗留数据（不占用记录索引）。
+      if (
+        rawKind === 'progress' || rawKind === 'workspace_update'
+        || rawKind === 'model_usage' || rawKind === 'llm_stream_retry'
+      ) continue
+      if ((rawKind === 'terminal' || rawKind === 'turn_terminal') && !payload.error && item.status === 'completed') continue
       const kind = resolveKind(rawKind, payload)
       const cell = buildCell(item, payload, kind, index)
       index += 1

@@ -7,74 +7,86 @@
   >
     <div ref="workspaceRegionEl" class="messenger-sidebar-workspace-region" :style="workspaceRegionStyle">
       <div class="messenger-sidebar-group-title">{{ t('messenger.sidebar.workspaceGroup') }}</div>
-      <div
-        class="messenger-sidebar-workspace-row"
-        :class="{ 'is-selected': !activeSessionId && !interlinkRemoteSelected }"
-        role="button"
-        tabindex="0"
-        :aria-label="workspaceName"
-        @click="handleWorkspaceRowClick"
-        @keydown.enter.prevent="handleWorkspaceRowClick"
-      >
-        <i class="fa-solid fa-cloud messenger-sidebar-workspace-icon" aria-hidden="true"></i>
-        <span class="messenger-sidebar-workspace-name" :title="workspaceName">{{ workspaceName }}</span>
-        <span class="messenger-sidebar-workspace-meta">{{ workspaceMetaLabel }}</span>
-        <!-- 唯一的「新建线程」入口（左栏顶部的「新任务」按钮已移除），所以常驻可见、不再悬停才出现。 -->
+
+      <!-- §6.3 工作区即行：云端工作区与本地工作区是同一份可拖拽条目列表（真正的同级，
+           云端行也能拖）。线程树是云端工作区的子级，紧跟云端行渲染——云端行被拖到哪，
+           它的线程就跟到哪（蜂窝同构的工作区/线程树）。
+           本地行没有检测到工作区投影的设备不出条目（见 interlinkWorkspaceRows）；
+           点击行把文件区切到对应目录（URL `?node=&ws=`），行顺序是蜂巢账号级偏好
+           （云端存储），不回写本地设备。 -->
+      <template v-for="entry in orderedWorkspaceEntries" :key="entry.key">
+        <template v-if="entry.kind === 'cloud'">
+          <div
+            class="messenger-sidebar-workspace-row"
+            :class="{
+              'is-selected': !interlinkRemoteSelected,
+              'is-dragging': dragKey === entry.key,
+              'is-drop-target': dropTargetKey === entry.key
+            }"
+            role="button"
+            tabindex="0"
+            draggable="true"
+            :aria-label="workspaceName"
+            @click="handleWorkspaceRowClick"
+            @keydown.enter.prevent="handleWorkspaceRowClick"
+            @dragstart="handleRowDragStart(entry, $event)"
+            @dragend="handleRowDragEnd"
+            @dragover.prevent="handleRowDragOver(entry)"
+            @dragleave="handleRowDragLeave(entry)"
+            @drop.prevent="handleRowDrop(entry)"
+          >
+            <i class="fa-solid fa-cloud messenger-sidebar-workspace-icon" aria-hidden="true"></i>
+            <span class="messenger-sidebar-workspace-name" :title="workspaceName">{{ workspaceName }}</span>
+            <span class="messenger-sidebar-workspace-meta">{{ workspaceMetaLabel }}</span>
+            <!-- 唯一的「新建线程」入口（左栏顶部的「新任务」按钮已移除），所以常驻可见、不再悬停才出现。 -->
+            <button
+              class="messenger-sidebar-workspace-menu"
+              type="button"
+              :disabled="newTaskDisabled"
+              :title="t('chat.newSession')"
+              :aria-label="t('chat.newSession')"
+              @click.stop="handleNewTask"
+            >
+              <i class="fa-solid fa-plus" aria-hidden="true"></i>
+            </button>
+          </div>
+
+          <!-- 云端线程树：云端工作区的子级。打开线程同时把目录目标切回云端。 -->
+          <MessengerThreadTree
+            :items="threads"
+            :active-session-id="activeSessionId"
+            :agent-id="agentIdForApi"
+            @open="handleThreadOpen"
+            @detail="emit('thread-detail', $event)"
+            @rename="emit('rename-thread', $event)"
+            @archive="emit('archive-thread', $event)"
+          />
+        </template>
+
         <button
-          class="messenger-sidebar-workspace-menu"
+          v-else
+          class="messenger-sidebar-workspace-row"
+          :class="{
+            'is-selected': isRowSelected(entry),
+            'is-dragging': dragKey === entry.key,
+            'is-drop-target': dropTargetKey === entry.key
+          }"
           type="button"
-          :disabled="newTaskDisabled"
-          :title="t('chat.newSession')"
-          :aria-label="t('chat.newSession')"
-          @click.stop="emit('new-task')"
+          draggable="true"
+          :aria-label="t('interlink.workspace.rowAria', { name: entry.label })"
+          @click="selectWorkspaceRow(entry)"
+          @dragstart="handleRowDragStart(entry, $event)"
+          @dragend="handleRowDragEnd"
+          @dragover.prevent="handleRowDragOver(entry)"
+          @dragleave="handleRowDragLeave(entry)"
+          @drop.prevent="handleRowDrop(entry)"
         >
-          <i class="fa-solid fa-plus" aria-hidden="true"></i>
+          <i class="fa-solid fa-folder messenger-sidebar-workspace-icon" aria-hidden="true"></i>
+          <span class="messenger-sidebar-workspace-name" :title="entry.label">
+            {{ entry.label }}
+          </span>
         </button>
-      </div>
-
-      <!-- §6.3 本地工作区行：与云端工作区同级、按工作区（而不是设备）区分；
-           点击行把文件区切到该工作区目录（URL `?node=&ws=`）。
-           行顺序是蜂巢账号级偏好（云端存储），可拖拽调整，不回写本地设备。 -->
-      <button
-        v-for="row in orderedWorkspaceRows"
-        :key="row.key"
-        class="messenger-sidebar-workspace-row is-device-row"
-        :class="{
-          'is-selected': isRowSelected(row),
-          'is-dragging': dragKey === row.key,
-          'is-drop-target': dropTargetKey === row.key
-        }"
-        type="button"
-        draggable="true"
-        :aria-label="t('interlink.workspace.rowAria', { name: row.label })"
-        @click="selectWorkspaceRow(row)"
-        @dragstart="handleRowDragStart(row, $event)"
-        @dragend="handleRowDragEnd"
-        @dragover.prevent="handleRowDragOver(row)"
-        @dragleave="handleRowDragLeave(row)"
-        @drop.prevent="handleRowDrop(row)"
-      >
-        <span
-          class="interlink-status-dot messenger-sidebar-device-status"
-          :class="statusDotClass(row.node.status)"
-          aria-hidden="true"
-        ></span>
-        <i :class="nodeTypeIcon(row.node.node_type)" class="messenger-sidebar-workspace-icon" aria-hidden="true"></i>
-        <span class="messenger-sidebar-workspace-name" :title="row.label">
-          {{ row.label }}
-        </span>
-        <span class="messenger-sidebar-workspace-meta">{{ t(statusLabelKey(row.node.status)) }}</span>
-      </button>
-
-      <MessengerThreadTree
-        :items="threads"
-        :active-session-id="activeSessionId"
-        :agent-id="agentIdForApi"
-        @open="emit('open-thread', $event)"
-        @detail="emit('thread-detail', $event)"
-        @rename="emit('rename-thread', $event)"
-        @archive="emit('archive-thread', $event)"
-      />
+      </template>
     </div>
 
     <div
@@ -120,7 +132,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import MessengerThreadTree from './MessengerThreadTree.vue';
 import WorkspaceFilesPanel from '@/views/messenger/workspace/WorkspaceFilesPanel.vue';
 import { useInterlinkNodes } from '@/views/messenger/interlink/useInterlinkNodes';
@@ -132,9 +144,6 @@ import {
 } from '@/api/interlink';
 import {
   interlinkWorkspaceRows,
-  nodeTypeIcon,
-  statusDotClass,
-  statusLabelKey,
   type InterlinkWorkspaceRow
 } from '@/views/messenger/interlink/interlinkNodeModel';
 import {
@@ -205,10 +214,24 @@ const {
 /** 节点 → 工作区行的映射是纯函数；上限在模型里统一收敛，不一次铺开。 */
 const workspaceRows = computed(() => interlinkWorkspaceRows(interlink.nodes.value || []));
 
-// ---------------------------------------------- 工作区行排序（云端偏好，§6.3）
+// ---------------------------------------------- 工作区条目排序（云端偏好，§6.3）
+
+/** 云端工作区与本地工作区在侧栏是同一份条目列表：同级、同一套拖拽排序。 */
+type WorkspaceSidebarEntry =
+  | { kind: 'cloud'; key: string }
+  | ({ kind: 'local' } & InterlinkWorkspaceRow);
+
+const CLOUD_ENTRY_KEY = 'cloud';
+const cloudSidebarEntry: WorkspaceSidebarEntry = { kind: 'cloud', key: CLOUD_ENTRY_KEY };
 
 const workspaceOrder = ref<string[]>([]);
-const orderedWorkspaceRows = computed(() => applyWorkspaceOrder(workspaceRows.value, workspaceOrder.value));
+const workspaceEntries = computed<WorkspaceSidebarEntry[]>(() => [
+  cloudSidebarEntry,
+  ...workspaceRows.value.map((row): WorkspaceSidebarEntry => ({ kind: 'local', ...row }))
+]);
+const orderedWorkspaceEntries = computed<WorkspaceSidebarEntry[]>(() =>
+  applyWorkspaceOrder(workspaceEntries.value, workspaceOrder.value)
+);
 const dragKey = ref('');
 const dropTargetKey = ref('');
 let orderSaveTimer: number | null = null;
@@ -222,26 +245,26 @@ onMounted(() => {
     .catch(() => undefined);
 });
 
-const handleRowDragStart = (row: InterlinkWorkspaceRow, event: DragEvent): void => {
-  dragKey.value = row.key;
+const handleRowDragStart = (entry: { key: string }, event: DragEvent): void => {
+  dragKey.value = entry.key;
   dropTargetKey.value = '';
   if (event.dataTransfer) {
     event.dataTransfer.effectAllowed = 'move';
     // Firefox 需要 setData 才会真正进入拖拽。
     try {
-      event.dataTransfer.setData('text/plain', row.key);
+      event.dataTransfer.setData('text/plain', entry.key);
     } catch {
       // 老内核不支持时不影响本地状态驱动的拖拽。
     }
   }
 };
 
-const handleRowDragOver = (row: InterlinkWorkspaceRow): void => {
-  if (dragKey.value && row.key !== dragKey.value) dropTargetKey.value = row.key;
+const handleRowDragOver = (entry: { key: string }): void => {
+  if (dragKey.value && entry.key !== dragKey.value) dropTargetKey.value = entry.key;
 };
 
-const handleRowDragLeave = (row: InterlinkWorkspaceRow): void => {
-  if (dropTargetKey.value === row.key) dropTargetKey.value = '';
+const handleRowDragLeave = (entry: { key: string }): void => {
+  if (dropTargetKey.value === entry.key) dropTargetKey.value = '';
 };
 
 const handleRowDragEnd = (): void => {
@@ -249,14 +272,14 @@ const handleRowDragEnd = (): void => {
   dropTargetKey.value = '';
 };
 
-const handleRowDrop = (row: InterlinkWorkspaceRow): void => {
+const handleRowDrop = (entry: { key: string }): void => {
   const dragged = dragKey.value;
   handleRowDragEnd();
-  if (!dragged || dragged === row.key) return;
+  if (!dragged || dragged === entry.key) return;
   const next = moveWorkspaceRow(
-    orderedWorkspaceRows.value.map((item) => item.key),
+    orderedWorkspaceEntries.value.map((item) => item.key),
     dragged,
-    row.key
+    entry.key
   );
   if (!next) return;
   workspaceOrder.value = next;
@@ -272,10 +295,39 @@ const scheduleOrderSave = (): void => {
   }, 600);
 };
 
-const isRowSelected = (row: InterlinkWorkspaceRow): boolean =>
-  interlinkRemoteSelected.value &&
-  interlinkTarget.value === interlinkDeviceTarget(row.deviceId) &&
-  interlinkWorkspaceId.value === row.workspaceId;
+const isRowSelected = (row: InterlinkWorkspaceRow): boolean => {
+  if (!interlinkRemoteSelected.value) return false;
+  if (interlinkTarget.value !== interlinkDeviceTarget(row.deviceId)) return false;
+  const ws = interlinkWorkspaceId.value;
+  if (!ws) {
+    // 缺省 ws＝该设备的默认目录：高亮该设备的第一行，避免「远程目标却无选中行」。
+    const first = workspaceRows.value.find(
+      (item) => interlinkDeviceTarget(item.deviceId) === interlinkTarget.value
+    );
+    return first?.key === row.key;
+  }
+  return ws === row.workspaceId;
+};
+
+// 目标自愈（§6.3）：URL 里残留的本地目标若对应不到任何工作区行（设备从未同步
+// 投影、工作区已删除、设备被吊销等），一律回落云端——文件区绝不停留在一个
+// 已不存在的本地目录上。等节点列表完成首次加载后再判，避免把有效深链误杀。
+const targetHasRow = computed(() => {
+  if (!interlinkRemoteSelected.value) return true;
+  const target = interlinkTarget.value;
+  const ws = interlinkWorkspaceId.value;
+  return workspaceRows.value.some(
+    (row) => interlinkDeviceTarget(row.deviceId) === target && (!ws || row.workspaceId === ws)
+  );
+});
+
+watch(
+  () => interlinkRemoteSelected.value && interlink.lastLoadedAt.value > 0 && !targetHasRow.value,
+  (stale) => {
+    if (stale) backToCloudWorkspace();
+  },
+  { immediate: true }
+);
 
 const selectWorkspaceRow = (row: InterlinkWorkspaceRow): void => {
   writeInterlinkTarget(interlinkDeviceTarget(row.deviceId), row.workspaceId);
@@ -285,6 +337,18 @@ const handleWorkspaceRowClick = (): void => {
   // 回到云端工作区上下文：文件区跟随 `?node=` 切回云端目录。
   backToCloudWorkspace();
   emit('select-workspace');
+};
+
+/** 线程是云端工作区的内容：打开线程（含新建）即把目录目标切回云端，
+ * 文件区跟着回到云端工作目录——不会停在某个本地工作区的只读投影上。 */
+const handleThreadOpen = (id: string): void => {
+  backToCloudWorkspace();
+  emit('open-thread', id);
+};
+
+const handleNewTask = (): void => {
+  backToCloudWorkspace();
+  emit('new-task');
 };
 
 // ------------------------------------------------------------------ resizer

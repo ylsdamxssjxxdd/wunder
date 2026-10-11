@@ -270,7 +270,6 @@ const handleMenuKeydown = (event: KeyboardEvent) => {
 };
 
 const openMenu = (row: WorkspaceVisibleRow | null, event: MouseEvent | Event) => {
-  if (props.readOnly && !row) return;
   if (row?.kind === 'more') return;
   const source = event as MouseEvent;
   const x = Number.isFinite(source.clientX) && source.clientX > 0 ? source.clientX : 24;
@@ -289,9 +288,11 @@ const createItems = (): MenuItem[] => [
 
 const menuItems = computed<MenuItem[]>(() => {
   const row = menu.value.row;
-  // 只读投影：只给「打开目录 / 预览」，写类动作在远程节点上不存在。
+  // 只读投影：行上只给「打开目录 / 预览」，写类动作在远程节点上不存在；
+  // 空白区给「刷新」，右键不再无声无息。
   if (props.readOnly) {
-    if (!row || row.kind === 'more') return [];
+    if (!row) return [{ command: 'refresh', label: t('common.refresh'), icon: 'fa-rotate-right' }];
+    if (row.kind === 'more') return [];
     return row.kind === 'dir'
       ? [{ command: 'toggle', label: t('messenger.filesArea.menu.open'), icon: 'fa-folder-open' }]
       : [{ command: 'preview', label: t('messenger.filesArea.menu.preview'), icon: 'fa-eye' }];

@@ -139,7 +139,20 @@ pub fn export_response(
 
 /// Stable lifecycle projection. Transport-only deltas never enter the timeline.
 pub fn event_item(session_id: &str, event_type: &str, data: &Value) -> Option<Value> {
-    if event_type.ends_with("_delta") || matches!(event_type, "heartbeat" | "context_usage") {
+    // progress/workspace_update/model_usage/llm_stream_retry 是传输态或统计类
+    // 通知（聊天视图走原始事件流，用量并入助手条目的 metrics），不是时间线记录；
+    // 入账只会制造大量无正文的上下文噪音。
+    if event_type.ends_with("_delta")
+        || matches!(
+            event_type,
+            "heartbeat"
+                | "context_usage"
+                | "progress"
+                | "workspace_update"
+                | "model_usage"
+                | "llm_stream_retry"
+        )
+    {
         return None;
     }
     let turn = data.get("turn_id")?.as_str()?;
@@ -211,13 +224,26 @@ pub fn event_item(session_id: &str, event_type: &str, data: &Value) -> Option<Va
                 .and_then(Value::as_str)
                 .unwrap_or("running"),
         ),
-        "turn_terminal" => (
-            "terminal",
-            "terminal".into(),
-            data.get("status")
-                .and_then(Value::as_str)
-                .unwrap_or("completed"),
-        ),
+        // 成功终止只是生命周期回执（stop_reason=「model_response」之类对时间线
+        // 没有信息量，轮次边界已由台账分组表达，对齐 dsh 无终止记录的做法）；
+        // 只有失败终止携带错误详情，聊天视图也依赖它渲染失败原因。
+        "turn_terminal" => {
+            let failed = data.get("error").is_some()
+                || matches!(
+                    data.get("status").and_then(Value::as_str),
+                    Some("failed") | Some("cancelled") | Some("rejected")
+                );
+            if !failed {
+                return None;
+            }
+            (
+                "terminal",
+                "terminal".into(),
+                data.get("status")
+                    .and_then(Value::as_str)
+                    .unwrap_or("failed"),
+            )
+        }
         "final"
         | "thread_status"
         | "thread_closed"
@@ -271,10 +297,28 @@ fn derive_context_text(event_type: &str, data: &Value) -> Option<String> {
         "approval_request" | "approval_result" | "approval_resolved" => {
             pick(&["summary", "reason", "status"])
         }
-        "turn_terminal" => pick(&["stop_reason", "status", "reason"]),
+        "turn_terminal" => {
+            // 失败终止优先展示错误详情；error 是嵌套对象，逐层取可读字段。
+            if let Some(error) = data.get("error") {
+                let nested = |key: &str| -> Option<String> {
+                    error
+                        .get(key)
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .map(str::to_string)
+                };
+                if let Some(text) = nested("message").or_else(|| nested("code")) {
+                    return Some(text);
+                }
+            }
+            pick(&["status", "reason"])
+        }
         "subagent_message" => pick(&["message", "summary", "content"]),
         "compaction" => pick(&["summary", "reason", "status"]),
-        _ => None,
+        "error" => pick(&["message", "code"]),
+        // 兜底：任何进入时间线的未知事件也必须有可读内容，避免「无内容」条目。
+        _ => pick(&["summary", "message", "reason", "stage", "description"]),
     }
 }
 
@@ -535,6 +579,69 @@ mod tests {
         assert_eq!(blocks[1]["field"], "reasoning");
         assert_eq!(blocks[1]["data"]["reasoning"], "thought");
         assert!(blocks[1]["data"].get("content").is_none());
+    }
+
+    #[test]
+    fn transport_status_events_never_enter_the_timeline() {
+        for event_type in [
+            "progress",
+            "workspace_update",
+            "heartbeat",
+            "context_usage",
+            "model_usage",
+            "llm_stream_retry",
+        ] {
+            let item = event_item(
+                "s",
+                event_type,
+                &json!({"turn_id":"turn","model_round":1,"summary":"noise"}),
+            );
+            assert!(item.is_none(), "{event_type} must stay out of the timeline");
+        }
+    }
+
+    #[test]
+    fn successful_turn_terminal_stays_out_failed_keeps_error_detail() {
+        let success = event_item(
+            "s",
+            "turn_terminal",
+            &json!({"turn_id":"turn","model_round":1,"status":"completed","stop_reason":"model_response"}),
+        );
+        assert!(success.is_none(), "successful terminals are lifecycle receipts");
+
+        let failed = event_item(
+            "s",
+            "turn_terminal",
+            &json!({
+                "turn_id":"turn",
+                "model_round":1,
+                "status":"failed",
+                "error":{"code":"UPSTREAM_TIMEOUT","message":"upstream timeout"}
+            }),
+        )
+        .expect("failed terminals keep error detail for the chat view");
+        assert_eq!(failed["kind"], "terminal");
+        assert_eq!(failed["status"], "failed");
+        assert_eq!(failed["content"], "upstream timeout");
+    }
+
+    #[test]
+    fn every_timeline_kind_carries_readable_content() {
+        let error_item = event_item(
+            "s",
+            "error",
+            &json!({"turn_id":"turn","model_round":1,"code":"UPSTREAM_TIMEOUT","message":"upstream timeout"}),
+        )
+        .expect("error stays a timeline record");
+        assert_eq!(error_item["content"], "upstream timeout");
+
+        let context_item = event_item(
+            "s",
+            "unknown_note",
+            &json!({"turn_id":"turn","model_round":2,"stage":"guard","summary":"guard passed"}),
+        )
+        .expect("unknown events fall back to a context record");
+        assert_eq!(context_item["content"], "guard passed");
     }
 }
 

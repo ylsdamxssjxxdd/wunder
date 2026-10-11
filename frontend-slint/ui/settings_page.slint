@@ -246,18 +246,21 @@ export component SettingsPage inherits Rectangle {
     in property <string> prompt-preview;
     in property <bool> prompt-preview-loading: false;
     in property <string> status;
-    // 0 general, 1 models, 2 tools, 3 agent, 4 companion, 5 scheduled tasks,
-    // 6 memories, 7 channels, 8 activity, 9 prompt packs, 10 archived threads,
-    // 11 help, 12 interlink.
+    // Tab ids are stable labels, not list positions: 0 general, 13 account,
+    // 1 models, 2 tools, 3 agent, 4 companion, 5 scheduled tasks, 6 memories,
+    // 7 channels, 9 prompt packs, 10 archived threads, 11 help. The navigation
+    // lists them in the web messenger's category order: general, account, models,
+    // tools, agent, companion, cron, memory, channels, prompts, archived, help.
     in-out property <int> settings-tab: 0;
     // Category filter typed into the navigation search box. Slint 1.18 strings
     // have no substring test, so the filter runs natively and the matching
     // categories come back as a bit set (bit N = category N).
     in-out property <string> settings-query: "";
-    // One flag per §9.2 category, in spec order. Slint 1.18 has no bitwise
-    // operators, so the native search projection ships booleans rather than a
-    // mask; an all-true list means "no query".
-    in-out property <[bool]> settings-category-flags: [true, true, true, true, true, true, true, true, true, true, true, true, true];
+    // One flag per category, in navigation order (12 categories). Slint 1.18 has
+    // no bitwise operators, so the native search projection ships booleans rather
+    // than a mask; an all-true list means "no query". Index = nav position, not
+    // tab id.
+    in-out property <[bool]> settings-category-flags: [true, true, true, true, true, true, true, true, true, true, true, true];
     out property <bool> settings-has-matches: root.count-visible() > 0;
     out property <int> settings-visible-count: root.count-visible();    // How many categories the current query keeps; the empty state and the test
     // projections both read this instead of re-deriving the flags.
@@ -273,8 +276,7 @@ export component SettingsPage inherits Rectangle {
             + (root.settings-category-flags[8] ? 1 : 0)
             + (root.settings-category-flags[9] ? 1 : 0)
             + (root.settings-category-flags[10] ? 1 : 0)
-            + (root.settings-category-flags[11] ? 1 : 0)
-            + (root.settings-category-flags[12] ? 1 : 0);
+            + (root.settings-category-flags[11] ? 1 : 0);
     }
     // Slint cannot test a substring, so the query is projected out and the
     // matching categories come back as a bit set.
@@ -466,15 +468,11 @@ export component SettingsPage inherits Rectangle {
             : state == "connecting" || state == "reconnecting" ? Theme.warning
             : Theme.muted;
     }
-    // Entering the category refreshes devices and reopens the current path so
-    // the panel never shows stale copy from a previous visit.
+    // Entering the agent category prefetches its model options so the editor
+    // never shows stale copy from a previous visit.
     changed settings-tab => {
         if root.settings-tab == 3 {
             root.refresh-agent-model-options();
-        }
-        if root.settings-tab == 12 {
-            root.interlink-refresh();
-            root.interlink-open(root.interlink-cloud-path);
         }
     }
 
@@ -608,59 +606,59 @@ export component SettingsPage inherits Rectangle {
                         }
                         SettingsNavItem {
                             visible: root.settings-category-flags[1];
+                            icon: @image-url("../assets/icons/log-user.svg");
+                            title: I18n.stc_account; subtitle: I18n.stc_account_note;
+                            selected: root.settings-tab == 13;
+                            clicked => { root.settings-tab = 13;  }
+                        }
+                        SettingsNavItem {
+                            visible: root.settings-category-flags[2];
                             icon: @image-url("../assets/icons/robot.svg");
                             title: I18n.stc_models; subtitle: I18n.stc_models_note;
                             selected: root.settings-tab == 1;
                             clicked => { root.settings-tab = 1; root.refresh(); }
                         }
                         SettingsNavItem {
-                            visible: root.settings-category-flags[2];
+                            visible: root.settings-category-flags[3];
                             icon: @image-url("../assets/icons/fa-toolbox.svg");
                             title: I18n.stc_tools; subtitle: I18n.stc_tools_note;
                             selected: root.settings-tab == 2;
                             clicked => { root.settings-tab = 2; root.refresh(); }
                         }
                         SettingsNavItem {
-                            visible: root.settings-category-flags[3];
+                            visible: root.settings-category-flags[4];
                             icon: @image-url("../assets/icons/fa-user.svg");
                             title: I18n.stc_agent; subtitle: I18n.stc_agent_note;
                             selected: root.settings-tab == 3;
                             clicked => { root.settings-tab = 3;  }
                         }
                         SettingsNavItem {
-                            visible: root.settings-category-flags[4];
+                            visible: root.settings-category-flags[5];
                             icon: @image-url("../assets/icons/bee.svg");
                             title: I18n.stc_pet; subtitle: I18n.stc_pet_note;
                             selected: root.settings-tab == 4;
                             clicked => { root.settings-tab = 4;  }
                         }
                         SettingsNavItem {
-                            visible: root.settings-category-flags[5];
+                            visible: root.settings-category-flags[6];
                             icon: @image-url("../assets/icons/fa-clock.svg");
                             title: I18n.stc_cron; subtitle: I18n.stc_cron_note;
                             selected: root.settings-tab == 5;
                             clicked => { root.settings-tab = 5; root.refresh(); }
                         }
                         SettingsNavItem {
-                            visible: root.settings-category-flags[6];
+                            visible: root.settings-category-flags[7];
                             icon: @image-url("../assets/icons/fa-memory.svg");
                             title: I18n.stc_memory; subtitle: I18n.stc_memory_note;
                             selected: root.settings-tab == 6;
                             clicked => { root.settings-tab = 6; root.refresh(); }
                         }
                         SettingsNavItem {
-                            visible: root.settings-category-flags[7];
+                            visible: root.settings-category-flags[8];
                             icon: @image-url("../assets/icons/plug.svg");
                             title: I18n.stc_channels; subtitle: I18n.stc_channels_note;
                             selected: root.settings-tab == 7;
                             clicked => { root.settings-tab = 7; root.refresh(); }
-                        }
-                        SettingsNavItem {
-                            visible: root.settings-category-flags[8];
-                            icon: @image-url("../assets/icons/log-chart.svg");
-                            title: I18n.stc_runs; subtitle: I18n.stc_runs_note;
-                            selected: root.settings-tab == 8;
-                            clicked => { root.settings-tab = 8;  }
                         }
                         SettingsNavItem {
                             visible: root.settings-category-flags[9];
@@ -682,13 +680,6 @@ export component SettingsPage inherits Rectangle {
                             title: I18n.stc_help; subtitle: I18n.stc_help_note;
                             selected: root.settings-tab == 11;
                             clicked => { root.settings-tab = 11;  }
-                        }
-                        SettingsNavItem {
-                            visible: root.settings-category-flags[12];
-                            icon: @image-url("../assets/icons/plug.svg");
-                            title: I18n.stc_interlink; subtitle: I18n.stc_interlink_note;
-                            selected: root.settings-tab == 12;
-                            clicked => { root.settings-tab = 12; }
                         }
                         // A live query that matches nothing says so instead of
                         // leaving an empty column with no explanation.
@@ -718,8 +709,8 @@ export component SettingsPage inherits Rectangle {
                 HorizontalLayout {
                     height: 62px; padding-left: 24px; padding-right: 24px; padding-top: 16px; padding-bottom: 16px; spacing: 8px;
                     VerticalLayout { spacing: 1px;
-                        Text { height: 25px; text: root.settings-tab == 0 ? I18n.stc_general : root.settings-tab == 1 ? I18n.stc_models : root.settings-tab == 2 ? I18n.stc_tools : root.settings-tab == 3 ? I18n.stc_agent : root.settings-tab == 4 ? I18n.stc_pet : root.settings-tab == 5 ? I18n.stc_cron : root.settings-tab == 6 ? I18n.stc_memory : root.settings-tab == 7 ? I18n.stc_channels : root.settings-tab == 8 ? I18n.stc_runs : root.settings-tab == 9 ? I18n.stc_prompts : root.settings-tab == 10 ? I18n.stc_archives : root.settings-tab == 11 ? I18n.stc_help : root.settings-tab == 12 ? I18n.stc_interlink : I18n.stc_general; color: Theme.text; font-size: 22px; font-weight: 700; overflow: elide; }
-                        Text { height: 17px; text: root.settings-tab == 0 ? I18n.stc_general_note : root.settings-tab == 1 ? I18n.stc_models_note : root.settings-tab == 2 ? I18n.stc_tools_note : root.settings-tab == 3 ? I18n.stc_agent_note : root.settings-tab == 4 ? I18n.stc_pet_note : root.settings-tab == 5 ? I18n.stc_cron_note : root.settings-tab == 6 ? I18n.stc_memory_note : root.settings-tab == 7 ? I18n.stc_channels_note : root.settings-tab == 8 ? I18n.stc_runs_note : root.settings-tab == 9 ? I18n.stc_prompts_note : root.settings-tab == 10 ? I18n.stc_archives_note : root.settings-tab == 11 ? I18n.stc_help_note : root.settings-tab == 12 ? I18n.stc_interlink_note : I18n.stc_general_note; color: Theme.muted; font-size: Theme.font-xs; overflow: elide; }
+                        Text { height: 25px; text: root.settings-tab == 0 ? I18n.stc_general : root.settings-tab == 13 ? I18n.stc_account : root.settings-tab == 1 ? I18n.stc_models : root.settings-tab == 2 ? I18n.stc_tools : root.settings-tab == 3 ? I18n.stc_agent : root.settings-tab == 4 ? I18n.stc_pet : root.settings-tab == 5 ? I18n.stc_cron : root.settings-tab == 6 ? I18n.stc_memory : root.settings-tab == 7 ? I18n.stc_channels : root.settings-tab == 9 ? I18n.stc_prompts : root.settings-tab == 10 ? I18n.stc_archives : root.settings-tab == 11 ? I18n.stc_help : I18n.stc_general; color: Theme.text; font-size: 22px; font-weight: 700; overflow: elide; }
+                        Text { height: 17px; text: root.settings-tab == 0 ? I18n.stc_general_note : root.settings-tab == 13 ? I18n.stc_account_note : root.settings-tab == 1 ? I18n.stc_models_note : root.settings-tab == 2 ? I18n.stc_tools_note : root.settings-tab == 3 ? I18n.stc_agent_note : root.settings-tab == 4 ? I18n.stc_pet_note : root.settings-tab == 5 ? I18n.stc_cron_note : root.settings-tab == 6 ? I18n.stc_memory_note : root.settings-tab == 7 ? I18n.stc_channels_note : root.settings-tab == 9 ? I18n.stc_prompts_note : root.settings-tab == 10 ? I18n.stc_archives_note : root.settings-tab == 11 ? I18n.stc_help_note : I18n.stc_general_note; color: Theme.muted; font-size: Theme.font-xs; overflow: elide; }
                     }
                     Rectangle { horizontal-stretch: 1; }
                     if root.settings-tab == 1 : Action { icon: @image-url("../assets/icons/save.svg"); label: I18n.st_models_save; primary: true; enabled: !root.loading && !root.saving && !root.cloud-locked && root.model-key-draft != "" && root.model-name-draft != "" && root.model-provider-draft != "" && (root.model-creating || root.selected-key != ""); clicked => { root.save-model(); } }
@@ -817,6 +808,34 @@ export component SettingsPage inherits Rectangle {
                                 Rectangle { height: 8px; }
                                 HorizontalLayout { height: 34px; Rectangle { horizontal-stretch: 1; } Action { width: 128px; label: root.lan-enabled ? I18n.st_lan_disable : I18n.st_lan_enable; show-label: true; primary: root.lan-enabled; enabled: !root.saving && !root.loading; clicked => { root.save-lan(!root.lan-enabled, root.lan-name); } } }
                             }
+                            // ---- 线程渲染压测（用户手动触发） ----
+                            SettingsCard {
+                                SettingsCardHeader { title: I18n.st_stress_title; subtitle: I18n.st_stress_note; }
+                                HorizontalLayout { spacing: 10px;
+                                    FormField { horizontal-stretch: 1; label: I18n.st_stress_user_rounds; placeholder: "1000"; text <=> root.stress-user-rounds; read-only: root.stress-running || root.saving || root.loading; }
+                                    FormField { horizontal-stretch: 1; label: I18n.st_stress_model_rounds; placeholder: "1000"; text <=> root.stress-model-rounds; read-only: root.stress-running || root.saving || root.loading; }
+                                }
+                                Text { height: 18px; text: I18n.st_stress_hint; color: Theme.muted; font-size: Theme.font-xs; overflow: elide; }
+                                Rectangle { height: 8px; }
+                                HorizontalLayout { height: 34px;
+                                    Action { width: 150px; label: root.stress-running ? I18n.st_stress_running : I18n.st_stress_generate; show-label: true; primary: true; enabled: !root.stress-running && !root.saving && !root.loading; clicked => { root.generate-stress-thread(); } }
+                                    Rectangle { horizontal-stretch: 1; }
+                                }
+                                Text { height: 18px; visible: root.stress-status != ""; text: root.stress-status; color: root.stress-status.starts-with("⚠") ? Theme.danger : Theme.muted; font-size: Theme.font-xs; overflow: elide; }
+                            }
+                            SettingsCard {
+                                SettingsCardHeader { title: I18n.st_reset_title; subtitle: I18n.st_reset_note; title-color: Theme.danger; }
+                                Rectangle { height: 10px; }
+                                HorizontalLayout { height: 34px;
+                                    Action { width: 140px; label: I18n.st_reset_title; show-label: true; danger: true; enabled: !root.loading && !root.saving; clicked => { root.reset-confirm-open = true; } }
+                                    Rectangle { horizontal-stretch: 1; }
+                                }
+                            }
+                        }
+                    }
+                    // ---- account: cloud account + activity (runs) ----
+                    if root.settings-tab == 13 : ScrollView { vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
+                        VerticalLayout { padding: 24px; spacing: 16px; alignment: start;
                             // ---- cloud account (§6.1) ----
                             // Server address + account + secret login. The
                             // native side validates and calls the engine
@@ -917,27 +936,39 @@ export component SettingsPage inherits Rectangle {
                                     }
                                 }
                             }
-                            // ---- 线程渲染压测（用户手动触发） ----
                             SettingsCard {
-                                SettingsCardHeader { title: I18n.st_stress_title; subtitle: I18n.st_stress_note; }
-                                HorizontalLayout { spacing: 10px;
-                                    FormField { horizontal-stretch: 1; label: I18n.st_stress_user_rounds; placeholder: "1000"; text <=> root.stress-user-rounds; read-only: root.stress-running || root.saving || root.loading; }
-                                    FormField { horizontal-stretch: 1; label: I18n.st_stress_model_rounds; placeholder: "1000"; text <=> root.stress-model-rounds; read-only: root.stress-running || root.saving || root.loading; }
+                                SettingsCardHeader { title: I18n.stc_runs_tab; subtitle: I18n.stc_runs_note; }
+                                HorizontalLayout { spacing: 12px;
+                                    for item in [
+                                        { label: I18n.stc_runs_duration, value: root.expert-duration },
+                                        { label: I18n.stc_runs_tokens, value: root.expert-tokens },
+                                        { label: I18n.stc_runs_calls, value: root.expert-calls }
+                                    ] : Rectangle {
+                                        horizontal-stretch: 1; height: 78px; border-radius: Theme.radius-lg;
+                                        background: Theme.panel; border-width: 1px; border-color: Theme.border;
+                                        VerticalLayout { padding: 12px; spacing: 2px;
+                                            Text { height: 17px; text: item.label; color: Theme.muted; font-size: Theme.font-xs; }
+                                            Text { height: 32px; text: item.value; color: Theme.text; font-size: Theme.font-display; font-weight: 700; }
+                                        }
+                                    }
                                 }
-                                Text { height: 18px; text: I18n.st_stress_hint; color: Theme.muted; font-size: Theme.font-xs; overflow: elide; }
-                                Rectangle { height: 8px; }
-                                HorizontalLayout { height: 34px;
-                                    Action { width: 150px; label: root.stress-running ? I18n.st_stress_running : I18n.st_stress_generate; show-label: true; primary: true; enabled: !root.stress-running && !root.saving && !root.loading; clicked => { root.generate-stress-thread(); } }
-                                    Rectangle { horizontal-stretch: 1; }
+                                SettingRow { label: I18n.stc_runs_flow; note: I18n.stc_runs_flow_note; last: true;
+                                    HorizontalLayout { spacing: 8px;
+                                        Action { label: I18n.stc_runs_open; show-label: true; clicked => { root.open-trajectory(); } }
+                                    }
                                 }
-                                Text { height: 18px; visible: root.stress-status != ""; text: root.stress-status; color: root.stress-status.starts-with("⚠") ? Theme.danger : Theme.muted; font-size: Theme.font-xs; overflow: elide; }
                             }
                             SettingsCard {
-                                SettingsCardHeader { title: I18n.st_reset_title; subtitle: I18n.st_reset_note; title-color: Theme.danger; }
-                                Rectangle { height: 10px; }
-                                HorizontalLayout { height: 34px;
-                                    Action { width: 140px; label: I18n.st_reset_title; show-label: true; danger: true; enabled: !root.loading && !root.saving; clicked => { root.reset-confirm-open = true; } }
-                                    Rectangle { horizontal-stretch: 1; }
+                                SettingsCardHeader { title: I18n.stc_runs_heat; subtitle: I18n.stc_runs_heat_note; }
+                                if root.expert-heat.length == 0 : Text { height: 44px; text: I18n.stc_runs_empty; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; }
+                                HorizontalLayout { spacing: 4px; alignment: start;
+                                    for cell in root.expert-heat : Rectangle {
+                                        width: 18px; height: 18px; border-radius: 4px;
+                                        background: cell.intensity <= 0.0 ? Theme.hover
+                                            : cell.intensity < 0.34 ? Theme.accent-soft
+                                            : cell.intensity < 0.67 ? Theme.accent-secondary
+                                            : Theme.accent;
+                                    }
                                 }
                             }
                         }
@@ -1510,46 +1541,6 @@ export component SettingsPage inherits Rectangle {
                         reconnect => { root.reconnect-channel(); }
                     }
 
-                    if root.settings-tab == 8 : ScrollView { vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
-                        VerticalLayout { padding: 24px; spacing: 16px; alignment: start;
-                            SettingsCard {
-                                SettingsCardHeader { title: I18n.stc_runs_tab; subtitle: I18n.stc_runs_note; }
-                                HorizontalLayout { spacing: 12px;
-                                    for item in [
-                                        { label: I18n.stc_runs_duration, value: root.expert-duration },
-                                        { label: I18n.stc_runs_tokens, value: root.expert-tokens },
-                                        { label: I18n.stc_runs_calls, value: root.expert-calls }
-                                    ] : Rectangle {
-                                        horizontal-stretch: 1; height: 78px; border-radius: Theme.radius-lg;
-                                        background: Theme.panel; border-width: 1px; border-color: Theme.border;
-                                        VerticalLayout { padding: 12px; spacing: 2px;
-                                            Text { height: 17px; text: item.label; color: Theme.muted; font-size: Theme.font-xs; }
-                                            Text { height: 32px; text: item.value; color: Theme.text; font-size: Theme.font-display; font-weight: 700; }
-                                        }
-                                    }
-                                }
-                                SettingRow { label: I18n.stc_runs_flow; note: I18n.stc_runs_flow_note; last: true;
-                                    HorizontalLayout { spacing: 8px;
-                                        Action { label: I18n.stc_runs_open; show-label: true; clicked => { root.open-trajectory(); } }
-                                    }
-                                }
-                            }
-                            SettingsCard {
-                                SettingsCardHeader { title: I18n.stc_runs_heat; subtitle: I18n.stc_runs_heat_note; }
-                                if root.expert-heat.length == 0 : Text { height: 44px; text: I18n.stc_runs_empty; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; }
-                                HorizontalLayout { spacing: 4px; alignment: start;
-                                    for cell in root.expert-heat : Rectangle {
-                                        width: 18px; height: 18px; border-radius: 4px;
-                                        background: cell.intensity <= 0.0 ? Theme.hover
-                                            : cell.intensity < 0.34 ? Theme.accent-soft
-                                            : cell.intensity < 0.67 ? Theme.accent-secondary
-                                            : Theme.accent;
-                                    }
-                                }
-                            }
-                        }
-                    }
-
                     if root.settings-tab == 10 : ScrollView { vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
                         VerticalLayout { padding: 24px; spacing: 16px; alignment: start;
                             SettingsCard {
@@ -1619,122 +1610,6 @@ export component SettingsPage inherits Rectangle {
                                     Text { text: I18n.pm_preview_hint; color: Theme.muted; font-size: Theme.font-2xs; overflow: elide; }
                                     TextEditBase { vertical-stretch: 1; text: root.prompt-preview; read-only: true; wrap: word-wrap; foreground: Theme.text; font-size: Theme.font-xs; background: Theme.panel; border-width: 1px; border-color: Theme.border; border-radius: Theme.radius-sm; scroll-view-padding: 8px; selection-background-color: Theme.accent; selection-foreground-color: white; }
                                 }
-                            }
-                        }
-                    }
-
-                    // ---- category 12: 设备互通 (§I9) ----
-                    if root.settings-tab == 12 : ScrollView { vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
-                        VerticalLayout { padding: 24px; spacing: 14px; alignment: start;
-                            // Tunnel status: one state row plus the note the
-                            // native poll synthesized (state text + last error).
-                            SettingsCard {
-                                SettingsCardHeader { title: I18n.il_tunnel_title; subtitle: root.interlink-status.note; }
-                                Rectangle { height: 10px; }
-                                HorizontalLayout { height: 22px; spacing: 8px;
-                                    Rectangle { y: 7px; width: 8px; height: 8px; border-radius: 4px; background: root.interlink-dot-color(root.interlink-status.state); }
-                                    Text { height: 22px; text: root.interlink-state-text(root.interlink-status.state); color: Theme.text; font-size: Theme.font-md; font-weight: 600; vertical-alignment: center; }
-                                    Rectangle { horizontal-stretch: 1; }
-                                }
-                            }
-                            // Device table: label / type / status / link.
-                            SettingsCard {
-                                SettingsCardHeader { title: I18n.il_devices_title; subtitle: I18n.il_devices_note; }
-                                Rectangle { height: 6px; }
-                                HorizontalLayout { height: 20px; spacing: 8px;
-                                    Text { text: I18n.il_col_label; color: Theme.muted; font-size: Theme.font-2xs; vertical-alignment: center; horizontal-stretch: 1; }
-                                    Text { width: 110px; text: I18n.il_col_type; color: Theme.muted; font-size: Theme.font-2xs; vertical-alignment: center; overflow: elide; }
-                                    Text { width: 90px; text: I18n.il_col_status; color: Theme.muted; font-size: Theme.font-2xs; vertical-alignment: center; overflow: elide; }
-                                    Text { width: 48px; text: I18n.il_col_link; color: Theme.muted; font-size: Theme.font-2xs; vertical-alignment: center; }
-                                }
-                                if root.interlink-loading : Text { height: 28px; text: I18n.il_loading; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; }
-                                if !root.interlink-loading && root.interlink-nodes.length == 0 : Text { height: 28px; text: I18n.il_devices_empty; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; }
-                                for node in root.interlink-nodes : Rectangle {
-                                    height: 30px;
-                                    HorizontalLayout { spacing: 8px;
-                                        Text { height: parent.height; text: node.label; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
-                                        Text { width: 110px; height: parent.height; text: node.node-type; color: Theme.muted; font-size: Theme.font-xs; vertical-alignment: center; overflow: elide; }
-                                        Text { width: 90px; height: parent.height; text: node.status; color: Theme.muted; font-size: Theme.font-xs; vertical-alignment: center; overflow: elide; }
-                                        Text { width: 48px; height: parent.height; text: node.connected ? I18n.il_connected_yes : I18n.il_connected_no; color: node.connected ? Theme.success : Theme.muted; font-size: Theme.font-xs; font-weight: 600; vertical-alignment: center; }
-                                    }
-                                }
-                                Rectangle { height: 8px; }
-                                HorizontalLayout { height: 34px; Rectangle { horizontal-stretch: 1; }
-                                    Action { width: 96px; label: I18n.il_refresh; show-label: true; enabled: !root.interlink-loading; clicked => { root.interlink-refresh(); } }
-                                }
-                            }
-                            // Cloud workspace browser: path row, entries,
-                            // pending-approval strip and the status note.
-                            SettingsCard {
-                                SettingsCardHeader { title: I18n.il_browse_title; subtitle: I18n.il_browse_hint; }
-                                Rectangle { height: 10px; }
-                                HorizontalLayout { height: 34px; spacing: 8px;
-                                    Rectangle { horizontal-stretch: 1; height: 34px; border-radius: Theme.radius-sm; background: Theme.panel; border-width: 1px; border-color: Theme.border;
-                                        TextInput {
-                                            x: 10px; y: 0px; width: parent.width - 20px; height: parent.height;
-                                            text <=> root.interlink-cloud-path;
-                                            single-line: true; font-size: Theme.font-sm; color: Theme.text;
-                                            vertical-alignment: center;
-                                            accepted => { root.interlink-open(root.interlink-cloud-path); }
-                                        }
-                                        if root.interlink-cloud-path == "" : Text {
-                                            x: 10px; y: 0px; width: parent.width - 20px; height: parent.height;
-                                            text: I18n.il_browse_path_hint; color: Theme.muted; font-size: Theme.font-sm;
-                                            vertical-alignment: center;
-                                        }
-                                    }
-                                    Action { width: 76px; label: I18n.il_browse_open; show-label: true; primary: true; enabled: !root.interlink-cloud-busy; clicked => { root.interlink-open(root.interlink-cloud-path); } }
-                                    Action { width: 96px; icon: @image-url("../assets/icons/arrow-up.svg"); label: I18n.il_browse_up; show-label: true; enabled: !root.interlink-cloud-busy; clicked => { root.interlink-cloud-up(); } }
-                                }
-                                // Remote high-risk commands need local approval
-                                // before the listing resolves; the decision is
-                                // one command id the native side remembers.
-                                Rectangle { height: 8px; }
-                                if root.interlink-cloud-pending : Rectangle {
-                                    height: 40px; border-radius: Theme.radius-sm; background: Theme.warning-bg;
-                                    HorizontalLayout { padding-left: 10px; padding-right: 10px; spacing: 8px;
-                                        Text { height: parent.height; text: I18n.il_browse_pending; color: Theme.warning; font-size: Theme.font-sm; font-weight: 600; vertical-alignment: center; }
-                                        Rectangle { horizontal-stretch: 1; }
-                                        Action { width: 76px; label: I18n.il_approve; show-label: true; enabled: !root.interlink-cloud-busy; clicked => { root.interlink-cloud-decide(true); } }
-                                        Action { width: 76px; label: I18n.il_reject; show-label: true; danger: true; enabled: !root.interlink-cloud-busy; clicked => { root.interlink-cloud-decide(false); } }
-                                    }
-                                }
-                                if root.interlink-cloud-busy : Text { height: 28px; text: I18n.il_loading; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; }
-                                if !root.interlink-cloud-busy && !root.interlink-cloud-pending && root.interlink-entries.length == 0 : Text { height: 32px; text: I18n.il_browse_empty; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; }
-                                for entry in root.interlink-entries : Rectangle {
-                                    height: 32px;
-                                    Rectangle { y: parent.height - 1px; width: parent.width; height: 1px; background: Theme.border; }
-                                    // The whole row is the hotzone: TouchArea as
-                                    // ancestor, folders navigate into the path.
-                                    entry-touch := TouchArea {
-                                        width: 100%; height: 100%;
-                                        mouse-cursor: entry.kind == "dir" ? pointer : default;
-                                        clicked => { if entry.kind == "dir" { root.interlink-open(entry.path); } }
-                                        HorizontalLayout { spacing: 8px;
-                                            Image {
-                                                y: (parent.height - 14px) / 2; width: 14px; height: 14px;
-                                                source: entry.kind == "dir" ? @image-url("../assets/icons/folder-open.svg") : @image-url("../assets/icons/file-lines.svg");
-                                                colorize: entry.kind == "dir" ? Theme.accent : Theme.muted;
-                                                image-fit: contain;
-                                            }
-                                            Text { height: parent.height; text: entry.name; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
-                                            Text { width: 64px; height: parent.height; text: entry.kind == "dir" ? I18n.il_kind_dir : I18n.il_kind_file; color: Theme.muted; font-size: Theme.font-xs; vertical-alignment: center; }
-                                            Text { width: 84px; height: parent.height; text: entry.kind == "dir" ? "" : root.interlink-size-text(entry.size); color: Theme.muted; font-size: Theme.font-xs; vertical-alignment: center; }
-                                            Text { width: 150px; height: parent.height; text: entry.updated-time; color: Theme.muted; font-size: Theme.font-xs; vertical-alignment: center; overflow: elide; }
-                                            // The pull button is a child of the row
-                                            // hotzone, so it keeps the pointer path and
-                                            // the row itself still navigates folders.
-                                            if entry.kind != "dir" : Action {
-                                                width: 30px; height: 30px;
-                                                icon: @image-url("../assets/icons/log-download.svg");
-                                                label: I18n.il_browse_pull;
-                                                enabled: !root.interlink-cloud-busy;
-                                                clicked => { root.interlink-cloud-pull(entry.path); }
-                                            }
-                                        }
-                                    }
-                                }
-                                Text { height: 18px; visible: root.interlink-cloud-note != ""; text: root.interlink-cloud-note; color: root.interlink-cloud-pending ? Theme.warning : Theme.muted; font-size: Theme.font-xs; overflow: elide; }
                             }
                         }
                     }

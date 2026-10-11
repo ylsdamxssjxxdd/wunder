@@ -170,19 +170,13 @@
   box-shadow: inset 0 2px 0 var(--mz-primary);
 }
 
-/* 已连接的本地设备行（§6.3）：同一套行样式套在 button 上，补齐 UA 重置。 */
+/* 已连接的本地工作区行（§6.3）：同一套行样式套在 button 上，补齐 UA 重置。 */
 button.messenger-sidebar-workspace-row {
   width: calc(100% - 12px);
   border: 0;
   background: none;
   font: inherit;
   text-align: left;
-}
-
-.messenger-sidebar-device-status {
-  flex-shrink: 0;
-  width: 8px;
-  height: 8px;
 }
 
 .messenger-sidebar-workspace-icon {
@@ -243,6 +237,13 @@ button.messenger-sidebar-workspace-row {
   flex: 1;
   min-height: 0;
   overflow: hidden;
+}
+
+/* §6.3 工作区即行：侧栏里线程树是云端工作区行的子级，内容多高就占多高，
+   后面的本地工作区行紧随其后（不再被 flex 撑到工作目录上沿）；
+   区域装不下时树按 flex-shrink 收缩并回到内部滚动（虚拟列表照常工作）。 */
+.messenger-sidebar-workspace-region .mz-thread-tree {
+  flex: 0 1 auto;
 }
 
 .mz-thread-scroll {
