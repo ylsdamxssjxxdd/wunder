@@ -68,7 +68,6 @@ struct Panel {
     model: Rc<VecModel<WorkspaceFileRow>>,
     /// Page cache keyed by directory path; the root lives under `""`.
     dirs: HashMap<String, DirState>,
-    busy: u32,
 }
 
 thread_local! {
@@ -89,7 +88,6 @@ fn with_panel<R>(run: impl FnOnce(&mut Panel) -> R) -> Option<R> {
         let panel = slot.get_or_insert_with(|| Panel {
             model: Rc::new(VecModel::default()),
             dirs: HashMap::new(),
-            busy: 0,
         });
         Some(run(panel))
     })
@@ -122,12 +120,13 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
 
     // Refresh: usage line, root, and every expanded directory in one bounded
     // background pass.
+    let refresh_api = api.clone();
     let weak = app.as_weak();
     app.on_ws_file_refresh(move || {
         let Some(app) = weak.upgrade() else {
             return;
         };
-        refresh(&app, api.clone());
+        refresh(&app, refresh_api.clone());
     });
 
     // Context menu (aligned with the web left-rail). `index` is -1 for the
@@ -211,8 +210,9 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         let name = row.name.to_string();
         app.set_status(format!("正在准备拖出 {name}…").into());
         let weak = app.as_weak();
+        let worker_api = drag_api.clone();
         std::thread::spawn(move || {
-            let outcome = drag_out(&drag_api, &path, &name);
+            let outcome = drag_out(&worker_api, &path, &name);
             let _ = weak.upgrade_in_event_loop(move |app| {
                 DRAG_OUT.set(false);
                 match outcome {
@@ -254,9 +254,10 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         app.set_status(format!("正在上传 {count} 个文件…").into());
         begin_busy(&app.as_weak());
         let weak = app.as_weak();
+        let worker_api = drop_api.clone();
         std::thread::spawn(move || {
-            let (done, failed) = upload_files(&drop_api, &paths);
-            let refresh_api = drop_api.clone();
+            let (done, failed) = upload_files(&worker_api, &paths);
+            let refresh_api = worker_api;
             let _ = weak.upgrade_in_event_loop(move |app| {
                 end_busy(&app);
                 refresh(&app, refresh_api);
@@ -921,7 +922,6 @@ mod tests {
             *slot.borrow_mut() = Some(Panel {
                 model: Rc::new(VecModel::default()),
                 dirs: HashMap::new(),
-                busy: 0,
             });
         });
         with_panel(|panel| {

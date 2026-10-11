@@ -211,19 +211,19 @@
   font-weight: 500;
 }
 
-/* 选项卡面板宿主：复用旧版 `messenger-tools-pane-host`（内含自建工具三面板），
-   在设置卡片内给固定高度，面板内部列表自行滚动。
+/* 选项卡面板宿主：内含 MCP / 技能 / 知识库三面板（紧凑布局见
+   `messenger-tools-panes.css`）。在设置卡片内给自适应高度，面板内部自行滚动。
    必须是 flex 列容器：面板根节点靠 `flex: 1 1 auto` 撑高，其左右两栏布局
    又依赖父级高度，block 容器下两栏会被压成 0 高度。 */
 .messenger-settings-card--pane {
-  padding: 8px;
+  padding: 10px;
 }
 
 .messenger-settings-tools-host {
   flex: 0 0 auto;
   display: flex;
   flex-direction: column;
-  height: 480px;
+  height: clamp(360px, calc(100vh - 204px), 520px);
   min-height: 0;
 }
 

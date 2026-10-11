@@ -1,10 +1,6 @@
 <template>
-  <div class="user-tools-pane skill-workspace-shell">
-    <div class="list-header">
-      <label>{{ t('userTools.skills.title') }}</label>
-      <div v-if="status" class="user-tools-status list-status">{{ status }}</div>
-    </div>
-    <div class="tips">{{ t('userTools.skills.tip') }}</div>
+  <div class="mst-pane mst-pane--skill">
+    <!-- 紧凑设置页布局：单行工具栏 + 主从两列，样式见 pages/messenger-tools-panes.css。 -->
     <input
       ref="uploadInputRef"
       type="file"
@@ -13,75 +9,81 @@
       @change="handleUpload"
     />
 
-    <div class="management-layout skill-layout">
-      <div class="management-list skill-sidebar">
-        <div class="list-header">
-          <label>{{ t('userTools.skills.list.title') }}</label>
-          <div class="header-actions">
-            <button
-              class="user-tools-btn secondary btn-with-icon icon-only"
-              type="button"
-              :title="t('userTools.skills.action.upload')"
-              :aria-label="t('userTools.skills.action.upload')"
-              @click="triggerUpload"
-            >
-              <i class="fa-solid fa-plus" aria-hidden="true"></i>
-            </button>
-            <button
-              class="user-tools-btn secondary btn-with-icon icon-only"
-              type="button"
-              :disabled="!activeSkill"
-              :title="t('userTools.skills.action.export')"
-              :aria-label="t('userTools.skills.action.export')"
-              @click="exportSkill"
-            >
-              <i class="fa-solid fa-file-zipper" aria-hidden="true"></i>
-            </button>
-            <button
-              class="user-tools-btn secondary btn-with-icon icon-only"
-              type="button"
-              :title="t('common.refresh')"
-              :aria-label="t('common.refresh')"
-              @click="reloadSkills"
-            >
-              <i class="fa-solid fa-arrows-rotate" aria-hidden="true"></i>
-            </button>
-          </div>
-        </div>
-        <div class="skills-list">
-          <div v-if="!skills.length" class="empty-text">{{ t('userTools.skills.list.empty') }}</div>
+    <div class="mst-toolbar">
+      <div class="mst-toolbar-title">
+        <span>{{ t('userTools.skills.list.title') }}</span>
+        <span class="mst-toolbar-count">{{ skills.length }}</span>
+      </div>
+      <div class="mst-toolbar-actions">
+        <button
+          class="mst-btn mst-btn--icon"
+          type="button"
+          :title="t('userTools.skills.action.upload')"
+          :aria-label="t('userTools.skills.action.upload')"
+          @click="triggerUpload"
+        >
+          <i class="fa-solid fa-plus" aria-hidden="true"></i>
+        </button>
+        <button
+          class="mst-btn mst-btn--icon"
+          type="button"
+          :disabled="!activeSkill"
+          :title="t('userTools.skills.action.export')"
+          :aria-label="t('userTools.skills.action.export')"
+          @click="exportSkill"
+        >
+          <i class="fa-solid fa-file-zipper" aria-hidden="true"></i>
+        </button>
+        <button
+          class="mst-btn mst-btn--icon"
+          type="button"
+          :title="t('common.refresh')"
+          :aria-label="t('common.refresh')"
+          @click="reloadSkills"
+        >
+          <i class="fa-solid fa-arrows-rotate" aria-hidden="true"></i>
+        </button>
+      </div>
+    </div>
+
+    <div class="mst-columns">
+      <aside class="mst-panel">
+        <div class="mst-panel-body">
           <div
             v-for="(skill, index) in skills"
             :key="skill.name || index"
-            class="skill-item user-skill-item"
-            :class="{ active: index === selectedIndex, 'has-delete': !isSkillReadonly(skill) }"
+            class="mst-item mst-item--master"
+            :class="{ 'is-active': index === selectedIndex, 'has-delete': !isSkillReadonly(skill) }"
+            role="button"
+            tabindex="0"
             @click="selectSkill(skill, index)"
+            @keydown.enter.prevent="selectSkill(skill, index)"
           >
-            <label class="tool-item-info">
-              <div class="user-skill-title-line">
-                <strong :title="skill.name">{{ skill.name }}</strong>
-                <span class="skill-source-tag" :class="`is-${resolveSkillSource(skill)}`">
-                  {{ buildSkillSourceLabel(skill) }}
-                </span>
-              </div>
-              <span class="muted">{{ buildSkillDesc(skill) }}</span>
-            </label>
+            <span class="mst-item-title">
+              <span class="mst-item-title-text" :title="skill.name">{{ skill.name }}</span>
+              <span class="mst-skill-tag" :class="`is-${resolveSkillSource(skill)}`">
+                {{ buildSkillSourceLabel(skill) }}
+              </span>
+            </span>
+            <span class="mst-item-sub" :title="buildSkillDesc(skill)">{{ buildSkillDesc(skill) }}</span>
             <button
               v-if="!isSkillReadonly(skill)"
-              class="user-tools-btn danger btn-with-icon btn-compact icon-only user-skill-delete"
+              class="mst-skill-delete"
               type="button"
               :disabled="deleteLoading"
               :title="t('userTools.skills.delete.title')"
+              :aria-label="t('userTools.skills.delete.title')"
               @click.stop="deleteSkill(skill)"
             >
               <i class="fa-solid fa-trash-can" aria-hidden="true"></i>
             </button>
           </div>
+          <div v-if="!skills.length" class="mst-empty">{{ t('userTools.skills.list.empty') }}</div>
         </div>
-      </div>
+      </aside>
 
-      <div v-if="activeSkill" class="management-detail skill-detail skill-workspace-wrap">
-        <div class="skill-workspace-shell chat-shell">
+      <section class="mst-panel">
+        <div v-if="activeSkill" class="skill-workspace-shell chat-shell">
           <WorkspacePanel
             ref="workspacePanelRef"
             class="skill-workspace-panel"
@@ -94,10 +96,8 @@
             @open-workspace-binding="handleOpenWorkspaceBinding"
           />
         </div>
-      </div>
-      <div v-else class="management-detail skill-detail skill-empty-detail">
-        <div class="empty-text">{{ t('userTools.skills.files.unselected') }}</div>
-      </div>
+        <div v-else class="mst-empty">{{ t('userTools.skills.files.unselected') }}</div>
+      </section>
     </div>
   </div>
 </template>
@@ -313,7 +313,7 @@ const exportSkill = async () => {
   }
   const loading = ElLoading.service({
     lock: false,
-    target: '.user-tools-dialog',
+    target: '.messenger-settings-tools-host',
     text: t('userTools.skills.export.preparing'),
     background: 'rgba(15, 23, 42, 0.18)'
   });
@@ -353,7 +353,7 @@ const handleUpload = async () => {
   }
   const loading = ElLoading.service({
     lock: false,
-    target: '.user-tools-dialog',
+    target: '.messenger-settings-tools-host',
     text: t('userTools.skills.upload.preparing'),
     background: 'rgba(15, 23, 42, 0.18)'
   });
@@ -492,7 +492,7 @@ const deleteSkill = async (skill: any) => {
   deleteLoading.value = true;
   const deleting = ElLoading.service({
     lock: false,
-    target: '.user-tools-dialog',
+    target: '.messenger-settings-tools-host',
     text: t('userTools.skills.deleting'),
     background: 'rgba(15, 23, 42, 0.18)'
   });

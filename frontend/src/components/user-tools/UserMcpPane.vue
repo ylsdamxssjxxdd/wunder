@@ -1,123 +1,136 @@
 <template>
-  <div class="user-tools-pane">
-    <div class="list-header">
-      <label>{{ t('userTools.mcp.title') }}</label>
-      <div v-if="status" class="user-tools-status list-status">{{ status }}</div>
-    </div>
-    <div class="tips">
-      {{ t('userTools.mcp.tip') }}
+  <div class="mst-pane mst-pane--mcp">
+    <!-- 紧凑设置页布局：单行工具栏 + 主从两列，样式见 pages/messenger-tools-panes.css。 -->
+    <div class="mst-toolbar">
+      <div class="mst-toolbar-title">
+        <span>{{ t('userTools.mcp.list.title') }}</span>
+        <span class="mst-toolbar-count">{{ servers.length }}</span>
+      </div>
+      <div class="mst-toolbar-actions">
+        <button
+          class="mst-btn mst-btn--icon"
+          type="button"
+          :disabled="!hasConnected || refreshingAll || isActiveServerConnecting"
+          :title="t('userTools.mcp.action.refreshAll')"
+          :aria-label="t('userTools.mcp.action.refreshAll')"
+          @click="refreshAll"
+        >
+          <i class="fa-solid fa-arrows-rotate" aria-hidden="true"></i>
+        </button>
+        <button
+          class="mst-btn mst-btn--icon"
+          type="button"
+          :title="t('userTools.mcp.action.import')"
+          :aria-label="t('userTools.mcp.action.import')"
+          @click="openImportModal"
+        >
+          <i class="fa-solid fa-file-import" aria-hidden="true"></i>
+        </button>
+        <button class="mst-btn mst-btn--primary" type="button" @click="addServer">
+          <i class="fa-solid fa-plus" aria-hidden="true"></i>
+          <span>{{ t('userTools.mcp.action.add') }}</span>
+        </button>
+      </div>
     </div>
 
-    <div class="management-layout mcp-layout">
-      <div class="management-list">
-        <div class="list-header">
-          <label>{{ t('userTools.mcp.list.title') }}</label>
-          <div class="header-actions">
-            <button
-              class="user-tools-btn secondary compact btn-with-icon icon-only"
-              type="button"
-              :disabled="!hasConnected || refreshingAll || isActiveServerConnecting"
-              :title="t('userTools.mcp.action.refreshAll')"
-              :aria-label="t('userTools.mcp.action.refreshAll')"
-              @click="refreshAll"
-            >
-              <i class="fa-solid fa-arrows-rotate" aria-hidden="true"></i>
-            </button>
-            <button
-              class="user-tools-btn secondary compact btn-with-icon icon-only"
-              type="button"
-              :title="t('userTools.mcp.action.import')"
-              :aria-label="t('userTools.mcp.action.import')"
-              @click="openImportModal"
-            >
-              <i class="fa-solid fa-file-import" aria-hidden="true"></i>
-            </button>
-            <button
-              class="user-tools-btn compact btn-with-icon icon-only"
-              type="button"
-              :title="t('userTools.mcp.action.add')"
-              :aria-label="t('userTools.mcp.action.add')"
-              @click="addServer"
-            >
-              <i class="fa-solid fa-plus" aria-hidden="true"></i>
-            </button>
-          </div>
-        </div>
-        <div class="list-body">
+    <div class="mst-columns">
+      <aside class="mst-panel">
+        <div class="mst-panel-body">
           <template v-if="servers.length">
             <button
               v-for="(server, index) in servers"
               :key="`${server.name || index}`"
-              class="list-item"
-              :class="{ active: index === selectedIndex, connecting: isServerConnecting(index) }"
+              class="mst-item mst-item--master"
+              :class="{
+                'is-active': index === selectedIndex,
+                'is-connecting': isServerConnecting(index)
+              }"
               type="button"
               @click="selectServer(index)"
             >
-              <div class="list-item-title">
-                <span>{{ server.display_name || server.name || t('userTools.mcp.server.unnamed') }}</span>
-              </div>
-              <small>{{ buildServerSubtitle(server) }}</small>
+              <span class="mst-item-title">
+                <span class="mst-item-title-text">
+                  {{ server.display_name || server.name || t('userTools.mcp.server.unnamed') }}
+                </span>
+                <i
+                  v-if="isServerConnecting(index)"
+                  class="fa-solid fa-spinner mst-spin"
+                  aria-hidden="true"
+                ></i>
+              </span>
+              <span class="mst-item-sub">{{ server.endpoint || '-' }}</span>
             </button>
           </template>
-          <div v-else class="empty-text">{{ t('userTools.mcp.list.emptyHint') }}</div>
+          <div v-else class="mst-empty">
+            <span>{{ t('userTools.mcp.list.emptyHint') }}</span>
+            <button class="mst-btn" type="button" @click="addServer">
+              <i class="fa-solid fa-plus" aria-hidden="true"></i>
+              <span>{{ t('userTools.mcp.action.add') }}</span>
+            </button>
+          </div>
         </div>
-      </div>
+      </aside>
 
-      <div class="management-detail">
-        <div class="detail-header">
-          <div>
-            <div class="detail-title">{{ detailTitle }}</div>
-            <div class="muted">{{ detailMeta }}</div>
-            <div class="muted mcp-detail-desc" :title="detailDesc">{{ detailDesc }}</div>
-            <div v-if="isActiveServerConnecting" class="mcp-connecting-hint">
-              <i class="fa-solid fa-spinner" aria-hidden="true"></i>
-              <span>{{ t('userTools.mcp.action.connecting') }}</span>
+      <section class="mst-panel">
+        <template v-if="activeServer">
+          <div class="mst-detail-head">
+            <div class="mst-detail-info">
+              <div class="mst-detail-title">{{ detailTitle }}</div>
+              <div class="mst-detail-meta">{{ detailMeta }}</div>
+              <div v-if="detailDesc" class="mst-detail-desc" :title="detailDesc">{{ detailDesc }}</div>
+              <div v-if="isActiveServerConnecting" class="mst-connecting">
+                <i class="fa-solid fa-spinner mst-spin" aria-hidden="true"></i>
+                <span>{{ t('userTools.mcp.action.connecting') }}</span>
+              </div>
+            </div>
+            <div class="mst-detail-actions">
+              <button
+                class="mst-btn"
+                type="button"
+                :disabled="!activeServer || isActiveServerConnecting || refreshingAll"
+                @click="connectServer"
+              >
+                <i class="fa-solid fa-plug" aria-hidden="true"></i>
+                <span>{{ connectLabel }}</span>
+              </button>
+              <button
+                class="mst-btn"
+                type="button"
+                :disabled="!activeServer || isActiveServerConnecting || refreshingAll"
+                @click="openEditModal"
+              >
+                {{ t('userTools.mcp.action.edit') }}
+              </button>
+              <button
+                class="mst-btn mst-btn--danger"
+                type="button"
+                :disabled="!activeServer || isActiveServerConnecting || refreshingAll"
+                @click="removeServer"
+              >
+                {{ t('userTools.mcp.action.delete') }}
+              </button>
             </div>
           </div>
-          <div class="detail-actions mcp-detail-actions">
-            <button
-              class="user-tools-btn btn-with-icon"
-              type="button"
-              :disabled="!activeServer || isActiveServerConnecting || refreshingAll"
-              @click="connectServer"
-            >
-              <i class="fa-solid fa-plug" aria-hidden="true"></i>
-              <span>{{ connectLabel }}</span>
-            </button>
-            <button
-              class="user-tools-btn secondary"
-              type="button"
-              :disabled="!activeServer || isActiveServerConnecting || refreshingAll"
-              @click="openEditModal"
-            >
-              {{ t('userTools.mcp.action.edit') }}
-            </button>
-            <button
-              class="user-tools-btn danger"
-              type="button"
-              :disabled="!activeServer || isActiveServerConnecting || refreshingAll"
-              @click="removeServer"
-            >
-              {{ t('userTools.mcp.action.delete') }}
-            </button>
-          </div>
-        </div>
-        <div class="muted">{{ t('userTools.mcp.tip.tools') }}</div>
 
-        <div class="tool-list">
-          <div v-if="toolListMessage" class="empty-text">{{ toolListMessage }}</div>
-          <div
-            v-for="tool in activeTools"
-            :key="tool.name"
-            class="tool-item"
-            :class="!isLocalMode ? 'tool-item-single' : 'tool-item-info-only'"
-            tabindex="0"
-            role="button"
-            @click="openToolDetail(tool)"
-            @keydown.enter.prevent="handleToolItemKeydown(tool, $event)"
-            @keydown.space.prevent="handleToolItemKeydown(tool, $event)"
+          <div class="mst-section-label">{{ t('userTools.mcp.tip.tools') }}</div>
+
+          <div class="mst-panel-body">
+            <div v-if="toolListMessage" class="mst-empty">{{ toolListMessage }}</div>
+            <div
+              v-for="tool in activeTools"
+              :key="tool.name"
+              class="mst-tool-row"
+              tabindex="0"
+              role="button"
+              @click="openToolDetail(tool)"
+              @keydown.enter.prevent="handleToolItemKeydown(tool, $event)"
+              @keydown.space.prevent="handleToolItemKeydown(tool, $event)"
             >
-              <label v-if="!isLocalMode" class="tool-check" @click.stop>
+              <div class="mst-tool-info">
+                <span class="mst-tool-name">{{ resolveToolTitle(tool) }}</span>
+                <span class="mst-tool-desc">{{ tool.description || t('common.noDescription') }}</span>
+              </div>
+              <label v-if="!isLocalMode" class="mst-tool-share" @click.stop>
                 <input
                   type="checkbox"
                   :checked="isToolShared(tool)"
@@ -125,13 +138,11 @@
                 />
                 <span>{{ t('userTools.action.share') }}</span>
               </label>
-              <label class="tool-item-info">
-                <strong>{{ resolveToolTitle(tool) }}</strong>
-                <span class="muted">{{ tool.description || t('common.noDescription') }}</span>
-              </label>
             </div>
           </div>
-      </div>
+        </template>
+        <div v-else class="mst-empty">{{ t('userTools.mcp.detail.empty') }}</div>
+      </section>
     </div>
 
     <el-dialog
@@ -612,15 +623,6 @@ const scheduleSave = () => {
 
 const selectServer = (index) => {
   selectedIndex.value = index;
-};
-
-const buildServerSubtitle = (server) => {
-  const parts = [];
-  if (server.display_name && server.name) {
-    parts.push(`ID: ${server.name}`);
-  }
-  parts.push(server.endpoint || '-');
-  return parts.join(' · ');
 };
 
 const isServerConnecting = (index) => connectingIndexes.value.has(index);

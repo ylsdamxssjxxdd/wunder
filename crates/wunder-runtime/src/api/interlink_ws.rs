@@ -861,6 +861,7 @@ async fn handle_data_frame(state: &Arc<AppState>, live: &LiveChannel, bytes: &[u
                 .get_by_stream(header.stream_id)
                 .map(|buffer| secret::sha256_hex(&buffer)[..16].to_string())
                 .unwrap_or_default();
+            let command_id = blob::store().command_id_of_stream(header.stream_id);
             write_audit(
                 state,
                 audit::record(
@@ -868,7 +869,7 @@ async fn handle_data_frame(state: &Arc<AppState>, live: &LiveChannel, bytes: &[u
                     &live.user_id,
                     Some(&format!("device:{}", live.device_id)),
                     Some("cloud"),
-                    None,
+                    command_id.as_deref(),
                     None,
                     vec![
                         ("stream_id", json!(header.stream_id)),

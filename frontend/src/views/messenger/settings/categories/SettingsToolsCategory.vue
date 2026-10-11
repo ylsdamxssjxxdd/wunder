@@ -115,7 +115,7 @@
       v-show="activeTab === 'mcp'"
       class="messenger-settings-card messenger-settings-card--pane"
     >
-      <div class="messenger-tools-pane-host user-tools-dialog messenger-settings-tools-host">
+      <div class="messenger-settings-tools-host">
         <UserMcpPane :visible="activeTab === 'mcp'" />
       </div>
     </section>
@@ -125,7 +125,7 @@
       v-show="activeTab === 'skill'"
       class="messenger-settings-card messenger-settings-card--pane"
     >
-      <div class="messenger-tools-pane-host user-tools-dialog messenger-settings-tools-host">
+      <div class="messenger-settings-tools-host">
         <UserSkillPane :visible="activeTab === 'skill'" :active="activeTab === 'skill'" />
       </div>
     </section>
@@ -135,7 +135,7 @@
       v-show="activeTab === 'knowledge'"
       class="messenger-settings-card messenger-settings-card--pane"
     >
-      <div class="messenger-tools-pane-host user-tools-dialog messenger-settings-tools-host">
+      <div class="messenger-settings-tools-host">
         <UserKnowledgePane :visible="activeTab === 'knowledge'" />
       </div>
     </section>
@@ -156,7 +156,7 @@ const UserSharedToolsPanel = defineRecoverableAsyncComponent(
   () => import('@/components/user-tools/UserSharedToolsPanel.vue')
 );
 
-/** 选项卡面板：复用旧版自建工具三面板（MCP / 知识库 / 技能），样式见 dialogs/user-tools.css。 */
+/** 选项卡面板：MCP / 技能 / 知识库三面板已按设置页紧凑布局重排，样式见 styles/pages/messenger-tools-panes.css。 */
 const UserMcpPane = defineRecoverableAsyncComponent(
   () => import('@/components/user-tools/UserMcpPane.vue')
 );

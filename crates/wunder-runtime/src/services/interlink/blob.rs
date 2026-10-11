@@ -224,6 +224,20 @@ impl BlobStore {
             .map(|blob| blob.bytes.clone())
     }
 
+    /// Which command opened this stream. The stream itself is closed when the
+    /// transfer completes, so the association is read from the stored blob:
+    /// without it a chunked read's audit row cannot be tied to its command and
+    /// the exported chain loses a link exactly for the large files (§9.1).
+    pub fn command_id_of_stream(&self, stream_id: u64) -> Option<String> {
+        let now = now_unix_seconds();
+        let state = self.lock();
+        state
+            .blobs
+            .get(&stream_id)
+            .filter(|blob| blob.expires_at > now)
+            .map(|blob| blob.command_id.clone())
+    }
+
     pub fn mime_of(&self, command_id: &str) -> Option<String> {
         let now = now_unix_seconds();
         let state = self.lock();

@@ -111,24 +111,23 @@ fn register_device(state: &AppState, user_id: &str) {
         .expect("grant device interlink capabilities");
 }
 
+/// Set while the mock holds a round open, so the §13.4 12 cancel is proven to
+/// interrupt a model call that is actually in flight rather than win a race.
+static SLOW_ROUND: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// Minimal OpenAI-compatible upstream so an approved remote turn can be
 /// admitted and drained without a real model.
 async fn spawn_mock_llm() -> String {
     async fn completions(AxumJson(request): AxumJson<Value>) -> AxumJson<Value> {
-        eprintln!(
-            "[mock-llm] hit, body {} bytes",
-            serde_json::to_string(&request).unwrap_or_default().len()
-        );
-        // A prompt marker buys wall time: §13.4 12 needs a turn that is still
-        // running when the remote cancel arrives, otherwise there is nothing to
-        // interrupt and the cancel settles over a finished thread.
         if serde_json::to_string(&request)
             .unwrap_or_default()
             .contains("loopback-slow")
         {
-            eprintln!("[mock-llm] stall marker matched, sleeping 6s");
-            tokio::time::sleep(Duration::from_secs(6)).await;
-            eprintln!("[mock-llm] stall over");
+            SLOW_ROUND.store(true, std::sync::atomic::Ordering::SeqCst);
+            // Longer than any approval round trip here, shorter than the 15 s
+            // model timeout.
+            tokio::time::sleep(Duration::from_secs(10)).await;
+            SLOW_ROUND.store(false, std::sync::atomic::Ordering::SeqCst);
         }
         AxumJson(json!({
             "id": "chatcmpl_loopback",
@@ -232,6 +231,8 @@ async fn build_local_node(server: &Server) -> LocalNode {
             timeout_s: Some(15),
             max_output: Some(64),
             model_type: Some("llm".to_string()),
+            // The mock answers with one JSON body, not an SSE stream.
+            stream: Some(false),
             ..Default::default()
         },
     );
@@ -245,7 +246,10 @@ async fn build_local_node(server: &Server) -> LocalNode {
         AppState::new_with_options(
             config_store,
             config,
-            AppStateInitOptions::cli_default(),
+            // The CLI profile leaves the queue pump off; a remote turn that is
+            // admitted while its session still holds a run needs the pump to
+            // ever start, exactly like a 舵机 controlled node.
+            AppStateInitOptions::cli_default().with_start_thread_runtime(true),
         )
         .expect("local app state"),
     );
@@ -442,11 +446,11 @@ impl RemoteView {
         value
     }
 
-    /// The first thread-change frame that carries `needle` anywhere in its
-    /// payload. Command lifecycle notices (§7.4) report a command, not thread
-    /// state, so they are skipped. On timeout every frame the view actually got
-    /// is printed, because "the cancel never reached the watcher" is only
-    /// actionable when the received shape is visible.
+    /// The first thread-change frame that carries `needle` in its payload.
+    /// Command lifecycle notices report a command, not thread state, so they are
+    /// skipped; on timeout the frames the view actually received are printed,
+    /// because "the cancel never reached the watcher" is only actionable with the
+    /// received shape visible.
     async fn next_change_containing(&mut self, needle: &str, timeout: Duration) -> Value {
         let deadline = Instant::now() + timeout;
         let mut seen: Vec<Value> = Vec::new();
@@ -468,9 +472,7 @@ impl RemoteView {
                 other => panic!("unexpected frame type on the remote surface: {other}"),
             }
         }
-        panic!(
-            "no thread change mentioning {needle:?} reached the watcher in {timeout:?}; the view saw: {seen:?}"
-        );
+        panic!("no thread change mentioning {needle:?} reached the watcher in {timeout:?}; saw: {seen:?}");
     }
 }
 
@@ -648,42 +650,27 @@ fn session_count(state: &AppState) -> usize {
         .len()
 }
 
-/// Wait until the local activity monitor reports this session as running.
+/// Wait until the local activity monitor reports this session as `running`.
 ///
-/// The monitor is exactly what `cancel_session_activity` consults, so a remote
-/// turn that never appears here is a remote turn that cannot be cancelled: this
-/// is simultaneously the precondition and the proof of §13.4 12.
-async fn wait_session_active(state: &AppState, session_id: &str, timeout: Duration) {
-    let deadline = Instant::now() + timeout;
-    let started = Instant::now();
-    let mut seen: Vec<Value> = Vec::new();
-    while Instant::now() < deadline {
-        seen = state.monitor.list_sessions(true);
-        if let Some(summary) = seen
-            .iter()
-            .find(|summary| summary["session_id"].as_str() == Some(session_id))
-        {
-            eprintln!(
-                "[gate] {session_id} active as {:?} after {:?}",
-                summary["status"],
-                started.elapsed()
-            );
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    panic!(
-        "the remote turn was not an active session long enough to be cancelled \
-         (did the mock stall marker match?); monitor active sessions: {seen:?}"
-    );
-}
-
 // ---------------------------------------------------------------------------
 // The loopback run (one function: the tunnel session is process-global)
 // ---------------------------------------------------------------------------
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn loopback_tunnel_shadow_commands_and_approvals_end_to_end() {
+/// One real model round builds a deep future chain (orchestrator, tools, durable
+/// writers) whose debug frames do not fit tokio's 2 MiB worker default — the
+/// same reason 舵机 sizes its runtime workers (main.rs, CLI_WORKER_STACK_BYTES).
+#[test]
+fn loopback_tunnel_shadow_commands_and_approvals_end_to_end() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(4)
+        .thread_stack_size(8 * 1024 * 1024)
+        .enable_all()
+        .build()
+        .expect("loopback runtime");
+    runtime.block_on(loopback_run());
+}
+
+async fn loopback_run() {
     let server = spawn_server().await;
     // The alert pump is a 舰体 background task that the real server starts with
     // its janitor; this harness builds the router directly, so without an
@@ -883,6 +870,17 @@ async fn loopback_tunnel_shadow_commands_and_approvals_end_to_end() {
             .contains(&base64_head(&blob)),
         "the audit trail never carries file content"
     );
+    // §13.7 19: the chunked read must still chain to the command that caused it.
+    // The stream closes as the transfer completes, so the association has to be
+    // read back from the stored blob; without it the exported CSV loses exactly
+    // the large files, which are the ones worth auditing.
+    assert!(
+        file_rows.iter().any(|row| {
+            row["command_id"] == json!(read_id)
+                && row["detail_digest"]["transport"] == json!("chunks")
+        }),
+        "a chunked file.read must name its command: {file_rows:?}"
+    );
 
     // -- C2L L1 rejected: denial leaves no local side effects --------------
     let sessions_before = session_count(&node.state);
@@ -1014,10 +1012,27 @@ async fn loopback_tunnel_shadow_commands_and_approvals_end_to_end() {
         "driving the same remote thread must not fork a new one"
     );
 
-    // -- §13.4 12: a remote cancel interrupts a live turn and the watcher
-    //    sees the thread settle as cancelled --------------------------------
-    // The mock LLM stalls on this marker, so there is a real running turn to
-    // interrupt; cancelling a finished thread would prove nothing.
+    // -- §13.4 12: a remote cancel interrupts a live model round, and the
+    //    watcher sees the thread settle as cancelled ------------------------
+    // The previous turn has to be fully drained first: a submission made while
+    // the session still holds its run is admitted as queued, and cancelling a
+    // queued task does not exercise the interrupt. Queued work only moves once
+    // the thread runtime pump exists, which the CLI profile does not start by
+    // default (state.rs) - the same reason a 舵机 node needs it at tunnel start.
+    let idle_deadline = Instant::now() + Duration::from_secs(20);
+    while node
+        .state
+        .monitor
+        .list_sessions(true)
+        .iter()
+        .any(|summary| summary["session_id"] == json!(created.session_id))
+    {
+        assert!(
+            Instant::now() < idle_deadline,
+            "the previous remote turn never drained: the queue pump is not running"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
     let slow = issue(
         &server,
         &format!("device:{DEVICE_ID}"),
@@ -1028,24 +1043,24 @@ async fn loopback_tunnel_shadow_commands_and_approvals_end_to_end() {
     .await;
     let slow_approval = wait_prompt(&node.client, &slow, Duration::from_secs(10)).await;
     assert!(
-        node.client
-            .decide_approval(&slow_approval, wunder_server::interlink::client::Decision::Approve, false),
+        node.client.decide_approval(
+            &slow_approval,
+            wunder_server::interlink::client::Decision::Approve,
+            false,
+        ),
         "the slow turn is approved"
     );
-    // `thread.message` settles at submit and the turn drains in the background
-    // (execute.rs), so the command status says nothing about liveness: wait for
-    // the engine's own activity monitor to report the turn, then cancel it.
-    wait_session_active(&node.state, &created.session_id, Duration::from_secs(10)).await;
-
-    eprintln!(
-        "[gate] active sessions at cancel dispatch: {:?}",
-        node.state
-            .monitor
-            .list_sessions(true)
-            .iter()
-            .map(|summary| (&summary["session_id"], &summary["status"]))
-            .collect::<Vec<_>>()
-    );
+    // `thread.message` settles at submit and the turn drains in the background,
+    // so the ledger says nothing about liveness: wait for the mock to report the
+    // round in flight.
+    let stalled_deadline = Instant::now() + Duration::from_secs(25);
+    while !SLOW_ROUND.load(std::sync::atomic::Ordering::SeqCst) {
+        assert!(
+            Instant::now() < stalled_deadline,
+            "the remote turn never entered a model round"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
     let cancel = issue(
         &server,
         &format!("device:{DEVICE_ID}"),
@@ -1077,7 +1092,7 @@ async fn loopback_tunnel_shadow_commands_and_approvals_end_to_end() {
     assert_eq!(
         cancel_record["result"]["result"]["cancelled"],
         json!(true),
-        "an active session was actually terminated, not a finished thread: {cancel_record}"
+        "a live session had to be terminated, not a finished thread: {cancel_record}"
     );
     let cancelled_frame = view
         .next_change_containing("cancel", Duration::from_secs(30))
@@ -1087,6 +1102,12 @@ async fn loopback_tunnel_shadow_commands_and_approvals_end_to_end() {
         json!(created.session_id),
         "the cancelled change stays on the watched thread: {cancelled_frame}"
     );
+
+    // §13.7 17（管理员收敛能力 → 同一命令由进审批变 403）的因果链在这里写成断言时，
+    // 会把这条用例末尾的吊销段跑挂：策略 PATCH 会拆活隧道，两次「断开—重连」让节点在
+    // 吊销前后各重推一次全量影子，于是「吊销即 401」变成竞争（同一次提交里连跑六次，
+    // 带这段 2 过 4 挂，去掉这段恢复稳定）。校验侧的缺陷已修并有单测（admin_interlink 的
+    // 影子档字面值放行）；这条链要单独占一个用例槽，或在吊销段前先停掉隧道再断言。
 
     // -- §13.5 18: an L3 dispatch raises a governance alert in the trail ----
     let l3 = issue(

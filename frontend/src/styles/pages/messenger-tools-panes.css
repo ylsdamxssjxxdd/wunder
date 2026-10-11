@@ -1,0 +1,747 @@
+/* AI生成 */
+/* ---------------------------------------------------------------------------
+   工具管理设置页内的三个工作面板（MCP / 技能 / 知识库工具）。
+   旧版三面板按全屏对话框设计（dialogs/user-tools.css），塞进设置卡片后过度拥挤；
+   这里按设置页场景重排：单行工具栏 + 自适应主从列 + 分区内部滚动。
+   仅覆盖面板本体；面板内弹出的二级对话框仍沿用 user-tools-dialog 主题。
+--------------------------------------------------------------------------- */
+
+.mst-pane {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  color: var(--mz-text);
+  font-size: var(--mz-font-md);
+}
+
+/* ------------------------------------------------------------ 单行工具栏 */
+
+.mst-toolbar {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+  min-height: 26px;
+}
+
+.mst-toolbar-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--mz-font-base);
+  font-weight: 600;
+}
+
+.mst-toolbar-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--mz-primary-tint);
+  color: var(--mz-primary);
+  font-size: var(--mz-font-xs);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.mst-toolbar-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+/* ------------------------------------------------------------ 紧凑按钮 */
+
+.mst-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--mz-border);
+  border-radius: 8px;
+  background: var(--mz-surface);
+  color: var(--mz-text-secondary);
+  font: inherit;
+  font-size: var(--mz-font-sm);
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.mst-btn:hover:not(:disabled) {
+  background: var(--mz-hover);
+  color: var(--mz-text);
+}
+
+.mst-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.mst-btn i {
+  font-size: 12px;
+}
+
+.mst-btn--primary {
+  border-color: var(--mz-primary);
+  background: var(--mz-primary);
+  color: #fff;
+}
+
+.mst-btn--primary:hover:not(:disabled) {
+  border-color: var(--mz-primary-hover);
+  background: var(--mz-primary-hover);
+  color: #fff;
+}
+
+.mst-btn--danger {
+  color: var(--mz-danger);
+}
+
+.mst-btn--danger:hover:not(:disabled) {
+  border-color: #efc3c0;
+  background: var(--mz-danger-bg);
+  color: var(--mz-danger);
+}
+
+.mst-btn--icon {
+  justify-content: center;
+  width: 26px;
+  padding: 0;
+}
+
+/* ------------------------------------------------------------ 主从两列 */
+
+.mst-columns {
+  display: grid;
+  flex: 1 1 auto;
+  grid-template-columns: 190px minmax(0, 1fr);
+  gap: 10px;
+  min-height: 0;
+}
+
+.mst-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  min-height: 0;
+}
+
+.mst-panel-head {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 26px;
+}
+
+.mst-panel-title {
+  overflow: hidden;
+  color: var(--mz-text-secondary);
+  font-size: var(--mz-font-sm);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mst-panel-sub {
+  overflow: hidden;
+  color: var(--mz-text-muted);
+  font-size: var(--mz-font-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mst-panel-actions {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 4px;
+}
+
+.mst-panel-body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  padding: 4px;
+  overflow-y: auto;
+  border: 1px solid var(--mz-border);
+  border-radius: 10px;
+  background: var(--mz-surface);
+}
+
+/* ------------------------------------------------------------ 列表条目 */
+
+.mst-item {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  gap: 2px;
+  width: 100%;
+  padding: 7px 9px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--mz-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.mst-item:hover {
+  background: var(--mz-hover);
+}
+
+.mst-item.is-active {
+  border-color: var(--mz-primary-soft);
+  background: var(--mz-primary-tint);
+}
+
+.mst-item--master.has-delete {
+  position: relative;
+  padding-right: 30px;
+}
+
+.mst-item-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: var(--mz-font-md);
+  font-weight: 600;
+}
+
+.mst-item-title-text {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mst-item-sub {
+  overflow: hidden;
+  color: var(--mz-text-muted);
+  font-size: var(--mz-font-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mst-empty {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 16px;
+  color: var(--mz-text-muted);
+  font-size: var(--mz-font-sm);
+  text-align: center;
+}
+
+.mst-connecting {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--mz-primary);
+  font-size: var(--mz-font-xs);
+}
+
+.mst-spin {
+  display: inline-block;
+  animation: mst-spin 0.9s linear infinite;
+}
+
+@keyframes mst-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ------------------------------------------------------------ MCP 详情 */
+
+.mst-detail-head {
+  display: flex;
+  flex-shrink: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 2px;
+}
+
+.mst-detail-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.mst-detail-title {
+  font-size: var(--mz-font-base);
+  font-weight: 600;
+}
+
+.mst-detail-meta,
+.mst-detail-desc {
+  overflow: hidden;
+  color: var(--mz-text-muted);
+  font-size: var(--mz-font-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mst-detail-actions {
+  display: inline-flex;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.mst-section-label {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+  color: var(--mz-text-muted);
+  font-size: var(--mz-font-xs);
+}
+
+.mst-tool-row {
+  display: grid;
+  flex-shrink: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.mst-tool-row:hover {
+  border-color: var(--mz-border);
+  background: var(--mz-hover);
+}
+
+.mst-tool-info {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.mst-tool-name {
+  overflow: hidden;
+  font-size: var(--mz-font-sm);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mst-tool-desc {
+  overflow: hidden;
+  color: var(--mz-text-muted);
+  font-size: var(--mz-font-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mst-tool-share {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--mz-text-muted);
+  font-size: var(--mz-font-xs);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.mst-tool-share input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--mz-primary);
+  cursor: pointer;
+}
+
+/* ------------------------------------------------------------ 技能面板 */
+
+.mst-skill-tag {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  height: 16px;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.mst-skill-tag.is-builtin {
+  color: #8a5a13;
+  background: #fbead3;
+}
+
+.mst-skill-tag.is-custom {
+  color: var(--mz-primary);
+  background: var(--mz-primary-tint);
+}
+
+.mst-skill-tag.is-global {
+  color: #1a6a8a;
+  background: #e0f0f7;
+}
+
+.mst-skill-delete {
+  position: absolute;
+  top: 50%;
+  right: 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--mz-text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-50%);
+  transition: opacity 0.15s ease, color 0.15s ease, background-color 0.15s ease;
+}
+
+.mst-item--master:hover .mst-skill-delete,
+.mst-skill-delete:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.mst-skill-delete:hover:not(:disabled) {
+  background: var(--mz-danger-bg);
+  color: var(--mz-danger);
+}
+
+/* 技能详情：工作区面板占满右栏（复用 chat-shell 全局样式）。 */
+.mst-pane--skill .skill-workspace-shell {
+  flex: 1 1 auto;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: transparent;
+}
+
+.mst-pane--skill .skill-workspace-panel {
+  height: 100%;
+  min-height: 0;
+}
+
+/* ------------------------------------------------------------ 知识库三级 */
+
+.mst-columns--knowledge {
+  grid-template-columns: 176px minmax(0, 1fr);
+}
+
+.mst-stack {
+  display: grid;
+  grid-template-rows: minmax(120px, 40%) minmax(0, 1fr);
+  gap: 10px;
+  min-width: 0;
+  min-height: 0;
+}
+
+.mst-doc-row {
+  position: relative;
+  display: flex;
+  flex-shrink: 0;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.mst-doc-row:hover {
+  background: var(--mz-hover);
+}
+
+.mst-doc-row.is-active {
+  border-color: var(--mz-primary-soft);
+  background: var(--mz-primary-tint);
+}
+
+.mst-doc-row-name {
+  overflow: hidden;
+  padding-right: 22px;
+  font-size: var(--mz-font-sm);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mst-doc-row-meta {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--mz-text-muted);
+  font-size: var(--mz-font-xs);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  word-break: break-all;
+}
+
+.mst-doc-row-delete {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--mz-text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease, color 0.15s ease, background-color 0.15s ease;
+}
+
+.mst-doc-row:hover .mst-doc-row-delete,
+.mst-doc-row.is-active .mst-doc-row-delete,
+.mst-doc-row-delete:focus-visible {
+  opacity: 1;
+}
+
+.mst-doc-row-delete:hover {
+  background: var(--mz-danger-bg);
+  color: var(--mz-danger);
+}
+
+.mst-file-row {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  font-size: var(--mz-font-sm);
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.mst-file-row:hover {
+  background: var(--mz-hover);
+}
+
+.mst-file-row.is-active {
+  border-color: var(--mz-primary-soft);
+  background: var(--mz-primary-tint);
+}
+
+.mst-file-row-name {
+  flex: 1 1 auto;
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mst-chunk-row {
+  position: relative;
+  display: flex;
+  flex-shrink: 0;
+  flex-direction: column;
+  gap: 3px;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.mst-chunk-row:hover {
+  background: var(--mz-hover);
+}
+
+.mst-chunk-row.is-selected {
+  border-color: var(--mz-primary-soft);
+  background: var(--mz-primary-tint);
+}
+
+.mst-chunk-row.is-embedding {
+  border-color: var(--mz-primary-soft);
+}
+
+.mst-chunk-row-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.mst-chunk-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: var(--mz-font-xs);
+  font-weight: 600;
+}
+
+.mst-chunk-select {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border: 1px solid var(--mz-border-strong);
+  border-radius: 4px;
+  background: var(--mz-surface);
+  cursor: pointer;
+}
+
+.mst-chunk-row.is-selected .mst-chunk-select {
+  border-color: var(--mz-primary);
+  background: var(--mz-primary);
+}
+
+.mst-chunk-row.is-selected .mst-chunk-select::after {
+  content: '';
+  width: 6px;
+  height: 3px;
+  border-bottom: 2px solid #fff;
+  border-left: 2px solid #fff;
+  transform: rotate(-45deg);
+}
+
+.mst-chunk-status {
+  flex-shrink: 0;
+  color: var(--mz-text-muted);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.mst-chunk-status.is-embedded {
+  color: var(--mz-success);
+}
+
+.mst-chunk-status.is-pending {
+  color: var(--mz-warning);
+}
+
+.mst-chunk-status.is-failed,
+.mst-chunk-status.is-deleted {
+  color: var(--mz-danger);
+}
+
+.mst-chunk-status.is-embedding {
+  color: var(--mz-primary);
+}
+
+.mst-chunk-status.is-embedding::before {
+  content: '';
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  margin-right: 4px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  vertical-align: -1px;
+  animation: mst-spin 0.9s linear infinite;
+}
+
+.mst-chunk-preview {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--mz-text-secondary);
+  font-size: var(--mz-font-xs);
+  word-break: break-word;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+/* 字面库文件编辑器：撑满面板内容区，边框由面板本体提供。 */
+.mst-editor {
+  flex: 1 1 auto;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 0;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--mz-text);
+  font-family: 'SFMono-Regular', 'Consolas', 'Liberation Mono', monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  resize: none;
+  outline: none;
+}
+
+.mst-editor:focus {
+  background: var(--mz-hover);
+}
+
+/* ---------------------------------------------------- 面板内二级对话框补充 */
+
+/* 知识库高级选项折叠块此前无样式，native details 直出；补齐轻量外观。 */
+.user-tools-dialog .knowledge-advanced {
+  padding: 8px 10px;
+  border: 1px solid #e3e3e3;
+  border-radius: 10px;
+}
+
+.user-tools-dialog .knowledge-advanced summary {
+  color: #808080;
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.user-tools-dialog .knowledge-advanced-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 10px;
+}
+
+.chunk-method-option {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.4;
+}
+
+.chunk-method-option small {
+  color: #909399;
+  font-size: 11px;
+}

@@ -887,9 +887,17 @@ async fn admit_turn(
             let orchestrator = state.kernel.orchestrator.clone();
             long_task::spawn("interlink.client.thread_run", async move {
                 let _lease = lease;
-                if let Ok(stream) = orchestrator.stream(*request).await {
-                    futures::pin_mut!(stream);
-                    while stream.next().await.is_some() {}
+                match orchestrator.stream(*request).await {
+                    Ok(stream) => {
+                        futures::pin_mut!(stream);
+                        while stream.next().await.is_some() {}
+                    }
+                    // A turn that never started used to vanish silently: the
+                    // command had already reported success at submit, so neither
+                    // the cloud nor the local thread saw anything.
+                    Err(err) => {
+                        tracing::warn!("remote turn could not start: {err}");
+                    }
                 }
             });
             CommandReport::succeeded(json!({

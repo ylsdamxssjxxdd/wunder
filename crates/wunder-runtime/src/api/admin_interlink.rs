@@ -817,9 +817,15 @@ fn clean_caps(list: &[String]) -> Result<Vec<String>, String> {
     let cleaned = clean_list(list, "capability")?;
     let known = interlink_ws::known_capabilities();
     for cap in cleaned.iter() {
-        // `tool.exec:<whitelist>` (§9.2) is the one parameterised form.
+        // `tool.exec:<whitelist>` (§9.2) is one parameterised form; the shadow
+        // level is the other, and the engine stores it inside this very list
+        // (`shadow:full` / `shadow:minimal`). Rejecting those bases here meant
+        // every admin capability save silently dropped the node's shadow level,
+        // because `capabilities` replaces the stored set wholesale.
         let base = cap.split(':').next().unwrap_or_default();
-        if !known.contains(&base) {
+        let shadow_level = cap == wunder_core::interlink::CAP_SHADOW_FULL
+            || cap == wunder_core::interlink::CAP_SHADOW_MINIMAL;
+        if !shadow_level && !known.contains(&base) {
             return Err(format!("unknown capability `{cap}`"));
         }
     }
@@ -1688,6 +1694,18 @@ mod tests {
         assert!(validate_policy(&bad_cap)
             .unwrap_err()
             .contains("unknown capability"));
+
+        // The shadow level is the other accepted parameterised form: it lives in
+        // the capabilities list itself, so the admin surface must be able to
+        // write it back without a 400.
+        assert!(validate_policy(&PolicyRequest {
+            capabilities: Some(vec![
+                "shadow:minimal".to_string(),
+                "shadow:full".to_string(),
+            ]),
+            ..Default::default()
+        })
+        .is_ok());
 
         // `tool.exec:<whitelist>` is the accepted parameterised form (§9.2).
         assert!(validate_policy(&PolicyRequest {

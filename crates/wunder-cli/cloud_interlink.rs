@@ -2233,7 +2233,7 @@ async fn watch(
                 match message {
                     Some(Ok(tokio_tungstenite::tungstenite::Message::Text(text))) => {
                         if let Ok(frame) = serde_json::from_str::<Value>(&text) {
-                            print_watch_frame(&frame);
+                            print_watch_frame(&frame, is_zh);
                         }
                     }
                     Some(Ok(tokio_tungstenite::tungstenite::Message::Close(_))) | None => break,
@@ -2248,23 +2248,117 @@ async fn watch(
     Ok(())
 }
 
-fn print_watch_frame(frame: &Value) {
-    let kind = frame.get("type").and_then(Value::as_str).unwrap_or("");
-    match kind {
-        "remote_frame.snapshot" | "remote_frame.delta" => {
-            let payload = frame.get("payload").cloned().unwrap_or(Value::Null);
-            println!("{}", serde_json::to_string(&payload).unwrap_or_default());
+fn print_watch_frame(frame: &Value, is_zh: bool) {
+    if let Some((stderr, line)) = watch_frame_line(frame, is_zh) {
+        if stderr {
+            eprintln!("{line}");
+        } else {
+            println!("{line}");
         }
-        "remote_frame.error" => {
-            let payload = frame.get("payload").cloned().unwrap_or(Value::Null);
-            eprintln!("error: {}", payload);
-        }
-        "remote_frame.close" => {
-            let reason = frame.pointer("/payload/reason").and_then(Value::as_str).unwrap_or("");
-            println!("[closed] {reason}");
-        }
-        _ => {}
     }
+}
+
+/// One line per `remote_ws` frame, plus whether it belongs on stderr.
+///
+/// The frame types are the server's own wire constants — `snapshot`, `delta`,
+/// `command`, `error`, `close` (docs §7.4). This match previously spelled them
+/// `remote_frame.*`, which is not what the socket sends, so every frame fell
+/// through and `cloud watch` printed only its banner while looking connected.
+fn watch_frame_line(frame: &Value, is_zh: bool) -> Option<(bool, String)> {
+    let tag = |zh: &str, en: &str| -> String { if is_zh { zh.to_string() } else { en.to_string() } };
+    match frame.get("type").and_then(Value::as_str).unwrap_or("") {
+        "snapshot" => {
+            let items = frame
+                .pointer("/payload/items")
+                .and_then(Value::as_array)
+                .map(|items| items.len())
+                .unwrap_or(0);
+            Some((
+                false,
+                format!("[{}] {}", tag("快照", "snapshot"), items),
+            ))
+        }
+        "delta" => {
+            let event = frame
+                .pointer("/payload/event")
+                .and_then(Value::as_str)
+                .unwrap_or("change");
+            let record = frame
+                .pointer("/payload/data")
+                .cloned()
+                .unwrap_or(Value::Null);
+            let text = watch_record_text(&record);
+            if text.is_empty() {
+                // A status-only change still moves the thread; say what it moved to.
+                let status = record
+                    .pointer("/payload/status")
+                    .or_else(|| record.get("status"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                Some((false, format!("[{event}] status={status}")))
+            } else {
+                Some((false, format!("[{event}] {text}")))
+            }
+        }
+        "command" => Some((
+            false,
+            format!(
+                "[{}] {} {}",
+                tag("命令", "command"),
+                frame.get("kind").and_then(Value::as_str).unwrap_or(""),
+                frame.get("status").and_then(Value::as_str).unwrap_or("")
+            ),
+        )),
+        "error" => Some((
+            true,
+            format!(
+                "error: {}",
+                frame.get("code").and_then(Value::as_str).unwrap_or("unknown")
+            ),
+        )),
+        "close" => Some((
+            false,
+            format!(
+                "[{}] {}",
+                tag("已关闭", "closed"),
+                frame
+                    .get("reason")
+                    .or_else(|| frame.pointer("/payload/reason"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+            ),
+        )),
+        _ => None,
+    }
+}
+
+/// The body of one change record, read the way the cloud view reads it: the
+/// item text can ride on the record itself or on its nested payload.
+fn watch_record_text(record: &Value) -> String {
+    for pointer in [
+        "/content",
+        "/payload/content",
+        "/text",
+        "/delta",
+        "/payload/text",
+    ] {
+        if let Some(text) = record.pointer(pointer).and_then(Value::as_str) {
+            if !text.is_empty() {
+                return clamp_watch_line(text);
+            }
+        }
+    }
+    String::new()
+}
+
+/// One line never exceeds the same bound the file preview uses, so a long
+/// answer cannot flood the terminal.
+fn clamp_watch_line(text: &str) -> String {
+    let mut out: String = text.chars().take(CAT_LINE_CHARS).collect();
+    if text.chars().count() > CAT_LINE_CHARS {
+        out.push('…');
+    }
+    out
 }
 
 fn urlencode(raw: &str) -> String {
@@ -2481,6 +2575,34 @@ mod tests {
         let data = json!({"command_id": "cmd_2", "status": "succeeded", "result": relay});
         assert_eq!(result_payload(&data), &json!({"threads": []}));
         assert_eq!(deep_get(&data, "stream_id", 3), Some(&json!(7)));
+    }
+
+    #[test]
+    fn watch_frame_lines_match_the_real_wire_types() {
+        // The match this replaced spelled the types `remote_frame.*`, which is
+        // not what remote_ws sends, so every frame fell through and `cloud
+        // watch` printed only its banner (docs §7.4).
+        let delta = json!({"type":"delta","thread_id":"th_1","seq":7,
+            "payload":{"event":"item_upsert","data":{"item_id":"t1:a","kind":"assistant_message","content":"hello"}}});
+        assert_eq!(
+            watch_frame_line(&delta, false),
+            Some((false, "[item_upsert] hello".to_string()))
+        );
+        let notice = json!({"type":"command","kind":"thread.message","status":"acked","command_id":"cmd_1"});
+        assert_eq!(
+            watch_frame_line(&notice, false),
+            Some((false, "[command] thread.message acked".to_string()))
+        );
+        let close = json!({"type":"close","reason":"unsubscribed"});
+        assert_eq!(
+            watch_frame_line(&close, false),
+            Some((false, "[closed] unsubscribed".to_string()))
+        );
+        let error = json!({"type":"error","code":"NODE_OFFLINE"});
+        assert_eq!(
+            watch_frame_line(&error, false),
+            Some((true, "error: NODE_OFFLINE".to_string()))
+        );
     }
 
     #[test]

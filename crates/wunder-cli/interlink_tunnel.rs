@@ -301,6 +301,12 @@ pub async fn start(runtime: &CliRuntime) -> bool {
         return false;
     }
     let state = Arc::clone(&runtime.state);
+    // A controlled node has to drain its own queue. The CLI profile deliberately
+    // does not start the thread-runtime pump at construction (any CLI invocation
+    // would otherwise wake stale pending tasks), but a remote send that arrives
+    // while a session still holds its run is admitted as queued and would never
+    // start without it. `start` is idempotent.
+    state.kernel.thread_runtime.clone().start();
     let options = InterlinkLocalOptions {
         local_user_id: runtime.user_id.clone(),
         workspace_id: None,

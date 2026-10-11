@@ -1,143 +1,138 @@
 <template>
-  <div class="user-tools-pane">
-    <div class="list-header">
-      <label>{{ t('userTools.knowledge.title') }}</label>
-      <div v-if="status" class="user-tools-status list-status">{{ status }}</div>
-    </div>
-    <div class="tips">
-      {{ t('userTools.knowledge.tip') }}
+  <div class="mst-pane mst-pane--knowledge">
+    <!-- 紧凑设置页布局：单行工具栏 + 「基础库列表 | 文档/片段上下分区」三段式，样式见 pages/messenger-tools-panes.css。 -->
+    <div class="mst-toolbar">
+      <div class="mst-toolbar-title">
+        <span>{{ t('userTools.knowledge.title') }}</span>
+        <span class="mst-toolbar-count">{{ bases.length }}</span>
+      </div>
+      <div class="mst-toolbar-actions">
+        <button class="mst-btn mst-btn--primary" type="button" :title="t('knowledge.action.add')" :aria-label="t('knowledge.action.add')" @click="addBase">
+          <i class="fa-solid fa-plus" aria-hidden="true"></i>
+          <span>{{ t('knowledge.action.add') }}</span>
+        </button>
+        <button
+          class="mst-btn mst-btn--icon"
+          type="button"
+          :title="t('knowledge.action.refresh')"
+          :aria-label="t('knowledge.action.refresh')"
+          @click="refreshConfig"
+        >
+          <i class="fa-solid fa-arrows-rotate" aria-hidden="true"></i>
+        </button>
+        <button
+          class="mst-btn mst-btn--icon"
+          type="button"
+          :disabled="!activeBase"
+          :title="t('common.edit')"
+          :aria-label="t('common.edit')"
+          @click="editBase"
+        >
+          <i class="fa-solid fa-pen" aria-hidden="true"></i>
+        </button>
+        <button
+          class="mst-btn mst-btn--icon mst-btn--danger"
+          type="button"
+          :disabled="!activeBase"
+          :title="t('knowledge.action.delete')"
+          :aria-label="t('knowledge.action.delete')"
+          @click="deleteBase"
+        >
+          <i class="fa-solid fa-trash" aria-hidden="true"></i>
+        </button>
+      </div>
     </div>
 
-    <div class="management-layout knowledge-layout">
-      <div class="management-list knowledge-base-column">
-        <div class="list-header">
-          <label>{{ t('knowledge.list.title') }}</label>
-          <div class="header-actions knowledge-column-actions">
-            <button
-              class="user-tools-btn secondary btn-with-icon btn-compact icon-only"
-              type="button"
-              :title="t('knowledge.action.add')"
-              :aria-label="t('knowledge.action.add')"
-              @click="addBase"
-            >
-              <i class="fa-solid fa-plus" aria-hidden="true"></i>
-            </button>
-            <button
-              class="user-tools-btn secondary btn-with-icon btn-compact icon-only"
-              type="button"
-              :title="t('knowledge.action.refresh')"
-              :aria-label="t('knowledge.action.refresh')"
-              @click="refreshConfig"
-            >
-              <i class="fa-solid fa-arrows-rotate" aria-hidden="true"></i>
-            </button>
-            <button
-              class="user-tools-btn secondary btn-with-icon btn-compact icon-only"
-              type="button"
-              :disabled="!activeBase"
-              :title="t('common.edit')"
-              :aria-label="t('common.edit')"
-              @click="editBase"
-            >
-              <i class="fa-solid fa-pen" aria-hidden="true"></i>
-            </button>
-            <button
-              class="user-tools-btn danger btn-with-icon btn-compact icon-only"
-              type="button"
-              :disabled="!activeBase"
-              :title="t('knowledge.action.delete')"
-              :aria-label="t('knowledge.action.delete')"
-              @click="deleteBase"
-            >
-              <i class="fa-solid fa-trash" aria-hidden="true"></i>
-            </button>
-          </div>
-        </div>
-        <div class="list-body">
+    <div class="mst-columns mst-columns--knowledge">
+      <aside class="mst-panel">
+        <div class="mst-panel-body">
           <template v-if="bases.length">
             <button
               v-for="(base, index) in bases"
               :key="`${base.name || index}`"
-              class="list-item"
-              :class="{ active: index === selectedIndex }"
+              class="mst-item mst-item--master"
+              :class="{ 'is-active': index === selectedIndex }"
               type="button"
               @click="selectBase(index)"
             >
-              <div>{{ base.name || t('knowledge.name.unnamed') }}</div>
-              <small>{{ buildBaseListMeta(base) }}</small>
+              <span class="mst-item-title">
+                <span class="mst-item-title-text">{{ base.name || t('knowledge.name.unnamed') }}</span>
+              </span>
+              <span class="mst-item-sub">{{ buildBaseListMeta(base) }}</span>
             </button>
           </template>
-          <div v-else class="empty-text">{{ t('userTools.knowledge.list.empty') }}</div>
+          <div v-else class="mst-empty">{{ t('userTools.knowledge.list.empty') }}</div>
         </div>
-      </div>
+      </aside>
 
-      <div class="management-list knowledge-doc-column">
-        <div class="list-header">
-          <label>{{ isIndexedBase ? t('knowledge.doc.section.docs') : t('fileList.title') }}</label>
-          <div class="header-actions knowledge-column-actions">
-            <button
-              v-if="!isIndexedBase"
-              class="user-tools-btn secondary btn-with-icon btn-compact icon-only"
-              type="button"
-              :disabled="!activeBase || uploadLoading"
-              :title="t('knowledge.action.uploadFile')"
-              :aria-label="t('knowledge.action.uploadFile')"
-              :class="{ 'is-loading': uploadLoading }"
-              @click="triggerUpload"
-            >
-              <i class="fa-solid" :class="uploadIcon" aria-hidden="true"></i>
-            </button>
-            <button
-              v-if="!isIndexedBase"
-              class="user-tools-btn secondary btn-with-icon btn-compact icon-only"
-              type="button"
-              :disabled="!activeBase"
-              :title="t('common.create')"
-              :aria-label="t('common.create')"
-              @click="createFile"
-            >
-              <i class="fa-solid fa-plus" aria-hidden="true"></i>
-            </button>
-            <button
-              v-if="isIndexedBase"
-              class="user-tools-btn secondary btn-with-icon btn-compact icon-only"
-              type="button"
-              :disabled="!activeBase || uploadLoading"
-              :title="t('knowledge.action.uploadDoc')"
-              :aria-label="t('knowledge.action.uploadDoc')"
-              :class="{ 'is-loading': uploadLoading }"
-              @click="triggerUpload"
-            >
-              <i class="fa-solid" :class="uploadIcon" aria-hidden="true"></i>
-            </button>
-            <button
-              v-if="isIndexedBase"
-              class="user-tools-btn secondary btn-with-icon btn-compact icon-only"
-              type="button"
-              :disabled="!activeBase || !canReindexDocs"
-              :title="t('knowledge.action.reindex')"
-              :aria-label="t('knowledge.action.reindex')"
-              @click="reindexDocs()"
-            >
-              <i class="fa-solid fa-rotate" aria-hidden="true"></i>
-            </button>
-          </div>
-        </div>
-        <div v-if="isIndexedBase" class="knowledge-doc-list">
-          <div v-if="!vectorDocs.length" class="empty-text">
-            {{ activeBase ? t('knowledge.doc.list.empty') : t('knowledge.detail.empty') }}
-          </div>
-          <div
-            v-for="doc in vectorDocs"
-            :key="doc.doc_id"
-            class="knowledge-doc-item"
-            :class="{ active: doc.doc_id === activeDocId }"
-            @click="selectDoc(doc.doc_id)"
-          >
-            <div class="knowledge-doc-item-header">
-              <div class="knowledge-doc-title">{{ doc.name || doc.doc_id }}</div>
+      <section class="mst-stack">
+        <div class="mst-panel">
+          <div class="mst-panel-head">
+            <span class="mst-panel-title">{{ isIndexedBase ? t('knowledge.doc.section.docs') : t('fileList.title') }}</span>
+            <div class="mst-panel-actions">
               <button
-                class="knowledge-doc-delete-btn"
+                v-if="!isIndexedBase"
+                class="mst-btn mst-btn--icon"
+                type="button"
+                :disabled="!activeBase || uploadLoading"
+                :title="t('knowledge.action.uploadFile')"
+                :aria-label="t('knowledge.action.uploadFile')"
+                :class="{ 'is-loading': uploadLoading }"
+                @click="triggerUpload"
+              >
+                <i class="fa-solid" :class="uploadIcon" aria-hidden="true"></i>
+              </button>
+              <button
+                v-if="!isIndexedBase"
+                class="mst-btn mst-btn--icon"
+                type="button"
+                :disabled="!activeBase"
+                :title="t('common.create')"
+                :aria-label="t('common.create')"
+                @click="createFile"
+              >
+                <i class="fa-solid fa-plus" aria-hidden="true"></i>
+              </button>
+              <button
+                v-if="isIndexedBase"
+                class="mst-btn mst-btn--icon"
+                type="button"
+                :disabled="!activeBase || uploadLoading"
+                :title="t('knowledge.action.uploadDoc')"
+                :aria-label="t('knowledge.action.uploadDoc')"
+                :class="{ 'is-loading': uploadLoading }"
+                @click="triggerUpload"
+              >
+                <i class="fa-solid" :class="uploadIcon" aria-hidden="true"></i>
+              </button>
+              <button
+                v-if="isIndexedBase"
+                class="mst-btn mst-btn--icon"
+                type="button"
+                :disabled="!activeBase || !canReindexDocs"
+                :title="t('knowledge.action.reindex')"
+                :aria-label="t('knowledge.action.reindex')"
+                @click="reindexDocs()"
+              >
+                <i class="fa-solid fa-rotate" aria-hidden="true"></i>
+              </button>
+            </div>
+          </div>
+          <div v-if="isIndexedBase" class="mst-panel-body">
+            <div v-if="!vectorDocs.length" class="mst-empty">
+              {{ activeBase ? t('knowledge.doc.list.empty') : t('knowledge.detail.empty') }}
+            </div>
+            <div
+              v-for="doc in vectorDocs"
+              :key="doc.doc_id"
+              class="mst-doc-row"
+              :class="{ 'is-active': doc.doc_id === activeDocId }"
+              @click="selectDoc(doc.doc_id)"
+            >
+              <span class="mst-doc-row-name">{{ doc.name || doc.doc_id }}</span>
+              <span class="mst-doc-row-meta">{{ buildDocMetaText(doc) }}</span>
+              <button
+                class="mst-doc-row-delete"
                 type="button"
                 :title="t('common.delete')"
                 :aria-label="t('common.delete')"
@@ -146,139 +141,130 @@
                 <i class="fa-solid fa-trash" aria-hidden="true"></i>
               </button>
             </div>
-            <div class="knowledge-doc-meta">{{ buildDocMetaText(doc) }}</div>
           </div>
-        </div>
-        <div v-else class="knowledge-file-list">
-          <div v-if="!files.length" class="empty-text">
-            {{ activeBase ? t('knowledge.file.empty') : t('knowledge.detail.empty') }}
-          </div>
-          <div
-            v-for="filePath in files"
-            :key="filePath"
-            class="knowledge-file-item"
-            :class="{ active: filePath === activeFile }"
-            @click="selectFile(filePath)"
-          >
-            <span class="knowledge-file-name">{{ filePath }}</span>
-            <button
-              class="knowledge-file-delete-btn"
-              type="button"
-              :title="t('common.delete')"
-              :aria-label="t('common.delete')"
-              @click.stop="deleteFile(filePath)"
+          <div v-else class="mst-panel-body">
+            <div v-if="!files.length" class="mst-empty">
+              {{ activeBase ? t('knowledge.file.empty') : t('knowledge.detail.empty') }}
+            </div>
+            <div
+              v-for="filePath in files"
+              :key="filePath"
+              class="mst-file-row"
+              :class="{ 'is-active': filePath === activeFile }"
+              @click="selectFile(filePath)"
             >
-              <i class="fa-solid fa-trash" aria-hidden="true"></i>
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <div class="management-detail knowledge-detail knowledge-content-column">
-        <div class="list-header knowledge-content-header">
-          <div class="knowledge-content-title">
-            <label>
-              {{ isIndexedBase ? t('knowledge.doc.section.chunkList') : (activeFile || t('knowledge.file.none')) }}
-            </label>
-            <div v-if="isIndexedBase" class="muted">{{ activeDocTitle }}</div>
-            <div v-if="isIndexedBase" class="muted">{{ activeDocMeta }}</div>
-          </div>
-          <div class="header-actions knowledge-column-actions">
-            <button
-              v-if="!isIndexedBase"
-              class="user-tools-btn btn-with-icon btn-compact icon-only"
-              type="button"
-              :disabled="!activeBase"
-              :title="t('common.save')"
-              :aria-label="t('common.save')"
-              @click="saveFile"
-            >
-              <i class="fa-solid fa-floppy-disk" aria-hidden="true"></i>
-            </button>
-            <button
-              v-if="isIndexedBase"
-              class="user-tools-btn secondary btn-with-icon btn-compact icon-only"
-              type="button"
-              :disabled="!canSelectChunks"
-              :title="selectAllLabel"
-              :aria-label="selectAllLabel"
-              @click="toggleSelectAllChunks"
-            >
-              <i class="fa-solid" :class="selectAllIcon" aria-hidden="true"></i>
-            </button>
-            <button
-              v-if="isIndexedBase"
-              class="user-tools-btn btn-with-icon btn-compact icon-only"
-              type="button"
-              :disabled="!canBatchEmbed"
-              :title="embedActionLabel"
-              :aria-label="embedActionLabel"
-              :class="{ 'is-loading': embeddingActive }"
-              @click="embedSelectedChunks"
-            >
-              <i class="fa-solid" :class="embedActionIcon" aria-hidden="true"></i>
-            </button>
-            <button
-              v-if="isIndexedBase"
-              class="user-tools-btn danger btn-with-icon btn-compact icon-only"
-              type="button"
-              :disabled="!canBatchDelete"
-              :title="t('knowledge.doc.action.deleteChunks')"
-              :aria-label="t('knowledge.doc.action.deleteChunks')"
-              @click="deleteSelectedChunks"
-            >
-              <i class="fa-solid fa-trash" aria-hidden="true"></i>
-            </button>
-          </div>
-        </div>
-        <div v-if="isIndexedBase" class="knowledge-doc-chunk-list">
-          <div v-if="!docChunks.length" class="empty-text">
-            {{ t('knowledge.chunk.empty') }}
-          </div>
-          <div
-            v-for="chunk in docChunks"
-            :key="chunk.index"
-            class="knowledge-doc-chunk-item"
-            :class="{
-              selected: isChunkSelected(chunk.index),
-              embedding: isChunkEmbedding(chunk.index)
-            }"
-            @click="openChunkEditor(chunk)"
-          >
-            <div class="knowledge-doc-chunk-title-row">
-              <div class="knowledge-doc-chunk-title">
-                <button
-                  class="knowledge-doc-chunk-select"
-                  type="button"
-                  :aria-label="isChunkSelected(chunk.index) ? t('knowledge.chunk.action.clearSelection') : t('knowledge.chunk.action.select')"
-                  @click.stop="toggleChunkSelection(chunk.index)"
-                ></button>
-                <span>#{{ chunk.index }} {{ chunk.start }}-{{ chunk.end }}</span>
-              </div>
-              <span
-                class="knowledge-doc-chunk-status"
-                :class="`status-${resolveChunkStatus(chunk)}`"
+              <span class="mst-file-row-name">{{ filePath }}</span>
+              <button
+                class="mst-doc-row-delete"
+                type="button"
+                :title="t('common.delete')"
+                :aria-label="t('common.delete')"
+                @click.stop="deleteFile(filePath)"
               >
-                {{ formatChunkStatus(chunk) }}
-              </span>
-            </div>
-            <div class="knowledge-doc-chunk-preview">
-              {{ chunk.preview || chunk.content }}
+                <i class="fa-solid fa-trash" aria-hidden="true"></i>
+              </button>
             </div>
           </div>
         </div>
-        <div v-else class="knowledge-editor-wrapper">
-          <textarea
-            v-model="fileContent"
-            class="knowledge-editor-textarea"
-            :placeholder="t('knowledge.file.none')"
-            spellcheck="false"
-            autocorrect="off"
-            autocomplete="off"
-            autocapitalize="off"
-          ></textarea>
+
+        <div class="mst-panel">
+          <div class="mst-panel-head">
+            <div class="mst-detail-info">
+              <span class="mst-panel-title">
+                {{ isIndexedBase ? t('knowledge.doc.section.chunkList') : (activeFile || t('knowledge.file.none')) }}
+              </span>
+              <span v-if="isIndexedBase" class="mst-panel-sub">{{ activeDocMeta || activeDocTitle }}</span>
+            </div>
+            <div class="mst-panel-actions">
+              <button
+                v-if="!isIndexedBase"
+                class="mst-btn mst-btn--icon"
+                type="button"
+                :disabled="!activeBase"
+                :title="t('common.save')"
+                :aria-label="t('common.save')"
+                @click="saveFile"
+              >
+                <i class="fa-solid fa-floppy-disk" aria-hidden="true"></i>
+              </button>
+              <button
+                v-if="isIndexedBase"
+                class="mst-btn mst-btn--icon"
+                type="button"
+                :disabled="!canSelectChunks"
+                :title="selectAllLabel"
+                :aria-label="selectAllLabel"
+                @click="toggleSelectAllChunks"
+              >
+                <i class="fa-solid" :class="selectAllIcon" aria-hidden="true"></i>
+              </button>
+              <button
+                v-if="isIndexedBase"
+                class="mst-btn mst-btn--icon"
+                type="button"
+                :disabled="!canBatchEmbed"
+                :title="embedActionLabel"
+                :aria-label="embedActionLabel"
+                :class="{ 'is-loading': embeddingActive }"
+                @click="embedSelectedChunks"
+              >
+                <i class="fa-solid" :class="embedActionIcon" aria-hidden="true"></i>
+              </button>
+              <button
+                v-if="isIndexedBase"
+                class="mst-btn mst-btn--icon mst-btn--danger"
+                type="button"
+                :disabled="!canBatchDelete"
+                :title="t('knowledge.doc.action.deleteChunks')"
+                :aria-label="t('knowledge.doc.action.deleteChunks')"
+                @click="deleteSelectedChunks"
+              >
+                <i class="fa-solid fa-trash" aria-hidden="true"></i>
+              </button>
+            </div>
+          </div>
+          <div v-if="isIndexedBase" class="mst-panel-body">
+            <div v-if="!docChunks.length" class="mst-empty">{{ t('knowledge.chunk.empty') }}</div>
+            <div
+              v-for="chunk in docChunks"
+              :key="chunk.index"
+              class="mst-chunk-row"
+              :class="{
+                'is-selected': isChunkSelected(chunk.index),
+                'is-embedding': isChunkEmbedding(chunk.index)
+              }"
+              @click="openChunkEditor(chunk)"
+            >
+              <div class="mst-chunk-row-top">
+                <div class="mst-chunk-title">
+                  <button
+                    class="mst-chunk-select"
+                    type="button"
+                    :aria-label="isChunkSelected(chunk.index) ? t('knowledge.chunk.action.clearSelection') : t('knowledge.chunk.action.select')"
+                    @click.stop="toggleChunkSelection(chunk.index)"
+                  ></button>
+                  <span>#{{ chunk.index }} {{ chunk.start }}-{{ chunk.end }}</span>
+                </div>
+                <span class="mst-chunk-status" :class="`is-${resolveChunkStatus(chunk)}`">
+                  {{ formatChunkStatus(chunk) }}
+                </span>
+              </div>
+              <div class="mst-chunk-preview">{{ chunk.preview || chunk.content }}</div>
+            </div>
+          </div>
+          <div v-else class="mst-panel-body">
+            <textarea
+              v-model="fileContent"
+              class="mst-editor"
+              :placeholder="t('knowledge.file.none')"
+              spellcheck="false"
+              autocorrect="off"
+              autocomplete="off"
+              autocapitalize="off"
+            ></textarea>
+          </div>
         </div>
-      </div>
+      </section>
     </div>
 
     <input ref="fileUploadRef" type="file" :accept="uploadAccept" hidden @change="handleFileUpload" />
