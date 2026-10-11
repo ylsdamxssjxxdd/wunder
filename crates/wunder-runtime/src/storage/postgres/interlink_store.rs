@@ -420,7 +420,7 @@ impl PostgresInterlinkStorage for PostgresStorage {
         if ids.is_empty() {
             return Ok(Vec::new());
         }
-        let conn = self.conn()?;
+        let mut conn = self.conn()?;
         let mut out = Vec::with_capacity(ids.len());
         // The node list is capped at 60 devices (api layer): fixed per-id
         // lookups avoid dynamic IN-list building and stay one round trip each.

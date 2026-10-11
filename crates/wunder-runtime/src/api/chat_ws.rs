@@ -616,6 +616,35 @@ async fn handle_ws(
                                                     let _ = send_ws_tail_event(&ws_tx_snapshot, Some(&request_id_cleanup), event).await;
                                                     continue;
                                                 }
+                                                if event.event == "thread_item_delta" {
+                                                    // Command-session output is the only delta
+                                                    // class the web timeline renders live;
+                                                    // assistant text rides thread_item_tail.
+                                                    // Restore the semantic stream name so the
+                                                    // client's command-session side effects
+                                                    // dispatch, and send it lossy like a tail:
+                                                    // the durable tool_result heals any gap.
+                                                    if event
+                                                        .data
+                                                        .pointer("/data/source_event")
+                                                        .and_then(serde_json::Value::as_str)
+                                                        == Some("command_session_delta")
+                                                    {
+                                                        let forwarded = StreamEvent {
+                                                            event: "command_session_delta".into(),
+                                                            data: event.data.clone(),
+                                                            id: None,
+                                                            timestamp: event.timestamp,
+                                                        };
+                                                        let _ = send_ws_tail_event(
+                                                            &ws_tx_snapshot,
+                                                            Some(&request_id_cleanup),
+                                                            forwarded,
+                                                        )
+                                                        .await;
+                                                    }
+                                                    continue;
+                                                }
                                                 // Durable content is delivered only by the feeder.
                                                 continue;
                                             }
