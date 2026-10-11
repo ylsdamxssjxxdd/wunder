@@ -97,4 +97,6 @@ supplement-build/
 # JiuwenSwarm runtime file operation logs
 .agent_history/
 .trash
+# Virtual-model simulation scratch outputs (harmless landing zone)
+.temp/
 docs/性能基线/assets

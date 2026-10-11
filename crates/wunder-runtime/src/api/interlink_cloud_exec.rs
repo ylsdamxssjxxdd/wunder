@@ -17,7 +17,7 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
 
-use wunder_core::interlink::COMMAND_STATUS_FAILED;
+use wunder_core::interlink::{AUDIT_COMMAND_FINISH, COMMAND_STATUS_FAILED};
 
 use crate::services::interlink::client::execute::{self, CommandSpec, ExecContext};
 use crate::services::interlink::client::shadow::ShadowCollector;
@@ -84,7 +84,7 @@ pub async fn run(
     )
     .await;
     let row = crate::services::interlink::audit::record(
-        "command.finish",
+        AUDIT_COMMAND_FINISH,
         &actor_user_id,
         None,
         Some("cloud"),
@@ -122,7 +122,7 @@ async fn finish_failed(
     .await;
     let storage = state.storage.clone();
     let row = crate::services::interlink::audit::record(
-        "command.finish",
+        AUDIT_COMMAND_FINISH,
         "cloud",
         None,
         Some("cloud"),

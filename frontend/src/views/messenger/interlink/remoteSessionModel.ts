@@ -155,13 +155,17 @@ const appendStreamingDelta = (state: RemoteSessionState, delta: string): void =>
 export const applyRemoteFrame = (state: RemoteSessionState, frame: InterlinkRemoteFrame): boolean => {
   if (!frame) return false;
   const payload = asRecord(frame.payload);
+  const type = String(frame.type || '').trim().toLowerCase();
+  if (type === 'command') {
+    // 设备侧命令生命周期通知：只有 kind/status/command_id，会话内容仍由
+    // snapshot/delta 承载，因此它不改动状态、也不占用幂等序号。
+    return false;
+  }
   const seq = Number(frame.seq);
   if (Number.isFinite(seq) && seq >= 0 && seq <= state.lastSeq) {
     // 重复帧（服务端补水可能重发）幂等丢弃。
     return false;
   }
-
-  const type = String(frame.type || '').trim().toLowerCase();
 
   if (type === 'snapshot') {
     state.gotSnapshot = true;
@@ -190,7 +194,13 @@ export const applyRemoteFrame = (state: RemoteSessionState, frame: InterlinkRemo
 
   if (type === 'delta') {
     const directDelta = extractText(payload.delta ?? payload.token ?? payload.text ?? payload.content);
-    const structured = payload.message ?? payload.item ?? payload.event ?? payload.data;
+    // 节点的增量帧是 {event: 事件名字符串, data: 变更条目}。事件名是字符串，
+    // 不能当成结构化载荷，否则会把真正的 data 记录遮住，增量永远渲染不出来。
+    const structured =
+      payload.message ??
+      payload.item ??
+      payload.data ??
+      (payload.event && typeof payload.event === 'object' ? payload.event : undefined);
     if (Array.isArray(structured) || (structured && typeof structured === 'object')) {
       const message = buildMessage(asRecord(structured), state.messages.length);
       if (message) {

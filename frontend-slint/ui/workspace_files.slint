@@ -1,0 +1,203 @@
+// Sidebar working-directory region (the left rail's lower half): the cloud
+// workspace file tree. One flat row model built by the native projection —
+// directories lazy-load their children, files pull-and-open on click — so the
+// Slint thread only lays out rows, the same division the thread tree above
+// uses. Row metrics follow the web left-rail panel: 26px rows, 12px per
+// depth level, folders in the amber of the web's folder icon.
+import { Theme, WorkspaceFileRow } from "theme.slint";
+import { I18n } from "i18n.slint";
+import { ListView } from "std-widgets.slint";
+
+export component WorkspaceFilesPanel inherits Rectangle {
+    background: transparent;
+
+    in property <[WorkspaceFileRow]> rows;
+    // Usage line projected on the Rust side ("已用 X · N 个文件"); empty hides it.
+    in property <string> stats;
+    // The root listing is in flight (the tree's own placeholder).
+    in property <bool> loading;
+    // Root-level failure: replaces the tree with the error block.
+    in property <string> error;
+    // Tunnel not connected: the region shows the connect hint instead.
+    in property <bool> offline;
+    // A listing, refresh or pull is in flight; the refresh button yields.
+    in property <bool> busy;
+
+    callback toggle(int);
+    callback refresh();
+    callback connect();
+
+    // Connected, settled and nothing came back: the empty state.
+    property <bool> empty:
+        !root.offline && !root.loading && root.error == "" && root.rows.length == 0;
+
+    VerticalLayout {
+        padding-left: 10px; padding-right: 10px; padding-top: 2px; padding-bottom: 6px;
+        spacing: 0px;
+        // Head: title and the refresh affordance, the same pair the workspace
+        // section header above uses.
+        HorizontalLayout {
+            height: 24px; spacing: 6px;
+            Image {
+                y: 5px; width: 13px; height: 13px;
+                source: @image-url("../assets/icons/folder-tree.svg");
+                colorize: Theme.muted;
+            }
+            Text {
+                height: parent.height; text: I18n.wf_title;
+                color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center;
+                horizontal-stretch: 1;
+            }
+            Rectangle {
+                y: 2px; width: 20px; height: 20px; border-radius: 5px;
+                background: head-touch.has-hover ? Theme.hover : transparent;
+                opacity: root.busy ? 0.4 : 1.0;
+                Image {
+                    x: 3px; y: 3px; width: 14px; height: 14px;
+                    source: @image-url("../assets/icons/rotate-right.svg");
+                    colorize: Theme.muted;
+                }
+                head-touch := TouchArea {
+                    mouse-cursor: pointer;
+                    enabled: !root.busy;
+                    clicked => { root.refresh(); }
+                }
+            }
+        }
+        if root.stats != "" : Text {
+            height: 16px; text: root.stats;
+            color: Theme.muted; font-size: Theme.font-2xs; vertical-alignment: center;
+            overflow: elide;
+        }
+        // Tunnel down: the region can browse nothing, so it says so and hands
+        // the user to the cloud sign-in instead of an eternal spinner.
+        if root.offline : VerticalLayout {
+            vertical-stretch: 1; alignment: center; spacing: 8px;
+            Image {
+                width: 26px; height: 26px;
+                source: @image-url("../assets/icons/folder-open.svg");
+                colorize: Theme.border-strong;
+            }
+            Text {
+                text: I18n.wf_offline; color: Theme.muted; font-size: Theme.font-xs;
+                horizontal-alignment: center; wrap: word-wrap;
+            }
+            Rectangle {
+                width: 84px; height: 26px; border-radius: 13px;
+                background: connect-touch.has-hover ? Theme.accent : Theme.accent-soft;
+                connect-touch := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.connect(); }
+                }
+                Text {
+                    width: 100%; height: 100%; text: I18n.wf_connect;
+                    color: connect-touch.has-hover ? white : Theme.accent;
+                    font-size: Theme.font-sm; font-weight: 600;
+                    horizontal-alignment: center; vertical-alignment: center;
+                }
+            }
+        }
+        // Root failure: the message plus one bounded way out.
+        if root.error != "" && !root.offline : VerticalLayout {
+            vertical-stretch: 1; alignment: center; spacing: 8px;
+            Text {
+                text: root.error; color: Theme.danger; font-size: Theme.font-xs;
+                horizontal-alignment: center; wrap: word-wrap;
+            }
+            Rectangle {
+                width: 84px; height: 26px; border-radius: 13px;
+                border-width: 1px; border-color: Theme.border-strong;
+                background: reload-touch.has-hover ? Theme.hover : Theme.surface;
+                reload-touch := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.refresh(); }
+                }
+                Text {
+                    width: 100%; height: 100%; text: I18n.wf_reload;
+                    color: Theme.text-secondary; font-size: Theme.font-sm;
+                    horizontal-alignment: center; vertical-alignment: center;
+                }
+            }
+        }
+        if root.loading && root.error == "" && !root.offline : Text {
+            vertical-stretch: 1; text: I18n.wf_loading;
+            color: Theme.muted; font-size: Theme.font-xs;
+            horizontal-alignment: center; vertical-alignment: center;
+        }
+        if root.empty : VerticalLayout {
+            vertical-stretch: 1; alignment: center; spacing: 6px;
+            Image {
+                width: 24px; height: 24px;
+                source: @image-url("../assets/icons/folder-open.svg");
+                colorize: Theme.border-strong;
+            }
+            Text {
+                text: I18n.wf_empty; color: Theme.muted; font-size: Theme.font-xs;
+                horizontal-alignment: center;
+            }
+            Text {
+                text: I18n.wf_open_hint; color: Theme.muted; font-size: Theme.font-2xs;
+                horizontal-alignment: center; opacity: 0.75; wrap: word-wrap;
+            }
+        }
+        // The tree. Rows are index-addressed like the thread tree: the native
+        // side owns the model, Slint hands the index back on click.
+        if !root.offline && root.error == "" && !root.loading && !root.empty : ListView {
+            vertical-stretch: 1;
+            horizontal-scrollbar-policy: always-off;
+            for row[index] in root.rows : Rectangle {
+                height: 26px; width: parent.width;
+                background: row-touch.has-hover ? Theme.hover : transparent;
+                row-touch := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.toggle(index); }
+                }
+                HorizontalLayout {
+                    padding-left: 6px + row.depth * 12px;
+                    padding-right: 8px;
+                    spacing: 5px;
+                    // The twisty column keeps file names aligned with the
+                    // directory names above them.
+                    Rectangle {
+                        width: 14px;
+                        if row.kind == 1 : Image {
+                            x: 1px; y: 7px; width: 12px; height: 12px;
+                            source: row.expanded
+                                ? @image-url("../assets/icons/chevron-down.svg")
+                                : @image-url("../assets/icons/chevron-right.svg");
+                            colorize: Theme.muted;
+                        }
+                    }
+                    if row.kind == 1 : Image {
+                        y: 6.5px; width: 13px; height: 13px;
+                        source: row.expanded
+                            ? @image-url("../assets/icons/folder-open.svg")
+                            : @image-url("../assets/icons/workspace/folder.svg");
+                        colorize: Theme.warning;
+                    }
+                    if row.kind != 1 : Image {
+                        y: 6.5px; width: 13px; height: 13px;
+                        source: row.icon;
+                    }
+                    Text {
+                        height: parent.height; text: row.name;
+                        color: row.kind == 2 ? Theme.muted : Theme.text-secondary;
+                        font-size: row.kind == 2 ? Theme.font-sm : Theme.font-md;
+                        vertical-alignment: center; overflow: elide;
+                        horizontal-stretch: 1;
+                    }
+                    if row.kind == 1 && row.loading : Text {
+                        height: parent.height; text: I18n.wf_loading_dir;
+                        color: Theme.muted; font-size: Theme.font-2xs;
+                        vertical-alignment: center;
+                    }
+                    if row.kind == 0 && row.size-text != "" : Text {
+                        height: parent.height; text: row.size-text;
+                        color: Theme.muted; font-size: Theme.font-2xs;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+    }
+}

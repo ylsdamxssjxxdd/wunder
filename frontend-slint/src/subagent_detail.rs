@@ -74,13 +74,14 @@ pub fn install(app: &crate::MainWindow, api: Arc<NativeDesktop>) {
 
     // Interrupt from the card or from the dialog header: the runtime settles
     // the child; the card and the header pick the new state up on their own
-    // feeds (the durable reload and the refresh clock).
-    let (stop_state, stop_api) = (state.clone(), api.clone());
+    // feeds (the durable reload and the refresh clock). Either way the parent
+    // is the thread the user is looking at — the card lives in the active
+    // timeline and the dialog overlays it — so the active session is the
+    // parent identity, not the dialog's stored one (a card can be stopped
+    // before the dialog has ever been opened).
+    let stop_api = api.clone();
     let stop = move |app: &crate::MainWindow, child: String| {
-        let parent = {
-            let current = stop_state.borrow();
-            current.parent.clone()
-        };
+        let parent = app.get_active_session_id().trim().to_string();
         if child.is_empty() || parent.is_empty() {
             return;
         }

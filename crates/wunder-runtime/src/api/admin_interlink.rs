@@ -30,8 +30,8 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use wunder_core::interlink::{
-    default_device_capabilities, NODE_STATUS_AWAY, NODE_STATUS_BUSY, NODE_STATUS_OFFLINE,
-    NODE_STATUS_ONLINE, NODE_STATUS_RECONNECTING,
+    AUDIT_POLICY_UPDATE, AUDIT_SECRET_ROTATE, default_device_capabilities, NODE_STATUS_AWAY,
+    NODE_STATUS_BUSY, NODE_STATUS_OFFLINE, NODE_STATUS_ONLINE, NODE_STATUS_RECONNECTING,
 };
 
 use crate::api::errors::error_response;
@@ -936,7 +936,7 @@ async fn patch_device_policy(
         write_audit(
             &state,
             audit::record(
-                "policy.update",
+                AUDIT_POLICY_UPDATE,
                 &actor,
                 Some("web"),
                 Some(&format!("device:{device_id}")),
@@ -1053,7 +1053,7 @@ async fn post_rotate_secret(
     write_audit(
         &state,
         audit::record(
-            "secret.rotate",
+            AUDIT_SECRET_ROTATE,
             &actor,
             Some("web"),
             Some(&format!("device:{device_id}")),

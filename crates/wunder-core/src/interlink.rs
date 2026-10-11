@@ -255,15 +255,28 @@ pub fn requires_hard_approval(kind: &str) -> bool {
 // Audit action names
 // ---------------------------------------------------------------------------
 
+// The values below are wire format: they live in the audit table, the CSV
+// export and the filter list of the 舰桥, so changing one is a data migration
+// and not a rename. Writers must use these constants; tests pin the literals.
 pub const AUDIT_CHANNEL_OPEN: &str = "channel.open";
 pub const AUDIT_CHANNEL_CLOSE: &str = "channel.close";
+/// Refused tunnel handshake (bad ticket, wrong secret, stale secret version).
+pub const AUDIT_CHANNEL_REJECTED: &str = "channel.rejected";
 pub const AUDIT_COMMAND_ISSUE: &str = "command.issue";
 pub const AUDIT_COMMAND_ACK: &str = "command.ack";
 pub const AUDIT_COMMAND_FINISH: &str = "command.finish";
 pub const AUDIT_APPROVAL_DECIDE: &str = "approval.decide";
+/// A file body crossed the data plane (inline or chunked); the audit row
+/// carries size and a short digest only.
 pub const AUDIT_FILE_READ: &str = "file.read";
-pub const AUDIT_FILE_WRITE: &str = "file.write";
 pub const AUDIT_SHADOW_SYNC: &str = "shadow.sync";
+/// A user dropped their cached shadow for one node.
+pub const AUDIT_SHADOW_PURGE: &str = "shadow.purge";
+pub const AUDIT_POLICY_UPDATE: &str = "policy.update";
+pub const AUDIT_SECRET_ROTATE: &str = "secret.rotate";
+pub const AUDIT_SECRET_ISSUE: &str = "secret.issue";
+/// Governance alert raised by the audit hook (docs §9.4).
+pub const AUDIT_ALERT_RAISED: &str = "alert.raised";
 
 // ---------------------------------------------------------------------------
 // Event payload kinds (`event` frames, docs §4.4 / §5.3 / §7.4)
@@ -339,6 +352,9 @@ pub fn is_queueable_when_offline(kind: &str) -> bool {
 /// Remote session view frame types on `WS /wunder/interlink/remote_ws`.
 pub const REMOTE_FRAME_SNAPSHOT: &str = "snapshot";
 pub const REMOTE_FRAME_DELTA: &str = "delta";
+/// Command lifecycle notice pushed to the watchers of the device that carries
+/// it (docs §7.4): `{type, kind, status, command_id}`, no payload and no seq.
+pub const REMOTE_FRAME_COMMAND: &str = "command";
 pub const REMOTE_FRAME_ERROR: &str = "error";
 pub const REMOTE_FRAME_CLOSE: &str = "close";
 pub const REMOTE_WS_PROTOCOL: &str = "wunder-interlink-remote";
@@ -386,5 +402,45 @@ mod tests {
         assert!(!is_queueable_when_offline(CMD_AGENT_SPAWN));
         assert!(!default_device_capabilities().iter().any(|cap| cap == CAP_TOOL_EXEC));
         assert!(!default_device_capabilities().iter().any(|cap| cap == CAP_AGENT_SPAWN));
+    }
+
+    /// Audit action names are the stored format: the CSV export and the filter
+    /// list of the 舰桥 match on them, so a rename must be deliberate.
+    #[test]
+    fn audit_action_names_are_frozen() {
+        assert_eq!(
+            [
+                AUDIT_CHANNEL_OPEN,
+                AUDIT_CHANNEL_CLOSE,
+                AUDIT_CHANNEL_REJECTED,
+                AUDIT_COMMAND_ISSUE,
+                AUDIT_COMMAND_ACK,
+                AUDIT_COMMAND_FINISH,
+                AUDIT_APPROVAL_DECIDE,
+                AUDIT_FILE_READ,
+                AUDIT_SHADOW_SYNC,
+                AUDIT_SHADOW_PURGE,
+                AUDIT_POLICY_UPDATE,
+                AUDIT_SECRET_ROTATE,
+                AUDIT_SECRET_ISSUE,
+                AUDIT_ALERT_RAISED,
+            ],
+            [
+                "channel.open",
+                "channel.close",
+                "channel.rejected",
+                "command.issue",
+                "command.ack",
+                "command.finish",
+                "approval.decide",
+                "file.read",
+                "shadow.sync",
+                "shadow.purge",
+                "policy.update",
+                "secret.rotate",
+                "secret.issue",
+                "alert.raised",
+            ]
+        );
     }
 }

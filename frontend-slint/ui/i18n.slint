@@ -895,10 +895,11 @@ export global I18n {
     out property <string> il_refresh: zh ? "刷新" : "Refresh";
     out property <string> il_loading: zh ? "加载中…" : "Loading…";
     out property <string> il_browse_title: zh ? "云端工作区" : "Cloud workspace";
-    out property <string> il_browse_hint: zh ? "输入云端路径浏览舰体上的工作区文件，点击文件夹进入。" : "Enter a cloud path to browse workspace files; click a folder to open it.";
+    out property <string> il_browse_hint: zh ? "输入云端路径浏览舰体上的工作区文件，点击文件夹进入；文件可拉到本地工作区，同名不覆盖，云端单次上限 1 MiB。" : "Enter a cloud path to browse workspace files; click a folder to open it. Files pull into the local workspace without overwriting, one cloud read capped at 1 MiB.";
     out property <string> il_browse_path_hint: zh ? "例如 / 或 /workspace" : "e.g. / or /workspace";
     out property <string> il_browse_open: zh ? "打开" : "Open";
     out property <string> il_browse_up: zh ? "上一级" : "Up one level";
+    out property <string> il_browse_pull: zh ? "拉到本地" : "Pull to this machine";
     out property <string> il_browse_empty: zh ? "此目录为空。" : "This folder is empty.";
     out property <string> il_browse_pending: zh ? "等待云端审批" : "Waiting for cloud approval";
     out property <string> il_approve: zh ? "批准" : "Approve";
@@ -1376,4 +1377,16 @@ export global I18n {
     out property <string> ws_delete_records_hint: zh ? "仅删除会话记录，磁盘文件保留" : "Removes session records only; files stay";
     out property <string> ws_btn_delete: zh ? "删除" : "Delete";
     out property <string> ws_pick_title: zh ? "选择工作区文件夹" : "Choose a workspace folder";
+    out property <string> wf_title: zh ? "工作目录" : "Working directory";
+    public pure function wf_stats(used: string, count: string) -> string { return zh ? "已用 " + used + " · " + count + " 个文件" : "Used " + used + " · " + count + " files"; }
+    public pure function wf_stats_dirs(count: string) -> string { return zh ? "" + count + " 个文件夹" : "" + count + " folders"; }
+    out property <string> wf_stats_truncated: zh ? "统计为大目录下界" : "Lower bound of a large directory";
+    out property <string> wf_empty: zh ? "当前目录没有文件" : "No files in this directory";
+    out property <string> wf_offline: zh ? "连接云端后，这里显示你的云端工作目录" : "Sign in to the cloud to browse your workspace";
+    out property <string> wf_connect: zh ? "去连接" : "Connect";
+    out property <string> wf_loading: zh ? "加载中…" : "Loading…";
+    out property <string> wf_reload: zh ? "重新加载" : "Reload";
+    public pure function wf_more(count: string) -> string { return zh ? "加载更多（剩余 " + count + " 项）" : "Load more (" + count + " remaining)"; }
+    out property <string> wf_loading_dir: zh ? "加载中" : "Loading";
+    out property <string> wf_open_hint: zh ? "点击文件拉取到本地工作区并打开" : "Click a file to pull it into the local workspace and open it";
 }

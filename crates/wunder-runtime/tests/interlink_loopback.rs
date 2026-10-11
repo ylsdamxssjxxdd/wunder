@@ -12,13 +12,12 @@
 use axum::{Json as AxumJson, Router};
 use futures::StreamExt;
 use serde_json::{json, Value};
-use std::net::TcpStream;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
-use tokio::net::TcpListener;
+use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::tungstenite::Message as WsMessage;
-use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
+use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 use wunder_server::{
     build_router,
     cloud::{shared as cloud_shared, CloudSessionFile},
@@ -344,24 +343,81 @@ impl RemoteView {
         Self { socket }
     }
 
-    /// Next text frame, skipping the keep-alive pings.
-    async fn next(&mut self, timeout: Duration) -> Value {
-        let deadline = Instant::now() + timeout;
+    /// One text frame, or `None` when nothing arrived inside `budget`. Pings and
+    /// pongs are skipped: the surface is text-only by contract (docs §7.4).
+    async fn read(&mut self, budget: Duration) -> Option<Value> {
         loop {
-            let received =
-                tokio::time::timeout(Duration::from_secs(2), self.socket.next()).await;
-            match received {
+            match tokio::time::timeout(budget, self.socket.next()).await {
                 Ok(Some(Ok(WsMessage::Text(text)))) => {
-                    return serde_json::from_str(&text).unwrap_or(Value::Null);
+                    return Some(serde_json::from_str(&text).unwrap_or(Value::Null));
                 }
                 Ok(Some(Ok(_))) => {}
                 Ok(Some(Err(error))) => panic!("remote_ws failed: {error}"),
                 Ok(None) => panic!("remote_ws closed"),
-                Err(_) => {
-                    assert!(Instant::now() < deadline, "no remote frame inside the window");
-                }
+                Err(_) => return None,
             }
         }
+    }
+
+    /// Next text frame, failing the test when the window closes first.
+    async fn next(&mut self, timeout: Duration) -> Value {
+        self.read(timeout)
+            .await
+            .expect("no remote frame inside the window")
+    }
+
+    /// The thread-change frame that follows an approved command. The command
+    /// lifecycle notices of §7.4 are pushed to the same watcher, in either
+    /// order relative to the change, so both shapes are asserted here.
+    async fn next_change(&mut self, command_id: &str, timeout: Duration) -> Value {
+        let deadline = Instant::now() + timeout;
+        let mut change: Option<Value> = None;
+        let mut notices = 0usize;
+        while Instant::now() < deadline {
+            if let Some(frame) = self.read(Duration::from_secs(2)).await {
+                match frame["type"].as_str().unwrap_or_default() {
+                    "delta" => {
+                        // One turn legitimately produces several changes (the
+                        // user item, the assistant item, status flips): keep the
+                        // first and ignore the rest.
+                        if change.is_none() {
+                            change = Some(frame);
+                        }
+                    }
+                    "command" => {
+                        assert_eq!(
+                            frame["command_id"],
+                            json!(command_id),
+                            "a lifecycle notice must name the command it reports: {frame}"
+                        );
+                        assert_eq!(
+                            frame["kind"],
+                            json!("thread.message"),
+                            "the notice carries the command kind: {frame}"
+                        );
+                        assert!(
+                            matches!(
+                                frame["status"].as_str(),
+                                Some("acked") | Some("succeeded")
+                            ),
+                            "only a real lifecycle status: {frame}"
+                        );
+                        notices += 1;
+                    }
+                    other => panic!("unexpected frame type on the remote surface: {other}"),
+                }
+            }
+            if change.is_some() && notices > 0 {
+                break;
+            }
+        }
+        let value =
+            change.unwrap_or_else(|| panic!("no delta for command {command_id} in the window"));
+        assert!(
+            notices > 0,
+            "the approved command must also reach its watcher as a lifecycle notice: {value}"
+        );
+        value
     }
 }
 
@@ -419,7 +475,7 @@ async fn wait_terminal(server: &Server, command_id: &str, timeout: Duration) -> 
         }
         assert!(
             Instant::now() < deadline,
-            "command {command_id} never reached a terminal state"
+            "command {command_id} never reached a terminal state, last record: {record}"
         );
         tokio::time::sleep(Duration::from_millis(150)).await;
     }
@@ -694,24 +750,16 @@ async fn loopback_tunnel_shadow_commands_and_approvals_end_to_end() {
     );
     assert_eq!(fetched, blob, "the streamed bytes must match exactly");
     // The trail records the read as size + short digest, never as content.
-    let (_, file_audit) = get_json(
-        &format!(
-            "{}/wunder/interlink/audit?limit=50&action=file.read",
-            server.base_url
-        ),
-        &server.token,
+    let file_rows = wait_action_rows(
+        &server,
+        "file.read",
+        Duration::from_secs(20),
+        |rows| {
+            rows.iter()
+                .any(|row| row["detail_digest"]["size"].as_i64() == Some(blob.len() as i64))
+        },
     )
     .await;
-    let file_rows = data_of(&file_audit)["items"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
-    assert!(
-        file_rows
-            .iter()
-            .any(|row| row["detail_digest"]["size"].as_i64() == Some(blob.len() as i64)),
-        "a file.read row with the byte count must exist: {file_rows:?}"
-    );
     assert!(
         !serde_json::to_string(&file_rows)
             .unwrap_or_default()
@@ -799,8 +847,8 @@ async fn loopback_tunnel_shadow_commands_and_approvals_end_to_end() {
         "the baseline belongs to the watched thread: {baseline}"
     );
     assert!(
-        baseline["payload"]["messages"].is_array(),
-        "蜂巢's reducer takes the baseline as `messages`: {baseline}"
+        baseline["payload"]["items"].is_array(),
+        "蜂巢's reducer takes the baseline as `payload.items`: {baseline}"
     );
 
     // ... and the next approved turn on the same thread arrives as a delta.
@@ -828,12 +876,20 @@ async fn loopback_tunnel_shadow_commands_and_approvals_end_to_end() {
     )
     .await;
     assert_eq!(follow_record["status"], json!("succeeded"), "{follow_record}");
-    let delta = view.next(Duration::from_secs(20)).await;
-    assert_eq!(delta["type"], json!("delta"), "a change after the baseline is a delta: {delta}");
+    let delta = view
+        .next_change(
+            follow["command_id"].as_str().unwrap(),
+            Duration::from_secs(30),
+        )
+        .await;
     assert_eq!(
         delta["thread_id"],
         json!(created.session_id),
         "the delta stays on the watched thread: {delta}"
+    );
+    assert!(
+        delta["payload"]["data"].is_object(),
+        "a change frame must carry the changed record as `payload.data`: {delta}"
     );
     assert_eq!(
         session_count(&node.state),
@@ -864,11 +920,19 @@ async fn loopback_tunnel_shadow_commands_and_approvals_end_to_end() {
             ),
         "the L3 prompt is decided"
     );
-    let alert = wait_alert_rows(&server, Duration::from_secs(20))
-        .await
-        .into_iter()
-        .find(|row| row["command_id"].as_str() == Some(l3_command))
-        .expect("the L3 dispatch raised an alert for this command");
+    let alert = wait_action_rows(
+        &server,
+        "alert.raised",
+        Duration::from_secs(20),
+        |rows| {
+            rows.iter()
+                .any(|row| row["command_id"].as_str() == Some(l3_command))
+        },
+    )
+    .await
+    .into_iter()
+    .find(|row| row["command_id"].as_str() == Some(l3_command))
+    .expect("the L3 dispatch raised an alert for this command");
     let detail = &alert["detail_digest"];
     assert_eq!(detail["trigger"], json!("l3_execution"), "{alert}");
     assert_eq!(detail["kind"], json!("tool.exec"), "{alert}");
@@ -1176,13 +1240,28 @@ async fn wait_prompt(
 /// pump writes them on a background task, so the row arrives a moment after the
 /// dispatch; a user-scoped query must be able to see it or the alert is not
 /// governance at all.
-async fn wait_alert_rows(server: &Server, timeout: Duration) -> Vec<Value> {
+/// Poll the user's own audit trail until one row of `action` satisfies
+/// `satisfied`.
+///
+/// Audit rows land asynchronously (the data-plane read is durable before its
+/// trail row is inserted), so reading once right after the operation races the
+/// writer. A filter that never returns a matching row is a real failure;
+/// arriving late is not.
+async fn wait_action_rows<F>(
+    server: &Server,
+    action: &str,
+    timeout: Duration,
+    satisfied: F,
+) -> Vec<Value>
+where
+    F: Fn(&[Value]) -> bool,
+{
     let deadline = Instant::now() + timeout;
     loop {
         let (_, body) = get_json(
             &format!(
-                "{}/wunder/interlink/audit?limit=100&action=alert.raised",
-                server.base_url
+                "{}/wunder/interlink/audit?limit=100&action={}",
+                server.base_url, action
             ),
             &server.token,
         )
@@ -1191,21 +1270,21 @@ async fn wait_alert_rows(server: &Server, timeout: Duration) -> Vec<Value> {
             .as_array()
             .cloned()
             .unwrap_or_default();
-        if !rows.is_empty() {
-            // The self-service view must honour `action` like the admin one,
-            // otherwise a filter that is silently ignored reads as "no alerts".
-            for row in &rows {
-                assert_eq!(
-                    row["action"].as_str(),
-                    Some("alert.raised"),
-                    "the action filter leaked other rows: {row}"
-                );
-            }
+        // The self-service view must honour `action` like the admin one,
+        // otherwise a filter that is silently ignored reads as "no rows".
+        for row in &rows {
+            assert_eq!(
+                row["action"].as_str(),
+                Some(action),
+                "the action filter leaked other rows: {row}"
+            );
+        }
+        if satisfied(rows.as_slice()) {
             return rows;
         }
         assert!(
             Instant::now() < deadline,
-            "no alert.raised row ever reached the user's trail"
+            "no `{action}` row the trail must carry ever reached the user's audit"
         );
         tokio::time::sleep(Duration::from_millis(200)).await;
     }

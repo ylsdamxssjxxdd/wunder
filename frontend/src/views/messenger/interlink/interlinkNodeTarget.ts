@@ -8,7 +8,7 @@
  */
 
 import { computed } from 'vue';
-import { useRoute, useRouter } from 'vue-router';
+import { useRoute, useRouter, type LocationQueryRaw } from 'vue-router';
 
 import { INTERLINK_CLOUD_NODE_ID, interlinkDeviceIdOf, interlinkDeviceTarget } from '@/api/interlink';
 
@@ -46,7 +46,7 @@ export const useInterlinkNodeTarget = () => {
     const normalized = normalizeNodeTarget(next);
     const current = normalizeNodeTarget(route.query[INTERLINK_NODE_QUERY_KEY]);
     if (normalized === current) return;
-    const query = { ...route.query } as Record<string, unknown>;
+    const query: LocationQueryRaw = { ...route.query };
     if (normalized === CLOUD_NODE_TARGET) {
       delete query[INTERLINK_NODE_QUERY_KEY];
     } else {

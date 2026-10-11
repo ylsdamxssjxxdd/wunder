@@ -33,11 +33,12 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 
 use wunder_core::interlink::{
-    CAP_AGENT_SPAWN, CAP_QUERY_BASIC, CAP_SHADOW_FULL, CAP_SHADOW_MINIMAL, CAP_THREAD_DRIVE,
-    CAP_TOOL_EXEC, CAP_WORKSPACE_READ_BINARY, CAP_WORKSPACE_WRITE, EVENT_PRESENCE,
-    EVENT_THREAD, FRAME_CLOSE, FRAME_COMMAND_ACK, FRAME_COMMAND_EVENT, FRAME_COMMAND_RESULT,
-    FRAME_ERROR, FRAME_EVENT, FRAME_HELLO, FRAME_HELLO_ACK, FRAME_PING, FRAME_PONG,
-    FRAME_SHADOW_DELTA, FRAME_SHADOW_FULL, INTERLINK_PROTOCOL_VERSION, InterlinkFrame,
+    AUDIT_CHANNEL_CLOSE, AUDIT_CHANNEL_OPEN, AUDIT_CHANNEL_REJECTED, AUDIT_FILE_READ,
+    AUDIT_SHADOW_SYNC, CAP_AGENT_SPAWN, CAP_QUERY_BASIC, CAP_SHADOW_FULL, CAP_SHADOW_MINIMAL,
+    CAP_THREAD_DRIVE, CAP_TOOL_EXEC, CAP_WORKSPACE_READ_BINARY, CAP_WORKSPACE_WRITE,
+    EVENT_PRESENCE, EVENT_THREAD, FRAME_CLOSE, FRAME_COMMAND_ACK, FRAME_COMMAND_EVENT,
+    FRAME_COMMAND_RESULT, FRAME_ERROR, FRAME_EVENT, FRAME_HELLO, FRAME_HELLO_ACK, FRAME_PING,
+    FRAME_PONG, FRAME_SHADOW_DELTA, FRAME_SHADOW_FULL, INTERLINK_PROTOCOL_VERSION, InterlinkFrame,
     InterlinkHello, InterlinkHelloAck,
     NODE_STATUS_AWAY, NODE_STATUS_BUSY, NODE_STATUS_ONLINE, REMOTE_FRAME_DELTA, TUNNEL_WS_PROTOCOL,
     default_device_capabilities,
@@ -414,7 +415,7 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>, ticket: TicketEntry)
         write_audit(
             &state,
             audit::record(
-                "channel.rejected",
+                AUDIT_CHANNEL_REJECTED,
                 &ticket.user_id,
                 None,
                 Some(&format!("device:{}", hello.device_id)),
@@ -471,7 +472,7 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>, ticket: TicketEntry)
     write_audit(
         &state,
         audit::record(
-            "channel.open",
+            AUDIT_CHANNEL_OPEN,
             &live.user_id,
             None,
             Some(&format!("device:{}", live.device_id)),
@@ -833,7 +834,7 @@ async fn store_inline(state: &Arc<AppState>, live: &LiveChannel, command_id: &st
     write_audit(
         state,
         audit::record(
-            "file.read",
+            AUDIT_FILE_READ,
             &live.user_id,
             Some(&format!("device:{}", live.device_id)),
             Some("cloud"),
@@ -863,7 +864,7 @@ async fn handle_data_frame(state: &Arc<AppState>, live: &LiveChannel, bytes: &[u
             write_audit(
                 state,
                 audit::record(
-                    "file.read",
+                    AUDIT_FILE_READ,
                     &live.user_id,
                     Some(&format!("device:{}", live.device_id)),
                     Some("cloud"),
@@ -1126,7 +1127,7 @@ async fn apply_shadow_frame(
             write_audit(
                 state,
                 audit::record(
-                    "shadow.sync",
+                    AUDIT_SHADOW_SYNC,
                     &live.user_id,
                     Some(&format!("device:{}", live.device_id)),
                     Some("cloud"),
@@ -1215,7 +1216,7 @@ async fn teardown(state: &AppState, live: &LiveChannel, reason: &str) {
     write_audit(
         state,
         audit::record(
-            "channel.close",
+            AUDIT_CHANNEL_CLOSE,
             &live.user_id,
             Some(&format!("device:{}", live.device_id)),
             Some("cloud"),

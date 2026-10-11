@@ -284,3 +284,71 @@ fn cloud_models_refresh_and_logout_require_a_session() {
         );
     }
 }
+
+/// 端控云 surface (plan §8.2) has to parse and exit cleanly with no session:
+/// every command is one-shot, so a logged-out run must refuse in the user's
+/// language instead of hanging on the network or failing on argument syntax.
+#[test]
+fn the_cloud_interlink_commands_parse_and_refuse_without_a_session() {
+    const CASES: &[&[&str]] = &[
+        &["cloud", "ws", "ls", "docs", "--limit", "10"],
+        &["cloud", "ws", "cat", "docs/a.md", "--lines", "5"],
+        &["cloud", "ws", "pull", "docs/a.md", "-o", "copies/a.md", "--force"],
+        &["cloud", "ws", "push", "docs/a.md", "-d", "in/a.md"],
+        &["cloud", "threads", "--limit", "5"],
+        &["cloud", "thread", "show", "th_1", "--raw"],
+        &["cloud", "send", "--attach", "--seconds", "3", "hello"],
+        &[
+            "cloud",
+            "audit",
+            "--action",
+            "command.issue",
+            "--device",
+            "dev-1",
+            "--since",
+            "1700000000",
+            "--csv",
+        ],
+        &["cloud", "watch", "--to", "dev-1", "--thread", "th_1", "--seconds", "1"],
+    ];
+    for lang in ["zh-CN", "en-US"] {
+        let expected = if lang == "zh-CN" {
+            "未登录"
+        } else {
+            "not logged in"
+        };
+        for args in CASES {
+            let (success, stdout, stderr) = run_cli_isolated_home(args, lang);
+            assert!(
+                !success,
+                "{args:?} must fail while logged out: lang={lang}, stdout={stdout}"
+            );
+            let combined = format!("{stdout}\n{stderr}");
+            assert!(
+                combined.contains(expected),
+                "{args:?} must say why it refused: lang={lang}, output={combined}"
+            );
+        }
+    }
+}
+
+/// `ws pull` refuses a landing path outside the workspace before it reads
+/// anything, so a typo can never write next to the repo.
+#[test]
+fn cloud_ws_pull_refuses_a_landing_path_outside_the_workspace() {
+    for lang in ["zh-CN", "en-US"] {
+        let args: &[&str] = &["cloud", "ws", "pull", "docs/a.md", "-o", "../../out.md"];
+        let (success, stdout, stderr) = run_cli_isolated_home(args, lang);
+        assert!(!success, "the escape attempt must fail: lang={lang}");
+        let combined = format!("{stdout}\n{stderr}");
+        let expected = if lang == "zh-CN" {
+            "工作区"
+        } else {
+            "workspace"
+        };
+        assert!(
+            combined.contains(expected),
+            "the refusal must name the workspace bound: lang={lang}, output={combined}"
+        );
+    }
+}

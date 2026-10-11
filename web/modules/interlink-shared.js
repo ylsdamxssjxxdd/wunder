@@ -41,6 +41,7 @@ export const COMMAND_STATUSES = [
 ];
 export const APPROVAL_STATES = ["none", "pending", "approved", "rejected", "expired"];
 export const DIRECTIONS = ["c2l", "l2c"];
+// 互通审计动作（与 crates/wunder-core/src/interlink.rs 的 AUDIT_* 一致）
 export const AUDIT_ACTIONS = [
   "channel.open",
   "channel.close",
@@ -50,8 +51,8 @@ export const AUDIT_ACTIONS = [
   "command.finish",
   "approval.decide",
   "file.read",
-  "file.write",
   "shadow.sync",
+  "shadow.purge",
   "policy.update",
   "secret.rotate",
   "secret.issue",

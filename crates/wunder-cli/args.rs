@@ -71,7 +71,11 @@ pub struct GlobalArgs {
     pub strict_config: bool,
 
     /// Attach local file/image for next request (repeatable) / 为下一轮请求附加本地文件或图片（可重复）。
-    #[arg(long = "attach", global = true)]
+    ///
+    /// Deliberately not `global`: the propagated `--attach` would occupy the
+    /// same long name inside `cloud send`, where it means "stream the thread".
+    /// `exec` and `resume` declare the same flag for their own position.
+    #[arg(long = "attach", value_name = "FILE")]
     pub attachments: Vec<String>,
 
     /// Output stream events as JSONL / 以 JSONL 输出流事件。
@@ -286,6 +290,12 @@ pub enum CloudSubcommand {
     /// Show the cloud workspace / 查看云端工作区。
     Ws(CloudWsCommand),
 
+    /// List the cloud account's threads / 列出云端线程。
+    Threads(CloudThreadsCommand),
+
+    /// Inspect one cloud thread / 查看单个云端线程。
+    Thread(CloudThreadCommand),
+
     /// Drive a cloud or local thread through the interlink ledger / 经互通台账驱动线程。
     Send(CloudSendCommand),
 
@@ -299,11 +309,127 @@ pub enum CloudSubcommand {
     Approve(CloudApproveCommand),
 }
 
+/// `cloud ws …`: the workspace actions. The bare `cloud ws <PATH>` spelling is
+/// kept so scripts written before `ws ls` exists still run.
 #[derive(Debug, Args)]
+#[command(args_conflicts_with_subcommands = true)]
 pub struct CloudWsCommand {
-    /// Relative path to list; defaults to the workspace root / 相对路径，缺省列根目录。
+    /// Legacy positional path, equal to `ws ls <PATH>` / 旧写法：等价于 `ws ls <PATH>`。
     #[arg(value_name = "PATH")]
     pub path: Option<String>,
+
+    #[command(subcommand)]
+    pub action: Option<CloudWsAction>,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum CloudWsAction {
+    /// List one directory / 列出目录。
+    Ls(CloudWsLsCommand),
+    /// Preview one file / 预览文件（有界）。
+    Cat(CloudWsCatCommand),
+    /// Download one file into the local workspace / 拉取文件到本地工作区。
+    Pull(CloudWsPullCommand),
+    /// Upload one text file into the cloud workspace / 上传文本文件到云端工作区。
+    Push(CloudWsPushCommand),
+}
+
+#[derive(Debug, Args)]
+pub struct CloudWsLsCommand {
+    /// Relative path; defaults to the workspace root / 相对路径，缺省列根目录。
+    #[arg(value_name = "PATH")]
+    pub path: Option<String>,
+
+    /// Skip the first N entries / 跳过前 N 条。
+    #[arg(long)]
+    pub offset: Option<u64>,
+
+    /// Page size (server caps at 500) / 每页条数（服务端上限 500）。
+    #[arg(long)]
+    pub limit: Option<u64>,
+}
+
+#[derive(Debug, Args)]
+pub struct CloudWsCatCommand {
+    /// Relative path inside the cloud workspace / 云端工作区内相对路径。
+    #[arg(value_name = "PATH")]
+    pub path: String,
+
+    /// Maximum preview lines / 预览最多行数。
+    #[arg(long, default_value_t = 200)]
+    pub lines: usize,
+}
+
+#[derive(Debug, Args)]
+pub struct CloudWsPullCommand {
+    /// Relative path inside the cloud workspace / 云端工作区内相对路径。
+    #[arg(value_name = "REMOTE_PATH")]
+    pub remote: String,
+
+    /// Landing path, always resolved inside the local workspace / 本地落点（只在工作区内解析）。
+    #[arg(short = 'o', long, value_name = "LOCAL_PATH")]
+    pub output: Option<PathBuf>,
+
+    /// Overwrite an existing local file / 覆盖已存在的本地文件。
+    #[arg(long, default_value_t = false)]
+    pub force: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct CloudWsPushCommand {
+    /// Local file to upload (text only) / 要上传的本地文件（仅文本）。
+    #[arg(value_name = "LOCAL_PATH")]
+    pub local: PathBuf,
+
+    /// Destination path inside the cloud workspace / 云端工作区内目标路径。
+    #[arg(short = 'd', long, value_name = "REMOTE_PATH")]
+    pub dest: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct CloudThreadsCommand {
+    /// Target node: `cloud` or `device:<id>` / 目标节点：cloud 或 device:<id>。
+    #[arg(long, default_value = "cloud")]
+    pub to: String,
+
+    /// Page size (server caps at 200) / 每页条数（服务端上限 200）。
+    #[arg(long, default_value_t = 50)]
+    pub limit: u64,
+
+    /// Emit JSON instead of a table / 输出 JSON。
+    #[arg(long, default_value_t = false)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct CloudThreadCommand {
+    #[command(subcommand)]
+    pub action: CloudThreadAction,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum CloudThreadAction {
+    /// Show one thread's key points and recent items / 查看线程要点与最近条目。
+    Show(CloudThreadShowCommand),
+}
+
+#[derive(Debug, Args)]
+pub struct CloudThreadShowCommand {
+    /// Thread id / 线程 id。
+    #[arg(value_name = "THREAD_ID")]
+    pub id: String,
+
+    /// Target node: `cloud` or `device:<id>` / 目标节点：cloud 或 device:<id>。
+    #[arg(long, default_value = "cloud")]
+    pub to: String,
+
+    /// Recent items to load (server caps at 200) / 加载最近条目数（服务端上限 200）。
+    #[arg(long, default_value_t = 20)]
+    pub limit: i64,
+
+    /// Print item bodies in full / 输出条目完整正文。
+    #[arg(long, default_value_t = false)]
+    pub raw: bool,
 }
 
 #[derive(Debug, Args)]
@@ -319,6 +445,17 @@ pub struct CloudSendCommand {
     /// Title for a new thread / 新线程标题。
     #[arg(long)]
     pub title: Option<String>,
+
+    /// Stream the thread's output as it arrives / 投递后流式回显线程输出。
+    ///
+    /// The name is shared with the local attachment flag on purpose; that flag
+    /// stopped being a global argument so `cloud send` can own it here.
+    #[arg(long = "attach", default_value_t = false)]
+    pub attach: bool,
+
+    /// Streaming window in seconds with --attach / --attach 的流式窗口秒数。
+    #[arg(long, default_value_t = 180)]
+    pub seconds: u64,
 
     /// Message text (prompt) / 消息文本。
     #[arg(value_name = "MESSAGE")]
@@ -342,9 +479,29 @@ pub struct CloudWatchCommand {
 
 #[derive(Debug, Args)]
 pub struct CloudAuditCommand {
-    /// Page size (server caps at 100) / 每页条数（服务端上限 100）。
+    /// Page size (server caps at 500) / 每页条数（服务端上限 500）。
     #[arg(long)]
     pub limit: Option<i64>,
+
+    /// Skip the first N rows / 跳过前 N 条。
+    #[arg(long)]
+    pub offset: Option<i64>,
+
+    /// Filter by audit action, e.g. `command.issue` / 按动作筛选，如 `command.issue`。
+    #[arg(long)]
+    pub action: Option<String>,
+
+    /// Filter by node: bare id or `device:<id>` / 按节点筛选：裸 id 或 device:<id>。
+    #[arg(long = "device", alias = "device-id")]
+    pub device: Option<String>,
+
+    /// Lower time bound: unix seconds/millis or RFC3339 / 起始时间：epoch 秒/毫秒或 RFC3339。
+    #[arg(long)]
+    pub since: Option<String>,
+
+    /// Upper time bound: unix seconds/millis or RFC3339 / 截止时间：epoch 秒/毫秒或 RFC3339。
+    #[arg(long)]
+    pub until: Option<String>,
 
     /// Emit CSV instead of a table / 输出 CSV。
     #[arg(long, default_value_t = false)]
@@ -412,6 +569,10 @@ pub struct ResumeCommand {
     /// Optional prompt after resume / 恢复后发送提问（可选，'-' 从 stdin 读取）。
     #[arg(value_name = "PROMPT")]
     pub prompt: Option<String>,
+
+    /// Attach local file/image for that prompt (repeatable) / 为该提问附加本地文件或图片（可重复）。
+    #[arg(long = "attach", value_name = "FILE")]
+    pub attachments: Vec<String>,
 }
 
 #[derive(Debug, Args)]
@@ -419,6 +580,10 @@ pub struct ExecCommand {
     /// Prompt to run; omit or pass '-' to read from stdin / 提问内容；省略或传 '-' 从 stdin 读取。
     #[arg(value_name = "PROMPT")]
     pub prompt: Option<String>,
+
+    /// Attach local file/image for this run (repeatable) / 为本次运行附加本地文件或图片（可重复）。
+    #[arg(long = "attach", value_name = "FILE")]
+    pub attachments: Vec<String>,
 
     /// Write the last assistant message to FILE / 把最后一条回复写入文件。
     #[arg(long = "output-last-message", short = 'o', value_name = "FILE")]
@@ -760,7 +925,75 @@ mod tests {
         let CloudSubcommand::Ws(ws) = command.command else {
             panic!("cloud ws expected");
         };
+        // The legacy `ws <PATH>` spelling still parses: no action, positional path.
         assert_eq!(ws.path.as_deref(), Some("docs"));
+        assert!(ws.action.is_none());
+
+        let cli = parse(&[
+            "wunder-cli",
+            "cloud",
+            "ws",
+            "ls",
+            "docs",
+            "--offset",
+            "20",
+            "--limit",
+            "50",
+        ]);
+        let Some(Command::Cloud(command)) = cli.command else {
+            panic!("cloud subcommand expected");
+        };
+        let CloudSubcommand::Ws(ws) = command.command else {
+            panic!("cloud ws expected");
+        };
+        assert_eq!(ws.path, None, "the action carries its own path");
+        match ws.action {
+            Some(CloudWsAction::Ls(ls)) => {
+                assert_eq!(ls.path.as_deref(), Some("docs"));
+                assert_eq!(ls.offset, Some(20));
+                assert_eq!(ls.limit, Some(50));
+            }
+            other => panic!("unexpected cloud ws action {other:?}"),
+        }
+
+        for (argv, expected) in [
+            (vec!["wunder-cli", "cloud", "ws", "cat", "a.md"], "cat"),
+            (
+                vec!["wunder-cli", "cloud", "ws", "pull", "a.md", "-o", "out/a.md", "--force"],
+                "pull",
+            ),
+            (
+                vec!["wunder-cli", "cloud", "ws", "push", "local.txt", "-d", "in/a.txt"],
+                "push",
+            ),
+        ] {
+            let cli = parse(&argv);
+            let Some(Command::Cloud(command)) = cli.command else {
+                panic!("cloud subcommand expected for {expected}");
+            };
+            let CloudSubcommand::Ws(ws) = command.command else {
+                panic!("cloud ws expected for {expected}");
+            };
+            match ws.action {
+                Some(CloudWsAction::Cat(cat)) => {
+                    assert_eq!(expected, "cat");
+                    assert_eq!(cat.path, "a.md");
+                    assert_eq!(cat.lines, 200);
+                }
+                Some(CloudWsAction::Pull(pull)) => {
+                    assert_eq!(expected, "pull");
+                    assert_eq!(pull.remote, "a.md");
+                    assert_eq!(pull.output.as_deref(), Some(std::path::Path::new("out/a.md")));
+                    assert!(pull.force);
+                }
+                Some(CloudWsAction::Push(push)) => {
+                    assert_eq!(expected, "push");
+                    assert_eq!(push.local, PathBuf::from("local.txt"));
+                    assert_eq!(push.dest.as_deref(), Some("in/a.txt"));
+                }
+                other => panic!("unexpected cloud ws action {other:?} for {expected}"),
+            }
+        }
 
         let cli = parse(&[
             "wunder-cli",
@@ -781,6 +1014,57 @@ mod tests {
         assert_eq!(send.to, "device:abc");
         assert_eq!(send.thread.as_deref(), Some("t1"));
         assert_eq!(send.message, "hello");
+        assert!(!send.attach, "the default stays the polled one-shot behaviour");
+
+        // `--attach` on `cloud send` is this command's streaming flag; `exec`
+        // keeps the attachment spelling for its own position, and the root form
+        // still works for the default/TUI run.
+        let cli = parse(&["wunder-cli", "cloud", "send", "--attach", "--seconds", "60", "hello"]);
+        let Some(Command::Cloud(command)) = cli.command else {
+            panic!("cloud subcommand expected");
+        };
+        let CloudSubcommand::Send(send) = command.command else {
+            panic!("cloud send expected");
+        };
+        assert!(send.attach);
+        assert_eq!(send.seconds, 60);
+        assert_eq!(send.message, "hello");
+        assert!(cli.global.attachments.is_empty());
+
+        let cli = parse(&["wunder-cli", "--attach", "a.png", "exec", "hello"]);
+        assert_eq!(cli.global.attachments, vec!["a.png".to_string()]);
+
+        let cli = parse(&["wunder-cli", "exec", "--attach", "b.png", "hello"]);
+        let Some(Command::Exec(exec)) = &cli.command else {
+            panic!("exec subcommand expected");
+        };
+        assert_eq!(exec.attachments, vec!["b.png".to_string()]);
+        assert!(cli.global.attachments.is_empty());
+
+        let cli = parse(&["wunder-cli", "cloud", "threads", "--limit", "10"]);
+        let Some(Command::Cloud(command)) = cli.command else {
+            panic!("cloud subcommand expected");
+        };
+        let CloudSubcommand::Threads(threads) = command.command else {
+            panic!("cloud threads expected");
+        };
+        assert_eq!(threads.to, "cloud");
+        assert_eq!(threads.limit, 10);
+
+        let cli = parse(&["wunder-cli", "cloud", "thread", "show", "t1", "--raw"]);
+        let Some(Command::Cloud(command)) = cli.command else {
+            panic!("cloud subcommand expected");
+        };
+        let CloudSubcommand::Thread(thread) = command.command else {
+            panic!("cloud thread expected");
+        };
+        match thread.action {
+            CloudThreadAction::Show(show) => {
+                assert_eq!(show.id, "t1");
+                assert!(show.raw);
+                assert_eq!(show.limit, 20);
+            }
+        }
 
         let cli = parse(&["wunder-cli", "cloud", "watch", "--thread", "t1"]);
         let Some(Command::Cloud(command)) = cli.command else {
@@ -793,7 +1077,24 @@ mod tests {
         assert_eq!(watch.thread, "t1");
         assert_eq!(watch.seconds, 300);
 
-        let cli = parse(&["wunder-cli", "cloud", "audit", "--csv", "--limit", "20"]);
+        let cli = parse(&[
+            "wunder-cli",
+            "cloud",
+            "audit",
+            "--csv",
+            "--limit",
+            "20",
+            "--offset",
+            "40",
+            "--action",
+            "command.issue",
+            "--device",
+            "abc",
+            "--since",
+            "2026-01-01T00:00:00Z",
+            "--until",
+            "1700000000",
+        ]);
         let Some(Command::Cloud(command)) = cli.command else {
             panic!("cloud subcommand expected");
         };
@@ -801,6 +1102,11 @@ mod tests {
             panic!("cloud audit expected");
         };
         assert_eq!(audit.limit, Some(20));
+        assert_eq!(audit.offset, Some(40));
+        assert_eq!(audit.action.as_deref(), Some("command.issue"));
+        assert_eq!(audit.device.as_deref(), Some("abc"));
+        assert_eq!(audit.since.as_deref(), Some("2026-01-01T00:00:00Z"));
+        assert_eq!(audit.until.as_deref(), Some("1700000000"));
         assert!(audit.csv);
 
         let cli = parse(&["wunder-cli", "cloud", "approve", "cmd-1", "--yes"]);

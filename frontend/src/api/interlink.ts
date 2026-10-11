@@ -319,16 +319,17 @@ export const fetchInterlinkShadow = async (
 export const submitInterlinkCommand = async (
   payload: InterlinkCommandRequest
 ): Promise<InterlinkCommandSubmitResult> => {
+  const commandId = String(payload.command_id || '').trim() || buildCommandId();
   const body: ApiPayload = {
     to: String(payload.to || '').trim(),
     kind: String(payload.kind || '').trim(),
     args: payload.args || {},
-    command_id: String(payload.command_id || '').trim() || buildCommandId()
+    command_id: commandId
   };
   const response = await api.post('/interlink/commands', body, { timeout: 20_000 });
   const data = unwrap(response?.data);
   return {
-    command_id: asText(data.command_id) || body.command_id,
+    command_id: asText(data.command_id) || commandId,
     status: asText(data.status) || 'issued',
     approval_state: asText(data.approval_state) || 'none',
     approval_id: asText(data.approval_id),
@@ -410,7 +411,9 @@ export const purgeInterlinkShadow = async (deviceId: string): Promise<boolean> =
 
 export const INTERLINK_REMOTE_SUBPROTOCOL = 'wunder-interlink-remote';
 
-export type InterlinkRemoteFrameType = 'snapshot' | 'delta' | 'error' | 'close';
+// `command` 是设备侧命令生命周期通知（服务端 §7.4 的控制帧）：只有
+// kind/status/command_id，没有 payload 与 seq，不参与会话渲染。
+export type InterlinkRemoteFrameType = 'snapshot' | 'delta' | 'command' | 'error' | 'close';
 
 export type InterlinkRemoteFrame = {
   v: number;

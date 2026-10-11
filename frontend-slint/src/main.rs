@@ -27,6 +27,7 @@ mod native_runtime;
 mod native_restore;
 mod native_smoke;
 mod navigation_ui;
+mod workspace_files;
 mod workspace_ui;
 mod companion_pet;
 mod pet_window;

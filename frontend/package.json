@@ -46,6 +46,8 @@
     "test:session-log-export": "node scripts/run-regression-tests.mjs session-log-export-regression.test.ts",
     "test:agent-settings-snapshot": "node scripts/run-regression-tests.mjs agent-settings-snapshot-regression.test.ts",
     "test:chat-session-list-load-cache": "node scripts/run-regression-tests.mjs chat-session-list-load-cache-regression.test.ts",
+    "test:interlink-remote-frame": "node scripts/run-regression-tests.mjs remote-session-frame-regression.test.ts",
+    "test:interlink": "npm run test:interlink-remote-frame",
     "test:messenger-bootstrap-priority": "node scripts/run-regression-tests.mjs messenger-bootstrap-priority-regression.test.ts",
     "test:message-viewport-runtime": "node scripts/run-regression-tests.mjs message-viewport-runtime-regression.test.ts",
     "test:chat-consistency": "node scripts/run-regression-tests.mjs chat-consistency-performance-regression.test.ts",

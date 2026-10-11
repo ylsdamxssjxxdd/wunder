@@ -4475,8 +4475,8 @@
  },
  {
   "key": "il_browse_hint",
-  "zh": "输入云端路径浏览舰体上的工作区文件，点击文件夹进入。",
-  "en": "Enter a cloud path to browse workspace files; click a folder to open it."
+  "zh": "输入云端路径浏览舰体上的工作区文件，点击文件夹进入；文件可拉到本地工作区，同名不覆盖，云端单次上限 1 MiB。",
+  "en": "Enter a cloud path to browse workspace files; click a folder to open it. Files pull into the local workspace without overwriting, one cloud read capped at 1 MiB."
  },
  {
   "key": "il_browse_path_hint",
@@ -4492,6 +4492,11 @@
   "key": "il_browse_up",
   "zh": "上一级",
   "en": "Up one level"
+ },
+ {
+  "key": "il_browse_pull",
+  "zh": "拉到本地",
+  "en": "Pull to this machine"
  },
  {
   "key": "il_browse_empty",
@@ -6899,5 +6904,75 @@
   "key": "ws_pick_title",
   "zh": "选择工作区文件夹",
   "en": "Choose a workspace folder"
+ },
+ {
+  "key": "wf_title",
+  "zh": "工作目录",
+  "en": "Working directory"
+ },
+ {
+  "key": "wf_stats",
+  "zh": "已用 {} · {} 个文件",
+  "en": "Used {} · {} files",
+  "params": [
+   "used",
+   "count"
+  ]
+ },
+ {
+  "key": "wf_stats_dirs",
+  "zh": "{} 个文件夹",
+  "en": "{} folders",
+  "params": [
+   "count"
+  ]
+ },
+ {
+  "key": "wf_stats_truncated",
+  "zh": "统计为大目录下界",
+  "en": "Lower bound of a large directory"
+ },
+ {
+  "key": "wf_empty",
+  "zh": "当前目录没有文件",
+  "en": "No files in this directory"
+ },
+ {
+  "key": "wf_offline",
+  "zh": "连接云端后，这里显示你的云端工作目录",
+  "en": "Sign in to the cloud to browse your workspace"
+ },
+ {
+  "key": "wf_connect",
+  "zh": "去连接",
+  "en": "Connect"
+ },
+ {
+  "key": "wf_loading",
+  "zh": "加载中…",
+  "en": "Loading…"
+ },
+ {
+  "key": "wf_reload",
+  "zh": "重新加载",
+  "en": "Reload"
+ },
+ {
+  "key": "wf_more",
+  "zh": "加载更多（剩余 {} 项）",
+  "en": "Load more ({} remaining)",
+  "params": [
+   "count"
+  ]
+ },
+ {
+  "key": "wf_loading_dir",
+  "zh": "加载中",
+  "en": "Loading"
+ },
+ {
+  "key": "wf_open_hint",
+  "zh": "点击文件拉取到本地工作区并打开",
+  "en": "Click a file to pull it into the local workspace and open it"
  }
 ]

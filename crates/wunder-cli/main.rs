@@ -93,7 +93,8 @@ fn run_cli() -> Result<()> {
         .build()
         .context("build tokio runtime failed")?;
     runtime.block_on(async move {
-        let cli = Cli::parse();
+        let mut cli = Cli::parse();
+        merge_command_attachments(&mut cli.global, &cli.command);
         if cli.bench_echo {
             // form-bench startup probe: emit the sentinel and exit before any
             // config/runtime boot, so the measured time is the fast path.
@@ -1599,6 +1600,20 @@ fn init_agents_template_text(language: &str) -> String {
 - Keep outputs concise with clear verification and next steps.
 "#
     .to_string()
+}
+
+/// `--attach` exists both at the root and on the one-shot agent commands, so a
+/// subcommand spelling folds into the same list the run paths already read.
+/// `cloud send --attach` is the streaming switch and never lands here.
+fn merge_command_attachments(global: &mut GlobalArgs, command: &Option<Command>) {
+    let extra: &[String] = match command {
+        Some(Command::Exec(command)) => command.attachments.as_slice(),
+        Some(Command::Resume(command)) => command.attachments.as_slice(),
+        _ => &[],
+    };
+    if !extra.is_empty() {
+        global.attachments.extend(extra.iter().cloned());
+    }
 }
 
 async fn prepare_global_pending_attachments(

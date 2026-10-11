@@ -361,7 +361,7 @@ mod tests {
         RemoteApproval {
             approval_id: "ap_1".to_string(),
             command_id: "cmd_1".to_string(),
-            kind: "workspace.write",
+            kind: "workspace.write".to_string(),
             level: "L2".to_string(),
             risk: "high".to_string(),
             from_node: "node-b".to_string(),

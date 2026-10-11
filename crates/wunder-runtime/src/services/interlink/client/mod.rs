@@ -1274,6 +1274,9 @@ impl ClientInner {
             };
             // Snapshot first, then deltas from the durable cursor.
             let (snapshot, cursor) = thread_snapshot(&inner, &user_id, &owned_thread).await;
+            // `snapshot: true` is what makes the server relay this as the
+            // baseline, and the snapshot object must BE the payload: the cloud
+            // view reads `payload.items`/`payload.turns`, not a nested copy.
             if !writer.try_send_frame(
                 FRAME_EVENT,
                 None,
@@ -1281,7 +1284,8 @@ impl ClientInner {
                     "kind": EVENT_THREAD,
                     "thread_id": owned_thread,
                     "seq": cursor,
-                    "payload": { "snapshot": snapshot },
+                    "snapshot": true,
+                    "payload": snapshot,
                 }),
             ) {
                 inner.forget_forwarder(&owned_thread);
@@ -1358,15 +1362,16 @@ async fn forward_changes(
             _ = stop.cancelled() => return,
             frame = receiver.recv() => {
                 let Some(frame) = frame else { return };
-                let payload = match &frame {
+                let (payload, is_baseline) = match &frame {
                     ThreadChangeFrame::Change { event, data, .. } => {
-                        json!({ "event": event, "data": data })
+                        (json!({ "event": event, "data": data }), false)
                     }
-                    ThreadChangeFrame::SnapshotRequired { data } => {
-                        json!({ "snapshot_required": true, "data": data })
-                    }
+                    // A trimmed window means the view must reload atomically:
+                    // carry the snapshot itself as the payload and flag it, so
+                    // the cloud view takes its replace branch (§7.4).
+                    ThreadChangeFrame::SnapshotRequired { data } => (data.clone(), true),
                     ThreadChangeFrame::Overflow { cursor, .. } => {
-                        json!({ "overflow": true, "cursor": cursor })
+                        (json!({ "overflow": true, "cursor": cursor }), false)
                     }
                 };
                 // A full queue means nobody is watching: drop the frame rather
@@ -1378,6 +1383,7 @@ async fn forward_changes(
                         "kind": EVENT_THREAD,
                         "thread_id": thread_id,
                         "seq": frame.seq(),
+                        "snapshot": is_baseline,
                         "payload": payload,
                     }),
                 );

@@ -13,12 +13,13 @@ use serde_json::{Map, Value};
 use uuid::Uuid;
 
 use wunder_core::interlink::{
-    APPROVAL_EXPIRED, APPROVAL_NONE, APPROVAL_PENDING, APPROVAL_REJECTED, CMD_COMMAND_CANCEL,
+    APPROVAL_EXPIRED, APPROVAL_NONE, APPROVAL_PENDING, APPROVAL_REJECTED, AUDIT_APPROVAL_DECIDE,
+    AUDIT_COMMAND_ACK, AUDIT_COMMAND_FINISH, AUDIT_COMMAND_ISSUE, CMD_COMMAND_CANCEL,
     COMMAND_STATUS_ACKED, COMMAND_STATUS_CANCELED, COMMAND_STATUS_FAILED, COMMAND_STATUS_ISSUED,
     COMMAND_STATUS_QUEUED, COMMAND_STATUS_RUNNING, COMMAND_STATUS_SUCCEEDED,
     COMMAND_STATUS_TIMEOUT, DIRECTION_C2L, ERR_APPROVAL_EXPIRED, ERR_APPROVAL_REJECTED,
     ERR_CAP_DENIED, ERR_NODE_BUSY, ERR_NODE_OFFLINE, ERR_QUEUE_FULL, ERR_TIMEOUT,
-    FRAME_COMMAND, InterlinkFrame, command_level, command_policy,
+    FRAME_COMMAND, InterlinkFrame, REMOTE_FRAME_COMMAND, command_level, command_policy,
     is_queueable_when_offline, is_terminal_command_status, requires_hard_approval,
 };
 
@@ -34,12 +35,6 @@ const MAX_TRACKED_FRAMES: usize = 1024;
 const MAX_TRACKED_RESULTS: usize = 512;
 /// Ledger rows scanned per sweep tick.
 const SWEEP_PAGE: i64 = 200;
-
-// Audit action names (docs §9.4).
-const AUDIT_COMMAND_ISSUE: &str = "command.issue";
-const AUDIT_COMMAND_ACK: &str = "command.ack";
-const AUDIT_COMMAND_FINISH: &str = "command.finish";
-const AUDIT_APPROVAL_DECIDE: &str = "approval.decide";
 
 /// Runtime limits for the command surface (`config.interlink`).
 #[derive(Debug, Clone)]
@@ -589,7 +584,25 @@ async fn park(
     };
     if hub().enqueue(user_id, item, limits.offline_queue_per_user) {
         hub().track_frame(&record.command_id, frame_text);
-        let _ = mark_status(storage, &record.command_id, COMMAND_STATUS_QUEUED, None, None, Some(reason), None).await;
+        let _ = mark_status(
+            storage.clone(),
+            &record.command_id,
+            COMMAND_STATUS_QUEUED,
+            None,
+            None,
+            Some(reason),
+            None,
+        )
+        .await;
+        // A parked command whose channel is live is transient backpressure, not
+        // an offline node: the backlog only drains on an event edge (a channel
+        // opening, a command finishing), so without this retry the command would
+        // sit until the timeout sweep fails it (docs §13.4 11).
+        if node_live {
+            if let Some(device_id) = device_of(target) {
+                retry_parked_queue(storage, user_id.to_string(), device_id, limits.clone());
+            }
+        }
         return Dispatch::Queued;
     }
     let _ = mark_status(
@@ -603,6 +616,21 @@ async fn park(
     )
     .await;
     Dispatch::Rejected(ERR_QUEUE_FULL)
+}
+
+/// One bounded retry of the backlog shortly after parking. A single attempt: if
+/// the outbound queue is still full the drain re-queues at the front and stops,
+/// and the janitor backstop (`drain_backlogs`) covers the longer waits.
+fn retry_parked_queue(
+    storage: Arc<dyn StorageBackend>,
+    user_id: String,
+    device_id: String,
+    limits: Limits,
+) {
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        let _ = drain(storage, &user_id, &device_id, &limits).await;
+    });
 }
 
 /// Build the `command` frame body handed to the tunnel (docs §4.2).
@@ -980,6 +1008,24 @@ pub async fn drain(
     Ok(delivered)
 }
 
+/// Backstop for parked commands. The offline queue drains on the event edges
+/// only (a channel opening, a command finishing), so a command that was parked
+/// while its channel was actually live would sit there until the timeout sweep
+/// fails it (docs §13.4 11). One pass per janitor tick, and only for nodes that
+/// really hold a backlog.
+pub async fn drain_backlogs(storage: Arc<dyn StorageBackend>, limits: &Limits) -> usize {
+    let mut delivered = 0usize;
+    for live in registry().snapshot() {
+        if hub().queued_depth(Some(live.user_id.as_str())) == 0 {
+            continue;
+        }
+        if let Ok(count) = drain(storage.clone(), &live.user_id, &live.device_id, limits).await {
+            delivered += count;
+        }
+    }
+    delivered
+}
+
 /// Timeout + approval-expiry sweep (docs §4.3, §7.3 4).
 pub async fn sweep(storage: Arc<dyn StorageBackend>, limits: &Limits, now: f64) -> anyhow::Result<usize> {
     let mut swept = 0usize;
@@ -1326,7 +1372,7 @@ pub fn approval_id_of(record: &InterlinkCommandRecord) -> Option<String> {
 
 fn lifecycle_json(kind: &str, status: &str, command_id: &str) -> String {
     serde_json::to_string(&json_object(vec![
-        ("type", Value::String("command".to_string())),
+        ("type", Value::String(REMOTE_FRAME_COMMAND.to_string())),
         ("kind", Value::String(kind.to_string())),
         ("status", Value::String(status.to_string())),
         ("command_id", Value::String(command_id.to_string())),

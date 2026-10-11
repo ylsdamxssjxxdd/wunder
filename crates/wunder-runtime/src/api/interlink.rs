@@ -16,7 +16,9 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use wunder_core::interlink::{
-    default_device_capabilities, APPROVAL_APPROVED, APPROVAL_EXPIRED, APPROVAL_PENDING,
+    AUDIT_APPROVAL_DECIDE, AUDIT_POLICY_UPDATE, AUDIT_SECRET_ISSUE, AUDIT_SECRET_ROTATE,
+    AUDIT_SHADOW_PURGE, default_device_capabilities, APPROVAL_APPROVED, APPROVAL_EXPIRED,
+    APPROVAL_PENDING,
     APPROVAL_REJECTED, COMMAND_STATUS_CANCELED, COMMAND_STATUS_FAILED, DIRECTION_C2L,
     DIRECTION_L2C, ERR_APPROVAL_EXPIRED, ERR_APPROVAL_REJECTED, ERR_CAP_DENIED,
     ERR_NODE_BUSY, ERR_NODE_OFFLINE, ERR_QUEUE_FULL, InterlinkNodeView, NODE_STATUS_AWAY,
@@ -476,7 +478,11 @@ async fn rotate_node_secret(
         }
         audit_write(
             &state,
-            if rotate { "secret.rotate" } else { "secret.issue" },
+            if rotate {
+                AUDIT_SECRET_ROTATE
+            } else {
+                AUDIT_SECRET_ISSUE
+            },
             &user_id,
             &device_id,
             vec![("secret_version", json!(version))],
@@ -900,7 +906,7 @@ async fn decide_command_approval(
     };
     audit_write(
         &state,
-        "approval.decide",
+        AUDIT_APPROVAL_DECIDE,
         &resolved.user.user_id,
         &ticket.device_id,
         vec![
@@ -1105,7 +1111,7 @@ async fn purge_shadow(
     }
     audit_write(
         &state,
-        "shadow.purge",
+        AUDIT_SHADOW_PURGE,
         &user_id,
         &device_id,
         vec![("by", json!("user"))],
@@ -1159,7 +1165,7 @@ async fn set_enabled(
     }
     audit_write(
         &state,
-        "policy.update",
+        AUDIT_POLICY_UPDATE,
         &user_id,
         &device_id,
         vec![("interlink_enabled", json!(request.enabled))],

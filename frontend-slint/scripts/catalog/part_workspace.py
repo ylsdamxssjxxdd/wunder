@@ -24,3 +24,21 @@ ENTRIES = [
     ("ws_btn_delete", "删除", "Delete"),
     ("ws_pick_title", "选择工作区文件夹", "Choose a workspace folder"),
 ]
+
+# Sidebar working-directory region: tree rows, usage line and the
+# offline/empty states. Copy mirrors the web left-rail where the web has one;
+# load-more and pull-open are desktop-specific.
+ENTRIES.extend([
+    ("wf_title", "工作目录", "Working directory"),
+    ("wf_stats", "已用 {} · {} 个文件", "Used {} · {} files", ["used", "count"]),
+    ("wf_stats_dirs", "{} 个文件夹", "{} folders", ["count"]),
+    ("wf_stats_truncated", "统计为大目录下界", "Lower bound of a large directory"),
+    ("wf_empty", "当前目录没有文件", "No files in this directory"),
+    ("wf_offline", "连接云端后，这里显示你的云端工作目录", "Sign in to the cloud to browse your workspace"),
+    ("wf_connect", "去连接", "Connect"),
+    ("wf_loading", "加载中…", "Loading…"),
+    ("wf_reload", "重新加载", "Reload"),
+    ("wf_more", "加载更多（剩余 {} 项）", "Load more ({} remaining)", ["count"]),
+    ("wf_loading_dir", "加载中", "Loading"),
+    ("wf_open_hint", "点击文件拉取到本地工作区并打开", "Click a file to pull it into the local workspace and open it"),
+])

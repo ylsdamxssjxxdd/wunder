@@ -4,7 +4,7 @@ import { ExpertToolGroup } from "expert_widgets.slint";
 export { ExpertToolGroup }
 import { RuntimeStatus } from "runtime_status.slint";
 import { I18n } from "i18n.slint";
-import { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, TextBlock, WorkflowLine, WorkflowSection, ToolWorkflowEntry, TimelineRow, TimelineCounts, TurnStatMetric, PatchCard, PatchLine, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, LanPeerCard, TrajRow, TrajSpan, TrajTick, TrajBoundary, TrajTiming, TrajSection, TrajTab, CronCard, CronRunCard, PromptPackCard, ChannelCatalogCard, ChannelAccountCard, ChannelBindingCard, ChannelLogCard, AvatarOption, AvatarColorChip, CompanionCard, PlanStep, InquiryQuestion, QueueTurn, DraftRecall, InterlinkStatus, InterlinkNode, InterlinkEntry, InterlinkApproval } from "theme.slint";
+import { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, TextBlock, WorkflowLine, WorkflowSection, ToolWorkflowEntry, TimelineRow, TimelineCounts, TurnStatMetric, PatchCard, PatchLine, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, LanPeerCard, TrajRow, TrajSpan, TrajTick, TrajBoundary, TrajTiming, TrajSection, TrajTab, CronCard, CronRunCard, PromptPackCard, ChannelCatalogCard, ChannelAccountCard, ChannelBindingCard, ChannelLogCard, AvatarOption, AvatarColorChip, CompanionCard, PlanStep, InquiryQuestion, QueueTurn, DraftRecall, InterlinkStatus, InterlinkNode, InterlinkEntry, InterlinkApproval, WorkspaceFileRow } from "theme.slint";
 import { Action, EdgeToggle, RailButton, Avatar, FormField, MiddleHeader, MiddleFooter, ConfirmDialog, InfoDialog, ToastHost, ToastState } from "components.slint";
 import { Composer, GoalBanner, InquiryPanel, StatusDock } from "composer.slint";
 import { TerminalView, TermSpan } from "terminal_view.slint";
@@ -27,7 +27,7 @@ import { ModelPresets } from "model_presets.slint";
 export { ModelPresets }
 // `TimelineView` is deliberately absent: nothing in Rust names it, and an
 // exported component that does not inherit Window only earns a build warning.
-export { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, TextBlock, WorkflowLine, WorkflowSection, ToolWorkflowEntry, TimelineRow, TimelineCounts, TurnStatMetric, PatchCard, PatchLine, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, LanPeerCard, TrajRow, TrajSpan, TrajTick, TrajBoundary, TrajTiming, TrajSection, TrajTab, CronCard, CronRunCard, PromptPackCard, ChannelCatalogCard, ChannelBindingCard, ChannelLogCard, AvatarOption, AvatarColorChip, CompanionCard, PlanStep, InterlinkStatus, InterlinkNode, InterlinkEntry, InterlinkApproval }
+export { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, TextBlock, WorkflowLine, WorkflowSection, ToolWorkflowEntry, TimelineRow, TimelineCounts, TurnStatMetric, PatchCard, PatchLine, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, LanPeerCard, TrajRow, TrajSpan, TrajTick, TrajBoundary, TrajTiming, TrajSection, TrajTab, CronCard, CronRunCard, PromptPackCard, ChannelCatalogCard, ChannelBindingCard, ChannelLogCard, AvatarOption, AvatarColorChip, CompanionCard, PlanStep, InterlinkStatus, InterlinkNode, InterlinkEntry, InterlinkApproval, WorkspaceFileRow }
 export { AppTray } from "tray.slint";
 export { TrayNotice } from "tray-notice.slint";
 export { ScreenshotOverlay } from "screenshot_overlay.slint";
@@ -515,9 +515,24 @@ export component MainWindow inherits Window {
     callback interlink-refresh();
     callback interlink-open(string);
     callback interlink-cloud-up();
+    callback interlink-cloud-pull(string);
     callback interlink-cloud-decide(bool);
     callback interlink-approve();
     callback interlink-reject();
+    // ---- working directory (左栏工作目录区, 蜂巢 B2) ----
+    // The cloud workspace file tree: one flat row model projected by the
+    // native controller (lazy directories, paged), a usage line and the
+    // tunnel-derived offline state. `toggle` opens files (pull + open) and
+    // expands directories; `refresh` reloads the root and every expanded
+    // directory in one bounded pass.
+    in-out property <[WorkspaceFileRow]> ws-file-rows: [];
+    in-out property <string> ws-file-stats;
+    in-out property <bool> ws-file-loading: false;
+    in-out property <string> ws-file-error;
+    in-out property <bool> ws-file-offline: true;
+    in-out property <bool> ws-file-busy: false;
+    callback ws-file-toggle(int);
+    callback ws-file-refresh();
     in-out property <string> selected-model-key;
     in-out property <string> selected-model-provider;
     in-out property <string> selected-model-name;
@@ -796,6 +811,17 @@ export component MainWindow inherits Window {
                 rename-thread(index, title) => { root.rename-thread(index, title); }
                 open-trajectory(index) => { root.open-trajectory(index); }
                 open-settings => { root.more-open = false; root.settings-open = true; root.settings-active-panel = 0; root.refresh-settings(); }
+                // Working-directory region: model and actions live on the
+                // window shell, the sidebar only forwards.
+                file-rows: root.ws-file-rows;
+                file-stats: root.ws-file-stats;
+                file-loading: root.ws-file-loading;
+                file-error: root.ws-file-error;
+                file-offline: root.ws-file-offline;
+                file-busy: root.ws-file-busy;
+                file-toggle(index) => { root.ws-file-toggle(index); }
+                file-refresh => { root.ws-file-refresh(); }
+                file-connect => { root.more-open = false; root.settings-open = true; root.settings-active-panel = 12; root.refresh-settings(); }
             }
             // Sidebar width drag handle: press and drag to resize, clamped so
             // the tree never collapses or eats the chat area.

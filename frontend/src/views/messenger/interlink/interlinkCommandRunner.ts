@@ -169,7 +169,7 @@ const pickInlineText = (result: Record<string, unknown> | null): string => {
   return typeof value === 'string' ? value : '';
 };
 
-const decodeBase64ToBytes = (value: string): Uint8Array | null => {
+const decodeBase64ToBytes = (value: string): Uint8Array<ArrayBuffer> | null => {
   try {
     const binary = atob(value.replace(/\s/g, ''));
     const bytes = new Uint8Array(binary.length);
@@ -186,7 +186,7 @@ export type RemoteFilePayload = {
   /** 文本内容（已解码）；二进制文件为空串。 */
   text: string;
   /** 供预览用的二进制（文本时为 null，避免多复制一份大对象）。 */
-  bytes: Uint8Array | null;
+  bytes: Uint8Array<ArrayBuffer> | null;
   size: number;
   truncated: boolean;
   /** 内联还是 blob 端点拿到的小节，用于文案与排查。 */

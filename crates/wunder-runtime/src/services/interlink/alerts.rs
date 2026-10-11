@@ -25,8 +25,8 @@ use serde_json::{json, Map, Value};
 use tokio::sync::mpsc;
 
 use wunder_core::interlink::{
-    command_level, AUDIT_APPROVAL_DECIDE, AUDIT_COMMAND_ACK, AUDIT_COMMAND_FINISH,
-    AUDIT_COMMAND_ISSUE, APPROVAL_REJECTED,
+    AUDIT_ALERT_RAISED, AUDIT_APPROVAL_DECIDE, AUDIT_CHANNEL_REJECTED, AUDIT_COMMAND_ACK,
+    AUDIT_COMMAND_FINISH, AUDIT_COMMAND_ISSUE, APPROVAL_REJECTED, command_level,
 };
 
 use crate::core::blocking;
@@ -60,10 +60,6 @@ const TOKEN_MAX_CHARS: usize = 64;
 /// Value of the `X-Interlink-Event` header on every webhook delivery.
 const WEBHOOK_EVENT: &str = "interlink.alert";
 
-/// Audit action of the alert itself; it is deliberately not a trigger.
-pub const ACTION_ALERT_RAISED: &str = "alert.raised";
-/// Audit action of a refused tunnel handshake.
-const ACTION_CHANNEL_REJECTED: &str = "channel.rejected";
 /// Handshake refusal for a secret version past its grace window (acceptance 20
 /// asks for reject *and* alert); the tunnel handler writes it as the reason.
 pub const REASON_SECRET_STALE_VERSION: &str = "secret_stale_version";
@@ -367,7 +363,7 @@ fn detect(state: &mut Detection, row: &InterlinkAuditRecord) -> Option<Alert> {
                 raised_at: row.created_at,
             })
         }
-        ACTION_CHANNEL_REJECTED
+        AUDIT_CHANNEL_REJECTED
             if token(parsed.get("reason")).as_deref() == Some(REASON_SECRET_STALE_VERSION) =>
         {
             let device = device_of(row.to_node.as_deref())?;
@@ -526,7 +522,7 @@ async fn write_audit(state: &AppState, alert: &Alert) {
     }
     let device = alert.device_id.as_deref().map(|device| format!("device:{device}"));
     let row = audit::record(
-        ACTION_ALERT_RAISED,
+        AUDIT_ALERT_RAISED,
         if alert.user_id.is_empty() { "system" } else { &alert.user_id },
         None,
         device.as_deref(),
@@ -758,7 +754,7 @@ mod tests {
         let mut state = Detection::default();
         let base = 4_000_000.0;
         let mismatch = audit_row(
-            ACTION_CHANNEL_REJECTED,
+            AUDIT_CHANNEL_REJECTED,
             "dev_k",
             "",
             r#"{"reason":"hmac_mismatch"}"#,
@@ -766,7 +762,7 @@ mod tests {
         );
         assert!(detect(&mut state, &mismatch).is_none());
         let stale = audit_row(
-            ACTION_CHANNEL_REJECTED,
+            AUDIT_CHANNEL_REJECTED,
             "dev_k",
             "",
             r#"{"reason":"secret_stale_version"}"#,
@@ -859,7 +855,7 @@ mod tests {
         // itself.
         let mut state = Detection::default();
         let raised = audit_row(
-            ACTION_ALERT_RAISED,
+            AUDIT_ALERT_RAISED,
             "dev_r",
             "cmd_r",
             r#"{"state":"rejected","trigger":"rejection_storm","reason":"secret_stale_version","kind":"tool.exec"}"#,

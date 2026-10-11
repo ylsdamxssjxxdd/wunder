@@ -20,12 +20,14 @@ pub(crate) async fn handle_cloud(
     match command.command {
         CloudSubcommand::Login(command) => cloud_login(runtime, global, command).await,
         CloudSubcommand::Logout => cloud_logout(runtime, global).await,
-        CloudSubcommand::Status => cloud_status(runtime, global),
+        CloudSubcommand::Status => cloud_status(runtime, global).await,
         CloudSubcommand::Models => cloud_models(runtime, global).await,
         CloudSubcommand::Refresh => cloud_refresh(runtime, global).await,
         CloudSubcommand::Logs(command) => cloud_logs(runtime, global, command).await,
         interlink @ (CloudSubcommand::Devices
         | CloudSubcommand::Ws(_)
+        | CloudSubcommand::Threads(_)
+        | CloudSubcommand::Thread(_)
         | CloudSubcommand::Send(_)
         | CloudSubcommand::Watch(_)
         | CloudSubcommand::Audit(_)
@@ -121,11 +123,16 @@ async fn cloud_logout(runtime: &CliRuntime, global: &GlobalArgs) -> Result<()> {
     Ok(())
 }
 
-fn cloud_status(_runtime: &CliRuntime, global: &GlobalArgs) -> Result<()> {
+async fn cloud_status(_runtime: &CliRuntime, global: &GlobalArgs) -> Result<()> {
     let language = crate::locale::resolve_cli_language(global);
     let is_zh = crate::locale::is_zh_language(language.as_str());
     let status = cloud_shared().status();
     for line in cloud_status_lines(&status, is_zh) {
+        println!("{line}");
+    }
+    // The tunnel line is the account's own view (nodes + open approvals). This
+    // command never starts the tunnel client, which only runs in the TUI.
+    for line in crate::cloud_interlink::status_interlink_lines(is_zh).await {
         println!("{line}");
     }
     Ok(())

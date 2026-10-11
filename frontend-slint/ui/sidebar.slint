@@ -5,10 +5,11 @@
 // the workspace refactor spec (§5.2). The tree is one flat row model built by
 // the native projection, so the Slint thread only lays out rows; rows
 // drag-reorder through `move-row`.
-import { Theme, SidebarRow } from "theme.slint";
+import { Theme, SidebarRow, WorkspaceFileRow } from "theme.slint";
 import { I18n } from "i18n.slint";
 import { ListView } from "std-widgets.slint";
 import { DragRow } from "drag_row.slint";
+import { WorkspaceFilesPanel } from "workspace_files.slint";
 
 // Resolve a workspace icon name to a bundled icon; unknown names fall back
 // to the generic folder so a stale icon string can never blank a row. Slint
@@ -203,6 +204,22 @@ export component Sidebar inherits Rectangle {
     callback open-trajectory(int);
     callback open-settings();
 
+    // Working-directory region (left rail's lower half): the cloud workspace
+    // file tree below a draggable splitter, as on the web. The region keeps a
+    // dragged absolute height (clamped so neither region can collapse away);
+    // an absolute length also keeps the window's vertical layout info free of
+    // a height→preferred-height cycle.
+    in property <[WorkspaceFileRow]> file-rows;
+    in property <string> file-stats;
+    in property <bool> file-loading;
+    in property <string> file-error;
+    in property <bool> file-offline;
+    in property <bool> file-busy;
+    in-out property <length> files-height: 220px;
+    callback file-toggle(int);
+    callback file-refresh();
+    callback file-connect();
+
     // Sidebar row currently renamed inline; -1 closes the editor. Only one
     // editor exists at a time, so a single shared draft suffices.
     property <int> renaming: -1;
@@ -334,6 +351,45 @@ export component Sidebar inherits Rectangle {
                     }
                 }
             }
+        }
+        // Draggable splitter between the thread tree and the working-directory
+        // region, as on the web: dragging up grows the files region. The
+        // delta never reads the sidebar height, so the window's vertical
+        // layout stays acyclic.
+        Rectangle {
+            height: 8px;
+            Rectangle {
+                y: 3px; width: parent.width; height: 1px;
+                background: splitter-touch.has-hover || splitter-touch.pressed ? Theme.border-strong : Theme.border;
+            }
+            splitter-touch := TouchArea {
+                mouse-cursor: ns-resize;
+                property <length> drag-y: 0px;
+                pointer-event(event) => {
+                    if event.kind == PointerEventKind.down {
+                        drag-y = self.mouse-y;
+                    }
+                }
+                moved => {
+                    let delta = self.mouse-y - drag-y;
+                    drag-y = self.mouse-y;
+                    root.files-height = Math.max(140px, Math.min(420px, root.files-height - delta));
+                }
+            }
+        }
+        // Working-directory region: the cloud workspace tree. Actions flow
+        // through to the window shell like every other sidebar callback.
+        WorkspaceFilesPanel {
+            height: root.files-height;
+            rows: root.file-rows;
+            stats: root.file-stats;
+            loading: root.file-loading;
+            error: root.file-error;
+            offline: root.file-offline;
+            busy: root.file-busy;
+            toggle(index) => { root.file-toggle(index); }
+            refresh => { root.file-refresh(); }
+            connect => { root.file-connect(); }
         }
         Rectangle { height: 1px; background: Theme.border; }
         // Settings button.

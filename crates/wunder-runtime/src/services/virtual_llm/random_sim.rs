@@ -1,6 +1,10 @@
 //! 无回放日志时的随机模拟：把一次用户轮次展开为随机 1-100 个模型轮次。
-//! 中间轮次发出无害只读工具调用，最终轮次输出总结文本。所有行为由
-//! (session, user_round, model_round) 确定性推导，取消恢复与重放保持一致。
+//! 中间轮次发出工具调用（覆盖运行时暴露的**全部**工具以贴近真实轨迹；其中少数无法
+//! 用通用启发式安全合成的工具改为一份固定调用内容，见 [`FIXED_ARGS`]），最终轮次输出总结文本。
+//! 所有行为由 (session, user_round, model_round) 确定性推导，取消恢复与重放保持一致。
+//! 由于这些工具调用会被**真实执行**，参数一律做无害化：只读工具沿用常规取值；有
+//! 副作用工具的路径参数改写到工作区 `.temp/` 目录、命令参数改为无副作用回显，从而
+//! 既不误改工作区其它位置，也不影响外部系统。
 
 use super::{VirtualReplayTurn, RANDOM_REPLAY_FORMAT, RANDOM_REPLAY_LOG_ID};
 use serde_json::{json, Map, Value};
@@ -9,17 +13,81 @@ use std::hash::{Hash, Hasher};
 
 /// 每个用户轮次的计划轮次上限（1-100 均匀分布）。
 const MAX_PLAN_ROUNDS: u64 = 100;
-/// 命中任一只读关键词的工具才可能被随机调用。
+/// 只读关键词：同时命中它、且不命中副作用关键词的工具按“只读工具”处理，
+/// 参数可安全地指向当前目录。
 const READ_ONLY_HINTS: &[&str] = &[
     "read", "list", "ls", "glob", "grep", "search", "find", "get", "query", "view", "show",
     "inspect", "describe", "stat", "status", "time", "recall", "读取", "列出", "搜索", "查找",
     "检索", "查看", "浏览", "获取", "查询", "状态", "时间", "召回",
 ];
-/// 命中任一排除关键词的工具一律跳过，即使它同时命中只读关键词。
-const BLOCKED_HINTS: &[&str] = &[
+/// 副作用关键词：命中它的工具按“有副作用工具”处理，参数必须无害化（路径改写进
+/// 工作区 `.temp/` 目录、命令改为无副作用回显等）。
+const MUTATION_HINTS: &[&str] = &[
     "write", "edit", "delete", "remove", "exec", "command", "run", "apply", "patch", "create",
     "update", "insert", "upload", "send", "post", "kill", "写入", "编辑", "删除", "执行", "运行",
     "命令", "创建", "更新", "上传", "发送", "子智能体", "定时", "计划", "问询", "记忆管理", "技能",
+];
+/// 少数无法用通用启发式安全合成的工具：它们照常进入随机池，但调用时不按 schema 随机
+/// 取参，而是发出一条**固定的无害调用内容**（以规范名或原始名精确匹配，大小写不敏感）。
+/// 覆盖三类：回合/用户可见控制（会话让出、问询面板）、真实机器控制与付费生成（桌面控制、
+/// 图像/视频/语音生成）、已单独提供入口的目标与子智能体工具。固定参数不消耗随机数；凡
+/// 会落地文件的固定调用，产物一律写入工作区 `.temp/`。
+const FIXED_ARGS: &[(&str, &str)] = &[
+    // 回合控制：不实际让出，只发一条可忽略的提示文本。
+    ("会话让出", r#"{"message":"__virtual_sim__"}"#),
+    ("sessions_yield", r#"{"message":"__virtual_sim__"}"#),
+    // 用户可见问询：固定文案，供人工一键选择，不携带任何真实业务参数。
+    (
+        "问询面板",
+        r#"{"questions":[{"question":"（模拟）是否继续下一步？","options":[{"label":"继续"},{"label":"暂停"}]}]}"#,
+    ),
+    (
+        "question_panel",
+        r#"{"questions":[{"question":"（模拟）是否继续下一步？","options":[{"label":"继续"},{"label":"暂停"}]}]}"#,
+    ),
+    // 真实机器控制：零位移、零等待，等价于空操作。
+    ("桌面控制器", r#"{"bbox":[0,0,0,0],"action":"delay","delay_ms":0}"#),
+    ("desktop_controller", r#"{"bbox":[0,0,0,0],"action":"delay","delay_ms":0}"#),
+    ("桌面监视器", r#"{"wait_ms":0,"note":"__virtual_sim__"}"#),
+    ("desktop_monitor", r#"{"wait_ms":0,"note":"__virtual_sim__"}"#),
+    // 付费生成：最小提示词，产物落工作区 .temp/。
+    (
+        "语音生成",
+        r#"{"text":"__virtual_sim__","path":".temp/__virtual_sim__.wav"}"#,
+    ),
+    (
+        "generate_speech",
+        r#"{"text":"__virtual_sim__","path":".temp/__virtual_sim__.wav"}"#,
+    ),
+    (
+        "图像生成",
+        r#"{"prompt":"a plain gray square on a white background","path":".temp/__virtual_sim__.png"}"#,
+    ),
+    (
+        "generate_image",
+        r#"{"prompt":"a plain gray square on a white background","path":".temp/__virtual_sim__.png"}"#,
+    ),
+    (
+        "视频生成",
+        r#"{"prompt":"a plain gray square on a white background","path":".temp/__virtual_sim__.mp4"}"#,
+    ),
+    (
+        "generate_video",
+        r#"{"prompt":"a plain gray square on a white background","path":".temp/__virtual_sim__.mp4"}"#,
+    ),
+    // 目标工具：普通调用给一份可忽略的目标（轮次上限=1，不会持续驱动）。
+    ("get_goal", r#"{}"#),
+    (
+        "create_goal",
+        r#"{"objective":"（模拟）示例目标，可忽略。","max_goal_rounds":1}"#,
+    ),
+    (
+        "update_goal",
+        r#"{"goal_id":"__virtual_sim__","revision":1,"action":"complete"}"#,
+    ),
+    // 子智能体：普通调用固定为只读 list；真实派生仍走专用入口。
+    ("子智能体控制", r#"{"action":"list","limit":5}"#),
+    ("subagent_control", r#"{"action":"list","limit":5}"#),
 ];
 /// 单轮最多同时发出的工具调用数。
 const MAX_CALLS_PER_ROUND: usize = 2;
@@ -52,8 +120,10 @@ const SUBAGENT_TASKS: &[&str] = &[
     "汇总最近变更并列出需要关注的条目。",
 ];
 
-/// 从请求提供的工具中筛选可安全随机调用的只读工具摘要 (名称, 参数 schema)。
-/// 必须在进入 'static 闭包前完成提取，结果为 owned 数据。
+/// 从请求提供的工具中提取工具摘要 (名称, 参数 schema)：为贴近真实轨迹，**纳入全部
+/// 工具**；少数无法用通用启发式安全合成的工具，其调用改走 [`FIXED_ARGS`] 的固定无害
+/// 参数（在 [`build_tool_turn`] 中判断），此处不再过滤。必须在进入 'static 闭包前
+/// 完成提取，结果为 owned 数据。
 pub(super) fn tool_summaries(tools: Option<&[Value]>) -> Vec<(String, Value)> {
     let Some(items) = tools else {
         return Vec::new();
@@ -67,20 +137,6 @@ pub(super) fn tool_summaries(tools: Option<&[Value]>) -> Vec<(String, Value)> {
         else {
             continue;
         };
-        let canonical = crate::tools::resolve_tool_name(name).to_lowercase();
-        let raw = name.to_lowercase();
-        if BLOCKED_HINTS
-            .iter()
-            .any(|hint| canonical.contains(hint) || raw.contains(hint))
-        {
-            continue;
-        }
-        if !READ_ONLY_HINTS
-            .iter()
-            .any(|hint| canonical.contains(hint) || raw.contains(hint))
-        {
-            continue;
-        }
         let schema = tool
             .pointer("/function/parameters")
             .or_else(|| tool.get("input_schema"))
@@ -92,11 +148,33 @@ pub(super) fn tool_summaries(tools: Option<&[Value]>) -> Vec<(String, Value)> {
     summaries
 }
 
+/// 是否为“只读工具”：命中只读关键词且不命中副作用关键词。只有这类工具的参数
+/// 才允许指向当前目录；其余工具（含无任何关键词命中的）一律按有副作用处理。
+fn is_read_only_tool(canonical: &str, raw: &str) -> bool {
+    let reads = READ_ONLY_HINTS
+        .iter()
+        .any(|hint| canonical.contains(hint) || raw.contains(hint));
+    let mutates = MUTATION_HINTS
+        .iter()
+        .any(|hint| canonical.contains(hint) || raw.contains(hint));
+    reads && !mutates
+}
+
+/// 若该工具需要一份“固定无害调用内容”，返回其固定参数（见 [`FIXED_ARGS`]）；否则返回
+/// `None`，让调用方按 schema 随机合成。规范名与原始名均参与精确匹配（大小写不敏感）。
+fn fixed_arguments(canonical: &str, raw: &str) -> Option<Value> {
+    FIXED_ARGS
+        .iter()
+        .find(|(key, _)| canonical == *key || raw == *key)
+        .and_then(|(_, args)| serde_json::from_str(args).ok())
+}
+
 /// 请求中提供的 `create_goal` 工具（若运行时暴露了它）。
 ///
-/// `create_goal` 会被 [`tool_summaries`] 的写操作过滤掉（名字里含 create），
-/// 但目标编排是运行时级能力，这里单独取出来供目标入口使用，并沿用模型实际
-/// 看到的工具名（可能是本地化别名），确保 tool_call 能通过在册校验。
+/// `create_goal` 虽已进入普通随机池（其普通调用走 [`FIXED_ARGS`] 的固定参数），但目标
+/// 编排是运行时级能力，需要携带完整 schema 与可控轮次上限（见 [`goal_create_arguments`]），
+/// 故这里单独取出来供目标入口使用，并沿用模型实际看到的工具名（可能是本地化别名），
+/// 确保 tool_call 能通过在册校验。
 pub(super) fn goal_entry_candidate(tools: Option<&[Value]>) -> Option<(String, Value)> {
     let items = tools?;
     items.iter().find_map(|tool| {
@@ -120,12 +198,22 @@ pub(super) fn goal_entry_candidate(tools: Option<&[Value]>) -> Option<(String, V
     })
 }
 
+/// 名称是否指向子智能体控制工具（规范名或原始名精确匹配，大小写不敏感）。
+///
+/// 该工具虽已进入普通随机池，但子会话必须把它从池中剔除（见 `load_turn_for_round`
+/// 的 `allow_subagent`），否则随机普通调用会绕过入口受限，从结构上破坏“只允许一层
+/// 子智能体”的防递归保证。
+pub(super) fn is_subagent_tool(name: &str) -> bool {
+    let canonical = crate::tools::resolve_tool_name(name);
+    canonical.trim() == SUBAGENT_TOOL_NAME || name.trim() == SUBAGENT_TOOL_NAME
+}
+
 /// 请求中提供的子智能体控制工具（若运行时暴露了它）。
 ///
-/// 该工具会被 [`tool_summaries`] 的“子智能体”排除词过滤掉（避免它被当作普通
-/// 只读工具随机调用），这里单独取出来，用于发出真实的子智能体调用（见
-/// [`subagent_arguments`]），让模拟轨迹更贴近真实工具面。递归由调用方用
-/// `allow_subagent` 兜底（子会话不再派生）。
+/// 该工具虽已进入普通随机池（其普通调用在 [`FIXED_ARGS`] 中固定为只读 `list`），但
+/// 真实派生/操控需要专门的参数合成（见 [`subagent_arguments`]），故这里单独取出来供
+/// 子智能体入口使用，让模拟轨迹更贴近真实工具面。递归由调用方用 `allow_subagent`
+/// 兜底（子会话不再派生）。
 pub(super) fn subagent_entry_candidate(tools: Option<&[Value]>) -> Option<(String, Value)> {
     let items = tools?;
     items.iter().find_map(|tool| {
@@ -302,17 +390,26 @@ fn build_tool_turn(
             special_calls += 1;
         }
     }
-    // 特殊动作占据名额后，只读调用相应减少，整体不超过 MAX_CALLS_PER_ROUND。
-    let read_only_calls = if special_calls >= MAX_CALLS_PER_ROUND {
+    // 特殊动作占据名额后，普通调用相应减少，整体不超过 MAX_CALLS_PER_ROUND。
+    let plain_calls = if special_calls >= MAX_CALLS_PER_ROUND {
         0
     } else if special_calls > 0 {
         1
     } else {
         1 + (next_u64(rng) as usize) % MAX_CALLS_PER_ROUND
     };
-    for index in 0..read_only_calls {
+    for index in 0..plain_calls {
         let (name, schema) = &candidates[(next_u64(rng) as usize) % candidates.len()];
-        let args = sample_arguments(schema, rng);
+        let canonical = crate::tools::resolve_tool_name(name).to_lowercase();
+        let raw = name.to_lowercase();
+        // 无法用通用启发式安全合成的工具改用固定无害参数（不消耗随机数）；其余按 schema
+        // 随机合成，有副作用的工具一律无害化，保证模拟调用即使被真实执行也不改动工作区。
+        let args = if let Some(fixed) = fixed_arguments(&canonical, &raw) {
+            fixed
+        } else {
+            let mutating = !is_read_only_tool(&canonical, &raw);
+            sample_arguments(schema, rng, mutating)
+        };
         calls.push(json!({
             "id": format!("sim_{round}_{model_round}_{index}"),
             "type": "function",
@@ -442,12 +539,17 @@ fn build_final_turn(
     }
 }
 
-/// 依据 input_schema 生成必填参数；启发式取值让只读工具大概率执行成功。
-fn sample_arguments(schema: &Value, rng: &mut u64) -> Value {
-    sample_object(schema, rng, 0)
+/// 依据 input_schema 生成必填参数。
+///
+/// * `mutating=false`（只读工具）：沿用启发式取值，让只读调用大概率成功。
+/// * `mutating=true`（有副作用工具）：一律无害化——路径类参数改写到工作区 `.temp/`
+///   下的哨兵名，命令类参数改为无副作用回显。这样即使被真实执行，落地文件也只会
+///   集中落在 `.temp/`（便于清理），不会污染工作区其它位置或影响外部系统。
+fn sample_arguments(schema: &Value, rng: &mut u64, mutating: bool) -> Value {
+    sample_object(schema, rng, 0, mutating)
 }
 
-fn sample_object(schema: &Value, rng: &mut u64, depth: u32) -> Value {
+fn sample_object(schema: &Value, rng: &mut u64, depth: u32, mutating: bool) -> Value {
     let mut map = Map::new();
     if depth > 2 {
         return Value::Object(map);
@@ -464,12 +566,15 @@ fn sample_object(schema: &Value, rng: &mut u64, depth: u32) -> Value {
             .and_then(|props| props.get(name))
             .cloned()
             .unwrap_or_else(|| json!({}));
-        map.insert(name.to_string(), sample_value(name, &prop_schema, rng, depth + 1));
+        map.insert(
+            name.to_string(),
+            sample_value(name, &prop_schema, rng, depth + 1, mutating),
+        );
     }
     Value::Object(map)
 }
 
-fn sample_value(name: &str, schema: &Value, rng: &mut u64, depth: u32) -> Value {
+fn sample_value(name: &str, schema: &Value, rng: &mut u64, depth: u32, mutating: bool) -> Value {
     if let Some(first) = schema
         .get("enum")
         .and_then(Value::as_array)
@@ -482,17 +587,25 @@ fn sample_value(name: &str, schema: &Value, rng: &mut u64, depth: u32) -> Value 
         Some("boolean") => json!(false),
         Some("array") => {
             let item_schema = schema.get("items").cloned().unwrap_or_else(|| json!({}));
-            json!([sample_value(name, &item_schema, rng, depth + 1)])
+            json!([sample_value(name, &item_schema, rng, depth + 1, mutating)])
         }
-        Some("object") => sample_object(schema, rng, depth),
-        _ => json!(string_argument(name, rng)),
+        Some("object") => sample_object(schema, rng, depth, mutating),
+        _ => json!(string_argument(name, rng, mutating)),
     }
 }
 
-fn string_argument(name: &str, rng: &mut u64) -> String {
+fn string_argument(name: &str, rng: &mut u64, mutating: bool) -> String {
     let lowered = name.to_lowercase();
-    if lowered.contains("path") || lowered.contains("dir") || lowered.contains("folder") {
-        return ".".into();
+    if is_path_like(&lowered) {
+        // 只读工具指向当前目录；有副作用工具改到工作区 .temp/ 下，落地文件集中可清理。
+        return if mutating {
+            workspace_temp_path(rng)
+        } else {
+            ".".into()
+        };
+    }
+    if is_command_like(&lowered) {
+        return "echo __virtual_sim__".into();
     }
     if lowered.contains("pattern") || lowered.contains("glob") {
         return "*".into();
@@ -509,6 +622,29 @@ fn string_argument(name: &str, rng: &mut u64) -> String {
         return pick(SAMPLE_WORDS, rng).to_string();
     }
     format!("sample-{}", (next_u64(rng) % 900) + 100)
+}
+
+/// 参数名是否暗示文件系统路径。
+fn is_path_like(lowered: &str) -> bool {
+    [
+        "path", "dir", "folder", "file", "target", "source", "dest", "root", "location",
+    ]
+    .iter()
+    .any(|key| lowered.contains(key))
+}
+
+/// 参数名是否暗示要执行的命令/脚本。
+fn is_command_like(lowered: &str) -> bool {
+    ["command", "cmd", "script", "shell", "exec"]
+        .iter()
+        .any(|key| lowered.contains(key))
+}
+
+/// 工作区 `.temp/` 目录下的相对哨兵路径：让有文件落地的模拟调用集中落在工作区内的
+/// `.temp/` 子目录，既无害化又便于清理，且不会散落到工作区其它位置。
+fn workspace_temp_path(rng: &mut u64) -> String {
+    let name = format!("__virtual_sim_{}__", (next_u64(rng) % 1_000_000) + 1);
+    format!(".temp/{name}")
 }
 
 fn numeric_argument(name: &str, rng: &mut u64) -> i64 {
@@ -569,20 +705,26 @@ mod tests {
     }
 
     #[test]
-    fn tool_summaries_filter_offered_readonly_tools() {
+    fn tool_summaries_include_all_tools() {
         let tools = vec![
             json!({"type":"function","function":{"name":"读取文件","parameters":json!({"type":"object"})}}),
             json!({"type":"function","function":{"name":"写入文件","parameters":json!({"type":"object"})}}),
             json!({"type":"function","function":{"name":"执行命令","parameters":json!({"type":"object"})}}),
+            json!({"type":"function","function":{"name":"会话让出","parameters":json!({"type":"object"})}}),
+            json!({"type":"function","function":{"name":"桌面控制器","parameters":json!({"type":"object"})}}),
         ];
         let summaries = tool_summaries(Some(&tools));
-        assert_eq!(summaries.len(), 1);
-        assert_eq!(summaries[0].0, "读取文件");
+        let names: Vec<&str> = summaries.iter().map(|(name, _)| name.as_str()).collect();
+        // 全部工具都进入随机池，不再有“永不调用”的排除项。
+        assert_eq!(
+            names,
+            vec!["读取文件", "写入文件", "执行命令", "会话让出", "桌面控制器"]
+        );
         assert!(tool_summaries(None).is_empty());
     }
 
     #[test]
-    fn tool_rounds_emit_only_offered_readonly_tools() {
+    fn tool_rounds_emit_offered_tools() {
         let candidates = vec![summary(
             "读取文件",
             json!({"type":"object","required":["path"],"properties":{"path":{"type":"string"}}}),
@@ -635,10 +777,77 @@ mod tests {
             "limit":{"type":"integer"},
             "recursive":{"type":"boolean"}
         }});
-        let args = sample_arguments(&schema, &mut rng);
+        let args = sample_arguments(&schema, &mut rng, false);
         assert!(args.get("pattern").and_then(Value::as_str).is_some());
         assert!(args.get("limit").and_then(Value::as_i64).is_some());
         assert!(args.get("recursive").is_none(), "optional fields stay unset");
+    }
+
+    #[test]
+    fn mutation_paths_land_in_workspace_temp_dir() {
+        let mut rng = 7_u64.max(1);
+        let schema = json!({"type":"object","required":["path"],"properties":{"path":{"type":"string"}}});
+        let args = sample_arguments(&schema, &mut rng, true);
+        let path = args.get("path").and_then(Value::as_str).expect("path is set");
+        assert_ne!(path, ".", "mutating tools must not target the working directory");
+        assert!(
+            path.starts_with(".temp/"),
+            "mutating paths should live under the workspace .temp/ dir, got {path}"
+        );
+    }
+
+    #[test]
+    fn read_only_paths_still_target_current_directory() {
+        let mut rng = 11_u64.max(1);
+        let schema = json!({"type":"object","required":["path"],"properties":{"path":{"type":"string"}}});
+        let args = sample_arguments(&schema, &mut rng, false);
+        assert_eq!(args.get("path").and_then(Value::as_str), Some("."));
+    }
+
+    #[test]
+    fn fixed_arguments_are_harmless_and_land_under_workspace_temp() {
+        // 会话让出：固定为可忽略的提示文本，不实际让出。
+        let yield_args = fixed_arguments("会话让出", "会话让出").expect("yield fixed args");
+        assert_eq!(
+            yield_args.get("message").and_then(Value::as_str),
+            Some("__virtual_sim__")
+        );
+        // 英文别名命中同一份固定内容。
+        assert_eq!(
+            fixed_arguments("sessions_yield", "sessions_yield"),
+            Some(yield_args)
+        );
+
+        // 有文件落地的固定参数一律指向工作区 .temp/。
+        for (zh, en) in [
+            ("语音生成", "generate_speech"),
+            ("图像生成", "generate_image"),
+            ("视频生成", "generate_video"),
+        ] {
+            let args = fixed_arguments(zh, zh).expect("fixed args");
+            let path = args.get("path").and_then(Value::as_str).expect("path set");
+            assert!(
+                path.starts_with(".temp/"),
+                "fixed payloads must land under .temp/, got {path}"
+            );
+            assert_eq!(
+                fixed_arguments(en, en),
+                Some(args),
+                "alias {en} should share the same fixed payload"
+            );
+        }
+
+        // 桌面控制固定为无副作用空操作。
+        let desktop = fixed_arguments("desktop_controller", "desktop_controller").expect("desktop");
+        assert_eq!(desktop.get("action").and_then(Value::as_str), Some("delay"));
+        assert_eq!(desktop.get("delay_ms").and_then(Value::as_i64), Some(0));
+
+        // 子智能体普通调用固定为只读 list。
+        let sub = fixed_arguments("subagent_control", "subagent_control").expect("subagent");
+        assert_eq!(sub.get("action").and_then(Value::as_str), Some("list"));
+
+        // 普通工具没有固定参数，交由 schema 随机合成。
+        assert!(fixed_arguments("读取文件", "读取文件").is_none());
     }
 
     #[test]
@@ -650,10 +859,10 @@ mod tests {
         let candidate = goal_entry_candidate(Some(&tools)).expect("create_goal is offered");
         assert_eq!(candidate.0, "create_goal");
         assert!(goal_entry_candidate(None).is_none());
-        // create_goal is a goal tool, never treated as a plain read-only tool.
+        // create_goal 已进入随机池（其普通调用由 FIXED_ARGS 固定），入口仍单独提供完整 schema。
         assert!(tool_summaries(Some(&tools))
             .iter()
-            .all(|(name, _)| name != "create_goal"));
+            .any(|(name, _)| name == "create_goal"));
     }
 
     #[test]
@@ -718,10 +927,10 @@ mod tests {
         let candidate = subagent_entry_candidate(Some(&tools)).expect("subagent_control offered");
         assert_eq!(candidate.0, "subagent_control");
         assert!(subagent_entry_candidate(None).is_none());
-        // 子智能体工具被排除词挡在只读候选之外，不会作为普通只读工具重复出现。
+        // 子智能体工具已进入随机池（其普通调用固定为只读 list），入口单独提供真实动作。
         assert!(tool_summaries(Some(&tools))
             .iter()
-            .all(|(name, _)| name != "subagent_control"));
+            .any(|(name, _)| name == "subagent_control"));
     }
 
     #[test]

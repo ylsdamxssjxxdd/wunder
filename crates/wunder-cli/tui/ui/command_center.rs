@@ -512,9 +512,9 @@ mod tests {
             remote_pending_approvals: 3,
             dropped_frames: 12,
         };
-        for width in [12, 20, 40] {
-            let line = truncate(&busy.line(true), usize::from(width));
-            assert!(line.width() <= usize::from(width), "{line} overflows {width}");
+        for width in [12usize, 20, 40] {
+            let line = truncate(&busy.line(true), width);
+            assert!(line.width() <= width, "{line} overflows {width}");
         }
         // Congestion must change the tone, not only the text.
         assert_eq!(

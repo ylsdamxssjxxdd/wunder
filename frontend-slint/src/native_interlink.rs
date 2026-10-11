@@ -1,9 +1,10 @@
 //! Interlink (设备互通 §I9) shell bindings: a 2s poll pushes the tunnel
-//! status and drains the approval queue, while devices and cloud listings are
-//! fetched on demand through the synchronous `NativeDesktop` façade. Network
-//! work (device list, cloud listing, cloud decision) always runs on a
-//! background thread via `crate::native_pages::run_background`; only the
-//! in-process status / pending-approval reads happen on the UI thread.
+//! status and drains the approval queue, while devices, cloud listings and
+//! cloud pulls are fetched on demand through the synchronous `NativeDesktop`
+//! façade. Network work and file writes (device list, cloud listing, cloud
+//! decision, cloud pull) always run on a background thread via
+//! `crate::native_pages::run_background`; only the in-process status /
+//! pending-approval reads happen on the UI thread.
 use crate::{native_pages, InterlinkApproval, InterlinkEntry, InterlinkNode, InterlinkStatus, MainWindow};
 use slint::{ComponentHandle, ModelRc, VecModel};
 use std::{cell::RefCell, sync::Arc};
@@ -22,6 +23,11 @@ thread_local! {
 /// Two-second cadence: fast enough that a remote approval request never feels
 /// lost, slow enough to stay invisible on the UI thread.
 const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Last path segment, only used to keep the in-flight note short.
+fn tail_of(path: &str) -> String {
+    path.rsplit(['/']).next().unwrap_or(path).to_string()
+}
 
 /// Human sentence for the tunnel status row. Chinese copy lives here (the
 /// native side owns its own strings); the state word itself is translated on
@@ -48,12 +54,16 @@ fn status_note(state: &str, last_error: Option<&str>, dropped_frames: u64) -> St
 
 /// One poll tick: push status, then open the next approval if the card is
 /// free. Runs on the UI thread; both façade calls are synchronous in-process.
-fn poll(app: &MainWindow, api: &NativeDesktop) {
+fn poll(app: &MainWindow, api: &Arc<NativeDesktop>) {
     let status = api.interlink_status();
     app.set_interlink_status(InterlinkStatus {
         state: status.state.clone().into(),
         note: status_note(&status.state, status.last_error.as_deref(), status.dropped_frames).into(),
     });
+    // The working-directory region rides the same tick: it derives its
+    // offline state from the tunnel and boots the cloud tree on the first
+    // connected tick after sign-in.
+    crate::workspace_files::tunnel_tick(app, api, status.state == "connected");
     if app.get_interlink_approval_open() {
         return;
     }
@@ -103,7 +113,7 @@ fn push_listing(app: &MainWindow, listing: wunder_desktop::native::NativeInterli
 /// Open (or re-open) a cloud path on a background thread.
 fn open_path(app_weak: slint::Weak<MainWindow>, api: Arc<NativeDesktop>, path: String) {
     native_pages::run_background(move || {
-        let result = api.interlink_cloud_listing(&path);
+        let result = api.interlink_cloud_listing(&path, 0);
         let _ = app_weak.upgrade_in_event_loop(move |app| {
             app.set_interlink_cloud_busy(false);
             match result {
@@ -197,6 +207,38 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         let weak = weak.clone();
         let api = up_api.clone();
         open_path(weak, api, parent);
+    });
+    // Pull one cloud file into the local workspace: same worker-thread rule
+    // as browsing (one bounded command round-trip plus one file write), and
+    // the outcome lands on the note line - never in a modal dialog.
+    let weak = app.as_weak();
+    let pull_api = api.clone();
+    app.on_interlink_cloud_pull(move |path| {
+        let Some(app) = weak.upgrade() else { return };
+        if app.get_interlink_cloud_busy() {
+            return;
+        }
+        let cloud_path = path.trim().to_string();
+        app.set_interlink_cloud_busy(true);
+        app.set_interlink_cloud_note(format!("正在拉取 {}…", tail_of(&cloud_path)).into());
+        let weak = weak.clone();
+        let api = pull_api.clone();
+        native_pages::run_background(move || {
+            let result = api.interlink_cloud_pull(&cloud_path, "");
+            let _ = weak.upgrade_in_event_loop(move |app| {
+                app.set_interlink_cloud_busy(false);
+                let note = match result {
+                    Ok(pull) => format!(
+                        "已拉到本地工作区：{}（{} 字节）",
+                        pull.local_path, pull.bytes
+                    ),
+                    // The façade reason is already a full sentence; a second
+                    // prefix would read as 拉取失败：拉取失败：…
+                    Err(error) => error.to_string().trim().to_string(),
+                };
+                app.set_interlink_cloud_note(note.into());
+            });
+        });
     });
     // Approve / reject a pending cloud listing command, then re-open the path
     // so the panel reflects the decision without a manual refresh.

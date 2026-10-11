@@ -450,6 +450,7 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
     start_goal_clock(app.as_weak());
     crate::thread_trajectory::install(app, desktop_preview.clone());
     crate::subagent_detail::install(app, desktop_preview.clone());
+    crate::workspace_files::install(app, desktop_preview.clone());
     crate::navigation_ui::install(app, desktop_preview.clone());
     crate::workspace_ui::install(app, desktop_preview.clone());
     let timeline = state.borrow().timeline.clone();

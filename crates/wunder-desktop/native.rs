@@ -57,7 +57,7 @@ mod cloud;
 mod interlink;
 pub use interlink::{
     NativeInterlinkApproval, NativeInterlinkEntry, NativeInterlinkListing, NativeInterlinkNode,
-    NativeInterlinkStatus,
+    NativeInterlinkPull, NativeInterlinkStats, NativeInterlinkStatus,
 };
 #[path = "native_companion_overlay.rs"]
 mod companion_overlay;

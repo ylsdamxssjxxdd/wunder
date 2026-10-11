@@ -71,6 +71,9 @@ pub fn spawn(state: Arc<AppState>) {
             }
             // 3) Command timeouts and approval expiry (docs §4.3, §7.3 4).
             let _ = commands::sweep(state.storage.clone(), &limits, now).await;
+            // 3b) Parked commands whose node is live right now: the queue would
+            //     otherwise wait for an event edge that may never come (§13.4 11).
+            let _ = commands::drain_backlogs(state.storage.clone(), &limits).await;
             // 4) Abandoned data-plane buffers.
             let _ = super::blob::store().cleanup_expired(now);
             // 5) Persisted channel rows left open by a crashed instance.

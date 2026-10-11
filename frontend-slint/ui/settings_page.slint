@@ -444,6 +444,7 @@ export component SettingsPage inherits Rectangle {
     callback interlink-refresh();
     callback interlink-open(string);
     callback interlink-cloud-up();
+    callback interlink-cloud-pull(string);
     callback interlink-cloud-decide(bool);
     // Human size for a cloud entry; the façade ships raw bytes as an int.
     // Slint integer division promotes to float, so every tier rounds.
@@ -1720,6 +1721,16 @@ export component SettingsPage inherits Rectangle {
                                             Text { width: 64px; height: parent.height; text: entry.kind == "dir" ? I18n.il_kind_dir : I18n.il_kind_file; color: Theme.muted; font-size: Theme.font-xs; vertical-alignment: center; }
                                             Text { width: 84px; height: parent.height; text: entry.kind == "dir" ? "" : root.interlink-size-text(entry.size); color: Theme.muted; font-size: Theme.font-xs; vertical-alignment: center; }
                                             Text { width: 150px; height: parent.height; text: entry.updated-time; color: Theme.muted; font-size: Theme.font-xs; vertical-alignment: center; overflow: elide; }
+                                            // The pull button is a child of the row
+                                            // hotzone, so it keeps the pointer path and
+                                            // the row itself still navigates folders.
+                                            if entry.kind != "dir" : Action {
+                                                width: 30px; height: 30px;
+                                                icon: @image-url("../assets/icons/log-download.svg");
+                                                label: I18n.il_browse_pull;
+                                                enabled: !root.interlink-cloud-busy;
+                                                clicked => { root.interlink-cloud-pull(entry.path); }
+                                            }
                                         }
                                     }
                                 }

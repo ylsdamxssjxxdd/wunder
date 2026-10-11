@@ -292,7 +292,19 @@ pub async fn load_turn_for_round(
     let session_seed = session_seed.to_string();
     // Tool references only live in this function body; extract owned summaries
     // before moving state into the blocking closure.
-    let tool_summaries = random_sim::tool_summaries(tools);
+    let tool_summaries = {
+        let summaries = random_sim::tool_summaries(tools);
+        // 子会话不再派生：把子智能体工具从随机池中一并剔除，避免随机“普通调用”绕过入口
+        // 限制而从子会话里再派生子智能体，破坏“只允许一层”的防递归保证。
+        if allow_subagent {
+            summaries
+        } else {
+            summaries
+                .into_iter()
+                .filter(|(name, _)| !random_sim::is_subagent_tool(name))
+                .collect()
+        }
+    };
     let goal_entry = goal_entry_allowed
         .then(|| random_sim::goal_entry_candidate(tools))
         .flatten();
@@ -301,6 +313,8 @@ pub async fn load_turn_for_round(
     // （allow_subagent=false）时不提供入口，从而只允许“一层”子智能体。若用户
     // 消息含 `subagent`，强制位为真，本轮必定发出。
     let force_subagent = user_message.map(random_sim::wants_subagent).unwrap_or(false);
+    // 消息里的数字覆盖本次计划轮次（owned，避免借用逃逸进 'static 闭包）。
+    let round_override = user_message.and_then(random_sim::parse_round_override);
     let subagent_entry = allow_subagent
         .then(|| random_sim::subagent_entry_candidate(tools))
         .flatten()
@@ -328,8 +342,7 @@ pub async fn load_turn_for_round(
         // may additionally arm a long-running goal so the goal driver keeps
         // producing rounds until the operator stops it.
         // 用户在消息里给出的数字覆盖本次计划轮次，直接决定“本次模型轮数”。
-        let total_rounds = user_message
-            .and_then(random_sim::parse_round_override)
+        let total_rounds = round_override
             .unwrap_or_else(|| random_sim::plan_rounds(&session_seed, round));
         let subagent_arg = subagent_entry
             .as_ref()
@@ -837,7 +850,7 @@ mod tests {
         };
         let tools = vec![
             json!({"type":"function","function":{"name":"读取文件","parameters":json!({"type":"object","required":["path"],"properties":{"path":{"type":"string"}}})}}),
-            json!({"type":"function","function":{"name":"subagent_control","parameters":json!({"type":"object","required":["action"],"properties":{"action":{"type":"string"}}})}}),
+            json!({"type":"function","function":{"name":"子智能体控制","parameters":json!({"type":"object","required":["action"],"properties":{"action":{"type":"string"}}})}}),
         ];
         // 数字 5 -> 本次计划 5 轮：第 1 轮是工具轮，第 5 轮是最终轮。
         let round_one = load_turn_for_round(
@@ -854,10 +867,10 @@ mod tests {
         .await
         .expect("turn");
         assert!(last.tool_calls.is_none(), "round 5 of 5 is the final turn");
-        // 含 subagent -> 首轮必定出现子智能体调用。
+        // 含 subagent -> 首轮必定出现子智能体调用（配合数字覆盖，确保存在工具轮）。
         let forced = load_turn_for_round(
             config.clone(), &model, "session-a", Some(1), Some(1), Some(&tools), true,
-            Some("subagent"), true,
+            Some("7 subagent"), true,
         )
         .await
         .expect("turn");
@@ -872,7 +885,7 @@ mod tests {
         // allow_subagent=false -> 子会话永不发出子智能体调用。
         let child = load_turn_for_round(
             config.clone(), &model, "session-a", Some(1), Some(1), Some(&tools), true,
-            Some("subagent"), false,
+            Some("7 subagent"), false,
         )
         .await
         .expect("turn");
