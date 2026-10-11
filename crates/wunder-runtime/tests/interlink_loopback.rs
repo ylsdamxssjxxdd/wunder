@@ -1,18 +1,24 @@
-//! Loopback end-to-end for the interlink plane (互通方案 §13.2/§13.3): a real
-//! server router over TCP plus the real client engine in the same process —
+//! Loopback end-to-end for the interlink plane (互通方案 §13.2/§13.3/§13.5): a
+//! real server router over TCP plus the real client engine in the same process —
 //! node secret bootstrap, WSS handshake, shadow push, C2L commands with the
-//! approval gate, idempotency, the offline queue and the L2C cloud executor.
+//! approval gate, idempotency, the offline queue, the L2C cloud executor and the
+//! governance cuts (kill switch, revocation, CSV audit export, the L3 alert that
+//! a user and the 舰桥 can both read back).
 //!
 //! The engine's tunnel session lives in the process-global `cloud::shared()`,
-//! so this file keeps exactly one test function; every link assertion runs in
-//! sequence inside it.
+//! so the link assertions share one test function; the ignored idle-budget test
+//! below must be run on its own (`--test-threads=1`).
 
 use axum::{Json as AxumJson, Router};
+use futures::StreamExt;
 use serde_json::{json, Value};
+use std::net::TcpStream;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
 use tokio::net::TcpListener;
+use tokio_tungstenite::tungstenite::Message as WsMessage;
+use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 use wunder_server::{
     build_router,
     cloud::{shared as cloud_shared, CloudSessionFile},
@@ -88,9 +94,17 @@ fn register_device(state: &AppState, user_id: &str) {
                 interlink_enabled: Some(true),
                 // The default grant is shadow:minimal, which uploads the
                 // summary only; the shadow assertions need the full level.
+                // `tool.exec` is off by default for every device (docs §9.2),
+                // so granting it here is also the admin-side L3 path.
                 capabilities: Some(
-                    json!(["shadow:minimal", "shadow:full", "query.basic", "thread.drive"])
-                        .to_string(),
+                    json!([
+                        "shadow:minimal",
+                        "shadow:full",
+                        "query.basic",
+                        "thread.drive",
+                        "tool.exec"
+                    ])
+                    .to_string(),
                 ),
                 ..Default::default()
             },
@@ -175,6 +189,20 @@ struct LocalNode {
 }
 
 async fn spawn_local_node(server: &Server) -> LocalNode {
+    let node = build_local_node(server).await;
+    // `start` takes the command receiver behind a blocking lock, so it must
+    // run off the async worker threads.
+    let started = node.client.clone();
+    tokio::task::spawn_blocking(move || started.start())
+        .await
+        .expect("interlink client start");
+    node
+}
+
+/// The local form's engine, session file and client instance - with the tunnel
+/// still down. The idle measurement needs a same-process baseline where only
+/// the two engines run, so it can subtract them from the tunnel's own cost.
+async fn build_local_node(server: &Server) -> LocalNode {
     let dir = tempfile::tempdir().expect("local tempdir");
     let mock_base = spawn_mock_llm().await;
     let mut config = base_config(&dir, "local.db");
@@ -231,12 +259,6 @@ async fn spawn_local_node(server: &Server) -> LocalNode {
             session_base_dir: dir.path().to_path_buf(),
         },
     );
-    // `start` takes the command receiver behind a blocking lock, so it must
-    // run off the async worker threads.
-    let started = client.clone();
-    tokio::task::spawn_blocking(move || started.start())
-        .await
-        .expect("interlink client start");
     LocalNode {
         state,
         client,
@@ -258,6 +280,7 @@ async fn http_json(
     let mut builder = match method {
         "POST" => client.post(url),
         "PATCH" => client.patch(url),
+        "DELETE" => client.delete(url),
         _ => client.get(url),
     };
     builder = builder.bearer_auth(token).timeout(Duration::from_secs(10));
@@ -268,6 +291,85 @@ async fn http_json(
     let status = response.status().as_u16();
     let parsed: Value = response.json().await.unwrap_or(Value::Null);
     (status, parsed)
+}
+
+/// Raw-text GET for the CSV export (the envelope is not JSON there).
+async fn get_text(url: &str, token: &str) -> (u16, String) {
+    let response = reqwest::Client::new()
+        .get(url)
+        .bearer_auth(token)
+        .timeout(Duration::from_secs(10))
+        .send()
+        .await
+        .expect("text request");
+    let status = response.status().as_u16();
+    (status, response.text().await.unwrap_or_default())
+}
+
+/// Raw-bytes GET for the blob endpoint (the body is the file, not an envelope).
+async fn get_bytes(url: &str, token: &str) -> (u16, Vec<u8>) {
+    let response = reqwest::Client::new()
+        .get(url)
+        .bearer_auth(token)
+        .timeout(Duration::from_secs(60))
+        .send()
+        .await
+        .expect("blob request");
+    let status = response.status().as_u16();
+    (status, response.bytes().await.unwrap_or_default().to_vec())
+}
+
+/// Deterministic filler past the inline ceiling; no real content involved.
+fn pattern_bytes(len: usize) -> Vec<u8> {
+    (0..len).map(|index| (index % 251) as u8).collect()
+}
+
+/// A cloud-side reader of `remote_ws` (docs §7.4): the same socket 蜂巢 opens.
+struct RemoteView {
+    socket: WebSocketStream<MaybeTlsStream<TcpStream>>,
+}
+
+impl RemoteView {
+    async fn open(server: &Server, device_id: &str, thread_id: &str) -> Self {
+        let url = format!(
+            "{}/wunder/interlink/remote_ws?target=device:{}&thread={}&token={}",
+            server.base_url.replace("http://", "ws://"),
+            device_id,
+            thread_id,
+            server.token
+        );
+        let (socket, _response) = tokio_tungstenite::connect_async(url)
+            .await
+            .expect("remote_ws handshake");
+        Self { socket }
+    }
+
+    /// Next text frame, skipping the keep-alive pings.
+    async fn next(&mut self, timeout: Duration) -> Value {
+        let deadline = Instant::now() + timeout;
+        loop {
+            let received =
+                tokio::time::timeout(Duration::from_secs(2), self.socket.next()).await;
+            match received {
+                Ok(Some(Ok(WsMessage::Text(text)))) => {
+                    return serde_json::from_str(&text).unwrap_or(Value::Null);
+                }
+                Ok(Some(Ok(_))) => {}
+                Ok(Some(Err(error))) => panic!("remote_ws failed: {error}"),
+                Ok(None) => panic!("remote_ws closed"),
+                Err(_) => {
+                    assert!(Instant::now() < deadline, "no remote frame inside the window");
+                }
+            }
+        }
+    }
+}
+
+/// A distinctive head of the base64 form, used to prove that encoded bytes
+/// never reach the trail.
+fn base64_head(bytes: &[u8]) -> String {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.encode(&bytes[..bytes.len().min(48)])
 }
 
 async fn get_json(url: &str, token: &str) -> (u16, Value) {
@@ -295,6 +397,9 @@ async fn issue(server: &Server, to: &str, kind: &str, args: Value, command_id: O
 }
 
 /// Poll one command until it leaves the open states; returns the record.
+///
+/// `queued` counts as open: the engine treats a parked command as pending work
+/// that a reconnect drains (docs §4.3), so returning on it would race the drain.
 async fn wait_terminal(server: &Server, command_id: &str, timeout: Duration) -> Value {
     let deadline = Instant::now() + timeout;
     loop {
@@ -309,7 +414,7 @@ async fn wait_terminal(server: &Server, command_id: &str, timeout: Duration) -> 
         assert_eq!(status, 200, "command query failed: {body}");
         let record = data_of(&body);
         let state = record["status"].as_str().unwrap_or("");
-        if !matches!(state, "issued" | "acked" | "running") {
+        if !matches!(state, "issued" | "acked" | "running" | "queued") {
             return record;
         }
         assert!(
@@ -321,7 +426,11 @@ async fn wait_terminal(server: &Server, command_id: &str, timeout: Duration) -> 
 }
 
 async fn wait_connected(client: &InterlinkClient) {
-    let deadline = Instant::now() + Duration::from_secs(30);
+    wait_connected_within(client, Duration::from_secs(30)).await;
+}
+
+async fn wait_connected_within(client: &InterlinkClient, timeout: Duration) {
+    let deadline = Instant::now() + timeout;
     loop {
         if client.status().state == wunder_server::interlink::client::TunnelState::Connected {
             return;
@@ -333,6 +442,35 @@ async fn wait_connected(client: &InterlinkClient) {
         );
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
+}
+
+/// Wait until the tunnel is no longer up: a close frame, a refused reconnect or
+/// the disabled state all count, the point is that it stopped being usable.
+async fn wait_disconnected(client: &InterlinkClient, timeout: Duration) {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if client.status().state != wunder_server::interlink::client::TunnelState::Connected {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the tunnel survived the close: {:?}",
+            serde_json::to_string(&client.status()).unwrap_or_default()
+        );
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+}
+
+/// Bring the tunnel back up after a `stop()` on the **same** client instance:
+/// lifting the kill switch must not require a process restart (docs §9.4). The
+/// instance keeps its node secret in the session file, so the reconnect also
+/// covers reading the secret back after a restart.
+async fn respawn_tunnel(node: &LocalNode) {
+    node.client.stop();
+    let started = node.client.clone();
+    tokio::task::spawn_blocking(move || started.start())
+        .await
+        .expect("restart tunnel client");
 }
 
 fn seed_session(state: &AppState, title: &str) {
@@ -374,6 +512,10 @@ fn session_count(state: &AppState) -> usize {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn loopback_tunnel_shadow_commands_and_approvals_end_to_end() {
     let server = spawn_server().await;
+    // The alert pump is a 舰体 background task that the real server starts with
+    // its janitor; this harness builds the router directly, so without an
+    // explicit spawn every detected alert would only be counted as dropped.
+    wunder_server::interlink::alerts::spawn(server.state.clone());
     let node = spawn_local_node(&server).await;
 
     // -- handshake: secret bootstrap + hello/ack --------------------------
@@ -415,7 +557,6 @@ async fn loopback_tunnel_shadow_commands_and_approvals_end_to_end() {
     node.client
         .invalidate_shadow(Sections::ALL);
     let deadline = Instant::now() + Duration::from_secs(20);
-    let mut shadow_threads = Value::Null;
     loop {
         let (status, body) = get_json(
             &format!(
@@ -428,8 +569,7 @@ async fn loopback_tunnel_shadow_commands_and_approvals_end_to_end() {
         assert_eq!(status, 200, "shadow query failed: {body}");
         let shadow = data_of(&body);
         if shadow["revision"].as_i64().unwrap_or(0) > 0 {
-            shadow_threads = shadow["threads"].clone();
-            let text = shadow_threads.to_string();
+            let text = shadow["threads"].to_string();
             if text.contains("影子甲") && text.contains("影子乙") {
                 break;
             }
@@ -465,6 +605,27 @@ async fn loopback_tunnel_shadow_commands_and_approvals_end_to_end() {
         entries.is_array()
     );
 
+    // The cloud node has no L3 capability: a self-approvable ticket must not
+    // turn the 舰体 host into a controllable device (docs §9.2, §13.5 17).
+    let (l3_status, l3_body) = http_json(
+        "POST",
+        &format!("{}/wunder/interlink/commands", server.base_url),
+        &server.token,
+        Some(json!({
+            "to": "cloud",
+            "kind": "tool.exec",
+            "args": {"command": "echo", "args": ["ready"]}
+        })),
+    )
+    .await;
+    assert_eq!(
+        l3_status, 403,
+        "an L3 command against the cloud node must be refused: {l3_body}"
+    );
+    let refused = data_of(&l3_body);
+    assert_eq!(refused["status"], json!("failed"), "{refused}");
+    assert_eq!(refused["error_code"], json!("CAP_DENIED"), "{refused}");
+
     // -- C2L L0: workspace.list executes on the node over the tunnel -------
     let user_root = node
         .state
@@ -491,6 +652,71 @@ async fn loopback_tunnel_shadow_commands_and_approvals_end_to_end() {
             .iter()
             .any(|row| row["name"] == json!("loopback.txt")),
         "remote listing sees the local file: {record}"
+    );
+
+    // -- §13.2 6: a shadowed file read rides the tunnel data plane ----------
+    // Anything past `stream::INLINE_MAX_BYTES` (1 MiB) leaves the control
+    // channel and comes back as chunks, so this is the path the ledger can
+    // never carry.
+    let blob = pattern_bytes(1024 * 1024 + 4096);
+    std::fs::write(user_root.join("loopback.bin"), &blob).expect("seed streamed file");
+    let read = issue(
+        &server,
+        &format!("device:{DEVICE_ID}"),
+        "workspace.read",
+        json!({"path": "loopback.bin"}),
+        None,
+    )
+    .await;
+    let read_id = read["command_id"].as_str().expect("read command id").to_string();
+    let record = wait_terminal(&server, &read_id, Duration::from_secs(60)).await;
+    assert_eq!(record["status"], json!("succeeded"), "{record}");
+    assert_eq!(
+        record["result"]["result"]["transport"],
+        json!("stream"),
+        "a 1 MiB file must not be inlined: {record}"
+    );
+    let (blob_status, fetched) = get_bytes(
+        &format!(
+            "{}/wunder/interlink/commands/{read_id}/blob",
+            server.base_url
+        ),
+        &server.token,
+    )
+    .await;
+    assert_eq!(blob_status, 200, "the blob endpoint refused the streamed file");
+    assert_eq!(
+        fetched.len(),
+        blob.len(),
+        "the reassembled stream lost bytes: {} of {}",
+        fetched.len(),
+        blob.len()
+    );
+    assert_eq!(fetched, blob, "the streamed bytes must match exactly");
+    // The trail records the read as size + short digest, never as content.
+    let (_, file_audit) = get_json(
+        &format!(
+            "{}/wunder/interlink/audit?limit=50&action=file.read",
+            server.base_url
+        ),
+        &server.token,
+    )
+    .await;
+    let file_rows = data_of(&file_audit)["items"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        file_rows
+            .iter()
+            .any(|row| row["detail_digest"]["size"].as_i64() == Some(blob.len() as i64)),
+        "a file.read row with the byte count must exist: {file_rows:?}"
+    );
+    assert!(
+        !serde_json::to_string(&file_rows)
+            .unwrap_or_default()
+            .contains(&base64_head(&blob)),
+        "the audit trail never carries file content"
     );
 
     // -- C2L L1 rejected: denial leaves no local side effects --------------
@@ -559,6 +785,156 @@ async fn loopback_tunnel_shadow_commands_and_approvals_end_to_end() {
         created.spawned_by
     );
 
+    // -- §13.3 8: the cloud view of that thread opens with a baseline -------
+    let mut view = RemoteView::open(&server, DEVICE_ID, &created.session_id).await;
+    let baseline = view.next(Duration::from_secs(20)).await;
+    assert_eq!(
+        baseline["type"],
+        json!("snapshot"),
+        "a fresh watcher must be handed the baseline, not a delta: {baseline}"
+    );
+    assert_eq!(
+        baseline["thread_id"],
+        json!(created.session_id),
+        "the baseline belongs to the watched thread: {baseline}"
+    );
+    assert!(
+        baseline["payload"]["messages"].is_array(),
+        "蜂巢's reducer takes the baseline as `messages`: {baseline}"
+    );
+
+    // ... and the next approved turn on the same thread arrives as a delta.
+    let follow = issue(
+        &server,
+        &format!("device:{DEVICE_ID}"),
+        "thread.message",
+        json!({"message": "第二句", "local_thread_id": created.session_id}),
+        None,
+    )
+    .await;
+    let follow_approval = wait_prompt(&node.client, &follow, Duration::from_secs(10)).await;
+    assert!(
+        node.client.decide_approval(
+            &follow_approval,
+            wunder_server::interlink::client::Decision::Approve,
+            false,
+        ),
+        "the follow-up prompt is decided"
+    );
+    let follow_record = wait_terminal(
+        &server,
+        follow["command_id"].as_str().unwrap(),
+        Duration::from_secs(30),
+    )
+    .await;
+    assert_eq!(follow_record["status"], json!("succeeded"), "{follow_record}");
+    let delta = view.next(Duration::from_secs(20)).await;
+    assert_eq!(delta["type"], json!("delta"), "a change after the baseline is a delta: {delta}");
+    assert_eq!(
+        delta["thread_id"],
+        json!(created.session_id),
+        "the delta stays on the watched thread: {delta}"
+    );
+    assert_eq!(
+        session_count(&node.state),
+        sessions_before + 1,
+        "driving the same remote thread must not fork a new one"
+    );
+
+    // -- §13.5 18: an L3 dispatch raises a governance alert in the trail ----
+    let l3 = issue(
+        &server,
+        &format!("device:{DEVICE_ID}"),
+        "tool.exec",
+        json!({"command": "echo", "args": ["ready"]}),
+        None,
+    )
+    .await;
+    assert_eq!(l3["approval_state"], json!("pending"), "{l3}");
+    let l3_approval = wait_prompt(&node.client, &l3, Duration::from_secs(10)).await;
+    let l3_command = l3["command_id"].as_str().expect("l3 command id");
+    // The alert belongs to the dispatch, not to the execution, so denying here
+    // keeps the run off the host while still proving the hook fired.
+    assert!(
+        node.client
+            .decide_approval(
+                &l3_approval,
+                wunder_server::interlink::client::Decision::Deny,
+                false,
+            ),
+        "the L3 prompt is decided"
+    );
+    let alert = wait_alert_rows(&server, Duration::from_secs(20))
+        .await
+        .into_iter()
+        .find(|row| row["command_id"].as_str() == Some(l3_command))
+        .expect("the L3 dispatch raised an alert for this command");
+    let detail = &alert["detail_digest"];
+    assert_eq!(detail["trigger"], json!("l3_execution"), "{alert}");
+    assert_eq!(detail["kind"], json!("tool.exec"), "{alert}");
+    assert_eq!(detail["level"], json!("L3"), "{alert}");
+    assert_eq!(
+        alert["actor"].as_str(),
+        Some(server.user_id.as_str()),
+        "an alert must be listed under the account it concerns: {alert}"
+    );
+    assert!(
+        !serde_json::to_string(&alert).unwrap_or_default().contains("ready"),
+        "the alert never carries arguments: {alert}"
+    );
+    // ... and the counters behind that row are readable by the 舰桥 (§9.4).
+    let (_, runtime) = get_json(
+        &format!("{}/wunder/admin/interlink/runtime", server.base_url),
+        &server.token,
+    )
+    .await;
+    let snapshot = data_of(&runtime);
+    assert_eq!(
+        snapshot["alerts"]["pump_running"],
+        json!(true),
+        "a started pump must report itself: {snapshot}"
+    );
+    assert!(
+        snapshot["alerts"]["raised"].as_i64().unwrap_or(0) >= 1,
+        "the L3 dispatch has to show in the alert counters: {snapshot}"
+    );
+    assert!(
+        snapshot["live_channels"].as_i64().unwrap_or(0) >= 1,
+        "the loopback tunnel counts as a live channel: {snapshot}"
+    );
+
+    // -- §13.3 9: nobody answers in time: the prompt closes, nothing runs ---
+    let (status, body) = http_json(
+        "POST",
+        &format!("{}/wunder/interlink/commands", server.base_url),
+        &server.token,
+        Some(json!({
+            "to": format!("device:{DEVICE_ID}"),
+            "kind": "thread.message",
+            "args": {"message": "无人应答", "title": "远程超时线程"},
+            "timeout_s": 1.0
+        })),
+    )
+    .await;
+    assert_eq!(status, 200, "issue failed: {body}");
+    let unanswered = data_of(&body);
+    let record = wait_terminal(
+        &server,
+        unanswered["command_id"].as_str().expect("command id"),
+        Duration::from_secs(30),
+    )
+    .await;
+    let code = record["error_code"].as_str().unwrap_or_default();
+    assert!(
+        matches!(code, "APPROVAL_REJECTED" | "APPROVAL_EXPIRED"),
+        "an unanswered prompt must close structurally, got {record}"
+    );
+    assert_eq!(
+        session_count(&node.state),
+        sessions_before + 1,
+        "the approved thread is the only one an unanswered prompt left behind"
+    );
+
     // -- idempotency: three replays, one ledger row ------------------------
     let first = issue(
         &server,
@@ -621,6 +997,153 @@ async fn loopback_tunnel_shadow_commands_and_approvals_end_to_end() {
         !serialized.contains("批准我") && !serialized.contains("拒绝我"),
         "audit never carries message bodies: {serialized}"
     );
+
+    // -- §13.5 governance: CSV export chains the same events ---------------
+    let (csv_status, csv) = get_text(
+        &format!(
+            "{}/wunder/interlink/audit?limit=200&format=csv",
+            server.base_url
+        ),
+        &server.token,
+    )
+    .await;
+    assert_eq!(csv_status, 200, "csv export failed: {csv}");
+    let mut csv_lines = csv.lines();
+    let header = csv_lines.next().unwrap_or_default();
+    assert_eq!(
+        header,
+        "seq,created_at,actor,from_node,to_node,action,command_id,approval_id,detail_digest",
+        "csv header is the contract the 舰桥 importer expects"
+    );
+    let csv_body = csv_lines.collect::<Vec<&str>>().join("\n");
+    assert!(csv_body.contains("command.issue"), "{csv_body}");
+    assert!(csv_body.contains("approval.decide"), "{csv_body}");
+    assert!(csv_body.contains("command.finish"), "{csv_body}");
+    assert!(
+        !csv_body.contains("批准我") && !csv_body.contains("拒绝我"),
+        "csv export never carries message bodies"
+    );
+
+    // -- §13.5 governance: kill switch closes a live tunnel ----------------
+    respawn_tunnel(&node).await;
+    wait_connected_within(&node.client, Duration::from_secs(60)).await;
+
+    // §13.3 11: what the offline queue parked must now run, in order.
+    let record = wait_terminal(
+        &server,
+        parked["command_id"].as_str().expect("parked command id"),
+        Duration::from_secs(30),
+    )
+    .await;
+    assert_eq!(
+        record["status"],
+        json!("succeeded"),
+        "a command parked while offline must execute once the node is back: {record}"
+    );
+
+    let (status, body) = http_json(
+        "PATCH",
+        &format!(
+            "{}/wunder/interlink/nodes/{}/enabled",
+            server.base_url, DEVICE_ID
+        ),
+        &server.token,
+        Some(json!({"enabled": false})),
+    )
+    .await;
+    assert_eq!(status, 200, "kill switch rejected: {body}");
+    wait_disconnected(&node.client, Duration::from_secs(20)).await;
+
+    let (status, body) = http_json(
+        "POST",
+        &format!("{}/wunder/interlink/commands", server.base_url),
+        &server.token,
+        Some(json!({
+            "to": format!("device:{DEVICE_ID}"),
+            "kind": "workspace.list",
+            "args": {"path": "."}
+        })),
+    )
+    .await;
+    assert_eq!(
+        status, 403,
+        "a device under the kill switch is refused, not queued: {body}"
+    );
+    assert!(
+        serde_json::to_string(&body).unwrap_or_default().contains("disabled"),
+        "the refusal says why: {body}"
+    );
+
+    let (status, body) = http_json(
+        "PATCH",
+        &format!(
+            "{}/wunder/interlink/nodes/{}/enabled",
+            server.base_url, DEVICE_ID
+        ),
+        &server.token,
+        Some(json!({"enabled": true})),
+    )
+    .await;
+    assert_eq!(status, 200, "kill switch lift rejected: {body}");
+
+    // -- §13.5 governance: revocation closes, forgets and hides ------------
+    respawn_tunnel(&node).await;
+    wait_connected_within(&node.client, Duration::from_secs(60)).await;
+
+    let (status, body) = http_json(
+        "DELETE",
+        &format!(
+            "{}/wunder/admin/cloud/devices/{}",
+            server.base_url, DEVICE_ID
+        ),
+        &server.token,
+        None,
+    )
+    .await;
+    assert_eq!(status, 200, "device revocation failed: {body}");
+    wait_disconnected(&node.client, Duration::from_secs(20)).await;
+
+    // The projection of a revoked device is gone: the endpoint answers 401 and
+    // the shadow row was deleted with the device.
+    let (status, _) = get_json(
+        &format!(
+            "{}/wunder/interlink/nodes/{}/shadow",
+            server.base_url, DEVICE_ID
+        ),
+        &server.token,
+    )
+    .await;
+    assert_eq!(status, 401, "a revoked device still serves its shadow");
+    assert!(
+        server
+            .state
+            .storage
+            .get_interlink_shadow(DEVICE_ID)
+            .expect("shadow query")
+            .is_none(),
+        "revocation must drop the stored projection"
+    );
+
+    let (_, nodes) = get_json(
+        &format!("{}/wunder/interlink/nodes", server.base_url),
+        &server.token,
+    )
+    .await;
+    let nodes = data_of(&nodes);
+    let listed: Vec<&str> = nodes["nodes"]
+        .as_array()
+        .map(|rows| {
+            rows.iter()
+                .filter_map(|row| row["node_id"].as_str())
+                .collect()
+        })
+        .unwrap_or_default();
+    assert!(
+        !listed.contains(&format!("device:{DEVICE_ID}").as_str()),
+        "a revoked device stays out of the catalog: {listed:?}"
+    );
+
+    node.client.stop();
 }
 
 /// Wait for the node-side prompt of one issued L1 command.
@@ -647,4 +1170,104 @@ async fn wait_prompt(
         );
         tokio::time::sleep(Duration::from_millis(150)).await;
     }
+}
+
+/// Poll the account's own audit trail for governance alerts (§13.5 18). The
+/// pump writes them on a background task, so the row arrives a moment after the
+/// dispatch; a user-scoped query must be able to see it or the alert is not
+/// governance at all.
+async fn wait_alert_rows(server: &Server, timeout: Duration) -> Vec<Value> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let (_, body) = get_json(
+            &format!(
+                "{}/wunder/interlink/audit?limit=100&action=alert.raised",
+                server.base_url
+            ),
+            &server.token,
+        )
+        .await;
+        let rows = data_of(&body)["items"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        if !rows.is_empty() {
+            // The self-service view must honour `action` like the admin one,
+            // otherwise a filter that is silently ignored reads as "no alerts".
+            for row in &rows {
+                assert_eq!(
+                    row["action"].as_str(),
+                    Some("alert.raised"),
+                    "the action filter leaked other rows: {row}"
+                );
+            }
+            return rows;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "no alert.raised row ever reached the user's trail"
+        );
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+}
+
+/// Idle cost of a live tunnel (docs §13.6: CPU < 1%, RSS delta < 30 MB).
+///
+/// CPU and RSS belong to the process, and this process carries two complete
+/// engines (the server router and the local form) whose own housekeeping would
+/// swamp the tunnel's cost. So the run has two phases: the same process idles
+/// first with the tunnel **down**, then with one live tunnel. The sampler
+/// watches for the `INTERLINK_TUNNEL_UP` line and reports both rates; only the
+/// increment belongs to the tunnel (docs §13.6: CPU < 1%, RSS delta < 30 MB).
+///
+/// Run it alone: `cargo test -p wunder-runtime --test interlink_loopback
+/// --features sqlite-storage -- --ignored --nocapture --test-threads=1`
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "idle tunnel budget measurement; run alone through scripts/interlink-bench/measure-idle.ps1"]
+async fn idle_tunnel_stays_open_without_growth() {
+    let window_s = std::env::var("INTERLINK_IDLE_SECONDS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(60);
+
+    let server = spawn_server().await;
+    let node = build_local_node(&server).await;
+
+    println!(
+        "INTERLINK_IDLE_PID={} BASELINE_SECONDS={window_s} TUNNEL_SECONDS={window_s}",
+        std::process::id()
+    );
+    for _ in 0..window_s {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+
+    let started = node.client.clone();
+    tokio::task::spawn_blocking(move || started.start())
+        .await
+        .expect("interlink client start");
+    wait_connected(&node.client).await;
+    let drops_after_connect = node.client.status().dropped_frames;
+    println!("INTERLINK_TUNNEL_UP");
+    for _ in 0..window_s {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+
+    // Idle means exactly that: the tunnel is still up and every bounded
+    // structure is back to empty.
+    let status = node.client.status();
+    assert_eq!(
+        status.state,
+        wunder_server::interlink::client::TunnelState::Connected,
+        "the tunnel must survive an idle window: {status:?}"
+    );
+    assert_eq!(status.pending_approvals, 0, "no approval queued while idle");
+    assert_eq!(status.inflight_commands, 0, "no command in flight while idle");
+    assert_eq!(status.watched_threads, 0, "no remote subscription while idle");
+    assert_eq!(
+        status.dropped_frames, drops_after_connect,
+        "an idle tunnel must not saturate its own bounded queues: {status:?}"
+    );
+    assert!(status.last_error.is_none(), "idle tunnel reported {status:?}");
+
+    node.client.stop();
 }

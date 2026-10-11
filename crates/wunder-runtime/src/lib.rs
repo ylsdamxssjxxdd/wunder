@@ -31,7 +31,7 @@ pub use orchestrator::constants as orchestrator_constants;
 pub use services::runtime::thread::{ThreadCancelSettlement, ThreadSubmitOutcome};
 pub use services::skill_archive;
 pub use services::stress_thread::{validate_stress_params, MAX_MODEL_ROUNDS, MAX_USER_ROUNDS};
-pub use services::subagents::list_parent_subagents;
+pub use services::subagents::{control_parent_subagents, list_parent_subagents};
 pub use services::thread_catalog::{
     StatusSignals, ThreadCatalogService, ThreadListQuery, ThreadPage, ThreadPendingReason,
     ThreadSnapshot, ThreadStatus, ThreadWriteAccess,

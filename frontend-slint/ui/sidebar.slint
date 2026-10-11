@@ -83,6 +83,7 @@ component ThreadRow inherits Rectangle {
     callback archive();
     callback begin-rename();
     callback commit-rename();
+    callback open-trajectory();
     height: 28px;
     background: data.active ? Theme.selected : transparent;
     // Tree connector line linking the thread to its workspace row.
@@ -136,9 +137,10 @@ component ThreadRow inherits Rectangle {
             }
         }
         if !root.editing : Rectangle {
-            // Rename and archive appear only while the row is hovered; they
-            // stay fully hidden otherwise, including on the active thread.
-            width: hover ? 46px : 0px;
+            // Rename, trajectory and archive appear only while the row is
+            // hovered; they stay fully hidden otherwise, including on the
+            // active thread.
+            width: hover ? 69px : 0px;
             clip: true;
             animate width { duration: 90ms; }
             HorizontalLayout {
@@ -148,6 +150,16 @@ component ThreadRow inherits Rectangle {
                     background: rename-touch.has-hover ? Theme.selected : transparent;
                     Image { x: 3px; y: 3px; width: 14px; height: 14px; source: @image-url("../assets/icons/pen.svg"); colorize: Theme.muted; }
                     rename-touch := TouchArea { mouse-cursor: pointer; clicked => { root.begin-rename(); } }
+                }
+                Rectangle {
+                    width: 20px; height: 20px; border-radius: 4px;
+                    background: traj-touch.has-hover ? Theme.selected : transparent;
+                    Image { x: 3px; y: 3px; width: 14px; height: 14px; source: @image-url("../assets/icons/log-chart.svg"); colorize: Theme.muted; }
+                    traj-touch := TouchArea {
+                        mouse-cursor: pointer;
+                        accessible-role: button; accessible-label: I18n.traj_title;
+                        clicked => { root.open-trajectory(); }
+                    }
                 }
                 Rectangle {
                     width: 20px; height: 20px; border-radius: 4px;
@@ -188,6 +200,7 @@ export component Sidebar inherits Rectangle {
     callback move-row(int, int);
     callback archive-thread(int);
     callback rename-thread(int, string);
+    callback open-trajectory(int);
     callback open-settings();
 
     // Sidebar row currently renamed inline; -1 closes the editor. Only one
@@ -317,6 +330,7 @@ export component Sidebar inherits Rectangle {
                             root.renaming = -1;
                             if title != row.title { root.rename-thread(row.payload, title); }
                         }
+                        open-trajectory => { root.open-trajectory(row.payload); }
                     }
                 }
             }

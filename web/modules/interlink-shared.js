@@ -5,6 +5,8 @@
 //   GET   /wunder/admin/interlink/channels?offset=&limit=&user_id=&device_id=
 //   GET   /wunder/admin/interlink/commands?offset=&limit=&user_id=&device_id=&kind=&status=&direction=
 //   GET   /wunder/admin/interlink/audit?offset=&limit=&user_id=&device_id=&action=&since=&until=&format=csv
+//   GET   /wunder/admin/interlink/runtime（只读快照：live_channels / rtt_p50_ms / rtt_p95_ms /
+//         channels / commands / watched_threads / blob_cache_bytes / open_streams / alerts）
 //   PATCH /wunder/admin/interlink/devices/{id}/policy
 //   POST  /wunder/admin/interlink/devices/{id}/rotate_secret
 //   DELETE /wunder/admin/cloud/devices/{id}（复用既有吊销端点）
@@ -15,6 +17,8 @@
 //
 // 契约三态（unknown / ready / unavailable）：端点 404 或 403/401 时置
 // unavailable 并短路后续管理端请求，避免在同一会话里反复打不可用端点。
+// 例外：/runtime 是新增只读端点，404 只表示「契约未就绪」，用 adminGet 的
+// missingOk 选项走 EndpointMissingError，不锁死整条管理端契约。
 
 import { getWunderBase } from "./api.js";
 import { openImpactConfirmModal } from "./preset-agents.js?v=20261007-01";
@@ -51,7 +55,11 @@ export const AUDIT_ACTIONS = [
   "policy.update",
   "secret.rotate",
   "secret.issue",
+  // 治理告警：alerts.rs 的三类触发都写这一行（见 ALERT_TRIGGERS）
+  "alert.raised",
 ];
+// alert.raised 行的 detail.trigger 取值（crates/wunder-runtime/src/services/interlink/alerts.rs）
+export const ALERT_TRIGGERS = ["l3_execution", "rejection_storm", "secret_stale_version"];
 // §7.1 冻结命令目录（与 crates/wunder-core/src/interlink.rs 一致）
 export const COMMAND_KINDS = [
   "node.summary",
@@ -135,6 +143,54 @@ const TEXT = {
     qualityTitle: "隧道质量",
     topNone: "无重连记录",
     noSample: "无样本",
+    // 互通告警与运行时（只读面板）
+    alertsTitle: "互通告警与运行时",
+    alertsTip: "只读治理面：告警计数与运行时快照来自 /admin/interlink/runtime，告警行来自审计端点。",
+    endpointMissing: "契约未就绪：{path} 尚不可用（后端未实现或已过时）。",
+    runtimeStateLoading: "运行时快照读取中…",
+    runtimeStateFailed: "运行时快照读取失败：{message}",
+    alertCountersTitle: "告警计数",
+    alertCountersHint: "累计值，进程重启后归零",
+    alertRuntimeTitle: "运行时指标",
+    alertListTitle: "最近告警",
+    alertListHint: "默认筛选 action=alert.raised，逐页读取",
+    statRaised: "已产生",
+    statDropped: "已丢弃",
+    statDelivered: "已投递",
+    statWebhookFailures: "webhook 失败",
+    statQueueCapacity: "队列容量",
+    statTracked: "检测态设备",
+    statPump: "告警泵",
+    pumpRunning: "运行中",
+    pumpStopped: "未运行",
+    pumpStoppedWarn: "告警泵未运行：新告警只计入「已丢弃」，不会投递（本地形态不起泵）。",
+    webhookFailureWarn: "webhook 失败 {count} 次：投递链路不通，告警只落审计。",
+    metricLiveChannels: "在线隧道",
+    metricChannels: "通道记录",
+    metricRtt: "RTT p50 / p95",
+    metricBlobCache: "Blob 缓存",
+    metricOpenStreams: "打开的流",
+    metricWatchedThreads: "被监听线程",
+    metricCommandStats: "在途 / 排队命令",
+    alertColTrigger: "触发",
+    alertColDevice: "设备",
+    alertColKind: "类型 / 等级",
+    alertColLevel: "等级",
+    alertColResult: "结果",
+    alertColCount: "计数",
+    alertColSeq: "审计序号",
+    alertColActor: "主体",
+    alertColCommand: "命令",
+    alertTriggerUnknown: "未归类",
+    alertTriggerL3Execution: "L3 执行",
+    alertTriggerRejectionStorm: "拒绝风暴",
+    alertTriggerSecretStale: "旧密钥握手",
+    alertDrawerTitle: "告警详情",
+    alertDrawerHint: "告警行只含标识符（§9.3 红线），正文不进审计。",
+    alertFilterThisDevice: "只看该设备的告警",
+    alertFilterDevice: "设备",
+    alertFilterAction: "审计动作",
+    alertNoDevice: "该告警未带设备标识。",
     // 表格
     colDevice: "设备",
     colClient: "客户端",
@@ -307,6 +363,55 @@ const TEXT = {
     qualityTitle: "Tunnel quality",
     topNone: "no reconnect records",
     noSample: "no sample",
+    alertsTitle: "Interlink alerts & runtime",
+    alertsTip:
+      "Read-only governance: alert counters and the runtime snapshot come from /admin/interlink/runtime, alert rows from the audit endpoint.",
+    endpointMissing: "Contract not ready: {path} is not available yet (backend not implemented or stale).",
+    runtimeStateLoading: "Reading the runtime snapshot…",
+    runtimeStateFailed: "Runtime snapshot failed: {message}",
+    alertCountersTitle: "Alert counters",
+    alertCountersHint: "Process-lifetime totals, reset on restart",
+    alertRuntimeTitle: "Runtime metrics",
+    alertListTitle: "Recent alerts",
+    alertListHint: "Filtered to action=alert.raised by default, one page per request",
+    statRaised: "Raised",
+    statDropped: "Dropped",
+    statDelivered: "Delivered",
+    statWebhookFailures: "Webhook failures",
+    statQueueCapacity: "Queue capacity",
+    statTracked: "Tracked devices",
+    statPump: "Alert pump",
+    pumpRunning: "running",
+    pumpStopped: "stopped",
+    pumpStoppedWarn:
+      "Alert pump is not running: new alerts only count towards Dropped and are never delivered (local forms do not spawn the pump).",
+    webhookFailureWarn: "Webhook failed {count} times: delivery is unreachable, alerts only land in the audit trail.",
+    metricLiveChannels: "Live tunnels",
+    metricChannels: "Channel records",
+    metricRtt: "RTT p50 / p95",
+    metricBlobCache: "Blob cache",
+    metricOpenStreams: "Open streams",
+    metricWatchedThreads: "Watched threads",
+    metricCommandStats: "In flight / queued commands",
+    alertColTrigger: "Trigger",
+    alertColDevice: "Device",
+    alertColKind: "Kind / level",
+    alertColLevel: "Level",
+    alertColResult: "Result",
+    alertColCount: "Count",
+    alertColSeq: "Audit seq",
+    alertColActor: "Actor",
+    alertColCommand: "Command",
+    alertTriggerUnknown: "unclassified",
+    alertTriggerL3Execution: "L3 execution",
+    alertTriggerRejectionStorm: "Rejection storm",
+    alertTriggerSecretStale: "Stale secret handshake",
+    alertDrawerTitle: "Alert detail",
+    alertDrawerHint: "An alert row carries identifiers only (§9.3 red line); payloads never reach the audit trail.",
+    alertFilterThisDevice: "Show only this device",
+    alertFilterDevice: "Device",
+    alertFilterAction: "Audit action",
+    alertNoDevice: "This alert carries no device identifier.",
     colDevice: "Device",
     colClient: "Client",
     colUser: "Account",
@@ -550,6 +655,15 @@ export const badge = (text, variant, title = "") => {
 export const statusBadge = (status) =>
   badge(statusLabel(status), `interlink-${NODE_STATUSES.includes(status) ? status : "away"}`, status || "");
 
+export const triggerLabel = (trigger) =>
+  t(
+    {
+      l3_execution: "alertTriggerL3Execution",
+      rejection_storm: "alertTriggerRejectionStorm",
+      secret_stale_version: "alertTriggerSecretStale",
+    }[trigger] || "alertTriggerUnknown"
+  );
+
 export const chip = (text, options = {}) => {
   const node = el("span", options.denied ? "interlink-chip is-denied" : "interlink-chip", text);
   if (options.title) {
@@ -707,6 +821,16 @@ export class ContractError extends Error {
   }
 }
 
+/// 单个端点尚未落地（404）：只影响调用它的那块界面，不锁死整条管理端契约。
+export class EndpointMissingError extends Error {
+  constructor(path) {
+    super(t("endpointMissing", { path }));
+    this.name = "EndpointMissingError";
+    this.endpointMissing = true;
+    this.path = path;
+  }
+}
+
 const blockForStatus = async (response) => {
   const fallback = t("requestFailed", { status: response.status });
   const message = await extractResponseMessage(response, fallback);
@@ -726,8 +850,10 @@ const blockForStatus = async (response) => {
 /**
  * GET 管理端 JSON，返回 `{ data }` 里的载荷。
  * 404 / 401 / 403 会把契约置为 unavailable 并短路后续请求。
+ * `missingOk` 用于新增只读端点：404 抛 EndpointMissingError（界面显示「契约未就绪」），
+ * 不影响契约状态，其它管理端请求继续可用。
  */
-export const adminGet = async (path, query) => {
+export const adminGet = async (path, query, options = {}) => {
   if (contract.isBlocked()) {
     throw new ContractError(contract.reason);
   }
@@ -737,6 +863,9 @@ export const adminGet = async (path, query) => {
     credentials: "same-origin",
   });
   if (!response.ok) {
+    if (options.missingOk && response.status === 404) {
+      throw new EndpointMissingError(`${adminBase()}${path}`);
+    }
     const error = await blockForStatus(response);
     if (contract.isBlocked()) {
       throw new ContractError(error.message);

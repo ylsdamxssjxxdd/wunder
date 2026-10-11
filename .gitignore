@@ -97,3 +97,4 @@ supplement-build/
 # JiuwenSwarm runtime file operation logs
 .agent_history/
 .trash
+docs/性能基线/assets

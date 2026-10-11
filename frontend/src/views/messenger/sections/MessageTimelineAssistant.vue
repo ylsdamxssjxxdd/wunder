@@ -6,69 +6,62 @@
     <!--
       时间线主体（形态对齐桌面端 `frontend-slint/src/timeline.rs`）：模型每轮的正式
       输出是一段独立打印，思考与工具调用按到达顺序折成可开合的批次夹在段与段之间。
-      块的顺序由投影层按 `created_seq` 定好，这里只负责铺开。
+      块的顺序由投影层按 `created_seq` 定好；块渲染由 MessageTimelineBlocks 与
+      子智能体详情弹窗共用，旧式单段正文（问候语、无块旧行）回退到本组件渲染。
     -->
-    <template
-      v-for="block in renderBlocks"
-      :key="block.id"
+    <MessageTimelineBlocks
+      v-if="hasProjectionBlocks"
+      :blocks="timelineBlocks"
+      :workflow-items="workflowItems"
+      :session-id="activeSessionId"
+      :identity-key="item.key"
+      :default-open="defaultOpen"
+      :streaming="bodyStreaming"
+      :content-version="runtimeContentVersion"
+      :body-text-transform="transformBodyText"
+      :cache-key-prefix="`agent:${conversationKey}:c${currentContainerId}:`"
+      :message="message"
+      :runtime-message-id="runtimeMessageId"
+      :runtime-user-turn-id="runtimeUserTurnId"
+      :runtime-model-turn-id="runtimeModelTurnId"
+      :content-truncated="message.content_truncated === true"
+      :resolve-workspace-path="resolveAgentMarkdownWorkspacePath"
+      :throttle-ms="MARKDOWN_STREAM_THROTTLE_MS"
+      @markdown-rendered="handleMessageMarkdownRendered(item.key, $event)"
+      @history-hydrated="handleHistoryHydrated"
+      @activity="(active) => emit('activity', active)"
     >
-      <div
-        v-if="block.kind === 'activity'"
-        class="timeline-group"
-        :class="{ 'is-open': block.open }"
-        data-turn-slot="activity"
-        :data-activity-id="block.id"
-      >
-        <button
-          class="timeline-group-head"
-          type="button"
-          :aria-expanded="block.open"
-          @click="toggleActivity(block.id)"
-        >
-          <span class="timeline-group-gutter" aria-hidden="true">
-            <i
-              :class="['fa-solid', 'fa-caret-right', 'timeline-group-arrow', { 'is-open': block.open }]"
-            ></i>
-            <span v-if="block.open" class="timeline-group-gutter-line"></span>
-          </span>
-          <span class="timeline-group-title">{{ activityTitle(block) }}</span>
-          <span v-if="!block.open && block.latestSummary" class="timeline-group-latest">{{ block.latestSummary }}</span>
-        </button>
-
-        <div v-if="block.open" class="timeline-group-body">
-          <template v-for="row in block.rows" :key="row.key">
-            <MessageTimelineThinkingEntry
-              v-if="row.kind === 'reasoning'"
-              :entry="row.entry"
-              :open="reasoningOpenKeys.includes(row.key)"
-              @toggle="toggleReasoning(row.key)"
-            />
-            <MessageTimelineToolEntry
-              v-else
-              :entry="row.entry"
-              :open="entryOpenKeys.includes(row.key)"
-              :patch-view="patchViewFor(row.entry)"
-              @toggle="toggleEntry(row.key)"
-            />
-          </template>
-
-          <button v-if="block.isLast && hiddenToolCount > 0" class="timeline-group-more" type="button" @click="showMoreEntries">
-            {{ t('chat.timeline.showMoreEntries', { count: hiddenToolCount }) }}
-          </button>
-
-          <div v-if="block.isLast && omittedRuns > 0" class="timeline-group-note" role="note">
-            {{ t('chat.timeline.omittedRuns', { count: omittedRuns }) }}
+      <template #body-tail="{ isLast }">
+        <template v-if="isLast">
+          <div v-if="hasUserImageAttachments(message)" class="message-user-image-grid">
+            <button
+              v-for="imageItem in resolveUserImageAttachments(message)"
+              :key="imageItem.key"
+              class="message-user-image-btn"
+              type="button"
+              :title="imageItem.name"
+              :aria-label="imageItem.name"
+              @click="openResourcePreview({ src: imageItem.src, title: imageItem.name, workspacePath: imageItem.workspacePath, meta: imageItem.workspacePath || imageItem.name, kind: 'image' })"
+            >
+              <img :src="imageItem.src" :alt="imageItem.name" class="message-user-image" loading="lazy" decoding="async" />
+            </button>
           </div>
-        </div>
-      </div>
-
-      <div
-        v-else
-        class="timeline-body-block"
-        :class="{ 'is-streaming': block.streaming }"
-        data-turn-slot="body"
-      >
-        <template v-if="isGreeting">
+          <div v-if="hasUserAudioAttachments(message)" class="message-user-audio-grid">
+            <div v-for="audioItem in resolveUserAudioAttachments(message)" :key="audioItem.key" class="message-user-audio-card">
+              <span class="message-user-audio-name" :title="audioItem.name">{{ audioItem.name }}</span>
+              <audio class="message-user-audio-player" :src="audioItem.src" controls preload="metadata"></audio>
+            </div>
+          </div>
+        </template>
+      </template>
+    </MessageTimelineBlocks>
+    <div
+      v-else-if="hasBody"
+      class="timeline-body-block"
+      :class="{ 'is-streaming': bodyStreaming }"
+      data-turn-slot="body"
+    >
+      <template v-if="isGreeting">
           <div class="timeline-greeting">
             <div class="timeline-greeting-text">{{ String(message.content || '') }}</div>
             <el-tooltip
@@ -143,46 +136,43 @@
         </template>
         <MessageMarkdownBody
           v-else
-          :cache-key="`agent:${conversationKey}:${block.id}:c${currentContainerId}`"
-          :content="block.text"
+          :cache-key="`agent:${conversationKey}:${legacyBodyId()}:c${currentContainerId}`"
+          :content="displayContent"
           :message="message"
           :runtime-message-id="runtimeMessageId"
           :runtime-user-turn-id="runtimeUserTurnId"
           :runtime-model-turn-id="runtimeModelTurnId"
           :session-id="activeSessionId"
-          :item-id="block.id"
+          :item-id="legacyBodyId()"
           :content-truncated="message.content_truncated === true"
           :assistant-display="true"
-          :explicit-content="!block.legacy"
-          :streaming="block.streaming"
+          :explicit-content="false"
+          :streaming="bodyStreaming"
           :throttle-ms="MARKDOWN_STREAM_THROTTLE_MS"
           :resolve-workspace-path="resolveAgentMarkdownWorkspacePath"
           @rendered="handleMessageMarkdownRendered(item.key, $event)"
           @history-message-hydrated="handleHistoryHydrated"
         />
-        <template v-if="block.isLast">
-          <div v-if="hasUserImageAttachments(message)" class="message-user-image-grid">
-            <button
-              v-for="imageItem in resolveUserImageAttachments(message)"
-              :key="imageItem.key"
-              class="message-user-image-btn"
-              type="button"
-              :title="imageItem.name"
-              :aria-label="imageItem.name"
-              @click="openResourcePreview({ src: imageItem.src, title: imageItem.name, workspacePath: imageItem.workspacePath, meta: imageItem.workspacePath || imageItem.name, kind: 'image' })"
-            >
-              <img :src="imageItem.src" :alt="imageItem.name" class="message-user-image" loading="lazy" decoding="async" />
-            </button>
+        <div v-if="hasUserImageAttachments(message)" class="message-user-image-grid">
+          <button
+            v-for="imageItem in resolveUserImageAttachments(message)"
+            :key="imageItem.key"
+            class="message-user-image-btn"
+            type="button"
+            :title="imageItem.name"
+            :aria-label="imageItem.name"
+            @click="openResourcePreview({ src: imageItem.src, title: imageItem.name, workspacePath: imageItem.workspacePath, meta: imageItem.workspacePath || imageItem.name, kind: 'image' })"
+          >
+            <img :src="imageItem.src" :alt="imageItem.name" class="message-user-image" loading="lazy" decoding="async" />
+          </button>
+        </div>
+        <div v-if="hasUserAudioAttachments(message)" class="message-user-audio-grid">
+          <div v-for="audioItem in resolveUserAudioAttachments(message)" :key="audioItem.key" class="message-user-audio-card">
+            <span class="message-user-audio-name" :title="audioItem.name">{{ audioItem.name }}</span>
+            <audio class="message-user-audio-player" :src="audioItem.src" controls preload="metadata"></audio>
           </div>
-          <div v-if="hasUserAudioAttachments(message)" class="message-user-audio-grid">
-            <div v-for="audioItem in resolveUserAudioAttachments(message)" :key="audioItem.key" class="message-user-audio-card">
-              <span class="message-user-audio-name" :title="audioItem.name">{{ audioItem.name }}</span>
-              <audio class="message-user-audio-player" :src="audioItem.src" controls preload="metadata"></audio>
-            </div>
-          </div>
-        </template>
+        </div>
       </div>
-    </template>
 
     <!--
       轮次统计行（§7.3 A，桌面端 BodyBlock 的 `height: 22px` 尾部行）：
@@ -230,21 +220,10 @@ import { computed, onBeforeUnmount, ref, triggerRef, watch } from 'vue';
 import MessageMarkdownBody from '@/components/chat/MessageMarkdownBody.vue';
 import MessageStats from '@/components/chat/MessageStats.vue';
 import MessageSubagentPanel from '@/components/chat/MessageSubagentPanel.vue';
-import MessageTimelineThinkingEntry from '@/components/chat/MessageTimelineThinkingEntry.vue';
-import MessageTimelineToolEntry from '@/components/chat/MessageTimelineToolEntry.vue';
+import MessageTimelineBlocks from '@/components/chat/MessageTimelineBlocks.vue';
 import { resolveRuntimeMessageContentSource, resolveRuntimeMessageContentSubscriptionIds } from '@/components/chat/messageRuntimeContent';
-import {
-  TIMELINE_ENTRY_PAGE_SIZE,
-  TIMELINE_ENTRY_RENDER_LIMIT,
-  buildTimelineToolEntries,
-  type TimelineReasoningEntry,
-  type TimelineToolEntry
-} from '@/components/chat/toolTimelineModel';
-import { buildTimelinePatchView } from '@/components/chat/toolTimelinePatch';
 import { createToolWorkflowRenderBatcher } from '@/components/chat/toolWorkflowRenderBatcher';
-import { MAX_OPEN_ENTRIES_PER_TURN } from '@/components/chat/timelineGroupState';
 import type { ChatRuntimeTimelineBlock } from '@/realtime/chat/chatRuntimeTypes';
-import type { ToolWorkflowPatchView } from '@/components/chat/toolWorkflowTypes';
 import type { WorkflowItem } from '@/components/chat/toolWorkflowRunModel';
 import type { MessengerControllerContext } from '../controller/messengerControllerContext';
 import { buildAssistantDisplayContent } from '@/utils/assistantFailureNotice';
@@ -442,26 +421,6 @@ watch(
 
 onBeforeUnmount(() => workflowBatcher.dispose());
 
-const toolEntryModel = computed(() => buildTimelineToolEntries(workflowItems.value, t));
-const allToolEntries = computed(() => toolEntryModel.value.entries);
-const omittedRuns = computed(() => toolEntryModel.value.omittedRuns);
-
-const entryRenderLimit = ref(TIMELINE_ENTRY_RENDER_LIMIT);
-const visibleToolEntries = computed<TimelineToolEntry[]>(() => {
-  const entries = allToolEntries.value;
-  const limit = Math.max(entryRenderLimit.value, 1);
-  return entries.length > limit ? entries.slice(entries.length - limit) : entries;
-});
-const hiddenToolCount = computed(() => Math.max(allToolEntries.value.length - visibleToolEntries.value.length, 0));
-const showMoreEntries = (): void => {
-  entryRenderLimit.value = Math.min(entryRenderLimit.value + TIMELINE_ENTRY_PAGE_SIZE, 400);
-};
-
-const reasoningSummaryOf = (text: string): string => {
-  const normalized = text.replace(/\s+/g, ' ').trim();
-  return normalized.length > 160 ? `${normalized.slice(0, 160)}…` : normalized;
-};
-
 // ------------------------------------------------- 时间线块（正文/批次交错）
 
 const timelineBlocks = computed<ChatRuntimeTimelineBlock[]>(() => {
@@ -472,141 +431,15 @@ const timelineBlocks = computed<ChatRuntimeTimelineBlock[]>(() => {
   return Array.isArray(blocks) ? (blocks as ChatRuntimeTimelineBlock[]) : [];
 });
 
-/**
- * 工具条目 → 批次行：批次里的 `tool` 行按底层工作流记录 id 认领自己的条目
- * （一次调用的 call / output / result 三条记录都指向同一条目）。
- */
-const toolEntryByItemId = computed(() => {
-  const map = new Map<string, TimelineToolEntry>();
-  visibleToolEntries.value.forEach((entry) => {
-    const run = entry.run as unknown as Record<string, Record<string, unknown> | null> | undefined;
-    [run?.callItem?.id, run?.outputItem?.id, run?.resultItem?.id].forEach((id) => {
-      if (id) map.set(String(id), entry);
-    });
-  });
-  return map;
-});
+/** 有投影块列表时交给共享的 MessageTimelineBlocks 渲染（与子智能体详情共用）。 */
+const hasProjectionBlocks = computed(() => timelineBlocks.value.length > 0);
 
-type RenderReasoningRow = { kind: 'reasoning'; key: string; entry: TimelineReasoningEntry };
-type RenderToolRow = { kind: 'tool'; key: string; entry: TimelineToolEntry };
-type RenderActivityRow = RenderReasoningRow | RenderToolRow;
-
-type RenderBodyBlock = {
-  kind: 'body';
-  id: string;
-  text: string;
-  streaming: boolean;
-  isLast: boolean;
-  /** 退回单段正文时交给 `MessageMarkdownBody` 自己解析（问候语、旧行）。 */
-  legacy?: boolean;
-};
-
-type RenderActivityBlock = {
-  kind: 'activity';
-  id: string;
-  open: boolean;
-  rows: RenderActivityRow[];
-  toolCount: number;
-  latestSummary: string;
-  isLast: boolean;
-};
-
-type RenderBlock = RenderBodyBlock | RenderActivityBlock;
-
-const renderBlocks = computed<RenderBlock[]>(() => {
-  const blocks = timelineBlocks.value;
-  if (blocks.length === 0) {
-    // 没有块列表（问候语、旧行）时退回单段正文，保持既有渲染形态。
-    if (!hasBody.value) return [];
-    return [{ kind: 'body', id: legacyBodyId(), text: displayContent.value, streaming: bodyStreaming.value, isLast: true, legacy: true }];
-  }
-  const lastBodyIndex = blocks.reduce((last, block, index) => (block.kind === 'body' ? index : last), -1);
-  const lastActivityIndex = blocks.reduce((last, block, index) => (block.kind === 'activity' ? index : last), -1);
-  const claimed = new Set<string>();
-  return blocks.map((block, index): RenderBlock => {
-    if (block.kind === 'body') {
-      const isLastBlock = index === blocks.length - 1;
-      return {
-        kind: 'body',
-        id: block.id,
-        // 失败提示是整轮信息，只挂在最后一段正文上（与旧单段形态同源）。
-        text: index === lastBodyIndex
-          ? buildAssistantDisplayContent(message.value, translate, block.text)
-          : block.text,
-        streaming: index === lastBodyIndex && bodyStreaming.value,
-        isLast: isLastBlock
-      };
-    }
-    // 思考行与工具行按投影给定的到达顺序铺开：一批里可以有多次思考、多次调用。
-    const rows: RenderActivityRow[] = [];
-    block.rows.forEach((row) => {
-      if (row.type === 'reasoning') {
-        const text = String(row.text || '');
-        if (!text.trim()) return;
-        const key = `${props.item.key}:${block.id}:reasoning:${row.itemId}`;
-        rows.push({
-          kind: 'reasoning',
-          key,
-          entry: {
-            kind: 'reasoning',
-            key,
-            // 思考条目的流式状态以条目自身 status 为准（投影层下发）：
-            // 整轮 active 期间思考可能早已结束，跟着整轮转圈会一直显示「正在思考…」。
-            // 旧行没有条目级状态时退回整轮 flag，保持既有表现。
-            streaming: row.streaming === undefined
-              ? index === lastActivityIndex && Boolean(message.value.reasoningStreaming)
-              : Boolean(row.streaming),
-            summary: reasoningSummaryOf(text),
-            text
-          }
-        });
-        return;
-      }
-      const entry = toolEntryByItemId.value.get(String(row.itemId));
-      if (!entry || claimed.has(entry.key)) return;
-      claimed.add(entry.key);
-      rows.push({ kind: 'tool', key: entry.key, entry });
-    });
-    // 认领不到批次的条目（旧行、投影短暂错位）落到最后一批，条目不会凭空消失。
-    if (index === lastActivityIndex) {
-      visibleToolEntries.value.forEach((entry) => {
-        if (claimed.has(entry.key)) return;
-        claimed.add(entry.key);
-        rows.push({ kind: 'tool', key: entry.key, entry });
-      });
-    }
-    const toolCount = rows.reduce((count, row) => count + (row.kind === 'tool' ? 1 : 0), 0);
-    const latestRow = rows[rows.length - 1];
-    return {
-      kind: 'activity',
-      id: block.id,
-      open: activityOpenState.value[block.id] ?? (index === lastActivityIndex && groupOpen.value),
-      rows,
-      toolCount,
-      latestSummary: latestRow
-        ? (latestRow.kind === 'tool'
-            ? latestRow.entry.summary || latestRow.entry.toolLabel
-            : latestRow.entry.summary)
-        : '',
-      isLast: index === blocks.length - 1
-    };
-  });
-});
+/** 最后一段正文套失败提示（与旧单段形态同源）；块内文本其余保持投影原样。 */
+const transformBodyText = (text: string, isLast: boolean): string =>
+  isLast ? buildAssistantDisplayContent(message.value, translate, text) : text;
 
 const legacyBodyId = (): string =>
   String(resolveAgentMessageKey?.(message.value, props.item.sourceIndex) || props.item.key);
-
-const patchViews = computed<Record<string, ToolWorkflowPatchView | null>>(() => {
-  const views: Record<string, ToolWorkflowPatchView | null> = {};
-  allToolEntries.value.forEach((entry) => {
-    if (entry.kind !== 'tool') return;
-    views[entry.key] = buildTimelinePatchView(entry.run, t);
-  });
-  return views;
-});
-
-const patchViewFor = (entry: TimelineToolEntry): ToolWorkflowPatchView | null =>
-  patchViews.value[entry.key] || null;
 
 const subagents = computed<Record<string, unknown>[]>(() => {
   // 子智能体进度是 `item_upsert` 原地写进行对象的，同样必须订阅内容时钟，
@@ -616,80 +449,28 @@ const subagents = computed<Record<string, unknown>[]>(() => {
   return Array.isArray(items) ? (items as Record<string, unknown>[]) : [];
 });
 
-// ------------------------------------------------------------ 展开状态
-
-const hasActivityGroup = computed(() =>
-  timelineBlocks.value.some((block) => block.kind === 'activity')
-);
-/** 整轮是否默认展开批次栏：仍由时间线按 MAX_OPEN_TURNS 下发（`defaultOpen`）。 */
-const groupOpen = ref(props.defaultOpen);
-/** 每个批次各自的开合覆盖；未点过的批次跟随整轮默认值。 */
-const activityOpenState = ref<Record<string, boolean>>({});
-const reasoningOpenKeys = ref<string[]>([]);
-const entryOpenKeys = ref<string[]>([]);
-const ENTRY_OPEN_LIMIT = MAX_OPEN_ENTRIES_PER_TURN;
-
 // 上报本轮的「有内容」状态；轮次行据此套用 MAX_OPEN_TURNS 上限。
 const emit = defineEmits<{ (event: 'activity', active: boolean): void }>();
+
+// 无投影块的轮次（纯文本、问候语、旧行）不挂共享块渲染组件，这里补上
+// 「无批次」上报；块从有到无（卸载子组件）时同样补报，保持既有清理语义。
 watch(
-  hasActivityGroup,
-  (visible) => emit('activity', Boolean(visible)),
+  () => [props.item.key, hasProjectionBlocks.value] as const,
+  ([, hasBlocks]) => {
+    if (!hasBlocks) emit('activity', false);
+  },
   { immediate: true }
 );
-
-const activityTitle = (block: RenderActivityBlock): string =>
-  block.toolCount > 0
-    ? t('chat.timeline.toolGroupOpen', { count: block.toolCount })
-    : t('chat.timeline.processed');
-
-const toggleActivity = (id: string): void => {
-  const block = renderBlocks.value.find((item) => item.id === id);
-  if (!block || block.kind !== 'activity') return;
-  activityOpenState.value = { ...activityOpenState.value, [id]: !block.open };
-};
-
-const toggleReasoning = (id: string): void => {
-  const next = reasoningOpenKeys.value.filter((key) => key !== id);
-  if (next.length === reasoningOpenKeys.value.length) next.push(id);
-  reasoningOpenKeys.value = next.slice(-ENTRY_OPEN_LIMIT);
-};
-
-const toggleEntry = (key: string): void => {
-  const next = new Set(entryOpenKeys.value);
-  if (next.has(key)) {
-    next.delete(key);
-  } else {
-    next.add(key);
-    while (next.size > ENTRY_OPEN_LIMIT) {
-      const firstKey = next.values().next().value as string | undefined;
-      if (!firstKey || firstKey === key) break;
-      next.delete(firstKey);
-    }
-  }
-  entryOpenKeys.value = Array.from(next);
-};
 
 watch(
   () => props.item.key,
   (key, previousKey) => {
     if (!key || key === previousKey) return;
-    // 虚拟列表会复用行组件：轮次身份变化时复位局部展开状态。
-    reasoningOpenKeys.value = [];
-    entryOpenKeys.value = [];
-    activityOpenState.value = {};
-    entryRenderLimit.value = TIMELINE_ENTRY_RENDER_LIMIT;
+    // 虚拟列表会复用行组件：轮次身份变化时立即刷新工具投影批次；
+    // 批次/条目的展开状态由 MessageTimelineBlocks 随 identityKey 自行复位。
     batchWorkflowItems();
   },
   { immediate: true }
-);
-
-// 默认开合由时间线按 MAX_OPEN_TURNS 计算后下发；用户点过的批次不再跟随。
-watch(
-  () => props.defaultOpen,
-  (open) => {
-    groupOpen.value = Boolean(open);
-    activityOpenState.value = {};
-  }
 );
 </script>
 
@@ -702,22 +483,8 @@ watch(
   min-width: 0;
 }
 
-/* §7.3 A BodyBlock：全宽、无气泡；左右内边距 24px、上下 6px；
-   hover 底 `hover` 45% 透明；正文 14px `text`。 */
-.timeline-body-block {
-  position: relative;
-  width: 100%;
-  min-width: 0;
-  padding: 6px 24px;
-  color: var(--mz-text, #1f2329);
-  font-size: calc(14px * var(--messenger-font-scale, 1));
-  line-height: 1.7;
-  transition: background-color 0.12s ease;
-}
-
-.timeline-body-block:hover {
-  background: rgba(246, 245, 243, 0.45);
-}
+/* 正文块（.timeline-body-block）与工具分组折叠条（.timeline-group*）的样式
+   随块渲染一起移入 MessageTimelineBlocks（与子智能体详情共用）。 */
 
 /* 轮次统计行：高 22px、间距 12px、图标 12px + 数值 11px muted（见 MessageStats 的
    `.messenger-message-stats`），右侧仅保留「复制」图标按钮 22×22 圆角 6。 */
@@ -850,118 +617,6 @@ watch(
 .timeline-greeting-preview:hover {
   background: var(--mz-timeline-hover, #f6f5f3);
   color: var(--mz-text-secondary, #3d3d3d);
-}
-
-/* ------------------------------------------------------- 工具分组折叠条 */
-
-.timeline-group {
-  width: 100%;
-  min-width: 0;
-}
-
-/* 折叠态是桌面端的「已处理」分隔条（30px、12px muted）；展开态是工具分组条
-   （32px、13px text-secondary）。展开箭头压在时间线竖线上（与条目行的节点圆点同
-   一列，桌面端 GroupBar 的箭头在内容列），连接线因此只画箭头以下那一段，标题落在
-   条目行状态图标同一列（x=52）。 */
-.timeline-group-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  box-sizing: border-box;
-  width: 100%;
-  height: 30px;
-  padding: 0 24px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--mz-text-muted, #8a8f99);
-  font-size: 12px;
-  text-align: left;
-  cursor: pointer;
-}
-
-.timeline-group.is-open .timeline-group-head {
-  height: 32px;
-  color: var(--mz-text-secondary, #3d3d3d);
-  font-size: 13px;
-}
-
-.timeline-group-head:hover {
-  background: var(--mz-timeline-hover, #f6f5f3);
-}
-
-.timeline-group-gutter {
-  position: relative;
-  flex: 0 0 auto;
-  align-self: stretch;
-  width: 20px;
-}
-
-.timeline-group-gutter-line {
-  position: absolute;
-  top: calc(50% + 7px);
-  bottom: 0;
-  left: 9.5px;
-  width: 1px;
-  background: var(--mz-timeline-line, #e2dfda);
-}
-
-/* 12px 箭头居中于 20px 沟槽的竖线（竖线中心 10px）。 */
-.timeline-group-arrow {
-  position: absolute;
-  top: 50%;
-  left: 4px;
-  width: 12px;
-  margin-top: -6px;
-  color: var(--mz-text-muted, #8a8f99);
-  font-size: 11px;
-  line-height: 12px;
-  text-align: center;
-  transition: transform 0.16s ease;
-}
-
-.timeline-group-arrow.is-open {
-  transform: rotate(90deg);
-}
-
-.timeline-group-title {
-  flex: 0 0 auto;
-}
-
-.timeline-group-latest {
-  flex: 1 1 auto;
-  min-width: 0;
-  color: var(--mz-text-muted, #8a8f99);
-  font-weight: 400;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* 条目行距 0：每条目自带 20px 沟槽，连接线在相邻行之间连续。 */
-.timeline-group-body {
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-  min-width: 0;
-}
-
-.timeline-group-more {
-  align-self: flex-start;
-  margin: 4px 0 4px 44px;
-  padding: 3px 8px;
-  border: 1px dashed var(--mz-border-strong, #d8d5d0);
-  border-radius: 8px;
-  background: transparent;
-  color: var(--mz-text-secondary, #3d3d3d);
-  font-size: 11px;
-  cursor: pointer;
-}
-
-.timeline-group-note {
-  margin: 4px 0 4px 44px;
-  color: var(--mz-text-muted, #8a8f99);
-  font-size: 11px;
 }
 
 .timeline-subagent-scope {

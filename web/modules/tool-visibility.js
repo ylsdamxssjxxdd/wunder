@@ -1,9 +1,9 @@
 // AI生成
-import { elements } from "./elements.js?v=20260518-01";
+import { elements } from "./elements.js?v=20261011-01";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
 import { notify } from "./notify.js";
-import { t } from "./i18n.js?v=20260518-01";
+import { t } from "./i18n.js?v=20261011-01";
 import { ensureOrgUnitsLoaded, getAllOrgUnitItems } from "./org-units.js?v=20260518-01";
 import { filterRemovedSwarmTools, filterRemovedSwarmToolRules } from "../shared/deprecated-tools.js";
 

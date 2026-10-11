@@ -1,7 +1,7 @@
 import { APP_CONFIG } from "../app.config.js?v=20260110-04";
-import { elements } from "./elements.js?v=20260710-01";
+import { elements } from "./elements.js?v=20261011-01";
 import { state } from "./state.js";
-import { appendLog } from "./log.js?v=20260108-02";
+import { appendLog } from "./log.js?v=20261011-01";
 import {
   formatBytes,
   formatDuration,
@@ -13,7 +13,8 @@ import {
 import { getWunderBase } from "./api.js";
 import { notify } from "./notify.js";
 import { appendQueuePriorityAction } from "./monitor-queue.js";
-import { getCurrentLanguage, t } from "./i18n.js?v=20260710-01";
+import { getCurrentLanguage, t } from "./i18n.js?v=20261011-01";
+import { openTrajectoryPage } from "./trajectory-view.js?v=20261011-01";
 import { filterRemovedSwarmTools } from "../shared/deprecated-tools.js";
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
@@ -4363,6 +4364,15 @@ export const initMonitorPanel = () => {
   if (elements.monitorDetailExport) {
     elements.monitorDetailExport.addEventListener("click", exportMonitorDetailLogs);
     setMonitorDetailExportEnabled(false);
+  }
+  if (elements.monitorDetailTrajectory) {
+    elements.monitorDetailTrajectory.addEventListener("click", () => {
+      const sessionId = String(state.monitor?.detail?.session?.session_id || "").trim();
+      if (!sessionId) {
+        return;
+      }
+      openTrajectoryPage(sessionId);
+    });
   }
   if (elements.monitorDetailTypeFilter) {
     elements.monitorDetailTypeFilter.addEventListener("change", () => {

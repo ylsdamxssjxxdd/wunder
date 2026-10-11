@@ -359,12 +359,20 @@ pub async fn issue(
 
     // Capability and policy gate first: a refusal must be a structurally failed
     // ledger row, never a silently downgraded command (docs §9.2).
-    if spec.direction == DIRECTION_C2L
-        && (node.policy.disables(kind)
-            || (!node.capabilities.is_empty()
-                && !node.capabilities.iter().any(|cap| cap == required_cap)))
+    //
+    // The cloud node has no L3 capability either: `tool.exec` and `agent.spawn`
+    // are defined against a node with a human approver, and a ticket the issuer
+    // approves themself on the server's own host is not one (docs §9.2, §13.5 17).
+    let cloud_over_set = spec.to_node == "cloud" && command_level(kind) == "L3";
+    if cloud_over_set
+        || (spec.direction == DIRECTION_C2L
+            && (node.policy.disables(kind)
+                || (!node.capabilities.is_empty()
+                    && !node.capabilities.iter().any(|cap| cap == required_cap))))
     {
-        let summary = if node.policy.disables(kind) {
+        let summary = if cloud_over_set {
+            "cloud_target_has_no_l3_capability".to_string()
+        } else if node.policy.disables(kind) {
             "admin_disabled_kind".to_string()
         } else {
             format!("missing_capability:{required_cap}")
@@ -718,17 +726,37 @@ pub async fn on_ack(
     let device_id = target_device(&record);
 
     if !accepted {
-        let refused = matches!(approval_state.as_str(), APPROVAL_REJECTED | APPROVAL_EXPIRED);
-        if refused {
-            let code = if approval_state == APPROVAL_EXPIRED {
-                ERR_APPROVAL_EXPIRED
-            } else {
-                ERR_APPROVAL_REJECTED
+        // The node names why it refused. Anything but its own busy signal is
+        // terminal: re-queueing a command the node will not run is a storm.
+        let refusal = payload
+            .get("error_code")
+            .and_then(Value::as_str)
+            .filter(|code| *code != ERR_NODE_BUSY)
+            .map(str::to_string);
+        let approval_refused =
+            matches!(approval_state.as_str(), APPROVAL_REJECTED | APPROVAL_EXPIRED);
+        if approval_refused || refusal.is_some() {
+            let code = match (approval_refused, refusal) {
+                (true, _) if approval_state == APPROVAL_EXPIRED => {
+                    ERR_APPROVAL_EXPIRED.to_string()
+                }
+                (true, _) => ERR_APPROVAL_REJECTED.to_string(),
+                (false, Some(code)) => code,
+                (false, None) => ERR_APPROVAL_REJECTED.to_string(),
             };
-            set_approval(storage.clone(), command_id, &approval_state).await?;
-            decide_ticket(storage.clone(), &record, &approval_state, "device", now).await?;
-            finalize(storage.clone(), command_id, COMMAND_STATUS_FAILED, Some(now), Some(code), None)
-                .await?;
+            if approval_refused {
+                set_approval(storage.clone(), command_id, &approval_state).await?;
+                decide_ticket(storage.clone(), &record, &approval_state, "device", now).await?;
+            }
+            finalize(
+                storage.clone(),
+                command_id,
+                COMMAND_STATUS_FAILED,
+                Some(now),
+                Some(code.as_str()),
+                Some(code.as_str()),
+            )
+            .await?;
             if let Some(device_id) = &device_id {
                 hub().release(device_id, command_id);
             }

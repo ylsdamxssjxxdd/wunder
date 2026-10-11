@@ -16,7 +16,8 @@ test('subagent cards update below the owning bubble and survive reload', async (
   service.items.set(item.item_id, item);
   await service.install(page);
   await page.route('**/chat/sessions/fixture-child/thread-log/snapshot*', route => route.fulfill({
-    json: { data: { cursor: 0, turns: [{ turn_id: 'fixture-child-turn', status: 'completed' }],
+    json: { data: { cursor: 0, turns: [{ turn_id: 'fixture-child-turn', status: 'completed',
+      content: 'Fixture child task' }],
       items: [{ item_id: 'fixture-child-tool', turn_id: 'fixture-child-turn', kind: 'tool_call',
         status: 'completed', visibility: 'user', revision: 1, payload: {
           tool: 'read_file', tool_call_id: 'fixture-call', event_type: 'tool_result',
@@ -79,7 +80,8 @@ test('subagent cards update below the owning bubble and survive reload', async (
     await expect(dialog).toBeVisible();
     await expect(dialog).toContainText('额度 5');
     await expect(dialog).not.toContainText('模型请求');
-    const title = dialog.locator('.tool-workflow-title');
+    // 子线程运行过程与主时间线同一套块渲染：工具批次折叠条 + 条目行。
+    const title = dialog.locator('.timeline-group-title').first();
     await expect(title).toBeVisible();
     // Check the real teleported component against its dialog background, not a CSS literal.
     const contrast = await title.evaluate(node => {
@@ -95,7 +97,13 @@ test('subagent cards update below the owning bubble and survive reload', async (
       return (Math.max(foreground, background) + 0.05) / (Math.min(foreground, background) + 0.05);
     });
     expect(contrast).toBeGreaterThanOrEqual(4.5);
-    await title.click();
-    await expect(dialog.locator('.tool-workflow-entry-summary')).toBeVisible();
+    // 最后一批默认展开：条目行直接可见；折叠条可收起再展开。
+    const entry = dialog.locator('.tl-entry').first();
+    await expect(entry).toBeVisible();
+    const head = dialog.locator('.timeline-group-head').first();
+    await head.click();
+    await expect(entry).toBeHidden();
+    await head.click();
+    await expect(entry).toBeVisible();
   } finally { await service.dispose(); }
 });

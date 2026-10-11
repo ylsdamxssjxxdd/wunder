@@ -74,6 +74,8 @@ pub fn draw(frame: &mut Frame, app: &mut TuiApp) {
 
     if let Some(lines) = app.approval_modal_lines() {
         modals::draw_approval_modal(frame, frame.area(), layout.input, lines, is_zh);
+    } else if let Some(lines) = app.remote_approval_modal_lines() {
+        modals::draw_approval_modal(frame, frame.area(), layout.input, lines, is_zh);
     } else if let Some(lines) = app.inquiry_modal_lines() {
         modals::draw_inquiry_modal(frame, frame.area(), layout.input, lines, is_zh);
     }

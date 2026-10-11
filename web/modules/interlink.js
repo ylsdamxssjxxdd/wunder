@@ -1,5 +1,8 @@
-// 舰桥「互通舰队」总览页（云端本地互通方案 I3）
-// 契约见 docs/云端本地互通方案.md §5.2「舰桥治理监控面（『互通舰队』导航组）」。
+// 蜂窝/舰桥「互通舰队」页装配：
+//   1) 总览（用户面 GET /wunder/interlink/nodes，本模块渲染进 #interlinkBody）
+//   2) 治理面（只读告警与运行时，web/modules/interlink-alerts.js 渲染进 #interlinkAlertsHost）
+// 治理面的数据契约与请求封装在 web/modules/interlink-shared.js，抽屉/分页器同样是共享单例，
+// 本文件只做装配与节奏（首次进入拉取、可见时按视图声明的周期轮询）。
 //
 // 数据来源（I2 已实现，用户面端点）：
 //   GET /wunder/interlink/nodes
@@ -16,6 +19,8 @@
 
 import { getWunderBase } from "./api.js";
 import { notify } from "./notify.js";
+import { drawer } from "./interlink-shared.js";
+import { alertsView } from "./interlink-alerts.js";
 
 // 节点类型顺序：与 §5.2「按 client 分布」一致
 const NODE_TYPES = ["desktop", "cli", "web", "server"];
@@ -572,6 +577,63 @@ export const loadInterlinkFleet = async () => {
 };
 
 // ---------------------------------------------------------------------------
+// 治理面装配（互通告警与运行时，只读）
+// ---------------------------------------------------------------------------
+
+const GOVERNANCE_HOST_ID = "interlinkAlertsHost";
+const GOVERNANCE_DRAWER_ID = "interlinkDrawer";
+const governanceState = { mounted: false, timer: null, loaded: false };
+
+const isInterlinkPanelActive = () =>
+  Boolean(document.getElementById("interlinkPanel")?.classList.contains("active"));
+
+const mountGovernance = () => {
+  const host = document.getElementById(GOVERNANCE_HOST_ID);
+  if (!host || governanceState.mounted) {
+    return false;
+  }
+  // 抽屉是共享单例：节点详情与告警详情用同一层，不复制第二套详情实现
+  drawer.init(GOVERNANCE_DRAWER_ID);
+  alertsView.mount(host);
+  governanceState.mounted = true;
+  return true;
+};
+
+const loadGovernance = async () => {
+  mountGovernance();
+  if (!governanceState.mounted) {
+    return;
+  }
+  governanceState.loaded = true;
+  await alertsView.refresh();
+};
+
+// 语言切换后按新文案重建骨架（视图状态与筛选保留在模块实例里）
+const rebuildGovernance = () => {
+  if (!governanceState.mounted) {
+    return;
+  }
+  alertsView.unmount();
+  governanceState.mounted = false;
+  if (mountGovernance()) {
+    alertsView.refresh().catch(() => {});
+  }
+};
+
+const startGovernancePolling = () => {
+  if (governanceState.timer) {
+    return;
+  }
+  governanceState.timer = setInterval(() => {
+    // 面板不在前台就不打端点：治理页可能在后台停留很久
+    if (!isInterlinkPanelActive() || !governanceState.loaded) {
+      return;
+    }
+    alertsView.refresh().catch(() => {});
+  }, alertsView.pollIntervalMs);
+};
+
+// ---------------------------------------------------------------------------
 // 初始化
 // ---------------------------------------------------------------------------
 
@@ -582,6 +644,7 @@ const bindLanguageSync = () => {
   }
   window.addEventListener("wunder:language-changed", () => {
     loadInterlinkFleet().catch(() => {});
+    rebuildGovernance();
   });
 };
 
@@ -592,8 +655,19 @@ export const initInterlinkPanel = () => {
     refreshBtn.dataset.interlinkBound = "1";
     refreshBtn.addEventListener("click", () => {
       loadInterlinkFleet().catch(() => {});
+      loadGovernance().catch(() => {});
     });
   }
+  const navBtn = document.getElementById("navInterlink");
+  if (navBtn && !navBtn.dataset.interlinkGovBound) {
+    navBtn.dataset.interlinkGovBound = "1";
+    navBtn.addEventListener("click", () => {
+      loadGovernance().catch(() => {});
+    });
+  }
+  // 装配只建骨架；首次数据在用户进入面板（或点刷新）时才拉取
+  mountGovernance();
+  startGovernancePolling();
   bindLanguageSync();
   renderSkeleton();
 };

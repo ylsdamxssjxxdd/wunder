@@ -175,6 +175,15 @@ pub struct InterlinkConfig {
     pub command_retention_days: u32,
     #[serde(default = "default_interlink_audit_retention_days")]
     pub audit_retention_days: u32,
+    /// Retention of a workspace shadow after its node was last seen. Covers the
+    /// long-silent and revoked devices whose projection nobody refreshes any
+    /// more; a revoked device is purged immediately, this is the back stop.
+    #[serde(default = "default_interlink_shadow_retention_days")]
+    pub shadow_retention_days: u32,
+    /// Alert hook endpoint (docs §9.4). Empty means alerts are only written to
+    /// the audit trail, nothing leaves the process.
+    #[serde(default)]
+    pub alert_webhook: String,
 }
 
 impl Default for InterlinkConfig {
@@ -192,6 +201,8 @@ impl Default for InterlinkConfig {
             shadow: InterlinkShadowConfig::default(),
             command_retention_days: default_interlink_command_retention_days(),
             audit_retention_days: default_interlink_audit_retention_days(),
+            shadow_retention_days: default_interlink_shadow_retention_days(),
+            alert_webhook: String::new(),
         }
     }
 }
@@ -248,6 +259,13 @@ fn default_interlink_command_retention_days() -> u32 {
 
 fn default_interlink_audit_retention_days() -> u32 {
     365
+}
+
+/// Shadows are a privacy-sensitive projection, so their fallback retention is
+/// far shorter than the ledger's: a node that has not re-synced for a month is
+/// treated as gone.
+fn default_interlink_shadow_retention_days() -> u32 {
+    30
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

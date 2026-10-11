@@ -177,6 +177,12 @@ impl Projection {
                     detail["status"] = p["status"].clone();
                     detail["item_id"] = json!(id);
                     events.push(json!({"event":"compaction","data":detail}));
+                } else if kind == "subagent_run" {
+                    // One child run, one stable item: every progress revision
+                    // rewrites the same card, so the UI can patch it in place.
+                    let mut card = payload.clone();
+                    card["item_id"] = json!(id);
+                    events.push(json!({"event":"subagent_run","data":card}));
                 } else if kind == "queue" && p["status"] == "queued" {
                     events.push(json!({"event":"queue_update","data":payload}));
                 }

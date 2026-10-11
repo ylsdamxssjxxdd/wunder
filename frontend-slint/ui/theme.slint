@@ -12,7 +12,35 @@ export struct WorkspaceCard { workspace-id: string, name: string, icon: string, 
 // `origin` is the thread's remote birthplace ("cloud" / "device:<id>"); an
 // empty string means locally created and renders no badge.
 export struct SidebarRow { kind: int, workspace-id: string, name: string, icon: string, color: string, thread-count: int, expanded: bool, selected: bool, thread-id: string, title: string, status: string, active: bool, payload: int, origin: string }
-export struct ThreadLogEvent { event-type: string, time: string, summary: string, raw: string, order: int, round: int }
+// Thread trajectory (dsh ui-trajectory alignment). Rows are pre-projected and
+// pre-bounded in Rust; Slint only lays out what it was handed.
+export struct TrajRow {
+    kind: int,            // 0 system 1 user 2 context 3 compacted 4 message 5 tool 6 subtool 7 turn-summary 8 assistant-summary
+    badge: string,        // event-column badge text (SYSTEM / USER / 请求 #N …)
+    text: string,         // primary preview text
+    detail: string,       // one-line tool args → result preview
+    error: bool,
+    request: int,         // request number, 0 = none
+    turn: int,            // user turn number, -1 = none
+    turn-start: bool,
+    turn-end: bool,
+    row-height: length,   // 30px ledger row / 20px summary row
+    index: int,           // logical record index for timeline focus
+}
+export struct TrajSpan {
+    lane: int,            // 0 input 1 model 2 tool
+    start: float,         // 0..1 fraction of the visible viewport
+    width: float,
+    kind: int,            // same palette as TrajRow.kind
+    index: int,           // logical record index to focus on click
+    ttft: float,          // 0..1 first-token fraction inside the span, -1 = none
+    selected: bool,
+}
+export struct TrajTick { pos: float, label: string }
+export struct TrajBoundary { pos: float, label: string }
+export struct TrajTiming { label: string, value: string }
+export struct TrajSection { title: string, body: string }
+export struct TrajTab { title: string, kind: int }  // 0 overview 1 raw 2 timing
 export struct TextBlock { text: string, styled: styled-text, kind: int, table-cells: [string], table-columns: int, table-rows: [string], image: image, image-source: string, language: string }
 // A bounded, stable projection of one tool invocation. Detail text is only
 // laid out after the user expands that entry, so streaming tool output never
@@ -55,7 +83,13 @@ export struct TimelineRow {
     // tokens / tool calls). Empty for rows that end no turn. Built by
     // `src/turn_stats.rs` and rendered as icon + value, mirroring the web
     // messenger's MessageStats.vue.
-    stats: [TurnStatMetric]
+    stats: [TurnStatMetric],
+    // Child-thread identity of a subagent card row (kind 5); empty elsewhere.
+    // The detail dialog loads that thread's own timeline.
+    subagent-id: string,
+    // A running subagent card shows its interrupt action; the field rides the
+    // row so the projection alone decides availability.
+    subagent-stoppable: bool
 }
 
 export struct TimelineCounts { rows: int, answers: int }

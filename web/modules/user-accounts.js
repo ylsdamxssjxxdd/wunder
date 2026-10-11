@@ -1,10 +1,10 @@
-import { elements } from "./elements.js?v=20261007-01";
+import { elements } from "./elements.js?v=20261011-01";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
-import { appendLog } from "./log.js?v=20260108-02";
+import { appendLog } from "./log.js?v=20261011-01";
 import { notify } from "./notify.js";
 import { formatTimestamp } from "./utils.js?v=20251229-02";
-import { t } from "./i18n.js?v=20261007-01";
+import { t } from "./i18n.js?v=20261011-01";
 import { ensureOrgUnitsLoaded, getOrgUnitMap, getOrgUnitOptions } from "./org-units.js?v=20260210-01";
 import { getAuthHeaders } from "./admin-auth.js?v=20260120-01";
 import { isRemovedSwarmTool } from "../shared/deprecated-tools.js";

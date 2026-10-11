@@ -292,6 +292,17 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
             }
             rows[bar_at].summary = latest;
         }
+        // Child runs render as cards at the turn's tail, the same place the web
+        // messenger parks its subagent panel. The projection is shared with the
+        // live reducer, so a card looks and behaves identically in both paths.
+        for card in &turn.subagents {
+            if card.session_id.is_empty() {
+                continue;
+            }
+            let mut row = crate::timeline::subagent_row(card);
+            row.payload = rows.len() as i32;
+            rows.push(row);
+        }
         // The metrics belong to the turn and ride on the body row that ends it,
         // which is also the row that owns the copy and save actions: the same
         // owner the live reducer picks with its backward walk.
@@ -346,6 +357,8 @@ fn blank_row(kind: i32, id: String) -> TimelineRow {
         payload: 0,
         patch: ModelRc::default(),
         stats: ModelRc::default(),
+        subagent_id: Default::default(),
+        subagent_stoppable: false,
     }
 }
 
@@ -385,6 +398,7 @@ mod tests {
                 text: text.into(),
                 items: Vec::new(),
             }],
+            subagents: Vec::new(),
         }
     }
 

@@ -1,11 +1,11 @@
-import { elements } from "./elements.js?v=20260215-01";
+import { elements } from "./elements.js?v=20261011-01";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
 import { ensureLlmConfigLoaded } from "./llm.js";
 import { getAuthHeaders } from "./admin-auth.js?v=20260120-01";
 import { formatBytes } from "./utils.js?v=20251229-02";
 import { notify } from "./notify.js";
-import { t } from "./i18n.js?v=20260215-01";
+import { t } from "./i18n.js?v=20261011-01";
 
 const MULTIMODAL_MODEL_TYPES = new Set(["asr", "tts", "image", "video"]);
 const AUDIO_EXTENSIONS = new Set(["mp3", "wav", "flac", "aac", "ogg", "m4a", "opus", "pcm"]);

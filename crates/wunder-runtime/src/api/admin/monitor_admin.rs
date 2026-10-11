@@ -58,6 +58,10 @@ pub(super) fn router() -> Router<Arc<AppState>> {
             get(admin_thread_turn),
         )
         .route(
+            "/wunder/admin/monitor/{session_id}/thread-log/snapshot",
+            get(admin_thread_snapshot),
+        )
+        .route(
             "/wunder/admin/monitor/{session_id}/thread-log/changes",
             get(admin_thread_changes),
         )
@@ -661,6 +665,22 @@ async fn admin_thread_turn(
     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
     .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.content_not_found")))?;
     Ok(Json(json!({"data":{"session_id":session_id,"turn":turn}})))
+}
+
+async fn admin_thread_snapshot(
+    State(state): State<Arc<AppState>>,
+    AxumPath(session_id): AxumPath<String>,
+) -> Result<Json<Value>, Response> {
+    let session_id = session_id.trim().to_string();
+    let user_id = monitor_user_id(&state, &session_id)?;
+    let storage = state.storage.clone();
+    let lookup = session_id.clone();
+    let snapshot = crate::core::blocking::run_db("api.admin.thread_log.snapshot", move || {
+        storage.thread_snapshot(&user_id, &lookup)
+    })
+    .await
+    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    Ok(Json(json!({"data": snapshot})))
 }
 
 async fn admin_thread_changes(

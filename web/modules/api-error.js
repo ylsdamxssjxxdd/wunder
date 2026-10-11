@@ -1,4 +1,4 @@
-import { t } from "./i18n.js?v=20260215-01";
+import { t } from "./i18n.js?v=20261011-01";
 
 const TRACE_HEADER = "x-trace-id";
 const TRACE_ID_RE = /\b(?:trace[_-]?id|err_[a-z0-9]+)\b[:=\s-]*[a-z0-9_-]*/gi;

@@ -1,0 +1,82 @@
+// slint-viewer fixture for the thread trajectory dialog: static rows, spans
+// and detail content exercising both ledger row styles, the three lanes,
+// the selected row and the details aside. ASCII-only so the i18n CJK check
+// stays green; user-facing strings in the real page come from Rust.
+import { I18n } from "i18n.slint";
+import { ThreadTrajectoryDialog } from "thread_trajectory.slint";
+
+export component TrajDemo inherits Window {
+    width: 1280px;
+    height: 800px;
+    title: "trajectory demo";
+
+    ThreadTrajectoryDialog {
+        rows: [
+            { kind: 1, badge: "", text: "Check the deploy log for the failed job", detail: "", error: false, request: 0, turn: 1, turn-start: true, turn-end: false, row-height: 30px, index: 0 },
+            { kind: 7, badge: "", text: "2 steps · 1 tool calls", detail: "", error: false, request: 0, turn: 1, turn-start: true, turn-end: false, row-height: 20px, index: 1 },
+            { kind: 4, badge: "#1", text: "Plan looks fine. Running the reproduction now.", detail: "", error: false, request: 1, turn: 2, turn-start: true, turn-end: false, row-height: 30px, index: 2 },
+            { kind: 5, badge: "", text: "demo_tool", detail: "{\"path\": \"logs/app.log\"} → exit 0, 12 lines matched", error: false, request: 0, turn: 2, turn-start: false, turn-end: false, row-height: 30px, index: 3 },
+            { kind: 4, badge: "#2", text: "The failure is a missing config key; applying the fix.", detail: "", error: false, request: 1, turn: 2, turn-start: false, turn-end: false, row-height: 30px, index: 4 },
+            { kind: 5, badge: "", text: "demo_tool", detail: "{\"path\": \"config.yaml\"} → patched 1 line", error: false, request: 0, turn: 2, turn-start: false, turn-end: false, row-height: 30px, index: 5 },
+            { kind: 3, badge: "", text: "Compacted summary of the earlier turns", detail: "", error: false, request: 0, turn: 3, turn-start: true, turn-end: false, row-height: 30px, index: 6 },
+            { kind: 2, badge: "", text: "context note kept for the next step", detail: "", error: false, request: 0, turn: 3, turn-start: false, turn-end: false, row-height: 30px, index: 7 },
+            { kind: 4, badge: "#3", text: "Done. The pipeline is green again.", detail: "", error: true, request: 1, turn: 3, turn-start: false, turn-end: true, row-height: 30px, index: 8 }
+        ];
+        spans: [
+            { lane: 0, start: 0.02, width: 0.06, kind: 1, index: 0, ttft: -1.0, selected: false },
+            { lane: 1, start: 0.10, width: 0.14, kind: 4, index: 2, ttft: 0.35, selected: true },
+            { lane: 2, start: 0.26, width: 0.08, kind: 5, index: 3, ttft: -1.0, selected: false },
+            { lane: 1, start: 0.38, width: 0.18, kind: 4, index: 4, ttft: 0.22, selected: false },
+            { lane: 2, start: 0.58, width: 0.06, kind: 5, index: 5, ttft: -1.0, selected: false },
+            { lane: 1, start: 0.70, width: 0.10, kind: 3, index: 6, ttft: -1.0, selected: false },
+            { lane: 0, start: 0.82, width: 0.04, kind: 2, index: 7, ttft: -1.0, selected: false },
+            { lane: 1, start: 0.88, width: 0.10, kind: 4, index: 8, ttft: 0.48, selected: false }
+        ];
+        ticks: [
+            { pos: 0.0, label: "0 ms" },
+            { pos: 0.25, label: "1.2 s" },
+            { pos: 0.5, label: "2.5 s" },
+            { pos: 0.75, label: "3.8 s" },
+            { pos: 1.0, label: "5 s" }
+        ];
+        boundaries: [
+            { pos: 0.0, label: "1" },
+            { pos: 0.34, label: "2" },
+            { pos: 0.68, label: "3" }
+        ];
+        view-start: 0.0;
+        view-width: 1.0;
+        detail-header: "Turn 2 · Step 1";
+        detail-badge: I18n.traj_kind_assistant;
+        detail-kind: 4;
+        detail-tabs: [
+            { title: I18n.traj_tab_overview, kind: 0 },
+            { title: I18n.traj_tab_timing, kind: 5 },
+            { title: I18n.traj_tab_raw, kind: 1 }
+        ];
+        detail-tab: 0;
+        overview-rows: [
+            { label: I18n.traj_status, value: I18n.traj_state_completed },
+            { label: I18n.traj_hierarchy, value: "Turn 2 · Step 1" },
+            { label: "Request", value: "Request #1" },
+            { label: I18n.traj_started_at, value: "2026-10-10 14:22:31.048" },
+            { label: I18n.traj_total_duration, value: "1,420 ms" },
+            { label: "Tokens", value: "in 1,236 · cache 880 · out 342" }
+        ];
+        sections: [
+            { title: I18n.traj_section_input, body: "Plan looks fine. Running the reproduction now." },
+            { title: I18n.traj_section_output, body: "The failure is a missing config key; applying the fix." }
+        ];
+        timing-rows: [];
+        raw-text: "";
+        selected-index: 2;
+        hover-index: -1;
+        tooltip-text: "";
+        show-duration: true;
+        show-turns: false;
+        show-calls: false;
+        query: "";
+        loading: false;
+        failed: false;
+    }
+}

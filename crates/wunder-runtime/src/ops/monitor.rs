@@ -1603,15 +1603,7 @@ impl MonitorState {
             let sessions = self.sessions.lock();
             sessions
                 .values()
-                .filter(|record| {
-                    if !active_only {
-                        return true;
-                    }
-                    record.status == Self::STATUS_RUNNING
-                        || record.status == Self::STATUS_CANCELLING
-                        || record.status == Self::STATUS_WAITING
-                        || record.status == Self::STATUS_QUEUED
-                })
+                .filter(|record| !active_only || Self::is_active_status(&record.status))
                 .map(|record| {
                     let mut summary = record.to_summary();
                     let speed = llm_speed_summary_from_monitor_events(&record.events);
@@ -1622,6 +1614,27 @@ impl MonitorState {
                 })
                 .collect()
         })
+    }
+
+    /// How many sessions `list_sessions(true)` would return, without building a
+    /// single summary. The tunnel calls this on its 2 s shadow tick and on every
+    /// presence frame, so it must not pay for per-session JSON and LLM speed
+    /// recomputation just to read a count.
+    pub fn count_active_sessions(&self) -> usize {
+        self.run_guarded("monitor.count_active_sessions", || 0usize, || {
+            let sessions = self.sessions.lock();
+            sessions
+                .values()
+                .filter(|record| Self::is_active_status(&record.status))
+                .count()
+        })
+    }
+
+    fn is_active_status(status: &str) -> bool {
+        status == Self::STATUS_RUNNING
+            || status == Self::STATUS_CANCELLING
+            || status == Self::STATUS_WAITING
+            || status == Self::STATUS_QUEUED
     }
 
     pub fn load_records_by_user(

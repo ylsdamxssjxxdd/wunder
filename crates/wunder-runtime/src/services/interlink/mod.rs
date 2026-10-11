@@ -20,6 +20,9 @@ use tokio::sync::mpsc;
 
 /// Human-in-the-loop approval tickets (docs §7.3).
 pub mod approvals;
+/// Governance alert hooks: L3 execution, rejection storms, secret replay
+/// (docs §9.4, §13.5 20).
+pub mod alerts;
 /// Append-only audit trail + argument digests (docs §9.4).
 pub mod audit;
 /// Bounded tunnel data-plane buffer for large remote file reads (docs §6.4).

@@ -10,14 +10,13 @@ use crate::{
 };
 use anyhow::{anyhow, Result};
 use bytes::Bytes;
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::runtime::Runtime;
 use wunder_server::DesktopTerminalSnapshot;
-#[path = "native_thread_log.rs"]
-mod thread_log;
-pub use thread_log::{NativeThreadLogPage, NativeThreadLogTurn};
+#[path = "native_trajectory.rs"]
+mod trajectory;
 
 #[path = "native_workflow.rs"]
 mod native_workflow;
@@ -186,6 +185,87 @@ pub struct NativeWorkflowEntry {
     /// Structured file diffs for the timeline patch card; empty for every tool
     /// that does not change files.
     pub patch_files: Vec<NativePatchFile>,
+}
+
+/// One child run of a parent turn, projected from the parent thread log's
+/// `subagent_run` item. The card carries identity, live status and counters
+/// only; the child thread itself is loaded separately for the detail view.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct NativeSubagentCard {
+    pub item_id: String,
+    /// The child session; the detail view loads its turns directly.
+    pub session_id: String,
+    pub run_id: String,
+    pub title: String,
+    pub status: String,
+    pub terminal: bool,
+    pub failed: bool,
+    pub latest_message: String,
+    pub error_message: String,
+    pub can_terminate: bool,
+    pub tool_calls: i64,
+    pub model_requests: i64,
+    pub context_tokens: i64,
+    pub credits: i64,
+}
+
+impl NativeSubagentCard {
+    /// Project one card out of a `subagent_run` item payload. `payload` is the
+    /// durable item payload with the child runtime under `runtime`; missing
+    /// fields degrade to defaults instead of failing the whole turn.
+    pub fn from_payload(payload: &Value) -> Option<Self> {
+        let runtime = payload.get("runtime").unwrap_or(&Value::Null);
+        let session_id = runtime["session_id"]
+            .as_str()
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        if session_id.is_empty() {
+            return None;
+        }
+        let metrics = &runtime["metrics"];
+        Some(Self {
+            item_id: payload["item_id"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string(),
+            session_id,
+            run_id: runtime["run_id"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string(),
+            title: runtime["title"]
+                .as_str()
+                .filter(|title| !title.trim().is_empty())
+                .unwrap_or("子智能体")
+                .trim()
+                .to_string(),
+            status: runtime["status"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string(),
+            terminal: runtime["terminal"].as_bool().unwrap_or(false),
+            failed: runtime["failed"].as_bool().unwrap_or(false),
+            latest_message: runtime["latest_message"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string(),
+            error_message: runtime["error_message"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string(),
+            can_terminate: runtime["can_terminate"].as_bool().unwrap_or(false),
+            tool_calls: metrics["tool_calls"].as_i64().unwrap_or(0),
+            model_requests: metrics["model_request_count"].as_i64().unwrap_or(0),
+            context_tokens: metrics["context_tokens"].as_i64().unwrap_or(0),
+            credits: metrics["account_credits_consumed"].as_i64().unwrap_or(0),
+        })
+    }
+
+    /// Whether the child has run to an end the card can settle on.
+    pub fn is_running(&self) -> bool {
+        !self.terminal && !matches!(self.status.as_str(), "closed" | "cancelled" | "canceled")
+    }
 }
 
 /// One file of a bounded patch projection (§7.4). Line numbers stay as strings
@@ -574,6 +654,56 @@ impl NativeDesktop {
             &self.desktop.user_id,
             session_id,
         ))
+    }
+
+    /// The child-run cards of one parent thread, as the parent thread log's
+    /// `subagent_run` items report them. Bounded by the runtime list limit.
+    pub fn subagent_cards(&self, parent_session: &str) -> Result<Vec<NativeSubagentCard>> {
+        let parent = parent_session.trim();
+        anyhow::ensure!(!parent.is_empty(), "missing parent thread identity");
+        let state = self.state();
+        let items = wunder_server::list_parent_subagents(
+            state.storage.as_ref(),
+            Some(&state.monitor),
+            self.user_id(),
+            parent,
+            None,
+        )?;
+        Ok(items
+            .iter()
+            // The list payloads carry the runtime fields at the top level;
+            // only the thread item nests them under `runtime`.
+            .filter_map(|item| NativeSubagentCard::from_payload(&json!({"runtime": item})))
+            .collect())
+    }
+
+    /// Interrupt or close one child run of the parent thread. The runtime owns
+    /// the permission and settlement semantics; the desktop only forwards.
+    pub fn subagent_control(
+        &self,
+        parent_session: &str,
+        action: &str,
+        child_session: &str,
+    ) -> Result<()> {
+        let parent = parent_session.trim();
+        let child = child_session.trim();
+        anyhow::ensure!(!parent.is_empty(), "missing parent thread identity");
+        anyhow::ensure!(!child.is_empty(), "missing child thread identity");
+        anyhow::ensure!(
+            matches!(action.trim(), "interrupt" | "terminate"),
+            "unsupported subagent action"
+        );
+        let state = self.state();
+        wunder_server::control_parent_subagents(
+            state.storage.as_ref(),
+            Some(&state.monitor),
+            self.user_id(),
+            parent,
+            action.trim(),
+            &[child.to_string()],
+            None,
+        )?;
+        Ok(())
     }
 
     pub fn send_chat(&self, input: NativeChatInput) -> Result<NativeStream> {

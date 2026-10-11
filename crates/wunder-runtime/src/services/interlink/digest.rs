@@ -8,7 +8,7 @@ use wunder_core::interlink::{command_level, command_policy};
 use super::secret::sha256_hex;
 
 /// Keys whose values must never be persisted verbatim (docs §9.3).
-const OPAQUE_KEYS: [&str; 13] = [
+const OPAQUE_KEYS: [&str; 14] = [
     "message",
     "content",
     "text",
@@ -22,6 +22,8 @@ const OPAQUE_KEYS: [&str; 13] = [
     "script",
     "secret",
     "token",
+    // `tool.exec` carries its command line here: a tool parameter, not a path.
+    "command",
 ];
 
 /// Longest string kept in clear text inside a digest.
@@ -145,6 +147,8 @@ impl DevicePolicy {
 }
 
 /// A short relative path or thread id, safe to show in a prompt or digest.
+/// A `tool.exec` working directory is deliberately not listed: on a local form
+/// it may be a host path, and §9.3 keeps only workspace-relative ones.
 pub fn short_target(kind: &str, args: &Value) -> String {
     for key in ["path", "local_thread_id", "thread_id", "agent"] {
         if let Some(text) = args.get(key).and_then(Value::as_str) {
@@ -227,5 +231,20 @@ mod tests {
             "path=a/b.md"
         );
         assert_eq!(short_target("node.summary", &json!({})), "kind=node.summary");
+    }
+
+    #[test]
+    fn tool_exec_digest_keeps_no_command_line() {
+        let digest = digest_args(
+            "tool.exec",
+            &json!({"command": "echo", "args": ["private sentence here"], "cwd": "."}),
+        );
+        let value: Value = serde_json::from_str(&digest).expect("digest json");
+        assert_eq!(value["level"], "L3");
+        assert_eq!(value["fields"]["command"]["t"], "string");
+        assert!(value["fields"]["command"].get("h").is_some());
+        assert!(!digest.contains("private sentence here"));
+        // The working directory is a path, so it stays readable.
+        assert_eq!(value["fields"]["cwd"], ".");
     }
 }

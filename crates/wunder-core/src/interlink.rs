@@ -229,7 +229,10 @@ pub fn command_policy(kind: &str) -> (&'static str, &'static str, bool) {
         }
         CMD_WORKSPACE_WRITE | CMD_WORKSPACE_MKDIR | CMD_WORKSPACE_MOVE | CMD_WORKSPACE_COPY
         | CMD_WORKSPACE_DELETE => (RISK_MEDIUM, CAP_WORKSPACE_WRITE, true),
-        CMD_TOOL_EXEC | CMD_AGENT_SPAWN => (RISK_HIGH, CAP_TOOL_EXEC, true),
+        // Each L3 operation carries its own capability: an administrator may open
+        // one of them without opening the other (docs §9.2).
+        CMD_TOOL_EXEC => (RISK_HIGH, CAP_TOOL_EXEC, true),
+        CMD_AGENT_SPAWN => (RISK_HIGH, CAP_AGENT_SPAWN, true),
         _ => (RISK_HIGH, CAP_TOOL_EXEC, true),
     }
 }
@@ -366,5 +369,22 @@ mod tests {
         assert!(command_policy(CMD_WORKSPACE_DELETE).2);
         assert!(requires_hard_approval(CMD_TOOL_EXEC));
         assert!(!requires_hard_approval(CMD_THREADS_LIST));
+    }
+
+    #[test]
+    fn l3_kinds_carry_their_own_capability_and_risk() {
+        assert_eq!(command_level(CMD_TOOL_EXEC), "L3");
+        assert_eq!(command_level(CMD_AGENT_SPAWN), "L3");
+        assert_eq!(command_policy(CMD_TOOL_EXEC).1, CAP_TOOL_EXEC);
+        assert_eq!(command_policy(CMD_AGENT_SPAWN).1, CAP_AGENT_SPAWN);
+        assert_eq!(command_policy(CMD_TOOL_EXEC).0, RISK_HIGH);
+        assert_eq!(command_policy(CMD_AGENT_SPAWN).0, RISK_HIGH);
+        assert!(requires_hard_approval(CMD_AGENT_SPAWN));
+        // An unknown kind stays the highest tier and is never queueable offline.
+        assert_eq!(command_level("not.a.kind"), "L3");
+        assert!(!is_queueable_when_offline(CMD_TOOL_EXEC));
+        assert!(!is_queueable_when_offline(CMD_AGENT_SPAWN));
+        assert!(!default_device_capabilities().iter().any(|cap| cap == CAP_TOOL_EXEC));
+        assert!(!default_device_capabilities().iter().any(|cap| cap == CAP_AGENT_SPAWN));
     }
 }

@@ -8,6 +8,17 @@ use anyhow::Result;
 use rusqlite::types::Value as SqlValue;
 use rusqlite::{params, params_from_iter, OptionalExtension};
 
+/// Rows selected per pass of the shadow retention sweep.
+const SHADOW_CLEANUP_PAGE: i64 = 200;
+/// Hard ceiling of one sweep call, so a big backlog can never turn into an
+/// unbounded delete.
+const SHADOW_CLEANUP_MAX_ROWS: i64 = 5_000;
+/// Ledger and audit sweeps are page-bounded too: the daily janitor must never
+/// hold the write lock for a whole table (docs §10.2). Whatever does not fit is
+/// picked up by the next pass.
+const LEDGER_CLEANUP_PAGE: i64 = 500;
+const LEDGER_CLEANUP_MAX_ROWS: i64 = 20_000;
+
 pub(super) trait SqliteInterlinkStorage {
     fn update_cloud_device_interlink_impl(
         &self,
@@ -31,6 +42,7 @@ pub(super) trait SqliteInterlinkStorage {
         -> Result<Option<InterlinkShadowRecord>>;
     fn get_interlink_shadow_revision_impl(&self, device_id: &str) -> Result<i64>;
     fn delete_interlink_shadow_impl(&self, device_id: &str) -> Result<()>;
+    fn cleanup_interlink_shadows_impl(&self, retention_days: u32, max_rows: i64) -> Result<u64>;
     fn insert_interlink_command_impl(&self, record: &InterlinkCommandRecord) -> Result<bool>;
     fn update_interlink_command_status_impl(
         &self,
@@ -316,6 +328,44 @@ impl SqliteInterlinkStorage for SqliteStorage {
         Ok(())
     }
 
+    fn cleanup_interlink_shadows_impl(&self, retention_days: u32, max_rows: i64) -> Result<u64> {
+        self.ensure_initialized()?;
+        if retention_days == 0 || max_rows <= 0 {
+            return Ok(0);
+        }
+        let cutoff = Self::now_ts() - (retention_days as f64) * 86_400.0;
+        let budget = max_rows.min(SHADOW_CLEANUP_MAX_ROWS);
+        let conn = self.open()?;
+        let mut removed = 0u64;
+        let mut remaining = budget;
+        while remaining > 0 {
+            let page = remaining.min(SHADOW_CLEANUP_PAGE);
+            let ids: Vec<String> = {
+                let mut stmt = conn.prepare(
+                    "SELECT device_id FROM interlink_node_shadows \
+                     WHERE COALESCE(synced_at, 0) < ? ORDER BY synced_at LIMIT ?",
+                )?;
+                let rows = stmt.query_map(params![cutoff, page], |row| row.get::<_, String>(0))?;
+                rows.collect::<std::result::Result<Vec<_>, _>>()?
+            };
+            if ids.is_empty() {
+                break;
+            }
+            let placeholders = ids.iter().map(|_| "?").collect::<Vec<&str>>().join(",");
+            let sql = format!("DELETE FROM interlink_node_shadows WHERE device_id IN ({placeholders})");
+            let deleted = conn.execute(&sql, params_from_iter(ids.iter()))?;
+            if deleted == 0 {
+                break;
+            }
+            removed += deleted as u64;
+            remaining -= deleted as i64;
+            if (ids.len() as i64) < page {
+                break;
+            }
+        }
+        Ok(removed)
+    }
+
     fn insert_interlink_command_impl(&self, record: &InterlinkCommandRecord) -> Result<bool> {
         self.ensure_initialized()?;
         if record.command_id.trim().is_empty() {
@@ -478,11 +528,25 @@ impl SqliteInterlinkStorage for SqliteStorage {
             return Ok(0);
         }
         let cutoff = Self::now_ts() - (retention_days as f64) * 86_400.0;
-        let deleted = self.open()?.execute(
-            "DELETE FROM interlink_commands WHERE COALESCE(created_at, 0) < ?",
-            params![cutoff],
-        )?;
-        Ok(deleted as u64)
+        let conn = self.open()?;
+        let mut removed = 0u64;
+        let mut remaining = LEDGER_CLEANUP_MAX_ROWS;
+        while remaining > 0 {
+            let page = remaining.min(LEDGER_CLEANUP_PAGE);
+            let deleted = conn.execute(
+                "DELETE FROM interlink_commands WHERE command_id IN (\
+                   SELECT command_id FROM interlink_commands \
+                   WHERE COALESCE(created_at, 0) < ? ORDER BY created_at LIMIT ?\
+                 )",
+                params![cutoff, page],
+            )?;
+            if deleted == 0 {
+                break;
+            }
+            removed += deleted as u64;
+            remaining -= deleted as i64;
+        }
+        Ok(removed)
     }
 
     fn insert_interlink_approval_impl(&self, record: &InterlinkApprovalRecord) -> Result<()> {
@@ -648,11 +712,25 @@ impl SqliteInterlinkStorage for SqliteStorage {
             return Ok(0);
         }
         let cutoff = Self::now_ts() - (retention_days as f64) * 86_400.0;
-        let deleted = self.open()?.execute(
-            "DELETE FROM interlink_audit WHERE COALESCE(created_at, 0) < ?",
-            params![cutoff],
-        )?;
-        Ok(deleted as u64)
+        let conn = self.open()?;
+        let mut removed = 0u64;
+        let mut remaining = LEDGER_CLEANUP_MAX_ROWS;
+        while remaining > 0 {
+            let page = remaining.min(LEDGER_CLEANUP_PAGE);
+            let deleted = conn.execute(
+                "DELETE FROM interlink_audit WHERE seq IN (\
+                   SELECT seq FROM interlink_audit \
+                   WHERE COALESCE(created_at, 0) < ? ORDER BY created_at LIMIT ?\
+                 )",
+                params![cutoff, page],
+            )?;
+            if deleted == 0 {
+                break;
+            }
+            removed += deleted as u64;
+            remaining -= deleted as i64;
+        }
+        Ok(removed)
     }
 }
 

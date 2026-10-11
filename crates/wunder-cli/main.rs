@@ -7,6 +7,7 @@ mod empty_state_animation;
 mod error_display;
 mod exec_events;
 mod input_guard;
+mod interlink_tunnel;
 mod locale;
 mod patch_diff;
 mod path_display;

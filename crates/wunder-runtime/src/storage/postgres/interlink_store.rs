@@ -8,6 +8,14 @@ use anyhow::Result;
 use tokio_postgres::types::ToSql;
 use tokio_postgres::Row;
 
+/// Rows deleted per pass of the shadow retention sweep.
+const SHADOW_CLEANUP_PAGE: i64 = 200;
+/// Hard ceiling of one sweep call, mirroring the SQLite side.
+const SHADOW_CLEANUP_MAX_ROWS: i64 = 5_000;
+/// Page bounds for the ledger and audit sweeps, mirroring the SQLite side.
+const LEDGER_CLEANUP_PAGE: i64 = 500;
+const LEDGER_CLEANUP_MAX_ROWS: i64 = 20_000;
+
 pub(super) trait PostgresInterlinkStorage {
     fn update_cloud_device_interlink_impl(
         &self,
@@ -31,6 +39,7 @@ pub(super) trait PostgresInterlinkStorage {
         -> Result<Option<InterlinkShadowRecord>>;
     fn get_interlink_shadow_revision_impl(&self, device_id: &str) -> Result<i64>;
     fn delete_interlink_shadow_impl(&self, device_id: &str) -> Result<()>;
+    fn cleanup_interlink_shadows_impl(&self, retention_days: u32, max_rows: i64) -> Result<u64>;
     fn insert_interlink_command_impl(&self, record: &InterlinkCommandRecord) -> Result<bool>;
     fn update_interlink_command_status_impl(
         &self,
@@ -404,6 +413,34 @@ impl PostgresInterlinkStorage for PostgresStorage {
         Ok(())
     }
 
+    fn cleanup_interlink_shadows_impl(&self, retention_days: u32, max_rows: i64) -> Result<u64> {
+        self.ensure_initialized()?;
+        if retention_days == 0 || max_rows <= 0 {
+            return Ok(0);
+        }
+        let cutoff = Self::now_ts() - (retention_days as f64) * 86_400.0;
+        let budget = max_rows.min(SHADOW_CLEANUP_MAX_ROWS);
+        let mut conn = self.conn()?;
+        let mut removed = 0u64;
+        let mut remaining = budget;
+        while remaining > 0 {
+            let page = remaining.min(SHADOW_CLEANUP_PAGE);
+            let deleted = conn.execute(
+                "DELETE FROM interlink_node_shadows WHERE device_id IN (\
+                   SELECT device_id FROM interlink_node_shadows \
+                   WHERE COALESCE(synced_at, 0) < $1 ORDER BY synced_at LIMIT $2\
+                 )",
+                &[&cutoff, &page],
+            )?;
+            if deleted == 0 {
+                break;
+            }
+            removed += deleted;
+            remaining -= deleted as i64;
+        }
+        Ok(removed)
+    }
+
     fn insert_interlink_command_impl(&self, record: &InterlinkCommandRecord) -> Result<bool> {
         self.ensure_initialized()?;
         if record.command_id.trim().is_empty() {
@@ -569,11 +606,24 @@ impl PostgresInterlinkStorage for PostgresStorage {
         }
         let cutoff = Self::now_ts() - (retention_days as f64) * 86_400.0;
         let mut conn = self.conn()?;
-        let deleted = conn.execute(
-            "DELETE FROM interlink_commands WHERE COALESCE(created_at, 0) < $1",
-            &[&cutoff],
-        )?;
-        Ok(deleted)
+        let mut removed = 0u64;
+        let mut remaining = LEDGER_CLEANUP_MAX_ROWS;
+        while remaining > 0 {
+            let page = remaining.min(LEDGER_CLEANUP_PAGE);
+            let deleted = conn.execute(
+                "DELETE FROM interlink_commands WHERE command_id IN (\
+                   SELECT command_id FROM interlink_commands \
+                   WHERE COALESCE(created_at, 0) < $1 ORDER BY created_at LIMIT $2\
+                 )",
+                &[&cutoff, &page],
+            )?;
+            if deleted == 0 {
+                break;
+            }
+            removed += deleted;
+            remaining -= deleted as i64;
+        }
+        Ok(removed)
     }
 
     fn insert_interlink_approval_impl(&self, record: &InterlinkApprovalRecord) -> Result<()> {
@@ -747,10 +797,23 @@ impl PostgresInterlinkStorage for PostgresStorage {
         }
         let cutoff = Self::now_ts() - (retention_days as f64) * 86_400.0;
         let mut conn = self.conn()?;
-        let deleted = conn.execute(
-            "DELETE FROM interlink_audit WHERE COALESCE(created_at, 0) < $1",
-            &[&cutoff],
-        )?;
-        Ok(deleted)
+        let mut removed = 0u64;
+        let mut remaining = LEDGER_CLEANUP_MAX_ROWS;
+        while remaining > 0 {
+            let page = remaining.min(LEDGER_CLEANUP_PAGE);
+            let deleted = conn.execute(
+                "DELETE FROM interlink_audit WHERE seq IN (\
+                   SELECT seq FROM interlink_audit \
+                   WHERE COALESCE(created_at, 0) < $1 ORDER BY created_at LIMIT $2\
+                 )",
+                &[&cutoff, &page],
+            )?;
+            if deleted == 0 {
+                break;
+            }
+            removed += deleted;
+            remaining -= deleted as i64;
+        }
+        Ok(removed)
     }
 }

@@ -78,6 +78,13 @@ impl Rng {
         x.wrapping_mul(0x2545_F491_4F6C_DD1D)
     }
 
+    /// UUID-shaped id drawn from the same deterministic stream. Used for the
+    /// rarely-sampled nested ids (subagent/memory/schedule) so the writers avoid
+    /// a `getrandom` syscall per call.
+    pub(crate) fn uuid(&mut self) -> Uuid {
+        Uuid::from_u64_pair(self.next_u64(), self.next_u64())
+    }
+
     pub(crate) fn below(&mut self, bound: u64) -> u64 {
         self.next_u64() % bound.max(1)
     }
@@ -100,6 +107,23 @@ impl Rng {
 
     pub(crate) fn pick<'a, T>(&mut self, values: &'a [T]) -> &'a T {
         &values[self.below(values.len() as u64) as usize]
+    }
+}
+
+/// Monotonic UUID-shaped id source for bulk row keys. Uniqueness comes from the
+/// counter (row keys are only ever scoped by the stress session), which lets the
+/// two writers avoid one `getrandom` syscall per generated item/tool call.
+pub(crate) struct IdGen(u64);
+
+impl IdGen {
+    pub(crate) fn new(seed: u64) -> Self {
+        Self(seed)
+    }
+
+    pub(crate) fn next(&mut self) -> Uuid {
+        self.0 = self.0.wrapping_add(1);
+        // "STRESS" ASCII prefix keeps generated ids recognizable in the database.
+        Uuid::from_u64_pair(0x5354_5245_5353_0000, self.0)
     }
 }
 
@@ -285,12 +309,23 @@ fn pick_command(rng: &mut Rng) -> String {
     .to_string()
 }
 
+/// Sampled tool result plus the derived pieces the writers reuse. `data_text`
+/// is the serialized `data` value, shared by the item payload and the mirrored
+/// `tool_logs` row so the value is serialized once instead of twice.
+pub(crate) struct ToolResult {
+    pub failed: bool,
+    pub data: Value,
+    pub data_text: String,
+    pub error: String,
+    pub meta: Value,
+}
+
 pub(crate) fn build_tool_result(
     rng: &mut Rng,
     profile: &ToolProfile,
     args: &Value,
     duration_ms: i64,
-) -> (bool, Value, String, Value) {
+) -> Result<ToolResult> {
     // A small share of calls fail, matching real-world tool error rates.
     let failed = rng.chance(6.0);
     let data = if failed {
@@ -339,7 +374,7 @@ pub(crate) fn build_tool_result(
             }),
             "写入文件" => json!({ "path": args.get("path").cloned().unwrap_or(json!("notes.md")), "bytes": rng.int(40, 9_000) }),
             "文本编辑" => json!({ "replacements": 1 }),
-            "子智能体控制" => json!({ "session_id": Uuid::new_v4().to_string(), "status": "spawned" }),
+            "子智能体控制" => json!({ "session_id": rng.uuid().to_string(), "status": "spawned" }),
             "web_search" => {
                 let mut results = Vec::new();
                 for i in 0..rng.int(3, 6) {
@@ -352,15 +387,16 @@ pub(crate) fn build_tool_result(
                 json!({ "results": results, "query": args.get("query").cloned().unwrap_or(json!("")) })
             }
             "web_fetch" => json!({ "title": "批量写入指南", "content": "相关章节的正文摘要……", "truncated": true }),
-            "记忆管理" => json!({ "action": "remember", "memory_id": Uuid::new_v4().to_string() }),
+            "记忆管理" => json!({ "action": "remember", "memory_id": rng.uuid().to_string() }),
             "计划面板" => json!({ "accepted": true }),
-            "定时任务" => json!({ "job_id": Uuid::new_v4().to_string(), "enabled": true }),
+            "定时任务" => json!({ "job_id": rng.uuid().to_string(), "enabled": true }),
             _ => json!({ "ok": true }),
         }
     };
+    let data_text = serde_json::to_string(&data)?;
     let meta = json!({
         "duration_ms": duration_ms,
-        "output_chars": data.to_string().chars().count(),
+        "output_chars": data_text.chars().count(),
     });
     let error = if failed {
         rng.pick_str(&[
@@ -371,7 +407,13 @@ pub(crate) fn build_tool_result(
     } else {
         String::new()
     };
-    (failed, data, error, meta)
+    Ok(ToolResult {
+        failed,
+        data,
+        data_text,
+        error,
+        meta,
+    })
 }
 
 pub(crate) fn build_answer_text(rng: &mut Rng, prompt: &str, turn_index: i64) -> String {
@@ -395,10 +437,15 @@ pub(crate) fn build_answer_text(rng: &mut Rng, prompt: &str, turn_index: i64) ->
 
 pub(crate) fn build_reasoning_text(rng: &mut Rng, budget_tokens: u64) -> String {
     let target_chars = (budget_tokens.saturating_mul(3)).max(60) as usize;
-    let mut text = String::new();
-    while text.chars().count() < target_chars {
-        text.push_str(rng.pick_str(REASONING_LINES));
+    // Track the running length instead of recounting the whole buffer on every
+    // append (that made this O(n^2) in the reasoning length).
+    let mut text = String::with_capacity(target_chars + 64);
+    let mut len_chars = 0usize;
+    while len_chars < target_chars {
+        let line = rng.pick_str(REASONING_LINES);
+        text.push_str(line);
         text.push(' ');
+        len_chars += line.chars().count() + 1;
     }
     text
 }
@@ -495,7 +542,18 @@ pub(crate) fn plan_timeline(
     })
 }
 
+/// serde_json-compatible rendering of a float (so spliced numbers parse back to
+/// the same value serde_json would have written).
+fn json_num(value: f64) -> String {
+    serde_json::to_string(&value).unwrap_or_else(|_| value.to_string())
+}
+
 /// Committed-item change payload shape (matches committed_item_payload).
+///
+/// `payload` is already a serialized JSON object, so it is spliced in verbatim
+/// rather than being parsed and re-serialized for every row (at the default
+/// scale this runs once per item and was a large share of the CPU). Only the
+/// small scalar fields pass through `serde_json` for correct escaping.
 pub(crate) fn committed_item_json(
     item_id: &str,
     item_index: i64,
@@ -507,25 +565,77 @@ pub(crate) fn committed_item_json(
     turn_id: &str,
     created_seq: i64,
 ) -> Result<String> {
-    Ok(serde_json::to_string(&json!({
-        "item_id": item_id,
-        "item_index": item_index,
-        "kind": kind,
-        "status": status,
-        "revision": 1,
-        "payload": serde_json::from_str::<Value>(payload).unwrap_or(Value::Null),
-        "created_time": created_time,
-        "updated_time": updated_time,
-        "turn_id": turn_id,
-        "visibility": "user",
-        "root_turn_id": turn_id,
-        "created_seq": created_seq,
-    }))?)
+    Ok(format!(
+        "{{\"item_id\":{},\"item_index\":{},\"kind\":{},\"status\":{},\"revision\":1,\"payload\":{},\"created_time\":{},\"updated_time\":{},\"turn_id\":{},\"visibility\":\"user\",\"root_turn_id\":{},\"created_seq\":{}}}",
+        serde_json::to_string(item_id)?,
+        item_index,
+        serde_json::to_string(kind)?,
+        serde_json::to_string(status)?,
+        payload,
+        json_num(created_time),
+        json_num(updated_time),
+        serde_json::to_string(turn_id)?,
+        serde_json::to_string(turn_id)?,
+        created_seq,
+    ))
 }
 
 pub(crate) fn profile_hint(profiles: &[(&ToolProfile, f64)]) -> String {
     match profiles.first() {
         Some((profile, _)) => format!("已调用 {}", profile.name),
         None => "继续推理".to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn committed_item_json_splices_payload_verbatim() {
+        let payload = serde_json::to_string(&json!({
+            "content": "hello \"world\"\n",
+            "usage": { "input_tokens": 12 },
+        }))
+        .unwrap();
+        let out = committed_item_json(
+            "turn-1:user",
+            0,
+            "user_message",
+            "completed",
+            &payload,
+            1_700_000_000.25,
+            1_700_000_000.25,
+            "turn-1",
+            7,
+        )
+        .unwrap();
+        let value: Value = serde_json::from_str(&out).expect("change payload is valid json");
+        assert_eq!(value["item_id"], json!("turn-1:user"));
+        assert_eq!(value["created_seq"], json!(7));
+        assert_eq!(value["revision"], json!(1));
+        assert_eq!(value["visibility"], json!("user"));
+        assert_eq!(value["root_turn_id"], json!("turn-1"));
+        assert_eq!(value["created_time"], json!(1_700_000_000.25));
+        // The nested item payload survives the verbatim splice intact.
+        assert_eq!(value["payload"]["content"], json!("hello \"world\"\n"));
+        assert_eq!(value["payload"]["usage"]["input_tokens"], json!(12));
+    }
+
+    #[test]
+    fn reasoning_text_reaches_budget() {
+        let mut rng = Rng::new(1);
+        let text = build_reasoning_text(&mut rng, 100);
+        assert!(text.chars().count() >= 300, "len={}", text.chars().count());
+        assert!(text.ends_with(' '));
+    }
+
+    #[test]
+    fn id_gen_produces_distinct_uuids() {
+        let mut ids = IdGen::new(42);
+        let a = ids.next().to_string();
+        let b = ids.next().to_string();
+        assert_ne!(a, b);
+        assert_eq!(a.len(), 36, "uuid-shaped: {a}");
     }
 }

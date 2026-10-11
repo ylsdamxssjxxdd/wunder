@@ -1,4 +1,4 @@
-import { getCurrentLanguage } from "./i18n.js?v=20260710-01";
+import { getCurrentLanguage } from "./i18n.js?v=20261011-01";
 
 export const simulationProfiles = { fast: [2000, 200], medium: [500, 50], slow: [100, 10] };
 export const normalizeSimulationSpeed = value => Object.hasOwn(simulationProfiles, value) ? value : "fast";

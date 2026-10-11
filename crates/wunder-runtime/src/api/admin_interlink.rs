@@ -38,7 +38,7 @@ use crate::api::errors::error_response;
 use crate::api::interlink_ws;
 use crate::auth as guard_auth;
 use crate::core::blocking;
-use crate::services::interlink::{audit, commands, digest, registry, secret, LiveChannel};
+use crate::services::interlink::{audit, commands, digest, janitor, registry, secret, LiveChannel};
 use crate::services::presence::derive_device_status_with_tunnel;
 use crate::state::AppState;
 use crate::storage::{
@@ -96,6 +96,7 @@ pub fn router() -> Router<Arc<AppState>> {
         )
         .route("/wunder/admin/interlink/commands", get(get_commands))
         .route("/wunder/admin/interlink/audit", get(get_audit))
+        .route("/wunder/admin/interlink/runtime", get(get_runtime))
 }
 
 // ---------------------------------------------------------------------------
@@ -143,7 +144,7 @@ struct AuditQuery {
 }
 
 /// Trimmed non-empty filter; `None` for anything blank.
-fn clean_filter(value: Option<&str>) -> Option<String> {
+pub(crate) fn clean_filter(value: Option<&str>) -> Option<String> {
     value
         .map(str::trim)
         .filter(|text| !text.is_empty())
@@ -207,7 +208,7 @@ fn normalize_status_filter(value: Option<&str>) -> Option<Option<String>> {
 /// (`device:<id>` for a persistent node, `cloud` / `web:conn` otherwise) and the
 /// store filters `to_node` by equality, so a bare id is expanded here.
 /// Idempotent: an already-prefixed value passes through untouched.
-fn node_filter(value: Option<String>) -> Option<String> {
+pub(crate) fn node_filter(value: Option<String>) -> Option<String> {
     value.map(|raw| {
         // `cloud` is the server node itself and carries no `device:` prefix.
         if raw.contains(':') || raw == "cloud" {
@@ -219,7 +220,7 @@ fn node_filter(value: Option<String>) -> Option<String> {
 }
 
 /// Time filter: epoch seconds, epoch milliseconds, or an RFC 3339 stamp.
-fn parse_time_filter(value: Option<&str>) -> Option<f64> {
+pub(crate) fn parse_time_filter(value: Option<&str>) -> Option<f64> {
     let text = clean_filter(value)?;
     if let Ok(number) = text.parse::<f64>() {
         // Above 1e11 the value is milliseconds; seconds are still ~1.8e9.
@@ -1193,7 +1194,7 @@ fn audit_row(record: &InterlinkAuditRecord) -> Value {
         "from_node": record.from_node,
         "to_node": record.to_node,
         "action": record.action,
-        "detail_digest": parse_or_json(record.detail_digest.as_deref()),
+        "detail_digest": audit::detail_value(record.detail_digest.as_deref()),
         "created_at": record.created_at,
     })
 }
@@ -1288,6 +1289,25 @@ fn insert_header(headers: &mut HeaderMap, name: HeaderName, value: &str) {
     if let Ok(parsed) = HeaderValue::try_from(value) {
         headers.insert(name, parsed);
     }
+}
+
+// ---------------------------------------------------------------------------
+// GET /wunder/admin/interlink/runtime
+// ---------------------------------------------------------------------------
+
+/// Sole HTTP consumer of the §9.4 alert counters (`alerts.stats()`) and the
+/// tunnel runtime metrics: what `janitor::snapshot()` had otherwise no reader
+/// for. The snapshot is a pure in-memory projection of the registry, command
+/// hub, watch hub, blob cache and alert counters, so this handler performs no
+/// database or IO work and stays O(live state).
+async fn get_runtime(State(state): State<Arc<AppState>>) -> Response {
+    if !interlink_enabled(&state).await {
+        return interlink_disabled_response();
+    }
+    Json(json!({
+        "data": janitor::snapshot()
+    }))
+    .into_response()
 }
 
 // ---------------------------------------------------------------------------
@@ -1854,6 +1874,7 @@ mod tests {
             "/wunder/admin/interlink/devices/d_1/rotate_secret",
             "/wunder/admin/interlink/commands",
             "/wunder/admin/interlink/audit",
+            "/wunder/admin/interlink/runtime",
         ] {
             assert!(guard_auth::is_admin_path(path), "{path} must be admin-gated");
         }

@@ -208,6 +208,12 @@ impl Orchestrator {
         self.goal.clone()
     }
 
+    /// Pooled HTTP client, shared with tool runs that start outside a model turn
+    /// (remote L3 commands) so they never build a second connection pool.
+    pub fn http_client(&self) -> reqwest::Client {
+        self.http.clone()
+    }
+
     pub async fn resolve_session_effective_tool_names(
         &self,
         user: &crate::storage::UserAccountRecord,

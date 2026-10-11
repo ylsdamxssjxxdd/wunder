@@ -31,20 +31,19 @@ use std::time::Duration;
 use futures::{SinkExt, StreamExt};
 use serde::Serialize;
 use serde_json::{json, Value};
-use tokio::sync::{mpsc, Mutex as TokioMutex, Notify};
+use tokio::sync::{mpsc, Notify};
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 use tokio_util::sync::CancellationToken;
 
 use wunder_core::interlink::{
-    APPROVAL_APPROVED, APPROVAL_EXPIRED, APPROVAL_NONE, APPROVAL_REJECTED, CAP_QUERY_BASIC,
-    CAP_SHADOW_FULL, CAP_SHADOW_MINIMAL, CAP_THREAD_DRIVE, CAP_WORKSPACE_READ_BINARY,
-    CAP_WORKSPACE_WRITE, CMD_COMMAND_CANCEL, EVENT_NODE_JOINED,
+    APPROVAL_APPROVED, APPROVAL_EXPIRED, APPROVAL_NONE, APPROVAL_REJECTED, CAP_AGENT_SPAWN,
+    CAP_QUERY_BASIC, CAP_SHADOW_FULL, CAP_SHADOW_MINIMAL, CAP_THREAD_DRIVE, CAP_TOOL_EXEC,
+    CAP_WORKSPACE_READ_BINARY, CAP_WORKSPACE_WRITE, CMD_COMMAND_CANCEL, EVENT_NODE_JOINED,
     EVENT_PRESENCE, EVENT_THREAD, FRAME_COMMAND, FRAME_COMMAND_ACK, FRAME_COMMAND_RESULT,
     FRAME_ERROR, FRAME_EVENT, FRAME_HELLO_ACK, FRAME_PONG, NODE_STATUS_AWAY, NODE_STATUS_BUSY,
-    NODE_STATUS_ONLINE, ERR_NODE_BUSY, InterlinkFrame, InterlinkHelloAck,
-    TUNNEL_WS_PROTOCOL,
+    NODE_STATUS_ONLINE, ERR_NODE_BUSY, InterlinkFrame, InterlinkHelloAck, TUNNEL_WS_PROTOCOL,
 };
 
 use crate::core::long_task;
@@ -112,6 +111,9 @@ pub struct TunnelStatus {
     pub pending_approvals: usize,
     pub inflight_commands: usize,
     pub watched_threads: usize,
+    /// Frames the bounded outbound queues refused since this process started
+    /// (docs §10.2: saturation degrades, it never blocks the engine).
+    pub dropped_frames: u64,
     /// Sanitized summary; never a token, secret or url.
     pub last_error: Option<String>,
     pub next_retry_at: Option<f64>,
@@ -147,18 +149,58 @@ impl InterlinkLocalOptions {
     }
 }
 
-/// Capabilities this node can actually honour, declared in `hello` and
-/// intersected by the server (docs §9.2). `tool.exec` and `agent.spawn` (L3)
-/// are deliberately not declared: the node has no implementation for them.
-pub fn declared_capabilities() -> Vec<String> {
-    vec![
+/// Build/platform facts that bound what this node may announce (docs §9.2: a
+/// capability is declared only when this build can actually honour it).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NodePlatform {
+    /// The Windows 7 build target has no sandbox/job-object primitives, so a
+    /// remotely started command could not be bounded or killed here.
+    pub legacy_windows: bool,
+    /// Spawning a work unit needs a live thread runtime.
+    pub thread_runtime_active: bool,
+}
+
+impl NodePlatform {
+    pub fn detect(state: &AppState) -> Self {
+        Self {
+            legacy_windows: cfg!(target_vendor = "win7"),
+            thread_runtime_active: state.runtime_capabilities.thread_runtime_active,
+        }
+    }
+}
+
+/// The L3 capabilities this build/platform can honour, empty on a node that
+/// cannot run them. Pure so the rule is testable without a tunnel.
+pub fn platform_capabilities(platform: &NodePlatform) -> Vec<&'static str> {
+    let mut caps = Vec::with_capacity(2);
+    if !platform.legacy_windows {
+        caps.push(CAP_TOOL_EXEC);
+    }
+    if platform.thread_runtime_active {
+        caps.push(CAP_AGENT_SPAWN);
+    }
+    caps
+}
+
+/// Capabilities declared in `hello` and intersected by the server (docs §9.2).
+/// Anything outside this set is refused by [`execute::preflight`] even when a
+/// server granted it, so a wrong `hello_ack` cannot make the node run something
+/// it does not support.
+pub fn declared_capabilities(platform: &NodePlatform) -> Vec<String> {
+    let mut caps = vec![
         CAP_SHADOW_FULL.to_string(),
         CAP_SHADOW_MINIMAL.to_string(),
         CAP_QUERY_BASIC.to_string(),
         CAP_WORKSPACE_READ_BINARY.to_string(),
         CAP_THREAD_DRIVE.to_string(),
         CAP_WORKSPACE_WRITE.to_string(),
-    ]
+    ];
+    caps.extend(
+        platform_capabilities(platform)
+            .into_iter()
+            .map(str::to_string),
+    );
+    caps
 }
 
 /// One connection's outbound router: two bounded queues, one socket.
@@ -166,6 +208,15 @@ pub struct TunnelWriter {
     control: mpsc::Sender<OutboundFrame>,
     data: mpsc::Sender<OutboundFrame>,
     channel_id: RwLock<Option<String>>,
+}
+
+/// Frames a full bounded queue refused, cumulative for the process so a
+/// degradation stays visible across reconnects (docs §10.2).
+static DROPPED_FRAMES: AtomicU64 = AtomicU64::new(0);
+
+/// Frames the tunnel had to drop since this process started.
+pub fn dropped_frames() -> u64 {
+    DROPPED_FRAMES.load(Ordering::Relaxed)
 }
 
 impl TunnelWriter {
@@ -240,11 +291,17 @@ impl TunnelWriter {
     pub fn try_send_frame(&self, kind: &str, corr: Option<&str>, payload: Value) -> bool {
         let frame = self.frame(kind, corr, payload);
         match serde_json::to_string(&frame) {
-            Ok(text) => self
-                .control
-                .try_send(OutboundFrame::Text(text))
-                .map(|_| true)
-                .unwrap_or(false),
+            Ok(text) => {
+                if self
+                    .control
+                    .try_send(OutboundFrame::Text(text))
+                    .is_err()
+                {
+                    DROPPED_FRAMES.fetch_add(1, Ordering::Relaxed);
+                    return false;
+                }
+                true
+            }
             Err(_) => false,
         }
     }
@@ -264,14 +321,19 @@ struct ClientInner {
     in_flight: InFlightTable,
     collector: ShadowCollector,
     shadow_wake: Arc<Notify>,
-    commands: mpsc::Sender<CommandSpec>,
-    command_rx: TokioMutex<Option<mpsc::Receiver<CommandSpec>>>,
+    /// Command sender of the current generation; `start()` swaps it together
+    /// with the dispatcher's matching receiver.
+    commands: RwLock<mpsc::Sender<CommandSpec>>,
     forwarders: RwLock<HashMap<String, Forwarder>>,
     secret: RwLock<Option<NodeSecret>>,
     last_error: RwLock<Option<String>>,
     next_retry_at: RwLock<Option<f64>>,
     last_busy_at: AtomicU64,
-    stop: CancellationToken,
+    /// Cancellation token of the **current start generation**: `stop()` cancels
+    /// it and `start()` installs a fresh one, so a stopped tunnel can be
+    /// re-opened in-process (kill switch lifted, config flipped back) instead of
+    /// staying dead until the form restarts.
+    stop: RwLock<CancellationToken>,
     running: AtomicBool,
 }
 
@@ -281,7 +343,11 @@ struct Forwarder {
 
 impl ClientInner {
     fn new(state: Arc<AppState>, options: InterlinkLocalOptions) -> Arc<Self> {
-        let (commands, command_rx) = mpsc::channel(COMMAND_QUEUE_CAPACITY);
+        // The receiver belongs to a start generation; an unstarted client keeps
+        // its sender pointed at a closed channel, so `try_send` fails loudly
+        // instead of parking commands nobody will ever run.
+        let (commands, receiver) = mpsc::channel(COMMAND_QUEUE_CAPACITY);
+        drop(receiver);
         Arc::new(Self {
             state,
             options,
@@ -295,14 +361,13 @@ impl ClientInner {
             in_flight: InFlightTable::default(),
             collector: ShadowCollector::new(),
             shadow_wake: Arc::new(Notify::new()),
-            commands,
-            command_rx: TokioMutex::new(Some(command_rx)),
+            commands: RwLock::new(commands),
             forwarders: RwLock::new(HashMap::new()),
             secret: RwLock::new(None),
             last_error: RwLock::new(None),
             next_retry_at: RwLock::new(None),
             last_busy_at: AtomicU64::new(0),
-            stop: CancellationToken::new(),
+            stop: RwLock::new(CancellationToken::new()),
             running: AtomicBool::new(false),
         })
     }
@@ -385,7 +450,7 @@ impl ClientInner {
 
     /// Local activity: how many threads this node is running right now.
     fn active_threads(&self) -> usize {
-        self.state.monitor.list_sessions(true).len()
+        self.state.monitor.count_active_sessions()
     }
 
     fn presence_payload(&self, now: f64) -> Value {
@@ -469,6 +534,13 @@ impl ClientInner {
             .clone()
     }
 
+    /// What this node is able to honour right now: the same set `hello`
+    /// declared, recomputed so a capability the server handed out by mistake is
+    /// still refused (docs §9.2 three-way intersection).
+    fn declared_capabilities(&self) -> Vec<String> {
+        declared_capabilities(&NodePlatform::detect(&self.state))
+    }
+
     fn set_capabilities(&self, caps: Vec<String>) {
         *self.capabilities.write().expect("tunnel state lock poisoned") = caps;
     }
@@ -488,6 +560,7 @@ impl ClientInner {
                 .read()
                 .expect("forwarder table lock poisoned")
                 .len(),
+            dropped_frames: dropped_frames(),
             last_error: self
                 .last_error
                 .read()
@@ -544,23 +617,26 @@ impl InterlinkClient {
         self.inner.mark_dirty_local(sections);
     }
 
-    /// Start the tunnel loop. Idempotent: a second call is a no-op.
+    /// Start the tunnel loop. Idempotent: a second call is a no-op, and after a
+    /// [`Self::stop`] it opens a fresh generation, so a stopped tunnel can be
+    /// re-opened in the same process.
     pub fn start(&self) {
         let inner = self.inner.clone();
         if inner.running.swap(true, Ordering::AcqRel) {
             return;
         }
+        // Replace the token `stop()` cancelled before any task is spawned.
+        inner.begin_generation();
         inner.set_tunnel(TunnelState::Connecting);
-        let receiver = {
-            let mut guard = inner.command_rx.blocking_lock();
-            guard.take()
-        };
-        if let Some(receiver) = receiver {
-            long_task::spawn("interlink.client.commands", command_dispatcher(
-                inner.clone(),
-                receiver,
-            ));
-        }
+        // One command channel per generation: the previous receiver was moved
+        // into the dispatcher that `stop()` just cancelled, so taking it from a
+        // slot would leave a reconnected node with nobody to run commands.
+        let (sender, receiver) = mpsc::channel(COMMAND_QUEUE_CAPACITY);
+        *inner.commands.write().expect("command sender lock poisoned") = sender;
+        long_task::spawn("interlink.client.commands", command_dispatcher(
+            inner.clone(),
+            receiver,
+        ));
         long_task::spawn("interlink.client.run_loop", run_loop(inner.clone()));
     }
 
@@ -571,7 +647,7 @@ impl InterlinkClient {
             return;
         }
         self.inner.running.store(false, Ordering::Release);
-        self.inner.stop.cancel();
+        self.inner.cancel_stop();
         self.inner.set_tunnel(TunnelState::Disabled);
         if let Some(writer) = self.inner.writer() {
             self.inner.clear_writer(&writer);
@@ -643,6 +719,7 @@ pub fn status() -> TunnelStatus {
             pending_approvals: 0,
             inflight_commands: 0,
             watched_threads: 0,
+            dropped_frames: 0,
             last_error: None,
             next_retry_at: None,
         })
@@ -682,7 +759,7 @@ async fn run_loop(inner: Arc<ClientInner>) {
     let mut attempt: u32 = 0;
     let mut flow = SecretFlow::default();
     loop {
-        if inner.stop.is_cancelled() {
+        if inner.stop_token().is_cancelled() {
             return;
         }
         let Some(session) = inner.session() else {
@@ -734,7 +811,7 @@ async fn run_loop(inner: Arc<ClientInner>) {
             TunnelState::Reconnecting
         });
         let outcome = connect_once(inner.clone(), &session, secret).await;
-        if inner.stop.is_cancelled() {
+        if inner.stop_token().is_cancelled() {
             return;
         }
         let reason = match outcome {
@@ -775,12 +852,36 @@ impl ClientInner {
     fn secret_value(&self) -> Option<NodeSecret> {
         self.secret.read().expect("tunnel state lock poisoned").clone()
     }
+
+    /// Cancellation token of the current generation.
+    fn stop_token(&self) -> CancellationToken {
+        self.stop
+            .read()
+            .expect("tunnel stop lock poisoned")
+            .clone()
+    }
+
+    /// Cancel the current generation. Both this and [`Self::begin_generation`]
+    /// take the lock, so a concurrent `start` can neither observe a half-applied
+    /// switch nor slip a fresh token in that nobody cancels.
+    fn cancel_stop(&self) {
+        self.stop
+            .read()
+            .expect("tunnel stop lock poisoned")
+            .cancel();
+    }
+
+    /// Start a new generation with an un-cancelled token.
+    fn begin_generation(&self) {
+        *self.stop.write().expect("tunnel stop lock poisoned") = CancellationToken::new();
+    }
 }
 
 async fn sleep_or_stop(inner: &Arc<ClientInner>, delay: Duration) {
+    let stop = inner.stop_token();
     tokio::select! {
         _ = tokio::time::sleep(delay) => {}
-        _ = inner.stop.cancelled() => {}
+        _ = stop.cancelled() => {}
     }
 }
 
@@ -824,7 +925,7 @@ async fn connect_once(
         session,
         &secret,
         &ticket,
-        &declared_capabilities(),
+        &inner.declared_capabilities(),
         inner.resume_channel().as_deref(),
         &env!("CARGO_PKG_VERSION").to_string(),
     );
@@ -862,7 +963,7 @@ async fn connect_once(
         control_rx,
         data_rx,
         pong_rx,
-        inner.stop.clone(),
+        inner.stop_token(),
     ));
 
     // First projection right after the ack (docs §6.2 1).
@@ -892,6 +993,7 @@ async fn connect_once(
     let mut full_timer = tokio::time::interval(Duration::from_secs(full_interval_s));
     full_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     full_timer.tick().await;
+    let stop = inner.stop_token();
 
     let reason = loop {
         tokio::select! {
@@ -931,7 +1033,7 @@ async fn connect_once(
                 // Nothing at all from the server for three heartbeat periods.
                 break CloseReason::Timeout;
             }
-            _ = inner.stop.cancelled() => break CloseReason::ClosedByPeer,
+            _ = stop.cancelled() => break CloseReason::ClosedByPeer,
         }
     };
 
@@ -1059,10 +1161,16 @@ fn handle_inbound(
                 return None;
             }
             let job = spec;
-            match inner.commands.try_send(job) {
+            let sender = inner
+                .commands
+                .read()
+                .expect("command sender lock poisoned")
+                .clone();
+            match sender.try_send(job) {
                 Ok(()) => None,
                 Err(_) => {
-                    // Queue full: the server owns the retry (docs §4.3).
+                    // Queue full, or no live generation to run it: the server
+                    // owns the retry (docs §4.3).
                     let payload = json!({
                         "accepted": false,
                         "approval_state": APPROVAL_NONE,
@@ -1243,10 +1351,11 @@ async fn forward_changes(
     cancel: CancellationToken,
 ) {
     use crate::ThreadChangeFrame;
+    let stop = inner.stop_token();
     loop {
         tokio::select! {
             _ = cancel.cancelled() => return,
-            _ = inner.stop.cancelled() => return,
+            _ = stop.cancelled() => return,
             frame = receiver.recv() => {
                 let Some(frame) = frame else { return };
                 let payload = match &frame {
@@ -1377,7 +1486,14 @@ async fn send_full_shadow(
 /// Every merge-window tick: fold the cheap signals in, then upload whatever is
 /// dirty (docs §6.2 2).
 async fn pump_shadow_signals(inner: &Arc<ClientInner>, writer: &Arc<TunnelWriter>, session: &CloudSessionFile) {
-    let scope = shadow::workspace_scope(&inner.state, &shadow_scope_sources(inner, session).await);
+    // Cheap signals only until something is actually dirty: this runs every
+    // merge window on an idle node, so it must not clone the config or read the
+    // workspace tree just to learn there is nothing to send (docs §10.2).
+    let scope = shadow::workspace_scope(
+        &inner.state,
+        &inner.options.local_user_id,
+        inner.options.workspace_id.as_deref(),
+    );
     let tree_version = inner.state.workspace.get_tree_version(&scope);
     let active = inner.active_threads() as u64;
     inner.collector.refresh_signals(tree_version, active);
@@ -1415,19 +1531,16 @@ async fn pump_shadow_signals(inner: &Arc<ClientInner>, writer: &Arc<TunnelWriter
     }
 }
 
-async fn shadow_scope_sources(inner: &Arc<ClientInner>, session: &CloudSessionFile) -> ShadowSources {
-    inner.shadow_sources(session).await
-}
-
 // ---------------------------------------------------------------------------
 // Command dispatcher
 // ---------------------------------------------------------------------------
 
 async fn command_dispatcher(inner: Arc<ClientInner>, mut receiver: mpsc::Receiver<CommandSpec>) {
+    let stop = inner.stop_token();
     loop {
         let spec = tokio::select! {
             Some(spec) = receiver.recv() => spec,
-            _ = inner.stop.cancelled() => return,
+            _ = stop.cancelled() => return,
             else => return,
         };
         let inner = inner.clone();
@@ -1486,24 +1599,24 @@ async fn run_command(inner: Arc<ClientInner>, spec: CommandSpec) {
 
     // 2) capability + approval precedence.
     let policy = session.interlink.approval_policy();
-    let preflight = execute::preflight(&spec, &inner.capabilities(), &inner.approvals, policy, now);
+    let preflight = execute::preflight(
+        &spec,
+        &inner.capabilities(),
+        &inner.declared_capabilities(),
+        &inner.approvals,
+        policy,
+        now,
+    );
     let approval_state = match preflight {
         Preflight::Allow => APPROVAL_NONE.to_string(),
         Preflight::Reject(code, state) => {
-            let _ = &code;
+            let refused = CommandReport::ack_denied(code, state);
             writer
-                .send_frame(
-                    FRAME_COMMAND_ACK,
-                    Some(&spec.command_id),
-                    CommandReport::ack(false, state),
-                )
+                .send_frame(FRAME_COMMAND_ACK, Some(&spec.command_id), refused.clone())
                 .await
                 .ok();
             inner.in_flight.remove(&spec.command_id);
-            inner
-                .ledger
-                .finish(&spec.command_id, CommandReport::ack(false, state), now_ts())
-                .await;
+            inner.ledger.finish(&spec.command_id, refused, now_ts()).await;
             return;
         }
         Preflight::NeedPrompt => match request_decision(&inner, &writer, &spec).await {
@@ -1569,7 +1682,7 @@ async fn request_decision(
         prompt: approval::prompt_text(&spec.kind, &spec.from_node, &spec.args),
         expires_at,
     };
-    let receiver = match inner.approvals.open(pending) {
+    let receiver = match inner.approvals.open(pending, now) {
         Ok(receiver) => receiver,
         Err(GateError::QueueFull) => {
             writer
@@ -1584,10 +1697,11 @@ async fn request_decision(
             return None;
         }
     };
+    let stop = inner.stop_token();
     let decision = tokio::select! {
         answered = receiver => answered.ok(),
         _ = tokio::time::sleep(Duration::from_secs_f64(window.max(0.001))) => None,
-        _ = inner.stop.cancelled() => None,
+        _ = stop.cancelled() => None,
     };
     let state = match decision {
         Some(Decision::Approve) => APPROVAL_APPROVED.to_string(),
@@ -1611,4 +1725,56 @@ async fn request_decision(
         }
     };
     Some(state)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn platform(legacy_windows: bool, thread_runtime_active: bool) -> NodePlatform {
+        NodePlatform {
+            legacy_windows,
+            thread_runtime_active,
+        }
+    }
+
+    #[test]
+    fn l3_declaration_follows_the_build_and_platform() {
+        let full = platform(false, true);
+        assert_eq!(
+            platform_capabilities(&full),
+            vec![CAP_TOOL_EXEC, CAP_AGENT_SPAWN]
+        );
+        // A legacy Windows 7 build cannot bound a remote command: no tool.exec,
+        // while the engine's own spawn path stays available (docs §9.2).
+        let legacy = platform(true, true);
+        assert_eq!(platform_capabilities(&legacy), vec![CAP_AGENT_SPAWN]);
+        // No thread runtime: nothing may be spawned on this node.
+        let idle = platform(false, false);
+        assert_eq!(platform_capabilities(&idle), vec![CAP_TOOL_EXEC]);
+        assert!(platform_capabilities(&platform(true, false)).is_empty());
+    }
+
+    #[test]
+    fn declared_set_always_covers_the_lower_tiers() {
+        for platform in [platform(false, true), platform(true, false)] {
+            let declared = declared_capabilities(&platform);
+            for cap in [
+                CAP_SHADOW_FULL,
+                CAP_SHADOW_MINIMAL,
+                CAP_QUERY_BASIC,
+                CAP_WORKSPACE_READ_BINARY,
+                CAP_THREAD_DRIVE,
+                CAP_WORKSPACE_WRITE,
+            ] {
+                assert!(declared.iter().any(|item| item == cap), "{cap} missing");
+            }
+        }
+        let full = declared_capabilities(&platform(false, true));
+        assert!(full.iter().any(|cap| cap == CAP_TOOL_EXEC));
+        assert!(full.iter().any(|cap| cap == CAP_AGENT_SPAWN));
+        let legacy = declared_capabilities(&platform(true, true));
+        assert!(!legacy.iter().any(|cap| cap == CAP_TOOL_EXEC));
+        assert!(legacy.iter().any(|cap| cap == CAP_AGENT_SPAWN));
+    }
 }

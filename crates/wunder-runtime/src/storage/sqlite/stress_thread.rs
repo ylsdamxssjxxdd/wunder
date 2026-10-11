@@ -3,8 +3,9 @@
 //! Writes the same SQLite schema the runtime reads, but bypasses the per-event
 //! commit path on purpose: one bulk connection with relaxed journal settings
 //! and one transaction per user turn. Rows are buffered and flushed as
-//! multi-row `INSERT ... VALUES (?,?,...)` statements (800 rows per statement
-//! stays well under the 32766 bound-parameter limit of bundled SQLite), which
+//! multi-row `INSERT ... VALUES (?,?,...)` statements (2000 rows per statement
+//! stays well under the 32766 bound-parameter limit of bundled SQLite; the
+//! statement is cached so repeated full batches skip re-parsing), which
 //! is the difference between minutes and hours at the default 1000×1000 scale.
 //! Timestamps are simulated backwards from "now" so the generated thread looks
 //! like it happened in the recent past. Sampling lives in the shared,
@@ -12,22 +13,20 @@
 
 use super::SqliteStorage;
 use crate::storage::stress_model::{
-    committed_item_json, fill_template, plan_timeline, profile_hint, base_seed, build_answer_text,
-    build_reasoning_text, build_tool_args, build_tool_result, sample_turn_plans,
-    StressThreadSpec, StressThreadStats,
+    base_seed, build_answer_text, build_reasoning_text, build_tool_args, build_tool_result,
+    committed_item_json, plan_timeline, profile_hint, sample_turn_plans, IdGen, StressThreadSpec,
+    StressThreadStats,
 };
 use anyhow::{ensure, Result};
 use chrono::{Local, TimeZone};
 use rusqlite::{params, params_from_iter, Connection, ToSql, Transaction, TransactionBehavior};
 use serde_json::{json, Value};
 use std::time::Duration;
-use uuid::Uuid;
 use wunder_core::storage_backend::StorageLifecycle;
 
-/// Rows per multi-row INSERT. 800 × 13 = 10400 parameters, well under the
-/// 32766 bind-parameter limit of bundled SQLite, and a comfortable payload
-/// size per statement.
-const BATCH_ROWS: usize = 800;
+/// Rows per multi-row INSERT. 2000 × 13 = 26000 parameters, still under the
+/// 32766 bind-parameter limit of bundled SQLite, and fewer statements per turn.
+const BATCH_ROWS: usize = 2000;
 
 /// A buffered parameter value for bulk inserts.
 enum P {
@@ -87,7 +86,10 @@ fn flush_batch(
         return Ok(());
     }
     let sql = multirow_sql(table, columns, row_width, rows.len());
-    tx.execute(&sql, params_from_iter(rows.iter().flatten()))?;
+    // Reuse a cached prepared statement: the full-size batch SQL text repeats
+    // across flushes, so SQLite skips re-parsing a 26k-placeholder INSERT.
+    let mut stmt = tx.prepare_cached(&sql)?;
+    stmt.execute(params_from_iter(rows.iter().flatten()))?;
     rows.clear();
     Ok(())
 }
@@ -166,6 +168,7 @@ impl SqliteStorage {
         let mut items_written: i64 = 0;
         let mut tool_calls_total: i64 = 0;
         let mut turn_rng = crate::storage::stress_model::Rng::new(0xC0FF_EE00 ^ seed);
+        let mut ids = IdGen::new(seed);
 
         // Buffered rows: item / change / tool_log batches are flushed inside
         // the current turn transaction and whenever they reach BATCH_ROWS.
@@ -177,8 +180,8 @@ impl SqliteStorage {
             let turn_index = offset as i64 + 1;
             clock += cost.gap_before_s;
             let turn_start = clock;
-            let turn_id = Uuid::new_v4().to_string();
-            let client_message_id = format!("stress-{}", Uuid::new_v4().simple());
+            let turn_id = ids.next().to_string();
+            let client_message_id = format!("stress-{}", ids.next().simple());
             let prompt_template = turn_rng.pick_str(crate::storage::stress_model::user_prompts());
             let prompt = crate::storage::stress_model::fill_template(prompt_template, &mut turn_rng, turn_index);
 
@@ -304,11 +307,12 @@ impl SqliteStorage {
                 let tool_done_at = round_start + call_profiles.iter().map(|(_, d)| *d).sum::<f64>();
 
                 for (profile, duration_s) in &call_profiles {
-                    let call_id = format!("call_{}", Uuid::new_v4().simple());
+                    let call_id = format!("call_{}", ids.next().simple());
                     let args = build_tool_args(&mut turn_rng, profile, turn_index);
+                    let args_text = serde_json::to_string(&args)?;
                     let duration_ms = (*duration_s * 1000.0).round() as i64;
-                    let (failed, data, error, meta) =
-                        build_tool_result(&mut turn_rng, profile, &args, duration_ms);
+                    let result = build_tool_result(&mut turn_rng, profile, &args, duration_ms)?;
+                    let failed = result.failed;
                     let tool_done = round_start + duration_s;
                     let item_id = format!("{turn_id}:tool-{call_id}");
                     let usage = json!({
@@ -321,7 +325,7 @@ impl SqliteStorage {
                     let mut payload = json!({
                         "tool": profile.name,
                         "ok": !failed,
-                        "data": data,
+                        "data": result.data,
                         "args": args,
                         "request_context_tokens": plan_round.input_tokens,
                         "request_usage": usage,
@@ -339,10 +343,10 @@ impl SqliteStorage {
                         "model_round": model_round,
                         "turn_id": turn_id,
                     });
-                    if !error.is_empty() {
-                        payload["error"] = json!(error);
+                    if !result.error.is_empty() {
+                        payload["error"] = json!(&result.error);
                     }
-                    payload["meta"] = meta;
+                    payload["meta"] = result.meta;
                     let payload_text = serde_json::to_string(&payload)?;
                     item_index += 1;
                     seq += 1;
@@ -395,15 +399,15 @@ impl SqliteStorage {
                         P::S(session_id.to_string()),
                         P::S(profile.name.to_string()),
                         P::I(if failed { 0 } else { 1 }),
-                        P::S(error),
-                        P::S(serde_json::to_string(&args)?),
-                        P::S(serde_json::to_string(&payload["data"])?),
+                        P::S(result.error),
+                        P::S(args_text),
+                        P::S(result.data_text),
                         P::S(Local
                             .timestamp_millis_opt((tool_done * 1000.0) as i64)
                             .single()
                             .map(|t| t.to_rfc3339())
                             .unwrap_or_default()),
-                        P::S(serde_json::to_string(&payload)?),
+                        P::S(payload_text),
                         P::F(tool_done),
                     ]);
                     if change_rows.len() >= BATCH_ROWS {
@@ -593,6 +597,7 @@ impl SqliteStorage {
 mod tests {
     use super::*;
     use crate::storage::stress_model::MAX_USER_ROUNDS;
+    use uuid::Uuid;
     use wunder_core::storage_backend::{ChatSessionStore, ThreadLogStore};
 
     fn temp_db() -> (std::path::PathBuf, SqliteStorage) {
@@ -737,6 +742,81 @@ mod tests {
             stats.tool_calls,
             stats.items as f64 / elapsed.as_secs_f64().max(1e-9)
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    #[ignore] // micro A/B: cached prepared stmt vs one-shot execute, interleaved
+    fn prepared_vs_raw_flush_micro() {
+        use wunder_core::storage_backend::StorageLifecycle;
+        let (dir, storage) = temp_db();
+        storage.ensure_initialized().unwrap();
+        let mut conn = Connection::open(storage.db_path.clone()).unwrap();
+        conn.busy_timeout(std::time::Duration::from_secs(30)).ok();
+        conn.pragma_update(None, "journal_mode", "MEMORY").ok();
+        conn.pragma_update(None, "synchronous", "OFF").ok();
+
+        const COLUMNS: &str = "session_id,item_id,turn_id,root_turn_id,visibility,user_id,item_index,kind,status,payload,created_time,updated_time,created_seq";
+        let n = BATCH_ROWS;
+        let sql = multirow_sql("thread_items", COLUMNS, 13, n);
+        let payload = "x".repeat(1024);
+        let make_rows = |tag: &str| -> Vec<Vec<P>> {
+            let session = format!("micro-{tag}");
+            let mut rows: Vec<Vec<P>> = Vec::with_capacity(n);
+            for i in 0..n {
+                rows.push(vec![
+                    P::S(session.clone()),
+                    P::S(format!("{tag}-item-{i:07}")),
+                    P::S(format!("{tag}-turn")),
+                    P::S(format!("{tag}-turn")),
+                    P::S("user".to_string()),
+                    P::S("micro-user".to_string()),
+                    P::I(i as i64),
+                    P::S("assistant_message".to_string()),
+                    P::S("completed".to_string()),
+                    P::S(payload.clone()),
+                    P::F(1_700_000_000.0),
+                    P::F(1_700_000_000.0),
+                    P::I(seq_of(i)),
+                ]);
+            }
+            rows
+        };
+        fn seq_of(i: usize) -> i64 {
+            i as i64
+        }
+
+        let mut raw = std::time::Duration::ZERO;
+        let mut cached = std::time::Duration::ZERO;
+        for round in 0..8 {
+            {
+                let tx = conn
+                    .transaction_with_behavior(TransactionBehavior::Immediate)
+                    .unwrap();
+                let mut rows = make_rows(&format!("raw{round}"));
+                let t = std::time::Instant::now();
+                tx.execute(&sql, params_from_iter(rows.iter().flatten()))
+                    .unwrap();
+                raw += t.elapsed();
+                rows.clear();
+                tx.commit().unwrap();
+            }
+            {
+                let tx = conn
+                    .transaction_with_behavior(TransactionBehavior::Immediate)
+                    .unwrap();
+                let mut rows = make_rows(&format!("cached{round}"));
+                let t = std::time::Instant::now();
+                {
+                    let mut stmt = tx.prepare_cached(&sql).unwrap();
+                    stmt.execute(params_from_iter(rows.iter().flatten())).unwrap();
+                }
+                cached += t.elapsed();
+                rows.clear();
+                tx.commit().unwrap();
+            }
+        }
+        println!("micro flush {n}x13 x8: raw={raw:?} cached={cached:?}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -28,6 +28,8 @@ pub struct NativeInterlinkStatus {
     pub pending_approvals: usize,
     pub inflight_commands: usize,
     pub watched_threads: usize,
+    /// Frames the tunnel had to drop because a bounded queue was full.
+    pub dropped_frames: u64,
     pub last_error: Option<String>,
     pub next_retry_at: Option<f64>,
 }
@@ -99,6 +101,7 @@ impl NativeDesktop {
             pending_approvals: status.pending_approvals,
             inflight_commands: status.inflight_commands,
             watched_threads: status.watched_threads,
+            dropped_frames: status.dropped_frames,
             last_error: status.last_error,
             next_retry_at: status.next_retry_at,
         }

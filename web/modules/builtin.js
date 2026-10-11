@@ -1,13 +1,13 @@
 // AI生成
-import { elements } from "./elements.js?v=20260518-01";
+import { elements } from "./elements.js?v=20261011-01";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
 import { getToolInputSchema, resolveToolIconClass } from "./utils.js?v=20251229-02";
 import { syncPromptTools } from "./tools.js?v=20260214-01";
 import { openToolDetailModal } from "./tool-detail.js?v=20260115-05";
 import { notify } from "./notify.js";
-import { appendLog } from "./log.js?v=20260108-02";
-import { t } from "./i18n.js?v=20260518-01";
+import { appendLog } from "./log.js?v=20261011-01";
+import { t } from "./i18n.js?v=20261011-01";
 import { filterRemovedSwarmTools, filterRemovedSwarmToolRules } from "../shared/deprecated-tools.js";
 
 // 拉取内置工具清单与启用状态

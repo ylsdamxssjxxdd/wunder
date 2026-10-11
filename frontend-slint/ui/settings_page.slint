@@ -426,8 +426,7 @@ export component SettingsPage inherits Rectangle {
     callback save-expert-memory();
     callback delete-expert-memory(string);
     callback open-expert-archive(string);
-    callback open-thread-log();
-    callback export-thread-log();
+    callback open-trajectory();
 
     // ---- interlink (设备互通, category 12) ----
     // The 2s poll pushes the tunnel status; devices and cloud listings are
@@ -1530,8 +1529,7 @@ export component SettingsPage inherits Rectangle {
                                 }
                                 SettingRow { label: I18n.stc_runs_flow; note: I18n.stc_runs_flow_note; last: true;
                                     HorizontalLayout { spacing: 8px;
-                                        Action { label: I18n.stc_runs_open; show-label: true; clicked => { root.open-thread-log(); } }
-                                        Action { label: I18n.stc_runs_export; show-label: true; clicked => { root.export-thread-log(); } }
+                                        Action { label: I18n.stc_runs_open; show-label: true; clicked => { root.open-trajectory(); } }
                                     }
                                 }
                             }

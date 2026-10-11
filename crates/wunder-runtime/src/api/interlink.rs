@@ -18,9 +18,9 @@ use serde_json::{json, Value};
 use wunder_core::interlink::{
     default_device_capabilities, APPROVAL_APPROVED, APPROVAL_EXPIRED, APPROVAL_PENDING,
     APPROVAL_REJECTED, COMMAND_STATUS_CANCELED, COMMAND_STATUS_FAILED, DIRECTION_C2L,
-    DIRECTION_L2C, ERR_APPROVAL_EXPIRED, ERR_APPROVAL_REJECTED, InterlinkNodeView,
-    NODE_STATUS_AWAY, NODE_STATUS_BUSY, NODE_STATUS_ONLINE, NODE_TYPE_CLI, NODE_TYPE_DESKTOP,
-    NODE_TYPE_SERVER,
+    DIRECTION_L2C, ERR_APPROVAL_EXPIRED, ERR_APPROVAL_REJECTED, ERR_CAP_DENIED,
+    ERR_NODE_BUSY, ERR_NODE_OFFLINE, ERR_QUEUE_FULL, InterlinkNodeView, NODE_STATUS_AWAY,
+    NODE_STATUS_BUSY, NODE_STATUS_ONLINE, NODE_TYPE_CLI, NODE_TYPE_DESKTOP, NODE_TYPE_SERVER,
 };
 
 use crate::api::errors::error_response;
@@ -29,13 +29,18 @@ use crate::core::blocking;
 use crate::services::presence::{
     aggregate_status, derive_device_status_with_tunnel, online_count,
 };
-use crate::services::interlink::{approvals, audit, blob, commands, digest, registry, secret};
+use crate::services::interlink::{
+    alerts, approvals, audit, blob, commands, digest, registry, secret,
+};
 use crate::state::AppState;
 use crate::storage::{
     CloudDeviceInterlinkPatch, CloudDeviceRecord, InterlinkCommandRecord, ListInterlinkAuditQuery,
 };
 use crate::api::interlink_cloud_exec;
 use crate::api::interlink_ws;
+// The audit filter helpers are shared with the 舰桥 admin surface on purpose:
+// one query string must mean the same thing on both ends.
+use crate::api::admin_interlink;
 
 /// User-facing interlink routes. Shared by the web bridge and local clients.
 pub fn router() -> Router<Arc<AppState>> {
@@ -636,7 +641,7 @@ async fn issue_command(
     {
         Ok(outcome) => outcome,
         Err(commands::IssueError::Replay(existing)) => {
-            return command_response(&existing, "replay", None, &state).await;
+            return command_response(&existing, "replay", None, StatusCode::OK, &state).await;
         }
         Err(commands::IssueError::UnknownKind(kind)) => {
             return error_response(
@@ -648,6 +653,14 @@ async fn issue_command(
             return error_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string());
         }
     };
+
+    // L3 dispatch goes to the governance hook (docs §9.4): the ledger audit
+    // entries of a tunnel command carry no kind, so this is the one place the
+    // tier of a device-targeted command is known. A refused dispatch is not an
+    // execution and never alerts.
+    if !matches!(outcome.dispatch, commands::Dispatch::Rejected(_)) {
+        alerts::note_command(&outcome.record, Some(dispatch_name(&outcome.dispatch)));
+    }
 
     // Local (cloud node) targets execute right here with the existing handlers.
     if outcome.dispatch == commands::Dispatch::LocalTarget {
@@ -666,6 +679,10 @@ async fn issue_command(
         });
     }
 
+    let status = match &outcome.dispatch {
+        commands::Dispatch::Rejected(code) => rejected_status(code),
+        _ => StatusCode::OK,
+    };
     command_response(
         &outcome.record,
         dispatch_name(&outcome.dispatch),
@@ -674,6 +691,7 @@ async fn issue_command(
             .as_ref()
             .map(|ticket| ticket.approval_id.clone())
             .as_deref(),
+        status,
         &state,
     )
     .await
@@ -688,14 +706,27 @@ fn dispatch_name(dispatch: &commands::Dispatch) -> &'static str {
     }
 }
 
+/// HTTP status of an admission refusal (docs §13.5 17): a capability or policy
+/// denial is an authorization failure, while an unreachable or saturated node
+/// is a temporary one. The ledger row is still returned in the body, so a
+/// client that reads `data.status` keeps working.
+fn rejected_status(code: &'static str) -> StatusCode {
+    match code {
+        ERR_CAP_DENIED => StatusCode::FORBIDDEN,
+        ERR_NODE_OFFLINE | ERR_NODE_BUSY | ERR_QUEUE_FULL => StatusCode::SERVICE_UNAVAILABLE,
+        _ => StatusCode::BAD_GATEWAY,
+    }
+}
+
 /// One response shape for every command entry point.
 async fn command_response(
     record: &InterlinkCommandRecord,
     dispatch: &str,
     approval_id: Option<&str>,
+    status: StatusCode,
     _state: &AppState,
 ) -> Response {
-    Json(json!({
+    let envelope = json!({
         "data": {
             "command_id": record.command_id,
             "direction": record.direction,
@@ -713,8 +744,8 @@ async fn command_response(
             "error_summary": record.error_summary,
             "result": commands::hub().result(&record.command_id),
         }
-    }))
-    .into_response()
+    });
+    (status, Json(envelope)).into_response()
 }
 
 // ---------------------------------------------------------------------------
@@ -1192,12 +1223,18 @@ async fn audit_write(
 // GET /wunder/interlink/audit - the caller's own interlink audit trail
 // ---------------------------------------------------------------------------
 
+/// Self-service audit filters. The names and their interpretation are the
+/// 舰桥 admin surface's (`action`, `device_id`, `since`, `until`), so one query
+/// string behaves the same on both ends and a client never has to guess.
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct AuditQuery {
     limit: Option<i64>,
     offset: Option<i64>,
     format: Option<String>,
+    action: Option<String>,
+    device_id: Option<String>,
+    since: Option<String>,
+    until: Option<String>,
 }
 
 /// Self-service audit view (docs §14 privacy line): a node owner can see every
@@ -1211,14 +1248,23 @@ async fn list_my_audit(State(state): State<Arc<AppState>>, headers: HeaderMap, A
     let user_id = resolved.user.user_id.clone();
     let limit = audit::page_limit(query.limit);
     let offset = audit::page_offset(query.offset);
+    let action = admin_interlink::clean_filter(query.action.as_deref());
+    let device = admin_interlink::node_filter(admin_interlink::clean_filter(
+        query.device_id.as_deref(),
+    ));
+    let since = admin_interlink::parse_time_filter(query.since.as_deref());
+    let until = admin_interlink::parse_time_filter(query.until.as_deref());
     let storage = state.storage.clone();
     let rows = match blocking::run_db(
         "api.interlink.my_audit",
         move || storage.list_interlink_audit(ListInterlinkAuditQuery {
             user_id: Some(&user_id),
+            device_id: device.as_deref(),
+            action: action.as_deref(),
+            since,
+            until,
             offset,
             limit,
-            ..Default::default()
         }),
     )
     .await
@@ -1254,7 +1300,7 @@ async fn list_my_audit(State(state): State<Arc<AppState>>, headers: HeaderMap, A
                 "action": row.action,
                 "command_id": row.command_id,
                 "approval_id": row.approval_id,
-                "detail_digest": row.detail_digest,
+                "detail_digest": audit::detail_value(row.detail_digest.as_deref()),
             })
         })
         .collect();

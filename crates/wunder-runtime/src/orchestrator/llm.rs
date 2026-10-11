@@ -619,6 +619,26 @@ impl Orchestrator {
         let context_cache_probe = build_context_cache_probe(&chat_messages.messages, tools);
         let virtual_turn = if virtual_replay {
             let app_config = self.config_store.get().await;
+            // 用户消息可驱动两条测试约定：数字 -> 本次模型轮次；`subagent` -> 必定
+            // 调用子智能体工具（见 load_turn_for_round）。
+            let user_message = crate::services::virtual_llm::latest_user_text(&request_messages);
+            // 子会话不再派生子智能体：`spawned_by` 判定当前会话是否由子智能体控制派生。
+            // 判定属于阻塞 DB 读取，放到 blocking 线程池执行。
+            let allow_subagent = {
+                let store = self.storage.clone();
+                let user = user_id.to_string();
+                let session = session_id.to_string();
+                crate::core::blocking::run_db("virtual_llm.session_is_child", move || {
+                    Ok(store
+                        .get_chat_session(&user, &session)
+                        .ok()
+                        .flatten()
+                        .map(|record| !crate::services::subagents::tree::is_child(&record))
+                        .unwrap_or(true))
+                })
+                .await
+                .unwrap_or(true)
+            };
             let turn = crate::services::virtual_llm::load_turn_for_round(
                 app_config,
                 &effective_config,
@@ -627,6 +647,8 @@ impl Orchestrator {
                 round_info.model_round,
                 tools,
                 !round_info.is_goal_round,
+                user_message.as_deref(),
+                allow_subagent,
             )
             .await
             .map_err(|err| {

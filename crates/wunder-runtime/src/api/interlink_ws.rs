@@ -47,8 +47,8 @@ use crate::api::errors::error_response;
 use crate::api::user_context::resolve_user;
 use crate::core::blocking;
 use crate::services::interlink::{
-    LiveChannel, LiveChannelRegistry, OutboundFrame, audit, blob, commands, digest, registry,
-    remote, secret, shadow,
+    LiveChannel, LiveChannelRegistry, OutboundFrame, alerts, audit, blob, commands, digest,
+    registry, remote, secret, shadow,
 };
 use crate::state::AppState;
 use crate::storage::{CloudDeviceInterlinkPatch, InterlinkChannelRecord};
@@ -403,6 +403,9 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>, ticket: TicketEntry)
     if outcome != secret::HandshakeOutcome::Ok {
         let reason = match outcome {
             secret::HandshakeOutcome::UnknownVersion => "secret_version_unknown",
+            // A retired key past the dual-key window: refuse and alert
+            // (docs §13.5 20). The audit reason is what the hook matches on.
+            secret::HandshakeOutcome::StaleVersion => alerts::REASON_SECRET_STALE_VERSION,
             _ => "hmac_mismatch",
         };
         let _ = send_close(&mut sender, reason, None).await;

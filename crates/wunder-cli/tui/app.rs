@@ -17,6 +17,7 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use wunder_server::approval::{
     new_channel as new_approval_channel, ApprovalRequest, ApprovalRequestKind, ApprovalResponse,
 };
+use wunder_server::interlink::client::Decision;
 use wunder_server::schemas::StreamEvent;
 use wunder_server::user_tools::UserMcpServer;
 use wunder_server::ThreadChangeFrame;
@@ -283,6 +284,9 @@ pub struct CommandCenterView {
     pub searching: bool,
     pub help: bool,
     pub group: String,
+    /// Node-level interlink tunnel state. Kept off the rows: a tunnel belongs to
+    /// this process, not to any one thread.
+    pub tunnel: crate::interlink_tunnel::TunnelSummary,
 }
 
 /// Nothing the first frame needs, so it is computed after the terminal already
@@ -552,6 +556,16 @@ pub struct TuiApp {
     /// Cloud composer notice (plan §6.2): queue/quota/expiry errors shown
     /// above the input until the next turn starts.
     cloud_error_notice: Option<String>,
+    /// Interlink tunnel (互通方案 §7.3). Node-level state, never a thread's: it
+    /// sits beside the cloud badge and shares its refresh window on purpose.
+    tunnel: crate::interlink_tunnel::TunnelSummary,
+    /// Whether this process opened the tunnel, so the poll stops paying for a
+    /// link a signed-out or disabled node never has.
+    tunnel_open: bool,
+    tunnel_polled_at: Option<Instant>,
+    /// The remote approval shown as a confirm row. `active_approval` stays the
+    /// engine's own tool gate for this thread; the two are never merged.
+    active_remote_approval: Option<crate::interlink_tunnel::RemoteApproval>,
     /// Cached status-bar badge (`☁ alice · 980`), refreshed at most once per
     /// second so per-frame footer rebuilds never touch the cloud session.
     cloud_badge: Option<String>,
@@ -680,6 +694,10 @@ impl TuiApp {
             active_stream_sessions: HashSet::new(),
             pending_thread_terminals: HashMap::new(),
             cloud_error_notice: None,
+            tunnel: crate::interlink_tunnel::TunnelSummary::default(),
+            tunnel_open: false,
+            tunnel_polled_at: None,
+            active_remote_approval: None,
             cloud_badge: None,
             cloud_badge_refreshed_at: None,
             cloud_badge_reconnecting: false,
@@ -832,6 +850,13 @@ impl TuiApp {
         let ctrl_c_pending = self
             .ctrl_c_hint_deadline
             .is_some_and(|deadline| Instant::now() <= deadline);
+        // The tunnel is the only thing here with no local event to wait on, so
+        // an open link keeps one slow tick alive on the existing frame
+        // scheduler. A signed-out or disabled node schedules nothing.
+        if self.tunnel_open {
+            self.frame_requester
+                .schedule_frame_in(crate::interlink_tunnel::POLL_INTERVAL);
+        }
         if self.thread_is_running(self.session_id.as_str()) {
             self.frame_requester
                 .schedule_frame_in(super::activity_indicator::RUNNING_ANIMATION_FRAME);
@@ -1145,6 +1170,122 @@ impl TuiApp {
     /// at a time and never outlives the round that fixed it.
     pub(super) fn clear_cloud_error_notice(&mut self) {
         self.cloud_error_notice = None;
+    }
+
+    /// The TUI is the only form that may hold a tunnel open (互通方案 I9).
+    pub fn set_tunnel_open(&mut self, open: bool) {
+        self.tunnel_open = open;
+    }
+
+    /// One tunnel tick on the existing status window. Both engine reads are
+    /// in-process bounded lookups, so this stays on the draw path like the
+    /// cloud badge instead of becoming a second timer.
+    pub fn poll_tunnel(&mut self) {
+        if !self.tunnel_open {
+            return;
+        }
+        if self
+            .tunnel_polled_at
+            .is_some_and(|at| at.elapsed() < crate::interlink_tunnel::POLL_INTERVAL)
+        {
+            return;
+        }
+        self.tunnel_polled_at = Some(Instant::now());
+        let summary = crate::interlink_tunnel::snapshot();
+        if summary.phase != self.tunnel.phase {
+            let notice = crate::interlink_tunnel::phase_notice(
+                self.tunnel.phase,
+                summary.phase,
+                self.is_zh_language(),
+            );
+            self.tunnel = summary;
+            self.push_log(LogKind::Info, notice);
+        } else {
+            self.tunnel = summary;
+        }
+        // An empty queue is the common case, so the session read and the prompt
+        // clone below only happen while a remote node is actually waiting.
+        if self.tunnel.remote_pending_approvals == 0 {
+            self.active_remote_approval = None;
+            return;
+        }
+        self.pump_remote_approvals();
+    }
+
+    /// Surface or refuse the prompts the engine is holding. The queue is bounded
+    /// by the engine's own `PENDING_MAX`, so this stays a small loop.
+    fn pump_remote_approvals(&mut self) {
+        let is_zh = self.is_zh_language();
+        let pending = crate::interlink_tunnel::pending_approvals();
+        // The row the operator is reading survives its own tick; the engine
+        // keeps the queue oldest-first, so a vanished id means it was answered
+        // or its window closed while this frame was away.
+        if self.active_remote_approval.as_ref().is_some_and(|shown| {
+            !pending
+                .iter()
+                .any(|item| item.approval_id == shown.approval_id)
+        }) {
+            self.active_remote_approval = None;
+        }
+        let policy = crate::interlink_tunnel::approval_default();
+        match crate::interlink_tunnel::remote_approval_action(
+            crate::interlink_tunnel::approval_surface(),
+            policy.as_str(),
+        ) {
+            crate::interlink_tunnel::RemoteApprovalAction::Prompt => {
+                if self.active_remote_approval.is_none() {
+                    self.active_remote_approval = pending.into_iter().next();
+                }
+            }
+            // No approver in this process: refuse now rather than let the
+            // remote command idle out at the end of its window (§7.3).
+            crate::interlink_tunnel::RemoteApprovalAction::Deny(reason) => {
+                for approval in &pending {
+                    if crate::interlink_tunnel::decide(
+                        approval.approval_id.as_str(),
+                        Decision::Deny,
+                    ) {
+                        let notice =
+                            crate::interlink_tunnel::denied_notice(approval, reason, is_zh);
+                        // This branch only runs with no approval surface, so the
+                        // transcript cannot show it: stderr carries the reason.
+                        eprintln!("{notice}");
+                        self.push_log(LogKind::Approval, notice);
+                    }
+                }
+                self.active_remote_approval = None;
+            }
+        }
+    }
+
+    pub fn remote_approval_modal_lines(&self) -> Option<Vec<String>> {
+        let approval = self.active_remote_approval.as_ref()?;
+        Some(crate::interlink_tunnel::remote_approval_lines(
+            approval,
+            crate::interlink_tunnel::unix_now(),
+            self.is_zh_language(),
+        ))
+    }
+
+    fn decide_remote_approval(&mut self, decision: Decision) {
+        let Some(approval) = self.active_remote_approval.take() else {
+            return;
+        };
+        let is_zh = self.is_zh_language();
+        let approved = decision == Decision::Approve;
+        if crate::interlink_tunnel::decide(approval.approval_id.as_str(), decision) {
+            let notice = crate::interlink_tunnel::decision_notice(&approval, approved, is_zh);
+            self.push_log(LogKind::Approval, notice);
+        } else {
+            self.push_log(
+                LogKind::Error,
+                if is_zh {
+                    "该远程审批已失效，无需再处理".to_string()
+                } else {
+                    "that remote approval is already closed".to_string()
+                },
+            );
+        }
     }
 
     pub fn inline_input_placeholders(&self) -> Vec<String> {
@@ -1583,6 +1724,7 @@ impl TuiApp {
             searching: center.searching,
             help: center.help,
             group: center.group.label(is_zh).to_string(),
+            tunnel: self.tunnel.clone(),
         })
     }
 
@@ -3929,6 +4071,16 @@ impl TuiApp {
             self.reset_plain_char_burst();
             self.handle_approval_key(key);
             return Ok(());
+        }
+
+        // A remote approval takes y/n only: Enter still submits and Esc still
+        // interrupts, so an inbound prompt can never eat a local keystroke.
+        if self.active_remote_approval.is_some() {
+            if let Some(decision) = crate::interlink_tunnel::remote_approval_choice(key.code) {
+                self.reset_plain_char_burst();
+                self.decide_remote_approval(decision);
+                return Ok(());
+            }
         }
 
         if self.warning_panel_open() && matches!(key.code, KeyCode::Esc) {

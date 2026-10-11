@@ -1,9 +1,9 @@
-import { elements } from "./elements.js?v=20260215-01";
+import { elements } from "./elements.js?v=20261011-01";
 import { getWunderBase } from "./api.js";
 import { escapeHtml, formatDuration } from "./utils.js";
 import { ensureLlmConfigLoaded } from "./llm.js";
 import { state } from "./state.js";
-import { getCurrentLanguage } from "./i18n.js?v=20260215-01";
+import { getCurrentLanguage } from "./i18n.js?v=20261011-01";
 
 const DEFAULT_USER_ID = "benchmark_admin";
 const RUN_POLL_INTERVAL_MS = 2500;

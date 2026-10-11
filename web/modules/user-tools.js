@@ -1,4 +1,4 @@
-import { elements } from "./elements.js?v=20260215-01";
+import { elements } from "./elements.js?v=20261011-01";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
 import {
@@ -7,7 +7,7 @@ import {
   ensureUserToolsState,
 } from "./tools.js?v=20260214-01";
 import { notify } from "./notify.js";
-import { appendLog } from "./log.js?v=20260108-02";
+import { appendLog } from "./log.js?v=20261011-01";
 import { openToolDetailModal } from "./tool-detail.js?v=20260115-05";
 import {
   buildHeadingHighlightHtml,
@@ -15,7 +15,7 @@ import {
   isPlainObject,
   parseHeadersValue,
 } from "./utils.js?v=20251229-02";
-import { t } from "./i18n.js?v=20260215-01";
+import { t } from "./i18n.js?v=20261011-01";
 
 const resolveUserMcpToolDisplayName = (tool) => {
   const title = String(tool?.title || "").trim();

@@ -26,16 +26,23 @@ const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
 /// Human sentence for the tunnel status row. Chinese copy lives here (the
 /// native side owns its own strings); the state word itself is translated on
 /// the Slint side, the note only adds detail.
-fn status_note(state: &str, last_error: Option<&str>) -> String {
+fn status_note(state: &str, last_error: Option<&str>, dropped_frames: u64) -> String {
     let base = match state {
         "connected" => "互通隧道已连接，其他设备可以查看本机工作区",
         "connecting" => "正在接入舰体…",
         "reconnecting" => "连接中断，正在自动重试…",
         _ => "互通未启用，可在登录云端后开启",
     };
+    // A saturated tunnel drops non-critical frames instead of blocking; the
+    // count is the only sign the operator gets that projection degraded.
+    let degraded = if dropped_frames > 0 {
+        format!("；隧道拥塞，已丢弃 {dropped_frames} 个可丢帧")
+    } else {
+        String::new()
+    };
     match last_error {
-        Some(error) if !error.is_empty() => format!("{base}；最近错误：{error}"),
-        _ => base.to_string(),
+        Some(error) if !error.is_empty() => format!("{base}；最近错误：{error}{degraded}"),
+        _ => format!("{base}{degraded}"),
     }
 }
 
@@ -45,7 +52,7 @@ fn poll(app: &MainWindow, api: &NativeDesktop) {
     let status = api.interlink_status();
     app.set_interlink_status(InterlinkStatus {
         state: status.state.clone().into(),
-        note: status_note(&status.state, status.last_error.as_deref()).into(),
+        note: status_note(&status.state, status.last_error.as_deref(), status.dropped_frames).into(),
     });
     if app.get_interlink_approval_open() {
         return;

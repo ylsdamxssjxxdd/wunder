@@ -3,27 +3,31 @@
 //! Mirrors the SQLite bulk writer: one dedicated pooled connection, one
 //! transaction per user turn, simulated timestamps ending at "now". Rows are
 //! buffered and flushed as multi-row `INSERT ... VALUES (...)` statements
-//! (800 rows per statement keeps the 65535-parameter protocol limit at bay),
-//! which is the difference between minutes and hours at the default 1000×1000
-//! scale. Sampling logic is shared with the SQLite backend in `stress_model`.
+//! (4000 rows per statement, prepared once and reused across flushes; the
+//! 65535-parameter protocol limit stays at bay), which is the difference
+//! between minutes and hours at the default 1000×1000 scale. Sampling logic is
+//! shared with the SQLite backend in `stress_model`.
 
 use super::PostgresStorage;
 use crate::storage::stress_model::{
     base_seed, build_answer_text, build_reasoning_text, build_tool_args, build_tool_result,
     committed_item_json, fill_template, plan_timeline, profile_hint, sample_turn_plans, user_prompts,
-    Rng, StressThreadSpec, StressThreadStats, StressTimelinePlan,
+    IdGen, Rng, StressThreadSpec, StressThreadStats, StressTimelinePlan,
 };
 use anyhow::{anyhow, ensure, Result};
 use chrono::{Local, TimeZone};
 use serde_json::{json, Value};
 use tokio_postgres::types::ToSql;
-use tokio_postgres::Transaction;
-use uuid::Uuid;
+use tokio_postgres::{Statement, Transaction};
 use wunder_core::storage_backend::StorageLifecycle;
 
-/// Rows per multi-row INSERT. 800 × 13 = 10400 parameters, well under the
-/// 65535 protocol limit, and a comfortable payload size per round-trip.
-const BATCH_ROWS: usize = 800;
+/// Rows per multi-row INSERT. 4000 × 13 = 52000 parameters, still under the
+/// 65535 protocol limit, and half as many round-trips/parses per turn.
+const BATCH_ROWS: usize = 4000;
+
+const ITEM_COLUMNS: &str = "session_id,item_id,turn_id,root_turn_id,visibility,user_id,item_index,kind,status,payload,created_time,updated_time,created_seq";
+const CHANGE_COLUMNS: &str = "session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time";
+const TOOL_LOG_COLUMNS: &str = "user_id,session_id,tool,ok,error,args,data,timestamp,payload,created_time";
 
 /// A buffered parameter value for bulk inserts.
 enum P {
@@ -75,14 +79,24 @@ async fn flush_batch(
     columns: &str,
     row_width: usize,
     rows: &mut Vec<Vec<P>>,
+    full: Option<&Statement>,
 ) -> Result<()> {
     if rows.is_empty() {
         return Ok(());
     }
-    let sql = multirow_sql(table, columns, row_width, rows.len());
     let flat: Vec<&(dyn ToSql + Sync)> =
         rows.iter().flat_map(|row| row.iter().map(P::as_sql)).collect();
-    tx.execute(&sql, &flat).await?;
+    // Full batches reuse the statement prepared once for the fixed shape; only
+    // the per-turn tail batch (fewer than BATCH_ROWS rows) is parsed on the fly.
+    match full.filter(|_| rows.len() == BATCH_ROWS) {
+        Some(stmt) => {
+            tx.execute(stmt, &flat).await?;
+        }
+        None => {
+            let sql = multirow_sql(table, columns, row_width, rows.len());
+            tx.execute(&sql, &flat).await?;
+        }
+    }
     rows.clear();
     Ok(())
 }
@@ -174,6 +188,7 @@ async fn run_generation(
     let mut items_written: i64 = 0;
     let mut tool_calls_total: i64 = 0;
     let mut turn_rng = Rng::new(0xC0FF_EE00 ^ seed);
+    let mut ids = IdGen::new(seed);
 
     // Buffered rows: item / change / tool_log batches are flushed per turn
     // transaction and whenever they reach BATCH_ROWS.
@@ -181,12 +196,29 @@ async fn run_generation(
     let mut change_rows: Vec<Vec<P>> = Vec::with_capacity(BATCH_ROWS);
     let mut tool_rows: Vec<Vec<P>> = Vec::with_capacity(BATCH_ROWS);
 
+    // Prepare each fixed full-batch INSERT exactly once. Every full batch then
+    // reuses these statements, so Postgres parses/plans each ~52k-parameter
+    // shape a single time instead of once per flush — the dominant cost of the
+    // INSERT path at scale.
+    let item_stmt = client
+        .prepare(&multirow_sql("thread_items", ITEM_COLUMNS, 13, BATCH_ROWS))
+        .await
+        .map_err(|err| anyhow!("prepare thread_items insert: {err}"))?;
+    let change_stmt = client
+        .prepare(&multirow_sql("thread_log_changes", CHANGE_COLUMNS, 9, BATCH_ROWS))
+        .await
+        .map_err(|err| anyhow!("prepare thread_log_changes insert: {err}"))?;
+    let tool_stmt = client
+        .prepare(&multirow_sql("tool_logs", TOOL_LOG_COLUMNS, 10, BATCH_ROWS))
+        .await
+        .map_err(|err| anyhow!("prepare tool_logs insert: {err}"))?;
+
     for (offset, cost) in plan.costs.iter().enumerate() {
         let turn_index = offset as i64 + 1;
         clock += cost.gap_before_s;
         let turn_start = clock;
-        let turn_id = Uuid::new_v4().to_string();
-        let client_message_id = format!("stress-{}", Uuid::new_v4().simple());
+        let turn_id = ids.next().to_string();
+        let client_message_id = format!("stress-{}", ids.next().simple());
         let prompt = fill_template(turn_rng.pick_str(user_prompts()), &mut turn_rng, turn_index);
         let plans = sample_turn_plans(cost.turn_seed, turn_index, spec.model_rounds_per_turn);
 
@@ -194,6 +226,10 @@ async fn run_generation(
             .transaction()
             .await
             .map_err(|err| anyhow!("begin turn transaction: {err}"))?;
+        // Synthetic data tolerates relaxed durability: skip the per-commit WAL
+        // fsync so 1000 sequential turn commits do not serialize on disk. This
+        // mirrors the SQLite bulk path (journal_mode=MEMORY, synchronous=OFF).
+        tx.execute("SET LOCAL synchronous_commit = off", &[]).await?;
         // Turn row (terminal state, like a settled real turn).
         tx.execute(
             "INSERT INTO thread_turns(session_id,turn_id,root_turn_id,trigger_kind,client_message_id,user_id,user_turn_index,status,summary,payload,created_time,updated_time) \
@@ -233,7 +269,7 @@ async fn run_generation(
             ]);
         }
         if change_rows.len() >= BATCH_ROWS {
-            flush_batch(&tx, "thread_log_changes", "session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time", 9, &mut change_rows).await?;
+            flush_batch(&tx, "thread_log_changes", CHANGE_COLUMNS, 9, &mut change_rows, Some(&change_stmt)).await?;
         }
 
         // User bubble item.
@@ -289,10 +325,10 @@ async fn run_generation(
             ]);
         }
         if item_rows.len() >= BATCH_ROWS {
-            flush_batch(&tx, "thread_items", "session_id,item_id,turn_id,root_turn_id,visibility,user_id,item_index,kind,status,payload,created_time,updated_time,created_seq", 13, &mut item_rows).await?;
+            flush_batch(&tx, "thread_items", ITEM_COLUMNS, 13, &mut item_rows, Some(&item_stmt)).await?;
         }
         if change_rows.len() >= BATCH_ROWS {
-            flush_batch(&tx, "thread_log_changes", "session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time", 9, &mut change_rows).await?;
+            flush_batch(&tx, "thread_log_changes", CHANGE_COLUMNS, 9, &mut change_rows, Some(&change_stmt)).await?;
         }
 
         let mut item_index: i64 = 0;
@@ -315,11 +351,12 @@ async fn run_generation(
             let tool_done_at = round_start + call_profiles.iter().map(|(_, d)| *d).sum::<f64>();
 
             for (profile, duration_s) in &call_profiles {
-                let call_id = format!("call_{}", Uuid::new_v4().simple());
+                let call_id = format!("call_{}", ids.next().simple());
                 let args = build_tool_args(&mut turn_rng, profile, turn_index);
+                let args_text = serde_json::to_string(&args)?;
                 let duration_ms = (*duration_s * 1000.0).round() as i64;
-                let (failed, data, error, meta) =
-                    build_tool_result(&mut turn_rng, profile, &args, duration_ms);
+                let result = build_tool_result(&mut turn_rng, profile, &args, duration_ms)?;
+                let failed = result.failed;
                 let tool_done = round_start + duration_s;
                 let item_id = format!("{turn_id}:tool-{call_id}");
                 let usage = json!({
@@ -332,7 +369,7 @@ async fn run_generation(
                 let mut payload = json!({
                     "tool": profile.name,
                     "ok": !failed,
-                    "data": data,
+                    "data": result.data,
                     "args": args,
                     "request_context_tokens": plan_round.input_tokens,
                     "request_usage": usage,
@@ -350,10 +387,10 @@ async fn run_generation(
                     "model_round": model_round,
                     "turn_id": turn_id,
                 });
-                if !error.is_empty() {
-                    payload["error"] = json!(error);
+                if !result.error.is_empty() {
+                    payload["error"] = json!(&result.error);
                 }
-                payload["meta"] = meta;
+                payload["meta"] = result.meta;
                 let payload_text = serde_json::to_string(&payload)?;
                 item_index += 1;
                 seq += 1;
@@ -409,21 +446,21 @@ async fn run_generation(
                     P::S(session_id.to_string()),
                     P::S(profile.name.to_string()),
                     P::I32(ok_flag),
-                    P::S(error.clone()),
-                    P::S(serde_json::to_string(&args)?),
-                    P::S(serde_json::to_string(&payload["data"])?),
+                    P::S(result.error),
+                    P::S(args_text),
+                    P::S(result.data_text),
                     P::S(stamp),
-                    P::S(serde_json::to_string(&payload)?),
+                    P::S(payload_text),
                     P::F(tool_done),
                 ]);
                 if item_rows.len() >= BATCH_ROWS {
-                    flush_batch(&tx, "thread_items", "session_id,item_id,turn_id,root_turn_id,visibility,user_id,item_index,kind,status,payload,created_time,updated_time,created_seq", 13, &mut item_rows).await?;
+                    flush_batch(&tx, "thread_items", ITEM_COLUMNS, 13, &mut item_rows, Some(&item_stmt)).await?;
                 }
                 if change_rows.len() >= BATCH_ROWS {
-                    flush_batch(&tx, "thread_log_changes", "session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time", 9, &mut change_rows).await?;
+                    flush_batch(&tx, "thread_log_changes", CHANGE_COLUMNS, 9, &mut change_rows, Some(&change_stmt)).await?;
                 }
                 if tool_rows.len() >= BATCH_ROWS {
-                    flush_batch(&tx, "tool_logs", "user_id,session_id,tool,ok,error,args,data,timestamp,payload,created_time", 10, &mut tool_rows).await?;
+                    flush_batch(&tx, "tool_logs", TOOL_LOG_COLUMNS, 10, &mut tool_rows, Some(&tool_stmt)).await?;
                 }
             }
 
@@ -532,10 +569,10 @@ async fn run_generation(
                 ]);
             }
             if item_rows.len() >= BATCH_ROWS {
-                flush_batch(&tx, "thread_items", "session_id,item_id,turn_id,root_turn_id,visibility,user_id,item_index,kind,status,payload,created_time,updated_time,created_seq", 13, &mut item_rows).await?;
+                flush_batch(&tx, "thread_items", ITEM_COLUMNS, 13, &mut item_rows, Some(&item_stmt)).await?;
             }
             if change_rows.len() >= BATCH_ROWS {
-                flush_batch(&tx, "thread_log_changes", "session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time", 9, &mut change_rows).await?;
+                flush_batch(&tx, "thread_log_changes", CHANGE_COLUMNS, 9, &mut change_rows, Some(&change_stmt)).await?;
             }
         }
 
@@ -567,9 +604,9 @@ async fn run_generation(
         )
         .await?;
         // Flush whatever is left inside this turn's transaction.
-        flush_batch(&tx, "thread_items", "session_id,item_id,turn_id,root_turn_id,visibility,user_id,item_index,kind,status,payload,created_time,updated_time,created_seq", 13, &mut item_rows).await?;
-        flush_batch(&tx, "thread_log_changes", "session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time", 9, &mut change_rows).await?;
-        flush_batch(&tx, "tool_logs", "user_id,session_id,tool,ok,error,args,data,timestamp,payload,created_time", 10, &mut tool_rows).await?;
+        flush_batch(&tx, "thread_items", ITEM_COLUMNS, 13, &mut item_rows, Some(&item_stmt)).await?;
+        flush_batch(&tx, "thread_log_changes", CHANGE_COLUMNS, 9, &mut change_rows, Some(&change_stmt)).await?;
+        flush_batch(&tx, "tool_logs", TOOL_LOG_COLUMNS, 10, &mut tool_rows, Some(&tool_stmt)).await?;
         tx.commit()
             .await
             .map_err(|err| anyhow!("commit turn transaction: {err}"))?;
@@ -584,6 +621,7 @@ async fn run_generation(
         .transaction()
         .await
         .map_err(|err| anyhow!("begin envelope transaction: {err}"))?;
+    tx.execute("SET LOCAL synchronous_commit = off", &[]).await?;
     tx.execute(
         "INSERT INTO thread_logs(session_id,user_id,latest_user_turn,latest_change_seq,created_time,updated_time) VALUES($1,$2,$3,$4,$5,$6)",
         &[&session_id, &user_id, &spec.user_rounds, &seq, &plan.start_time, &end_time],

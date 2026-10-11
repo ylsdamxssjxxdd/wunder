@@ -22,7 +22,7 @@ pub(crate) fn draw(frame: &mut Frame, area: Rect, view: CommandCenterView, is_zh
     let sections = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),
+            Constraint::Length(4),
             Constraint::Min(4),
             Constraint::Length(2),
         ])
@@ -86,11 +86,23 @@ fn draw_header(frame: &mut Frame, area: Rect, view: &CommandCenterView, is_zh: b
         ]),
         Line::from(Span::styled(tabs, theme::secondary_text())),
         Line::from(Span::styled(
+            truncate(&view.tunnel.line(is_zh), area.width as usize),
+            tunnel_tone(view.tunnel.phase, view.tunnel.dropped_frames),
+        )),
+        Line::from(Span::styled(
             "─".repeat(area.width as usize),
             theme::secondary_text(),
         )),
     ];
     frame.render_widget(Paragraph::new(lines), area);
+}
+
+/// Congestion is the one condition that must not read as a healthy link.
+fn tunnel_tone(phase: crate::interlink_tunnel::TunnelPhase, dropped_frames: u64) -> Style {
+    if dropped_frames > 0 || matches!(phase, crate::interlink_tunnel::TunnelPhase::Reconnecting) {
+        return theme::warning_text();
+    }
+    theme::secondary_text()
 }
 
 fn draw_rows(frame: &mut Frame, area: Rect, view: &CommandCenterView, is_zh: bool) {
@@ -491,5 +503,27 @@ mod tests {
         assert_eq!(format_tokens(999), "999");
         assert_eq!(format_tokens(12_800), "12.8k");
         assert_eq!(format_tokens(2_400_000), "2.4M");
+    }
+
+    #[test]
+    fn the_tunnel_header_line_stays_inside_the_header_width() {
+        let busy = crate::interlink_tunnel::TunnelSummary {
+            phase: crate::interlink_tunnel::TunnelPhase::Reconnecting,
+            remote_pending_approvals: 3,
+            dropped_frames: 12,
+        };
+        for width in [12, 20, 40] {
+            let line = truncate(&busy.line(true), usize::from(width));
+            assert!(line.width() <= usize::from(width), "{line} overflows {width}");
+        }
+        // Congestion must change the tone, not only the text.
+        assert_eq!(
+            tunnel_tone(crate::interlink_tunnel::TunnelPhase::Connected, 0),
+            theme::secondary_text()
+        );
+        assert_ne!(
+            tunnel_tone(crate::interlink_tunnel::TunnelPhase::Connected, 1),
+            theme::secondary_text()
+        );
     }
 }

@@ -9,27 +9,10 @@ export const state = {
     debugSessionId: "",
     debugSessionStatus: "",
     debugSessionPinned: false,
-    debugEventCursor: 0,
-    debugRestored: false,
     debugStreaming: false,
-    debugSyncAfterStream: false,
-    debugSawFinal: false,
     promptReloadTimer: null,
     promptNeedsRefresh: false,
     promptReloadHandler: null,
-    llmOutput: {
-      globalRound: 0,
-      currentRound: null,
-      // 模型输出按轮次拆分的运行时状态
-      rounds: [],
-      selectedRound: null,
-      userSelectedRound: false,
-    },
-    planBoard: {
-      explanation: "",
-      steps: [],
-      updatedAt: null,
-    },
   },
   panelLoaded: {
     monitor: false,

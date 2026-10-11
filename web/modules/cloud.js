@@ -1,10 +1,10 @@
-import { elements } from "./elements.js?v=20261007-01";
+import { elements } from "./elements.js?v=20261011-01";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
-import { appendLog } from "./log.js?v=20260108-02";
+import { appendLog } from "./log.js?v=20261011-01";
 import { notify } from "./notify.js";
 import { formatTimestamp } from "./utils.js?v=20251229-02";
-import { t, getCurrentLanguage } from "./i18n.js?v=20261007-01";
+import { t, getCurrentLanguage } from "./i18n.js?v=20261011-01";
 // 危险操作复用预设面板的「影响面预览 + 二次确认」弹层（与用户管理面板同款做法）
 import { openImpactConfirmModal } from "./preset-agents.js?v=20261007-01";
 

@@ -18,7 +18,9 @@ use std::sync::RwLock;
 
 use tokio::sync::oneshot;
 
-use wunder_core::interlink::{command_level, requires_hard_approval};
+use wunder_core::interlink::{
+    command_level, requires_hard_approval, CMD_AGENT_SPAWN, CMD_TOOL_EXEC,
+};
 
 use crate::services::interlink::approvals;
 
@@ -165,15 +167,20 @@ impl ApprovalGate {
 
     /// Open a prompt. Returns the ticket to show plus the receiver the command
     /// task awaits. Fails when the bounded queue is full.
+    ///
+    /// `now` is the caller's clock: pruning has to compare against the real
+    /// time, never against the new ticket's own `expires_at`, which would drop
+    /// every live prompt that expires no later than this one.
     pub fn open(
         &self,
         approval: PendingApproval,
+        now: f64,
     ) -> Result<oneshot::Receiver<Decision>, GateError> {
         let approval_id = approval.approval_id.clone();
         let command_id = approval.command_id.clone();
         let (respond, receiver) = oneshot::channel();
         let mut state = self.state.write().expect("approval gate lock poisoned");
-        prune_prompts(&mut state, approval.expires_at);
+        prune_prompts(&mut state, now);
         if state.pending.contains_key(&approval_id) {
             // Same ticket reopened: refuse rather than show two modals.
             return Err(GateError::QueueFull);
@@ -335,15 +342,231 @@ fn prune_prompts(state: &mut State, now: f64) {
     }
 }
 
-/// Prompt text shown to the local user. The wording is produced by the shared
+/// Prompt text shown to the local user. The base line comes from the shared
 /// approval helper (`services/interlink/approvals.rs`), so the node and the
-/// server's ticket carry the same text: tier, kind, source node and a target
-/// summary. Argument bodies never reach it (docs §9.3).
+/// server's ticket start from the same wording; the L3 detail line is added
+/// locally only (docs §9.5: the approver must see what they are approving,
+/// §9.3: the persisted ticket stays free of parameter bodies).
 pub fn prompt_text(kind: &str, from_node: &str, args: &serde_json::Value) -> String {
     let label = if from_node.trim().is_empty() {
         "cloud"
     } else {
         from_node.trim()
     };
-    approvals::prompt_text(kind, label, args)
+    let base = approvals::prompt_text(kind, label, args);
+    match local_detail(kind, args) {
+        Some(detail) => format!("{base}\n{detail}"),
+        None => base,
+    }
+}
+
+/// Longest parameter line the local prompt shows.
+const DETAIL_MAX_CHARS: usize = 240;
+
+fn clip(text: &str) -> String {
+    let cleaned = text.trim();
+    if cleaned.len() <= DETAIL_MAX_CHARS {
+        return cleaned.to_string();
+    }
+    format!("{}…", cleaned.chars().take(DETAIL_MAX_CHARS).collect::<String>())
+}
+
+/// The local approver's view of one L3 request: the command line and its
+/// window, or the task a spawned unit gets. `None` for every other tier, whose
+/// arguments must not be echoed anywhere (docs §9.3).
+pub fn local_detail(kind: &str, args: &serde_json::Value) -> Option<String> {
+    if command_level(kind) != "L3" {
+        return None;
+    }
+    let text = |key: &str| {
+        args.get(key)
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(clip)
+    };
+    if kind == CMD_TOOL_EXEC {
+        let command = text("command")?;
+        let mut lines = vec![format!("run: {command}")];
+        if let Some(items) = args.get("args").and_then(serde_json::Value::as_array) {
+            let joined = items
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .collect::<Vec<_>>()
+                .join(" ");
+            if !joined.trim().is_empty() {
+                lines.push(format!("args: {}", clip(&joined)));
+            }
+        }
+        lines.push(format!(
+            "in: {}",
+            text("cwd").unwrap_or_else(|| ".".to_string())
+        ));
+        if let Some(timeout) = args.get("timeout_s").and_then(serde_json::Value::as_f64) {
+            lines.push(format!("timeout: {timeout}s"));
+        }
+        return Some(lines.join("\n"));
+    }
+    if kind == CMD_AGENT_SPAWN {
+        let task = text("task")?;
+        let mut lines = vec![format!("task: {task}")];
+        if let Some(parent) = text("parent_thread_id") {
+            lines.push(format!("parent: {parent}"));
+        }
+        if let Some(label) = text("label") {
+            lines.push(format!("label: {label}"));
+        }
+        return Some(lines.join("\n"));
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use wunder_core::interlink::{
+        CMD_THREAD_MESSAGE, CMD_WORKSPACE_DELETE, CMD_WORKSPACE_WRITE,
+    };
+
+    fn ticket(approval_id: &str, command_id: &str, kind: &str) -> PendingApproval {
+        PendingApproval {
+            approval_id: approval_id.to_string(),
+            command_id: command_id.to_string(),
+            kind: kind.to_string(),
+            level: command_level(kind).to_string(),
+            risk: "high".to_string(),
+            from_node: "cloud".to_string(),
+            prompt: "prompt".to_string(),
+            expires_at: 10_000.0,
+        }
+    }
+
+    #[test]
+    fn mutating_tiers_never_run_without_a_live_decision() {
+        // No policy value and no remembered grant may auto-allow L2/L3: the only
+        // allowed outcomes are a live prompt or a refusal (docs §7.3, §9.5).
+        for policy in ["prompt", "allow_readonly", "deny_all", "whatever"] {
+            for kind in [CMD_WORKSPACE_WRITE, CMD_WORKSPACE_DELETE, CMD_TOOL_EXEC, CMD_AGENT_SPAWN]
+            {
+                assert_ne!(
+                    plan(kind, policy, true),
+                    ApprovalPlan::AutoAllow,
+                    "{kind} under {policy} must never auto-allow"
+                );
+            }
+        }
+        for kind in [CMD_WORKSPACE_WRITE, CMD_TOOL_EXEC, CMD_AGENT_SPAWN] {
+            assert_eq!(plan(kind, "prompt", true), ApprovalPlan::RequirePrompt);
+            assert!(matches!(
+                plan(kind, "deny_all", true),
+                ApprovalPlan::AutoDeny(_)
+            ));
+            assert!(matches!(
+                plan(kind, "allow_readonly", true),
+                ApprovalPlan::AutoDeny(_)
+            ));
+        }
+    }
+
+    #[test]
+    fn only_l1_uses_the_scope_memory() {
+        assert_eq!(plan(CMD_THREAD_MESSAGE, "prompt", true), ApprovalPlan::AutoAllow);
+        assert_eq!(plan(CMD_THREAD_MESSAGE, "prompt", false), ApprovalPlan::RequirePrompt);
+        assert!(!approvals::is_memorizable(CMD_TOOL_EXEC));
+        assert!(!approvals::is_memorizable(CMD_AGENT_SPAWN));
+        assert!(!approvals::is_memorizable(CMD_WORKSPACE_DELETE));
+        assert!(approvals::is_memorizable(CMD_THREAD_MESSAGE));
+    }
+
+    #[test]
+    fn approving_an_l3_ticket_never_creates_a_memory_grant() {
+        let gate = ApprovalGate::default();
+        let receiver = gate
+            .open(ticket("apr_1", "cmd_1", CMD_TOOL_EXEC), 1_000.0)
+            .expect("open");
+        assert!(gate.decide("apr_1", Decision::Approve, true, 1_000.0));
+        assert!(gate.memory_grants(1_000.0).is_empty());
+        assert!(!gate.remembered("cloud", CMD_TOOL_EXEC, 1_000.0));
+        assert_eq!(receiver.blocking_recv(), Ok(Decision::Approve));
+
+        // The same flag on an L1 ticket does record a bounded grant.
+        let receiver = gate
+            .open(ticket("apr_2", "cmd_2", CMD_THREAD_MESSAGE), 1_000.0)
+            .expect("open");
+        assert!(gate.decide("apr_2", Decision::Approve, true, 1_000.0));
+        assert_eq!(gate.memory_grants(1_000.0).len(), 1);
+        assert!(gate.remembered("cloud", CMD_THREAD_MESSAGE, 1_000.0));
+        assert!(!gate.remembered("cloud", CMD_THREAD_MESSAGE, 1_000.0 + MEMORY_TTL_S));
+        assert_eq!(receiver.blocking_recv(), Ok(Decision::Approve));
+    }
+
+    #[test]
+    fn pending_prompts_are_bounded() {
+        let gate = ApprovalGate::default();
+        for index in 0..PENDING_MAX {
+            gate.open(ticket(&format!("apr_{index}"), &format!("cmd_{index}"), CMD_TOOL_EXEC), 1_000.0)
+                .expect("below the bound");
+        }
+        assert!(matches!(
+            gate.open(ticket("apr_overflow", "cmd_overflow", CMD_TOOL_EXEC), 1_000.0),
+            Err(GateError::QueueFull)
+        ));
+        assert_eq!(gate.pending().len(), PENDING_MAX);
+        // A ticket that is already on the queue never opens a second modal.
+        assert!(matches!(
+            gate.open(ticket("apr_0", "cmd_0", CMD_TOOL_EXEC), 1_000.0),
+            Err(GateError::QueueFull)
+        ));
+        gate.clear();
+        assert!(gate.pending().is_empty());
+    }
+
+    #[test]
+    fn expired_prompts_free_the_queue_instead_of_blocking_it() {
+        let gate = ApprovalGate::default();
+        for index in 0..PENDING_MAX {
+            gate.open(ticket(&format!("apr_{index}"), &format!("cmd_{index}"), CMD_TOOL_EXEC), 1_000.0)
+                .expect("below the bound");
+        }
+        // Every ticket above expires at 10_000; a later caller must not be
+        // locked out by prompts nobody answered in time.
+        assert!(gate
+            .open(ticket("apr_later", "cmd_later", CMD_TOOL_EXEC), 10_000.0)
+            .is_ok());
+        assert_eq!(gate.pending().len(), 1, "only the live prompt is left");
+    }
+
+    #[test]
+    fn l3_prompt_shows_the_approver_the_request() {
+        let detail = local_detail(
+            CMD_TOOL_EXEC,
+            &json!({"command": "echo", "args": ["ready"], "cwd": "notes", "timeout_s": 5.0}),
+        )
+        .expect("tool.exec detail");
+        assert!(detail.contains("run: echo"));
+        assert!(detail.contains("args: ready"));
+        assert!(detail.contains("in: notes"));
+        assert!(detail.contains("timeout: 5s"));
+        assert!(local_detail(
+            CMD_AGENT_SPAWN,
+            &json!({"task": "summarise the open notes", "parent_thread_id": "th_1"})
+        )
+        .expect("spawn detail")
+        .contains("parent: th_1"));
+        // Every other tier keeps the ticket wording and nothing else.
+        assert!(local_detail(CMD_THREAD_MESSAGE, &json!({"message": "hello"})).is_none());
+        assert!(local_detail(CMD_WORKSPACE_WRITE, &json!({"path": "a.md"})).is_none());
+        let prompt = prompt_text(CMD_TOOL_EXEC, "cloud", &json!({"command": "echo"}));
+        assert!(prompt.starts_with("[L3] tool.exec from cloud"));
+        assert!(prompt.contains("run: echo"));
+    }
+
+    #[test]
+    fn window_is_always_bounded_by_the_documented_default() {
+        assert_eq!(window_seconds(None, None, 1_000.0), APPROVAL_TIMEOUT_S);
+        assert_eq!(window_seconds(Some(1_030.0), None, 1_000.0), 30.0);
+        assert_eq!(window_seconds(None, Some(3_600.0), 1_000.0), APPROVAL_TIMEOUT_S);
+        assert_eq!(window_seconds(Some(900.0), Some(900.0), 1_000.0), 1.0);
+    }
 }

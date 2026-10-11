@@ -43,6 +43,7 @@ export global EntryKind {
     out property <int> reason: 2;
     out property <int> tool: 3;
     out property <int> group: 4;
+    out property <int> subagent: 5;
 }
 
 // One shared rotation driver for every running spinner; a single timer in the
@@ -407,12 +408,95 @@ component GroupBar inherits Rectangle {
     }
 }
 
+// One child run of the turn (kind 5): a card at the turn's tail, the place the
+// web messenger parks its subagent panel. Clicking opens the child thread in
+// the detail dialog, which renders the same TimelineView rows; a running card
+// also carries the interrupt action the runtime controls.
+component SubagentCard inherits Rectangle {
+    in property <TimelineRow> data;
+    callback open-subagent(string);
+    callback stop-subagent(string);
+    height: card-column.preferred-height;
+    card-column := VerticalLayout {
+        padding-left: Theme.timeline-padding + TimelineMetrics.gutter;
+        padding-right: Theme.timeline-padding;
+        padding-top: 2px; padding-bottom: 2px;
+        card := Rectangle {
+            preferred-height: card-inner.preferred-height + 14px;
+            min-height: self.preferred-height;
+            border-radius: Theme.radius-sm;
+            border-width: 1px;
+            border-color: card-touch.has-hover ? Theme.border-strong : Theme.border;
+            background: card-touch.has-hover ? Theme.hover : Theme.panel;
+            card-touch := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.open-subagent(root.data.subagent-id); }
+            }
+            card-inner := VerticalLayout {
+                x: 10px; y: 7px;
+                width: parent.width - 20px;
+                spacing: 3px;
+                head-row := HorizontalLayout {
+                    spacing: 8px;
+                    height: card-title.preferred-height;
+                    Image {
+                        width: 13px; height: 13px;
+                        source: ToolIcons.image(root.data.tool-icon);
+                        colorize: Theme.muted; image-fit: contain;
+                    }
+                    card-title := Text {
+                        max-width: 220px;
+                        text: root.data.text; color: Theme.text;
+                        font-size: Theme.font-md; vertical-alignment: center;
+                        overflow: elide;
+                    }
+                    Text {
+                        width: self.preferred-width; vertical-alignment: center;
+                        text: root.data.status-kind == 1 ? I18n.sub_status_running
+                            : root.data.status-kind == 2 ? I18n.sub_status_failed
+                            : I18n.sub_status_done;
+                        color: root.data.status-kind == 1 ? Theme.accent
+                            : root.data.status-kind == 2 ? Theme.danger
+                            : Theme.success;
+                        font-size: Theme.font-sm;
+                    }
+                    Rectangle { horizontal-stretch: 1; min-width: 0px; }
+                    if root.data.subagent-stoppable : stop-button := Rectangle {
+                        width: 22px; height: 22px; border-radius: 11px;
+                        background: stop-touch.has-hover ? Theme.danger-bg : transparent;
+                        Image {
+                            x: 6px; y: 6px; width: 10px; height: 10px;
+                            source: @image-url("../assets/icons/stop.svg");
+                            colorize: Theme.danger; image-fit: contain;
+                        }
+                        stop-touch := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.stop-subagent(root.data.subagent-id); }
+                        }
+                    }
+                    Text {
+                        width: self.preferred-width; vertical-alignment: center;
+                        text: I18n.sub_card_title; color: Theme.muted;
+                        font-size: Theme.font-sm;
+                    }
+                }
+                if root.data.summary != "" : Text {
+                    text: root.data.summary; color: Theme.muted;
+                    font-size: Theme.font-sm; overflow: elide;
+                }
+            }
+        }
+    }
+}
+
 export component TimelineRowView inherits Rectangle {
     in property <TimelineRow> entry;
     callback toggle(int);
     callback copy-text(string);
     callback download-text(string);
     callback open-resource(string);
+    callback open-subagent(string);
+    callback stop-subagent(string);
     width: 100%;
     // A batch entry belongs to its bar: folding the bar takes the entries with
     // it, which is what `toggle` writes into `group-open` across the group. The
@@ -449,6 +533,11 @@ export component TimelineRowView inherits Rectangle {
             data: root.entry;
             toggle(index) => { root.toggle(index); }
         }
+        if root.entry.kind == EntryKind.subagent : SubagentCard {
+            data: root.entry;
+            open-subagent(id) => { root.open-subagent(id); }
+            stop-subagent(id) => { root.stop-subagent(id); }
+        }
     }
 }
 
@@ -469,6 +558,8 @@ export component TimelineView inherits Rectangle {
     callback copy-text(string);
     callback download-text(string);
     callback open-resource(string);
+    callback open-subagent(string);
+    callback stop-subagent(string);
     vertical-stretch: 1;
     // Push the viewport to the newest content on request; the projection calls
     // this when it follows the stream, and the "back to latest" action does too.
@@ -515,6 +606,8 @@ export component TimelineView inherits Rectangle {
                 copy-text(text) => { root.copy-text(text); }
                 download-text(text) => { root.download-text(text); }
                 open-resource(id) => { root.open-resource(id); }
+                open-subagent(id) => { root.open-subagent(id); }
+                stop-subagent(id) => { root.stop-subagent(id); }
             }
         }
         scrolled => {

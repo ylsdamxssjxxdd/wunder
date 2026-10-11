@@ -78,7 +78,9 @@ pub use catalog::{
     with_browser_group_members,
 };
 pub(crate) use compact::{compact_tool_spec_for_model, compact_tool_specs_for_model};
-pub use context::{build_tool_roots, ToolContext, ToolEventEmitter, ToolRoots};
+pub use context::{
+    build_tool_roots, DetachedToolContext, ToolContext, ToolEventEmitter, ToolRoots,
+};
 pub(crate) use context::{
     collect_allow_roots, collect_read_roots, resolve_tool_path, roots_allow_any_path,
 };

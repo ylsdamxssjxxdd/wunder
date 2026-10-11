@@ -696,6 +696,60 @@ fn exercise_interlink_channels_and_shadows(storage: Arc<dyn StorageBackend>) {
     storage.delete_interlink_shadow("").unwrap();
     assert!(storage.get_interlink_shadow("").unwrap().is_none());
     assert_eq!(storage.get_interlink_shadow_revision("").unwrap(), 0);
+
+    // Retention (docs §13.5 18): projections of nodes that stopped re-syncing
+    // leave after the policy window, and one call stays inside its budget.
+    let now = now_ts();
+    let day = 86_400.0;
+    let projection = |device: &str, synced_at: f64| InterlinkShadowRecord {
+        device_id: device.to_string(),
+        user_id: user.to_string(),
+        revision: 1,
+        summary: Some(r#"{"os":"TestOS"}"#.to_string()),
+        threads: None,
+        tasks: None,
+        workspace: None,
+        synced_at,
+    };
+    for (device, age_days) in [
+        ("device-aged-40", 40.0),
+        ("device-aged-35", 35.0),
+        ("device-aged-31", 31.0),
+        ("device-aged-edge", 30.0 + 60.0 / day),
+        ("device-fresh-29", 29.0),
+        ("device-fresh-edge", 30.0 - 60.0 / day),
+    ] {
+        storage
+            .upsert_interlink_shadow(&projection(device, now - age_days * day))
+            .unwrap();
+    }
+
+    assert_eq!(
+        storage.cleanup_interlink_shadows(0, 10).unwrap(),
+        0,
+        "zero retention disables the sweep"
+    );
+    assert_eq!(
+        storage.cleanup_interlink_shadows(30, -1).unwrap(),
+        0,
+        "a non-positive budget deletes nothing"
+    );
+    // Oldest first, and never more than the requested budget.
+    assert_eq!(storage.cleanup_interlink_shadows(30, 2).unwrap(), 2);
+    assert!(storage.get_interlink_shadow("device-aged-40").unwrap().is_none());
+    assert!(storage.get_interlink_shadow("device-aged-35").unwrap().is_none());
+    assert!(storage.get_interlink_shadow("device-aged-31").unwrap().is_some());
+    assert!(storage.get_interlink_shadow("device-aged-edge").unwrap().is_some());
+    assert!(storage.get_interlink_shadow("device-fresh-29").unwrap().is_some());
+    assert!(storage.get_interlink_shadow("device-fresh-edge").unwrap().is_some());
+
+    assert_eq!(storage.cleanup_interlink_shadows(30, 10).unwrap(), 2);
+    assert!(storage.get_interlink_shadow("device-aged-31").unwrap().is_none());
+    assert!(storage.get_interlink_shadow("device-aged-edge").unwrap().is_none());
+    // Inside the window, including a row one minute off the cutoff, stays.
+    assert!(storage.get_interlink_shadow("device-fresh-29").unwrap().is_some());
+    assert!(storage.get_interlink_shadow("device-fresh-edge").unwrap().is_some());
+    assert_eq!(storage.cleanup_interlink_shadows(30, 10).unwrap(), 0);
 }
 
 fn interlink_command(

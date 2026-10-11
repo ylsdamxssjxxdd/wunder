@@ -60,8 +60,12 @@ pub fn channel_hmac(secret: &str, ticket: &str) -> String {
 pub enum HandshakeOutcome {
     /// The MAC matches the derived secret of the presented version.
     Ok,
-    /// The presented version is unknown (never issued / revoked).
+    /// The presented version is newer than anything issued for the node.
     UnknownVersion,
+    /// A retired version is presented outside its dual-key window: either a
+    /// node that never picked up the rotation or a replay of an old key
+    /// (docs §13.5 20 - refuse and alert).
+    StaleVersion,
     /// The version is plausible but the MAC does not match (wrong secret).
     Mismatch,
 }
@@ -81,16 +85,18 @@ pub fn verify_handshake(
     presented_hmac: &str,
     now: f64,
 ) -> HandshakeOutcome {
-    if stored_version > 1 && presented_version == stored_version - 1 {
-        // Grace window: the previous key is still accepted (docs §9.1).
-        let within_grace = now - rotated_at <= ROTATION_GRACE_S;
-        if within_grace {
+    if presented_version < stored_version {
+        let in_grace = stored_version > 1
+            && presented_version == stored_version - 1
+            && now - rotated_at <= ROTATION_GRACE_S;
+        if in_grace {
+            // Grace window: the previous key is still accepted (docs §9.1).
             let secret = derive_secret(pepper, device_id, presented_version);
             return compare(&secret, ticket, presented_hmac);
         }
-        return HandshakeOutcome::UnknownVersion;
+        return HandshakeOutcome::StaleVersion;
     }
-    if presented_version != stored_version {
+    if presented_version > stored_version {
         return HandshakeOutcome::UnknownVersion;
     }
     let secret = derive_secret(pepper, device_id, stored_version);
@@ -228,10 +234,17 @@ mod tests {
             verify_handshake(pepper, "dev-1", &current_hash, 2, rotated_at, 1, ticket, &mac, rotated_at + 3_600.0),
             HandshakeOutcome::Ok
         );
-        // ...25h later it does not, and the attempt is a structural reject.
+        // ...25h later it does not, and the attempt is a stale-key reject.
         assert_eq!(
             verify_handshake(pepper, "dev-1", &current_hash, 2, rotated_at, 1, ticket, &mac, rotated_at + 90_000.0),
-            HandshakeOutcome::UnknownVersion
+            HandshakeOutcome::StaleVersion
+        );
+        // A key retired before the last rotation is stale immediately, too.
+        let older = channel_hmac(&derive_secret(pepper, "dev-1", 1), ticket);
+        assert_eq!(
+            verify_handshake(pepper, "dev-1", &secret_hash(pepper, &derive_secret(pepper, "dev-1", 3)), 3, rotated_at, 1, ticket, &older, rotated_at + 60.0),
+            HandshakeOutcome::StaleVersion,
+            "only the single previous version is ever dual-key valid"
         );
     }
 

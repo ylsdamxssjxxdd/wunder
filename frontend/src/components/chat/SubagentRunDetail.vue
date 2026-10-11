@@ -4,42 +4,63 @@
     <div v-if="error" role="alert" class="subagent-run-detail__error">
       {{ error }} <button type="button" @click="reload++">重试</button>
     </div>
-    <p v-if="!loading && !error && !entries.length">等待子智能体开始执行…</p>
-    <p v-if="truncated" class="subagent-run-detail__hint">显示最近 200 项运行记录</p>
-    <article v-for="entry in entries" :key="entry.id" class="subagent-run-detail__entry">
-      <MessageToolWorkflow v-if="entry.workflow" :items="[entry.workflow]" :visible="true"
-        :session-id="sessionId" :state-key="`subagent:${runId}:${entry.id}`" :render-version="revision" />
-      <template v-else>
-        <header>{{ entry.title }} <span>{{ entry.status }}</span></header>
-        <details v-if="entry.reasoning"><summary>思考过程</summary><pre>{{ entry.reasoning }}</pre></details>
-        <pre v-if="entry.content">{{ entry.content }}</pre>
-        <p v-else-if="!entry.reasoning" class="subagent-run-detail__hint">正在生成…</p>
-      </template>
-    </article>
+    <p v-if="!loading && !error && !assistant" class="subagent-run-detail__hint">
+      等待子智能体开始执行…
+    </p>
+    <template v-else-if="assistant">
+      <p v-if="userTask" class="subagent-run-detail__task" :title="userTask">{{ userTask }}</p>
+      <!-- 与主时间线同一套块渲染（正文 + 思考/工具批次），不做第二套运行记录形态。 -->
+      <MessageTimelineBlocks
+        :blocks="assistant.timeline ?? []"
+        :workflow-items="assistant.workflowItems ?? []"
+        :session-id="sessionId"
+        :identity-key="identityKey"
+        :default-open="true"
+        :streaming="streaming"
+        :content-version="revision"
+        :cache-key-prefix="`subagent:${sessionId}:${runId}:`"
+        :message="assistant"
+        :resolve-workspace-path="resolveWorkspacePath"
+        :body-text-transform="transformBodyText"
+      />
+    </template>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, shallowRef, watch } from 'vue';
+import { computed, ref, shallowRef, watch } from 'vue';
+
+import MessageTimelineBlocks from './MessageTimelineBlocks.vue';
 import { getThreadLogSnapshot } from '@/api/chat';
 import { chatWsClient } from '@/stores/chatWatcher';
 import { emptyChatThreadState } from '@/realtime/chat/chatThreadTypes';
-import { applyChatThreadSnapshot, applyChatThreadFrame, composeItemText } from '@/realtime/chat/chatThreadState';
+import { applyChatThreadSnapshot, applyChatThreadFrame } from '@/realtime/chat/chatThreadState';
 import { toChatThreadFrame } from '@/realtime/chat/chatThreadRuntime';
-import { buildWorkflowRecord } from '@/realtime/chat/chatThreadProjection';
-import type { ChatRuntimeWorkflowItemProjection } from '@/realtime/chat/chatRuntimeTypes';
-import MessageToolWorkflow from './MessageToolWorkflow.vue';
+import { buildChatThreadTurnSlots } from '@/realtime/chat/chatThreadProjection';
+import type { ChatRuntimeMessageProjection } from '@/realtime/chat/chatRuntimeTypes';
+import { buildAssistantDisplayContent } from '@/utils/assistantFailureNotice';
+import { t } from '@/i18n';
 
 const props = defineProps<{ sessionId: string; runId: string; turnId?: string }>();
-type Entry = { id: string; title: string; status: string; content?: string; reasoning?: string;
-  workflow?: ChatRuntimeWorkflowItemProjection };
-const entries = shallowRef<Entry[]>([]);
+
+const assistant = shallowRef<ChatRuntimeMessageProjection | null>(null);
+const userTask = ref('');
 const revision = ref(0);
-const truncated = ref(false);
 const loading = ref(true);
 const error = ref('');
 const reload = ref(0);
-const workflowKinds = new Set(['tool_call', 'approval', 'plan', 'compaction', 'queue']);
+
+const identityKey = computed(() => `${props.sessionId}:${props.runId}:${props.turnId || ''}`);
+const streaming = computed(() => {
+  const current = assistant.value;
+  return Boolean(current && !current.final);
+});
+/** 失败提示是整轮信息，只挂在最后一段正文上（与主时间线同源）。 */
+const transformBodyText = (text: string, isLast: boolean): string =>
+  isLast && assistant.value
+    ? buildAssistantDisplayContent(assistant.value as Record<string, unknown>, t, text)
+    : text;
+const resolveWorkspacePath = (rawPath: string): string => String(rawPath || '');
 
 watch(() => [props.sessionId, props.runId, props.turnId, reload.value], (_, __, cleanup) => {
   const state = emptyChatThreadState(props.sessionId);
@@ -48,25 +69,18 @@ watch(() => [props.sessionId, props.runId, props.turnId, reload.value], (_, __, 
   let renderTimer: ReturnType<typeof setTimeout> | undefined;
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
   let recovery = false;
-  entries.value = [];
+  assistant.value = null;
+  userTask.value = '';
   loading.value = true;
   error.value = '';
   const render = () => {
     renderTimer = undefined;
     if (controller.signal.aborted) return;
-    const turnId = props.turnId || [...state.turns.values()].at(-1)?.turnId;
-    const visible = [...state.items.values()].filter(item => item.turnId === turnId &&
-      !['admin', 'model_internal'].includes(item.visibility ?? '') &&
-      (workflowKinds.has(item.kind) || (item.kind === 'assistant_message' &&
-        item.itemId === `${item.turnId}:text-${item.modelRound}`)));
-    truncated.value = visible.length > 200;
-    entries.value = visible.slice(-200).map(item => workflowKinds.has(item.kind)
-      ? { id: item.itemId, title: '', status: '', workflow: buildWorkflowRecord(item, item.turnId) }
-      : { id: item.itemId, title: `模型输出 · 第 ${item.modelRound} 轮`,
-          status: ['completed', 'success'].includes(item.status) ? '已完成' :
-            ['cancelled', 'interrupted'].includes(item.status) ? '已中断' : item.status === 'failed' ? '失败' : '生成中',
-          content: composeItemText(state, item.itemId, 'content'),
-          reasoning: composeItemText(state, item.itemId, 'reasoning') });
+    const turnId = props.turnId || [...state.turns.values()].at(-1)?.turnId || '';
+    const slots = buildChatThreadTurnSlots(state);
+    const slot = slots.find(entry => entry.rootTurnId === turnId) ?? slots.at(-1) ?? null;
+    assistant.value = slot?.assistant ?? null;
+    userTask.value = String(slot?.user?.content || '');
     revision.value++;
   };
   const scheduleRender = () => { renderTimer ??= setTimeout(render, 24); };
@@ -123,10 +137,18 @@ watch(() => [props.sessionId, props.runId, props.turnId, reload.value], (_, __, 
 
 <style scoped>
 .subagent-run-detail { min-height: 100px; }
-.subagent-run-detail__entry { margin: 12px 0; }
-.subagent-run-detail__entry header { font-size: 13px; font-weight: 600; }
-.subagent-run-detail__entry header span, .subagent-run-detail__hint { color: var(--chat-text-secondary, #6b7280); font-size: 12px; }
-.subagent-run-detail__entry pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 13px; line-height: 1.6; }
-.subagent-run-detail__entry details { margin-top: 8px; }
+.subagent-run-detail__task {
+  margin: 0 0 4px;
+  padding: 0 24px;
+  color: var(--chat-text-secondary, #6b7280);
+  font-size: 12px;
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+.subagent-run-detail__hint { color: var(--chat-text-secondary, #6b7280); font-size: 12px; }
 .subagent-run-detail__error { color: #b42318; }
 </style>

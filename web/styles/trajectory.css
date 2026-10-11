@@ -1,0 +1,979 @@
+/**
+ * 线程轨迹样式（对齐蜂巢 thread-trajectory.css / dsh ui-trajectory：
+ * 工具栏 + 时间线 + 台账表格 + 检查器）。
+ * token 全部以 --tt-* 局部变量承载，前缀 tt- 避免与舰桥既有样式冲突。
+ */
+
+.tt-root {
+  --tt-brand: rgb(65, 118, 230);
+  --tt-brand-dim: rgba(65, 118, 230, 0.55);
+  --tt-brand-faint: rgba(65, 118, 230, 0.1);
+  --tt-green: rgb(34, 197, 94);
+  --tt-green-mix: rgb(54, 167, 98);
+  --tt-green-100: rgb(230, 250, 237);
+  --tt-amber: rgb(221, 134, 41);
+  --tt-amber-100: rgb(254, 245, 231);
+  --tt-red: rgb(236, 19, 19);
+  --tt-red-soft: rgb(242, 90, 90);
+  --tt-violet: rgb(136, 107, 174);
+  --tt-text: rgb(15, 17, 21);
+  --tt-text-2: rgb(97, 102, 107);
+  --tt-text-3: rgb(129, 133, 140);
+  --tt-caption: rgb(173, 178, 184);
+  --tt-bg: rgb(255, 255, 255);
+  --tt-bg-module: rgb(245, 246, 247);
+  --tt-bg-code: rgb(249, 250, 251);
+  --tt-hover: rgba(38, 49, 72, 0.06);
+  --tt-active: rgba(38, 49, 72, 0.1);
+  --tt-border: rgba(0, 0, 0, 0.04);
+  --tt-border-2: rgba(0, 0, 0, 0.1);
+  --tt-border-4: rgba(0, 0, 0, 0.16);
+  --tt-radius-xs: 4px;
+  --tt-radius-sm: 8px;
+  --tt-font: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  --tt-mono: 'SF Mono', 'JetBrains Mono', 'Fira Code', Consolas, 'Courier New', monospace;
+
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--tt-bg);
+  color: var(--tt-text);
+  font-family: var(--tt-font);
+  font-size: 13px;
+  line-height: 20px;
+  text-align: left;
+}
+
+/* ---------------------------------------------------------------- */
+/* 舰桥嵌入容器                                                      */
+/* ---------------------------------------------------------------- */
+
+/* 调试面板右侧：轨迹嵌入区（替代原四张日志卡片） */
+.panel-logs.panel-trajectory {
+  display: flex;
+  padding: 0;
+}
+
+.panel-logs.panel-trajectory > .debug-trajectory {
+  flex: 1 1 auto;
+}
+
+.debug-trajectory {
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+/* 线程日志 → 轨迹页面：全屏弹窗 */
+.trajectory-modal {
+  z-index: 230;
+  padding: 24px;
+}
+
+.trajectory-card {
+  width: min(1320px, 96vw);
+  height: min(920px, 94vh);
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+}
+
+.trajectory-mount {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* ---------------------------------------------------------------- */
+/* 工具栏                                                            */
+/* ---------------------------------------------------------------- */
+
+.tt-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  flex: none;
+  padding: 0 8px;
+  border-bottom: 0.5px solid var(--tt-border-2);
+}
+
+.tt-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex: none;
+  padding: 0;
+  border: none;
+  border-radius: var(--tt-radius-xs);
+  background: transparent;
+  color: var(--tt-text-2);
+  cursor: pointer;
+}
+
+.tt-icon-button:hover {
+  background: var(--tt-hover);
+  color: var(--tt-text);
+}
+
+.tt-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 7px;
+  border: none;
+  border-radius: var(--tt-radius-xs);
+  background: transparent;
+  color: var(--tt-text-2);
+  font: inherit;
+  font-size: 12px;
+  line-height: 18px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.tt-toggle:hover {
+  background: var(--tt-hover);
+  color: var(--tt-text);
+}
+
+.tt-toggle-active {
+  background: var(--tt-brand-faint);
+  color: var(--tt-brand);
+}
+
+.tt-toggle-active:hover {
+  background: var(--tt-brand-faint);
+  color: var(--tt-brand);
+}
+
+.tt-toggle-glyph {
+  font-family: var(--tt-mono);
+  font-size: 11px;
+  line-height: 1;
+}
+
+.tt-toolbar-spacer {
+  flex: 1 1 auto;
+  min-width: 8px;
+}
+
+.tt-search {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 1 164px;
+  min-width: 96px;
+  height: 22px;
+  padding: 0 7px;
+  border: 0.5px solid var(--tt-border-4);
+  border-radius: var(--tt-radius-xs);
+  color: var(--tt-text-3);
+  background: var(--tt-bg);
+}
+
+.tt-search:focus-within {
+  border-color: var(--tt-brand);
+  color: var(--tt-brand);
+}
+
+.tt-search-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--tt-text);
+  font: inherit;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.tt-search-input::placeholder {
+  color: var(--tt-caption);
+}
+
+/* ---------------------------------------------------------------- */
+/* 时间线                                                            */
+/* ---------------------------------------------------------------- */
+
+.tt-timeline {
+  position: relative;
+  flex: none;
+  padding: 4px 0 8px;
+  border-bottom: 0.5px solid var(--tt-border-2);
+  user-select: none;
+  touch-action: none;
+}
+
+.tt-timeline.tt-panning {
+  cursor: grabbing;
+}
+
+.tt-timeline.tt-dragging {
+  cursor: crosshair;
+}
+
+.tt-axis {
+  position: relative;
+  height: 16px;
+  margin: 0 8px;
+  font-family: var(--tt-mono);
+  font-size: 10px;
+  line-height: 16px;
+  color: var(--tt-text-3);
+}
+
+.tt-axis-tick {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.tt-track {
+  position: relative;
+  height: 50px;
+  margin: 0 8px;
+  overflow: hidden;
+}
+
+.tt-lane-label {
+  position: absolute;
+  left: 0;
+  font-size: 10px;
+  line-height: 12px;
+  color: var(--tt-text-3);
+  pointer-events: none;
+}
+
+.tt-lane-0 { top: 1px; }
+.tt-lane-1 { top: 15px; }
+.tt-lane-2 { top: 29px; }
+
+.tt-turn-boundary {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0.5px;
+  background: var(--tt-border-2);
+  pointer-events: none;
+}
+
+.tt-hoverline {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--tt-brand);
+  opacity: 0.85;
+  pointer-events: none;
+}
+
+.tt-span {
+  position: absolute;
+  height: 8px;
+  border-radius: 1px;
+  background: var(--tt-text-3);
+  cursor: pointer;
+}
+
+.tt-span:hover {
+  box-shadow:
+    0 0 0 1px var(--tt-bg),
+    0 0 0 2px var(--tt-brand);
+}
+
+.tt-span-user { background: var(--tt-brand); }
+.tt-span-context { background: var(--tt-green-mix); }
+.tt-span-compacted { background: var(--tt-text-3); }
+.tt-span-system { background: var(--tt-text-3); }
+.tt-span-message { background: var(--tt-brand-dim); }
+.tt-span-tool,
+.tt-span-subtool { background: var(--tt-amber); }
+
+.tt-span-error {
+  background: var(--tt-red);
+}
+
+.tt-span-dimmed {
+  opacity: 0.14;
+}
+
+.tt-span-outside {
+  opacity: 0.2;
+}
+
+.tt-selection {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: rgba(65, 118, 230, 0.12);
+  pointer-events: none;
+}
+
+.tt-selection-edge {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--tt-brand);
+}
+
+.tt-selection-edge-start { left: 0; }
+.tt-selection-edge-end { right: 0; }
+
+.tt-tooltip {
+  position: fixed;
+  z-index: 40;
+  max-width: 320px;
+  padding: 5px 8px;
+  border: 0.5px solid var(--tt-border-4);
+  border-radius: var(--tt-radius-xs);
+  background: var(--tt-bg);
+  box-shadow: 0 4px 16px rgba(15, 17, 21, 0.12);
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--tt-text);
+  pointer-events: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tt-tooltip-line + .tt-tooltip-line {
+  margin-top: 2px;
+  color: var(--tt-text-2);
+}
+
+/* ---------------------------------------------------------------- */
+/* 台账                                                              */
+/* ---------------------------------------------------------------- */
+
+.tt-body {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.tt-ledger {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: auto;
+  background: var(--tt-bg);
+}
+
+.tt-ledger-canvas {
+  position: relative;
+  min-height: 100%;
+}
+
+.tt-table {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.tt-col-event {
+  width: 84px;
+}
+
+.tt-row td {
+  height: 30px;
+  padding: 0 8px;
+  border-bottom: 0.5px solid var(--tt-border);
+  vertical-align: middle;
+}
+
+.tt-row:hover td {
+  background: var(--tt-hover);
+}
+
+.tt-row-selected td {
+  background: var(--tt-active);
+}
+
+.tt-row-summary td {
+  height: 20px;
+}
+
+.tt-row-error .tt-content-cell {
+  color: var(--tt-red);
+}
+
+.tt-row[data-timeline-focus='outside'] td {
+  opacity: 0.24;
+}
+
+.tt-event-cell {
+  position: relative;
+  padding-left: 36px !important;
+  padding-right: 4px !important;
+}
+
+.tt-request-dot {
+  position: absolute;
+  top: -8px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+}
+
+.tt-request-dot::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--tt-brand-dim);
+}
+
+.tt-request-dot:hover::before {
+  background: var(--tt-brand);
+  box-shadow: 0 0 0 3px var(--tt-brand-faint);
+}
+
+.tt-request-dot-label {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: none;
+  padding: 1px 5px;
+  border-radius: var(--tt-radius-xs);
+  background: var(--tt-bg-module);
+  font-family: var(--tt-mono);
+  font-size: 9px;
+  line-height: 12px;
+  color: var(--tt-text-2);
+  white-space: nowrap;
+}
+
+.tt-request-dot:hover .tt-request-dot-label {
+  display: block;
+}
+
+.tt-turn-label {
+  display: inline-block;
+  padding: 1px 5px;
+  border-radius: 0 0 2px 2px;
+  background: var(--tt-bg-module);
+  font-family: var(--tt-mono);
+  font-size: 8px;
+  line-height: 10px;
+  color: var(--tt-text-2);
+}
+
+.tt-content-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding-left: 4px !important;
+}
+
+.tt-kind-slot {
+  flex: none;
+  width: 44px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.tt-kind-tag {
+  display: inline-flex;
+  align-items: center;
+  height: 19px;
+  padding: 0 5px;
+  border-radius: var(--tt-radius-xs);
+  font-size: 10px;
+  line-height: 16px;
+  font-weight: 650;
+  letter-spacing: 0.035em;
+  white-space: nowrap;
+}
+
+.tt-kind-system,
+.tt-kind-compacted {
+  color: var(--tt-text-2);
+  background: var(--tt-bg-module);
+}
+
+.tt-kind-user {
+  color: var(--tt-brand);
+  background: var(--tt-brand-faint);
+}
+
+.tt-kind-context {
+  color: var(--tt-green-mix);
+  background: var(--tt-green-100);
+}
+
+.tt-kind-message {
+  color: var(--tt-violet);
+  background: rgba(136, 107, 174, 0.15);
+}
+
+.tt-kind-tool,
+.tt-kind-subtool {
+  color: var(--tt-amber);
+  background: var(--tt-amber-100);
+}
+
+.tt-record-content {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  overflow: hidden;
+}
+
+.tt-record-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tt-record-empty {
+  color: var(--tt-caption);
+  font-style: italic;
+}
+
+.tt-collapsed-summary {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--tt-text-3);
+  font-size: 11px;
+  line-height: 20px;
+}
+
+.tt-collapsed-turn {
+  color: var(--tt-text-2);
+}
+
+.tt-tool-name,
+.tt-tool-args {
+  font-family: var(--tt-mono);
+  white-space: nowrap;
+}
+
+.tt-tool-args {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--tt-text-3);
+}
+
+.tt-tool-result {
+  flex: none;
+  max-width: 480px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--tt-caption);
+}
+
+.tt-tool-result-arrow {
+  margin-right: 6px;
+}
+
+.tt-state-chip {
+  flex: none;
+  font-size: 10px;
+  line-height: 16px;
+}
+
+.tt-state-error {
+  color: var(--tt-red);
+}
+
+.tt-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--tt-text-3);
+}
+
+/* ---------------------------------------------------------------- */
+/* 详情面板                                                          */
+/* ---------------------------------------------------------------- */
+
+.tt-resize-handle {
+  flex: none;
+  width: 8px;
+  margin-left: -4px;
+  cursor: col-resize;
+  z-index: 3;
+}
+
+.tt-details {
+  position: relative;
+  flex: none;
+  width: clamp(320px, 38%, 440px);
+  max-width: calc(100% - 280px);
+  min-width: 320px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-left: 0.5px solid var(--tt-border-2);
+  background: var(--tt-bg);
+}
+
+.tt-details-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 42px;
+  flex: none;
+  padding: 0 8px 0 12px;
+  border-bottom: 0.5px solid var(--tt-border);
+}
+
+.tt-details-location {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--tt-mono);
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--tt-text-3);
+}
+
+.tt-details-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex: none;
+  padding: 0;
+  border: none;
+  border-radius: var(--tt-radius-xs);
+  background: transparent;
+  color: var(--tt-text-3);
+  cursor: pointer;
+}
+
+.tt-details-close:hover {
+  background: var(--tt-hover);
+  color: var(--tt-text);
+}
+
+.tt-detail-tabs {
+  display: flex;
+  align-items: stretch;
+  height: 34px;
+  flex: none;
+  padding: 0 4px;
+  border-bottom: 0.5px solid var(--tt-border);
+}
+
+.tt-detail-tab {
+  position: relative;
+  padding: 0 9px;
+  border: none;
+  background: transparent;
+  color: var(--tt-text-2);
+  font: inherit;
+  font-size: 12px;
+  line-height: 18px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.tt-detail-tab:hover {
+  color: var(--tt-text);
+}
+
+.tt-detail-tab-active {
+  color: var(--tt-brand);
+  font-weight: 500;
+}
+
+.tt-detail-tab-active::after {
+  content: '';
+  position: absolute;
+  left: 9px;
+  right: 9px;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--tt-brand);
+}
+
+.tt-detail-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.tt-detail-body-summary {
+  display: flex;
+  flex-direction: column;
+}
+
+.tt-overview {
+  margin: 0;
+  padding: 8px 0;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.tt-overview-row {
+  display: grid;
+  grid-template-columns: 94px minmax(0, 1fr);
+  gap: 8px;
+  min-height: 22px;
+  align-items: baseline;
+  padding: 0 14px;
+}
+
+.tt-overview-row dt {
+  color: var(--tt-text-3);
+}
+
+.tt-overview-row dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.tt-dd-clickable {
+  cursor: pointer;
+}
+
+.tt-dd-clickable:hover {
+  color: var(--tt-brand);
+}
+
+.tt-mono {
+  font-family: var(--tt-mono);
+  font-size: 12px;
+}
+
+.tt-link {
+  display: inline;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--tt-brand);
+  font: inherit;
+  cursor: pointer;
+  margin-right: 10px;
+}
+
+.tt-link:hover {
+  text-decoration: underline;
+}
+
+.tt-overview-section {
+  border-top: 0.5px solid var(--tt-border);
+}
+
+.tt-section-title {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  height: 24px;
+  padding: 0 14px 3px;
+  border: none;
+  background: none;
+  color: var(--tt-text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 20px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tt-section-chevron {
+  color: var(--tt-text-3);
+  transition: transform 0.12s ease;
+}
+
+.tt-section-chevron-open {
+  transform: rotate(90deg);
+}
+
+.tt-section-scroll {
+  max-height: 280px;
+  overflow: auto;
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 12px), transparent);
+}
+
+.tt-markdown-payload {
+  padding: 14px;
+  font-size: 13px;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+}
+
+.tt-markdown-payload pre {
+  margin: 8px 0;
+  padding: 10px 12px;
+  border-radius: var(--tt-radius-xs);
+  background: var(--tt-bg-code);
+  font-family: var(--tt-mono);
+  font-size: 12px;
+  line-height: 18px;
+  overflow: auto;
+}
+
+.tt-markdown-payload code {
+  font-family: var(--tt-mono);
+  font-size: 12px;
+}
+
+.tt-markdown-payload p + p {
+  margin-top: 8px;
+}
+
+.tt-markdown-payload ul,
+.tt-markdown-payload ol {
+  margin: 8px 0;
+  padding-left: 20px;
+}
+
+.tt-markdown-preview {
+  padding: 2px 14px 8px;
+}
+
+.tt-payload-stack {
+  padding: 0 0 8px;
+}
+
+.tt-payload-pre {
+  margin: 0;
+  padding: 14px;
+  background: var(--tt-bg-code);
+  font-family: var(--tt-mono);
+  font-size: 12px;
+  line-height: 19px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  tab-size: 2;
+}
+
+.tt-no-payload {
+  padding: 18px 14px;
+  color: var(--tt-text-3);
+}
+
+/* ---------------------------------------------------------------- */
+/* JSON 树                                                           */
+/* ---------------------------------------------------------------- */
+
+.tt-json-tree {
+  padding: 10px 14px;
+  font-family: var(--tt-mono);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.tt-json-row {
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
+  min-height: 16px;
+  padding-left: 10px;
+  border-radius: var(--tt-radius-xs);
+}
+
+.tt-json-row:hover {
+  background: rgba(60, 64, 67, 0.04);
+}
+
+.tt-json-toggle {
+  padding: 0;
+  border: none;
+  background: none;
+  color: #5f6368;
+  font: inherit;
+  cursor: pointer;
+}
+
+.tt-json-punct {
+  color: #202124;
+}
+
+.tt-json-ellipsis,
+.tt-json-count {
+  color: var(--tt-text-3);
+}
+
+.tt-json-label {
+  margin-right: 3px;
+  color: #881391;
+}
+
+.tt-json-children {
+  margin-left: 10px;
+  border-left: 0.5px solid var(--tt-border-2);
+}
+
+.tt-json-child {
+  position: relative;
+}
+
+.tt-json-close {
+  color: #202124;
+}
+
+.tt-json-string {
+  color: #c41a16;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.tt-json-string-clamped {
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.tt-json-string-open {
+  max-height: none;
+}
+
+.tt-json-keyword {
+  color: #1c00cf;
+}
+
+.tt-json-number {
+  color: #1c00cf;
+}

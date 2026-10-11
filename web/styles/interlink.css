@@ -347,6 +347,38 @@ button.interlink-op:disabled { cursor: not-allowed; opacity: 0.55; }
 button.interlink-op { font-size: 12px; }
 .interlink-flag { font-size: 11px; color: #94a3b8; }
 
+/* ---------- 面板骨架：总览与治理面共用一个滚动容器 ---------- */
+.interlink-overview {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.interlink-governance {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+/* ---------- 告警与运行时（只读面板）---------- */
+.interlink-alert-table { table-layout: auto; }
+.interlink-alert-table td { white-space: nowrap; }
+.interlink-alert-table td.interlink-mono,
+.interlink-alert-table td.interlink-cell-sub { white-space: normal; }
+.interlink-notice.is-error {
+  border-color: #fecaca;
+  background: #fef2f2;
+  color: #b91c1c;
+}
+.interlink-stat.is-warn .interlink-stat-value { color: #92400e; }
+.interlink-stat.is-danger { border-color: #fecaca; background: #fef2f2; }
+.interlink-stat.is-danger .interlink-stat-value { color: #b91c1c; }
+.interlink-drawer-header > div {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.interlink-drawer-header > button { flex: none; }
+
 @media (max-width: 900px) {
   .interlink-heat { grid-template-columns: repeat(12, minmax(0, 1fr)); }
   .interlink-drawer { width: 100%; }

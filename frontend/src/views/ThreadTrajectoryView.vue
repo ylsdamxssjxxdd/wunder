@@ -629,13 +629,41 @@ async function load(): Promise<void> {
   try {
     const snapshot = await getThreadLogSnapshot(sessionId)
     const payload = snapshot?.data
-    rawTurns.value = Array.isArray(payload?.turns) ? payload.turns : []
+    rawTurns.value = attachTurnItems(payload)
   } catch {
     loadError.value = true
     rawTurns.value = []
   } finally {
     loading.value = false
   }
+}
+
+/**
+ * 快照的 items 与 turns 是两个平铺数组；把 items 按 turn_id 归组挂到各自的
+ * 轮次上，布局模型才能读到每轮的记录。没有 turn_id 的条目挂在首个轮次前。
+ */
+function attachTurnItems(payload: unknown): unknown[] {
+  const source = payload as { turns?: unknown; items?: unknown } | null | undefined
+  if (!Array.isArray(source?.turns)) return []
+  const turns = (source.turns as unknown[]).filter((turn) => !!turn && typeof turn === 'object')
+  const items = Array.isArray(source?.items) ? (source.items as unknown[]) : []
+  if (items.length === 0) return turns
+  const buckets = new Map<string, unknown[]>()
+  for (const item of items) {
+    const turnId = typeof (item as { turn_id?: unknown })?.turn_id === 'string'
+      ? (item as { turn_id: string }).turn_id
+      : ''
+    if (!turnId) continue
+    const bucket = buckets.get(turnId)
+    if (bucket) bucket.push(item)
+    else buckets.set(turnId, [item])
+  }
+  for (const turn of turns) {
+    const row = turn as { turn_id?: unknown; items?: unknown[] }
+    const turnId = typeof row.turn_id === 'string' ? row.turn_id : ''
+    row.items = turnId ? buckets.get(turnId) ?? [] : []
+  }
+  return turns
 }
 
 function goBack(): void {

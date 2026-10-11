@@ -1,4 +1,4 @@
-import { getCurrentLanguage, t } from "./i18n.js?v=20260215-01";
+import { getCurrentLanguage, t } from "./i18n.js?v=20261011-01";
 import { resolveToolIconClass as resolveSharedToolIconClass } from "../shared/tool-visuals.js";
 
 // 工具函数：纯逻辑处理，便于多模块复用

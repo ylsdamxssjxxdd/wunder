@@ -10,12 +10,12 @@ import {
 
 } from "./app.config.js?v=20260215-01";
 
-import { elements } from "./modules/elements.js?v=20260710-01";
+import { elements } from "./modules/elements.js?v=20261011-01";
 
 import { state } from "./modules/state.js";
 
 
-import { appendLog } from "./modules/log.js?v=20260215-01";
+import { appendLog } from "./modules/log.js?v=20261011-01";
 import { loadI18nConfig } from "./modules/i18n-config.js?v=20260603-02";
 
 import { initToolDetailModal } from "./modules/tool-detail.js?v=20260926-01";
@@ -34,13 +34,13 @@ import {
   loadSystemPrompt,
 } from "./modules/prompt.js?v=20260215-01";
 
-import { initDebugPanel, toggleDebugPolling } from "./modules/debug.js?v=20260215-01";
+import { initDebugPanel, toggleDebugPolling } from "./modules/debug.js?v=20261011-01";
 import {
   initMonitorPanel,
   loadMonitorData,
   refreshMonitorPanelLayout,
   toggleMonitorPolling,
-} from "./modules/monitor.js?v=20260710-01";
+} from "./modules/monitor.js?v=20261011-01";
 import { initUserManagementPanel, loadUserStats } from "./modules/users.js?v=20260215-01";
 import { initUserAccountsPanel, loadUserAccounts } from "./modules/user-accounts.js?v=20260518-01";
 import { initExternalLinksPanel, loadExternalLinks } from "./modules/external-links.js?v=20260215-01";
@@ -49,7 +49,7 @@ import { initCompanionsPanel, loadCompanions } from "./modules/companions.js?v=2
 import { initOrgUnitsPanel, loadOrgUnits } from "./modules/org-units.js?v=20260215-01";
 import { initChannelsPanel, loadChannelAccounts } from "./modules/channels.js?v=20260215-01";
 import { initCloudPanel, loadCloudPanel } from "./modules/cloud.js?v=20261008-01";
-import { initInterlinkPanel, loadInterlinkFleet } from "./modules/interlink.js?v=20261010-01";
+import { initInterlinkPanel, loadInterlinkFleet } from "./modules/interlink.js?v=20261011-01";
 
 import { initMcpPanel, loadMcpServers } from "./modules/mcp.js?v=20260215-01";
 import {
@@ -81,10 +81,10 @@ import { initEvaluationPanel } from "./modules/evaluation.js?v=20260802-03";
 import {
   initMultimodalDebugPanel,
   loadMultimodalDebugPanel,
-} from "./modules/multimodal-debug.js?v=20260508-01";
+} from "./modules/multimodal-debug.js?v=20261011-01";
 import { applyAuthHeaders, getAuthScope, initAdminAuth } from "./modules/admin-auth.js?v=20260926-05";
 
-import { getCurrentLanguage, setLanguage, t } from "./modules/i18n.js?v=20260710-01";
+import { getCurrentLanguage, setLanguage, t } from "./modules/i18n.js?v=20261011-01";
 
 
 

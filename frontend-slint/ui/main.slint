@@ -4,15 +4,17 @@ import { ExpertToolGroup } from "expert_widgets.slint";
 export { ExpertToolGroup }
 import { RuntimeStatus } from "runtime_status.slint";
 import { I18n } from "i18n.slint";
-import { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, TextBlock, WorkflowLine, WorkflowSection, ToolWorkflowEntry, TimelineRow, TimelineCounts, TurnStatMetric, PatchCard, PatchLine, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, LanPeerCard, ThreadLogEvent, CronCard, CronRunCard, PromptPackCard, ChannelCatalogCard, ChannelAccountCard, ChannelBindingCard, ChannelLogCard, AvatarOption, AvatarColorChip, CompanionCard, PlanStep, InquiryQuestion, QueueTurn, DraftRecall, InterlinkStatus, InterlinkNode, InterlinkEntry, InterlinkApproval } from "theme.slint";
+import { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, TextBlock, WorkflowLine, WorkflowSection, ToolWorkflowEntry, TimelineRow, TimelineCounts, TurnStatMetric, PatchCard, PatchLine, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, LanPeerCard, TrajRow, TrajSpan, TrajTick, TrajBoundary, TrajTiming, TrajSection, TrajTab, CronCard, CronRunCard, PromptPackCard, ChannelCatalogCard, ChannelAccountCard, ChannelBindingCard, ChannelLogCard, AvatarOption, AvatarColorChip, CompanionCard, PlanStep, InquiryQuestion, QueueTurn, DraftRecall, InterlinkStatus, InterlinkNode, InterlinkEntry, InterlinkApproval } from "theme.slint";
 import { Action, EdgeToggle, RailButton, Avatar, FormField, MiddleHeader, MiddleFooter, ConfirmDialog, InfoDialog, ToastHost, ToastState } from "components.slint";
 import { Composer, GoalBanner, InquiryPanel, StatusDock } from "composer.slint";
 import { TerminalView, TermSpan } from "terminal_view.slint";
 import { TimelineView } from "timeline.slint";
 import { Sidebar, WorkspaceVisual } from "sidebar.slint";
 import { SettingsPage } from "settings_page.slint";
-import { ThreadLogDialog, LogMetric } from "thread_log.slint";
-export { LogMetric }
+import { I18n } from "i18n.slint";
+import { ThreadTrajectoryDialog } from "thread_trajectory.slint";
+import { SubagentDetailDialog } from "subagent_detail.slint";
+export { I18n }
 import { ToolResource, ToolsDialog, McpServerDraft, KnowledgeInfo } from "tools_page.slint";
 export { ToolResource, ToolsDialog, McpServerDraft, KnowledgeInfo }
 import { AvatarDialog, AvatarDialogState } from "avatar_dialog.slint";
@@ -25,7 +27,7 @@ import { ModelPresets } from "model_presets.slint";
 export { ModelPresets }
 // `TimelineView` is deliberately absent: nothing in Rust names it, and an
 // exported component that does not inherit Window only earns a build warning.
-export { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, TextBlock, WorkflowLine, WorkflowSection, ToolWorkflowEntry, TimelineRow, TimelineCounts, TurnStatMetric, PatchCard, PatchLine, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, LanPeerCard, ThreadLogEvent, CronCard, CronRunCard, PromptPackCard, ChannelCatalogCard, ChannelBindingCard, ChannelLogCard, AvatarOption, AvatarColorChip, CompanionCard, PlanStep, InterlinkStatus, InterlinkNode, InterlinkEntry, InterlinkApproval }
+export { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, TextBlock, WorkflowLine, WorkflowSection, ToolWorkflowEntry, TimelineRow, TimelineCounts, TurnStatMetric, PatchCard, PatchLine, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, LanPeerCard, TrajRow, TrajSpan, TrajTick, TrajBoundary, TrajTiming, TrajSection, TrajTab, CronCard, CronRunCard, PromptPackCard, ChannelCatalogCard, ChannelBindingCard, ChannelLogCard, AvatarOption, AvatarColorChip, CompanionCard, PlanStep, InterlinkStatus, InterlinkNode, InterlinkEntry, InterlinkApproval }
 export { AppTray } from "tray.slint";
 export { TrayNotice } from "tray-notice.slint";
 export { ScreenshotOverlay } from "screenshot_overlay.slint";
@@ -241,27 +243,66 @@ export component MainWindow inherits Window {
     in-out property <string> dialog-title;
     in-out property <string> dialog-text;
     in-out property <bool> dialog-open: false;
-    in-out property <bool> thread-log-open: false;
-    in-out property <[LogMetric]> thread-log-metrics;
-    in-out property <[ThreadLogEvent]> thread-log-events;
-    in-out property <[string]> thread-log-round-options;
-    in-out property <[string]> thread-log-types;
-    in-out property <string> thread-log-title;
-    in-out property <string> thread-log-question;
-    in-out property <string> thread-log-query;
-    in-out property <string> thread-log-page-info;
-    in-out property <string> thread-log-error;
-    in-out property <int> thread-log-round: 0;
-    in-out property <int> thread-log-type: 0;
-    in-out property <bool> thread-log-loading;
-    in-out property <bool> thread-log-previous;
-    in-out property <bool> thread-log-next;
-    in-out property <bool> thread-log-more;
-    callback filter-thread-log();
-    callback select-log-round(int);
-    callback log-page(int);
-    callback more-log-items();
-    callback export-thread-log();
+    // Thread trajectory page. Rows, spans and detail text are pre-projected
+    // in Rust (src/thread_trajectory.rs); Slint only lays them out.
+    in-out property <bool> traj-open: false;
+    in-out property <[TrajRow]> traj-rows;
+    in-out property <[TrajSpan]> traj-spans;
+    in-out property <[TrajTick]> traj-ticks;
+    in-out property <[TrajBoundary]> traj-boundaries;
+    in-out property <float> traj-view-start: 0.0;
+    in-out property <float> traj-view-width: 1.0;
+    in-out property <string> traj-detail-header;
+    in-out property <string> traj-detail-badge;
+    in-out property <int> traj-detail-kind: 1;
+    in-out property <[TrajTab]> traj-detail-tabs;
+    in-out property <int> traj-detail-tab: 0;
+    in-out property <[TrajTiming]> traj-overview;
+    in-out property <[TrajSection]> traj-sections;
+    in-out property <[TrajTiming]> traj-timing;
+    in-out property <string> traj-raw;
+    in-out property <int> traj-selected: -1;
+    in-out property <int> traj-hover: -1;
+    in-out property <string> traj-tooltip;
+    in-out property <bool> traj-show-duration: true;
+    in-out property <bool> traj-show-turns: false;
+    in-out property <bool> traj-show-calls: false;
+    in-out property <string> traj-query;
+    in-out property <bool> traj-loading;
+    in-out property <bool> traj-failed;
+    callback traj-select-row(int);
+    callback traj-select-tab(int);
+    callback traj-select-span(int);
+    callback traj-hover-span(int);
+    callback traj-leave();
+    callback traj-toggle-duration();
+    callback traj-toggle-turns();
+    callback traj-toggle-calls();
+    callback traj-search-changed();
+    callback traj-zoom(float);
+    callback traj-pan(float);
+    // Subagent detail dialog: the child thread's rows come from the same
+    // projection as the main timeline (src/subagent_detail.rs); Slint only
+    // lays out the card and hands clicks back.
+    in-out property <bool> subagent-open: false;
+    in-out property <[TimelineRow]> subagent-rows;
+    in-out property <string> subagent-title;
+    in-out property <int> subagent-status-kind: 0;
+    in-out property <bool> subagent-running: false;
+    in-out property <bool> subagent-stoppable: false;
+    in-out property <string> subagent-task;
+    in-out property <string> subagent-metrics;
+    in-out property <bool> subagent-loading: false;
+    in-out property <bool> subagent-failed: false;
+    callback subagent-close();
+    callback subagent-interrupt();
+    callback subagent-toggle(int);
+    callback subagent-download(string);
+    callback subagent-open-resource(string);
+    // A timeline card click and its interrupt action; the controller resolves
+    // the parent thread from the active session.
+    callback timeline-open-subagent(string);
+    callback timeline-stop-subagent(string);
     in-out property <bool> more-open: false;
     // Read-only mirror of the timeline viewport offset; the native smoke checks
     // use it to prove the view does not jump while the user reads back.
@@ -696,7 +737,9 @@ export component MainWindow inherits Window {
     callback filter-settings-categories(string);
     // Actions the embedded category pages raise that had no shell entry point
     // while those pages were unmounted.
-    callback open-thread-log();
+    // Sidebar thread-row hover action: open the trajectory page for that
+    // conversation (payload is the conversation index).
+    callback open-trajectory(int);
     callback request-channel-delete();
     callback confirm-channel-delete();
     callback cancel-channel-delete();
@@ -751,6 +794,7 @@ export component MainWindow inherits Window {
                 move-row(index, delta) => { root.move-row(index, delta); }
                 archive-thread(index) => { root.archive-thread(index); }
                 rename-thread(index, title) => { root.rename-thread(index, title); }
+                open-trajectory(index) => { root.open-trajectory(index); }
                 open-settings => { root.more-open = false; root.settings-open = true; root.settings-active-panel = 0; root.refresh-settings(); }
             }
             // Sidebar width drag handle: press and drag to resize, clamped so
@@ -803,6 +847,8 @@ export component MainWindow inherits Window {
                             copy-text(text) => { root.copy-raw(text); }
                             download-text(text) => { root.timeline-download(text); }
                             open-resource(id) => { root.timeline-open(id); }
+                            open-subagent(id) => { root.timeline-open-subagent(id); }
+                            stop-subagent(id) => { root.timeline-stop-subagent(id); }
                         }
                         TerminalView {
                             visible: root.terminal-mode;
@@ -1174,8 +1220,7 @@ export component MainWindow inherits Window {
         save-expert-memory => { root.save-expert-memory(); }
         delete-expert-memory(id) => { root.delete-expert-memory(id); }
         open-expert-archive(id) => { root.open-expert-archive(id); }
-        open-thread-log => { root.open-thread-log(); }
-        export-thread-log => { root.export-thread-log(); }
+        open-trajectory => { root.open-trajectory(-1); }
 
         settings-query <=> root.settings-query;
         settings-category-flags: root.settings-category-flags;
@@ -1221,19 +1266,45 @@ export component MainWindow inherits Window {
         close-label: I18n.info_ack;
         closed => { root.dialog-open = false; }
     }
-    if root.thread-log-open : ThreadLogDialog {
-        title: root.thread-log-title; metrics: root.thread-log-metrics; events: root.thread-log-events;
-        rounds: root.thread-log-round-options; types: root.thread-log-types;
-        selected-round <=> root.thread-log-round; selected-type <=> root.thread-log-type;
-        query <=> root.thread-log-query; question: root.thread-log-question;
-        page-info: root.thread-log-page-info; loading: root.thread-log-loading; error: root.thread-log-error;
-        previous: root.thread-log-previous; next: root.thread-log-next; more: root.thread-log-more;
-        close => { root.thread-log-open = false; }
-        filter => { root.filter-thread-log(); }
-        select-round(index) => { root.select-log-round(index); }
-        page(delta) => { root.log-page(delta); }
-        load-more => { root.more-log-items(); }
-        export-log => { root.export-thread-log(); }
+    if root.traj-open : ThreadTrajectoryDialog {
+        rows: root.traj-rows; spans: root.traj-spans; ticks: root.traj-ticks; boundaries: root.traj-boundaries;
+        view-start: root.traj-view-start; view-width: root.traj-view-width;
+        detail-header: root.traj-detail-header; detail-badge: root.traj-detail-badge; detail-kind: root.traj-detail-kind;
+        detail-tabs: root.traj-detail-tabs; detail-tab: root.traj-detail-tab;
+        overview-rows: root.traj-overview; sections: root.traj-sections; timing-rows: root.traj-timing;
+        raw-text: root.traj-raw; selected-index: root.traj-selected; hover-index: root.traj-hover;
+        tooltip-text: root.traj-tooltip;
+        show-duration: root.traj-show-duration; show-turns <=> root.traj-show-turns; show-calls <=> root.traj-show-calls;
+        query <=> root.traj-query;
+        loading: root.traj-loading; failed: root.traj-failed;
+        close => { root.traj-open = false; }
+        toggle-duration => { root.traj-toggle-duration(); }
+        toggle-turns => { root.traj-toggle-turns(); }
+        toggle-calls => { root.traj-toggle-calls(); }
+        select-row(index) => { root.traj-select-row(index); }
+        select-tab(tab) => { root.traj-select-tab(tab); }
+        select-span(index) => { root.traj-select-span(index); }
+        hover-span(index) => { root.traj-hover-span(index); }
+        leave-span => { root.traj-leave(); }
+        search-edited => { root.traj-search-changed(); }
+        zoom(factor) => { root.traj-zoom(factor); }
+        pan(start) => { root.traj-pan(start); }
+    }
+    if root.subagent-open : SubagentDetailDialog {
+        title: root.subagent-title;
+        status-kind: root.subagent-status-kind;
+        running: root.subagent-running;
+        stoppable: root.subagent-stoppable;
+        task: root.subagent-task;
+        metrics: root.subagent-metrics;
+        rows: root.subagent-rows;
+        loading: root.subagent-loading;
+        failed: root.subagent-failed;
+        close => { root.subagent-close(); }
+        interrupt => { root.subagent-interrupt(); }
+        toggle(index) => { root.subagent-toggle(index); }
+        download-text(text) => { root.subagent-download(text); }
+        open-resource(id) => { root.subagent-open-resource(id); }
     }
     if root.cron-delete-open : ConfirmDialog {
         title: I18n.cron_delete_title;
@@ -1267,24 +1338,41 @@ export component MainWindow inherits Window {
     // command kind is the title, the prompt is the body and level / risk /
     // source ride on the subline. The poll only opens the card when it is
     // closed, so a visible card is never replaced mid-read.
+    // A high-risk ask (L3 runs a command or an agent on this machine) wears the
+    // danger treatment: red edge, a banner and an explicit note, so it can never
+    // be read as an ordinary confirmation.
     if root.interlink-approval-open : Rectangle {
         z: 240;
         background: Theme.overlay;
         TouchArea { clicked => { /* remote asks must be answered, not dismissed */ } }
         Rectangle {
             width: min(460px, parent.width - 48px);
-            height: 240px;
+            height: root.interlink-approval.risk == "high" ? 296px : 240px;
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
             border-radius: Theme.radius-xl;
             background: Theme.surface;
             border-width: 1px;
-            border-color: Theme.border;
+            border-color: root.interlink-approval.risk == "high" ? Theme.danger : Theme.border;
             TouchArea { }
             VerticalLayout { padding: 20px; spacing: 10px;
-                Text { height: 24px; text: root.interlink-approval.kind; color: Theme.text; font-size: 17px; font-weight: 600; overflow: elide; }
+                if root.interlink-approval.risk == "high" : Rectangle {
+                    height: 26px;
+                    border-radius: Theme.radius-sm;
+                    background: Theme.danger-bg;
+                    HorizontalLayout { padding-left: 10px; padding-right: 10px;
+                        Text { height: 26px; vertical-alignment: center; text: I18n.il_ap_high_badge; color: Theme.danger; font-size: Theme.font-xs; font-weight: 600; }
+                    }
+                }
+                Text { height: 24px; text: root.interlink-approval.kind; color: root.interlink-approval.risk == "high" ? Theme.danger : Theme.text; font-size: 17px; font-weight: 600; overflow: elide; }
                 Text { vertical-stretch: 1; text: root.interlink-approval.prompt; color: Theme.text-secondary; font-size: Theme.font-sm; wrap: word-wrap; }
                 Text { height: 18px; text: I18n.il_ap_meta_level + root.interlink-approval.level + " · " + I18n.il_ap_meta_risk + root.interlink-approval.risk + " · " + I18n.il_ap_meta_from + root.interlink-approval.from-node; color: Theme.muted; font-size: Theme.font-xs; overflow: elide; }
+                if root.interlink-approval.risk == "high" : Text {
+                    text: I18n.il_ap_high_note;
+                    color: Theme.muted;
+                    font-size: Theme.font-xs;
+                    wrap: word-wrap;
+                }
                 HorizontalLayout { height: 32px; spacing: 8px;
                     Action { width: 96px; label: I18n.il_ap_reject; show-label: true; danger: true; clicked => { root.interlink-approval-open = false; root.interlink-reject(); } }
                     Rectangle { horizontal-stretch: 1; }

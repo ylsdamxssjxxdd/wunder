@@ -1,5 +1,7 @@
 //! Durable user-turn projection. Execution turns never allocate page rows.
-use super::{message_from_value, NativeDesktop, NativeMessage, NativeWorkflowEntry};
+use super::{
+    message_from_value, NativeDesktop, NativeMessage, NativeSubagentCard, NativeWorkflowEntry,
+};
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 use wunder_server::storage::StorageBackend;
@@ -7,6 +9,10 @@ use wunder_server::storage::StorageBackend;
 /// Tool and compaction entries one turn projects. The timeline lays out every
 /// visible row, so this is a frame-cost bound as well as a display bound.
 const MAX_TURN_ENTRIES: usize = 24;
+
+/// Child-run cards one turn projects. A turn spawning more children than the
+/// cap keeps the newest cards; the runtime list view remains the full index.
+const MAX_TURN_SUBAGENTS: usize = 8;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct NativeChatTurn {
@@ -17,6 +23,9 @@ pub struct NativeChatTurn {
     /// runtime registers as a single `assistant_message` item, so it carries
     /// that round's thinking, its answer block and the tools it invoked.
     pub rounds: Vec<NativeChatRound>,
+    /// Child runs spawned by this turn, in durable order. Cards render at the
+    /// turn's tail, matching the web messenger's subagent panel.
+    pub subagents: Vec<NativeSubagentCard>,
 }
 
 /// One model round of an assistant turn.
@@ -195,6 +204,7 @@ fn project_turn(root: &Value, items: &[Value]) -> Option<NativeChatTurn> {
     // admitted it. Keeping that grouping is what lets a reloaded turn rebuild
     // the same batches and answer blocks the live stream produced.
     let mut rounds: Vec<NativeChatRound> = Vec::new();
+    let mut subagents: Vec<NativeSubagentCard> = Vec::new();
     let mut entries = 0usize;
     let mut last_round = 1;
     for item in items {
@@ -224,6 +234,22 @@ fn project_turn(root: &Value, items: &[Value]) -> Option<NativeChatTurn> {
                     text,
                     items: Vec::new(),
                 }),
+            }
+            continue;
+        }
+        if kind == "subagent_run" {
+            // Child runs render as cards at the turn's tail; each progress
+            // revision rewrites one stable item, so a single pass yields one
+            // card per child.
+            let mut data = data.clone();
+            if let Some(id) = item["item_id"].as_str() {
+                data["item_id"] = json!(id);
+            }
+            if let Some(card) = NativeSubagentCard::from_payload(&data) {
+                if subagents.len() >= MAX_TURN_SUBAGENTS {
+                    subagents.remove(0);
+                }
+                subagents.push(card);
             }
             continue;
         }
@@ -277,6 +303,7 @@ fn project_turn(root: &Value, items: &[Value]) -> Option<NativeChatTurn> {
         user,
         assistant,
         rounds,
+        subagents,
     })
 }
 
@@ -373,7 +400,7 @@ mod tests {
 
     #[test]
     fn continuation_and_model_actions_fill_one_root_pair() {
-        let root = json!({"turn_id":"fixture-root", "status":"completed"});
+        let root = json!({"turn_id": "fixture-root", "status": "completed"});
         let items = vec![
             json!({"kind":"user_message","turn_id":"fixture-root","payload":{"content":"Fixture input"}}),
             json!({"kind":"assistant_message","item_id":"fixture-root:text-1","turn_id":"fixture-root","status":"completed","payload":{"content":"Earlier", "model_round":1}}),
@@ -386,5 +413,40 @@ mod tests {
         assert_eq!(turn.assistant.text, "Retained partial");
         assert_eq!(turn.assistant.stats_status, "已停止");
         assert!(project_turn(&root, &items[1..]).is_none());
+    }
+
+    #[test]
+    fn subagent_run_items_project_into_child_cards() {
+        let root = json!({"turn_id": "fixture-root", "status": "running"});
+        let items = vec![
+            json!({"kind":"user_message","turn_id":"fixture-root","payload":{"content":"Fixture input"}}),
+            json!({"kind":"subagent_run","item_id":"fixture-root:sub-fixture-run","turn_id":"fixture-root",
+                   "status":"completed","visibility":"user",
+                   "payload":{"session_id":"fixture-parent","turn_id":"fixture-root","user_round":1,
+                              "item_id":"fixture-root:sub-fixture-run","kind":"subagent_run",
+                              "status":"completed","visibility":"user","runtime":{
+                                  "session_id":"fixture-child","run_id":"fixture-run","title":"资料整理",
+                                  "status":"running","terminal":false,"failed":false,
+                                  "latest_message":"正在读取资料","can_terminate":true,
+                                  "metrics":{"tool_calls":2,"model_request_count":1,
+                                             "account_credits_consumed":0,"context_tokens":1024}}}}),
+        ];
+        let turn = project_turn(&root, &items).unwrap();
+        assert_eq!(turn.subagents.len(), 1);
+        let card = &turn.subagents[0];
+        assert_eq!(card.session_id, "fixture-child");
+        assert_eq!(card.item_id, "fixture-root:sub-fixture-run");
+        assert_eq!(card.title, "资料整理");
+        assert!(card.is_running());
+        assert!(card.can_terminate);
+        assert_eq!(card.tool_calls, 2);
+        assert_eq!(card.context_tokens, 1024);
+        // A card without a child identity cannot render anything useful.
+        let broken = vec![
+            items[0].clone(),
+            json!({"kind":"subagent_run","item_id":"fixture-root:sub-broken","turn_id":"fixture-root",
+                   "status":"completed","payload":{"runtime":{"title":"无身份"}}}),
+        ];
+        assert!(project_turn(&root, &broken).unwrap().subagents.is_empty());
     }
 }

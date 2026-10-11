@@ -1781,6 +1781,9 @@ impl InterlinkStore for PostgresStorage {
     fn delete_interlink_shadow(&self, device_id: &str) -> Result<()> {
         self.delete_interlink_shadow_impl(device_id)
     }
+    fn cleanup_interlink_shadows(&self, retention_days: u32, max_rows: i64) -> Result<u64> {
+        self.cleanup_interlink_shadows_impl(retention_days, max_rows)
+    }
 
     fn insert_interlink_command(&self, record: &InterlinkCommandRecord) -> Result<bool> {
         self.insert_interlink_command_impl(record)

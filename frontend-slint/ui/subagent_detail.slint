@@ -1,0 +1,112 @@
+// Subagent detail dialog: the child thread rendered through the same
+// TimelineView the main chat uses, so a child's turns read exactly like the
+// parent's. Header fields, the task line and the metrics are pre-projected in
+// Rust; the dialog itself only lays out what it was handed.
+import { Theme, TimelineRow } from "theme.slint";
+import { I18n } from "i18n.slint";
+import { TimelineView } from "timeline.slint";
+import { ModalDialog, Action } from "components.slint";
+
+export component SubagentDetailDialog inherits Rectangle {
+    in property <string> title;
+    in property <int> status-kind: 0;
+    in property <bool> running: false;
+    in property <bool> stoppable: false;
+    in property <string> task;
+    in property <string> metrics;
+    in property <[TimelineRow]> rows;
+    in property <bool> loading: false;
+    in property <bool> failed: false;
+
+    callback close();
+    callback interrupt();
+    callback toggle(int);
+    callback download-text(string);
+    callback open-resource(string);
+    // Copy reuses the hidden-buffer trick the main window's copy-raw uses.
+    copy-buffer := TextInput { width: 0px; height: 0px; }
+    public function copy-text(text: string) {
+        copy-buffer.text = text;
+        copy-buffer.select-all();
+        copy-buffer.copy();
+        copy-buffer.text = "";
+    }
+
+    width: 100%; height: 100%;
+    ModalDialog {
+        dismissable: true;
+        card-width: root.width * 0.78;
+        card-height: root.height * 0.82;
+        dismissed => { root.close(); }
+        // ---- header: identity, live status, actions ----
+        HorizontalLayout {
+            height: 26px;
+            spacing: 8px;
+            Text {
+                max-width: 320px; text: root.title;
+                color: Theme.text; font-size: Theme.font-md; font-weight: 700;
+                vertical-alignment: center; overflow: elide;
+            }
+            Text {
+                width: self.preferred-width; vertical-alignment: center;
+                text: root.status-kind == 1 ? I18n.sub_status_running
+                    : root.status-kind == 2 ? I18n.sub_status_failed
+                    : I18n.sub_status_done;
+                color: root.status-kind == 1 ? Theme.accent
+                    : root.status-kind == 2 ? Theme.danger
+                    : Theme.success;
+                font-size: Theme.font-sm;
+            }
+            Rectangle { horizontal-stretch: 1; }
+            if root.stoppable : Action {
+                width: 64px; label: I18n.sub_interrupt; show-label: true; danger: true;
+                clicked => { root.interrupt(); }
+            }
+            Action {
+                width: 64px; label: I18n.traj_close; show-label: true;
+                clicked => { root.close(); }
+            }
+        }
+        // ---- task the parent handed the child, and the live counters ----
+        if root.task != "" : Text {
+            height: 18px; text: I18n.sub_detail_task_line(root.task);
+            color: Theme.text-secondary; font-size: Theme.font-sm;
+            overflow: elide; vertical-alignment: center;
+        }
+        if root.metrics != "" : Text {
+            height: 18px; text: root.metrics;
+            color: Theme.muted; font-size: Theme.font-sm;
+            overflow: elide; vertical-alignment: center;
+        }
+        // ---- the child thread itself, in the main timeline's rows ----
+        Rectangle {
+            vertical-stretch: 1;
+            TimelineView {
+                rows: root.rows;
+                spinning: root.running;
+                follow-output: true;
+                toggle(index) => { root.toggle(index); }
+                copy-text(text) => { root.copy-text(text); }
+                download-text(text) => { root.download-text(text); }
+                open-resource(id) => { root.open-resource(id); }
+            }            if root.loading && root.rows.length == 0 : Text {
+                text: I18n.sub_detail_loading; color: Theme.muted;
+                font-size: Theme.font-md;
+                x: (parent.width - self.preferred-width) / 2;
+                y: (parent.height - self.preferred-height) / 2;
+            }
+            if !root.loading && root.failed : Text {
+                text: I18n.sub_detail_load_failed; color: Theme.danger;
+                font-size: Theme.font-md;
+                x: (parent.width - self.preferred-width) / 2;
+                y: (parent.height - self.preferred-height) / 2;
+            }
+            if !root.loading && !root.failed && root.rows.length == 0 : Text {
+                text: I18n.sub_detail_empty; color: Theme.muted;
+                font-size: Theme.font-md;
+                x: (parent.width - self.preferred-width) / 2;
+                y: (parent.height - self.preferred-height) / 2;
+            }
+        }
+    }
+}

@@ -1,6 +1,6 @@
 import { getWunderBase } from './api.js';
 import { notify } from './notify.js';
-import { t } from './i18n.js?v=20260710-01';
+import { t } from './i18n.js?v=20261011-01';
 
 export const appendQueuePriorityAction = (container, session, refresh) => {
   if (!['queued', 'waiting'].includes(String(session.status || '').toLowerCase())) return;

@@ -1,10 +1,10 @@
-import { elements } from "./elements.js?v=20260610-01";
+import { elements } from "./elements.js?v=20261011-01";
 import { state } from "./state.js";
-import { appendLog } from "./log.js?v=20260108-02";
+import { appendLog } from "./log.js?v=20261011-01";
 import { escapeHtml, formatBytes } from "./utils.js?v=20251229-02";
 import { getWunderBase } from "./api.js";
 import { notify } from "./notify.js";
-import { getCurrentLanguage, t } from "./i18n.js?v=20260610-01";
+import { getCurrentLanguage, t } from "./i18n.js?v=20261011-01";
 import { getAuthHeaders } from "./admin-auth.js?v=20260120-01";
 import {
   closeWorkspacePropertiesModal,

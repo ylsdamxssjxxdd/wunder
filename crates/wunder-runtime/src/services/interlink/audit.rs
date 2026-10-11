@@ -15,6 +15,9 @@ pub const AUDIT_PAGE_MAX: i64 = 500;
 const DETAIL_MAX_CHARS: usize = 2048;
 
 /// Build one audit row. `seq` is assigned by storage (autoincrement).
+///
+/// Building the row is also the single hook point of the alerting governance
+/// layer: every trail writer feeds the detector without knowing about it.
 pub fn record(
     action: &str,
     actor: &str,
@@ -24,7 +27,7 @@ pub fn record(
     approval_id: Option<&str>,
     detail: Vec<(&str, Value)>,
 ) -> InterlinkAuditRecord {
-    InterlinkAuditRecord {
+    let row = InterlinkAuditRecord {
         seq: 0,
         command_id: command_id.map(str::to_string),
         approval_id: approval_id.map(str::to_string),
@@ -34,7 +37,9 @@ pub fn record(
         action: action.to_string(),
         detail_digest: Some(detail_json(detail)),
         created_at: now_unix_seconds(),
-    }
+    };
+    super::alerts::observe(&row);
+    row
 }
 
 /// Serialize a bounded, ordered detail digest.
@@ -56,6 +61,21 @@ pub fn detail_json(parts: Vec<(&str, Value)>) -> String {
         out.push('…');
     }
     out
+}
+
+/// Project one stored detail column back into a response value.
+///
+/// The user and the 舰桥 audit surfaces both use it, so an alert's `trigger`,
+/// `kind` and `level` reach every consumer as typed fields instead of a JSON
+/// string each client parses on its own. Text that is not valid JSON (a
+/// truncated digest) stays verbatim rather than being dropped.
+pub fn detail_value(raw: Option<&str>) -> Value {
+    match raw {
+        None => Value::Null,
+        Some(text) => {
+            serde_json::from_str::<Value>(text).unwrap_or_else(|_| Value::String(text.to_string()))
+        }
+    }
 }
 
 /// CSV export for the bridge (docs §9.4). Values are quoted and escaped; the
@@ -165,6 +185,21 @@ mod tests {
         );
         assert_eq!(row.action, "file.read");
         assert!(row.detail_digest.unwrap().contains("a/b.txt"));
+    }
+
+    #[test]
+    fn detail_column_projects_back_to_typed_fields() {
+        let stored = detail_json(vec![
+            ("trigger", Value::String("l3_execution".to_string())),
+            ("count", Value::from(1)),
+        ]);
+        let value = detail_value(Some(&stored));
+        assert_eq!(value["trigger"].as_str(), Some("l3_execution"));
+        assert_eq!(value["count"].as_i64(), Some(1));
+        // A truncated digest is not valid JSON: it stays readable instead of
+        // being replaced by null.
+        assert_eq!(detail_value(Some("not json")).as_str(), Some("not json"));
+        assert!(detail_value(None).is_null());
     }
 
     #[test]

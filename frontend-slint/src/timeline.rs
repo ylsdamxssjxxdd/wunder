@@ -10,7 +10,7 @@ use crate::{TextBlock, TimelineRow};
 #[allow(unused_imports)]
 use slint::{Model, ModelRc, VecModel};
 use std::rc::Rc;
-use wunder_desktop::native::NativeWorkflowEntry;
+use wunder_desktop::native::{NativeSubagentCard, NativeWorkflowEntry};
 
 /// Row kinds; keep in sync with `EntryKind` in ui/timeline.slint.
 pub const KIND_USER: i32 = 0;
@@ -18,6 +18,7 @@ pub const KIND_BODY: i32 = 1;
 pub const KIND_REASON: i32 = 2;
 pub const KIND_TOOL: i32 = 3;
 pub const KIND_GROUP: i32 = 4;
+pub const KIND_SUBAGENT: i32 = 5;
 /// Status kinds: 0 done, 1 running, 2 failed.
 pub const STATUS_DONE: i32 = 0;
 pub const STATUS_RUNNING: i32 = 1;
@@ -51,6 +52,45 @@ pub fn stat_metrics(metrics: &[crate::turn_stats::Metric]) -> Vec<crate::TurnSta
         .collect()
 }
 
+/// One child-run card to its timeline row. Shared by the live reducer and the
+/// history projection so a card reads identically in both paths; the reducer
+/// only re-stamps the row index.
+pub fn subagent_row(card: &NativeSubagentCard) -> TimelineRow {
+    let status = if card.failed || matches!(card.status.as_str(), "failed" | "error") {
+        STATUS_FAILED
+    } else if card.is_running() {
+        STATUS_RUNNING
+    } else {
+        STATUS_DONE
+    };
+    let message = if card.latest_message.is_empty() {
+        card.error_message.as_str()
+    } else {
+        card.latest_message.as_str()
+    };
+    let mut summary: String =
+        message.lines().next().unwrap_or_default().chars().take(160).collect();
+    if summary.is_empty() {
+        // A settled card without a message would repeat its status label, so
+        // only the unfinished states carry a placeholder line.
+        if status != STATUS_DONE {
+            summary = if status == STATUS_RUNNING {
+                "正在执行…".into()
+            } else {
+                "执行失败".into()
+            };
+        }
+    }
+    let mut row = blank(KIND_SUBAGENT, format!("sub-{}", card.item_id));
+    row.text = card.title.as_str().into();
+    row.summary = summary.as_str().into();
+    row.tool_icon = crate::tool_icons::workflow_icon("subagent_control").into();
+    row.status_kind = status;
+    row.subagent_id = card.session_id.as_str().into();
+    row.subagent_stoppable = card.can_terminate && status == STATUS_RUNNING;
+    row
+}
+
 fn blank(kind: i32, id: String) -> TimelineRow {
     TimelineRow {
         kind,
@@ -71,6 +111,8 @@ fn blank(kind: i32, id: String) -> TimelineRow {
         payload: 0,
         patch: ModelRc::default(),
         stats: ModelRc::default(),
+        subagent_id: slint::SharedString::default(),
+        subagent_stoppable: false,
     }
 }
 
@@ -522,13 +564,40 @@ impl Timeline {
     }
 
     /// End a tool batch so the next reasoning or tool opens a fresh bar. The
-    /// batch entries stay known, because a later result frame still updates the
-    /// row it created.
+    /// batch entries stay known, because a later result frame still updates
+    /// the row it created.
     fn close_batch(&mut self) {
         if self.group != NO_GROUP {
             self.refresh_batch_label();
         }
         self.group = NO_GROUP;
+    }
+
+    /// Append one child-run card, or update the card of an already seen item.
+    /// A child run outlives the tool call that spawned it, so the card is its
+    /// own row outside any batch; progress revisions patch it in place.
+    pub fn upsert_subagent(&mut self, card: &NativeSubagentCard) {
+        if card.session_id.is_empty() {
+            return;
+        }
+        let row = subagent_row(card);
+        let id = row.id.clone();
+        if let Some(index) = (0..self.model.row_count()).find(|index| {
+            self.model
+                .row_data(*index)
+                .is_some_and(|existing| existing.kind == KIND_SUBAGENT && existing.id == id)
+        }) {
+            self.patch(index, |existing| {
+                existing.text = row.text.clone();
+                existing.summary = row.summary.clone();
+                existing.status_kind = row.status_kind;
+                existing.subagent_id = row.subagent_id.clone();
+                existing.subagent_stoppable = row.subagent_stoppable;
+            });
+            return;
+        }
+        let index = self.push(row);
+        self.patch(index, |existing| existing.payload = index as i32);
     }
 
     /// Close the trailing segment before the turn settles.
@@ -550,13 +619,14 @@ impl Timeline {
     }
 
     /// A cancelled or failed turn must never leave an entry spinning: every row
-    /// that was still running settles as failed.
+    /// that was still running settles as failed. A child run is a work unit of
+    /// its own, so its card keeps the status the runtime reports for it.
     fn fail_running(&mut self) {
         for index in 0..self.model.row_count() {
             let Some(row) = self.model.row_data(index) else {
                 continue;
             };
-            if row.status_kind != STATUS_RUNNING {
+            if row.status_kind != STATUS_RUNNING || row.kind == KIND_SUBAGENT {
                 continue;
             }
             let mut row = row;

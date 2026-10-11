@@ -21,15 +21,19 @@ pub const JANITOR_INTERVAL_S: u64 = 30;
 const RETENTION_INTERVAL_S: f64 = 24.0 * 3600.0;
 /// Rows inspected per channel reconciliation tick.
 const CHANNEL_PAGE: i64 = 200;
+/// Rows the shadow retention sweep may remove per daily tick.
+const SHADOW_CLEANUP_ROWS: i64 = 2_000;
 
 static RUNNING: AtomicBool = AtomicBool::new(false);
 
 /// Start the maintenance loop once per process; a disabled interlink section
-/// leaves the loop stopped (docs §3.3).
+/// leaves the loop stopped (docs §3.3). The alert pump shares this lifecycle
+/// because it is fed by the same trail and drained on the same cadence.
 pub fn spawn(state: Arc<AppState>) {
     if RUNNING.swap(true, Ordering::SeqCst) {
         return;
     }
+    super::alerts::spawn(state.clone());
     let handle = tokio::runtime::Handle::current();
     handle.spawn(async move {
         let mut last_retention = 0.0f64;
@@ -47,6 +51,7 @@ pub fn spawn(state: Arc<AppState>) {
             let presence_ttl = config.interlink.presence_ttl_s.max(1) as f64;
             let command_retention = config.interlink.command_retention_days;
             let audit_retention = config.interlink.audit_retention_days;
+            let shadow_retention = config.interlink.shadow_retention_days;
             drop(config);
 
             let now = now_unix_seconds();
@@ -70,7 +75,9 @@ pub fn spawn(state: Arc<AppState>) {
             let _ = super::blob::store().cleanup_expired(now);
             // 5) Persisted channel rows left open by a crashed instance.
             let _ = close_stale_channels(state.storage.clone(), now, presence_ttl * 2.0).await;
-            // 6) Retention, once a day.
+            // 6) Alert detection state, on this same cadence.
+            super::alerts::prune(now);
+            // 7) Retention, once a day.
             if now - last_retention >= RETENTION_INTERVAL_S {
                 last_retention = now;
                 let storage = state.storage.clone();
@@ -80,6 +87,12 @@ pub fn spawn(state: Arc<AppState>) {
                     }
                     if audit_retention > 0 {
                         let _ = storage.cleanup_interlink_audit(audit_retention)?;
+                    }
+                    if shadow_retention > 0 {
+                        // A shadow of a node that never re-synced is stale
+                        // evidence; drop it in bounded pages (docs §9.3 4).
+                        let _ =
+                            storage.cleanup_interlink_shadows(shadow_retention, SHADOW_CLEANUP_ROWS)?;
                     }
                     Ok::<(), anyhow::Error>(())
                 })
@@ -199,6 +212,7 @@ pub fn snapshot() -> serde_json::Value {
             .collect::<Vec<_>>(),
         "blob_cache_bytes": super::blob::store().cache_bytes(),
         "open_streams": super::blob::store().open_streams(),
+        "alerts": super::alerts::stats(),
     })
 }
 

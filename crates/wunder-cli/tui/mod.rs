@@ -48,6 +48,13 @@ pub async fn run_main(
     )
     .await?;
 
+    // Interlink tunnel (互通方案 I9): the TUI is the only resident 舵机 form, so
+    // it is the only place a node may open its outbound link. One-shot
+    // subcommands never reach here, and the same exit path always closes it.
+    let tunnel_open = crate::interlink_tunnel::start(runtime).await;
+    app.set_tunnel_open(tunnel_open);
+    app.poll_tunnel();
+
     if let Some(prompt) = first_prompt
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
@@ -58,6 +65,9 @@ pub async fn run_main(
     app.request_redraw();
 
     let run_result = run_loop(&mut terminal, &mut app, frame_notifications).await;
+    if tunnel_open {
+        crate::interlink_tunnel::stop();
+    }
     let restore_result = restore_terminal(&mut terminal);
 
     run_result?;
@@ -135,6 +145,7 @@ async fn run_loop(
         }
 
         app.drain_stream_events().await;
+        app.poll_tunnel();
 
         sync_mouse_mode(terminal, app, &mut mouse_capture_enabled)?;
 

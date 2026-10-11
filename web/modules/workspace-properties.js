@@ -1,4 +1,4 @@
-import { t } from "./i18n.js?v=20260610-01";
+import { t } from "./i18n.js?v=20261011-01";
 import { formatBytes } from "./utils.js?v=20251229-02";
 
 let initialized = false;

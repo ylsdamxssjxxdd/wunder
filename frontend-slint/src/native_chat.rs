@@ -27,6 +27,7 @@ use wunder_desktop::native::NativeChatCommand;
 mod commands;
 #[path = "native_chat_observer.rs"]
 mod observer;
+pub(crate) use observer::project_history;
 #[path = "native_chat_queue.rs"]
 mod queue;
 
@@ -447,7 +448,8 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
     bind_inquiry(app, state.clone());
     bind_queue(app, state.clone());
     start_goal_clock(app.as_weak());
-    crate::thread_log_ui::install(app, desktop_preview.clone());
+    crate::thread_trajectory::install(app, desktop_preview.clone());
+    crate::subagent_detail::install(app, desktop_preview.clone());
     crate::navigation_ui::install(app, desktop_preview.clone());
     crate::workspace_ui::install(app, desktop_preview.clone());
     let timeline = state.borrow().timeline.clone();
@@ -2736,6 +2738,16 @@ fn apply_event(
                     data,
                 ));
                 active.state = "正在执行工具…".into();
+            }
+        }
+        "subagent_run" => {
+            // One child run, one stable item: the card patches in place as the
+            // runtime republishes it. The child's own status rules the row, so
+            // the parent turn's state never rewrites it.
+            let card = wunder_desktop::NativeSubagentCard::from_payload(data);
+            match card {
+                Some(card) => timeline.upsert_subagent(&card),
+                None => return Ok(false),
             }
         }
         "error" | "queue_fail" => {

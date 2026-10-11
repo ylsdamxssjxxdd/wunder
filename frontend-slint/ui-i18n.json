@@ -4549,6 +4549,16 @@
   "en": "Reject"
  },
  {
+  "key": "il_ap_high_badge",
+  "zh": "高危操作 · 将在本机执行",
+  "en": "High risk · runs on this machine"
+ },
+ {
+  "key": "il_ap_high_note",
+  "zh": "批准即在本机执行；拒绝不产生任何副作用。参数只在本机可见，不会上云。",
+  "en": "Approving runs this on the local machine; rejecting leaves no side effect. The parameters stay local and are never uploaded."
+ },
+ {
   "key": "sb_origin_cloud",
   "zh": "☁ 云端",
   "en": "Cloud"
@@ -4725,13 +4735,8 @@
  },
  {
   "key": "stc_runs_open",
-  "zh": "打开线程日志",
-  "en": "Open thread log"
- },
- {
-  "key": "stc_runs_export",
-  "zh": "导出日志",
-  "en": "Export log"
+  "zh": "查看轨迹",
+  "en": "Trajectory"
  },
  {
   "key": "stc_runs_flow_note",
@@ -5927,6 +5932,76 @@
   "en": "Send to submit your choices"
  },
  {
+  "key": "sub_card_title",
+  "zh": "子智能体",
+  "en": "Subagent"
+ },
+ {
+  "key": "sub_status_running",
+  "zh": "运行中",
+  "en": "Running"
+ },
+ {
+  "key": "sub_status_done",
+  "zh": "已完成",
+  "en": "Completed"
+ },
+ {
+  "key": "sub_status_failed",
+  "zh": "失败",
+  "en": "Failed"
+ },
+ {
+  "key": "sub_interrupt",
+  "zh": "中断",
+  "en": "Interrupt"
+ },
+ {
+  "key": "sub_detail_title",
+  "zh": "子智能体线程",
+  "en": "Subagent thread"
+ },
+ {
+  "key": "sub_detail_task_line",
+  "zh": "任务：{}",
+  "en": "Task: {}",
+  "params": [
+   "task"
+  ]
+ },
+ {
+  "key": "sub_detail_metrics",
+  "zh": "{} 次工具调用 · {} 次模型请求",
+  "en": "{} tool calls · {} model requests",
+  "params": [
+   "tools",
+   "requests"
+  ]
+ },
+ {
+  "key": "sub_detail_tokens",
+  "zh": "上下文 {} tok",
+  "en": "Context {} tok",
+  "params": [
+   "tokens"
+  ]
+ },
+ {
+  "key": "sub_detail_empty",
+  "zh": "子线程暂无内容",
+  "en": "The child thread has no content yet"
+ },
+ {
+  "key": "sub_detail_load_failed",
+  "zh": "子线程加载失败",
+  "en": "Failed to load the child thread"
+ },
+ {
+  "key": "sub_detail_loading",
+  "zh": "正在加载子线程…",
+  "en": "Loading the child thread…"
+ },
+ {
   "key": "tl_stat_duration",
   "zh": "耗时",
   "en": "Duration"
@@ -6424,6 +6499,311 @@
   "key": "tm_importing",
   "zh": "正在导入技能包…",
   "en": "Importing skill archive…"
+ },
+ {
+  "key": "traj_title",
+  "zh": "线程轨迹",
+  "en": "Thread trajectory"
+ },
+ {
+  "key": "traj_back",
+  "zh": "返回",
+  "en": "Back"
+ },
+ {
+  "key": "traj_search",
+  "zh": "搜索轨迹",
+  "en": "Search trajectory"
+ },
+ {
+  "key": "traj_duration",
+  "zh": "时长",
+  "en": "Duration"
+ },
+ {
+  "key": "traj_turns",
+  "zh": "轮次",
+  "en": "Turns"
+ },
+ {
+  "key": "traj_calls",
+  "zh": "调用",
+  "en": "Calls"
+ },
+ {
+  "key": "traj_lane_input",
+  "zh": "输入",
+  "en": "Input"
+ },
+ {
+  "key": "traj_lane_model",
+  "zh": "模型",
+  "en": "Model"
+ },
+ {
+  "key": "traj_lane_tool",
+  "zh": "工具",
+  "en": "Tools"
+ },
+ {
+  "key": "traj_load_failed",
+  "zh": "加载线程轨迹失败",
+  "en": "Failed to load thread trajectory"
+ },
+ {
+  "key": "traj_empty",
+  "zh": "暂无可展示的轨迹记录",
+  "en": "No trajectory records to display"
+ },
+ {
+  "key": "traj_loading",
+  "zh": "正在加载…",
+  "en": "Loading…"
+ },
+ {
+  "key": "traj_kind_system",
+  "zh": "系统",
+  "en": "System"
+ },
+ {
+  "key": "traj_kind_user",
+  "zh": "用户",
+  "en": "User"
+ },
+ {
+  "key": "traj_kind_context",
+  "zh": "上下文",
+  "en": "Context"
+ },
+ {
+  "key": "traj_kind_compacted",
+  "zh": "已压缩",
+  "en": "Compacted"
+ },
+ {
+  "key": "traj_kind_assistant",
+  "zh": "助手",
+  "en": "Assistant"
+ },
+ {
+  "key": "traj_kind_tool",
+  "zh": "工具",
+  "en": "Tool"
+ },
+ {
+  "key": "traj_kind_subtool",
+  "zh": "子工具",
+  "en": "Subtool"
+ },
+ {
+  "key": "traj_request",
+  "zh": "请求 #{}",
+  "en": "Request #{}"
+ },
+ {
+  "key": "traj_step",
+  "zh": "第 {} 步",
+  "en": "Step {}"
+ },
+ {
+  "key": "traj_messages",
+  "zh": "消息",
+  "en": "Messages"
+ },
+ {
+  "key": "traj_compaction",
+  "zh": "压缩 {}",
+  "en": "Compaction {}"
+ },
+ {
+  "key": "traj_turn_title",
+  "zh": "第 {} 轮",
+  "en": "Turn {}"
+ },
+ {
+  "key": "traj_between_turns",
+  "zh": "轮次之间",
+  "en": "Between turns"
+ },
+ {
+  "key": "traj_summary_turn",
+  "zh": "… {} 个步骤 · {} 个工具调用",
+  "en": "… {} steps · {} tool calls"
+ },
+ {
+  "key": "traj_summary_tools",
+  "zh": "… {} 个工具调用",
+  "en": "… {} tool calls"
+ },
+ {
+  "key": "traj_tool_calls_only",
+  "zh": "（仅工具调用）",
+  "en": "(tool calls only)"
+ },
+ {
+  "key": "traj_no_content",
+  "zh": "无内容",
+  "en": "No content"
+ },
+ {
+  "key": "traj_tool_unnamed",
+  "zh": "工具",
+  "en": "Tool"
+ },
+ {
+  "key": "traj_state_completed",
+  "zh": "已完成",
+  "en": "Completed"
+ },
+ {
+  "key": "traj_state_waiting",
+  "zh": "等待中",
+  "en": "Waiting"
+ },
+ {
+  "key": "traj_state_failed",
+  "zh": "失败",
+  "en": "Failed"
+ },
+ {
+  "key": "traj_unavailable",
+  "zh": "不可用",
+  "en": "Unavailable"
+ },
+ {
+  "key": "traj_not_recorded",
+  "zh": "未记录",
+  "en": "Not recorded"
+ },
+ {
+  "key": "traj_ms",
+  "zh": "{} 毫秒",
+  "en": "{} ms"
+ },
+ {
+  "key": "traj_tokens",
+  "zh": "{} tok",
+  "en": "{} tok"
+ },
+ {
+  "key": "traj_tokens_per_second",
+  "zh": "{}/s",
+  "en": "{}/s"
+ },
+ {
+  "key": "traj_usage_not_reported",
+  "zh": "未报告用量",
+  "en": "Usage not reported"
+ },
+ {
+  "key": "traj_status",
+  "zh": "状态",
+  "en": "Status"
+ },
+ {
+  "key": "traj_hierarchy",
+  "zh": "层级",
+  "en": "Hierarchy"
+ },
+ {
+  "key": "traj_token",
+  "zh": "Token",
+  "en": "Tokens"
+ },
+ {
+  "key": "traj_reasoning",
+  "zh": "推理",
+  "en": "Reasoning"
+ },
+ {
+  "key": "traj_started_at",
+  "zh": "开始时间",
+  "en": "Started at"
+ },
+ {
+  "key": "traj_total_duration",
+  "zh": "总时长",
+  "en": "Total duration"
+ },
+ {
+  "key": "traj_first_token",
+  "zh": "首 token 延迟",
+  "en": "First token"
+ },
+ {
+  "key": "traj_generation",
+  "zh": "生成",
+  "en": "Generation"
+ },
+ {
+  "key": "traj_throughput",
+  "zh": "吞吐量",
+  "en": "Throughput"
+ },
+ {
+  "key": "traj_close",
+  "zh": "关闭",
+  "en": "Close"
+ },
+ {
+  "key": "traj_tab_overview",
+  "zh": "概述",
+  "en": "Overview"
+ },
+ {
+  "key": "traj_tab_raw",
+  "zh": "原始内容",
+  "en": "Raw content"
+ },
+ {
+  "key": "traj_tab_params",
+  "zh": "参数",
+  "en": "Parameters"
+ },
+ {
+  "key": "traj_tab_result",
+  "zh": "结果",
+  "en": "Result"
+ },
+ {
+  "key": "traj_tab_schema",
+  "zh": "Schema",
+  "en": "Schema"
+ },
+ {
+  "key": "traj_tab_timing",
+  "zh": "计时",
+  "en": "Timing"
+ },
+ {
+  "key": "traj_section_input",
+  "zh": "输入",
+  "en": "Input"
+ },
+ {
+  "key": "traj_section_output",
+  "zh": "输出",
+  "en": "Output"
+ },
+ {
+  "key": "traj_param_unavailable",
+  "zh": "未捕获参数",
+  "en": "Parameters not captured"
+ },
+ {
+  "key": "traj_no_output",
+  "zh": "无输出",
+  "en": "No output"
+ },
+ {
+  "key": "traj_schema_unavailable",
+  "zh": "Schema 不可用",
+  "en": "Schema unavailable"
+ },
+ {
+  "key": "traj_tooltip_ttft",
+  "zh": "首 token {} · 解码 {}",
+  "en": "First token {} · decoding {}"
  },
  {
   "key": "ws_dlg_new",

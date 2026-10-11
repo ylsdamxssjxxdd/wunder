@@ -38,6 +38,19 @@ const GOAL_OBJECTIVES: &[&str] = &[
     "围绕当前主题持续推进，边查证边产出结论，直到我手动中断。",
     "把它当成一个需要长期推进的任务：每轮都往前推进一步并记录状态。",
 ];
+/// 子智能体控制工具的规范名（在册校验以此为准）。
+const SUBAGENT_TOOL_NAME: &str = "子智能体控制";
+/// 首轮中平均每多少轮发出一条子智能体调用（1/N 概率）。
+const SUBAGENT_ACTION_ONE_IN: u64 = 4;
+/// 用户消息可覆盖的本次计划模型轮次上限（避免一次测试跑出过多轮次）。
+const MAX_ROUND_OVERRIDE: u64 = 2000;
+/// 合成子任务描述：真实派生子智能体时作为 `task` 参数。
+const SUBAGENT_TASKS: &[&str] = &[
+    "在只读范围内梳理当前目录结构并汇报。",
+    "核对指定主题的相关资料并给出要点摘要。",
+    "排查一处疑似问题并给出结论与证据。",
+    "汇总最近变更并列出需要关注的条目。",
+];
 
 /// 从请求提供的工具中筛选可安全随机调用的只读工具摘要 (名称, 参数 schema)。
 /// 必须在进入 'static 闭包前完成提取，结果为 owned 数据。
@@ -107,6 +120,86 @@ pub(super) fn goal_entry_candidate(tools: Option<&[Value]>) -> Option<(String, V
     })
 }
 
+/// 请求中提供的子智能体控制工具（若运行时暴露了它）。
+///
+/// 该工具会被 [`tool_summaries`] 的“子智能体”排除词过滤掉（避免它被当作普通
+/// 只读工具随机调用），这里单独取出来，用于发出真实的子智能体调用（见
+/// [`subagent_arguments`]），让模拟轨迹更贴近真实工具面。递归由调用方用
+/// `allow_subagent` 兜底（子会话不再派生）。
+pub(super) fn subagent_entry_candidate(tools: Option<&[Value]>) -> Option<(String, Value)> {
+    let items = tools?;
+    items.iter().find_map(|tool| {
+        let name = tool
+            .pointer("/function/name")
+            .or_else(|| tool.get("name"))
+            .and_then(Value::as_str)?;
+        let canonical = crate::tools::resolve_tool_name(name);
+        if canonical.trim() != SUBAGENT_TOOL_NAME && name.trim() != SUBAGENT_TOOL_NAME {
+            return None;
+        }
+        let schema = tool
+            .pointer("/function/parameters")
+            .or_else(|| tool.get("input_schema"))
+            .cloned()
+            .filter(Value::is_object)
+            .unwrap_or_else(|| json!({}));
+        Some((name.to_string(), schema))
+    })
+}
+
+/// 构造子智能体调用参数：真实派生或巡检子任务。
+///
+/// 默认派生一个子任务（`spawn`），并周期性派发一批（`batch_spawn`），偶尔用
+/// `list` 做一次无副作用巡检。这些动作在编排器里都会**真实执行**；递归由调用方
+/// 兜底——被派生的子会话自身不再被允许派生子智能体（见 `load_turn_for_round`
+/// 的 `allow_subagent`）。
+fn subagent_arguments(rng: &mut u64) -> Value {
+    match next_u64(rng) % 5 {
+        0 => json!({ "action": "list", "limit": 20 }),
+        1 => json!({
+            "action": "batch_spawn",
+            "tasks": [
+                { "task": pick(SUBAGENT_TASKS, rng), "label": "sim-child-1" },
+                { "task": pick(SUBAGENT_TASKS, rng), "label": "sim-child-2" },
+            ],
+        }),
+        _ => json!({
+            "action": "spawn",
+            "task": pick(SUBAGENT_TASKS, rng),
+            "label": "sim-child",
+        }),
+    }
+}
+
+/// 从用户消息中解析“本次计划模型轮次数”覆盖值：取消息里第一个纯数字 token。
+///
+/// 例如 `100` 或 `100 subagent` -> 100；`跑 12 轮` -> 12。结果被夹到
+/// `1..=MAX_ROUND_OVERRIDE`，因而“用户输入一个数字就决定本次模型轮次”这一
+/// 测试约定被严格遵守。`abc100` 这类以字母开头的 token 不会被误读。
+pub(super) fn parse_round_override(message: &str) -> Option<usize> {
+    message.split_whitespace().find_map(|token| {
+        let token = token.trim_matches(|c: char| {
+            matches!(
+                c,
+                ',' | '.' | ';' | ':' | '!' | '?' | '(' | ')' | '[' | ']'
+                    | '，' | '。' | '；' | '：' | '！' | '？' | '、' | '（' | '）'
+            )
+        });
+        if token.is_empty() || !token.chars().all(|c| c.is_ascii_digit()) {
+            return None;
+        }
+        token
+            .parse::<u64>()
+            .ok()
+            .map(|value| value.clamp(1, MAX_ROUND_OVERRIDE) as usize)
+    })
+}
+
+/// 用户消息是否要求本次必定调用子智能体工具（大小写不敏感的 `subagent`）。
+pub(super) fn wants_subagent(message: &str) -> bool {
+    message.to_ascii_lowercase().contains("subagent")
+}
+
 /// 构造 `create_goal` 的合法参数：必需 objective + 一个把轮次上限顶到天花板的
 /// `max_goal_rounds`，从而实现“被目标持续驱动直到人工停止”。
 fn goal_create_arguments(schema: &Value, rng: &mut u64) -> Value {
@@ -138,10 +231,21 @@ pub(super) fn build_turn(
     total_rounds: usize,
     tools: &[(String, Value)],
     goal_entry: Option<&(String, Value)>,
+    // 子智能体工具入口，附带“本轮是否强制发出”的开关。用元组承载强制位，这样
+    // 只有 `Some(..)` 的调用点需要关心它，`None` 的调用点无需改动。
+    subagent_entry: Option<(&(String, Value), bool)>,
 ) -> VirtualReplayTurn {
     let mut rng = mix(session_seed, ((round as u64) << 32) | model_round as u64).max(1);
     if model_round < total_rounds && !tools.is_empty() {
-        build_tool_turn(round, model_round, total_rounds, tools, goal_entry, &mut rng)
+        build_tool_turn(
+            round,
+            model_round,
+            total_rounds,
+            tools,
+            goal_entry,
+            subagent_entry,
+            &mut rng,
+        )
     } else {
         build_final_turn(round, model_round, total_rounds, &mut rng)
     }
@@ -153,6 +257,7 @@ fn build_tool_turn(
     total_rounds: usize,
     candidates: &[(String, Value)],
     goal_entry: Option<&(String, Value)>,
+    subagent_entry: Option<(&(String, Value), bool)>,
     rng: &mut u64,
 ) -> VirtualReplayTurn {
     let mut calls = Vec::with_capacity(MAX_CALLS_PER_ROUND);
@@ -162,6 +267,7 @@ fn build_tool_turn(
     let opens_goal = model_round == 1
         && goal_entry.is_some()
         && next_u64(rng) % GOAL_ENTRY_ONE_IN == 0;
+    let mut special_calls = 0usize;
     if opens_goal {
         if let Some((name, schema)) = goal_entry {
             let args = goal_create_arguments(schema, rng);
@@ -170,9 +276,36 @@ fn build_tool_turn(
                 "type": "function",
                 "function": {"name": name, "arguments": args.to_string()},
             }));
+            special_calls += 1;
         }
     }
-    let read_only_calls = if opens_goal {
+    // 子智能体工具：与目标入口同为“首轮、确定性抽样”的特殊动作。这里发出的是
+    // **真实**的派生/巡检调用（见 subagent_arguments）；递归由调用方通过
+    // `allow_subagent` 兜底——子会话不会再被派生子智能体。用户消息含 `subagent`
+    // 时强制位为真，本轮必定发出；否则平均每 SUBAGENT_ACTION_ONE_IN 轮抽样一次。
+    // 仅在提供该工具时才消耗随机数，保持与历史轨迹一致的确定性。
+    let opens_subagent = match subagent_entry {
+        Some((_, force)) if model_round == 1 => {
+            let roll = next_u64(rng);
+            force || roll % SUBAGENT_ACTION_ONE_IN == 0
+        }
+        _ => false,
+    };
+    if opens_subagent {
+        if let Some(((name, _schema), _)) = subagent_entry {
+            let args = subagent_arguments(rng);
+            calls.push(json!({
+                "id": format!("sim_{round}_{model_round}_subagent"),
+                "type": "function",
+                "function": {"name": name, "arguments": args.to_string()},
+            }));
+            special_calls += 1;
+        }
+    }
+    // 特殊动作占据名额后，只读调用相应减少，整体不超过 MAX_CALLS_PER_ROUND。
+    let read_only_calls = if special_calls >= MAX_CALLS_PER_ROUND {
+        0
+    } else if special_calls > 0 {
         1
     } else {
         1 + (next_u64(rng) as usize) % MAX_CALLS_PER_ROUND
@@ -205,6 +338,8 @@ fn build_tool_turn(
     );
     if opens_goal {
         reasoning = "这是一项需要持续推进的工作，先登记目标，再逐轮展开。".to_string();
+    } else if opens_subagent {
+        reasoning = "先委派子智能体处理其中一部分工作，再继续推进。".to_string();
     }
     let content = if next_u64(rng) % 3 != 0 {
         pick(
@@ -224,6 +359,8 @@ fn build_tool_turn(
     };
     let content = if opens_goal {
         "我会把它作为一个持续任务来推进，先建立目标。".to_string()
+    } else if opens_subagent {
+        "先派一个子智能体去处理这部分工作。".to_string()
     } else {
         content
     };
@@ -451,7 +588,7 @@ mod tests {
             json!({"type":"object","required":["path"],"properties":{"path":{"type":"string"}}}),
         )];
         for model_round in 1..30 {
-            let turn = build_turn("session-a", 1, model_round, 40, &candidates, None);
+            let turn = build_turn("session-a", 1, model_round, 40, &candidates, None, None);
             if model_round < 40 {
                 let calls = turn
                     .tool_calls
@@ -473,7 +610,7 @@ mod tests {
     #[test]
     fn no_tools_means_single_final_turn() {
         for model_round in 1..10 {
-            let turn = build_turn("session-a", 1, model_round, 10, &[], None);
+            let turn = build_turn("session-a", 1, model_round, 10, &[], None, None);
             assert!(turn.tool_calls.is_none());
             assert!(!turn.content.trim().is_empty());
         }
@@ -485,7 +622,7 @@ mod tests {
             "列出文件",
             json!({"type":"object","properties":{"path":{"type":"string"}}}),
         )];
-        let turn = build_turn("session-a", 3, 20, 20, &candidates, None);
+        let turn = build_turn("session-a", 3, 20, 20, &candidates, None, None);
         assert!(turn.tool_calls.is_none());
         assert!(turn.content.contains("模型轮次"));
     }
@@ -535,14 +672,14 @@ mod tests {
         let mut opened = 0;
         for round in 1..=24 {
             // Later model rounds never re-open a goal.
-            let later = build_turn("session-a", round, 2, 40, &candidates, Some(&goal));
+            let later = build_turn("session-a", round, 2, 40, &candidates, Some(&goal), None);
             let later_calls = later.tool_calls.as_ref().and_then(Value::as_array).expect("calls");
             assert!(later_calls
                 .iter()
                 .all(|call| call.pointer("/function/name").and_then(Value::as_str) != Some("create_goal")));
             // The first model round may open a goal, and only deterministically.
-            let first = build_turn("session-a", round, 1, 40, &candidates, Some(&goal));
-            let again = build_turn("session-a", round, 1, 40, &candidates, Some(&goal));
+            let first = build_turn("session-a", round, 1, 40, &candidates, Some(&goal), None);
+            let again = build_turn("session-a", round, 1, 40, &candidates, Some(&goal), None);
             assert_eq!(first.tool_calls, again.tool_calls, "goal entry must be reproducible");
             let calls = first.tool_calls.as_ref().and_then(Value::as_array).expect("calls");
             assert!(calls.len() <= MAX_CALLS_PER_ROUND);
@@ -565,10 +702,135 @@ mod tests {
         assert!(opened > 0, "at least one human turn should arm a goal");
         assert!(opened < 24, "goal entry stays a deterministic subset, not every turn");
         // A driver-issued round never sees a goal candidate.
-        let blocked = build_turn("session-a", 1, 1, 40, &candidates, None);
+        let blocked = build_turn("session-a", 1, 1, 40, &candidates, None, None);
         let blocked_calls = blocked.tool_calls.as_ref().and_then(Value::as_array).expect("calls");
         assert!(blocked_calls
             .iter()
             .all(|call| call.pointer("/function/name").and_then(Value::as_str) != Some("create_goal")));
+    }
+
+    #[test]
+    fn subagent_candidate_matches_localized_control_tool() {
+        let tools = vec![
+            json!({"type":"function","function":{"name":"读取文件","parameters":json!({"type":"object"})}}),
+            json!({"type":"function","function":{"name":"subagent_control","parameters":json!({"type":"object","required":["action"],"properties":{"action":{"type":"string"}}})}}),
+        ];
+        let candidate = subagent_entry_candidate(Some(&tools)).expect("subagent_control offered");
+        assert_eq!(candidate.0, "subagent_control");
+        assert!(subagent_entry_candidate(None).is_none());
+        // 子智能体工具被排除词挡在只读候选之外，不会作为普通只读工具重复出现。
+        assert!(tool_summaries(Some(&tools))
+            .iter()
+            .all(|(name, _)| name != "subagent_control"));
+    }
+
+    #[test]
+    fn subagent_call_only_on_first_round_and_deterministic() {
+        let candidates = vec![summary(
+            "读取文件",
+            json!({"type":"object","required":["path"],"properties":{"path":{"type":"string"}}}),
+        )];
+        let subagent = summary(
+            "子智能体控制",
+            json!({"type":"object","required":["action"],"properties":{"action":{"type":"string"}}}),
+        );
+        let mut emitted = 0;
+        for round in 1..=40 {
+            // 后续模型轮次永不发出子智能体调用。
+            let later =
+                build_turn("session-a", round, 2, 40, &candidates, None, Some((&subagent, false)));
+            let later_calls = later.tool_calls.as_ref().and_then(Value::as_array).expect("calls");
+            assert!(later_calls
+                .iter()
+                .all(|call| call.pointer("/function/name").and_then(Value::as_str)
+                    != Some("子智能体控制")));
+            // 首轮可确定性触发，且可复现。
+            let first = build_turn("session-a", round, 1, 40, &candidates, None, Some((&subagent, false)));
+            let again = build_turn("session-a", round, 1, 40, &candidates, None, Some((&subagent, false)));
+            assert_eq!(first.tool_calls, again.tool_calls, "subagent entry reproducible");
+            let calls = first.tool_calls.as_ref().and_then(Value::as_array).expect("calls");
+            assert!(calls.len() <= MAX_CALLS_PER_ROUND);
+            if let Some(call) = calls
+                .iter()
+                .find(|call| call.pointer("/function/name").and_then(Value::as_str)
+                    == Some("子智能体控制"))
+            {
+                emitted += 1;
+                let args: Value = serde_json::from_str(
+                    call.pointer("/function/arguments").and_then(Value::as_str).expect("args"),
+                )
+                .expect("subagent arguments are json");
+                // 真实动作：spawn / batch_spawn / list 三者之一。
+                let action = args.get("action").and_then(Value::as_str).expect("action");
+                assert!(matches!(action, "spawn" | "batch_spawn" | "list"));
+            }
+        }
+        assert!(emitted > 0, "at least one human turn should inspect subagents");
+        assert!(emitted < 40, "subagent entry stays a deterministic subset");
+        // 未提供该工具时，永不发出。
+        let absent = build_turn("session-a", 1, 1, 40, &candidates, None, None);
+        let absent_calls = absent.tool_calls.as_ref().and_then(Value::as_array).expect("calls");
+        assert!(absent_calls
+            .iter()
+            .all(|call| call.pointer("/function/name").and_then(Value::as_str)
+                != Some("子智能体控制")));
+    }
+
+    #[test]
+    fn parse_round_override_reads_first_number_token() {
+        assert_eq!(parse_round_override("100"), Some(100));
+        assert_eq!(parse_round_override("100 subagent"), Some(100));
+        assert_eq!(parse_round_override("跑 12 轮"), Some(12));
+        assert_eq!(parse_round_override("no digits here"), None);
+        assert_eq!(parse_round_override("abc100"), None);
+        assert_eq!(parse_round_override("0"), Some(1));
+        assert_eq!(parse_round_override("999999"), Some(MAX_ROUND_OVERRIDE as usize));
+    }
+
+    #[test]
+    fn wants_subagent_is_case_insensitive() {
+        assert!(wants_subagent("please SubAgent this"));
+        assert!(wants_subagent("subagent"));
+        assert!(!wants_subagent("100"));
+    }
+
+    #[test]
+    fn forced_subagent_dispatches_on_first_round() {
+        let candidates = vec![summary(
+            "读取文件",
+            json!({"type":"object","required":["path"],"properties":{"path":{"type":"string"}}}),
+        )];
+        let subagent = summary(
+            "子智能体控制",
+            json!({"type":"object","required":["action"],"properties":{"action":{"type":"string"}}}),
+        );
+        let mut dispatched = 0;
+        for i in 0..8 {
+            let seed = format!("session-forced-{i}");
+            let turn = build_turn(&seed, 1, 1, 50, &candidates, None, Some((&subagent, true)));
+            let calls = turn.tool_calls.as_ref().and_then(Value::as_array).expect("calls");
+            let call = calls
+                .iter()
+                .find(|call| call.pointer("/function/name").and_then(Value::as_str)
+                    == Some("子智能体控制"))
+                .expect("forced subagent call present");
+            let args: Value = serde_json::from_str(
+                call.pointer("/function/arguments").and_then(Value::as_str).expect("args"),
+            )
+            .expect("subagent arguments are json");
+            let action = args.get("action").and_then(Value::as_str).expect("action");
+            assert!(matches!(action, "spawn" | "batch_spawn" | "list"));
+            if matches!(action, "spawn" | "batch_spawn") {
+                dispatched += 1;
+            }
+            // 强制位只在首轮生效；后续轮次不再发出子智能体调用。
+            let later = build_turn(&seed, 1, 2, 50, &candidates, None, Some((&subagent, true)));
+            let later_calls = later.tool_calls.as_ref().and_then(Value::as_array).expect("calls");
+            assert!(later_calls
+                .iter()
+                .all(|call| call.pointer("/function/name").and_then(Value::as_str)
+                    != Some("子智能体控制")));
+        }
+        assert!(dispatched > 0, "forced subagent should really dispatch");
     }
 }

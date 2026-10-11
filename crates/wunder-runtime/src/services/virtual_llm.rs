@@ -275,6 +275,13 @@ pub async fn load_turn_for_round(
     model_round: Option<i64>,
     tools: Option<&[Value]>,
     goal_entry_allowed: bool,
+    // 本次人类消息（最新一条用户文本），用于驱动两条测试约定：
+    //   * 消息里第一个纯数字 token -> 覆盖本次计划模型轮次数；
+    //   * 消息含 `subagent`（大小写不敏感）-> 本次必定调用子智能体工具。
+    user_message: Option<&str>,
+    // 当前会话是否允许派生子智能体。子会话（由子智能体控制派生而来）为 false，
+    // 从结构上杜绝“子智能体再派生子智能体”的无限递归。
+    allow_subagent: bool,
 ) -> Result<VirtualReplayTurn> {
     let target_log_id = resolve_virtual_model_id(model);
     let round = user_round.unwrap_or(1).max(1) as usize;
@@ -289,6 +296,15 @@ pub async fn load_turn_for_round(
     let goal_entry = goal_entry_allowed
         .then(|| random_sim::goal_entry_candidate(tools))
         .flatten();
+    // 子智能体工具：发出真实的派生/巡检调用，让随机轨迹贴近真实工具面。它不受
+    // goal_entry_allowed 限制（与目标入口相互独立）。当当前会话是子会话
+    // （allow_subagent=false）时不提供入口，从而只允许“一层”子智能体。若用户
+    // 消息含 `subagent`，强制位为真，本轮必定发出。
+    let force_subagent = user_message.map(random_sim::wants_subagent).unwrap_or(false);
+    let subagent_entry = allow_subagent
+        .then(|| random_sim::subagent_entry_candidate(tools))
+        .flatten()
+        .map(|entry| (entry, force_subagent));
     blocking::run_fs("virtual_llm.load_turn", move || {
         if let Some(log) = config
             .llm
@@ -311,7 +327,13 @@ pub async fn load_turn_for_round(
         // read-only tool calls) without spending any real API quota. Human turns
         // may additionally arm a long-running goal so the goal driver keeps
         // producing rounds until the operator stops it.
-        let total_rounds = random_sim::plan_rounds(&session_seed, round);
+        // 用户在消息里给出的数字覆盖本次计划轮次，直接决定“本次模型轮数”。
+        let total_rounds = user_message
+            .and_then(random_sim::parse_round_override)
+            .unwrap_or_else(|| random_sim::plan_rounds(&session_seed, round));
+        let subagent_arg = subagent_entry
+            .as_ref()
+            .map(|(entry, force)| (entry, *force));
         Ok(random_sim::build_turn(
             &session_seed,
             round,
@@ -319,9 +341,38 @@ pub async fn load_turn_for_round(
             total_rounds,
             &tool_summaries,
             goal_entry.as_ref(),
+            subagent_arg,
         ))
     })
     .await
+}
+
+/// 从请求消息里取出最新一条用户文本，用于驱动测试用控制语法。
+///
+/// 消息元素形如 `{"role":"user","content": <string | [{type:"text",text:..}]>}`；
+/// 从后往前找到第一条非空的用户文本。取不到时返回 `None`。
+pub fn latest_user_text(messages: &[Value]) -> Option<String> {
+    messages.iter().rev().find_map(|message| {
+        if message.get("role").and_then(Value::as_str) != Some("user") {
+            return None;
+        }
+        let content = message.get("content")?;
+        let text = match content {
+            Value::String(text) => text.clone(),
+            Value::Array(parts) => parts
+                .iter()
+                .filter(|part| part.get("type").and_then(Value::as_str) == Some("text"))
+                .filter_map(|part| part.get("text").and_then(Value::as_str))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            _ => String::new(),
+        };
+        if text.trim().is_empty() {
+            None
+        } else {
+            Some(text)
+        }
+    })
 }
 
 pub fn estimate_virtual_usage(input_messages: &[Value], turn: &VirtualReplayTurn) -> TokenUsage {
@@ -713,7 +764,7 @@ mod tests {
 
     #[test]
     fn random_sim_turn_marks_virtual_random_source() {
-        let turn = random_sim::build_turn("session-a", 3, 2, 5, &[], None);
+        let turn = random_sim::build_turn("session-a", 3, 2, 5, &[], None, None);
 
         assert_eq!(turn.source_log_id, RANDOM_REPLAY_LOG_ID);
         assert_eq!(turn.source_round, 3);
@@ -731,7 +782,7 @@ mod tests {
             ..Default::default()
         };
 
-        let turn = load_turn_for_round(config, &model, "session-a", Some(2), Some(3), None, true)
+        let turn = load_turn_for_round(config, &model, "session-a", Some(2), Some(3), None, true, None, true)
             .await
             .expect("random virtual turn");
 
@@ -755,12 +806,83 @@ mod tests {
             ..Default::default()
         };
 
-        let turn = load_turn_for_round(config, &model, "session-a", Some(1), Some(1), None, true)
+        let turn = load_turn_for_round(config, &model, "session-a", Some(1), Some(1), None, true, None, true)
             .await
             .expect("random fallback for missing log");
 
         assert_eq!(turn.source_log_id, RANDOM_REPLAY_LOG_ID);
         assert_eq!(turn.format, RANDOM_REPLAY_FORMAT);
         assert!(!turn.content.trim().is_empty());
+    }
+
+    #[test]
+    fn latest_user_text_reads_latest_user_message() {
+        let messages = vec![
+            json!({"role": "user", "content": "first"}),
+            json!({"role": "assistant", "content": "hi"}),
+            json!({"role": "user", "content": [{"type": "text", "text": "100 subagent"}]}),
+        ];
+        assert_eq!(latest_user_text(&messages).as_deref(), Some("100 subagent"));
+        assert!(latest_user_text(&[]).is_none());
+        assert!(latest_user_text(&[json!({"role": "assistant", "content": "x"})]).is_none());
+    }
+
+    #[tokio::test]
+    async fn user_message_number_and_subagent_control_virtual_turn() {
+        let config = Config::default();
+        let model = LlmModelConfig {
+            provider: Some(VIRTUAL_REPLAY_PROVIDER.to_string()),
+            model: None,
+            ..Default::default()
+        };
+        let tools = vec![
+            json!({"type":"function","function":{"name":"读取文件","parameters":json!({"type":"object","required":["path"],"properties":{"path":{"type":"string"}}})}}),
+            json!({"type":"function","function":{"name":"subagent_control","parameters":json!({"type":"object","required":["action"],"properties":{"action":{"type":"string"}}})}}),
+        ];
+        // 数字 5 -> 本次计划 5 轮：第 1 轮是工具轮，第 5 轮是最终轮。
+        let round_one = load_turn_for_round(
+            config.clone(), &model, "session-a", Some(1), Some(1), Some(&tools), true,
+            Some("5"), true,
+        )
+        .await
+        .expect("turn");
+        assert!(round_one.tool_calls.is_some(), "round 1 of 5 is a tool turn");
+        let last = load_turn_for_round(
+            config.clone(), &model, "session-a", Some(1), Some(5), Some(&tools), true,
+            Some("5"), true,
+        )
+        .await
+        .expect("turn");
+        assert!(last.tool_calls.is_none(), "round 5 of 5 is the final turn");
+        // 含 subagent -> 首轮必定出现子智能体调用。
+        let forced = load_turn_for_round(
+            config.clone(), &model, "session-a", Some(1), Some(1), Some(&tools), true,
+            Some("subagent"), true,
+        )
+        .await
+        .expect("turn");
+        let forced_calls = forced.tool_calls.as_ref().and_then(Value::as_array).expect("calls");
+        assert!(
+            forced_calls
+                .iter()
+                .any(|call| call.pointer("/function/name").and_then(Value::as_str)
+                    == Some("子智能体控制")),
+            "subagent keyword forces a subagent call"
+        );
+        // allow_subagent=false -> 子会话永不发出子智能体调用。
+        let child = load_turn_for_round(
+            config.clone(), &model, "session-a", Some(1), Some(1), Some(&tools), true,
+            Some("subagent"), false,
+        )
+        .await
+        .expect("turn");
+        let child_calls = child.tool_calls.as_ref().and_then(Value::as_array).expect("calls");
+        assert!(
+            child_calls
+                .iter()
+                .all(|call| call.pointer("/function/name").and_then(Value::as_str)
+                    != Some("子智能体控制")),
+            "child sessions must not spawn grandchildren"
+        );
     }
 }

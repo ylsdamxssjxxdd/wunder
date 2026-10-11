@@ -246,6 +246,8 @@ fn fixture_row(kind: i32, index: usize, text: &str) -> TimelineRow {
         payload: index as i32,
         patch: ModelRc::default(),
         stats: ModelRc::default(),
+        subagent_id: Default::default(),
+        subagent_stoppable: false,
     }
 }
 

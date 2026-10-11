@@ -418,6 +418,80 @@ pub(crate) fn sanitize_relative_path(raw_path: &str) -> Option<PathBuf> {
     Some(path)
 }
 
+/// Snapshot of the state a tool call needs when it starts outside a model turn
+/// (a remote L3 command is the only such caller today). It owns the borrowed
+/// halves of [`ToolContext`] so the call still runs through the tool's own
+/// execution and policy path instead of a second, weaker one.
+pub struct DetachedToolContext {
+    state: Arc<crate::state::AppState>,
+    config: Config,
+    skills: SkillRegistry,
+    roots: ToolRoots,
+    http: reqwest::Client,
+}
+
+impl DetachedToolContext {
+    /// Read the config and skill snapshot once per command; nothing here blocks
+    /// on the filesystem or the network.
+    pub async fn load(state: &Arc<crate::state::AppState>) -> Self {
+        let config = state.config_store.get().await;
+        let skills = state.skills.read().await.clone();
+        let roots = build_tool_roots(&config, &skills, None, &[]);
+        Self {
+            state: state.clone(),
+            config,
+            skills,
+            roots,
+            http: state.kernel.orchestrator.http_client(),
+        }
+    }
+
+    pub fn config(&self) -> &Config {
+        &self.config
+    }
+
+    /// Bind one call to a local user, the session it belongs to (a subagent's
+    /// parent thread, or the command's own id) and the workspace scope key.
+    /// `is_admin` is the node owner's flag: on a local form the single user owns
+    /// the engine, and a remote command only runs with their approval.
+    pub fn bind<'a>(
+        &'a self,
+        user_id: &'a str,
+        session_id: &'a str,
+        scope: &'a str,
+    ) -> ToolContext<'a> {
+        let state = self.state.as_ref();
+        ToolContext {
+            user_id,
+            session_id,
+            workspace_id: scope,
+            agent_id: None,
+            user_round: None,
+            model_round: None,
+            is_admin: true,
+            storage: state.storage.clone(),
+            orchestrator: Some(state.kernel.orchestrator.clone()),
+            monitor: Some(state.monitor.clone()),
+            workspace: state.workspace.clone(),
+            lsp_manager: state.lsp_manager.clone(),
+            config: &self.config,
+            skills: &self.skills,
+            gateway: Some(state.control.gateway.clone()),
+            user_world: Some(state.projection.user_world.clone()),
+            cron_wake_signal: None,
+            user_tool_manager: Some(state.user_tool_manager.clone()),
+            user_tool_bindings: None,
+            user_tool_store: Some(state.user_tool_manager.store()),
+            request_config_overrides: None,
+            allow_roots: Some(self.roots.allow_roots.clone()),
+            read_roots: Some(self.roots.read_roots.clone()),
+            command_sessions: Some(state.control.command_sessions.clone()),
+            event_emitter: None,
+            http: &self.http,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{

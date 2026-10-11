@@ -18,7 +18,7 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
-use wunder_core::interlink::{CAP_SHADOW_FULL, CAP_SHADOW_MINIMAL};
+use wunder_core::interlink::CAP_SHADOW_FULL;
 
 use crate::core::blocking;
 use crate::services::thread_catalog::{ThreadCatalogService, ThreadListQuery};
@@ -461,12 +461,20 @@ impl ShadowCollector {
 /// The workspace scope a node projects: the plain local user, or the desktop
 /// workspace binding when the caller supplied one. Fence, path resolution and
 /// size limits stay inside `WorkspaceManager` - this only picks the scope key.
-pub fn workspace_scope(state: &Arc<AppState>, sources: &ShadowSources) -> String {
-    let user = sources.local_user_id.trim();
+///
+/// The identity is passed as plain fields: the idle 2 s signal tick needs this
+/// before it knows whether anything changed, so it must not build a full
+/// `ShadowSources` (that one clones the whole config for its tree limits).
+pub fn workspace_scope(
+    state: &Arc<AppState>,
+    local_user_id: &str,
+    workspace_id: Option<&str>,
+) -> String {
+    let user = local_user_id.trim();
     if user.is_empty() {
         return String::new();
     }
-    match sources.workspace_id.as_deref().map(str::trim) {
+    match workspace_id.map(str::trim) {
         Some(workspace_id) if !workspace_id.is_empty() => state
             .workspace
             .scoped_user_id_for_workspace(user, workspace_id),
@@ -622,7 +630,7 @@ pub async fn gather_workspace(
     sources: &ShadowSources,
     limits: &TreeLimits,
 ) -> (Value, bool) {
-    let scope = workspace_scope(state, sources);
+    let scope = workspace_scope(state, &sources.local_user_id, sources.workspace_id.as_deref());
     let root = state.workspace.workspace_root(&scope);
     let walk_limits = TreeLimits {
         max_entries: limits.max_entries,

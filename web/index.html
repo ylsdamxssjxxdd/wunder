@@ -20,7 +20,7 @@
       rel="stylesheet"
       href="./third/fontawesome-free-6.7.2-web/css/solid.min.css"
     />
-    <link rel="stylesheet" href="./app.css?v=20260324-06" />
+    <link rel="stylesheet" href="./app.css?v=20261011-02" />
     <link rel="stylesheet" href="./styles/throughput.css?v=20260925-07" />
   </head>
   <body>
@@ -1441,7 +1441,28 @@
           <div class="tips" data-i18n="interlink.tip">
             查看跨端节点的在线状态、客户端分布与最近活跃；隧道质量与 24h 在线率热图待管理端点接入。
           </div>
-          <div id="interlinkBody" class="interlink-body"></div>
+          <div class="interlink-body">
+            <div id="interlinkBody" class="interlink-overview"></div>
+            <!-- 治理面（告警与运行时，只读）：web/modules/interlink-alerts.js 装配 -->
+            <div id="interlinkAlertsHost" class="interlink-governance"></div>
+          </div>
+          <div id="interlinkDrawer" class="interlink-drawer" hidden>
+            <div class="interlink-drawer-header">
+              <div>
+                <div class="interlink-drawer-title" data-drawer-title></div>
+                <div class="interlink-drawer-sub" data-drawer-sub></div>
+              </div>
+              <button
+                class="secondary btn-with-icon btn-compact icon-only"
+                type="button"
+                data-drawer-close
+                data-i18n-aria-label="common.close"
+              >
+                <i class="fa-solid fa-xmark"></i>
+              </button>
+            </div>
+            <div class="interlink-drawer-body" data-drawer-body></div>
+          </div>
         </section>
         <section id="externalLinksPanel" class="panel">
           <div class="list-header">
@@ -2280,60 +2301,8 @@
               </div>
               </div>
             </div>
-            <div class="panel-logs">
-              <div class="log-card">
-                <div class="log-card-header">
-                  <label data-i18n="debug.log.events">事件日志</label>
-                  <span class="log-waiting" data-i18n="debug.log.running">进行中</span>
-                </div>
-                <div id="eventLog" class="log log-collapsible"></div>
-              </div>
-              <div class="log-card">
-                <div class="log-card-header">
-                  <label data-i18n="debug.log.requests">请求日志</label>
-                  <span class="log-waiting" data-i18n="debug.log.running">进行中</span>
-                </div>
-                <div id="requestLog" class="log log-collapsible"></div>
-              </div>
-              <div class="log-card">
-                <div class="log-card-header">
-                  <label data-i18n="debug.log.output">模型输出</label>
-                  <div class="header-input">
-                    <label for="modelOutputRoundSelect" data-i18n="debug.log.round">轮次</label>
-                    <select id="modelOutputRoundSelect"></select>
-                    <button
-                      id="modelOutputPreviewBtn"
-                      class="model-output-preview-toggle"
-                      type="button"
-                      aria-label="预览"
-                      title="预览"
-                      data-i18n-aria-label="debug.output.preview"
-                      data-i18n-title="debug.output.preview"
-                    >
-                      <i class="fa-solid fa-eye"></i>
-                    </button>
-                    <button
-                      id="modelOutputPlanBtn"
-                      class="model-output-preview-toggle plan-board-toggle"
-                      type="button"
-                      aria-label="计划看板"
-                      title="计划看板"
-                      data-i18n-aria-label="debug.output.plan"
-                      data-i18n-title="debug.output.plan"
-                    >
-                      <i class="fa-solid fa-table"></i>
-                    </button>
-                  </div>
-                </div>
-                <div id="modelOutput" class="log">
-                  <div id="modelOutputA2ui" class="a2ui-output"></div>
-                  <pre id="modelOutputText" class="model-output-text"></pre>
-                </div>
-              </div>
-              <div class="log-card">
-                <label data-i18n="debug.log.stats">统计信息</label>
-                <div id="finalAnswer" class="answer"></div>
-              </div>
+            <div class="panel-logs panel-trajectory">
+              <div id="debugTrajectoryMount" class="debug-trajectory"></div>
             </div>
           </div>
         </section>
@@ -5969,6 +5938,10 @@
           <div class="modal-header">
           <div id="monitorDetailTitle" class="detail-title">线程日志</div>
           <div class="modal-header-actions">
+            <button id="monitorDetailTrajectory" class="secondary btn-with-icon btn-compact" type="button">
+              <i class="fa-solid fa-route" aria-hidden="true"></i>
+              <span data-i18n="monitor.detail.trajectory">轨迹视图</span>
+            </button>
             <button id="monitorDetailClose" class="icon-btn" type="button">×</button>
           </div>
         </div>
@@ -6088,34 +6061,9 @@
         </div>
       </div>
     </div>
-    <div id="modelOutputPreviewModal" class="modal">
-      <div class="modal-card modal-card-lg model-output-preview-card">
-        <div class="modal-header">
-          <div
-            class="detail-title"
-            data-i18n="debug.output.previewTitle"
-          >模型输出预览</div>
-          <button id="modelOutputPreviewClose" class="icon-btn" type="button">×</button>
-        </div>
-        <div class="modal-body model-output-preview-body">
-          <div class="model-output-preview-content">
-            <div id="modelOutputPreviewText" class="model-output-preview-pane model-output-preview-markdown"></div>
-            <div id="modelOutputPreviewA2ui" class="model-output-preview-pane a2ui-output"></div>
-          </div>
-        </div>
-      </div>
-    </div>
-    <div id="planBoardModal" class="modal">
-      <div class="modal-card plan-board-card">
-        <div class="modal-header">
-          <div id="planBoardTitle" class="detail-title" data-i18n="debug.plan.title">计划看板</div>
-          <button id="planBoardClose" class="icon-btn" type="button">×</button>
-        </div>
-        <div class="modal-body">
-          <div id="planBoardExplanation" class="plan-board-explanation"></div>
-          <div id="planBoardList" class="plan-board-list"></div>
-          <div id="planBoardEmpty" class="plan-board-empty" data-i18n="debug.plan.empty">暂无计划</div>
-        </div>
+    <div id="trajectoryModal" class="modal trajectory-modal">
+      <div class="modal-card trajectory-card">
+        <div id="trajectoryMount" class="trajectory-mount"></div>
       </div>
     </div>
     <div id="workspaceEditorModal" class="modal">
@@ -6300,6 +6248,6 @@
     </div>
     <script src="./third/echarts/echarts.min.js?v=20260118-07"></script>
     <script src="./third/marked.min.js?v=20260118-07"></script>
-    <script type="module" src="./app.js?v=20260926-01"></script>
+    <script type="module" src="./app.js?v=20261011-01"></script>
   </body>
 </html>
