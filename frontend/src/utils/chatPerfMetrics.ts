@@ -11,7 +11,11 @@ const METRICS = new Set([
   'chat_watchdog_idle_complete', 'chat_watchdog_idle', 'chat_slow_client_auto_resume',
   'workspace.panel.refresh', 'workspace.panel.refresh.event',
   'workspace.panel.refresh.settle.ms', 'workspace.panel.refresh.incremental.ms',
-  'workspace.panel.refresh.full.ms'
+  'workspace.panel.refresh.full.ms',
+  // W4-L heavy-history thread rendering metrics. Names missing from this set are dropped by
+  // recordPerfDuration/incrementPerfCounter below, so instrumentation must stay registered here.
+  'snapshot_apply_ms', 'thread_projection_ms', 'virtual_window_recompute_ms',
+  'trajectory_layout_ms', 'snapshot_abort', 'workflow_events_items'
 ]);
 const META_KEYS = new Set(['contentLength', 'messageCount', 'itemCount', 'fetchMs',
   'hydrateMs', 'foregroundSyncMs', 'transcriptCount', 'eventCount', 'roundCount']);
@@ -25,6 +29,10 @@ export type PerfMetricsState = {
 export const emptyPerfMetrics = (): PerfMetricsState => ({ counters: {}, durations: {}, slowest: [] });
 const normalize = (name: string) => name.replace('_slow_flush', '_flush').replace('_slow_render', '_render');
 const round = (value: number) => Math.round(value * 10) / 10;
+
+// Exposes the whitelist so gates can assert a metric name is actually registered instead of
+// silently dropped at record time.
+export const isPerfMetricRegistered = (name: string) => METRICS.has(name) || METRICS.has(normalize(name));
 
 export const incrementPerfCounter = (state: PerfMetricsState, name: string, delta = 1) => {
   if (!METRICS.has(name) || !Number.isFinite(delta) || delta <= 0) return;

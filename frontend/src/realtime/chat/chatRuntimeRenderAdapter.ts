@@ -88,6 +88,20 @@ const materializedMessageCache = new WeakMap<
 >();
 let materializedMessageCacheClock = 0;
 
+/**
+ * W3-I instrumentation: number of times the O(1) identity-skip branch of
+ * materializeChatRuntimeMessageWithCache was taken. Exposed so the projection
+ * regression can assert the branch is reachable on the v2 path (an undefined
+ * `structureVersion` makes it unreachable).
+ */
+let chatRuntimeIdentitySkipCount = 0;
+
+export const getChatRuntimeIdentitySkipCount = (): number => chatRuntimeIdentitySkipCount;
+
+export const resetChatRuntimeIdentitySkipCount = (): void => {
+  chatRuntimeIdentitySkipCount = 0;
+};
+
 const resolveWorkflowMaterializationTarget = (
   messages: ChatRuntimeMessageProjection[],
   runtimeStatus: unknown
@@ -338,6 +352,7 @@ const materializeChatRuntimeMessageWithCache = (
       !isRuntimeMessageActive(message.status) &&
       isMaterializedMessageAligned(previous.message, message)) {
     previous.lastUsed = ++materializedMessageCacheClock;
+    chatRuntimeIdentitySkipCount += 1;
     return previous.message;
   }
   const sourceRevision = buildProjectionMessageMaterializationRevision(message);

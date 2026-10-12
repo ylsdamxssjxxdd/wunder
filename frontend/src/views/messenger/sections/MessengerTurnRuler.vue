@@ -228,8 +228,10 @@ const centerTurnRow = (rowIndex: number, turnId: string, attempt = 0): void => {
     'scrollVirtualMessageToIndex'
   );
   if (keys.length > 1 && typeof scrollToIndex === 'function') {
-    // 运行时（messageViewportRuntime）的键序是「每个轮次两条消息」，轮次下标 -> 首条消息下标。
-    scrollToIndex(keys, Math.min(keys.length - 1, rowIndex * 2), 'center');
+    // `keys` holds one entry per conversation row (a row key such as `turn:...`,
+    // not a flattened user+assistant message pair), so the absolute row index
+    // already indexes it directly - the old `* 2` overshot into the wrong row.
+    scrollToIndex(keys, Math.min(keys.length - 1, rowIndex), 'center');
   }
   const heights = collectMeasuredRowHeights();
   if (!heights.length || !heights.some((height) => height > 0)) {
@@ -245,8 +247,9 @@ const centerTurnRow = (rowIndex: number, turnId: string, attempt = 0): void => {
     }
     const key = keys[index] || '';
     const resolved = typeof estimateRowHeight === 'function' ? Number(estimateRowHeight(key)) : 0;
-    // 运行时的键是「轮次里的单条消息」，一个轮次 = 两条消息。
-    return resolved > 0 ? resolved * 2 : 0;
+    // `resolveVirtualMessageHeight` already folds the turn segment's 2x base into
+    // `turn:` keys, so applying another `* 2` here would quadruple the estimate.
+    return resolved > 0 ? resolved : 0;
   };
   let offset = 0;
   for (let index = 0; index < Math.min(rowIndex, heights.length); index += 1) {

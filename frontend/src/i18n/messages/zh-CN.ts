@@ -2633,6 +2633,7 @@ export default {
   'messenger.trajectory.hierarchy': '层级',
   'messenger.trajectory.token': 'Token',
   'messenger.trajectory.reasoning': '推理',
+  'messenger.trajectory.thinking': '思考',
   'messenger.trajectory.tokens': '{value} tok',
   'messenger.trajectory.usageNotReported': '未报告用量',
   'messenger.trajectory.throughput': '吞吐量',

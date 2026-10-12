@@ -89,7 +89,7 @@ watch(() => [props.sessionId, props.runId, props.turnId, reload.value], (_, __, 
     recovery = false;
     try {
       if (snapshot) {
-        const response = await getThreadLogSnapshot(props.sessionId, { signal: controller.signal });
+        const response = await getThreadLogSnapshot(props.sessionId, {}, { signal: controller.signal });
         if (controller.signal.aborted) return;
         applyChatThreadSnapshot(state, response.data?.data ?? response.data, Date.now());
         render();

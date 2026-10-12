@@ -138,23 +138,15 @@ pub fn export_response(
 }
 
 /// Stable lifecycle projection. Transport-only deltas never enter the timeline.
+///
+/// 严格白名单：只有携带时间线信息量的事件才入账（对齐 dsh 只记录可读轨迹）。
+/// 传输态与统计通知（`*_delta`、heartbeat、context_usage、progress、
+/// workspace_update、model_usage、llm_stream_retry）、生命周期回执
+/// （final/thread_status/…/llm_response；失败详情由 turn_terminal 携带，error
+/// 事件只是流式通知）以及一切未知事件（hook 通知、子会话生命周期等）一律
+/// 不入账 —— catch-all 兜底只会制造大量「无内容」的上下文噪音。queue_* 是
+/// 挂起/恢复的持久台账（同一条目 queued→running upsert），轨迹前端自行跳过。
 pub fn event_item(session_id: &str, event_type: &str, data: &Value) -> Option<Value> {
-    // progress/workspace_update/model_usage/llm_stream_retry 是传输态或统计类
-    // 通知（聊天视图走原始事件流，用量并入助手条目的 metrics），不是时间线记录；
-    // 入账只会制造大量无正文的上下文噪音。
-    if event_type.ends_with("_delta")
-        || matches!(
-            event_type,
-            "heartbeat"
-                | "context_usage"
-                | "progress"
-                | "workspace_update"
-                | "model_usage"
-                | "llm_stream_retry"
-        )
-    {
-        return None;
-    }
     let turn = data.get("turn_id")?.as_str()?;
     let model = data.get("model_round").and_then(Value::as_i64).unwrap_or(0);
     let (kind, key, status) = match event_type {
@@ -244,16 +236,7 @@ pub fn event_item(session_id: &str, event_type: &str, data: &Value) -> Option<Va
                     .unwrap_or("failed"),
             )
         }
-        "final"
-        | "thread_status"
-        | "thread_closed"
-        | "thread_turn_started"
-        | "quota_usage"
-        | "token_usage"
-        | "round_usage"
-        | "model_request_usage"
-        | "llm_response" => return None,
-        _ => (event_type, uuid::Uuid::new_v4().to_string(), "completed"),
+        _ => return None,
     };
     let mut item = data.clone();
     item["event_type"] = json!(event_type);
@@ -264,7 +247,7 @@ pub fn event_item(session_id: &str, event_type: &str, data: &Value) -> Option<Va
     if event_type == "llm_request" {
         item["visibility"] = json!("admin");
     }
-    // 上下文类事件（queue/plan/approval/terminal/compaction/subagent_message）只有
+    // 上下文类事件（plan/approval/terminal/compaction/subagent_message）只有
     // 结构化字段、没有可读正文；轨迹 UI 渲染 `content`，这里补出最贴切的文本，
     // 对齐 dsh 中每种 kind 都有可读内容的做法。
     if item.get("content").is_none() {
@@ -275,7 +258,8 @@ pub fn event_item(session_id: &str, event_type: &str, data: &Value) -> Option<Va
     Some(item)
 }
 
-/// 从上下文类事件的结构化字段中提取一段人类可读文本。
+/// 从上下文类事件的结构化字段中提取一段人类可读文本。白名单之外的
+/// 事件类型不会走到这里。
 fn derive_context_text(event_type: &str, data: &Value) -> Option<String> {
     let pick = |keys: &[&str]| -> Option<String> {
         keys.iter()
@@ -316,9 +300,7 @@ fn derive_context_text(event_type: &str, data: &Value) -> Option<String> {
         }
         "subagent_message" => pick(&["message", "summary", "content"]),
         "compaction" => pick(&["summary", "reason", "status"]),
-        "error" => pick(&["message", "code"]),
-        // 兜底：任何进入时间线的未知事件也必须有可读内容，避免「无内容」条目。
-        _ => pick(&["summary", "message", "reason", "stage", "description"]),
+        _ => None,
     }
 }
 
@@ -626,22 +608,25 @@ mod tests {
     }
 
     #[test]
-    fn every_timeline_kind_carries_readable_content() {
+    fn error_and_unknown_events_stay_out_of_the_timeline() {
+        // error 只是流式通知；失败详情由 turn_terminal 携带（见上方测试）。
         let error_item = event_item(
             "s",
             "error",
             &json!({"turn_id":"turn","model_round":1,"code":"UPSTREAM_TIMEOUT","message":"upstream timeout"}),
-        )
-        .expect("error stays a timeline record");
-        assert_eq!(error_item["content"], "upstream timeout");
+        );
+        assert!(error_item.is_none(), "error is a stream notification, not a record");
 
-        let context_item = event_item(
-            "s",
-            "unknown_note",
-            &json!({"turn_id":"turn","model_round":2,"stage":"guard","summary":"guard passed"}),
-        )
-        .expect("unknown events fall back to a context record");
-        assert_eq!(context_item["content"], "guard passed");
+        // 白名单之外的一切未知事件（hook 通知、子会话生命周期等）一律不入账，
+        // 避免 catch-all 制造「无内容」的上下文噪音。
+        for event_type in ["unknown_note", "hook_invoked", "command_session_start"] {
+            let item = event_item(
+                "s",
+                event_type,
+                &json!({"turn_id":"turn","model_round":2,"stage":"guard","summary":"guard passed"}),
+            );
+            assert!(item.is_none(), "{event_type} must stay out of the timeline");
+        }
     }
 }
 

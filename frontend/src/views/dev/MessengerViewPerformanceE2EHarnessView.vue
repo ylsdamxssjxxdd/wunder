@@ -12,6 +12,7 @@ import MessengerView from '@/views/MessengerView.vue';
 import { runChatWorkerProbe } from './chatWorkerProbe';
 import { runMessengerTwoTurnProbe } from './messengerTwoTurnProbe';
 import { runMessengerReasoningProbe } from './messengerReasoningProbe';
+import { runMessengerLiveTimelineProbe } from './messengerLiveTimelineProbe';
 import { installToolResultsProbe } from './toolResultsProbe';
 import { createMessengerToolRetryProbe } from './messengerToolRetryProbe';
 import { enableWorkflowHistoryFixture, readWorkflowHistoryFixture } from './messengerWorkflowHistoryFixture';
@@ -522,6 +523,7 @@ onMounted(async () => {
     showEarlierToolEntries,
     switchSessionAndReturn,
     runDurableStreamProbe,
+    runLiveTimelineProbe: () => runMessengerLiveTimelineProbe(SESSION_A),
     collectMetrics
   };
 });

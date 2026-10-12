@@ -1,9 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import {
   applyLocalQueueReorder,
+  hasOnlyQueueMarkers,
   isChatQueueRuntimeEvent,
+  isParkedQueueTurn,
   projectQueueItems,
+  selectParkedTurnMessageIds,
   type QueuedTurn
 } from '../../src/stores/chatQueueProjection';
 
@@ -50,4 +55,99 @@ test('isChatQueueRuntimeEvent 只认排队相关事件', () => {
   assert.equal(isChatQueueRuntimeEvent('llm_output_delta'), false);
   assert.equal(isChatQueueRuntimeEvent('thread_status'), false);
   assert.equal(isChatQueueRuntimeEvent(''), false);
+});
+
+const parkedItem = (overrides: Partial<QueuedTurn> = {}): QueuedTurn => ({
+  ...projectQueueItems([{ queue_id: 'task-a', content: '后面那条', created_at: 100 }])[0],
+  clientMessageId: 'cm-1',
+  ...overrides
+});
+
+const queuedUser = { role: 'user', message_id: 'cm-1', client_message_id: 'cm-1', user_turn_id: 'user-turn:s:round:2' };
+const queuedAssistant = {
+  role: 'assistant',
+  message_id: 'local-assistant:m-2',
+  user_turn_id: 'user-turn:s:round:2',
+  status: 'queued',
+  content: '',
+  workflowItems: [{ id: 'queue:task-a', eventType: 'queued', status: 'pending' }]
+};
+
+test('挂起中的轮次由排队条承载，时间线不放这一行', () => {
+  const items = [parkedItem()];
+  assert.ok(isParkedQueueTurn(items, queuedUser, queuedAssistant));
+  // 补水后的形状没有 client_message_id，只能靠 `queue:<queue_id>` 标记对上。
+  const hydrated = { ...queuedAssistant, workflowItems: [{ id: 'queue:task-a', event: 'queue_enter' }] };
+  assert.ok(isParkedQueueTurn(items, { role: 'user', message_id: 'cm-1' }, hydrated));
+});
+
+test('开跑、已产出或已不在队列里的轮次照常渲染', () => {
+  const items = [parkedItem()];
+  assert.equal(isParkedQueueTurn([], queuedUser, queuedAssistant), false, '条目不在队列');
+  assert.equal(isParkedQueueTurn(items, queuedUser, { ...queuedAssistant, content: '开始回答了' }), false);
+  assert.equal(
+    isParkedQueueTurn(items, queuedUser, {
+      ...queuedAssistant,
+      workflowItems: [{ id: 'tool-1', eventType: 'tool_call' }]
+    }),
+    false,
+    '已经有非排队条目'
+  );
+  assert.equal(isParkedQueueTurn(items, queuedUser, { ...queuedAssistant, reasoningStreaming: true }), false);
+  // 标记里的 queue_id 也能钉住这一轮，即使用户侧 id 对不上（补水形状）。
+  assert.ok(isParkedQueueTurn(items, { role: 'user', message_id: 'other' }, queuedAssistant));
+  assert.equal(
+    isParkedQueueTurn(items, { role: 'user', message_id: 'other' }, { ...queuedAssistant, workflowItems: [] }),
+    false,
+    '既对不上 client_message_id 也没有排队标记'
+  );
+  assert.equal(hasOnlyQueueMarkers({ role: 'user', content: '' }), false, '用户消息不是助手侧判定对象');
+});
+
+test('撤下一条没开跑的轮次会挑出本地占位的两条消息', () => {
+  const messages = [
+    { role: 'user', message_id: 'cm-0', client_message_id: 'cm-0' },
+    { role: 'assistant', message_id: 'local-assistant:m-1', client_message_id: 'cm-0' },
+    queuedUser,
+    queuedAssistant,
+    { role: 'assistant', message_id: 'local-assistant:m-3', content: '上一轮的回答' }
+  ];
+  assert.deepEqual(selectParkedTurnMessageIds(messages, 'cm-1'), ['cm-1', 'local-assistant:m-2']);
+  // 已经产出的那一轮不属于排队条，一条都不许剪。
+  assert.deepEqual(selectParkedTurnMessageIds(messages, 'cm-0'), []);
+  assert.deepEqual(selectParkedTurnMessageIds(messages, 'missing'), []);
+  assert.deepEqual(selectParkedTurnMessageIds(messages, ''), []);
+  assert.deepEqual(selectParkedTurnMessageIds(undefined, 'cm-1'), []);
+});
+
+const readSource = (relative: string): string =>
+  readFileSync(resolve(process.cwd(), 'src', relative), 'utf8');
+
+test('排队让位与剪枝真的接在渲染与撤下路径上', () => {
+  const controller = readSource('views/messenger/controller/messengerControllerInstall.ts');
+  const slotsStart = controller.indexOf('ctx.agentTurnSlots = computed');
+  const slots = slotsStart < 0 ? '' : controller.slice(slotsStart, controller.indexOf('ctx.agentConversationRows', slotsStart));
+  assert.ok(slots, 'agentTurnSlots computed not found');
+  assert.ok(
+    slots.includes('.filter((slot) => !isParkedQueueTurn(queuedItems, slot.user, slot.assistant))'),
+    '时间线没有按排队条让位'
+  );
+  assert.ok(slots.includes('chatQueueState.items'), '让位判定没有读排队条状态');
+
+  const strip = readSource('components/chat/ComposerQueueStrip.vue');
+  assert.ok(/emit\('withdrawn', result\.item\)/.test(strip), '撤下后没有广播 withdrawn');
+  assert.ok(/handleWithdraw\(item, false\)/.test(strip), '删除路径没有走同一条撤下逻辑');
+
+  const composer = readSource('components/chat/ChatComposer.vue');
+  assert.ok(
+    /@withdrawn="handleQueueTurnWithdrawn"/.test(composer) &&
+      /chatStore\.dropParkedQueueTurn\(clientMessageId\)/.test(composer),
+    '输入区没有剪掉撤下的轮次'
+  );
+  const sendActions = readSource('stores/chatSendActions.ts');
+  assert.ok(
+    /dropParkedQueueTurn\(clientMessageId: unknown\)/.test(sendActions) &&
+      /selectParkedTurnMessageIds\(this\.messages/.test(sendActions),
+    'store 上的剪枝动作缺失'
+  );
 });

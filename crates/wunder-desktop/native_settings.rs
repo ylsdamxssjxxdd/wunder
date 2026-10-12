@@ -220,7 +220,7 @@ impl NativeDesktop {
         let send_key = send_key.trim();
         if !matches!(
             theme,
-            "terracotta" | "hula-green" | "minimal" | "tech-blue"
+            "terracotta" | "hula-green" | "forest" | "honey" | "minimal" | "tech-blue"
         ) {
             bail!("暂不支持该主题");
         }

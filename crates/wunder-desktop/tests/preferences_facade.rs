@@ -120,6 +120,15 @@ fn preferences_validate_and_persist() {
     assert_eq!(settings.theme, "hula-green");
     assert_eq!(settings.send_key, "none");
     assert_eq!(settings.font_size, 18);
+    // The 蜂窝 theme card writes these four ids; a rejected save leaves the
+    // accent applied live but lost on the next start.
+    for theme in ["terracotta", "forest", "honey"] {
+        let saved = runtime
+            .save_preferences(theme, "none", 18)
+            .unwrap_or_else(|error| panic!("save {theme}: {error}"));
+        assert_eq!(saved.theme, theme);
+        assert_eq!(runtime.get_desktop_settings().expect("reload").theme, theme);
+    }
     let reloaded = runtime.get_desktop_settings().expect("reload");
     assert_eq!(reloaded.send_key, "none");
     assert_eq!(reloaded.font_size, 18);

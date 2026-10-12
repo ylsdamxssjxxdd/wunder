@@ -202,6 +202,11 @@ pub fn start_stress_thread_job(request: StartStressJobRequest) -> Result<Value, 
                 #[cfg(feature = "postgres-storage")]
                 StressStorageTarget::Postgres { dsn, connect_timeout_s, pool_size } => {
                     let storage = crate::storage::PostgresStorage::new(dsn, connect_timeout_s, pool_size)?;
+                    // The server that dispatched this job has already finished
+                    // the schema bootstrap; running the DDL batch again from
+                    // this dedicated instance would issue runtime DDL and
+                    // amplify any ongoing lock contention.
+                    storage.assume_schema_initialized();
                     storage.generate_stress_thread(&owner, &spec, |done_rounds, items_written| {
                         update_progress(&job_for_progress, done_rounds, items_written);
                     })

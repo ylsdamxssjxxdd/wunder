@@ -695,6 +695,30 @@ export const loadSessionEventsSnapshot = (
   });
 };
 
+// W4-L: how many durable rows a workflow-only snapshot carried. Mirrors the
+// canonical bridge shape: a flat `events` array, else per-round `rounds[].events`.
+const countWorkflowSnapshotEvents = (payload: Record<string, unknown>): number => {
+  const events = payload.events;
+  if (Array.isArray(events) && events.length > 0) {
+    return events.length;
+  }
+  const rounds = payload.rounds;
+  if (!Array.isArray(rounds)) {
+    return 0;
+  }
+  let total = 0;
+  for (const round of rounds) {
+    if (!round || typeof round !== 'object') {
+      continue;
+    }
+    const nested = (round as Record<string, unknown>).events;
+    if (Array.isArray(nested)) {
+      total += nested.length;
+    }
+  }
+  return total;
+};
+
 export const loadSessionWorkflowEventsSnapshot = (
   sessionId,
   options: { fromUserRound?: unknown; toUserRound?: unknown; signal?: AbortSignal } = {}
@@ -720,6 +744,10 @@ export const loadSessionWorkflowEventsSnapshot = (
     ...params
   }, { signal: options.signal }).then((response) => {
     const payload = response?.data?.data;
+    if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
+      // W4-L: the heavy-history cost of this load is the number of rows it pulled.
+      chatPerf.countWorkflowEventsItems(countWorkflowSnapshotEvents(payload as Record<string, unknown>));
+    }
     return payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : null;
   });
 };

@@ -45,3 +45,43 @@ test('reading old history and appending more messages does not force jump back t
   expect(afterAppend.flags.autoStickToBottom).toBe(false);
   expect(afterAppend.flags.showScrollBottomButton).toBe(true);
 });
+
+// W4-L gate: the perf capture surface records every registered heavy-history metric and still
+// drops unknown names. Removing the chatPerfMetrics.ts whitelist registration turns this red.
+test('heavy-history perf gate records registered metrics and drops unknown ones', async ({ page }) => {
+  const report = await page.evaluate(async () => {
+    const perf = await (async () => {
+      const globalPerf = (window as Window & { wunderPerf?: unknown }).wunderPerf;
+      if (globalPerf) return globalPerf as any;
+      const module_ = await import('/src/utils/chatPerf.ts');
+      return (module_ as any).chatPerf;
+    })();
+    perf.start();
+    perf.recordSnapshotApply(184.5, { itemCount: 4800 });
+    perf.recordThreadProjection(233.1, { roundCount: 480 });
+    perf.recordVirtualWindowRecompute(12.4, { messageCount: 980 });
+    perf.recordTrajectoryLayout(96.7, { itemCount: 1000 });
+    perf.countSnapshotAbort(2);
+    perf.countWorkflowEventsItems(25000);
+    perf.recordDuration('heavy_history_projection_probe_ms', 5);
+    perf.count('heavy_history_probe_counter', 5);
+    const snapshot = perf.snapshot();
+    perf.stop();
+    return snapshot as {
+      durations: Record<string, { count: number; maxMs: number } | undefined>;
+      counters: Record<string, number | undefined>;
+      summary: { heavyHistory: { snapshotAborts: number; workflowEventItems: number } };
+    };
+  });
+
+  expect(report.durations.snapshot_apply_ms?.count).toBe(1);
+  expect(report.durations.thread_projection_ms?.count).toBe(1);
+  expect(report.durations.virtual_window_recompute_ms?.count).toBe(1);
+  expect(report.durations.trajectory_layout_ms?.count).toBe(1);
+  expect(report.counters.snapshot_abort).toBe(2);
+  expect(report.counters.workflow_events_items).toBe(25000);
+  expect(report.durations.heavy_history_projection_probe_ms).toBeUndefined();
+  expect(report.counters.heavy_history_probe_counter).toBeUndefined();
+  expect(report.summary.heavyHistory.snapshotAborts).toBe(2);
+  expect(report.summary.heavyHistory.workflowEventItems).toBe(25000);
+});

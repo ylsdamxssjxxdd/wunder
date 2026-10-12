@@ -14,10 +14,15 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
+use wunder_core::storage_backend::ThreadSnapshotWindow;
 
 const SESSION_EVENTS_MAX_LIMIT: i64 = 500;
 const WORKFLOW_EVENTS_PAGE_MAX_LIMIT: i64 = 100;
 const WORKFLOW_TURN_ITEMS_MAX: usize = 10_000;
+/// Hard ceiling on workflow events materialized for a single `workflow_only`
+/// request. `WORKFLOW_TURN_ITEMS_MAX` only bounds one turn, so without this a
+/// request spanning many turns could still return `rounds x turn` events.
+const WORKFLOW_REQUEST_ITEMS_MAX: usize = 20_000;
 
 pub(super) fn router() -> Router<Arc<AppState>> {
     Router::new()
@@ -98,6 +103,20 @@ struct ThreadChangesQuery {
     from_block: Option<i64>,
     #[serde(default)]
     field: Option<String>,
+}
+/// Optional tail-window bounds for the atomic thread snapshot. Absent fields
+/// fall back to the storage default window, so existing callers stay bounded.
+#[derive(Debug, Default, Deserialize)]
+struct ThreadSnapshotQuery {
+    #[serde(default)]
+    max_turns: Option<i64>,
+    #[serde(default)]
+    max_items: Option<i64>,
+    #[serde(default)]
+    max_blocks: Option<i64>,
+    /// Exclusive upper bound for paging strictly older turn windows.
+    #[serde(default)]
+    before_turn_index: Option<i64>,
 }
 
 async fn require_owned_thread(
@@ -224,13 +243,25 @@ async fn get_thread_snapshot(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     AxumPath(session_id): AxumPath<String>,
+    Query(query): Query<ThreadSnapshotQuery>,
 ) -> Result<Json<Value>, Response> {
     let session_id = session_id.trim().to_string();
     let user_id = require_owned_thread(&state, &headers, &session_id).await?;
     let storage = state.storage.clone();
     let lookup_session = session_id.clone();
+    let mut window = ThreadSnapshotWindow::default();
+    if let Some(max_turns) = query.max_turns {
+        window.max_turns = max_turns.max(1) as usize;
+    }
+    if let Some(max_items) = query.max_items {
+        window.max_items = max_items.max(1) as usize;
+    }
+    if let Some(max_blocks) = query.max_blocks {
+        window.max_blocks = max_blocks.max(1) as usize;
+    }
+    window.before_turn_index = query.before_turn_index.filter(|value| *value > 0);
     let snapshot = blocking::run_db("api.chat.thread_log.snapshot", move || {
-        storage.thread_snapshot(&user_id, &lookup_session)
+        storage.thread_snapshot_window(&user_id, &lookup_session, &window)
     })
     .await
     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
@@ -629,10 +660,20 @@ async fn load_session_workflow_rounds(
             .collect();
         let has_more = turns.len() > limit as usize;
         turns.truncate(limit as usize);
-        let rounds = turns
-            .iter()
-            .map(|turn| thread_turn_to_workflow_round(&*storage, &user_id, &session_id, turn))
-            .collect::<anyhow::Result<Vec<_>>>()?;
+        let mut remaining = WORKFLOW_REQUEST_ITEMS_MAX;
+        let mut rounds = Vec::new();
+        for turn in turns.iter() {
+            if remaining == 0 {
+                break;
+            }
+            rounds.push(thread_turn_to_workflow_round(
+                &*storage,
+                &user_id,
+                &session_id,
+                turn,
+                &mut remaining,
+            )?);
+        }
         // These are already round projections, not raw events to regroup.
         Ok((rounds, has_more, Some(total)))
     })
@@ -640,11 +681,34 @@ async fn load_session_workflow_rounds(
     .unwrap_or_default()
 }
 
+/// Append workflow events from `items`, decrementing the shared request-level
+/// `remaining` budget. Returns how many events were appended. Stops as soon as
+/// the budget is exhausted so one oversized turn cannot blow the request cap.
+fn append_workflow_events(
+    items: &[Value],
+    events: &mut Vec<Value>,
+    remaining: &mut usize,
+) -> usize {
+    let mut appended = 0usize;
+    for item in items {
+        if *remaining == 0 {
+            break;
+        }
+        if let Some(event) = thread_item_workflow_event(item) {
+            events.push(event);
+            *remaining -= 1;
+            appended += 1;
+        }
+    }
+    appended
+}
+
 fn thread_turn_to_workflow_round(
     storage: &dyn crate::storage::StorageBackend,
     user_id: &str,
     session_id: &str,
     turn: &Value,
+    remaining: &mut usize,
 ) -> anyhow::Result<Value> {
     let turn_id = turn
         .get("turn_id")
@@ -674,7 +738,7 @@ fn thread_turn_to_workflow_round(
             break;
         }
         loaded = loaded.saturating_add(items.len());
-        events.extend(items.iter().filter_map(thread_item_workflow_event));
+        append_workflow_events(items, &mut events, remaining);
         let has_more = detail
             .get("has_more")
             .and_then(Value::as_bool)
@@ -683,7 +747,7 @@ fn thread_turn_to_workflow_round(
             .get("next_after")
             .and_then(Value::as_i64)
             .unwrap_or(after);
-        if !has_more || next_after <= after || loaded >= WORKFLOW_TURN_ITEMS_MAX {
+        if !has_more || next_after <= after || loaded >= WORKFLOW_TURN_ITEMS_MAX || *remaining == 0 {
             break;
         }
         after = next_after;
@@ -937,8 +1001,8 @@ fn is_workflow_event(event_type: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        collect_session_event_rounds, normalize_workflow_round_range, should_merge_round_event,
-        thread_turn_to_workflow_round,
+        append_workflow_events, collect_session_event_rounds, normalize_workflow_round_range,
+        should_merge_round_event, thread_turn_to_workflow_round,
     };
     use crate::storage::SqliteStorage;
     use serde_json::{json, Value};
@@ -1003,9 +1067,32 @@ mod tests {
                 )
                 .unwrap();
         }
-        let round = thread_turn_to_workflow_round(&storage, "owner", "thread", &accepted).unwrap();
+        let mut remaining = super::WORKFLOW_REQUEST_ITEMS_MAX;
+        let round =
+            thread_turn_to_workflow_round(&storage, "owner", "thread", &accepted, &mut remaining)
+                .unwrap();
         assert_eq!(round["events"].as_array().map(Vec::len), Some(205));
         assert_eq!(round["events"][204]["data"]["tool_call_id"], "tool-204");
+    }
+
+    #[test]
+    fn workflow_request_budget_caps_materialized_events() {
+        let items: Vec<Value> = (0..5)
+            .map(|index| {
+                json!({
+                    "kind":"tool_call", "item_id":format!("tool-{index}"),
+                    "status":"completed", "visibility":"user",
+                    "payload":{"tool":"read_file", "tool_call_id":format!("tool-{index}")}
+                })
+            })
+            .collect();
+        let mut events = Vec::new();
+        let mut remaining = 2usize;
+        let appended = append_workflow_events(&items, &mut events, &mut remaining);
+        // Old code had no request-level budget and would append all 5 events.
+        assert_eq!(appended, 2);
+        assert_eq!(events.len(), 2);
+        assert_eq!(remaining, 0);
     }
 
     #[test]

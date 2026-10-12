@@ -1,8 +1,18 @@
-import { computed, shallowRef, watch, type ComputedRef, type Ref } from 'vue';
+// AI生成
+import { computed, getCurrentScope, onScopeDispose, shallowRef, watch, type ComputedRef, type Ref } from 'vue';
 
 type KeySource = string | Readonly<Ref<string>> | ComputedRef<string>;
 type KeyListSource = string[] | Readonly<Ref<string[]>> | ComputedRef<string[]>;
 type MovePosition = 'before' | 'after';
+
+/** Minimal storage contract so the composable can be exercised with a fake backend. */
+export type StableListStorage = {
+  getItem: (key: string) => string | null;
+  setItem: (key: string, value: string) => void;
+};
+
+/** Schedules a deferred flush. Tests inject a manual scheduler to control timing. */
+export type StableListFlushScheduler = (task: () => void) => void;
 
 const normalizeKey = (value: unknown): string => String(value || '').trim();
 
@@ -37,8 +47,37 @@ const resolveKeyListSource = (value?: KeyListSource): string[] => {
   return normalizeKeyList(Array.isArray(value.value) ? value.value : []);
 };
 
-const readStoredKeys = (storageKey: string): string[] => {
+const resolveDefaultStorage = (): StableListStorage | null => {
   if (typeof window === 'undefined') {
+    return null;
+  }
+  try {
+    return window.localStorage || null;
+  } catch {
+    return null;
+  }
+};
+
+// Persistence is a preference, never a correctness dependency: coalesce every
+// interaction into the next idle frame (or microtask) so a click/drag never
+// blocks the main thread on a synchronous, full-order localStorage write.
+const defaultScheduleFlush: StableListFlushScheduler = (task) => {
+  const scope = (typeof window !== 'undefined' ? window : globalThis) as unknown as {
+    requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => unknown;
+  };
+  if (typeof scope.requestIdleCallback === 'function') {
+    scope.requestIdleCallback(() => task(), { timeout: 500 });
+    return;
+  }
+  if (typeof queueMicrotask === 'function') {
+    queueMicrotask(task);
+    return;
+  }
+  setTimeout(task, 0);
+};
+
+const readStoredKeys = (storage: StableListStorage | null, storageKey: string): string[] => {
+  if (!storage) {
     return [];
   }
   const normalizedStorageKey = normalizeKey(storageKey);
@@ -46,7 +85,7 @@ const readStoredKeys = (storageKey: string): string[] => {
     return [];
   }
   try {
-    const raw = window.localStorage.getItem(normalizedStorageKey);
+    const raw = storage.getItem(normalizedStorageKey);
     if (!raw) {
       return [];
     }
@@ -60,8 +99,8 @@ const readStoredKeys = (storageKey: string): string[] => {
   }
 };
 
-const writeStoredKeys = (storageKey: string, keys: string[]): void => {
-  if (typeof window === 'undefined') {
+const writeStoredKeys = (storage: StableListStorage | null, storageKey: string, keys: string[]): void => {
+  if (!storage) {
     return;
   }
   const normalizedStorageKey = normalizeKey(storageKey);
@@ -69,19 +108,20 @@ const writeStoredKeys = (storageKey: string, keys: string[]): void => {
     return;
   }
   try {
-    window.localStorage.setItem(normalizedStorageKey, JSON.stringify(normalizeKeyList(keys)));
+    storage.setItem(normalizedStorageKey, JSON.stringify(normalizeKeyList(keys)));
   } catch {
-    // Ignore localStorage write failures and keep the session-local order.
+    // Ignore storage write failures and keep the session-local order.
   }
 };
 
 const readStoredKeysFromCandidates = (
+  storage: StableListStorage | null,
   primaryStorageKey: string,
   fallbackStorageKeys: string[]
 ): { keys: string[]; matchedKey: string } => {
   const candidates = normalizeKeyList([primaryStorageKey, ...fallbackStorageKeys]);
   for (const candidate of candidates) {
-    const keys = readStoredKeys(candidate);
+    const keys = readStoredKeys(storage, candidate);
     if (keys.length > 0) {
       return { keys, matchedKey: candidate };
     }
@@ -118,7 +158,14 @@ export const stabilizeKeyOrder = (previousKeys: string[], incomingKeys: string[]
   return [...additions, ...existing];
 };
 
-const mergeKeyOrderPreservingMissing = (previousKeys: string[], incomingKeys: string[]): string[] => {
+/**
+ * Merge a previous manual order with the server's incoming order in a single
+ * linear pass. Surviving rows keep their previous relative order; rows that are
+ * new position themselves just before the next surviving row they follow in the
+ * incoming order, and trailing rows append at the end. This is the same result
+ * the historical nested-scan implementation produced, without the O(n^2) scans.
+ */
+export const mergeKeyOrderPreservingMissing = (previousKeys: string[], incomingKeys: string[]): string[] => {
   const normalizedIncoming = normalizeKeyList(incomingKeys);
   const normalizedPrevious = normalizeKeyList(previousKeys);
   if (!normalizedIncoming.length) {
@@ -129,22 +176,56 @@ const mergeKeyOrderPreservingMissing = (previousKeys: string[], incomingKeys: st
   }
 
   const previousSet = new Set(normalizedPrevious);
-  const next = normalizedPrevious.filter((key) => normalizedIncoming.includes(key));
-  const nextSet = new Set(next);
-  // Insert new rows according to the server's current order. This keeps older
-  // pagination pages at the bottom while a newly created thread enters at the top.
-  normalizedIncoming.forEach((key, index) => {
-    if (nextSet.has(key)) return;
-    const following = normalizedIncoming.slice(index + 1).find((candidate) => previousSet.has(candidate));
-    if (following) {
-      next.splice(next.indexOf(following), 0, key);
-    } else {
-      const preceding = [...normalizedIncoming].slice(0, index).reverse().find((candidate) => nextSet.has(candidate));
-      const insertionIndex = preceding ? next.indexOf(preceding) + 1 : next.length;
-      next.splice(insertionIndex, 0, key);
+  const incomingSet = new Set(normalizedIncoming);
+  const survivors = normalizedPrevious.filter((key) => incomingSet.has(key));
+  if (!survivors.length) {
+    return normalizedIncoming;
+  }
+
+  // For every incoming slot, precompute the nearest surviving old row to its
+  // right. New rows bucket under that anchor so they keep the incoming order
+  // without repeated lookups.
+  const anchorByIndex: Array<string | null> = new Array(normalizedIncoming.length).fill(null);
+  let following: string | null = null;
+  for (let index = normalizedIncoming.length - 1; index >= 0; index -= 1) {
+    anchorByIndex[index] = following;
+    if (previousSet.has(normalizedIncoming[index])) {
+      following = normalizedIncoming[index];
     }
-    nextSet.add(key);
-  });
+  }
+
+  const anchors = new Map<string, string[]>();
+  const trailing: string[] = [];
+  let tailAnchor = '';
+  for (let index = 0; index < normalizedIncoming.length; index += 1) {
+    const key = normalizedIncoming[index];
+    if (previousSet.has(key)) {
+      tailAnchor = key;
+      continue;
+    }
+    const anchor = anchorByIndex[index];
+    if (anchor) {
+      const bucket = anchors.get(anchor);
+      if (bucket) bucket.push(key);
+      else anchors.set(anchor, [key]);
+    } else {
+      trailing.push(key);
+    }
+  }
+
+  const next: string[] = [];
+  for (const key of survivors) {
+    const bucket = anchors.get(key);
+    if (bucket) next.push(...bucket);
+    next.push(key);
+  }
+  // Rows with no following survivor sit immediately after the last survivor in
+  // the incoming order (the historical scan inserted them after the nearest
+  // preceding key, which is that survivor).
+  if (trailing.length) {
+    const anchorIndex = next.indexOf(tailAnchor);
+    next.splice(anchorIndex < 0 ? next.length : anchorIndex + 1, 0, ...trailing);
+  }
   return next;
 };
 
@@ -158,11 +239,12 @@ export const prependFreshKeys = (
   const previousSet = new Set(previousKeys);
   const additions = incomingKeys.filter((key) => !previousSet.has(key));
   if (!additions.length) return order;
-  const existingTimestamps = previousKeys
-    .map((key) => timestamps.get(key) ?? 0)
-    .filter((value) => Number.isFinite(value) && value > 0);
-  if (!existingTimestamps.length) return order;
-  const newestExisting = Math.max(...existingTimestamps);
+  let newestExisting = 0;
+  for (const key of previousKeys) {
+    const value = timestamps.get(key) ?? 0;
+    if (Number.isFinite(value) && value > newestExisting) newestExisting = value;
+  }
+  if (!newestExisting) return order;
   const fresh = additions.filter((key) => (timestamps.get(key) ?? 0) > newestExisting);
   if (!fresh.length) return order;
   const freshSet = new Set(fresh);
@@ -239,11 +321,40 @@ export function usePersistentStableListOrder<T>(
     getTimestamp?: (item: T) => number;
     storageKey: KeySource;
     storageFallbackKeys?: KeyListSource;
+    /** Injectable storage backend; defaults to window.localStorage. */
+    storage?: StableListStorage | null;
+    /** Injectable flush scheduler; defaults to requestIdleCallback/microtask. */
+    scheduleFlush?: StableListFlushScheduler;
   }
 ) {
   const orderedKeys = shallowRef<string[]>([]);
   const activeStorageKey = shallowRef('');
   const knownTimestamps = new Map<string, number>();
+
+  const storage = options.storage === undefined ? resolveDefaultStorage() : options.storage;
+  const scheduleFlush = options.scheduleFlush || defaultScheduleFlush;
+
+  // Single pending write per composable: every interaction within one frame
+  // collapses into one serialized localStorage write on the next idle slot.
+  let pendingWrite: { key: string; keys: string[] } | null = null;
+  let flushScheduled = false;
+  const runFlush = () => {
+    flushScheduled = false;
+    const pending = pendingWrite;
+    pendingWrite = null;
+    if (pending) writeStoredKeys(storage, pending.key, pending.keys);
+  };
+  const scheduleWrite = (storageKey: string, keys: string[]) => {
+    if (!storageKey) {
+      return;
+    }
+    pendingWrite = { key: storageKey, keys: keys.slice() };
+    if (flushScheduled) {
+      return;
+    }
+    flushScheduled = true;
+    scheduleFlush(runFlush);
+  };
 
   const syncFromSource = (items: T[], storageKey: string) => {
     const incomingKeys = normalizeKeyList((Array.isArray(items) ? items : []).map((item) => options.getKey(item)));
@@ -265,9 +376,7 @@ export function usePersistentStableListOrder<T>(
     if (!sameKeyList(nextOrder, orderedKeys.value)) {
       orderedKeys.value = nextOrder;
     }
-    if (storageKey) {
-      writeStoredKeys(storageKey, orderedKeys.value);
-    }
+    scheduleWrite(storageKey, orderedKeys.value);
     incomingTimestamps.forEach((value, key) => knownTimestamps.set(key, value));
   };
 
@@ -277,15 +386,16 @@ export function usePersistentStableListOrder<T>(
       if (storageKey !== activeStorageKey.value) {
         activeStorageKey.value = storageKey;
         knownTimestamps.clear();
-        const { keys, matchedKey } = readStoredKeysFromCandidates(storageKey, fallbackStorageKeys);
+        const { keys, matchedKey } = readStoredKeysFromCandidates(storage, storageKey, fallbackStorageKeys);
         orderedKeys.value = keys;
         if (storageKey && matchedKey && matchedKey !== storageKey && keys.length > 0) {
-          writeStoredKeys(storageKey, keys);
+          scheduleWrite(storageKey, keys);
         }
       }
       syncFromSource(Array.isArray(items) ? items : [], storageKey);
+      const liveKeys = new Set(orderedKeys.value);
       for (const key of [...knownTimestamps.keys()]) {
-        if (!orderedKeys.value.includes(key)) knownTimestamps.delete(key);
+        if (!liveKeys.has(key)) knownTimestamps.delete(key);
       }
     },
     {
@@ -293,6 +403,12 @@ export function usePersistentStableListOrder<T>(
       deep: false
     }
   );
+
+  // Flush any deferred write when the owning scope is torn down so a quick
+  // unmount cannot drop the last interaction.
+  if (getCurrentScope()) {
+    onScopeDispose(runFlush);
+  }
 
   const orderedItems = computed(() => {
     const items = Array.isArray(source.value) ? source.value : [];
@@ -329,10 +445,7 @@ export function usePersistentStableListOrder<T>(
       return;
     }
     orderedKeys.value = nextOrder;
-    const storageKey = resolveKeySource(options.storageKey);
-    if (storageKey) {
-      writeStoredKeys(storageKey, nextOrder);
-    }
+    scheduleWrite(resolveKeySource(options.storageKey), nextOrder);
   };
 
   const prependKey = (key: string): void => {
@@ -347,8 +460,7 @@ export function usePersistentStableListOrder<T>(
     if (orderedKeys.value[0] === normalizedKey) return;
     const nextOrder = [normalizedKey, ...orderedKeys.value.filter((item) => item !== normalizedKey)];
     orderedKeys.value = nextOrder;
-    const storageKey = resolveKeySource(options.storageKey);
-    if (storageKey) writeStoredKeys(storageKey, nextOrder);
+    scheduleWrite(resolveKeySource(options.storageKey), nextOrder);
   };
 
   return {

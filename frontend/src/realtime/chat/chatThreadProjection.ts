@@ -8,7 +8,15 @@
 // (change_seq arrival). A user turn has exactly one user slot and one
 // assistant slot; model rounds are sections inside that assistant bubble.
 // No scoring, no string
-// pattern matching, no localeCompare, no cross-call caching.
+// pattern matching, no localeCompare.
+//
+// W3-I projection memoization: buildChatThreadTurnSlots caches one slot per
+// root turn, keyed by the state instance plus that turn's full input
+// signature. A bump that touches only one turn therefore keeps every untouched
+// slot's object identity, which lets chatRuntimeRenderAdapter's O(1) identity
+// skip work on the v2 path (the adapter requires a defined `structureVersion`,
+// so each rebuilt slot stamps a fresh one). The projection stays a pure
+// function of the state: an unchanged state yields deep-equal slots.
 
 import type {
   ChatThreadState,
@@ -23,6 +31,12 @@ import type {
   ChatRuntimeTimelineBlock,
   ChatRuntimeWorkflowItemProjection
 } from './chatRuntimeTypes';
+import { chatPerf } from '@/utils/chatPerf';
+
+// W4-L: guarded clock for the heavy-history metrics. `performance` is missing in
+// some non-browser hosts, and the recorder is inert while capture is off.
+const perfNowMs = (): number =>
+  typeof performance !== 'undefined' ? performance.now() : Date.now();
 
 // Bubble ids are namespaced so they can never collide with legacy message ids.
 const USER_BUBBLE_ID_PREFIX = 'tturn:';
@@ -47,7 +61,33 @@ export interface ChatThreadTurnSlot {
   assistant: ChatRuntimeMessageProjection;
 }
 
-export const buildChatThreadTurnSlots = (
+type ChatThreadSlotCacheEntry = {
+  signature: string;
+  slot: ChatThreadTurnSlot;
+};
+
+type ChatThreadSlotCache = {
+  entries: Map<string, ChatThreadSlotCacheEntry>;
+  /** Previous output array, returned verbatim when nothing changed. */
+  slots: ChatThreadTurnSlot[];
+};
+
+// W3-I: one slot cache per state instance. The reducer mutates the state maps in
+// place, so a per-turn input signature (not object identity) decides reuse. The
+// WeakMap key keeps the cache bounded to live sessions.
+const turnSlotCaches = new WeakMap<ChatThreadState, ChatThreadSlotCache>();
+let slotStructureVersionClock = 0;
+
+const resolveTurnSlotCache = (state: ChatThreadState): ChatThreadSlotCache => {
+  let cache = turnSlotCaches.get(state);
+  if (!cache) {
+    cache = { entries: new Map(), slots: [] };
+    turnSlotCaches.set(state, cache);
+  }
+  return cache;
+};
+
+const computeChatThreadTurnSlots = (
   state: ChatThreadState | null | undefined
 ): ChatThreadTurnSlot[] => {
   if (!state) return [];
@@ -68,6 +108,8 @@ export const buildChatThreadTurnSlots = (
     group.push(turn);
     executions.set(root, group);
   }
+  const cache = resolveTurnSlotCache(state);
+  const activeTurnIds = new Set<string>();
   const slots: ChatThreadTurnSlot[] = [];
   const turns = [...state.turns.values()].sort(compareTurns);
   for (const turn of turns) {
@@ -80,9 +122,101 @@ export const buildChatThreadTurnSlots = (
     // Only an accepted user input owns a page slot. Orphan execution data is
     // retained by the reducer until its root input arrives; never invent a row.
     if (turn.userContent === null) continue;
-    slots.push(buildTurnSlot(state, { ...turn, status: (active ?? latest).status }, items));
+    activeTurnIds.add(turn.turnId);
+    const signature = buildTurnSlotSignature(state, turn, group, items);
+    const cached = cache.entries.get(turn.turnId);
+    if (cached && cached.signature === signature) {
+      slots.push(cached.slot);
+      continue;
+    }
+    const slot = buildTurnSlot(state, { ...turn, status: (active ?? latest).status }, items);
+    // The adapter's O(1) identity skip needs a defined `structureVersion`; stamp
+    // one per rebuild so an untouched (reused) slot keeps its old version and a
+    // changed slot is never skipped.
+    const structureVersion = ++slotStructureVersionClock;
+    slot.user.structureVersion = structureVersion;
+    slot.assistant.structureVersion = structureVersion;
+    cache.entries.set(turn.turnId, { signature, slot });
+    slots.push(slot);
   }
+  // Drop slots for turns that no longer own a page row.
+  for (const turnId of [...cache.entries.keys()]) {
+    if (!activeTurnIds.has(turnId)) cache.entries.delete(turnId);
+  }
+  if (slots.length === cache.slots.length && slots.every((slot, index) => slot === cache.slots[index])) {
+    return cache.slots;
+  }
+  cache.slots = slots;
   return slots;
+};
+
+/**
+ * W4-L instrumentation seam: the projection is the main-thread cost of turning
+ * thread state into renderable slots, so its wall time is recorded once per
+ * call. Keeping the wrapper outside the memoized body keeps the cache identity
+ * semantics untouched.
+ */
+export const buildChatThreadTurnSlots = (
+  state: ChatThreadState | null | undefined
+): ChatThreadTurnSlot[] => {
+  const startedAt = perfNowMs();
+  try {
+    return computeChatThreadTurnSlots(state);
+  } finally {
+    chatPerf.recordThreadProjection(perfNowMs() - startedAt);
+  }
+};
+
+/**
+ * W3-I input signature: every field buildTurnSlot reads for one root turn. When
+ * this string is unchanged the slot is reused verbatim, so a bump confined to
+ * one turn leaves its siblings' object identity intact.
+ */
+const buildTurnSlotSignature = (
+  state: ChatThreadState,
+  turn: ThreadTurnState,
+  group: ThreadTurnState[],
+  items: ThreadItemState[]
+): string => {
+  const parts: string[] = [];
+  for (const member of group) {
+    parts.push([
+      member.turnId,
+      member.rootTurnId ?? '',
+      member.userRound ?? '',
+      member.status ?? '',
+      member.clientMessageId ?? '',
+      member.userContent ?? ''
+    ].join('\u0001'));
+  }
+  // buildUserBubble reads the turn's user item directly, even when the item is
+  // hidden from the visible bucket, so always include it.
+  const userItem = state.items.get(`${turn.turnId}:user`);
+  if (userItem) parts.push(describeTurnSignatureItem(state, userItem));
+  for (const item of items) parts.push(describeTurnSignatureItem(state, item));
+  return parts.join('\u0002');
+};
+
+const describeTurnSignatureItem = (state: ChatThreadState, item: ThreadItemState): string => {
+  const head = [
+    item.itemId,
+    item.turnId,
+    item.modelRound,
+    item.kind,
+    item.status,
+    item.revision,
+    item.role ?? '',
+    item.visibility ?? '',
+    item.order,
+    String(item.raw?.created_seq ?? ''),
+    String(item.raw?.root_turn_id ?? '')
+  ].join('\u0001');
+  // Only the stable per-round text items can change without a revision bump:
+  // durable blocks and ephemeral tails feed composeItemText directly.
+  if (item.kind === 'assistant_message' && item.itemId === textItemId(item.turnId, item.modelRound)) {
+    return [head, composeItemText(state, item.itemId, 'content'), composeItemText(state, item.itemId, 'reasoning')].join('\u0001');
+  }
+  return head;
 };
 
 /** Compatibility view for non-page consumers; the page consumes slots directly. */

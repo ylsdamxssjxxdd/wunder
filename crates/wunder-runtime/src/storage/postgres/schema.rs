@@ -836,6 +836,27 @@ impl PostgresStorage {
                 "CREATE INDEX IF NOT EXISTS idx_tool_logs_tool_time \
                  ON tool_logs (tool, created_time DESC)",
             ),
+            // Orphan sweep sessions: the incremental sweep collects orphan
+            // (session, user) pairs per time slice, so the two big log tables
+            // need a created_time-leading index for the bounded scan.
+            (
+                "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_thread_items_time_session \
+                 ON thread_items (created_time, session_id)",
+                "CREATE INDEX IF NOT EXISTS idx_thread_items_time_session \
+                 ON thread_items (created_time, session_id)",
+            ),
+            (
+                "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_tool_logs_time_session \
+                 ON tool_logs (created_time, session_id)",
+                "CREATE INDEX IF NOT EXISTS idx_tool_logs_time_session \
+                 ON tool_logs (created_time, session_id)",
+            ),
+            (
+                "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_artifact_logs_time_session \
+                 ON artifact_logs (created_time, session_id)",
+                "CREATE INDEX IF NOT EXISTS idx_artifact_logs_time_session \
+                 ON artifact_logs (created_time, session_id)",
+            ),
             (
                 "DROP INDEX CONCURRENTLY IF EXISTS idx_tool_logs_time",
                 "DROP INDEX IF EXISTS idx_tool_logs_time",

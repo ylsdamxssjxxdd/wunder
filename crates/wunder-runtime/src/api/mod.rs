@@ -47,6 +47,7 @@ pub(crate) mod ws_log;
 use crate::state::AppState;
 use axum::Router;
 use std::sync::Arc;
+use tower_http::compression::CompressionLayer;
 
 pub fn build_router(state: Arc<AppState>) -> Router {
     Router::new()
@@ -87,6 +88,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .merge(user_channels::router())
         .merge(user_channel_logs::router())
         .merge(crate::mcp::router(state.clone()))
+        .layer(CompressionLayer::new())
         .with_state(state)
 }
 
@@ -123,5 +125,6 @@ pub fn build_desktop_router(state: Arc<AppState>) -> Router {
         .merge(user_channels::router())
         .merge(user_channel_logs::router())
         .merge(crate::mcp::router(state.clone()))
+        .layer(CompressionLayer::new())
         .with_state(state)
 }

@@ -1,3 +1,4 @@
+// AI生成
 import api from './http';
 
 import { resolveAccessToken } from '@/api/requestAuth';
@@ -105,10 +106,16 @@ export const getThreadLogTurns = (id: string, params: QueryParams = {}, options:
   api.get(`/chat/sessions/${id}/thread-log/turns`, { params, ...options });
 export const getThreadLogTurn = (sessionId: string, turnId: string, params: QueryParams = {}, options: { signal?: AbortSignal } = {}) =>
   api.get(`/chat/sessions/${sessionId}/thread-log/turns/${encodeURIComponent(turnId)}`, { params, ...options });
-// Atomic thread snapshot (plan §5 M2-C): cursor + full turn/item/block rows
-// read in one transaction; the v2 pipeline rebuilds its state from it.
-export const getThreadLogSnapshot = (id: string, options: { signal?: AbortSignal } = {}) =>
-  api.get(`/chat/sessions/${id}/thread-log/snapshot`, options);
+// Atomic thread snapshot (plan §5 M2-C): cursor + turn/item/block rows read in
+// one transaction; the v2 pipeline rebuilds its state from it. The server
+// bounds the read to a tail window (W1-B); callers may narrow it further via
+// `params` (max_turns / max_items / max_blocks / before_turn_index) for a
+// first-paint budget or to page strictly older turns.
+export const getThreadLogSnapshot = (
+  id: string,
+  params: QueryParams = {},
+  options: { signal?: AbortSignal } = {}
+) => api.get(`/chat/sessions/${id}/thread-log/snapshot`, { params, ...options });
 export const getThreadLogChanges = (id: string, params: QueryParams = {}, options: { signal?: AbortSignal } = {}) =>
   api.get(`/chat/sessions/${id}/thread-log/changes`, { params, ...options });
 export const getThreadLogItemContent = (

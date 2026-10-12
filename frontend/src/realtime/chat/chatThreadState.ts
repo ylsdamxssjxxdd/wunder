@@ -38,6 +38,13 @@ import type {
   ThreadTurnStatusPayload,
   ThreadTurnUpsertPayload
 } from './chatThreadTypes';
+import { chatPerf } from '@/utils/chatPerf';
+
+// W4-L: guarded clock for the heavy-history metrics. `performance` is missing in
+// some non-browser hosts, and every chatPerf recorder is inert while a capture
+// is not running, so leaving the calls in place costs two clock reads.
+const perfNowMs = (): number =>
+  typeof performance !== 'undefined' ? performance.now() : Date.now();
 
 export interface ChatThreadSnapshotTurn {
   root_turn_id?: string;
@@ -569,8 +576,148 @@ function applyTailFrame(state: ChatThreadState, frame: ThreadItemTailFrame): Cha
 }
 
 // ---------------------------------------------------------------------------
-// Snapshot (full reload with cursor guard, §3.4 rule 4)
+// Snapshot (full reload with cursor guard, section 3.4 rule 4)
+//
+// W2-F: the reload payload is first normalized into a bounded, serializable
+// shard plan (planChatThreadSnapshot) and then applied shard by shard. The
+// planner is pure and does row flattening only, so it can run in a Worker for
+// large threads; the applier yields to the main thread once a shard budget is
+// spent and honours an abort signal, so any single main-thread task stays
+// bounded (decision D5: <= 200ms per task). Shard order is turn phase, then
+// item phase, then block phase, so the applied state is identical to the
+// pre-sharding single-pass apply.
 // ---------------------------------------------------------------------------
+
+export interface ChatThreadSnapshotShard {
+  kind: 'turns' | 'items' | 'blocks';
+  turns?: ChatThreadSnapshotTurn[];
+  items?: ThreadItemUpsertPayload[];
+  blocks?: ThreadBlockUpsertPayload[];
+  /** Work units (turn/item/block count) used for main-thread yield budgeting. */
+  cost: number;
+}
+
+export interface ChatThreadSnapshotPlan {
+  cursor: number;
+  shards: ChatThreadSnapshotShard[];
+  turnCount: number;
+  itemCount: number;
+  blockCount: number;
+}
+
+export interface ChatThreadSnapshotPlanOptions {
+  maxTurnsPerShard?: number;
+  maxItemsPerShard?: number;
+  maxBlocksPerShard?: number;
+}
+
+export const CHAT_THREAD_SNAPSHOT_PLAN_DEFAULTS = {
+  maxTurnsPerShard: 128,
+  maxItemsPerShard: 512,
+  maxBlocksPerShard: 512
+} as const;
+
+/** Accumulated shard cost allowed between two main-thread yields. */
+export const CHAT_THREAD_SNAPSHOT_YIELD_BUDGET = 512;
+
+function chunkArray<T>(values: T[], size: number): T[][] {
+  const step = Math.max(1, Math.floor(size));
+  const chunks: T[][] = [];
+  for (let index = 0; index < values.length; index += step) {
+    chunks.push(values.slice(index, index + step));
+  }
+  return chunks;
+}
+
+/**
+ * Normalize a full/partial reload into a bounded shard plan. Embedded item rows
+ * (atomic snapshot shape) are flattened here: this is the CPU-heavy parse the
+ * Worker offloads. Shards are contiguous slices in phase order.
+ */
+export function planChatThreadSnapshot(
+  snapshot: ChatThreadSnapshot | null | undefined,
+  options: ChatThreadSnapshotPlanOptions = {}
+): ChatThreadSnapshotPlan {
+  const cursor = snapshot && typeof snapshot.cursor === 'number' && Number.isFinite(snapshot.cursor)
+    ? snapshot.cursor
+    : Number.NaN;
+  const turns = Array.isArray(snapshot?.turns) ? snapshot.turns : [];
+  const sourceItems = Array.isArray(snapshot?.items) ? snapshot.items : [];
+  const blocks = Array.isArray(snapshot?.blocks) ? snapshot.blocks : [];
+  const items = sourceItems.map((entry) => hasEmbeddedItemPayload(entry as Record<string, unknown>)
+    ? flattenThreadItemRow(entry as Record<string, unknown>) as unknown as ThreadItemUpsertPayload
+    : entry);
+  const maxTurns = options.maxTurnsPerShard ?? CHAT_THREAD_SNAPSHOT_PLAN_DEFAULTS.maxTurnsPerShard;
+  const maxItems = options.maxItemsPerShard ?? CHAT_THREAD_SNAPSHOT_PLAN_DEFAULTS.maxItemsPerShard;
+  const maxBlocks = options.maxBlocksPerShard ?? CHAT_THREAD_SNAPSHOT_PLAN_DEFAULTS.maxBlocksPerShard;
+  const shards: ChatThreadSnapshotShard[] = [];
+  for (const chunk of chunkArray(turns, maxTurns)) shards.push({ kind: 'turns', turns: chunk, cost: chunk.length });
+  for (const chunk of chunkArray(items, maxItems)) shards.push({ kind: 'items', items: chunk, cost: chunk.length });
+  for (const chunk of chunkArray(blocks, maxBlocks)) shards.push({ kind: 'blocks', blocks: chunk, cost: chunk.length });
+  return { cursor, shards, turnCount: turns.length, itemCount: items.length, blockCount: blocks.length };
+}
+
+const asSnapshotFrame = (changeType: string, payload: unknown): ThreadChangeFrame =>
+  ({ event: 'thread_change', seq: 0, change_type: changeType, data: payload as Record<string, unknown> });
+
+function resetSnapshotTarget(state: ChatThreadState): void {
+  const side = sideState(state);
+  side.orderCounter = 0;
+  side.blockEnds.clear();
+  side.extraTails.clear();
+  // Replace contents in place: callers hold references to the maps.
+  state.turns.clear();
+  state.items.clear();
+  state.blocks.clear();
+  state.tails.clear();
+}
+
+function applySnapshotTurn(state: ChatThreadState, entry: ChatThreadSnapshotTurn): void {
+  const turnId = firstString(entry.turn_id);
+  if (!turnId) return;
+  state.turns.set(turnId, {
+    turnId,
+    rootTurnId: firstString(entry.root_turn_id),
+    userRound: firstNumber(entry.user_round, entry.user_turn_index, entry.payload?.user_round) ?? null,
+    status: firstString(entry.status) ?? null,
+    clientMessageId: firstString(entry.client_message_id, entry.payload?.client_message_id) ?? null,
+    userContent: typeof entry.content === 'string' ? entry.content : null
+  });
+}
+
+function applySnapshotShard(state: ChatThreadState, shard: ChatThreadSnapshotShard): void {
+  if (shard.kind === 'turns') {
+    for (const entry of shard.turns ?? []) applySnapshotTurn(state, entry);
+    return;
+  }
+  if (shard.kind === 'items') {
+    // Reuse the durable appliers so items rebuild exactly as if replayed;
+    // seq is unread inside the appliers.
+    for (const payload of shard.items ?? []) applyItemUpsert(state, asSnapshotFrame('item_upsert', payload));
+    return;
+  }
+  for (const payload of shard.blocks ?? []) applyTextBlock(state, asSnapshotFrame('text_block', payload));
+}
+
+function isPlanApplicable(state: ChatThreadState, plan: ChatThreadSnapshotPlan | null | undefined): boolean {
+  if (!plan || typeof plan.cursor !== 'number' || !Number.isFinite(plan.cursor)) return false;
+  return plan.cursor >= state.lastSeq;
+}
+
+/** Synchronous single-task apply of a prepared plan (compat / fallback path). */
+export function applyChatThreadSnapshotPlanSync(
+  state: ChatThreadState,
+  plan: ChatThreadSnapshotPlan,
+  now: number
+): ChatThreadApplyResult {
+  void now;
+  if (!isPlanApplicable(state, plan)) return UNCHANGED; // stale full reload: cursor guard
+  resetSnapshotTarget(state);
+  for (const shard of plan.shards) applySnapshotShard(state, shard);
+  state.gap.length = 0;
+  state.lastSeq = plan.cursor;
+  return CHANGED_STRUCTURAL;
+}
 
 export function applyChatThreadSnapshot(
   state: ChatThreadState,
@@ -583,49 +730,82 @@ export function applyChatThreadSnapshot(
     !Number.isFinite(snapshot.cursor) || snapshot.cursor < state.lastSeq) {
     return UNCHANGED; // stale full reload: cursor guard
   }
-
-  const side = sideState(state);
-  side.orderCounter = 0;
-  side.blockEnds.clear();
-  side.extraTails.clear();
-
-  // Replace contents in place: callers hold references to the maps.
-  state.turns.clear();
-  for (const entry of snapshot.turns ?? []) {
-    const turnId = firstString(entry.turn_id);
-    if (!turnId) continue;
-    state.turns.set(turnId, {
-      turnId,
-      rootTurnId: firstString(entry.root_turn_id),
-      userRound: firstNumber(entry.user_round, entry.user_turn_index, entry.payload?.user_round) ?? null,
-      status: firstString(entry.status) ?? null,
-      clientMessageId: firstString(entry.client_message_id, entry.payload?.client_message_id) ?? null,
-      userContent: typeof entry.content === 'string' ? entry.content : null
-    });
+  const startedAt = perfNowMs();
+  try {
+    return applyChatThreadSnapshotPlanSync(state, planChatThreadSnapshot(snapshot), now);
+  } finally {
+    chatPerf.recordSnapshotApply(perfNowMs() - startedAt);
   }
+}
 
-  state.items.clear();
-  state.blocks.clear();
-  state.tails.clear();
-  // Reuse the durable appliers against the cleared maps so items and blocks
-  // rebuild exactly as if replayed; seq is unread inside the appliers.
-  const asFrame = (changeType: string, payload: unknown): ThreadChangeFrame =>
-    ({ event: 'thread_change', seq: 0, change_type: changeType, data: payload as Record<string, unknown> });
-  for (const entry of snapshot.items ?? []) {
-    // Atomic-snapshot rows carry an embedded payload copy next to the row
-    // columns; flat projections pass through untouched.
-    const payload = hasEmbeddedItemPayload(entry as Record<string, unknown>)
-      ? flattenThreadItemRow(entry as Record<string, unknown>)
-      : entry;
-    applyItemUpsert(state, asFrame('item_upsert', payload));
-  }
-  for (const payload of snapshot.blocks ?? []) {
-    applyTextBlock(state, asFrame('text_block', payload));
-  }
+export interface ChatThreadSnapshotApplyOptions {
+  /** Cooperative cancellation; checked before each shard. */
+  shouldAbort?: () => boolean;
+  /** Main-thread yield used between shards (default: a 0ms macrotask). */
+  yieldToMain?: () => Promise<void>;
+  /** Accumulated shard cost allowed before yielding (default 512). */
+  yieldBudget?: number;
+}
 
-  state.gap.length = 0;
-  state.lastSeq = snapshot.cursor;
-  return CHANGED_STRUCTURAL;
+export interface ChatThreadSnapshotApplyOutcome {
+  applied: boolean;
+  aborted: boolean;
+  shardsApplied: number;
+  shardCount: number;
+  yields: number;
+}
+
+const defaultYieldToMain = (): Promise<void> =>
+  new Promise<void>((resolve) => { setTimeout(resolve, 0); });
+
+/**
+ * Sharded, abortable apply of a prepared plan. The plan is applied in place; a
+ * mid-flight abort stops before the next shard and leaves state.lastSeq
+ * unadvanced, so the caller can reject the partial rebuild and re-request.
+ */
+export async function applyChatThreadSnapshotPlanSharded(
+  state: ChatThreadState,
+  plan: ChatThreadSnapshotPlan,
+  options: ChatThreadSnapshotApplyOptions = {}
+): Promise<ChatThreadSnapshotApplyOutcome> {
+  const shardCount = plan?.shards?.length ?? 0;
+  if (!isPlanApplicable(state, plan)) {
+    return { applied: false, aborted: false, shardsApplied: 0, shardCount, yields: 0 };
+  }
+  const shouldAbort = options.shouldAbort;
+  if (shouldAbort?.()) {
+    return { applied: false, aborted: true, shardsApplied: 0, shardCount, yields: 0 };
+  }
+  const yieldToMain = options.yieldToMain ?? defaultYieldToMain;
+  const yieldBudget = Math.max(1, options.yieldBudget ?? CHAT_THREAD_SNAPSHOT_YIELD_BUDGET);
+  // W4-L: one measurement for the whole sharded pass. The work spans multiple
+  // macrotasks (yields), so the span is opened once here and closed in `finally`
+  // rather than per shard.
+  const startedAt = perfNowMs();
+  try {
+    resetSnapshotTarget(state);
+    let shardsApplied = 0;
+    let yields = 0;
+    let spent = 0;
+    for (const shard of plan.shards) {
+      if (shouldAbort?.()) {
+        return { applied: false, aborted: true, shardsApplied, shardCount, yields };
+      }
+      applySnapshotShard(state, shard);
+      shardsApplied += 1;
+      spent += shard.cost || 1;
+      if (spent >= yieldBudget && shardsApplied < shardCount) {
+        spent = 0;
+        yields += 1;
+        await yieldToMain();
+      }
+    }
+    state.gap.length = 0;
+    state.lastSeq = plan.cursor;
+    return { applied: true, aborted: false, shardsApplied, shardCount, yields };
+  } finally {
+    chatPerf.recordSnapshotApply(perfNowMs() - startedAt);
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -21,6 +21,9 @@ import { flushBackgroundPublication } from '@/realtime/chat/chatBackgroundPublic
 import { resolveChatRuntimeRenderableKey } from '@/realtime/chat/chatRuntimeMessageKeys';
 import { resolveChatRuntimeMessageRenderKey } from '@/realtime/chat/chatRuntimeRenderAdapter';
 import { buildChatThreadMaterializedSlots } from '@/realtime/chat/chatThreadRuntime';
+import { isTranscriptFallbackEnabled, resolveAgentTurnRenderRows } from '@/views/messenger/controller/legacyTurnRowAdapter';
+import { chatQueueState } from '@/stores/chatQueueState';
+import { isParkedQueueTurn } from '@/stores/chatQueueProjection';
 import { useAgentStore } from '@/stores/agents';
 import { useAuthStore } from '@/stores/auth';
 import { useChatStore } from '@/stores/chat';
@@ -79,7 +82,7 @@ import { useMessengerInteractionBlocker } from '@/views/messenger/interactionBlo
 import { preloadAgentSettingsPanels, preloadMessengerSettingsPanels } from '@/views/messenger/lazyPanels';
 import { MessageConversationKind, hasRetainedAgentConversationContext, hasRetainedMessageConversationContext, hasRetainedMessageConversationContext as resolveRetainedMessageConversationContext, resolveMessageConversationKind } from '@/views/messenger/messageConversationRetention';
 import { createMessageViewportRuntime } from '@/views/messenger/messageViewportRuntime';
-import { buildMessageVirtualWindow, resolveVirtualOffsetTop } from '@/views/messenger/messageVirtualWindow';
+import { buildMessageVirtualWindow, createMessageVirtualHeightEstimator, resolveVirtualOffsetTop } from '@/views/messenger/messageVirtualWindow';
 import { defaultMessengerOrderPreferences, loadMessengerOrderPreferences, saveMessengerOrderPreferences } from '@/views/messenger/messengerOrderSync';
 import type { MessengerOrderPreferences } from '@/views/messenger/messengerOrderSync';
 import { AGENT_CONTAINER_IDS, AGENT_MAIN_READ_AT_STORAGE_PREFIX, AGENT_MAIN_UNREAD_STORAGE_PREFIX, AGENT_TOOL_OVERRIDE_NONE, DEFAULT_AGENT_KEY, DISMISSED_AGENT_STORAGE_PREFIX, MESSENGER_SEND_KEY_STORAGE_KEY, MESSENGER_UI_FONT_SIZE_STORAGE_KEY, USER_CONTAINER_ID, WORLD_COMPOSER_HEIGHT_STORAGE_KEY, sectionRouteMap } from '@/views/messenger/model';
@@ -516,7 +519,31 @@ function installMessengerControllerStateRefs(ctx: MessengerControllerContext): v
 
   ctx.messageVirtualLayoutVersion = ref(0);
 
-  ctx.messageVirtualHeightCache = new Map<string, number>();
+  // Measured row heights must feed two consumers: the persisted height cache the
+  // viewport runtime writes into, and the segment estimator that
+  // `resolveVirtualMessageHeight` reads. The cache is created before the estimator
+  // (which needs `MESSAGE_VIRTUAL_ESTIMATED_HEIGHT`), so this write-through Map
+  // reads the estimator lazily off the shared context instead of capturing it.
+  class RecordingMessageHeightCache extends Map<string, number> {
+      set(key: string, value: number): this {
+          super.set(key, value);
+          const estimator = ctx.messageVirtualHeightEstimator;
+          if (estimator && typeof estimator.record === 'function') {
+              estimator.record(key, value);
+          }
+          return this;
+      }
+
+      clear(): void {
+          super.clear();
+          const estimator = ctx.messageVirtualHeightEstimator;
+          if (estimator && typeof estimator.clear === 'function') {
+              estimator.clear();
+          }
+      }
+  }
+
+  ctx.messageVirtualHeightCache = new RecordingMessageHeightCache();
 
   ctx.agentRuntimeStateMap = ref<Map<string, AgentRuntimeState>>(new Map());
 
@@ -835,6 +862,15 @@ function installMessengerControllerStateRefs(ctx: MessengerControllerContext): v
   ctx.CONTACT_VIRTUAL_OVERSCAN = 8;
 
   ctx.MESSAGE_VIRTUAL_ESTIMATED_HEIGHT = 118;
+
+  // One estimator for the whole controller. Measured rows refine a running
+  // per-segment average, so an unmeasured `turn:` row estimates the real
+  // composite user+assistant height instead of the flat `turn x 2` rule; the
+  // virtual windows derive their fallback `estimatedHeight` from the same
+  // segment model so it stays consistent with `resolveVirtualMessageHeight`.
+  ctx.messageVirtualHeightEstimator = createMessageVirtualHeightEstimator({
+      baseHeight: ctx.MESSAGE_VIRTUAL_ESTIMATED_HEIGHT
+  });
 
   ctx.AGENT_VOICE_MODEL_SUPPORT_CACHE_MS = 30000;
 
@@ -1867,19 +1903,46 @@ function installMessengerControllerRenderableMessages(ctx: MessengerControllerCo
   });
 
   // The page source is a list of fixed user turns, never a list of messages.
-  ctx.agentTurnSlots = computed(() => {
+  // 还在引擎队列里、一行输出都没产出的轮次由输入区上方的排队条承载，时间线不放行。
+  // W2-E: keep the raw result so `null` (registry has no entry -> the durable
+  // render source is missing, most likely a failed snapshot) stays distinct from
+  // `[]` (a real thread with no user turn). Only `null` may fall back.
+  ctx.agentThreadSlotSource = computed(() => {
       const version = ctx.chatStore.runtimeProjectionVersionBySession?.[ctx.chatStore.activeSessionId] || 0;
       void version;
-      return (buildChatThreadMaterializedSlots(ctx.chatStore.activeSessionId) ?? []).map(slot => ({
+      return buildChatThreadMaterializedSlots(ctx.chatStore.activeSessionId);
+  });
+  ctx.agentTurnSlots = computed(() => {
+      const queuedItems = chatQueueState.items;
+      return (ctx.agentThreadSlotSource.value ?? [])
+          .filter((slot) => !isParkedQueueTurn(queuedItems, slot.user, slot.assistant))
+          .map(slot => ({
           key: slot.key, rootTurnId: slot.rootTurnId, kind: 'turn',
           user: wrapSlotMessage(slot.user), assistant: wrapSlotMessage(slot.assistant)
       }));
   });
+  // W2-E render-source arbitration: window projection > transcript fallback > grid.
+  // The two sources never render together (the fallback is picked only when the
+  // window projection has no entry at all), so no duplicate greeting bubble and
+  // no un-alignable v1/v2 keys are ever mixed.
+  ctx.transcriptFallbackEnabled = computed(() => isTranscriptFallbackEnabled());
+  ctx.agentTurnRenderPlan = computed(() => resolveAgentTurnRenderRows({
+      windowRows: ctx.agentTurnSlots.value,
+      windowAvailable: ctx.agentThreadSlotSource.value !== null,
+      messages: ctx.chatStore.messages,
+      enabled: ctx.transcriptFallbackEnabled.value
+  }));
+  ctx.agentRenderRows = computed(() => ctx.agentTurnRenderPlan.value.rows);
+  ctx.agentTurnFallbackRows = computed(() => ctx.agentTurnRenderPlan.value.source === 'transcript_fallback'
+      ? ctx.agentTurnRenderPlan.value.rows
+      : []);
+  ctx.agentTurnRowsHaveContent = computed(() => ctx.agentTurnRenderPlan.value.rows.length > 0);
   ctx.agentConversationRows = computed(() => {
       const greeting = resolveSyntheticGreetingRenderable();
+      const rows = ctx.agentRenderRows.value;
       return greeting
-          ? [{ key: 'conversation-greeting', kind: 'greeting', assistant: greeting }, ...ctx.agentTurnSlots.value]
-          : ctx.agentTurnSlots.value;
+          ? [{ key: 'conversation-greeting', kind: 'greeting', assistant: greeting }, ...rows]
+          : rows;
   });
   // Compatibility view for composer, attachments and diagnostics only.
   ctx.agentRenderableMessages = computed<AgentRenderableMessage[]>(() =>
@@ -2050,13 +2113,10 @@ function installMessengerControllerRenderableMessages(ctx: MessengerControllerCo
       return false;
   });
 
-  ctx.resolveVirtualMessageHeight = (key: string): number => {
-      const normalized = String(key || '').trim();
-      if (!normalized) {
-          return ctx.MESSAGE_VIRTUAL_ESTIMATED_HEIGHT;
-      }
-      return ctx.messageVirtualHeightCache.get(normalized) || ctx.MESSAGE_VIRTUAL_ESTIMATED_HEIGHT * (normalized.startsWith('turn:') ? 2 : 1);
-  };
+  // Same source of truth as the virtual windows' `estimatedHeight`: the measured
+  // height when known, else the learned per-segment average (a `turn:` row keeps
+  // the 2x base default until the first real composite row is measured).
+  ctx.resolveVirtualMessageHeight = (key: string): number => ctx.messageVirtualHeightEstimator.resolve(key);
 
   ctx.estimateVirtualOffsetTop = (keys: string[], index: number): number => resolveVirtualOffsetTop(
       Array.isArray(keys) ? keys : [],
@@ -2071,7 +2131,7 @@ function installMessengerControllerRenderableMessages(ctx: MessengerControllerCo
       viewportHeight: ctx.messageVirtualViewportHeight.value,
       overscan: ctx.MESSAGE_VIRTUAL_OVERSCAN,
       tailPinCount: ctx.MESSAGE_VIRTUAL_TAIL_PIN_COUNT,
-      estimatedHeight: ctx.MESSAGE_VIRTUAL_ESTIMATED_HEIGHT * 2,
+      estimatedHeight: ctx.messageVirtualHeightEstimator.segmentEstimate('turn'),
       resolveHeight: ctx.resolveVirtualMessageHeight,
       layoutVersion: ctx.messageVirtualLayoutVersion.value
   }));
@@ -2144,7 +2204,7 @@ function installMessengerControllerRenderableMessages(ctx: MessengerControllerCo
       viewportHeight: ctx.messageVirtualViewportHeight.value,
       overscan: ctx.MESSAGE_VIRTUAL_OVERSCAN,
       tailPinCount: ctx.MESSAGE_VIRTUAL_TAIL_PIN_COUNT,
-      estimatedHeight: ctx.MESSAGE_VIRTUAL_ESTIMATED_HEIGHT,
+      estimatedHeight: ctx.messageVirtualHeightEstimator.segmentEstimate('world'),
       resolveHeight: ctx.resolveVirtualMessageHeight,
       layoutVersion: ctx.messageVirtualLayoutVersion.value
   }));

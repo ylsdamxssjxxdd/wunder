@@ -4,6 +4,46 @@ use anyhow::Result;
 use serde_json::Value;
 use std::collections::HashMap;
 
+/// Bounded read window for the atomic v2 thread snapshot (根治方案 I5).
+///
+/// The snapshot is the single durable hydration source for chat rendering, so
+/// an unbounded read on a million-row thread is what blanks the panel. Every
+/// reader therefore materializes only the MOST RECENT `max_turns` turns (plus
+/// their items/blocks, each independently capped) and reports whether older
+/// data was dropped. `before_turn_index` pages strictly older windows.
+#[derive(Debug, Clone)]
+pub struct ThreadSnapshotWindow {
+    /// Maximum number of trailing turns to return (ordered by user turn).
+    pub max_turns: usize,
+    /// Hard cap on item rows materialized across the selected turns.
+    pub max_items: usize,
+    /// Hard cap on text-block rows materialized across the selected items.
+    pub max_blocks: usize,
+    /// Exclusive upper bound: only turns with `user_turn_index < this` are read.
+    pub before_turn_index: Option<i64>,
+}
+
+impl ThreadSnapshotWindow {
+    /// Clamp caller input into safe bounds, always preserving the tail window.
+    pub fn clamped(mut self) -> Self {
+        self.max_turns = self.max_turns.clamp(1, 2_000);
+        self.max_items = self.max_items.clamp(1, 200_000);
+        self.max_blocks = self.max_blocks.clamp(1, 400_000);
+        self
+    }
+}
+
+impl Default for ThreadSnapshotWindow {
+    fn default() -> Self {
+        Self {
+            max_turns: 200,
+            max_items: 20_000,
+            max_blocks: 40_000,
+            before_turn_index: None,
+        }
+    }
+}
+
 /// Domain-scoped storage abstractions for persistent runtime data.
 
 /// Storage backend lifecycle and schema readiness checks.
@@ -226,7 +266,23 @@ pub trait ThreadLogStore {
     /// Atomic thread snapshot for v2 resume (根治方案 I5): cursor, turns,
     /// items and text blocks read inside one transaction so a concurrent
     /// commit can never produce a torn projection.
+    ///
+    /// Readers are always BOUNDED: implementations return the trailing
+    /// [`ThreadSnapshotWindow`] tail plus `truncated`/`has_older` metadata, so a
+    /// million-row thread can never materialize unbounded.
     fn thread_snapshot(&self, user_id: &str, session_id: &str) -> Result<Value>;
+
+    /// Tail-windowed snapshot. Default forwards to `thread_snapshot` (itself
+    /// bounded) so backends that never specialized the window stay correct.
+    fn thread_snapshot_window(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        window: &ThreadSnapshotWindow,
+    ) -> Result<Value> {
+        let _ = window;
+        self.thread_snapshot(user_id, session_id)
+    }
     fn delete_thread_log_by_session(&self, user_id: &str, session_id: &str) -> Result<i64>;
 }
 

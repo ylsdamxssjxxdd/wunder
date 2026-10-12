@@ -14,6 +14,7 @@ use crate::storage::{
     ThreadLogStore, UserAccountStore, UserRefreshTokenRecord, UserRefreshTokenStore,
     UserWorldStore, VectorDocumentStore, WorkspaceRecord, WorkspaceStore,
 };
+use wunder_core::storage_backend::ThreadSnapshotWindow;
 
 impl StorageLifecycle for SqliteStorage {
     fn ensure_initialized(&self) -> Result<()> {
@@ -74,7 +75,15 @@ impl ThreadLogStore for SqliteStorage {
         self.upsert_thread_text_block_impl(user_id, session_id, block)
     }
     fn thread_snapshot(&self, user_id: &str, session_id: &str) -> Result<Value> {
-        self.thread_snapshot_impl(user_id, session_id)
+        self.thread_snapshot_impl(user_id, session_id, &ThreadSnapshotWindow::default())
+    }
+    fn thread_snapshot_window(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        window: &ThreadSnapshotWindow,
+    ) -> Result<Value> {
+        self.thread_snapshot_impl(user_id, session_id, window)
     }
     fn list_thread_text_blocks(
         &self,

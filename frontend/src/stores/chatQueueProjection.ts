@@ -94,3 +94,89 @@ export const applyLocalQueueReorder = (
   // 用户给定的顺序就是新的派发顺序，不再按 created_at 重排。
   return withPositions(next);
 };
+
+const QUEUE_MARKER_EVENT_TYPES = new Set(['queued', 'queue_enter', 'queue_update']);
+
+const readMessageId = (message: Record<string, any> | null | undefined): string =>
+  cleanText(message?.message_id ?? message?.messageId ?? message?.id);
+
+const isQueueMarkerItem = (item: unknown): boolean => {
+  const source = (item || {}) as Record<string, unknown>;
+  const eventType = cleanText(source.eventType ?? source.event ?? source.event_type).toLowerCase();
+  return QUEUE_MARKER_EVENT_TYPES.has(eventType);
+};
+
+/** 助手侧除了「排队中」标记什么都没有：这一轮还没真正开跑。 */
+export const hasOnlyQueueMarkers = (message: unknown): boolean => {
+  const source = message as Record<string, any> | null | undefined;
+  if (!source || cleanText(source.role).toLowerCase() !== 'assistant') return false;
+  if (cleanText(source.content)) return false;
+  if (cleanText(source.reasoning)) return false;
+  if (source.workflowStreaming || source.reasoningStreaming) return false;
+  const items = Array.isArray(source.workflowItems) ? source.workflowItems : [];
+  return items.every(isQueueMarkerItem);
+};
+
+/** 历史补水后的排队标记条目 id 形如 `queue:<queue_id>`，用它也能对上排队条。 */
+const markerQueueIdsOf = (message: unknown): Set<string> => {
+  const source = message as Record<string, any> | null | undefined;
+  const items = Array.isArray(source?.workflowItems) ? source.workflowItems : [];
+  return new Set(
+    items
+      .filter(isQueueMarkerItem)
+      .map((item) => cleanText((item as Record<string, unknown>)?.id))
+      .filter((id) => id.startsWith('queue:'))
+      .map((id) => id.slice('queue:'.length))
+  );
+};
+
+/**
+ * 排队条替时间线承载这一轮：条目确实还挂在引擎队列里，且这一轮一行输出都没有。
+ * 两个条件都要——只看队列会漏掉「已开跑但条目还没刷掉」，只看状态会在排队接口
+ * 查询失败时把消息两头都藏掉。
+ */
+export const isParkedQueueTurn = (
+  items: QueuedTurn[],
+  userMessage: unknown,
+  assistantMessage: unknown
+): boolean => {
+  if (!hasOnlyQueueMarkers(assistantMessage)) return false;
+  const user = userMessage as Record<string, any> | null | undefined;
+  const clientMessageId = cleanText(user?.client_message_id ?? readMessageId(user));
+  if (clientMessageId && items.some((item) => item.clientMessageId === clientMessageId)) {
+    return true;
+  }
+  const markerQueueIds = markerQueueIdsOf(assistantMessage);
+  return markerQueueIds.size > 0 && items.some((item) => markerQueueIds.has(item.queueId));
+};
+
+/**
+ * 撤下一条还没开跑的轮次后，要从时间线里剪掉的本地乐观消息 id。
+ * 助手侧已经有任何真实输出时返回空：那种情况下这一轮不属于排队条，不该被剪。
+ */
+export const selectParkedTurnMessageIds = (
+  messages: Array<Record<string, any> | null | undefined>,
+  clientMessageId: unknown
+): string[] => {
+  const cleaned = cleanText(clientMessageId);
+  const list = Array.isArray(messages) ? messages : [];
+  if (!cleaned) return [];
+  const user = list.find(
+    (message) =>
+      message &&
+      cleanText(message.role).toLowerCase() === 'user' &&
+      cleanText(message.client_message_id ?? readMessageId(message)) === cleaned
+  );
+  if (!user) return [];
+  const userTurnId = cleanText(user.user_turn_id);
+  const assistants = list.filter(
+    (message) =>
+      message &&
+      cleanText(message.role).toLowerCase() === 'assistant' &&
+      (!userTurnId || cleanText(message.user_turn_id) === userTurnId)
+  );
+  if (!assistants.length || !assistants.every((assistant) => hasOnlyQueueMarkers(assistant))) {
+    return [];
+  }
+  return [readMessageId(user), ...assistants.map(readMessageId)].filter(Boolean);
+};

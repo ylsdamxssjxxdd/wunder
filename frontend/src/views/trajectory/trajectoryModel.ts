@@ -3,6 +3,13 @@
  * 并给出时间线投影、请求编号、折叠与虚拟行布局。
  */
 
+import { chatPerf } from '@/utils/chatPerf'
+
+// W4-L: guarded clock for the heavy-history metrics. `performance` is missing in
+// some non-browser hosts, and the recorder is inert while capture is off.
+const perfNowMs = (): number =>
+  typeof performance !== 'undefined' ? performance.now() : Date.now()
+
 export type TrajKind = 'system' | 'user' | 'context' | 'compacted' | 'message' | 'tool' | 'subtool'
 
 export interface TrajUsage {
@@ -193,6 +200,23 @@ export function markdownPreviewText(text: string): string {
   return plain.length > TEXT_PREVIEW_LIMIT ? `${plain.slice(0, TEXT_PREVIEW_LIMIT)}…` : plain
 }
 
+/** 惰性字段：首次读取时才计算并缓存，把昂贵的 markdown 预览推迟到展示期。 */
+function defineLazy<T>(target: object, key: string, compute: () => T): void {
+  let ready = false
+  let cached: T | undefined
+  Object.defineProperty(target, key, {
+    configurable: true,
+    enumerable: true,
+    get(): T {
+      if (!ready) {
+        cached = compute()
+        ready = true
+      }
+      return cached as T
+    },
+  })
+}
+
 /* ------------------------------------------------------------------ */
 /* 快照字段读取                                                        */
 /* ------------------------------------------------------------------ */
@@ -287,11 +311,17 @@ function summarizeToolResult(payload: RawRecord): string {
 function extractUsage(payload: RawRecord): TrajUsage | undefined {
   const usage: TrajUsage = {}
   const sources: RawRecord[] = []
+  // 优先级：llm_output 顶层 usage → 会话统计 → meta.message_stats 内嵌的
+  // usage/round_usage（会话写入器整体覆盖 payload 后顶层 usage 只剩这里）。
+  if (isRecord(payload.usage)) sources.push(payload.usage)
   const stats = payload.stats
   if (isRecord(stats)) sources.push(stats)
   const messageStats = metaOf(payload).message_stats
-  if (isRecord(messageStats)) sources.push(messageStats)
-  if (isRecord(payload.usage)) sources.push(payload.usage)
+  if (isRecord(messageStats)) {
+    if (isRecord(messageStats.usage)) sources.push(messageStats.usage)
+    if (isRecord(messageStats.round_usage)) sources.push(messageStats.round_usage)
+    sources.push(messageStats)
+  }
   if (sources.length === 0) return undefined
   const pick = (keys: string[]): number | undefined => {
     for (const source of sources) {
@@ -349,14 +379,17 @@ function buildCell(item: RawRecord, payload: RawRecord, kind: TrajKind, index: n
 
   if (kind === 'message') {
     const contentText = contentToText(payload.content)
-    const thinkingText = contentToText(payload.reasoning)
+    // 流式壳写入 `reasoning`；会话写入器覆盖 payload 后字段名为
+    // `reasoning_content`，两个来源都要读。
+    const thinkingText = contentToText(payload.reasoning) || contentToText(payload.reasoning_content)
     const toolCalls = payload.tool_calls
     if (!contentText.trim() && Array.isArray(toolCalls) && toolCalls.length > 0) {
       cell.text = ''
       cell.toolCallOnly = true
     } else {
-      cell.text = markdownPreviewText(contentText)
-      cell.previewMarkdown = contentText.trim() ? contentText : undefined
+      const source = contentText
+      defineLazy(cell, 'text', () => markdownPreviewText(source))
+      cell.previewMarkdown = source.trim() ? source : undefined
     }
     const prefill = typeof payload.prefill_duration_s === 'number'
       && Number.isFinite(payload.prefill_duration_s) ? payload.prefill_duration_s : null
@@ -397,7 +430,8 @@ function buildCell(item: RawRecord, payload: RawRecord, kind: TrajKind, index: n
     cell.inputDetail = argsRaw.trim() ? argsRaw : undefined
     cell.outputDetail = resultRaw.trim() ? resultRaw : undefined
     cell.result = resultRaw.trim() ? resultRaw : undefined
-    cell.resultPreviewMarkdown = resultRaw.trim() ? markdownPreviewText(resultRaw) : undefined
+    if (resultRaw.trim()) defineLazy(cell, 'resultPreviewMarkdown', () => markdownPreviewText(resultRaw))
+    else cell.resultPreviewMarkdown = undefined
     const schema = payload.schema ?? payload.tool_schema
     if (typeof schema === 'string' && schema.trim()) cell.schemaDetail = schema
     else if (isRecord(schema)) cell.schemaDetail = JSON.stringify(schema, null, 2)
@@ -419,9 +453,10 @@ function buildCell(item: RawRecord, payload: RawRecord, kind: TrajKind, index: n
   } else {
     let contentText = contentToText(payload.content)
     if (!contentText.trim()) contentText = contextFallbackText(payload)
-    cell.text = markdownPreviewText(contentText)
-    cell.previewMarkdown = contentText.trim() ? contentText : undefined
-    cell.inputDetail = contentText.trim() ? contentText : undefined
+    const source = contentText
+    defineLazy(cell, 'text', () => markdownPreviewText(source))
+    cell.previewMarkdown = source.trim() ? source : undefined
+    cell.inputDetail = source.trim() ? source : undefined
     // 用户/上下文是瞬时事件（dsh 的输入通道即小刻度）：不用 updated_time
     // 兜底补时长，否则会被拉成覆盖整轮的长条，时间线输入通道因此总是塞满。
     cell.timeSeconds = startedAt !== null ? 0 : null
@@ -462,10 +497,13 @@ export function buildTrajectoryLayout(rawTurns: unknown, t: Translate): TrajTurn
       model.groups.push(group)
       return group
     }
+    // step → 分组用 Map 索引，避免每步线性扫描 model.groups（原 O(k²)）。
+    const stepGroups = new Map<number, TrajGroupModel>()
     const stepGroup = (step: number): TrajGroupModel => {
-      const existing = model.groups.find(group => group.step === step)
+      const existing = stepGroups.get(step)
       if (existing) return existing
       const group: TrajGroupModel = { title: t('trajectory.stepLabel', { step }), cells: [], step }
+      stepGroups.set(step, group)
       model.groups.push(group)
       return group
     }
@@ -492,6 +530,15 @@ export function buildTrajectoryLayout(rawTurns: unknown, t: Translate): TrajTurn
       if (
         rawKind === 'progress' || rawKind === 'workspace_update'
         || rawKind === 'model_usage' || rawKind === 'llm_stream_retry'
+        || rawKind === 'thread_turn_started' || rawKind === 'model_call'
+      ) continue
+      // 历史脏数据：队列瞬态（含 user_withdrew 等取消回执）、会话写入器重复
+      // 落账的工具结果（tool_call 条目已合并参数与结果）、命令子会话生命周期、
+      // 知识检索与 hook 通知 —— 对轨迹都没有可读价值，一律不占记录索引。
+      if (
+        rawKind === 'queue' || rawKind.startsWith('queue_')
+        || rawKind === 'tool_message' || rawKind.startsWith('command_session')
+        || rawKind === 'knowledge_request' || rawKind.startsWith('hook/')
       ) continue
       if ((rawKind === 'terminal' || rawKind === 'turn_terminal') && !payload.error && item.status === 'completed') continue
       const kind = resolveKind(rawKind, payload)
@@ -510,7 +557,7 @@ export function buildTrajectoryLayout(rawTurns: unknown, t: Translate): TrajTurn
           if (resultRaw.trim()) {
             cell.result = resultRaw
             cell.outputDetail = resultRaw
-            cell.resultPreviewMarkdown = markdownPreviewText(resultRaw)
+            defineLazy(cell, 'resultPreviewMarkdown', () => markdownPreviewText(resultRaw))
           }
           if (candidatePayload.error === true) cell.isError = true
           const candidateStart = firstTime(candidatePayload, STARTED_KEYS)
@@ -649,7 +696,7 @@ function spanFor(cell: TrajCell, start: number, end: number): TimelineSpan {
 }
 
 /** 把每条记录投影到稳定的三通道时间线。 */
-export function deriveTimeline(
+function deriveTimelineUninstrumented(
   turns: readonly TrajTurnModel[],
   mode: TimelineMode = 'sequence',
 ): TimelineModel | null {
@@ -669,6 +716,23 @@ export function deriveTimeline(
   }
   if (spans.length === 0) return null
   return { start: 0, end: spans.length, spans, turnBoundaries }
+}
+
+/**
+ * W4-L instrumentation seam: trajectory layout is the cost of projecting the
+ * ledger onto the timeline, so it is recorded once per call. Both the sequence
+ * and the timed layout run inside the measured span.
+ */
+export function deriveTimeline(
+  turns: readonly TrajTurnModel[],
+  mode: TimelineMode = 'sequence',
+): TimelineModel | null {
+  const startedAt = perfNowMs()
+  try {
+    return deriveTimelineUninstrumented(turns, mode)
+  } finally {
+    chatPerf.recordTrajectoryLayout(perfNowMs() - startedAt)
+  }
 }
 
 function deriveTimedTimeline(
@@ -701,30 +765,26 @@ function deriveTimedTimeline(
 
   const spans: TimelineSpan[] = []
   const turnBoundaries: TimelineTurnBoundary[] = []
+  // 用循环累加求 min/max，避免对大数组做 Math.min(...) / Math.max(...) 展开。
+  let start = Infinity
+  let end = -Infinity
   for (const turn of timedTurns) {
-    const projected = turn.rawSpans.map((span): TimelineSpan => {
+    let turnStart = Infinity
+    for (const span of turn.rawSpans) {
       const offset = removedIdleBySpan.get(span) ?? 0
-      return {
-        ...span,
-        start: span.start - offset,
-        end: (actualDuration ? span.end : span.start) - offset,
-      }
-    })
-    spans.push(...projected)
+      const projectedStart = span.start - offset
+      const projectedEnd = (actualDuration ? span.end : span.start) - offset
+      spans.push({ ...span, start: projectedStart, end: projectedEnd })
+      if (projectedStart < turnStart) turnStart = projectedStart
+      if (projectedStart < start) start = projectedStart
+      if (projectedEnd > end) end = projectedEnd
+    }
     if (turn.turn !== null) {
-      turnBoundaries.push({
-        turn: turn.turn,
-        time: Math.min(...projected.map(span => span.start)),
-      })
+      turnBoundaries.push({ turn: turn.turn, time: turnStart })
     }
   }
 
-  return {
-    start: Math.min(...spans.map(span => span.start)),
-    end: Math.max(...spans.map(span => span.end)),
-    spans,
-    turnBoundaries,
-  }
+  return { start, end, spans, turnBoundaries }
 }
 
 /** 选区覆盖的记录索引集合。 */
@@ -793,11 +853,6 @@ export function filterRecords(
   return records.filter(record => recordNeedle(record).includes(needle))
 }
 
-function countTools(records: readonly TableRecord[]): number {
-  return records.filter(record =>
-    record.cell.kind === 'tool' || record.cell.kind === 'subtool').length
-}
-
 /** 轮次折叠：每轮只留首条记录并附摘要行。 */
 export function collapseTurnRecords(
   records: readonly TableRecord[],
@@ -805,11 +860,28 @@ export function collapseTurnRecords(
   collapsedAssistants: ReadonlySet<string>,
   t: Translate,
 ): readonly TableRecord[] {
-  const turnRecords = new Map<number | null, TableRecord[]>()
+  // 单趟分桶：一次遍历同时建立「轮次分组标题集合」「轮次工具数」以及
+  // 「轮次 + 分组」桶与分组工具数，随后再遍历一次生成结果。
+  // 原实现在过滤阶段对每条记录重扫整轮桶（含按分组 filter），复杂度 O(k²)。
+  const turnSteps = new Map<number | null, Set<string>>()
+  const turnTools = new Map<number | null, number>()
+  const groupBuckets = new Map<string, TableRecord[]>()
+  const groupTools = new Map<string, number>()
+
   for (const record of records) {
-    const bucket = turnRecords.get(record.turn)
+    const turn = record.turn
+    if (record.group.length > 0) {
+      const steps = turnSteps.get(turn)
+      if (steps) steps.add(record.group)
+      else turnSteps.set(turn, new Set([record.group]))
+    }
+    const isTool = record.cell.kind === 'tool' || record.cell.kind === 'subtool'
+    if (isTool) turnTools.set(turn, (turnTools.get(turn) ?? 0) + 1)
+    const identity = requestIdentity(turn, record.group)
+    const bucket = groupBuckets.get(identity)
     if (bucket) bucket.push(record)
-    else turnRecords.set(record.turn, [record])
+    else groupBuckets.set(identity, [record])
+    if (isTool) groupTools.set(identity, (groupTools.get(identity) ?? 0) + 1)
   }
 
   const output: TableRecord[] = []
@@ -822,25 +894,24 @@ export function collapseTurnRecords(
     }
     if (turnCollapsed) {
       if (!record.turnStart) continue
-      const bucket = turnRecords.get(record.turn) ?? []
-      const steps = new Set(
-        bucket.map(candidate => candidate.group).filter(title => title.length > 0),
-      ).size
+      const steps = turnSteps.get(record.turn)?.size ?? 0
+      const tools = turnTools.get(record.turn) ?? 0
       output.push({
         ...record,
-        collapsedSummary: t('trajectory.summaryTurn', { steps, tools: countTools(bucket) }),
+        collapsedSummary: t('trajectory.summaryTurn', { steps, tools }),
         collapsedSummaryKind: 'turn',
       })
       continue
     }
     const assistantKey = requestIdentity(record.turn, record.group)
     if (collapsedAssistants.has(assistantKey)) {
-      const bucket = (turnRecords.get(record.turn) ?? [])
-        .filter(candidate => candidate.group === record.group)
-      if (bucket[0]?.cell.index !== record.cell.index) continue
+      const bucket = groupBuckets.get(assistantKey)
+      if (bucket?.[0]?.cell.index !== record.cell.index) continue
       output.push({
         ...record,
-        collapsedSummary: t('trajectory.summaryAssistantTools', { count: countTools(bucket) }),
+        collapsedSummary: t('trajectory.summaryAssistantTools', {
+          count: groupTools.get(assistantKey) ?? 0,
+        }),
         collapsedSummaryKind: 'assistant',
       })
       continue

@@ -1,3 +1,4 @@
+// AI生成
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -846,6 +847,54 @@ test('a stale atomic snapshot is refused and keeps the durable protocol contract
   // A stale snapshot leaves the durable projection intact.
   assert.equal(buildChatThreadMaterializedMessages(SESSION)?.length, 2);
 
+  registerChatThreadSnapshotLoader(null);
+});
+
+test('snapshot_required reloads are single-flight and cool down after settling', async () => {
+  resetChatThreadRuntime(SESSION);
+  ensureChatThreadRuntime(SESSION);
+  const store = new FakeStore();
+  let loads = 0;
+  let appliedSnapshots = 0;
+  let release: (() => void) | null = null;
+  registerChatThreadSnapshotLoader(async () => {
+    loads += 1;
+    await new Promise<void>((resolve) => { release = resolve; });
+    return { cursor: 10, turns: [], items: [], blocks: [] };
+  });
+  let clock = 1_000_000;
+  const apply = (payload: unknown) =>
+    applyChatThreadServerEvent(store, SESSION, 'thread_snapshot_required', payload, {
+      now: () => clock,
+      onSnapshotApplied: () => { appliedSnapshots += 1; },
+      onSnapshotRequired: () => { appliedSnapshots += 0; }
+    });
+  const frame = { event: 'thread_snapshot_required', data: {} };
+
+  // Burst while the first reload is still in flight: a flapping watch must not
+  // start a second overlapping reload.
+  apply(frame);
+  apply(frame);
+  apply(frame);
+  assert.equal(loads, 1);
+
+  release?.();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(appliedSnapshots, 1);
+  assert.equal(loads, 1);
+
+  // Inside the cooldown the trailing burst is dropped outright.
+  clock += 10;
+  apply(frame);
+  assert.equal(loads, 1);
+
+  // Past the cooldown a fresh reload is admitted again.
+  clock += 5_000;
+  apply(frame);
+  assert.equal(loads, 2);
+
+  release?.();
+  await new Promise((resolve) => setTimeout(resolve, 0));
   registerChatThreadSnapshotLoader(null);
 });
 

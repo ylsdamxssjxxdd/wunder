@@ -60,6 +60,8 @@ import {
   normalizeMessageFeedbackVote
 } from '@/utils/messageFeedback';
 import { applyChatThreadServerEvent, submitChatThreadTurn, getChatThreadState } from '@/realtime/chat/chatThreadRuntime';
+import { markRuntimeProjectionChanged } from '@/realtime/chat/chatRuntimeProjectionInvalidation';
+import { selectParkedTurnMessageIds } from '@/stores/chatQueueProjection';
 import { createWsMultiplexer } from '@/utils/ws';
 import { isDemoMode, loadDemoChatState, saveDemoChatState } from '@/utils/demo';
 import { emitAgentRuntimeRefresh, emitWorkspaceRefresh } from '@/utils/workspaceEvents';
@@ -1291,5 +1293,34 @@ export const chatSendActions = {
           startSessionWatcher(this, sessionId);
         }
       }
+    },
+
+    /**
+     * 撤下一条还没开跑的排队轮次：连同它的本地乐观消息一起剪掉。
+     * 引擎侧这条从未落进会话历史，留着就是一条永远不会更新的残影。
+     */
+    dropParkedQueueTurn(clientMessageId: unknown) {
+      const sessionId = String(this.activeSessionId || '').trim();
+      const cleanedClientMessageId = String(clientMessageId || '').trim();
+      const staleIds = new Set(selectParkedTurnMessageIds(this.messages, cleanedClientMessageId));
+      if (!sessionId || !staleIds.size) return;
+      for (let index = this.messages.length - 1; index >= 0; index -= 1) {
+        const message = this.messages[index] as Record<string, unknown> | null;
+        const messageId = String(
+          message?.message_id ?? message?.messageId ?? message?.id ?? ''
+        ).trim();
+        if (staleIds.has(messageId)) {
+          this.messages.splice(index, 1);
+        }
+      }
+      const threadState = getChatThreadState(sessionId);
+      threadState?.turns.delete(`pending:${cleanedClientMessageId}`);
+      cacheSessionMessages(sessionId, this.messages);
+      markRuntimeProjectionChanged(this, {
+        sessionId,
+        reason: 'queue_turn_withdrawn',
+        immediate: true
+      });
+      this.scheduleSnapshot(true);
     },
 };

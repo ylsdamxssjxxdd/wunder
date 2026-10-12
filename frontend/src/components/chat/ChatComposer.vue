@@ -143,7 +143,11 @@
     </div>
 
     <!-- 排队条：当前轮还在跑时发出的消息先停在引擎队列里，可插话 / 编辑 / 删除 / 拖动排序。 -->
-    <ComposerQueueStrip :session-id="activeQueueSessionId" @edit="handleQueueTurnEdit" />
+    <ComposerQueueStrip
+      :session-id="activeQueueSessionId"
+      @edit="handleQueueTurnEdit"
+      @withdrawn="handleQueueTurnWithdrawn"
+    />
 
     <!-- 输入框是唯一的「卡片」：白底 + 细边 + 圆角；工具行不再共用这张底。 -->
     <div class="input-box input-box--world">
@@ -1220,6 +1224,12 @@ const focusComposerInputAtEnd = () => {
 };
 
 const activeQueueSessionId = computed(() => String(chatStore.activeSessionId || '').trim());
+
+// 撤下一条还没开跑的轮次：引擎侧它从未进过会话历史，本地占位必须一起消失。
+const handleQueueTurnWithdrawn = (item: { clientMessageId?: string }) => {
+  const clientMessageId = String(item?.clientMessageId || '').trim();
+  if (clientMessageId) chatStore.dropParkedQueueTurn(clientMessageId);
+};
 
 // 排队条目被「编辑」撤下后放回输入框：文本追加，附件按已转换的媒体条目还原。
 const handleQueueTurnEdit = (item: { content?: string; attachments?: unknown[] }) => {

@@ -4,6 +4,7 @@ use crate::storage::{StorageLifecycle, USAGE_CHAT_WATERMARK_KEY};
 use anyhow::{ensure, Result};
 use serde_json::{json, Value};
 use uuid::Uuid;
+use wunder_core::storage_backend::ThreadSnapshotWindow;
 pub(super) trait PostgresThreadLogStorage {
     fn load_subagent_context_impl(
         &self,
@@ -39,7 +40,12 @@ pub(super) trait PostgresThreadLogStorage {
         session_id: &str,
         block: &Value,
     ) -> Result<i64>;
-    fn thread_snapshot_impl(&self, user_id: &str, session_id: &str) -> Result<Value>;
+    fn thread_snapshot_impl(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        window: &ThreadSnapshotWindow,
+    ) -> Result<Value>;
     fn list_thread_text_blocks_impl(
         &self,
         session_id: &str,
@@ -267,7 +273,7 @@ impl PostgresThreadLogStorage for PostgresStorage {
             .get(0);
         let mut written = conn.execute(
             "UPDATE thread_item_blocks SET event_id=$6, payload=$7 \
-             WHERE session_id=$1 AND item_id=$3 AND field=$4 AND block_index=$5 \
+             WHERE session_id=$1 AND user_id=$2 AND item_id=$3 AND field=$4 AND block_index=$5 \
              AND event_id<=$6 AND payload<>$7",
             &[
                 &session_id,
@@ -283,7 +289,7 @@ impl PostgresThreadLogStorage for PostgresStorage {
             let exists: bool = conn
                 .query_one(
                     "SELECT EXISTS(SELECT 1 FROM thread_item_blocks \
-                     WHERE session_id=$1 AND item_id=$3 AND field=$4 AND block_index=$5)",
+                     WHERE session_id=$1 AND user_id=$2 AND item_id=$3 AND field=$4 AND block_index=$5)",
                     &[&session_id, &user_id, &item_id, &field, &index],
                 )?
                 .get(0);
@@ -327,8 +333,14 @@ impl PostgresThreadLogStorage for PostgresStorage {
         conn.commit()?;
         Ok(change_seq)
     }
-    fn thread_snapshot_impl(&self, user_id: &str, session_id: &str) -> Result<Value> {
+    fn thread_snapshot_impl(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        window: &ThreadSnapshotWindow,
+    ) -> Result<Value> {
         self.ensure_initialized()?;
+        let window = window.clone().clamped();
         let mut client = self.conn()?;
         let mut tx = client.transaction()?;
         tx.batch_execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")?;
@@ -341,7 +353,17 @@ impl PostgresThreadLogStorage for PostgresStorage {
         // Match SQLite: an owned chat session can exist before its first turn.
         // Session authorization remains at the API boundary.
         if owner.is_none() {
-            return Ok(json!({"cursor":0,"turns":[],"items":[],"blocks":[],"item_total":0}));
+            return Ok(json!({
+                "cursor": 0,
+                "turns": [],
+                "items": [],
+                "blocks": [],
+                "item_total": 0,
+                "truncated": false,
+                "has_older": false,
+                "window_start_turn_index": Value::Null,
+                "window_end_turn_index": Value::Null,
+            }));
         }
         ensure!(owner.as_deref() == Some(user_id), "thread owner mismatch");
         let cursor: i64 = tx
@@ -350,7 +372,13 @@ impl PostgresThreadLogStorage for PostgresStorage {
                 &[&session_id],
             )?
             .get(0);
-        let turns = tx.query("SELECT turn_id,user_turn_index,status,summary,payload,updated_time,root_turn_id,trigger_kind FROM thread_turns WHERE user_id=$1 AND session_id=$2 ORDER BY user_turn_index ASC, created_time ASC, turn_id ASC", &[&user_id, &session_id])?
+        // Tail-window on turns: newest `max_turns` first as a hard bound, then
+        // restored ascending so renderers keep a stable order.
+        let before = window.before_turn_index.unwrap_or(i64::MAX);
+        let max_turns = window.max_turns as i64;
+        let max_items = window.max_items as i64;
+        let max_blocks = window.max_blocks as i64;
+        let mut turns = tx.query("SELECT turn_id,user_turn_index,status,summary,payload,updated_time,root_turn_id,trigger_kind FROM thread_turns WHERE user_id=$1 AND session_id=$2 AND user_turn_index < $3 ORDER BY user_turn_index DESC, created_time DESC, turn_id DESC LIMIT $4", &[&user_id, &session_id, &before, &max_turns])?
             .into_iter().map(|row| {
                 let mut turn = turn_row(row);
                 if turn["trigger_kind"] == "continuation" {
@@ -358,7 +386,19 @@ impl PostgresThreadLogStorage for PostgresStorage {
                 }
                 turn
             }).collect::<Vec<_>>();
-        let items = tx.query("SELECT item_id,item_index,kind,status,revision,payload,created_time,updated_time,turn_id,visibility,root_turn_id,created_seq FROM thread_items WHERE user_id=$1 AND session_id=$2 AND visibility='user' ORDER BY created_seq ASC, item_index ASC", &[&user_id, &session_id])?
+        turns.reverse();
+        let window_start_turn_index = turns.first().and_then(|turn| turn["user_turn_index"].as_i64());
+        let window_end_turn_index = turns.last().and_then(|turn| turn["user_turn_index"].as_i64());
+        let has_older = match window_start_turn_index {
+            Some(start) => tx
+                .query_opt(
+                    "SELECT 1 FROM thread_turns WHERE user_id=$1 AND session_id=$2 AND user_turn_index < $3 LIMIT 1",
+                    &[&user_id, &session_id, &start],
+                )?
+                .is_some(),
+            None => false,
+        };
+        let mut items = tx.query("SELECT item_id,item_index,kind,status,revision,payload,created_time,updated_time,turn_id,visibility,root_turn_id,created_seq FROM thread_items WHERE user_id=$1 AND session_id=$2 AND visibility='user' AND turn_id IN (SELECT turn_id FROM thread_turns WHERE user_id=$3 AND session_id=$4 AND user_turn_index < $5 ORDER BY user_turn_index DESC, created_time DESC, turn_id DESC LIMIT $6) ORDER BY created_seq DESC, item_index DESC LIMIT $7", &[&user_id, &session_id, &user_id, &session_id, &before, &max_turns, &max_items])?
             .into_iter()
             .map(|row| {
                 let mut item = change_item_row_pg(&row);
@@ -369,18 +409,24 @@ impl PostgresThreadLogStorage for PostgresStorage {
                 item
             })
             .collect::<Vec<_>>();
-        let item_total = items.len() as i64;
-        let blocks = tx.query("SELECT payload FROM thread_item_blocks WHERE user_id=$2 AND session_id=$1 AND item_id IN (SELECT item_id FROM thread_items WHERE user_id=$2 AND session_id=$1 AND visibility='user') ORDER BY item_id, field, block_index", &[&session_id, &user_id])?
+        let items_truncated = items.len() as i64 >= max_items;
+        items.reverse();
+        let blocks = tx.query("SELECT payload FROM thread_item_blocks WHERE user_id=$1 AND session_id=$2 AND item_id IN (SELECT item_id FROM thread_items WHERE user_id=$3 AND session_id=$4 AND visibility='user' AND turn_id IN (SELECT turn_id FROM thread_turns WHERE user_id=$5 AND session_id=$6 AND user_turn_index < $7 ORDER BY user_turn_index DESC, created_time DESC, turn_id DESC LIMIT $8) ORDER BY created_seq DESC, item_index DESC LIMIT $9) ORDER BY item_id, field, block_index LIMIT $10", &[&user_id, &session_id, &user_id, &session_id, &user_id, &session_id, &before, &max_turns, &max_items, &max_blocks])?
             .into_iter()
             .filter_map(|r| serde_json::from_str::<Value>(&r.get::<_, String>(0)).ok())
             .collect::<Vec<_>>();
+        let blocks_truncated = blocks.len() as i64 >= max_blocks;
         tx.commit()?;
         Ok(json!({
             "cursor": cursor,
             "turns": turns,
             "items": items,
             "blocks": blocks,
-            "item_total": item_total,
+            "item_total": items.len(),
+            "truncated": has_older || items_truncated || blocks_truncated,
+            "has_older": has_older,
+            "window_start_turn_index": window_start_turn_index,
+            "window_end_turn_index": window_end_turn_index,
         }))
     }
     fn list_thread_text_blocks_impl(

@@ -5,6 +5,12 @@ import {
   rememberMessageScrollPosition,
   restoreMessageScrollPosition
 } from './messageScrollMemory';
+import { chatPerf } from '@/utils/chatPerf';
+
+// W4-L: guarded clock for the heavy-history metrics. `performance` is missing in
+// some non-browser hosts, and the recorder is inert while capture is off.
+const perfNowMs = (): number =>
+  typeof performance !== 'undefined' ? performance.now() : Date.now();
 
 export type RenderableMessage = {
   key: string;
@@ -30,6 +36,11 @@ export type MessageViewportRuntimeOptions = {
   estimateVirtualOffsetTop: (keys: string[], index: number) => number;
   resolveVirtualMessageHeight: (key: string) => number;
   loadOlderHistory?: () => Promise<unknown[] | unknown>;
+  // Optional session-scoped persistence for the measured height table. When
+  // provided, the table is hydrated for the current session on creation and
+  // written back on prune/dispose. Both caps live in the store.
+  heightEstimateStore?: MessageHeightEstimateStore;
+  heightEstimateSessionId?: () => string;
 };
 
 export type MessageViewportRuntime = {
@@ -62,6 +73,217 @@ const clamp = (value: number, min: number, max: number): number => Math.max(min,
 export const MESSAGE_VIRTUAL_HEIGHT_CACHE_LIMIT = 384;
 const MESSAGE_RESIZE_REFRESH_DELAY_MS = 64;
 const WORKFLOW_LAYOUT_REFRESH_INTERVAL_MS = 120;
+
+// --- Session-scoped, bounded persistence of the height estimate table ----
+//
+// The measured row-height table is reusable across remounts, but it must not
+// grow without bound. The store keeps at most `limitPerSession` rows per session
+// and at most `sessionLimit` sessions, evicting the least-recently-touched
+// session first, so the persisted footprint is capped at
+// `limitPerSession * sessionLimit` entries.
+
+export const MESSAGE_VIRTUAL_HEIGHT_STORE_KEY = 'wunder_chat_message_virtual_heights';
+export const MESSAGE_VIRTUAL_HEIGHT_STORE_LIMIT_PER_SESSION = 256;
+export const MESSAGE_VIRTUAL_HEIGHT_STORE_SESSION_LIMIT = 16;
+
+export type HeightEstimateStorageLike = {
+  getItem: (key: string) => string | null;
+  setItem: (key: string, value: string) => void;
+};
+
+type HeightEstimateStoreState = {
+  version: 1;
+  order: string[];
+  sessions: Record<string, Record<string, number>>;
+};
+
+export type MessageHeightEstimateStore = {
+  load: (sessionId: string) => Map<string, number>;
+  save: (sessionId: string, entries: Map<string, number> | Iterable<[string, number]>) => void;
+  dropSession: (sessionId: string) => void;
+  sessions: () => string[];
+  clear: () => void;
+};
+
+const sanitizeHeightRecord = (input: unknown, limit: number): Record<string, number> => {
+  const output: Record<string, number> = {};
+  if (!input || typeof input !== 'object') {
+    return output;
+  }
+  const entries = Object.entries(input as Record<string, unknown>);
+  const start = Math.max(0, entries.length - limit);
+  for (let index = start; index < entries.length; index += 1) {
+    const [key, raw] = entries[index];
+    const value = Math.floor(Number(raw));
+    if (!key || !Number.isFinite(value) || value <= 0) {
+      continue;
+    }
+    output[key] = value;
+  }
+  return output;
+};
+
+export const createMessageHeightEstimateStore = (options: {
+  storage?: HeightEstimateStorageLike | null;
+  storageKey?: string;
+  limitPerSession?: number;
+  sessionLimit?: number;
+} = {}): MessageHeightEstimateStore => {
+  const storageKey = String(options.storageKey || MESSAGE_VIRTUAL_HEIGHT_STORE_KEY);
+  const limitPerSession = clamp(
+    Math.trunc(Number(options.limitPerSession) || MESSAGE_VIRTUAL_HEIGHT_STORE_LIMIT_PER_SESSION),
+    1,
+    MESSAGE_VIRTUAL_HEIGHT_CACHE_LIMIT
+  );
+  const sessionLimit = clamp(
+    Math.trunc(Number(options.sessionLimit) || MESSAGE_VIRTUAL_HEIGHT_STORE_SESSION_LIMIT),
+    1,
+    256
+  );
+
+  const resolveStorage = (): HeightEstimateStorageLike | null => {
+    if (options.storage !== undefined) {
+      return options.storage || null;
+    }
+    try {
+      const candidate = (globalThis as { localStorage?: HeightEstimateStorageLike }).localStorage;
+      if (candidate && typeof candidate.getItem === 'function' && typeof candidate.setItem === 'function') {
+        return candidate;
+      }
+    } catch (error) {
+      return null;
+    }
+    return null;
+  };
+
+  const read = (): HeightEstimateStoreState => {
+    const empty: HeightEstimateStoreState = { version: 1, order: [], sessions: {} };
+    const storage = resolveStorage();
+    if (!storage) {
+      return empty;
+    }
+    try {
+      const raw = storage.getItem(storageKey);
+      if (!raw) {
+        return empty;
+      }
+      const parsed = JSON.parse(raw) as Partial<HeightEstimateStoreState> | null;
+      if (!parsed || typeof parsed !== 'object') {
+        return empty;
+      }
+      const order = Array.isArray(parsed.order)
+        ? parsed.order.map((value) => String(value || '').trim()).filter(Boolean)
+        : [];
+      const sessionsSource = parsed.sessions && typeof parsed.sessions === 'object'
+        ? (parsed.sessions as Record<string, unknown>)
+        : {};
+      const sessions: Record<string, Record<string, number>> = {};
+      Object.keys(sessionsSource).forEach((sessionId) => {
+        if (!sessionId) {
+          return;
+        }
+        sessions[sessionId] = sanitizeHeightRecord(sessionsSource[sessionId], limitPerSession);
+      });
+      return { version: 1, order, sessions };
+    } catch (error) {
+      return empty;
+    }
+  };
+
+  const write = (state: HeightEstimateStoreState): void => {
+    const storage = resolveStorage();
+    if (!storage) {
+      return;
+    }
+    try {
+      storage.setItem(storageKey, JSON.stringify(state));
+    } catch (error) {
+      // Persistence is best-effort: a full or disabled storage must never throw.
+    }
+  };
+
+  const touch = (state: HeightEstimateStoreState, sessionId: string): void => {
+    const order = [sessionId, ...state.order.filter((value) => value !== sessionId)];
+    order.slice(sessionLimit).forEach((evicted) => {
+      delete state.sessions[evicted];
+    });
+    state.order = order.slice(0, sessionLimit);
+  };
+
+  const load = (sessionId: string): Map<string, number> => {
+    const id = String(sessionId || '').trim();
+    const result = new Map<string, number>();
+    if (!id) {
+      return result;
+    }
+    const state = read();
+    const record = state.sessions[id];
+    if (record) {
+      Object.keys(record).forEach((key) => result.set(key, record[key]));
+      if (state.order[0] !== id) {
+        touch(state, id);
+        write(state);
+      }
+    }
+    return result;
+  };
+
+  const save = (
+    sessionId: string,
+    entries: Map<string, number> | Iterable<[string, number]>
+  ): void => {
+    const id = String(sessionId || '').trim();
+    if (!id) {
+      return;
+    }
+    const state = read();
+    const record: Record<string, number> = {};
+    const input = entries instanceof Map ? Array.from(entries.entries()) : Array.from(entries);
+    input.forEach((entry) => {
+      const key = String(entry?.[0] || '').trim();
+      const value = Math.floor(Number(entry?.[1]));
+      if (!key || !Number.isFinite(value) || value <= 0) {
+        return;
+      }
+      record[key] = value;
+    });
+    const keys = Object.keys(record);
+    if (keys.length > 0) {
+      const trimmed: Record<string, number> = {};
+      keys.slice(Math.max(0, keys.length - limitPerSession)).forEach((key) => {
+        trimmed[key] = record[key];
+      });
+      state.sessions[id] = trimmed;
+    } else {
+      delete state.sessions[id];
+    }
+    touch(state, id);
+    write(state);
+  };
+
+  const dropSession = (sessionId: string): void => {
+    const id = String(sessionId || '').trim();
+    if (!id) {
+      return;
+    }
+    const state = read();
+    delete state.sessions[id];
+    state.order = state.order.filter((value) => value !== id);
+    write(state);
+  };
+
+  const clear = (): void => {
+    write({ version: 1, order: [], sessions: {} });
+  };
+
+  return {
+    load,
+    save,
+    dropSession,
+    sessions: () => read().order.slice(),
+    clear
+  };
+};
 
 export const createMessageViewportRuntime = (
   options: MessageViewportRuntimeOptions
@@ -97,6 +319,33 @@ export const createMessageViewportRuntime = (
     }
     chatDebugLog('messenger.viewport', event, payload);
   };
+
+  const resolveHeightEstimateSessionId = (): string => {
+    if (typeof options.heightEstimateSessionId === 'function') {
+      return String(options.heightEstimateSessionId() || '').trim();
+    }
+    return String(options.activeConversationKey?.value || '').trim();
+  };
+
+  const persistMessageHeightEstimates = () => {
+    if (!options.heightEstimateStore) {
+      return;
+    }
+    const sessionId = resolveHeightEstimateSessionId();
+    if (!sessionId) {
+      return;
+    }
+    options.heightEstimateStore.save(sessionId, options.messageVirtualHeightCache);
+  };
+
+  if (options.heightEstimateStore) {
+    const persistedHeights = options.heightEstimateStore.load(resolveHeightEstimateSessionId());
+    persistedHeights.forEach((height, key) => {
+      if (!options.messageVirtualHeightCache.has(key)) {
+        options.messageVirtualHeightCache.set(key, height);
+      }
+    });
+  }
 
   const applyMessageVirtualMetrics = (scrollTop: number, viewportHeight: number) => {
     if (options.messageVirtualViewportHeight.value !== viewportHeight) {
@@ -150,6 +399,7 @@ export const createMessageViewportRuntime = (
     }
     if (changed) {
       options.messageVirtualLayoutVersion.value += 1;
+      persistMessageHeightEstimates();
     }
   };
 
@@ -513,12 +763,18 @@ export const createMessageViewportRuntime = (
     const shouldUpdateScrollState = refreshOptions.updateScrollState === true;
     const shouldMeasure = refreshOptions.measure === true;
     if (typeof window === 'undefined') {
-      syncMessageVirtualMetrics();
-      if (shouldUpdateScrollState) {
-        updateMessageScrollState();
-      }
-      if (shouldMeasure) {
-        measureVisibleMessageHeights(refreshOptions.measureKeys);
+      // W4-L: the synchronous recompute path still costs main-thread time.
+      const startedAt = perfNowMs();
+      try {
+        syncMessageVirtualMetrics();
+        if (shouldUpdateScrollState) {
+          updateMessageScrollState();
+        }
+        if (shouldMeasure) {
+          measureVisibleMessageHeights(refreshOptions.measureKeys);
+        }
+      } finally {
+        chatPerf.recordVirtualWindowRecompute(perfNowMs() - startedAt);
       }
       return;
     }
@@ -549,16 +805,22 @@ export const createMessageViewportRuntime = (
       scheduledViewportRefreshMeasureAll = false;
       scheduledViewportRefreshReason = '';
       scheduledViewportRefreshMeasureKeys.clear();
-      syncMessageVirtualMetrics();
-      if (shouldFlushScrollState) {
-        updateMessageScrollState();
-      }
-      if (shouldFlushMeasure) {
-        if (shouldMeasureAll && options.shouldVirtualizeMessages.value) {
-          scheduleDeferredVisibleMeasure(reason || 'viewport-refresh');
-        } else {
-          measureVisibleMessageHeights(nextMeasureKeys);
+      // W4-L: the deferred flush is the real recompute; measure it once per frame.
+      const startedAt = perfNowMs();
+      try {
+        syncMessageVirtualMetrics();
+        if (shouldFlushScrollState) {
+          updateMessageScrollState();
         }
+        if (shouldFlushMeasure) {
+          if (shouldMeasureAll && options.shouldVirtualizeMessages.value) {
+            scheduleDeferredVisibleMeasure(reason || 'viewport-refresh');
+          } else {
+            measureVisibleMessageHeights(nextMeasureKeys);
+          }
+        }
+      } finally {
+        chatPerf.recordVirtualWindowRecompute(perfNowMs() - startedAt);
       }
       void maybeLoadOlderHistory();
     });
@@ -752,6 +1014,7 @@ export const createMessageViewportRuntime = (
       workflowLayoutRefreshHandle = null;
     }
     rememberCurrentScroll();
+    persistMessageHeightEstimates();
     releaseObservedMessageNodes();
     messageResizeObserver = null;
     scheduledViewportRefreshNeedsScrollState = false;

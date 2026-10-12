@@ -1,4 +1,5 @@
 import { readSessionQuotaUsed } from '@/stores/chatSessionQuota';
+import type { AgentRuntimeState } from './model';
 
 export type TaskListItem = {
   id: string;
@@ -34,7 +35,60 @@ export function taskWindow(count: number, top: number, height: number, rowHeight
   return { start, end: Math.min(count, start + size) };
 }
 
+export type TaskRowRange = { start: number; end: number };
+export type TaskRowStateResolver<T> = (item: T) => AgentRuntimeState;
+
+/**
+ * Resolve render state only for the rows inside the virtual window. The caller
+ * passes the same range used for slicing, so a single session bump can never
+ * fan out into a full-list state recompute (the sidebar dep-magnet).
+ */
+export function resolveVisibleTaskRows<T>(
+  items: ReadonlyArray<T>,
+  range: TaskRowRange,
+  resolveState: TaskRowStateResolver<T>
+): Array<T & { state: AgentRuntimeState }> {
+  const rows: Array<T & { state: AgentRuntimeState }> = [];
+  const end = Math.min(range.end, items.length);
+  for (let index = Math.max(0, range.start); index < end; index += 1) {
+    const item = items[index];
+    if (item === undefined || item === null) {
+      continue;
+    }
+    rows.push({ ...item, state: resolveState(item) });
+  }
+  return rows;
+}
+
+// Identity-keyed memo shared by the two call sites that build the same list from
+// the same source within one render (`MessengerSidebar.vue` and the controller's
+// right-dock session history). They pass the very same `sessions` array plus the
+// same agent id / new-session label, so the second call reuses the first
+// computation instead of rebuilding it. A mutated/replaced array identity (or a
+// different agent/label) naturally misses and recomputes; the memo never changes
+// the returned value, only whether it was recomputed.
+const taskListMemoCache = new WeakMap<Record<string, any>[], Map<string, TaskListItem[]>>();
+
 export function buildTaskList(sessions: Record<string, any>[], agentId: string, fallbackTitle: string): TaskListItem[] {
+  if (Array.isArray(sessions)) {
+    let byInput = taskListMemoCache.get(sessions);
+    if (!byInput) {
+      byInput = new Map<string, TaskListItem[]>();
+      taskListMemoCache.set(sessions, byInput);
+    }
+    const memoKey = `${String(agentId ?? '')}\u0000${String(fallbackTitle ?? '')}`;
+    const cached = byInput.get(memoKey);
+    if (cached) {
+      return cached;
+    }
+    const built = computeTaskList(sessions, agentId, fallbackTitle);
+    byInput.set(memoKey, built);
+    return built;
+  }
+  return computeTaskList(sessions, agentId, fallbackTitle);
+}
+
+function computeTaskList(sessions: Record<string, any>[], agentId: string, fallbackTitle: string): TaskListItem[] {
   const normalizeAgent = (value: unknown) => String(value || '').trim().replace(/^(?:default|__default__)$/, '');
   const seen = new Set<string>();
   return sessions.filter((item) => {

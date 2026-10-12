@@ -1,3 +1,4 @@
+// AI生成
 import { applyChatThreadEffects, syncChatThreadShell } from './chatThreadEffects';
 import { advanceThreadLogCursor, threadLogCursor } from './chatThreadCursor';
 import { selectVisibleMessageProjections } from '@/realtime/chat/chatRuntimeSelectors';
@@ -312,20 +313,30 @@ const WATCHDOG_V2_LIVENESS_IDLE_MS = 6000;
 
 // Atomic thread-log snapshot loader for the v2 pipeline (plan §5 M2-C). The
 // runtime module stays API-free; this module owns the real implementation and
-// tests can replace it via registerChatThreadSnapshotLoader.
+// tests can replace it via registerChatThreadSnapshotLoader. W1-D: the loader
+// is self-bounding — an unbounded fetch on a huge thread can otherwise hang
+// the snapshot_required recovery loop forever, so it aborts after this budget
+// and the runtime falls back to onSnapshotRequired.
+const CHAT_THREAD_SNAPSHOT_TIMEOUT_MS = 8000;
 registerChatThreadSnapshotLoader(async (sessionKey) => {
-  const response = await getThreadLogSnapshot(sessionKey);
-  const body = response?.data?.data ?? response?.data ?? {};
-  const cursor = Number(body?.cursor);
-  if (!Number.isSafeInteger(cursor) || cursor < 0) {
-    throw new Error('thread snapshot cursor missing');
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), CHAT_THREAD_SNAPSHOT_TIMEOUT_MS);
+  try {
+    const response = await getThreadLogSnapshot(sessionKey, {}, { signal: controller.signal });
+    const body = response?.data?.data ?? response?.data ?? {};
+    const cursor = Number(body?.cursor);
+    if (!Number.isSafeInteger(cursor) || cursor < 0) {
+      throw new Error('thread snapshot cursor missing');
+    }
+    return {
+      cursor,
+      turns: Array.isArray(body?.turns) ? body.turns : [],
+      items: Array.isArray(body?.items) ? body.items : [],
+      blocks: Array.isArray(body?.blocks) ? body.blocks : []
+    };
+  } finally {
+    clearTimeout(timeoutId);
   }
-  return {
-    cursor,
-    turns: Array.isArray(body?.turns) ? body.turns : [],
-    items: Array.isArray(body?.items) ? body.items : [],
-    blocks: Array.isArray(body?.blocks) ? body.blocks : []
-  };
 });
 
 let wsRequestSeq = 0;

@@ -1,6 +1,17 @@
 import { emptyPerfMetrics, incrementPerfCounter, recordPerfDuration, summarizePerfMetrics } from './chatPerfMetrics';
 import { observeChatBrowserPerformance } from './chatPerfBrowser';
 
+// W4-L: heavy-history thread rendering metrics. Every name here must stay registered in the
+// chatPerfMetrics.ts whitelist, otherwise the record call below is dropped without an error.
+export const CHAT_PERF_HEAVY_HISTORY_METRICS = {
+  snapshotApplyMs: 'snapshot_apply_ms',
+  threadProjectionMs: 'thread_projection_ms',
+  virtualWindowRecomputeMs: 'virtual_window_recompute_ms',
+  trajectoryLayoutMs: 'trajectory_layout_ms',
+  snapshotAbort: 'snapshot_abort',
+  workflowEventsItems: 'workflow_events_items'
+} as const;
+
 const STORAGE_KEY = 'wunder:performance-capture';
 const MAX_CAPTURE_MS = 30 * 60 * 1000;
 const listeners = new Set<() => void>();
@@ -72,6 +83,14 @@ const snapshot = () => {
         workflowBuild: duration('chat_workflow_entries_build') },
       loading: { session: duration('chat_session_detail_load'), history: duration('chat_history_load'),
         snapshot: duration('chat_snapshot_flush') },
+      heavyHistory: {
+        snapshotApply: duration('snapshot_apply_ms'),
+        threadProjection: duration('thread_projection_ms'),
+        virtualWindowRecompute: duration('virtual_window_recompute_ms'),
+        trajectoryLayout: duration('trajectory_layout_ms'),
+        snapshotAborts: metrics.counters.snapshot_abort || 0,
+        workflowEventItems: metrics.counters.workflow_events_items || 0
+      },
       sampledPeaks: { ...capture.peaks }
     },
     environment: { appVersion: typeof __WUNDER_APP_VERSION__ !== 'undefined' ? __WUNDER_APP_VERSION__ : 'dev',
@@ -112,6 +131,21 @@ export const chatPerf = {
     if (running) incrementPerfCounter(capture.metrics, name, delta);
   },
   recordDuration,
+  // W4-L heavy-history recording surface. Duration helpers no-op unless capture is running.
+  recordSnapshotApply: (ms: number, meta?: Record<string, unknown>) =>
+    recordDuration(CHAT_PERF_HEAVY_HISTORY_METRICS.snapshotApplyMs, ms, meta),
+  recordThreadProjection: (ms: number, meta?: Record<string, unknown>) =>
+    recordDuration(CHAT_PERF_HEAVY_HISTORY_METRICS.threadProjectionMs, ms, meta),
+  recordVirtualWindowRecompute: (ms: number, meta?: Record<string, unknown>) =>
+    recordDuration(CHAT_PERF_HEAVY_HISTORY_METRICS.virtualWindowRecomputeMs, ms, meta),
+  recordTrajectoryLayout: (ms: number, meta?: Record<string, unknown>) =>
+    recordDuration(CHAT_PERF_HEAVY_HISTORY_METRICS.trajectoryLayoutMs, ms, meta),
+  countSnapshotAbort: (delta = 1) => {
+    if (running) incrementPerfCounter(capture.metrics, CHAT_PERF_HEAVY_HISTORY_METRICS.snapshotAbort, delta);
+  },
+  countWorkflowEventsItems: (delta = 1) => {
+    if (running) incrementPerfCounter(capture.metrics, CHAT_PERF_HEAVY_HISTORY_METRICS.workflowEventsItems, delta);
+  },
   time: <T>(name: string, fn: () => T, meta?: Record<string, unknown>): T => {
     if (!running) return fn();
     const start = performance.now();

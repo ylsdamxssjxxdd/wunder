@@ -69,7 +69,8 @@ pub struct DesktopSettings {
     #[serde(default)]
     pub language: String,
     /// UI accent palette: "terracotta" (the 蜂巢 default; stored legacy names
-    /// like "light" render as it), "hula-green", "minimal" or "tech-blue".
+    /// like "light" render as it), "hula-green", "forest", "honey", "minimal"
+    /// or "tech-blue". The settings card offers the first four.
     #[serde(default = "default_theme")]
     pub theme: String,
     /// Composer send key: "enter" (default), "ctrl_enter" or "none" (button only).

@@ -297,15 +297,23 @@ fn summarize_tool_result(payload: &Value) -> String {
 }
 
 fn extract_usage(payload: &Value) -> Option<Usage> {
+    // 优先级：llm_output 顶层 usage → 会话统计 → meta.message_stats 内嵌的
+    // usage/round_usage（会话写入器整体覆盖 payload 后顶层 usage 只剩这里）。
     let mut sources: Vec<&Value> = Vec::new();
+    if let Some(usage) = payload.get("usage").filter(|v| v.is_object()) {
+        sources.push(usage);
+    }
     if let Some(stats) = payload.get("stats").filter(|v| v.is_object()) {
         sources.push(stats);
     }
     if let Some(stats) = meta_of(payload).get("message_stats").filter(|v| v.is_object()) {
+        if let Some(nested) = stats.get("usage").filter(|v| v.is_object()) {
+            sources.push(nested);
+        }
+        if let Some(nested) = stats.get("round_usage").filter(|v| v.is_object()) {
+            sources.push(nested);
+        }
         sources.push(stats);
-    }
-    if let Some(usage) = payload.get("usage").filter(|v| v.is_object()) {
-        sources.push(usage);
     }
     if sources.is_empty() {
         return None;
@@ -330,6 +338,28 @@ fn extract_usage(payload: &Value) -> Option<Usage> {
         think: pick(&["reasoning_tokens"]),
     };
     usage.any().then_some(usage)
+}
+
+/// 历史遗留的噪音条目：传输态与统计通知（`*_delta`/heartbeat/context_usage/
+/// progress/workspace_update/model_usage/llm_stream_retry 不产生条目，但旧库
+/// 里可能残留）、队列瞬态（含 user_withdrew 取消回执）、会话写入器重复落账
+/// 的工具结果（tool_call 条目已合并参数与结果）、命令子会话生命周期、知识
+/// 检索与 hook 通知、轮次开始回执与 admin 模型请求 —— 对轨迹都没有可读价值。
+fn is_skipped_raw_kind(raw_kind: &str) -> bool {
+    matches!(
+        raw_kind,
+        "progress"
+            | "workspace_update"
+            | "model_usage"
+            | "llm_stream_retry"
+            | "thread_turn_started"
+            | "model_call"
+            | "queue"
+            | "tool_message"
+            | "knowledge_request"
+    ) || raw_kind.starts_with("queue_")
+        || raw_kind.starts_with("command_session")
+        || raw_kind.starts_with("hook/")
 }
 
 fn resolve_kind(raw_kind: &str, payload: &Value) -> i32 {
@@ -498,7 +528,15 @@ fn build_cell(item: &Value, payload: &Value, kind: i32, index: usize) -> Cell {
     match kind {
         KIND_MESSAGE => {
             let content_text = content_to_text(payload.get("content").unwrap_or(&Value::Null));
-            let thinking_text = content_to_text(payload.get("reasoning").unwrap_or(&Value::Null));
+            // 流式壳写入 `reasoning`；会话写入器覆盖 payload 后字段名为
+            // `reasoning_content`，两个来源都要读。
+            let reasoning_text =
+                content_to_text(payload.get("reasoning").unwrap_or(&Value::Null));
+            let thinking_text = if reasoning_text.trim().is_empty() {
+                content_to_text(payload.get("reasoning_content").unwrap_or(&Value::Null))
+            } else {
+                reasoning_text
+            };
             let tool_calls = payload.get("tool_calls");
             if content_text.trim().is_empty() && tool_calls.map(Value::is_array).unwrap_or(false) {
                 cell.tool_call_only = true;
@@ -606,6 +644,24 @@ fn parse_snapshot(snapshot: &Value) -> SnapshotModel {
             }
             let payload = payload_of(item);
             let raw_kind = raw_kind_of(item, payload).to_string();
+            // 传输态/统计通知、队列瞬态、重复落账等噪音条目不进时间线；
+            // 后端已白名单化不再入账，这里跳过历史遗留数据（不占记录索引）。
+            if is_skipped_raw_kind(&raw_kind) {
+                continue;
+            }
+            // 成功的轮次终止只是生命周期回执；失败终止保留（携带错误详情）。
+            let item_status = item
+                .get("status")
+                .and_then(Value::as_str)
+                .or_else(|| payload.get("status").and_then(Value::as_str));
+            if matches!(raw_kind.as_str(), "terminal" | "turn_terminal")
+                && item_status == Some("completed")
+                && payload
+                    .get("error")
+                    .map_or(true, Value::is_null)
+            {
+                continue;
+            }
             let kind = resolve_kind(&raw_kind, payload);
             let index = cells.len();
             cells.push(build_cell(item, payload, kind, index));
@@ -1813,5 +1869,51 @@ mod tests {
         assert_eq!(texts.seconds(None), "未记录");
         assert_eq!(thousands(11049.0), "11,049");
         assert_eq!(markdown_preview_text("# 标题\n- 甲 **粗** 乙"), "标题\n甲 粗 乙");
+    }
+
+    #[test]
+    fn aligns_with_web_trajectory_rules() {
+        // 与 web 端 trajectoryModel 同一条规则集：会话写入器覆盖后的 payload
+        // 读 reasoning_content 与 meta.message_stats 内嵌用量；队列瞬态、重复
+        // 落账的工具结果、命令子会话、hook 通知与成功轮次终止不进时间线。
+        let snapshot = json!({
+            "turns": [
+                {"turn_id": "t1", "user_turn_index": 1, "status": "finished", "summary": "s", "payload": {}, "updated_time": 100.0, "root_turn_id": "t1", "trigger_kind": "user"}
+            ],
+            "items": [
+                {"item_id": "i1", "item_index": 0, "kind": "assistant_message", "status": "completed", "revision": 0,
+                 "payload": {"content": "回复", "reasoning_content": "思考中", "model_round": 1,
+                             "meta": {"message_stats": {"usage": {"input_tokens": 5565, "output_tokens": 491}}}},
+                 "created_time": 10.0, "updated_time": 10.0,
+                 "turn_id": "t1", "visibility": "user", "root_turn_id": "t1", "created_seq": 1},
+                {"item_id": "n1", "item_index": 1, "kind": "queue", "status": "cancelled", "revision": 0,
+                 "payload": {"reason": "user_withdrew"}, "created_time": 10.5, "updated_time": 10.5,
+                 "turn_id": "t1", "visibility": "user", "root_turn_id": "t1", "created_seq": 2},
+                {"item_id": "n2", "item_index": 2, "kind": "tool_message", "status": "completed", "revision": 0,
+                 "payload": {"role": "tool", "content": "重复结果"}, "created_time": 10.6, "updated_time": 10.6,
+                 "turn_id": "t1", "visibility": "user", "root_turn_id": "t1", "created_seq": 3},
+                {"item_id": "n3", "item_index": 3, "kind": "command_session_start", "status": "completed", "revision": 0,
+                 "payload": {"stage": "guard"}, "created_time": 10.7, "updated_time": 10.7,
+                 "turn_id": "t1", "visibility": "user", "root_turn_id": "t1", "created_seq": 4},
+                {"item_id": "n4", "item_index": 4, "kind": "hook/invoked", "status": "completed", "revision": 0,
+                 "payload": {"summary": "hook"}, "created_time": 10.8, "updated_time": 10.8,
+                 "turn_id": "t1", "visibility": "user", "root_turn_id": "t1", "created_seq": 5},
+                {"item_id": "n5", "item_index": 5, "kind": "turn_terminal", "status": "completed", "revision": 0,
+                 "payload": {"status": "completed"}, "created_time": 10.9, "updated_time": 10.9,
+                 "turn_id": "t1", "visibility": "user", "root_turn_id": "t1", "created_seq": 6}
+            ],
+            "blocks": [],
+            "item_total": 6
+        });
+        let model = parse_snapshot(&snapshot);
+        // 六条入账里只有助手条目留下，其余全是被跳过的噪音。
+        assert_eq!(model.cells.len(), 1);
+        assert_eq!(model.records.len(), 1);
+        let message = &model.cells[0];
+        assert_eq!(message.kind, KIND_MESSAGE);
+        assert_eq!(message.thinking_detail.as_deref(), Some("思考中"));
+        let usage = message.usage.expect("nested message_stats.usage must surface");
+        assert_eq!(usage.input, Some(5565.0));
+        assert_eq!(usage.output, Some(491.0));
     }
 }

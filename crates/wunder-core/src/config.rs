@@ -3074,6 +3074,42 @@ storage:
         let _ = fs::remove_dir_all(&root);
     }
 
+    /// The chat composer queue is a product behaviour in 蜂巢 and 蜂窝: a
+    /// follow-up message sent during a run parks above the input box. Off, the
+    /// same send comes back USER_BUSY, so neither the code default nor the
+    /// shipped template may turn it off.
+    #[test]
+    fn test_chat_runtime_queue_ships_enabled() {
+        assert!(AgentQueueConfig::default().enabled);
+        // Read the template as text: `load_config_from_path` on this file falls
+        // back to defaults (its `${VAR}` placeholders land on numeric fields),
+        // so a parsed read here would pass no matter what the file says.
+        let template = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(|crates| crates.parent())
+            .map(|root| root.join("config").join("wunder-example.yaml"))
+            .expect("repo config template");
+        let text = fs::read_to_string(&template).expect("read config template");
+        let block = text
+            .split("agent_queue:")
+            .nth(1)
+            .expect("agent_queue section in the template");
+        let enabled = block
+            .lines()
+            .map(str::trim)
+            .find(|line| line.starts_with("enabled:"))
+            .expect("agent_queue.enabled");
+        let value = enabled
+            .split(':')
+            .nth(1)
+            .unwrap_or_default()
+            .split('#')
+            .next()
+            .unwrap_or_default()
+            .trim();
+        assert_eq!(value, "true", "{} must keep the chat queue on", template.display());
+    }
+
     #[test]
     fn test_load_config_from_path_repairs_generated_sparse_config_from_example() {
         let root =

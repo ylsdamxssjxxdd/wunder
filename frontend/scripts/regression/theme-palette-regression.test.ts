@@ -98,3 +98,19 @@ test('unknown and legacy values still resolve to a real palette', () => {
   assert.equal(normalizeThemePalette(' Tech-Blue '), 'tech-blue');
   assert.equal(normalizeThemePalette(null), DEFAULT_THEME_PALETTE);
 });
+
+test('the server accepts every palette the picker can write', () => {
+  // PATCH /auth/me/preferences clamps an unknown `theme_palette` back to the
+  // default and the echo overwrites the local copy, so a palette missing from
+  // the Rust whitelist snaps the UI back on the next appearance load.
+  const authApi = readFileSync(
+    resolve(process.cwd(), '..', 'crates', 'wunder-runtime', 'src', 'api', 'auth.rs'),
+    'utf8'
+  );
+  const block = /fn normalize_theme_palette[\s\S]*?\n}/.exec(authApi)?.[0];
+  assert.ok(block, 'normalize_theme_palette vanished from the auth API');
+  const accepted = new Set([...block.matchAll(/"([a-z-]+)"/g)].map((match) => match[1]));
+  for (const palette of SELECTABLE_THEME_PALETTES) {
+    assert.ok(accepted.has(palette), `server clamps the selectable palette ${palette}`);
+  }
+});

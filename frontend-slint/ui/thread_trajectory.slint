@@ -352,13 +352,44 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                             // event column (84px): request marker or kind badge
                             Rectangle {
                                 width: 84px;
-                                if row.request > 0 : Text {
-                                    x: 10px; width: 68px; height: parent.height;
-                                    text: row.badge;
-                                    color: TrajTokens.brand;
-                                    font-size: 9px; font-weight: 700;
-                                    vertical-alignment: center;
-                                    overflow: elide;
+                                if row.request > 0 : Rectangle {
+                                    // dsh requestBoundaryControl：16px 热区内一个
+                                    // 5px 灰点（9px 白圈垫底盖住行线），全部固定在
+                                    // 同一纵线上；hover 变品牌色并在右侧弹出标签。
+                                    x: 10px; y: (parent.height - 16px) / 2;
+                                    width: 16px; height: 16px;
+                                    request-touch := TouchArea { }
+                                    Rectangle {
+                                        width: 9px; height: 9px;
+                                        x: (parent.width - self.width) / 2;
+                                        y: (parent.height - self.height) / 2;
+                                        border-radius: self.width / 2;
+                                        background: white;
+                                    }
+                                    Rectangle {
+                                        width: 5px; height: 5px;
+                                        x: (parent.width - self.width) / 2;
+                                        y: (parent.height - self.height) / 2;
+                                        border-radius: self.width / 2;
+                                        background: request-touch.has-hover ? TrajTokens.brand : TrajTokens.caption;
+                                    }
+                                    if request-touch.has-hover : Rectangle {
+                                        x: 17px; y: 2px;
+                                        width: request-label.preferred-width + 8px;
+                                        height: 12px;
+                                        border-radius: 2px;
+                                        border-width: 0.5px;
+                                        border-color: TrajTokens.border-3;
+                                        background: white;
+                                        request-label := Text {
+                                            x: 4px; height: parent.height;
+                                            text: row.badge;
+                                            color: TrajTokens.text-2;
+                                            font-family: Theme.font-mono;
+                                            font-size: 9px;
+                                            vertical-alignment: center;
+                                        }
+                                    }
                                 }
                                 if row.request == 0 && row.kind <= 6 : Rectangle {
                                     x: (parent.width - pill-text.preferred-width - 14px) / 2;

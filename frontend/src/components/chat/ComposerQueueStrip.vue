@@ -77,7 +77,10 @@ import {
 } from '@/stores/chatQueueState';
 
 const props = defineProps<{ sessionId?: string }>();
-const emit = defineEmits<{ (event: 'edit', item: QueuedTurn): void }>();
+const emit = defineEmits<{
+  (event: 'edit', item: QueuedTurn): void;
+  (event: 'withdrawn', item: QueuedTurn): void;
+}>();
 const { t } = useI18n();
 
 const items = computed(() => chatQueueState.items);
@@ -155,7 +158,7 @@ const handleInterject = async (item: QueuedTurn) => {
   }
 };
 
-const handleWithdraw = async (item: QueuedTurn): Promise<boolean> => {
+const handleWithdraw = async (item: QueuedTurn, refill: boolean): Promise<boolean> => {
   const sessionId = String(props.sessionId || '').trim();
   if (!sessionId) return false;
   busy.value = true;
@@ -165,7 +168,11 @@ const handleWithdraw = async (item: QueuedTurn): Promise<boolean> => {
       ElMessage.warning(result.message || t('chat.composer.queue.actionFailed'));
       return false;
     }
-    if (result.item) emit('edit', result.item);
+    if (result.item) {
+      // 撤下后这一轮在时间线里的本地占位也要跟着走，删除路径才不会留残影。
+      emit('withdrawn', result.item);
+      if (refill) emit('edit', result.item);
+    }
     return true;
   } finally {
     busy.value = false;
@@ -173,11 +180,11 @@ const handleWithdraw = async (item: QueuedTurn): Promise<boolean> => {
 };
 
 const handleEdit = (item: QueuedTurn) => {
-  void handleWithdraw(item);
+  void handleWithdraw(item, true);
 };
 
 const handleRemove = (item: QueuedTurn) => {
-  void handleWithdraw(item);
+  void handleWithdraw(item, false);
 };
 </script>
 

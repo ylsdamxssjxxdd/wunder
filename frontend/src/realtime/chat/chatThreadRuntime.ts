@@ -1,11 +1,16 @@
+// AI生成
 // Durable chat pipeline hub: per-session thread state registry, server frame
 // normalization and render invalidation. Chat has one protocol and one reducer.
 import {
   applyChatThreadFrame,
   applyChatThreadSnapshot,
+  applyChatThreadSnapshotPlanSharded,
   bindStreamStarted,
-  type ChatThreadSnapshot
+  planChatThreadSnapshot,
+  type ChatThreadSnapshot,
+  type ChatThreadSnapshotApplyOutcome
 } from './chatThreadState';
+import { planChatThreadSnapshotInWorker } from '@/workers/chatThreadSnapshotClient';
 import { buildChatThreadTurnSlots } from './chatThreadProjection';
 import {
   emptyChatThreadState,
@@ -15,6 +20,7 @@ import {
   type ChatThreadFrame,
   type ThreadChangeFrame,
   type ChatThreadState,
+  type ThreadTurnState,
   type StreamStartedAck,
   type ThreadSnapshotRequiredData
 } from './chatThreadTypes';
@@ -27,6 +33,7 @@ import type { ChatRuntimeMessageProjection, ChatRuntimeProjection } from './chat
 import {
   materializeChatRuntimeProjectionList
 } from './chatRuntimeRenderAdapter';
+import { chatPerf } from '@/utils/chatPerf';
 
 interface ChatThreadRuntimeEntry {
   key: string;
@@ -35,6 +42,13 @@ interface ChatThreadRuntimeEntry {
   renderProjection: ChatRuntimeProjection;
   /** Clock (ms) of the last resume dispatch; collapses control-frame bursts. */
   lastResumeDispatchAt: number;
+  /** W1-D: a snapshot_required reload is currently in flight for this session. */
+  snapshotInFlight: boolean;
+  /** W1-D: clock (ms) the last snapshot_required reload settled; a short
+   *  cooldown collapses bursts that arrive after the reload completed. */
+  lastSnapshotSettledAt: number;
+  /** W2-F: cooperative abort for the in-flight sharded snapshot hydrate. */
+  snapshotAbort: AbortController | null;
 }
 
 const registry = new Map<string, ChatThreadRuntimeEntry>();
@@ -49,12 +63,20 @@ export const ensureChatThreadRuntime = (key: string): ChatThreadRuntimeEntry => 
       key,
       state: emptyChatThreadState(key),
       renderProjection: { sessions: { [key]: { messages: [] } } } as unknown as ChatRuntimeProjection,
-      lastResumeDispatchAt: 0
+      lastResumeDispatchAt: 0,
+      snapshotInFlight: false,
+      lastSnapshotSettledAt: 0,
+      snapshotAbort: null
     };
     registry.set(key, entry);
     if (registry.size > REGISTRY_LIMIT) {
       const oldest = registry.keys().next().value;
-      if (oldest && oldest !== key) registry.delete(oldest);
+      if (oldest && oldest !== key) {
+        // A sharded hydrate for an evicted session must stop; otherwise it
+        // would keep writing into a state no longer owned by the registry.
+        registry.get(oldest)?.snapshotAbort?.abort();
+        registry.delete(oldest);
+      }
     }
   }
   return entry;
@@ -67,6 +89,9 @@ export const isChatThreadV2Session = (key: string): boolean =>
   Boolean(registry.get(key)) && isChatChangeStreamEnabled();
 
 export const resetChatThreadRuntime = (key: string): void => {
+  // Abort any in-flight sharded hydrate before dropping the entry so it cannot
+  // keep applying shards into a detached state.
+  registry.get(key)?.snapshotAbort?.abort();
   registry.delete(key);
 };
 
@@ -95,14 +120,76 @@ export const submitChatThreadTurn = (store: unknown, key: string, clientMessageI
   markRuntimeProjectionChanged(store, { sessionId: key, reason: 'thread_submit', immediate: true });
 };
 
+/**
+ * Collect the locally-owned optimistic turns (`pending:` ids) that a snapshot
+ * replacement must keep. Single pass over the turn map.
+ */
+const collectPendingTurns = (state: ChatThreadState): ThreadTurnState[] => {
+  const pending: ThreadTurnState[] = [];
+  for (const turn of state.turns.values()) {
+    if (turn.turnId.startsWith('pending:')) pending.push(turn);
+  }
+  return pending;
+};
+
+/**
+ * Re-attach the optimistic turns a snapshot did not already cover. One pass to
+ * index the surviving client_message_ids, then one pass over the pending list:
+ * O(turns + pending) instead of the former O(pending x turns) nested scan.
+ */
+const restorePendingTurns = (state: ChatThreadState, pending: ThreadTurnState[]): void => {
+  if (!pending.length) return;
+  const knownClientMessageIds = new Set<string | null>();
+  for (const turn of state.turns.values()) knownClientMessageIds.add(turn.clientMessageId);
+  for (const turn of pending) {
+    if (knownClientMessageIds.has(turn.clientMessageId)) continue;
+    state.turns.set(turn.turnId, turn);
+    knownClientMessageIds.add(turn.clientMessageId);
+  }
+};
+
+/** Synchronous compat hydrate (open-load path, dev fixtures, tests). */
 export const hydrateChatThreadRuntime = (store: unknown, key: string, snapshot: ChatThreadSnapshot): boolean => {
   const state = ensureChatThreadRuntime(key).state;
-  const pending = [...state.turns.values()].filter((turn) => turn.turnId.startsWith('pending:'));
+  const pending = collectPendingTurns(state);
   const result = applyChatThreadSnapshot(state, snapshot, Date.now());
   if (!result.changed) return false;
-  for (const turn of pending) {
-    if (![...state.turns.values()].some((entry) => entry.clientMessageId === turn.clientMessageId)) state.turns.set(turn.turnId, turn);
-  }
+  restorePendingTurns(state, pending);
+  markRuntimeProjectionChanged(store, { sessionId: key, reason: 'thread_snapshot', immediate: true });
+  return true;
+};
+
+export interface ChatThreadHydrateOptions {
+  /** Cooperative abort for the sharded apply; checked before every shard. */
+  signal?: AbortSignal;
+  /** Main-thread yield between shards (default: a 0ms macrotask). */
+  yieldToMain?: () => Promise<void>;
+  /** Accumulated shard cost allowed before yielding (default per plan). */
+  yieldBudget?: number;
+}
+
+/**
+ * W2-F sharded hydrate: plan the snapshot (Worker when available, main thread
+ * otherwise), then apply the shards with periodic main-thread yields and abort
+ * support. Returns false when the snapshot is stale or the apply was aborted.
+ */
+export const hydrateChatThreadRuntimeBatched = async (
+  store: unknown,
+  key: string,
+  snapshot: ChatThreadSnapshot,
+  options: ChatThreadHydrateOptions = {}
+): Promise<boolean> => {
+  const state = ensureChatThreadRuntime(key).state;
+  const pending = collectPendingTurns(state);
+  const planned = await planChatThreadSnapshotInWorker(snapshot, undefined, options.signal);
+  const plan = planned ?? planChatThreadSnapshot(snapshot);
+  const outcome: ChatThreadSnapshotApplyOutcome = await applyChatThreadSnapshotPlanSharded(state, plan, {
+    shouldAbort: () => options.signal?.aborted === true,
+    yieldToMain: options.yieldToMain,
+    yieldBudget: options.yieldBudget
+  });
+  if (!outcome.applied) return false;
+  restorePendingTurns(state, pending);
   markRuntimeProjectionChanged(store, { sessionId: key, reason: 'thread_snapshot', immediate: true });
   return true;
 };
@@ -317,6 +404,11 @@ const extractSnapshotRequiredData = (payload: unknown): ThreadSnapshotRequiredDa
   return {};
 };
 
+/** W1-D: collapse snapshot_required bursts. At most one reload may be in
+ *  flight per session; after it settles a short cooldown swallows follow-up
+ *  frames, so a flapping watch cannot degrade into a reload storm. */
+const THREAD_SNAPSHOT_REQUIRED_COOLDOWN_MS = 1_000;
+
 const dispatchSnapshotRequired = (
   store: unknown,
   key: string,
@@ -324,22 +416,43 @@ const dispatchSnapshotRequired = (
   hooks: ChatThreadServerEventHooks
 ): void => {
   const data = extractSnapshotRequiredData(payload);
+  const entry = ensureChatThreadRuntime(key);
   const loader = chatThreadSnapshotLoader;
+  const now = (hooks.now ?? Date.now)();
+  // Single-flight: a reload is already running for this session.
+  if (entry.snapshotInFlight) return;
+  // Cooldown: a reload just settled; drop the trailing burst.
+  if (entry.lastSnapshotSettledAt && now - entry.lastSnapshotSettledAt < THREAD_SNAPSHOT_REQUIRED_COOLDOWN_MS) {
+    return;
+  }
   if (!loader) {
+    entry.lastSnapshotSettledAt = now;
     hooks.onSnapshotRequired?.(data);
     return;
   }
+  entry.snapshotInFlight = true;
+  // W2-F: the sharded hydrate is abortable. The controller is aborted when the
+  // session is reset or evicted, so a superseded rebuild stops between shards.
+  const controller = new AbortController();
+  entry.snapshotAbort = controller;
   void (async () => {
     try {
       const snapshot = await loader(key);
-      const entry = registry.get(key);
-      if (!entry) return;
-      const applied = hydrateChatThreadRuntime(store, key, snapshot);
+      const current = registry.get(key);
+      if (!current) return;
+      const applied = await hydrateChatThreadRuntimeBatched(store, key, snapshot, { signal: controller.signal });
       if (!applied) throw new Error('thread snapshot cursor is stale');
       markRuntimeProjectionChanged(store, { sessionId: key, reason: 'thread_structure' });
       hooks.onSnapshotApplied?.();
     } catch {
-      hooks.onSnapshotRequired?.(data);
+      // W4-L: an aborted or failed hydrate is the heavy-history abort signal.
+      // A deliberate abort (session reset/eviction) is not a recovery failure.
+      chatPerf.countSnapshotAbort(1);
+      if (!controller.signal.aborted) hooks.onSnapshotRequired?.(data);
+    } finally {
+      entry.snapshotInFlight = false;
+      entry.lastSnapshotSettledAt = (hooks.now ?? Date.now)();
+      if (entry.snapshotAbort === controller) entry.snapshotAbort = null;
     }
   })();
 };

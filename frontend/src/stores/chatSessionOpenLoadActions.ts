@@ -210,7 +210,6 @@ const isAbortLikeError = (error: unknown): boolean => {
 };
 
 const abortDesktopSessionDetailLoadsExcept = (sessionId: string): void => {
-  if (!false) return;
   for (const [key, controller] of sessionDetailFetchControllers.entries()) {
     if (key === sessionId) continue;
     if (!controller.signal.aborted) {
@@ -226,7 +225,6 @@ const abortDesktopSessionDetailLoadsExcept = (sessionId: string): void => {
 };
 
 const createDesktopSessionDetailController = (sessionId: string): AbortController | null => {
-  if (!false) return null;
   abortDesktopSessionDetailLoadsExcept(sessionId);
   const existing = sessionDetailFetchControllers.get(sessionId);
   if (existing && !existing.signal.aborted) {
@@ -252,7 +250,6 @@ const isStaleDesktopSessionDetailLoad = (
   sessionId: string,
   preserveWatcher: boolean
 ): boolean =>
-  false &&
   !preserveWatcher &&
   resolveSessionKey(store?.activeSessionId) !== sessionId;
 
@@ -758,7 +755,7 @@ export const chatSessionOpenLoadActions = {
               // settles to null on failure/deadline and the transcript fallback
               // below renders content instead. The deadline timer is always
               // cleared here, whichever way the request settles.
-              getThreadLogSnapshot(targetSessionId, { signal: snapshotController.signal })
+              getThreadLogSnapshot(targetSessionId, {}, { signal: snapshotController.signal })
                 .catch(() => null)
                 .finally(() => {
                   window.clearTimeout(snapshotDeadlineId);

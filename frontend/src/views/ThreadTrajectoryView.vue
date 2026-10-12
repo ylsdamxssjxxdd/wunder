@@ -226,8 +226,21 @@
             </tbody>
           </table>
         </div>
-        <div v-if="records.length === 0" class="tt-empty">
-          {{ loadError ? t('messenger.trajectory.loadFailed') : t('messenger.trajectory.empty') }}
+        <div v-if="loading || loadError || records.length === 0" class="tt-empty">
+          {{ loading
+            ? t('common.loading')
+            : loadError
+              ? t('messenger.trajectory.loadFailed')
+              : t('messenger.trajectory.empty') }}
+        </div>
+        <!-- W1-B/W2-G: 服务端按尾窗返回快照（truncated=true 表示更早的轮次被省略），
+             这里如实提示而不是把“有界”当成“无数据”。 -->
+        <div
+          v-if="truncated && !loading && !loadError && records.length > 0"
+          class="tt-truncated-hint"
+          role="status"
+        >
+          为控制首屏开销，仅展示最近的轨迹轮次。
         </div>
       </div>
 
@@ -319,6 +332,15 @@
                     <div class="tt-markdown-payload" v-html="inputMarkdown" />
                   </div>
                 </div>
+                <div v-if="selectedCell.thinkingDetail" class="tt-overview-section">
+                  <button class="tt-section-title" type="button" @click="toggleSection('thinking')">
+                    {{ t('messenger.trajectory.thinking') }}
+                    <span class="tt-section-chevron" :class="{ 'tt-section-chevron-open': openSections.thinking }">›</span>
+                  </button>
+                  <div v-if="openSections.thinking" class="tt-section-scroll">
+                    <div class="tt-markdown-payload" v-html="thinkingMarkdown" />
+                  </div>
+                </div>
                 <div v-if="selectedCell.outputDetail" class="tt-overview-section">
                   <button class="tt-section-title" type="button" @click="toggleSection('output')">
                     {{ t('messenger.trajectory.output') }}
@@ -386,7 +408,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, markRaw, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useI18n } from '@/i18n'
@@ -424,6 +446,9 @@ const MIN_VIEWPORT_MS = 20
 const MIN_VIEWPORT_OPS = 4
 const EDGE_PAN_FRACTION = 0.08
 const TOOLTIP_DELAY_MS = 500
+// 时间线 span 的 DOM 上限：百万级记录下若不限量会为每个 span 生成节点 + 4 个
+// 事件监听器；这里在可视窗口内做等步长采样，保证 DOM 节点数有界。
+const MAX_TIMELINE_SPANS = 2000
 
 const route = useRoute()
 const router = useRouter()
@@ -433,7 +458,12 @@ const modelT: Translate = (key, params) => t(`messenger.${key}`, params as never
 
 const loading = ref(true)
 const loadError = ref(false)
-const rawTurns = ref<unknown[]>([])
+// W1-B：服务端只返回尾窗（truncated=true 表示更早轮次被截断）。这是有界读取的
+// 正常结果，不是错误，也不应被当成空态。
+const truncated = ref(false)
+// 线程快照可能达百万级条目，用 shallowRef 只跟踪引用本身，避免 Vue 把整份
+// 快照转成深层响应式代理（会引发 CPU/内存爆炸）；写入的大对象以 markRaw 包裹。
+const rawTurns = shallowRef<unknown[]>([])
 
 // 大线程日志的快照可能非常庞大（压测会话可达百万级条目），单次全量拉取
 // 会长时间占用主线程并可能触发默认 30s 超时。这里给一个显式上界并在
@@ -450,7 +480,7 @@ const searchQuery = ref('')
 const selectedIndex = ref<number | null>(null)
 const activeTab = ref('')
 const detailsWidth = ref<number | null>(null)
-const openSections = reactive({ input: true, output: true })
+const openSections = reactive({ input: true, output: true, thinking: true })
 const timestampMode = ref<'local' | 'unix'>('local')
 
 const collapsedTurns = ref(new Set<number | null>())
@@ -589,7 +619,7 @@ const projectedSpans = computed(() => {
   const width = trackWidth.value || 600
   const span = Math.max(1e-9, viewSpan.value)
   const matched = searchMatched.value
-  return model.spans
+  const projected = model.spans
     .map((modelSpan, i) => {
       const left = ((modelSpan.start - viewStart.value) / span) * width
       const pw = ((modelSpan.end - modelSpan.start) / span) * width
@@ -604,6 +634,10 @@ const projectedSpans = computed(() => {
       }
     })
     .filter(span => span.left + span.width > 0 && span.left < width)
+  // 可视窗口内 span 仍然过多时，按等步长采样，确保渲染的 DOM 节点数有界。
+  if (projected.length <= MAX_TIMELINE_SPANS) return projected
+  const stride = Math.ceil(projected.length / MAX_TIMELINE_SPANS)
+  return projected.filter((_, index) => index % stride === 0)
 })
 
 const projectedBoundaries = computed(() => {
@@ -670,18 +704,21 @@ async function load(): Promise<void> {
   }
   loading.value = true
   loadError.value = false
+  truncated.value = false
   loadAbort?.abort()
   const controller = new AbortController()
   loadAbort = controller
   const timeoutId = window.setTimeout(() => controller.abort(), TRAJECTORY_SNAPSHOT_TIMEOUT_MS)
   try {
-    const snapshot = await getThreadLogSnapshot(sessionId, { signal: controller.signal })
+    const snapshot = await getThreadLogSnapshot(sessionId, {}, { signal: controller.signal })
     // 快照端点的 HTTP 体是 { data: { cursor, turns, items, blocks, item_total } }，
     // 而 http.ts 的拦截器返回完整 AxiosResponse，故需再取一层 .data 才能拿到快照本体。
     const payload = (snapshot?.data as { data?: unknown } | undefined)?.data
+    truncated.value = (payload as { truncated?: unknown } | undefined)?.truncated === true
     rawTurns.value = attachTurnItems(payload)
   } catch {
     loadError.value = true
+    truncated.value = false
     rawTurns.value = []
   } finally {
     window.clearTimeout(timeoutId)
@@ -715,7 +752,7 @@ function attachTurnItems(payload: unknown): unknown[] {
     const turnId = typeof row.turn_id === 'string' ? row.turn_id : ''
     row.items = turnId ? buckets.get(turnId) ?? [] : []
   }
-  return turns
+  return markRaw(turns)
 }
 
 function goBack(): void {
@@ -788,6 +825,8 @@ onBeforeUnmount(() => {
   trackResizeObserver?.disconnect()
   trackResizeObserver = null
   if (tooltipTimer !== null) window.clearTimeout(tooltipTimer)
+  if (pointerRafId !== null) window.cancelAnimationFrame(pointerRafId)
+  pointerRafId = null
 })
 
 /* ---------------------------------------------------------------- */
@@ -838,13 +877,11 @@ function argsPreview(cell: TrajCell): string {
 
 interface RequestDot { request: TrajRequestNumber; left: number }
 
+// dsh 的请求小点全部固定在同一纵线上（base-left 12px，无逐轮偏移）。
 const dotsByAssistantIndex = computed(() => {
   const map = new Map<number, RequestDot>()
-  const perTurn = new Map<number | null, number>()
   for (const request of requests.value) {
-    const count = perTurn.get(request.turn) ?? 0
-    perTurn.set(request.turn, count + 1)
-    map.set(request.assistantIndex, { request, left: 12 + (count % 4) * 8 })
+    map.set(request.assistantIndex, { request, left: 12 })
   }
   return map
 })
@@ -1104,7 +1141,7 @@ function toggleTimestampMode(): void {
   timestampMode.value = timestampMode.value === 'local' ? 'unix' : 'local'
 }
 
-function toggleSection(key: 'input' | 'output'): void {
+function toggleSection(key: 'input' | 'output' | 'thinking'): void {
   openSections[key] = !openSections[key]
 }
 
@@ -1185,6 +1222,7 @@ function renderCellMarkdown(raw: string | undefined): string {
 const previewMarkdown = computed(() => renderCellMarkdown(selectedCell.value?.previewMarkdown))
 const inputMarkdown = computed(() => renderCellMarkdown(selectedCell.value?.inputDetail))
 const outputMarkdown = computed(() => renderCellMarkdown(selectedCell.value?.outputDetail))
+const thinkingMarkdown = computed(() => renderCellMarkdown(selectedCell.value?.thinkingDetail))
 
 const detailsStyle = computed(() =>
   detailsWidth.value === null ? undefined : { width: `${detailsWidth.value}px` })
@@ -1207,11 +1245,12 @@ function onWindowPointerMove(event: PointerEvent): void {
     const maxWidth = Math.max(320, window.innerWidth - 280)
     detailsWidth.value = Math.min(720, Math.max(320, Math.min(maxWidth, resizeState.startWidth + delta)))
   }
-  handleTimelineMove(event)
+  schedulePointerMove(event, false)
 }
 
 function onWindowPointerUp(): void {
   resizeState = null
+  flushPointerMove()
   finishTimelinePointer()
 }
 
@@ -1279,13 +1318,7 @@ function onTimelinePointerDown(event: PointerEvent): void {
 }
 
 function onTimelinePointerMove(event: PointerEvent): void {
-  if (trackEl.value) {
-    const rect = trackEl.value.getBoundingClientRect()
-    hoverX.value = event.clientX >= rect.left && event.clientX <= rect.right
-      ? event.clientX - rect.left
-      : null
-  }
-  handleTimelineMove(event)
+  schedulePointerMove(event, true)
 }
 
 function handleTimelineMove(event: PointerEvent): void {
@@ -1309,6 +1342,42 @@ function handleTimelineMove(event: PointerEvent): void {
     start: Math.min(anchor, current),
     end: Math.max(anchor, current),
   }
+}
+
+/* 拖动/悬停的指针移动统一走帧级节流：同一帧内只处理最后一次事件，
+   避免每次 pointermove 都全量重算时间线投影与 selection。 */
+let pointerRafId: number | null = null
+let pendingPointer: { event: PointerEvent; updateHover: boolean } | null = null
+
+function schedulePointerMove(event: PointerEvent, updateHover: boolean): void {
+  pendingPointer = { event, updateHover }
+  if (pointerRafId !== null) return
+  pointerRafId = window.requestAnimationFrame(() => {
+    pointerRafId = null
+    const pending = pendingPointer
+    pendingPointer = null
+    if (pending) applyPointerMove(pending.event, pending.updateHover)
+  })
+}
+
+function applyPointerMove(event: PointerEvent, updateHover: boolean): void {
+  if (updateHover && trackEl.value) {
+    const rect = trackEl.value.getBoundingClientRect()
+    hoverX.value = event.clientX >= rect.left && event.clientX <= rect.right
+      ? event.clientX - rect.left
+      : null
+  }
+  handleTimelineMove(event)
+}
+
+function flushPointerMove(): void {
+  if (pointerRafId !== null) {
+    window.cancelAnimationFrame(pointerRafId)
+    pointerRafId = null
+  }
+  const pending = pendingPointer
+  pendingPointer = null
+  if (pending) applyPointerMove(pending.event, pending.updateHover)
 }
 
 function edgePan(clientX: number, rect: DOMRect): void {
@@ -1355,6 +1424,7 @@ function finishTimelinePointer(): void {
 }
 
 function onTimelinePointerUp(): void {
+  flushPointerMove()
   finishTimelinePointer()
 }
 

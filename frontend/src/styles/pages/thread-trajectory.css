@@ -427,7 +427,7 @@
 .tt-request-dot {
   position: absolute;
   top: -8px;
-  z-index: 2;
+  z-index: 6;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -445,23 +445,24 @@
   width: 5px;
   height: 5px;
   border-radius: 50%;
-  background: var(--tt-brand-dim);
+  /* dsh 规格：灰色小点 + 2px 背景色圈（盖住底下的行线），常态不是品牌蓝。 */
+  background: var(--tt-caption);
+  box-shadow: 0 0 0 2px var(--tt-bg), 0 0 0 3px transparent;
 }
 
 .tt-request-dot:hover::before {
   background: var(--tt-brand);
-  box-shadow: 0 0 0 3px var(--tt-brand-faint);
 }
 
 .tt-request-dot-label {
   position: absolute;
-  top: 14px;
-  left: 50%;
-  transform: translateX(-50%);
+  top: 2px;
+  left: 17px;
   display: none;
-  padding: 1px 5px;
-  border-radius: var(--tt-radius-xs);
-  background: var(--tt-bg-module);
+  padding: 0 4px;
+  border: 0.5px solid var(--tt-border-4);
+  border-radius: 2px;
+  background: var(--tt-bg);
   font-family: var(--tt-mono);
   font-size: 9px;
   line-height: 12px;

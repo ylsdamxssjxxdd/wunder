@@ -1,6 +1,7 @@
 use super::SqliteStorage;
 use crate::storage::{StorageLifecycle, USAGE_CHAT_WATERMARK_KEY};
 use anyhow::{ensure, Result};
+use wunder_core::storage_backend::ThreadSnapshotWindow;
 use rusqlite::{params, OptionalExtension};
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -137,7 +138,12 @@ pub(super) trait SqliteThreadLogStorage {
         limit: i64,
     ) -> Result<Vec<Value>>;
     fn latest_thread_change_seq_by_session_impl(&self, session_id: &str) -> Result<i64>;
-    fn thread_snapshot_impl(&self, user_id: &str, session_id: &str) -> Result<Value>;
+    fn thread_snapshot_impl(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        window: &ThreadSnapshotWindow,
+    ) -> Result<Value>;
     fn list_thread_changes_impl(
         &self,
         user_id: &str,
@@ -1016,8 +1022,14 @@ impl SqliteThreadLogStorage for SqliteStorage {
         tx.commit()?;
         Ok(Some(feedback))
     }
-    fn thread_snapshot_impl(&self, user_id: &str, session_id: &str) -> Result<Value> {
+    fn thread_snapshot_impl(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        window: &ThreadSnapshotWindow,
+    ) -> Result<Value> {
         self.ensure_initialized()?;
+        let window = window.clone().clamped();
         let conn = self.open()?;
         let tx = conn.unchecked_transaction()?;
         let owner: Option<String> = tx
@@ -1030,7 +1042,17 @@ impl SqliteThreadLogStorage for SqliteStorage {
         // A newly created chat session has no ThreadLog until its first turn.
         // The API already checks session ownership; absent logs contain no data.
         if owner.is_none() {
-            return Ok(json!({"cursor":0,"turns":[],"items":[],"blocks":[],"item_total":0}));
+            return Ok(json!({
+                "cursor": 0,
+                "turns": [],
+                "items": [],
+                "blocks": [],
+                "item_total": 0,
+                "truncated": false,
+                "has_older": false,
+                "window_start_turn_index": Value::Null,
+                "window_end_turn_index": Value::Null,
+            }));
         }
         ensure!(owner.as_deref() == Some(user_id), "thread owner mismatch");
         let cursor: i64 = tx.query_row(
@@ -1038,10 +1060,14 @@ impl SqliteThreadLogStorage for SqliteStorage {
             params![session_id],
             |r| r.get(0),
         )?;
+        // Tail-window on turns: read the newest `max_turns` first as a hard bound,
+        // then restore ascending so renderers keep a stable order.
+        let before = window.before_turn_index.unwrap_or(i64::MAX);
+        let max_turns = window.max_turns as i64;
         let mut turns = Vec::new();
         {
-            let mut stmt = tx.prepare("SELECT turn_id,user_turn_index,status,summary,payload,updated_time,root_turn_id,trigger_kind FROM thread_turns WHERE user_id=? AND session_id=? ORDER BY user_turn_index ASC, created_time ASC, turn_id ASC")?;
-            let rows = stmt.query_map(params![user_id, session_id], turn_row)?;
+            let mut stmt = tx.prepare("SELECT turn_id,user_turn_index,status,summary,payload,updated_time,root_turn_id,trigger_kind FROM thread_turns WHERE user_id=? AND session_id=? AND user_turn_index < ? ORDER BY user_turn_index DESC, created_time DESC, turn_id DESC LIMIT ?")?;
+            let rows = stmt.query_map(params![user_id, session_id, before, max_turns], turn_row)?;
             for row in rows {
                 let mut turn = row?;
                 if turn["trigger_kind"] == "continuation" {
@@ -1051,10 +1077,29 @@ impl SqliteThreadLogStorage for SqliteStorage {
                 turns.push(turn);
             }
         }
+        turns.reverse();
+        let window_start_turn_index = turns.first().and_then(|turn| turn["user_turn_index"].as_i64());
+        let window_end_turn_index = turns.last().and_then(|turn| turn["user_turn_index"].as_i64());
+        let has_older = match window_start_turn_index {
+            Some(start) => tx
+                .query_row(
+                    "SELECT 1 FROM thread_turns WHERE user_id=? AND session_id=? AND user_turn_index < ? LIMIT 1",
+                    params![user_id, session_id, start],
+                    |_| Ok(()),
+                )
+                .optional()?
+                .is_some(),
+            None => false,
+        };
+        // Items restricted to the windowed turns, newest-first cap then ascending.
+        let max_items = window.max_items as i64;
         let mut items = Vec::new();
         {
-            let mut stmt = tx.prepare("SELECT item_id,item_index,kind,status,revision,payload,created_time,updated_time,turn_id,visibility,root_turn_id,created_seq FROM thread_items WHERE user_id=? AND session_id=? AND visibility='user' ORDER BY created_seq ASC, item_index ASC")?;
-            let rows = stmt.query_map(params![user_id, session_id], change_item_row)?;
+            let mut stmt = tx.prepare("SELECT item_id,item_index,kind,status,revision,payload,created_time,updated_time,turn_id,visibility,root_turn_id,created_seq FROM thread_items WHERE user_id=? AND session_id=? AND visibility='user' AND turn_id IN (SELECT turn_id FROM thread_turns WHERE user_id=? AND session_id=? AND user_turn_index < ? ORDER BY user_turn_index DESC, created_time DESC, turn_id DESC LIMIT ?) ORDER BY created_seq DESC, item_index DESC LIMIT ?")?;
+            let rows = stmt.query_map(
+                params![user_id, session_id, user_id, session_id, before, max_turns, max_items],
+                change_item_row,
+            )?;
             for row in rows {
                 let mut item = row?;
                 if let Some(map) = item["payload"].as_object_mut() {
@@ -1064,16 +1109,33 @@ impl SqliteThreadLogStorage for SqliteStorage {
                 items.push(item);
             }
         }
+        let items_truncated = items.len() as i64 >= max_items;
+        items.reverse();
+        // Blocks restricted to the windowed items (already newest-first bound).
+        let max_blocks = window.max_blocks as i64;
         let mut blocks = Vec::new();
         {
-            let mut stmt = tx.prepare("SELECT payload FROM thread_item_blocks WHERE user_id=? AND session_id=? AND item_id IN (SELECT item_id FROM thread_items WHERE user_id=? AND session_id=? AND visibility='user') ORDER BY item_id, field, block_index")?;
-            let rows = stmt.query_map(params![user_id, session_id, user_id, session_id], |r| {
-                Ok(serde_json::from_str::<Value>(&r.get::<_, String>(0)?).unwrap_or(Value::Null))
-            })?;
+            let mut stmt = tx.prepare("SELECT payload FROM thread_item_blocks WHERE user_id=? AND session_id=? AND item_id IN (SELECT item_id FROM thread_items WHERE user_id=? AND session_id=? AND visibility='user' AND turn_id IN (SELECT turn_id FROM thread_turns WHERE user_id=? AND session_id=? AND user_turn_index < ? ORDER BY user_turn_index DESC, created_time DESC, turn_id DESC LIMIT ?) ORDER BY created_seq DESC, item_index DESC LIMIT ?) ORDER BY item_id, field, block_index LIMIT ?")?;
+            let rows = stmt.query_map(
+                params![
+                    user_id,
+                    session_id,
+                    user_id,
+                    session_id,
+                    user_id,
+                    session_id,
+                    before,
+                    max_turns,
+                    max_items,
+                    max_blocks
+                ],
+                |r| Ok(serde_json::from_str::<Value>(&r.get::<_, String>(0)?).unwrap_or(Value::Null)),
+            )?;
             for row in rows {
                 blocks.push(row?);
             }
         }
+        let blocks_truncated = blocks.len() as i64 >= max_blocks;
         tx.commit()?;
         Ok(json!({
             "cursor": cursor,
@@ -1081,6 +1143,10 @@ impl SqliteThreadLogStorage for SqliteStorage {
             "items": items,
             "blocks": blocks,
             "item_total": items.len(),
+            "truncated": has_older || items_truncated || blocks_truncated,
+            "has_older": has_older,
+            "window_start_turn_index": window_start_turn_index,
+            "window_end_turn_index": window_end_turn_index,
         }))
     }
     fn list_thread_changes_by_session_impl(
@@ -1243,7 +1309,9 @@ mod tests {
         let db = SqliteStorage::new(dir.path().join("empty.db").to_string_lossy().into_owned());
         assert_eq!(
             db.thread_snapshot("owner", "thread").unwrap(),
-            json!({"cursor":0,"turns":[],"items":[],"blocks":[],"item_total":0})
+            json!({"cursor":0,"turns":[],"items":[],"blocks":[],"item_total":0,
+                "truncated":false,"has_older":false,
+                "window_start_turn_index":Value::Null,"window_end_turn_index":Value::Null})
         );
         db.accept_thread_turn("owner", "thread", &input(1)).unwrap();
         assert!(
@@ -1253,6 +1321,49 @@ mod tests {
                 > 0
         );
         assert!(db.thread_snapshot("other", "thread").is_err());
+    }
+    #[test]
+    fn snapshot_window_bounds_the_tail_and_pages_older_turns() {
+        use wunder_core::storage_backend::{ThreadLogStore, ThreadSnapshotWindow};
+        let dir = tempfile::tempdir().unwrap();
+        let db = SqliteStorage::new(dir.path().join("window.db").to_string_lossy().into_owned());
+        for index in 1..=5 {
+            db.accept_thread_turn("owner", "thread", &input(index))
+                .unwrap();
+        }
+        let full = db.thread_snapshot("owner", "thread").unwrap();
+        let total = full["turns"].as_array().unwrap().len();
+        assert!(total > 2, "fixture must exceed the window");
+        assert_eq!(full["has_older"], json!(false));
+        // A narrow window must never materialize the whole thread.
+        let window = ThreadSnapshotWindow {
+            max_turns: 2,
+            ..ThreadSnapshotWindow::default()
+        };
+        let snapshot = db
+            .thread_snapshot_window("owner", "thread", &window)
+            .unwrap();
+        let turns = snapshot["turns"].as_array().unwrap();
+        assert_eq!(turns.len(), 2, "window must bound the turn tail");
+        assert_eq!(snapshot["has_older"], json!(true));
+        assert_eq!(snapshot["truncated"], json!(true));
+        let start = snapshot["window_start_turn_index"].as_i64().unwrap();
+        let end = snapshot["window_end_turn_index"].as_i64().unwrap();
+        assert_eq!(turns[0]["user_turn_index"], json!(start));
+        assert_eq!(turns[1]["user_turn_index"], json!(end));
+        assert!(start <= end);
+        // Paging strictly older than the window start excludes the tail we have.
+        let older = ThreadSnapshotWindow {
+            max_turns: 2,
+            before_turn_index: Some(start),
+            ..ThreadSnapshotWindow::default()
+        };
+        let older = db
+            .thread_snapshot_window("owner", "thread", &older)
+            .unwrap();
+        for turn in older["turns"].as_array().unwrap() {
+            assert!(turn["user_turn_index"].as_i64().unwrap() < start);
+        }
     }
     #[test]
     fn active_text_recovery_pages_fields_and_commits_idempotent_change_cursors() {
@@ -1483,7 +1594,9 @@ mod tests {
             assert_eq!(change["payload"]["trigger_kind"], "continuation");
             assert_eq!(change["payload"]["user_round"], 1);
         }
-        let snapshot = db.thread_snapshot_impl("owner", "thread").unwrap();
+        let snapshot = db
+            .thread_snapshot_impl("owner", "thread", &ThreadSnapshotWindow::default())
+            .unwrap();
         assert_eq!(snapshot["turns"].as_array().unwrap().len(), 2);
         let continuation = snapshot["turns"]
             .as_array()
@@ -2208,6 +2321,258 @@ mod tests {
                 .0
                 .len(),
             1
+        );
+    }
+
+    /// Collect one string field from every row of a snapshot array.
+    fn ids(rows: &Value, key: &str) -> Vec<String> {
+        rows.as_array()
+            .map(|list| {
+                list.iter()
+                    .filter_map(|row| row.get(key).and_then(Value::as_str).map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// The tail window is the read path a paging client rebuilds the thread from,
+    /// so it must agree with the full snapshot row for row. A window that filters
+    /// items by turn but leaves blocks pointing at `item_id IN (all user items)`
+    /// is the specific regression this guards: page blocks would then reference
+    /// items outside the page.
+    #[test]
+    fn snapshot_window_pages_reconstruct_the_full_thread_exactly_once() {
+        use wunder_core::storage_backend::{ThreadLogStore, ThreadSnapshotWindow};
+        let dir = tempfile::tempdir().unwrap();
+        let db = SqliteStorage::new(dir.path().join("paging.db").to_string_lossy().into_owned());
+        // Synthetic fixture: a handful of turns, each with a stable item and a
+        // block. Deliberately tiny; never a stress profile.
+        const TURNS: usize = 5;
+        let mut next_event = 1_i64;
+        for round in 1..=TURNS {
+            let accepted = db
+                .accept_thread_turn_impl("owner", "thread", &input(round))
+                .unwrap();
+            let turn_id = accepted["turn_id"].as_str().unwrap().to_string();
+            let item_id = format!("answer-{round}");
+            db.append_thread_item_impl(
+                "owner",
+                &json!({"session_id":"thread","turn_id":turn_id,"item_id":item_id,
+                    "kind":"assistant_message","role":"assistant","status":"completed",
+                    "content":format!("answer {round}")}),
+            )
+            .unwrap();
+            db.upsert_thread_text_block_impl(
+                "owner",
+                "thread",
+                &json!({"item_id":item_id,"field":"content","block_index":0,
+                    "event_id":next_event,"content":format!("answer block {round}")}),
+            )
+            .unwrap();
+            next_event += 1;
+        }
+        let full = db.thread_snapshot("owner", "thread").unwrap();
+        // A fixture smaller than the default window is a complete read.
+        assert_eq!(full["has_older"], json!(false));
+        assert_eq!(full["truncated"], json!(false));
+        assert_eq!(
+            full["cursor"].as_i64().unwrap(),
+            db.latest_thread_change_seq_by_session_impl("thread")
+                .unwrap()
+        );
+        let full_turns = ids(&full["turns"], "turn_id");
+        let full_items = ids(&full["items"], "item_id");
+        let full_blocks = ids(&full["blocks"], "item_id");
+        assert_eq!(full_turns.len(), TURNS);
+        assert_eq!(full_items.len(), TURNS * 2, "each turn keeps a user and an answer item");
+        assert_eq!(full_blocks.len(), TURNS);
+
+        let mut paged_turns = Vec::new();
+        let mut paged_items = Vec::new();
+        let mut paged_blocks = Vec::new();
+        let mut before: Option<i64> = None;
+        let mut pages = 0usize;
+        loop {
+            let window = ThreadSnapshotWindow {
+                max_turns: 2,
+                before_turn_index: before,
+                ..ThreadSnapshotWindow::default()
+            };
+            let page = db.thread_snapshot_window("owner", "thread", &window).unwrap();
+            pages += 1;
+            assert!(pages <= 16, "tail paging must terminate");
+            // Cursor is read in the same transaction as the rows: a bounded
+            // window must not report a different watermark than the full read.
+            assert_eq!(page["cursor"], full["cursor"]);
+            let turns = ids(&page["turns"], "turn_id");
+            let items = ids(&page["items"], "item_id");
+            let blocks = ids(&page["blocks"], "item_id");
+            if turns.is_empty() {
+                break;
+            }
+            // The exclusive upper bound must never repeat the boundary turn.
+            if let Some(bound) = before {
+                for turn in page["turns"].as_array().unwrap() {
+                    assert!(turn["user_turn_index"].as_i64().unwrap() < bound);
+                }
+            }
+            // No window may leak rows from a turn outside itself.
+            let turn_set: std::collections::HashSet<String> = turns.iter().cloned().collect();
+            for item in page["items"].as_array().unwrap() {
+                assert!(
+                    turn_set.contains(item["turn_id"].as_str().unwrap()),
+                    "item {} leaked outside its window turns",
+                    item["item_id"]
+                );
+            }
+            // Blocks must stay inside the windowed items, not the whole thread.
+            let item_set: std::collections::HashSet<String> = items.iter().cloned().collect();
+            for block in page["blocks"].as_array().unwrap() {
+                assert!(
+                    item_set.contains(block["item_id"].as_str().unwrap()),
+                    "block {} leaked outside its window items",
+                    block["item_id"]
+                );
+            }
+            // Window bounds mirror the ascending returned turns.
+            assert_eq!(
+                page["window_start_turn_index"].as_i64(),
+                page["turns"][0]["user_turn_index"].as_i64()
+            );
+            assert_eq!(
+                page["window_end_turn_index"].as_i64(),
+                page["turns"].as_array().unwrap().last().unwrap()["user_turn_index"].as_i64()
+            );
+            before = page["window_start_turn_index"].as_i64();
+            paged_turns.extend(turns);
+            paged_items.extend(items);
+            paged_blocks.extend(blocks);
+            if page["has_older"] == json!(false) {
+                break;
+            }
+        }
+        let sorted = |mut values: Vec<String>| {
+            values.sort();
+            values
+        };
+        assert_eq!(paged_turns.len(), full_turns.len(), "each turn returned exactly once");
+        assert_eq!(paged_items.len(), full_items.len(), "each item returned exactly once");
+        assert_eq!(paged_blocks.len(), full_blocks.len(), "each block returned exactly once");
+        assert_eq!(sorted(paged_turns), sorted(full_turns));
+        assert_eq!(sorted(paged_items), sorted(full_items));
+        assert_eq!(sorted(paged_blocks), sorted(full_blocks));
+    }
+
+    /// `has_older` and `truncated` must track which axis actually dropped data,
+    /// and a first page with headroom must report neither.
+    #[test]
+    fn snapshot_window_reports_older_and_truncation_only_when_data_was_dropped() {
+        use wunder_core::storage_backend::{ThreadLogStore, ThreadSnapshotWindow};
+        let dir = tempfile::tempdir().unwrap();
+        let db = SqliteStorage::new(dir.path().join("flags.db").to_string_lossy().into_owned());
+        for round in 1..=4 {
+            let accepted = db
+                .accept_thread_turn_impl("owner", "thread", &input(round))
+                .unwrap();
+            let turn_id = accepted["turn_id"].as_str().unwrap().to_string();
+            let item_id = format!("answer-{round}");
+            db.append_thread_item_impl(
+                "owner",
+                &json!({"session_id":"thread","turn_id":turn_id,"item_id":item_id,
+                    "kind":"assistant_message","content":format!("answer {round}")}),
+            )
+            .unwrap();
+            db.upsert_thread_text_block_impl(
+                "owner",
+                "thread",
+                &json!({"item_id":item_id,"field":"content","block_index":0,
+                    "event_id":round as i64,"content":format!("block {round}")}),
+            )
+            .unwrap();
+        }
+        // First page (before=None) with headroom on every axis: nothing dropped.
+        let headroom = ThreadSnapshotWindow {
+            max_turns: 10,
+            ..ThreadSnapshotWindow::default()
+        };
+        let page = db.thread_snapshot_window("owner", "thread", &headroom).unwrap();
+        assert_eq!(page["turns"].as_array().unwrap().len(), 4);
+        assert_eq!(page["has_older"], json!(false));
+        assert_eq!(page["truncated"], json!(false));
+        // Narrowing the tail drops older turns: both flags flip.
+        let tail = ThreadSnapshotWindow {
+            max_turns: 2,
+            ..ThreadSnapshotWindow::default()
+        };
+        let page = db.thread_snapshot_window("owner", "thread", &tail).unwrap();
+        assert_eq!(page["turns"].as_array().unwrap().len(), 2);
+        assert_eq!(page["has_older"], json!(true));
+        assert_eq!(page["truncated"], json!(true));
+        // The item cap is independent of `has_older`: a full turn window still
+        // reports truncation when items were dropped.
+        let item_capped = ThreadSnapshotWindow {
+            max_turns: 10,
+            max_items: 1,
+            ..ThreadSnapshotWindow::default()
+        };
+        let page = db
+            .thread_snapshot_window("owner", "thread", &item_capped)
+            .unwrap();
+        assert_eq!(page["has_older"], json!(false));
+        assert_eq!(page["items"].as_array().unwrap().len(), 1);
+        assert_eq!(page["truncated"], json!(true));
+        // The block cap behaves the same way.
+        let block_capped = ThreadSnapshotWindow {
+            max_turns: 10,
+            max_blocks: 1,
+            ..ThreadSnapshotWindow::default()
+        };
+        let page = db
+            .thread_snapshot_window("owner", "thread", &block_capped)
+            .unwrap();
+        assert_eq!(page["has_older"], json!(false));
+        assert_eq!(page["blocks"].as_array().unwrap().len(), 1);
+        assert_eq!(page["truncated"], json!(true));
+    }
+
+    /// PG mirrors the SQLite window field names byte for byte; a rename on one
+    /// side would silently diverge the two backends. The shape is asserted here
+    /// as the shared contract the parity check relies on.
+    #[test]
+    fn snapshot_window_response_shape_matches_the_shared_backend_contract() {
+        use wunder_core::storage_backend::{ThreadLogStore, ThreadSnapshotWindow};
+        let dir = tempfile::tempdir().unwrap();
+        let db = SqliteStorage::new(dir.path().join("shape.db").to_string_lossy().into_owned());
+        db.accept_thread_turn_impl("owner", "thread", &input(1))
+            .unwrap();
+        let value = db
+            .thread_snapshot_window("owner", "thread", &ThreadSnapshotWindow::default())
+            .unwrap();
+        let keys: std::collections::BTreeSet<&str> = value
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(
+            keys,
+            [
+                "cursor",
+                "turns",
+                "items",
+                "blocks",
+                "item_total",
+                "truncated",
+                "has_older",
+                "window_start_turn_index",
+                "window_end_turn_index"
+            ]
+            .into_iter()
+            .collect()
+        );
+        assert_eq!(
+            value["item_total"].as_i64(),
+            Some(value["items"].as_array().unwrap().len() as i64)
         );
     }
 }

@@ -18,6 +18,8 @@
         draggable="true"
         role="treeitem"
         :aria-selected="activeSessionId === item.id ? 'true' : 'false'"
+        @mouseenter="handleRowHover(item.id)"
+        @mouseleave="hoverId = ''"
         @dragstart="handleDragStart($event, item.id)"
         @dragover="handleDragOver($event, item.id)"
         @drop="handleDrop($event, item.id)"
@@ -39,11 +41,13 @@
           <span class="mz-thread-title">{{ item.title }}</span>
         </button>
         <el-dropdown
+          v-if="shouldRenderMenu(item.id)"
           trigger="click"
           :teleported="true"
           placement="bottom-end"
           popper-class="mz-thread-dropdown"
           @command="(action: string) => handleAction(action, item.id)"
+          @visible-change="(visible: boolean) => handleMenuVisible(item.id, visible)"
         >
           <button class="mz-thread-menu" type="button" :title="t('common.more')" :aria-label="t('common.more')">
             <i class="fa-solid fa-ellipsis" aria-hidden="true"></i>
@@ -77,7 +81,7 @@ import { useChatStore } from '@/stores/chat';
 import { useAuthStore } from '@/stores/auth';
 import { selectSessionRuntimeStatus } from '@/realtime/chat/chatRuntimeSelectors';
 import { getChatThreadStatus } from '@/realtime/chat/chatThreadRuntime';
-import { taskWindow, type TaskListItem } from '@/views/messenger/taskList';
+import { resolveVisibleTaskRows, taskWindow, type TaskListItem } from '@/views/messenger/taskList';
 import { hasCompletedTaskTurn, resolveTaskRuntimeState } from '@/views/messenger/taskRuntimeState';
 import { getRuntime, getSessionMessages, hasRuntimeControllers } from '@/stores/chatRuntimeState';
 import { useTaskListPages } from '@/views/messenger/useTaskListPages';
@@ -139,13 +143,29 @@ const resolveItemState = (item: TaskListItem): AgentRuntimeState => {
   return state;
 };
 
-const displayItems = computed(() =>
-  ordered.orderedItems.value.map((item) => ({ ...item, state: resolveItemState(item) }))
-);
+const displayItems = computed(() => ordered.orderedItems.value);
 const range = computed(() => taskWindow(displayItems.value.length, scrollTop.value, height.value, ROW_HEIGHT));
-// Subscribe inside this small component; text streaming must not invalidate the page shell.
-const visibleItems = computed(() => displayItems.value.slice(range.value.start, range.value.end));
+// Resolve runtime state only for rows inside the virtual window. Subscribing to
+// a session's projection/loading clock for every row turns one session bump
+// into a full-list recompute (dep magnet); keeping it windowed bounds the work
+// to the visible rows even when the backing list is large.
+const visibleItems = computed(() => resolveVisibleTaskRows(displayItems.value, range.value, resolveItemState));
 const emptyLabel = computed(() => t('messenger.tasks.empty'));
+
+// Row menus mount on demand: render the dropdown only for the hovered row or
+// the row whose menu is currently open, instead of one el-dropdown per row.
+const hoverId = ref('');
+const openMenuId = ref('');
+const shouldRenderMenu = (id: string): boolean =>
+  openMenuId.value ? openMenuId.value === id : hoverId.value === id;
+const handleRowHover = (id: string) => {
+  hoverId.value = id;
+  if (openMenuId.value && openMenuId.value !== id) openMenuId.value = '';
+};
+const handleMenuVisible = (id: string, visible: boolean) => {
+  if (visible) openMenuId.value = id;
+  else if (openMenuId.value === id) openMenuId.value = '';
+};
 
 const stateLabel = (state: AgentRuntimeState): string => t(`messenger.thread.state.${state}`);
 

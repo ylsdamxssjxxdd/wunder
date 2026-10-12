@@ -68,6 +68,14 @@ async fn run_server(runtime_threads: runtime_tuning::ServerRuntimeThreads) -> an
         "server bootstrap ready"
     );
     let state = Arc::new(AppState::new(config_store.clone(), config.clone())?);
+    if !config.agent_queue.enabled {
+        // The composer queue is what keeps a follow-up message above the input
+        // box while a turn runs. Off, a second message has nowhere to go and
+        // the chat page reports USER_BUSY, so say so at startup.
+        warn!(
+            "agent_queue.enabled=false: 运行中再发消息会被拒绝（USER_BUSY），聊天排队条不会出现"
+        );
+    }
     state.lsp_manager.sync_with_config(&config).await;
     long_task::spawn(
         "server.bootstrap.hydrate_mcp_tool_specs",

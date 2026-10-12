@@ -360,6 +360,9 @@ const splitterEl = ref<HTMLElement | null>(null);
 const footerEl = ref<HTMLElement | null>(null);
 const splitRatio = ref(DEFAULT_SPLIT);
 const isResizing = ref(false);
+/** 按下分隔条时，指针相对分隔条顶边的偏移：拖拽全程保持不变，
+ *  否则分隔条顶边会直接吸到指针上，整条跳到指针下方。 */
+let resizeGrabOffset = 0;
 
 try {
   const stored = Number.parseFloat(String(localStorage.getItem(WORKSPACE_SPLIT_STORAGE_KEY) || ''));
@@ -397,7 +400,10 @@ const handleResizeMove = (event: PointerEvent) => {
   if (!rect || rect.height <= 0) return;
   const track = resizableTrackHeight();
   if (track <= 0) return;
-  const next = Math.min(MAX_SPLIT, Math.max(MIN_SPLIT, (event.clientY - rect.top) / track));
+  // 轨道内高度＝指针位置减去按下时记录的抓取偏移：分隔条跟着指针平移，
+  // 而不是让顶边吸到指针上（那样整条会瞬间移到指针下方）。
+  const pointerTrackY = event.clientY - rect.top - resizeGrabOffset;
+  const next = Math.min(MAX_SPLIT, Math.max(MIN_SPLIT, pointerTrackY / track));
   splitRatio.value = next;
 };
 
@@ -410,6 +416,10 @@ const stopResize = () => {
 
 const startResize = (event: PointerEvent) => {
   isResizing.value = true;
+  // 记录抓取点：指针相对分隔条顶边（即可伸缩轨道底边）的偏移，拖拽全程保持，
+  // 分隔条跟着指针平移而不产生跳变。
+  const splitterRect = splitterEl.value?.getBoundingClientRect();
+  resizeGrabOffset = splitterRect ? event.clientY - splitterRect.top : 0;
   (event.currentTarget as HTMLElement | null)?.focus?.();
   window.addEventListener('pointermove', handleResizeMove);
   window.addEventListener('pointerup', stopResize, { once: true });
