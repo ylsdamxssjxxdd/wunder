@@ -96,6 +96,78 @@ component SettingRow inherits Rectangle {
     if !root.last : Rectangle { y: parent.height - 1px; width: parent.width; height: 1px; background: Theme.border; }
 }
 
+// One 主题模式 tile: a mini chat mock painted in that palette with its name
+// below. The palette colours are passed in explicitly so an unselected tile
+// still previews its own accent; they match `Theme` and the web `base.css`.
+component ThemeTile inherits Rectangle {
+    in property <string> palette;
+    in property <string> name;
+    in property <color> accent;
+    in property <color> tint;
+    in property <bool> active: false;
+    callback picked(string);
+    horizontal-stretch: 1;
+    vertical-stretch: 0;
+    height: 110px;
+    border-radius: Theme.radius-md;
+    border-width: 1px;
+    border-color: root.active ? root.accent : Theme.border;
+    background: Theme.surface;
+    mock := Rectangle {
+        x: 10px; y: 10px; width: parent.width - 20px; height: 68px;
+        border-radius: Theme.radius-sm; border-width: 1px; border-color: Theme.border;
+        background: root.tint;
+        Rectangle { x: 12px; y: 12px; width: parent.width * 0.46; height: 7px; border-radius: 3.5px; background: root.accent; }
+        Rectangle { x: 12px; y: 25px; width: parent.width * 0.3; height: 5px; border-radius: 2.5px; background: #DCD8D2; }
+        // The avatar ring is the selection mark, as on the web card.
+        Rectangle { x: parent.width - 27px; y: 9px; width: 15px; height: 15px;
+            border-radius: 7.5px; background: Theme.surface;
+            border-width: root.active ? 4px : 1px;
+            border-color: root.active ? root.accent : Theme.border-strong; }
+        Rectangle { x: 12px; y: 34px; width: parent.width - 24px; height: 24px;
+            border-radius: 6px; border-width: 1px; border-color: Theme.border; background: Theme.surface;
+            Rectangle { x: 8px; y: 7px; width: parent.width * 0.55; height: 4px; border-radius: 2px; background: #D8D4CE; }
+            Rectangle { x: 8px; y: 15px; width: parent.width * 0.33; height: 4px; border-radius: 2px; background: #D8D4CE; }
+        }
+    }
+    Text { y: 86px; width: parent.width; height: 16px; text: root.name;
+        color: Theme.text; font-size: Theme.font-sm; font-weight: 600;
+        horizontal-alignment: center; vertical-alignment: center; overflow: elide; }
+    TouchArea { mouse-cursor: pointer; clicked => { root.picked(root.palette); } }
+}
+
+// 主题模式 block: the SettingRow rhythm, but the four tiles take the full
+// width under the label, as on the web card.
+export component ThemeModeRow inherits Rectangle {
+    in property <string> label;
+    in property <string> note: "";
+    in property <string> theme;
+    in property <bool> last: false;
+    callback picked(string);
+    height: body.preferred-height + (root.last ? 0px : 1px);
+    body := VerticalLayout {
+        padding-top: 12px; padding-bottom: 12px; spacing: 12px;
+        VerticalLayout { spacing: 3px;
+            Text { text: root.label; color: Theme.text; font-size: Theme.font-md; font-weight: 600; }
+            if root.note != "" : Text { text: root.note; color: Theme.muted; font-size: Theme.font-xs; wrap: word-wrap; }
+        }
+        HorizontalLayout { spacing: 12px;
+            // The tint is each palette's `Theme.accent-soft`, the tone the
+            // shell actually paints on bubbles and badges; the page base stays
+            // neutral in every palette by design.
+            ThemeTile { palette: "forest"; name: I18n.st_theme_forest; accent: #2f7a5c; tint: #e9f2ee;
+                active: root.theme == "forest"; picked(name) => { root.picked(name); } }
+            ThemeTile { palette: "hula-green"; name: I18n.st_theme_mint; accent: #16ad8d; tint: #e7f7f2;
+                active: root.theme == "hula-green"; picked(name) => { root.picked(name); } }
+            ThemeTile { palette: "honey"; name: I18n.st_theme_honey; accent: #c08a2a; tint: #f8f0dd;
+                active: root.theme == "honey"; picked(name) => { root.picked(name); } }
+            ThemeTile { palette: "terracotta"; name: I18n.st_theme_parchment; accent: #c96443; tint: #f6e9e3;
+                active: root.theme == "terracotta"; picked(name) => { root.picked(name); } }
+        }
+    }
+    if !root.last : Rectangle { y: parent.height - 1px; width: parent.width; height: 1px; background: Theme.border; }
+}
+
 // Settings shell (§9): a 12-category navigation on the left and the selected
 // category's cards on the right. It replaces the old five-tab entity page; the
 // per-category panels below reuse the existing native callbacks unchanged.
@@ -532,9 +604,6 @@ export component SettingsPage inherits Rectangle {
     private property <bool> model-delete-open: false;
     background: Theme.chat;
 
-    function palette-name(index: int) -> string {
-        return index == 1 ? "hula-green" : index == 2 ? "minimal" : index == 3 ? "tech-blue" : "terracotta";
-    }
     // Per-type list icons, mirroring the web messenger model list.
     public pure function model-icon(kind: string) -> image {
         kind == "embedding" ? @image-url("../assets/icons/log-fingerprint.svg") :
@@ -740,10 +809,8 @@ export component SettingsPage inherits Rectangle {
                                     ComboBox { width: 132px; height: 38px; model: ["zh-CN", "en-US"]; current-index: root.language == "en-US" ? 1 : 0; enabled: !root.saving && !root.loading;
                                         selected(value) => { root.language = value; root.save-runtime(root.workspace-root, root.language, root.python-path, root.git-path, root.rg-path); } }
                                 }
-                                SettingRow { label: I18n.st_palette; note: I18n.st_palette_note;
-                                    ComboBox { width: 150px; height: 38px; model: [I18n.st_palette_terracotta, I18n.st_palette_hula, I18n.st_palette_minimal, I18n.st_palette_tech]; current-index: root.theme == "hula-green" ? 1 : root.theme == "minimal" ? 2 : root.theme == "tech-blue" ? 3 : 0;
-                                        selected(value) => { root.theme = root.palette-name(self.current-index); Theme.palette = root.theme; root.save-preferences(); } }
-                                }
+                                ThemeModeRow { label: I18n.st_palette; note: I18n.st_palette_note; theme: root.theme;
+                                    picked(name) => { root.theme = name; Theme.palette = name; root.save-preferences(); } }
                                 SettingRow { label: I18n.st_font_size; note: I18n.st_font_size_note; last: true;
                                     HorizontalLayout { spacing: 10px;
                                         Rectangle { width: 106px; height: 34px; border-radius: 17px; background: Theme.panel; border-width: 1px; border-color: Theme.border;

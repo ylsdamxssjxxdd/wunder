@@ -6,6 +6,7 @@ import { notify } from "./notify.js";
 import { t } from "./i18n.js?v=20261011-01";
 import { ensureOrgUnitsLoaded, getAllOrgUnitItems } from "./org-units.js?v=20260518-01";
 import { filterRemovedSwarmTools, filterRemovedSwarmToolRules } from "../shared/deprecated-tools.js";
+import { syncPromptTools } from "./tools.js?v=20261012-01";
 
 const normalizeNameList = (values) => {
   const seen = new Set();
@@ -274,10 +275,23 @@ export const saveToolVisibilityPanel = async () => {
   renderList();
   renderDetail();
   notify(t("common.save"), "success");
+  // 可见性变更后广播工具领域事件，令其它面板（预设智能体/内置工具/提示词等）刷新或失效
+  syncPromptTools();
 };
 
 export const initToolVisibilityPanel = () => {
   ensureState();
+  // 工具启用/可见性变更时刷新本面板（治本·领域事件订阅）
+  if (!state.toolVisibility.dataInvalidationBound && typeof window !== "undefined") {
+    state.toolVisibility.dataInvalidationBound = true;
+    window.addEventListener("wunder:tools-updated", () => {
+      if (state.runtime?.activePanel === "toolVisibility" && state.panelLoaded?.toolVisibility) {
+        Promise.resolve(loadToolVisibilityPanel()).catch(() => {});
+      } else {
+        state.panelLoaded.toolVisibility = false;
+      }
+    });
+  }
   elements.toolVisibilityRefreshBtn?.addEventListener("click", async () => {
     try {
       await loadToolVisibilityPanel();

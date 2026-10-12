@@ -75,6 +75,11 @@ pub(super) trait SqliteChatSessionStorage {
         limit: i64,
     ) -> Result<(Vec<ChatSessionRecord>, i64)>;
     fn count_chat_sessions_by_workspace_impl(&self, user_id: &str) -> Result<Vec<(String, i64)>>;
+    fn count_chat_sessions_by_day_impl(
+        &self,
+        user_id: &str,
+        since_at: f64,
+    ) -> Result<Vec<(String, i64)>>;
     fn reassign_chat_sessions_workspace_impl(
         &self,
         user_id: &str,
@@ -494,6 +499,37 @@ impl SqliteChatSessionStorage for SqliteStorage {
         Ok(result)
     }
 
+    fn count_chat_sessions_by_day_impl(
+        &self,
+        user_id: &str,
+        since_at: f64,
+    ) -> Result<Vec<(String, i64)>> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        if cleaned_user.is_empty() || !since_at.is_finite() || since_at <= 0.0 {
+            return Ok(Vec::new());
+        }
+        let conn = self.open()?;
+        let mut stmt = conn.prepare(
+            "SELECT strftime('%Y-%m-%d', created_at, 'unixepoch', 'localtime'), COUNT(*) \
+             FROM chat_sessions \
+             WHERE user_id = ? AND created_at >= ? \
+             AND (parent_session_id IS NULL OR trim(parent_session_id) = '') \
+             GROUP BY 1 ORDER BY 1",
+        )?;
+        let rows = stmt.query_map(params![cleaned_user, since_at], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })?;
+        let mut days = Vec::new();
+        for row in rows {
+            let (day, count) = row?;
+            if !day.is_empty() {
+                days.push((day, count));
+            }
+        }
+        Ok(days)
+    }
+
     fn reassign_chat_sessions_workspace_impl(
         &self,
         user_id: &str,
@@ -641,6 +677,7 @@ fn map_chat_session_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ChatSession
 mod child_directory_tests {
     use crate::storage::sqlite::SqliteStorage;
     use crate::storage::*;
+    use chrono::{Local, TimeZone};
     use tempfile::tempdir;
 
     fn build_storage() -> SqliteStorage {
@@ -808,5 +845,56 @@ mod child_directory_tests {
             .expect("other user page");
         assert_eq!(other_total, 0);
         assert!(other.is_empty());
+    }
+
+    #[test]
+    fn thread_starts_bucket_by_local_calendar_day() {
+        let storage = build_storage();
+        let day = |offset: i64| -> (f64, String) {
+            let naive = (Local::now().date_naive() - chrono::Duration::days(offset))
+                .and_hms_opt(9, 0, 0)
+                .expect("local day");
+            let at = Local
+                .from_local_datetime(&naive)
+                .single()
+                .expect("unambiguous local day");
+            (at.timestamp() as f64, naive.format("%Y-%m-%d").to_string())
+        };
+        let (today_at, today_key) = day(0);
+        let (yesterday_at, yesterday_key) = day(1);
+        let (long_ago_at, _) = day(400);
+
+        for (id, parent, created_at) in [
+            ("root-today-1", None, today_at),
+            ("root-today-2", None, today_at),
+            ("child-today", Some("root-today-1"), today_at),
+            ("root-yesterday", None, yesterday_at),
+            ("root-long-ago", None, long_ago_at),
+        ] {
+            storage
+                .upsert_chat_session(&session("u-activity", id, parent, created_at))
+                .expect("upsert session");
+        }
+        storage
+            .upsert_chat_session(&session("u-other", "other-today", None, today_at))
+            .expect("upsert other user");
+
+        let (since_at, _) = day(30);
+        assert_eq!(
+            storage
+                .count_chat_sessions_by_day("u-activity", since_at)
+                .expect("daily buckets"),
+            vec![(yesterday_key, 1_i64), (today_key, 2_i64)]
+        );
+
+        // A blank scope or an unset window never scans the table.
+        assert!(storage
+            .count_chat_sessions_by_day("  ", since_at)
+            .expect("blank user")
+            .is_empty());
+        assert!(storage
+            .count_chat_sessions_by_day("u-activity", 0.0)
+            .expect("unset window")
+            .is_empty());
     }
 }

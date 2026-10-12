@@ -2,6 +2,7 @@
 
 slint::include_modules!();
 mod agent_editor;
+mod activity_ui;
 mod audio_recording;
 pub(crate) mod avatar_assets;
 mod avatar_ui;

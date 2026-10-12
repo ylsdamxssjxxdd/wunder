@@ -1,5 +1,5 @@
 use super::{
-    error_response, fetch_agent_record, format_ts, now_ts, resolve_chat_model_name,
+    error_response, fetch_agent_record, format_ts, now_ts, resolve_thread_model_name,
     CHAT_SESSION_STATUS_ACTIVE, CHAT_SESSION_STATUS_ARCHIVED, DEFAULT_SESSION_TITLE,
 };
 use crate::api::user_context::resolve_user;
@@ -80,6 +80,10 @@ pub(super) fn router() -> Router<Arc<AppState>> {
             post(update_session_reasoning_effort),
         )
         .route(
+            "/wunder/chat/sessions/{session_id}/model",
+            post(update_session_model),
+        )
+        .route(
             "/wunder/chat/sessions/{session_id}/thread-log/messages",
             get(get_session_history),
         )
@@ -149,6 +153,14 @@ struct SessionTitleUpdateRequest {
 #[derive(Debug, Deserialize)]
 struct SessionReasoningEffortUpdateRequest {
     reasoning_effort: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct SessionModelUpdateRequest {
+    /// Thread model override; empty clears it so the thread follows the agent
+    /// configuration again.
+    #[serde(default)]
+    model_name: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -334,6 +346,14 @@ async fn list_sessions(
                     .workspace
                     .load_session_reasoning_effort(&resolved.user.user_id, &record.session_id)),
             );
+            // Thread model override; absent means the thread follows the agent
+            // configuration.
+            if let Some(session_model) = state
+                .workspace
+                .load_session_model_override(&resolved.user.user_id, &record.session_id)
+            {
+                map.insert("session_model_name".to_string(), json!(session_model));
+            }
         }
         let monitor = state.monitor.get_record(&record.session_id);
         // One precedence table for every client: the chat list resolves its wire
@@ -481,7 +501,15 @@ async fn get_session(
     };
 
     let config = state.config_store.get().await;
-    let runtime = resolve_session_model_runtime(&config, agent_record.as_ref());
+    let session_model_override =
+        state
+            .workspace
+            .load_session_model_override(&resolved.user.user_id, &session_id);
+    let runtime = resolve_session_model_runtime_with_override(
+        &config,
+        agent_record.as_ref(),
+        session_model_override.as_deref(),
+    );
     let context_tokens = state
         .workspace
         .load_session_context_tokens(&resolved.user.user_id, &session_id)
@@ -523,6 +551,7 @@ async fn get_session(
             "agent_name": agent_name,
             "tool_overrides": record.tool_overrides,
             "reasoning_effort": state.workspace.load_session_reasoning_effort(&resolved.user.user_id, &session_id),
+            "session_model_name": session_model_override,
             "history_incomplete": history_incomplete,
             "transcript": transcript,
             "model_name": runtime.as_ref().and_then(|runtime| runtime.display_name.clone()),
@@ -578,6 +607,65 @@ async fn update_session_reasoning_effort(
     Ok(Json(
         json!({ "data": { "id": session_id, "reasoning_effort": reasoning_effort } }),
     ))
+}
+
+async fn update_session_model(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    AxumPath(session_id): AxumPath<String>,
+    Json(payload): Json<SessionModelUpdateRequest>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, None).await?;
+    let session_id = session_id.trim().to_string();
+    if session_id.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.content_required"),
+        ));
+    }
+    let exists = state
+        .user_store
+        .get_chat_session(&resolved.user.user_id, &session_id)
+        .map_err(|error| error_response(StatusCode::BAD_REQUEST, error.to_string()))?;
+    if exists.is_none() {
+        return Err(error_response(
+            StatusCode::NOT_FOUND,
+            i18n::t("error.session_not_found"),
+        ));
+    }
+    let requested = payload.model_name.trim().to_string();
+    // An empty value clears the override; a non-empty value must still resolve
+    // to a configured LLM so a typo never silently pins the thread to the
+    // fallback chain.
+    if !requested.is_empty() {
+        let config = state.config_store.get().await;
+        let valid = config
+            .llm
+            .models
+            .get(&requested)
+            .is_some_and(crate::services::llm::is_llm_model);
+        if !valid {
+            return Err(error_response(
+                StatusCode::BAD_REQUEST,
+                i18n::t("error.model_not_found"),
+            ));
+        }
+    }
+    state
+        .workspace
+        .save_session_model_override(
+            &resolved.user.user_id,
+            &session_id,
+            if requested.is_empty() {
+                None
+            } else {
+                Some(requested.as_str())
+            },
+        )
+        .map_err(|error| error_response(StatusCode::BAD_REQUEST, error.to_string()))?;
+    Ok(Json(json!(
+        { "data": { "id": session_id, "model_name": requested } }
+    )))
 }
 
 /// Monitor events are intentionally bounded and older sessions may not retain
@@ -1047,7 +1135,14 @@ async fn update_session_title(
     let config = state.config_store.get().await;
     let agent_record =
         fetch_agent_record(&state, &resolved.user, record.agent_id.as_deref(), true).await?;
-    let runtime = resolve_session_model_runtime(&config, agent_record.as_ref());
+    let runtime = resolve_session_model_runtime_with_override(
+        &config,
+        agent_record.as_ref(),
+        state
+            .workspace
+            .load_session_model_override(&resolved.user.user_id, &session_id)
+            .as_deref(),
+    );
     let goal = state
         .kernel
         .orchestrator
@@ -1108,7 +1203,14 @@ async fn archive_session(
     let config = state.config_store.get().await;
     let agent_record =
         fetch_agent_record(&state, &resolved.user, record.agent_id.as_deref(), true).await?;
-    let runtime = resolve_session_model_runtime(&config, agent_record.as_ref());
+    let runtime = resolve_session_model_runtime_with_override(
+        &config,
+        agent_record.as_ref(),
+        state
+            .workspace
+            .load_session_model_override(&resolved.user.user_id, &session_id)
+            .as_deref(),
+    );
     let goal = state
         .kernel
         .orchestrator
@@ -1158,7 +1260,14 @@ async fn restore_session(
     let config = state.config_store.get().await;
     let agent_record =
         fetch_agent_record(&state, &resolved.user, record.agent_id.as_deref(), true).await?;
-    let runtime = resolve_session_model_runtime(&config, agent_record.as_ref());
+    let runtime = resolve_session_model_runtime_with_override(
+        &config,
+        agent_record.as_ref(),
+        state
+            .workspace
+            .load_session_model_override(&resolved.user.user_id, &session_id)
+            .as_deref(),
+    );
     let goal = state
         .kernel
         .orchestrator
@@ -1745,7 +1854,18 @@ fn resolve_session_model_runtime(
     config: &crate::config::Config,
     agent_record: Option<&crate::storage::UserAgentRecord>,
 ) -> Option<SessionModelRuntime> {
-    let config_key = resolve_chat_model_name(config, agent_record)?;
+    resolve_session_model_runtime_with_override(config, agent_record, None)
+}
+
+/// Same as `resolve_session_model_runtime`, but a thread model override wins
+/// over the agent configuration when it still points at a configured LLM.
+fn resolve_session_model_runtime_with_override(
+    config: &crate::config::Config,
+    agent_record: Option<&crate::storage::UserAgentRecord>,
+    session_override: Option<&str>,
+) -> Option<SessionModelRuntime> {
+    let config_key =
+        resolve_thread_model_name(config, agent_record, session_override)?;
     let model_config = config.llm.models.get(&config_key)?;
     if !is_llm_model(model_config) {
         return None;

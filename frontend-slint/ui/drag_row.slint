@@ -1,10 +1,24 @@
 import { Theme } from "theme.slint";
 
-// Shared drag coordinates let each row expose the live insertion target.
+// The pitch the sidebar tree lays its rows out with. The native drop resolver
+// walks the same numbers, so a row height only lives in this file.
+export global SidebarMetrics {
+    in-out property <length> thread-height: 28px;
+    in-out property <length> group-height: 34px;
+}
+
+// Shared drag state. `anchor-y` is the window-relative pointer at press and
+// `pointer-y` the live one, so a row can report how far the pointer travelled
+// while every other row can still expose the insertion seam under it.
 export global DragPreview {
     in-out property <bool> active: false;
     in-out property <length> pointer-y: 0px;
+    in-out property <length> anchor-y: 0px;
     in-out property <length> source-y: -1px;
+    in-out property <int> source-index: -1;
+    in-out property <int> source-kind: -1;
+    in-out property <string> source-workspace: "";
+    in-out property <string> source-label: "";
 }
 
 export component DragRow inherits Rectangle {
@@ -12,18 +26,31 @@ export component DragRow inherits Rectangle {
     in property <bool> enabled: true;
     in property <bool> selected;
     in property <color> selected-color: Theme.accent-soft;
+    // Which tree row this is, and the group it may be re-ordered within. The
+    // native side resolves the drop from the reported pointer travel, so the
+    // row only has to say which row was grabbed and what it holds.
+    in property <int> row-index: -1;
+    in property <int> row-kind: -1;
+    in property <string> workspace-id: "";
     out property <bool> hover: touch.has-hover;
     callback activate();
     callback move-by(int);
-    private property <length> start-y;
-    private property <bool> dragging;
-    private property <bool> drop-target: DragPreview.active && DragPreview.source-y != root.absolute-position.y && DragPreview.pointer-y >= root.absolute-position.y && DragPreview.pointer-y < root.absolute-position.y + root.height;
+    private property <bool> dragging: DragPreview.active && DragPreview.source-index == root.row-index;
+    // A row only accepts another row of its own kind, and a thread never
+    // leaves the workspace it is listed under.
+    private property <bool> droppable: DragPreview.active
+        && root.row-index != DragPreview.source-index
+        && root.row-kind == DragPreview.source-kind
+        && (root.row-kind != 1 || root.workspace-id == DragPreview.source-workspace);
+    private property <bool> drop-target: root.droppable
+        && DragPreview.pointer-y >= root.absolute-position.y
+        && DragPreview.pointer-y < root.absolute-position.y + root.height;
     private property <bool> insert-after: DragPreview.pointer-y >= root.absolute-position.y + root.height / 2;
     border-radius: Theme.radius-lg;
     background: root.selected ? root.selected-color : touch.has-hover || touch.pressed ? Theme.accent-soft : transparent;
     border-width: root.dragging ? 1px : 0px;
     border-color: Theme.accent;
-    opacity: root.dragging ? 0.88 : 1;
+    opacity: root.dragging ? 0.45 : 1;
     accessible-role: button; accessible-label: root.label;
     accessible-action-default => { if root.enabled { root.activate(); } }
     forward-focus: focus;
@@ -44,30 +71,46 @@ export component DragRow inherits Rectangle {
         enabled: root.enabled; mouse-cursor: root.dragging ? move : pointer;
         pointer-event(event) => {
             if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
-                root.start-y = self.mouse-y;
-                root.dragging = false;
-                DragPreview.active = false;
+                DragPreview.anchor-y = root.absolute-position.y + self.mouse-y;
+                DragPreview.pointer-y = DragPreview.anchor-y;
                 DragPreview.source-y = root.absolute-position.y;
-                DragPreview.pointer-y = root.absolute-position.y + self.mouse-y;
+                DragPreview.source-index = root.row-index;
+                DragPreview.source-kind = root.row-kind;
+                DragPreview.source-workspace = root.workspace-id;
+                DragPreview.source-label = root.label;
+                DragPreview.active = false;
                 focus.focus();
             }
             if event.kind == PointerEventKind.up && event.button == PointerEventButton.left {
-                if root.dragging { root.move-by(round((self.mouse-y - root.start-y) / root.height)); }
-                else { root.activate(); }
-                root.dragging = false;
+                if DragPreview.active {
+                    // Travel in px, not rows: the tree mixes 28px thread rows
+                    // with 34px group rows, so only the native side can turn
+                    // the travel into the row the pointer actually sits in.
+                    root.move-by(round((DragPreview.pointer-y - DragPreview.anchor-y) / 1px));
+                } else {
+                    root.activate();
+                }
                 DragPreview.active = false;
+                DragPreview.source-index = -1;
+                DragPreview.source-kind = -1;
+                DragPreview.source-workspace = "";
+                DragPreview.source-label = "";
                 DragPreview.source-y = -1px;
             }
             if event.kind == PointerEventKind.cancel {
-                root.dragging = false;
                 DragPreview.active = false;
+                DragPreview.source-index = -1;
+                DragPreview.source-kind = -1;
+                DragPreview.source-workspace = "";
+                DragPreview.source-label = "";
                 DragPreview.source-y = -1px;
             }
         }
+        // While a button is down Slint keeps sending the moves to this area,
+        // so `pointer-y` follows the cursor across the whole list.
         moved => {
             DragPreview.pointer-y = root.absolute-position.y + self.mouse-y;
-            if self.pressed && abs(self.mouse-y - root.start-y) > 6px {
-                root.dragging = true;
+            if self.pressed && abs(DragPreview.pointer-y - DragPreview.anchor-y) > 6px {
                 DragPreview.active = true;
             }
         }

@@ -1,5 +1,23 @@
 [
  {
+  "key": "act_tab_sessions",
+  "zh": "会话",
+  "en": "Sessions"
+ },
+ {
+  "key": "act_tab_credits",
+  "zh": "Credits",
+  "en": "Credits"
+ },
+ {
+  "key": "act_month",
+  "zh": "{}月",
+  "en": "{}",
+  "params": [
+   "month"
+  ]
+ },
+ {
   "key": "ag_title",
   "zh": "专家",
   "en": "Agents"
@@ -1213,6 +1231,14 @@
   "key": "ws_menu_edit",
   "zh": "编辑工作区",
   "en": "Edit workspace"
+ },
+ {
+  "key": "sb_rename_body",
+  "zh": "重命名「{}」为：",
+  "en": "Rename “{}” to:",
+  "params": [
+   "name"
+  ]
  },
  {
   "key": "ws_menu_reveal",
@@ -4269,6 +4295,16 @@
   "en": "Sending, appearance, runtime and diagnostics"
  },
  {
+  "key": "stc_account",
+  "zh": "账号",
+  "en": "Account"
+ },
+ {
+  "key": "stc_account_note",
+  "zh": "云账号、登录状态与用量统计",
+  "en": "Cloud account, sign-in state and usage"
+ },
+ {
   "key": "stc_models",
   "zh": "模型设置",
   "en": "Models"
@@ -4880,33 +4916,33 @@
  },
  {
   "key": "st_palette",
-  "zh": "配色主题",
-  "en": "Color theme"
+  "zh": "主题模式",
+  "en": "Theme mode"
  },
  {
   "key": "st_palette_note",
-  "zh": "选择系统设置的主色风格",
-  "en": "Pick the primary accent style"
+  "zh": "选择界面强调色与气泡底色，即时生效",
+  "en": "Pick the accent colour and the bubble tone; applied immediately"
  },
  {
-  "key": "st_palette_terracotta",
-  "zh": "赭橙（蜂巢基调）",
-  "en": "Terracotta (hive base)"
+  "key": "st_theme_forest",
+  "zh": "森林",
+  "en": "Forest"
  },
  {
-  "key": "st_palette_hula",
-  "zh": "Hula 绿",
-  "en": "Hula green"
+  "key": "st_theme_mint",
+  "zh": "薄荷",
+  "en": "Mint"
  },
  {
-  "key": "st_palette_minimal",
-  "zh": "极简",
-  "en": "Minimal"
+  "key": "st_theme_honey",
+  "zh": "蜜蜂",
+  "en": "Honey"
  },
  {
-  "key": "st_palette_tech",
-  "zh": "科技蓝",
-  "en": "Tech blue"
+  "key": "st_theme_parchment",
+  "zh": "羊皮纸",
+  "en": "Parchment"
  },
  {
   "key": "st_font_size",
@@ -7019,6 +7055,26 @@
   "key": "wf_menu_open_ws",
   "zh": "打开本地工作区",
   "en": "Open local workspace"
+ },
+ {
+  "key": "wf_menu_preview",
+  "zh": "预览",
+  "en": "Preview"
+ },
+ {
+  "key": "wf_menu_archive",
+  "zh": "打包下载",
+  "en": "Download as zip"
+ },
+ {
+  "key": "wf_menu_archive_root",
+  "zh": "下载当前目录",
+  "en": "Download this folder"
+ },
+ {
+  "key": "wf_menu_clear",
+  "zh": "清空",
+  "en": "Clear"
  },
  {
   "key": "wf_rename_title",

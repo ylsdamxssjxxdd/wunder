@@ -1,3 +1,4 @@
+// AI生成
 import {
   APP_CONFIG,
   applyStoredConfig,
@@ -7,7 +8,7 @@ import {
 } from "../app.config.js?v=20260110-04";
 import { elements } from "./elements.js?v=20261011-01";
 import { state } from "./state.js";
-import { toggleMonitorPolling } from "./monitor.js?v=20261011-01";
+import { toggleMonitorPolling } from "./monitor.js?v=20261012-01";
 import { notify } from "./notify.js";
 import {
   getLanguageLabel,

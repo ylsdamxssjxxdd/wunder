@@ -28,6 +28,7 @@ pub fn install(app: &crate::MainWindow) {
 pub fn install_ready(app: &crate::MainWindow, runtime: Arc<NativeDesktop>) {
     crate::native_chat::install(app, runtime.clone());
     crate::native_pages::install(app, runtime.clone());
+    crate::activity_ui::install(app, runtime.clone());
     crate::companion_pet::install(app, runtime);
 }
 
@@ -35,5 +36,6 @@ pub fn install_ready(app: &crate::MainWindow, runtime: Arc<NativeDesktop>) {
 /// screenshots of the main window, so no pet may float over them.
 pub fn install_ready_without_pets(app: &crate::MainWindow, runtime: Arc<NativeDesktop>) {
     crate::native_chat::install(app, runtime.clone());
-    crate::native_pages::install(app, runtime);
+    crate::native_pages::install(app, runtime.clone());
+    crate::activity_ui::install(app, runtime);
 }

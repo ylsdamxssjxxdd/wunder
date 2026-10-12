@@ -62,6 +62,8 @@
     "test:message-render": "node scripts/run-regression-tests.mjs message-render-regression.test.ts",
     "test:workspace-refresh": "node scripts/run-regression-tests.mjs workspace-panel-refresh-regression.test.ts workspace-hydration-batch-regression.test.ts",
     "test:ability-visuals": "node scripts/run-regression-tests.mjs ability-visuals-regression.test.ts",
+    "test:daily-activity-grid": "node scripts/run-regression-tests.mjs daily-activity-grid-regression.test.ts",
+    "test:theme-palette": "node scripts/run-regression-tests.mjs theme-palette-regression.test.ts",
     "test:e2e:chat-bubble-stress": "playwright test tests/e2e/chat-bubble-stress-harness.spec.ts --workers=1",
     "test:chat-evidence": "node scripts/run-regression-tests.mjs chat-evidence-analysis-regression.test.ts assistant-failure-notice-regression.test.ts",
     "test:e2e:chat-durable-stream-performance": "playwright test tests/e2e/chat-durable-stream-performance.spec.ts --workers=1",

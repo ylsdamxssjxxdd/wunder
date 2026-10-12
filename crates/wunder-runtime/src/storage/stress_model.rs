@@ -189,13 +189,20 @@ const ANSWER_PARAGRAPHS: &[&str] = &[
     "从耗时分布看，前 10% 的请求占了大约一半的等待时间，基本都是冷启动路径。加一层有界缓存之后，尾部延迟明显收敛。",
 ];
 
+// English traces: identical reasoning content per byte costs ~3x less than
+// CJK text (1 byte/char vs 3). Length is driven by the per-round budget, so
+// short and long lines are mixed only for texture.
 const REASONING_LINES: &[&str] = &[
-    "先确认输入的边界条件，再决定走哪条分支。",
-    "这个假设和上一轮观察到的现象矛盾，换个角度验证。",
-    "把问题拆成两步：先定位差异来源，再评估改动影响面。",
-    "直接改表层治标不治本，应该从数据流向的上游解决。",
-    "这里的时间戳只在本地有意义，跨节点比较需要统一到 UTC。",
-    "容量估算保守一点，宁可先少配，留出观察窗口。",
+    "Check the input's boundary conditions first, then pick the branch.",
+    "That assumption contradicts last round's observation; verify it another way.",
+    "Split it in two: locate the difference, then size the blast radius.",
+    "Patching the surface layer won't fix the root cause; go upstream.",
+    "This timestamp is only meaningful locally; compare across nodes in UTC.",
+    "Keep the capacity estimate conservative and leave an observation window.",
+    "The warning is the same pattern firing repeatedly: idle connections get reaped early and the next request reconnects. Raising the keep-alive should silence it.",
+    "Three call sites copy the whole object; two can pass by reference, the third needs paging so it never loads everything at once.",
+    "The profile shows the slowest 10% of requests take half of the total wait, all of them cold-start. A bounded cache should converge the tail.",
+    "The tests have a blind spot: the rollback path for a duplicate key under concurrency is never asserted. Two cases should cover it.",
 ];
 
 pub(crate) fn fill_template(template: &str, rng: &mut Rng, index: i64) -> String {
@@ -218,6 +225,22 @@ pub(crate) struct RoundPlan {
     pub input_tokens: u64,
     pub prefill_duration_s: f64,
     pub decode_duration_s: f64,
+}
+
+/// Reasoning budget per model round: short traces dominate, with an
+/// occasional long one. Same `[120, 1500]` envelope as before, but the
+/// weighted mean drops to ~370 tokens so synthetic payloads stop carrying a
+/// ~1.5k-token thought chain on every single round.
+fn sample_reasoning_budget(rng: &mut Rng) -> u64 {
+    let roll = rng.below(100);
+    let (lo, hi) = if roll < 72 {
+        (120, 320) // short, the common case
+    } else if roll < 92 {
+        (320, 800)
+    } else {
+        (800, 1_500) // occasional long trace
+    };
+    rng.int(lo, hi) as u64
 }
 
 fn sample_round(rng: &mut Rng, is_final: bool, turn_index: i64, round_index: i64) -> RoundPlan {
@@ -247,7 +270,7 @@ fn sample_round(rng: &mut Rng, is_final: bool, turn_index: i64, round_index: i64
         rng.int(60, 260) as u64
     };
     let reasoning_tokens = if !is_final || rng.chance(45.0) {
-        Some(rng.int(120, 1_500) as u64)
+        Some(sample_reasoning_budget(rng))
     } else {
         None
     };

@@ -1,3 +1,4 @@
+// AI生成
 import { elements } from "./elements.js?v=20261011-01";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
@@ -8,7 +9,7 @@ import { t } from "./i18n.js?v=20261011-01";
 import { ensureOrgUnitsLoaded, getOrgUnitMap, getOrgUnitOptions } from "./org-units.js?v=20260210-01";
 import { getAuthHeaders } from "./admin-auth.js?v=20260120-01";
 import { isRemovedSwarmTool } from "../shared/deprecated-tools.js";
-import { openImpactConfirmModal } from "./preset-agents.js?v=20261007-01";
+import { openImpactConfirmModal } from "./preset-agents.js?v=20261012-01";
 import {
   CONTRACT_STATE_UNAVAILABLE,
   getContractState,

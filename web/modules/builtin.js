@@ -3,7 +3,7 @@ import { elements } from "./elements.js?v=20261011-01";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
 import { getToolInputSchema, resolveToolIconClass } from "./utils.js?v=20251229-02";
-import { syncPromptTools } from "./tools.js?v=20260214-01";
+import { syncPromptTools } from "./tools.js?v=20261012-01";
 import { openToolDetailModal } from "./tool-detail.js?v=20260115-05";
 import { notify } from "./notify.js";
 import { appendLog } from "./log.js?v=20261011-01";
@@ -108,6 +108,17 @@ const saveBuiltinTools = async () => {
 
 // 初始化内置工具面板交互
 export const initBuiltinPanel = () => {
+  // 工具启用/可见性变更时刷新本面板（治本·领域事件订阅）
+  if (!state.builtin.dataInvalidationBound && typeof window !== "undefined") {
+    state.builtin.dataInvalidationBound = true;
+    window.addEventListener("wunder:tools-updated", () => {
+      if (state.runtime?.activePanel === "builtin" && state.panelLoaded?.builtin) {
+        Promise.resolve(loadBuiltinTools()).catch(() => {});
+      } else {
+        state.panelLoaded.builtin = false;
+      }
+    });
+  }
   elements.refreshBuiltinBtn.addEventListener("click", async () => {
     try {
       await loadBuiltinTools();

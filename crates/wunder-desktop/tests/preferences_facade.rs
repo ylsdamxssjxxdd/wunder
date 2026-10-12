@@ -150,6 +150,41 @@ fn session_reasoning_effort_persists_through_the_native_facade() {
 }
 
 #[test]
+fn session_model_override_persists_through_the_native_facade() {
+    let runtime = start_isolated().expect("isolated runtime");
+    let session = runtime.create_session(None).expect("create session");
+
+    assert_eq!(session.session_model_name, None, "no override at birth");
+    assert!(
+        runtime.set_session_model(&session.id, "missing-model").is_err(),
+        "unknown model keys are rejected at the façade"
+    );
+    runtime
+        .set_session_model(&session.id, "test-model")
+        .expect("pin model");
+    let reloaded = runtime
+        .get_session_info(&session.id)
+        .expect("reload session");
+    assert_eq!(
+        reloaded.session_model_name.as_deref(),
+        Some("test-model"),
+        "override round-trips"
+    );
+    runtime
+        .set_session_model(&session.id, "")
+        .expect("clear override");
+    assert_eq!(
+        runtime
+            .get_session_info(&session.id)
+            .expect("reload session")
+            .session_model_name,
+        None,
+        "clearing falls back to the agent chain"
+    );
+    assert!(runtime.set_session_model("missing-session", "test-model").is_err());
+}
+
+#[test]
 fn diagnostics_export_is_secret_free() {
     let runtime = start_isolated().expect("isolated runtime");
     let directory = tempfile::tempdir().expect("tempdir");

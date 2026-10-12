@@ -86,6 +86,8 @@ mod channels;
 mod cron;
 #[path = "native_profile.rs"]
 mod profile;
+#[path = "native_activity.rs"]
+mod activity;
 #[path = "native_prompts.rs"]
 mod prompts;
 #[path = "native_settings.rs"]
@@ -148,6 +150,9 @@ pub struct NativeSession {
     pub runtime_status: String,
     pub locked: bool,
     pub reasoning_effort: String,
+    /// Thread model override (workspace meta). `None` means the thread follows
+    /// the agent configuration.
+    pub session_model_name: Option<String>,
     /// Remote origin of the thread (`cloud` / `device:<id>`), from the
     /// session row's `spawned_by`; `None` for locally created threads.
     pub origin: Option<String>,
@@ -452,6 +457,11 @@ impl NativeDesktop {
             .state
             .workspace
             .load_session_reasoning_effort(self.user_id(), &record.session_id);
+        let session_model_name = self
+            .desktop
+            .state
+            .workspace
+            .load_session_model_override(self.user_id(), &record.session_id);
         let workspace = record
             .workspace_id
             .as_deref()
@@ -502,6 +512,7 @@ impl NativeDesktop {
                 .map(str::to_string),
             locked: false,
             reasoning_effort,
+            session_model_name,
         }
     }
 
@@ -522,6 +533,46 @@ impl NativeDesktop {
             .state
             .workspace
             .save_session_reasoning_effort(self.user_id(), session_id, value)
+            .map_err(Into::into)
+    }
+
+    /// Pins the thread's model override (empty clears it). The model key is
+    /// validated against the engine's LLM catalogue; a stale key written
+    /// earlier degrades to the agent/global chain at turn time.
+    pub fn set_session_model(&self, session_id: &str, model_key: &str) -> Result<()> {
+        let session_id = session_id.trim();
+        if session_id.is_empty() {
+            return Err(anyhow!("线程不存在"));
+        }
+        if self
+            .state()
+            .user_store
+            .get_chat_session(self.user_id(), session_id)?
+            .is_none()
+        {
+            return Err(anyhow!("线程不存在"));
+        }
+        let model_key = model_key.trim();
+        if !model_key.is_empty() {
+            let config = self.runtime.block_on(self.state().config_store.get());
+            let valid = config.llm.models.get(model_key).is_some_and(|model| {
+                matches!(
+                    model.model_type.as_deref().unwrap_or("llm"),
+                    "llm" | "LLM" | "Llm"
+                )
+            });
+            if !valid {
+                return Err(anyhow!("模型不存在或不可用"));
+            }
+        }
+        self.desktop
+            .state
+            .workspace
+            .save_session_model_override(
+                self.user_id(),
+                session_id,
+                (!model_key.is_empty()).then_some(model_key),
+            )
             .map_err(Into::into)
     }
 

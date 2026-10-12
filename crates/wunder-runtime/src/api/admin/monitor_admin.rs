@@ -136,10 +136,16 @@ async fn admin_monitor(
     let service_ms = stage_started_at.elapsed().as_millis();
     stage_started_at = Instant::now();
     let config = state.config_store.get().await;
-    let tool_stats = normalize_tool_stats(
-        state.workspace.get_tool_usage_stats(since_time, until_time),
-        &config,
-    );
+    // The tool-stats aggregate hits storage synchronously; route it through the
+    // blocking pool so a slow window scan cannot stall the async runtime.
+    let stats_state = state.clone();
+    let tool_usage_stats = crate::core::blocking::run_db(
+        "api.admin.monitor.tool_stats",
+        move || Ok::<_, anyhow::Error>(stats_state.workspace.get_tool_usage_stats(since_time, until_time)),
+    )
+    .await
+    .unwrap_or_default();
+    let tool_stats = normalize_tool_stats(tool_usage_stats, &config);
     let tool_stats_ms = stage_started_at.elapsed().as_millis();
     stage_started_at = Instant::now();
     let sandbox = state.monitor.get_sandbox_metrics(since_time, until_time);
@@ -322,28 +328,45 @@ async fn admin_monitor_tool_usage(
         }
     }
     let mut tool_name = cleaned.clone();
-    let usage_records = if builtin_names.contains(&canonical) {
-        let mut names = vec![canonical.clone()];
-        for (alias, target) in builtin_aliases() {
-            if target == canonical && !names.contains(&alias) {
-                names.push(alias);
-            }
-        }
-        let mut combined = Vec::new();
-        for name in names {
-            combined.extend(
-                state
-                    .workspace
-                    .get_tool_session_usage(&name, since_time, until_time),
-            );
-        }
+    if builtin_names.contains(&canonical) {
         tool_name = canonical.clone();
-        merge_tool_session_usage(combined)
-    } else {
-        state
-            .workspace
-            .get_tool_session_usage(&requested_runtime_name, since_time, until_time)
-    };
+    }
+    // Session usage aggregates are storage-bound; keep them off the async
+    // runtime so slow windows cannot block other requests.
+    let usage_state = state.clone();
+    let canonical_for_query = canonical.clone();
+    let requested_for_query = requested_runtime_name.clone();
+    let builtin_for_query = builtin_names.contains(&canonical);
+    let usage_records = crate::core::blocking::run_db(
+        "api.admin.monitor.tool_usage",
+        move || -> anyhow::Result<Vec<HashMap<String, Value>>> {
+            if builtin_for_query {
+                let mut names = vec![canonical_for_query.clone()];
+                for (alias, target) in builtin_aliases() {
+                    if target == canonical_for_query && !names.contains(&alias) {
+                        names.push(alias);
+                    }
+                }
+                let mut combined = Vec::new();
+                for name in names {
+                    combined.extend(
+                        usage_state
+                            .workspace
+                            .get_tool_session_usage(&name, since_time, until_time),
+                    );
+                }
+                Ok(merge_tool_session_usage(combined))
+            } else {
+                Ok(usage_state.workspace.get_tool_session_usage(
+                    &requested_for_query,
+                    since_time,
+                    until_time,
+                ))
+            }
+        },
+    )
+    .await
+    .unwrap_or_default();
 
     let display_name = display_map
         .get(&tool_name)

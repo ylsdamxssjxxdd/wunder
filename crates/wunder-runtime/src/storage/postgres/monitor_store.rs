@@ -20,6 +20,11 @@ pub(super) trait PostgresMonitorStorage {
         limit: i64,
     ) -> Result<Vec<Value>>;
     fn sum_monitor_consumed_tokens_by_user_impl(&self, user_id: &str) -> Result<i64>;
+    fn sum_monitor_quota_used_by_day_impl(
+        &self,
+        user_id: &str,
+        since_at: f64,
+    ) -> Result<Vec<(String, i64)>>;
     fn delete_monitor_record_impl(&self, session_id: &str) -> Result<()>;
     fn delete_monitor_records_by_user_impl(&self, user_id: &str) -> Result<i64>;
 }
@@ -218,6 +223,39 @@ impl PostgresMonitorStorage for PostgresStorage {
             &[&cleaned_user],
         )?;
         Ok(row.get::<_, i64>(0).max(0))
+    }
+
+    fn sum_monitor_quota_used_by_day_impl(
+        &self,
+        user_id: &str,
+        since_at: f64,
+    ) -> Result<Vec<(String, i64)>> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        if cleaned_user.is_empty() || !since_at.is_finite() || since_at <= 0.0 {
+            return Ok(Vec::new());
+        }
+        let mut conn = self.conn()?;
+        let rows = conn.query(
+            "SELECT day, COALESCE(SUM(CASE \
+                 WHEN quota_used ~ '^[0-9]+$' THEN quota_used::BIGINT \
+                 ELSE 0 END), 0)::BIGINT \
+             FROM ( \
+                 SELECT to_char(to_timestamp(updated_time), 'YYYY-MM-DD') AS day, \
+                        payload::jsonb ->> 'quota_used' AS quota_used \
+                 FROM monitor_sessions WHERE user_id = $1 AND updated_time >= $2 \
+             ) AS monitor_usage \
+             GROUP BY day ORDER BY day",
+            &[&cleaned_user, &since_at],
+        )?;
+        Ok(rows
+            .iter()
+            .filter_map(|row| {
+                let day = row.get::<_, String>(0);
+                let credits = row.get::<_, i64>(1).max(0);
+                (!day.is_empty() && credits > 0).then_some((day, credits))
+            })
+            .collect())
     }
 
     fn delete_monitor_record_impl(&self, _session_id: &str) -> Result<()> {

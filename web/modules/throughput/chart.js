@@ -1,3 +1,4 @@
+// AI生成
 export const tokenLabel = (value) => {
   const tokens = Number(value);
   if (!Number.isFinite(tokens)) return "—";
@@ -11,7 +12,23 @@ export const speedLabel = (value) => {
   if (!Number.isFinite(speed)) return "—";
   return `${tokenLabel(speed)} tok/s`;
 };
-export const selectableResult = (item) => ["finished", "incomplete"].includes(item.status);
+
+// Expand a single run into one point per concurrency level, each carrying that
+// level's own metrics. Older single-concurrency records without samples fall
+// back to the run-level summary.
+export const samplePoints = (item) => {
+  const samples = Array.isArray(item?.samples) ? item.samples : [];
+  if (samples.length) {
+    return samples.map((sample) => ({
+      concurrency: sample.concurrency,
+      status: sample.status || item.status,
+      elapsed_s: sample.elapsed_s,
+      metrics: sample.metrics || {},
+    }));
+  }
+  const concurrency = (item?.config?.concurrency_list || [item?.config?.concurrency || 1])[0];
+  return [{ concurrency, status: item?.status, elapsed_s: item?.elapsed_s, metrics: item?.metrics || {} }];
+};
 
 const METRICS = [
   ["prefill_tps", "prefill", "#2563eb"],
@@ -20,48 +37,29 @@ const METRICS = [
   ["avg_decode_tps", "avgDecode", "#d97706"],
 ];
 
-const sameScenario = (left, right) => left.config.model_name === right.config.model_name
-  && Number(left.config.input_tokens) === Number(right.config.input_tokens)
-  && Number(left.config.output_tokens) === Number(right.config.output_tokens)
-  && Boolean(left.simulated) === Boolean(right.simulated)
-  && (left.simulation_speed || "") === (right.simulation_speed || "");
-
-export function latestScenario(items, selected) {
-  const candidates = items.filter((item) => selected.has(item.id) && selectableResult(item));
-  return candidates.at(-1) || null;
-}
-
-export function concurrencySeries(items, selected, label) {
-  const scenario = latestScenario(items, selected);
-  if (!scenario) return [];
-  const runs = items
-    .filter((item) => selected.has(item.id) && selectableResult(item) && sameScenario(item, scenario))
-    .flatMap((item) => item.samples?.length
-      ? item.samples
-        .filter((sample) => !sample.status || selectableResult(sample))
-        .map((sample) => ({ ...item, config: { ...item.config, concurrency: sample.concurrency }, metrics: sample.metrics, status: sample.status }))
-      : [item]);
+// Build one series per metric from a single run's per-concurrency points. The
+// y-axis shows the measured speed (tok/s), so each concurrency level reports
+// its own result instead of a value relative to concurrency 1.
+export function concurrencySeries(item, label) {
+  if (!item) return [];
+  const points = samplePoints(item);
   return METRICS.map(([key, labelKey, color]) => {
-    const pointsByConcurrency = new Map();
-    for (const item of runs) {
-      const concurrency = Number(item.config.concurrency || 1);
-      const value = Number(item.metrics?.[key]);
+    const byConcurrency = new Map();
+    for (const point of points) {
+      const concurrency = Number(point.concurrency || 1);
+      const value = Number(point.metrics?.[key]);
       if (Number.isFinite(concurrency) && Number.isFinite(value) && value >= 0) {
-        // Repeated selected runs use the latest snapshot, so each concurrency has one point.
-        pointsByConcurrency.set(concurrency, value);
+        byConcurrency.set(concurrency, value);
       }
     }
-    const points = [...pointsByConcurrency].map(([concurrency, value]) => ({ concurrency, value }))
+    const data = [...byConcurrency]
+      .map(([concurrency, value]) => ({ concurrency, value }))
       .sort((left, right) => left.concurrency - right.concurrency);
-    const baseline = points.find((point) => point.concurrency === 1)?.value;
-    if (!Number.isFinite(baseline) || baseline <= 0) return null;
+    if (!data.length) return null;
     return {
       name: label(labelKey), type: "line", smooth: false, symbol: "circle", symbolSize: 8,
       lineStyle: { color, width: 2 }, itemStyle: { color },
-      data: points.map((point) => ({
-        value: [point.concurrency, Number((((point.value - baseline) / baseline) * 100).toFixed(2))],
-        raw: point.value,
-      })),
+      data: data.map((point) => ({ value: [point.concurrency, Number(point.value.toFixed(2))] })),
     };
   }).filter(Boolean);
 }

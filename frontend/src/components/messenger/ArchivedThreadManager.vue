@@ -40,9 +40,9 @@
         class="messenger-archived-thread-item"
         role="button"
         tabindex="0"
-        @click="openArchivedSessionDetail(item.id)"
-        @keydown.enter.prevent="openArchivedSessionDetail(item.id)"
-        @keydown.space.prevent="openArchivedSessionDetail(item.id)"
+        @click="openArchivedSessionTrajectory(item.id)"
+        @keydown.enter.prevent="openArchivedSessionTrajectory(item.id)"
+        @keydown.space.prevent="openArchivedSessionTrajectory(item.id)"
       >
         <div class="messenger-archived-thread-title-row">
           <div class="messenger-archived-thread-title">{{ item.title }}</div>
@@ -129,7 +129,7 @@ const props = withDefaults(
 );
 
 const emit = defineEmits<{
-  (event: 'open-session-detail', sessionId: string): void;
+  (event: 'open-session-trajectory', sessionId: string): void;
   (event: 'session-restored', sessionId: string): void;
   (event: 'session-deleted', sessionId: string): void;
 }>();
@@ -266,10 +266,10 @@ const loadArchivedSessions = async () => {
   }
 };
 
-const openArchivedSessionDetail = (sessionId: string) => {
+const openArchivedSessionTrajectory = (sessionId: string) => {
   const targetId = String(sessionId || '').trim();
   if (!targetId) return;
-  emit('open-session-detail', targetId);
+  emit('open-session-trajectory', targetId);
 };
 
 const restoreArchivedSession = async (sessionId: string) => {

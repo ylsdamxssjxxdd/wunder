@@ -1,9 +1,9 @@
 <template>
   <div
     ref="rulerRef"
-    v-show="hasStrip"
     class="messenger-turn-ruler"
     aria-hidden="true"
+    :class="{ 'is-empty': !hasStrip }"
     :data-turn-ruler-marks="marks.length"
     :data-turn-ruler-total="conversationRowCount"
     :data-turn-ruler-last="lastJumpPath"
@@ -27,7 +27,7 @@
     ></span>
     <!-- 悬停预览卡：标题取该轮次的用户消息，摘要取助手回复（参考主页面刻度交互）。 -->
     <div
-      v-if="hoverMark && (hoverTitle || hoverSnippet)"
+      v-if="hasStrip && hoverMark && (hoverTitle || hoverSnippet)"
       class="messenger-turn-ruler-preview"
       :data-turn-ruler-preview="hoverIndex"
       :style="{ '--turn-ruler-preview-offset': previewOffset }"
@@ -374,7 +374,8 @@ const handleStripWheel = (event: WheelEvent): void => {
 
 <style scoped>
 /* 通道本体：`.messenger-chat-lane` 里的固定 18px 列，上下留 10px。
-   没有刻度时 `v-show` 收起，flex 布局自动把空间还给滚动视口。
+   刻度不足两条时只隐藏刻度本身，通道继续占位：阅读列的居中以这条通道为基准，
+   通道忽宽忽窄会让正文列跟着左右跳动。
    槽位间距 = `min(条体高 / 刻度数, 12px)`：刻度贴成一列、围绕条体垂直中点居中，
    刻度极多时间距被条体高度压小（退回全高均分），不会溢出。 */
 .messenger-turn-ruler {
@@ -385,9 +386,14 @@ const handleStripWheel = (event: WheelEvent): void => {
   position: relative;
   flex-shrink: 0;
   box-sizing: border-box;
-  width: 18px;
+  width: var(--mz-turn-ruler-width, 18px);
   margin: 10px 0;
   z-index: 6;
+}
+
+/* 没有可点的刻度时通道保持占位但整体不响应：只保留滚轮转发（把手势还给聊天）。 */
+.messenger-turn-ruler.is-empty .messenger-turn-ruler-tick {
+  display: none;
 }
 
 /* 命中区：宽度占满 18px（`left: 0; right: 0`），高 = 槽位间距（贴在一起），

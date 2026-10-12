@@ -11,8 +11,6 @@
         v-if="!isUser"
         :controller="controller"
         :item="item"
-        :default-open="defaultOpen"
-        @activity="emit('activity', $event)"
       />
 
       <div
@@ -135,17 +133,11 @@ import MessageTimelineAssistant from './MessageTimelineAssistant.vue';
  * - 行外壳本身保持 `.messenger-message` / `.mine` / `data-turn-id` /
  *   `data-message-status` 这组钩子不变（真机 DOM 审计依赖它们）。
  */
-const props = withDefaults(defineProps<{
+const props = defineProps<{
   controller: MessengerControllerContext;
   item: { key: string; sourceIndex: number; message: Record<string, any> };
-  /** 工具分组默认展开（时间线按 MAX_OPEN_TURNS 计算后下发）。 */
-  defaultOpen?: boolean;
-}>(), {
-  defaultOpen: false
-});
+}>();
 
-const emit = defineEmits<{ (event: 'activity', active: boolean): void }>();
-const defaultOpen = computed(() => props.defaultOpen === true);
 const isUser = computed(() => String(props.item.message?.role || '') === 'user');
 
 const translate = props.controller.t;

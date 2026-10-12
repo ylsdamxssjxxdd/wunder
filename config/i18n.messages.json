@@ -359,6 +359,10 @@
     "en-US": "Session cancelled",
     "zh-CN": "会话已取消"
   },
+  "error.model_not_found": {
+    "en-US": "Model not found or not available",
+    "zh-CN": "模型不存在或不可用"
+  },
   "error.session_not_found": {
     "en-US": "Session not found",
     "zh-CN": "会话不存在"

@@ -9,7 +9,11 @@ import { Action, EdgeToggle, RailButton, Avatar, FormField, MiddleHeader, Middle
 import { Composer, GoalBanner, InquiryPanel, StatusDock } from "composer.slint";
 import { TerminalView, TermSpan } from "terminal_view.slint";
 import { TimelineView } from "timeline.slint";
+import { ActivityCard, ActivityMonth, ActivityWeek } from "activity_card.slint";
+export { ActivityMonth, ActivityWeek }
 import { Sidebar, WorkspaceVisual } from "sidebar.slint";
+import { SidebarMetrics } from "drag_row.slint";
+export { SidebarMetrics }
 import { SettingsPage } from "settings_page.slint";
 import { I18n } from "i18n.slint";
 import { ThreadTrajectoryDialog } from "thread_trajectory.slint";
@@ -49,6 +53,10 @@ export component MainWindow inherits Window {
     callback select-row(int);
     callback workspace-menu(int, int);
     callback new-workspace();
+    // Sidebar drag reorder: the row that was grabbed and how far the pointer
+    // travelled from the press point, in pixels. The native side turns that
+    // travel into the row the pointer really sits on, so one drag can move a
+    // row several places.
     callback move-row(int, int);
     callback open-workspace-folder(string);
     callback rename-thread(int, string);
@@ -206,6 +214,12 @@ export component MainWindow inherits Window {
     in-out property <bool> chat-loading: false;
     in-out property <bool> session-loading: false;
     in-out property <bool> creating-session: false;
+    // New-thread activity heatmap: sparse day buckets projected natively into
+    // weekly columns, plus the month axis and the selected series tab.
+    in-out property <[ActivityWeek]> activity-sessions: [];
+    in-out property <[ActivityWeek]> activity-credits: [];
+    in-out property <[ActivityMonth]> activity-months: [];
+    in-out property <int> activity-tab: 0;
     in-out property <bool> agents-loading: false;
     in-out property <bool> tools-loading: false;
     in-out property <bool> tools-working: false;
@@ -554,6 +568,13 @@ export component MainWindow inherits Window {
     in-out property <bool> ws-prompt-busy: false;
     callback ws-prompt-accepted(string);
     callback ws-prompt-canceled();
+    // The thread rename prompt. The sidebar's pen only asks for it (payload and
+    // current title); the draft stays here until the dialog confirms, so an
+    // accidental click can no longer rewrite a thread title.
+    in-out property <bool> thread-rename-open: false;
+    in-out property <int> thread-rename-payload: -1;
+    in-out property <string> thread-rename-title;
+    in-out property <string> thread-rename-draft;
     in-out property <string> selected-model-key;
     in-out property <string> selected-model-provider;
     in-out property <string> selected-model-name;
@@ -613,6 +634,7 @@ export component MainWindow inherits Window {
     in-out property <string> reasoning-effort: "default";
     callback stop-generation();
     callback save-session-reasoning-effort(string);
+    callback select-thread-model(string);
     callback copy-raw(string);
     copy-buffer := TextInput { width: 0px; height: 0px; }
     copy-raw(raw) => { copy-buffer.text = raw; copy-buffer.select-all(); copy-buffer.copy(); copy-buffer.text = ""; }
@@ -827,9 +849,14 @@ export component MainWindow inherits Window {
                 select-row(index) => { root.select-row(index); }
                 workspace-menu(workspace, action) => { root.workspace-menu(workspace, action); }
                 new-workspace => { root.new-workspace(); }
-                move-row(index, delta) => { root.move-row(index, delta); }
+                move-row(index, travel) => { root.move-row(index, travel); }
                 archive-thread(index) => { root.archive-thread(index); }
-                rename-thread(index, title) => { root.rename-thread(index, title); }
+                rename-request(payload, title) => {
+                    root.thread-rename-payload = payload;
+                    root.thread-rename-title = title;
+                    root.thread-rename-draft = title;
+                    root.thread-rename-open = true;
+                }
                 open-trajectory(index) => { root.open-trajectory(index); }
                 open-settings => { root.more-open = false; root.settings-open = true; root.settings-active-panel = 0; root.refresh-settings(); }
                 // Working-directory region: model and actions live on the
@@ -921,6 +948,16 @@ export component MainWindow inherits Window {
                             measured-cols <=> root.terminal-measured-cols;
                             measured-rows <=> root.terminal-measured-rows;
                         }
+                        // A thread without a single message is a blank pane; the
+                        // yearly activity grid holds that space until the first
+                        // message lands, then the transcript takes it back.
+                        if root.timeline.length == 0 && !root.terminal-mode && !root.chat-loading && !root.session-loading : ActivityCard {
+                            x: 0px; y: 0px; width: 100%; height: 100%;
+                            sessions: root.activity-sessions;
+                            credits: root.activity-credits;
+                            months: root.activity-months;
+                            tab <=> root.activity-tab;
+                        }
                     }
                     // Status dock: the plan capsule sits between the timeline
                     // and the goal banner; its checklist card overlaps the
@@ -928,73 +965,84 @@ export component MainWindow inherits Window {
                     // tool has steps — the turn's phase text already reads on
                     // the timeline rows, and queue position is folded into the
                     // timeline too, so the old banners are gone.
-                    if root.activity-steps-total > 0 : StatusDock {
-                        running: root.activity-running;
-                        steps-done: root.activity-steps-done;
-                        steps-total: root.activity-steps-total;
-                        plan-explanation: root.activity-plan-explanation;
-                        plan-steps: root.activity-plan-steps;
-                        plan-dismiss => { root.activity-plan-dismiss(); }
-                    }
-                    if root.goal-objective != "" : GoalBanner {
-                        objective: root.goal-objective;
-                        elapsed: root.goal-elapsed;
-                        paused: root.goal-paused;
-                        editing <=> root.goal-editing;
-                        edit-draft <=> root.goal-edit-draft;
-                        save(text) => { root.goal-save(text); }
-                        pause-toggle => { root.goal-pause-toggle(); }
-                        clear => { root.goal-clear(); }
-                    }
-                    if root.inquiry-visible && root.inquiry-session == root.active-session-id : InquiryPanel {
-                        question: root.inquiry-question;
-                        page: root.inquiry-page;
-                        total: root.inquiry-total;
-                        other <=> root.inquiry-other;
-                        option-clicked(index) => { root.inquiry-option-clicked(index); }
-                        no-preference => { root.inquiry-no-preference(); }
-                        page-move(delta) => { root.inquiry-page-move(delta); }
-                        dismiss => { root.inquiry-dismiss(); }
-                    }
-                    Composer {
-                        draft <=> root.draft; busy: root.command-pending || root.busy || root.session-loading || root.creating-session || root.chat-loading;
-                        inquiry-ready: root.inquiry-ready;
-                        terminal-mode: root.terminal-mode;
-                        command => { root.terminal-mode = !root.terminal-mode; root.terminal-toggled(root.terminal-mode); }
-                        send-key: root.runtime-send-key;
-                        interrupt => { root.terminal-interrupt(); }
-                        context-usage: root.context-usage; context-known: root.context-known; context-counts: root.context-counts; reasoning-effort <=> root.reasoning-effort;
-                        models: root.models;
-                        model-catalogue-count: root.model-catalogue-count;
-                        cloud-ready: root.cloud-logged-in && !root.cloud-expired;
-                        model-name: root.selected-model-name != "" ? root.selected-model-name : root.selected-agent-model;
-                        model-key: root.selected-model-key;
-                        model-saving: root.saving;
-                        select-model(index, key) => { root.set-default-model(key); }
-                        set-default-model(key) => { root.set-default-model(key); }
-                        open-model-settings => { root.settings-open = true; root.settings-active-panel = 1; root.refresh-settings(); }
-                        search-models(query) => { root.search-models(query); }
-                        workspace-name: root.active-workspace-name;
-                        branch-name: root.active-workspace-branch;
-                        permission-mode <=> root.permission-mode;
-                        permission-changed(value) => { root.save-permission-mode(value); }
-                        attachments: root.pending-attachments;
-                        queue-turns: root.queue-turns;
-                        queue-overflow: root.queue-overflow;
-                        queue-interject(queue-id) => { root.queue-interject(queue-id); }
-                        queue-edit(queue-id) => { root.queue-edit(queue-id); }
-                        queue-remove(queue-id) => { root.queue-remove(queue-id); }
-                        queue-move-by(queue-id, delta) => { root.queue-move-by(queue-id, delta); }
-                        recall-history(direction, cursor-offset, anchor-offset, draft) => {
-                            return root.recall-history(direction, cursor-offset, anchor-offset, draft);
+                    // The whole input band shares the transcript's reading column:
+                    // a layout child may not re-declare width (that is a binding
+                    // loop), so the row stays full width and centres its band.
+                    Rectangle {
+                        height: input-band.preferred-height;
+                        input-band := VerticalLayout {
+                            width: min(parent.width, Theme.timeline-column-width);
+                            x: (parent.width - self.width) / 2;
+                            spacing: 0px;
+                            if root.activity-steps-total > 0 : StatusDock {
+                                running: root.activity-running;
+                                steps-done: root.activity-steps-done;
+                                steps-total: root.activity-steps-total;
+                                plan-explanation: root.activity-plan-explanation;
+                                plan-steps: root.activity-plan-steps;
+                                plan-dismiss => { root.activity-plan-dismiss(); }
+                            }
+                            if root.goal-objective != "" : GoalBanner {
+                                objective: root.goal-objective;
+                                elapsed: root.goal-elapsed;
+                                paused: root.goal-paused;
+                                editing <=> root.goal-editing;
+                                edit-draft <=> root.goal-edit-draft;
+                                save(text) => { root.goal-save(text); }
+                                pause-toggle => { root.goal-pause-toggle(); }
+                                clear => { root.goal-clear(); }
+                            }
+                            if root.inquiry-visible && root.inquiry-session == root.active-session-id : InquiryPanel {
+                                question: root.inquiry-question;
+                                page: root.inquiry-page;
+                                total: root.inquiry-total;
+                                other <=> root.inquiry-other;
+                                option-clicked(index) => { root.inquiry-option-clicked(index); }
+                                no-preference => { root.inquiry-no-preference(); }
+                                page-move(delta) => { root.inquiry-page-move(delta); }
+                                dismiss => { root.inquiry-dismiss(); }
+                            }
+                            Composer {
+                                draft <=> root.draft; busy: root.command-pending || root.busy || root.session-loading || root.creating-session || root.chat-loading;
+                            inquiry-ready: root.inquiry-ready;
+                            terminal-mode: root.terminal-mode;
+                            command => { root.terminal-mode = !root.terminal-mode; root.terminal-toggled(root.terminal-mode); }
+                            send-key: root.runtime-send-key;
+                            interrupt => { root.terminal-interrupt(); }
+                            context-usage: root.context-usage; context-known: root.context-known; context-counts: root.context-counts; reasoning-effort <=> root.reasoning-effort;
+                            models: root.models;
+                            model-catalogue-count: root.model-catalogue-count;
+                            cloud-ready: root.cloud-logged-in && !root.cloud-expired;
+                            model-name: root.selected-model-name != "" ? root.selected-model-name : root.selected-agent-model;
+                            model-key: root.selected-model-key;
+                            model-saving: root.saving;
+                            select-model(index, key) => { root.select-thread-model(key); }
+                            set-default-model(key) => { root.set-default-model(key); }
+                            open-model-settings => { root.settings-open = true; root.settings-active-panel = 1; root.refresh-settings(); }
+                            search-models(query) => { root.search-models(query); }
+                            workspace-name: root.active-workspace-name;
+                            branch-name: root.active-workspace-branch;
+                            permission-mode <=> root.permission-mode;
+                            permission-changed(value) => { root.save-permission-mode(value); }
+                            attachments: root.pending-attachments;
+                            queue-turns: root.queue-turns;
+                            queue-overflow: root.queue-overflow;
+                            queue-interject(queue-id) => { root.queue-interject(queue-id); }
+                            queue-edit(queue-id) => { root.queue-edit(queue-id); }
+                            queue-remove(queue-id) => { root.queue-remove(queue-id); }
+                            queue-move-by(queue-id, delta) => { root.queue-move-by(queue-id, delta); }
+                            recall-history(direction, cursor-offset, anchor-offset, draft) => {
+                                return root.recall-history(direction, cursor-offset, anchor-offset, draft);
+                            }
+                            generating: root.busy || root.goal-active; stopping: root.stopping; stop => { root.stop-generation(); }
+                            recording: root.recording; transcribing: root.transcribing; recording-elapsed: root.recording-elapsed; recording-pulse: root.recording-pulse;
+                            send => { root.send-message(); }
+                            screenshot(hide-window, region) => { root.capture-screenshot(hide-window, region); }
+                            record-voice => { root.record-voice(); }
+                            reasoning-effort-changed(value) => { root.save-session-reasoning-effort(value); }
+                            remove-attachment(index) => { root.remove-attachment(index); }
+                            }
                         }
-                        generating: root.busy || root.goal-active; stopping: root.stopping; stop => { root.stop-generation(); }
-                        recording: root.recording; transcribing: root.transcribing; recording-elapsed: root.recording-elapsed; recording-pulse: root.recording-pulse;
-                        send => { root.send-message(); }
-                        screenshot(hide-window, region) => { root.capture-screenshot(hide-window, region); }
-                        record-voice => { root.record-voice(); }
-                        reasoning-effort-changed(value) => { root.save-session-reasoning-effort(value); }
-                        remove-attachment(index) => { root.remove-attachment(index); }
                     }
                 }
             }
@@ -1368,6 +1416,19 @@ export component MainWindow inherits Window {
         busy: root.ws-prompt-busy;
         accepted(value) => { root.ws-prompt-accepted(value); }
         canceled => { root.ws-prompt-canceled(); }
+    }
+    if root.thread-rename-open : WorkspacePromptDialog {
+        prompt-title: I18n.common_rename;
+        prompt-body: I18n.sb_rename_body(root.thread-rename-title);
+        input-visible: true;
+        prompt-value <=> root.thread-rename-draft;
+        confirm-label: I18n.common_confirm;
+        accepted(value) => {
+            let title = value;
+            root.thread-rename-open = false;
+            if title != root.thread-rename-title { root.rename-thread(root.thread-rename-payload, title); }
+        }
+        canceled => { root.thread-rename-open = false; }
     }
     if root.cron-delete-open : ConfirmDialog {
         title: I18n.cron_delete_title;

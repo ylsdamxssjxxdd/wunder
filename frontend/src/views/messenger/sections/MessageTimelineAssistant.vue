@@ -15,7 +15,6 @@
       :workflow-items="workflowItems"
       :session-id="activeSessionId"
       :identity-key="item.key"
-      :default-open="defaultOpen"
       :streaming="bodyStreaming"
       :content-version="runtimeContentVersion"
       :body-text-transform="transformBodyText"
@@ -29,7 +28,6 @@
       :throttle-ms="MARKDOWN_STREAM_THROTTLE_MS"
       @markdown-rendered="handleMessageMarkdownRendered(item.key, $event)"
       @history-hydrated="handleHistoryHydrated"
-      @activity="(active) => emit('activity', active)"
     >
       <template #body-tail="{ isLast }">
         <template v-if="isLast">
@@ -229,29 +227,25 @@ import type { MessengerControllerContext } from '../controller/messengerControll
 import { buildAssistantDisplayContent } from '@/utils/assistantFailureNotice';
 
 /**
- * 助手轮次的时间线条目区（方案 §7.3 / §7.4 / §7.6，形态对齐桌面端
+ * 助手轮次的时间线条目区（方案 §7.3 / §7.4，形态对齐桌面端
  * `frontend-slint/ui/timeline.slint` 的 `BodyBlock` / `FoldEntry` / `GroupBar`）。
  *
- * 结构：正文块（**全宽、无气泡**，左右内边距 24px、上下 6px，hover 底 `hover` 45%）
- * → 轮次统计行（高 22px、间距 12px、图标 12px + 数值 11px muted，右侧复制/下载
- * 52×22 圆角 6）→ 工具分组折叠条（32px，展开时沟槽画连接线；折叠态是 30px 的
- * 「已处理」）→ 分组体（每条目自带 20px 沟槽：1px 连接线 + 6px 节点圆点）
- * → 子智能体面板。
+ * 结构：工作过程折叠条（34px，默认收起，罩住最后一段正文之前的全部中间
+ * 内容）→ 正文块（**全宽、无气泡**，左右内边距 24px、上下 6px，hover 底 `hover`
+ * 45%）与工具批次（折叠条 + 每条目 20px 沟槽：1px 连接线 + 6px 节点圆点）按到达
+ * 顺序交错铺开 → 轮次统计行（高 22px、间距 12px、图标 12px + 数值 11px muted，
+ * 右侧仅复制）→ 子智能体面板。
  *
  * 性能：
  * - 工具投影走 `createToolWorkflowRenderBatcher` 按帧合并（33ms），
  *   不在每个 token 上重新折叠条目；
  * - 条目窗口有界（`TIMELINE_ENTRY_RENDER_LIMIT`），超出部分按页展开；
- * - 展开状态按 key 记录且条数有界；历史轮次不参与重算。
+ * - 过程区收起时折叠体整体不渲染；展开状态按 key 记录且条数有界。
  */
-const props = withDefaults(defineProps<{
+const props = defineProps<{
   controller: MessengerControllerContext;
   item: { key: string; sourceIndex: number; message: Record<string, any> };
-  /** 该轮次默认展开工具分组（由时间线按 MAX_OPEN_TURNS 计算）。 */
-  defaultOpen?: boolean;
-}>(), {
-  defaultOpen: false
-});
+}>();
 
 const controller = props.controller;
 const translate = controller.t;
@@ -449,19 +443,6 @@ const subagents = computed<Record<string, unknown>[]>(() => {
   return Array.isArray(items) ? (items as Record<string, unknown>[]) : [];
 });
 
-// 上报本轮的「有内容」状态；轮次行据此套用 MAX_OPEN_TURNS 上限。
-const emit = defineEmits<{ (event: 'activity', active: boolean): void }>();
-
-// 无投影块的轮次（纯文本、问候语、旧行）不挂共享块渲染组件，这里补上
-// 「无批次」上报；块从有到无（卸载子组件）时同样补报，保持既有清理语义。
-watch(
-  () => [props.item.key, hasProjectionBlocks.value] as const,
-  ([, hasBlocks]) => {
-    if (!hasBlocks) emit('activity', false);
-  },
-  { immediate: true }
-);
-
 watch(
   () => props.item.key,
   (key, previousKey) => {
@@ -483,8 +464,24 @@ watch(
   min-width: 0;
 }
 
-/* 正文块（.timeline-body-block）与工具分组折叠条（.timeline-group*）的样式
-   随块渲染一起移入 MessageTimelineBlocks（与子智能体详情共用）。 */
+/* 回退分支（问候语、无投影块的旧行）自己就是正文块，度量与
+   MessageTimelineBlocks 的 `.timeline-body-block` 保持一致：全宽、无气泡、
+   左右 24px、上下 6px、hover 底 45% 透明。少了这一段，问候语会贴到
+   视口左缘（§7 让视口左右内边距归 0，缩进全靠每一行自承担）。 */
+.timeline-body-block {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  padding: 6px 24px;
+  color: var(--mz-text, #1f2329);
+  font-size: calc(14px * var(--messenger-font-scale, 1));
+  line-height: 1.7;
+  transition: background-color 0.12s ease;
+}
+
+.timeline-body-block:hover {
+  background: rgba(246, 245, 243, 0.45);
+}
 
 /* 轮次统计行：高 22px、间距 12px、图标 12px + 数值 11px muted（见 MessageStats 的
    `.messenger-message-stats`），右侧仅保留「复制」图标按钮 22×22 圆角 6。 */

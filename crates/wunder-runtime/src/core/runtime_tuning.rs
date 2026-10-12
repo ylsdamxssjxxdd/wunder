@@ -2,6 +2,8 @@
 use std::fs;
 use std::thread;
 
+use super::blocking;
+
 pub const SERVER_WORKER_THREADS_ENV: &str = "WUNDER_SERVER_WORKER_THREADS";
 pub const SERVER_MAX_BLOCKING_THREADS_ENV: &str = "WUNDER_SERVER_MAX_BLOCKING_THREADS";
 pub const POSTGRES_RUNTIME_THREADS_ENV: &str = "WUNDER_POSTGRES_RUNTIME_THREADS";
@@ -10,6 +12,7 @@ pub const SESSION_RUN_MAX_BLOCKING_THREADS_ENV: &str = "WUNDER_SESSION_RUN_MAX_B
 
 const MAX_SERVER_WORKER_THREADS: usize = 128;
 const MAX_SERVER_BLOCKING_THREADS: usize = 512;
+const BLOCKING_POOL_HEADROOM_THREADS: usize = 16;
 const MAX_POSTGRES_RUNTIME_THREADS: usize = 32;
 const MAX_SESSION_RUN_WORKER_THREADS: usize = 64;
 const MAX_SESSION_RUN_BLOCKING_THREADS: usize = 256;
@@ -80,13 +83,24 @@ pub fn server_runtime_threads() -> ServerRuntimeThreads {
     );
     let max_blocking_threads = env_thread_count(
         SERVER_MAX_BLOCKING_THREADS_ENV,
-        worker_threads.saturating_mul(4).clamp(16, 64),
+        default_server_blocking_threads(worker_threads),
         MAX_SERVER_BLOCKING_THREADS,
     );
     ServerRuntimeThreads {
         worker_threads,
         max_blocking_threads,
     }
+}
+
+/// The blocking classes reserve their permits process-wide, so a pool smaller
+/// than that reserve would make tokio's shared blocking pool - and not the class
+/// semaphore - decide how many blocking operations actually run.
+fn default_server_blocking_threads(worker_threads: usize) -> usize {
+    let by_class_reserves = blocking::total_concurrency() + BLOCKING_POOL_HEADROOM_THREADS;
+    let by_worker_threads = worker_threads.saturating_mul(4);
+    by_class_reserves
+        .max(by_worker_threads)
+        .clamp(16, MAX_SERVER_BLOCKING_THREADS)
 }
 
 pub fn postgres_runtime_threads() -> usize {
@@ -128,7 +142,20 @@ fn normalize_thread_count(raw: Option<&str>, default_value: usize, max_value: us
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_thread_count, parse_cgroup_v2_cpu_max, parse_cpu_quota};
+    use super::{
+        blocking, default_server_blocking_threads, normalize_thread_count, parse_cgroup_v2_cpu_max,
+        parse_cpu_quota,
+    };
+
+    #[test]
+    fn blocking_pool_floor_covers_every_class_reserve() {
+        let floor = default_server_blocking_threads(1);
+        assert!(
+            floor >= blocking::total_concurrency(),
+            "blocking pool capacity {floor} must not be smaller than the class reserve {}",
+            blocking::total_concurrency()
+        );
+    }
 
     #[test]
     fn cpu_quota_rounds_fractional_cpu_up_and_ignores_unlimited_values() {

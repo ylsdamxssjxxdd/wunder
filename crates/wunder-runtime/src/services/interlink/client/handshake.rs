@@ -33,6 +33,17 @@ pub const BACKOFF_BASE_S: u64 = 1;
 pub const BACKOFF_MAX_S: u64 = 300;
 /// Jitter band: ±20% of the scheduled delay (docs §4.4).
 pub const BACKOFF_JITTER_BPS: u64 = 2_000;
+/// Backoff step that lands on the documented 300 s ceiling: the floor applied
+/// to reasons a fast retry cannot fix (docs §4.4).
+pub const COOLDOWN_ATTEMPT: u32 = 9;
+/// Consecutive failed attempts after which the ladder gives up and the client
+/// degrades to a slow fixed-cadence reconnect. Degradation, not abandonment:
+/// offline-command draining and remote wake-up both need the loop to keep
+/// knocking, just quietly.
+pub const RECONNECT_SLOW_AFTER: u32 = 10;
+/// Nominal delay of the degraded tier (15 minutes). Jitter stays a ±20%
+/// perturbation around this nominal value, never a tier change.
+pub const RECONNECT_SLOW_DELAY_S: u64 = 900;
 /// Time budget for the websocket connect plus the `hello_ack` round trip.
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// Time budget for one REST bootstrap call.
@@ -172,6 +183,42 @@ pub fn policy_for(reason: &CloseReason) -> RetryPolicy {
 pub fn backoff_delay(attempt: u32) -> Duration {
     let step = BACKOFF_BASE_S.saturating_mul(1u64.checked_shl(attempt.min(32)).unwrap_or(0));
     Duration::from_secs(step.clamp(BACKOFF_BASE_S, BACKOFF_MAX_S))
+}
+
+/// Nominal retry delay after `attempt` consecutive failed attempts, plus
+/// whether the ladder has degraded into the slow tier. Pure, so the whole
+/// reconnect schedule is pinned by unit tests without any clock.
+///
+/// The degraded tier is a *design choice, not an abandonment*: giving up on
+/// reconnecting would break the landed semantics of offline-command drain
+/// and remote wake-up, so the loop keeps knocking at one quarter the capped
+/// ladder rate instead.
+pub fn retry_plan(attempt: u32) -> (Duration, bool) {
+    if attempt >= RECONNECT_SLOW_AFTER {
+        return (Duration::from_secs(RECONNECT_SLOW_DELAY_S), true);
+    }
+    (backoff_delay(attempt), false)
+}
+
+/// Advance the failure streak after one ended attempt.
+///
+/// * `reached_steady_state`: the session completed the handshake and only
+///   ended afterwards, so the streak restarts at zero — the ladder counts
+///   *consecutive* failures, never process-lifetime failures. Without this
+///   reset a long-lived node would sit pinned at the ceiling tier forever
+///   after roughly nine incidental disconnects, waiting five minutes before
+///   every retry of a one-off blip.
+/// * [`RetryPolicy::Cooldown`] floors the streak at the capped step instead
+///   of assigning it, so repeated cooldowns (kill switch, revocation) still
+///   climb past the ladder and degrade into the slow tier rather than
+///   hammering the server at the 300 s ceiling forever — while a fresh
+///   cooldown after a healthy session gets the 300 s window, not 900 s.
+pub fn next_attempt(current: u32, reached_steady_state: bool, policy: RetryPolicy) -> u32 {
+    let base = if reached_steady_state { 0 } else { current };
+    match policy {
+        RetryPolicy::Now | RetryPolicy::Backoff => base.saturating_add(1),
+        RetryPolicy::Cooldown => base.saturating_add(1).max(COOLDOWN_ATTEMPT),
+    }
 }
 
 /// Decide the reconnect plan after one failed session: a secret-shaped close
@@ -497,4 +544,128 @@ fn network_error(err: &reqwest::Error) -> HandshakeError {
     // Reuse the cloud channel's sanitisation: class only, no url or token.
     let _ = cloud::network_error_summary(err);
     HandshakeError::Network
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn retry_plan_walks_the_ladder_and_holds_the_ceiling() {
+        let ladder: Vec<u64> = (0..8)
+            .map(|attempt| retry_plan(attempt).0.as_secs())
+            .collect();
+        assert_eq!(ladder, vec![1, 2, 4, 8, 16, 32, 64, 128]);
+        // The step that would be 512 is clamped to the documented ceiling,
+        // and nothing below the degrade threshold is ever "degraded".
+        assert_eq!(retry_plan(8), (Duration::from_secs(256), false));
+        assert_eq!(retry_plan(9), (Duration::from_secs(300), false));
+        assert!(!retry_plan(0).1);
+        assert!(!retry_plan(RECONNECT_SLOW_AFTER - 1).1);
+    }
+
+    #[test]
+    fn retry_plan_degrades_past_the_threshold() {
+        assert_eq!(
+            retry_plan(RECONNECT_SLOW_AFTER),
+            (Duration::from_secs(RECONNECT_SLOW_DELAY_S), true)
+        );
+        // Once degraded the nominal delay never grows or shrinks again,
+        // and the ladder below the threshold is untouched.
+        assert_eq!(
+            retry_plan(u32::MAX),
+            (Duration::from_secs(RECONNECT_SLOW_DELAY_S), true)
+        );
+        assert_eq!(retry_plan(RECONNECT_SLOW_AFTER - 1).1, false);
+    }
+
+    #[test]
+    fn healthy_session_restarts_the_ladder() {
+        // A long streak parked in the degraded tier...
+        let stuck = RECONNECT_SLOW_AFTER + 5;
+        assert!(retry_plan(stuck).1);
+        // ...followed by a session that reached steady state: the streak
+        // resets, so the next blip waits a ladder step, not the slow tier.
+        let attempt = next_attempt(stuck, true, RetryPolicy::Backoff);
+        assert_eq!(attempt, 1);
+        assert_eq!(retry_plan(attempt.max(1)), (Duration::from_secs(2), false));
+        // A reset streak without any new failure still plans from the very
+        // first ladder step.
+        assert_eq!(retry_plan(0), (Duration::from_secs(1), false));
+    }
+
+    #[test]
+    fn cooldown_floors_the_streak_without_erasing_it() {
+        // A fresh cooldown lands on the capped 300 s window.
+        let attempt = next_attempt(0, false, RetryPolicy::Cooldown);
+        assert_eq!(attempt, COOLDOWN_ATTEMPT);
+        assert_eq!(retry_plan(attempt), (Duration::from_secs(300), false));
+        // Repeated cooldowns climb past the floor and reach the slow tier,
+        // so a revoked node never hammers the ceiling forever.
+        let again = next_attempt(attempt, false, RetryPolicy::Cooldown);
+        assert_eq!(again, COOLDOWN_ATTEMPT + 1);
+        assert_eq!(
+            retry_plan(again),
+            (Duration::from_secs(RECONNECT_SLOW_DELAY_S), true)
+        );
+        // Cooldown after a healthy session resets first: the node gets the
+        // 300 s cooldown, not a carry-over degrade from the old streak.
+        assert_eq!(
+            next_attempt(stuck(), true, RetryPolicy::Cooldown),
+            COOLDOWN_ATTEMPT
+        );
+    }
+
+    fn stuck() -> u32 {
+        RECONNECT_SLOW_AFTER + 5
+    }
+
+    #[test]
+    fn jitter_stays_inside_the_band_and_is_deterministic() {
+        let nominal = Duration::from_secs(RECONNECT_SLOW_DELAY_S);
+        // The two band edges come out exactly, so "15 minutes" stays the
+        // assertable nominal value: ±20% => [720 s, 1080 s].
+        assert_eq!(jittered(nominal, 0), Duration::from_secs(720));
+        let band_micros = nominal.as_micros() as u64 * BACKOFF_JITTER_BPS / 10_000;
+        assert_eq!(
+            jittered(nominal, band_micros * 2),
+            Duration::from_secs(1080)
+        );
+        for sample in [1u64, 7, 42, u64::MAX] {
+            let jittered_delay = jittered(nominal, sample);
+            assert!(
+                jittered_delay >= Duration::from_secs(720)
+                    && jittered_delay <= Duration::from_secs(1080),
+                "sample {sample} left the ±20% band"
+            );
+            // Same entropy sample => same delay (no hidden clock or RNG).
+            assert_eq!(jittered_delay, jittered(nominal, sample));
+        }
+        // The ladder tier is jittered the same way and stays inside its band.
+        let capped = Duration::from_secs(BACKOFF_MAX_S);
+        for sample in [0u64, 12345, u64::MAX] {
+            let jittered_delay = jittered(capped, sample);
+            assert!(
+                jittered_delay >= Duration::from_secs(240)
+                    && jittered_delay <= Duration::from_secs(360),
+            );
+        }
+    }
+
+    #[test]
+    fn policy_for_keeps_the_quiet_reasons_quiet() {
+        // Kill switch / revoked / too old: the no-hot-loop mapping must not
+        // regress into a ladder retry.
+        for reason in [
+            CloseReason::InterlinkDisabled,
+            CloseReason::DeviceRevoked,
+            CloseReason::UpgradeRequired,
+            CloseReason::ProtocolUnsupported,
+        ] {
+            assert_eq!(policy_for(&reason), RetryPolicy::Cooldown, "{reason:?}");
+        }
+        // A missing key is fixable right now; transport noise backs off.
+        assert_eq!(policy_for(&CloseReason::SecretRequired), RetryPolicy::Now);
+        assert_eq!(policy_for(&CloseReason::Transport), RetryPolicy::Backoff);
+    }
 }

@@ -2,6 +2,9 @@
 // Do not edit by hand: add or change entries in the catalog and rebuild.
 export global I18n {
     in-out property <bool> zh: true;
+    out property <string> act_tab_sessions: zh ? "会话" : "Sessions";
+    out property <string> act_tab_credits: zh ? "Credits" : "Credits";
+    public pure function act_month(month: string) -> string { return zh ? "" + month + "月" : "" + month + ""; }
     out property <string> ag_title: zh ? "专家" : "Agents";
     out property <string> ag_subtitle: zh ? "管理可用于新会话的智能体" : "Manage agents for new sessions";
     out property <string> ag_search: zh ? "搜索专家" : "Search agents";
@@ -245,6 +248,7 @@ export global I18n {
     out property <string> sidebar_settings: zh ? "设置" : "Settings";
     out property <string> ws_menu_new_thread: zh ? "新建线程" : "New thread";
     out property <string> ws_menu_edit: zh ? "编辑工作区" : "Edit workspace";
+    public pure function sb_rename_body(name: string) -> string { return zh ? "重命名「" + name + "」为：" : "Rename “" + name + "” to:"; }
     out property <string> ws_menu_reveal: zh ? "打开文件夹" : "Open folder";
     out property <string> ws_menu_delete: zh ? "删除工作区" : "Delete workspace";
     out property <string> ws_delete_title: zh ? "删除工作区" : "Delete workspace";
@@ -978,12 +982,12 @@ export global I18n {
     out property <string> st_send_button: zh ? "仅按钮发送" : "Button click only";
     out property <string> st_send_button_note: zh ? "Enter 换行，点击发送按钮发送" : "Enter inserts a newline; click the send button to send";
     out property <string> st_ui_language: zh ? "语言" : "Language";
-    out property <string> st_palette: zh ? "配色主题" : "Color theme";
-    out property <string> st_palette_note: zh ? "选择系统设置的主色风格" : "Pick the primary accent style";
-    out property <string> st_palette_terracotta: zh ? "赭橙（蜂巢基调）" : "Terracotta (hive base)";
-    out property <string> st_palette_hula: zh ? "Hula 绿" : "Hula green";
-    out property <string> st_palette_minimal: zh ? "极简" : "Minimal";
-    out property <string> st_palette_tech: zh ? "科技蓝" : "Tech blue";
+    out property <string> st_palette: zh ? "主题模式" : "Theme mode";
+    out property <string> st_palette_note: zh ? "选择界面强调色与气泡底色，即时生效" : "Pick the accent colour and the bubble tone; applied immediately";
+    out property <string> st_theme_forest: zh ? "森林" : "Forest";
+    out property <string> st_theme_mint: zh ? "薄荷" : "Mint";
+    out property <string> st_theme_honey: zh ? "蜜蜂" : "Honey";
+    out property <string> st_theme_parchment: zh ? "羊皮纸" : "Parchment";
     out property <string> st_font_size: zh ? "字体大小" : "Font size";
     out property <string> st_font_size_note: zh ? "聊天内容的字体大小" : "Font size for chat content";
     out property <string> st_workspace_root: zh ? "工作区根目录" : "Workspace root";
@@ -1404,7 +1408,6 @@ export global I18n {
     out property <string> wf_menu_archive: zh ? "打包下载" : "Download as zip";
     out property <string> wf_menu_archive_root: zh ? "下载当前目录" : "Download this folder";
     out property <string> wf_menu_clear: zh ? "清空" : "Clear";
-    public pure function wf_clear_body(name: string) -> string { return zh ? "清空「" + name + "」下的全部内容？云端文件不可恢复。" : "Clear everything under \"" + name + "\"? Cloud files cannot be recovered."; }
     out property <string> wf_rename_title: zh ? "重命名" : "Rename";
     out property <string> wf_new_dir_title: zh ? "新建目录" : "New folder";
     out property <string> wf_new_file_title: zh ? "新建文件" : "New file";

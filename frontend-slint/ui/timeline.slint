@@ -44,6 +44,7 @@ export global EntryKind {
     out property <int> tool: 3;
     out property <int> group: 4;
     out property <int> subagent: 5;
+    out property <int> process: 6;
 }
 
 // One shared rotation driver for every running spinner; a single timer in the
@@ -408,6 +409,47 @@ component GroupBar inherits Rectangle {
     }
 }
 
+// ---- work-process fold (§7.3 A): one bar over the turn's intermediate rows ----
+// The bar is the turn's only handle on everything before its newest answer
+// block: thinking, tool batches and the earlier rounds' printed notes. Folded
+// (the default) the reader sees one line and the answer; unfolded the batches
+// come with it, because opening the process is the user asking to see the work.
+component ProcessBar inherits Rectangle {
+    in property <TimelineRow> data;
+    callback toggle(int);
+    // One step heavier than a batch bar: it owns a whole turn's process.
+    height: 34px;
+    border-radius: Theme.radius-tag;
+    background: bar-touch.has-hover ? Theme.hover : transparent;
+    bar-touch := TouchArea {
+        x: Theme.timeline-padding; y: 0px;
+        width: parent.width - Theme.timeline-padding * 2;
+        height: parent.height;
+        mouse-cursor: pointer;
+        clicked => { root.toggle(root.data.payload); }
+    }
+    HorizontalLayout {
+        padding-left: Theme.timeline-padding; padding-right: Theme.timeline-padding;
+        spacing: 0px;
+        TimelineGutter { line: root.data.open; caret: true; caret-open: root.data.open; }
+        HorizontalLayout {
+            height: parent.height; spacing: 8px;
+            Text {
+                width: self.preferred-width; height: parent.height;
+                text: root.data.text; color: Theme.text-secondary;
+                font-size: Theme.font-md; vertical-alignment: center;
+            }
+            // The last thing the turn did, read out while the fold is closed.
+            Text {
+                horizontal-stretch: 1; min-width: 0px; height: parent.height;
+                text: root.data.summary; color: Theme.muted; font-size: Theme.font-sm;
+                overflow: elide; vertical-alignment: center;
+                visible: !root.data.open && root.data.summary != "";
+            }
+        }
+    }
+}
+
 // One child run of the turn (kind 5): a card at the turn's tail, the place the
 // web messenger parks its subagent panel. Clicking opens the child thread in
 // the detail dialog, which renders the same TimelineView rows; a running card
@@ -501,13 +543,22 @@ export component TimelineRowView inherits Rectangle {
     // A batch entry belongs to its bar: folding the bar takes the entries with
     // it, which is what `toggle` writes into `group-open` across the group. The
     // bar itself is the handle and always stays laid out.
-    visible: root.entry.visible
+    // The work-process fold is the same mechanism one level up: the bar is the
+    // handle, and a folded process takes its batches and notes out of the layout.
+    private property <bool> in-process: root.entry.kind != EntryKind.process
+        && root.entry.process-idx != -1;
+    private property <bool> shown: root.entry.visible
         && (root.entry.kind == EntryKind.group
+            || root.entry.kind == EntryKind.process
             || root.entry.group-idx == -1
-            || root.entry.group-open);
+            || root.entry.group-open)
+        && (!root.in-process || root.entry.process-open);
+    visible: root.shown;
     // The column sizes every row from its own content, so an unfold or a
-    // wrapped line simply makes the timeline taller.
-    height: cell.preferred-height;
+    // wrapped line simply makes the timeline taller. A hidden row has to give
+    // its height back: Slint keeps the reservation of an invisible layout item,
+    // so a folded batch would otherwise leave a hole the size of its content.
+    height: root.shown ? cell.preferred-height : 0px;
     cell := VerticalLayout {
         width: root.width;
         spacing: 0px; alignment: start;
@@ -530,6 +581,10 @@ export component TimelineRowView inherits Rectangle {
             open-resource(id) => { root.open-resource(id); }
         }
         if root.entry.kind == EntryKind.group : GroupBar {
+            data: root.entry;
+            toggle(index) => { root.toggle(index); }
+        }
+        if root.entry.kind == EntryKind.process : ProcessBar {
             data: root.entry;
             toggle(index) => { root.toggle(index); }
         }
@@ -561,6 +616,11 @@ export component TimelineView inherits Rectangle {
     callback open-subagent(string);
     callback stop-subagent(string);
     vertical-stretch: 1;
+    // Reading column: the transcript is one centred column of at most
+    // `timeline-column-width`, so a wide window leaves page margins instead of
+    // stretching every line across the whole pane. The turn ruler keeps the
+    // viewport edge, exactly like the web messenger's chat lane.
+    private property <length> column-width: min(rows-scroll.visible-width, Theme.timeline-column-width);
     // Push the viewport to the newest content on request; the projection calls
     // this when it follows the stream, and the "back to latest" action does too.
     public function scroll-to-end() {
@@ -598,7 +658,8 @@ export component TimelineView inherits Rectangle {
         horizontal-scrollbar-policy: always-off; vertical-scrollbar-policy: as-needed;
         content-width: self.visible-width;
         rows-column := VerticalLayout {
-            width: rows-scroll.visible-width;
+            width: root.column-width;
+            x: (rows-scroll.visible-width - root.column-width) / 2;
             spacing: 0px; alignment: start;
             for item in root.rows : TimelineRowView {
                 entry: item;

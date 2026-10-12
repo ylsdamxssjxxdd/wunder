@@ -1,11 +1,16 @@
 //! Flat, incremental chat timeline (§7).
 //!
 //! One bounded row per user bubble, assistant body block, reasoning entry, tool
-//! entry, tool batch bar and completed-turn divider. Everything is projected
-//! once on the Rust side: the Slint thread only lays out the cells it is handed
-//! and reports each measured height back, so a streaming token never rebuilds
-//! the history. Fold state lives in the model and is patched in place, which
-//! keeps the reducer out of every user fold.
+//! entry, tool batch bar, work-process bar and completed-turn divider.
+//! Everything is projected once on the Rust side: the Slint thread only lays out
+//! the cells it is handed and reports each measured height back, so a streaming
+//! token never rebuilds the history. Fold state lives in the model and is
+//! patched in place, which keeps the reducer out of every user fold.
+//!
+//! The work-process bar is the turn's handle on everything it did before its
+//! newest answer block: earlier rounds' notes, thinking segments and tool
+//! batches. It ships folded, so a turn reads as one process line plus the
+//! answer, and unfolding it brings its batches along.
 use crate::{TextBlock, TimelineRow};
 #[allow(unused_imports)]
 use slint::{Model, ModelRc, VecModel};
@@ -19,18 +24,17 @@ pub const KIND_REASON: i32 = 2;
 pub const KIND_TOOL: i32 = 3;
 pub const KIND_GROUP: i32 = 4;
 pub const KIND_SUBAGENT: i32 = 5;
+pub const KIND_PROCESS: i32 = 6;
 /// Status kinds: 0 done, 1 running, 2 failed.
 pub const STATUS_DONE: i32 = 0;
 pub const STATUS_RUNNING: i32 = 1;
 pub const STATUS_FAILED: i32 = 2;
 /// A row outside any tool batch.
 pub const NO_GROUP: i32 = -1;
+/// A row outside the work-process fold: the turn's newest answer block.
+pub const NO_PROCESS: i32 = -1;
 /// Entries and bounded fields kept per turn.
 const MAX_GROUP_ENTRIES: usize = 24;
-/// Batch bars the history projection leaves open by default, matching the
-/// web messenger: only the newest turns read as expanded, older batches stay
-/// folded bars the user can still open.
-pub const MAX_OPEN_TURNS: usize = 8;
 
 pub fn status_kind(state: &str) -> i32 {
     match state {
@@ -108,6 +112,8 @@ fn blank(kind: i32, id: String) -> TimelineRow {
         open: false,
         group_idx: NO_GROUP,
         group_open: false,
+        process_idx: NO_PROCESS,
+        process_open: false,
         payload: 0,
         patch: ModelRc::default(),
         stats: ModelRc::default(),
@@ -163,6 +169,14 @@ pub struct Timeline {
     next_group: i32,
     reasons: usize,
     group_open: bool,
+    /// Work-process fold of the live turn: its id, its bar row, and the newest
+    /// answer block, which is the one row the fold leaves open.
+    process: i32,
+    next_process: i32,
+    process_bar: usize,
+    last_body: usize,
+    /// Whether the live turn's fold is currently applied to its batch bars.
+    process_enabled: bool,
     turn: Option<String>,
     /// The live turn ran to its end but its rows are still the only copy: the
     /// durable snapshot has not caught up with it yet.
@@ -190,7 +204,12 @@ impl Timeline {
             group: NO_GROUP,
             next_group: 0,
             reasons: 0,
-            group_open: true,
+            group_open: false,
+            process: NO_PROCESS,
+            next_process: 0,
+            process_bar: 0,
+            last_body: usize::MAX,
+            process_enabled: false,
             turn: None,
             settled: false,
             highlight: false,
@@ -280,7 +299,11 @@ impl Timeline {
         self.group = NO_GROUP;
         self.next_group = 0;
         self.reasons = 0;
-        self.group_open = true;
+        self.group_open = false;
+        self.process = NO_PROCESS;
+        self.process_bar = 0;
+        self.last_body = usize::MAX;
+        self.process_enabled = false;
         self.turn = None;
         self.settled = false;
         self.highlight = false;
@@ -315,14 +338,132 @@ impl Timeline {
         self.tools.clear();
         self.bars.clear();
         self.group = NO_GROUP;
-        self.group_open = true;
+        // A lone batch reads as a folded handle; the process fold opens it once
+        // the turn has a process, and the user owns it after that.
+        self.group_open = false;
         self.reasons = 0;
         self.turn = Some(root.to_string());
         self.settled = false;
         let mut user = blank(KIND_USER, format!("user-turn-{root}"));
         user.text = text.into();
         user.blocks = crate::message_blocks::from_text(text);
-        self.push(user)
+        let index = self.push(user);
+        self.open_process(root);
+        index
+    }
+
+    /// Publish the live turn's work-process bar right behind its bubble. The bar
+    /// is pushed once per turn so its row index never moves, and stays invisible
+    /// until the turn actually has a process worth folding.
+    fn open_process(&mut self, root: &str) {
+        self.next_process += 1;
+        self.process = self.next_process;
+        self.last_body = usize::MAX;
+        self.process_enabled = false;
+        let mut bar = blank(KIND_PROCESS, format!("process-{root}"));
+        bar.text = crate::timeline_text::process_label(0).into();
+        bar.visible = false;
+        let index = self.push(bar);
+        self.process_bar = index;
+        self.patch(index, |row| {
+            row.payload = index as i32;
+            row.process_idx = self.process;
+        });
+    }
+
+    /// Whether the batch a row is about to join should publish open: the
+    /// reducer default, or the process fold the user just opened.
+    fn batch_open_state(&self) -> bool {
+        self.group_open || (self.process_enabled && self.process_is_open())
+    }
+
+    /// Current open state of the live turn's process bar. Read off the model so
+    /// a user click (`toggle` takes `&self`) is what decides it.
+    fn process_is_open(&self) -> bool {
+        self.model
+            .row_data(self.process_bar)
+            .is_some_and(|row| row.open)
+    }
+
+    /// Re-project the live turn's process bar: which rows belong to the fold,
+    /// the step count, what the turn last did, and whether the turn has a
+    /// process at all. A lone batch is already a one-line fold, so the bar stays
+    /// out of the way until a second block or an intermediate note joins it.
+    fn refresh_process_bar(&mut self) {
+        if self.process == NO_PROCESS {
+            return;
+        }
+        let process = self.process;
+        // The fold covers everything between the bar and the turn's newest
+        // answer block; with no answer yet there is nothing to fold behind.
+        let end = if self.last_body == usize::MAX {
+            0
+        } else {
+            self.last_body
+        };
+        let mut steps = 0i32;
+        let mut blocks = 0i32;
+        let mut notes = 0i32;
+        let mut summary = slint::SharedString::default();
+        let mut region = Vec::new();
+        for index in (self.process_bar + 1)..end {
+            let Some(row) = self.model.row_data(index) else {
+                continue;
+            };
+            region.push((index, row.kind));
+            match row.kind {
+                KIND_GROUP => blocks += 1,
+                KIND_BODY => {
+                    blocks += 1;
+                    steps += 1;
+                    notes += 1;
+                    summary = crate::timeline_text::summary(row.text.as_str()).as_str().into();
+                }
+                KIND_REASON | KIND_TOOL | KIND_SUBAGENT => {
+                    if row.group_idx == NO_GROUP {
+                        blocks += 1;
+                    }
+                    steps += 1;
+                    if !row.summary.is_empty() {
+                        summary = row.summary.clone();
+                    }
+                }
+                _ => {}
+            }
+        }
+        let enabled = !region.is_empty() && (blocks >= 2 || notes > 0);
+        if enabled != self.process_enabled {
+            // Batches follow the fold: inside a process every step is on screen
+            // once the bar is opened, while a turn without a fold keeps its lone
+            // batch folded as its own handle. Only the transition restamps, so a
+            // batch the user folded by hand keeps its state through later frames.
+            self.process_enabled = enabled;
+            let open = enabled && self.process_is_open();
+            for (index, _) in region.iter() {
+                self.patch(*index, |row| {
+                    if row.kind == KIND_GROUP {
+                        row.open = open;
+                    }
+                    if row.group_idx != NO_GROUP {
+                        row.group_open = open;
+                    }
+                });
+            }
+        }
+        let open = self.process_is_open();
+        for (index, _) in region.iter() {
+            self.patch(*index, |row| {
+                row.process_idx = if enabled { process } else { NO_PROCESS };
+                row.process_open = open;
+            });
+        }
+        let bar = self.process_bar;
+        let label = crate::timeline_text::process_label(steps);
+        self.patch(bar, |row| {
+            row.text = label.as_str().into();
+            row.summary = summary;
+            row.visible = enabled;
+        });
     }
 
     /// Begin the next assistant body block; the runtime registers exactly one
@@ -340,6 +481,10 @@ impl Timeline {
             index,
             pending: false,
         });
+        // The block this round replaces becomes process content: only the
+        // newest answer block of the turn stays outside the fold.
+        self.last_body = index;
+        self.refresh_process_bar();
         index
     }
 
@@ -388,12 +533,12 @@ impl Timeline {
                 row.status_kind = STATUS_RUNNING;
                 row.payload = index as i32;
                 row.group_idx = group;
-                // Every batch starts folded open; the user owns the fold after.
-                row.group_open = true;
+                row.group_open = self.batch_open_state();
                 row.open = false;
                 row.foldable = true;
             });
             self.reasons += 1;
+            self.refresh_process_bar();
             self.thinking = Some(Thinking {
                 text: String::new(),
                 index,
@@ -448,7 +593,7 @@ impl Timeline {
         let group = self.next_group;
         self.next_group += 1;
         let bar = self.push(blank(KIND_GROUP, format!("group-{group}")));
-        let open = self.group_open;
+        let open = self.batch_open_state();
         self.patch(bar, |row| {
             row.open = open;
             row.payload = bar as i32;
@@ -461,6 +606,7 @@ impl Timeline {
             latest: Default::default(),
         });
         self.group = group;
+        self.refresh_process_bar();
     }
 
     /// Rewrite the bar label of the batch the last upsert landed in. The count
@@ -519,6 +665,7 @@ impl Timeline {
                 bar.latest = summary.as_str().into();
             }
             self.refresh_batch_label();
+            self.refresh_process_bar();
             return;
         }
         if self.tools.len() >= MAX_GROUP_ENTRIES {
@@ -545,7 +692,7 @@ impl Timeline {
             row.patch = cards;
             row.payload = index as i32;
             row.group_idx = group;
-            row.group_open = true;
+            row.group_open = self.batch_open_state();
             row.open = false;
             row.foldable = true;
         });
@@ -561,6 +708,7 @@ impl Timeline {
             bar.latest = summary.as_str().into();
         }
         self.refresh_batch_label();
+        self.refresh_process_bar();
     }
 
     /// End a tool batch so the next reasoning or tool opens a fresh bar. The
@@ -598,6 +746,7 @@ impl Timeline {
         }
         let index = self.push(row);
         self.patch(index, |existing| existing.payload = index as i32);
+        self.refresh_process_bar();
     }
 
     /// Close the trailing segment before the turn settles.
@@ -687,6 +836,7 @@ impl Timeline {
     /// that holds no live turn: tests, probes and the thread-log column.
     pub fn set_history(&mut self, rows: Vec<TimelineRow>) {
         self.model.set_vec(rows);
+        self.sync_fold_ids();
     }
 
     /// Publish the durable history in front of the live turn. The two share one
@@ -712,6 +862,7 @@ impl Timeline {
             // rows: the snapshot owns everything either way.
             self.forget_turn();
             self.model.set_vec(rows);
+            self.sync_fold_ids();
             return;
         };
         if anchor.is_empty() || rows.iter().any(|row| row.id == anchor)
@@ -721,6 +872,7 @@ impl Timeline {
             // done with it and its copy goes with them.
             self.forget_turn();
             self.model.set_vec(rows);
+            self.sync_fold_ids();
             return;
         }
         let mut published = rows;
@@ -731,13 +883,17 @@ impl Timeline {
             };
             // Fold handles address their row by index, so the tail keeps
             // toggling itself after the prefix moved.
-            if matches!(row.kind, KIND_GROUP | KIND_REASON | KIND_TOOL) {
+            if matches!(
+                row.kind,
+                KIND_GROUP | KIND_REASON | KIND_TOOL | KIND_PROCESS
+            ) {
                 row.payload = (index as isize + delta) as i32;
             }
             published.push(row);
         }
         self.model.set_vec(published);
         self.rebase(delta);
+        self.sync_fold_ids();
     }
 
     /// Whether the snapshot's tail is no longer the durable tail the model
@@ -775,6 +931,23 @@ impl Timeline {
         self.tools.clear();
         self.bars.clear();
         self.group = NO_GROUP;
+        self.process = NO_PROCESS;
+        self.last_body = usize::MAX;
+        self.process_enabled = false;
+    }
+
+    /// Keep the reducer's fold ids ahead of whatever the snapshot published:
+    /// a toggle folds by id across the whole model, so a live batch or process
+    /// may never share one with a durable turn's.
+    fn sync_fold_ids(&mut self) {
+        let mut group = NO_GROUP;
+        let mut process = NO_PROCESS;
+        for row in self.model.iter() {
+            group = group.max(row.group_idx);
+            process = process.max(row.process_idx);
+        }
+        self.next_group = group + 1;
+        self.next_process = process + 1;
     }
 
     /// Move every row index the reducer still holds by the amount the durable
@@ -810,6 +983,32 @@ impl Timeline {
             return;
         };
         match row.kind {
+            KIND_PROCESS => {
+                let open = !row.open;
+                let process = row.process_idx;
+                for index in 0..self.model.row_count() {
+                    let Some(mut target) = self.model.row_data(index) else {
+                        continue;
+                    };
+                    if target.process_idx != process {
+                        continue;
+                    }
+                    if target.kind == KIND_PROCESS {
+                        target.open = open;
+                    }
+                    target.process_open = open;
+                    // Opening the process is the user asking to see the work, so
+                    // the batches inside it come with it. Their own state is left
+                    // alone when folding: it is not on screen either way.
+                    if open {
+                        if target.kind == KIND_GROUP {
+                            target.open = true;
+                        }
+                        target.group_open = true;
+                    }
+                    self.model.set_row_data(index, target);
+                }
+            }
             KIND_GROUP => {
                 let open = !row.open;
                 let group = row.group_idx;
@@ -951,7 +1150,11 @@ mod tests {
             1,
             "the live turn keeps exactly one bubble"
         );
-        assert_eq!(model.row_count(), 10, "four durable turns plus the live turn");
+        assert_eq!(
+            model.row_count(),
+            11,
+            "four durable turns plus the live turn's bubble, process bar and block"
+        );
         assert_eq!(
             timeline.last_answer(),
             "直播中的答案",

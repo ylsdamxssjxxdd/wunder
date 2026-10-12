@@ -440,6 +440,7 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
     bind_send(app, state.clone());
     bind_terminal(app, state.clone());
     bind_reasoning_effort(app, state.clone());
+    bind_thread_model(app, state.clone());
     bind_attachments(app);
     bind_voice_recording(app, state.clone());
     bind_stop(app, state.clone());
@@ -540,6 +541,7 @@ pub(crate) fn publish_timeline(app: &MainWindow, live: &crate::timeline::Timelin
     app.set_timeline(live.model());
     let marks = live.turn_marks();
     app.set_turn_marks(ModelRc::new(VecModel::from(marks)));
+    crate::activity_ui::notify_timeline_rows(live.row_count());
 }
 
 /// Reset the status-dock attributes for a thread without a live plan. The
@@ -926,6 +928,12 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
                         crate::navigation_ui::project(&app);
                         crate::navigation_ui::project_sidebar(&app, None);
                         app.set_reasoning_effort(session.reasoning_effort.into());
+                        // A thread with a pinned model shows it in the composer;
+                        // without one the label falls back to the agent model
+                        // (already restored by `restore_agent` above).
+                        if let Some(model) = session.session_model_name.as_deref() {
+                            crate::native_pages::select_model_key(&app, model);
+                        }
                         app.set_status("内嵌运行时已就绪".into());
                     }
                     Err(error) => app.set_status(format!("无法加载会话：{error}").into()),
@@ -1021,6 +1029,45 @@ fn bind_new_thread(app: &MainWindow, state: Rc<RefCell<State>>) {
                         app.invoke_select_conversation(0);
                     }
                     Err(error) => app.set_status(format!("无法新建会话：{error}").into()),
+                }
+            });
+        });
+    });
+}
+
+/// Thread model pinning: the composer's model picker writes a per-thread
+/// override instead of the global default. The label moves optimistically in
+/// the same frame; the meta write races behind and reverts on failure.
+fn bind_thread_model(app: &MainWindow, state: Rc<RefCell<State>>) {
+    let weak = app.as_weak();
+    app.on_select_thread_model(move |key| {
+        let Some(app) = weak.upgrade() else { return };
+        let key = key.trim().to_string();
+        if key.is_empty() {
+            return;
+        }
+        let session = app.get_active_session_id().to_string();
+        if session.is_empty() {
+            return;
+        }
+        // Optimistic switch: project the picked card into the composer label
+        // right away; persistence races behind.
+        let previous_key = app.get_selected_model_key().to_string();
+        crate::native_pages::select_model_key(&app, &key);
+        let desktop = state.borrow().desktop.clone();
+        let weak = app.as_weak();
+        std::thread::spawn(move || {
+            let result = desktop.set_session_model(&session, &key);
+            let _ = weak.upgrade_in_event_loop(move |app| {
+                if app.get_active_session_id() != session {
+                    return;
+                }
+                match result {
+                    Ok(()) => app.set_status("已切换本线程模型".into()),
+                    Err(error) => {
+                        crate::native_pages::select_model_key(&app, &previous_key);
+                        app.set_status(format!("无法切换模型：{error}").into());
+                    }
                 }
             });
         });
@@ -3042,23 +3089,36 @@ mod turn_tests {
             kinds,
             vec![
                 crate::timeline::KIND_USER,
+                crate::timeline::KIND_PROCESS,
                 crate::timeline::KIND_GROUP,
                 crate::timeline::KIND_REASON,
                 crate::timeline::KIND_TOOL,
                 crate::timeline::KIND_BODY,
             ]
         );
-        let group = &rows[1];
+        let group = &rows[2];
         assert_eq!(group.text, "执行工具 1 次");
-        assert!(group.open && group.group_idx == 0);
-        assert_eq!(rows[2].tool_name, "已思考");
-        assert_eq!(rows[2].status_kind, crate::timeline::STATUS_DONE);
-        assert!(rows[2].detail.contains("Fixture thinking"));
-        assert_eq!(rows[3].tool_name, "读取文件");
-        assert_eq!(rows[3].target, "example.txt");
+        assert!(
+            !group.open && group.group_idx == 0,
+            "a lone batch reads as one folded handle"
+        );
+        assert_eq!(rows[3].tool_name, "已思考");
         assert_eq!(rows[3].status_kind, crate::timeline::STATUS_DONE);
-        assert_eq!(rows[3].payload, 3);
-        assert_eq!(rows[4].text, "Fixture answer");
+        assert!(rows[3].detail.contains("Fixture thinking"));
+        assert_eq!(rows[4].tool_name, "读取文件");
+        assert_eq!(rows[4].target, "example.txt");
+        assert_eq!(rows[4].status_kind, crate::timeline::STATUS_DONE);
+        assert_eq!(rows[4].payload, 4);
+        assert_eq!(rows[5].text, "Fixture answer");
+        // One batch is not yet a process worth a second shell: the bar stays
+        // invisible while the turn has only its bubble and one batch.
+        assert_eq!(
+            rows[1].text,
+            crate::timeline_text::process_label(2),
+            "the bar counts the steps it already holds",
+        );
+        assert!(!rows[1].visible, "one batch needs no process bar");
+        assert_eq!(rows[5].process_idx, crate::timeline::NO_PROCESS);
         // A second round freezes the first block and opens a new batch.
         drop(live);
         reduce(
@@ -3076,12 +3136,30 @@ mod turn_tests {
         timeline.borrow_mut().flush();
         let live = timeline.borrow();
         let rows: Vec<_> = live.model().iter().collect();
-        assert_eq!(rows.len(), 8);
-        assert!(rows[4].foldable, "the first answer block freezes");
-        assert_eq!(rows[5].kind, crate::timeline::KIND_GROUP);
-        assert_eq!(rows[5].group_idx, 1);
-        assert_eq!(rows[7].kind, crate::timeline::KIND_BODY);
-        assert_eq!(rows[7].text, "Second answer");
+        assert_eq!(rows.len(), 9);
+        assert!(rows[5].foldable, "the first answer block freezes");
+        assert_eq!(rows[6].kind, crate::timeline::KIND_GROUP);
+        assert_eq!(rows[6].group_idx, 1);
+        assert_eq!(rows[8].kind, crate::timeline::KIND_BODY);
+        assert_eq!(rows[8].text, "Second answer");
+        // Two batches plus an intermediate note is a process: the bar takes
+        // over, its batches come open with it, and only the newest answer stays
+        // outside.
+        assert!(rows[1].visible, "the process bar earns its place");
+        assert_eq!(
+            rows[1].text,
+            crate::timeline_text::process_label(4),
+            "thinking, one call, the frozen note and the second call",
+        );
+        assert!(
+            !rows[1].summary.is_empty(),
+            "the folded bar reads out what the turn last did"
+        );
+        for row in rows.iter().skip(2).take(6) {
+            assert_eq!(row.process_idx, rows[1].process_idx, "step {row:?} escaped");
+            assert!(!row.process_open && !row.group_open, "the process ships folded");
+        }
+        assert_eq!(rows[8].process_idx, crate::timeline::NO_PROCESS);
     }
 
     /// A stopped turn keeps the partial answer and marks the tail, and later

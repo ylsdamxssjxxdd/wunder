@@ -1,13 +1,17 @@
+/* AI生成 */
 /* Two-column messenger shell (workbench | settings).
    Design tokens follow the cloud-usability plan §11.1 and the sidebar metrics
    follow §5.2; keep this file free of legacy four-zone shell rules. */
 
 .messenger-view {
-  /* §11.1 colour tokens */
-  --mz-primary: #c96443;
-  --mz-primary-hover: #b55637;
-  --mz-primary-soft: #dfac9a;
-  --mz-primary-tint: #f6e9e3;
+  /* §11.1 colour tokens. The accent family is not a literal here: it follows
+     `--ui-accent*`, the one palette the theme picker writes, so the shell,
+     its buttons and the activity heatmap retint together. The fallbacks keep
+     the default terracotta if base.css has not loaded yet. */
+  --mz-primary: var(--ui-accent, #c96443);
+  --mz-primary-hover: var(--ui-accent-hover, #b55637);
+  --mz-primary-soft: var(--ui-accent-secondary, #dfac9a);
+  --mz-primary-tint: var(--ui-accent-soft, #f6e9e3);
   --mz-bg: #fbfaf8;
   --mz-surface: #ffffff;
   --mz-sidebar: #f6f5f3;
@@ -36,6 +40,11 @@
   --mz-thought: #3e9c7e;
   /* 思考/工具条目是过程信息，比正文与批次栏更淡一档。 */
   --mz-timeline-entry-soft: #9ba0a8;
+
+  /* 阅读列宽度：正文列与输入区共用，窄视口自动退化为一屏宽。 */
+  --mz-chat-column-width: 1000px;
+  /* 刻度条独占通道宽度：输入区按它右移，两列才能对齐到同一中线。 */
+  --mz-turn-ruler-width: 18px;
 
   /* §5.2 sidebar metrics */
   --mz-sidebar-width: 240px;
@@ -522,7 +531,9 @@ button.messenger-sidebar-workspace-row {
   min-height: 0;
   margin: 0 var(--mz-sidebar-padding);
   border: 1px solid var(--mz-border);
-  border-radius: var(--mz-radius-card);
+  /* 不用圆角：滚动容器会按 border-radius 裁剪内容，首个文件条目四角被削成弧形。
+     列表本身就是方形条目，这里保持直角与之对齐。 */
+  border-radius: 0;
   background: var(--mz-surface);
   overflow-x: hidden;
   overflow-y: auto;
@@ -1348,5 +1359,21 @@ button.messenger-sidebar-workspace-row {
    顶部/底部留白收窄到 2px，避免旧 12px 行距把时间线拉散。 */
 .messenger-view .messenger-chat-body .messenger-message-panel {
   gap: 2px;
+}
+
+/* 阅读列：聊天内容不铺满整个视口，正文列限宽后水平居中，两侧留白随视口
+   变宽而增大。宽度落在面板上，行内 24px 缩进与 hover 色带都跟着这一列走。
+   正文列在滚动视口里居中（视口已经让开刻度条通道），输入区按同一条通道
+   右移自己的内边距，两列才对齐到同一条中线。 */
+.messenger-view .messenger-chat-body .messenger-message-panel,
+.messenger-view .messenger-chat-footer .messenger-agent-composer {
+  width: min(100%, var(--mz-chat-column-width));
+  margin-inline: auto;
+}
+
+/* `.is-threaded` 与 `.messenger-chat-body.is-messages` 同源（有活动线程时
+   刻度条通道才存在），无线程时输入区回到整幅居中。 */
+.messenger-view .messenger-chat-footer.is-threaded {
+  padding-right: calc(16px + var(--mz-turn-ruler-width));
 }
 

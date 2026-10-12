@@ -1,3 +1,4 @@
+// AI生成
 import { APP_CONFIG } from "../app.config.js?v=20260110-04";
 import { elements } from "./elements.js?v=20261011-01";
 import { state } from "./state.js";
@@ -350,11 +351,23 @@ export const loadAvailableTools = async () => {
   schedulePromptReload();
 };
 
-// 对外同步工具清单（用于 MCP/技能/内置工具变更后刷新提示词面板）
+// 工具领域事件：工具启用/停用或可见性变更后广播，供各面板刷新或置失效
+const broadcastToolsUpdated = () => {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("wunder:tools-updated"));
+  }
+};
+
+// 对外同步工具清单（用于 MCP/技能/内置工具/工具可见性变更后刷新提示词面板并通知其它面板）
 export const syncPromptTools = () => {
-  loadAvailableTools().catch((error) => {
-    reportToolListLoadFailure(error.message);
-  });
+  const task = loadAvailableTools()
+    .then(() => {
+      broadcastToolsUpdated();
+    })
+    .catch((error) => {
+      reportToolListLoadFailure(error.message);
+    });
+  return task;
 };
 
 export const ensureToolSelectionLoaded = async () => {

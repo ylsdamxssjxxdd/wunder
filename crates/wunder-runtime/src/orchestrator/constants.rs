@@ -15,6 +15,14 @@ pub const SESSION_LOCK_TTL_S: f64 = 120.0;
 pub const SESSION_LOCK_HEARTBEAT_S: f64 = 5.0;
 pub const SESSION_LOCK_POLL_INTERVAL_S: f64 = 0.2;
 pub const SESSION_LOCK_BUSY_RETRY_S: f64 = 0.8;
+/// Global-slot waits back off instead of re-polling on a fixed interval: every
+/// waiter also takes a DB permit per attempt, so a fixed 0.2s cadence turns a
+/// full system into a storage storm that keeps the system full.
+pub const SESSION_LOCK_BUSY_BACKOFF_FACTOR: f64 = 2.0;
+pub const SESSION_LOCK_BUSY_BACKOFF_AFTER: u32 = 2;
+pub const SESSION_LOCK_BUSY_MAX_INTERVAL_S: f64 = 3.0;
+pub const SESSION_LOCK_BUSY_MAX_SPREAD_S: f64 = 0.5;
+pub const SESSION_LOCK_BUSY_WARN_S: f64 = 30.0;
 pub const STREAM_EVENT_QUEUE_SIZE: usize = 256;
 pub const STREAM_EVENT_POLL_INTERVAL_S: f64 = 0.2;
 pub const STREAM_EVENT_RESUME_POLL_INTERVAL_S: f64 = 0.08;

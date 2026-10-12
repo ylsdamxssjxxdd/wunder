@@ -9,7 +9,8 @@ import type { MessengerControllerContext } from './messengerControllerContext';
 import { listAgentUserRounds, listRunningAgents } from '@/api/agents';
 import { updateProfile } from '@/api/auth';
 import { listChannelBindings } from '@/api/channels';
-import { fetchRealtimeSystemPrompt, fetchSessionSystemPrompt, getSession as getChatSessionApi, synthesizeChatTts } from '@/api/chat';
+import { fetchRealtimeSystemPrompt, fetchSessionSystemPrompt, getSession as getChatSessionApi, synthesizeChatTts, updateSessionModel } from '@/api/chat';
+import { composerModelCatalog } from '@/components/chat/composerModelCatalog';
 import { fetchCronJobs } from '@/api/cron';
 import { fetchUserSkillContent, uploadUserSkillZip } from '@/api/userTools';
 import { downloadWunderWorkspaceFile, fetchWunderWorkspaceContent } from '@/api/workspace';
@@ -30,7 +31,7 @@ import type { MessengerSection } from '@/stores/sessionHub';
 import { useThemeStore } from '@/stores/theme';
 import { buildDeclaredDependencyPayload } from '@/utils/agentDependencyStatus';
 import { normalizeAgentPresetQuestions } from '@/utils/agentPresetQuestions';
-import { showApiError, resolveApiError } from '@/utils/apiError';
+import { showApiError } from '@/utils/apiError';
 import { buildAssistantDisplayContent, resolveAssistantFailureNotice } from '@/utils/assistantFailureNotice';
 import { hasAssistantWaitingForCurrentOutput, normalizeAssistantMessageRuntimeState, resolveAssistantMessageRuntimeState } from '@/utils/assistantMessageRuntime';
 import { isAudioRecordingSupported } from '@/utils/audioRecorder';
@@ -652,10 +653,6 @@ function installMessengerControllerStateRefs(ctx: MessengerControllerContext): v
 
   ctx.rightDockSkillToggleSaving = ref(false);
 
-
-  ctx.timelineDetailDialogVisible = ref(false);
-
-  ctx.timelineDetailSessionId = ref('');
 
   ctx.messengerSessionRefreshTraceId = ref('');
 
@@ -2871,6 +2868,20 @@ function installMessengerControllerAgentIdentityState(ctx: MessengerControllerCo
 
   ctx.activeAgentSessionModelName = computed(() => ctx.resolveModelNameFromRecord(ctx.activeAgentSession.value));
 
+  // Thread model override (workspace meta). Raw config key; absent means the
+  // thread follows the agent configuration. The label resolves the catalogue
+  // display name when the catalogue knows the key.
+  ctx.activeAgentSessionModelOverride = computed(() => {
+      if (!ctx.isAgentConversationActive.value)
+          return '';
+      const session = ctx.asObjectRecord(ctx.activeAgentSession.value);
+      const override = String(session.session_model_name || '').trim();
+      if (!override)
+          return '';
+      const hit = (composerModelCatalog.value.items || []).find((item) => ctx.isSameModelName(item.id, override));
+      return (hit?.name || override).trim();
+  });
+
   ctx.activeAgentRuntimeModelName = computed(() => {
       if (!ctx.isAgentConversationActive.value)
           return '';
@@ -2948,6 +2959,10 @@ function installMessengerControllerAgentIdentityState(ctx: MessengerControllerCo
   ctx.agentHeaderModelDisplayName = computed(() => {
       if (!ctx.isAgentConversationActive.value)
           return '';
+      // A thread model override wins: switching in the composer is per-thread.
+      const threadModelOverride = ctx.activeAgentSessionModelOverride.value;
+      if (threadModelOverride)
+          return threadModelOverride;
       const configuredModelName = ctx.activeAgentConfiguredModelName.value;
       // Keep composer label stable by preferring configured model alias over runtime model id.
       if (configuredModelName)
@@ -3039,10 +3054,16 @@ function installMessengerControllerAgentIdentityState(ctx: MessengerControllerCo
   /**
    * §8.3 model switching for the composer popover.
    *
-   * The cloud contract has no per-session model field: the effective model is
-   * resolved from the single user agent (`resolve_chat_model_name(config, agent)`),
-   * so switching the current thread's model means updating that agent record and
-   * refreshing the local profile. The next turn picks it up without a reload.
+   * Switching is per-thread: the model override lives in workspace meta and
+   * every turn resolves `session override -> agent -> global default`, so the
+   * switch writes one meta record instead of the agent configuration. The
+   * switch is optimistic — the composer label reads the local session record,
+   * so the patch lands in the same frame and persistence queues behind it; a
+   * failed write reverts the patch (unless a newer switch re-patched) and
+   * reports the error. Writes are chained so rapid picks persist in pick order.
+   *
+   * Before the first message there is no thread to pin, so the pick falls back
+   * to updating the agent record — the upcoming thread then starts with it.
    *
    * Reasoning effort stays a per-thread setting and is written by the composer
    * itself through `POST /chat/sessions/{id}/reasoning-effort`.
@@ -3050,6 +3071,8 @@ function installMessengerControllerAgentIdentityState(ctx: MessengerControllerCo
    * `user_default_model_name` (A3) is not delivered yet and has no setter
    * endpoint, so "设为我的默认" reports the gap instead of faking a write.
    */
+  let composerModelWriteChain: Promise<void> = Promise.resolve();
+  let composerModelPatchEpoch = 0;
   ctx.applyComposerModelSelection = async (payload: {
       modelId?: string;
       reasoningEffort?: string;
@@ -3063,33 +3086,88 @@ function installMessengerControllerAgentIdentityState(ctx: MessengerControllerCo
       if (!targetAgentId) {
           return { ok: false, message: ctx.t('chat.features.agentMissing') };
       }
-      try {
-          const updated = (await ctx.agentStore.updateAgent(targetAgentId, {
-              model_name: modelId
-          })) as Record<string, unknown> | null;
-          const refreshed = updated || (await ctx.agentStore.getAgent(targetAgentId, { force: true }).catch(() => null));
+      const sessionId = String(ctx.chatStore.activeSessionId || '').trim();
+      const patchTargets: Array<{
+          profile: Record<string, unknown>;
+          field: string;
+          previous: unknown;
+          existed: boolean;
+      }> = [];
+      const seenProfiles = new Set<Record<string, unknown>>();
+      const patchField = (profile: Record<string, unknown> | null, field: string, value: string) => {
+          if (!profile || seenProfiles.has(profile)) return;
+          seenProfiles.add(profile);
+          patchTargets.push({
+              profile,
+              field,
+              previous: profile[field],
+              existed: Object.prototype.hasOwnProperty.call(profile, field)
+          });
+          profile[field] = value;
+      };
+      const patchAgentProfiles = () => {
+          // The agent profile records are the store's own reactive objects, so
+          // in-place patches re-fire the label computeds in the same frame.
+          const isActiveAgent = targetAgentId === ctx.activeAgentId.value;
           if (targetAgentId === DEFAULT_AGENT_KEY) {
-              await ctx.loadDefaultAgentProfile().catch(() => null);
+              patchField(ctx.asObjectRecord(ctx.defaultAgentProfile.value), 'model_name', modelId);
+              patchField(ctx.asObjectRecord(ctx.defaultAgentProfile.value), 'configured_model_name', modelId);
           }
-          else if (targetAgentId === ctx.activeAgentId.value) {
-              ctx.activeAgentDetailProfile.value = (refreshed as Record<string, unknown> | null) || updated;
-              ctx.activeAgent.value = (refreshed as Record<string, unknown> | null) || updated;
+          else if (isActiveAgent) {
+              patchField(ctx.asObjectRecord(ctx.activeAgent.value), 'model_name', modelId);
+              patchField(ctx.asObjectRecord(ctx.activeAgent.value), 'configured_model_name', modelId);
+              patchField(ctx.asObjectRecord(ctx.activeAgentDetailProfile.value), 'model_name', modelId);
+              patchField(ctx.asObjectRecord(ctx.activeAgentDetailProfile.value), 'configured_model_name', modelId);
           }
-          if (payload?.setAsDefault === true) {
-              // Honest degradation: the read field may exist while the write
-              // endpoint is still pending on the backend track.
-              ElMessage.info(ctx.t('chat.composer.modelSetDefaultUnsupported'));
-          }
-          return { ok: true, message: ctx.t('chat.composer.modelSwitched', { name: modelId }) };
+      };
+      if (sessionId) {
+          patchField(ctx.asObjectRecord(ctx.activeAgentSession.value), 'session_model_name', modelId);
       }
-      catch (error) {
-          showApiError(error, ctx.t('chat.composer.modelSwitchFailed'));
-          return {
-              ok: false,
-              message: resolveApiError(error, ctx.t('chat.composer.modelSwitchFailed')).message ||
-                  ctx.t('chat.composer.modelSwitchFailed')
-          };
+      else {
+          patchAgentProfiles();
       }
+      const revertPatch = () => {
+          for (const entry of patchTargets) {
+              if (entry.existed) {
+                  entry.profile[entry.field] = entry.previous;
+              }
+              else {
+                  delete entry.profile[entry.field];
+              }
+          }
+      };
+      const patchEpoch = ++composerModelPatchEpoch;
+      composerModelWriteChain = composerModelWriteChain.then(async () => {
+          try {
+              if (sessionId) {
+                  await updateSessionModel(sessionId, { model_name: modelId });
+                  return;
+              }
+              const updated = (await ctx.agentStore.updateAgent(targetAgentId, {
+                  model_name: modelId
+              })) as Record<string, unknown> | null;
+              const refreshed = updated || (await ctx.agentStore.getAgent(targetAgentId, { force: true }).catch(() => null));
+              if (targetAgentId === DEFAULT_AGENT_KEY) {
+                  await ctx.loadDefaultAgentProfile().catch(() => null);
+              }
+              else if (targetAgentId === ctx.activeAgentId.value) {
+                  ctx.activeAgentDetailProfile.value = (refreshed as Record<string, unknown> | null) || updated;
+                  ctx.activeAgent.value = (refreshed as Record<string, unknown> | null) || updated;
+              }
+          }
+          catch (error) {
+              if (patchEpoch === composerModelPatchEpoch) {
+                  revertPatch();
+              }
+              showApiError(error, ctx.t('chat.composer.modelSwitchFailed'));
+          }
+      });
+      if (payload?.setAsDefault === true) {
+          // Honest degradation: the read field may exist while the write
+          // endpoint is still pending on the backend track.
+          ElMessage.info(ctx.t('chat.composer.modelSetDefaultUnsupported'));
+      }
+      return { ok: true, message: ctx.t('chat.composer.modelSwitched', { name: modelId }) };
   };
 
   ctx.activeSessionApproval = computed(() => {
@@ -6762,7 +6840,8 @@ type WorldScreenshotCaptureOption = {
 type StartNewSessionOutcome = 'noop' | 'already_current' | 'opened';
 
 function installMessengerControllerTimelineFileActions(ctx: MessengerControllerContext): void {
-  ctx.restoreTimelineSession = async (sessionId: string) => {
+  // 按会话 ID 打开线程：导航独立于执行锁，运行中的任务可随时查看。
+  ctx.openSessionById = async (sessionId: string) => {
       const targetId = String(sessionId || '').trim();
       if (!targetId)
           return;
@@ -6771,29 +6850,12 @@ function installMessengerControllerTimelineFileActions(ctx: MessengerControllerC
       await ctx.openAgentSession(targetId, targetAgentId);
   };
 
-  ctx.openTimelineSessionDetail = (sessionId: string) => {
+  // 线程轨迹直达：线程操作菜单不再展示线程日志对话框，直接进入轨迹视图。
+  ctx.openSessionTrajectory = (sessionId: string) => {
       const targetId = String(sessionId || '').trim();
       if (!targetId)
           return;
-      ctx.timelineDetailSessionId.value = targetId;
-      ctx.timelineDetailDialogVisible.value = true;
-  };
-
-  watch(() => ctx.timelineDetailDialogVisible.value, (visible) => {
-      if (!visible) {
-          ctx.timelineDetailSessionId.value = '';
-      }
-  });
-
-  ctx.handleTimelineDialogActivateSession = async (sessionId: string) => {
-      const targetId = String(sessionId || '').trim();
-      if (!targetId)
-          return;
-      const targetSession = ctx.resolveSessionRecordById(targetId);
-      const targetAgentId = ctx.resolveSessionAgentId(targetSession);
-      // Navigation is independent from execution locks: users may inspect another task
-      // while it runs, while send/stop actions remain scoped to the selected session.
-      await ctx.restoreTimelineSession(targetId);
+      ctx.router.push({ name: 'trajectory', query: { session: targetId } }).catch(() => undefined);
   };
 
   ctx.renameTimelineSession = async (sessionId: string) => {
@@ -6846,9 +6908,6 @@ function installMessengerControllerTimelineFileActions(ctx: MessengerControllerC
       if (!targetId)
           return;
       ctx.timelinePreviewMap.value.delete(targetId);
-      if (ctx.timelineDetailSessionId.value === targetId) {
-          ctx.timelineDetailDialogVisible.value = false;
-      }
       ctx.triggerRealtimePulseRefresh?.('archived-session-removed');
   };
 

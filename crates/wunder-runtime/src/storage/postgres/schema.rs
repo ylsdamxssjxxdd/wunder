@@ -824,6 +824,11 @@ impl PostgresStorage {
     }
 
     fn ensure_performance_indexes(&self, conn: &mut PgConn<'_>) -> Result<()> {
+        // BRIN on created_time proved lossy once large backfilled history
+        // (stress-test loads) landed in the table: recent-window aggregates
+        // re-checked hundreds of thousands of heap rows and stalled requests
+        // for tens of seconds. Exact btree time indexes keep the scan
+        // proportional to the queried window instead of the whole table.
         let statements = [
             (
                 "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_tool_logs_tool_time \
@@ -832,16 +837,24 @@ impl PostgresStorage {
                  ON tool_logs (tool, created_time DESC)",
             ),
             (
+                "DROP INDEX CONCURRENTLY IF EXISTS idx_tool_logs_time",
+                "DROP INDEX IF EXISTS idx_tool_logs_time",
+            ),
+            (
                 "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_tool_logs_time \
-                 ON tool_logs USING brin (created_time)",
+                 ON tool_logs (created_time)",
                 "CREATE INDEX IF NOT EXISTS idx_tool_logs_time \
-                 ON tool_logs USING brin (created_time)",
+                 ON tool_logs (created_time)",
+            ),
+            (
+                "DROP INDEX CONCURRENTLY IF EXISTS idx_artifact_logs_time",
+                "DROP INDEX IF EXISTS idx_artifact_logs_time",
             ),
             (
                 "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_artifact_logs_time \
-                 ON artifact_logs USING brin (created_time)",
+                 ON artifact_logs (created_time)",
                 "CREATE INDEX IF NOT EXISTS idx_artifact_logs_time \
-                 ON artifact_logs USING brin (created_time)",
+                 ON artifact_logs (created_time)",
             ),
             (
                 "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_monitor_sessions_updated \
@@ -875,6 +888,88 @@ impl PostgresStorage {
 
         Ok(())
     }
+
+    /// Create the monthly range partitions for `table` covering
+    /// `months_back`..=`months_ahead` around the current month, plus a
+    /// DEFAULT partition that catches rows outside the rolling window.
+    /// Parent indexes automatically extend to newly attached partitions.
+    pub(super) fn ensure_time_partitions(
+        &self,
+        conn: &mut PgConn<'_>,
+        table: &str,
+        months_back: i32,
+        months_ahead: i32,
+    ) -> Result<()> {
+        if !PARTITIONED_TABLES.contains(&table) {
+            return Ok(());
+        }
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|value| value.as_secs() as i64)
+            .unwrap_or(0);
+        let (year, month) = civil_month_from_days(now_secs.div_euclid(86400));
+        for offset in -months_back..=months_ahead {
+            let (partition_year, partition_month) = shift_month(year, month, offset);
+            let start = month_start_epoch(partition_year, partition_month);
+            let (next_year, next_month) = shift_month(partition_year, partition_month, 1);
+            let end = month_start_epoch(next_year, next_month);
+            let name = format!("{table}_y{partition_year:04}m{partition_month:02}");
+            conn.execute(
+                &format!(
+                    "CREATE TABLE IF NOT EXISTS {name} PARTITION OF {table} \
+                     FOR VALUES FROM ({start}) TO ({end}) \
+                     WITH (autovacuum_vacuum_scale_factor = 0.02)"
+                ),
+                &[],
+            )?;
+        }
+        conn.execute(
+            &format!("CREATE TABLE IF NOT EXISTS {table}_default PARTITION OF {table} DEFAULT"),
+            &[],
+        )?;
+        Ok(())
+    }
+}
+
+/// Tables ranged by created_time; guarded so ensure_time_partitions only
+/// ever touches partitioned parents.
+const PARTITIONED_TABLES: &[&str] = &[
+    "thread_items",
+    "thread_item_blocks",
+    "thread_log_changes",
+    "tool_logs",
+    "artifact_logs",
+];
+
+/// Days since 1970-01-01 to (year, month) of that day.
+fn civil_month_from_days(days: i64) -> (i64, i64) {
+    // Howard Hinnant's civil_from_days, reduced to month resolution.
+    let z = days + 719468;
+    let era = if z >= 0 { z } else { z - 146096 } / 146097;
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = if m <= 2 { y + 1 } else { y };
+    (year, m)
+}
+
+fn shift_month(year: i64, month: i64, offset: i32) -> (i64, i64) {
+    let total = year * 12 + (month - 1) + offset as i64;
+    (total.div_euclid(12), total.rem_euclid(12) + 1)
+}
+
+/// Epoch seconds of the first day of the given month (UTC midnight).
+fn month_start_epoch(year: i64, month: i64) -> i64 {
+    let y = if month <= 2 { year - 1 } else { year };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = y - era * 400;
+    let m = if month > 2 { month - 3 } else { month + 9 };
+    let doy = (153 * m + 2) / 5;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    (era * 146097 + doe - 719468) * 86400
 }
 
 impl PostgresSchemaStorage for PostgresStorage {
@@ -952,17 +1047,18 @@ impl PostgresSchemaStorage for PostgresStorage {
                   payload TEXT NOT NULL,
                   created_time DOUBLE PRECISION NOT NULL,
                   updated_time DOUBLE PRECISION NOT NULL,
-                  PRIMARY KEY (session_id, item_id),
-                  UNIQUE (session_id, root_turn_id, item_index)
-                );
+                  created_seq BIGINT NOT NULL DEFAULT 0,
+                  PRIMARY KEY (session_id, item_id, created_time)
+                ) PARTITION BY RANGE (created_time);
                 CREATE INDEX IF NOT EXISTS idx_thread_items_turn
                   ON thread_items (user_id, session_id, root_turn_id, item_index);
             CREATE TABLE IF NOT EXISTS thread_item_blocks (
               session_id TEXT NOT NULL, user_id TEXT NOT NULL, item_id TEXT NOT NULL,
               field TEXT NOT NULL DEFAULT 'content', block_index BIGINT NOT NULL,
               event_id BIGINT NOT NULL, payload TEXT NOT NULL,
-              PRIMARY KEY(session_id,item_id,field,block_index)
-            );
+              created_time DOUBLE PRECISION NOT NULL DEFAULT 0,
+              PRIMARY KEY(session_id,item_id,field,block_index,created_time)
+            ) PARTITION BY RANGE (created_time);
             CREATE INDEX IF NOT EXISTS idx_thread_blocks_replay ON thread_item_blocks(session_id,event_id);
                 CREATE TABLE IF NOT EXISTS thread_log_changes (
                   session_id TEXT NOT NULL,
@@ -974,8 +1070,8 @@ impl PostgresSchemaStorage for PostgresStorage {
                   revision BIGINT NOT NULL DEFAULT 1,
                   payload TEXT NOT NULL,
                   created_time DOUBLE PRECISION NOT NULL,
-                  PRIMARY KEY (session_id, change_seq)
-                );
+                  PRIMARY KEY (session_id, change_seq, created_time)
+                ) PARTITION BY RANGE (created_time);
                 CREATE INDEX IF NOT EXISTS idx_thread_changes_cursor
                   ON thread_log_changes (user_id, session_id, change_seq);
                 CREATE TABLE IF NOT EXISTS thread_log_metrics (
@@ -1007,7 +1103,7 @@ impl PostgresSchemaStorage for PostgresStorage {
                   PRIMARY KEY (user_id, session_id)
                 );
                 CREATE TABLE IF NOT EXISTS tool_logs (
-                  id BIGSERIAL PRIMARY KEY,
+                  id BIGSERIAL,
                   user_id TEXT NOT NULL,
                   session_id TEXT NOT NULL,
                   tool TEXT,
@@ -1017,21 +1113,30 @@ impl PostgresSchemaStorage for PostgresStorage {
                   data TEXT,
                   timestamp TEXT,
                   payload TEXT NOT NULL,
-                  created_time DOUBLE PRECISION NOT NULL
-                );
+                  created_time DOUBLE PRECISION NOT NULL,
+                  excluded BOOLEAN NOT NULL DEFAULT FALSE,
+                  PRIMARY KEY (id, created_time)
+                ) PARTITION BY RANGE (created_time);
                 CREATE INDEX IF NOT EXISTS idx_tool_logs_session
                   ON tool_logs (user_id, session_id, id);
                 CREATE TABLE IF NOT EXISTS artifact_logs (
-                  id BIGSERIAL PRIMARY KEY,
+                  id BIGSERIAL,
                   user_id TEXT NOT NULL,
                   session_id TEXT NOT NULL,
                   kind TEXT NOT NULL,
                   name TEXT,
                   payload TEXT NOT NULL,
-                  created_time DOUBLE PRECISION NOT NULL
-                );
+                  created_time DOUBLE PRECISION NOT NULL,
+                  PRIMARY KEY (id, created_time)
+                ) PARTITION BY RANGE (created_time);
                 CREATE INDEX IF NOT EXISTS idx_artifact_logs_session
                   ON artifact_logs (user_id, session_id, id);
+                CREATE TABLE IF NOT EXISTS user_usage_summary (
+                  user_id TEXT PRIMARY KEY,
+                  chat_records BIGINT NOT NULL DEFAULT 0,
+                  tool_records BIGINT NOT NULL DEFAULT 0,
+                  updated_time DOUBLE PRECISION NOT NULL DEFAULT 0
+                );
                 CREATE TABLE IF NOT EXISTS monitor_sessions (
                   session_id TEXT PRIMARY KEY,
                   user_id TEXT,
@@ -2084,6 +2189,15 @@ impl PostgresSchemaStorage for PostgresStorage {
                     self.ensure_cron_columns(&mut conn)?;
                     self.ensure_memory_fragment_columns(&mut conn)?;
                     self.ensure_performance_indexes(&mut conn)?;
+                    for table in [
+                        "thread_items",
+                        "thread_item_blocks",
+                        "thread_log_changes",
+                        "tool_logs",
+                        "artifact_logs",
+                    ] {
+                        self.ensure_time_partitions(&mut conn, table, 1, 3)?;
+                    }
                     self.initialized.store(true, Ordering::SeqCst);
                     return Ok(());
                 }

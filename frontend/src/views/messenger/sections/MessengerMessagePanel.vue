@@ -24,16 +24,19 @@
           </div>
 
           <div v-if="retainedMessageRenderKind === 'agent'">
+            <div v-if="showThreadActivityCard" class="messenger-thread-activity">
+              <SessionActivityCard />
+            </div>
             <div v-if="agentVirtualTopSpacer" class="messenger-message-virtual-spacer"
               :style="{ height: `${agentVirtualTopSpacer.height}px` }" aria-hidden="true"></div>
-            <template v-for="(row, rowIndex) in agentVirtualRows" :key="row.key">
+            <template v-for="row in agentVirtualRows" :key="row.key">
               <div v-if="row.kind === 'spacer'" class="messenger-message-virtual-spacer"
                 :style="{ height: `${row.height}px` }" aria-hidden="true"></div>
-              <div v-else-if="row.kind === 'greeting'" class="messenger-greeting-region"
+              <div v-else-if="row.kind === 'greeting' && !showThreadActivityCard" class="messenger-greeting-region"
                 data-chat-measure :data-virtual-key="row.key">
                 <MessengerAgentBubble :controller="controller" :item="row.assistant" />
               </div>
-              <MessengerTurnRow v-else :controller="controller" :turn="row" :row-index="rowIndex" />
+              <MessengerTurnRow v-else-if="row.kind !== 'greeting'" :controller="controller" :turn="row" />
             </template>
           </div>
 
@@ -165,15 +168,17 @@
 </template>
 
 <script setup lang="ts">
-import { onUpdated } from 'vue';
+import { computed, onUpdated } from 'vue';
 import MessengerTurnRow from './MessengerTurnRow.vue';
 import MessengerAgentBubble from './MessengerAgentBubble.vue';
+import SessionActivityCard from '@/components/messenger/SessionActivityCard.vue';
 import type { MessengerControllerContext } from '../controller/messengerControllerContext';
 import MessageMarkdownBody from '@/components/chat/MessageMarkdownBody.vue';
 import { chatPerf } from '@/utils/chatPerf';
 
 // The stable controller carries refs/actions; only this subtree tracks message render dependencies.
 const props = defineProps<{ controller: MessengerControllerContext }>();
+const agentTurnSlots = props.controller.agentTurnSlots;
 const agentVirtualRows = props.controller.agentVirtualRows;
 const agentVirtualTopSpacer = props.controller.agentVirtualTopSpacer;
 const bootLoading = props.controller.bootLoading;
@@ -202,5 +207,16 @@ const toggleWorldVoicePlayback = props.controller.toggleWorldVoicePlayback;
 const worldVirtualBottomSpacer = props.controller.worldVirtualBottomSpacer;
 const worldVirtualGroups = props.controller.worldVirtualGroups;
 const worldVirtualTopSpacer = props.controller.worldVirtualTopSpacer;
+// A thread without a single user turn shows the yearly activity grid in place
+// of the synthetic greeting; the greeting returns with the first real turn.
+// History still loading must not flash the grid over a thread that has turns.
+const chatStore = props.controller.chatStore;
+const showThreadActivityCard = computed(() => {
+  if (retainedMessageRenderKind?.value !== 'agent' || agentTurnSlots?.value?.length) {
+    return false;
+  }
+  const sessionId = String(chatStore?.activeSessionId || '');
+  return !sessionId || !chatStore?.historyLoading?.(sessionId);
+});
 onUpdated(() => chatPerf.count('chat_message_panel_render'));
 </script>

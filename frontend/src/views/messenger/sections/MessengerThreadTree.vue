@@ -51,7 +51,7 @@
           <template #dropdown>
             <el-dropdown-menu>
               <el-dropdown-item command="rename">{{ t('messenger.tasks.rename') }}</el-dropdown-item>
-              <el-dropdown-item command="detail">{{ t('messenger.timeline.detail.open') }}</el-dropdown-item>
+              <el-dropdown-item command="trajectory">{{ t('messenger.trajectory.open') }}</el-dropdown-item>
               <el-dropdown-item
                 command="archive"
                 :disabled="item.state === 'running' || item.state === 'pending' || item.locked"
@@ -90,7 +90,7 @@ const ROW_HEIGHT = 28;
 const props = defineProps<{ items: TaskListItem[]; activeSessionId: string; agentId: string }>();
 const emit = defineEmits<{
   open: [id: string];
-  detail: [id: string];
+  trajectory: [id: string];
   rename: [id: string];
   archive: [id: string];
 }>();
@@ -155,7 +155,7 @@ const syncViewport = () => {
 };
 
 const handleAction = (action: string, id: string) => {
-  if (action === 'detail') emit('detail', id);
+  if (action === 'trajectory') emit('trajectory', id);
   else if (action === 'rename') emit('rename', id);
   else if (action === 'archive') emit('archive', id);
 };

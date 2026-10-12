@@ -1,3 +1,4 @@
+// AI生成
 import { APP_CONFIG, applyDefaultConfig } from "./app.config.js?v=20260215-01";
 
 import {
@@ -26,7 +27,7 @@ import {
   loadAvailableTools,
   reportToolListLoadFailure,
   resetToolSelection,
-} from "./modules/tools.js?v=20260215-01";
+} from "./modules/tools.js?v=20261012-01";
 
 import {
   ensurePromptTemplatesLoaded,
@@ -40,10 +41,10 @@ import {
   loadMonitorData,
   refreshMonitorPanelLayout,
   toggleMonitorPolling,
-} from "./modules/monitor.js?v=20261011-01";
+} from "./modules/monitor.js?v=20261012-01";
 import { initUserManagementPanel, loadUserStats } from "./modules/users.js?v=20260215-01";
 import { initUserAccountsPanel, loadUserAccounts } from "./modules/user-accounts.js?v=20260518-01";
-import { initPresetAgentsPanel, loadPresetAgents } from "./modules/preset-agents.js?v=20260518-01";
+import { initPresetAgentsPanel, loadPresetAgents } from "./modules/preset-agents.js?v=20261012-01";
 import { initCompanionsPanel, loadCompanions } from "./modules/companions.js?v=20260506-01";
 import { initOrgUnitsPanel, loadOrgUnits } from "./modules/org-units.js?v=20260215-01";
 
@@ -55,13 +56,13 @@ import {
   onLspPanelDeactivate,
 } from "./modules/lsp.js?v=20260215-01";
 
-import { initBuiltinPanel, loadBuiltinTools } from "./modules/builtin.js?v=20260518-01";
+import { initBuiltinPanel, loadBuiltinTools } from "./modules/builtin.js?v=20261012-01";
 
 import { initSkillsPanel, loadSkills } from "./modules/skills.js?v=20260610-01";
 import {
   initToolVisibilityPanel,
   loadToolVisibilityPanel,
-} from "./modules/tool-visibility.js?v=20260518-01";
+} from "./modules/tool-visibility.js?v=20261012-01";
 import { initKnowledgePanel, loadKnowledgeConfig } from "./modules/knowledge.js?v=20260603-02";
 
 import { initLlmPanel, loadLlmConfig } from "./modules/llm.js?v=20260923-04";
@@ -69,9 +70,9 @@ import { initLlmPanel, loadLlmConfig } from "./modules/llm.js?v=20260923-04";
 import { initSettingsPanel, loadAdminDefaults } from "./modules/settings.js?v=20260602-01";
 
 import { initApiDocsPanel } from "./modules/api-docs.js?v=20260215-01";
-import { initThroughputPanel, toggleThroughputPolling } from "./modules/throughput.js?v=20260925-07";
+import { initThroughputPanel, toggleThroughputPolling } from "./modules/throughput.js?v=20261012-01";
 import { initPerformancePanel } from "./modules/performance.js?v=20260215-01";
-import { initEvaluationPanel } from "./modules/evaluation.js?v=20260802-03";
+import { initEvaluationPanel } from "./modules/evaluation.js?v=20261012-01";
 import {
   initMultimodalDebugPanel,
   loadMultimodalDebugPanel,

@@ -1,4 +1,5 @@
 use super::*;
+use crate::core::blocking;
 use crate::llm::LlmClient;
 
 impl Orchestrator {
@@ -23,7 +24,7 @@ impl Orchestrator {
                 let account = if is_admin {
                     None
                 } else {
-                    let status = tokio::task::spawn_blocking(move || {
+                    let status = blocking::run_db("orchestrator.quota.consume", move || {
                         storage.consume_user_quota(
                             &user_id,
                             &UserStore::today_string(),
@@ -32,7 +33,6 @@ impl Orchestrator {
                         )
                     })
                     .await
-                    .map_err(|err| OrchestratorError::internal(err.to_string()))?
                     .map_err(|err| OrchestratorError::internal(err.to_string()))?;
                     let Some(status) = status else {
                         return Ok(());

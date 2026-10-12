@@ -184,6 +184,7 @@ ENTRIES = [
     ("sidebar_settings", "设置", "Settings"),
     ("ws_menu_new_thread", "新建线程", "New thread"),
     ("ws_menu_edit", "编辑工作区", "Edit workspace"),
+    ("sb_rename_body", "重命名「{}」为：", "Rename “{}” to:", ["name"]),
     ("ws_menu_reveal", "打开文件夹", "Open folder"),
     ("ws_menu_delete", "删除工作区", "Delete workspace"),
     ("ws_delete_title", "删除工作区", "Delete workspace"),

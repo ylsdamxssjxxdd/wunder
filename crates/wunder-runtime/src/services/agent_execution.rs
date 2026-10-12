@@ -9,6 +9,32 @@ pub(crate) fn resolve_chat_model_name(
     config: &crate::config::Config,
     agent_record: Option<&crate::storage::UserAgentRecord>,
 ) -> Option<String> {
+    resolve_thread_model_name(config, agent_record, None)
+}
+
+/// Thread model resolution: a thread-local override wins when it still points
+/// at a configured LLM, then the agent's configured model, then the global
+/// default. Read-time validation keeps a stale override (model deleted after
+/// the thread pinned it) degrading to the fallback chain instead of breaking
+/// the turn.
+pub(crate) fn resolve_thread_model_name(
+    config: &crate::config::Config,
+    agent_record: Option<&crate::storage::UserAgentRecord>,
+    session_override: Option<&str>,
+) -> Option<String> {
+    if let Some(name) = session_override
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        if config
+            .llm
+            .models
+            .get(name)
+            .is_some_and(crate::services::llm::is_llm_model)
+        {
+            return Some(name.to_string());
+        }
+    }
     if let Some(name) =
         agent_record.and_then(|record| normalize_optional_model_name(record.model_name.as_deref()))
     {

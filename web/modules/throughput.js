@@ -1,1 +1,2 @@
-export { initThroughputPanel, toggleThroughputPolling } from "./throughput/controller.js?v=20260925-07";
+// AI生成
+export { initThroughputPanel, toggleThroughputPolling } from "./throughput/controller.js?v=20261012-01";

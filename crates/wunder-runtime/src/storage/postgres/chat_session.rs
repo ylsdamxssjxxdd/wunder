@@ -74,6 +74,11 @@ pub(super) trait PostgresChatSessionStorage {
         limit: i64,
     ) -> Result<(Vec<ChatSessionRecord>, i64)>;
     fn count_chat_sessions_by_workspace_impl(&self, user_id: &str) -> Result<Vec<(String, i64)>>;
+    fn count_chat_sessions_by_day_impl(
+        &self,
+        user_id: &str,
+        since_at: f64,
+    ) -> Result<Vec<(String, i64)>>;
     fn reassign_chat_sessions_workspace_impl(
         &self,
         user_id: &str,
@@ -482,6 +487,30 @@ impl PostgresChatSessionStorage for PostgresStorage {
              AND workspace_id IS NOT NULL AND workspace_id != '' \
              GROUP BY workspace_id",
             &[&cleaned_user],
+        )?;
+        Ok(rows
+            .iter()
+            .map(|row| (row.get::<_, String>(0), row.get::<_, i64>(1)))
+            .collect())
+    }
+
+    fn count_chat_sessions_by_day_impl(
+        &self,
+        user_id: &str,
+        since_at: f64,
+    ) -> Result<Vec<(String, i64)>> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        if cleaned_user.is_empty() || !since_at.is_finite() || since_at <= 0.0 {
+            return Ok(Vec::new());
+        }
+        let mut conn = self.conn()?;
+        let rows = conn.query(
+            "SELECT to_char(to_timestamp(created_at), 'YYYY-MM-DD'), COUNT(*) FROM chat_sessions \
+             WHERE user_id = $1 AND created_at >= $2 \
+             AND TRIM(COALESCE(parent_session_id, '')) = '' \
+             GROUP BY 1 ORDER BY 1",
+            &[&cleaned_user, &since_at],
         )?;
         Ok(rows
             .iter()

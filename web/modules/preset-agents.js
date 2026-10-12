@@ -1,3 +1,4 @@
+// AI生成
 ﻿import { elements } from "./elements.js?v=20261011-01";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
@@ -5,6 +6,7 @@ import { appendLog } from "./log.js?v=20261011-01";
 import { notify } from "./notify.js";
 import { t } from "./i18n.js?v=20261011-01";
 import { formatTimestamp } from "./utils.js?v=20251229-02";
+import { ensureLlmConfigLoaded } from "./llm.js?v=20260923-04";
 import { listGlobalCompanions } from "./companions.js?v=20260506-01";
 import { ensureOrgUnitsLoaded } from "./org-units.js?v=20260518-01";
 import { isRemovedSwarmTool } from "../shared/deprecated-tools.js";
@@ -896,26 +898,6 @@ const normalizeModelType = (value) => {
 const resolveDefaultModelDisplayName = () => {
   const configured = normalizeOptionalModelName(state.presetAgents?.defaultModelName);
   return configured || t("presetAgents.form.modelDefaultName");
-};
-
-const extractLlmModelCatalog = (payload) => {
-  const root =
-    payload?.llm && typeof payload.llm === "object"
-      ? payload.llm
-      : payload?.data?.llm && typeof payload.data.llm === "object"
-        ? payload.data.llm
-        : {};
-  const rawModels = root?.models && typeof root.models === "object" ? root.models : {};
-  const names = Object.keys(rawModels)
-    .map((name) => String(name || "").trim())
-    .filter(Boolean);
-  const options = names.filter((name) => normalizeModelType(rawModels?.[name]?.model_type) === "llm");
-  const requestedDefault = normalizeOptionalModelName(root?.default);
-  const defaultModelName =
-    (requestedDefault && options.includes(requestedDefault) && requestedDefault) ||
-    options[0] ||
-    "";
-  return { options, defaultModelName };
 };
 
 const renderModelOptions = (selectedModelName = "") => {
@@ -3069,13 +3051,25 @@ const loadDefaultTemplateAgent = async () => {
   return normalizeUserAgent(payload?.data || {});
 };
 
+// 模型下拉单一数据源：直接复用 llm.js 维护的共享 state.llm，避免出现第二份模型副本（治本·消灭多副本）
+const syncModelCatalogFromState = () => {
+  const order = Array.isArray(state.llm?.order) ? state.llm.order : [];
+  const options = order.filter(
+    (name) => normalizeModelType(state.llm?.configs?.[name]?.model_type) === "llm"
+  );
+  const requestedDefault = normalizeOptionalModelName(state.llm?.defaultName);
+  const defaultModelName =
+    (requestedDefault && options.includes(requestedDefault) && requestedDefault) || options[0] || "";
+  state.presetAgents.modelOptions = options;
+  state.presetAgents.defaultModelName = defaultModelName;
+  renderModelOptions(normalizeOptionalModelName(effectiveSelectedPreset()?.model_name));
+};
+
 const loadModelCatalog = async ({ silent = false } = {}) => {
   try {
-    const payload = await requestJson("/admin/llm");
-    const catalog = extractLlmModelCatalog(payload);
-    state.presetAgents.modelOptions = catalog.options;
-    state.presetAgents.defaultModelName = catalog.defaultModelName;
-    renderModelOptions(normalizeOptionalModelName(effectiveSelectedPreset()?.model_name));
+    // 复用共享的模型配置加载器：仅在未加载时拉取，已加载则直接用内存数据
+    await ensureLlmConfigLoaded();
+    syncModelCatalogFromState();
   } catch (error) {
     state.presetAgents.modelOptions = [];
     state.presetAgents.defaultModelName = "";
@@ -4057,6 +4051,31 @@ const bindActions = () => {
   }
 };
 
+// 数据失效订阅（治本·领域事件）：模型/工具变更后，可见则即刻重载，不可见则置失效待下次进入
+let presetDataInvalidationBound = false;
+const bindDataInvalidation = () => {
+  if (presetDataInvalidationBound || typeof window === "undefined") {
+    return;
+  }
+  presetDataInvalidationBound = true;
+  // 模型配置变更：模型下拉直接派生自共享 state.llm，无需重新请求
+  window.addEventListener("wunder:llm-updated", () => {
+    try {
+      syncModelCatalogFromState();
+    } catch (error) {
+      // 派生失败时忽略，下次进入面板会重新派生
+    }
+  });
+  // 工具启用/可见性变更：面板可见则重载工具目录，否则标记面板失效
+  window.addEventListener("wunder:tools-updated", () => {
+    if (state.runtime?.activePanel === "presetAgents" && state.panelLoaded?.presetAgents) {
+      Promise.resolve(loadToolCatalog()).catch(() => {});
+    } else {
+      state.panelLoaded.presetAgents = false;
+    }
+  });
+};
+
 export const initPresetAgentsPanel = async () => {
   ensureState();
   if (!ensureElements()) {
@@ -4065,6 +4084,7 @@ export const initPresetAgentsPanel = async () => {
   if (state.presetAgents.initialized) {
     return;
   }
+  bindDataInvalidation();
   // Load avatar config from backend first
   await Promise.all([
     loadPresetAvatars(),

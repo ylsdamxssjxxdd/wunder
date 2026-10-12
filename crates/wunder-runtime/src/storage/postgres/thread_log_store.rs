@@ -1,5 +1,6 @@
+use super::log_stats_store::{decrement_usage_summary, read_meta_f64};
 use super::PostgresStorage;
-use crate::storage::StorageLifecycle;
+use crate::storage::{StorageLifecycle, USAGE_CHAT_WATERMARK_KEY};
 use anyhow::{ensure, Result};
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -188,7 +189,7 @@ impl PostgresThreadLogStorage for PostgresStorage {
         tx.execute("INSERT INTO thread_logs(session_id,user_id,latest_user_turn,latest_change_seq,created_time,updated_time) SELECT $3,user_id,COALESCE((SELECT MAX(user_turn_index) FROM thread_turns WHERE session_id=$2 AND trigger_kind='user' AND user_turn_index<=$4),0),latest_change_seq,created_time,updated_time FROM thread_logs WHERE user_id=$1 AND session_id=$2", &[&user_id,&source,&target,&through_round])?;
         tx.execute("INSERT INTO thread_turns(session_id,turn_id,user_id,root_turn_id,trigger_kind,client_message_id,user_turn_index,status,summary,payload,created_time,updated_time) SELECT $3,turn_id,user_id,root_turn_id,trigger_kind,client_message_id,user_turn_index,status,summary,jsonb_set(payload::jsonb, '{session_id}', to_jsonb($3::text), true)::text,created_time,updated_time FROM thread_turns WHERE user_id=$1 AND session_id=$2 AND user_turn_index<=$4", &[&user_id,&source,&target,&through_round])?;
         tx.execute("INSERT INTO thread_items(session_id,item_id,turn_id,root_turn_id,visibility,user_id,item_index,kind,status,revision,payload,created_time,updated_time,created_seq) SELECT $3,i.item_id,i.turn_id,i.root_turn_id,i.visibility,i.user_id,i.item_index,i.kind,i.status,i.revision,jsonb_set(i.payload::jsonb, '{session_id}', to_jsonb($3::text), true)::text,i.created_time,i.updated_time,i.created_seq FROM thread_items i JOIN thread_turns t ON t.session_id=i.session_id AND t.turn_id=i.turn_id WHERE i.user_id=$1 AND i.session_id=$2 AND t.user_turn_index<=$4", &[&user_id,&source,&target,&through_round])?;
-        tx.execute("INSERT INTO thread_item_blocks(session_id,user_id,item_id,field,block_index,event_id,payload) SELECT $3,b.user_id,b.item_id,b.field,b.block_index,b.event_id,jsonb_set(b.payload::jsonb, '{session_id}', to_jsonb($3::text), true)::text FROM thread_item_blocks b JOIN thread_items i ON i.session_id=$3 AND i.item_id=b.item_id WHERE b.user_id=$1 AND b.session_id=$2", &[&user_id,&source,&target])?;
+        tx.execute("INSERT INTO thread_item_blocks(session_id,user_id,item_id,field,block_index,event_id,payload,created_time) SELECT $3,b.user_id,b.item_id,b.field,b.block_index,b.event_id,jsonb_set(b.payload::jsonb, '{session_id}', to_jsonb($3::text), true)::text,i.created_time FROM thread_item_blocks b JOIN thread_items i ON i.session_id=$3 AND i.item_id=b.item_id WHERE b.user_id=$1 AND b.session_id=$2", &[&user_id,&source,&target])?;
         tx.execute("INSERT INTO thread_log_changes(session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time) SELECT $3,c.change_seq,c.user_id,c.change_type,c.turn_id,c.item_id,c.revision,c.payload,c.created_time FROM thread_log_changes c JOIN thread_turns t ON t.session_id=$3 AND t.turn_id=c.turn_id WHERE c.user_id=$1 AND c.session_id=$2", &[&user_id,&source,&target])?;
         tx.execute("INSERT INTO thread_log_metrics(session_id,user_id,metric_key,metric_value,updated_time) SELECT session_id,user_id,'user_turn_total',latest_user_turn,updated_time FROM thread_logs WHERE user_id=$1 AND session_id=$3 AND $2<>$3", &[&user_id,&source,&target])?;
         tx.commit()?;
@@ -255,7 +256,55 @@ impl PostgresThreadLogStorage for PostgresStorage {
             )?
             .get(0);
         anyhow::ensure!(item_exists, "thread item does not exist for block");
-        let written = conn.execute("INSERT INTO thread_item_blocks(session_id,user_id,item_id,field,block_index,event_id,payload) VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(session_id,item_id,field,block_index) DO UPDATE SET event_id=excluded.event_id,payload=excluded.payload WHERE thread_item_blocks.event_id<=excluded.event_id AND thread_item_blocks.payload<>excluded.payload",&[&session_id,&user_id,&item_id,&field,&index,&event_id,&text])?;
+        // Partitioned storage has no global unique index, so the guarded
+        // upsert becomes update-first; thread_logs FOR UPDATE serializes
+        // concurrent writers for the session.
+        let item_created_time: f64 = conn
+            .query_one(
+                "SELECT created_time FROM thread_items WHERE session_id=$1 AND user_id=$2 AND item_id=$3",
+                &[&session_id, &user_id, &item_id],
+            )?
+            .get(0);
+        let mut written = conn.execute(
+            "UPDATE thread_item_blocks SET event_id=$6, payload=$7 \
+             WHERE session_id=$1 AND item_id=$3 AND field=$4 AND block_index=$5 \
+             AND event_id<=$6 AND payload<>$7",
+            &[
+                &session_id,
+                &user_id,
+                &item_id,
+                &field,
+                &index,
+                &event_id,
+                &text,
+            ],
+        )?;
+        if written == 0 {
+            let exists: bool = conn
+                .query_one(
+                    "SELECT EXISTS(SELECT 1 FROM thread_item_blocks \
+                     WHERE session_id=$1 AND item_id=$3 AND field=$4 AND block_index=$5)",
+                    &[&session_id, &user_id, &item_id, &field, &index],
+                )?
+                .get(0);
+            if !exists {
+                conn.execute(
+                    "INSERT INTO thread_item_blocks(session_id,user_id,item_id,field,block_index,event_id,payload,created_time) \
+                     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
+                    &[
+                        &session_id,
+                        &user_id,
+                        &item_id,
+                        &field,
+                        &index,
+                        &event_id,
+                        &text,
+                        &item_created_time,
+                    ],
+                )?;
+                written = 1;
+            }
+        }
         let mut change_seq = 0i64;
         if written > 0 {
             let row = conn.query_one("SELECT l.latest_change_seq+1,i.turn_id FROM thread_logs l JOIN thread_items i ON i.session_id=l.session_id WHERE l.session_id=$1 AND i.item_id=$2", &[&session_id,&item_id])?;
@@ -711,24 +760,46 @@ impl PostgresThreadLogStorage for PostgresStorage {
                 .unwrap_or("user")
         };
         let text = serde_json::to_string(payload)?;
-        let existing: Option<(String, String)> = tx
+        let existing: Option<(String, String, f64)> = tx
             .query_opt(
-                "SELECT turn_id,payload FROM thread_items WHERE session_id=$1 AND item_id=$2",
+                "SELECT turn_id,payload,created_time FROM thread_items WHERE session_id=$1 AND item_id=$2",
                 &[&session_id, &item_id],
             )?
-            .map(|r| (r.get(0), r.get(1)));
-        if let Some((existing_turn, _)) = &existing {
+            .map(|r| (r.get(0), r.get(1), r.get(2)));
+        if let Some((existing_turn, _, _)) = &existing {
             ensure!(
                 existing_turn == turn_id,
                 "thread item belongs to another turn"
             );
         }
-        if existing.as_ref().map(|(_, value)| value.as_str()) == Some(text.as_str()) {
+        if existing.as_ref().map(|(_, value, _)| value.as_str()) == Some(text.as_str()) {
             tx.commit()?;
             return Ok(None);
         }
         let index:i64=tx.query_one("SELECT COALESCE(MAX(item_index),-1)+1 FROM thread_items WHERE session_id=$1 AND root_turn_id=$2", &[&session_id,&root_id])?.get(0);
-        tx.execute("INSERT INTO thread_items(session_id,item_id,turn_id,root_turn_id,visibility,user_id,item_index,kind,status,payload,created_time,updated_time,created_seq) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,(SELECT latest_change_seq+1 FROM thread_logs WHERE session_id=$1)) ON CONFLICT(session_id,item_id) DO UPDATE SET kind=excluded.kind,status=excluded.status,visibility=excluded.visibility,payload=excluded.payload,revision=thread_items.revision+1,updated_time=excluded.updated_time WHERE thread_items.turn_id=excluded.turn_id", &[&session_id,&item_id,&turn_id,&root_id,&visibility,&user_id,&index,&kind,&status,&text,&now,&now])?;
+        // Partitioned storage has no global unique index, so the guarded
+        // upsert becomes update-or-insert; thread_logs FOR UPDATE serializes
+        // concurrent writers for the session.
+        let written = if let Some((_, _, existing_created_time)) = &existing {
+            tx.execute(
+                "UPDATE thread_items SET kind=$3,status=$4,visibility=$5,payload=$6,revision=revision+1,updated_time=$7 \
+                 WHERE session_id=$1 AND item_id=$2 AND created_time=$8",
+                &[
+                    &session_id,
+                    &item_id,
+                    &kind,
+                    &status,
+                    &visibility,
+                    &text,
+                    &now,
+                    existing_created_time,
+                ],
+            )?
+        } else {
+            tx.execute("INSERT INTO thread_items(session_id,item_id,turn_id,root_turn_id,visibility,user_id,item_index,kind,status,payload,created_time,updated_time,created_seq) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,(SELECT latest_change_seq+1 FROM thread_logs WHERE session_id=$1))", &[&session_id,&item_id,&turn_id,&root_id,&visibility,&user_id,&index,&kind,&status,&text,&now,&now])?;
+            1
+        };
+        anyhow::ensure!(written > 0, "thread item upsert wrote no rows");
         let revision: i64 = tx
             .query_one(
                 "SELECT revision FROM thread_items WHERE session_id=$1 AND item_id=$2",
@@ -1059,6 +1130,8 @@ impl PostgresThreadLogStorage for PostgresStorage {
         self.ensure_initialized()?;
         let mut conn = self.conn()?;
         let mut tx = conn.transaction()?;
+        let now = Self::now_ts();
+        let chat_wm = read_meta_f64(&mut tx, USAGE_CHAT_WATERMARK_KEY)?.unwrap_or(0.0);
         let mut count = 0i64;
         count += tx.execute(
             "DELETE FROM thread_log_metrics WHERE user_id=$1 AND session_id=$2",
@@ -1072,10 +1145,21 @@ impl PostgresThreadLogStorage for PostgresStorage {
             "DELETE FROM thread_log_changes WHERE user_id=$1 AND session_id=$2",
             &[&user_id, &session_id],
         )? as i64;
-        count += tx.execute(
+        // thread_items: only rows inside the chat watermark were counted in
+        // the usage summary; the rest was never admitted.
+        let counted: i64 = tx
+            .query_one(
+                "WITH del AS (DELETE FROM thread_items WHERE user_id=$1 AND session_id=$2 \
+                   AND visibility='user' AND kind IN ('user_message','assistant_message') \
+                   AND created_time <= $3 RETURNING 1) SELECT COUNT(*) FROM del",
+                &[&user_id, &session_id, &chat_wm],
+            )?
+            .get(0);
+        let rest = tx.execute(
             "DELETE FROM thread_items WHERE user_id=$1 AND session_id=$2",
             &[&user_id, &session_id],
         )? as i64;
+        count += counted + rest;
         count += tx.execute(
             "DELETE FROM thread_turns WHERE user_id=$1 AND session_id=$2",
             &[&user_id, &session_id],
@@ -1084,6 +1168,7 @@ impl PostgresThreadLogStorage for PostgresStorage {
             "DELETE FROM thread_logs WHERE user_id=$1 AND session_id=$2",
             &[&user_id, &session_id],
         )? as i64;
+        decrement_usage_summary(&mut tx, &[(user_id.to_string(), counted)], &[], now)?;
         tx.commit()?;
         Ok(count)
     }

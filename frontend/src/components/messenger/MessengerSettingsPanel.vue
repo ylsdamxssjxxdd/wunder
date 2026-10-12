@@ -147,17 +147,34 @@
             {{ languageLabel }}
           </button>
         </div>
-        <div class="messenger-settings-row">
-          <div>
+        <div class="messenger-settings-theme-block">
+          <div class="messenger-settings-theme-head">
             <div class="messenger-settings-label">{{ t('messenger.settings.theme') }}</div>
             <div class="messenger-settings-hint">{{ t('messenger.settings.themeHint') }}</div>
           </div>
-          <select v-model="themePalette" class="messenger-settings-select">
-            <option value="hula-green">{{ t('messenger.settings.themeOptionHula') }}</option>
-            <option value="eva-orange">{{ t('messenger.settings.themeOptionEva') }}</option>
-            <option value="minimal">{{ t('messenger.settings.themeOptionMinimal') }}</option>
-            <option value="tech-blue">{{ t('messenger.settings.themeOptionTechBlue') }}</option>
-          </select>
+          <ul class="messenger-theme-tiles" data-testid="settings-theme-tiles">
+            <li v-for="option in themeOptions" :key="option.palette">
+              <button
+                class="messenger-theme-tile"
+                :class="{ 'is-active': option.palette === themePalette }"
+                type="button"
+                :aria-pressed="option.palette === themePalette"
+                :data-testid="`settings-theme-${option.palette}`"
+                @click="themePalette = option.palette"
+              >
+                <span class="messenger-theme-tile-mock" :style="option.mockStyle" aria-hidden="true">
+                  <span class="messenger-theme-tile-bar"></span>
+                  <span class="messenger-theme-tile-sub"></span>
+                  <span class="messenger-theme-tile-avatar"></span>
+                  <span class="messenger-theme-tile-body">
+                    <span class="messenger-theme-tile-line"></span>
+                    <span class="messenger-theme-tile-line is-short"></span>
+                  </span>
+                </span>
+                <span class="messenger-theme-tile-name">{{ option.label }}</span>
+              </button>
+            </li>
+          </ul>
         </div>
         <div class="messenger-settings-row">
           <div>
@@ -368,7 +385,14 @@ import { useChatStore } from '@/stores/chat';
 import { showApiError } from '@/utils/apiError';
 import { sumConversationConsumedTokens } from '@/utils/messageStats';
 import UserAvatarGlyph from '@/components/messenger/UserAvatarGlyph.vue';
-import { normalizeThemePalette, type ThemePalette } from '@/utils/themeAppearance';
+import {
+  SELECTABLE_THEME_PALETTES,
+  THEME_PALETTE_LABEL_KEYS,
+  THEME_PALETTE_SWATCHES,
+  normalizeThemePalette,
+  type ThemeSwatchPalette,
+  type ThemePalette
+} from '@/utils/themeAppearance';
 
 type SendKeyMode = 'enter' | 'ctrl_enter' | 'none';
 type ProfileAvatarOption = {
@@ -449,6 +473,17 @@ const authStore = useAuthStore();
 const chatStore = useChatStore();
 const sendKey = ref<SendKeyMode>('enter');
 const themePalette = ref<ThemePalette>('eva-orange');
+// 预览卡自带色值，未选中的色板也能显示自己的强调色。
+const themeOptions = computed(() =>
+  SELECTABLE_THEME_PALETTES.map((palette: ThemeSwatchPalette) => ({
+    palette,
+    label: t(THEME_PALETTE_LABEL_KEYS[palette] ?? ''),
+    mockStyle: {
+      '--tile-accent': THEME_PALETTE_SWATCHES[palette].accent,
+      '--tile-tint': THEME_PALETTE_SWATCHES[palette].tint
+    }
+  }))
+);
 const usernameDraft = ref('');
 const currentPasswordDraft = ref('');
 const newPasswordDraft = ref('');

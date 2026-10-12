@@ -191,6 +191,7 @@ struct RetentionState {
 struct UserUsageCache {
     data: HashMap<String, HashMap<String, i64>>,
     updated_ts: f64,
+    refreshing: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -306,6 +307,8 @@ pub struct WorkspaceManager {
     deleted_session_log_grace_hours: AtomicI64,
     retention_interval_s: f64,
     retention_state: Arc<Mutex<RetentionState>>,
+    orphan_sweep_last_ts: Arc<AtomicI64>,
+    orphan_sweep_interval_s: f64,
     temp_cleanup_interval_s: f64,
     temp_cleanup_idle_ttl_s: f64,
     temp_cleanup_state: Arc<Mutex<RetentionState>>,
@@ -320,8 +323,12 @@ pub struct WorkspaceManager {
     search_cache_max_items: usize,
     search_cache_idle_ttl_s: f64,
     search_cache_max_users: usize,
-    user_usage_cache: Mutex<UserUsageCache>,
+    user_usage_cache: Arc<Mutex<UserUsageCache>>,
     user_usage_cache_ttl_s: f64,
+    usage_reconcile_last_ts: Arc<AtomicI64>,
+    usage_reconcile_interval_s: f64,
+    partitions_ensure_last_ts: Arc<AtomicI64>,
+    slow_query_last_ts: Arc<AtomicI64>,
     usage_stats_cache: Mutex<UsageStatsCache>,
     usage_stats_ttl_s: f64,
     usage_stats_max_users: usize,
@@ -357,6 +364,8 @@ impl WorkspaceManager {
             ),
             retention_interval_s: 3600.0,
             retention_state: Arc::new(Mutex::new(RetentionState::default())),
+            orphan_sweep_last_ts: Arc::new(AtomicI64::new(0)),
+            orphan_sweep_interval_s: 6.0 * 3600.0,
             temp_cleanup_interval_s: TEMP_FILES_CLEANUP_INTERVAL_S,
             temp_cleanup_idle_ttl_s,
             temp_cleanup_state: Arc::new(Mutex::new(RetentionState::default())),
@@ -377,8 +386,12 @@ impl WorkspaceManager {
             search_cache_max_items: SEARCH_INDEX_MAX_ITEMS,
             search_cache_idle_ttl_s: SEARCH_CACHE_IDLE_TTL_S,
             search_cache_max_users: SEARCH_CACHE_MAX_USERS,
-            user_usage_cache: Mutex::new(UserUsageCache::default()),
-            user_usage_cache_ttl_s: 5.0,
+            user_usage_cache: Arc::new(Mutex::new(UserUsageCache::default())),
+            user_usage_cache_ttl_s: 300.0,
+            usage_reconcile_last_ts: Arc::new(AtomicI64::new(0)),
+            usage_reconcile_interval_s: 600.0,
+            partitions_ensure_last_ts: Arc::new(AtomicI64::new(0)),
+            slow_query_last_ts: Arc::new(AtomicI64::new(0)),
             usage_stats_cache: Mutex::new(UsageStatsCache::default()),
             usage_stats_ttl_s: USAGE_STATS_TTL_S,
             usage_stats_max_users: USAGE_STATS_MAX_USERS,
@@ -780,6 +793,27 @@ impl WorkspaceManager {
         format!("session_reasoning_effort:{safe_user}:{safe_session}")
     }
 
+    fn session_model_key(&self, user_id: &str, session_id: &str) -> String {
+        let safe_user = self.safe_user_id(user_id);
+        let safe_session = session_id
+            .trim()
+            .chars()
+            .map(|ch| {
+                if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                    ch
+                } else {
+                    '_'
+                }
+            })
+            .collect::<String>();
+        let safe_session = if safe_session.trim().is_empty() {
+            "default".to_string()
+        } else {
+            safe_session
+        };
+        format!("session_model:{safe_user}:{safe_session}")
+    }
+
     fn session_context_overflow_key(&self, user_id: &str, session_id: &str) -> String {
         let safe_user = self.safe_user_id(user_id);
         let safe_session = session_id
@@ -866,13 +900,51 @@ impl WorkspaceManager {
 
     fn maybe_schedule_retention_cleanup(&self) {
         let grace_hours = self.deleted_session_log_grace_hours();
-        if self.stream_event_retention_hours <= 0 && grace_hours <= 0 {
+        let retention_enabled = self.stream_event_retention_hours > 0;
+        let now = now_ts();
+        let orphan_due = {
+            let last =
+                self.orphan_sweep_last_ts.load(std::sync::atomic::Ordering::SeqCst) as f64;
+            last <= 0.0 || now - last >= self.orphan_sweep_interval_s
+        };
+        // Usage summary reconcile keeps per-user counters exact without any
+        // write-path cost; partitions roll forward so new months always have
+        // a landing place before the first row arrives.
+        let usage_due = {
+            let last = self
+                .usage_reconcile_last_ts
+                .load(std::sync::atomic::Ordering::SeqCst) as f64;
+            last <= 0.0 || now - last >= self.usage_reconcile_interval_s
+        };
+        let partitions_due = {
+            let last = self
+                .partitions_ensure_last_ts
+                .load(std::sync::atomic::Ordering::SeqCst) as f64;
+            last <= 0.0 || now - last >= 86400.0
+        };
+        // Slow-query guardrail: periodic peek at the backend's statement
+        // statistics keeps O(full-scan) additions a log-line discovery.
+        let slow_query_due = {
+            let last = self
+                .slow_query_last_ts
+                .load(std::sync::atomic::Ordering::SeqCst) as f64;
+            last <= 0.0 || now - last >= 3600.0
+        };
+        if !retention_enabled
+            && grace_hours <= 0
+            && !orphan_due
+            && !usage_due
+            && !partitions_due
+            && !slow_query_due
+        {
             return;
         }
-        let now = now_ts();
         {
             let mut state = self.retention_state.lock();
-            if state.running || now - state.last_cleanup < self.retention_interval_s {
+            if state.running
+                || (!orphan_due && !usage_due && !partitions_due && !slow_query_due
+                    && now - state.last_cleanup < self.retention_interval_s)
+            {
                 return;
             }
             state.running = true;
@@ -883,7 +955,18 @@ impl WorkspaceManager {
         // window are removed, chat history stays durable.
         let retention_enabled = self.stream_event_retention_hours > 0;
         let cutoff = now - (self.stream_event_retention_hours as f64) * 3600.0;
+        // Orphan sweep only considers log rows older than an hour so a session
+        // being created can never race the sweep.
+        let orphan_cutoff = now - 3600.0;
+        let run_orphan_sweep = orphan_due;
+        let run_usage_reconcile = usage_due;
+        let run_partitions_ensure = partitions_due;
+        let run_slow_query_report = slow_query_due;
         let state = self.retention_state.clone();
+        let orphan_flag = self.orphan_sweep_last_ts.clone();
+        let usage_flag = self.usage_reconcile_last_ts.clone();
+        let partitions_flag = self.partitions_ensure_last_ts.clone();
+        let slow_query_flag = self.slow_query_last_ts.clone();
         if let Ok(handle) = Handle::try_current() {
             handle.spawn(async move {
                 let _ = run_workspace_db("workspace.retention.cleanup", move || {
@@ -895,6 +978,38 @@ impl WorkspaceManager {
                         }
                     }
                     cleanup_expired_deleted_session_logs(storage.as_ref(), grace_hours, now);
+                    if run_orphan_sweep {
+                        run_orphan_sweep_once(storage.as_ref(), &orphan_flag, orphan_cutoff, now);
+                    }
+                    if run_usage_reconcile {
+                        match storage.reconcile_user_usage(false) {
+                            Ok(()) => {
+                                usage_flag.store(
+                                    now_ts() as i64,
+                                    std::sync::atomic::Ordering::SeqCst,
+                                );
+                            }
+                            Err(error) => {
+                                warn!(%error, "usage summary reconcile failed");
+                            }
+                        }
+                    }
+                    if run_partitions_ensure {
+                        match storage.ensure_time_partitions_current() {
+                            Ok(()) => {
+                                partitions_flag.store(
+                                    now_ts() as i64,
+                                    std::sync::atomic::Ordering::SeqCst,
+                                );
+                            }
+                            Err(error) => {
+                                warn!(%error, "time partition roll-forward failed");
+                            }
+                        }
+                    }
+                    if run_slow_query_report && storage.report_slow_queries().is_ok() {
+                        slow_query_flag.store(now_ts() as i64, std::sync::atomic::Ordering::SeqCst);
+                    }
                     Ok(())
                 })
                 .await;
@@ -911,6 +1026,30 @@ impl WorkspaceManager {
                 }
             }
             cleanup_expired_deleted_session_logs(storage.as_ref(), grace_hours, now);
+            if run_orphan_sweep {
+                run_orphan_sweep_once(storage.as_ref(), &orphan_flag, orphan_cutoff, now);
+            }
+            if run_usage_reconcile {
+                match storage.reconcile_user_usage(false) {
+                    Ok(()) => usage_flag.store(now_ts() as i64, std::sync::atomic::Ordering::SeqCst),
+                    Err(error) => {
+                        warn!(%error, "usage summary reconcile failed");
+                    }
+                }
+            }
+            if run_partitions_ensure {
+                match storage.ensure_time_partitions_current() {
+                    Ok(()) => {
+                        partitions_flag.store(now_ts() as i64, std::sync::atomic::Ordering::SeqCst)
+                    }
+                    Err(error) => {
+                        warn!(%error, "time partition roll-forward failed");
+                    }
+                }
+            }
+            if run_slow_query_report && storage.report_slow_queries().is_ok() {
+                slow_query_flag.store(now_ts() as i64, std::sync::atomic::Ordering::SeqCst);
+            }
             let mut guard = state.lock();
             guard.running = false;
         }
@@ -1909,6 +2048,43 @@ impl WorkspaceManager {
             .unwrap_or(0) as i64
     }
 
+    /// Thread-local model override. `None`/empty clears the override so the
+    /// thread follows the agent configuration again; validity against the model
+    /// catalogue is checked at resolution time, so a later-deleted model degrades
+    /// to the fallback chain instead of breaking the thread.
+    pub fn load_session_model_override(&self, user_id: &str, session_id: &str) -> Option<String> {
+        let key = self.session_model_key(user_id, session_id);
+        self.storage
+            .get_meta(&key)
+            .ok()
+            .flatten()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+    }
+
+    pub fn save_session_model_override(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        model: Option<&str>,
+    ) -> Result<()> {
+        let key = self.session_model_key(user_id, session_id);
+        let value = model.map(str::trim).filter(|value| !value.is_empty());
+        match value {
+            Some(model) => self.storage.set_meta(&key, model)?,
+            None => {
+                let _ = self.storage.delete_meta_prefix(&key);
+            }
+        }
+        Ok(())
+    }
+
+    pub fn delete_session_model_override(&self, user_id: &str, session_id: &str) -> i64 {
+        self.storage
+            .delete_meta_prefix(&self.session_model_key(user_id, session_id))
+            .unwrap_or(0) as i64
+    }
+
     pub fn load_session_context_overflow(&self, user_id: &str, session_id: &str) -> bool {
         let key = self.session_context_overflow_key(user_id, session_id);
         let Ok(value) = self.storage.get_meta(&key) else {
@@ -2024,38 +2200,48 @@ impl WorkspaceManager {
 
     pub fn get_user_usage_stats(&self) -> HashMap<String, HashMap<String, i64>> {
         let now = now_ts();
-        {
+        let (snapshot, stale) = {
             let cache = self.user_usage_cache.lock();
-            if cache.updated_ts > 0.0 && now - cache.updated_ts < self.user_usage_cache_ttl_s {
-                return cache.data.clone();
+            let stale = cache.updated_ts <= 0.0
+                || now - cache.updated_ts >= self.user_usage_cache_ttl_s;
+            (cache.data.clone(), stale)
+        };
+        if stale {
+            self.request_user_usage_refresh();
+        }
+        snapshot
+    }
+
+    /// Refresh the usage aggregate off-thread. The aggregate is the O(1)
+    /// per-user summary maintained by the maintenance loop's reconcile, so
+    /// callers only ever read the cached snapshot and at most one background
+    /// refresh runs at a time.
+    fn request_user_usage_refresh(&self) {
+        {
+            let mut cache = self.user_usage_cache.lock();
+            if cache.refreshing {
+                return;
             }
+            cache.refreshing = true;
         }
-        let chat_stats = self.storage.get_user_chat_stats().unwrap_or_default();
-        let tool_stats = self.storage.get_user_tool_stats().unwrap_or_default();
-        let mut combined: HashMap<String, HashMap<String, i64>> = HashMap::new();
-        for (user_id, stats) in chat_stats {
-            let mut entry = HashMap::new();
-            entry.insert(
-                "chat_records".to_string(),
-                *stats.get("chat_records").unwrap_or(&0),
-            );
-            entry.insert("tool_records".to_string(), 0);
-            combined.insert(user_id, entry);
-        }
-        for (user_id, stats) in tool_stats {
-            let entry = combined.entry(user_id).or_insert_with(|| {
-                let mut entry = HashMap::new();
-                entry.insert("chat_records".to_string(), 0);
-                entry.insert("tool_records".to_string(), 0);
-                entry
+        let storage = self.storage.clone();
+        let cache_slot = self.user_usage_cache.clone();
+        let _ = thread::Builder::new()
+            .name("wunder-user-usage-refresh".to_string())
+            .spawn(move || {
+                let summary = storage.get_user_usage_summary().unwrap_or_default();
+                let mut combined: HashMap<String, HashMap<String, i64>> = HashMap::new();
+                for (user_id, (chat_records, tool_records)) in summary {
+                    let mut entry = HashMap::new();
+                    entry.insert("chat_records".to_string(), chat_records);
+                    entry.insert("tool_records".to_string(), tool_records);
+                    combined.insert(user_id, entry);
+                }
+                let mut cache = cache_slot.lock();
+                cache.data = combined;
+                cache.updated_ts = now_ts();
+                cache.refreshing = false;
             });
-            let count = *stats.get("tool_records").unwrap_or(&0);
-            entry.insert("tool_records".to_string(), count);
-        }
-        let mut cache = self.user_usage_cache.lock();
-        cache.data = combined.clone();
-        cache.updated_ts = now;
-        combined
     }
 
     pub fn get_tool_usage_stats(
@@ -2101,6 +2287,7 @@ impl WorkspaceManager {
         let _ = self.storage.release_session_lock(cleaned_session);
         let _ = self.delete_session_context_tokens(cleaned_user, cleaned_session);
         let _ = self.delete_session_reasoning_effort(cleaned_user, cleaned_session);
+        let _ = self.delete_session_model_override(cleaned_user, cleaned_session);
         let _ = self.delete_session_context_overflow(cleaned_user, cleaned_session);
         let _ = self.delete_session_context_limit_hint(cleaned_user, cleaned_session);
     }
@@ -2981,6 +3168,29 @@ fn purge_session_logs_with_storage(storage: &dyn StorageBackend, user_id: &str, 
     let _ = storage.delete_artifact_logs_by_session(cleaned_user, cleaned_session);
     let _ = storage.delete_stream_events_by_session(cleaned_session);
     let _ = storage.delete_thread_log_by_session(cleaned_user, cleaned_session);
+}
+
+/// Sweep thread/tool log rows whose session no longer exists in the durable
+/// catalog. Only runs when due; the storage layer ignores rows younger than
+/// the cutoff so in-flight sessions are never touched.
+fn run_orphan_sweep_once(
+    storage: &dyn StorageBackend,
+    flag: &AtomicI64,
+    cutoff: f64,
+    now: f64,
+) {
+    match storage.cleanup_orphan_session_logs(cutoff) {
+        Ok(deleted) => {
+            let total: i64 = deleted.values().copied().sum();
+            if total > 0 {
+                info!(total, tables = ?deleted, "orphan session logs removed");
+            }
+            flag.store(now as i64, std::sync::atomic::Ordering::SeqCst);
+        }
+        Err(err) => {
+            warn!(error = %err, "orphan session log sweep failed");
+        }
+    }
 }
 
 /// Purge durable logs for sessions whose deletion grace window has expired and

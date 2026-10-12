@@ -17,7 +17,7 @@
         @new-task="startNewSession"
         @select-workspace="selectWorkspace"
         @open-thread="openThread"
-        @thread-detail="openTimelineSessionDetail"
+        @thread-trajectory="openSessionTrajectory"
         @rename-thread="renameTimelineSession"
         @archive-thread="archiveTimelineSession"
         @open-settings="openSettingsPage"
@@ -95,6 +95,7 @@
           v-if="showChatComposerFooter"
           ref="chatFooterRef"
           class="messenger-chat-footer"
+          :class="{ 'is-threaded': hasActiveThread }"
         >
           <button
             v-if="showScrollBottomButton"
@@ -181,8 +182,6 @@
     </div>
 
     <MessengerDialogsHost
-      v-model:timeline-detail-dialog-visible="timelineDetailDialogVisible"
-      :timeline-detail-session-id="timelineDetailSessionId"
       v-model:agent-prompt-preview-visible="agentPromptPreviewVisible"
       :agent-prompt-preview-loading="agentPromptPreviewLoading"
       :active-agent-prompt-preview-html="activeAgentPromptPreviewHtml"
@@ -380,7 +379,7 @@ const openThread = (sessionId: string) => {
   closeDrawerOnNarrow();
   // 侧栏线程都是云端线程：打开线程＝工作目录跟随切回云端（§6.3 线程驱动切换）。
   backToCloudWorkspace();
-  void controller.handleTimelineDialogActivateSession?.(sessionId);
+  void controller.openSessionById?.(sessionId);
 };
 
 const selectWorkspace = () => {
@@ -457,7 +456,7 @@ const onlyOfficePath = controller.onlyOfficePath;
 const onlyOfficeUserId = controller.onlyOfficeUserId;
 const onlyOfficeVisible = controller.onlyOfficeVisible;
 const openAgentById = controller.openAgentById;
-const openTimelineSessionDetail = controller.openTimelineSessionDetail;
+const openSessionTrajectory = controller.openSessionTrajectory;
 const renameTimelineSession = controller.renameTimelineSession;
 const resolveAgentRuntimeState = controller.resolveAgentRuntimeState;
 const resolvedMessageConversationKind = controller.resolvedMessageConversationKind;
@@ -478,8 +477,6 @@ const showScrollBottomButton = controller.showScrollBottomButton;
 const showScrollTopButton = controller.showScrollTopButton;
 const startNewSession = controller.startNewSession;
 const stopAgentMessage = controller.stopAgentMessage;
-const timelineDetailDialogVisible = controller.timelineDetailDialogVisible;
-const timelineDetailSessionId = controller.timelineDetailSessionId;
 const toggleAgentVoiceRecord = controller.toggleAgentVoiceRecord;
 const updateComposerApprovalMode = controller.updateComposerApprovalMode;
 const agentVoiceDurationMs = controller.agentVoiceDurationMs;

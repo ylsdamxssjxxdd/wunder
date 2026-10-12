@@ -1,8 +1,9 @@
+// AI生成
 import { elements } from "./elements.js?v=20261011-01";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
 import { isPlainObject, parseHeadersValue, getToolInputSchema } from "./utils.js?v=20251229-02";
-import { syncPromptTools } from "./tools.js?v=20260214-01";
+import { syncPromptTools } from "./tools.js?v=20261012-01";
 import { notify } from "./notify.js";
 import { appendLog } from "./log.js?v=20261011-01";
 import { t } from "./i18n.js?v=20261011-01";

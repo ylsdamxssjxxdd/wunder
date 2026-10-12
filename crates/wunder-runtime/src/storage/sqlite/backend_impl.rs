@@ -276,6 +276,12 @@ impl LogStatsStore for SqliteStorage {
     fn get_user_tool_stats(&self) -> Result<HashMap<String, HashMap<String, i64>>> {
         self.get_user_tool_stats_impl()
     }
+    fn get_user_usage_summary(&self) -> Result<HashMap<String, (i64, i64)>> {
+        self.get_user_usage_summary_impl()
+    }
+    fn reconcile_user_usage(&self, full: bool) -> Result<()> {
+        self.reconcile_user_usage_impl(full)
+    }
     fn get_tool_usage_stats(
         &self,
         since_time: Option<f64>,
@@ -363,6 +369,13 @@ impl MonitorStore for SqliteStorage {
     }
     fn sum_monitor_consumed_tokens_by_user(&self, user_id: &str) -> Result<i64> {
         self.sum_monitor_consumed_tokens_by_user_impl(user_id)
+    }
+    fn sum_monitor_quota_used_by_day(
+        &self,
+        user_id: &str,
+        since_at: f64,
+    ) -> Result<Vec<(String, i64)>> {
+        self.sum_monitor_quota_used_by_day_impl(user_id, since_at)
     }
     fn delete_monitor_record(&self, session_id: &str) -> Result<()> {
         self.delete_monitor_record_impl(session_id)
@@ -800,6 +813,9 @@ impl RetentionStore for SqliteStorage {
     fn cleanup_retention(&self, cutoff_epoch_s: f64) -> Result<HashMap<String, i64>> {
         self.cleanup_retention_impl(cutoff_epoch_s)
     }
+    fn cleanup_orphan_session_logs(&self, cutoff_epoch_s: f64) -> Result<HashMap<String, i64>> {
+        self.cleanup_orphan_session_logs_impl(cutoff_epoch_s)
+    }
 }
 
 impl UserAccountStore for SqliteStorage {
@@ -998,6 +1014,13 @@ impl ChatSessionStore for SqliteStorage {
     }
     fn count_chat_sessions_by_workspace(&self, user_id: &str) -> Result<Vec<(String, i64)>> {
         self.count_chat_sessions_by_workspace_impl(user_id)
+    }
+    fn count_chat_sessions_by_day(
+        &self,
+        user_id: &str,
+        since_at: f64,
+    ) -> Result<Vec<(String, i64)>> {
+        self.count_chat_sessions_by_day_impl(user_id, since_at)
     }
     fn reassign_chat_sessions_workspace(
         &self,

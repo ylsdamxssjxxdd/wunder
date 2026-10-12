@@ -117,6 +117,14 @@ pub struct TunnelStatus {
     /// Sanitized summary; never a token, secret or url.
     pub last_error: Option<String>,
     pub next_retry_at: Option<f64>,
+    /// True while the run loop has degraded into the slow fixed-cadence tier
+    /// ([`handshake::RECONNECT_SLOW_DELAY_S`]) after
+    /// [`handshake::RECONNECT_SLOW_AFTER`] consecutive failed attempts since
+    /// the last healthy session. Cleared when a session reaches steady state,
+    /// when the waiting condition changes (login, local kill switch lifted)
+    /// or when the tunnel is stopped. The tunnel state stays `Reconnecting`:
+    /// degradation is a cadence fact, not a new state.
+    pub reconnect_degraded: bool,
 }
 
 /// What a local form must tell the client about itself. The ids live in the
@@ -321,6 +329,15 @@ struct ClientInner {
     in_flight: InFlightTable,
     collector: ShadowCollector,
     shadow_wake: Arc<Notify>,
+    /// Immediate-retry wake channel: `retry_now()` ends the current backoff
+    /// or idle sleep in the run loop. Bounded by design: `retry_pending`
+    /// dedupes requests to at most one (`notify_waiters()` stores no permit,
+    /// so the flag is what keeps a wake that arrives before the sleep from
+    /// being lost), and waking a sleep never interrupts an in-flight
+    /// `connect_once` - two concurrent connections stay impossible.
+    retry_wake: Arc<Notify>,
+    retry_pending: AtomicBool,
+    reconnect_degraded: AtomicBool,
     /// Command sender of the current generation; `start()` swaps it together
     /// with the dispatcher's matching receiver.
     commands: RwLock<mpsc::Sender<CommandSpec>>,
@@ -361,6 +378,9 @@ impl ClientInner {
             in_flight: InFlightTable::default(),
             collector: ShadowCollector::new(),
             shadow_wake: Arc::new(Notify::new()),
+            retry_wake: Arc::new(Notify::new()),
+            retry_pending: AtomicBool::new(false),
+            reconnect_degraded: AtomicBool::new(false),
             commands: RwLock::new(commands),
             forwarders: RwLock::new(HashMap::new()),
             secret: RwLock::new(None),
@@ -388,6 +408,33 @@ impl ClientInner {
 
     fn set_next_retry(&self, at: Option<f64>) {
         *self.next_retry_at.write().expect("tunnel state lock poisoned") = at;
+    }
+
+    fn set_reconnect_degraded(&self, degraded: bool) {
+        self.reconnect_degraded.store(degraded, Ordering::Release);
+    }
+
+    /// Consume the pending immediate-retry request exactly once.
+    fn take_retry_pending(&self) -> bool {
+        self.retry_pending.swap(false, Ordering::AcqRel)
+    }
+
+    /// Request "retry the next scheduled sleep right now". Bounded: at most
+    /// one wake is pending at any time; requests while the loop is
+    /// connecting/handshaking are remembered by the flag and consumed by the
+    /// next sleep, so this can never stack up into a connect storm.
+    fn request_retry_now(&self) {
+        if self
+            .retry_pending
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            // A wake is already pending: whoever set it also notified the
+            // registered waiters (or the flag alone will serve the next
+            // sleep), so a second notify would add nothing.
+            return;
+        }
+        self.retry_wake.notify_waiters();
     }
 
     fn session(&self) -> Option<CloudSessionFile> {
@@ -567,6 +614,7 @@ impl ClientInner {
                 .expect("tunnel state lock poisoned")
                 .clone(),
             next_retry_at: *self.next_retry_at.read().expect("tunnel state lock poisoned"),
+            reconnect_degraded: self.reconnect_degraded.load(Ordering::Acquire),
         }
     }
 
@@ -591,6 +639,16 @@ impl InterlinkClient {
 
     pub fn status(&self) -> TunnelStatus {
         self.inner.status()
+    }
+
+    /// Ask the tunnel to drop its current backoff/idle wait and retry at
+    /// once. Wakes the wait without interrupting an in-flight connect, so
+    /// there is never a second concurrent connection attempt; requests are
+    /// deduped to at most one pending wake. Use it when a condition the loop
+    /// was waiting on changed (login, local kill switch lifted, "connect"
+    /// pressed while the backoff is already in the 300 s tier).
+    pub fn retry_now(&self) {
+        self.inner.request_retry_now();
     }
 
     /// Prompt queue for the local modal / TUI line (docs §7.3).
@@ -623,6 +681,11 @@ impl InterlinkClient {
     pub fn start(&self) {
         let inner = self.inner.clone();
         if inner.running.swap(true, Ordering::AcqRel) {
+            // Already running: a repeated `start()` is how a form expresses
+            // "connect now" (e.g. right after saving the session with the
+            // local kill switch lifted). Wake the current wait instead of
+            // silently no-op'ing into up to one full idle/backoff window.
+            inner.request_retry_now();
             return;
         }
         // Replace the token `stop()` cancelled before any task is spawned.
@@ -649,6 +712,7 @@ impl InterlinkClient {
         self.inner.running.store(false, Ordering::Release);
         self.inner.cancel_stop();
         self.inner.set_tunnel(TunnelState::Disabled);
+        self.inner.set_reconnect_degraded(false);
         if let Some(writer) = self.inner.writer() {
             self.inner.clear_writer(&writer);
         }
@@ -722,6 +786,7 @@ pub fn status() -> TunnelStatus {
             dropped_frames: 0,
             last_error: None,
             next_retry_at: None,
+            reconnect_degraded: false,
         })
 }
 
@@ -743,6 +808,17 @@ pub fn stop() {
     }
 }
 
+/// Ask the running tunnel to retry its current backoff/idle wait at once (see
+/// [`InterlinkClient::retry_now`]). A no-op when this process never started a
+/// client: it must **never** boot one, because opening a tunnel is the local
+/// form's decision, not a side effect of some other caller poking the status
+/// surface.
+pub fn retry_now() {
+    if let Some(client) = shared() {
+        client.retry_now();
+    }
+}
+
 /// Unix seconds; the tunnel envelope timestamps use it.
 pub(crate) fn now_ts() -> f64 {
     std::time::SystemTime::now()
@@ -756,7 +832,16 @@ pub(crate) fn now_ts() -> f64 {
 // ---------------------------------------------------------------------------
 
 async fn run_loop(inner: Arc<ClientInner>) {
+    // Consecutive failed attempts since the last healthy session — NOT
+    // process-lifetime failures: a session that reached steady state resets
+    // the streak, otherwise a long-running node pins itself at the ceiling
+    // after ~9 incidental disconnects and waits five minutes for every
+    // one-off blip forever.
     let mut attempt: u32 = 0;
+    // True while the loop sits in the quiet condition (logged out or the
+    // local kill switch is on). Leaving it is a condition change worth a
+    // full-budget try, not another failure in the streak.
+    let mut quiet = true;
     let mut flow = SecretFlow::default();
     loop {
         if inner.stop_token().is_cancelled() {
@@ -766,14 +851,29 @@ async fn run_loop(inner: Arc<ClientInner>) {
             // Logged out: stay quiet and cheap, surface `disabled`.
             inner.set_tunnel(TunnelState::Disabled);
             inner.set_capabilities(Vec::new());
+            inner.set_reconnect_degraded(false);
+            quiet = true;
             sleep_or_stop(&inner, IDLE_WAIT).await;
             continue;
         };
         if !session.interlink.enabled {
             inner.set_tunnel(TunnelState::Disabled);
             inner.set_error(Some("interlink is disabled locally".to_string()));
+            inner.set_reconnect_degraded(false);
+            quiet = true;
             sleep_or_stop(&inner, IDLE_WAIT).await;
             continue;
+        }
+        if quiet {
+            // A session appeared or the local kill switch was lifted: what
+            // the loop was waiting on has changed, so this is "worth trying
+            // now" territory - clear the streak (and the degraded tier) and
+            // let the fresh condition get the full ladder from step one. An
+            // external flipper can additionally call `retry_now()` to end
+            // the current idle wait immediately instead of within IDLE_WAIT.
+            quiet = false;
+            attempt = 0;
+            inner.set_reconnect_degraded(false);
         }
         inner.set_error(None);
         // Bootstrap the node secret before the first ticket (docs §4.1).
@@ -788,10 +888,12 @@ async fn run_loop(inner: Arc<ClientInner>) {
                     // keep the cloud channel working and back off.
                     inner.set_error(Some(err.summary()));
                     inner.set_tunnel(TunnelState::Disabled);
-                    let delay = jittered(handshake::backoff_delay(attempt.max(1)));
+                    attempt = handshake::next_attempt(attempt, false, RetryPolicy::Backoff);
+                    let (nominal, degraded) = handshake::retry_plan(attempt.max(1));
+                    inner.set_reconnect_degraded(degraded);
+                    let delay = jittered(nominal);
                     inner.set_next_retry(Some(now_ts() + delay.as_secs_f64()));
                     sleep_or_stop(&inner, delay).await;
-                    attempt = attempt.saturating_add(1);
                     continue;
                 }
             }
@@ -815,10 +917,16 @@ async fn run_loop(inner: Arc<ClientInner>) {
             return;
         }
         let reason = match outcome {
-            Ok(()) => {
-                // Clean end of a steady-state session (close, socket error).
+            Ok(reason) => {
+                // The session reached steady state and only then ended (a
+                // clean close, a blip, a server restart): a healthy session
+                // sits between failures, so the streak restarts at zero and
+                // this ends-up retry lands on the first ladder step, not on
+                // whatever the previous outage had accumulated.
                 flow.reset();
-                CloseReason::ClosedByPeer
+                attempt = 0;
+                inner.set_reconnect_degraded(false);
+                reason
             }
             Err(reason) => reason,
         };
@@ -832,21 +940,15 @@ async fn run_loop(inner: Arc<ClientInner>) {
                 Err(err) => inner.set_error(Some(err.summary())),
             }
         }
-        match policy {
-            RetryPolicy::Now => attempt = attempt.saturating_add(1),
-            RetryPolicy::Backoff => attempt = attempt.saturating_add(1),
-            RetryPolicy::Cooldown => attempt = COOLDOWN_ATTEMPT,
-        }
-        let delay = jittered(handshake::backoff_delay(attempt.max(1)));
+        attempt = handshake::next_attempt(attempt, false, policy);
+        let (nominal, degraded) = handshake::retry_plan(attempt.max(1));
+        inner.set_reconnect_degraded(degraded);
+        let delay = jittered(nominal);
         inner.set_next_retry(Some(now_ts() + delay.as_secs_f64()));
         inner.set_tunnel(TunnelState::Reconnecting);
         sleep_or_stop(&inner, delay).await;
     }
 }
-
-/// Backoff step that lands on the documented 300 s ceiling: used for reasons
-/// a fast retry cannot fix (docs §4.4).
-const COOLDOWN_ATTEMPT: u32 = 9;
 
 impl ClientInner {
     fn secret_value(&self) -> Option<NodeSecret> {
@@ -874,14 +976,39 @@ impl ClientInner {
     /// Start a new generation with an un-cancelled token.
     fn begin_generation(&self) {
         *self.stop.write().expect("tunnel stop lock poisoned") = CancellationToken::new();
+        // Drop a wake that the previous generation never consumed (one
+        // arriving between `stop()` and this `start()` lands on the old,
+        // already-finished loop). Carrying it over would make the fresh
+        // generation skip its very first planned wait - the user asked to
+        // start, which is its own immediate retry, so a stale pending wake
+        // must not stack on top of it.
+        self.retry_pending.store(false, Ordering::Release);
     }
 }
 
 async fn sleep_or_stop(inner: &Arc<ClientInner>, delay: Duration) {
+    // Register the wake waiter **before** consuming the pending flag:
+    // `notify_waiters()` stores no permit, so in the other order a
+    // `retry_now()` arriving in between would be lost until the full delay
+    // elapsed. With this order a request either wakes this sleep or leaves
+    // the flag for the next iteration to consume - bounded at one wake, no
+    // accumulating permits, no extra timer.
+    let wake = inner.retry_wake.notified();
+    tokio::pin!(wake);
+    wake.as_mut().enable();
+    if inner.take_retry_pending() {
+        return;
+    }
     let stop = inner.stop_token();
     tokio::select! {
         _ = tokio::time::sleep(delay) => {}
         _ = stop.cancelled() => {}
+        _ = &mut wake => {
+            // The notification and the flag belong to the one request:
+            // consume it so this wake does not also shorten the *next*
+            // sleep.
+            inner.retry_pending.store(false, Ordering::Release);
+        }
     }
 }
 
@@ -893,11 +1020,17 @@ fn jittered(delay: Duration) -> Duration {
 // One connection attempt
 // ---------------------------------------------------------------------------
 
+/// Run one connection to its end.
+///
+/// `Ok(reason)` means the handshake completed and the session ran into the
+/// steady state before ending with `reason`; `Err(reason)` means the attempt
+/// failed *before* the tunnel ever worked. The run loop needs the difference
+/// to keep the backoff ladder honest (healthy session => streak reset).
 async fn connect_once(
     inner: Arc<ClientInner>,
     session: &CloudSessionFile,
     secret: NodeSecret,
-) -> Result<(), CloseReason> {
+) -> Result<CloseReason, CloseReason> {
     let ticket = handshake::fetch_channel_ticket(session)
         .await
         .map_err(|err| reason_for_error(&err))?;
@@ -952,6 +1085,9 @@ async fn connect_once(
     *inner.writer.write().expect("tunnel state lock poisoned") = Some(writer.clone());
     inner.set_tunnel(TunnelState::Connected);
     inner.set_error(None);
+    // Connected is the proof the streak broke: the badge leaves the degraded
+    // tier immediately, not only after the session later ends.
+    inner.set_reconnect_degraded(false);
 
     // Writer task: control frames always go out before data chunks (docs §10
     // frame priority), both queues are bounded. Protocol-level pongs travel a
@@ -1052,7 +1188,10 @@ async fn connect_once(
     if aborted > 0 {
         tracing::debug!("[interlink] aborted {aborted} in-flight command(s) on tunnel close");
     }
-    Err(reason)
+    // The session had reached steady state (Connected above) before it ended:
+    // report Ok so the run loop can reset the consecutive-failure ladder -
+    // however this particular end looked, the node *can* connect.
+    Ok(reason)
 }
 
 impl ClientInner {

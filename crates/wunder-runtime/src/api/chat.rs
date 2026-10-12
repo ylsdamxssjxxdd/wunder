@@ -6,7 +6,7 @@ use crate::schemas::{AttachmentPayload, WunderRequest};
 pub(crate) use crate::services::agent_execution::{
     apply_tool_overrides, finalize_tool_names, normalize_tool_overrides,
     resolve_agent_tool_defaults, resolve_chat_model_name, resolve_override_name_with_allowed,
-    resolve_session_tool_overrides,
+    resolve_session_tool_overrides, resolve_thread_model_name,
 };
 use crate::services::llm::normalize_reasoning_effort;
 use crate::services::runtime::thread::ThreadSubmitOutcome;
@@ -33,6 +33,7 @@ const TOOL_OVERRIDE_NONE: &str = "__no_tools__";
 const CHAT_SESSION_STATUS_ACTIVE: &str = "active";
 const CHAT_SESSION_STATUS_ARCHIVED: &str = "archived";
 
+mod activity;
 mod events;
 mod media;
 mod prompt;
@@ -44,6 +45,7 @@ use sessions::{has_active_queue_task, is_session_stream_active_or_queued};
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
+        .merge(activity::router())
         .merge(events::router())
         .merge(media::router())
         .merge(prompt::router())
@@ -537,7 +539,15 @@ pub(crate) async fn build_chat_request(
         .map(|record| normalize_agent_approval_mode(Some(record.approval_mode.as_str())));
     let resolved_approval_mode = request_approval_mode.or(agent_approval_mode);
     let config = state.config_store.get().await;
-    let selected_model_name = resolve_chat_model_name(&config, agent_record.as_ref());
+    let session_model_override =
+        state
+            .workspace
+            .load_session_model_override(&user.user_id, &session_id);
+    let selected_model_name = resolve_thread_model_name(
+        &config,
+        agent_record.as_ref(),
+        session_model_override.as_deref(),
+    );
     let mut config_override_map = serde_json::Map::new();
     let mut selected_model_overrides = serde_json::Map::new();
     if let Some(mode) = tool_call_mode {
@@ -636,10 +646,15 @@ pub async fn native_chat_context_capacity(
     })
     .await?;
     let config = state.config_store.get().await;
-    Ok(resolve_chat_model_name(&config, agent.as_ref())
-        .and_then(|key| config.llm.models.get(&key))
-        .and_then(|model| model.max_context)
-        .filter(|value| *value > 0))
+    let session_model_override = state.workspace.load_session_model_override(user_id, session_id);
+    Ok(resolve_thread_model_name(
+        &config,
+        agent.as_ref(),
+        session_model_override.as_deref(),
+    )
+    .and_then(|key| config.llm.models.get(&key))
+    .and_then(|model| model.max_context)
+    .filter(|value| *value > 0))
 }
 
 /// Build a local desktop request without going through the HTTP adapter.

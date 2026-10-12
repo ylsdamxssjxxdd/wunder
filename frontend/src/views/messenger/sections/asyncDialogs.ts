@@ -9,6 +9,3 @@ export const MessengerResourcePreviewDialog = lazy(
 export const MessengerPromptPreviewDialog = lazy(
   () => import('@/components/messenger/MessengerPromptPreviewDialog.vue')
 );
-export const MessengerTimelineDetailDialog = lazy(
-  () => import('@/components/messenger/MessengerTimelineDetailDialog.vue')
-);

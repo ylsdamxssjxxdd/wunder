@@ -49,6 +49,13 @@ pub fn tool_calls(count: i32) -> String {
     format!("执行工具 {count} 次")
 }
 
+/// The work-process bar label of §7.3 A: one line over everything the turn did
+/// before its newest answer block, counted in steps (rounds' notes, thinking
+/// segments and tool calls; batch bars are containers and do not count).
+pub fn process_label(steps: i32) -> String {
+    format!("工作过程 · {steps} 步")
+}
+
 /// The small target chip of a tool entry: the path or command the call acted
 /// on. `tool_result_display` keeps "action · status" on line one and the
 /// target on line two, so a single-line result simply has no target.

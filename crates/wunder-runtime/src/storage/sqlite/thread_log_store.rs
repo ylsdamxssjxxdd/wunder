@@ -1,5 +1,5 @@
 use super::SqliteStorage;
-use crate::storage::StorageLifecycle;
+use crate::storage::{StorageLifecycle, USAGE_CHAT_WATERMARK_KEY};
 use anyhow::{ensure, Result};
 use rusqlite::{params, OptionalExtension};
 use serde_json::{json, Value};
@@ -1137,6 +1137,10 @@ impl SqliteThreadLogStorage for SqliteStorage {
         self.ensure_initialized()?;
         let mut conn = self.open()?;
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let now = Self::now_ts();
+        let chat_wm =
+            super::log_stats_store::read_meta_f64_tx(&tx, USAGE_CHAT_WATERMARK_KEY)?
+                .unwrap_or(0.0);
         let mut count = 0i64;
         count += tx.execute(
             "DELETE FROM thread_log_metrics WHERE user_id=? AND session_id=?",
@@ -1150,10 +1154,18 @@ impl SqliteThreadLogStorage for SqliteStorage {
             "DELETE FROM thread_log_changes WHERE user_id=? AND session_id=?",
             params![user_id, session_id],
         )? as i64;
-        count += tx.execute(
+        // thread_items: only rows inside the chat watermark were counted in
+        // the usage summary; the rest was never admitted.
+        let counted = tx.execute(
+            "DELETE FROM thread_items WHERE user_id=? AND session_id=? AND visibility='user' \
+             AND kind IN ('user_message','assistant_message') AND created_time <= ?",
+            params![user_id, session_id, chat_wm],
+        )? as i64;
+        let rest = tx.execute(
             "DELETE FROM thread_items WHERE user_id=? AND session_id=?",
             params![user_id, session_id],
         )? as i64;
+        count += counted + rest;
         count += tx.execute(
             "DELETE FROM thread_turns WHERE user_id=? AND session_id=?",
             params![user_id, session_id],
@@ -1162,6 +1174,12 @@ impl SqliteThreadLogStorage for SqliteStorage {
             "DELETE FROM thread_logs WHERE user_id=? AND session_id=?",
             params![user_id, session_id],
         )? as i64;
+        super::log_stats_store::decrement_usage_summary_tx(
+            &tx,
+            &[(user_id.to_string(), counted)],
+            &[],
+            now,
+        )?;
         tx.commit()?;
         Ok(count)
     }

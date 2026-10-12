@@ -52,6 +52,24 @@ impl SqliteStorage {
         tx.commit()?;
         Ok(())
     }
+
+    fn ensure_tool_log_columns(&self, conn: &Connection) -> Result<()> {
+        let tx =
+            rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
+        let columns = load_table_columns(&tx, "tool_logs")?;
+        if columns.is_empty() {
+            tx.commit()?;
+            return Ok(());
+        }
+        if !columns.contains("excluded") {
+            tx.execute(
+                "ALTER TABLE tool_logs ADD COLUMN excluded INTEGER NOT NULL DEFAULT 0",
+                [],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
     fn ensure_cloud_device_interlink_columns(&self, conn: &Connection) -> Result<()> {
         let tx =
             rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
@@ -657,10 +675,13 @@ impl SqliteSchemaStorage for SqliteStorage {
               data TEXT,
               timestamp TEXT,
               payload TEXT NOT NULL,
-              created_time REAL NOT NULL
+              created_time REAL NOT NULL,
+              excluded INTEGER NOT NULL DEFAULT 0
             );
             CREATE INDEX IF NOT EXISTS idx_tool_logs_session
               ON tool_logs (user_id, session_id, id);
+            CREATE INDEX IF NOT EXISTS idx_tool_logs_time
+              ON tool_logs (created_time);
             CREATE TABLE IF NOT EXISTS artifact_logs (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               user_id TEXT NOT NULL,
@@ -672,6 +693,14 @@ impl SqliteSchemaStorage for SqliteStorage {
             );
             CREATE INDEX IF NOT EXISTS idx_artifact_logs_session
               ON artifact_logs (user_id, session_id, id);
+            CREATE INDEX IF NOT EXISTS idx_artifact_logs_time
+              ON artifact_logs (created_time);
+            CREATE TABLE IF NOT EXISTS user_usage_summary (
+              user_id TEXT PRIMARY KEY,
+              chat_records INTEGER NOT NULL DEFAULT 0,
+              tool_records INTEGER NOT NULL DEFAULT 0,
+              updated_time REAL NOT NULL DEFAULT 0
+            );
             CREATE TABLE IF NOT EXISTS monitor_sessions (
               session_id TEXT PRIMARY KEY,
               user_id TEXT,
@@ -1702,6 +1731,7 @@ impl SqliteSchemaStorage for SqliteStorage {
         self.ensure_session_goal_columns(&conn)?;
         self.ensure_thread_item_sequence(&conn)?;
         self.ensure_thread_item_block_fields(&conn)?;
+        self.ensure_tool_log_columns(&conn)?;
         // A hard cutover intentionally discards obsolete duplicate history.
         conn.execute("DROP TABLE IF EXISTS chat_history", [])?;
         self.ensure_model_context_table_retired(&conn)?;

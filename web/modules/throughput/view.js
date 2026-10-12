@@ -1,6 +1,7 @@
+// AI生成
 import { escapeHtml, formatTimestamp } from "../utils.js?v=20251229-02";
-import { label as l } from "./copy.js?v=20260925-06";
-import { speedLabel, tokenLabel } from "./chart.js?v=20260925-07";
+import { label as l } from "./copy.js?v=20261012-01";
+import { speedLabel, tokenLabel, samplePoints } from "./chart.js?v=20261012-01";
 import { simulationSpeedLabel } from "../llm-simulation.js?v=20260923-02";
 
 const escape = (value) => escapeHtml(String(value ?? ""));
@@ -41,10 +42,10 @@ export function mount(panel) {
           <div id="tpChart" role="img" aria-label="${l("comparison")}"></div><p id="tpChartEmpty" class="muted"></p>
         </section>
         <section class="monitor-block tp-history">
-          <div class="tp-section-header"><h2>${l("history")}</h2><span id="tpSelected" class="muted"></span>
-            <button id="tpSelectValid" class="secondary" type="button">${l("selectValid")}</button><button id="tpClear" class="secondary" type="button">${l("clear")}</button><button id="tpExport" class="secondary" type="button">${l("export")}</button></div>
+          <div class="tp-section-header"><h2>${l("history")}</h2><span id="tpViewed" class="muted"></span>
+            <button id="tpExport" class="secondary" type="button">${l("exportCurrent")}</button></div>
           <div class="tp-table-wrap"><table class="monitor-table"><thead><tr>
-            ${["select","time","model","concurrencyList","input","target","actualOutput","decode","ttft","status","view"].map((key) => `<th scope="col">${l(key)}</th>`).join("")}
+            ${["time","model","concurrencyList","input","target","actualOutput","decode","ttft","status","reuse"].map((key) => `<th scope="col">${l(key)}</th>`).join("")}
           </tr></thead><tbody id="tpHistory"></tbody></table></div>
         </section>
       </div>
@@ -53,27 +54,34 @@ export function mount(panel) {
 
 export function details(element, item) {
   if (!item) { element.innerHTML = `<div class="tp-empty">${l("empty")}</div>`; return; }
-  const m = item.metrics;
-  const stats = [["ttft", durationMs(m.ttft_ms)], ["decode", speedLabel(m.decode_tps)], ["elapsed", `${number(item.elapsed_s, 2)} s`]];
-  const fields = [["concurrencyList", (item.config.concurrency_list || [item.config.concurrency || 1]).join(", ")], ["context", tokenLabel(item.config.input_tokens)], ["target", tokenLabel(item.config.output_tokens)],
-    ["actualInput", tokenLabel(m.input_tokens)], ["actualOutput", tokenLabel(m.output_tokens)], ["reasoning", tokenLabel(m.reasoning_tokens)],
-    ["ttftMax", durationMs(m.max_ttft_ms)], ["avgDecode", speedLabel(m.avg_decode_tps)],
-    ["prefill", speedLabel(m.prefill_tps)], ["avgPrefill", speedLabel(m.avg_prefill_tps)]];
-  if (item.simulated && item.simulation_speed) fields.push(["simulationSpeed", simulationSpeedLabel(item.simulation_speed)]);
-  element.innerHTML = `<div class="tp-run-heading"><strong>${escape(item.config.model_name)}</strong><span class="tp-badge tp-${escape(item.status)}">${l(item.status)}</span>${item.simulated ? `<span class="tp-badge">${l("simulated")}</span>` : ""}</div>
-    <div class="tp-stats">${stats.map(([key,value])=>`<div><span class="muted">${l(key)}</span><strong>${escape(value)}</strong></div>`).join("")}</div>
-    <dl class="tp-facts">${fields.map(([key,value])=>`<div><dt>${l(key)}</dt><dd>${escape(value)}</dd></div>`).join("")}</dl>
-    ${item.samples?.length ? `<p class="muted">${l("batchSamples")}: ${item.samples.map((sample) => `${number(sample.concurrency, 0)} → ${speedLabel(sample.metrics.decode_tps)}`).join(" · ")}</p>` : ""}
+  const headings = ["concurrency", "status", "actualInput", "actualOutput", "decode", "avgDecode", "prefill", "avgPrefill", "ttft", "ttftMax", "elapsed"];
+  const rows = samplePoints(item).map((point) => {
+    const m = point.metrics || {};
+    return `<tr>
+      <td>${number(point.concurrency, 0)}</td>
+      <td><span class="tp-badge tp-${escape(point.status)}">${l(point.status)}</span></td>
+      <td>${tokenLabel(m.input_tokens)}</td>
+      <td>${tokenLabel(m.output_tokens)}</td>
+      <td>${speedLabel(m.decode_tps)}</td>
+      <td>${speedLabel(m.avg_decode_tps)}</td>
+      <td>${speedLabel(m.prefill_tps)}</td>
+      <td>${speedLabel(m.avg_prefill_tps)}</td>
+      <td>${durationMs(m.ttft_ms)}</td>
+      <td>${durationMs(m.max_ttft_ms)}</td>
+      <td>${point.elapsed_s == null ? "—" : `${number(point.elapsed_s, 2)} s`}</td>
+    </tr>`;
+  }).join("");
+  element.innerHTML = `<div class="tp-run-heading"><strong>${escape(item.config.model_name)}</strong><span class="tp-badge tp-${escape(item.status)}">${l(item.status)}</span>${item.simulated ? `<span class="tp-badge">${l("simulated")}</span>` : ""}${item.simulated && item.simulation_speed ? `<span class="muted">${l("simulationSpeed")}: ${escape(simulationSpeedLabel(item.simulation_speed))}</span>` : ""}<span class="muted">${l("concurrencyList")}: ${escape((item.config.concurrency_list || [item.config.concurrency || 1]).join(", "))}</span></div>
+    <div class="tp-table-wrap"><table class="monitor-table tp-detail-table"><thead><tr>${headings.map((key) => `<th scope="col">${l(key)}</th>`).join("")}</tr></thead><tbody>${rows || `<tr><td colspan="${headings.length}" class="tp-empty">${l("none")}</td></tr>`}</tbody></table></div>
     <p class="muted">${l("measurement")}</p>
     ${item.error ? `<p class="tp-error" role="alert">${escape(item.error)}</p>` : ""}
     ${item.persistence_error ? `<p class="tp-warning">${l("persistError")}</p>` : ""}`;
 }
 
-export function history(element, items, selected, viewed) {
-  element.innerHTML = [...items].reverse().map((item) => `<tr class="${viewed === item.id ? "tp-viewed" : ""}">
-    <td><input type="checkbox" data-select="${escape(item.id)}" aria-label="${l("select")} ${escape(formatTimestamp(item.started_at))}" ${selected.has(item.id) ? "checked" : ""}></td>
+export function history(element, items, viewed) {
+  element.innerHTML = [...items].reverse().map((item) => `<tr class="tp-row${viewed === item.id ? " tp-viewed" : ""}" data-view="${escape(item.id)}" tabindex="0" role="button" aria-label="${l("view")} ${escape(formatTimestamp(item.started_at))}">
     <td>${escape(formatTimestamp(item.started_at))}</td><td>${escape(item.config.model_name)}</td><td>${escape((item.config.concurrency_list || [item.config.concurrency || 1]).join(", "))}</td><td>${tokenLabel(item.config.input_tokens)}</td><td>${tokenLabel(item.config.output_tokens)}</td>
     <td>${tokenLabel(item.metrics.output_tokens)}</td><td>${speedLabel(item.metrics.decode_tps)}</td><td>${durationMs(item.metrics.ttft_ms)}</td><td><span class="tp-badge tp-${escape(item.status)}">${l(item.status)}</span></td>
-    <td><button class="secondary" type="button" data-view="${escape(item.id)}">${l("view")}</button> <button class="secondary" type="button" data-reuse="${escape(item.id)}">${l("reuse")}</button></td>
-  </tr>`).join("") || `<tr><td colspan="11" class="tp-empty">${l("none")}</td></tr>`;
+    <td><button class="secondary" type="button" data-reuse="${escape(item.id)}">${l("reuse")}</button></td>
+  </tr>`).join("") || `<tr><td colspan="10" class="tp-empty">${l("none")}</td></tr>`;
 }

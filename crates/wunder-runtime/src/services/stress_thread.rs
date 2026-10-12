@@ -12,9 +12,29 @@ use parking_lot::Mutex;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 use uuid::Uuid;
 
 const MAX_TRACKED_JOBS: usize = 8;
+
+/// Upper bound on the generation budget. The job is a manual debug tool that
+/// legitimately runs for minutes, so a stuck job may hold one DB blocking slot
+/// for at most this long before it is reclaimed.
+const STRESS_GENERATE_MAX_TIMEOUT: Duration = Duration::from_secs(60 * 60);
+
+/// Execution budget for one synthetic generation. The shared DB budget (30s,
+/// `core::blocking::DB_EXEC_TIMEOUT_MS`) only covers ordinary queries; the
+/// default 1000×1000 profile writes ~5M rows and needs minutes even though the
+/// writer batches aggressively. Measured on this machine the debug build runs
+/// at ~4.3k items/s, i.e. roughly 11 minutes for 1000×1000, so the budget is
+/// scaled with the requested model-round count and capped.
+fn stress_generate_timeout(spec: &crate::storage::StressThreadSpec) -> Duration {
+    let model_rounds =
+        (spec.user_rounds.max(1) as u64).saturating_mul(spec.model_rounds_per_turn.max(1) as u64);
+    // 60s baseline plus 1s per 500 model rounds (4s per 1000), capped at an hour.
+    let budget_s = 60 + model_rounds / 500;
+    Duration::from_secs(budget_s).min(STRESS_GENERATE_MAX_TIMEOUT)
+}
 
 /// Where the bulk writer should run. Built by each entry point from its own
 /// storage configuration.
@@ -156,9 +176,12 @@ pub fn start_stress_thread_job(request: StartStressJobRequest) -> Result<Value, 
         // per job so the write connection never contends with the runtime's
         // pooled connections.
         let job_for_progress = Arc::clone(&job);
+        let exec_timeout = stress_generate_timeout(&spec);
         let outcome: anyhow::Result<crate::storage::StressThreadStats> =
-            crate::core::blocking::run_db(
+            crate::core::blocking::run_with_exec_timeout(
+            crate::core::blocking::BlockingKind::Db,
             "stress_thread.generate",
+            exec_timeout,
             move || match target {
                 #[cfg(feature = "sqlite-storage")]
                 StressStorageTarget::Sqlite { db_path } => {
@@ -319,4 +342,42 @@ fn now_ts() -> f64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs_f64())
         .unwrap_or(0.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{stress_generate_timeout, STRESS_GENERATE_MAX_TIMEOUT};
+    use crate::storage::StressThreadSpec;
+
+    fn spec(user_rounds: i64, model_rounds_per_turn: i64) -> StressThreadSpec {
+        StressThreadSpec {
+            session_id: "stress-timeout-unit".to_string(),
+            title: "timeout".to_string(),
+            user_rounds,
+            model_rounds_per_turn,
+        }
+    }
+
+    #[test]
+    fn timeout_dwarfs_the_shared_db_budget_for_large_profiles() {
+        // The generic DB budget is 30s; the default 1000×1000 profile (1M model
+        // rounds) must be allowed minutes: 60s + 1M/500 = 2060s.
+        let d = stress_generate_timeout(&spec(1000, 1000));
+        assert_eq!(d, std::time::Duration::from_secs(2060));
+        assert!(d > std::time::Duration::from_secs(30));
+        // The largest profile (2000×2000 = 4M rounds) saturates the cap.
+        assert_eq!(
+            stress_generate_timeout(&spec(2000, 2000)),
+            STRESS_GENERATE_MAX_TIMEOUT
+        );
+    }
+
+    #[test]
+    fn timeout_scales_with_size_and_keeps_a_floor() {
+        let tiny = stress_generate_timeout(&spec(1, 1));
+        let mid = stress_generate_timeout(&spec(50, 20));
+        let big = stress_generate_timeout(&spec(1000, 1000));
+        assert_eq!(tiny, std::time::Duration::from_secs(60));
+        assert!(mid > tiny && big > mid, "budget must grow with workload");
+    }
 }

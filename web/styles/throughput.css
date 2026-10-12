@@ -1,3 +1,4 @@
+/* AI生成 */
 #throughputPanel { overflow: hidden; }
 #throughputPanel h1 { margin-bottom: 4px; }
 #throughputPanel h2 { font-size: 14px; margin: 0; }
@@ -31,8 +32,9 @@ p.tp-warning, p.tp-error { padding: 10px; border-radius: 6px; }
 #tpChart { height: 300px; width: 100%; }.tp-comparison .muted, .tp-details > div > .muted { font-size: 12px; }
 .tp-empty { text-align: center; color: #64748b; padding: 48px 16px; }.tp-table-wrap { overflow: auto; max-height: 370px; margin-top: 14px; }
 .tp-history table { min-width: 1120px; table-layout: auto; }.tp-history th { position: sticky; top: 0; background: #f8fafc; z-index: 1; }
-.tp-history th:first-child { width: 64px; }.tp-history th:nth-child(2) { min-width: 144px; }.tp-history th:nth-child(9) { min-width: 130px; }.tp-history th:last-child { min-width: 140px; }
-.tp-history td { font-size: 12px; }.tp-history td:last-child { white-space: nowrap; }.tp-history input[type=checkbox] { width: 16px; height: 16px; accent-color: #2563eb; }
-.tp-viewed { background: #eff6ff; }#throughputPanel :focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
+.tp-history th:first-child { min-width: 150px; }.tp-history th:nth-child(2) { min-width: 144px; }.tp-history th:nth-child(9) { min-width: 100px; }.tp-history th:last-child { min-width: 96px; }
+.tp-history td { font-size: 12px; }.tp-history td:last-child { white-space: nowrap; }
+.tp-history tbody tr { cursor: pointer; }.tp-history tbody tr:hover { background: #f8fafc; }.tp-history tbody tr.tp-viewed, .tp-history tbody tr.tp-viewed:hover { background: #eff6ff; }
+.tp-detail-table { min-width: 960px; }#throughputPanel :focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
 @media (max-width: 1100px) { .tp-layout { grid-template-columns: 240px minmax(0,1fr); }.tp-facts { grid-template-columns: repeat(2,minmax(0,1fr)); }.tp-stats strong { font-size: 18px; } }
 @media (max-width: 780px) { #throughputPanel { overflow-y: auto; }.tp-layout { display: flex; flex-direction: column; flex: 0 0 auto; }.tp-config { align-self: stretch; max-height: none; }.tp-results { overflow: visible; }.tp-stats { gap: 6px; }.tp-stats > div { padding: 10px; }.tp-stats strong { font-size: 16px; } }

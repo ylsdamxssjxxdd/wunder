@@ -9,6 +9,18 @@ use std::collections::HashMap;
 /// Storage backend lifecycle and schema readiness checks.
 pub trait StorageLifecycle {
     fn ensure_initialized(&self) -> Result<()>;
+    /// Roll forward time partitions covering the current window (PostgreSQL
+    /// only; other backends keep whole-table storage and do nothing).
+    fn ensure_time_partitions_current(&self) -> Result<()> {
+        let _ = self;
+        Ok(())
+    }
+    /// Emit a WARN log for the worst statements recorded by the backend's
+    /// query statistics (PostgreSQL pg_stat_statements; no-op elsewhere).
+    fn report_slow_queries(&self) -> Result<()> {
+        let _ = self;
+        Ok(())
+    }
 }
 
 /// Persistent metadata key/value store.
@@ -260,6 +272,14 @@ pub trait LogStatsStore {
         limit: i64,
     ) -> Result<Vec<(String, String)>>;
     fn delete_deleted_session_log_grace(&self, user_id: &str, session_id: &str) -> Result<()>;
+    /// O(1) read of the per-user usage summary maintained by
+    /// `reconcile_user_usage`. Returns `(chat_records, tool_records)` keyed by
+    /// user id. Never scans the underlying log tables.
+    fn get_user_usage_summary(&self) -> Result<HashMap<String, (i64, i64)>>;
+    /// Reconcile the usage summary against the log tables. `full=true`
+    /// recomputes every user from scratch; `full=false` aggregates only rows
+    /// past the stored watermarks. Runs on the maintenance path only.
+    fn reconcile_user_usage(&self, full: bool) -> Result<()>;
 }
 
 /// Runtime monitor record storage.
@@ -358,6 +378,16 @@ pub trait MonitorStore {
     }
     fn delete_monitor_record(&self, session_id: &str) -> Result<()>;
     fn delete_monitor_records_by_user(&self, user_id: &str) -> Result<i64>;
+    /// Quota credits spent per local calendar day (`YYYY-MM-DD`), oldest
+    /// first. One credit is charged per admitted model request, so this is the
+    /// credits a user spends, not the tokens they move. A session's accumulated
+    /// credits land on the day it was last active, since there is no per-day
+    /// credit ledger. Idle days are omitted.
+    fn sum_monitor_quota_used_by_day(
+        &self,
+        user_id: &str,
+        since_at: f64,
+    ) -> Result<Vec<(String, i64)>>;
 }
 
 /// Session concurrency lock storage.
@@ -621,6 +651,12 @@ pub trait RetentionStore {
     /// User-visible chat history is durable and never deleted here.
     /// Returns deleted row counts keyed by table name.
     fn cleanup_retention(&self, cutoff_epoch_s: f64) -> Result<HashMap<String, i64>>;
+    /// Delete thread/tool log rows whose session no longer exists in the
+    /// durable catalog. Only rows created before `cutoff_epoch_s` are
+    /// considered, so in-flight sessions are never touched, and sessions
+    /// inside the deletion-grace window are preserved. Returns deleted row
+    /// counts keyed by table name.
+    fn cleanup_orphan_session_logs(&self, cutoff_epoch_s: f64) -> Result<HashMap<String, i64>>;
 }
 
 /// User, organization, token, external link, and session-scope storage.
@@ -771,6 +807,11 @@ pub trait ChatSessionStore {
     ) -> Result<(Vec<ChatSessionRecord>, i64)>;
     /// Active thread counts grouped by workspace for one user.
     fn count_chat_sessions_by_workspace(&self, user_id: &str) -> Result<Vec<(String, i64)>>;
+    /// Thread starts bucketed by local calendar day (`YYYY-MM-DD`), oldest
+    /// first. Model-created child threads are excluded so the series matches
+    /// the threads a user actually opened. Days without activity are omitted.
+    fn count_chat_sessions_by_day(&self, user_id: &str, since_at: f64)
+        -> Result<Vec<(String, i64)>>;
     /// Move every thread of one workspace to another (workspace deletion).
     fn reassign_chat_sessions_workspace(
         &self,

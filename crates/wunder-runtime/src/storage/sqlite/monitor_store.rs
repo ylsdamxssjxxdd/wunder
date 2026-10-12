@@ -22,6 +22,11 @@ pub(super) trait SqliteMonitorStorage {
         limit: i64,
     ) -> Result<Vec<Value>>;
     fn sum_monitor_consumed_tokens_by_user_impl(&self, user_id: &str) -> Result<i64>;
+    fn sum_monitor_quota_used_by_day_impl(
+        &self,
+        user_id: &str,
+        since_at: f64,
+    ) -> Result<Vec<(String, i64)>>;
     fn delete_monitor_record_impl(&self, session_id: &str) -> Result<()>;
     fn delete_monitor_records_by_user_impl(&self, user_id: &str) -> Result<i64>;
 }
@@ -223,6 +228,39 @@ impl SqliteMonitorStorage for SqliteStorage {
         Ok(total.max(0))
     }
 
+    fn sum_monitor_quota_used_by_day_impl(
+        &self,
+        user_id: &str,
+        since_at: f64,
+    ) -> Result<Vec<(String, i64)>> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        if cleaned_user.is_empty() || !since_at.is_finite() || since_at <= 0.0 {
+            return Ok(Vec::new());
+        }
+        let conn = self.open()?;
+        let mut stmt = conn.prepare(
+            "SELECT strftime('%Y-%m-%d', updated_time, 'unixepoch', 'localtime'), \
+                 COALESCE(SUM(CASE \
+                     WHEN json_valid(payload) \
+                     THEN MAX(COALESCE(CAST(json_extract(payload, '$.quota_used') AS INTEGER), 0), 0) \
+                     ELSE 0 END), 0) \
+             FROM monitor_sessions WHERE user_id = ? AND updated_time >= ? \
+             GROUP BY 1 ORDER BY 1",
+        )?;
+        let rows = stmt.query_map(params![cleaned_user, since_at], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })?;
+        let mut days = Vec::new();
+        for row in rows {
+            let (day, credits) = row?;
+            if !day.is_empty() && credits > 0 {
+                days.push((day, credits));
+            }
+        }
+        Ok(days)
+    }
+
     fn delete_monitor_record_impl(&self, session_id: &str) -> Result<()> {
         self.ensure_initialized()?;
         if session_id.trim().is_empty() {
@@ -254,6 +292,7 @@ impl SqliteMonitorStorage for SqliteStorage {
 mod tests {
     use super::SqliteStorage;
     use crate::storage::*;
+    use chrono::{Local, TimeZone};
     use serde_json::json;
     use tempfile::tempdir;
 
@@ -379,5 +418,57 @@ mod tests {
             .expect("record");
         assert_eq!(record["updated_time"], json!(20.0));
         assert_eq!(record["user_rounds"], json!(4));
+    }
+
+    #[test]
+    fn quota_used_buckets_by_local_calendar_day() {
+        let (storage, _dir) = build_storage();
+        let day = |offset: i64| -> (f64, String) {
+            let naive = (Local::now().date_naive() - chrono::Duration::days(offset))
+                .and_hms_opt(9, 0, 0)
+                .expect("local day");
+            let at = Local
+                .from_local_datetime(&naive)
+                .single()
+                .expect("unambiguous local day");
+            (at.timestamp() as f64, naive.format("%Y-%m-%d").to_string())
+        };
+        let (today_at, today_key) = day(0);
+        let (yesterday_at, yesterday_key) = day(1);
+        let (long_ago_at, _) = day(400);
+
+        for (session_id, user_id, updated_at, credits) in [
+            ("session-today-a", "user-a", today_at, 12),
+            ("session-today-b", "user-a", today_at, 8),
+            ("session-yesterday", "user-a", yesterday_at, 4),
+            ("session-long-ago", "user-a", long_ago_at, 99),
+            ("session-other-user", "user-b", today_at, 7),
+        ] {
+            storage
+                .upsert_monitor_record(&json!({
+                    "session_id": session_id,
+                    "user_id": user_id,
+                    "status": "completed",
+                    "updated_time": updated_at,
+                    "quota_used": credits
+                }))
+                .expect("upsert monitor record");
+        }
+
+        let (since_at, _) = day(30);
+        assert_eq!(
+            storage
+                .sum_monitor_quota_used_by_day("user-a", since_at)
+                .expect("daily credits"),
+            vec![(yesterday_key, 4_i64), (today_key, 20_i64)]
+        );
+        assert!(storage
+            .sum_monitor_quota_used_by_day("  ", since_at)
+            .expect("blank user")
+            .is_empty());
+        assert!(storage
+            .sum_monitor_quota_used_by_day("user-a", -1.0)
+            .expect("unset window")
+            .is_empty());
     }
 }

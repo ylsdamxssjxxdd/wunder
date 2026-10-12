@@ -141,6 +141,29 @@ pub fn install(app: &MainWindow) {
             return;
         };
         match row.kind {
+            crate::timeline::KIND_PROCESS => {
+                let open = !row.open;
+                let process = row.process_idx;
+                for index in 0..model.row_count() {
+                    let Some(mut target) = model.row_data(index) else {
+                        continue;
+                    };
+                    if target.process_idx != process {
+                        continue;
+                    }
+                    if target.kind == crate::timeline::KIND_PROCESS {
+                        target.open = open;
+                    }
+                    target.process_open = open;
+                    if open {
+                        if target.kind == crate::timeline::KIND_GROUP {
+                            target.open = true;
+                        }
+                        target.group_open = true;
+                    }
+                    model.set_row_data(index, target);
+                }
+            }
             crate::timeline::KIND_GROUP => {
                 let open = !row.open;
                 let group = row.group_idx;
@@ -243,6 +266,8 @@ fn fixture_row(kind: i32, index: usize, text: &str) -> TimelineRow {
         open: false,
         group_idx: crate::timeline::NO_GROUP,
         group_open: false,
+        process_idx: crate::timeline::NO_PROCESS,
+        process_open: false,
         payload: index as i32,
         patch: ModelRc::default(),
         stats: ModelRc::default(),
@@ -251,9 +276,12 @@ fn fixture_row(kind: i32, index: usize, text: &str) -> TimelineRow {
     }
 }
 
-/// One completed turn so the default preview covers every entry type.
+/// Two completed turns, so the default preview covers every entry type: the
+/// first is a plain answer, the second carries a work process (two batches and
+/// an intermediate note) behind one folded bar, with only its final answer
+/// outside the fold.
 fn demo_timeline() -> Vec<TimelineRow> {
-    let rows = vec![
+    let mut rows = vec![
         fixture_row(crate::timeline::KIND_USER, 0, "整理工作目录并说明结果"),
         {
             let mut body = fixture_row(
@@ -265,90 +293,102 @@ fn demo_timeline() -> Vec<TimelineRow> {
             body.stats = demo_stats("8.2s", "42.5/s", "8.4k", "1.2k", "2");
             body
         },
-        fixture_row(crate::timeline::KIND_USER, 2, "检查文件内容并给出结论"),
-        {
-            let mut body = fixture_row(
-                crate::timeline::KIND_BODY,
-                3,
-                "目录结构正常，文本内容可读取，未发现格式问题。",
-            );
-            body.foldable = true;
-            body.stats = demo_stats("12.4s", "68.2k/s", "12.3k", "4.1k", "3");
-            body
-        },
-        {
-            let mut bar = fixture_row(crate::timeline::KIND_GROUP, 4, "执行工具 3 次");
-            bar.open = true;
-            bar.group_idx = 0;
-            bar.payload = 4;
-            bar
-        },
-        {
-            let mut row = fixture_row(crate::timeline::KIND_REASON, 5, "");
-            row.tool_name = "已思考".into();
-            row.summary = "先读取目录清单，确认文件类型，再检查文本内容是否可用。".into();
-            row.detail = row.summary.clone();
-            row.group_idx = 0;
-            row.group_open = true;
-            row.payload = 5;
-            row.foldable = true;
-            row
-        },
-        {
-            let mut row = fixture_row(crate::timeline::KIND_TOOL, 6, "");
-            row.tool_name = "读取文件".into();
-            row.tool_icon = "file-lines".into();
-            row.target = "示例/项目/readme.md".into();
-            row.summary = "完成 · 已读取 42 行".into();
-            row.detail = "读取 · 完成\n示例/项目/readme.md\n演示内容".into();
-            row.group_idx = 0;
-            row.group_open = true;
-            row.payload = 6;
-            row.foldable = true;
-            row
-        },
-        {
-            let mut row = fixture_row(crate::timeline::KIND_TOOL, 7, "");
-            row.tool_name = "编辑文件".into();
-            row.tool_icon = "file-pen".into();
-            row.target = "示例/项目/main.rs".into();
-            row.summary = "完成 · 更新 +41 −41".into();
-            row.group_idx = 0;
-            row.group_open = true;
-            row.payload = 7;
-            row.foldable = true;
-            row.open = true;
-            row.patch = ModelRc::from(Rc::new(VecModel::from(vec![crate::PatchCard {
-                path: "示例/项目/main.rs".into(),
-                action: "更新".into(),
-                added: "41".into(),
-                deleted: "41".into(),
-                lines: ModelRc::from(Rc::new(VecModel::from(vec![
-                    crate::PatchLine {
-                        number: "135".into(),
-                        text: "fn run() {".into(),
-                        kind: "context".into(),
-                    },
-                    crate::PatchLine {
-                        number: "136".into(),
-                        text: "    let previous = load();".into(),
-                        kind: "delete".into(),
-                    },
-                    crate::PatchLine {
-                        number: "136".into(),
-                        text: "    let current = load_next();".into(),
-                        kind: "add".into(),
-                    },
-                    crate::PatchLine {
-                        number: "137".into(),
-                        text: "}".into(),
-                        kind: "context".into(),
-                    },
-                ]))),
-            }])));
-            row
-        },
     ];
+    rows.push(fixture_row(
+        crate::timeline::KIND_USER,
+        rows.len(),
+        "检查文件内容并给出结论",
+    ));
+    let process = 1i32;
+    let bar_at = rows.len();
+    let mut bar = fixture_row(
+        crate::timeline::KIND_PROCESS,
+        bar_at,
+        &crate::timeline_text::process_label(4),
+    );
+    bar.process_idx = process;
+    bar.summary = "完成 · 更新 +41 −41".into();
+    rows.push(bar);
+    let mut fold = |row: &mut TimelineRow| {
+        row.process_idx = process;
+    };
+    // First batch: one thinking segment and one read.
+    let first = rows.len();
+    let mut group = fixture_row(crate::timeline::KIND_GROUP, first, "执行工具 1 次");
+    group.group_idx = 0;
+    group.open = true;
+    group.group_open = true;
+    fold(&mut group);
+    rows.push(group);
+    let mut reason = fixture_row(crate::timeline::KIND_REASON, rows.len(), "");
+    reason.tool_name = "已思考".into();
+    reason.summary = "先读取目录清单，确认文件类型，再检查文本内容是否可用。".into();
+    reason.detail = reason.summary.clone();
+    reason.group_idx = 0;
+    reason.group_open = true;
+    reason.foldable = true;
+    fold(&mut reason);
+    rows.push(reason);
+    let mut read = fixture_row(crate::timeline::KIND_TOOL, rows.len(), "");
+    read.tool_name = "读取文件".into();
+    read.tool_icon = "file-lines".into();
+    read.target = "示例/项目/readme.md".into();
+    read.summary = "完成 · 已读取 42 行".into();
+    read.detail = "读取 · 完成\n示例/项目/readme.md\n演示内容".into();
+    read.group_idx = 0;
+    read.group_open = true;
+    read.foldable = true;
+    fold(&mut read);
+    rows.push(read);
+    // What the round printed before it acted.
+    let mut note = fixture_row(
+        crate::timeline::KIND_BODY,
+        rows.len(),
+        "目录结构正常，先检查两个文本文件的内容。",
+    );
+    note.foldable = true;
+    fold(&mut note);
+    rows.push(note);
+    // Second batch: the edit that carries the diff card.
+    let second = rows.len();
+    let mut group = fixture_row(crate::timeline::KIND_GROUP, second, "执行工具 2 次");
+    group.group_idx = 1;
+    group.open = true;
+    group.group_open = true;
+    fold(&mut group);
+    rows.push(group);
+    let mut list = fixture_row(crate::timeline::KIND_TOOL, rows.len(), "");
+    list.tool_name = "列出文件".into();
+    list.tool_icon = "folder-open".into();
+    list.target = "示例/项目".into();
+    list.summary = "完成 · 3 个文件".into();
+    list.detail = "列出文件 · 完成\n示例/项目\nreadme.md, main.rs, Cargo.toml".into();
+    list.group_idx = 1;
+    list.group_open = true;
+    list.foldable = true;
+    fold(&mut list);
+    rows.push(list);
+    let mut edit = fixture_row(crate::timeline::KIND_TOOL, rows.len(), "");
+    edit.tool_name = "编辑文件".into();
+    edit.tool_icon = "file-pen".into();
+    edit.target = "示例/项目/main.rs".into();
+    edit.summary = "完成 · 更新 +41 −41".into();
+    edit.group_idx = 1;
+    edit.group_open = true;
+    edit.foldable = true;
+    edit.open = true;
+    edit.patch = patch_card();
+    fold(&mut edit);
+    rows.push(edit);
+    // The turn's newest answer block: the one row outside the fold.
+    let mut answer = fixture_row(
+        crate::timeline::KIND_BODY,
+        rows.len(),
+        "目录结构正常，文本内容可读取，未发现格式问题。",
+    );
+    answer.foldable = true;
+    answer.stats = demo_stats("12.4s", "68.2k/s", "12.3k", "4.1k", "3");
+    rows.push(answer);
     rows
 }
 
@@ -385,6 +425,20 @@ pub(crate) fn near_limit_rows(turns: usize, entries: usize, unfold: bool) -> Vec
         );
         user.visible = visible;
         rows.push(user);
+        // The turn's work-process bar, so the measurement covers the shape the
+        // projection actually publishes: one bar over the batch and its entries.
+        let process = turn as i32 + 1;
+        let process_at = rows.len();
+        let mut fold = fixture_row(
+            crate::timeline::KIND_PROCESS,
+            process_at,
+            &crate::timeline_text::process_label(entries as i32 + 1),
+        );
+        fold.process_idx = process;
+        fold.open = open;
+        fold.process_open = open;
+        fold.summary = "完成 · 已读取 42 行".into();
+        rows.push(fold);
         // A batch bar plus its entries; the last entry carries the patch card so
         // the batch stays at the 24-entry ceiling instead of exceeding it.
         let base = rows.len();
@@ -397,6 +451,8 @@ pub(crate) fn near_limit_rows(turns: usize, entries: usize, unfold: bool) -> Vec
         bar.open = open;
         bar.group_open = open;
         bar.visible = visible;
+        bar.process_idx = process;
+        bar.process_open = open;
         rows.push(bar);
         for slot in 0..entries {
             let index = base + 1 + slot;
@@ -418,6 +474,8 @@ pub(crate) fn near_limit_rows(turns: usize, entries: usize, unfold: bool) -> Vec
             row.foldable = true;
             row.group_idx = base as i32;
             row.group_open = open;
+            row.process_idx = process;
+            row.process_open = open;
             row.open = open && slot + 1 == entries;
             row.payload = index as i32;
             if slot + 1 == entries {

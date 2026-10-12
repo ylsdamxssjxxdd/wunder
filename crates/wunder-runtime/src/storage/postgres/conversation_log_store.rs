@@ -123,14 +123,24 @@ impl PostgresConversationLogStorage for PostgresStorage {
         let tool = Self::parse_string(payload.get("tool"));
         let ok = Self::parse_bool(payload.get("ok"));
         let error = Self::parse_string(payload.get("error"));
-        let args = payload
+        let args_raw = payload
             .get("args")
-            .and_then(|value| serde_json::to_string(value).ok())
-            .map(|text| crate::storage::constants::truncate_tool_log_column(&text));
-        let data = payload
+            .and_then(|value| serde_json::to_string(value).ok());
+        let data_raw = payload
             .get("data")
-            .and_then(|value| serde_json::to_string(value).ok())
-            .map(|text| crate::storage::constants::truncate_tool_log_column(&text));
+            .and_then(|value| serde_json::to_string(value).ok());
+        let args = args_raw
+            .as_deref()
+            .map(crate::storage::constants::truncate_tool_log_column);
+        let data = data_raw
+            .as_deref()
+            .map(crate::storage::constants::truncate_tool_log_column);
+        // Flag statistical exclusions at write time on the pre-truncation
+        // columns so stats queries never rescan payload text.
+        let excluded = crate::storage::constants::tool_log_row_excluded(
+            tool.as_deref().unwrap_or(""),
+            data_raw.as_deref(),
+        );
         let timestamp = Self::parse_string(payload.get("timestamp"));
         // The full payload column is retired: tool logs always persist the
         // bounded args/data columns plus an empty payload placeholder.
@@ -167,8 +177,8 @@ impl PostgresConversationLogStorage for PostgresStorage {
         let now = Self::now_ts();
         let mut conn = self.conn()?;
         conn.execute(
-            "INSERT INTO tool_logs (user_id, session_id, tool, ok, error, args, data, timestamp, payload, created_time) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+            "INSERT INTO tool_logs (user_id, session_id, tool, ok, error, args, data, timestamp, payload, created_time, excluded) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
             &[
                 &user_id,
                 &session_id,
@@ -180,6 +190,7 @@ impl PostgresConversationLogStorage for PostgresStorage {
                 &timestamp,
                 &payload_text,
                 &now,
+                &excluded,
             ],
         )?;
         Ok(())

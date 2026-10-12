@@ -51,6 +51,10 @@ ENTRIES.extend([
     ("wf_menu_new_file", "新建文件", "New file"),
     ("wf_menu_refresh", "刷新", "Refresh"),
     ("wf_menu_open_ws", "打开本地工作区", "Open local workspace"),
+    ("wf_menu_preview", "预览", "Preview"),
+    ("wf_menu_archive", "打包下载", "Download as zip"),
+    ("wf_menu_archive_root", "下载当前目录", "Download this folder"),
+    ("wf_menu_clear", "清空", "Clear"),
     # Prompts and confirmations (rename / new dir / new file / delete / L2 approval).
     ("wf_rename_title", "重命名", "Rename"),
     ("wf_new_dir_title", "新建目录", "New folder"),

@@ -57,7 +57,7 @@
             :active-session-id="activeSessionId"
             :agent-id="agentIdForApi"
             @open="handleThreadOpen"
-            @detail="emit('thread-detail', $event)"
+            @trajectory="emit('thread-trajectory', $event)"
             @rename="emit('rename-thread', $event)"
             @archive="emit('archive-thread', $event)"
           />
@@ -90,6 +90,7 @@
     </div>
 
     <div
+      ref="splitterEl"
       class="messenger-sidebar-splitter"
       :class="{ 'is-dragging': isResizing }"
       role="separator"
@@ -107,7 +108,7 @@
       <WorkspaceFilesPanel />
     </div>
 
-    <div class="messenger-sidebar-footer">
+    <div ref="footerEl" class="messenger-sidebar-footer">
       <button
         class="messenger-sidebar-settings"
         :class="{ 'is-active': settingsActive }"
@@ -158,7 +159,7 @@ const emit = defineEmits<{
   'new-task': [];
   'select-workspace': [];
   'open-thread': [id: string];
-  'thread-detail': [id: string];
+  'thread-trajectory': [id: string];
   'rename-thread': [id: string];
   'archive-thread': [id: string];
   'open-settings': [];
@@ -355,6 +356,8 @@ const handleNewTask = (): void => {
 
 const sidebarEl = ref<HTMLElement | null>(null);
 const workspaceRegionEl = ref<HTMLElement | null>(null);
+const splitterEl = ref<HTMLElement | null>(null);
+const footerEl = ref<HTMLElement | null>(null);
 const splitRatio = ref(DEFAULT_SPLIT);
 const isResizing = ref(false);
 
@@ -378,12 +381,23 @@ const persistSplit = () => {
   }
 };
 
+/** 可伸缩轨道高度＝侧栏高度减去固定的分隔条与页脚：分栏比例只作用于这段轨道，
+ *  取整个侧栏高度会把固定的页脚也算进比例，按下瞬间分栏会整体跳一下。 */
+const resizableTrackHeight = (): number => {
+  const rect = sidebarEl.value?.getBoundingClientRect();
+  if (!rect || rect.height <= 0) return 0;
+  const splitterHeight = splitterEl.value?.offsetHeight ?? 0;
+  const footerHeight = footerEl.value?.offsetHeight ?? 0;
+  return Math.max(1, rect.height - splitterHeight - footerHeight);
+};
+
 const handleResizeMove = (event: PointerEvent) => {
   if (!isResizing.value) return;
   const rect = sidebarEl.value?.getBoundingClientRect();
   if (!rect || rect.height <= 0) return;
-  const offset = event.clientY - rect.top;
-  const next = Math.min(MAX_SPLIT, Math.max(MIN_SPLIT, offset / rect.height));
+  const track = resizableTrackHeight();
+  if (track <= 0) return;
+  const next = Math.min(MAX_SPLIT, Math.max(MIN_SPLIT, (event.clientY - rect.top) / track));
   splitRatio.value = next;
 };
 
@@ -407,9 +421,9 @@ const resetResize = () => {
 };
 
 const nudgeResize = (delta: number) => {
-  const rect = sidebarEl.value?.getBoundingClientRect();
-  if (!rect || rect.height <= 0) return;
-  splitRatio.value = Math.min(MAX_SPLIT, Math.max(MIN_SPLIT, splitRatio.value + delta / rect.height));
+  const track = resizableTrackHeight();
+  if (track <= 0) return;
+  splitRatio.value = Math.min(MAX_SPLIT, Math.max(MIN_SPLIT, splitRatio.value + delta / track));
   persistSplit();
 };
 

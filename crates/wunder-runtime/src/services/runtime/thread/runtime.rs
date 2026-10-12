@@ -212,9 +212,31 @@ impl ThreadRuntime {
             .filter(|id| !id.is_empty())
         {
             Some(id) => id.to_string(),
-            None => self.create_task_session_id(&user_id, &agent_id)?,
+            None => {
+                let store = self.user_store.clone();
+                let owner_id = user_id.clone();
+                let agent_for_session = agent_id.clone();
+                blocking::run_db("runtime.thread.create_task_session_id", move || {
+                    create_task_session_id_with(&store, &owner_id, &agent_for_session)
+                })
+                .await?
+            }
         };
-        self.ensure_session_record(&user_id, &session_id, &agent_id)?;
+        {
+            let store = self.user_store.clone();
+            let owner_id = user_id.clone();
+            let session_for_record = session_id.clone();
+            let agent_for_record = agent_id.clone();
+            blocking::run_db("runtime.thread.ensure_session_record", move || {
+                ensure_session_record_with(
+                    &store,
+                    &owner_id,
+                    &session_for_record,
+                    &agent_for_record,
+                )
+            })
+            .await?;
+        }
         let goal_round_tag = goal::read_goal_round_tag(request.config_overrides.as_ref());
         if goal_round_tag.is_none() {
             // Competing input withdraws queued goal rounds; the driver settles
@@ -292,7 +314,7 @@ impl ThreadRuntime {
                 // may start, and can never be attached to the active turn.
                 if force_runtime_queue
                     || self.should_queue(&user_id, Some(session_id)).await
-                    || self.user_store.count_pending_agent_tasks()? > 0
+                    || self.count_all_pending_tasks().await > 0
                     || self.orchestrator.scheduling.suspended_count() > 0
                 {
                     let info = self
@@ -441,9 +463,7 @@ impl ThreadRuntime {
             return Ok(Vec::new());
         }
         let thread_id = format!("thread_{cleaned}");
-        let tasks = self
-            .user_store
-            .list_agent_tasks_by_thread(&thread_id, None, 32)?;
+        let tasks = self.list_thread_tasks(&thread_id, None, 32).await?;
         let mut withdrawn = Vec::new();
         for task in tasks {
             let is_pending = task.status == TASK_STATUS_PENDING || task.status == TASK_STATUS_RETRY;
@@ -466,13 +486,25 @@ impl ThreadRuntime {
         status: Option<&str>,
         limit: i64,
     ) -> Result<Vec<AgentTaskRecord>> {
-        self.user_store
-            .list_agent_tasks_by_thread(thread_id, status, limit)
+        let store = self.user_store.clone();
+        let thread_id = thread_id.to_string();
+        let status = status.map(|value| value.to_string());
+        blocking::run_db("runtime.thread.list_thread_tasks", move || {
+            store.list_agent_tasks_by_thread(&thread_id, status.as_deref(), limit)
+        })
+        .await
+    }
+
+    async fn get_agent_task(&self, task_id: &str) -> Result<Option<AgentTaskRecord>> {
+        let store = self.user_store.clone();
+        let task_id = task_id.to_string();
+        blocking::run_db("runtime.thread.get_agent_task", move || store.get_agent_task(&task_id))
+            .await
     }
 
     pub async fn cancel_task(&self, task_id: &str) -> Result<()> {
         let now = now_ts();
-        if let Some(task) = self.user_store.get_agent_task(task_id)? {
+        if let Some(task) = self.get_agent_task(task_id).await? {
             if let Some(turn_id) = task
                 .request_payload
                 .pointer("/config_overrides/__thread_log_turn_id")
@@ -493,17 +525,17 @@ impl ThreadRuntime {
                     .await;
             }
         }
-        self.user_store
-            .update_agent_task_status(UpdateAgentTaskStatusParams {
-                task_id,
-                status: TASK_STATUS_CANCELLED,
-                retry_count: 0,
-                retry_at: now,
-                started_at: None,
-                finished_at: Some(now),
-                last_error: Some("cancelled"),
-                updated_at: now,
-            })?;
+        self.write_task_status(self.task_status_update(
+            task_id,
+            TASK_STATUS_CANCELLED,
+            0,
+            now,
+            None,
+            Some(now),
+            Some("cancelled"),
+            now,
+        ))
+        .await?;
         Ok(())
     }
 
@@ -672,81 +704,7 @@ impl ThreadRuntime {
     }
 
     pub fn create_task_session_id(&self, user_id: &str, agent_id: &str) -> Result<String> {
-        let cleaned_user = user_id.trim();
-        if cleaned_user.is_empty() {
-            return Err(anyhow!(i18n::t("error.user_id_required")));
-        }
-        let now = now_ts();
-        let session_id = format!("sess_{}", Uuid::new_v4().simple());
-        let record = ChatSessionRecord {
-            session_id: session_id.clone(),
-            user_id: cleaned_user.to_string(),
-            title: DEFAULT_SESSION_TITLE.to_string(),
-            status: "active".to_string(),
-            created_at: now,
-            updated_at: now,
-            last_message_at: now,
-            agent_id: if agent_id.trim().is_empty() {
-                None
-            } else {
-                Some(agent_id.trim().to_string())
-            },
-            workspace_id: None,
-            tool_overrides: Vec::new(),
-            parent_session_id: None,
-            parent_message_id: None,
-            spawn_label: None,
-            spawned_by: None,
-        };
-        self.user_store.upsert_chat_session(&record)?;
-        Ok(session_id)
-    }
-
-    fn ensure_session_record(
-        &self,
-        user_id: &str,
-        session_id: &str,
-        agent_id: &str,
-    ) -> Result<ChatSessionRecord> {
-        let cleaned_user = user_id.trim();
-        let cleaned_session = session_id.trim();
-        if cleaned_user.is_empty() || cleaned_session.is_empty() {
-            return Err(anyhow!(i18n::t("error.content_required")));
-        }
-        let existing = self
-            .user_store
-            .get_chat_session(cleaned_user, cleaned_session)?;
-        if let Some(record) = existing {
-            if record.agent_id.as_deref().unwrap_or("").trim() != agent_id.trim()
-                || record.status == "archived"
-            {
-                return Err(anyhow!(i18n::t("error.permission_denied")));
-            }
-            return Ok(record);
-        }
-        let now = now_ts();
-        let record = ChatSessionRecord {
-            session_id: cleaned_session.to_string(),
-            user_id: cleaned_user.to_string(),
-            title: DEFAULT_SESSION_TITLE.to_string(),
-            status: "active".to_string(),
-            created_at: now,
-            updated_at: now,
-            last_message_at: now,
-            agent_id: if agent_id.trim().is_empty() {
-                None
-            } else {
-                Some(agent_id.trim().to_string())
-            },
-            workspace_id: None,
-            tool_overrides: Vec::new(),
-            parent_session_id: None,
-            parent_message_id: None,
-            spawn_label: None,
-            spawned_by: None,
-        };
-        self.user_store.upsert_chat_session(&record)?;
-        Ok(record)
+        create_task_session_id_with(&self.user_store, user_id, agent_id)
     }
 
     async fn should_queue(&self, user_id: &str, session_id: Option<&str>) -> bool {
@@ -808,17 +766,24 @@ impl ThreadRuntime {
             finished_at: None,
             last_error: None,
         };
-        self.user_store.insert_agent_task(&record)?;
-        let queue_stats = self.compute_queue_stats(&record).await;
-        self.user_store
-            .storage_backend()
-            .update_agent_task_queue_payload(
-                &record.task_id,
-                &json!({
-                    "queue_ahead": queue_stats.queue_ahead, "queue_total": queue_stats.queue_total,
-                    "active_ahead": queue_stats.active_ahead, "wait_ahead": queue_stats.wait_ahead
-                }),
-            )?;
+        let store = self.user_store.clone();
+        let inserted_record = record.clone();
+        blocking::run_db("runtime.thread.insert_agent_task", move || {
+            store.insert_agent_task(&inserted_record)
+        })
+        .await?;
+        let total_pending = self.count_all_pending_tasks().await;
+        let queue_stats = self.compute_queue_stats(&record, total_pending).await;
+        let storage = self.user_store.storage_backend();
+        let task_id = record.task_id.clone();
+        let queue_payload = json!({
+            "queue_ahead": queue_stats.queue_ahead, "queue_total": queue_stats.queue_total,
+            "active_ahead": queue_stats.active_ahead, "wait_ahead": queue_stats.wait_ahead
+        });
+        blocking::run_db("runtime.thread.enter_queue_payload", move || {
+            storage.update_agent_task_queue_payload(&task_id, &queue_payload)
+        })
+        .await?;
         let queue_change_seq = self
             .emit_queue_event(&record.session_id, &record.user_id, "queue_enter", {
                 let mut payload = json!({
@@ -878,24 +843,43 @@ impl ThreadRuntime {
         })
     }
 
-    async fn compute_queue_stats(&self, task: &AgentTaskRecord) -> QueueStats {
-        let total = self
-            .user_store
-            .count_pending_agent_tasks()
-            .map(|count| count.max(0) as usize)
-            .unwrap_or(0);
-        let ahead = self
-            .user_store
-            .count_pending_agent_tasks_ahead(task.retry_at, task.created_at, &task.task_id)
-            .map(|count| count.max(0) as usize)
-            .unwrap_or(0);
-        let queue_ahead = ahead.min(total.saturating_sub(1));
+    /// Global pending count. One query serves an entire queue tick: it is the
+    /// same number for every task, so callers pass it down instead of letting
+    /// `compute_queue_stats` re-read it per task.
+    async fn count_all_pending_tasks(&self) -> usize {
+        let store = self.user_store.clone();
+        blocking::run_db("runtime.thread.count_pending_tasks", move || {
+            Ok(store
+                .count_pending_agent_tasks()
+                .map(|count| count.max(0) as usize)
+                .unwrap_or(0))
+        })
+        .await
+        .unwrap_or(0)
+    }
+
+    async fn compute_queue_stats(&self, task: &AgentTaskRecord, total_pending: usize) -> QueueStats {
+        let ahead = {
+            let store = self.user_store.clone();
+            let retry_at = task.retry_at;
+            let created_at = task.created_at;
+            let task_id = task.task_id.clone();
+            blocking::run_db("runtime.thread.count_pending_ahead", move || {
+                Ok(store
+                    .count_pending_agent_tasks_ahead(retry_at, created_at, &task_id)
+                    .map(|count| count.max(0) as usize)
+                    .unwrap_or(0))
+            })
+            .await
+            .unwrap_or(0)
+        };
+        let queue_ahead = ahead.min(total_pending.saturating_sub(1));
         let active_ahead = self
             .compute_active_wait_ahead(&task.user_id, &task.session_id)
             .await;
         QueueStats {
             queue_ahead,
-            queue_total: total,
+            queue_total: total_pending,
             active_ahead,
             wait_ahead: queue_ahead.saturating_add(active_ahead),
         }
@@ -940,8 +924,8 @@ impl ThreadRuntime {
             .unwrap_or(false)
     }
 
-    async fn emit_queue_update(&self, task: &AgentTaskRecord) {
-        let stats = self.compute_queue_stats(task).await;
+    async fn emit_queue_update(&self, task: &AgentTaskRecord, total_pending: usize) {
+        let stats = self.compute_queue_stats(task, total_pending).await;
         let payload = json!({"queue_ahead":stats.queue_ahead, "queue_total":stats.queue_total,
             "active_ahead":stats.active_ahead, "wait_ahead":stats.wait_ahead});
         if payload.as_object().is_some_and(|fields| {
@@ -980,6 +964,27 @@ impl ThreadRuntime {
         .await;
     }
 
+    /// Whether a durable session lock already names this session. Read off the
+    /// worker threads: a SQLite read here would stall one of the few runtime
+    /// workers on every submit and every queue tick.
+    async fn holds_session_lock(&self, user_id: &str, session_id: &str) -> bool {
+        let store = self.user_store.clone();
+        let user_id = user_id.to_string();
+        let session_id = session_id.to_string();
+        blocking::run_db("runtime.thread.holds_session_lock", move || {
+            Ok(store
+                .list_session_locks_by_user(&user_id)
+                .map(|locks| {
+                    locks
+                        .iter()
+                        .any(|lock| lock.session_id.trim() == session_id.as_str())
+                })
+                .unwrap_or(false))
+        })
+        .await
+        .unwrap_or(false)
+    }
+
     pub async fn is_session_available_for_submit(&self, user_id: &str, session_id: &str) -> bool {
         let cleaned_user = user_id.trim();
         let cleaned_session = session_id.trim();
@@ -996,19 +1001,11 @@ impl ThreadRuntime {
                 return false;
             }
         }
-        if let Ok(locks) = self.user_store.list_session_locks_by_user(cleaned_user) {
-            if locks
-                .iter()
-                .any(|lock| lock.session_id.trim() == cleaned_session)
-            {
-                return false;
-            }
+        if self.holds_session_lock(cleaned_user, cleaned_session).await {
+            return false;
         }
         let thread_id = format!("thread_{cleaned_session}");
-        if let Ok(tasks) = self
-            .user_store
-            .list_agent_tasks_by_thread(&thread_id, None, 8)
-        {
+        if let Ok(tasks) = self.list_thread_tasks(&thread_id, None, 8).await {
             if tasks.iter().any(|task| {
                 task.status == TASK_STATUS_PENDING
                     || task.status == TASK_STATUS_RETRY
@@ -1034,15 +1031,7 @@ impl ThreadRuntime {
                 return false;
             }
         }
-        if let Ok(locks) = self.user_store.list_session_locks_by_user(cleaned_user) {
-            if locks
-                .iter()
-                .any(|lock| lock.session_id.trim() == cleaned_session)
-            {
-                return false;
-            }
-        }
-        true
+        !self.holds_session_lock(cleaned_user, cleaned_session).await
     }
 
     /// Persist queue lifecycle as one stable ThreadLog Item.  `stream_events`
@@ -1090,14 +1079,7 @@ impl ThreadRuntime {
         let Some(turn_id) = turn_id else {
             return 0;
         };
-        let status = match event_type {
-            "queue_enter" | "queue_update" => "queued",
-            "queue_start" => "running",
-            "queue_finish" => "completed",
-            "queue_cancel" => "cancelled",
-            "queue_fail" => "failed",
-            _ => "completed",
-        };
+        let status = durable_queue_status(event_type, payload.get("status").and_then(Value::as_str));
         if let Some(map) = payload.as_object_mut() {
             map.insert("event_type".into(), json!(event_type));
             map.insert("turn_id".into(), json!(turn_id));
@@ -1190,22 +1172,27 @@ impl ThreadRuntime {
                 }
             }
         };
+        let total_pending = self.count_all_pending_tasks().await;
         for task in &pending {
-            self.emit_queue_update(task).await;
+            self.emit_queue_update(task, total_pending).await;
         }
         let config = self.config_store.get().await;
         let ttl_s = config.agent_queue.task_ttl_s as f64;
-        for task in pending {
-            // Disabling admission must not strand previously accepted durable tasks.
-            if task
-                .request_payload
+        let has_default_priority_task = pending.iter().any(|task| {
+            task.request_payload
                 .get("queue_priority")
                 .and_then(Value::as_i64)
                 .unwrap_or(0)
                 == 0
-            {
-                self.resume_suspended_tasks().await;
-            }
+        });
+        drop(config);
+        // Granting resume is capacity-driven, not per task: doing it inside the
+        // loop cloned the whole configuration once per queued task.
+        if has_default_priority_task {
+            self.resume_suspended_tasks().await;
+        }
+        for task in pending {
+            // Disabling admission must not strand previously accepted durable tasks.
             if ttl_s > 0.0 {
                 let age = now_ts() - task.created_at;
                 if age > ttl_s {
@@ -1342,7 +1329,14 @@ impl ThreadRuntime {
         if request.agent_id.is_none() && !task.agent_id.trim().is_empty() {
             request.agent_id = Some(task.agent_id.clone());
         }
-        if let Ok(Some(user)) = self.user_store.get_user_by_id(&task.user_id) {
+        let store = self.user_store.clone();
+        let owner_id = task.user_id.clone();
+        if let Ok(Some(user)) =
+            blocking::run_db("runtime.thread.load_task_user", move || {
+                store.get_user_by_id(&owner_id)
+            })
+            .await
+        {
             request.is_admin = UserStore::is_admin(&user);
         }
         // Queued goal rounds revalidate against the live goal before running;
@@ -1365,18 +1359,19 @@ impl ThreadRuntime {
                 _ => false,
             };
             if !valid {
+                let now = now_ts();
                 let _ = self
-                    .user_store
-                    .update_agent_task_status(UpdateAgentTaskStatusParams {
-                        task_id: &task.task_id,
-                        status: TASK_STATUS_CANCELLED,
-                        retry_count: task.retry_count,
-                        retry_at: now_ts(),
-                        started_at: Some(started_at),
-                        finished_at: Some(now_ts()),
-                        last_error: Some("goal round superseded".into()),
-                        updated_at: now_ts(),
-                    });
+                    .write_task_status(self.task_status_update(
+                        &task.task_id,
+                        TASK_STATUS_CANCELLED,
+                        task.retry_count,
+                        now,
+                        Some(started_at),
+                        Some(now),
+                        Some("goal round superseded"),
+                        now,
+                    ))
+                    .await;
                 self.finish_thread(&task.thread_id).await;
                 let _ = self.queue_tx.try_send(());
                 return;
@@ -1409,7 +1404,7 @@ impl ThreadRuntime {
                     }
                     // drain
                 }
-                if self.is_task_cancelled(&task.task_id) {
+                if self.is_task_cancelled(&task.task_id).await {
                     self.finish_thread(&task.thread_id).await;
                     let _ = self.queue_tx.try_send(());
                     return;
@@ -1428,17 +1423,17 @@ impl ThreadRuntime {
                 }
                 let finished_at = now_ts();
                 let _ = self
-                    .user_store
-                    .update_agent_task_status(UpdateAgentTaskStatusParams {
-                        task_id: &task.task_id,
-                        status: TASK_STATUS_SUCCESS,
-                        retry_count: task.retry_count,
-                        retry_at: finished_at,
-                        started_at: Some(started_at),
-                        finished_at: Some(finished_at),
-                        last_error: None,
-                        updated_at: finished_at,
-                    });
+                    .write_task_status(self.task_status_update(
+                        &task.task_id,
+                        TASK_STATUS_SUCCESS,
+                        task.retry_count,
+                        finished_at,
+                        Some(started_at),
+                        Some(finished_at),
+                        None,
+                        finished_at,
+                    ))
+                    .await;
                 self.emit_queue_event(&task.session_id, &task.user_id, "queue_finish", {
                     let mut payload = json!({
                     "queue_id": task.task_id,
@@ -1476,6 +1471,38 @@ impl ThreadRuntime {
         let _ = self.queue_tx.try_send(());
     }
 
+    /// Owned form of a queue lifecycle write so it can leave the worker threads.
+    fn task_status_update(
+        &self,
+        task_id: &str,
+        status: &str,
+        retry_count: i64,
+        retry_at: f64,
+        started_at: Option<f64>,
+        finished_at: Option<f64>,
+        last_error: Option<&str>,
+        updated_at: f64,
+    ) -> TaskStatusUpdate {
+        TaskStatusUpdate {
+            task_id: task_id.to_string(),
+            status: status.to_string(),
+            retry_count,
+            retry_at,
+            started_at,
+            finished_at,
+            last_error: last_error.map(|value| value.to_string()),
+            updated_at,
+        }
+    }
+
+    async fn write_task_status(&self, update: TaskStatusUpdate) -> Result<()> {
+        let store = self.user_store.clone();
+        blocking::run_db("runtime.thread.update_agent_task_status", move || {
+            store.update_agent_task_status(update.params())
+        })
+        .await
+    }
+
     async fn retry_task(&self, task: &AgentTaskRecord, message: String) -> Result<()> {
         let config = self.config_store.get().await;
         let max_retries = config.agent_queue.max_retries as i64;
@@ -1485,17 +1512,17 @@ impl ThreadRuntime {
         }
         let delay = 1.5_f64.powi(next_retry as i32).clamp(1.0, 30.0);
         let now = now_ts();
-        self.user_store
-            .update_agent_task_status(UpdateAgentTaskStatusParams {
-                task_id: &task.task_id,
-                status: TASK_STATUS_RETRY,
-                retry_count: next_retry,
-                retry_at: now + delay,
-                started_at: task.started_at.or(Some(now)),
-                finished_at: None,
-                last_error: Some(message.as_str()),
-                updated_at: now,
-            })?;
+        self.write_task_status(self.task_status_update(
+            &task.task_id,
+            TASK_STATUS_RETRY,
+            next_retry,
+            now + delay,
+            task.started_at.or(Some(now)),
+            None,
+            Some(message.as_str()),
+            now,
+        ))
+        .await?;
         self.monitor
             .mark_queued(&task.session_id, Some(&i18n::t("monitor.summary.queued")));
         Ok(())
@@ -1503,17 +1530,17 @@ impl ThreadRuntime {
 
     async fn fail_task(&self, task: &AgentTaskRecord, message: String, status: &str) -> Result<()> {
         let now = now_ts();
-        self.user_store
-            .update_agent_task_status(UpdateAgentTaskStatusParams {
-                task_id: &task.task_id,
-                status,
-                retry_count: task.retry_count,
-                retry_at: now,
-                started_at: task.started_at.or(Some(now)),
-                finished_at: Some(now),
-                last_error: Some(message.as_str()),
-                updated_at: now,
-            })?;
+        self.write_task_status(self.task_status_update(
+            &task.task_id,
+            status,
+            task.retry_count,
+            now,
+            task.started_at.or(Some(now)),
+            Some(now),
+            Some(message.as_str()),
+            now,
+        ))
+        .await?;
         if let Some(turn_id) = task
             .request_payload
             .pointer("/config_overrides/__thread_log_turn_id")
@@ -1573,21 +1600,20 @@ impl ThreadRuntime {
         Ok(())
     }
 
-    fn is_task_cancelled(&self, task_id: &str) -> bool {
+    async fn is_task_cancelled(&self, task_id: &str) -> bool {
         let cleaned = task_id.trim();
         if cleaned.is_empty() {
             return false;
         }
-        self.user_store
-            .get_agent_task(cleaned)
-            .map(|task| {
-                task.map(|record| {
-                    record
-                        .status
-                        .trim()
-                        .eq_ignore_ascii_case(TASK_STATUS_CANCELLED)
-                })
-                .unwrap_or(false)
+        self.get_agent_task(cleaned)
+            .await
+            .ok()
+            .flatten()
+            .map(|record| {
+                record
+                    .status
+                    .trim()
+                    .eq_ignore_ascii_case(TASK_STATUS_CANCELLED)
             })
             .unwrap_or(false)
     }
@@ -1682,6 +1708,33 @@ fn now_ts() -> f64 {
     Utc::now().timestamp_millis() as f64 / 1000.0
 }
 
+/// The durable status a queue event leaves on its queue item.
+///
+/// The event name alone cannot express every outcome: cancelling a thread
+/// reports `queue_fail` - the family the realtime consumers treat as terminal -
+/// while the item itself has to read `cancelled`, not `failed`. Deriving the
+/// status purely from the event name used to overwrite the caller's own value,
+/// so every cancellation landed in the durable log, and in the 蜂巢/蜂窝/互通
+/// projections built from it, as a failure.
+fn durable_queue_status(event_type: &str, declared: Option<&str>) -> &'static str {
+    // `cancelled` and `failed` are different outcomes and both must survive.
+    match declared.map(str::trim) {
+        Some("queued") => "queued",
+        Some("running") => "running",
+        Some("completed") => "completed",
+        Some("cancelled") => "cancelled",
+        Some("failed") => "failed",
+        _ => match event_type {
+            "queue_enter" | "queue_update" => "queued",
+            "queue_start" => "running",
+            "queue_finish" => "completed",
+            "queue_cancel" => "cancelled",
+            "queue_fail" => "failed",
+            _ => "completed",
+        },
+    }
+}
+
 fn try_acquire_start_lease_with_limit(
     session_id: &str,
     max_active: usize,
@@ -1716,6 +1769,109 @@ struct QueueStats {
     queue_total: usize,
     active_ahead: usize,
     wait_ahead: usize,
+}
+
+#[derive(Debug, Clone)]
+struct TaskStatusUpdate {
+    task_id: String,
+    status: String,
+    retry_count: i64,
+    retry_at: f64,
+    started_at: Option<f64>,
+    finished_at: Option<f64>,
+    last_error: Option<String>,
+    updated_at: f64,
+}
+
+impl TaskStatusUpdate {
+    fn params(&self) -> UpdateAgentTaskStatusParams<'_> {
+        UpdateAgentTaskStatusParams {
+            task_id: &self.task_id,
+            status: &self.status,
+            retry_count: self.retry_count,
+            retry_at: self.retry_at,
+            started_at: self.started_at,
+            finished_at: self.finished_at,
+            last_error: self.last_error.as_deref(),
+            updated_at: self.updated_at,
+        }
+    }
+}
+
+fn create_task_session_id_with(store: &UserStore, user_id: &str, agent_id: &str) -> Result<String> {
+    let cleaned_user = user_id.trim();
+    if cleaned_user.is_empty() {
+        return Err(anyhow!(i18n::t("error.user_id_required")));
+    }
+    let now = now_ts();
+    let session_id = format!("sess_{}", Uuid::new_v4().simple());
+    let record = ChatSessionRecord {
+        session_id: session_id.clone(),
+        user_id: cleaned_user.to_string(),
+        title: DEFAULT_SESSION_TITLE.to_string(),
+        status: "active".to_string(),
+        created_at: now,
+        updated_at: now,
+        last_message_at: now,
+        agent_id: if agent_id.trim().is_empty() {
+            None
+        } else {
+            Some(agent_id.trim().to_string())
+        },
+        workspace_id: None,
+        tool_overrides: Vec::new(),
+        parent_session_id: None,
+        parent_message_id: None,
+        spawn_label: None,
+        spawned_by: None,
+    };
+    store.upsert_chat_session(&record)?;
+    Ok(session_id)
+}
+
+fn ensure_session_record_with(
+    store: &UserStore,
+    user_id: &str,
+    session_id: &str,
+    agent_id: &str,
+) -> Result<ChatSessionRecord> {
+    let cleaned_user = user_id.trim();
+    let cleaned_session = session_id.trim();
+    if cleaned_user.is_empty() || cleaned_session.is_empty() {
+        return Err(anyhow!(i18n::t("error.content_required")));
+    }
+    let existing = store.get_chat_session(cleaned_user, cleaned_session)?;
+    if let Some(record) = existing {
+        if record.agent_id.as_deref().unwrap_or("").trim() != agent_id.trim()
+            || record.status == "archived"
+        {
+            return Err(anyhow!(i18n::t("error.permission_denied")));
+        }
+        return Ok(record);
+    }
+    let now = now_ts();
+    let record = ChatSessionRecord {
+        session_id: cleaned_session.to_string(),
+        user_id: cleaned_user.to_string(),
+        title: DEFAULT_SESSION_TITLE.to_string(),
+        status: "active".to_string(),
+        created_at: now,
+        updated_at: now,
+        last_message_at: now,
+        agent_id: if agent_id.trim().is_empty() {
+            None
+        } else {
+            Some(agent_id.trim().to_string())
+        },
+        workspace_id: None,
+        tool_overrides: Vec::new(),
+        parent_session_id: None,
+        parent_message_id: None,
+        spawn_label: None,
+        spawned_by: None,
+    };
+    store.upsert_chat_session(&record)?;
+    Ok(record)
 }
 
 #[cfg(test)]
@@ -1790,5 +1946,27 @@ mod tests {
 
         drop(first);
         assert!(try_acquire_start_lease_with_limit("session-a", 2, &pending, &active).is_some());
+    }
+
+    #[test]
+    fn a_cancellation_stays_cancelled_in_the_durable_queue_item() {
+        // The thread-cancel settlement reports `queue_fail` (the terminal family the
+        // realtime consumers already know) while declaring `cancelled`. Deriving the
+        // status purely from the event name used to rewrite every cancellation as a
+        // failure, in the durable log and in every projection built from it.
+        assert_eq!(
+            durable_queue_status("queue_fail", Some(TASK_STATUS_CANCELLED)),
+            "cancelled"
+        );
+        // With nothing declared the event name still decides, exactly as before.
+        assert_eq!(durable_queue_status("queue_fail", None), "failed");
+        assert_eq!(durable_queue_status("queue_enter", None), "queued");
+        assert_eq!(durable_queue_status("queue_start", None), "running");
+        assert_eq!(durable_queue_status("queue_finish", None), "completed");
+        assert_eq!(durable_queue_status("queue_cancel", None), "cancelled");
+        // An unrecognized declared value (or an empty one) falls back to the event
+        // name instead of writing a status the projections do not know.
+        assert_eq!(durable_queue_status("queue_update", Some("pending")), "queued");
+        assert_eq!(durable_queue_status("queue_fail", Some("")), "failed");
     }
 }

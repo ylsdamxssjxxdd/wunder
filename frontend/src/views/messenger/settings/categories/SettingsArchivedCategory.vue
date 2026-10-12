@@ -12,7 +12,7 @@
         <ArchivedThreadManager
           :agent-id="settingsAgentIdForApi"
           :active="isActive"
-          @open-session-detail="openTimelineSessionDetail"
+          @open-session-trajectory="openSessionTrajectory"
           @session-deleted="handleArchivedSessionRemoved"
         />
       </div>
@@ -38,7 +38,7 @@ onDeactivated(() => {
 });
 
 const settingsAgentIdForApi = props.controller.settingsAgentIdForApi;
-const openTimelineSessionDetail = props.controller.openTimelineSessionDetail;
+const openSessionTrajectory = props.controller.openSessionTrajectory;
 const handleArchivedSessionRemoved = props.controller.handleArchivedSessionRemoved;
 const ArchivedThreadManager = props.controller.ArchivedThreadManager;
 </script>

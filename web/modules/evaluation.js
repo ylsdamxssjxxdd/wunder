@@ -1,7 +1,8 @@
+// AI生成
 import { elements } from "./elements.js?v=20261011-01";
 import { getWunderBase } from "./api.js";
 import { escapeHtml, formatDuration } from "./utils.js";
-import { ensureLlmConfigLoaded } from "./llm.js";
+import { ensureLlmConfigLoaded } from "./llm.js?v=20260923-04";
 import { state } from "./state.js";
 import { getCurrentLanguage } from "./i18n.js?v=20261011-01";
 
@@ -1004,6 +1005,17 @@ export async function initEvaluationPanel() {
 
   bindEvents();
   renderModelOptions();
+  // 模型配置变更时重绘模型下拉（治本·领域事件订阅）
+  if (!benchmarkState.dataInvalidationBound && typeof window !== "undefined") {
+    benchmarkState.dataInvalidationBound = true;
+    window.addEventListener("wunder:llm-updated", () => {
+      try {
+        renderModelOptions();
+      } catch (error) {
+        // 面板未就绪时忽略
+      }
+    });
+  }
   clearDetail();
   updateIndicator(benchmarkState.activeStatus);
   updatePrimaryAction();

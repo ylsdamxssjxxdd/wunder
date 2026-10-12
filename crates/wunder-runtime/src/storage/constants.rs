@@ -33,7 +33,28 @@ pub(crate) const TOOL_LOG_EXCLUDED_NAMES: &[&str] = &[
     "ask_panel",
     "问询面板",
     "performance_log",
+    "final_response",
+    "最终回复",
 ];
+
+/// Usage summary watermarks: reconcile only aggregates rows past these
+/// markers, and delete paths only decrement rows counted inside them.
+pub(crate) const USAGE_TOOL_WATERMARK_KEY: &str = "usage_tool_watermark";
+pub(crate) const USAGE_CHAT_WATERMARK_KEY: &str = "usage_chat_watermark_ts";
+pub(crate) const USAGE_FULL_RECONCILE_KEY: &str = "usage_full_reconcile_ts";
+pub(crate) const USAGE_FULL_RECONCILE_INTERVAL_S: f64 = 7.0 * 24.0 * 3600.0;
+
+/// Whether a tool log row is excluded from usage statistics at write time:
+/// excluded tool names or skill_read diagnostics never reach stats queries.
+/// Must be evaluated on the full (pre-truncation) data column so the marker
+/// cannot be cut away by head+tail truncation.
+pub(crate) fn tool_log_row_excluded(tool: &str, data: Option<&str>) -> bool {
+    let cleaned = tool.trim();
+    if TOOL_LOG_EXCLUDED_NAMES.iter().any(|name| *name == cleaned) {
+        return true;
+    }
+    data.is_some_and(|data| data.contains(TOOL_LOG_SKILL_READ_MARKER))
+}
 
 pub use wunder_core::storage_constants::{
     normalize_sandbox_container_id, normalize_workspace_container_id, DEFAULT_SANDBOX_CONTAINER_ID,

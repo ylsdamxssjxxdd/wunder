@@ -88,6 +88,44 @@
   --ui-accent-link-hover: #0b7e67;
 }
 
+/* 森林：深绿强调色，页面表面只带极浅的绿调。 */
+:root[data-user-accent='forest'] {
+  --ui-accent: #2f7a5c;
+  --ui-accent-rgb: 47, 122, 92;
+  --ui-accent-secondary: #7fb39a;
+  --ui-accent-secondary-rgb: 127, 179, 154;
+  --ui-accent-deep: #24614a;
+  --ui-accent-soft: #e9f2ee;
+  --ui-accent-soft-2: #dfeae4;
+  --ui-accent-soft-3: #f3f8f5;
+  --ui-accent-soft-4: #cfe3d8;
+  --ui-accent-soft-5: #c2dccf;
+  --ui-accent-gradient-start: #a8cdb9;
+  --ui-accent-gradient-mid: #4e9b76;
+  --ui-accent-hover: #24614a;
+  --ui-accent-disabled: #cfdcd5;
+  --ui-accent-link-hover: #1f5540;
+}
+
+/* 蜜蜂：琥珀金强调色，表面带浅蜜糖底。 */
+:root[data-user-accent='honey'] {
+  --ui-accent: #c08a2a;
+  --ui-accent-rgb: 192, 138, 42;
+  --ui-accent-secondary: #e0bd77;
+  --ui-accent-secondary-rgb: 224, 189, 119;
+  --ui-accent-deep: #9c6f1f;
+  --ui-accent-soft: #f8f0dd;
+  --ui-accent-soft-2: #f4e8cf;
+  --ui-accent-soft-3: #fbf6ea;
+  --ui-accent-soft-4: #eeddb8;
+  --ui-accent-soft-5: #e8d1a3;
+  --ui-accent-gradient-start: #e6c489;
+  --ui-accent-gradient-mid: #cf9c3d;
+  --ui-accent-hover: #a87c26;
+  --ui-accent-disabled: #e6d6b4;
+  --ui-accent-link-hover: #8f651b;
+}
+
 :root[data-user-accent='minimal'] {
   --ui-accent: #8f9aad;
   --ui-accent-rgb: 143, 154, 173;

@@ -59,6 +59,20 @@
           spellcheck="false"
         >
       </div>
+      <button
+        class="tt-toggle tt-export"
+        type="button"
+        :disabled="exporting"
+        :title="t('messenger.trajectory.export')"
+        :aria-label="t('messenger.trajectory.export')"
+        @click="exportLog"
+      >
+        <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+          <path d="M8 2.5v7m0 0 2.75-2.75M8 9.5 5.25 6.75" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" />
+          <path d="M3 11v1.75a.75.75 0 0 0 .75.75h8.5a.75.75 0 0 0 .75-.75V11" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+        <span>{{ t('messenger.trajectory.export') }}</span>
+      </button>
     </header>
 
     <div
@@ -374,8 +388,10 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import { useI18n } from '@/i18n'
 import { getThreadLogSnapshot } from '@/api/chat'
+import { exportSingleSessionLog } from '@/utils/sessionLogExport'
 import { renderMarkdown } from '@/utils/markdown'
 import TrajectoryJsonTree from './trajectory/TrajectoryJsonTree.vue'
 import {
@@ -418,6 +434,12 @@ const modelT: Translate = (key, params) => t(`messenger.${key}`, params as never
 const loading = ref(true)
 const loadError = ref(false)
 const rawTurns = ref<unknown[]>([])
+
+// 大线程日志的快照可能非常庞大（压测会话可达百万级条目），单次全量拉取
+// 会长时间占用主线程并可能触发默认 30s 超时。这里给一个显式上界并在
+// 卸载时中止在途请求，避免视图长时间空转或卸载后回调写入已销毁的状态。
+const TRAJECTORY_SNAPSHOT_TIMEOUT_MS = 45_000
+let loadAbort: AbortController | null = null
 
 const showDuration = ref(true)
 const showTime = ref(false)
@@ -648,8 +670,12 @@ async function load(): Promise<void> {
   }
   loading.value = true
   loadError.value = false
+  loadAbort?.abort()
+  const controller = new AbortController()
+  loadAbort = controller
+  const timeoutId = window.setTimeout(() => controller.abort(), TRAJECTORY_SNAPSHOT_TIMEOUT_MS)
   try {
-    const snapshot = await getThreadLogSnapshot(sessionId)
+    const snapshot = await getThreadLogSnapshot(sessionId, { signal: controller.signal })
     // 快照端点的 HTTP 体是 { data: { cursor, turns, items, blocks, item_total } }，
     // 而 http.ts 的拦截器返回完整 AxiosResponse，故需再取一层 .data 才能拿到快照本体。
     const payload = (snapshot?.data as { data?: unknown } | undefined)?.data
@@ -658,6 +684,8 @@ async function load(): Promise<void> {
     loadError.value = true
     rawTurns.value = []
   } finally {
+    window.clearTimeout(timeoutId)
+    if (loadAbort === controller) loadAbort = null
     loading.value = false
   }
 }
@@ -694,6 +722,26 @@ function goBack(): void {
   router.back()
 }
 
+/** 导出线程日志：与原线程日志对话框共用同一下载链路。 */
+const exporting = ref(false)
+
+async function exportLog(): Promise<void> {
+  const sessionId = String(route.query.session ?? '').trim()
+  if (!sessionId || exporting.value) return
+  exporting.value = true
+  try {
+    await exportSingleSessionLog(sessionId)
+    ElMessage.success(t('messenger.trajectory.exported'))
+  } catch (error) {
+    const detail = String((error as { message?: string })?.message || '').trim()
+    ElMessage.error(t('messenger.trajectory.exportFailed', {
+      message: detail || t('common.requestFailed'),
+    }))
+  } finally {
+    exporting.value = false
+  }
+}
+
 function onKeyDown(event: KeyboardEvent): void {
   if (event.key === 'Escape') {
     selection.value = null
@@ -702,9 +750,24 @@ function onKeyDown(event: KeyboardEvent): void {
 }
 
 function updateSizes(): void {
-  if (trackEl.value) trackWidth.value = trackEl.value.clientWidth
   if (ledgerEl.value) ledgerViewport.value = ledgerEl.value.clientHeight
 }
+
+// 时间线区块 v-if="timeline"：数据加载完成前轨道不存在，onMounted 测不到宽度。
+// 通过 ref 侦测挂载并挂 ResizeObserver，轨道首次出现与尺寸变化时都重新测量，
+// 否则 trackWidth 停留在默认 600，色块与刻度会挤在轨道左侧、右边留白。
+let trackResizeObserver: ResizeObserver | null = null
+
+watch(trackEl, (el) => {
+  trackResizeObserver?.disconnect()
+  trackResizeObserver = null
+  if (!el) return
+  trackWidth.value = el.clientWidth
+  trackResizeObserver = new ResizeObserver(() => {
+    trackWidth.value = el.clientWidth
+  })
+  trackResizeObserver.observe(el)
+})
 
 onMounted(() => {
   void load()
@@ -716,10 +779,14 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  loadAbort?.abort()
+  loadAbort = null
   window.removeEventListener('keydown', onKeyDown)
   window.removeEventListener('pointermove', onWindowPointerMove)
   window.removeEventListener('pointerup', onWindowPointerUp)
   window.removeEventListener('resize', updateSizes)
+  trackResizeObserver?.disconnect()
+  trackResizeObserver = null
   if (tooltipTimer !== null) window.clearTimeout(tooltipTimer)
 })
 

@@ -1125,6 +1125,10 @@ fn bind_settings(app: &MainWindow, api: Arc<NativeDesktop>) {
         if app.get_saving() || app.get_settings_loading() || app.get_agents_loading() {
             return;
         }
+        // Optimistic switch: project the picked card into the composer label in
+        // the same frame; persistence races behind and reverts on failure.
+        let previous_key = app.get_selected_model_key().to_string();
+        select_model_key(&app, &key);
         app.set_saving(true);
         let weak = weak.clone();
         let api = default_api.clone();
@@ -1139,7 +1143,10 @@ fn bind_settings(app: &MainWindow, api: Arc<NativeDesktop>) {
                         app.set_status("默认模型已更新".into());
                         app.invoke_refresh_agents();
                     }
-                    Err(error) => show_error(&app, format!("无法更新默认模型：{error}")),
+                    Err(error) => {
+                        select_model_key(&app, &previous_key);
+                        show_error(&app, format!("无法更新默认模型：{error}"));
+                    }
                 }
             });
         });
@@ -1367,11 +1374,15 @@ fn to_model_card(model: wunder_desktop::ModelRecord) -> crate::ModelCard {
 }
 
 /// Map a persisted theme value onto a `Theme.palette` name. Only the accent
-/// family is selectable: the legacy "light"/"eva-orange" values, and anything
-/// unrecognised, resolve to the 蜂巢 terracotta default.
+/// family is selectable: the settings card offers terracotta (羊皮纸),
+/// hula-green (薄荷), forest (森林) and honey (蜜蜂); the legacy "light"/
+/// "eva-orange" values, and anything unrecognised, resolve to the 蜂巢
+/// terracotta default.
 fn normalize_palette(theme: &str) -> &'static str {
     match theme.trim() {
         "hula-green" => "hula-green",
+        "forest" => "forest",
+        "honey" => "honey",
         "minimal" => "minimal",
         "tech-blue" => "tech-blue",
         _ => "terracotta",
@@ -1404,7 +1415,7 @@ fn tool_status_text(status: &RuntimeToolStatus) -> String {
     }
 }
 
-fn select_model_key(app: &MainWindow, key: &str) {
+pub(crate) fn select_model_key(app: &MainWindow, key: &str) {
     if let Some(index) = app.get_models().iter().position(|model| model.key == key) {
         app.invoke_select_model(index as i32);
     }
@@ -1483,7 +1494,7 @@ pub(crate) fn show_error(app: &MainWindow, error: String) {
 
 #[cfg(test)]
 mod tests {
-    use super::{profile_brush, profile_glyph};
+    use super::{normalize_palette, profile_brush, profile_glyph};
 
     /// The backend default (`DEFAULT_AVATAR_COLOR` in `wunder-desktop`), which
     /// every unreadable preference falls back to.
@@ -1512,5 +1523,18 @@ mod tests {
         for value in ["", "  ", "red", "#12345", "#1234567", "#zzzzzz", "#12345g"] {
             assert_eq!(profile_brush(value), DEFAULT_BRUSH, "value {value:?}");
         }
+    }
+
+    /// Every palette id the settings card writes must survive the restart
+    /// round trip; one that `normalize_palette` drops silently comes back
+    /// terracotta.
+    #[test]
+    fn the_four_selectable_palettes_survive_a_restart() {
+        for palette in ["terracotta", "hula-green", "forest", "honey"] {
+            assert_eq!(normalize_palette(palette), palette);
+            assert_eq!(normalize_palette(&format!(" {palette} ")), palette);
+        }
+        assert_eq!(normalize_palette("light"), "terracotta");
+        assert_eq!(normalize_palette("nonsense"), "terracotta");
     }
 }

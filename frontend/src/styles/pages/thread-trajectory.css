@@ -116,6 +116,16 @@
   line-height: 1;
 }
 
+.tt-export:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.tt-export:disabled:hover {
+  background: transparent;
+  color: var(--tt-text-2);
+}
+
 .tt-toolbar-spacer {
   flex: 1 1 auto;
   min-width: 8px;

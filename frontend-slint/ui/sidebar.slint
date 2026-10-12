@@ -8,7 +8,7 @@
 import { Theme, SidebarRow, WorkspaceFileRow } from "theme.slint";
 import { I18n } from "i18n.slint";
 import { ListView } from "std-widgets.slint";
-import { DragRow } from "drag_row.slint";
+import { DragRow, DragPreview, SidebarMetrics } from "drag_row.slint";
 import { WorkspaceFilesPanel } from "workspace_files.slint";
 
 // Resolve a workspace icon name to a bundled icon; unknown names fall back
@@ -79,12 +79,9 @@ component StatusDot inherits Rectangle {
 
 component ThreadRow inherits Rectangle {
     in property <SidebarRow> data;
-    in property <bool> editing;
     in property <bool> hover;
-    in-out property <string> rename-draft;
     callback archive();
     callback begin-rename();
-    callback commit-rename();
     callback open-trajectory();
     height: 28px;
     background: data.active ? Theme.selected : transparent;
@@ -92,29 +89,11 @@ component ThreadRow inherits Rectangle {
     Rectangle { x: 20px; y: 0px; width: 1px; height: parent.height; background: Theme.border; }
     HorizontalLayout {
         padding-left: 34px; padding-right: 8px; spacing: 8px;
-        if root.editing : TextInput {
-            width: parent.width - 90px;
-            text <=> root.rename-draft;
-            font-size: Theme.font-md;
-            color: Theme.text;
-            single-line: true;
-            vertical-alignment: center;
-            selection-background-color: Theme.accent-soft; selection-foreground-color: Theme.text;
-            accepted => { root.commit-rename(); }
-            key-pressed(event) => {
-                if event.text == Key.Escape {
-                    root.rename-draft = root.data.title;
-                    root.commit-rename();
-                    return accept;
-                }
-                return reject;
-            }
-        }
-        if !root.editing : StatusDot {
+        StatusDot {
             y: (parent.height - 6px) / 2;
             status: data.status;
         }
-        if !root.editing : Text {
+        Text {
             vertical-alignment: center;
             text: data.title;
             color: data.active ? Theme.text : Theme.text-secondary;
@@ -124,8 +103,9 @@ component ThreadRow inherits Rectangle {
         }
         // Remote-origin badge (§I9): threads created in the cloud or by another
         // device carry a small chip so local rows stay unmarked. Uses the same
-        // accent-soft pill recipe as the cloud-quota badge.
-        if !root.editing && data.origin != "" : Rectangle {
+        // accent-soft pill recipe as the cloud-quota badge. It yields to the
+        // hover actions.
+        if !root.hover && data.origin != "" : Rectangle {
             height: 16px;
             width: min(origin-chip-text.preferred-width + 12px, 72px);
             border-radius: 8px;
@@ -138,37 +118,49 @@ component ThreadRow inherits Rectangle {
                 horizontal-alignment: center; vertical-alignment: center; overflow: elide;
             }
         }
-        if !root.editing : Rectangle {
-            // Rename, trajectory and archive appear only while the row is
-            // hovered; they stay fully hidden otherwise, including on the
-            // active thread.
-            width: hover ? 69px : 0px;
-            clip: true;
-            animate width { duration: 90ms; }
-            HorizontalLayout {
-                spacing: 3px; alignment: start;
-                Rectangle {
-                    width: 20px; height: 20px; border-radius: 4px;
-                    background: rename-touch.has-hover ? Theme.selected : transparent;
-                    Image { x: 3px; y: 3px; width: 14px; height: 14px; source: @image-url("../assets/icons/pen.svg"); colorize: Theme.muted; }
-                    rename-touch := TouchArea { mouse-cursor: pointer; clicked => { root.begin-rename(); } }
-                }
-                Rectangle {
-                    width: 20px; height: 20px; border-radius: 4px;
-                    background: traj-touch.has-hover ? Theme.selected : transparent;
-                    Image { x: 3px; y: 3px; width: 14px; height: 14px; source: @image-url("../assets/icons/log-chart.svg"); colorize: Theme.muted; }
-                    traj-touch := TouchArea {
-                        mouse-cursor: pointer;
-                        accessible-role: button; accessible-label: I18n.traj_title;
-                        clicked => { root.open-trajectory(); }
-                    }
-                }
-                Rectangle {
-                    width: 20px; height: 20px; border-radius: 4px;
-                    background: archive-touch.has-hover ? Theme.selected : transparent;
-                    Image { x: 3px; y: 3px; width: 14px; height: 14px; source: @image-url("../assets/icons/box-archive.svg"); colorize: Theme.muted; }
-                    archive-touch := TouchArea { mouse-cursor: pointer; clicked => { root.archive(); } }
-                }
+    }
+    // The hover actions ride over the row's right edge instead of joining its
+    // layout. In-layout they took the top of the row (a layout only stretches a
+    // child that brings no cross size of its own) and their reveal animated a
+    // width, so the title re-ellipsized on every frame of it and the row read
+    // as jittering. The band is opaque so no glyph lands on the title text.
+    if root.hover : Rectangle {
+        x: parent.width - 74px;
+        y: 0px;
+        width: 74px;
+        height: parent.height;
+        background: data.active ? Theme.selected : Theme.accent-soft;
+        Rectangle {
+            x: 0px; y: (parent.height - 20px) / 2; width: 20px; height: 20px; border-radius: 4px;
+            background: rename-touch.has-hover ? Theme.selected : transparent;
+            Image { x: 3px; y: 3px; width: 14px; height: 14px; source: @image-url("../assets/icons/pen.svg"); colorize: Theme.muted; }
+            Tooltip { text: @markdown("\{I18n.common_rename}"); }
+            rename-touch := TouchArea {
+                mouse-cursor: pointer;
+                accessible-role: button; accessible-label: I18n.common_rename;
+                clicked => { root.begin-rename(); }
+            }
+        }
+        Rectangle {
+            x: 23px; y: (parent.height - 20px) / 2; width: 20px; height: 20px; border-radius: 4px;
+            background: traj-touch.has-hover ? Theme.selected : transparent;
+            Image { x: 3px; y: 3px; width: 14px; height: 14px; source: @image-url("../assets/icons/timeline.svg"); colorize: Theme.muted; }
+            Tooltip { text: @markdown("\{I18n.traj_title}"); }
+            traj-touch := TouchArea {
+                mouse-cursor: pointer;
+                accessible-role: button; accessible-label: I18n.traj_title;
+                clicked => { root.open-trajectory(); }
+            }
+        }
+        Rectangle {
+            x: 46px; y: (parent.height - 20px) / 2; width: 20px; height: 20px; border-radius: 4px;
+            background: archive-touch.has-hover ? Theme.selected : transparent;
+            Image { x: 3px; y: 3px; width: 14px; height: 14px; source: @image-url("../assets/icons/box-archive.svg"); colorize: Theme.muted; }
+            Tooltip { text: @markdown("\{I18n.ap_archive_thread}"); }
+            archive-touch := TouchArea {
+                mouse-cursor: pointer;
+                accessible-role: button; accessible-label: I18n.ap_archive_thread;
+                clicked => { root.archive(); }
             }
         }
     }
@@ -201,7 +193,9 @@ export component Sidebar inherits Rectangle {
     callback new-workspace();
     callback move-row(int, int);
     callback archive-thread(int);
-    callback rename-thread(int, string);
+    // Ask the shell to open the rename prompt for a thread (payload, current
+    // title); the shell commits through its own `rename-thread`.
+    callback rename-request(int, string);
     callback open-trajectory(int);
     callback open-settings();
 
@@ -230,11 +224,6 @@ export component Sidebar inherits Rectangle {
     callback file-drag(int);
     callback file-drop(DropEvent);
 
-    // Sidebar row currently renamed inline; -1 closes the editor. Only one
-    // editor exists at a time, so a single shared draft suffices.
-    property <int> renaming: -1;
-    in-out property <string> rename-draft;
-
     VerticalLayout {
         spacing: 0px;
         Rectangle { height: 12px; }
@@ -255,12 +244,14 @@ export component Sidebar inherits Rectangle {
             }
         }
         // Workspace/thread tree. Rows drag-reorder among neighbours of the
-        // same kind via `move-row`.
-        ListView {
+        // same kind via `move-row`, which reports pointer travel in pixels;
+        // the row pitch comes from SidebarMetrics so the native resolver and
+        // this layout cannot disagree.
+        tree := ListView {
             vertical-stretch: 1;
             horizontal-scrollbar-policy: always-off;
             for row[ri] in root.rows : Rectangle {
-                height: row.kind == 1 ? 28px : 34px;
+                height: row.kind == 1 ? SidebarMetrics.thread-height : SidebarMetrics.group-height;
                 width: parent.width;
                 if row.kind == 0 : ws-drag := DragRow {
                     height: parent.height;
@@ -269,8 +260,11 @@ export component Sidebar inherits Rectangle {
                     selected: row.selected;
                     selected-color: Theme.selected;
                     label: row.name;
+                    row-index: ri;
+                    row-kind: row.kind;
+                    workspace-id: row.workspace-id;
                     activate => { root.select-row(ri); }
-                    move-by(delta) => { root.move-row(ri, delta); }
+                    move-by(travel) => { root.move-row(ri, travel); }
                     // Selection indicator on the workspace row.
                     Rectangle { x: 0px; y: 5px; width: 2px; height: 24px; border-radius: 1px; background: row.selected ? Theme.accent : transparent; }
                     HorizontalLayout {
@@ -302,30 +296,39 @@ export component Sidebar inherits Rectangle {
                             height: parent.height; text: "\{row.thread-count}";
                             color: Theme.muted; font-size: Theme.font-xs; vertical-alignment: center;
                         }
-                        // Direct actions replace the old ellipsis menu: plus
-                        // spawns a thread in this workspace, pen opens the
-                        // edit dialog (icon, color, folder, reveal, delete).
-                        if ws-drag.hover : HorizontalLayout {
-                            spacing: 2px; alignment: end;
-                            Rectangle {
-                                width: 22px; height: 22px; border-radius: 5px;
-                                background: ws-thread-touch.has-hover ? Theme.selected : transparent;
-                                Image { x: 4px; y: 4px; width: 14px; height: 14px; source: @image-url("../assets/icons/plus.svg"); colorize: Theme.muted; }
-                                ws-thread-touch := TouchArea {
-                                    mouse-cursor: pointer;
-                                    accessible-role: button; accessible-label: I18n.ws_menu_new_thread;
-                                    clicked => { root.workspace-menu(ri, 0); }
-                                }
+                    }
+                    // Direct actions replace the old ellipsis menu: plus spawns
+                    // a thread in this workspace, pen opens the edit dialog
+                    // (icon, color, folder, reveal, delete). Like the thread
+                    // row's band they ride over the row instead of joining its
+                    // layout, so revealing them moves nothing and they sit on
+                    // the name's own centre line.
+                    if ws-drag.hover : Rectangle {
+                        x: parent.width - 56px;
+                        y: 0px;
+                        width: 56px;
+                        height: parent.height;
+                        background: row.selected ? Theme.selected : Theme.accent-soft;
+                        Rectangle {
+                            x: 0px; y: (parent.height - 22px) / 2; width: 22px; height: 22px; border-radius: 5px;
+                            background: ws-thread-touch.has-hover ? Theme.selected : transparent;
+                            Image { x: 4px; y: 4px; width: 14px; height: 14px; source: @image-url("../assets/icons/plus.svg"); colorize: Theme.muted; }
+                            Tooltip { text: @markdown("\{I18n.ws_menu_new_thread}"); }
+                            ws-thread-touch := TouchArea {
+                                mouse-cursor: pointer;
+                                accessible-role: button; accessible-label: I18n.ws_menu_new_thread;
+                                clicked => { root.workspace-menu(ri, 0); }
                             }
-                            Rectangle {
-                                width: 22px; height: 22px; border-radius: 5px;
-                                background: ws-edit-touch.has-hover ? Theme.selected : transparent;
-                                Image { x: 4px; y: 4px; width: 14px; height: 14px; source: @image-url("../assets/icons/pen.svg"); colorize: Theme.muted; }
-                                ws-edit-touch := TouchArea {
-                                    mouse-cursor: pointer;
-                                    accessible-role: button; accessible-label: I18n.ws_menu_edit;
-                                    clicked => { root.workspace-menu(ri, 1); }
-                                }
+                        }
+                        Rectangle {
+                            x: 24px; y: (parent.height - 22px) / 2; width: 22px; height: 22px; border-radius: 5px;
+                            background: ws-edit-touch.has-hover ? Theme.selected : transparent;
+                            Image { x: 4px; y: 4px; width: 14px; height: 14px; source: @image-url("../assets/icons/pen.svg"); colorize: Theme.muted; }
+                            Tooltip { text: @markdown("\{I18n.ws_menu_edit}"); }
+                            ws-edit-touch := TouchArea {
+                                mouse-cursor: pointer;
+                                accessible-role: button; accessible-label: I18n.ws_menu_edit;
+                                clicked => { root.workspace-menu(ri, 1); }
                             }
                         }
                     }
@@ -333,30 +336,24 @@ export component Sidebar inherits Rectangle {
                 if row.kind == 1 : DragRow {
                     height: parent.height;
                     width: parent.width;
-                    // Inline rename owns the row while it is open.
-                    enabled: root.renaming != ri;
                     selected: row.active;
                     selected-color: Theme.selected;
                     label: row.title;
+                    row-index: ri;
+                    row-kind: row.kind;
+                    workspace-id: row.workspace-id;
                     activate => { root.select-row(ri); }
-                    move-by(delta) => { root.move-row(ri, delta); }
+                    move-by(travel) => { root.move-row(ri, travel); }
                     ThreadRow {
                         height: parent.height;
                         width: parent.width;
                         data: row;
                         hover: parent.hover;
-                        editing: root.renaming == ri;
-                        rename-draft <=> root.rename-draft;
                         archive => { root.archive-thread(row.payload); }
-                        begin-rename => {
-                            root.rename-draft = row.title;
-                            root.renaming = ri;
-                        }
-                        commit-rename => {
-                            let title = root.rename-draft;
-                            root.renaming = -1;
-                            if title != row.title { root.rename-thread(row.payload, title); }
-                        }
+                        // Renaming needs a draft the user can still abandon, so
+                        // the pen asks the shell for the prompt dialog instead
+                        // of editing in place.
+                        begin-rename => { root.rename-request(row.payload, row.title); }
                         open-trajectory => { root.open-trajectory(row.payload); }
                     }
                 }
@@ -493,6 +490,29 @@ export component Sidebar inherits Rectangle {
                     }
                 }
             }
+        }
+    }
+    // What the drag follows: the grabbed row keeps its cell (only its seam and
+    // box highlight move), and this chip tracks the pointer one for one. Its
+    // travel is clamped to the tree's own span so a drag that leaves the list
+    // cannot paint over the header or the working-directory region below.
+    if DragPreview.active : Rectangle {
+        x: 8px;
+        y: Math.max(tree.absolute-position.y - root.absolute-position.y, Math.min(
+            DragPreview.pointer-y - root.absolute-position.y - 10px,
+            tree.absolute-position.y - root.absolute-position.y + tree.height - 22px));
+        width: parent.width - 16px;
+        height: 20px;
+        z: 200;
+        border-radius: Theme.radius-sm;
+        border-width: 1px;
+        border-color: Theme.accent;
+        background: Theme.surface;
+        Text {
+            x: 8px; width: parent.width - 16px; height: parent.height;
+            text: DragPreview.source-label;
+            color: Theme.text; font-size: Theme.font-md;
+            vertical-alignment: center; overflow: elide;
         }
     }
 }

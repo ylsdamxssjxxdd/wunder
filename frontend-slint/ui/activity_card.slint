@@ -1,0 +1,91 @@
+// New-thread activity heatmap: 53 weekly columns x 7 weekday rows, the card
+// the web form shows before the first message of a thread. Day buckets are
+// projected natively; nothing here is fetched from the UI.
+import { Theme } from "theme.slint";
+import { I18n } from "i18n.slint";
+
+export struct ActivityCell { level: int, future: bool }
+export struct ActivityWeek { cells: [ActivityCell] }
+export struct ActivityMonth { month: int, column: int }
+
+component ActivityTab inherits Rectangle {
+    in property <string> label;
+    in property <bool> active;
+    in property <int> index;
+    callback picked(int);
+    width: label-el.width;
+    TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.picked(root.index); }
+        label-el := Text {
+            text: root.label;
+            font-size: Theme.font-md;
+            font-weight: 700;
+            color: root.active ? Theme.text : Theme.muted;
+            vertical-alignment: center;
+        }
+    }
+}
+
+export component ActivityCard inherits Rectangle {
+    in property <[ActivityWeek]> sessions;
+    in property <[ActivityWeek]> credits;
+    in property <[ActivityMonth]> months;
+    in-out property <int> tab: 0;
+    in property <int> columns: 53;
+    property <length> gap: 3px;
+
+    // The transcript pane is shared, so the card paints the chat background
+    // behind itself instead of relying on what sits under it.
+    Rectangle { x: 0px; y: 0px; width: 100%; height: 100%; background: Theme.chat; }
+    VerticalLayout {
+        x: 0px; y: 0px; width: 100%; height: 100%;
+        padding: 24px; spacing: 0px;
+        alignment: center; cross-axis-alignment: center;
+        Rectangle {
+            vertical-stretch: 0;
+            width: min(880px, parent.width);
+            height: card.preferred-height;
+            border-radius: Theme.radius-lg;
+            border-width: 1px;
+            border-color: Theme.border;
+            background: Theme.surface;
+            card := VerticalLayout {
+                padding-left: 24px; padding-right: 24px;
+                padding-top: 18px; padding-bottom: 14px;
+                spacing: 16px;
+                HorizontalLayout { height: 18px; spacing: 14px; alignment: start;
+                    ActivityTab { label: I18n.act_tab_sessions; index: 0; active: root.tab == 0; picked(tab) => { root.tab = tab; } }
+                    ActivityTab { label: I18n.act_tab_credits; index: 1; active: root.tab == 1; picked(tab) => { root.tab = tab; } }
+                }
+                // One square per day: the cell edge follows the available width
+                // so the year never overflows the card.
+                grid := Rectangle {
+                    property <length> size: Math.max(4px, (self.width - root.gap * (root.columns - 1)) / root.columns);
+                    height: self.size * 7 + root.gap * 6;
+                    HorizontalLayout { spacing: root.gap; alignment: start;
+                        for week in (root.tab == 1 ? root.credits : root.sessions) : VerticalLayout { spacing: root.gap;
+                            for cell in week.cells : Rectangle {
+                                width: grid.size; height: grid.size;
+                                border-radius: grid.size * 0.26;
+                                background: cell.future ? Theme.hover
+                                    : cell.level <= 0 ? Theme.activity-off
+                                    : Theme.activity-tone(Theme.accent, cell.level * 25);
+                            }
+                        }
+                    }
+                }
+                Rectangle { height: 14px;
+                    for month in root.months : Text {
+                        x: (grid.size + root.gap) * month.column;
+                        y: 0px; height: 14px;
+                        text: I18n.act_month(month.month);
+                        color: Theme.muted;
+                        font-size: Theme.font-xs;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+    }
+}

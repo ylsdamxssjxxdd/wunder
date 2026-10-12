@@ -1,11 +1,12 @@
+// AI生成
 import { state } from "../state.js";
 import { getWunderBase } from "../api.js";
 import { ensureLlmConfigLoaded } from "../llm.js";
 import { escapeHtml, formatTimestamp } from "../utils.js?v=20251229-02";
 import { resolveApiErrorMessage } from "../api-error.js";
-import { label as l } from "./copy.js?v=20260925-06";
-import { mount, details, history, number, durationMs } from "./view.js?v=20260925-06";
-import { concurrencySeries, selectableResult, speedLabel } from "./chart.js?v=20260925-07";
+import { label as l } from "./copy.js?v=20261012-01";
+import { mount, details, history, number } from "./view.js?v=20261012-01";
+import { concurrencySeries, speedLabel } from "./chart.js?v=20261012-01";
 
 const KEY = "wunder_throughput_scenario_v2";
 let initialized = false;
@@ -24,10 +25,11 @@ let historySignature = "";
 let chartSignature = "";
 let requestSequence = 0;
 let appliedSequence = 0;
-const selected = new Set();
-const known = new Set();
 const $ = (id) => document.getElementById(id);
 const running = () => ["running", "stopping"].includes(data.active?.status);
+// The run whose details and chart are shown: an explicitly selected history row,
+// otherwise the live run, otherwise the most recent history entry.
+const currentRecord = () => viewed ? data.history.find((item) => item.id === viewed) : data.active || data.history.at(-1);
 
 async function api(path, body, signal) {
   const response = await fetch(`${getWunderBase()}/admin/throughput/${path}`, {
@@ -76,18 +78,12 @@ function apply(snapshot, sequence) {
   appliedSequence = sequence;
   data = snapshot;
   const ids = new Set(data.history.map((item) => item.id));
-  for (const id of selected) if (!ids.has(id)) selected.delete(id);
-  for (const item of data.history) {
-    if (!known.has(item.id) && selectableResult(item)) selected.add(item.id);
-    known.add(item.id);
-  }
-  for (const id of known) if (!ids.has(id)) known.delete(id);
   if (viewed && !ids.has(viewed)) viewed = "";
   render();
 }
 
 function render(force = false) {
-  const item = viewed ? data.history.find((item) => item.id === viewed) : data.active || data.history.at(-1);
+  const item = currentRecord();
   details($("tpDetail"), item);
   if (running() && data.active?.config?.concurrency_list?.length) {
     const total = data.active.config.concurrency_list.length;
@@ -101,40 +97,36 @@ function render(force = false) {
   $("tpStop").disabled = busy || data.active?.status === "stopping";
   $("tpStop").textContent = l(data.active?.status === "stopping" ? "stopping" : "stop");
   for (const id of ["tpModel", "tpConcurrencyList", "tpInput", "tpOutput"]) $(id).disabled = running() || busy;
-  const signature = JSON.stringify([data.history, [...selected], viewed]);
+  const signature = JSON.stringify([data.history, viewed]);
   if (force || signature !== historySignature) {
-    history($("tpHistory"), data.history, selected, viewed);
+    history($("tpHistory"), data.history, viewed);
     historySignature = signature;
   }
-  $("tpSelected").textContent = `${l("selected")} ${selected.size} / ${data.history.length}`;
-  $("tpExport").disabled = selected.size === 0;
+  $("tpViewed").textContent = viewed && item ? `${l("viewing")} ${formatTimestamp(item.started_at)}` : "";
+  $("tpExport").disabled = !viewed;
   draw(force);
 }
 
 function draw(force = false) {
-  const signature = JSON.stringify([historySignature]);
+  const item = currentRecord();
+  const signature = JSON.stringify([item?.id, item?.status, item?.samples?.length, item?.metrics?.decode_tps]);
   if (!force && signature === chartSignature) return;
   chartSignature = signature;
-  const series = concurrencySeries(data.history, selected, l);
+  const series = item ? concurrencySeries(item, l) : [];
   $("tpChartEmpty").textContent = !window.echarts ? l("chartUnavailable") : series.length ? "" : l("chartEmpty");
   if (!window.echarts) return;
   chart ||= window.echarts.init($("tpChart"));
   chart.setOption({
-    animation: false, color: ["#2563eb", "#16a34a", "#d97706", "#7c3aed", "#dc2626", "#0891b2"],
+    animation: false, color: ["#2563eb", "#8b5cf6", "#16a34a", "#d97706", "#7c3aed", "#dc2626", "#0891b2"],
     tooltip: { trigger: "axis", confine: true, formatter: (points) => {
       const concurrency = points?.[0]?.value?.[0];
       const header = `${l("concurrency")}: ${number(concurrency, 0)}`;
-      const rows = (points || []).map((point) => {
-        const change = Number(point.value[1]);
-        const changeText = `${change > 0 ? "+" : ""}${number(change)}%`;
-        const raw = point.data?.raw;
-        return `${point.marker}${escapeHtml(point.seriesName)}: ${changeText}<br>${l("measured")}: ${speedLabel(raw)}`;
-      });
+      const rows = (points || []).map((point) => `${point.marker}${escapeHtml(point.seriesName)}: ${speedLabel(Array.isArray(point.value) ? point.value[1] : point.value)}`);
       return [header, ...rows].join("<br>");
     } },
     legend: { type: "scroll", bottom: 0 }, grid: { top: 48, left: 82, right: 25, bottom: 68 },
     xAxis: { type: "value", name: l("concurrency"), minInterval: 1, axisLabel: { formatter: (value) => number(value, 0) } },
-    yAxis: { type: "value", name: l("relativeChange"), axisLabel: { formatter: (value) => `${value > 0 ? "+" : ""}${number(value)}%` } }, series,
+    yAxis: { type: "value", name: l("speed"), axisLabel: { formatter: (value) => speedLabel(value) } }, series,
   }, true);
   chart.resize();
 }
@@ -235,11 +227,13 @@ async function command(action) {
   }
 }
 
-function exportSelected() {
-  const blob = new Blob([JSON.stringify({ schema_version: 2, history: data.history.filter((item) => selected.has(item.id)) }, null, 2)], { type: "application/json" });
+function exportCurrent() {
+  const item = viewed ? data.history.find((entry) => entry.id === viewed) : null;
+  if (!item) return;
+  const blob = new Blob([JSON.stringify({ schema_version: 2, history: [item] }, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
-  link.href = url; link.download = "throughput-comparison.json"; link.click();
+  link.href = url; link.download = `throughput-${item.id}.json`; link.click();
   setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
@@ -253,26 +247,23 @@ function bind() {
     catch (error) { if (visible && epoch === generation) $("tpFeedback").textContent = error.message; }
   });
   $("tpCurrent").addEventListener("click", () => { viewed = ""; render(); });
-  $("tpSelectValid").addEventListener("click", () => { selected.clear(); data.history.filter(selectableResult).forEach((item) => selected.add(item.id)); render(); });
-  $("tpClear").addEventListener("click", () => { selected.clear(); render(); });
-  $("tpExport").addEventListener("click", exportSelected);
-  $("tpHistory").addEventListener("change", (event) => {
-    const id = event.target.dataset.select;
-    if (!id) return;
-    if (event.target.checked) selected.add(id); else selected.delete(id);
-    render();
-  });
+  $("tpExport").addEventListener("click", exportCurrent);
   $("tpHistory").addEventListener("click", (event) => {
-    const target = event.target.closest("button");
-    if (target?.dataset.view) {
-      viewed = target.dataset.view; render();
-      // Keep the selected details visible even when the history pane was scrolled.
-      $("tpDetail").closest("section").scrollIntoView({ block: "start" });
-    }
-    if (target?.dataset.reuse && !running() && !busy) {
-      const item = data.history.find((item) => item.id === target.dataset.reuse);
+    // The reuse button restores a run's configuration without changing the view.
+    const reuse = event.target.closest("button")?.dataset.reuse;
+    if (reuse) {
+      if (running() || busy) return;
+      const item = data.history.find((entry) => entry.id === reuse);
       if (item) { restoreForm(item.config); saveForm(); $("tpModel").focus(); }
+      return;
     }
+    const row = event.target.closest("tr[data-view]");
+    if (row) { viewed = row.dataset.view; render(); }
+  });
+  $("tpHistory").addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    const row = event.target.closest("tr[data-view]");
+    if (row) { event.preventDefault(); viewed = row.dataset.view; render(); }
   });
 }
 
@@ -304,7 +295,7 @@ export function toggleThroughputPolling(active) {
   pending?.abort(); pending = null;
   socket?.close(); socket = null;
   if (!active) { observer?.disconnect(); return; }
-  observer?.observe($("tpChart"));
+  observer.observe($("tpChart"));
   chart?.resize();
   void refresh(); void connect(generation);
   poll = setInterval(() => { if (!socket || socket.readyState !== WebSocket.OPEN) void refresh(); }, 3000);

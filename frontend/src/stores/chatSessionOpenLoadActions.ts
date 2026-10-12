@@ -1,3 +1,4 @@
+// AI生成
 import { hydrateChatThreadRuntime } from '@/realtime/chat/chatThreadRuntime';
 import { syncChatThreadShell } from './chatThreadEffects';
 import { getThreadLogSnapshot } from '@/api/chat';
@@ -148,6 +149,12 @@ import {
 
 const resolveLoadSessionsCacheKey = (agentId: string | null) =>
   resolveLoadSessionsCacheKeyBase(agentId, resolveSessionListCacheKey);
+
+// Upper bound on how long opening a session waits for the atomic thread snapshot
+// before falling back to the transcript. Stress-sized sessions (millions of
+// items) would otherwise stall the whole open for the full 30s HTTP timeout
+// while the snapshot serializes and transfers.
+const SESSION_OPEN_THREAD_SNAPSHOT_DEADLINE_MS = 8000;
 
 const readLoadSessionsCacheEntry = (agentId: string | null, maxAgeMs: number) =>
   agentId === null
@@ -700,6 +707,20 @@ export const chatSessionOpenLoadActions = {
         try {
           if (!sessionDetail || !eventsPayload || !workflowEventsPayload) {
             perfFetchStart = perfEnabled ? performance.now() : 0;
+            // Bound the atomic thread snapshot: abort it at the deadline (or when
+            // the caller aborts) so a stress-sized session cannot hold the whole
+            // open for the full 30s HTTP timeout. It resolves to null and the
+            // transcript fallback below renders content instead.
+            const snapshotController = new AbortController();
+            const forwardDetailAbort = () => snapshotController.abort();
+            if (detailAbortController) {
+              if (detailAbortController.signal.aborted) snapshotController.abort();
+              else detailAbortController.signal.addEventListener('abort', forwardDetailAbort, { once: true });
+            }
+            const snapshotDeadlineId = window.setTimeout(
+              () => snapshotController.abort(),
+              SESSION_OPEN_THREAD_SNAPSHOT_DEADLINE_MS
+            );
             [sessionRes, eventsPayload, workflowEventsPayload, threadSnapshot] = await Promise.all([
               sessionDetail
                 ? Promise.resolve(null)
@@ -731,7 +752,18 @@ export const chatSessionOpenLoadActions = {
               loadSessionWorkflowEventsSnapshot(targetSessionId, {
                 signal: detailAbortController?.signal
               }).catch(() => null),
-              getThreadLogSnapshot(targetSessionId, detailAbortController ? { signal: detailAbortController.signal } : {})
+              // A missing snapshot must never reject the whole Promise.all —
+              // otherwise the entire session open throws, the thread runtime is
+              // never hydrated and the chat blanks to the activity grid. It
+              // settles to null on failure/deadline and the transcript fallback
+              // below renders content instead. The deadline timer is always
+              // cleared here, whichever way the request settles.
+              getThreadLogSnapshot(targetSessionId, { signal: snapshotController.signal })
+                .catch(() => null)
+                .finally(() => {
+                  window.clearTimeout(snapshotDeadlineId);
+                  detailAbortController?.signal.removeEventListener('abort', forwardDetailAbort);
+                })
             ]);
             if (detailAbortController?.signal.aborted || isStaleDesktopSessionDetailLoad(this, targetSessionId, preserveWatcher)) {
               return null;

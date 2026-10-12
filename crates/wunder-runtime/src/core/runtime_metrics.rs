@@ -46,6 +46,7 @@ pub struct BlockingMetricSnapshot {
     pub queue_timeouts: u64,
     pub exec_timeouts: u64,
     pub join_errors: u64,
+    pub class_rejects: u64,
     pub in_flight: u64,
     pub avg_queue_ms: f64,
     pub max_queue_ms: u64,
@@ -107,6 +108,7 @@ struct BlockingMetric {
     queue_timeouts: AtomicU64,
     exec_timeouts: AtomicU64,
     join_errors: AtomicU64,
+    class_rejects: AtomicU64,
     in_flight: AtomicU64,
     total_queue_ms: AtomicU64,
     max_queue_ms: AtomicU64,
@@ -209,6 +211,14 @@ pub fn record_blocking_join_error(kind: &str, label: &str, queued_ms: u64) {
     update_max(&metric.max_queue_ms, queued_ms);
 }
 
+/// A request declined without waiting because every permit of the class is stuck.
+/// Deliberately not counted as a call: it never queued and never executed, so it
+/// must not dilute the average queue and exec times.
+pub fn record_blocking_class_reject(kind: &str, label: &str) {
+    let metric = blocking_metric(kind, label);
+    metric.class_rejects.fetch_add(1, Ordering::Relaxed);
+}
+
 pub fn record_queue_config(name: &str, capacity: usize, max_in_flight: usize) {
     let metric = queue_metric(name);
     update_max(&metric.capacity, capacity.max(1) as u64);
@@ -293,7 +303,8 @@ pub fn snapshot() -> RuntimeMetricsSnapshot {
     let queues = snapshot_queues();
     let long_tasks = snapshot_long_tasks();
     let loop_ticks = snapshot_loop_ticks();
-    let alerts = build_alerts(&blocking, &queues, &long_tasks);
+    let mut alerts = class_stall_alerts();
+    alerts.extend(build_alerts(&blocking, &queues, &long_tasks));
     RuntimeMetricsSnapshot {
         generated_at_s: now_ts(),
         blocking,
@@ -396,6 +407,7 @@ fn snapshot_blocking() -> Vec<BlockingMetricSnapshot> {
                 queue_timeouts: metric.queue_timeouts.load(Ordering::Relaxed),
                 exec_timeouts: metric.exec_timeouts.load(Ordering::Relaxed),
                 join_errors: metric.join_errors.load(Ordering::Relaxed),
+                class_rejects: metric.class_rejects.load(Ordering::Relaxed),
                 in_flight: metric.in_flight.load(Ordering::Relaxed),
                 avg_queue_ms: avg(total_queue_ms, calls),
                 max_queue_ms: metric.max_queue_ms.load(Ordering::Relaxed),
@@ -506,6 +518,28 @@ fn snapshot_loop_ticks() -> Vec<LoopTickMetricSnapshot> {
             .then_with(|| left.label.cmp(&right.label))
     });
     items
+}
+
+/// Reports a blocking class whose whole reserve is held by operations that
+/// already outlived their execution timeout. Kept out of `build_alerts` because
+/// it reads live process state rather than the passed-in snapshots.
+fn class_stall_alerts() -> Vec<RuntimeMetricAlert> {
+    super::blocking::class_stalls()
+        .into_iter()
+        .map(|stall| RuntimeMetricAlert {
+            severity: if stall.stalled_permits >= stall.concurrency {
+                "critical"
+            } else {
+                "warning"
+            },
+            source: "blocking_class",
+            label: stall.kind.to_string(),
+            message: format!(
+                "stalled_permits={}/{} exceeded their execution timeout and still hold the permit",
+                stall.stalled_permits, stall.concurrency
+            ),
+        })
+        .collect()
 }
 
 fn build_alerts(
@@ -770,6 +804,7 @@ mod tests {
             queue_timeouts: 1,
             exec_timeouts: 0,
             join_errors: 0,
+            class_rejects: 0,
             in_flight: 0,
             avg_queue_ms: super::ALERT_BLOCKING_MAX_QUEUE_MS as f64,
             max_queue_ms: super::ALERT_BLOCKING_MAX_QUEUE_MS,
@@ -796,6 +831,7 @@ mod tests {
             queue_timeouts: 0,
             exec_timeouts: 0,
             join_errors: 0,
+            class_rejects: 0,
             in_flight: 0,
             avg_queue_ms: 0.0,
             max_queue_ms: 0,

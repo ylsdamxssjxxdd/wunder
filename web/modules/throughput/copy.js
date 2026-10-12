@@ -1,3 +1,4 @@
+// AI生成
 import { getCurrentLanguage } from "../i18n.js?v=20260710-01";
 
 const copy = {
@@ -14,7 +15,7 @@ const copy = {
   outputHint: ["设置本次测试的输出上限，详情会记录 API 实际输出量。", "Sets the output limit; details record the actual API output."],
   privacy: ["仅保留最近 50 次性能摘要，不创建用户、会话或线程日志。", "Only the latest 50 performance summaries are retained. No users, sessions or thread logs are created."],
   start: ["开始测试", "Start test"], stop: ["停止测试", "Stop test"], stopping: ["正在停止", "Stopping"],
-  refresh: ["刷新", "Refresh"], export: ["导出所选数据", "Export selected"],
+  refresh: ["刷新", "Refresh"], exportCurrent: ["导出当前记录", "Export current"],
   details: ["测试详情", "Test details"], empty: ["选择模型、输入和输出长度，开始第一次测试。", "Select a model, input length and output length to start your first test."],
   current: ["查看当前测试", "View current test"], historical: ["历史结果", "Historical result"],
   running: ["测试中", "Running"], finished: ["已完成", "Completed"], incomplete: ["已记录", "Recorded"], error: ["请求失败", "Request failed"], stopped: ["已停止", "Stopped"], idle: ["等待测试", "Ready"],
@@ -31,12 +32,12 @@ const copy = {
   time: ["测试时间", "Test time"], reason: ["结束原因", "Finish reason"], unknown: ["API 未提供", "Not reported by API"],
   persistError: ["摘要保存失败；当前结果仍可导出，重启后可能丢失。", "Summary could not be saved. Export it now; it may be lost after restart."],
   comparison: ["历史性能对比", "Historical performance"],
-  comparisonHint: ["横轴为并发数；纵轴以 1 并发为基准显示变化百分比。勾选历史记录可叠加比较。", "Concurrency is on the x-axis; the y-axis shows percentage change relative to concurrency 1. Select history rows to compare."],
-  relativeChange: ["相对 1 并发变化", "Change vs. concurrency 1"], measured: ["实测", "Measured"],
+  comparisonHint: ["横轴为并发数，纵轴为该次测试各并发档的实测速度。点击下方历史记录即可查看对应结果。", "Concurrency is on the x-axis; the y-axis shows the measured speed of each concurrency level in the viewed run. Click a history row to inspect its result."],
+  speed: ["速度 (tok/s)", "Speed (tok/s)"], viewing: ["当前查看", "Viewing"],
   metric: ["指标", "Metric"], axis: ["横轴", "X axis"], axisInput: ["上下文长度", "Context length"], axisTime: ["测试时间", "Test time"],
-  history: ["测试历史", "Test history"], select: ["加入对比", "Compare"], view: ["详情", "Details"], reuse: ["复用配置", "Reuse"],
-  selectValid: ["选择可比较记录", "Select comparable records"], clear: ["清空选择", "Clear selection"], none: ["暂无历史数据", "No history yet"],
-  chartEmpty: ["选择包含 1 并发基线的历史记录后显示性能曲线", "Select history records that include concurrency 1 to display performance curves"],
+  history: ["测试历史", "Test history"], view: ["查看", "View"], reuse: ["复用配置", "Reuse"],
+  none: ["暂无历史数据", "No history yet"],
+  chartEmpty: ["点击下方历史记录后显示该次测试的性能曲线", "Click a history row to display that run's performance curves"],
   chartUnavailable: ["图表组件不可用，实测数据仍可在列表中查看或导出。", "Chart component unavailable. Measurements remain available in the table and export."],
   connected: ["实时同步", "Live"], reconnecting: ["正在重连，定时补水中", "Reconnecting; refreshing snapshots"],
   noModels: ["请先配置并启用语言模型", "Configure and enable a language model first"],
@@ -44,7 +45,7 @@ const copy = {
   batchProgress: ["正在测试第 {current} / {total} 个并发档", "Testing concurrency point {current} / {total}"],
   batchSamples: ["并发档结果", "Concurrency points"],
   contextError: ["输入与输出之和超过该模型配置的上下文窗口", "Input plus output exceeds the model's configured context window"],
-  selected: ["已选", "Selected"], status: ["状态", "Status"],
+  status: ["状态", "Status"],
   measurement: ["整体生成速度只计算首字之后的并发批次生成区间，不含预填充；它按批次墙钟时间计算，所以不一定等于单生成速度乘以并发数。预填充速度包含网络等待，首字延迟按并发请求取平均。", "Overall generation speed covers only the concurrent generation interval after the first token, excluding prefill. It uses batch wall time, so it may differ from per-request generation speed multiplied by concurrency. Prefill includes network wait, and TTFT is averaged across requests."],
 };
 export const label = (key) => copy[key]?.[getCurrentLanguage().startsWith("zh") ? 0 : 1] ?? key;

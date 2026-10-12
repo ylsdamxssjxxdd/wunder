@@ -1,5 +1,30 @@
 <template>
-  <template v-for="block in renderBlocks" :key="block.id">
+  <!--
+    工作过程：一轮里除最后一段正式回复以外的所有中间内容（各轮模型的中间
+    打印、思考、工具批次）折进这一条，默认收起。收起时中间块整体不渲染，展开后
+    批次条跟随展开，条目分页与限宽语义不变。
+  -->
+  <button
+    v-if="fold.enabled"
+    class="timeline-process-head"
+    :class="{ 'is-open': processOpen }"
+    type="button"
+    data-turn-slot="process"
+    :aria-expanded="processOpen"
+    @click="toggleProcess"
+  >
+    <span class="timeline-process-gutter" aria-hidden="true">
+      <i
+        :class="['fa-solid', 'fa-caret-right', 'timeline-process-arrow', { 'is-open': processOpen }]"
+      ></i>
+      <span v-if="processOpen" class="timeline-process-gutter-line"></span>
+    </span>
+    <span class="timeline-process-title">{{ t('chat.timeline.workProcess') }}</span>
+    <span class="timeline-process-count">{{ t('chat.timeline.workProcessSteps', { count: fold.steps }) }}</span>
+    <span v-if="!processOpen && fold.summary" class="timeline-process-latest">{{ fold.summary }}</span>
+  </button>
+
+  <template v-for="block in visibleBlocks" :key="block.id">
     <div
       v-if="block.kind === 'activity'"
       class="timeline-group"
@@ -104,12 +129,17 @@ import { t } from '@/i18n';
  * `frontend-slint/ui/timeline.slint` 的 `BodyBlock` / `FoldEntry` / `GroupBar`）：
  * 正文块（全宽、无气泡）与思考/工具批次按投影给定的到达顺序交错铺开。
  *
+ * 一轮里最后一段正文之前的中间内容（各轮模型的中间打印、思考、工具批次）折进
+ * 一条「工作过程」，默认收起：收起时折叠体整体不渲染，用户只看到过程条目
+ * 与最终回复；展开后其中的批次跟随铺开。只剩一个批次时不套这层外壳，批次栏
+ * 本身就是一行折叠。
+ *
  * `MessageTimelineAssistant`（主时间线）与子智能体详情弹窗共用本组件，
  * 保证子线程运行过程与主时间线是同一套渲染形态。
  *
  * 数据契约：块列表与工作流投影由调用方供给；投影层按行对象**原地**改写，
  * 因此 `contentVersion`（内容时钟）变化时本组件整体重算，行内文本才不落后帧。
- * 渲染状态（批次开合、条目开合、分页窗口）是组件私有的纯渲染状态。
+ * 渲染状态（过程区/批次开合、条目开合、分页窗口）是组件私有的纯渲染状态。
  */
 const props = withDefaults(defineProps<{
   blocks: ChatRuntimeTimelineBlock[];
@@ -117,7 +147,7 @@ const props = withDefaults(defineProps<{
   sessionId?: string;
   /** 身份变化时复位展开状态（虚拟列表复用行组件 / 弹窗切换运行）。 */
   identityKey?: string;
-  /** 最后一批是否默认展开；主时间线按 MAX_OPEN_TURNS 下发。 */
+  /** 本轮是否默认展开：过程区与其中的批次一起展开（子智能体详情用），主时间线收起。 */
   defaultOpen?: boolean;
   /** 最后一段正文是否仍在流式输出。 */
   streaming?: boolean;
@@ -153,8 +183,6 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   (event: 'markdown-rendered', detail: unknown): void;
   (event: 'history-hydrated', detail: Record<string, unknown>): void;
-  /** 本轮是否存在工具批次（主时间线据此套用 MAX_OPEN_TURNS 上限）。 */
-  (event: 'activity', active: boolean): void;
 }>();
 
 defineOptions({ inheritAttrs: false });
@@ -182,6 +210,14 @@ type RenderActivityBlock = {
 };
 
 type RenderBlock = RenderBodyBlock | RenderActivityBlock;
+
+/** 过程区折叠计划：`finalIndex` 是留在折叠体外面的最后一段正文。 */
+type TimelineFold = {
+  enabled: boolean;
+  finalIndex: number;
+  steps: number;
+  summary: string;
+};
 
 // ------------------------------------------------------- 工具/思考条目
 
@@ -215,23 +251,52 @@ const toolEntryByItemId = computed(() => {
   return map;
 });
 
-const reasoningSummaryOf = (text: string): string => {
+const foldSummaryOf = (text: string): string => {
   const normalized = text.replace(/\s+/g, ' ').trim();
   return normalized.length > 160 ? `${normalized.slice(0, 160)}…` : normalized;
 };
 
+// ------------------------------------------------------------ 展开状态
+
+/** 整轮默认展开时，过程区与其中的批次一起铺开（子智能体详情）。 */
+const groupOpen = ref(props.defaultOpen);
+/** 过程区开合：主时间线默认收起，用户点过以用户为准。 */
+const processOpen = ref(props.defaultOpen);
+/** 每个批次各自的开合覆盖；未点过的批次跟随整轮默认值。 */
+const activityOpenState = ref<Record<string, boolean>>({});
+const reasoningOpenKeys = ref<string[]>([]);
+const entryOpenKeys = ref<string[]>([]);
+const ENTRY_OPEN_LIMIT = MAX_OPEN_ENTRIES_PER_TURN;
+
+const activityTitle = (block: RenderActivityBlock): string =>
+  block.toolCount > 0
+    ? t('chat.timeline.toolGroupOpen', { count: block.toolCount })
+    : t('chat.timeline.processed');
+
 // ------------------------------------------------- 时间线块（正文/批次交错）
 
-const renderBlocks = computed<RenderBlock[]>(() => {
+const EMPTY_FOLD: TimelineFold = { enabled: false, finalIndex: 0, steps: 0, summary: '' };
+
+/**
+ * 块装配与过程区折叠计划一次算完：`finalIndex` 之前的块属于工作过程，
+ * 最后一段正文（及其之后的零星批次）留在折叠体外面直接可见。
+ */
+const timeline = computed<{ blocks: RenderBlock[]; fold: TimelineFold }>(() => {
   // 与数据侧同一张内容时钟：块里的正文是投影层组合好的最新文本，
   // 行对象上的副本可能落后一帧，不订阅时钟就会停在首帧。
   void props.contentVersion;
   const blocks = props.blocks;
   const lastBodyIndex = blocks.reduce((last, block, index) => (block.kind === 'body' ? index : last), -1);
   const lastActivityIndex = blocks.reduce((last, block, index) => (block.kind === 'activity' ? index : last), -1);
+  // 折叠体里只剩一个批次时，批次栏本身就是一行折叠，不再套第二层外壳。
+  const foldEnabled = lastBodyIndex > 0
+    && (lastBodyIndex >= 2 || blocks.slice(0, lastBodyIndex).some((block) => block.kind === 'body'));
   const claimed = new Set<string>();
-  return blocks.map((block, index): RenderBlock => {
+  let steps = 0;
+  const rendered = blocks.map((block, index): RenderBlock => {
+    const inProcess = foldEnabled && index < lastBodyIndex;
     if (block.kind === 'body') {
+      if (inProcess) steps += 1;
       const isLastBlock = index === blocks.length - 1;
       return {
         kind: 'body',
@@ -262,7 +327,7 @@ const renderBlocks = computed<RenderBlock[]>(() => {
             streaming: row.streaming === undefined
               ? index === lastActivityIndex && props.streaming
               : Boolean(row.streaming),
-            summary: reasoningSummaryOf(text),
+            summary: foldSummaryOf(text),
             text
           }
         });
@@ -281,12 +346,15 @@ const renderBlocks = computed<RenderBlock[]>(() => {
         rows.push({ kind: 'tool', key: entry.key, entry });
       });
     }
+    if (inProcess) steps += rows.length;
     const toolCount = rows.reduce((count, row) => count + (row.kind === 'tool' ? 1 : 0), 0);
     const latestRow = rows[rows.length - 1];
     return {
       kind: 'activity',
       id: block.id,
-      open: activityOpenState.value[block.id] ?? (index === lastActivityIndex && groupOpen.value),
+      // 过程区展开就是用户要看过程，批次跟随过程区一起打开；点过的批次以用户为准。
+      open: activityOpenState.value[block.id]
+        ?? (inProcess ? processOpen.value : index === lastActivityIndex && groupOpen.value),
       rows,
       toolCount,
       latestSummary: latestRow
@@ -297,6 +365,26 @@ const renderBlocks = computed<RenderBlock[]>(() => {
       isLast: index === blocks.length - 1
     };
   });
+
+  if (!foldEnabled) return { blocks: rendered, fold: EMPTY_FOLD };
+  let summary = '';
+  for (let index = lastBodyIndex - 1; index >= 0 && !summary; index -= 1) {
+    const block = rendered[index];
+    summary = block.kind === 'activity' ? block.latestSummary : foldSummaryOf(block.text);
+  }
+  return {
+    blocks: rendered,
+    fold: { enabled: true, finalIndex: lastBodyIndex, steps, summary }
+  };
+});
+
+const fold = computed<TimelineFold>(() => timeline.value.fold);
+
+/** 收起时折叠体整体不渲染：中间的正文与条目不进 DOM。 */
+const visibleBlocks = computed<RenderBlock[]>(() => {
+  const { blocks, fold: plan } = timeline.value;
+  if (!plan.enabled || processOpen.value) return blocks;
+  return blocks.slice(plan.finalIndex);
 });
 
 const patchViews = computed<Record<string, ToolWorkflowPatchView | null>>(() => {
@@ -311,32 +399,12 @@ const patchViews = computed<Record<string, ToolWorkflowPatchView | null>>(() => 
 const patchViewFor = (entry: TimelineToolEntry): ToolWorkflowPatchView | null =>
   patchViews.value[entry.key] || null;
 
-// ------------------------------------------------------------ 展开状态
-
-const hasActivityGroup = computed(() =>
-  props.blocks.some((block) => block.kind === 'activity')
-);
-/** 整轮是否默认展开批次栏：主时间线按 MAX_OPEN_TURNS 下发。 */
-const groupOpen = ref(props.defaultOpen);
-/** 每个批次各自的开合覆盖；未点过的批次跟随整轮默认值。 */
-const activityOpenState = ref<Record<string, boolean>>({});
-const reasoningOpenKeys = ref<string[]>([]);
-const entryOpenKeys = ref<string[]>([]);
-const ENTRY_OPEN_LIMIT = MAX_OPEN_ENTRIES_PER_TURN;
-
-watch(
-  hasActivityGroup,
-  (visible) => emit('activity', Boolean(visible)),
-  { immediate: true }
-);
-
-const activityTitle = (block: RenderActivityBlock): string =>
-  block.toolCount > 0
-    ? t('chat.timeline.toolGroupOpen', { count: block.toolCount })
-    : t('chat.timeline.processed');
+const toggleProcess = (): void => {
+  processOpen.value = !processOpen.value;
+};
 
 const toggleActivity = (id: string): void => {
-  const block = renderBlocks.value.find((item) => item.id === id);
+  const block = timeline.value.blocks.find((item) => item.id === id);
   if (!block || block.kind !== 'activity') return;
   activityOpenState.value = { ...activityOpenState.value, [id]: !block.open };
 };
@@ -370,6 +438,7 @@ watch(
     reasoningOpenKeys.value = [];
     entryOpenKeys.value = [];
     activityOpenState.value = {};
+    processOpen.value = Boolean(props.defaultOpen);
     entryRenderLimit.value = TIMELINE_ENTRY_RENDER_LIMIT;
   }
 );
@@ -379,6 +448,7 @@ watch(
   () => props.defaultOpen,
   (open) => {
     groupOpen.value = Boolean(open);
+    processOpen.value = Boolean(open);
     activityOpenState.value = {};
   }
 );
@@ -400,6 +470,89 @@ watch(
 
 .timeline-body-block:hover {
   background: rgba(246, 245, 243, 0.45);
+}
+
+/* ----------------------------------------------- 工作过程折叠条
+   一轮的过程入口：标题 + 步数，收起时再给出最新一条摘要。沟槽基准与批次栏
+   一致（箭头压在时间线竖线上，标题落在条目行状态图标同一列 x=52）。 */
+.timeline-process-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-sizing: border-box;
+  width: 100%;
+  height: 34px;
+  padding: 0 24px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--mz-text-secondary, #3d3d3d);
+  font-size: calc(13px * var(--messenger-font-scale, 1));
+  text-align: left;
+  cursor: pointer;
+}
+
+.timeline-process-head:hover {
+  background: var(--mz-timeline-hover, #f6f5f3);
+}
+
+.timeline-process-gutter {
+  position: relative;
+  flex: 0 0 auto;
+  align-self: stretch;
+  width: 20px;
+}
+
+.timeline-process-gutter-line {
+  position: absolute;
+  top: calc(50% + 7px);
+  bottom: 0;
+  left: 9.5px;
+  width: 1px;
+  background: var(--mz-timeline-line, #e2dfda);
+}
+
+.timeline-process-arrow {
+  position: absolute;
+  top: 50%;
+  left: 4px;
+  width: 12px;
+  margin-top: -6px;
+  color: var(--mz-text-muted, #8a8f99);
+  font-size: 11px;
+  line-height: 12px;
+  text-align: center;
+  transition: transform 0.16s ease;
+}
+
+.timeline-process-arrow.is-open {
+  transform: rotate(90deg);
+}
+
+.timeline-process-title {
+  flex: 0 0 auto;
+  font-weight: 600;
+}
+
+.timeline-process-count {
+  flex: 0 0 auto;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--mz-selected, #edeae6);
+  color: var(--mz-text-muted, #8a8f99);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.timeline-process-latest {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--mz-text-muted, #8a8f99);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* ------------------------------------------------------- 工具分组折叠条 */

@@ -1,10 +1,4 @@
 <template>
-  <MessengerTimelineDetailDialog
-    :visible="timelineDetailDialogVisible"
-    :session-id="timelineDetailSessionId"
-    @update:visible="updateTimelineDetailDialogVisible"
-  />
-
   <MessengerPromptPreviewDialog
     :visible="agentPromptPreviewVisible"
     :loading="agentPromptPreviewLoading"
@@ -62,15 +56,12 @@ import DrawioEditorDialog from '@/components/chat/DrawioEditorDialog.vue';
 import OnlyOfficeEditorDialog from '@/components/chat/OnlyOfficeEditorDialog.vue';
 import {
   MessengerResourcePreviewDialog,
-  MessengerPromptPreviewDialog,
-  MessengerTimelineDetailDialog
+  MessengerPromptPreviewDialog
 } from './asyncDialogs';
 import type { PromptToolingPreviewItem } from '@/utils/promptToolingPreview';
 import type { WorkspaceResourcePreviewKind } from '@/utils/workspaceResourcePreview';
 
 const {
-  timelineDetailDialogVisible,
-  timelineDetailSessionId,
   agentPromptPreviewVisible,
   agentPromptPreviewLoading,
   activeAgentPromptPreviewHtml,
@@ -100,8 +91,6 @@ const {
   drawioUserId,
   drawioSidebarVisible
 } = defineProps<{
-  timelineDetailDialogVisible: boolean;
-  timelineDetailSessionId: string;
   agentPromptPreviewVisible: boolean;
   agentPromptPreviewLoading: boolean;
   activeAgentPromptPreviewHtml: string;
@@ -137,15 +126,10 @@ const {
 }>();
 
 const emit = defineEmits<{
-  (event: 'update:timelineDetailDialogVisible', value: boolean): void;
   (event: 'update:agentPromptPreviewVisible', value: boolean): void;
   (event: 'update:onlyOfficeVisible', value: boolean): void;
   (event: 'update:drawioVisible', value: boolean): void;
 }>();
-
-const updateTimelineDetailDialogVisible = (value: boolean) => {
-  emit('update:timelineDetailDialogVisible', value);
-};
 
 const updateAgentPromptPreviewVisible = (value: boolean) => {
   emit('update:agentPromptPreviewVisible', value);

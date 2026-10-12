@@ -77,6 +77,11 @@ export struct TimelineRow {
     open: bool,
     group-idx: int,
     group-open: bool,
+    // The turn's work-process fold (§7.3 A): every row before the turn's newest
+    // answer block carries its turn's `process-idx` and follows `process-open`.
+    // The bar row owns the label and the step count; -1 means "not folded".
+    process-idx: int,
+    process-open: bool,
     payload: int,
     patch: [PatchCard],
     // End-of-turn metrics (duration / speed / context occupancy / consumed

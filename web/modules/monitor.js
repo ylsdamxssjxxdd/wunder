@@ -1,3 +1,4 @@
+// AI生成
 import { APP_CONFIG } from "../app.config.js?v=20260110-04";
 import { elements } from "./elements.js?v=20261011-01";
 import { state } from "./state.js";
@@ -4321,6 +4322,13 @@ const requestCancelSession = async (sessionId) => {
 
 export const initMonitorPanel = () => {
   ensureMonitorState();
+  // 工具清单变更时使热力图工具清单缓存失效（治本·领域事件订阅）
+  if (!state.monitor.toolsInvalidationBound && typeof window !== "undefined") {
+    state.monitor.toolsInvalidationBound = true;
+    window.addEventListener("wunder:tools-updated", () => {
+      state.monitor.availableToolsUpdatedAt = 0;
+    });
+  }
   bindToolHeatmapScrollPersistence();
   ensureMonitorCharts();
   bindMonitorPagination();

@@ -1,5 +1,8 @@
 use super::SqliteStorage;
-use crate::storage::{StorageLifecycle, TOOL_LOG_EXCLUDED_NAMES, TOOL_LOG_SKILL_READ_MARKER};
+use crate::storage::{
+    StorageLifecycle, USAGE_CHAT_WATERMARK_KEY, USAGE_FULL_RECONCILE_INTERVAL_S,
+    USAGE_FULL_RECONCILE_KEY, USAGE_TOOL_WATERMARK_KEY,
+};
 use anyhow::Result;
 use rusqlite::types::Value as SqlValue;
 use rusqlite::{params, params_from_iter};
@@ -9,6 +12,8 @@ use std::collections::HashMap;
 pub(super) trait SqliteLogStatsStorage {
     fn get_user_chat_stats_impl(&self) -> Result<HashMap<String, HashMap<String, i64>>>;
     fn get_user_tool_stats_impl(&self) -> Result<HashMap<String, HashMap<String, i64>>>;
+    fn get_user_usage_summary_impl(&self) -> Result<HashMap<String, (i64, i64)>>;
+    fn reconcile_user_usage_impl(&self, full: bool) -> Result<()>;
     fn get_tool_usage_stats_impl(
         &self,
         since_time: Option<f64>,
@@ -45,17 +50,70 @@ pub(super) trait SqliteLogStatsStorage {
     fn delete_deleted_session_log_grace_impl(&self, user_id: &str, session_id: &str) -> Result<()>;
 }
 
-fn append_tool_log_exclusions(filters: &mut Vec<String>, params_list: &mut Vec<SqlValue>) {
-    if !TOOL_LOG_EXCLUDED_NAMES.is_empty() {
-        let placeholders = vec!["?"; TOOL_LOG_EXCLUDED_NAMES.len()].join(", ");
-        filters.push(format!("tool NOT IN ({placeholders})"));
-        for name in TOOL_LOG_EXCLUDED_NAMES {
-            params_list.push(SqlValue::from(name.to_string()));
+/// Exclusion is now a materialized column: the write path flags rows once,
+/// stats queries never rescan the payload text.
+fn append_tool_log_exclusions(filters: &mut Vec<String>) {
+    filters.push("excluded = 0".to_string());
+}
+
+pub(super) fn read_meta_f64_tx(
+    tx: &rusqlite::Transaction<'_>,
+    key: &str,
+) -> Result<Option<f64>> {
+    let value: Option<String> = tx
+        .query_row("SELECT value FROM meta WHERE key = ?1", params![key], |row| {
+            row.get(0)
+        })
+        .map(Some)
+        .or_else(|error| match error {
+            rusqlite::Error::QueryReturnedNoRows => Ok(None),
+            other => Err(other),
+        })?;
+    Ok(value.and_then(|value| value.trim().parse::<f64>().ok()))
+}
+
+pub(super) fn write_meta_f64_tx(
+    tx: &rusqlite::Transaction<'_>,
+    key: &str,
+    value: f64,
+    now: f64,
+) -> Result<()> {
+    tx.execute(
+        "INSERT INTO meta (key, value, updated_time) VALUES (?1, ?2, ?3) \
+         ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_time = excluded.updated_time",
+        params![key, value.to_string(), now],
+    )?;
+    Ok(())
+}
+
+/// Decrement summary counters for rows that were inside the reconcile
+/// watermarks when deleted. Summary values clamp at zero so a drifted
+/// summary cannot go negative; the periodic full reconcile corrects drift.
+pub(super) fn decrement_usage_summary_tx(
+    tx: &rusqlite::Transaction<'_>,
+    chat: &[(String, i64)],
+    tool: &[(String, i64)],
+    now: f64,
+) -> Result<()> {
+    for (user_id, delta) in chat {
+        if *delta > 0 {
+            tx.execute(
+                "UPDATE user_usage_summary SET chat_records = MAX(chat_records - ?2, 0), \
+                 updated_time = ?3 WHERE user_id = ?1",
+                params![user_id, delta, now],
+            )?;
         }
     }
-    let marker = format!("%{TOOL_LOG_SKILL_READ_MARKER}%");
-    filters.push("(data IS NULL OR data NOT LIKE ?)".to_string());
-    params_list.push(SqlValue::from(marker));
+    for (user_id, delta) in tool {
+        if *delta > 0 {
+            tx.execute(
+                "UPDATE user_usage_summary SET tool_records = MAX(tool_records - ?2, 0), \
+                 updated_time = ?3 WHERE user_id = ?1",
+                params![user_id, delta, now],
+            )?;
+        }
+    }
+    Ok(())
 }
 
 impl SqliteLogStatsStorage for SqliteStorage {
@@ -96,7 +154,7 @@ impl SqliteLogStatsStorage for SqliteStorage {
         );
         let mut filters = Vec::new();
         let mut params_list: Vec<SqlValue> = Vec::new();
-        append_tool_log_exclusions(&mut filters, &mut params_list);
+        append_tool_log_exclusions(&mut filters);
         if !filters.is_empty() {
             query.push_str(" WHERE ");
             query.push_str(&filters.join(" AND "));
@@ -126,6 +184,102 @@ impl SqliteLogStatsStorage for SqliteStorage {
         Ok(stats)
     }
 
+    fn get_user_usage_summary_impl(&self) -> Result<HashMap<String, (i64, i64)>> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let mut stmt = conn.prepare(
+            "SELECT user_id, chat_records, tool_records FROM user_usage_summary",
+        )?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            })?
+            .collect::<std::result::Result<Vec<(String, i64, i64)>, _>>()?;
+        let mut summary = HashMap::new();
+        for (user_id, chat_records, tool_records) in rows {
+            let cleaned = user_id.trim();
+            if cleaned.is_empty() {
+                continue;
+            }
+            summary.insert(cleaned.to_string(), (chat_records, tool_records));
+        }
+        Ok(summary)
+    }
+
+    fn reconcile_user_usage_impl(&self, full: bool) -> Result<()> {
+        self.ensure_initialized()?;
+        let mut conn = self.open()?;
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let now = Self::now_ts();
+        let last_full = read_meta_f64_tx(&tx, USAGE_FULL_RECONCILE_KEY)?;
+        let needs_full = full
+            || last_full.is_none()
+            || now - last_full.unwrap_or(0.0) >= USAGE_FULL_RECONCILE_INTERVAL_S;
+        if needs_full {
+            // Full recompute: replace the summary in one transaction. Chat
+            // counts follow the thread_logs join shape so both paths agree.
+            tx.execute("DELETE FROM user_usage_summary", [])?;
+            tx.execute(
+                "INSERT INTO user_usage_summary (user_id, chat_records, tool_records, updated_time) \
+                 SELECT u.user_id, COALESCE(c.chat_records, 0), COALESCE(t.tool_records, 0), ?1 \
+                 FROM (SELECT user_id FROM thread_logs GROUP BY user_id \
+                       UNION SELECT user_id FROM tool_logs WHERE excluded = 0 GROUP BY user_id) u \
+                 LEFT JOIN (SELECT l.user_id, COUNT(i.item_id) AS chat_records \
+                            FROM thread_logs l \
+                            LEFT JOIN thread_items i ON i.session_id = l.session_id AND i.user_id = l.user_id \
+                              AND i.visibility = 'user' AND i.kind IN ('user_message','assistant_message') \
+                            GROUP BY l.user_id) c ON c.user_id = u.user_id \
+                 LEFT JOIN (SELECT user_id, COUNT(*) AS tool_records FROM tool_logs \
+                            WHERE excluded = 0 GROUP BY user_id) t ON t.user_id = u.user_id",
+                params![now],
+            )?;
+            let tool_max: i64 = tx.query_row("SELECT COALESCE(MAX(id), 0) FROM tool_logs", [], |row| row.get(0))?;
+            let chat_max: f64 = tx.query_row("SELECT COALESCE(MAX(created_time), 0) FROM thread_items", [], |row| row.get(0))?;
+            write_meta_f64_tx(&tx, USAGE_TOOL_WATERMARK_KEY, tool_max as f64, now)?;
+            write_meta_f64_tx(&tx, USAGE_CHAT_WATERMARK_KEY, chat_max, now)?;
+            write_meta_f64_tx(&tx, USAGE_FULL_RECONCILE_KEY, now, now)?;
+        } else {
+            // Incremental: aggregate only rows past the watermarks, then
+            // advance them inside the same transaction. Watermarks always
+            // move forward; a weekly full pass corrects any drift.
+            let tool_wm = read_meta_f64_tx(&tx, USAGE_TOOL_WATERMARK_KEY)?.unwrap_or(0.0) as i64;
+            let chat_wm = read_meta_f64_tx(&tx, USAGE_CHAT_WATERMARK_KEY)?.unwrap_or(0.0);
+            tx.execute(
+                "INSERT INTO user_usage_summary (user_id, chat_records, tool_records, updated_time) \
+                 SELECT user_id, 0, COUNT(*) AS delta_records, ?2 FROM tool_logs \
+                 WHERE id > ?1 AND excluded = 0 GROUP BY user_id \
+                 ON CONFLICT (user_id) DO UPDATE SET \
+                   tool_records = user_usage_summary.tool_records + excluded.delta_records, \
+                   updated_time = excluded.updated_time",
+                params![tool_wm, now],
+            )?;
+            tx.execute(
+                "INSERT INTO user_usage_summary (user_id, chat_records, tool_records, updated_time) \
+                 SELECT user_id, COUNT(*) AS delta_records, 0, ?2 FROM thread_items \
+                 WHERE created_time > ?1 AND visibility = 'user' \
+                   AND kind IN ('user_message','assistant_message') GROUP BY user_id \
+                 ON CONFLICT (user_id) DO UPDATE SET \
+                   chat_records = user_usage_summary.chat_records + excluded.delta_records, \
+                   updated_time = excluded.updated_time",
+                params![chat_wm, now],
+            )?;
+            let tool_max: i64 = tx.query_row("SELECT COALESCE(MAX(id), 0) FROM tool_logs", [], |row| row.get(0))?;
+            let chat_max: f64 = tx.query_row("SELECT COALESCE(MAX(created_time), 0) FROM thread_items", [], |row| row.get(0))?;
+            if tool_max as f64 > tool_wm as f64 {
+                write_meta_f64_tx(&tx, USAGE_TOOL_WATERMARK_KEY, tool_max as f64, now)?;
+            }
+            if chat_max > chat_wm {
+                write_meta_f64_tx(&tx, USAGE_CHAT_WATERMARK_KEY, chat_max, now)?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     fn get_tool_usage_stats_impl(
         &self,
         since_time: Option<f64>,
@@ -143,7 +297,7 @@ impl SqliteLogStatsStorage for SqliteStorage {
             filters.push("created_time <= ?".to_string());
             params_list.push(SqlValue::from(until));
         }
-        append_tool_log_exclusions(&mut filters, &mut params_list);
+        append_tool_log_exclusions(&mut filters);
         if !filters.is_empty() {
             query.push_str(" WHERE ");
             query.push_str(&filters.join(" AND "));
@@ -191,7 +345,7 @@ impl SqliteLogStatsStorage for SqliteStorage {
             filters.push("created_time <= ?".to_string());
             params_list.push(SqlValue::from(until));
         }
-        append_tool_log_exclusions(&mut filters, &mut params_list);
+        append_tool_log_exclusions(&mut filters);
         if !filters.is_empty() {
             query.push_str(" AND ");
             query.push_str(&filters.join(" AND "));
@@ -286,10 +440,33 @@ impl SqliteLogStatsStorage for SqliteStorage {
             Ok(tx.execute(&sql, params![start, end])? as i64)
         };
         let mut results = HashMap::new();
-        results.insert(
-            "tool_logs".to_string(),
-            delete_range("tool_logs", "created_time")?,
-        );
+        // tool_logs: rows inside the usage watermark were counted in the
+        // summary and must decrement it; rows past the watermark (or excluded)
+        // were never counted and are removed without adjustment. Per-user
+        // deltas are aggregated before deletion, in the same transaction.
+        let tool_wm = read_meta_f64_tx(&tx, USAGE_TOOL_WATERMARK_KEY)?.unwrap_or(0.0) as i64;
+        let tool_deltas: Vec<(String, i64)> = {
+            let mut stmt = tx.prepare(
+                "SELECT user_id, COUNT(*) FROM tool_logs WHERE created_time >= ? AND created_time <= ? \
+                 AND excluded = 0 AND id <= ? \
+                 AND NOT EXISTS (SELECT 1 FROM protected_chat_sessions p WHERE p.session_id = tool_logs.session_id) \
+                 GROUP BY user_id",
+            )?;
+            let rows = stmt
+                .query_map(params![start, end, tool_wm], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+                })?
+                .collect::<std::result::Result<Vec<(String, i64)>, _>>()?;
+            rows
+        };
+        let tool_counted_deleted = tx.execute(
+            "DELETE FROM tool_logs WHERE created_time >= ? AND created_time <= ? \
+             AND excluded = 0 AND id <= ? \
+             AND NOT EXISTS (SELECT 1 FROM protected_chat_sessions p WHERE p.session_id = tool_logs.session_id)",
+            params![start, end, tool_wm],
+        )? as i64;
+        let tool_rest = delete_range("tool_logs", "created_time")?;
+        results.insert("tool_logs".to_string(), tool_counted_deleted + tool_rest);
         results.insert(
             "artifact_logs".to_string(),
             delete_range("artifact_logs", "created_time")?,
@@ -310,6 +487,7 @@ impl SqliteLogStatsStorage for SqliteStorage {
             "chat_sessions".to_string(),
             super::session_cleanup::remove_empty_catalog(&tx, start, end, now)?,
         );
+        decrement_usage_summary_tx(&tx, &[], &tool_deltas, now)?;
         tx.execute("DROP TABLE protected_chat_sessions", [])?;
         tx.commit()?;
         Ok(results)
@@ -322,11 +500,12 @@ impl SqliteLogStatsStorage for SqliteStorage {
         }
         let mut conn = self.open()?;
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let now = Self::now_ts();
+        let chat_wm = read_meta_f64_tx(&tx, USAGE_CHAT_WATERMARK_KEY)?.unwrap_or(0.0);
         let mut removed = 0i64;
         for table in [
             "thread_item_blocks",
             "thread_log_changes",
-            "thread_items",
             "thread_turns",
             "thread_log_metrics",
             "thread_logs",
@@ -336,15 +515,39 @@ impl SqliteLogStatsStorage for SqliteStorage {
                 params![user_id],
             )? as i64;
         }
+        // thread_items: only the visible-message rows inside the chat
+        // watermark were counted; the remainder was never in the summary.
+        let counted = tx.execute(
+            "DELETE FROM thread_items WHERE user_id=? AND visibility='user' \
+             AND kind IN ('user_message','assistant_message') AND created_time <= ?",
+            params![user_id, chat_wm],
+        )? as i64;
+        let rest =
+            tx.execute("DELETE FROM thread_items WHERE user_id=?", params![user_id])? as i64;
+        removed += counted + rest;
+        decrement_usage_summary_tx(&tx, &[(user_id.to_string(), counted)], &[], now)?;
         tx.commit()?;
         Ok(removed)
     }
 
     fn delete_tool_logs_impl(&self, user_id: &str) -> Result<i64> {
         self.ensure_initialized()?;
-        let conn = self.open()?;
-        let affected = conn.execute("DELETE FROM tool_logs WHERE user_id = ?", params![user_id])?;
-        Ok(affected as i64)
+        let cleaned = user_id.trim();
+        if cleaned.is_empty() {
+            return Ok(0);
+        }
+        let mut conn = self.open()?;
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let now = Self::now_ts();
+        let tool_wm = read_meta_f64_tx(&tx, USAGE_TOOL_WATERMARK_KEY)?.unwrap_or(0.0) as i64;
+        let counted = tx.execute(
+            "DELETE FROM tool_logs WHERE user_id=? AND excluded=0 AND id <= ?",
+            params![cleaned, tool_wm],
+        )? as i64;
+        let rest = tx.execute("DELETE FROM tool_logs WHERE user_id=?", params![cleaned])? as i64;
+        decrement_usage_summary_tx(&tx, &[], &[(cleaned.to_string(), counted)], now)?;
+        tx.commit()?;
+        Ok(counted + rest)
     }
 
     fn delete_tool_logs_by_session_impl(&self, user_id: &str, session_id: &str) -> Result<i64> {
@@ -354,12 +557,21 @@ impl SqliteLogStatsStorage for SqliteStorage {
         if cleaned_user.is_empty() || cleaned_session.is_empty() {
             return Ok(0);
         }
-        let conn = self.open()?;
-        let affected = conn.execute(
-            "DELETE FROM tool_logs WHERE user_id = ? AND session_id = ?",
+        let mut conn = self.open()?;
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let now = Self::now_ts();
+        let tool_wm = read_meta_f64_tx(&tx, USAGE_TOOL_WATERMARK_KEY)?.unwrap_or(0.0) as i64;
+        let counted = tx.execute(
+            "DELETE FROM tool_logs WHERE user_id=? AND session_id=? AND excluded=0 AND id <= ?",
+            params![cleaned_user, cleaned_session, tool_wm],
+        )? as i64;
+        let rest = tx.execute(
+            "DELETE FROM tool_logs WHERE user_id=? AND session_id=?",
             params![cleaned_user, cleaned_session],
-        )?;
-        Ok(affected as i64)
+        )? as i64;
+        decrement_usage_summary_tx(&tx, &[], &[(cleaned_user.to_string(), counted)], now)?;
+        tx.commit()?;
+        Ok(counted + rest)
     }
 
     fn delete_artifact_logs_impl(&self, user_id: &str) -> Result<i64> {
@@ -476,7 +688,7 @@ mod tests {
                 "user-a",
                 &json!({
                     "session_id": "session-b",
-                    "role": "assistant",
+                    "role": "user",
                     "content": "message-b"
                 }),
             )
@@ -572,11 +784,13 @@ mod tests {
             .any(|entry| entry.get("session_id") == Some(&json!("session-c"))));
         assert!(storage.get_log_usage().expect("log usage") > 0);
 
+        // One admitted user turn writes 6 backing rows: thread_logs,
+        // thread_turns, thread_items, 2x thread_log_changes, thread_log_metrics.
         assert_eq!(
             storage
                 .delete_thread_log_by_session("user-a", "session-a")
                 .expect("delete chat by session"),
-            1
+            6
         );
         assert!(storage
             .load_thread_context_items("user-a", "session-a", 500, true)
@@ -586,7 +800,7 @@ mod tests {
             storage
                 .delete_thread_logs_by_user("user-a")
                 .expect("delete remaining chat"),
-            1
+            6
         );
         assert_eq!(
             storage

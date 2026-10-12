@@ -30,7 +30,10 @@ pub use constants::{
     MAX_SANDBOX_CONTAINER_ID, MIN_SANDBOX_CONTAINER_ID, USER_PRIVATE_CONTAINER_ID,
 };
 #[cfg(any(feature = "postgres-storage", feature = "sqlite-storage", test))]
-pub(crate) use constants::{TOOL_LOG_EXCLUDED_NAMES, TOOL_LOG_SKILL_READ_MARKER};
+pub(crate) use constants::{
+    USAGE_CHAT_WATERMARK_KEY, USAGE_FULL_RECONCILE_INTERVAL_S, USAGE_FULL_RECONCILE_KEY,
+    USAGE_TOOL_WATERMARK_KEY,
+};
 pub use factory::build_storage;
 #[cfg(feature = "postgres-storage")]
 pub use postgres::PostgresStorage;
