@@ -136,7 +136,7 @@ impl PostgresStorage {
                     &mut chat_deltas,
                     &mut tool_deltas,
                     deleted,
-                );
+                )?;
             }
             // Rows inside the usage watermarks were counted in the per-user
             // summary; decrement it exactly like the previous sweep did.
