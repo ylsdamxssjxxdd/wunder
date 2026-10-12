@@ -24,9 +24,12 @@
           </div>
 
           <div v-if="retainedMessageRenderKind === 'agent'">
+            <button v-if="!atLatest" @click="chatStore.loadSessionDetail(chatStore.activeSessionId)">回到最新消息</button>
             <div v-if="showThreadActivityCard" class="messenger-thread-activity">
               <SessionActivityCard />
             </div>
+            <div v-if="threadPhase === 'error'" role="alert" class="messenger-chat-empty">{{ threadError }} <button @click="chatStore.loadSessionDetail(chatStore.activeSessionId)">重试</button></div>
+            <div v-else-if="threadPhase === 'opening'" class="messenger-chat-empty">{{ t('common.loading') }}</div>
             <div v-if="agentVirtualTopSpacer" class="messenger-message-virtual-spacer"
               :style="{ height: `${agentVirtualTopSpacer.height}px` }" aria-hidden="true"></div>
             <template v-for="row in agentVirtualRows" :key="row.key">
@@ -168,6 +171,7 @@
 </template>
 
 <script setup lang="ts">
+import { threadViewPhase, threadViewError, threadViewAtLatest } from '@/realtime/chat/threadViewStore';
 import { computed, onUpdated } from 'vue';
 import MessengerTurnRow from './MessengerTurnRow.vue';
 import MessengerAgentBubble from './MessengerAgentBubble.vue';
@@ -216,12 +220,15 @@ const worldVirtualTopSpacer = props.controller.worldVirtualTopSpacer;
 // projection or the transcript fallback), so a failed snapshot renders rows
 // instead of the grid.
 const chatStore = props.controller.chatStore;
+const threadPhase=computed(()=>threadViewPhase(String(chatStore?.activeSessionId??'')));
+const atLatest=computed(()=>threadViewAtLatest(String(chatStore?.activeSessionId??'')));
+const threadError=computed(()=>threadViewError(String(chatStore?.activeSessionId??'')));
 const showThreadActivityCard = computed(() =>
   resolveShowThreadActivityCard({
     renderKind: retainedMessageRenderKind?.value,
     hasTurnContent: Boolean(agentTurnRowsHaveContent?.value) || Boolean(agentTurnSlots?.value?.length),
     sessionId: chatStore?.activeSessionId,
-    historyLoading: chatStore?.historyLoading?.(String(chatStore?.activeSessionId || '')) === true
+    historyLoading: chatStore?.activeSessionId ? threadPhase.value !== 'verified_empty' : false
   })
 );
 onUpdated(() => chatPerf.count('chat_message_panel_render'));

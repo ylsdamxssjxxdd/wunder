@@ -1859,6 +1859,17 @@ fn resolve_session_model_runtime(
 
 /// Same as `resolve_session_model_runtime`, but a thread model override wins
 /// over the agent configuration when it still points at a configured LLM.
+pub(super) fn session_model_view(
+    config: &crate::config::Config,
+    agent: Option<&crate::storage::UserAgentRecord>,
+    model_override: Option<&str>,
+) -> Value {
+    let runtime=resolve_session_model_runtime_with_override(config,agent,model_override);
+    json!({"model_name":runtime.as_ref().and_then(|r|r.display_name.as_ref()).map(|v|wunder_core::thread_view::preview(v,128)),
+        "model_key":runtime.as_ref().and_then(|r|r.config_key.as_ref()).map(|v|wunder_core::thread_view::preview(v,128)),
+        "context_max_tokens":runtime.as_ref().and_then(|r|r.max_context),"context_total_tokens":runtime.as_ref().and_then(|r|r.max_context)})
+}
+
 fn resolve_session_model_runtime_with_override(
     config: &crate::config::Config,
     agent_record: Option<&crate::storage::UserAgentRecord>,

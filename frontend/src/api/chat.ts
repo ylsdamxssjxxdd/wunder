@@ -104,6 +104,12 @@ export const getSessionEventsWithParams = (
 ) => api.get(`/chat/sessions/${id}/events`, { params, ...options });
 export const getThreadLogTurns = (id: string, params: QueryParams = {}, options: { signal?: AbortSignal } = {}) =>
   api.get(`/chat/sessions/${id}/thread-log/turns`, { params, ...options });
+export const getThreadViewBootstrap = (id: string, params: QueryParams = {}, options: { signal?: AbortSignal } = {}) =>
+  api.get(`/chat/sessions/${encodeURIComponent(id)}/view/bootstrap`, { params, timeout:3000, ...options });
+export const getThreadViewChatPage = (id: string, params: QueryParams = {}, options: { signal?: AbortSignal } = {}) =>
+  api.get(`/chat/sessions/${encodeURIComponent(id)}/view/chat`, { params, timeout:3000, ...options });
+export const getThreadViewBody = (id: string, bodyId: string, params: QueryParams = {}, options: { signal?: AbortSignal } = {}) =>
+  api.get(`/chat/sessions/${encodeURIComponent(id)}/bodies/${encodeURIComponent(bodyId)}`, { params, timeout:3000, ...options });
 export const getThreadLogTurn = (sessionId: string, turnId: string, params: QueryParams = {}, options: { signal?: AbortSignal } = {}) =>
   api.get(`/chat/sessions/${sessionId}/thread-log/turns/${encodeURIComponent(turnId)}`, { params, ...options });
 // Atomic thread snapshot (plan §5 M2-C): cursor + turn/item/block rows read in
@@ -229,3 +235,6 @@ export const openChatSocket = (options: OpenChatSocketOptions = {}): WebSocket =
 
 export const exportThreadLog = (sessionId: string) =>
   api.get(`/chat/sessions/${encodeURIComponent(sessionId)}/thread-log/export`, { responseType: 'blob' });
+
+export const searchThreadView = (id:string,q:string,options:{signal?:AbortSignal}={}) =>
+  api.get(`/chat/sessions/${encodeURIComponent(id)}/view/search`,{params:{q},signal:options.signal});

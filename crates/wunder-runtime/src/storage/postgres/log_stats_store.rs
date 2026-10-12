@@ -61,12 +61,7 @@ pub(super) fn read_meta_f64(tx: &mut PgTx<'_>, key: &str) -> Result<Option<f64>>
         .and_then(|row| row.get::<_, String>(0).trim().parse::<f64>().ok()))
 }
 
-pub(super) fn write_meta_f64(
-    tx: &mut PgTx<'_>,
-    key: &str,
-    value: f64,
-    now: f64,
-) -> Result<()> {
+pub(super) fn write_meta_f64(tx: &mut PgTx<'_>, key: &str, value: f64, now: f64) -> Result<()> {
     tx.execute(
         "INSERT INTO meta (key, value, updated_time) VALUES ($1, $2, $3) \
          ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_time = EXCLUDED.updated_time",
@@ -215,11 +210,14 @@ impl PostgresLogStatsStorage for PostgresStorage {
                             WHERE excluded = FALSE GROUP BY user_id) t ON t.user_id = u.user_id",
                 &[&now],
             )?;
-            let tool_max: i64 =
-                tx.query_one("SELECT COALESCE(MAX(id), 0) FROM tool_logs", &[])?
-                    .get(0);
+            let tool_max: i64 = tx
+                .query_one("SELECT COALESCE(MAX(id), 0) FROM tool_logs", &[])?
+                .get(0);
             let chat_max: f64 = tx
-                .query_one("SELECT COALESCE(MAX(created_time), 0) FROM thread_items", &[])?
+                .query_one(
+                    "SELECT COALESCE(MAX(created_time), 0) FROM thread_items",
+                    &[],
+                )?
                 .get(0);
             write_meta_f64(&mut tx, USAGE_TOOL_WATERMARK_KEY, tool_max as f64, now)?;
             write_meta_f64(&mut tx, USAGE_CHAT_WATERMARK_KEY, chat_max, now)?;
@@ -249,11 +247,14 @@ impl PostgresLogStatsStorage for PostgresStorage {
                    updated_time = EXCLUDED.updated_time",
                 &[&chat_wm, &now],
             )?;
-            let tool_max: i64 =
-                tx.query_one("SELECT COALESCE(MAX(id), 0) FROM tool_logs", &[])?
-                    .get(0);
+            let tool_max: i64 = tx
+                .query_one("SELECT COALESCE(MAX(id), 0) FROM tool_logs", &[])?
+                .get(0);
             let chat_max: f64 = tx
-                .query_one("SELECT COALESCE(MAX(created_time), 0) FROM thread_items", &[])?
+                .query_one(
+                    "SELECT COALESCE(MAX(created_time), 0) FROM thread_items",
+                    &[],
+                )?
                 .get(0);
             if tool_max as f64 > tool_wm as f64 {
                 write_meta_f64(&mut tx, USAGE_TOOL_WATERMARK_KEY, tool_max as f64, now)?;
@@ -480,7 +481,14 @@ impl PostgresLogStatsStorage for PostgresStorage {
         let now = Self::now_ts();
         let chat_wm = read_meta_f64(&mut tx, USAGE_CHAT_WATERMARK_KEY)?.unwrap_or(0.0);
         let mut removed = 0i64;
+        tx.execute("DELETE FROM thread_trajectory_tiles WHERE session_id IN (SELECT session_id FROM thread_view_heads WHERE user_id=$1)",&[&user_id])?;
         for table in [
+            "thread_body_search",
+            "thread_body_manifests",
+            "thread_body_chunks",
+            "thread_chat_rows",
+            "thread_trajectory_rows",
+            "thread_view_heads",
             "thread_item_blocks",
             "thread_log_changes",
             "thread_turns",
@@ -502,8 +510,7 @@ impl PostgresLogStatsStorage for PostgresStorage {
                 &[&user_id, &chat_wm],
             )?
             .get(0);
-        let rest =
-            tx.execute("DELETE FROM thread_items WHERE user_id=$1", &[&user_id])? as i64;
+        let rest = tx.execute("DELETE FROM thread_items WHERE user_id=$1", &[&user_id])? as i64;
         removed += counted + rest;
         decrement_usage_summary(&mut tx, &[(user_id.to_string(), counted)], &[], now)?;
         tx.commit()?;

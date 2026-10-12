@@ -24,7 +24,7 @@ const FS_EXEC_TIMEOUT_MS: u64 = 60_000;
 const CPU_EXEC_TIMEOUT_MS: u64 = 60_000;
 const EXTERNAL_EXEC_TIMEOUT_MS: u64 = 30_000;
 
-const BLOCKING_KIND_COUNT: usize = 4;
+const BLOCKING_KIND_COUNT: usize = 5;
 
 // A blocking thread cannot be cancelled, so its permit stays claimed until the
 // operation returns even after the caller gave up. These states mark exactly the
@@ -36,6 +36,7 @@ const TASK_RETURNED: u8 = 2;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BlockingKind {
     Db,
+    View,
     Fs,
     Cpu,
     External,
@@ -45,6 +46,7 @@ impl BlockingKind {
     const fn queue_timeout(self) -> Duration {
         Duration::from_millis(match self {
             Self::Db => DB_QUEUE_TIMEOUT_MS,
+            Self::View => 150,
             Self::Fs => FS_QUEUE_TIMEOUT_MS,
             Self::Cpu => CPU_QUEUE_TIMEOUT_MS,
             Self::External => EXTERNAL_QUEUE_TIMEOUT_MS,
@@ -54,6 +56,7 @@ impl BlockingKind {
     const fn exec_timeout(self) -> Duration {
         Duration::from_millis(match self {
             Self::Db => DB_EXEC_TIMEOUT_MS,
+            Self::View => 2000,
             Self::Fs => FS_EXEC_TIMEOUT_MS,
             Self::Cpu => CPU_EXEC_TIMEOUT_MS,
             Self::External => EXTERNAL_EXEC_TIMEOUT_MS,
@@ -63,6 +66,7 @@ impl BlockingKind {
     const fn concurrency(self) -> usize {
         match self {
             Self::Db => DB_CONCURRENCY,
+            Self::View => 8,
             Self::Fs => FS_CONCURRENCY,
             Self::Cpu => CPU_CONCURRENCY,
             Self::External => EXTERNAL_CONCURRENCY,
@@ -72,6 +76,7 @@ impl BlockingKind {
     pub const fn name(self) -> &'static str {
         match self {
             Self::Db => "db",
+            Self::View => "view",
             Self::Fs => "fs",
             Self::Cpu => "cpu",
             Self::External => "external",
@@ -81,6 +86,7 @@ impl BlockingKind {
     const fn index(self) -> usize {
         match self {
             Self::Db => 0,
+            Self::View => 4,
             Self::Fs => 1,
             Self::Cpu => 2,
             Self::External => 3,
@@ -109,12 +115,14 @@ fn class_semaphores() -> &'static [Arc<Semaphore>; BLOCKING_KIND_COUNT] {
             Arc::new(Semaphore::new(BlockingKind::Fs.concurrency().max(1))),
             Arc::new(Semaphore::new(BlockingKind::Cpu.concurrency().max(1))),
             Arc::new(Semaphore::new(BlockingKind::External.concurrency().max(1))),
+            Arc::new(Semaphore::new(BlockingKind::View.concurrency().max(1))),
         ]
     })
 }
 
 fn class_kinds() -> [BlockingKind; BLOCKING_KIND_COUNT] {
     [
+        BlockingKind::View,
         BlockingKind::Db,
         BlockingKind::Fs,
         BlockingKind::Cpu,
@@ -164,6 +172,15 @@ where
     F: FnOnce() -> Result<T> + Send + 'static,
 {
     run(BlockingKind::Db, label, task).await
+}
+
+/// Presentation reads have reserved capacity and a short queue budget.
+pub async fn run_view<T, F>(label: &'static str, task: F) -> Result<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T> + Send + 'static,
+{
+    run(BlockingKind::View, label, task).await
 }
 
 pub async fn run_fs<T, F>(label: &'static str, task: F) -> Result<T>
@@ -347,11 +364,19 @@ mod tests {
     fn every_class_reserve_fits_inside_the_reported_total() {
         use super::class_kinds;
         let total = super::total_concurrency();
-        assert_eq!(total, 48, "class reserves must stay explicit");
+        assert_eq!(total, 56, "class reserves must stay explicit");
         for kind in class_kinds() {
             assert!(kind.concurrency() > 0);
             assert!(kind.concurrency() <= total);
         }
+    }
+
+    #[test]
+    fn view_reads_have_independent_capacity_and_short_deadlines() {
+        assert!(!Arc::ptr_eq(&BlockingKind::View.semaphore(), &BlockingKind::Db.semaphore()));
+        assert_eq!(BlockingKind::View.concurrency(), 8);
+        assert_eq!(BlockingKind::View.queue_timeout(), Duration::from_millis(150));
+        assert_eq!(BlockingKind::View.exec_timeout(), Duration::from_secs(2));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

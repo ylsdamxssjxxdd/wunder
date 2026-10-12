@@ -55,7 +55,7 @@
           v-model="searchQuery"
           class="tt-search-input"
           type="text"
-          :placeholder="t('messenger.trajectory.searchTrajectory')"
+          :placeholder="'搜索完整线程'"
           spellcheck="false"
         >
       </div>
@@ -75,6 +75,18 @@
       </button>
     </header>
 
+    <div class="tt-page-controls">
+      <button v-if="trajectoryMore" :disabled="loading" @click="load(trajectoryBefore ?? undefined)">读取较早记录</button>
+      <button @click="load()">最新记录</button>
+      <span>当前摘要页</span>
+    </div>
+    <div v-if="searchQuery" class="tt-search-results">
+      <span v-if="searchLoading">搜索中…</span><span v-if="searchError">搜索失败，请重试</span>
+      <button v-for="hit in searchHits" :key="`${hit.body.body_id}:${hit.cursor}`" @click="openSearchHit(hit)">{{ hit.snippet }}</button>
+      <span v-if="searchMore">已返回前 20 个命中，请缩小关键词范围</span>
+      <pre v-if="searchText">{{ searchText }}</pre>
+    </div>
+    <canvas ref="overviewCanvas" class="tt-overview-canvas" title="全线程记录摘要：红色包含失败，黄色包含运行中记录" />
     <div
       v-if="timeline"
       class="tt-timeline"
@@ -274,6 +286,11 @@
             >{{ tab }}</button>
           </div>
           <div class="tt-detail-body">
+            <span v-if="detailLoading" role="status">加载详情中…</span>
+            <button v-if="detailError" @click="loadRecordDetail(selectedCell.recordId)">详情读取失败，重试</button>
+            <pre v-if="(details[selectedCell.recordId] as any)?.raw">{{ (details[selectedCell.recordId] as any)?.raw }}</pre>
+            <ThreadBodyViewport v-if="(details[selectedCell.recordId] as any)?.content_body" :key="selectedCell.recordId" :session-id="String(route.query.session ?? '')" :body="(details[selectedCell.recordId] as any).content_body" preview="正文按页读取" :cache-key="`trajectory:${selectedCell.recordId}`" />
+            <button v-if="(details[selectedCell.recordId] as any)?.has_more" :disabled="detailLoading" @click="nextDetail">继续读取详情</button>
             <!-- 概述 -->
             <div v-if="activeTab === overviewTab" class="tt-detail-body-summary">
               <dl class="tt-overview">
@@ -412,7 +429,8 @@ import { computed, markRaw, nextTick, onBeforeUnmount, onMounted, reactive, ref,
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useI18n } from '@/i18n'
-import { getThreadLogSnapshot } from '@/api/chat'
+import { searchThreadView, getThreadViewBootstrap, getThreadViewBody } from '@/api/chat'
+import ThreadBodyViewport from '@/components/chat/ThreadBodyViewport.vue'
 import { exportSingleSessionLog } from '@/utils/sessionLogExport'
 import { renderMarkdown } from '@/utils/markdown'
 import TrajectoryJsonTree from './trajectory/TrajectoryJsonTree.vue'
@@ -448,7 +466,6 @@ const EDGE_PAN_FRACTION = 0.08
 const TOOLTIP_DELAY_MS = 500
 // 时间线 span 的 DOM 上限：百万级记录下若不限量会为每个 span 生成节点 + 4 个
 // 事件监听器；这里在可视窗口内做等步长采样，保证 DOM 节点数有界。
-const MAX_TIMELINE_SPANS = 2000
 
 const route = useRoute()
 const router = useRouter()
@@ -464,11 +481,17 @@ const truncated = ref(false)
 // 线程快照可能达百万级条目，用 shallowRef 只跟踪引用本身，避免 Vue 把整份
 // 快照转成深层响应式代理（会引发 CPU/内存爆炸）；写入的大对象以 markRaw 包裹。
 const rawTurns = shallowRef<unknown[]>([])
+const displayPage=shallowRef<any>(null)
+const trajectoryBefore=ref<number|null>(null)
+const trajectoryMore=ref(false)
+const details=shallowRef<Record<string,unknown>>({})
+const overviewCanvas=ref<HTMLCanvasElement|null>(null)
+const detailRefById=new Map<string,any>()
 
 // 大线程日志的快照可能非常庞大（压测会话可达百万级条目），单次全量拉取
 // 会长时间占用主线程并可能触发默认 30s 超时。这里给一个显式上界并在
 // 卸载时中止在途请求，避免视图长时间空转或卸载后回调写入已销毁的状态。
-const TRAJECTORY_SNAPSHOT_TIMEOUT_MS = 45_000
+const TRAJECTORY_REQUEST_TIMEOUT_MS = 3000
 let loadAbort: AbortController | null = null
 
 const showDuration = ref(true)
@@ -476,6 +499,20 @@ const showTime = ref(false)
 const showTurns = ref(false)
 const showCalls = ref(false)
 const searchQuery = ref('')
+
+const searchHits=shallowRef<any[]>([]),searchLoading=ref(false),searchError=ref(false),searchMore=ref(false),searchText=ref('')
+let searchAbort:AbortController|null=null,searchTimer:ReturnType<typeof setTimeout>|null=null
+watch(searchQuery,()=>{searchAbort?.abort();if(searchTimer)clearTimeout(searchTimer);searchHits.value=[];searchText.value='';
+ if(!searchQuery.value.trim())return
+ searchTimer=setTimeout(async()=>{const controller=new AbortController();searchAbort=controller;searchLoading.value=true;searchError.value=false
+  try{const response=await searchThreadView(String(route.query.session??''),searchQuery.value.slice(0,128),{signal:controller.signal});if(!controller.signal.aborted){searchHits.value=response.data.data.hits;searchMore.value=response.data.data.has_more}}
+  catch{if(!controller.signal.aborted)searchError.value=true}finally{if(searchAbort===controller)searchLoading.value=false}
+ },250)
+})
+async function openSearchHit(hit:any){searchAbort?.abort();const controller=new AbortController();searchAbort=controller
+ try{const r=await getThreadViewBody(String(route.query.session??''),hit.body.body_id,{revision:hit.body.revision,cursor:hit.cursor},{signal:controller.signal});if(!controller.signal.aborted)searchText.value=r.data.data.chunks.join('')}
+ catch{if(!controller.signal.aborted)searchError.value=true}
+}
 
 const selectedIndex = ref<number | null>(null)
 const activeTab = ref('')
@@ -520,7 +557,7 @@ const timelineMode = computed(() => {
 const turns = computed(() => buildTrajectoryLayout(rawTurns.value, modelT))
 const requests = computed(() => buildRequestNumbers(turns.value))
 const allRecords = computed(() => flattenRecords(turns.value))
-const filteredRecords = computed(() => filterRecords(allRecords.value, searchQuery.value))
+const filteredRecords = computed(() => allRecords.value)
 const records = computed(() => collapseTurnRecords(
   filteredRecords.value,
   collapsedTurns.value,
@@ -609,8 +646,9 @@ function recordNeedleText(record: TableRecord): string {
 }
 
 const focusSet = computed<ReadonlySet<number> | null>(() => {
-  if (!selection.value) return null
-  return timelineFocusIndexes(turns.value, selection.value, timelineMode.value)
+  if (!selection.value || dragging.value) return null
+  const {start,end}=selection.value
+  return new Set((timeline.value?.spans??[]).filter(s=>s.start<=end && s.end>=start).map(s=>s.index))
 })
 
 const projectedSpans = computed(() => {
@@ -634,10 +672,7 @@ const projectedSpans = computed(() => {
       }
     })
     .filter(span => span.left + span.width > 0 && span.left < width)
-  // 可视窗口内 span 仍然过多时，按等步长采样，确保渲染的 DOM 节点数有界。
-  if (projected.length <= MAX_TIMELINE_SPANS) return projected
-  const stride = Math.ceil(projected.length / MAX_TIMELINE_SPANS)
-  return projected.filter((_, index) => index % stride === 0)
+  return projected
 })
 
 const projectedBoundaries = computed(() => {
@@ -695,65 +730,65 @@ function formatAxisDuration(ms: number): string {
 /* 数据加载                                                          */
 /* ---------------------------------------------------------------- */
 
-async function load(): Promise<void> {
-  const sessionId = String(route.query.session ?? '').trim()
-  if (!sessionId) {
-    loading.value = false
-    loadError.value = true
-    return
-  }
-  loading.value = true
-  loadError.value = false
-  truncated.value = false
-  loadAbort?.abort()
-  const controller = new AbortController()
-  loadAbort = controller
-  const timeoutId = window.setTimeout(() => controller.abort(), TRAJECTORY_SNAPSHOT_TIMEOUT_MS)
+async function load(before?:number): Promise<void> {
+  const sessionId=String(route.query.session??'').trim()
+  if(!sessionId){loading.value=false;loadError.value=true;return}
+  loadAbort?.abort();const controller=new AbortController();loadAbort=controller
+  loading.value=true;loadError.value=false
+  let timedOut=false;const deadline=setTimeout(()=>{timedOut=true;controller.abort()},TRAJECTORY_REQUEST_TIMEOUT_MS)
   try {
-    const snapshot = await getThreadLogSnapshot(sessionId, {}, { signal: controller.signal })
-    // 快照端点的 HTTP 体是 { data: { cursor, turns, items, blocks, item_total } }，
-    // 而 http.ts 的拦截器返回完整 AxiosResponse，故需再取一层 .data 才能拿到快照本体。
-    const payload = (snapshot?.data as { data?: unknown } | undefined)?.data
-    truncated.value = (payload as { truncated?: unknown } | undefined)?.truncated === true
-    rawTurns.value = attachTurnItems(payload)
-  } catch {
-    loadError.value = true
-    truncated.value = false
-    rawTurns.value = []
-  } finally {
-    window.clearTimeout(timeoutId)
-    if (loadAbort === controller) loadAbort = null
-    loading.value = false
+    const response=await getThreadViewBootstrap(sessionId,{kind:'trajectory',...(before===undefined?{}:{before})},{signal:controller.signal})
+    if(controller.signal.aborted||loadAbort!==controller)return
+    const page=response.data.data.page
+    if(page.projection_state!=='ready')throw new Error('display projection rebuilding')
+    displayPage.value=markRaw(page);trajectoryBefore.value=page.next_before;trajectoryMore.value=page.has_more
+    detailAbort?.abort();selectedIndex.value=null;details.value={};scrollTop.value=0;
+    truncated.value=false;rawTurns.value=summaryTurns(page.trajectory)
+    await nextTick();drawOverview()
+  }catch{if(loadAbort===controller && (!controller.signal.aborted||timedOut))loadError.value=true}
+  finally{clearTimeout(deadline);if(loadAbort===controller){loadAbort=null;loading.value=false}}
+}
+function summaryTurns(rows:any[]):unknown[] {
+  detailRefById.clear()
+  const turns=new Map<string,any>()
+  for(const row of rows){
+    detailRefById.set(row.item_id,row.detail)
+    let turn=turns.get(row.root_turn_id)
+    if(!turn){turn={turn_id:row.root_turn_id,user_turn_index:row.user_round,items:[]};turns.set(row.root_turn_id,turn)}
+    turn.items.push({item_id:row.item_id,item_index:row.item_index,kind:row.kind,status:row.status,created_time:row.started_at,updated_time:row.completed_at,
+      payload:{content:row.summary,tool:row.tool_name,model_round:row.model_round,started_at:row.started_at,completed_at:row.completed_at}})
   }
+  return markRaw([...turns.values()])
+}
+function drawOverview(){
+ const canvas=overviewCanvas.value,page=displayPage.value;if(!canvas||!page)return
+ const width=Math.min(4096,canvas.clientWidth||600),dpr=Math.min(2,window.devicePixelRatio||1);canvas.width=width*dpr;canvas.height=48*dpr
+ const ctx=canvas.getContext('2d');if(!ctx)return;ctx.scale(dpr,dpr);ctx.clearRect(0,0,width,48)
+ const tiles=page.tiles??[],step=width/Math.max(1,tiles.length),max=Math.max(1,...tiles.map((t:any)=>t.count))
+ for(let i=0;i<tiles.length;i++){const t=tiles[i],height=Math.max(2,t.count/max*40);ctx.fillStyle=t.failed?'#c94545':t.running?'#ce9b31':'#688ba9';ctx.fillRect(i*step,48-height,Math.max(1,step-1),height)}
+}
+let detailAbort:AbortController|null=null
+const detailLoading=ref(false),detailError=ref(false)
+async function loadRecordDetail(id:string,cursor=0){
+ const body=detailRefById.get(id);if(!body)return
+ detailAbort?.abort();const controller=new AbortController();detailAbort=controller;detailLoading.value=true;detailError.value=false
+ const session=String(route.query.session??'')
+ try {
+  const response=await getThreadViewBody(session,body.body_id,{revision:body.revision,cursor},{signal:controller.signal})
+  if(controller.signal.aborted || detailAbort!==controller || selectedCell.value?.recordId!==id || String(route.query.session??'')!==session)return
+  const page=response.data.data
+  let value:any={raw:page.chunks.join(''),has_more:page.has_more,body,next:page.next_cursor}
+  if(cursor===0 && !page.has_more){try{value={...value,...JSON.parse(value.raw)}}catch{}}
+  details.value={[id]:markRaw(value)}
+ }catch{if(!controller.signal.aborted && detailAbort===controller)detailError.value=true}
+ finally{if(detailAbort===controller){detailAbort=null;detailLoading.value=false}}
+}
+async function nextDetail(){
+ const cell=selectedCell.value;if(!cell)return
+ const prior=details.value[cell.recordId] as any;if(!prior?.has_more || detailLoading.value)return
+ await loadRecordDetail(cell.recordId,prior.next)
 }
 
-/**
- * 快照的 items 与 turns 是两个平铺数组；把 items 按 turn_id 归组挂到各自的
- * 轮次上，布局模型才能读到每轮的记录。没有 turn_id 的条目挂在首个轮次前。
- */
-function attachTurnItems(payload: unknown): unknown[] {
-  const source = payload as { turns?: unknown; items?: unknown } | null | undefined
-  if (!Array.isArray(source?.turns)) return []
-  const turns = (source.turns as unknown[]).filter((turn) => !!turn && typeof turn === 'object')
-  const items = Array.isArray(source?.items) ? (source.items as unknown[]) : []
-  if (items.length === 0) return turns
-  const buckets = new Map<string, unknown[]>()
-  for (const item of items) {
-    const turnId = typeof (item as { turn_id?: unknown })?.turn_id === 'string'
-      ? (item as { turn_id: string }).turn_id
-      : ''
-    if (!turnId) continue
-    const bucket = buckets.get(turnId)
-    if (bucket) bucket.push(item)
-    else buckets.set(turnId, [item])
-  }
-  for (const turn of turns) {
-    const row = turn as { turn_id?: unknown; items?: unknown[] }
-    const turnId = typeof row.turn_id === 'string' ? row.turn_id : ''
-    row.items = turnId ? buckets.get(turnId) ?? [] : []
-  }
-  return markRaw(turns)
-}
 
 function goBack(): void {
   router.back()
@@ -787,6 +822,7 @@ function onKeyDown(event: KeyboardEvent): void {
 }
 
 function updateSizes(): void {
+  drawOverview()
   if (ledgerEl.value) ledgerViewport.value = ledgerEl.value.clientHeight
 }
 
@@ -806,6 +842,8 @@ watch(trackEl, (el) => {
   trackResizeObserver.observe(el)
 })
 
+watch(()=>route.query.session,()=>{rawTurns.value=[];displayPage.value=null;details.value={};searchQuery.value='';searchAbort?.abort();detailAbort?.abort();void load()})
+
 onMounted(() => {
   void load()
   window.addEventListener('keydown', onKeyDown)
@@ -817,6 +855,8 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   loadAbort?.abort()
+  detailAbort?.abort()
+  searchAbort?.abort();if(searchTimer)clearTimeout(searchTimer)
   loadAbort = null
   window.removeEventListener('keydown', onKeyDown)
   window.removeEventListener('pointermove', onWindowPointerMove)
@@ -919,6 +959,7 @@ watch([showTurns, showCalls], ([turnsOn, callsOn]) => {
 
 function selectIndex(index: number, options: { fromLedger?: boolean } = {}): void {
   selectedIndex.value = index
+  const recordCell=findCell(index);if(recordCell)void loadRecordDetail(recordCell.recordId).catch(()=>{loadError.value=true})
   const cell = findCell(index)
   activeTab.value = defaultTabFor(cell)
   openSections.input = true
@@ -981,8 +1022,14 @@ function findRecordOf(cell: TrajCell): TableRecord | null {
   return allRecords.value.find(record => record.cell.index === cell.index) ?? null
 }
 
-const selectedCell = computed<TrajCell | null>(() =>
-  selectedIndex.value === null ? null : findCell(selectedIndex.value))
+const selectedCell = computed<TrajCell | null>(() => {
+  const base=selectedIndex.value===null?null:findCell(selectedIndex.value)
+  if(!base)return null
+  const detail=details.value[base.recordId] as any
+  if(!detail)return base
+  const stringify=(v:unknown)=>typeof v==='string'?v:v===undefined?'':JSON.stringify(v,null,2)
+  return {...base,inputDetail:stringify(detail.args??detail.content??detail.raw),outputDetail:stringify(detail.content??detail.raw),thinkingDetail:stringify(detail.reasoning??detail.reasoning_content),result:stringify(detail.result??detail.data??detail.raw),schemaDetail:stringify(detail.schema)}
+})
 const selectedRecord = computed<TableRecord | null>(() => {
   const cell = selectedCell.value
   return cell ? findRecordOf(cell) : null
@@ -1521,3 +1568,7 @@ function formatTokens(value: number | undefined): string {
   return t('messenger.trajectory.tokens', { value: Math.round(value).toLocaleString('en-US') })
 }
 </script>
+
+<style scoped>
+.tt-overview-canvas{width:100%;height:48px;flex:none}.tt-page-controls{display:flex;gap:12px;align-items:center;padding:6px 12px;font-size:12px}
+</style>

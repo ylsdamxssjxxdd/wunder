@@ -6,8 +6,8 @@ use std::collections::HashMap;
 
 /// Bounded read window for the atomic v2 thread snapshot (根治方案 I5).
 ///
-/// The snapshot is the single durable hydration source for chat rendering, so
-/// an unbounded read on a million-row thread is what blanks the panel. Every
+/// The snapshot is retained for execution/native recovery; web pages use display views. An
+/// unbounded read on a million-row thread can exhaust memory. Every
 /// reader therefore materializes only the MOST RECENT `max_turns` turns (plus
 /// their items/blocks, each independently capped) and reports whether older
 /// data was dropped. `before_turn_index` pages strictly older windows.
@@ -87,6 +87,43 @@ pub trait ConversationLogStore {
 /// from the short lived stream event buffer: turns are the pagination unit and
 /// items are stable, idempotently replaceable records.
 pub trait ThreadLogStore {
+    /// Presentation pages select only precomputed, bounded summaries.
+    fn thread_view_page(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        kind: &str,
+        before: Option<i64>,
+        limit: usize,
+    ) -> Result<crate::thread_view::ThreadViewPage>;
+    fn thread_view_changes(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        after: i64,
+    ) -> Result<crate::thread_view::ThreadViewChanges>;
+    fn thread_body_page(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        body_id: &str,
+        revision: i64,
+        cursor: i64,
+    ) -> Result<crate::thread_view::ThreadBodyPage>;
+    fn thread_view_search(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        query: &str,
+    ) -> Result<crate::thread_view::ThreadSearchPage>;
+    /// Offline/background seek rebuild; never invoked by a presentation read.
+    fn rebuild_thread_view_page(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        after: i64,
+    ) -> Result<(i64, bool)>;
+    fn pending_thread_view_rebuilds(&self) -> Result<Vec<(String, String, i64)>>;
     /// Bounded quoted background: visible user/assistant text from recent root user turns.
     /// Implementations truncate text in SQL before materializing rows.
     fn load_subagent_context(
@@ -765,7 +802,8 @@ pub trait UserAccountStore {
 /// Refresh-token rotation storage for local (desktop/cli) sessions.
 pub trait UserRefreshTokenStore {
     fn create_user_refresh_token(&self, record: &UserRefreshTokenRecord) -> Result<()>;
-    fn get_user_refresh_token(&self, refresh_token: &str) -> Result<Option<UserRefreshTokenRecord>>;
+    fn get_user_refresh_token(&self, refresh_token: &str)
+        -> Result<Option<UserRefreshTokenRecord>>;
     /// Flag a single refresh token as revoked; the row is kept so replaying
     /// it can be detected as reuse.
     fn revoke_refresh_token(&self, refresh_token: &str) -> Result<()>;
@@ -866,8 +904,11 @@ pub trait ChatSessionStore {
     /// Thread starts bucketed by local calendar day (`YYYY-MM-DD`), oldest
     /// first. Model-created child threads are excluded so the series matches
     /// the threads a user actually opened. Days without activity are omitted.
-    fn count_chat_sessions_by_day(&self, user_id: &str, since_at: f64)
-        -> Result<Vec<(String, i64)>>;
+    fn count_chat_sessions_by_day(
+        &self,
+        user_id: &str,
+        since_at: f64,
+    ) -> Result<Vec<(String, i64)>>;
     /// Move every thread of one workspace to another (workspace deletion).
     fn reassign_chat_sessions_workspace(
         &self,
@@ -1467,8 +1508,7 @@ pub trait InterlinkStore {
         error_code: Option<&str>,
         error_summary: Option<&str>,
     ) -> Result<()>;
-    fn set_interlink_command_approval(&self, command_id: &str, approval_state: &str)
-        -> Result<()>;
+    fn set_interlink_command_approval(&self, command_id: &str, approval_state: &str) -> Result<()>;
     fn get_interlink_command(&self, command_id: &str) -> Result<Option<InterlinkCommandRecord>>;
     fn list_interlink_commands(
         &self,
@@ -1485,8 +1525,7 @@ pub trait InterlinkStore {
         decided_by: &str,
         decided_at: f64,
     ) -> Result<()>;
-    fn get_interlink_approval(&self, approval_id: &str)
-        -> Result<Option<InterlinkApprovalRecord>>;
+    fn get_interlink_approval(&self, approval_id: &str) -> Result<Option<InterlinkApprovalRecord>>;
 
     // --- audit ---
     fn insert_interlink_audit(&self, record: &InterlinkAuditRecord) -> Result<()>;
@@ -1566,7 +1605,7 @@ impl<T> StorageBackend for T where
         + QuotaBalanceStore
         + TerminalTranscriptStore
         + CloudStore
-    + InterlinkStore
+        + InterlinkStore
         + Send
         + Sync
 {

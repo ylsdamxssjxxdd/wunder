@@ -3,14 +3,19 @@
     class="timeline-assistant"
     :data-turn-id="String(message.__runtime_user_turn_id || message.user_turn_id || '')"
   >
+    <div v-if="Number(message.workflow_count)>0" class="timeline-process-summary">
+      <button type="button" @click="controller.openSessionTrajectory?.(activeSessionId)">工作过程：{{ message.workflow_count }} 条记录<span v-if="message.workflow_failed_count"> · {{ message.workflow_failed_count }} 条失败</span></button>
+    </div>
+    <pre v-if="message.__thread_tail && message.__thread_preview && message.streaming" class="timeline-live-tail">{{ message.__thread_tail }}</pre>
     <!--
       时间线主体（形态对齐桌面端 `frontend-slint/src/timeline.rs`）：模型每轮的正式
       输出是一段独立打印，思考与工具调用按到达顺序折成可开合的批次夹在段与段之间。
       块的顺序由投影层按 `created_seq` 定好；块渲染由 MessageTimelineBlocks 与
       子智能体详情弹窗共用，旧式单段正文（问候语、无块旧行）回退到本组件渲染。
     -->
+    <ThreadBodyViewport v-if="message.__thread_preview && message.__thread_body" :session-id="activeSessionId" :body="message.__thread_body" :preview="String(message.content||'')" :cache-key="`thread:${item.key}`" />
     <MessageTimelineBlocks
-      v-if="hasProjectionBlocks"
+      v-else-if="hasProjectionBlocks"
       :blocks="timelineBlocks"
       :workflow-items="workflowItems"
       :session-id="activeSessionId"
@@ -213,6 +218,7 @@
 </template>
 
 <script setup lang="ts">
+import ThreadBodyViewport from '@/components/chat/ThreadBodyViewport.vue';
 import { computed, onBeforeUnmount, ref, triggerRef, watch } from 'vue';
 
 import MessageMarkdownBody from '@/components/chat/MessageMarkdownBody.vue';
@@ -325,7 +331,7 @@ const displayContent = computed(() => {
 });
 const hasBody = computed(() => Boolean(controller.hasMessageContent?.(displayContent.value)));
 const bodyStreaming = computed(() =>
-  Boolean(message.value.stream_incomplete || message.value.workflowStreaming || message.value.reasoningStreaming)
+  Boolean(message.value.streaming || message.value.stream_incomplete || message.value.workflowStreaming || message.value.reasoningStreaming)
 );
 
 /**
@@ -359,6 +365,7 @@ const workflowItems = ref<WorkflowItem[]>([]);
  * 只落到投影、DOM 停在首帧（表现为「实时不更新、刷新后正常」）。
  */
 const resolveProjectedMessage = () => {
+  if(message.value.__thread_view)return null;
   const sessionId = activeSessionId.value;
   if (!sessionId) return null;
   return resolveRuntimeMessageContentSource({
@@ -456,6 +463,7 @@ watch(
 </script>
 
 <style scoped>
+.timeline-live-tail{max-height:160px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;}
 .timeline-assistant {
   display: flex;
   flex-direction: column;

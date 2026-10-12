@@ -104,7 +104,9 @@ const resolveManualChunk = (rawId: string) => {
   if (id.includes('/node_modules/axios/')) {
     return 'vendor-http';
   }
-  return 'vendor-misc';
+  // Let Rollup keep editor, formula and other optional dependencies in their
+  // actual entry chunks; a shared catch-all eagerly loads every feature.
+  return undefined;
 };
 
 export default defineConfig(({ mode }) => {

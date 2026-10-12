@@ -198,6 +198,11 @@ impl PostgresThreadLogStorage for PostgresStorage {
         tx.execute("INSERT INTO thread_item_blocks(session_id,user_id,item_id,field,block_index,event_id,payload,created_time) SELECT $3,b.user_id,b.item_id,b.field,b.block_index,b.event_id,jsonb_set(b.payload::jsonb, '{session_id}', to_jsonb($3::text), true)::text,i.created_time FROM thread_item_blocks b JOIN thread_items i ON i.session_id=$3 AND i.item_id=b.item_id WHERE b.user_id=$1 AND b.session_id=$2", &[&user_id,&source,&target])?;
         tx.execute("INSERT INTO thread_log_changes(session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time) SELECT $3,c.change_seq,c.user_id,c.change_type,c.turn_id,c.item_id,c.revision,c.payload,c.created_time FROM thread_log_changes c JOIN thread_turns t ON t.session_id=$3 AND t.turn_id=c.turn_id WHERE c.user_id=$1 AND c.session_id=$2", &[&user_id,&source,&target])?;
         tx.execute("INSERT INTO thread_log_metrics(session_id,user_id,metric_key,metric_value,updated_time) SELECT session_id,user_id,'user_turn_total',latest_user_turn,updated_time FROM thread_logs WHERE user_id=$1 AND session_id=$3 AND $2<>$3", &[&user_id,&source,&target])?;
+        crate::storage::thread_view_store::initialize(
+            &mut super::thread_view_store::Db(&mut tx),
+            user_id,
+            target,
+        )?;
         tx.commit()?;
         Ok(())
     }
@@ -328,6 +333,15 @@ impl PostgresThreadLogStorage for PostgresStorage {
                 "DELETE FROM thread_log_changes WHERE session_id=$1 AND change_seq<=$2",
                 &[&session_id, &seq.saturating_sub(4096)],
             )?;
+            crate::storage::thread_view_store::project_block(
+                &mut super::thread_view_store::Db(&mut conn),
+                user_id,
+                session_id,
+                item_id,
+                field,
+                index,
+                block,
+            )?;
             change_seq = seq;
         }
         conn.commit()?;
@@ -387,8 +401,12 @@ impl PostgresThreadLogStorage for PostgresStorage {
                 turn
             }).collect::<Vec<_>>();
         turns.reverse();
-        let window_start_turn_index = turns.first().and_then(|turn| turn["user_turn_index"].as_i64());
-        let window_end_turn_index = turns.last().and_then(|turn| turn["user_turn_index"].as_i64());
+        let window_start_turn_index = turns
+            .first()
+            .and_then(|turn| turn["user_turn_index"].as_i64());
+        let window_end_turn_index = turns
+            .last()
+            .and_then(|turn| turn["user_turn_index"].as_i64());
         let has_older = match window_start_turn_index {
             Some(start) => tx
                 .query_opt(
@@ -523,6 +541,11 @@ impl PostgresThreadLogStorage for PostgresStorage {
             )?
             .map(|r| r.get(0));
         ensure!(owner.as_deref() == Some(user_id), "thread owner mismatch");
+        crate::storage::thread_view_store::initialize(
+            &mut super::thread_view_store::Db(&mut tx),
+            user_id,
+            session_id,
+        )?;
         let client_id = input
             .get("client_message_id")
             .and_then(Value::as_str)
@@ -641,6 +664,18 @@ impl PostgresThreadLogStorage for PostgresStorage {
             "DELETE FROM thread_log_changes WHERE session_id=$1 AND change_seq<=$2",
             &[&session_id, &item_seq.saturating_sub(4096)],
         )?;
+        crate::storage::thread_view_store::project_turn(
+            &mut super::thread_view_store::Db(&mut tx),
+            user_id,
+            session_id,
+            &turn_id,
+        )?;
+        crate::storage::thread_view_store::project_item(
+            &mut super::thread_view_store::Db(&mut tx),
+            user_id,
+            session_id,
+            &item_id,
+        )?;
         tx.commit()?;
         Ok(json!({"turn_id":turn_id,"root_turn_id":root_id,"user_turn_index":round,"created":true}))
     }
@@ -745,6 +780,12 @@ impl PostgresThreadLogStorage for PostgresStorage {
             }
             let item_revision = item["revision"].as_i64().unwrap_or(0);
             let item_payload = serde_json::to_string(&item)?;
+            crate::storage::thread_view_store::project_item(
+                &mut super::thread_view_store::Db(&mut tx),
+                user_id,
+                session_id,
+                &item_id,
+            )?;
             tx.execute("INSERT INTO thread_log_changes(session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)", &[&session_id,&seq,&user_id,&"item_upsert",&turn_id,&item_id,&item_revision,&item_payload,&now])?;
         }
         tx.execute(
@@ -755,6 +796,12 @@ impl PostgresThreadLogStorage for PostgresStorage {
         tx.execute(
             "DELETE FROM thread_log_changes WHERE session_id=$1 AND change_seq<=$2",
             &[&session_id, &seq.saturating_sub(4096)],
+        )?;
+        crate::storage::thread_view_store::project_turn(
+            &mut super::thread_view_store::Db(&mut tx),
+            user_id,
+            session_id,
+            turn_id,
         )?;
         tx.commit()?;
         Ok(changed > 0 || input_changed > 0 || had_settled)
@@ -880,6 +927,12 @@ impl PostgresThreadLogStorage for PostgresStorage {
         tx.execute(
             "DELETE FROM thread_log_changes WHERE session_id=$1 AND change_seq<=$2",
             &[&session_id, &seq.saturating_sub(4096)],
+        )?;
+        crate::storage::thread_view_store::project_item(
+            &mut super::thread_view_store::Db(&mut tx),
+            user_id,
+            session_id,
+            item_id,
         )?;
         tx.commit()?;
         Ok(Some(
@@ -1116,6 +1169,13 @@ impl PostgresThreadLogStorage for PostgresStorage {
             "UPDATE thread_logs SET latest_change_seq=$1,updated_time=$2 WHERE session_id=$3",
             &[&seq, &now, &session_id],
         )?;
+        crate::storage::thread_view_store::project_feedback(
+            &mut super::thread_view_store::Db(&mut tx),
+            user_id,
+            session_id,
+            item_id,
+            &feedback,
+        )?;
         tx.commit()?;
         Ok(Some(feedback))
     }
@@ -1215,6 +1275,23 @@ impl PostgresThreadLogStorage for PostgresStorage {
             &[&user_id, &session_id],
         )? as i64;
         decrement_usage_summary(&mut tx, &[(user_id.to_string(), counted)], &[], now)?;
+        for table in [
+            "thread_body_search",
+            "thread_body_manifests",
+            "thread_body_chunks",
+            "thread_chat_rows",
+            "thread_trajectory_rows",
+            "thread_view_heads",
+        ] {
+            tx.execute(
+                &format!("DELETE FROM {table} WHERE user_id=$1 AND session_id=$2"),
+                &[&user_id, &session_id],
+            )?;
+        }
+        tx.execute(
+            "DELETE FROM thread_trajectory_tiles WHERE session_id=$1",
+            &[&session_id],
+        )?;
         tx.commit()?;
         Ok(count)
     }

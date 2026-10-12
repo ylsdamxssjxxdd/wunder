@@ -51,6 +51,8 @@ pub fn router() -> Router<Arc<AppState>> {
 
 #[derive(Debug, Deserialize)]
 struct WsStartPayload {
+    #[serde(default)]
+    view_seq: Option<i64>,
     content: String,
     #[serde(default, alias = "clientMessageId")]
     client_message_id: Option<String>,
@@ -88,6 +90,8 @@ struct WsResumePayload {
 
 #[derive(Debug, Deserialize)]
 struct WsWatchPayload {
+    #[serde(default)]
+    view_seq: Option<i64>,
     #[serde(default)]
     after_change_seq: Option<i64>,
     #[serde(default)]
@@ -397,6 +401,8 @@ async fn handle_ws(
                             .await;
                             continue;
                         };
+                        let display_cursor = payload.view_seq;
+                        let display_user = user.user_id.clone();
                         log_ws_message(
                             WS_ENDPOINT,
                             &connection_id,
@@ -507,18 +513,33 @@ async fn handle_ws(
                                 // A queued turn keeps the session busy until its
                                 // queue-scoped feeder reaches a terminal event.
                                 let queued_busy = presence.nodes().begin_busy(&web_node_id);
+                                let queued_user = user.user_id.clone();
                                 long_task::spawn("api.chat_ws.queued_auto_resume", async move {
                                     let _queued_busy = queued_busy;
-                                    resume_queued_thread_changes_v2(
-                                        resume_state,
-                                        resume_session,
-                                        queue_id,
-                                        queue_after_change_seq,
-                                        Some(&resume_request_id),
-                                        resume_tx,
-                                        Some(cancel),
-                                    )
-                                    .await;
+                                    if let Some(seq) = display_cursor {
+                                        crate::api::ws_helpers::resume_queued_thread_view(
+                                            resume_state,
+                                            resume_session,
+                                            queued_user,
+                                            queue_id,
+                                            seq,
+                                            Some(&resume_request_id),
+                                            resume_tx,
+                                            Some(cancel),
+                                        )
+                                        .await;
+                                    } else {
+                                        resume_queued_thread_changes_v2(
+                                            resume_state,
+                                            resume_session,
+                                            queue_id,
+                                            queue_after_change_seq,
+                                            Some(&resume_request_id),
+                                            resume_tx,
+                                            Some(cancel),
+                                        )
+                                        .await;
+                                    }
                                     // cleanup: only remove if our task_id still owns
                                     // the entry (avoids clobbering a newer task).
                                     let _ = cleanup_ws_task(
@@ -606,8 +627,13 @@ async fn handle_ws(
                                                         let feeder_tx = ws_tx_snapshot.clone();
                                                         let feeder_request_id = request_id_cleanup.clone();
                                                         let feeder_cancel = feeder_cancel.clone();
+                                                        let display_user = display_user.clone();
                                                         long_task::spawn("api.chat_ws.change_feeder", async move {
-                                                            resume_thread_changes_v2(feeder_state, feeder_session, change_cursor, Some(&feeder_request_id), feeder_tx, Some(feeder_cancel)).await;
+                                                            if let Some(seq)=display_cursor {
+                                                                crate::api::ws_helpers::resume_thread_view(feeder_state,feeder_session,display_user,seq,Some(&feeder_request_id),feeder_tx,Some(feeder_cancel)).await;
+                                                            } else {
+                                                                resume_thread_changes_v2(feeder_state, feeder_session, change_cursor, Some(&feeder_request_id), feeder_tx, Some(feeder_cancel)).await;
+                                                            }
                                                         });
                                                     }
                                                     continue;
@@ -658,6 +684,16 @@ async fn handle_ws(
                                     // installs its session watcher.
                                     feeder_cancel.cancel();
                                     if stream_drained {
+                                        if display_cursor.is_some() {
+                                            crate::api::ws_helpers::send_final_thread_view(
+                                                &state_snapshot,
+                                                &session_id_cleanup,
+                                                &display_user,
+                                                Some(&request_id_cleanup),
+                                                &ws_tx_snapshot,
+                                            )
+                                            .await;
+                                        }
                                         // v2 durable content is delivered only by
                                         // the feeder, so the send stream carries no
                                         // terminal frame of its own. Without one
@@ -852,6 +888,8 @@ async fn handle_ws(
                             continue;
                         }
                         let after_change_seq = payload.after_change_seq.unwrap_or(0).max(0);
+                        let view_seq = payload.view_seq;
+                        let view_user = user.user_id.clone();
                         let ws_tx_snapshot = ws_tx.clone();
                         let state_snapshot = state.clone();
                         let (cancel, task_id) =
@@ -861,15 +899,28 @@ async fn handle_ws(
                         let request_id_cleanup = request_id.clone();
                         let task_id_cleanup = task_id.clone();
                         long_task::spawn("api.chat_ws.watch_stream", async move {
-                            resume_thread_changes_v2(
-                                state_snapshot,
-                                session_id,
-                                after_change_seq,
-                                Some(&request_id_cleanup),
-                                ws_tx_snapshot,
-                                Some(cancel.clone()),
-                            )
-                            .await;
+                            if let Some(seq) = view_seq {
+                                crate::api::ws_helpers::resume_thread_view(
+                                    state_snapshot,
+                                    session_id,
+                                    view_user,
+                                    seq,
+                                    Some(&request_id_cleanup),
+                                    ws_tx_snapshot,
+                                    Some(cancel.clone()),
+                                )
+                                .await;
+                            } else {
+                                resume_thread_changes_v2(
+                                    state_snapshot,
+                                    session_id,
+                                    after_change_seq,
+                                    Some(&request_id_cleanup),
+                                    ws_tx_snapshot,
+                                    Some(cancel.clone()),
+                                )
+                                .await;
+                            }
                             let _ = cleanup_ws_task(
                                 &tasks_cleanup,
                                 &request_id_cleanup,

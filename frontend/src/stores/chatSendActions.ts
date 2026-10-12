@@ -1,4 +1,5 @@
-import { applyChatThreadEffects, syncChatThreadShell } from './chatThreadEffects';
+import { threadViewSlots, threadViewCursor,settlePendingThreadView,removePendingThreadView } from '@/realtime/chat/threadViewStore';
+import { applyChatThreadEffects, applyThreadViewEffects, syncChatThreadShell } from './chatThreadEffects';
 import { defineStore } from 'pinia';
 
 import {
@@ -625,6 +626,7 @@ export const chatSendActions = {
         );
         const debugPayloadEnabled = isChatDebugEnabled();
         const payload = {
+          view_seq: threadViewCursor(sessionId),
           content,
           stream: true,
           client_message_id: clientMessageId,
@@ -651,6 +653,7 @@ export const chatSendActions = {
           if (
             applyChatThreadServerEvent(this, sessionId, effectiveEventType, payload, {
               onChangesApplied: (changes) => applyChatThreadEffects(this, sessionId, changes),
+              onViewApplied: prior => applyThreadViewEffects(this,sessionId,prior),
               // The request-scoped feeder on the send stream stops for good once
               // it crosses the slow-client watermark (server sends
               // stream_overflow and returns). Without a recovery hook every
@@ -658,6 +661,7 @@ export const chatSendActions = {
               // spinning and later entries never render until a page reload.
               // Mount the session watcher immediately; it replays from the
               // last applied durable cursor.
+              onSnapshotRequired: () => {void this.loadSessionDetail(sessionId);},
               onOverflow: () => startSessionWatcher(this, sessionId),
               onGapOverflow: () => startSessionWatcher(this, sessionId)
             })
@@ -1051,6 +1055,7 @@ export const chatSendActions = {
           await pendingTerminalSnapshotSmoothing;
         }
       } catch (error) {
+        settlePendingThreadView(sessionId,clientMessageId,error?.name==='AbortError'?'cancelled':'failed',String(error?.message??''));
         const pending = getChatThreadState(sessionId)?.turns.get(`pending:${clientMessageId}`);
         if (pending) {
           pending.status = error?.name === 'AbortError' ? 'cancelled' : 'failed';
@@ -1169,7 +1174,8 @@ export const chatSendActions = {
           interruptedByStop ||
           Boolean(runtime?.stopRequested) ||
           sendControllerAlreadyCleared;
-        const durableTurn = [...(getChatThreadState(sessionId)?.turns.values() ?? [])]
+        const displaySlot=threadViewSlots(sessionId)?.find(slot=>slot.user.client_message_id===clientMessageId);
+        const durableTurn = displaySlot ? {status:displaySlot.assistant.status} : [...(getChatThreadState(sessionId)?.turns.values() ?? [])]
           .find((turn) => turn.clientMessageId === clientMessageId);
         finalSeen ||= durableTurn?.status === 'completed';
         errorSeen ||= durableTurn?.status === 'failed';
@@ -1315,6 +1321,7 @@ export const chatSendActions = {
       }
       const threadState = getChatThreadState(sessionId);
       threadState?.turns.delete(`pending:${cleanedClientMessageId}`);
+      removePendingThreadView(sessionId,cleanedClientMessageId);
       cacheSessionMessages(sessionId, this.messages);
       markRuntimeProjectionChanged(this, {
         sessionId,

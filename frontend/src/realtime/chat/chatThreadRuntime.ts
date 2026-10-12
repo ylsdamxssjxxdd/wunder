@@ -34,6 +34,7 @@ import {
   materializeChatRuntimeProjectionList
 } from './chatRuntimeRenderAdapter';
 import { chatPerf } from '@/utils/chatPerf';
+import { threadViewSlots, submitThreadView, clearThreadView, applyThreadViewChanges, applyThreadViewTail,threadViewStatus } from './threadViewStore';
 
 interface ChatThreadRuntimeEntry {
   key: string;
@@ -93,9 +94,11 @@ export const resetChatThreadRuntime = (key: string): void => {
   // keep applying shards into a detached state.
   registry.get(key)?.snapshotAbort?.abort();
   registry.delete(key);
+  clearThreadView(key);
 };
 
 export const getChatThreadStatus = (key: string): string | null => {
+  const viewStatus=threadViewStatus(key);if(viewStatus!==null)return viewStatus;
   const state = getChatThreadState(key);
   if (!state?.turns.size) return null;
   let latest = null;
@@ -110,14 +113,19 @@ export const getChatThreadStatus = (key: string): string | null => {
   return active?.status ?? latest?.status ?? null;
 };
 
-/** Install local input in the same turn map before any busy status is published. */
-export const submitChatThreadTurn = (store: unknown, key: string, clientMessageId: string, content: string): void => {
-  const state = ensureChatThreadRuntime(key).state;
-  if ([...state.turns.values()].some((turn) => turn.clientMessageId === clientMessageId)) return;
-  const userRound = [...state.turns.values()].reduce((max, turn) => Math.max(max, turn.userRound ?? 0), 0) + 1;
-  const turnId = `pending:${clientMessageId}`;
-  state.turns.set(turnId, { turnId, userRound, clientMessageId, userContent: content, status: 'running' });
-  markRuntimeProjectionChanged(store, { sessionId: key, reason: 'thread_submit', immediate: true });
+/** Browser optimistic input belongs exclusively to the display window. */
+export const submitChatThreadTurn = (_store:unknown,key:string,clientMessageId:string,content:string):void => {
+  submitThreadView(key,clientMessageId,content);
+};
+
+/** Explicit raw-log projection consumers have their own optimistic input. */
+export const submitRawChatThreadTurn=(store:unknown,key:string,clientMessageId:string,content:string):void=>{
+  const state=ensureChatThreadRuntime(key).state;
+  if([...state.turns.values()].some(turn=>turn.clientMessageId===clientMessageId))return;
+  const userRound=[...state.turns.values()].reduce((max,turn)=>Math.max(max,turn.userRound??0),0)+1;
+  const turnId=`pending:${clientMessageId}`;
+  state.turns.set(turnId,{turnId,userRound,clientMessageId,userContent:content,status:'running'});
+  markRuntimeProjectionChanged(store,{sessionId:key,reason:'thread_submit',immediate:true});
 };
 
 /**
@@ -374,6 +382,7 @@ const bumpInvalidation = (
  * - now: injectable clock for tests; defaults to Date.now.
  */
 export interface ChatThreadServerEventHooks {
+  onViewApplied?: (prior:Map<string,string>) => void;
   now?: () => number;
   onChangesApplied?: (changes: ThreadChangeFrame[]) => void;
   onSnapshotRequired?: (payload: ThreadSnapshotRequiredData) => void;
@@ -485,7 +494,26 @@ export const applyChatThreadServerEvent = (
   payload: unknown,
   hooks: ChatThreadServerEventHooks = {}
 ): boolean => {
-  if (CONTROL_EVENT.test(eventType)) return false;
+  if(eventType==='thread_item_tail' && applyThreadViewTail(key,payload))return true;
+  if (eventType === 'thread_view_change') {
+    const wire = payload as any;
+    const data = wire?.data ?? wire;
+    const prior=new Map((threadViewSlots(key)??[]).map(s=>[s.rootTurnId,String(s.assistant.status)]));
+    const applied = applyThreadViewChanges(key, data);
+    if (!applied) hooks.onSnapshotRequired?.({});
+    else {
+      const rows=threadViewSlots(key)??[];
+      const target=store as any;
+      if(target.activeSessionId===key)target.messages=rows.flatMap(s=>[s.user,s.assistant]);
+      const active=['running','queued','waiting_input','waiting_approval'].includes(threadViewStatus(key)??'');
+      if(target.loadingBySession) {if(active)target.loadingBySession[key]=true;else delete target.loadingBySession[key];}
+      hooks.onViewApplied?.(prior);
+    }
+    return true;
+  }
+  if(eventType==='thread_view_required'){hooks.onSnapshotRequired?.({});return true;}
+  if (CONTROL_EVENT.test(eventType)||eventType==='final') return false;
+  if(threadViewSlots(key)!==null)return true;
   const entry = ensureChatThreadRuntime(key);
   if (eventType === 'thread_snapshot_required') {
     dispatchSnapshotRequired(store, key, payload, hooks);
@@ -525,6 +553,8 @@ export type ChatThreadMaterializedSlot = {
 };
 
 export const buildChatThreadMaterializedSlots = (key: string): ChatThreadMaterializedSlot[] | null => {
+  const view = threadViewSlots(key);
+  if (view !== null) return view;
   const entry = registry.get(key);
   if (!entry) return null;
   const slots = buildChatThreadTurnSlots(entry.state);

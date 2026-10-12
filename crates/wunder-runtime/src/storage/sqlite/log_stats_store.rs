@@ -56,14 +56,13 @@ fn append_tool_log_exclusions(filters: &mut Vec<String>) {
     filters.push("excluded = 0".to_string());
 }
 
-pub(super) fn read_meta_f64_tx(
-    tx: &rusqlite::Transaction<'_>,
-    key: &str,
-) -> Result<Option<f64>> {
+pub(super) fn read_meta_f64_tx(tx: &rusqlite::Transaction<'_>, key: &str) -> Result<Option<f64>> {
     let value: Option<String> = tx
-        .query_row("SELECT value FROM meta WHERE key = ?1", params![key], |row| {
-            row.get(0)
-        })
+        .query_row(
+            "SELECT value FROM meta WHERE key = ?1",
+            params![key],
+            |row| row.get(0),
+        )
         .map(Some)
         .or_else(|error| match error {
             rusqlite::Error::QueryReturnedNoRows => Ok(None),
@@ -187,9 +186,8 @@ impl SqliteLogStatsStorage for SqliteStorage {
     fn get_user_usage_summary_impl(&self) -> Result<HashMap<String, (i64, i64)>> {
         self.ensure_initialized()?;
         let conn = self.open()?;
-        let mut stmt = conn.prepare(
-            "SELECT user_id, chat_records, tool_records FROM user_usage_summary",
-        )?;
+        let mut stmt =
+            conn.prepare("SELECT user_id, chat_records, tool_records FROM user_usage_summary")?;
         let rows = stmt
             .query_map([], |row| {
                 Ok((
@@ -237,8 +235,15 @@ impl SqliteLogStatsStorage for SqliteStorage {
                             WHERE excluded = 0 GROUP BY user_id) t ON t.user_id = u.user_id",
                 params![now],
             )?;
-            let tool_max: i64 = tx.query_row("SELECT COALESCE(MAX(id), 0) FROM tool_logs", [], |row| row.get(0))?;
-            let chat_max: f64 = tx.query_row("SELECT COALESCE(MAX(created_time), 0) FROM thread_items", [], |row| row.get(0))?;
+            let tool_max: i64 =
+                tx.query_row("SELECT COALESCE(MAX(id), 0) FROM tool_logs", [], |row| {
+                    row.get(0)
+                })?;
+            let chat_max: f64 = tx.query_row(
+                "SELECT COALESCE(MAX(created_time), 0) FROM thread_items",
+                [],
+                |row| row.get(0),
+            )?;
             write_meta_f64_tx(&tx, USAGE_TOOL_WATERMARK_KEY, tool_max as f64, now)?;
             write_meta_f64_tx(&tx, USAGE_CHAT_WATERMARK_KEY, chat_max, now)?;
             write_meta_f64_tx(&tx, USAGE_FULL_RECONCILE_KEY, now, now)?;
@@ -267,8 +272,15 @@ impl SqliteLogStatsStorage for SqliteStorage {
                    updated_time = excluded.updated_time",
                 params![chat_wm, now],
             )?;
-            let tool_max: i64 = tx.query_row("SELECT COALESCE(MAX(id), 0) FROM tool_logs", [], |row| row.get(0))?;
-            let chat_max: f64 = tx.query_row("SELECT COALESCE(MAX(created_time), 0) FROM thread_items", [], |row| row.get(0))?;
+            let tool_max: i64 =
+                tx.query_row("SELECT COALESCE(MAX(id), 0) FROM tool_logs", [], |row| {
+                    row.get(0)
+                })?;
+            let chat_max: f64 = tx.query_row(
+                "SELECT COALESCE(MAX(created_time), 0) FROM thread_items",
+                [],
+                |row| row.get(0),
+            )?;
             if tool_max as f64 > tool_wm as f64 {
                 write_meta_f64_tx(&tx, USAGE_TOOL_WATERMARK_KEY, tool_max as f64, now)?;
             }
@@ -503,7 +515,14 @@ impl SqliteLogStatsStorage for SqliteStorage {
         let now = Self::now_ts();
         let chat_wm = read_meta_f64_tx(&tx, USAGE_CHAT_WATERMARK_KEY)?.unwrap_or(0.0);
         let mut removed = 0i64;
+        tx.execute("DELETE FROM thread_trajectory_tiles WHERE session_id IN (SELECT session_id FROM thread_view_heads WHERE user_id=?)",params![user_id])?;
         for table in [
+            "thread_body_search",
+            "thread_body_manifests",
+            "thread_body_chunks",
+            "thread_chat_rows",
+            "thread_trajectory_rows",
+            "thread_view_heads",
             "thread_item_blocks",
             "thread_log_changes",
             "thread_turns",
@@ -522,8 +541,7 @@ impl SqliteLogStatsStorage for SqliteStorage {
              AND kind IN ('user_message','assistant_message') AND created_time <= ?",
             params![user_id, chat_wm],
         )? as i64;
-        let rest =
-            tx.execute("DELETE FROM thread_items WHERE user_id=?", params![user_id])? as i64;
+        let rest = tx.execute("DELETE FROM thread_items WHERE user_id=?", params![user_id])? as i64;
         removed += counted + rest;
         decrement_usage_summary_tx(&tx, &[(user_id.to_string(), counted)], &[], now)?;
         tx.commit()?;

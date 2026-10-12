@@ -40,6 +40,7 @@ mod prompt;
 mod queue;
 mod sessions;
 mod stress;
+mod view;
 
 use sessions::{has_active_queue_task, is_session_stream_active_or_queued};
 
@@ -52,6 +53,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .merge(queue::router())
         .merge(sessions::router())
         .merge(stress::router())
+        .merge(view::router())
         .route(
             "/wunder/chat/sessions/{session_id}/subagents",
             get(list_session_subagents),
@@ -539,10 +541,9 @@ pub(crate) async fn build_chat_request(
         .map(|record| normalize_agent_approval_mode(Some(record.approval_mode.as_str())));
     let resolved_approval_mode = request_approval_mode.or(agent_approval_mode);
     let config = state.config_store.get().await;
-    let session_model_override =
-        state
-            .workspace
-            .load_session_model_override(&user.user_id, &session_id);
+    let session_model_override = state
+        .workspace
+        .load_session_model_override(&user.user_id, &session_id);
     let selected_model_name = resolve_thread_model_name(
         &config,
         agent_record.as_ref(),
@@ -646,15 +647,15 @@ pub async fn native_chat_context_capacity(
     })
     .await?;
     let config = state.config_store.get().await;
-    let session_model_override = state.workspace.load_session_model_override(user_id, session_id);
-    Ok(resolve_thread_model_name(
-        &config,
-        agent.as_ref(),
-        session_model_override.as_deref(),
+    let session_model_override = state
+        .workspace
+        .load_session_model_override(user_id, session_id);
+    Ok(
+        resolve_thread_model_name(&config, agent.as_ref(), session_model_override.as_deref())
+            .and_then(|key| config.llm.models.get(&key))
+            .and_then(|model| model.max_context)
+            .filter(|value| *value > 0),
     )
-    .and_then(|key| config.llm.models.get(&key))
-    .and_then(|model| model.max_context)
-    .filter(|value| *value > 0))
 }
 
 /// Build a local desktop request without going through the HTTP adapter.

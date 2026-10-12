@@ -72,8 +72,10 @@ fn multirow_sql(table: &str, columns: &str, row_width: usize, rows: usize) -> St
 }
 
 const ITEM_COLUMNS: &str = "session_id,item_id,turn_id,root_turn_id,visibility,user_id,item_index,kind,status,payload,created_time,updated_time,created_seq";
-const CHANGE_COLUMNS: &str = "session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time";
-const TOOL_LOG_COLUMNS: &str = "user_id,session_id,tool,ok,error,args,data,timestamp,payload,created_time";
+const CHANGE_COLUMNS: &str =
+    "session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time";
+const TOOL_LOG_COLUMNS: &str =
+    "user_id,session_id,tool,ok,error,args,data,timestamp,payload,created_time";
 
 fn flush_batch(
     tx: &Transaction<'_>,
@@ -120,14 +122,8 @@ impl SqliteStorage {
         conn.pragma_update(None, "synchronous", "OFF").ok();
         conn.pragma_update(None, "cache_size", -262_144).ok();
 
-        let write_result = self.write_stress_thread(
-            &mut conn,
-            user_id,
-            spec,
-            &plan,
-            seed,
-            &mut progress,
-        );
+        let write_result =
+            self.write_stress_thread(&mut conn, user_id, spec, &plan, seed, &mut progress);
         let stats = match write_result {
             Ok(stats) => stats,
             Err(err) => {
@@ -183,7 +179,11 @@ impl SqliteStorage {
             let turn_id = ids.next().to_string();
             let client_message_id = format!("stress-{}", ids.next().simple());
             let prompt_template = turn_rng.pick_str(crate::storage::stress_model::user_prompts());
-            let prompt = crate::storage::stress_model::fill_template(prompt_template, &mut turn_rng, turn_index);
+            let prompt = crate::storage::stress_model::fill_template(
+                prompt_template,
+                &mut turn_rng,
+                turn_index,
+            );
 
             // Same per-turn seed as pass 1: identical tool counts/durations.
             let plans = sample_turn_plans(cost.turn_seed, turn_index, spec.model_rounds_per_turn);
@@ -300,7 +300,8 @@ impl SqliteStorage {
                 turn_clock += plan_round.prefill_duration_s * scale;
                 let round_start = turn_clock;
 
-                let mut call_profiles: Vec<(&crate::storage::stress_model::ToolProfile, f64)> = Vec::new();
+                let mut call_profiles: Vec<(&crate::storage::stress_model::ToolProfile, f64)> =
+                    Vec::new();
                 for (i, profile) in plan_round.tool_profiles.iter().enumerate() {
                     call_profiles.push((*profile, plan_round.tool_duration_s[i] * scale));
                 }
@@ -359,7 +360,11 @@ impl SqliteStorage {
                         P::S(user_id.to_string()),
                         P::I(item_index),
                         P::S("tool_call".into()),
-                        P::S(if failed { "failed".into() } else { "completed".to_string() }),
+                        P::S(if failed {
+                            "failed".into()
+                        } else {
+                            "completed".to_string()
+                        }),
                         P::S(payload_text.clone()),
                         P::F(tool_done),
                         P::F(tool_done),
@@ -402,16 +407,24 @@ impl SqliteStorage {
                         P::S(result.error),
                         P::S(args_text),
                         P::S(result.data_text),
-                        P::S(Local
-                            .timestamp_millis_opt((tool_done * 1000.0) as i64)
-                            .single()
-                            .map(|t| t.to_rfc3339())
-                            .unwrap_or_default()),
+                        P::S(
+                            Local
+                                .timestamp_millis_opt((tool_done * 1000.0) as i64)
+                                .single()
+                                .map(|t| t.to_rfc3339())
+                                .unwrap_or_default(),
+                        ),
                         P::S(payload_text),
                         P::F(tool_done),
                     ]);
                     if change_rows.len() >= BATCH_ROWS {
-                        flush_batch(&tx, "thread_log_changes", CHANGE_COLUMNS, 9, &mut change_rows)?;
+                        flush_batch(
+                            &tx,
+                            "thread_log_changes",
+                            CHANGE_COLUMNS,
+                            9,
+                            &mut change_rows,
+                        )?;
                     }
                     if tool_rows.len() >= BATCH_ROWS {
                         flush_batch(&tx, "tool_logs", TOOL_LOG_COLUMNS, 10, &mut tool_rows)?;
@@ -432,7 +445,11 @@ impl SqliteStorage {
                 let answer = if m as i64 + 1 == spec.model_rounds_per_turn {
                     build_answer_text(&mut turn_rng, &prompt, turn_index)
                 } else {
-                    format!("继续处理：{}（第 {} 轮）", profile_hint(&call_profiles), model_round)
+                    format!(
+                        "继续处理：{}（第 {} 轮）",
+                        profile_hint(&call_profiles),
+                        model_round
+                    )
                 };
                 let reasoning = plan_round
                     .reasoning_tokens
@@ -550,7 +567,13 @@ impl SqliteStorage {
                 ]);
             }
             flush_batch(&tx, "thread_items", ITEM_COLUMNS, 13, &mut item_rows)?;
-            flush_batch(&tx, "thread_log_changes", CHANGE_COLUMNS, 9, &mut change_rows)?;
+            flush_batch(
+                &tx,
+                "thread_log_changes",
+                CHANGE_COLUMNS,
+                9,
+                &mut change_rows,
+            )?;
             flush_batch(&tx, "tool_logs", TOOL_LOG_COLUMNS, 10, &mut tool_rows)?;
             tx.execute(
                 "UPDATE thread_turns SET updated_time=? WHERE session_id=? AND turn_id=?",
@@ -569,6 +592,7 @@ impl SqliteStorage {
             "INSERT INTO thread_logs(session_id,user_id,latest_user_turn,latest_change_seq,created_time,updated_time) VALUES(?,?,?,?,?,?)",
             params![session_id, user_id, spec.user_rounds, seq, plan.start_time, end_time],
         )?;
+        tx.execute("INSERT INTO thread_view_heads(session_id,user_id,projection_state) VALUES(?,?,'rebuilding') ON CONFLICT(session_id) DO NOTHING",params![session_id,user_id])?;
         tx.execute(
             "INSERT INTO thread_log_metrics(session_id,user_id,metric_key,metric_value,updated_time) VALUES(?,?, 'user_turn_total', ?, ?) \
              ON CONFLICT(session_id,metric_key) DO UPDATE SET metric_value=excluded.metric_value,updated_time=excluded.updated_time",
@@ -630,9 +654,7 @@ mod tests {
         let (sessions, _) = storage
             .list_chat_sessions("tester", None, None, 0, 50)
             .unwrap();
-        assert!(sessions
-            .iter()
-            .any(|s| s.session_id == "stress-session-1"));
+        assert!(sessions.iter().any(|s| s.session_id == "stress-session-1"));
 
         // Visible messages: every model round contributes an assistant bubble,
         // so 3 turns × (1 user + 4 assistant) = 15, newest first.
@@ -672,11 +694,17 @@ mod tests {
         let items = detail["items"].as_array().unwrap();
         // user bubble + at least one item per model round (tools + assistant)
         assert!(items.len() >= 5, "turn items: {}", items.len());
-        let kinds: Vec<&str> = items.iter().map(|i| i["kind"].as_str().unwrap_or_default()).collect();
+        let kinds: Vec<&str> = items
+            .iter()
+            .map(|i| i["kind"].as_str().unwrap_or_default())
+            .collect();
         assert_eq!(kinds.first().copied(), Some("user_message"));
         assert!(kinds.contains(&"tool_call"));
         assert!(kinds.contains(&"assistant_message"));
-        let tool_item = items.iter().find(|i| i["kind"] == json!("tool_call")).unwrap();
+        let tool_item = items
+            .iter()
+            .find(|i| i["kind"] == json!("tool_call"))
+            .unwrap();
         let payload = &tool_item["payload"];
         assert!(payload["tool_call_id"].as_str().is_some());
         assert!(payload["tool"].as_str().is_some());
@@ -713,7 +741,9 @@ mod tests {
             user_rounds: MAX_USER_ROUNDS + 1,
             model_rounds_per_turn: 4,
         };
-        assert!(storage.generate_stress_thread("tester", &spec, |_, _| {}).is_err());
+        assert!(storage
+            .generate_stress_thread("tester", &spec, |_, _| {})
+            .is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -809,7 +839,8 @@ mod tests {
                 let t = std::time::Instant::now();
                 {
                     let mut stmt = tx.prepare_cached(&sql).unwrap();
-                    stmt.execute(params_from_iter(rows.iter().flatten())).unwrap();
+                    stmt.execute(params_from_iter(rows.iter().flatten()))
+                        .unwrap();
                 }
                 cached += t.elapsed();
                 rows.clear();

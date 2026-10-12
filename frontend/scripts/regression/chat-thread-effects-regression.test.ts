@@ -1,11 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createPinia, setActivePinia } from 'pinia';
-import { applyChatThreadServerEvent, submitChatThreadTurn, hydrateChatThreadRuntime, resetChatThreadRuntime, buildChatThreadMaterializedMessages } from '../../src/realtime/chat/chatThreadRuntime';
+import { applyChatThreadServerEvent, submitRawChatThreadTurn, hydrateChatThreadRuntime, resetChatThreadRuntime, buildChatThreadMaterializedMessages } from '../../src/realtime/chat/chatThreadRuntime';
+import {beginThreadView,commitThreadView,resetThreadViews} from '../../src/realtime/chat/threadViewStore';
 import { buildWorkflowToolRuns } from '../../src/components/chat/toolWorkflowRunModel';
 import { resolveCollapsedWorkflowEntryMetadata } from '../../src/components/chat/toolWorkflowCollapsedMetadata';
 
-const key = 'thread-effects-test';
+const key = 'fixture-thread-effects';
 const setup = async () => {
   Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: {
     getItem: () => null, setItem: () => {}, removeItem: () => {}
@@ -13,10 +14,10 @@ const setup = async () => {
   const { useChatStore } = await import('../../src/stores/chat');
   const { applyChatThreadEffects, syncChatThreadShell } = await import('../../src/stores/chatThreadEffects');
   setActivePinia(createPinia());
-  resetChatThreadRuntime(key);
+  resetChatThreadRuntime(key);resetThreadViews();
   const chat = useChatStore();
   chat.activeSessionId = key;
-  chat.sessions = [{ id: key, agent_id: 'agent-example' }] as any;
+  chat.sessions = [{ id: key, agent_id: 'fixture-agent' }] as any;
   const events: string[] = [];
   const eventDetails: any[] = [];
   const original = globalThis.window;
@@ -31,7 +32,7 @@ const setup = async () => {
 test('durable lifecycle settles shell and dispatches workspace effects once even through replay and gaps', async () => {
   const { chat, events, apply, syncChatThreadShell, cleanup } = await setup();
   try {
-    submitChatThreadTurn(chat, key, 'client-one', 'question');
+    submitRawChatThreadTurn(chat, key, 'client-one', 'question');
     chat.loadingBySession[key] = true;
     syncChatThreadShell(chat, key);
     assert.equal(chat.isSessionBusy(key), true);
@@ -51,7 +52,7 @@ test('durable lifecycle settles shell and dispatches workspace effects once even
     assert.equal(chat.sessionRuntimeStatus(key), 'completed');
     assert.equal(chat.isSessionLoading(key), false);
     assert.equal(events.filter(event => event === 'wunder:agent-runtime-refresh').length, 1);
-    submitChatThreadTurn(chat, key, 'client-two', 'next question');
+    submitRawChatThreadTurn(chat, key, 'client-two', 'next question');
     const rows = buildChatThreadMaterializedMessages(key)!;
     assert.deepEqual(rows.map(row => row.role), ['user', 'assistant', 'user', 'assistant']);
     assert.equal(rows[1].final, true);
@@ -103,14 +104,10 @@ test('production send callback binds its pending pair and settles from server tu
     }
     pendingRoles = buildChatThreadMaterializedMessages(key)!.map(row => row.role);
     const clientId = request.payload.client_message_id;
-    const emit = (cursor: number, payload: Record<string, unknown>, change_type = 'turn_upsert') => options.onEvent('thread_change', JSON.stringify({
-      cursor, change_type, turn_id: 'turn-send', item_id: payload.item_id, revision: payload.revision, payload
-    }));
-    emit(1, { turn_id: 'turn-send', status: 'queued', user_round: 1, client_message_id: clientId });
-    emit(2, { item_id: 'turn-send:user', turn_id: 'turn-send', kind: 'user_message', content: 'question', user_round: 1, client_message_id: clientId, revision: 1 }, 'item_upsert');
-    emit(3, { turn_id: 'turn-send', status: 'running' });
-    emit(4, { item_id: 'turn-send:text-1', turn_id: 'turn-send', model_round: 1, kind: 'assistant_message', role: 'assistant', content: 'answer', status: 'completed', revision: 1 }, 'item_upsert');
-    emit(5, { turn_id: 'turn-send', status: 'completed' });
+    options.onEvent('thread_view_change',JSON.stringify({epoch:1,view_seq:5,rows:[{
+      root_turn_id:'fixture-turn-send',execution_turn_id:'fixture-turn-send',user_round:1,client_message_id:clientId,revision:5,status:'completed',
+      user:{item_id:'fixture-turn-send:user',content:'question'},assistant:{item_id:'fixture-turn-send:text-1',content:'answer'},workflow_count:0,failed_count:0
+    }]}));
     assert.equal(chat.isSessionBusy(key), false);
     assert.equal(chat.isSessionLoading(key), false);
     options.onEvent('final', JSON.stringify({ content: 'answer' }));
@@ -193,7 +190,7 @@ test('scheduled preemption projects the new root turn live and emits one complet
     const completions = eventDetails
       .filter(detail => Array.isArray(detail?.completedTurns))
       .flatMap(detail => detail.completedTurns);
-    assert.equal(completions.length, 1);
-    assert.equal(completions[0].turnId, 'scheduled-turn');
+    assert.equal(completions.filter(c=>c.turnId==='scheduled-turn').length, 1);
+    assert.equal(completions.find(c=>c.turnId==='old-turn')?.status, 'cancelled');
   } finally { cleanup(); }
 });

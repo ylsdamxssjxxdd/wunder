@@ -1,131 +1,21 @@
-import { isChatSnapshotCurrent, readChatRealtimeRevision } from './chatSnapshotFreshness';
-import { defineStore } from 'pinia';
+import {threadViewSlots} from '@/realtime/chat/threadViewStore';
+import { prefetchThreadView } from './threadViewLoader';
+
 import { isSessionUnavailable } from './chatSessionAvailability';
 
-import {
-  archiveSession as archiveSessionApi,
-  cancelMessageStream,
-  compactSession as compactSessionApi,
-  controlSessionSubagents as controlSessionSubagentsApi,
-  createSession,
-  deleteSession as deleteSessionApi,
-  getSessionWithParams,
-  getSessionGoal,
-  getSessionHistoryPage,
-  getSessionSubagents,
-  listSessions,
-  openChatSocket,
-  renameSession as renameSessionApi,
-  restoreSession as restoreSessionApi,
-  setSessionGoal as setSessionGoalApi,
-  submitMessageFeedback as submitMessageFeedbackApi,
-  updateSessionTools as updateSessionToolsApi
-} from '@/api/chat';
-import { t } from '@/i18n';
-import { formatStructuredErrorText } from '@/utils/streamError';
-import { resolveCompactionProgressTitle } from '@/utils/chatCompactionUi';
-import {
-  buildChatRequestTextInputOverflowError,
-  resolveChatRequestTextInputOverflow
-} from '@/utils/chatRequestInputLimit';
-import {
-  hasActiveSubagentsAfterLatestUser,
-  hasRunningAssistantMessage,
-  hasStreamingAssistantMessage,
-  isSessionBusyFromSignals,
-  isThreadRuntimeBusy,
-  isThreadRuntimeWaiting,
-  normalizeThreadRuntimeStatus
-} from '@/utils/chatSessionRuntime';
-import {
-  isSubagentItemActive,
-  normalizeSubagentRuntimeFlag,
-  isSubagentStatusFailed,
-  isSubagentStatusSuccessful,
-  normalizeSubagentRuntimeStatus
-} from '@/utils/subagentRuntime';
-import { normalizeChatDurationSeconds, normalizeChatTimestampMs } from '@/utils/chatTiming';
-import {
-  mergeSessionsByIdPreservingRuntimeFields
-} from '@/stores/chatSessionMerge';
-import {
-  estimateChatTextTokens,
-  estimateRequestContextTokens,
-  resolveRequestContextPreviewTokens
-} from '@/utils/chatContextEstimate';
-import { resolveWorkflowDurationMs } from '@/utils/toolWorkflowTiming';
-import { summarizeTurnDecodeSpeed } from '@/utils/turnDecodeSpeed';
-import {
-  normalizeMessageFeedback,
-  normalizeMessageFeedbackVote
-} from '@/utils/messageFeedback';
-import { createWsMultiplexer } from '@/utils/ws';
-import { isDemoMode, loadDemoChatState, saveDemoChatState } from '@/utils/demo';
-import { emitAgentRuntimeRefresh, emitWorkspaceRefresh } from '@/utils/workspaceEvents';
-import { chatPerf } from '@/utils/chatPerf';
-import { chatDebugLog, isChatDebugEnabled } from '@/utils/chatDebug';
-import { resolveAccessToken } from '@/api/requestAuth';
-import {
-  createChatRuntimeProjection,
-  applyChatRuntimeEvent
-} from '@/realtime/chat/chatRuntimeReducer';
-import {
-  materializeChatRuntimeMessages
-} from '@/realtime/chat/chatRuntimeRenderAdapter';
-import {
-  selectLegacyMessageStatus,
-  selectVisibleMessageProjections,
-  selectSessionBusy,
-  selectSessionBusyReason,
-  selectSessionRuntimeStatus
-} from '@/realtime/chat/chatRuntimeSelectors';
-import type { ChatRuntimeProjection } from '@/realtime/chat/chatRuntimeTypes';
-import {
-  clearTrailingPendingAssistantMessages,
-  clearSupersededPendingAssistantMessages,
-  findPendingAssistantMessage,
-  isPendingAssistantMessage,
-  stopPendingAssistantMessage
-} from './chatPendingMessage';
-import {
-  captureChatSnapshotScheduleContext,
-  resolveChatSnapshotScheduleSource
-} from './chatSnapshotScheduler';
-import { resolveInteractiveControllerRecoveryReason } from './chatInteractiveRuntimeRecovery';
-import {
-  normalizeStreamLifecyclePhase,
-  shouldForcePreserveWatcherForActiveSession,
-  shouldApplyForegroundDetailHydration,
-  shouldKeepForegroundInteractiveRuntime,
-  shouldKeepForegroundLiveMessagesDuringRunningGap,
-  shouldKeepForegroundLiveMessages,
-  shouldRestartWatchAfterInteractiveStream
-} from './chatWatchLifecycle';
-import { isCompactionSummaryEvent } from '@/utils/chatCompactionWorkflow';
-import {
-  dedupeTerminalCompactionMarkersInPlace,
-  isCompactionMarkerAssistantMessage,
-  isSupersededRunningManualCompactionMarker,
-  mergeCompactionMarkersIntoMessages,
-  shouldPreserveTerminalCompactionMarkerState
-} from './chatCompactionMarker';
-import {
-  replaceMessageArrayKeepingReference,
-  resolveRealtimeMessageArrayReference
-} from './chatMessageArraySync';
-import { useCommandSessionStore } from './commandSessions';
-import { hasRetainedMessageConversationContext as hasRetainedConversationContext } from '@/views/messenger/messageConversationRetention';
+import { listSessions } from '@/api/chat';
 
-import { dismissStaleInquiryPanels, ensureGreetingMessage, hydrateSessionCommandSessions, normalizeInquiryPanelState, normalizeInquiryPanelStatus, sortSessionsByActivity, syncDemoChatCache } from './chatDemoPanels';
-import { hydrateMessage } from './chatMessageHydration';
-import { DEFAULT_AGENT_KEY, patchSessionRuntimeFields, persistAgentSession, readChatPersistState, resolvePersistedSessionId, syncGoalFromSessionRecord } from './chatPersist';
-import { resolveKnownSessionEventFloor, resolveMaterializedMessageEventId, resolveSessionDetailMessageLimit } from './chatRuntimeControls';
-import { applyCanonicalSessionEventsSnapshot, applyHistoryMeta, applyMessageWindow, applySessionRuntimeSnapshot, buildRuntimeDebugSnapshot, buildSessionHydratedMessageVersion, cacheSessionDetailSnapshot, cacheSessionMessages, clearCompletedAssistantStreamingState, cloneSessionList, ensureRuntime, filterSessionsByAgent, getSessionMessages, hasCanonicalSessionTranscript, hasKnownSessionInStore, isReusableFreshSession, isSessionDetailWarm, isSessionUnavailableStatus, loadSessionEventsSnapshot, loadSessionWorkflowEventsSnapshot, markSessionDetailWarm, normalizeThreadControlSession, purgeUnavailableSession, readSessionHydratedMessageVersion, readSessionListCache, resolveCanonicalSessionTranscript, resolveChatHttpStatus, resolveInitialSessionIdFromList, resolveSessionKey, resolveSessionListCacheKey, sessionDetailPrefetchInFlight, sessionListCacheInFlight, shouldApplySessionEventsSnapshotToProjection, syncChatRuntimeProjectionFromSnapshot, writeSessionHydratedMessageVersion, writeSessionListCache } from './chatRuntimeState';
+import { materializeChatRuntimeMessages } from '@/realtime/chat/chatRuntimeRenderAdapter';
+
+import { normalizeInquiryPanelState, normalizeInquiryPanelStatus, sortSessionsByActivity, syncDemoChatCache } from './chatDemoPanels';
+
+import { DEFAULT_AGENT_KEY, patchSessionRuntimeFields, persistAgentSession, readChatPersistState, resolvePersistedSessionId } from './chatPersist';
+
+import { applyCanonicalSessionEventsSnapshot, cloneSessionList, filterSessionsByAgent, getSessionMessages, isReusableFreshSession, loadSessionWorkflowEventsSnapshot, normalizeThreadControlSession, readSessionListCache, resolveInitialSessionIdFromList, resolveSessionKey, resolveSessionListCacheKey, sessionListCacheInFlight, syncChatRuntimeProjectionFromSnapshot, writeSessionListCache } from './chatRuntimeState';
 import { readChatSnapshot, scheduleChatSnapshot } from './chatSnapshot';
 import { resolveGreetingContent } from './chatStats';
-import { normalizeStreamEventId, updateRuntimeLastEventId, updateRuntimeRemoteLastEventId } from './chatStreamIds';
+
 import { InquiryPanelPatch, ListSessionsByStatusOptions } from './chatTypes';
-import { attachWorkflowEvents, buildSessionWorkflowState, getSessionWorkflowState } from './chatWorkflowHydration';
 
 const workflowHistoryHydrationInFlight = new Map<string, Promise<void>>();
 
@@ -208,6 +98,7 @@ export const chatCacheActions = {
     getCachedSessionMessages(sessionId) {
       const targetId = resolveSessionKey(sessionId);
       if (!targetId) return [];
+      const view=threadViewSlots(targetId);if(view!==null)return view.flatMap(s=>[s.user,s.assistant]);
       const _projectionVersion = this.runtimeProjectionVersion;
       const projected = materializeChatRuntimeMessages(this.runtimeProjection, targetId);
       if (projected.length > 0) {
@@ -239,6 +130,7 @@ export const chatCacheActions = {
     },
     async hydrateSessionWorkflowHistory(sessionId, sourceMessages = null) {
       const targetId = resolveSessionKey(sessionId);
+      if(threadViewSlots(targetId)!==null)return;
       // Prefer the foreground snapshot when supplied; a warm session cache
       // can lag behind the transcript that just finished loading.
       const cachedTranscript = getSessionMessages(targetId);
@@ -347,203 +239,9 @@ export const chatCacheActions = {
       return sortSessionsByActivity(data?.data?.items || []);
     },
     async preloadSessionDetail(sessionId, options: { force?: boolean; syncActive?: boolean } = {}) {
-      const targetId = resolveSessionKey(sessionId);
-      if (!targetId) return null;
-      if (isSessionUnavailable(this, targetId)) return null;
-      const force = options.force === true;
-      const syncActive = options.syncActive !== false;
-      const activeSessionId = resolveSessionKey(this.activeSessionId);
-      if (false && !force && targetId !== activeSessionId) {
-        chatDebugLog('chat.store.preload', 'desktop-skip-background-detail', {
-          sessionId: targetId,
-          activeSessionId,
-          force,
-          syncActive
-        });
-        return this.sessions.find((session) => session.id === targetId) || null;
-      }
-      const cachedMessages = getSessionMessages(targetId) || [];
-      if (!force && isSessionDetailWarm(targetId) && cachedMessages.length) {
-        chatDebugLog('chat.store.preload', 'warm-hit', {
-          sessionId: targetId,
-          force,
-          syncActive,
-          messageCount: cachedMessages.length
-        });
-        return this.sessions.find((session) => session.id === targetId) || null;
-      }
-      const inFlight = sessionDetailPrefetchInFlight.get(targetId);
-      if (inFlight) {
-        chatDebugLog('chat.store.preload', 'reuse-inflight', {
-          sessionId: targetId,
-          force,
-          syncActive
-        });
-        return inFlight;
-      }
-      const request = (async () => {
-        let sessionRes = null;
-        let eventsPayload = null;
-        const hydrationRevision = readChatRealtimeRevision(ensureRuntime(targetId));
-        const knownEventFloor = resolveKnownSessionEventFloor(targetId);
-        const detailLimit = resolveSessionDetailMessageLimit(false);
-        chatDebugLog('chat.store.preload', 'fetch-start', {
-          sessionId: targetId,
-          force,
-          syncActive,
-          knownEventFloor,
-          activeSessionId,
-          detailLimit
-        });
-        try {
-          [sessionRes, eventsPayload] = await Promise.all([
-            getSessionWithParams(targetId, { limit: detailLimit, summary: true }),
-            loadSessionEventsSnapshot(targetId, {
-              limit: detailLimit,
-              minLastEventId: knownEventFloor,
-              shouldCache: () => !isSessionUnavailable(this, targetId)
-            }).catch((error) => {
-              if (isSessionUnavailableStatus(resolveChatHttpStatus(error))) {
-                throw error;
-              }
-              return null;
-            })
-          ]);
-        } catch (error) {
-          if (isSessionUnavailableStatus(resolveChatHttpStatus(error))) {
-            chatDebugLog('chat.store.preload', 'session-unavailable', {
-              sessionId: targetId
-            });
-            purgeUnavailableSession(this, targetId);
-            return null;
-          }
-          chatDebugLog('chat.store.preload', 'fetch-error', {
-            sessionId: targetId,
-            error:
-              String((error as { name?: unknown; message?: unknown })?.message || '').trim() ||
-              String((error as { name?: unknown; message?: unknown })?.name || '').trim()
-          });
-          throw error;
-        }
-        const payload = sessionRes?.data;
-        const sessionDetail = payload?.data || null;
-        if (isSessionUnavailable(this, targetId)) return null;
-        cacheSessionDetailSnapshot(targetId, sessionDetail);
-        syncGoalFromSessionRecord(this, sessionDetail);
-        const hydratedVersion = buildSessionHydratedMessageVersion(sessionDetail, eventsPayload);
-        hydrateSessionCommandSessions(
-          targetId,
-          eventsPayload?.command_sessions ?? eventsPayload?.commandSessions
-        );
-        const runtime = ensureRuntime(targetId);
-        if (!isChatSnapshotCurrent(runtime, eventsPayload, hydrationRevision)) return null;
-        applySessionRuntimeSnapshot(runtime, eventsPayload?.runtime);
-        const remoteRunning = eventsPayload?.running === true;
-        const remoteLastEventId = normalizeStreamEventId(
-          eventsPayload?.last_event_id ?? eventsPayload?.lastEventId
-        );
-        updateRuntimeRemoteLastEventId(
-          runtime,
-          remoteLastEventId
-        );
-        if (shouldApplySessionEventsSnapshotToProjection(eventsPayload, runtime)) {
-          applyCanonicalSessionEventsSnapshot(this, targetId, eventsPayload, {
-            phase: 'preload'
-          });
-        } else if (
-          (Array.isArray(eventsPayload?.events) && eventsPayload.events.length > 0) ||
-          (Array.isArray(eventsPayload?.rounds) && eventsPayload.rounds.length > 0)
-        ) {
-          // Idle sessions still need their persisted tool workflow rows after a
-          // refresh; do not replay runtime state from this historical preload.
-          applyCanonicalSessionEventsSnapshot(this, targetId, eventsPayload, {
-            phase: 'preload-history',
-            includeRuntime: false
-          });
-        } else {
-          chatDebugLog('chat.store.preload', 'events-snapshot-skip-idle-transcript', {
-            sessionId: targetId,
-            remoteRunning,
-            remoteLastEventId,
-            eventCount: Array.isArray(eventsPayload?.events) ? eventsPayload.events.length : 0,
-            runtime: buildRuntimeDebugSnapshot(runtime)
-          });
-        }
-        const cachedHydratedMessages = getSessionMessages(targetId) || [];
-        const hasCanonicalTranscript = hasCanonicalSessionTranscript(sessionDetail);
-        const canReuseHydratedMessages =
-          !hasCanonicalTranscript &&
-          !remoteRunning &&
-          Array.isArray(cachedHydratedMessages) &&
-          cachedHydratedMessages.length > 0 &&
-          readSessionHydratedMessageVersion(targetId) === hydratedVersion;
-        let messages = cachedHydratedMessages;
-        if (canReuseHydratedMessages) {
-          getSessionWorkflowState(targetId, { reset: true });
-        } else {
-          const rounds = eventsPayload?.rounds || [];
-          const workflowState = buildSessionWorkflowState();
-          const rawMessages = attachWorkflowEvents(
-            resolveCanonicalSessionTranscript(sessionDetail),
-            rounds
-          );
-          messages = rawMessages.map((message) => hydrateMessage(message, workflowState));
-          messages = mergeCompactionMarkersIntoMessages(messages, cachedHydratedMessages);
-        }
-        dismissStaleInquiryPanels(messages);
-        const greetingMessages = ensureGreetingMessage(messages, {
-          createdAt: sessionDetail?.created_at,
-          greeting: this.greetingOverride
-        });
-        if (!remoteRunning) {
-          clearCompletedAssistantStreamingState(greetingMessages);
-        }
-        applyHistoryMeta(targetId, sessionDetail, greetingMessages);
-        applyMessageWindow(this, targetId, greetingMessages);
-        cacheSessionMessages(targetId, greetingMessages);
-        const shouldSyncActiveMessages =
-          syncActive && resolveSessionKey(this.activeSessionId) === targetId && Array.isArray(this.messages);
-        if (shouldSyncActiveMessages) {
-          replaceMessageArrayKeepingReference(this.messages, greetingMessages);
-        }
-        updateRuntimeLastEventId(
-          runtime,
-          Math.max(resolveMaterializedMessageEventId(greetingMessages), remoteLastEventId || 0)
-        );
-        if (
-          !remoteRunning &&
-          (
-            resolveSessionKey(this.activeSessionId) === targetId ||
-            Boolean(this.runtimeProjection?.sessions?.[targetId])
-          )
-        ) {
-          syncChatRuntimeProjectionFromSnapshot(this, targetId, greetingMessages, {
-            immediate: false,
-            loading: false,
-            running: false,
-            authoritative: true
-          });
-        }
-        writeSessionHydratedMessageVersion(targetId, hydratedVersion);
-        markSessionDetailWarm(targetId);
-        chatDebugLog('chat.store.preload', 'fetch-complete', {
-          sessionId: targetId,
-          force,
-          syncActive,
-          remoteRunning,
-          remoteLastEventId,
-          messageCount: greetingMessages.length,
-          reusedHydratedMessages: canReuseHydratedMessages,
-          syncedActiveMessages: shouldSyncActiveMessages
-        });
-        void this.refreshSessionSubagents(targetId).catch(() => null);
-        void this.hydrateSessionWorkflowHistory(targetId, greetingMessages);
-        return sessionDetail;
-      })().finally(() => {
-        sessionDetailPrefetchInFlight.delete(targetId);
-      });
-      sessionDetailPrefetchInFlight.set(targetId, request);
-      return request;
+      const key=resolveSessionKey(sessionId);if(!key||isSessionUnavailable(this,key))return null;
+      if(options.syncActive!==false&&this.activeSessionId===key)return this.loadSessionDetail(key);
+      return prefetchThreadView(key);
     },
     getSnapshotForSession(sessionId) {
       const snapshot = readChatSnapshot();

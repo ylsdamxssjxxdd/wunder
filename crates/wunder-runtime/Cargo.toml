@@ -173,7 +173,7 @@ pulldown-cmark.workspace = true
 qrcode.workspace = true
 regex.workspace = true
 rmcp = { workspace = true, optional = true }
-rusqlite = { workspace = true, optional = true }
+rusqlite = { workspace = true, optional = true, features = ["hooks"] }
 rustls.workspace = true
 sasl = { workspace = true, optional = true }
 scraper = { workspace = true, optional = true }

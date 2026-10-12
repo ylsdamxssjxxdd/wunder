@@ -1,17 +1,16 @@
 use super::*;
 use crate::storage::{
     AgentDirectoryStore, AgentRuntimeStore, BenchmarkStore, BridgeStore, ChannelDirectoryStore,
-    ChannelRuntimeStore, ChatSessionStore, CloudCallRecord, CloudDeviceLogRecord,
-    CloudDeviceInterlinkPatch, CloudDeviceRecord, CloudLogInsertResult, CloudStore,
-    ConversationLogStore, CronStore, InterlinkApprovalRecord, InterlinkAuditRecord,
+    ChannelRuntimeStore, ChatSessionStore, CloudCallRecord, CloudDeviceInterlinkPatch,
+    CloudDeviceLogRecord, CloudDeviceRecord, CloudLogInsertResult, CloudStore,
+    ConversationLogStore, CronStore, GatewayStore, InterlinkApprovalRecord, InterlinkAuditRecord,
     InterlinkChannelRecord, InterlinkCommandRecord, InterlinkShadowOverview, InterlinkShadowRecord,
-    InterlinkStore,
-    ListInterlinkAuditQuery, ListInterlinkCommandsQuery,
-    GatewayStore, ListCloudDeviceLogsQuery, ListCloudRecordsQuery, LogStatsStore, MediaStore,
-    MemoryRecordStore, MetaStore, MonitorStore, QuotaBalanceStore, RetentionStore,
-    SessionGoalStore, SessionLockStore, SessionRunStore, StorageLifecycle, TerminalTranscriptStore,
-    ThreadLogStore, UserAccountStore, UserRefreshTokenRecord, UserRefreshTokenStore,
-    UserWorldStore, VectorDocumentStore, WorkspaceRecord, WorkspaceStore,
+    InterlinkStore, ListCloudDeviceLogsQuery, ListCloudRecordsQuery, ListInterlinkAuditQuery,
+    ListInterlinkCommandsQuery, LogStatsStore, MediaStore, MemoryRecordStore, MetaStore,
+    MonitorStore, QuotaBalanceStore, RetentionStore, SessionGoalStore, SessionLockStore,
+    SessionRunStore, StorageLifecycle, TerminalTranscriptStore, ThreadLogStore, UserAccountStore,
+    UserRefreshTokenRecord, UserRefreshTokenStore, UserWorldStore, VectorDocumentStore,
+    WorkspaceRecord, WorkspaceStore,
 };
 use wunder_core::storage_backend::ThreadSnapshotWindow;
 
@@ -98,6 +97,50 @@ impl ConversationLogStore for PostgresStorage {
 }
 
 impl ThreadLogStore for PostgresStorage {
+    fn thread_view_search(
+        &self,
+        u: &str,
+        s: &str,
+        q: &str,
+    ) -> Result<wunder_core::thread_view::ThreadSearchPage> {
+        self.view_search(u, s, q)
+    }
+    fn pending_thread_view_rebuilds(&self) -> Result<Vec<(String, String, i64)>> {
+        self.view_pending()
+    }
+
+    fn thread_view_page(
+        &self,
+        u: &str,
+        s: &str,
+        k: &str,
+        b: Option<i64>,
+        l: usize,
+    ) -> Result<wunder_core::thread_view::ThreadViewPage> {
+        self.view_page(u, s, k, b, l)
+    }
+    fn thread_view_changes(
+        &self,
+        u: &str,
+        s: &str,
+        a: i64,
+    ) -> Result<wunder_core::thread_view::ThreadViewChanges> {
+        self.view_changes(u, s, a)
+    }
+    fn thread_body_page(
+        &self,
+        u: &str,
+        s: &str,
+        id: &str,
+        r: i64,
+        c: i64,
+    ) -> Result<wunder_core::thread_view::ThreadBodyPage> {
+        self.view_body(u, s, id, r, c)
+    }
+    fn rebuild_thread_view_page(&self, u: &str, s: &str, a: i64) -> Result<(i64, bool)> {
+        self.view_rebuild(u, s, a)
+    }
+
     fn load_subagent_context(
         &self,
         user_id: &str,
@@ -1815,7 +1858,6 @@ impl TerminalTranscriptStore for PostgresStorage {
     }
 }
 
-
 impl InterlinkStore for PostgresStorage {
     fn update_cloud_device_interlink(
         &self,
@@ -1886,11 +1928,7 @@ impl InterlinkStore for PostgresStorage {
             error_summary,
         )
     }
-    fn set_interlink_command_approval(
-        &self,
-        command_id: &str,
-        approval_state: &str,
-    ) -> Result<()> {
+    fn set_interlink_command_approval(&self, command_id: &str, approval_state: &str) -> Result<()> {
         self.set_interlink_command_approval_impl(command_id, approval_state)
     }
     fn get_interlink_command(&self, command_id: &str) -> Result<Option<InterlinkCommandRecord>> {
@@ -1918,10 +1956,7 @@ impl InterlinkStore for PostgresStorage {
     ) -> Result<()> {
         self.decide_interlink_approval_impl(approval_id, state, decided_by, decided_at)
     }
-    fn get_interlink_approval(
-        &self,
-        approval_id: &str,
-    ) -> Result<Option<InterlinkApprovalRecord>> {
+    fn get_interlink_approval(&self, approval_id: &str) -> Result<Option<InterlinkApprovalRecord>> {
         self.get_interlink_approval_impl(approval_id)
     }
 

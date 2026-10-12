@@ -4,7 +4,7 @@ const METRICS = new Set([
   'browser_frame_gap', 'browser_long_task', 'browser_input_event',
   'chat_stream_plain_text_flush', 'chat_stream_content_clock_flush',
   'chat_stream_markdown_render', 'chat_workflow_entries_build', 'chat_snapshot_flush',
-  'chat_session_detail_load', 'chat_history_load', 'chat_stream_total', 'chat_resume_total',
+  'chat_view_content_paint', 'chat_view_fetch_ms', 'chat_view_commit_ms', 'chat_session_detail_load', 'chat_history_load', 'chat_stream_total', 'chat_resume_total',
   'chat_stream_event', 'chat_resume_event', 'chat_watch_event', 'chat_shell_render',
   'chat_message_panel_render', 'chat_stream_interrupted', 'chat_resume_interrupted',
   'chat_watch_interrupted', 'chat_history_load_failed', 'chat_watch_terminal',
@@ -18,7 +18,7 @@ const METRICS = new Set([
   'trajectory_layout_ms', 'snapshot_abort', 'workflow_events_items'
 ]);
 const META_KEYS = new Set(['contentLength', 'messageCount', 'itemCount', 'fetchMs',
-  'hydrateMs', 'foregroundSyncMs', 'transcriptCount', 'eventCount', 'roundCount']);
+  'rows', 'bytes', 'hydrateMs', 'foregroundSyncMs', 'transcriptCount', 'eventCount', 'roundCount']);
 type Duration = { count: number; totalMs: number; maxMs: number; buckets: number[] };
 type SlowSample = { atMs: number; metric: string; durationMs: number; sizes?: Record<string, number> };
 export type PerfMetricsState = {

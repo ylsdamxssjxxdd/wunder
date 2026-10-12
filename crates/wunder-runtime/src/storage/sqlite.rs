@@ -59,6 +59,7 @@ mod session_run;
 pub(crate) mod stress_thread;
 mod terminal_transcript_store;
 mod thread_log_store;
+mod thread_view_store;
 mod user_account_store;
 mod user_world_store;
 mod vector_document_store;

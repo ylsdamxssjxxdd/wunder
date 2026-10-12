@@ -11,8 +11,8 @@
 use super::PostgresStorage;
 use crate::storage::stress_model::{
     base_seed, build_answer_text, build_reasoning_text, build_tool_args, build_tool_result,
-    committed_item_json, fill_template, plan_timeline, profile_hint, sample_turn_plans, user_prompts,
-    IdGen, Rng, StressThreadSpec, StressThreadStats, StressTimelinePlan,
+    committed_item_json, fill_template, plan_timeline, profile_hint, sample_turn_plans,
+    user_prompts, IdGen, Rng, StressThreadSpec, StressThreadStats, StressTimelinePlan,
 };
 use anyhow::{anyhow, ensure, Result};
 use chrono::{Local, TimeZone};
@@ -31,8 +31,10 @@ use wunder_core::storage_backend::StorageLifecycle;
 const BATCH_ROWS: usize = 2_500;
 
 const ITEM_COLUMNS: &str = "session_id,item_id,turn_id,root_turn_id,visibility,user_id,item_index,kind,status,payload,created_time,updated_time,created_seq";
-const CHANGE_COLUMNS: &str = "session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time";
-const TOOL_LOG_COLUMNS: &str = "user_id,session_id,tool,ok,error,args,data,timestamp,payload,created_time";
+const CHANGE_COLUMNS: &str =
+    "session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time";
+const TOOL_LOG_COLUMNS: &str =
+    "user_id,session_id,tool,ok,error,args,data,timestamp,payload,created_time";
 
 /// A buffered parameter value for bulk inserts.
 enum P {
@@ -89,8 +91,10 @@ async fn flush_batch(
     if rows.is_empty() {
         return Ok(());
     }
-    let flat: Vec<&(dyn ToSql + Sync)> =
-        rows.iter().flat_map(|row| row.iter().map(P::as_sql)).collect();
+    let flat: Vec<&(dyn ToSql + Sync)> = rows
+        .iter()
+        .flat_map(|row| row.iter().map(P::as_sql))
+        .collect();
     // Full batches reuse the statement prepared once for the fixed shape; only
     // the per-turn tail batch (fewer than BATCH_ROWS rows) is parsed on the fly.
     match full.filter(|_| rows.len() == BATCH_ROWS) {
@@ -210,7 +214,12 @@ async fn run_generation(
         .await
         .map_err(|err| anyhow!("prepare thread_items insert: {err}"))?;
     let change_stmt = client
-        .prepare(&multirow_sql("thread_log_changes", CHANGE_COLUMNS, 9, BATCH_ROWS))
+        .prepare(&multirow_sql(
+            "thread_log_changes",
+            CHANGE_COLUMNS,
+            9,
+            BATCH_ROWS,
+        ))
         .await
         .map_err(|err| anyhow!("prepare thread_log_changes insert: {err}"))?;
     let tool_stmt = client
@@ -234,7 +243,8 @@ async fn run_generation(
         // Synthetic data tolerates relaxed durability: skip the per-commit WAL
         // fsync so 1000 sequential turn commits do not serialize on disk. This
         // mirrors the SQLite bulk path (journal_mode=MEMORY, synchronous=OFF).
-        tx.execute("SET LOCAL synchronous_commit = off", &[]).await?;
+        tx.execute("SET LOCAL synchronous_commit = off", &[])
+            .await?;
         // Turn row (terminal state, like a settled real turn).
         tx.execute(
             "INSERT INTO thread_turns(session_id,turn_id,root_turn_id,trigger_kind,client_message_id,user_id,user_turn_index,status,summary,payload,created_time,updated_time) \
@@ -274,7 +284,15 @@ async fn run_generation(
             ]);
         }
         if change_rows.len() >= BATCH_ROWS {
-            flush_batch(&tx, "thread_log_changes", CHANGE_COLUMNS, 9, &mut change_rows, Some(&change_stmt)).await?;
+            flush_batch(
+                &tx,
+                "thread_log_changes",
+                CHANGE_COLUMNS,
+                9,
+                &mut change_rows,
+                Some(&change_stmt),
+            )
+            .await?;
         }
 
         // User bubble item.
@@ -330,10 +348,26 @@ async fn run_generation(
             ]);
         }
         if item_rows.len() >= BATCH_ROWS {
-            flush_batch(&tx, "thread_items", ITEM_COLUMNS, 13, &mut item_rows, Some(&item_stmt)).await?;
+            flush_batch(
+                &tx,
+                "thread_items",
+                ITEM_COLUMNS,
+                13,
+                &mut item_rows,
+                Some(&item_stmt),
+            )
+            .await?;
         }
         if change_rows.len() >= BATCH_ROWS {
-            flush_batch(&tx, "thread_log_changes", CHANGE_COLUMNS, 9, &mut change_rows, Some(&change_stmt)).await?;
+            flush_batch(
+                &tx,
+                "thread_log_changes",
+                CHANGE_COLUMNS,
+                9,
+                &mut change_rows,
+                Some(&change_stmt),
+            )
+            .await?;
         }
 
         let mut item_index: i64 = 0;
@@ -459,13 +493,37 @@ async fn run_generation(
                     P::F(tool_done),
                 ]);
                 if item_rows.len() >= BATCH_ROWS {
-                    flush_batch(&tx, "thread_items", ITEM_COLUMNS, 13, &mut item_rows, Some(&item_stmt)).await?;
+                    flush_batch(
+                        &tx,
+                        "thread_items",
+                        ITEM_COLUMNS,
+                        13,
+                        &mut item_rows,
+                        Some(&item_stmt),
+                    )
+                    .await?;
                 }
                 if change_rows.len() >= BATCH_ROWS {
-                    flush_batch(&tx, "thread_log_changes", CHANGE_COLUMNS, 9, &mut change_rows, Some(&change_stmt)).await?;
+                    flush_batch(
+                        &tx,
+                        "thread_log_changes",
+                        CHANGE_COLUMNS,
+                        9,
+                        &mut change_rows,
+                        Some(&change_stmt),
+                    )
+                    .await?;
                 }
                 if tool_rows.len() >= BATCH_ROWS {
-                    flush_batch(&tx, "tool_logs", TOOL_LOG_COLUMNS, 10, &mut tool_rows, Some(&tool_stmt)).await?;
+                    flush_batch(
+                        &tx,
+                        "tool_logs",
+                        TOOL_LOG_COLUMNS,
+                        10,
+                        &mut tool_rows,
+                        Some(&tool_stmt),
+                    )
+                    .await?;
                 }
             }
 
@@ -483,7 +541,11 @@ async fn run_generation(
             let answer = if m as i64 + 1 == spec.model_rounds_per_turn {
                 build_answer_text(&mut turn_rng, &prompt, turn_index)
             } else {
-                format!("继续处理：{}（第 {} 轮）", profile_hint(&call_profiles), model_round)
+                format!(
+                    "继续处理：{}（第 {} 轮）",
+                    profile_hint(&call_profiles),
+                    model_round
+                )
             };
             let reasoning = plan_round
                 .reasoning_tokens
@@ -574,10 +636,26 @@ async fn run_generation(
                 ]);
             }
             if item_rows.len() >= BATCH_ROWS {
-                flush_batch(&tx, "thread_items", ITEM_COLUMNS, 13, &mut item_rows, Some(&item_stmt)).await?;
+                flush_batch(
+                    &tx,
+                    "thread_items",
+                    ITEM_COLUMNS,
+                    13,
+                    &mut item_rows,
+                    Some(&item_stmt),
+                )
+                .await?;
             }
             if change_rows.len() >= BATCH_ROWS {
-                flush_batch(&tx, "thread_log_changes", CHANGE_COLUMNS, 9, &mut change_rows, Some(&change_stmt)).await?;
+                flush_batch(
+                    &tx,
+                    "thread_log_changes",
+                    CHANGE_COLUMNS,
+                    9,
+                    &mut change_rows,
+                    Some(&change_stmt),
+                )
+                .await?;
             }
         }
 
@@ -609,9 +687,33 @@ async fn run_generation(
         )
         .await?;
         // Flush whatever is left inside this turn's transaction.
-        flush_batch(&tx, "thread_items", ITEM_COLUMNS, 13, &mut item_rows, Some(&item_stmt)).await?;
-        flush_batch(&tx, "thread_log_changes", CHANGE_COLUMNS, 9, &mut change_rows, Some(&change_stmt)).await?;
-        flush_batch(&tx, "tool_logs", TOOL_LOG_COLUMNS, 10, &mut tool_rows, Some(&tool_stmt)).await?;
+        flush_batch(
+            &tx,
+            "thread_items",
+            ITEM_COLUMNS,
+            13,
+            &mut item_rows,
+            Some(&item_stmt),
+        )
+        .await?;
+        flush_batch(
+            &tx,
+            "thread_log_changes",
+            CHANGE_COLUMNS,
+            9,
+            &mut change_rows,
+            Some(&change_stmt),
+        )
+        .await?;
+        flush_batch(
+            &tx,
+            "tool_logs",
+            TOOL_LOG_COLUMNS,
+            10,
+            &mut tool_rows,
+            Some(&tool_stmt),
+        )
+        .await?;
         tx.commit()
             .await
             .map_err(|err| anyhow!("commit turn transaction: {err}"))?;
@@ -626,12 +728,14 @@ async fn run_generation(
         .transaction()
         .await
         .map_err(|err| anyhow!("begin envelope transaction: {err}"))?;
-    tx.execute("SET LOCAL synchronous_commit = off", &[]).await?;
+    tx.execute("SET LOCAL synchronous_commit = off", &[])
+        .await?;
     tx.execute(
         "INSERT INTO thread_logs(session_id,user_id,latest_user_turn,latest_change_seq,created_time,updated_time) VALUES($1,$2,$3,$4,$5,$6)",
         &[&session_id, &user_id, &spec.user_rounds, &seq, &plan.start_time, &end_time],
     )
     .await?;
+    tx.execute("INSERT INTO thread_view_heads(session_id,user_id,projection_state) VALUES($1,$2,'rebuilding') ON CONFLICT(session_id) DO NOTHING",&[&session_id,&user_id]).await?;
     // metric_value is DOUBLE PRECISION in the Postgres schema; an i64 binding
     // would be rejected by tokio-postgres ("error serializing parameter"). The
     // live runtime writes it as `latest_user_turn::double precision` too.

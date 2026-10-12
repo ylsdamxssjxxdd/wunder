@@ -1,0 +1,160 @@
+//! Bounded presentation reads. Execution snapshots are not a page contract.
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+pub const CHAT_PAGE_SIZE: usize = 12;
+pub const CHAT_PAGE_MAX: usize = 20;
+pub const TRAJECTORY_PAGE_SIZE: usize = 80;
+pub const TRAJECTORY_PAGE_MAX: usize = 100;
+pub const BODY_CHUNK_BYTES: usize = 8192;
+pub const CHAT_RESPONSE_BYTES: usize = 128 * 1024;
+pub const TRAJECTORY_RESPONSE_BYTES: usize = 192 * 1024;
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct BodyRef {
+    pub body_id: String,
+    pub revision: i64,
+    pub bytes: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ViewMessage {
+    pub item_id: String,
+    pub content: String,
+    #[serde(default)]
+    pub created_seq: i64,
+    #[serde(default)]
+    pub durable_seq: i64,
+    #[serde(default)]
+    pub content_offset: usize,
+    pub body: Option<BodyRef>,
+    pub feedback: Option<Value>,
+    pub stats: Option<Value>,
+    #[serde(default)]
+    pub tail: String,
+    #[serde(default)]
+    pub failure: String,
+    #[serde(default)]
+    pub attachments: Vec<Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ChatViewRow {
+    #[serde(default)]
+    pub execution_turn_id: String,
+    pub root_turn_id: String,
+    pub user_round: i64,
+    pub client_message_id: Option<String>,
+    pub revision: i64,
+    pub status: String,
+    pub user: ViewMessage,
+    pub assistant: ViewMessage,
+    pub workflow_count: i64,
+    pub failed_count: i64,
+    pub created_time: f64,
+    pub updated_time: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct TrajectoryViewRow {
+    pub item_id: String,
+    pub root_turn_id: String,
+    pub turn_id: String,
+    pub user_round: i64,
+    pub item_index: i64,
+    pub created_seq: i64,
+    pub revision: i64,
+    pub kind: String,
+    pub status: String,
+    pub summary: String,
+    pub tool_name: Option<String>,
+    pub model_round: i64,
+    pub started_at: f64,
+    pub completed_at: Option<f64>,
+    pub detail: Option<BodyRef>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct TrajectoryTile {
+    pub bucket: i64,
+    pub count: i64,
+    pub failed: i64,
+    pub running: i64,
+    pub start: f64,
+    pub end: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ThreadViewPage {
+    pub runtime_status:String,
+    pub active_turn_id:String,
+    pub session_id: String,
+    pub epoch: i64,
+    pub view_seq: i64,
+    pub projection_state: String,
+    pub thread_empty: Option<bool>,
+    pub latest_round: i64,
+    pub chat: Vec<ChatViewRow>,
+    pub trajectory: Vec<TrajectoryViewRow>,
+    pub tiles: Vec<TrajectoryTile>,
+    pub tile_level: usize,
+    pub next_before: Option<i64>,
+    pub has_more: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ThreadBodyPage {
+    pub body_id: String,
+    pub revision: i64,
+    pub chunks: Vec<String>,
+    pub next_cursor: Option<i64>,
+    pub has_more: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ThreadViewChanges {
+    pub runtime_status:String,
+    pub active_turn_id:String,
+    pub epoch: i64,
+    pub view_seq: i64,
+    pub reset_required: bool,
+    pub rows: Vec<ChatViewRow>,
+}
+
+/// Byte bounded UTF-8 preview, also safe for JSON's worst case escaping.
+pub fn preview(text: &str, budget: usize) -> String {
+    let mut end = text.len().min(budget);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    text[..end].to_string()
+}
+
+pub fn chunks(text: &str) -> impl Iterator<Item = &str> {
+    let mut remaining = text;
+    std::iter::from_fn(move || {
+        if remaining.is_empty() {
+            return None;
+        }
+        let mut end = remaining.len().min(BODY_CHUNK_BYTES);
+        while !remaining.is_char_boundary(end) {
+            end -= 1;
+        }
+        let (chunk, rest) = remaining.split_at(end);
+        remaining = rest;
+        Some(chunk)
+    })
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ThreadSearchHit {
+    pub item_id: String,
+    pub body: BodyRef,
+    pub cursor: i64,
+    pub snippet: String,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ThreadSearchPage {
+    pub hits: Vec<ThreadSearchHit>,
+    pub has_more: bool,
+}

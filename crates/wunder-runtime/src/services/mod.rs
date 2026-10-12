@@ -57,6 +57,7 @@ pub mod subagents;
 pub mod thread_catalog;
 pub mod thread_change_feeder;
 pub mod thread_log;
+pub mod thread_view_rebuild;
 pub mod tool_result_display;
 pub mod tools;
 pub mod user_access;

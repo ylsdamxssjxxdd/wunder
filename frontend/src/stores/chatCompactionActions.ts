@@ -1,3 +1,4 @@
+import {settlePendingThreadView} from '@/realtime/chat/threadViewStore';
 import { applyChatThreadServerEvent, submitChatThreadTurn, getChatThreadState } from '@/realtime/chat/chatThreadRuntime';
 import { syncChatThreadShell } from './chatThreadEffects';
 import { markRuntimeProjectionChanged } from '@/realtime/chat/chatRuntimeProjectionInvalidation';
@@ -260,6 +261,7 @@ export const chatCompactionActions = {
           });
           return data?.data?.message || data?.message || '';
         } catch (error) {
+          settlePendingThreadView(targetId,compactClientId,isAbortRequestError(error)?'cancelled':'failed');syncChatThreadShell(this,targetId);
           const pending = getChatThreadState(targetId)?.turns.get(`pending:${compactClientId}`);
           if (pending) {
             pending.status = isAbortRequestError(error) ? 'cancelled' : 'failed';

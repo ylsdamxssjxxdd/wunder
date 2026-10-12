@@ -17,7 +17,8 @@
         v-if="isUser"
         class="messenger-message-bubble messenger-markdown"
       >
-        <MessageMarkdownBody
+        <ThreadBodyViewport v-if="item.message.__thread_preview && item.message.__thread_body" :session-id="String(chatStore.activeSessionId||'')" :body="item.message.__thread_body" :preview="String(item.message.content||'')" :cache-key="`thread:${item.key}`" />
+        <MessageMarkdownBody v-else
           :cache-key="`agent:${String(sessionHub.activeConversationKey || '')}:${resolveAgentMessageKey(item.message, item.sourceIndex)}:c${currentContainerId}`"
           :content="String(item.message.content || '')"
           :message="item.message"
@@ -118,6 +119,7 @@
 </template>
 
 <script setup lang="ts">
+import ThreadBodyViewport from '@/components/chat/ThreadBodyViewport.vue';
 import { computed } from 'vue';
 import type { MessengerControllerContext } from '../controller/messengerControllerContext';
 import MessageMarkdownBody from '@/components/chat/MessageMarkdownBody.vue';

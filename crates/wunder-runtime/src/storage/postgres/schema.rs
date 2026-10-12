@@ -2197,6 +2197,18 @@ impl PostgresSchemaStorage for PostgresStorage {
                     self.ensure_chat_session_columns(&mut conn)?;
                     self.ensure_thread_item_sequence(&mut conn)?;
                     self.ensure_thread_item_block_fields(&mut conn)?;
+                    conn.batch_execute(crate::storage::thread_view_store::SCHEMA)?;
+                    conn.batch_execute(super::thread_view_store::SEARCH_SCHEMA)?;
+                    if conn
+                        .query_opt(
+                            "SELECT key FROM meta WHERE key='thread_view_v1_discovered'",
+                            &[],
+                        )?
+                        .is_none()
+                    {
+                        conn.execute("INSERT INTO thread_view_heads(session_id,user_id,projection_state) SELECT session_id,user_id,'rebuilding' FROM thread_logs WHERE latest_user_turn>0 ON CONFLICT(session_id) DO NOTHING", &[])?;
+                        conn.execute("INSERT INTO meta(key,value,updated_time) VALUES('thread_view_v1_discovered','1',0) ON CONFLICT(key) DO NOTHING",&[])?;
+                    }
                     // A hard cutover intentionally discards obsolete duplicate history.
                     conn.execute("DROP TABLE IF EXISTS chat_history", &[])?;
                     self.ensure_model_context_table_retired(&mut conn)?;

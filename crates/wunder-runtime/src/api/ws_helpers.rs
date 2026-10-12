@@ -288,6 +288,187 @@ pub(crate) async fn resume_thread_changes_v2(
     }
 }
 
+/// Browser display subscription: bounded row revisions, no raw log replay.
+pub(crate) async fn resume_thread_view(
+    state: Arc<AppState>,
+    session_id: String,
+    user_id: String,
+    mut after: i64,
+    request_id: Option<&str>,
+    tx: WsSender,
+    cancel: Option<CancellationToken>,
+) {
+    let mut wake = state.kernel.orchestrator.change_hub.subscribe(&session_id);
+    let mut idle = 0u32;
+    loop {
+        if cancel.as_ref().is_some_and(|c| c.is_cancelled()) {
+            return;
+        }
+        let storage = state.storage.clone();
+        let session = session_id.clone();
+        let user = user_id.clone();
+        let result = blocking::run_view("api.ws.thread_view", move || {
+            storage.thread_view_changes(&user, &session, after)
+        })
+        .await;
+        match result {
+            Ok(page) if page.reset_required => {
+                let _ = try_send_ws_event(
+                    &tx,
+                    request_id,
+                    StreamEvent {
+                        event: "thread_view_required".into(),
+                        data: json!({"session_id":session_id}),
+                        id: None,
+                        timestamp: Some(Utc::now()),
+                    },
+                );
+                return;
+            }
+            Ok(page) if page.view_seq > after => {
+                idle = 0;
+                after = page.view_seq;
+                if try_send_ws_event(
+                    &tx,
+                    request_id,
+                    StreamEvent {
+                        event: "thread_view_change".into(),
+                        data: serde_json::to_value(page).unwrap_or(Value::Null),
+                        id: None,
+                        timestamp: Some(Utc::now()),
+                    },
+                )
+                .is_err()
+                {
+                    return;
+                }
+            }
+            Err(_) => {
+                let _ = try_send_ws_event(
+                    &tx,
+                    request_id,
+                    StreamEvent {
+                        event: "thread_view_required".into(),
+                        data: json!({"session_id":session_id}),
+                        id: None,
+                        timestamp: Some(Utc::now()),
+                    },
+                );
+                return;
+            }
+            _ => {
+                idle = idle.saturating_add(1);
+            }
+        }
+        let wait = tokio::time::sleep(std::time::Duration::from_millis(
+            (250u64 << idle.min(4)).min(4000),
+        ));
+        let cancellation = async {
+            if let Some(c) = cancel.as_ref() {
+                c.cancelled().await
+            } else {
+                std::future::pending::<()>().await
+            }
+        };
+        tokio::select! {_=cancellation=>return,_=wake.changed()=>{},_=wait=>{}}
+    }
+}
+
+/// The queue owns execution. The browser receives only bounded display rows.
+pub(crate) async fn resume_queued_thread_view(
+    state: Arc<AppState>,
+    session: String,
+    user: String,
+    queue: String,
+    after: i64,
+    request: Option<&str>,
+    tx: WsSender,
+    cancel: Option<CancellationToken>,
+) {
+    let feeder_cancel = cancel.clone().unwrap_or_default().child_token();
+    let feeder = resume_thread_view(
+        state.clone(),
+        session.clone(),
+        user.clone(),
+        after,
+        request,
+        tx.clone(),
+        Some(feeder_cancel.clone()),
+    );
+    tokio::pin!(feeder);
+    loop {
+        tokio::select! {
+            _=&mut feeder=>return,
+            _=tokio::time::sleep(std::time::Duration::from_millis(500))=>{}
+        }
+        if cancel.as_ref().is_some_and(|c| c.is_cancelled()) {
+            return;
+        }
+        let users = state.user_store.clone();
+        let id = queue.clone();
+        let task = blocking::run_view("api.ws.thread_view.queue", move || {
+            users.get_agent_task(&id)
+        })
+        .await
+        .ok()
+        .flatten();
+        if let Some(task) = task {
+            if task.session_id != session {
+                return;
+            }
+            if matches!(
+                task.status.as_str(),
+                "success" | "failed" | "cancelled" | "dead"
+            ) {
+                feeder_cancel.cancel();
+                send_final_thread_view(&state, &session, &user, request, &tx).await;
+                let _ = try_send_ws_event(
+                    &tx,
+                    request,
+                    StreamEvent {
+                        event: "final".into(),
+                        data: json!({"session_id":session}),
+                        id: None,
+                        timestamp: Some(Utc::now()),
+                    },
+                );
+                return;
+            }
+        }
+    }
+}
+
+pub(crate) async fn send_final_thread_view(
+    state: &Arc<AppState>,
+    session: &str,
+    user: &str,
+    request: Option<&str>,
+    tx: &WsSender,
+) {
+    let storage = state.storage.clone();
+    let session = session.to_string();
+    let user = user.to_string();
+    if let Ok(page) = blocking::run_view("api.ws.thread_view.final", move || {
+        storage.thread_view_page(&user, &session, "chat", None, 12)
+    })
+    .await
+    {
+        let mut data = json!({"runtime_status":page.runtime_status,"active_turn_id":page.active_turn_id,"epoch":page.epoch,"view_seq":page.view_seq,"rows":page.chat,"reset_required":page.projection_state!="ready"});
+        if serde_json::to_vec(&data).map(|v|v.len()>60*1024).unwrap_or(true){data["rows"]=json!([]);data["reset_required"]=json!(true);}
+        let _ = send_ws_event(
+            tx,
+            request,
+            StreamEvent {
+                event: "thread_view_change".into(),
+                data,
+                id: None,
+                timestamp: Some(Utc::now()),
+            },
+        )
+        .await;
+    }
+}
+
 /// Queued v2 start uses the same durable feeder as normal turns, but stops
 /// after the matching queue Item reaches a terminal state. All frames are
 /// still forwarded to the session reducer so queue transitions and any

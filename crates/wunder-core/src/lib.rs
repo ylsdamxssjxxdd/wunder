@@ -23,6 +23,7 @@ pub mod storage_backend;
 pub mod storage_bridge;
 pub mod storage_constants;
 pub mod storage_records;
+pub mod thread_view;
 pub mod token_utils;
 pub mod tool_args;
 pub mod virtual_model;

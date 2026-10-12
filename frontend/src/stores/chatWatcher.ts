@@ -1,139 +1,36 @@
+import { threadViewCursor, commitThreadView, threadViewGeneration, threadViewStatus, threadViewSlots, resetThreadViews, failThreadView } from '@/realtime/chat/threadViewStore';
+import { getThreadViewBootstrap } from '@/api/chat';
 // AI生成
-import { applyChatThreadEffects, syncChatThreadShell } from './chatThreadEffects';
-import { advanceThreadLogCursor, threadLogCursor } from './chatThreadCursor';
-import { selectVisibleMessageProjections } from '@/realtime/chat/chatRuntimeSelectors';
-import {
-  applyChatThreadServerEvent,
-  ensureChatThreadRuntime,
-  getChatThreadState,
-  registerChatThreadSnapshotLoader
-} from '@/realtime/chat/chatThreadRuntime';
-import { isChatSnapshotCurrent } from './chatSnapshotFreshness';
-import { defineStore } from 'pinia';
+// AI生成
+import { applyChatThreadEffects, applyThreadViewEffects, syncChatThreadShell } from './chatThreadEffects';
 
-import {
-  archiveSession as archiveSessionApi,
-  cancelMessageStream,
-  compactSession as compactSessionApi,
-  controlSessionSubagents as controlSessionSubagentsApi,
-  createSession,
-  deleteSession as deleteSessionApi,
-  getSession,
-  getSessionGoal,
-  getSessionEvents,
-  getSessionHistoryPage,
-  getSessionSubagents,
-  getThreadLogSnapshot,
-  getThreadLogTurn,
-  listSessions,
-  openChatSocket,
-  renameSession as renameSessionApi,
-  restoreSession as restoreSessionApi,
-  setSessionGoal as setSessionGoalApi,
-  submitMessageFeedback as submitMessageFeedbackApi,
-  updateSessionTools as updateSessionToolsApi
-} from '@/api/chat';
+import { applyChatThreadServerEvent, ensureChatThreadRuntime, getChatThreadState } from '@/realtime/chat/chatThreadRuntime';
+
+import { openChatSocket } from '@/api/chat';
 import { t } from '@/i18n';
-import { formatStructuredErrorText } from '@/utils/streamError';
-import { resolveCompactionProgressTitle } from '@/utils/chatCompactionUi';
-import {
-  buildChatRequestTextInputOverflowError,
-  resolveChatRequestTextInputOverflow
-} from '@/utils/chatRequestInputLimit';
-import {
-  hasActiveSubagentsAfterLatestUser,
-  hasRunningAssistantMessage,
-  hasStreamingAssistantMessage,
-  isSessionBusyFromSignals,
-  isThreadRuntimeBusy,
-  isThreadRuntimeWaiting,
-  normalizeThreadRuntimeStatus
-} from '@/utils/chatSessionRuntime';
-import {
-  isSubagentItemActive,
-  normalizeSubagentRuntimeFlag,
-  isSubagentStatusFailed,
-  isSubagentStatusSuccessful,
-  normalizeSubagentRuntimeStatus
-} from '@/utils/subagentRuntime';
-import { normalizeChatDurationSeconds, normalizeChatTimestampMs } from '@/utils/chatTiming';
-import {
-  mergeSessionsByIdPreservingRuntimeFields
-} from '@/stores/chatSessionMerge';
-import {
-  estimateChatTextTokens,
-  estimateRequestContextTokens,
-  resolveRequestContextPreviewTokens
-} from '@/utils/chatContextEstimate';
-import { resolveWorkflowDurationMs } from '@/utils/toolWorkflowTiming';
-import { summarizeTurnDecodeSpeed } from '@/utils/turnDecodeSpeed';
-import {
-  normalizeMessageFeedback,
-  normalizeMessageFeedbackVote
-} from '@/utils/messageFeedback';
-import { createWsMultiplexer } from '@/utils/ws';
-import { isDemoMode, loadDemoChatState, saveDemoChatState } from '@/utils/demo';
-import { emitAgentRuntimeRefresh, emitWorkspaceRefresh } from '@/utils/workspaceEvents';
-import { chatPerf } from '@/utils/chatPerf';
-import { chatDebugLog, isChatDebugEnabled, isChatDebugVerboseEnabled } from '@/utils/chatDebug';
-import { buildMessageIdentityDebugList } from '@/utils/chatMessageDebug';
-import { resolveAccessToken } from '@/api/requestAuth';
-import {
-  createChatRuntimeProjection,
-  applyChatRuntimeEvent
-} from '@/realtime/chat/chatRuntimeReducer';
-import {
-  selectSessionBusy,
-  selectSessionBusyReason,
-  selectRuntimeLastAppliedEventId,
-  selectSessionRuntimeStatus
-} from '@/realtime/chat/chatRuntimeSelectors';
-import type { ChatRuntimeProjection } from '@/realtime/chat/chatRuntimeTypes';
-import {
-  clearTrailingPendingAssistantMessages,
-  findPendingAssistantMessage,
-  isPendingAssistantMessage,
-  stopPendingAssistantMessage
-} from './chatPendingMessage';
-import {
-  captureChatSnapshotScheduleContext,
-  resolveChatSnapshotScheduleSource
-} from './chatSnapshotScheduler';
-import { resolveInteractiveControllerRecoveryReason } from './chatInteractiveRuntimeRecovery';
-import {
-  normalizeStreamLifecyclePhase,
-  shouldForcePreserveWatcherForActiveSession,
-  shouldApplyForegroundDetailHydration,
-  shouldKeepForegroundInteractiveRuntime,
-  shouldKeepForegroundLiveMessagesDuringRunningGap,
-  shouldKeepForegroundLiveMessages,
-  shouldRestartWatchAfterInteractiveStream
-} from './chatWatchLifecycle';
-import { isCompactionSummaryEvent } from '@/utils/chatCompactionWorkflow';
-import {
-  dedupeTerminalCompactionMarkersInPlace,
-  isCompactionMarkerAssistantMessage,
-  isSupersededRunningManualCompactionMarker,
-  mergeCompactionMarkersIntoMessages,
-  shouldPreserveTerminalCompactionMarkerState
-} from './chatCompactionMarker';
-import {
-  replaceMessageArrayKeepingReference,
-  resolveRealtimeMessageArrayReference
-} from './chatMessageArraySync';
-import { useCommandSessionStore } from './commandSessions';
-import { hasRetainedMessageConversationContext as hasRetainedConversationContext } from '@/views/messenger/messageConversationRetention';
 
-import { buildWorkflowItem, hydrateSessionCommandSessions, safeJsonParse } from './chatDemoPanels';
+import { hasRunningAssistantMessage, isThreadRuntimeBusy } from '@/utils/chatSessionRuntime';
+
+import { createWsMultiplexer } from '@/utils/ws';
+
+import { chatPerf } from '@/utils/chatPerf';
+
+import { isCompactionMarkerAssistantMessage } from './chatCompactionMarker';
+
+import { useCommandSessionStore } from './commandSessions';
+
+import { buildWorkflowItem, safeJsonParse } from './chatDemoPanels';
 import { applyGoalStreamEvent } from './chatPersist';
-import { SLOW_CLIENT_RESUME_DELAY_MS, WATCH_RECONCILE_COOLDOWN_MS, WATCH_RECONCILE_DELAY_MS, abortWatchStream, clearRuntimeInteractiveControllers, clearRuntimeResumeStreamState, clearRuntimeSendStreamState, clearSessionWatcher, clearSlowClientResume, clearWatchdog, recoverRuntimeInteractiveControllers, resolveWatchdogProfile, setSessionLoading } from './chatRuntimeControls';
-import { applyCanonicalSessionEventsSnapshot, applyCanonicalStreamRuntimeEvent, applySessionRuntimeEvent, applySessionRuntimeSnapshot, buildLatestAssistantRuntimeDebugSnapshot, buildRuntimeDebugSnapshot, cacheSessionMessages, syncChatRuntimeProjectionFromSnapshot, clearRuntimeProjectionInvalidation, clearSessionEventsSnapshot, countAssistantStreamingMessages, ensureRuntime, getRuntime, getSessionMessages, hasKnownSessionInStore, isSessionUnavailableStatus, loadSessionEventsSnapshot, notifySessionSnapshot, purgeUnavailableSession, refreshRuntimeStreamLifecycle, resolveChatHttpStatus, resolveSessionKey, resolveSessionMessageArray, sessionDetailPrefetchInFlight, sessionDetailSnapshotCache, sessionDetailWarmState, sessionEventsSnapshotCache, sessionEventsSnapshotInFlight, sessionHistoryState, sessionHydratedMessageVersion, sessionListCache, sessionListCacheInFlight, sessionMessages, sessionProtectedRealtimeMessages, sessionRuntime, sessionRuntimeShadowState, sessionSubagentsCache, sessionSubagentsInFlight } from './chatRuntimeState';
-import { settleTerminalAssistantArtifacts as settleTerminalAssistantArtifactsBase } from './chatTerminalArtifacts';
+import { abortWatchStream, clearRuntimeResumeStreamState, clearRuntimeSendStreamState, clearSessionWatcher, clearSlowClientResume, clearWatchdog, recoverRuntimeInteractiveControllers, resolveWatchdogProfile, setSessionLoading } from './chatRuntimeControls';
+import { applySessionRuntimeEvent, cacheSessionMessages, clearRuntimeProjectionInvalidation, clearSessionEventsSnapshot, ensureRuntime, getRuntime, hasKnownSessionInStore, isSessionUnavailableStatus, purgeUnavailableSession, refreshRuntimeStreamLifecycle, resolveChatHttpStatus, resolveSessionKey, resolveSessionMessageArray, sessionDetailPrefetchInFlight, sessionDetailSnapshotCache, sessionDetailWarmState, sessionEventsSnapshotCache, sessionEventsSnapshotInFlight, sessionHistoryState, sessionHydratedMessageVersion, sessionListCache, sessionListCacheInFlight, sessionMessages, sessionProtectedRealtimeMessages, sessionRuntime, sessionRuntimeShadowState, sessionSubagentsCache, sessionSubagentsInFlight } from './chatRuntimeState';
+
 import { chatWatcherSharedState } from './chatSharedState';
 import { clearAllChatSnapshots, clearScheduledChatSnapshot } from './chatSnapshot';
 import { buildMessage } from './chatStats';
-import { getRuntimeLastEventId, normalizeFlag, normalizeStreamEventId, updateRuntimeLastEventId, updateRuntimeRemoteLastEventId } from './chatStreamIds';
-import { buildDetail, handleApprovalEvent, isTerminalLlmOutputPayload, isTerminalStreamEventType, resolveNormalizedStreamEventType, sessionWorkflowState } from './chatWorkflowHydration';
+import { normalizeFlag } from './chatStreamIds';
+import { buildDetail, handleApprovalEvent, resolveNormalizedStreamEventType, sessionWorkflowState } from './chatWorkflowHydration';
+
+const connectionFailures=new Map<string,number>();
 
 export const startSessionWatcher = (store, sessionId) => {
   clearSessionWatcher();
@@ -141,7 +38,7 @@ export const startSessionWatcher = (store, sessionId) => {
   if (!key) return;
   const desktopMode = false;
   if (!hasKnownSessionInStore(store, key)) {
-    purgeUnavailableSession(store, key);
+    failThreadView(key,threadViewGeneration(key),'线程元信息尚未加载，请重试');
     return;
   }
   chatWatcherSharedState.sessionWatchSessionId = key;
@@ -196,7 +93,8 @@ export const startSessionWatcher = (store, sessionId) => {
               return !['completed', 'failed', 'cancelled', 'interrupted', 'rejected', 'stopped'].includes(status);
             })
           : null;
-        const running = durableRunning ?? (
+        const displayStatus=threadViewStatus(key);
+        const running = displayStatus!==null ? ['running','queued','waiting_input','waiting_approval'].includes(displayStatus) : durableRunning ?? (
           isThreadRuntimeBusy(runtime?.threadStatus) ||
           hasRunningAssistantMessage(sessionMessagesRef)
         );
@@ -214,18 +112,38 @@ export const startSessionWatcher = (store, sessionId) => {
     tick();
   };
 
+  let recoveryAttempt=0;
+  let recovering=false;
+  const recoverView = async () => {
+    if(controller.signal.aborted || recovering)return;
+    recovering=true;
+    try {
+      const generation=threadViewGeneration(key);
+      const response=await getThreadViewBootstrap(key,{kind:'chat'},{signal:controller.signal});
+      if(controller.signal.aborted)return;
+      if(!commitThreadView(key,response.data.data.page,generation,false,true))throw new Error('view recovery incomplete');
+      recoveryAttempt=0;if(store.activeSessionId===key)store.messages=(threadViewSlots(key)??[]).flatMap(s=>[s.user,s.assistant]);syncChatThreadShell(store,key);resumeWatchFromLastSeq();
+    } catch {
+      if(controller.signal.aborted)return;
+      const delay=[500,1000,2000,5000][Math.min(recoveryAttempt++,3)];
+      threadResumeTimer=setTimeout(()=>{threadResumeTimer=null;void recoverView();},delay+Math.random()*200);
+    }finally{recovering=false;}
+  };
   const onEvent = (eventType, dataText) => {
     runtime.watchLastEventAt = Date.now();
+    connectionFailures.delete(key);
     const payload = safeJsonParse(dataText);
     const data = payload?.data ?? payload;
     const normalizedEventType = resolveNormalizedStreamEventType(eventType, payload);
+    if(normalizedEventType==='thread_view_required') {void recoverView();return;}
     if (normalizedEventType !== 'heartbeat' && normalizedEventType !== 'ping') {
       clearSessionEventsSnapshot(key, { keepInFlight: true });
     }
     if (applyGoalStreamEvent(store, key, normalizedEventType, data ?? payload)) return;
     if (applyChatThreadServerEvent(store, key, normalizedEventType || eventType, payload, {
       onChangesApplied: (changes) => applyChatThreadEffects(store, key, changes),
-      onSnapshotRequired: () => controller.abort(),
+      onViewApplied: prior => applyThreadViewEffects(store,key,prior),
+      onSnapshotRequired: () => {void recoverView();},
       onSnapshotApplied: () => { syncChatThreadShell(store, key); resumeWatchFromLastSeq(); },
       onOverflow: resumeWatchFromLastSeq,
       onGapOverflow: resumeWatchFromLastSeq
@@ -249,7 +167,7 @@ export const startSessionWatcher = (store, sessionId) => {
     sessionId: key,
     message: () => ({
       type: 'watch', request_id: requestId, session_id: key,
-      payload: { after_change_seq: getChatThreadState(key)?.lastSeq ?? 0 }
+      payload: { after_change_seq: 0, view_seq: threadViewCursor(key) }
     }),
     onEvent,
     signal: controller.signal,
@@ -263,7 +181,8 @@ export const startSessionWatcher = (store, sessionId) => {
       store.clearPendingApprovals({ requestId, sessionId: key });
       if (error?.name === 'AbortError' || error?.phase === 'aborted') return;
       if (isSessionUnavailableStatus(resolveChatHttpStatus(error))) {
-        purgeUnavailableSession(store, key);
+        if(runtime.watchController===controller)failThreadView(key,threadViewGeneration(key),'线程不可访问，请刷新检查权限');
+        controller.abort();
         return;
       }
       if (error?.phase !== 'connect' && error?.phase !== 'stream' && error?.name !== 'TypeError') {
@@ -288,13 +207,16 @@ export const startSessionWatcher = (store, sessionId) => {
         if (chatWatcherSharedState.sessionWatchSessionId === key) chatWatcherSharedState.sessionWatchSessionId = '';
       }
       if (isCurrentWatcher && !controller.signal.aborted && store.activeSessionId === key && !desktopMode) {
+        const attempts=connectionFailures.get(key)??0;
+        connectionFailures.set(key,Math.min(attempts+1,5));
+        while(connectionFailures.size>32)connectionFailures.delete(connectionFailures.keys().next().value!);
         setTimeout(() => {
           const latest = getRuntime(key);
           // Another path may have installed a watcher during the debounce
           // window.  Never replace that live instance with this stale retry.
           if (latest?.watchController || store.activeSessionId !== key) return;
           startSessionWatcher(store, key);
-        }, 80);
+        }, Math.min(30000,1000*2**attempts)+Math.random()*500);
       }
     });
 };
@@ -310,34 +232,6 @@ export const chatWsClient = createWsMultiplexer(() => openChatSocket(), {
 // v2 liveness probe threshold (plan §5 M2-A): a running session silent past
 // this floor gets its watch reconnected; idle sessions are left alone.
 const WATCHDOG_V2_LIVENESS_IDLE_MS = 6000;
-
-// Atomic thread-log snapshot loader for the v2 pipeline (plan §5 M2-C). The
-// runtime module stays API-free; this module owns the real implementation and
-// tests can replace it via registerChatThreadSnapshotLoader. W1-D: the loader
-// is self-bounding — an unbounded fetch on a huge thread can otherwise hang
-// the snapshot_required recovery loop forever, so it aborts after this budget
-// and the runtime falls back to onSnapshotRequired.
-const CHAT_THREAD_SNAPSHOT_TIMEOUT_MS = 8000;
-registerChatThreadSnapshotLoader(async (sessionKey) => {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), CHAT_THREAD_SNAPSHOT_TIMEOUT_MS);
-  try {
-    const response = await getThreadLogSnapshot(sessionKey, {}, { signal: controller.signal });
-    const body = response?.data?.data ?? response?.data ?? {};
-    const cursor = Number(body?.cursor);
-    if (!Number.isSafeInteger(cursor) || cursor < 0) {
-      throw new Error('thread snapshot cursor missing');
-    }
-    return {
-      cursor,
-      turns: Array.isArray(body?.turns) ? body.turns : [],
-      items: Array.isArray(body?.items) ? body.items : [],
-      blocks: Array.isArray(body?.blocks) ? body.blocks : []
-    };
-  } finally {
-    clearTimeout(timeoutId);
-  }
-});
 
 let wsRequestSeq = 0;
 
@@ -531,6 +425,7 @@ export const finalizeManualCompactionAsRequestFailed = (message, error): void =>
 };
 
 export const resetChatRuntimeState = () => {
+  resetThreadViews();
   Array.from(sessionRuntime.keys()).forEach((sessionId) => {
     abortResumeStream(sessionId);
     abortSendStream(sessionId);

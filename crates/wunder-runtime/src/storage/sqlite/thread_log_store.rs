@@ -1,10 +1,10 @@
 use super::SqliteStorage;
 use crate::storage::{StorageLifecycle, USAGE_CHAT_WATERMARK_KEY};
 use anyhow::{ensure, Result};
-use wunder_core::storage_backend::ThreadSnapshotWindow;
 use rusqlite::{params, OptionalExtension};
 use serde_json::{json, Value};
 use uuid::Uuid;
+use wunder_core::storage_backend::ThreadSnapshotWindow;
 pub(super) trait SqliteThreadLogStorage {
     fn load_subagent_context_impl(
         &self,
@@ -201,6 +201,11 @@ impl SqliteThreadLogStorage for SqliteStorage {
         tx.execute("INSERT INTO thread_item_blocks(session_id,user_id,item_id,field,block_index,event_id,payload) SELECT ?3,b.user_id,b.item_id,b.field,b.block_index,b.event_id,json_set(b.payload, '$.session_id', ?3) FROM thread_item_blocks b JOIN thread_items i ON i.session_id=?3 AND i.item_id=b.item_id WHERE b.user_id=?1 AND b.session_id=?2", params![user_id,source,target])?;
         tx.execute("INSERT INTO thread_log_changes(session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time) SELECT ?3,c.change_seq,c.user_id,c.change_type,c.turn_id,c.item_id,c.revision,c.payload,c.created_time FROM thread_log_changes c JOIN thread_turns t ON t.session_id=?3 AND t.turn_id=c.turn_id WHERE c.user_id=?1 AND c.session_id=?2", params![user_id,source,target])?;
         tx.execute("INSERT INTO thread_log_metrics(session_id,user_id,metric_key,metric_value,updated_time) SELECT session_id,user_id,'user_turn_total',latest_user_turn,updated_time FROM thread_logs WHERE user_id=?1 AND session_id=?3 AND ?2<>?3", params![user_id,source,target])?;
+        crate::storage::thread_view_store::initialize(
+            &mut super::thread_view_store::Db(&tx),
+            user_id,
+            target,
+        )?;
         tx.commit()?;
         Ok(())
     }
@@ -322,6 +327,15 @@ impl SqliteThreadLogStorage for SqliteStorage {
                 "DELETE FROM thread_log_changes WHERE session_id=? AND change_seq<=?",
                 params![session_id, seq.saturating_sub(4096)],
             )?;
+            crate::storage::thread_view_store::project_block(
+                &mut super::thread_view_store::Db(&conn),
+                user_id,
+                session_id,
+                item_id,
+                field,
+                index,
+                block,
+            )?;
             change_seq = seq;
         }
         conn.commit()?;
@@ -441,6 +455,11 @@ impl SqliteThreadLogStorage for SqliteStorage {
             )
             .optional()?;
         ensure!(owner.as_deref() == Some(user_id), "thread owner mismatch");
+        crate::storage::thread_view_store::initialize(
+            &mut super::thread_view_store::Db(&tx),
+            user_id,
+            session_id,
+        )?;
         let client_id = input
             .get("client_message_id")
             .and_then(Value::as_str)
@@ -555,6 +574,18 @@ impl SqliteThreadLogStorage for SqliteStorage {
             "DELETE FROM thread_log_changes WHERE session_id=? AND change_seq<=?",
             params![session_id, item_seq.saturating_sub(4096)],
         )?;
+        crate::storage::thread_view_store::project_turn(
+            &mut super::thread_view_store::Db(&tx),
+            user_id,
+            session_id,
+            &turn_id,
+        )?;
+        crate::storage::thread_view_store::project_item(
+            &mut super::thread_view_store::Db(&tx),
+            user_id,
+            session_id,
+            &item_id,
+        )?;
         tx.commit()?;
         Ok(json!({"turn_id":turn_id,"root_turn_id":root_id,"user_turn_index":round,"created":true}))
     }
@@ -646,6 +677,12 @@ impl SqliteThreadLogStorage for SqliteStorage {
             let item_revision = item_payload.parse::<Value>()?["revision"]
                 .as_i64()
                 .unwrap_or(0);
+            crate::storage::thread_view_store::project_item(
+                &mut super::thread_view_store::Db(&tx),
+                user_id,
+                session_id,
+                &item_id,
+            )?;
             tx.execute("INSERT INTO thread_log_changes(session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time) VALUES(?,?,?,?,?,?,?,?,?)", params![session_id,seq,user_id,"item_upsert",turn_id,item_id,item_revision,item_payload,now])?;
         }
         tx.execute(
@@ -656,6 +693,12 @@ impl SqliteThreadLogStorage for SqliteStorage {
         tx.execute(
             "DELETE FROM thread_log_changes WHERE session_id=? AND change_seq<=?",
             params![session_id, seq.saturating_sub(4096)],
+        )?;
+        crate::storage::thread_view_store::project_turn(
+            &mut super::thread_view_store::Db(&tx),
+            user_id,
+            session_id,
+            turn_id,
         )?;
         tx.commit()?;
         Ok(changed > 0 || input_changed > 0 || had_settled)
@@ -750,6 +793,12 @@ impl SqliteThreadLogStorage for SqliteStorage {
         tx.execute(
             "DELETE FROM thread_log_changes WHERE session_id=? AND change_seq<=?",
             params![session_id, seq.saturating_sub(4096)],
+        )?;
+        crate::storage::thread_view_store::project_item(
+            &mut super::thread_view_store::Db(&tx),
+            user_id,
+            session_id,
+            item_id,
         )?;
         tx.commit()?;
         Ok(Some(
@@ -1019,6 +1068,13 @@ impl SqliteThreadLogStorage for SqliteStorage {
             "UPDATE thread_logs SET latest_change_seq=?,updated_time=? WHERE session_id=?",
             params![seq, now, session_id],
         )?;
+        crate::storage::thread_view_store::project_feedback(
+            &mut super::thread_view_store::Db(&tx),
+            user_id,
+            session_id,
+            item_id,
+            &feedback,
+        )?;
         tx.commit()?;
         Ok(Some(feedback))
     }
@@ -1078,8 +1134,12 @@ impl SqliteThreadLogStorage for SqliteStorage {
             }
         }
         turns.reverse();
-        let window_start_turn_index = turns.first().and_then(|turn| turn["user_turn_index"].as_i64());
-        let window_end_turn_index = turns.last().and_then(|turn| turn["user_turn_index"].as_i64());
+        let window_start_turn_index = turns
+            .first()
+            .and_then(|turn| turn["user_turn_index"].as_i64());
+        let window_end_turn_index = turns
+            .last()
+            .and_then(|turn| turn["user_turn_index"].as_i64());
         let has_older = match window_start_turn_index {
             Some(start) => tx
                 .query_row(
@@ -1118,18 +1178,13 @@ impl SqliteThreadLogStorage for SqliteStorage {
             let mut stmt = tx.prepare("SELECT payload FROM thread_item_blocks WHERE user_id=? AND session_id=? AND item_id IN (SELECT item_id FROM thread_items WHERE user_id=? AND session_id=? AND visibility='user' AND turn_id IN (SELECT turn_id FROM thread_turns WHERE user_id=? AND session_id=? AND user_turn_index < ? ORDER BY user_turn_index DESC, created_time DESC, turn_id DESC LIMIT ?) ORDER BY created_seq DESC, item_index DESC LIMIT ?) ORDER BY item_id, field, block_index LIMIT ?")?;
             let rows = stmt.query_map(
                 params![
-                    user_id,
-                    session_id,
-                    user_id,
-                    session_id,
-                    user_id,
-                    session_id,
-                    before,
-                    max_turns,
-                    max_items,
-                    max_blocks
+                    user_id, session_id, user_id, session_id, user_id, session_id, before,
+                    max_turns, max_items, max_blocks
                 ],
-                |r| Ok(serde_json::from_str::<Value>(&r.get::<_, String>(0)?).unwrap_or(Value::Null)),
+                |r| {
+                    Ok(serde_json::from_str::<Value>(&r.get::<_, String>(0)?)
+                        .unwrap_or(Value::Null))
+                },
             )?;
             for row in rows {
                 blocks.push(row?);
@@ -1205,8 +1260,7 @@ impl SqliteThreadLogStorage for SqliteStorage {
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let now = Self::now_ts();
         let chat_wm =
-            super::log_stats_store::read_meta_f64_tx(&tx, USAGE_CHAT_WATERMARK_KEY)?
-                .unwrap_or(0.0);
+            super::log_stats_store::read_meta_f64_tx(&tx, USAGE_CHAT_WATERMARK_KEY)?.unwrap_or(0.0);
         let mut count = 0i64;
         count += tx.execute(
             "DELETE FROM thread_log_metrics WHERE user_id=? AND session_id=?",
@@ -1245,6 +1299,23 @@ impl SqliteThreadLogStorage for SqliteStorage {
             &[(user_id.to_string(), counted)],
             &[],
             now,
+        )?;
+        for table in [
+            "thread_body_search",
+            "thread_body_manifests",
+            "thread_body_chunks",
+            "thread_chat_rows",
+            "thread_trajectory_rows",
+            "thread_view_heads",
+        ] {
+            tx.execute(
+                &format!("DELETE FROM {table} WHERE user_id=? AND session_id=?"),
+                params![user_id, session_id],
+            )?;
+        }
+        tx.execute(
+            "DELETE FROM thread_trajectory_tiles WHERE session_id=?",
+            params![session_id],
         )?;
         tx.commit()?;
         Ok(count)
@@ -2384,7 +2455,11 @@ mod tests {
         let full_items = ids(&full["items"], "item_id");
         let full_blocks = ids(&full["blocks"], "item_id");
         assert_eq!(full_turns.len(), TURNS);
-        assert_eq!(full_items.len(), TURNS * 2, "each turn keeps a user and an answer item");
+        assert_eq!(
+            full_items.len(),
+            TURNS * 2,
+            "each turn keeps a user and an answer item"
+        );
         assert_eq!(full_blocks.len(), TURNS);
 
         let mut paged_turns = Vec::new();
@@ -2398,7 +2473,9 @@ mod tests {
                 before_turn_index: before,
                 ..ThreadSnapshotWindow::default()
             };
-            let page = db.thread_snapshot_window("owner", "thread", &window).unwrap();
+            let page = db
+                .thread_snapshot_window("owner", "thread", &window)
+                .unwrap();
             pages += 1;
             assert!(pages <= 16, "tail paging must terminate");
             // Cursor is read in the same transaction as the rows: a bounded
@@ -2455,9 +2532,21 @@ mod tests {
             values.sort();
             values
         };
-        assert_eq!(paged_turns.len(), full_turns.len(), "each turn returned exactly once");
-        assert_eq!(paged_items.len(), full_items.len(), "each item returned exactly once");
-        assert_eq!(paged_blocks.len(), full_blocks.len(), "each block returned exactly once");
+        assert_eq!(
+            paged_turns.len(),
+            full_turns.len(),
+            "each turn returned exactly once"
+        );
+        assert_eq!(
+            paged_items.len(),
+            full_items.len(),
+            "each item returned exactly once"
+        );
+        assert_eq!(
+            paged_blocks.len(),
+            full_blocks.len(),
+            "each block returned exactly once"
+        );
         assert_eq!(sorted(paged_turns), sorted(full_turns));
         assert_eq!(sorted(paged_items), sorted(full_items));
         assert_eq!(sorted(paged_blocks), sorted(full_blocks));
@@ -2495,7 +2584,9 @@ mod tests {
             max_turns: 10,
             ..ThreadSnapshotWindow::default()
         };
-        let page = db.thread_snapshot_window("owner", "thread", &headroom).unwrap();
+        let page = db
+            .thread_snapshot_window("owner", "thread", &headroom)
+            .unwrap();
         assert_eq!(page["turns"].as_array().unwrap().len(), 4);
         assert_eq!(page["has_older"], json!(false));
         assert_eq!(page["truncated"], json!(false));

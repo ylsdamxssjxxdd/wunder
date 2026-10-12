@@ -291,6 +291,9 @@ impl AppState {
         );
         let user_tool_manager = Arc::new(UserToolManager::new(user_tool_store.clone()));
         let user_store = Arc::new(UserStore::new(storage.clone()));
+        if options.resolved_start_thread_runtime() {
+            crate::services::thread_view_rebuild::start(storage.clone());
+        }
         let inner_visible = Arc::new(InnerVisibleService::new(
             config_store.clone(),
             workspace.clone(),

@@ -1,0 +1,2 @@
+import {defineConfig} from '@playwright/test';
+export default defineConfig({testDir:'./tests/e2e',testMatch:'thread-view-real.spec.ts',timeout:150000,expect:{timeout:12000},workers:1,reporter:'list',use:{baseURL:'http://127.0.0.1:4176',trace:'retain-on-failure'},webServer:{command:'cargo run --manifest-path ../Cargo.toml -p wunder-runtime --features sqlite-storage --example thread_view_fixture',url:'http://127.0.0.1:4176',timeout:180000,reuseExistingServer:true}});

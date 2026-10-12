@@ -3,7 +3,7 @@ import type { Row } from './chatEvidenceAnalysis';
 
 export const MOCK_SESSION = 'fixture-thread';
 export const MOCK_AGENT = 'fixture-agent';
-type Subscription = { socket: WebSocketRoute; request: string };
+type Subscription = { socket: WebSocketRoute; request: string; display?: boolean };
 
 /** In-process protocol peer. Only HTTP/WS are mocked; no application store is accessed. */
 export class ChatMockService {
@@ -35,6 +35,16 @@ export class ChatMockService {
       queue_ahead: ahead, queue_total: ahead + 1, active_ahead: 2, wait_ahead: ahead + 2 });
   }
 
+  viewRows() {
+    return this.turns.map(turn=>{
+      const items=[...this.items.values()].filter(i=>i.turn_id===turn.turn_id);
+      const answer=items.filter(i=>i.kind==='assistant_message'&&String(i.item_id).includes(':text-')).at(-1);
+      const user=items.find(i=>i.kind==='user_message');
+      return {root_turn_id:turn.root_turn_id??turn.turn_id,user_round:turn.user_round,client_message_id:turn.client_message_id,revision:this.changes.length,status:turn.status,
+        user:{item_id:user?.item_id??'',content:user?.content??turn.content},assistant:{item_id:answer?.item_id??'',content:answer?.content??'',stats:answer?.meta?.message_stats},
+        workflow_count:items.filter(i=>i.kind==='tool_call').length,failed_count:items.filter(i=>i.kind==='tool_call'&&i.status==='failed').length};
+    });
+  }
   snapshot() { return { cursor: this.changes.length, turns: this.turns.map(turn => ({
     turn_id: turn.turn_id, root_turn_id: turn.root_turn_id ?? turn.turn_id,
     trigger_kind: turn.trigger_kind ?? 'user', user_turn_index: turn.user_round, status: turn.status, payload: structuredClone(turn) })),
@@ -60,8 +70,8 @@ export class ChatMockService {
       revision: payload.revision, payload: structuredClone(payload) };
     this.changes.push(change);
     for (const sub of this.subscriptions) {
-      this.send(sub, 'thread_change', change);
-      if (this.duplicateNext) this.send(sub, 'thread_change', change);
+      if(sub.display){const rows=this.viewRows().filter(r=>r.root_turn_id===payload.turn_id);this.send(sub,'thread_view_change',{epoch:1,view_seq:this.changes.length,rows});}
+      else {this.send(sub, 'thread_change', change);if (this.duplicateNext) this.send(sub, 'thread_change', change);}
     }
   }
   private item(turn: Row, suffix: string, kind: string, status: string, extra: Row = {}) {
@@ -233,7 +243,7 @@ export class ChatMockService {
       socket.onMessage(raw => {
         const message = JSON.parse(String(raw));
         this.record({ transport: 'ws', type: message.type, payload: message.payload });
-        const sub = { socket, request: message.request_id };
+        const sub = { socket, request: message.request_id, display: message.payload?.view_seq!==undefined };
         if (message.type === 'cancel') { this.cancel(); return; }
         if (!['start', 'watch', 'resume'].includes(message.type)) {
           if (!['ping', 'pong', 'unwatch'].includes(message.type)) this.failures.push('unexpected-ws-request');
@@ -246,7 +256,8 @@ export class ChatMockService {
           this.send(sub, 'stream_started', turn);
         }
         const after = Number(message.payload?.after_change_seq ?? 0);
-        for (const change of this.changes.filter(change => change.change_seq > after)) this.send(sub, 'thread_change', change);
+        if(sub.display)this.send(sub,'thread_view_change',{epoch:1,view_seq:this.changes.length,rows:this.viewRows().slice(-12)});
+        else for (const change of this.changes.filter(change => change.change_seq > after)) this.send(sub, 'thread_change', change);
       });
     });
     await page.route('**/*', async route => {
@@ -270,6 +281,12 @@ export class ChatMockService {
       };
       else if (path === `/agents/${MOCK_AGENT}`) data = agent;
       else if (path === '/chat/sessions') data = request.method() === 'POST' ? session : { items: [session], total: 1 };
+      else if(path.endsWith('/view/bootstrap')||path.endsWith('/view/chat')) {
+        const before=Number(new URL(request.url()).searchParams.get('before')??Number.MAX_SAFE_INTEGER);const rows=this.viewRows().filter(r=>r.user_round<before);const chat=rows.slice(-12);
+        data={session,page:{session_id:MOCK_SESSION,epoch:1,view_seq:this.changes.length,projection_state:'ready',thread_empty:this.turns.length===0,latest_round:this.round,chat,trajectory:new URL(request.url()).searchParams.get('kind')==='trajectory'?[...this.items.values()].slice(-80).map((item,i)=>({item_id:item.item_id,root_turn_id:item.turn_id,turn_id:item.turn_id,user_round:item.user_round,item_index:i,created_seq:i+1,revision:item.revision,kind:item.kind,status:item.status,summary:item.content??item.tool??item.kind,tool_name:item.tool,model_round:1,started_at:1+i,completed_at:2+i,detail:{body_id:`${item.item_id}|detail`,revision:item.revision,bytes:128}})):[],tiles:[],tile_level:0,next_before:chat[0]?.user_round??null,has_more:rows.length>chat.length}};
+      }
+      else if(path.includes('/bodies/')) {const id=decodeURIComponent(path.split('/bodies/')[1]).split('|')[0];data={body_id:id,revision:1,chunks:[JSON.stringify(this.items.get(id)??{})],next_cursor:1,has_more:false};}
+      else if(path.endsWith('/view/search'))data={hits:[],has_more:false};
       else if (path.endsWith('/thread-log/snapshot')) data = this.snapshot();
       else if (path === `/chat/sessions/${MOCK_SESSION}`) data = { ...session, messages: [], transcript: [], thread_change_cursor: this.changes.length };
       else if (path.endsWith('/events')) data = { events: [], items: [], running: Boolean(this.active),

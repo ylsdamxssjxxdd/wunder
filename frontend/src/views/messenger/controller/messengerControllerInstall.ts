@@ -20,8 +20,9 @@ import { getCurrentLanguage, setLanguage, useI18n } from '@/i18n';
 import { flushBackgroundPublication } from '@/realtime/chat/chatBackgroundPublication';
 import { resolveChatRuntimeRenderableKey } from '@/realtime/chat/chatRuntimeMessageKeys';
 import { resolveChatRuntimeMessageRenderKey } from '@/realtime/chat/chatRuntimeRenderAdapter';
+import { threadViewClock } from '@/realtime/chat/threadViewStore';
+import { readThreadBody } from '@/realtime/chat/threadBodyReader';
 import { buildChatThreadMaterializedSlots } from '@/realtime/chat/chatThreadRuntime';
-import { isTranscriptFallbackEnabled, resolveAgentTurnRenderRows } from '@/views/messenger/controller/legacyTurnRowAdapter';
 import { chatQueueState } from '@/stores/chatQueueState';
 import { isParkedQueueTurn } from '@/stores/chatQueueProjection';
 import { useAgentStore } from '@/stores/agents';
@@ -1908,6 +1909,7 @@ function installMessengerControllerRenderableMessages(ctx: MessengerControllerCo
   // render source is missing, most likely a failed snapshot) stays distinct from
   // `[]` (a real thread with no user turn). Only `null` may fall back.
   ctx.agentThreadSlotSource = computed(() => {
+      void threadViewClock.value;
       const version = ctx.chatStore.runtimeProjectionVersionBySession?.[ctx.chatStore.activeSessionId] || 0;
       void version;
       return buildChatThreadMaterializedSlots(ctx.chatStore.activeSessionId);
@@ -1925,17 +1927,8 @@ function installMessengerControllerRenderableMessages(ctx: MessengerControllerCo
   // The two sources never render together (the fallback is picked only when the
   // window projection has no entry at all), so no duplicate greeting bubble and
   // no un-alignable v1/v2 keys are ever mixed.
-  ctx.transcriptFallbackEnabled = computed(() => isTranscriptFallbackEnabled());
-  ctx.agentTurnRenderPlan = computed(() => resolveAgentTurnRenderRows({
-      windowRows: ctx.agentTurnSlots.value,
-      windowAvailable: ctx.agentThreadSlotSource.value !== null,
-      messages: ctx.chatStore.messages,
-      enabled: ctx.transcriptFallbackEnabled.value
-  }));
+  ctx.agentTurnRenderPlan = computed(() => ({rows:ctx.agentTurnSlots.value,source:'thread_view'}));
   ctx.agentRenderRows = computed(() => ctx.agentTurnRenderPlan.value.rows);
-  ctx.agentTurnFallbackRows = computed(() => ctx.agentTurnRenderPlan.value.source === 'transcript_fallback'
-      ? ctx.agentTurnRenderPlan.value.rows
-      : []);
   ctx.agentTurnRowsHaveContent = computed(() => ctx.agentTurnRenderPlan.value.rows.length > 0);
   ctx.agentConversationRows = computed(() => {
       const greeting = resolveSyntheticGreetingRenderable();
@@ -9396,7 +9389,9 @@ function installMessengerControllerMessageMarkdownVoice(ctx: MessengerController
 
   ctx.copyMessageContent = async (payload: unknown) => {
       const message = payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : null;
-      const text = prepareMessageMarkdownContent(message?.content ?? payload, message).trim();
+      let text='';
+      try{text = message?.__thread_body ? await readThreadBody(String(ctx.chatStore.activeSessionId||''),message.__thread_body) : prepareMessageMarkdownContent(message?.content ?? payload, message).trim();}
+      catch{ElMessage.warning(ctx.t('chat.message.copyFailed'));return;}
       if (!text)
           return;
       const copied = await copyText(text);

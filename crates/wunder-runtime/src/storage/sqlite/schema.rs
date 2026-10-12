@@ -78,14 +78,38 @@ impl SqliteStorage {
             return Ok(());
         }
         let additions: [(&str, &str); 8] = [
-            ("node_secret_hash", "ALTER TABLE cloud_devices ADD COLUMN node_secret_hash TEXT"),
-            ("secret_version", "ALTER TABLE cloud_devices ADD COLUMN secret_version INTEGER NOT NULL DEFAULT 0"),
-            ("interlink_enabled", "ALTER TABLE cloud_devices ADD COLUMN interlink_enabled INTEGER"),
-            ("capabilities", "ALTER TABLE cloud_devices ADD COLUMN capabilities TEXT"),
-            ("policy_overrides", "ALTER TABLE cloud_devices ADD COLUMN policy_overrides TEXT"),
-            ("tunnel_connected", "ALTER TABLE cloud_devices ADD COLUMN tunnel_connected INTEGER NOT NULL DEFAULT 0"),
-            ("last_tunnel_at", "ALTER TABLE cloud_devices ADD COLUMN last_tunnel_at REAL"),
-            ("secret_rotated_at", "ALTER TABLE cloud_devices ADD COLUMN secret_rotated_at REAL"),
+            (
+                "node_secret_hash",
+                "ALTER TABLE cloud_devices ADD COLUMN node_secret_hash TEXT",
+            ),
+            (
+                "secret_version",
+                "ALTER TABLE cloud_devices ADD COLUMN secret_version INTEGER NOT NULL DEFAULT 0",
+            ),
+            (
+                "interlink_enabled",
+                "ALTER TABLE cloud_devices ADD COLUMN interlink_enabled INTEGER",
+            ),
+            (
+                "capabilities",
+                "ALTER TABLE cloud_devices ADD COLUMN capabilities TEXT",
+            ),
+            (
+                "policy_overrides",
+                "ALTER TABLE cloud_devices ADD COLUMN policy_overrides TEXT",
+            ),
+            (
+                "tunnel_connected",
+                "ALTER TABLE cloud_devices ADD COLUMN tunnel_connected INTEGER NOT NULL DEFAULT 0",
+            ),
+            (
+                "last_tunnel_at",
+                "ALTER TABLE cloud_devices ADD COLUMN last_tunnel_at REAL",
+            ),
+            (
+                "secret_rotated_at",
+                "ALTER TABLE cloud_devices ADD COLUMN secret_rotated_at REAL",
+            ),
         ];
         for (column, ddl) in additions {
             if !columns.contains(column) {
@@ -106,7 +130,10 @@ impl SqliteStorage {
             return Ok(());
         }
         if !columns.contains("workspaces") {
-            tx.execute("ALTER TABLE interlink_node_shadows ADD COLUMN workspaces TEXT", [])?;
+            tx.execute(
+                "ALTER TABLE interlink_node_shadows ADD COLUMN workspaces TEXT",
+                [],
+            )?;
         }
         tx.commit()?;
         Ok(())
@@ -1731,6 +1758,16 @@ impl SqliteSchemaStorage for SqliteStorage {
         self.ensure_session_goal_columns(&conn)?;
         self.ensure_thread_item_sequence(&conn)?;
         self.ensure_thread_item_block_fields(&conn)?;
+        conn.execute_batch(crate::storage::thread_view_store::SCHEMA)?;
+        conn.execute_batch(super::thread_view_store::SEARCH_SCHEMA)?;
+        if !conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM meta WHERE key='thread_view_v1_discovered')",
+            [],
+            |r| r.get::<_, bool>(0),
+        )? {
+            conn.execute("INSERT INTO thread_view_heads(session_id,user_id,projection_state) SELECT session_id,user_id,'rebuilding' FROM thread_logs WHERE latest_user_turn>0 ON CONFLICT(session_id) DO NOTHING", [])?;
+            conn.execute("INSERT INTO meta(key,value,updated_time) VALUES('thread_view_v1_discovered','1',0) ON CONFLICT(key) DO NOTHING",[])?;
+        }
         self.ensure_tool_log_columns(&conn)?;
         // A hard cutover intentionally discards obsolete duplicate history.
         conn.execute("DROP TABLE IF EXISTS chat_history", [])?;
