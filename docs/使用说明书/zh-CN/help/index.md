@@ -15,14 +15,13 @@ summary: 按症状分流的帮助入口：故障排查、FAQ、术语表。
 
 1. 不会用 → 看 FAQ 和入门文档
 2. 功能异常 → 看故障排查
-3. 想接入开发 → 看接入概览
+3. 想接入开发 → 看[参考概览](/docs/zh-CN/reference/)里的接口与端点
 
 ## 按症状跳转
 
 ### 页面打不开、登录失败
 
 - [故障排查](/docs/zh-CN/help/troubleshooting/)
-- [认证与安全](/docs/zh-CN/ops/auth-and-security/)
 
 ### 工具不出现、功能不可用
 
@@ -32,7 +31,6 @@ summary: 按症状分流的帮助入口：故障排查、FAQ、术语表。
 ### 文件上传或下载异常
 
 - [故障排查](/docs/zh-CN/help/troubleshooting/)
-- [工作区 API](/docs/zh-CN/integration/workspace-api/)
 
 ### 配置问题
 

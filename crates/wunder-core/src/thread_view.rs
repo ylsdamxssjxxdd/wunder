@@ -29,11 +29,19 @@ pub struct ViewMessage {
     pub durable_seq: i64,
     #[serde(default)]
     pub content_offset: usize,
+    /// UTF-16 cursor for the independent reasoning stream.  Keeping this
+    /// separate from `content_offset` lets replay and live tails reject
+    /// duplicate/out-of-order reasoning frames without guessing from a
+    /// bounded preview.
+    #[serde(default)]
+    pub reasoning_offset: usize,
     pub body: Option<BodyRef>,
     pub feedback: Option<Value>,
     pub stats: Option<Value>,
     #[serde(default)]
     pub tail: String,
+    #[serde(default)]
+    pub tail_offset: usize,
     #[serde(default)]
     pub failure: String,
     #[serde(default)]
@@ -52,6 +60,11 @@ pub struct ChatViewRow {
     pub user: ViewMessage,
     pub assistant: ViewMessage,
     pub workflow_count: i64,
+    /// Number of model rounds that emitted reasoning in this user turn.
+    #[serde(default)]
+    pub reasoning_count: i64,
+    #[serde(default)]
+    pub reasoning_item_id: String,
     pub failed_count: i64,
     #[serde(default)]
     pub subagents: Vec<Value>,

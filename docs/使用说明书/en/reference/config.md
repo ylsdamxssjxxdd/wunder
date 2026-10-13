@@ -151,9 +151,3 @@ This lets an external platform push messages to wunder. Set up a publicly reacha
 - Workspace: network storage (persistent)
 - Security: configure keys and path limits strictly
 - Tools: assign permissions by role
-
-## Further reading
-
-- [Deployment and Running](/docs/en/ops/deployment/)
-- [Data & Storage](/docs/en/ops/data-and-storage/)
-- [Authentication & Security](/docs/en/ops/auth-and-security/)

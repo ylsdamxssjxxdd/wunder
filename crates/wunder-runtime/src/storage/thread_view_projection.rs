@@ -20,12 +20,15 @@ pub(crate) fn message(item_id: &str, content: &str, revision: i64) -> ViewMessag
 }
 
 pub(crate) fn set_reasoning(message: &mut ViewMessage, payload: &Value) {
-    message.reasoning = payload
+    let reasoning = payload
         .get("reasoning")
         .or_else(|| payload.get("reasoning_content"))
         .and_then(Value::as_str)
-        .map(|value| preview(value, 2048))
-        .unwrap_or_default();
+        .unwrap_or("");
+    if !reasoning.is_empty() {
+        message.reasoning = preview(reasoning, 2048);
+        message.reasoning_offset = reasoning.encode_utf16().count();
+    }
 }
 
 pub(crate) fn stable_answer(item_id: &str, turn_id: &str, kind: &str) -> bool {
@@ -130,12 +133,64 @@ pub(crate) fn finite_stats(item: &Value) -> Option<Value> {
         .get("message_stats")
         .or_else(|| item.pointer("/meta/message_stats"))?
         .as_object()?;
-    let fields = source
-        .iter()
-        .take(24)
-        .filter(|(_, v)| v.is_number() || v.is_boolean())
-        .map(|(k, v)| (preview(k, 64), v.clone()))
-        .collect::<serde_json::Map<_, _>>();
+    // Keep the small nested usage payloads intact.  The previous projection
+    // admitted only top-level numbers/booleans, which silently removed
+    // `round_usage`/`usage` and left the bubble's token metric as `--` after a
+    // reload even though the server had persisted the counts.
+    let mut fields = serde_json::Map::new();
+    let mut scalar_count = 0usize;
+    for (key, value) in source.iter() {
+        let keep_scalar = value.is_number() || value.is_boolean();
+        let keep_usage = matches!(key.as_str(), "usage" | "round_usage" | "roundUsage")
+            && value.as_object().is_some();
+        if !keep_scalar && !keep_usage { continue; }
+        if keep_scalar {
+            scalar_count = scalar_count.saturating_add(1);
+            if scalar_count > 64 && !matches!(key.as_str(), "model_request_count" | "account_credits_consumed" | "tool_calls" | "toolCalls") {
+                continue;
+            }
+        }
+        if keep_usage {
+            let bounded = value.as_object().unwrap().iter()
+                .filter(|(_, v)| v.is_number() || v.is_boolean())
+                .take(12)
+                .map(|(k, v)| (preview(k, 64), v.clone()))
+                .collect::<serde_json::Map<_, _>>();
+            fields.insert(preview(key, 64), Value::Object(bounded));
+        } else {
+            fields.insert(preview(key, 64), value.clone());
+        }
+    }
+    // Usage fields are canonical even when a provider serializes them after a
+    // large set of optional metrics.  The explicit lookup above is therefore
+    // intentionally independent of object iteration order.
+    for key in ["usage", "round_usage", "roundUsage"] {
+        if fields.contains_key(key) { continue; }
+        let Some(value) = source.get(key).and_then(Value::as_object) else { continue };
+        let bounded = value.iter()
+            .filter(|(_, v)| v.is_number() || v.is_boolean())
+            .take(16)
+            .map(|(k, v)| (preview(k, 64), v.clone()))
+            .collect::<serde_json::Map<_, _>>();
+        fields.insert(key.into(), Value::Object(bounded));
+    }
+    // Preserve the canonical quota aliases when they are present in the
+    // nested request usage object.  This is the value shown in the bubble,
+    // distinct from context occupancy.
+    if !fields.contains_key("request_consumed_tokens") {
+        for usage_key in ["round_usage", "usage"] {
+            let value = fields
+                .get(usage_key)
+                .and_then(Value::as_object)
+                .and_then(|usage| usage.get("request_consumed_tokens").or_else(|| usage.get("total_tokens")))
+                .cloned();
+            if let Some(value) = value {
+                    fields.insert("request_consumed_tokens".into(), value.clone());
+                    fields.insert("consumed_tokens".into(), value);
+                    break;
+            }
+        }
+    }
     Some(Value::Object(fields))
 }
 

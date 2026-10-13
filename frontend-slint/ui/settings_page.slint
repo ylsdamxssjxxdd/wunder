@@ -12,6 +12,7 @@ import { ToolsPage, ToolResource } from "tools_page.slint";
 import { ExpertData, MemoryCard, ArchiveCard, RuntimePoint, HeatCard } from "expert_data.slint";
 import { AvatarDialogState } from "avatar_dialog.slint";
 import { HelpBrowser } from "help_browser.slint";
+import { HelpDocs } from "help_models.slint";
 
 // Web-style settings navigation entry: 36px circular icon badge, title and
 // subtitle rows, solid accent background with white text when selected.
@@ -808,7 +809,7 @@ export component SettingsPage inherits Rectangle {
                                 }
                                 SettingRow { label: I18n.st_ui_language; note: I18n.st_language_hint;
                                     ComboBox { width: 132px; height: 38px; model: ["zh-CN", "en-US"]; current-index: root.language == "en-US" ? 1 : 0; enabled: !root.saving && !root.loading;
-                                        selected(value) => { root.language = value; root.save-runtime(root.workspace-root, root.language, root.python-path, root.git-path, root.rg-path); } }
+                                        selected(value) => { root.language = value; HelpDocs.language-changed(value == "zh-CN"); root.save-runtime(root.workspace-root, root.language, root.python-path, root.git-path, root.rg-path); } }
                                 }
                                 ThemeModeRow { label: I18n.st_palette; note: I18n.st_palette_note; theme: root.theme;
                                     picked(name) => { root.theme = name; Theme.palette = name; root.save-preferences(); } }

@@ -81,6 +81,7 @@ pub(crate) fn log_prefix(kind: LogKind) -> &'static str {
         LogKind::Assistant => "• ",
         LogKind::Reasoning => "• ",
         LogKind::Tool => "• ",
+        LogKind::Plan => "• ",
         LogKind::Approval => "! ",
         LogKind::Inquiry => "? ",
         LogKind::Error => "✕ ",
@@ -1292,12 +1293,13 @@ pub(super) fn format_tool_call_line(tool: &str, args: &Value, is_zh: bool) -> St
             .map(str::trim)
             .filter(|value| !value.is_empty())
         {
+            // codex puts the command on the header line; the backticked
+            // second row was a wunder-only detour from that.
             lines.push(if tool_is_zh {
-                format!("• 调用 {tool}")
+                format!("• 运行 {}", clip_command(command))
             } else {
-                format!("• Called {tool}")
+                format!("• Ran {}", clip_command(command))
             });
-            lines.push(format!("  └ `{command}`"));
             return lines.join("\n");
         }
     }
@@ -1449,6 +1451,25 @@ pub(super) fn format_apply_patch_approval_lines(args: &Value, is_zh: bool) -> Op
     });
     lines.extend(preview_lines.into_iter().map(|line| format!("  {line}")));
     Some(lines)
+}
+
+/// One command on one header line: a runaway command would push the rest of the
+/// card off screen, so the tail is cut rather than wrapped.
+fn clip_command(command: &str) -> String {
+    const MAX_COMMAND_CHARS: usize = 160;
+    let single = command.lines().next().unwrap_or_default().trim();
+    if single.chars().count() <= MAX_COMMAND_CHARS {
+        return single.to_string();
+    }
+    let mut output = String::new();
+    for (index, ch) in single.chars().enumerate() {
+        if index >= MAX_COMMAND_CHARS {
+            break;
+        }
+        output.push(ch);
+    }
+    output.push('…');
+    output
 }
 
 fn summarize_tool_args(args: &Value) -> String {

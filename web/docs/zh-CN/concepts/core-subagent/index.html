@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>子智能体 | 使用说明书</title>
+  <meta name="description" content="子智能体核心在单一线程内派生子任务，交给独立执行体完成并回传结果；协作形态只有子智能体一种，蜂群编排已从引擎与协议层移除。">
+  <link rel="stylesheet" href="/docs/site.css?v=c9863d5d7815">
+  <script type="module" src="/docs/site.js?v=c9863d5d7815"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/concepts/core-subagent","language":"zh-CN","title":"子智能体","summary":"子智能体核心在单一线程内派生子任务，交给独立执行体完成并回传结果；协作形态只有子智能体一种，蜂群编排已从引擎与协议层移除。","updated_at":"2026-10-13","read_when":[],"source_docs":[],"tab":"核心","group":"9 个核心","group_path":["9 个核心"],"url":"/docs/zh-CN/concepts/core-subagent/","headings":[{"id":"section-1","level":1,"text":"子智能体"},{"id":"section-2","level":2,"text":"怎么运作"},{"id":"section-3","level":2,"text":"边界与当前限制"}],"prev_slug":"zh-CN/concepts/core-context-compression","next_slug":"zh-CN/concepts/core-scheduled-tasks","markdown":"# 子智能体\n\n子智能体核心在单一线程内派生子任务：父线程把一项子任务交给独立执行体，它跑完把结果回传给父线程。\n\n## 怎么运作\n\n`子智能体控制` 提供 11 种动作：\n\n| 动作 | 动作 | 动作 |\n| --- | --- | --- |\n| `spawn` | `batch_spawn` | `wait` |\n| `interrupt` | `close` | `resume` |\n| `report` | `send` | `status` |\n| `list` | `history` | |\n\n父子轮次引用编码为 `user_round` + `model_round`，子执行体的轮次挂在这对父轮引用下。子会话的用户消息隐藏，并以 auto-wake 唤醒。\n\n## 边界与当前限制\n\n- 协作形态**只有子智能体**。蜂群编排（蜂群工具、蜂房、编排态、team run、蜂群包）已从引擎与协议层移除，不是待实现，也不是被开关隐藏。\n- TUI 提示、前端 i18n 标签与兼容垫片仍有蜂群残留，空目录待清理。这些残留不代表能力存在。\n","source_path":"使用说明书/zh-CN/concepts/core-subagent.md"}</script>
+</body>
+</html>

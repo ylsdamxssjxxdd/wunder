@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Plan Panel / Question Panel / Sessions Yield | 使用说明书</title>
+  <meta name="description" content="Three interaction-control tools: maintaining a visible execution plan, asking the user for a route before acting, and yielding the current turn to wait for an external event.">
+  <link rel="stylesheet" href="/docs/site.css?v=c9863d5d7815">
+  <script type="module" src="/docs/site.js?v=c9863d5d7815"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/tools/panels","language":"en","title":"Plan Panel / Question Panel / Sessions Yield","summary":"Three interaction-control tools: maintaining a visible execution plan, asking the user for a route before acting, and yielding the current turn to wait for an external event.","updated_at":"2026-10-13","read_when":[],"source_docs":[],"tab":"Tools","group":"Wrapping and Front-end Coordination","group_path":["Wrapping and Front-end Coordination"],"url":"/docs/en/tools/panels/","headings":[{"id":"section-1","level":2,"text":"Plan Panel"},{"id":"section-2","level":2,"text":"Question Panel"},{"id":"section-3","level":2,"text":"Sessions Yield"},{"id":"section-4","level":2,"text":"Diagnosing problems"},{"id":"section-5","level":2,"text":"Boundaries"},{"id":"section-6","level":2,"text":"Related pages"}],"prev_slug":"en/tools/index","next_slug":"en/tools/workspace-files","markdown":"The three tools belong to the same interaction-control family. None of them produces a business side effect; they only change what the frontend shows or how the current turn ends.\n\n| Canonical name | Aliases |\n| --- | --- |\n| `计划面板` | `update_plan` |\n| `问询面板` | `question_panel`, `ask_panel` |\n| `会话让出` | `sessions_yield`, `yield` |\n\nThe standalone \"sleep and wait\" tool has also been deleted, and waiting semantics are now carried by `会话让出`.\n\n## Plan Panel\n\nUse it to build and maintain an execution checklist when a task takes several steps and the user wants to follow progress. Work that finishes in one go does not need a plan.\n\nA plan is a set of steps, 1 to 12 items, each a step plus a status; items with an empty step are dropped. Statuses are `pending` / `in_progress` / `completed`, and variants such as `in-progress`, `done`, and `complete` are normalized. You can attach one line describing the change to the plan.\n\nThe call replaces the whole plan rather than patching it. Only one step may be in progress at a time; if a second one appears, it is downgraded to pending.\n\nAn empty plan, or one whose steps are all dropped, reports an error. The result does not echo the plan content back; the plan reaches the user through a frontend event.\n\n## Question Panel\n\nUse it when several reasonable routes exist and the user has to decide before work continues. Opening the panel hands the current turn to the user, so do not keep assuming an answer within the same turn.\n\nIt can ask 1 to 4 questions, each with 1 to 4 options; an option can be a label plus description plus a recommended flag, or just a string. Each question can be set to multiple choice, single choice by default. The old flat single-question form (question, options, and a multiple-choice flag at the top level) is still accepted. An option whose label contains \"recommended\", or that carries the recommended flag, is recognized as the recommended choice.\n\nWhen trimming and failing, more than 4 questions keeps only the first 4; a question with no options is dropped entirely; if everything is dropped, it reports an error.\n\nThe panel is sent in a \"stay open\" form, and the turn ends there: the closing text tells the user to answer in the panel, and the stop reason is recorded as the question panel. In other words, opening the panel ends the turn and waits for the user's next message.\n\n## Sessions Yield\n\nUse it when the turn has nothing left to do but you want to state explicitly that you are yielding and waiting for an external event, rather than hard-coding a closing line. It is not a substitute for a final reply, nor a timer.\n\nYou can give one line of yield note to tell the user the current state; leaving it empty uses the default waiting text.\n\nThe result state is \"yielded\", the turn's answer is set to that note, and the stop reason is recorded as a yield. Waking on schedule is handled by [Schedule Task](/docs/en/tools/schedule-task/).\n\nIn desktop mode (Honeycomb) `会话让出` is listed as a hidden tool and is not exposed to the agent.\n\n## Diagnosing problems\n\nAll three use the shared failure shell. The most common failures are argument validation: an empty plan in the Plan Panel, no usable options in the Question Panel, and parse errors from a malformed argument structure.\n\n## Boundaries\n\n- Panels neither authenticate nor approve: they only handle presentation and turn control, and have nothing to do with the approval tier for writing files or running commands.\n- The results of the plan and the question are deliberately thin, to save context; do not stuff detailed content into the note for the model to read back.\n- When the frontend stream drops, panel events may not render, but the turn-ending semantics still take effect: after a question or a yield, do not expect the same turn to continue.\n- Limits: at most 12 plan items, at most 4 questions, and at most 4 options per question; anything beyond is rejected or trimmed.\n\n## Related pages\n\n- How results enter model input and display: [Tools](/docs/en/tools/index/)\n- Deriving and waiting: [Subagent Control](/docs/en/tools/subagent-control/)\n","source_path":"使用说明书/en/tools/panels.md"}</script>
+</body>
+</html>

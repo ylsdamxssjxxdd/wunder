@@ -4,25 +4,30 @@
     :data-turn-id="String(message.__runtime_user_turn_id || message.user_turn_id || message.root_turn_id || '')"
   >
     <MessageTimelineTurnProcess
-      v-if="Number(message.workflow_count)>0 || Boolean(String(message.reasoning || '').trim())"
+      v-if="Number(message.process_count ?? message.workflow_count)>0 || Boolean(String(message.reasoning || '').trim())"
       :session-id="activeSessionId"
       :turn-id="processTurnId"
-      :count="Number(message.workflow_count)||0"
+      :count="Number(message.process_count ?? message.workflow_count)||0"
       :failed-count="Number(message.workflow_failed_count)||0"
       :reasoning="String(message.reasoning || '')"
-      :live-tail="liveTail"
+      :reasoning-item-id="String(message.reasoning_item_id || '')"
       @open-change="processOpen = $event"
     />
     <!-- 有工具的轮次：流式文本进过程区实时行，不外显为正文；过程区收起时外显保证输出可见；
          无工具轮次保持正文直播，活动尾部挂在持久前缀之后。 -->
-    <pre v-if="liveTailOutside" ref="liveTailEl" class="timeline-live-tail">{{ message.__thread_tail }}</pre>
     <!--
       时间线主体（形态对齐桌面端 `frontend-slint/src/timeline.rs`）：模型每轮的正式
       输出是一段独立打印，思考与工具调用按到达顺序折成可开合的批次夹在段与段之间。
       块的顺序由投影层按 `created_seq` 定好；块渲染由 MessageTimelineBlocks 与
       子智能体详情弹窗共用，旧式单段正文（问候语、无块旧行）回退到本组件渲染。
     -->
-    <ThreadBodyViewport v-if="!liveInProcess && message.__thread_preview && message.__thread_body" :session-id="activeSessionId" :body="message.__thread_body" :preview="String(message.content||'')" :cache-key="`thread:${item.key}`" />
+    <!-- The stream preview must stay in the same padded timeline block as the
+         terminal answer.  Switching to the body viewport while bytes are still
+         arriving used to drop the row's padding for the first few frames and
+         made the answer jump to the viewport's left edge. -->
+    <div v-if="!bodyStreaming && message.__thread_preview && message.__thread_body" class="timeline-body-block">
+      <ThreadBodyViewport :session-id="activeSessionId" :body="message.__thread_body" :preview="String(message.content||'')" :cache-key="`thread:${item.key}`" />
+    </div>
     <MessageTimelineBlocks
       v-else-if="hasProjectionBlocks"
       :blocks="timelineBlocks"
@@ -68,7 +73,7 @@
       </template>
     </MessageTimelineBlocks>
     <div
-      v-else-if="hasBody && !liveInProcess"
+      v-else-if="hasBody"
       class="timeline-body-block"
       :class="{ 'is-streaming': bodyStreaming }"
       data-turn-slot="body"
@@ -158,7 +163,7 @@
           :item-id="legacyBodyId()"
           :content-truncated="message.content_truncated === true"
           :assistant-display="true"
-          :explicit-content="false"
+          :explicit-content="true"
           :streaming="bodyStreaming"
           :throttle-ms="MARKDOWN_STREAM_THROTTLE_MS"
           :resolve-workspace-path="resolveAgentMarkdownWorkspacePath"
@@ -228,7 +233,7 @@
 
 <script setup lang="ts">
 import ThreadBodyViewport from '@/components/chat/ThreadBodyViewport.vue';
-import { computed, nextTick, onBeforeUnmount, ref, triggerRef, watch } from 'vue';
+import { computed, onBeforeUnmount, ref, triggerRef, watch } from 'vue';
 
 import MessageMarkdownBody from '@/components/chat/MessageMarkdownBody.vue';
 import MessageStats from '@/components/chat/MessageStats.vue';
@@ -292,31 +297,9 @@ const processTurnId = computed(() =>
  * 流式文本经 live-tail 进过程区实时行；轮次完成（streaming=false）后正文恢复。
  * 无工具的普通轮次不受影响，保持流式正文直播。
  */
-const liveInProcess = computed(() =>
-  Boolean(message.value.streaming && Number(message.value.workflow_count || 0) > 0)
-);
-const liveTail = computed(() => (liveInProcess.value ? String(message.value.__thread_tail || '') : ''));
+const liveInProcess = computed(() => false);
 // 过程区展开状态（子组件上报）：决定 liveInProcess 时活动尾部是否需要外显。
 const processOpen = ref(false);
-const liveTailEl = ref<HTMLPreElement | null>(null);
-const liveTailOutside = computed(() => {
-  const tail = message.value.__thread_tail;
-  if (!tail || !message.value.streaming) return false;
-  // 有工具轮次：正文区已让位，过程区收起时 tail 必须外显，否则流式期间无输出可见。
-  if (liveInProcess.value) return !processOpen.value;
-  // 无工具轮次：正文区显示持久前缀（preview），活动尾部外显跟随。
-  return Boolean(message.value.__thread_preview);
-});
-// 外显尾部自动跟随：用户未上滚查看时始终贴底，与正文直播的跟随语义一致。
-watch(
-  () => String(message.value.__thread_tail || '').length,
-  async () => {
-    if (!liveTailOutside.value) return;
-    await nextTick();
-    const el = liveTailEl.value;
-    if (el) el.scrollTop = el.scrollHeight;
-  }
-);
 
 const resolveAgentMessageKey = controller.resolveAgentMessageKey;
 const resolveAgentMarkdownWorkspacePath = controller.resolveAgentMarkdownWorkspacePath;
@@ -376,7 +359,32 @@ const runtimeContentVersion = computed(() => {
 
 const displayContent = computed(() => {
   void runtimeContentVersion.value;
-  return String(controller.buildAssistantDisplayContent?.(message.value, translate) || '');
+  const base = String(controller.buildAssistantDisplayContent?.(message.value, translate) || '');
+  // Thread-view rows carry a durable preview plus an ephemeral tail. Compose
+  // both before handing the text to the streaming renderer; the durable body
+  // viewport is intentionally used only after the turn settles.
+  if (message.value.__thread_view && message.value.streaming) {
+    const tail = String(message.value.__thread_tail || '');
+    if (!tail) return base;
+    const units = (value: string): number => [...value].reduce((total, char) => total + char.length, 0);
+    const baseUnits = units(base);
+    const tailEnd = Number(message.value.__thread_tail_offset || message.value.__thread_tail?.length || 0);
+    const tailUnits = units(tail);
+    const tailStart = Math.max(0, tailEnd - tailUnits);
+    if (baseUnits <= tailStart) return `${base}${tail}`;
+    if (baseUnits >= tailEnd) return base;
+    // The durable preview already contains the beginning of the active block;
+    // append only the unseen UTF-16 suffix instead of duplicating the block.
+    let consumed = baseUnits - tailStart;
+    let index = 0;
+    for (const char of tail) {
+      if (consumed <= 0) break;
+      consumed -= char.length;
+      index += char.length;
+    }
+    return `${base}${tail.slice(index)}`;
+  }
+  return base;
 });
 const hasBody = computed(() => Boolean(controller.hasMessageContent?.(displayContent.value)));
 const bodyStreaming = computed(() =>

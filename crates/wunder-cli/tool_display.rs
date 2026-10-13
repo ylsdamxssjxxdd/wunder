@@ -1,7 +1,7 @@
 use serde_json::Value;
 
 const MAX_PREVIEW_ITEMS: usize = 6;
-const MAX_PREVIEW_LINES: usize = 6;
+const MAX_PREVIEW_LINES: usize = 3;
 const MAX_PREVIEW_CHARS: usize = 360;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -77,4 +77,3 @@ The Honeycomb runs locally, and its working directory is a persistent directory 
 
 - [Workspace management reference](/docs/en/reference/workspace-routing/) — file management tips
 - [Workspace files tool](/docs/en/tools/workspace-files/) — how the agent reads and writes files
-- [Data and storage](/docs/en/ops/data-and-storage/) — storage policy

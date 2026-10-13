@@ -1,12 +1,12 @@
 ---
 title: 核心概览
-summary: wunder 为什么这样表现——10 个核心设计约束，以及它们的分层与入口。
+summary: wunder 为什么这样表现——9 个核心设计约束，以及它们的分层与入口。
 updated_at: 2026-10-13
 ---
 
 # 核心概览
 
-wunder（心舰）是智能体调度平台：把目标交给智能体，它拆解任务、调用工具、交付结果。这 10 个核心解释的是**系统为什么这样表现**，不是它能做什么的清单。功能清单看[工具](/docs/zh-CN/tools/)和[接口索引](/docs/zh-CN/reference/api-index/)。
+wunder（心舰）是智能体调度平台：把目标交给智能体，它拆解任务、调用工具、交付结果。这 9 个核心解释的是**系统为什么这样表现**，不是它能做什么的清单。功能清单看[工具](/docs/zh-CN/tools/)和[接口索引](/docs/zh-CN/reference/api-index/)。
 
 ## 四条设计原则
 
@@ -28,28 +28,27 @@ wunder（心舰）是智能体调度平台：把目标交给智能体，它拆�
 
 蜂窝与舵机不依赖舰体，可独立运行与分发。Electron / Tauri 前端壳已停止日常维护，不再作为能力描述。
 
-## 10 个核心
+## 9 个核心
 
 <div class="docs-card-grid docs-card-grid-compact">
-  <a class="docs-card" href="/docs/zh-CN/concepts/core-agent-loop/"><strong>智能体循环</strong><span>线程一轮一轮推进到终态的过程，以及刹车条件。</span></a>
-  <a class="docs-card" href="/docs/zh-CN/concepts/core-tools/"><strong>工具</strong><span>工具是执行能力的统一接口。</span></a>
-  <a class="docs-card" href="/docs/zh-CN/concepts/core-context-compression/"><strong>上下文压缩</strong><span>长对话不因超限而中断的机制。</span></a>
-  <a class="docs-card" href="/docs/zh-CN/concepts/core-memory/"><strong>记忆</strong><span>长期资料只注入一次，并安全参与执行。</span></a>
-  <a class="docs-card" href="/docs/zh-CN/concepts/core-channels/"><strong>渠道</strong><span>第三方平台入口共享同一套线程运行时。</span></a>
-  <a class="docs-card" href="/docs/zh-CN/concepts/core-scheduled-tasks/"><strong>定时任务</strong><span>到点的消息排队，不与人工消息抢锁。</span></a>
-  <a class="docs-card" href="/docs/zh-CN/concepts/core-multi-user-management/"><strong>多用户管理</strong><span>组织、权限、额度与治理面。</span></a>
-  <a class="docs-card" href="/docs/zh-CN/concepts/core-realtime/"><strong>实时性</strong><span>过程可见、断线可续、看到的就是落库的。</span></a>
-  <a class="docs-card" href="/docs/zh-CN/concepts/core-stability/"><strong>稳定性</strong><span>错误不扩散、能自愈、有限重试。</span></a>
-  <a class="docs-card" href="/docs/zh-CN/concepts/core-observability/"><strong>可观测性</strong><span>线程轨迹与台账记录线程发生了什么。</span></a>
+  <a class="docs-card" href="/docs/zh-CN/concepts/core-goal/"><strong>目标</strong><span>让智能体进入目标态并持续完成一项任务。</span></a>
+  <a class="docs-card" href="/docs/zh-CN/concepts/core-compatibility/"><strong>兼容性</strong><span>让蜂窝与舵机在旧操作系统环境中可运行并被明确约束。</span></a>
+  <a class="docs-card" href="/docs/zh-CN/concepts/core-context-compression/"><strong>上下文压缩</strong><span>在长会话中控制上下文规模并保留有效信息。</span></a>
+  <a class="docs-card" href="/docs/zh-CN/concepts/core-subagent/"><strong>子智能体</strong><span>在单一线程内派生子任务，由独立执行体完成并回传结果。</span></a>
+  <a class="docs-card" href="/docs/zh-CN/concepts/core-scheduled-tasks/"><strong>定时任务</strong><span>支持系统级周期执行与后台治理。</span></a>
+  <a class="docs-card" href="/docs/zh-CN/concepts/core-channels/"><strong>渠道通信</strong><span>多入口接入同一运行时能力。</span></a>
+  <a class="docs-card" href="/docs/zh-CN/concepts/core-memory/"><strong>记忆</strong><span>支持长会话与长期资料利用，但不污染线程核心认知。</span></a>
+  <a class="docs-card" href="/docs/zh-CN/concepts/core-multithreading/"><strong>多线程</strong><span>在单进程内通过并发控制提升吞吐与资源利用。</span></a>
+  <a class="docs-card" href="/docs/zh-CN/concepts/core-multi-user-management/"><strong>多租户</strong><span>支持舰体的组织、用户、租户与权限治理。</span></a>
 </div>
 
 三层关系（从内到外）：
 
 | 层 | 核心 | 解决什么 |
 | --- | --- | --- |
-| 执行引擎 | 循环、工具、上下文压缩、记忆 | 线程能持续跑、能调用能力、能控长度、能用长期资料 |
-| 接入与治理 | 渠道、定时任务、多用户管理 | 不同入口与后台任务共享同一套规则 |
-| 交付保障 | 实时性、稳定性、可观测性 | 过程看得见、压力扛得住、问题追得回 |
+| 执行引擎 | 上下文压缩、记忆、子智能体、多线程 | 一个线程怎么跑完：能控长度、能用长期资料、能派生子任务、能与其它线程并发推进 |
+| 接入与治理 | 渠道通信、定时任务、多租户、目标 | 谁在什么时候唤起线程，以及组织、用户与权限的治理面 |
+| 平台底座 | 兼容性 | 这套引擎与接入能在哪些操作系统上跑起来 |
 
 ## 深入主题
 
@@ -69,12 +68,17 @@ wunder（心舰）是智能体调度平台：把目标交给智能体，它拆�
 | 持续目标态 | [目标态系统](/docs/zh-CN/concepts/goal-mode/) |
 | 动画形象 | [形象系统](/docs/zh-CN/concepts/companion/) |
 | 异常与截断行为 | [边界处理](/docs/zh-CN/concepts/boundary-handling/) |
+| 线程一轮一轮如何推进 | [智能体循环](/docs/zh-CN/concepts/core-agent-loop/) |
+| 能力的四层结构 | [工具](/docs/zh-CN/concepts/core-tools/) |
+| 过程可见、断线可续 | [实时性](/docs/zh-CN/concepts/core-realtime/) |
+| 有界、预算与熔断 | [稳定性](/docs/zh-CN/concepts/core-stability/) |
+| 日志、指标与线程轨迹 | [可观测性](/docs/zh-CN/concepts/core-observability/) |
 
 ## 按角色推荐阅读
 
 - **第一次用蜂窝**：[快速上手](/docs/zh-CN/start/quickstart/) → 智能体循环 → 工具 → 记忆 → 上下文压缩。
 - **管理员 / 治理**：多用户管理 → 稳定性 → 可观测性 → 渠道 → [配置参考](/docs/zh-CN/reference/config/)。
-- **接入与开发**：[系统架构](/docs/zh-CN/concepts/architecture/) → [舰体 API](/docs/zh-CN/integration/wunder-api/) → [聊天 WebSocket](/docs/zh-CN/integration/chat-ws/) → 流式执行。
+- **接入与开发**：[系统架构](/docs/zh-CN/concepts/architecture/) → [聊天 WebSocket](/docs/zh-CN/reference/chat-ws/) → 流式执行。
 
 ## 常见误解
 

@@ -86,7 +86,7 @@ The frontend consumes a **view**: a chat page holds only 12 user rounds, and eve
 ## Further reading
 
 - [Session states](/docs/en/reference/stream-events/) — the list of events and fields
-- [Chat WebSocket](/docs/en/integration/chat-ws/) — protocol and envelope
+- [Chat WebSocket](/docs/en/reference/chat-ws/) — protocol and envelope
 - [Sessions and rounds](/docs/en/concepts/sessions-and-rounds/) — entry and round granularity
 - [Real-time behavior](/docs/en/concepts/core-realtime/) — design principles
 - [System architecture](/docs/en/concepts/architecture/) — the layering of view and truth

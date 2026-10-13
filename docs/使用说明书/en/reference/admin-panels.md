@@ -207,5 +207,3 @@ The Bridge holds the highest privileges in the system:
 ## Further reading
 
 - [System Settings Reference](/docs/en/reference/config/)
-- [Channel Management Guide](/docs/en/ops/channel-runtime/)
-- [Monitoring and Evaluation](/docs/en/ops/benchmark-and-observability/)

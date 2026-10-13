@@ -93,5 +93,4 @@ updated_at: 2026-10-13
 - [会话与轮次](/docs/zh-CN/concepts/sessions-and-rounds/) —— 编号口径
 - [流式执行](/docs/zh-CN/concepts/streaming/) —— 推送、补水与背压
 - [工作区与工作目录](/docs/zh-CN/concepts/workspaces/) —— 路径与沙盒边界
-- [部署与运维](/docs/zh-CN/ops/deployment/) —— 编排、端口与构建
 - [配置参考](/docs/zh-CN/reference/config/) —— 全部配置项

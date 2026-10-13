@@ -203,6 +203,7 @@ pub(crate) fn log_style(kind: LogKind) -> Style {
         LogKind::Assistant => Style::default(),
         LogKind::Reasoning => secondary_text(),
         LogKind::Tool => secondary_text(),
+        LogKind::Plan => secondary_text(),
         LogKind::Approval | LogKind::Inquiry => accent_text(),
         LogKind::Error => danger_text(),
     }

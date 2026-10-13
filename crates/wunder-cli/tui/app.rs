@@ -75,6 +75,7 @@ const SUPPRESSED_CLIPBOARD_PASTE_TIMEOUT: Duration = Duration::from_millis(1200)
 mod commands;
 mod exploring_group;
 mod input_placeholders;
+mod plan_panel;
 mod thread_ui_state;
 mod transcript_view;
 use thread_ui_state::ThreadUiState;
@@ -128,6 +129,8 @@ pub enum LogKind {
     Approval,
     Inquiry,
     Tool,
+    /// The `update_plan` card: the model's execution plan, replaced in place.
+    Plan,
     Error,
 }
 
@@ -173,6 +176,7 @@ struct TranscriptRenderCache {
     offset_from_bottom: usize,
     archived_entries: usize,
     log_entries: usize,
+    raw_output: bool,
     lines: Vec<Line<'static>>,
     local_scroll: u16,
 }
@@ -469,6 +473,11 @@ pub struct TuiApp {
     history: Vec<String>,
     history_cursor: Option<usize>,
     history_draft: String,
+    /// Text removed by the kill keys, reinserted by Ctrl+Y.
+    kill_buffer: String,
+    /// Alt+R: render the transcript as plain text so a terminal selection
+    /// copies what the model actually wrote, without card styling.
+    raw_output: bool,
     pending_attachments: Vec<crate::attachments::PreparedAttachment>,
     pending_attachment_paths: VecDeque<String>,
     pending_paste: VecDeque<String>,
@@ -637,6 +646,8 @@ impl TuiApp {
             session_stats: crate::SessionStatsSnapshot::default(),
             last_usage: None,
             config_wizard: None,
+            kill_buffer: String::new(),
+            raw_output: false,
             stream_saw_output: false,
             stream_saw_final: false,
             stream_received_content_delta: false,
@@ -2106,9 +2117,50 @@ impl TuiApp {
                     (self.inquiry_selected_index + 1).min(route_len.saturating_sub(1));
                 Some(None)
             }
+            KeyCode::Char('k') if key.modifiers.is_empty() => {
+                self.inquiry_selected_index = self.inquiry_selected_index.saturating_sub(1);
+                Some(None)
+            }
+            KeyCode::Char('j') if key.modifiers.is_empty() => {
+                self.inquiry_selected_index =
+                    (self.inquiry_selected_index + 1).min(route_len.saturating_sub(1));
+                Some(None)
+            }
+            // codex moves between queued questions with the horizontal arrows
+            // and the page keys; a question switch lands on its first option.
+            KeyCode::Left | KeyCode::PageUp => {
+                self.inquiry_move_question(-1);
+                Some(None)
+            }
+            KeyCode::Right | KeyCode::PageDown => {
+                self.inquiry_move_question(1);
+                Some(None)
+            }
+            KeyCode::Char('h') if key.modifiers.is_empty() => {
+                self.inquiry_move_question(-1);
+                Some(None)
+            }
+            KeyCode::Char('l') if key.modifiers.is_empty() => {
+                self.inquiry_move_question(1);
+                Some(None)
+            }
+            KeyCode::Char('p') if key.modifiers == KeyModifiers::CONTROL => {
+                self.inquiry_move_question(-1);
+                Some(None)
+            }
+            KeyCode::Char('n') if key.modifiers == KeyModifiers::CONTROL => {
+                self.inquiry_move_question(1);
+                Some(None)
+            }
             KeyCode::Enter => Some(Some((self.inquiry_selected_index + 1).to_string())),
             KeyCode::Esc => {
                 self.active_inquiry_panel = None;
+                self.inquiry_selected_index = 0;
+                Some(None)
+            }
+            // Backspace and Delete drop the highlight back to the first option,
+            // the way codex clears a selection before retyping an answer.
+            KeyCode::Backspace | KeyCode::Delete => {
                 self.inquiry_selected_index = 0;
                 Some(None)
             }
@@ -2124,6 +2176,66 @@ impl TuiApp {
                 }
             }
             _ => None,
+        }
+    }
+
+    /// Remove the question holding the highlight. When the last question goes,
+    /// the panel closes and the thread returns to whatever state it was in.
+    fn inquiry_skip_current_question(&mut self) {
+        let Some(panel) = self.active_inquiry_panel.as_mut() else {
+            return;
+        };
+        let flat = panel.flat_routes();
+        if flat.is_empty() {
+            self.active_inquiry_panel = None;
+            self.inquiry_selected_index = 0;
+            return;
+        }
+        let question_index = flat[self.inquiry_selected_index.min(flat.len() - 1)].0;
+        panel.questions.remove(question_index);
+        self.inquiry_selected_index = 0;
+        if panel.questions.iter().all(|item| item.routes.is_empty()) {
+            self.active_inquiry_panel = None;
+        }
+        if self.active_inquiry_panel.is_none() {
+            self.push_log(
+                LogKind::Inquiry,
+                crate::locale::tr(
+                    self.display_language.as_str(),
+                    "已跳过剩余问题，按无偏好继续",
+                    "skipped the remaining questions; continuing with no preference",
+                ),
+            );
+            self.thread_registry.set_status(
+                &self.session_id,
+                if self.thread_is_running(&self.session_id) {
+                    super::thread_registry::ThreadRunState::Working
+                } else {
+                    super::thread_registry::ThreadRunState::Ready
+                },
+            );
+        }
+    }
+
+    /// Move the highlight to the first option of the previous or next question.
+    /// Questions are the unit codex pages through; individual options stay on
+    /// the vertical keys.
+    fn inquiry_move_question(&mut self, delta: isize) {
+        let Some(panel) = self.active_inquiry_panel.as_ref() else {
+            return;
+        };
+        let flat = panel.flat_routes();
+        if flat.is_empty() {
+            return;
+        }
+        let current_question = flat[self.inquiry_selected_index.min(flat.len() - 1)].0;
+        let target_question = if delta < 0 {
+            current_question.saturating_sub(delta.unsigned_abs())
+        } else {
+            (current_question.saturating_add(delta as usize)).min(panel.questions.len() - 1)
+        };
+        if let Some(index) = flat.iter().position(|(question, _)| *question == target_question) {
+            self.inquiry_selected_index = index;
         }
     }
 
@@ -2251,31 +2363,36 @@ impl TuiApp {
     pub fn shortcuts_lines(&self) -> Vec<String> {
         if self.is_zh_language() {
             return vec![
-                "/ 命令 · Enter 发送 · ! 直接执行 shell".to_string(),
-                "Shift + Enter / Ctrl + J 换行 · Tab 补全".to_string(),
-                "@ 文件提及 · # 技能 · $ 工具 · Ctrl + V 粘贴图片".to_string(),
+                "/ 命令 · Enter 发送 · Tab 补全 · ! 直接执行 shell".to_string(),
+                "Shift + Enter / Ctrl + J 换行 · Ctrl + V 粘贴 · Ctrl + Y 取回删除的文本".to_string(),
+                "@ 文件提及 · # 技能 · $ 工具 · 拖入图片或文件即可附加".to_string(),
                 "Alt + , / Alt + . 降低/提高推理强度".to_string(),
-                "Ctrl + R / Ctrl + S 搜索输入历史".to_string(),
-                "Ctrl + G 外部编辑器 · Ctrl + O 复制最后回复".to_string(),
-                "Ctrl + T 完整转录 · Ctrl + L 清屏开新会话 · Ctrl + C 退出".to_string(),
+                "Ctrl + R / Ctrl + S 搜索输入历史 · Ctrl + G 外部编辑器".to_string(),
+                "Ctrl + O 复制最后回复 · Ctrl + L 清屏开新会话 · Ctrl + C 退出".to_string(),
+                "Ctrl + T 完整转录 · Alt + R 原始输出（纯文本，便于复制）".to_string(),
                 "Esc 中断当前轮次 · 空闲时清空输入草稿".to_string(),
-                "F3 查看输出并选中卡片 · Enter 展开或收起".to_string(),
-                "F2 运行提醒 · F4 切换鼠标（wunder 与 codex 的差异）".to_string(),
-                "Esc 关闭快捷键 · 拖入图片或文件即可附加".to_string(),
+                "F3 聚焦活动并选中卡片 · Enter 展开或收起 · F2 运行提醒 · F4 切换鼠标".to_string(),
+                "问询面板：↑↓ 或 j/k 选选项 · ←→ PgUp PgDn 切题 · 数字直选".to_string(),
+                "Ctrl + ] 跳过当前问题 · Backspace 清除选择".to_string(),
+                "列表与转录：j/k 移动 · Ctrl + B/F 翻页 · Ctrl + U/D 半页".to_string(),
+                "Home / End 跳首尾 · q 退出转录 · Esc 关闭快捷键".to_string(),
             ];
         }
         vec![
-            "/ for commands            enter to send            ! to run a shell command".to_string(),
-            "shift + enter for newline                     tab to complete".to_string(),
-            "@ for files              # skills              $ tools            ctrl + v to paste".to_string(),
+            "/ for commands            enter to send            tab to complete".to_string(),
+            "! to run a shell command                      ctrl + v to paste".to_string(),
+            "shift + enter or ctrl + j for a newline       ctrl + y to yank killed text".to_string(),
+            "@ for files              # skills              $ tools            drag to attach".to_string(),
             "alt + , / alt + . to lower or raise reasoning effort".to_string(),
-            "ctrl + r / ctrl + s to search the composer history".to_string(),
-            "ctrl + g external editor                      ctrl + o to copy the last reply".to_string(),
-            "ctrl + t for the full transcript              ctrl + l to clear and start a new thread".to_string(),
+            "ctrl + r / ctrl + s to search the composer history                 ctrl + g editor".to_string(),
+            "ctrl + o copies the last reply                ctrl + l clears into a new thread".to_string(),
+            "ctrl + t for the full transcript              alt + r for raw, copy-friendly output".to_string(),
             "esc to interrupt a running round              ctrl + c to exit".to_string(),
-            "f3 to view output and select cards            enter to open or fold".to_string(),
-            "f2 for run notices                            f4 to switch mouse (a wunder difference)".to_string(),
-            "esc to close shortcuts                        drag images/files to attach".to_string(),
+            "f3 focuses activity and selects cards         f2 run notices     f4 mouse mode".to_string(),
+            "questions: up/down or j/k choose              left/right, pgup/pgdn switch question".to_string(),
+            "digits pick an option      ctrl + ] skips the question      backspace clears".to_string(),
+            "lists: j/k move            ctrl + b/ctrl + f page           ctrl + u/ctrl + d half page".to_string(),
+            "home / end jump            q leaves the transcript          esc closes shortcuts".to_string(),
         ]
     }
 
@@ -2732,7 +2849,7 @@ impl TuiApp {
             return Ok(());
         }
         match key.code {
-            KeyCode::Esc | KeyCode::Left => self.close_command_center(),
+            KeyCode::Esc | KeyCode::Left | KeyCode::Char('h') => self.close_command_center(),
             KeyCode::Up => center.move_selection(-1),
             KeyCode::Down => center.move_selection(1),
             KeyCode::PageUp => center.move_selection(-8),
@@ -2747,6 +2864,22 @@ impl TuiApp {
                     .next(key.modifiers.contains(KeyModifiers::SHIFT));
                 center.reconcile_selection();
             }
+            // codex's list context: `k`/`j` and their Ctrl forms move the
+            // selection, Ctrl+P/Ctrl+N and Ctrl+B/Ctrl+F page it, F3 and `/`
+            // both start a search.
+            KeyCode::Char('k') if key.modifiers.is_empty() => center.move_selection(-1),
+            KeyCode::Char('j') if key.modifiers.is_empty() => center.move_selection(1),
+            KeyCode::Char('p') | KeyCode::Char('k') if key.modifiers == KeyModifiers::CONTROL => {
+                center.move_selection(-8)
+            }
+            KeyCode::Char('n') | KeyCode::Char('j') if key.modifiers == KeyModifiers::CONTROL => {
+                center.move_selection(8)
+            }
+            KeyCode::Char('b') if key.modifiers == KeyModifiers::CONTROL => {
+                center.move_selection(-8)
+            }
+            KeyCode::Char('f') if key.modifiers == KeyModifiers::CONTROL => center.move_selection(8),
+            KeyCode::F(3) => center.searching = true,
             KeyCode::Char('/') => center.searching = true,
             KeyCode::Char('g') | KeyCode::Char('G') => {
                 center.group = center.group.next();
@@ -2878,6 +3011,7 @@ impl TuiApp {
                 && cache.offset_from_bottom == self.transcript_offset_from_bottom
                 && cache.archived_entries == self.history_archived_entries
                 && cache.log_entries == self.logs.len()
+                && cache.raw_output == self.raw_output
         }) {
             return TranscriptRenderedView {
                 lines: cache.lines.clone(),
@@ -2888,17 +3022,29 @@ impl TuiApp {
         let render_window = self.transcript_render_window(height);
         let transcript_total_lines = render_window.total_lines;
         let transcript_scroll = render_window.local_scroll;
-        let mut transcript_lines: Vec<Line<'static>> = render_window
-            .entries
-            .into_iter()
-            .flat_map(|entry| {
-                self.render_entry_lines(
-                    entry.global_index,
-                    selected_transcript.is_some_and(|selected| selected == entry.global_index),
-                    width,
-                )
-            })
-            .collect();
+        // Alt+R drops the card styling and the markdown spans so a terminal
+        // selection copies plain text; codex calls this raw scrollback mode.
+        let raw_output = self.raw_output;
+        let mut transcript_lines: Vec<Line<'static>> = if raw_output {
+            render_window
+                .entries
+                .iter()
+                .flat_map(|entry| raw_entry_lines(self.logs[entry.global_index].text.as_str()))
+                .collect()
+        } else {
+            render_window
+                .entries
+                .into_iter()
+                .flat_map(|entry| {
+                    self.render_entry_lines(
+                        entry.global_index,
+                        selected_transcript
+                            .is_some_and(|selected| selected == entry.global_index),
+                        width,
+                    )
+                })
+                .collect()
+        };
 
         if transcript_lines.is_empty() {
             let placeholder = if is_zh {
@@ -2921,6 +3067,7 @@ impl TuiApp {
             offset_from_bottom: self.transcript_offset_from_bottom,
             archived_entries: self.history_archived_entries,
             log_entries: self.logs.len(),
+            raw_output,
             lines: transcript_lines.clone(),
             local_scroll: transcript_scroll,
         });
@@ -2929,6 +3076,29 @@ impl TuiApp {
             lines: transcript_lines,
             local_scroll: transcript_scroll,
         }
+    }
+
+    /// Alt+R flips raw mode and invalidates the render cache, so the next frame
+    /// redraws the transcript as plain text.
+    fn toggle_raw_output(&mut self) {
+        self.raw_output = !self.raw_output;
+        self.invalidate_transcript_metrics();
+        self.push_log(
+            LogKind::Info,
+            crate::locale::tr(
+                self.display_language.as_str(),
+                if self.raw_output {
+                    "已开启原始输出：转录按纯文本渲染，便于复制"
+                } else {
+                    "已关闭原始输出：恢复卡片渲染"
+                },
+                if self.raw_output {
+                    "raw output on: transcript renders as plain text for copy"
+                } else {
+                    "raw output off: back to card rendering"
+                },
+            ),
+        );
     }
 
     fn archive_scrollback_entries(&mut self, viewport_height: u16) {
@@ -4211,6 +4381,17 @@ impl TuiApp {
                     self.delete_to_line_end();
                     return Ok(());
                 }
+                // Ctrl+Y yanks what Ctrl+U / Ctrl+K / Ctrl+W removed, matching
+                // codex's editor kill ring behaviour.
+                KeyCode::Char('y') => {
+                    self.yank_kill_buffer();
+                    return Ok(());
+                }
+                // Ctrl+] skips the focused question in an open inquiry panel.
+                KeyCode::Char(']') if self.active_inquiry_panel.is_some() => {
+                    self.inquiry_skip_current_question();
+                    return Ok(());
+                }
                 _ => {}
             }
         }
@@ -4220,6 +4401,11 @@ impl TuiApp {
             match key.code {
                 // Alt+, / Alt+. step the reasoning effort, like the desktop
                 // input area's strength control.
+                // Alt+R toggles raw scrollback, like codex's toggle_raw_output.
+                KeyCode::Char('r') => {
+                    self.toggle_raw_output();
+                    return Ok(());
+                }
                 KeyCode::Char(',') => {
                     self.step_reasoning_effort(-1).await;
                     return Ok(());
@@ -4273,6 +4459,18 @@ impl TuiApp {
         if self.has_resume_picker() {
             self.reset_plain_char_burst();
             self.handle_resume_picker_key(key).await?;
+            return Ok(());
+        }
+
+        // codex's `skip_question` binding: drop the focused question and keep
+        // the rest. A skipped question is answered as "no preference", which is
+        // the same outcome the panel logs for a question left blank.
+        if self.active_inquiry_panel.is_some()
+            && key.modifiers == KeyModifiers::CONTROL
+            && matches!(key.code, KeyCode::Char(']'))
+        {
+            self.reset_plain_char_burst();
+            self.inquiry_skip_current_question();
             return Ok(());
         }
 
@@ -4593,13 +4791,31 @@ impl TuiApp {
 
     async fn handle_resume_picker_key(&mut self, key: KeyEvent) -> Result<()> {
         match key.code {
-            KeyCode::Esc => {
+            KeyCode::Esc | KeyCode::Char('h') => {
                 self.close_resume_picker();
             }
             KeyCode::Up => self.move_resume_picker_selection(-1),
             KeyCode::Down => self.move_resume_picker_selection(1),
             KeyCode::PageUp => self.move_resume_picker_selection(-8),
             KeyCode::PageDown => self.move_resume_picker_selection(8),
+            // Same list bindings as the command center: `k`/`j` move one row,
+            // Ctrl+P/Ctrl+N, Ctrl+B/Ctrl+F and Ctrl+K/Ctrl+J page or move.
+            KeyCode::Char('k') if key.modifiers.is_empty() => {
+                self.move_resume_picker_selection(-1)
+            }
+            KeyCode::Char('j') if key.modifiers.is_empty() => self.move_resume_picker_selection(1),
+            KeyCode::Char('p') | KeyCode::Char('b') if key.modifiers == KeyModifiers::CONTROL => {
+                self.move_resume_picker_selection(-8)
+            }
+            KeyCode::Char('n') | KeyCode::Char('f') if key.modifiers == KeyModifiers::CONTROL => {
+                self.move_resume_picker_selection(8)
+            }
+            KeyCode::Char('k') if key.modifiers == KeyModifiers::CONTROL => {
+                self.move_resume_picker_selection(-1)
+            }
+            KeyCode::Char('j') if key.modifiers == KeyModifiers::CONTROL => {
+                self.move_resume_picker_selection(1)
+            }
             KeyCode::Home => {
                 if let Some(picker) = self.resume_picker.as_mut() {
                     picker.selected = 0;
@@ -4670,6 +4886,45 @@ impl TuiApp {
             }
             KeyCode::F(3) => {
                 self.toggle_focus_area();
+                true
+            }
+            // codex's pager bindings that the transcript focus did not answer:
+            // `k`/`j` scroll a row, Space and Ctrl+F/Ctrl+B page, Ctrl+U/Ctrl+D
+            // move half a page, and `q` leaves the transcript.
+            KeyCode::Char('k') if key.modifiers.is_empty() => {
+                self.move_transcript_selection(-1);
+                true
+            }
+            KeyCode::Char('j') if key.modifiers.is_empty() => {
+                self.move_transcript_selection(1);
+                true
+            }
+            KeyCode::Char(' ') if key.modifiers.is_empty() => {
+                self.move_transcript_selection(8);
+                true
+            }
+            KeyCode::Char(' ') if key.modifiers == KeyModifiers::SHIFT => {
+                self.move_transcript_selection(-8);
+                true
+            }
+            KeyCode::Char('f') if key.modifiers == KeyModifiers::CONTROL => {
+                self.move_transcript_selection(8);
+                true
+            }
+            KeyCode::Char('b') if key.modifiers == KeyModifiers::CONTROL => {
+                self.move_transcript_selection(-8);
+                true
+            }
+            KeyCode::Char('d') if key.modifiers == KeyModifiers::CONTROL => {
+                self.move_transcript_selection(4);
+                true
+            }
+            KeyCode::Char('u') if key.modifiers == KeyModifiers::CONTROL => {
+                self.move_transcript_selection(-4);
+                true
+            }
+            KeyCode::Char('q') if key.modifiers.is_empty() => {
+                self.focus_area = FocusArea::Input;
                 true
             }
             _ => false,
@@ -6119,7 +6374,7 @@ impl TuiApp {
         }
 
         if start == 0 {
-            self.input.replace_range(0..end, "");
+            self.kill_range(0, end);
             self.input_cursor = 0;
             return;
         }
@@ -6138,7 +6393,7 @@ impl TuiApp {
             start = before;
         }
 
-        self.input.replace_range(start..end, "");
+        self.kill_range(start, end);
         self.input_cursor = start;
     }
 
@@ -6205,7 +6460,7 @@ impl TuiApp {
         }
         let start = self.line_start_index();
         if start < end {
-            self.input.replace_range(start..end, "");
+            self.kill_range(start, end);
             self.input_cursor = start;
         }
     }
@@ -6223,8 +6478,34 @@ impl TuiApp {
         }
         let end = self.line_end_index();
         if start < end {
-            self.input.replace_range(start..end, "");
+            self.kill_range(start, end);
         }
+    }
+
+    /// Delete `start..end` and keep the text in the kill buffer, the way
+    /// codex's `Ctrl+U`/`Ctrl+K`/`Ctrl+W` feed a buffer that `Ctrl+Y` yanks
+    /// back. Consecutive kills append, so `Ctrl+K Ctrl+K` yanks both lines.
+    fn kill_range(&mut self, start: usize, end: usize) {
+        let end = end.min(self.input.len());
+        if start >= end {
+            return;
+        }
+        let killed = self.input[start..end].to_string();
+        self.kill_buffer.push_str(killed.as_str());
+        self.input.replace_range(start..end, "");
+    }
+
+    /// Ctrl+Y: reinsert what the last kills removed at the cursor.
+    fn yank_kill_buffer(&mut self) {
+        if self.kill_buffer.is_empty() {
+            return;
+        }
+        let text = self.kill_buffer.clone();
+        let at = self.input_cursor.min(self.input.len());
+        self.input.insert_str(at, text.as_str());
+        self.input_cursor = at + text.len();
+        self.history_cursor = None;
+        self.clamp_input_cursor_outside_attachment_placeholder();
     }
 
     fn move_cursor_up(&mut self) {
@@ -6728,6 +7009,9 @@ impl TuiApp {
                 if let Some(panel) = self.parse_inquiry_panel_state(payload) {
                     self.activate_inquiry_panel(panel, true);
                 }
+            }
+            "plan_update" => {
+                self.apply_plan_update(payload);
             }
             "error" => {
                 let message = parse_error_message(payload);
@@ -7333,6 +7617,33 @@ impl TuiApp {
         self.register_created_tool_card(key, TempToolKind::Generic(tool.to_string()), index);
     }
 
+    /// The engine sends the whole plan on every `update_plan`, so the card the
+    /// reader already has is rewritten rather than joined by a second one. A
+    /// plan that no longer sits at the tail starts a new card, the way a later
+    /// thought does.
+    fn apply_plan_update(&mut self, payload: &Value) {
+        let is_zh = self.is_zh_language();
+        let Some(parsed) = plan_panel::PlanLogEntry::parse(payload, is_zh) else {
+            return;
+        };
+        let special = SpecialLogEntry::Plan(parsed);
+        let text = special.summary_text();
+        let tail = self.logs.len().checked_sub(1);
+        if let Some(index) = tail {
+            let is_plan_card = self.logs[index]
+                .special
+                .as_ref()
+                .is_some_and(|entry| matches!(entry, SpecialLogEntry::Plan(_)));
+            if is_plan_card {
+                self.logs[index].special = Some(special);
+                self.logs[index].text = text;
+                self.invalidate_transcript_metrics();
+                return;
+            }
+        }
+        self.push_special_log(LogKind::Plan, text, special);
+    }
+
     /// A workspace read joins the group at the tail of the transcript, the way Codex keeps a
     /// run of exploration in one card. Anything that lands after the group closes it, and a
     /// full group starts a new card instead of growing without bound.
@@ -7436,16 +7747,29 @@ impl TuiApp {
                 if self.apply_exploring_result(index, tool, key.as_ref(), payload) {
                     return;
                 }
-                let special = build_completed_tool_log(tool, payload, self.is_zh_language());
+                let special = build_completed_tool_log(tool, payload, self.is_zh_language(), None);
                 self.push_special_log(LogKind::Tool, special.summary_text(), special);
                 return;
             }
-            let special = build_completed_tool_log(tool, payload, self.is_zh_language());
+            // The pending card already resolved its verb, and a settled sub-agent
+            // call reads differently ("Waiting for" becomes "Finished waiting").
+            let inherited = self.presentation_at(index);
+            let special =
+                build_completed_tool_log(tool, payload, self.is_zh_language(), inherited);
             self.write_completed_tool_cell(index, special);
             return;
         }
-        let special = build_completed_tool_log(tool, payload, self.is_zh_language());
+        let special = build_completed_tool_log(tool, payload, self.is_zh_language(), None);
         self.push_special_log(LogKind::Tool, special.summary_text(), special);
+    }
+
+    /// The verb the card at `index` was built with, so a result can settle it
+    /// into the right tense instead of re-deriving one from the tool name.
+    fn presentation_at(&self, index: usize) -> Option<crate::tool_presentation::ToolPresentation> {
+        match self.logs.get(index)?.special.as_ref()? {
+            SpecialLogEntry::Tool(entry) => Some(entry.presentation),
+            _ => None,
+        }
     }
 
     /// Locate the pending card a tool result belongs to. Stable `tool_call_id`
@@ -7550,6 +7874,17 @@ impl TuiApp {
 /// Transcript lines carried by one projected history record, in display order:
 /// reasoning first, then the answer. Snapshot recovery and durable replay share
 /// this projection so both paths land identical text (根治方案 §10).
+/// Raw mode drops every span and card prefix: one styled-free line per source
+/// line, so a terminal mouse selection copies the text and nothing else.
+fn raw_entry_lines(text: &str) -> Vec<Line<'static>> {
+    if text.is_empty() {
+        return vec![Line::from(String::new())];
+    }
+    text.lines()
+        .map(|line| Line::from(line.to_string()))
+        .collect()
+}
+
 fn record_transcript_lines(record: &Value) -> Vec<(LogKind, String)> {
     let role = record.get("role").and_then(Value::as_str).unwrap_or("");
     let content = history_content_to_text(record.get("content"));

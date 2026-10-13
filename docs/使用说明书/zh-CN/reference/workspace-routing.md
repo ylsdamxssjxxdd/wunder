@@ -82,6 +82,3 @@ summary: 每个用户的工作区只有一个云端目录，路径一律是工�
 ## 延伸阅读
 
 - [工作区与工作目录](/docs/zh-CN/concepts/workspaces/) —— 隔离模型
-- [工作区 API](/docs/zh-CN/integration/workspace-api/) —— 接口清单
-- [临时目录与文档转换](/docs/zh-CN/integration/temp-dir/) —— 中转区
-- [数据管理](/docs/zh-CN/ops/data-and-storage/) —— 存储策略

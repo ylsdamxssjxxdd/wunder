@@ -118,8 +118,6 @@ When you submit, add what you did and when the stutter happened. Total model rep
 
 Continue with:
 
-- [Desktop Local Mode](/docs/en/ops/desktop-local-mode/)
-- [Authentication & Security](/docs/en/ops/auth-and-security/)
 - [Configuration Reference](/docs/en/reference/config/)
 
 ## What to Include When Reporting an Issue

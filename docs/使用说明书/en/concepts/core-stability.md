@@ -104,4 +104,3 @@ Every interface error uses the same structure: it marks the failure and carries 
 - [Context Compression](/docs/en/concepts/core-context-compression/) — details of over-limit compression
 - [Observability](/docs/en/concepts/core-observability/) — metrics and logs
 - [Troubleshooting](/docs/en/help/troubleshooting/) — steps for handling real problems
-- [Authentication and Security](/docs/en/ops/auth-and-security/) — permissions and risk governance

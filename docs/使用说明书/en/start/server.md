@@ -147,7 +147,5 @@ Configuration supports hot reloading at runtime, and changes are written straigh
 
 - [Bridge interface](/docs/en/surfaces/web-admin/)
 - [Beehive interface](/docs/en/surfaces/frontend/)
-- [Authentication and security](/docs/en/ops/auth-and-security/)
-- [Deployment and operations](/docs/en/ops/deployment/)
 - [Configuration reference](/docs/en/reference/config/)
 - [First-run troubleshooting](/docs/en/start/troubleshooting-first-run/)

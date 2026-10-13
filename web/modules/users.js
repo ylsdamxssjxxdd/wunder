@@ -333,7 +333,9 @@ const renderUserStats = () => {
     const presetCell = document.createElement("td");
     presetCell.textContent = isAll ? "-" : user.preset_id || "-";
     if (!isAll) {
-      presetCell.title = user.preset_id ? user.preset_id : notReadyHint;
+      presetCell.title = hasBindingData
+        ? user.preset_id || ""
+        : notReadyHint;
     }
 
     const agentCell = document.createElement("td");
@@ -341,7 +343,9 @@ const renderUserStats = () => {
       agentCell.textContent = `${user.agent_count}`;
     } else {
       agentCell.textContent = user.agent_id || `${user.agent_count}`;
-      agentCell.title = user.agent_id ? user.agent_id : notReadyHint;
+      agentCell.title = hasBindingData
+        ? user.agent_id || ""
+        : notReadyHint;
     }
 
     const customizedCell = document.createElement("td");

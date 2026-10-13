@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Interlink | 使用说明书</title>
+  <meta name="description" content="The Beehive, the Honeycomb, and the Helm share one presence state, see each other&#x27;s workspaces, and control each other in both directions.">
+  <link rel="stylesheet" href="/docs/site.css?v=c9863d5d7815">
+  <script type="module" src="/docs/site.js?v=c9863d5d7815"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/reference/interlink","language":"en","title":"Interlink","summary":"The Beehive, the Honeycomb, and the Helm share one presence state, see each other's workspaces, and control each other in both directions.","updated_at":"2026-10-13","read_when":[],"source_docs":[],"tab":"Reference","group":"Three-endpoint Interop","group_path":["Three-endpoint Interop"],"url":"/docs/en/reference/interlink/","headings":[{"id":"section-1","level":2,"text":"The three endpoints and prerequisites"},{"id":"section-2","level":2,"text":"The four capabilities"},{"id":"section-3","level":2,"text":"How to use it"},{"id":"section-4","level":3,"text":"Honeycomb (desktop)"},{"id":"section-5","level":3,"text":"Beehive (web)"},{"id":"section-6","level":3,"text":"Helm (cli)"},{"id":"section-7","level":2,"text":"Security boundary"},{"id":"section-8","level":2,"text":"Non-goals"},{"id":"section-9","level":2,"text":"Cost"}],"prev_slug":"en/reference/admin-panels","next_slug":"en/help/index","markdown":"Interlink connects the Beehive (web), the Honeycomb (desktop), and the Helm (cli) into one system: **unified presence + cross-end workspace visibility + two-way remote control**. Local devices open no public inbound entry point; all traffic is relayed through the Hull.\n\n## The three endpoints and prerequisites\n\n| Name | Form | Role |\n|------|------|------|\n| Beehive | web | The cloud AI workbench, provided with the Hull, opened in a browser |\n| Honeycomb | desktop | The local AI workbench, the desktop form, with direct access to files on this machine |\n| Helm | cli | The manual local entry point, the command-line form |\n\nPrerequisites:\n\n1. All three endpoints share the `wunder-runtime` engine and the `wunder-core` contract.\n2. The local device has signed in to the Hull through the existing cloud connection scheme, and holds `wund_<token>` + `device_id`.\n3. The Hull is the sole authority for accounts, devices, quota, and policy.\n\n## The four capabilities\n\n| ID | Capability | What it means |\n|------|------|------|\n| R1 | Unified presence | The Hull maintains a cross-end node directory, and the three endpoints share one state model — `online` / `away` / `busy` / `reconnecting` / `offline` — at second-level precision (local) and near-real-time precision (web) |\n| R2 | Workspace visibility | The local workspace appears in the Beehive as a **shadow projection**, projecting metadata summaries (thread directory, directory-tree summary, scheduled tasks, usage); **file contents are not mirrored**, and are pulled on demand over the interlink tunnel as the user acts |\n| R3 | Cloud controlling local | The Beehive can issue graded operations to online local nodes (query / session control / workspace write / tool execution); sensitive operations go through local **human-in-the-loop approval**, and everything is audited |\n| R4 | Local controlling cloud | The Honeycomb and the Helm treat the cloud as a symmetric node — browse the cloud workspace, send messages to cloud threads, read thread event streams; the Helm provides a scriptable command group |\n\nThe unified state model:\n\n| State | Meaning |\n|------|------|\n| `online` | Online and idle |\n| `busy` | Online and executing |\n| `away` | Online but inactive |\n| `reconnecting` | Recovering from a dropped connection |\n| `offline` | Offline |\n\n## How to use it\n\n### Honeycomb (desktop)\n\n| Entry point | What it does |\n|------|------|\n| Settings → the device interlink category | Tunnel state, device table, cloud workspace browsing |\n| Remote command approval dialog | Polls the pending queue every 2s; approve / reject |\n| Sidebar thread source badge | Cloud / device |\n| Tunnel client | Hangs up as soon as the process starts |\n\n### Beehive (web)\n\n| Entry point | What it does |\n|------|------|\n| Sidebar | Presented as \"device as workspace\": a device appears as a sidebar workspace row, and the directory falls into place as threads are clicked |\n| The \"cloud / device\" dropdown switcher | Removed |\n\n### Helm (cli)\n\n| Entry point | What it does |\n|------|------|\n| The `cloud` subcommand group | `devices` / `ws` / `send` / `watch` / `audit` / `approve` |\n| `cloud status` | Combines four sections: interlink tunnel, pending approvals, other devices, cloud workspace usage |\n| `cloud watch` | Frame types are `snapshot` / `delta` / `command` / `error` / `close` |\n\n## Security boundary\n\n| Boundary | Meaning |\n|------|------|\n| No public inbound entry point | Reverse tunnel: the local side only makes outbound connections, opens no listening port, and control traffic is delivered over the already-established link |\n| Least capability | Each class of remote operation is a declarative capability, read-only by default |\n| Explicit authorization | Write and execution classes require local user authorization, and an administrator can tighten it further in the Bridge |\n| Graded approval | Risk tiers L0–L3, see the table below |\n| Complete audit | Every remote operation forms a chain that can be inspected |\n| One-click shutdown | The kill switch is held by the user |\n\nRisk tiers:\n\n| Level | Operations covered | Approval |\n|------|------|------|\n| L0 read-only | `node.summary` / `shadow.refresh` / `workspace.list\\|search\\|stat\\|read` / `threads.list\\|get` | No approval needed |\n| L0+ | `workspace.read:binary` | No approval needed + audited |\n| L1 session | `thread.create` / `thread.message` / `thread.cancel` / `thread.answer` | Approval needed by default, can be lowered to none |\n| L2 workspace write | `workspace.write\\|mkdir\\|move\\|copy\\|delete` | Approval mandatory, cannot be lowered |\n| L3 execution | `tool.exec` (allow-listed commands) / `agent.spawn` | Approval mandatory + disabled for administrators by default, can be enabled |\n\nThe two worth remembering most:\n\n- **L3 is off by default**: `tool.exec` and `agent.spawn` are not in a device's capability set by default; approvals are never remembered; only a summary of the execution result is returned.\n- **L2 writes are backed up first**: write operations are backed up to `工作区/.interlink_backup/<command_id>/` (the most recent 50 generations are kept), and the result reports the SHA256 before and after.\n\n## Non-goals\n\n- Local and cloud threads are **not merged**, and are not visible to each other. Interlink is remote operation, not data synchronization; a remote thread always exists on the other side marked as \"remote\".\n- No full mirroring or two-way synchronization of workspace files — only metadata projection plus on-demand pull.\n- No graphical remote control; control granularity stops at the engine and file APIs.\n- No NAT hole-punching; all traffic is relayed through the Hull.\n- The Honeycomb and the Helm do not interlink directly; local-to-local access always goes through the Hull.\n\n## Cost\n\n| Metric | Measured |\n|------|------|\n| Idle tunnel CPU | 0.114% of a single core |\n| Idle window memory | Working set growth 0.18 MB (one-time +4.7 MB at link setup, counted separately) |\n\nThe numbers come from the two-phase same-process sampling of `scripts/interlink-bench/measure-idle.ps1` (one baseline phase and one tunnel phase, measuring the delta).\n","source_path":"使用说明书/en/reference/interlink.md"}</script>
+</body>
+</html>

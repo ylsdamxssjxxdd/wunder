@@ -69,6 +69,7 @@ pub enum Block {
     List { spans: Vec<Span>, marker: String },
     Table { rows: Vec<TableRow> },
     Cards { cards: Vec<Card> },
+    Code { rows: Vec<Vec<Span>> },
 }
 
 #[derive(Deserialize)]
@@ -88,6 +89,9 @@ pub struct Card {
 pub struct Topic {
     pub id: String,
     pub title: String,
+    /// 侧栏分组名（开始 / 核心 / 工具 / 界面 / 参考），目录按此渲染分组标题。
+    #[serde(default)]
+    pub group: String,
     pub keywords: Vec<String>,
     pub blocks: Vec<Block>,
     #[serde(skip)]
@@ -107,9 +111,14 @@ pub struct Manual {
 }
 
 impl Manual {
-    pub fn load() -> Self {
-        let mut manual: Self = serde_json::from_str(include_str!("../assets/help/manual.json"))
-            .expect("内置帮助手册 JSON 已校验");
+    /// 按界面语言加载内嵌手册：zh 取中文版，否则英文版。
+    pub fn load(zh: bool) -> Self {
+        let raw = if zh {
+            include_str!("../assets/help/manual.zh.json")
+        } else {
+            include_str!("../assets/help/manual.en.json")
+        };
+        let mut manual: Self = serde_json::from_str(raw).expect("内置帮助手册 JSON 已校验");
         for topic in &mut manual.topics {
             let mut text = format!("{} {} ", topic.title, topic.keywords.join(" "));
             for block in &topic.blocks {
@@ -146,6 +155,7 @@ impl Block {
                 visit(&c.title);
                 visit(&c.summary);
             }),
+            Self::Code { rows } => rows.iter().for_each(|row| visit(row)),
             Self::H1 { spans }
             | Self::H2 { spans }
             | Self::Paragraph { spans }
@@ -540,6 +550,21 @@ impl Typesetter {
                     }
                     y += 10.0;
                 }
+                Block::Code { rows } => {
+                    // 装饰矩形垫在文本之下，与插入顺序无关。
+                    let background_index = doc.rects.len();
+                    let pad = 10.0;
+                    let mut cy = y + pad;
+                    for row in rows {
+                        cy += self.text(
+                            &mut doc, row, x + 12.0, cy, w - 24.0, 13.0 * zoom, 0x1f2933, false, false,
+                        );
+                    }
+                    let height = cy - y + pad;
+                    doc.rects
+                        .insert(background_index, rect(x, y, w, height, 0xf7f7f7, Some(0xe1e1e1), 4.0));
+                    y += height + 16.0;
+                }
             }
         }
         doc.height = y + 48.0;
@@ -589,19 +614,22 @@ impl History {
 }
 
 struct Controller {
-    manual: Manual,
+    /// 下标 0 为中文手册、1 为英文手册，按界面语言取用；切语言不重新解析。
+    manuals: [Manual; 2],
+    zh: bool,
     history: History,
     typesetter: Typesetter,
     document: Document,
     selection: Range<usize>,
     press: Option<(f32, f32, usize)>,
-    layout_key: Option<(usize, i32, i32)>,
+    layout_key: Option<(bool, usize, i32, i32)>,
 }
 
 impl Controller {
-    fn new() -> Self {
+    fn new(zh: bool) -> Self {
         Self {
-            manual: Manual::load(),
+            manuals: [Manual::load(true), Manual::load(false)],
+            zh,
             history: History::new(),
             typesetter: Typesetter::new(),
             document: Document::default(),
@@ -611,17 +639,66 @@ impl Controller {
         }
     }
 
+    /// 当前语言手册在 manuals 中的下标。
+    fn lang(&self) -> usize {
+        if self.zh {
+            0
+        } else {
+            1
+        }
+    }
+
+    /// 按当前语言重建目录与索引，并把当前主题重新排版。
+    fn apply_language(&mut self, docs: &HelpDocs, zh: bool) {
+        self.zh = zh;
+        self.history = History::new();
+        let lang = self.lang();
+        docs.set_contents(model(
+            self.manuals[lang]
+                .topics
+                .iter()
+                .enumerate()
+                .map(|(i, topic)| HelpEntry {
+                    topic: i as i32,
+                    title: topic.title.clone().into(),
+                    detail: topic.keywords.join(" / ").into(),
+                    group: topic.group.clone().into(),
+                })
+                .collect(),
+        ));
+        docs.set_keyword_index(model(
+            self.manuals[lang]
+                .index
+                .iter()
+                .map(|entry| HelpEntry {
+                    topic: entry.topic as i32,
+                    title: entry.keyword.clone().into(),
+                    detail: format!(
+                        "{} / {}",
+                        self.manuals[lang].topics[entry.topic].group,
+                        self.manuals[lang].topics[entry.topic].title
+                    )
+                    .into(),
+                    group: String::new().into(),
+                })
+                .collect(),
+        ));
+        self.search(docs, docs.get_search_text().as_str());
+        self.navigate(docs);
+    }
+
     fn search(&self, docs: &HelpDocs, query: &str) {
-        let rows = self
-            .manual
+        let lang = self.lang();
+        let rows = self.manuals[lang]
             .search(query)
             .into_iter()
             .map(|i| {
-                let topic = &self.manual.topics[i];
+                let topic = &self.manuals[lang].topics[i];
                 HelpEntry {
                     topic: i as i32,
                     title: topic.title.clone().into(),
-                    detail: format!("使用手册 / {}", topic.keywords.join(" / ")).into(),
+                    detail: format!("{} / {}", topic.group, topic.keywords.join(" / ")).into(),
+                    group: String::new().into(),
                 }
             })
             .collect();
@@ -631,11 +708,12 @@ impl Controller {
     fn render(&mut self, docs: &HelpDocs) {
         let width = docs.get_document_width().max(120.0).round();
         let zoom = docs.get_zoom_percent().clamp(80, 160);
-        let key = (self.history.current(), width as i32, zoom);
+        let key = (self.zh, self.history.current(), width as i32, zoom);
         if self.layout_key.as_ref() == Some(&key) {
             return;
         }
-        let topic = &self.manual.topics[self.history.current()];
+        let lang = self.lang();
+        let topic = &self.manuals[lang].topics[self.history.current()];
         self.document = self.typesetter.layout(
             topic,
             width,
@@ -711,8 +789,9 @@ impl Controller {
             2 => {
                 if let Some((px, py, _)) = self.press.take() {
                     if (px - x).abs() < 4.0 && (py - y).abs() < 4.0 {
+                        let lang = self.lang();
                         let target = self.document.link_at(x, y).and_then(|link| {
-                            self.manual.topics.iter().position(|topic| topic.id == link)
+                            self.manuals[lang].topics.iter().position(|topic| topic.id == link)
                         });
                         if let Some(index) = target {
                             self.history.open(index);
@@ -730,48 +809,30 @@ impl Controller {
 /// 在主窗口创建后调用一次：填充目录/索引并把全部回调绑到 HelpDocs 全局。
 pub fn bind(app: &crate::MainWindow) {
     let docs = app.global::<HelpDocs>();
-    let controller = Rc::new(RefCell::new(Controller::new()));
+    // 界面语言取运行时的 runtime-language（"zh-CN" / "en-US"）。I18n.zh 目前
+    // 没有写入方，不能作为判断依据。
+    let zh = !app.get_runtime_language().starts_with("en");
+    let controller = Rc::new(RefCell::new(Controller::new(zh)));
     {
-        let controller = controller.borrow();
-        docs.set_contents(model(
-            controller
-                .manual
-                .topics
-                .iter()
-                .enumerate()
-                .map(|(i, topic)| HelpEntry {
-                    topic: i as i32,
-                    title: topic.title.clone().into(),
-                    detail: topic.keywords.join(" / ").into(),
-                })
-                .collect(),
-        ));
-        docs.set_keyword_index(model(
-            controller
-                .manual
-                .index
-                .iter()
-                .map(|entry| HelpEntry {
-                    topic: entry.topic as i32,
-                    title: entry.keyword.clone().into(),
-                    detail: format!(
-                        "使用手册 / {}",
-                        controller.manual.topics[entry.topic].title
-                    )
-                    .into(),
-                })
-                .collect(),
-        ));
-        controller.search(&docs, "");
+        let mut controller = controller.borrow_mut();
+        controller.apply_language(&docs, zh);
     }
     let app_weak = app.as_weak();
+    let weak = app_weak.clone();
+    let state = Rc::clone(&controller);
+    docs.on_language_changed(move |zh| {
+        let Some(app) = weak.upgrade() else { return };
+        let docs = app.global::<HelpDocs>();
+        state.borrow_mut().apply_language(&docs, zh);
+    });
     let weak = app_weak.clone();
     let state = Rc::clone(&controller);
     docs.on_topic_opened(move |index| {
         let Some(app) = weak.upgrade() else { return };
         let docs = app.global::<HelpDocs>();
         let mut state = state.borrow_mut();
-        if index >= 0 && (index as usize) < state.manual.topics.len() {
+        let lang = state.lang();
+        if index >= 0 && (index as usize) < state.manuals[lang].topics.len() {
             state.history.open(index as usize);
             state.navigate(&docs);
         }
@@ -840,18 +901,32 @@ mod tests {
 
     #[test]
     fn manual_parses_and_links_resolve() {
-        let manual = Manual::load();
-        assert!(manual.topics.len() >= 10);
-        for entry in &manual.index {
-            assert!(entry.topic < manual.topics.len(), "index 引用越界");
-        }
-        let ids: Vec<&str> = manual.topics.iter().map(|t| t.id.as_str()).collect();
-        for topic in &manual.topics {
-            for block in &topic.blocks {
-                if let Block::Cards { cards } = block {
-                    for card in cards {
-                        assert!(ids.contains(&card.target.as_str()), "卡片目标不存在");
+        // 中英两份手册都要满足同样的约束：索引不越界、主题有分组、
+        // 卡片与正文链接的目标主题存在。
+        for zh in [true, false] {
+            let manual = Manual::load(zh);
+            assert!(manual.topics.len() >= 10);
+            for entry in &manual.index {
+                assert!(entry.topic < manual.topics.len(), "index 引用越界");
+            }
+            for topic in &manual.topics {
+                assert!(!topic.group.is_empty(), "主题 {} 缺少分组", topic.id);
+            }
+            let ids: Vec<&str> = manual.topics.iter().map(|t| t.id.as_str()).collect();
+            for topic in &manual.topics {
+                for block in &topic.blocks {
+                    if let Block::Cards { cards } = block {
+                        for card in cards {
+                            assert!(ids.contains(&card.target.as_str()), "卡片目标不存在");
+                        }
                     }
+                    block.visit_text(&mut |spans| {
+                        for span in spans {
+                            if !span.href.is_empty() {
+                                assert!(ids.contains(&span.href.as_str()), "正文链接目标不存在");
+                            }
+                        }
+                    });
                 }
             }
         }
@@ -861,7 +936,7 @@ mod tests {
     fn typeset_smoke() {
         // 单测进程没有走 main.rs 的启动路径，先注册内嵌字体再排版。
         crate::register_bundled_font().expect("注册内嵌字体");
-        let manual = Manual::load();
+        let manual = Manual::load(true);
         let mut typesetter = Typesetter::new();
         let doc = typesetter.layout(&manual.topics[0], 800.0, 1.0, false);
         assert!(!doc.runs.is_empty());

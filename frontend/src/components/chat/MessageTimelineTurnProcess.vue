@@ -8,6 +8,7 @@
   <div class="timeline-turn-process" :class="{ 'is-open': open }">
     <button
       class="timeline-process-head"
+      data-turn-slot="process"
       :class="{ 'is-open': open }"
       type="button"
       :aria-expanded="open"
@@ -19,27 +20,31 @@
       </span>
       <span class="timeline-process-title">{{ t('chat.timeline.workProcess') }}</span>
       <span class="timeline-process-count">{{ t('chat.timeline.workProcessSteps', { count }) }}</span>
+      <span v-if="!open && reasoningSummary" class="timeline-process-latest" :title="reasoningSummary">
+        {{ reasoningSummary }}
+      </span>
       <span v-if="!open && failedCount > 0" class="timeline-process-latest">
         {{ t('chat.timeline.workProcessFailed', { count: failedCount }) }}
       </span>
     </button>
 
     <div v-if="open" class="timeline-process-body">
+      <MessageTimelineThinkingEntry
+        v-if="reasoningText"
+        :entry="reasoningEntry"
+        :open="openKeys.has('reasoning:projected')"
+        @toggle="toggleKey('reasoning:projected')"
+      />
       <div v-if="loading && !loaded" class="timeline-process-note">{{ t('chat.timeline.processLoading') }}</div>
       <template v-else-if="error">
         <div class="timeline-process-note">{{ t('chat.timeline.processFailed') }}</div>
         <button class="timeline-process-retry" type="button" @click="load">{{ t('chat.timeline.processRetry') }}</button>
       </template>
       <template v-else>
-        <MessageTimelineThinkingEntry
-          v-if="reasoningText"
-          :entry="reasoningEntry"
-          :open="openKeys.has('reasoning:projected')"
-          @toggle="toggleKey('reasoning:projected')"
-        />
         <div v-if="omittedRuns > 0" class="timeline-process-note">
           {{ t('chat.timeline.omittedRuns', { count: omittedRuns }) }}
         </div>
+        <div class="timeline-group">
         <template v-for="row in rows" :key="row.key">
           <MessageTimelineThinkingEntry
             v-if="row.kind === 'reasoning'"
@@ -55,7 +60,7 @@
             :structured-view="structuredViewFor(row.entry)"
             @toggle="toggleKey(row.key)"
           />
-          <div v-else class="timeline-body-block">
+          <div v-else class="timeline-body-block" data-turn-slot="body">
             <MessageMarkdownBody
               :cache-key="`${cacheKeyPrefix}${row.key}`"
               :content="row.text"
@@ -64,6 +69,7 @@
             />
           </div>
         </template>
+        </div>
         <!-- 有工具轮次的流式尾部：正文区在流式期间让位，活动文本在这里直播，
              轮次完成后由正文区接管（buildRows 会排除最后一条助手正文，不重复）。 -->
         <div v-if="liveTail" class="timeline-body-block timeline-live-print">{{ liveTail }}</div>
@@ -104,6 +110,7 @@ const props = defineProps<{
   /** 流式期间的活动文本尾部：正文区让位时由过程区实时行承接展示。 */
   liveTail?: string;
   reasoning?: string;
+  reasoningItemId?: string;
 }>();
 
 // 展开状态上报：父组件据此决定流式尾部是否外显（过程区收起时正文已让位，
@@ -125,12 +132,13 @@ let reloadTimer: number | null = null;
 
 const cacheKeyPrefix = computed(() => `turn-process:${props.sessionId}:${props.turnId}:`);
 const reasoningText = computed(() => String(props.reasoning || '').trim());
+const reasoningSummary = computed(() => firstLine(reasoningText.value));
 const firstLine = (text: string): string => {
   const normalized = text.replace(/\s+/g, ' ').trim();
   return normalized.length > 160 ? `${normalized.slice(0, 160)}…` : normalized;
 };
 const reasoningEntry = computed<TimelineReasoningEntry>(() => ({
-  kind: 'reasoning', key: 'reasoning:projected', streaming: false,
+  kind: 'reasoning', key: 'reasoning:projected', streaming: Boolean(props.reasoning && !loaded.value),
   summary: firstLine(reasoningText.value), text: reasoningText.value
 }));
 
@@ -396,7 +404,10 @@ const buildRows = (items: Array<Record<string, unknown>>): ProcessRow[] => {
     const payload = asObject(slot.item?.payload);
     const itemId = String(slot.item?.item_id || '');
     const reasoning = typeof payload.reasoning === 'string' ? payload.reasoning.trim() : '';
-    if (reasoning) {
+    // The lightweight thread view already renders the active reasoning entry
+    // above the lazy log. Do not add the same item a second time when the
+    // expanded request returns its durable assistant row.
+    if (reasoning && !(itemId === String(props.reasoningItemId || '') || reasoning === reasoningText.value)) {
       rows.push({
         kind: 'reasoning',
         key: `reasoning:${itemId}`,

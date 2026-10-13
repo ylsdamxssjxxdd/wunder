@@ -102,4 +102,3 @@ updated_at: 2026-10-13
 - [上下文压缩](/docs/zh-CN/concepts/core-context-compression/) —— 超限压缩细节
 - [稳定性与观测](/docs/zh-CN/concepts/core-observability/) —— 指标与日志
 - [故障排查](/docs/zh-CN/help/troubleshooting/) —— 实际问题处理步骤
-- [认证与安全运维](/docs/zh-CN/ops/auth-and-security/) —— 权限与风险治理

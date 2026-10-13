@@ -370,6 +370,46 @@
   background: var(--tt-bg);
 }
 
+.tt-truncated-hint {
+  position: sticky;
+  top: 0;
+  z-index: 8;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 34px;
+  padding: 5px 12px;
+  border-bottom: 0.5px solid rgba(65, 118, 230, 0.22);
+  background: rgba(247, 250, 255, 0.96);
+  color: var(--tt-text-2);
+  font-size: 11px;
+  line-height: 18px;
+  box-shadow: 0 1px 4px rgba(15, 17, 21, 0.06);
+}
+
+.tt-truncated-hint button {
+  flex: none;
+  min-height: 24px;
+  padding: 2px 9px;
+  border: 0.5px solid var(--tt-brand-dim);
+  border-radius: var(--tt-radius-xs);
+  background: var(--tt-bg);
+  color: var(--tt-brand);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.tt-truncated-hint button:hover:not(:disabled) {
+  background: var(--tt-brand-faint);
+}
+
+.tt-truncated-hint button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
 .tt-ledger-canvas {
   position: relative;
   min-height: 100%;

@@ -21,6 +21,8 @@ wunder 是一个智能体调度平台。你给它一个目标，它自己拆解�
 | **舵机** | 在终端里指挥智能体 | 命令行用户 / 自动化脚本 |
 | **舰体** | 多人共用的管理与治理平台 | 管理员 |
 
+见 [形态矩阵](/docs/zh-CN/start/forms/)。
+
 蜂窝和舵机不依赖舰体，可单独安装运行。**舰桥**是舰体自带的管理界面，随舰体一起启动，面向管理员。
 
 ## 从蜂窝开始
@@ -69,7 +71,6 @@ wunder 是一个智能体调度平台。你给它一个目标，它自己拆解�
 - **下载安装** → [蜂窝入门](/docs/zh-CN/start/desktop/)
 - **界面地图** → [界面概览](/docs/zh-CN/surfaces/index/)
 - **深入理解系统** → [核心概览](/docs/zh-CN/concepts/)
-- **接入现有系统** → [接入概览](/docs/zh-CN/integration/)
 - **说明书总览** → [说明书总览](/docs/zh-CN/start/hubs/)
 - **文档生态导航** → [常用说明目录](/docs/zh-CN/start/docs-directory/)
 - **首次启动失败** → [首次运行排查](/docs/zh-CN/start/troubleshooting-first-run/)

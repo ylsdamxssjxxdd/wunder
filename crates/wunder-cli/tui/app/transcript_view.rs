@@ -67,6 +67,24 @@ fn view_action(key: KeyEvent) -> Option<ViewAction> {
         KeyCode::Down | KeyCode::Char('\u{000e}') => Some(ViewAction::Scroll(1)),
         KeyCode::PageUp => Some(ViewAction::Scroll(-10)),
         KeyCode::PageDown => Some(ViewAction::Scroll(10)),
+        // The pager keys codex answers: `k`/`j` for a row, Space and
+        // Ctrl+F/Ctrl+B for a page, Ctrl+U/Ctrl+D for half of one.
+        KeyCode::Char('k') if key.modifiers.is_empty() => Some(ViewAction::Scroll(-1)),
+        KeyCode::Char('j') if key.modifiers.is_empty() => Some(ViewAction::Scroll(1)),
+        KeyCode::Char(' ') if key.modifiers.is_empty() => Some(ViewAction::Scroll(10)),
+        KeyCode::Char(' ') if key.modifiers == KeyModifiers::SHIFT => {
+            Some(ViewAction::Scroll(-10))
+        }
+        KeyCode::Char('f') if key.modifiers == KeyModifiers::CONTROL => {
+            Some(ViewAction::Scroll(10))
+        }
+        KeyCode::Char('b') if key.modifiers == KeyModifiers::CONTROL => {
+            Some(ViewAction::Scroll(-10))
+        }
+        KeyCode::Char('d') if key.modifiers == KeyModifiers::CONTROL => Some(ViewAction::Scroll(5)),
+        KeyCode::Char('u') if key.modifiers == KeyModifiers::CONTROL => {
+            Some(ViewAction::Scroll(-5))
+        }
         KeyCode::Home => Some(ViewAction::Top),
         KeyCode::End => Some(ViewAction::Bottom),
         _ => None,

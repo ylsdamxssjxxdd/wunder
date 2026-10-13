@@ -73,7 +73,7 @@ Sections are organized by form: each section lists what a healthy run looks like
 
 | Symptom | Check first | Docs |
 | --- | --- | --- |
-| Stuck in a `/login` loop after opening | Login tokens are opaque random strings, **not JWTs**; replaying one triggers whole-family revocation | [Authentication and security](/docs/en/ops/auth-and-security/) |
+| Stuck in a `/login` loop after opening | Login tokens are opaque random strings, **not JWTs**; replaying one triggers whole-family revocation | Authentication and security |
 | Long threads open slowly, rendering stutters | The high-volume thread rendering optimization plan has not landed yet; the performance bottleneck remains | [Beehive interface](/docs/en/surfaces/frontend/) |
 | WebSocket drops and doesn't recover | After a disconnect, replay endpoints can backfill; the Beehive reuses a single `/chat/ws` channel | [Beehive interface](/docs/en/surfaces/frontend/) |
 | Attachment upload fails | Temporary attachment limit 200 MB, persistent attachments 10 MB | [Beehive interface](/docs/en/surfaces/frontend/) |

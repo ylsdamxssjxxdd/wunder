@@ -1,0 +1,1934 @@
+{
+  "topics": [
+    {
+      "id": "welcome",
+      "title": "Welcome",
+      "group": "Getting Started",
+      "keywords": [
+        "getting started",
+        "welcome",
+        "manual",
+        "help"
+      ],
+      "blocks": [
+        {
+          "kind": "h1",
+          "spans": [
+            {
+              "text": "Honeycomb User Manual"
+            }
+          ]
+        },
+        {
+          "kind": "lead",
+          "spans": [
+            {
+              "text": "Honeycomb is a local AI workbench: hand a goal to the agent, and it breaks the task down, calls tools, and delivers results. Files and threads stay on this machine."
+            }
+          ]
+        },
+        {
+          "kind": "paragraph",
+          "spans": [
+            {
+              "text": "This manual introduces Honeycomb's core capabilities and day-to-day operations. On the left, the "
+            },
+            {
+              "text": "Contents",
+              "bold": true
+            },
+            {
+              "text": " pane organizes topics, the "
+            },
+            {
+              "text": "Index",
+              "bold": true
+            },
+            {
+              "text": " looks entries up by keyword, and "
+            },
+            {
+              "text": "Search",
+              "bold": true
+            },
+            {
+              "text": " matches full text. Green links in the body jump to the related topic."
+            }
+          ]
+        },
+        {
+          "kind": "cards",
+          "cards": [
+            {
+              "target": "quickstart",
+              "title": [
+                {
+                  "text": "Quick Start",
+                  "bold": false,
+                  "code": false,
+                  "kbd": false,
+                  "href": ""
+                }
+              ],
+              "summary": [
+                {
+                  "text": "Create a thread, send a message, switch models — your first conversation in a few minutes.",
+                  "bold": false,
+                  "code": false,
+                  "kbd": false,
+                  "href": ""
+                }
+              ]
+            },
+            {
+              "target": "core-goal",
+              "title": [
+                {
+                  "text": "Goal",
+                  "bold": false,
+                  "code": false,
+                  "kbd": false,
+                  "href": ""
+                }
+              ],
+              "summary": [
+                {
+                  "text": "Put the agent into a goal state and let it keep working the task.",
+                  "bold": false,
+                  "code": false,
+                  "kbd": false,
+                  "href": ""
+                }
+              ]
+            },
+            {
+              "target": "tools-overview",
+              "title": [
+                {
+                  "text": "Tools Overview",
+                  "bold": false,
+                  "code": false,
+                  "kbd": false,
+                  "href": ""
+                }
+              ],
+              "summary": [
+                {
+                  "text": "The built-in tool matrix, grouped into eight categories.",
+                  "bold": false,
+                  "code": false,
+                  "kbd": false,
+                  "href": ""
+                }
+              ]
+            },
+            {
+              "target": "interface",
+              "title": [
+                {
+                  "text": "Interface Tour",
+                  "bold": false,
+                  "code": false,
+                  "kbd": false,
+                  "href": ""
+                }
+              ],
+              "summary": [
+                {
+                  "text": "Get to know the sidebar, thread list, working process, and trajectory view.",
+                  "bold": false,
+                  "code": false,
+                  "kbd": false,
+                  "href": ""
+                }
+              ]
+            },
+            {
+              "target": "settings",
+              "title": [
+                {
+                  "text": "Settings Overview",
+                  "bold": false,
+                  "code": false,
+                  "kbd": false,
+                  "href": ""
+                }
+              ],
+              "summary": [
+                {
+                  "text": "Entry point for general preferences, model configuration, cloud account, and Devices & interlink.",
+                  "bold": false,
+                  "code": false,
+                  "kbd": false,
+                  "href": ""
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "tip",
+          "spans": [
+            {
+              "text": "Tip: ",
+              "bold": true
+            },
+            {
+              "text": "Type a keyword into the search box at the top of the settings category list to jump straight to that category."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "quickstart",
+      "title": "Quick Start",
+      "group": "Getting Started",
+      "keywords": [
+        "new thread",
+        "send message",
+        "switch model",
+        "conversation",
+        "first time"
+      ],
+      "blocks": [
+        {
+          "kind": "h1",
+          "spans": [
+            {
+              "text": "Quick Start"
+            }
+          ]
+        },
+        {
+          "kind": "h2",
+          "spans": [
+            {
+              "text": "Create a thread"
+            }
+          ]
+        },
+        {
+          "kind": "paragraph",
+          "spans": [
+            {
+              "text": "Click "
+            },
+            {
+              "text": "New thread",
+              "bold": true
+            },
+            {
+              "text": " in the sidebar to begin. Each thread keeps its own history, tool call records, and model selection, independent of the others."
+            }
+          ]
+        },
+        {
+          "kind": "h2",
+          "spans": [
+            {
+              "text": "Send a message"
+            }
+          ]
+        },
+        {
+          "kind": "list",
+          "marker": "·",
+          "spans": [
+            {
+              "text": "Type in the input box and press the send key (Enter by default; can be changed to Ctrl+Enter in settings)."
+            }
+          ]
+        },
+        {
+          "kind": "list",
+          "marker": "·",
+          "spans": [
+            {
+              "text": "The agent streams its reply; tool calls appear in the "
+            },
+            {
+              "text": "working process",
+              "bold": true
+            },
+            {
+              "text": " collapsible bar above the reply — click to expand it in place."
+            }
+          ]
+        },
+        {
+          "kind": "list",
+          "marker": "·",
+          "spans": [
+            {
+              "text": "Screenshots, recordings, and other multimodal inputs are supported and are sent to the agent along with the message."
+            }
+          ]
+        },
+        {
+          "kind": "h2",
+          "spans": [
+            {
+              "text": "Choose a model for the thread"
+            }
+          ]
+        },
+        {
+          "kind": "paragraph",
+          "spans": [
+            {
+              "text": "The model switcher beside the input box affects only the "
+            },
+            {
+              "text": "current thread",
+              "bold": true
+            },
+            {
+              "text": "; the default configuration is left untouched. Once a thread is created, its system prompt and model stay fixed within that thread."
+            }
+          ]
+        },
+        {
+          "kind": "callout",
+          "spans": [
+            {
+              "text": "All conversation data is stored in a local SQLite database; you can browse past threads while offline."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "interface",
+      "title": "Interface Tour",
+      "group": "Surfaces",
+      "keywords": [
+        "interface",
+        "sidebar",
+        "working process",
+        "trajectory",
+        "layout"
+      ],
+      "blocks": [
+        {
+          "kind": "h1",
+          "spans": [
+            {
+              "text": "Interface Tour"
+            }
+          ]
+        },
+        {
+          "kind": "h2",
+          "spans": [
+            {
+              "text": "Main window layout"
+            }
+          ]
+        },
+        {
+          "kind": "paragraph",
+          "spans": [
+            {
+              "text": "The main window has three areas: the "
+            },
+            {
+              "text": "sidebar",
+              "bold": true
+            },
+            {
+              "text": " on the left carries the thread list and main entries; the middle is the "
+            },
+            {
+              "text": "conversation area",
+              "bold": true
+            },
+            {
+              "text": ", showing message bubbles and the working process; the bottom is the "
+            },
+            {
+              "text": "input area",
+              "bold": true
+            },
+            {
+              "text": ", with model switching and send controls."
+            }
+          ]
+        },
+        {
+          "kind": "h2",
+          "spans": [
+            {
+              "text": "Working process"
+            }
+          ]
+        },
+        {
+          "kind": "paragraph",
+          "spans": [
+            {
+              "text": "Tool calls and intermediate output stream into the "
+            },
+            {
+              "text": "working process",
+              "bold": true
+            },
+            {
+              "text": " collapsible bar in real time as the agent works. Each tool entry is labeled on the right with its context usage and execution time, for example "
+            },
+            {
+              "text": "5.6k token 262ms",
+              "code": true
+            },
+            {
+              "text": "."
+            }
+          ]
+        },
+        {
+          "kind": "h2",
+          "spans": [
+            {
+              "text": "Trajectory view"
+            }
+          ]
+        },
+        {
+          "kind": "paragraph",
+          "spans": [
+            {
+              "text": "The trajectory view replays a task's full execution timeline round by round, including model reasoning, tool calls, and context compaction events — use it to inspect how a complex task ran."
+            }
+          ]
+        },
+        {
+          "kind": "task",
+          "spans": [
+            {
+              "text": "Recommended: ",
+              "bold": true
+            },
+            {
+              "text": "For everyday use the working process is enough; open the trajectory view when you need a full review."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "threads",
+      "title": "Agent Threads",
+      "group": "Reference",
+      "keywords": [
+        "rounds",
+        "tool calls",
+        "context compaction",
+        "subagent",
+        "thread"
+      ],
+      "blocks": [
+        {
+          "kind": "h1",
+          "spans": [
+            {
+              "text": "Agent Threads"
+            }
+          ]
+        },
+        {
+          "kind": "h2",
+          "spans": [
+            {
+              "text": "User rounds and model rounds"
+            }
+          ]
+        },
+        {
+          "kind": "paragraph",
+          "spans": [
+            {
+              "text": "Every message you send counts as 1 "
+            },
+            {
+              "text": "user round",
+              "bold": true
+            },
+            {
+              "text": "; every action the model performs (a model call, a tool call, or the final reply) counts as 1 "
+            },
+            {
+              "text": "model round",
+              "bold": true
+            },
+            {
+              "text": ". A single task can span multiple user rounds and multiple model rounds."
+            }
+          ]
+        },
+        {
+          "kind": "h2",
+          "spans": [
+            {
+              "text": "Tool calls"
+            }
+          ]
+        },
+        {
+          "kind": "paragraph",
+          "spans": [
+            {
+              "text": "To the model, everything is a tool. The agent calls tools as needed while running a task; each call appears in the working process in real time, labeled with its context usage and duration."
+            }
+          ]
+        },
+        {
+          "kind": "h2",
+          "spans": [
+            {
+              "text": "Context compaction"
+            }
+          ]
+        },
+        {
+          "kind": "paragraph",
+          "spans": [
+            {
+              "text": "When the context nears its limit, the system compacts the history automatically and shows a compaction card. Context usage drops noticeably afterwards, and the task can continue."
+            }
+          ]
+        },
+        {
+          "kind": "h2",
+          "spans": [
+            {
+              "text": "Subagents"
+            }
+          ]
+        },
+        {
+          "kind": "paragraph",
+          "spans": [
+            {
+              "text": "Complex tasks are broken down and handed to subagents. A subagent is a work unit the main agent creates on the fly; its execution appears in the working process as tool entries."
+            }
+          ]
+        },
+        {
+          "kind": "callout",
+          "spans": [
+            {
+              "text": "A thread's system prompt stays frozen after it is first created; long-term memory is injected once at thread initialization, keeping the model's prompt cache stable."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "models",
+      "title": "Models",
+      "group": "Reference",
+      "keywords": [
+        "models",
+        "parameters",
+        "default model",
+        "channel",
+        "multimodal parameters",
+        "temperature"
+      ],
+      "blocks": [
+        {
+          "kind": "h1",
+          "spans": [
+            {
+              "text": "Models"
+            }
+          ]
+        },
+        {
+          "kind": "paragraph",
+          "spans": [
+            {
+              "text": "Add and manage models under the "
+            },
+            {
+              "text": "Model configuration",
+              "bold": true
+            },
+            {
+              "text": " category in settings. Each model can be configured independently with its key, service address, and parameters."
+            }
+          ]
+        },
+        {
+          "kind": "h2",
+          "spans": [
+            {
+              "text": "Common parameters"
+            }
+          ]
+        },
+        {
+          "kind": "table",
+          "rows": [
+            {
+              "header": true,
+              "cells": [
+                [
+                  {
+                    "text": "Parameter"
+                  }
+                ],
+                [
+                  {
+                    "text": "Description"
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "Temperature"
+                  }
+                ],
+                [
+                  {
+                    "text": "Controls output randomness; higher values are more varied."
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "Timeout"
+                  }
+                ],
+                [
+                  {
+                    "text": "Maximum wait time for a single request."
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "Max output"
+                  }
+                ],
+                [
+                  {
+                    "text": "Upper limit on output length for a single reply."
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "Max context"
+                  }
+                ],
+                [
+                  {
+                    "text": "Upper limit on conversation context length; compaction triggers once it is exceeded."
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "Max rounds"
+                  }
+                ],
+                [
+                  {
+                    "text": "Upper limit on model rounds allowed for a single task."
+                  }
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "h2",
+          "spans": [
+            {
+              "text": "Multimodal parameters"
+            }
+          ]
+        },
+        {
+          "kind": "paragraph",
+          "spans": [
+            {
+              "text": "One model record can hold separate parameters for chat (LLM), speech recognition (ASR), speech synthesis (TTS), image generation, and video generation. Fill in what you need."
+            }
+          ]
+        },
+        {
+          "kind": "tip",
+          "spans": [
+            {
+              "text": "Tip: ",
+              "bold": true
+            },
+            {
+              "text": "Before saving, use the \"Probe\" button to verify that the context length or voice list is available."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "tools",
+      "title": "Tools & Skills",
+      "group": "Tools",
+      "keywords": [
+        "tools",
+        "skills",
+        "MCP",
+        "knowledge base",
+        "server"
+      ],
+      "blocks": [
+        {
+          "kind": "h1",
+          "spans": [
+            {
+              "text": "Tools & Skills"
+            }
+          ]
+        },
+        {
+          "kind": "paragraph",
+          "spans": [
+            {
+              "text": "The "
+            },
+            {
+              "text": "Tools & Skills",
+              "bold": true
+            },
+            {
+              "text": " page in settings centrally manages the capabilities the agent can call, split into tabs for built-in tools, MCP tools, skills, knowledge bases, and more."
+            }
+          ]
+        },
+        {
+          "kind": "h2",
+          "spans": [
+            {
+              "text": "Tabs"
+            }
+          ]
+        },
+        {
+          "kind": "list",
+          "marker": "·",
+          "spans": [
+            {
+              "text": "Built-in tools: local capabilities shipped with the app, such as file read/write and terminal execution."
+            }
+          ]
+        },
+        {
+          "kind": "list",
+          "marker": "·",
+          "spans": [
+            {
+              "text": "MCP tools: external tools connected through MCP servers."
+            }
+          ]
+        },
+        {
+          "kind": "list",
+          "marker": "·",
+          "spans": [
+            {
+              "text": "Skills: capability extension packages organized as resources."
+            }
+          ]
+        },
+        {
+          "kind": "list",
+          "marker": "·",
+          "spans": [
+            {
+              "text": "Knowledge base: long-term knowledge retrieval for the agent."
+            }
+          ]
+        },
+        {
+          "kind": "callout",
+          "spans": [
+            {
+              "text": "Local capabilities run under least privilege: system capability calls must be declared explicitly and are never silently exposed to remote ends."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "workspace",
+      "title": "Files & Workspace",
+      "group": "Reference",
+      "keywords": [
+        "files",
+        "workspace",
+        "local",
+        "storage",
+        "export"
+      ],
+      "blocks": [
+        {
+          "kind": "h1",
+          "spans": [
+            {
+              "text": "Files & Workspace"
+            }
+          ]
+        },
+        {
+          "kind": "paragraph",
+          "spans": [
+            {
+              "text": "Honeycomb stores file assets in a local workspace directory. The "
+            },
+            {
+              "text": "Workspace directory",
+              "bold": true
+            },
+            {
+              "text": " setting specifies the root path; files the agent produces and content you export are both saved locally."
+            }
+          ]
+        },
+        {
+          "kind": "paragraph",
+          "spans": [
+            {
+              "text": "Files, screenshots, and generated content from a session can be viewed and managed in the file panel, with drag-and-drop interop with the system file manager."
+            }
+          ]
+        },
+        {
+          "kind": "task",
+          "spans": [
+            {
+              "text": "Recommended: ",
+              "bold": true
+            },
+            {
+              "text": "Put the workspace on a disk partition with plenty of space, and back up important output regularly."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "multimodal",
+      "title": "Multimodal Input",
+      "group": "Reference",
+      "keywords": [
+        "screenshot",
+        "recording",
+        "speech recognition",
+        "speech synthesis",
+        "image generation",
+        "video generation"
+      ],
+      "blocks": [
+        {
+          "kind": "h1",
+          "spans": [
+            {
+              "text": "Multimodal Input"
+            }
+          ]
+        },
+        {
+          "kind": "h2",
+          "spans": [
+            {
+              "text": "Screenshots and images"
+            }
+          ]
+        },
+        {
+          "kind": "paragraph",
+          "spans": [
+            {
+              "text": "Use the screenshot entry in the input area to capture the screen, or paste or drag images straight into the input box. Images are sent to the agent along with the message, for recognition and understanding."
+            }
+          ]
+        },
+        {
+          "kind": "h2",
+          "spans": [
+            {
+              "text": "Recording and speech recognition"
+            }
+          ]
+        },
+        {
+          "kind": "paragraph",
+          "spans": [
+            {
+              "text": "Hold the record button in the input area to start recording; on release the audio is transcribed into the input box, and you can send it once confirmed. Speech recognition uses the service configured in "
+            },
+            {
+              "text": "Model configuration",
+              "href": "models"
+            },
+            {
+              "text": "."
+            }
+          ]
+        },
+        {
+          "kind": "h2",
+          "spans": [
+            {
+              "text": "Speech synthesis and generation"
+            }
+          ]
+        },
+        {
+          "kind": "paragraph",
+          "spans": [
+            {
+              "text": "Once a TTS voice is configured, the agent's replies can be read aloud; with image and video generation parameters configured, the agent can call those capabilities during a task to produce content."
+            }
+          ]
+        },
+        {
+          "kind": "tip",
+          "spans": [
+            {
+              "text": "Tip: ",
+              "bold": true
+            },
+            {
+              "text": "Multimodal capabilities depend on the corresponding parameters being filled in; unconfigured items do not appear in the input area."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "settings",
+      "title": "Settings Overview",
+      "group": "Reference",
+      "keywords": [
+        "settings",
+        "language",
+        "theme",
+        "cloud account",
+        "preferences"
+      ],
+      "blocks": [
+        {
+          "kind": "h1",
+          "spans": [
+            {
+              "text": "Settings Overview"
+            }
+          ]
+        },
+        {
+          "kind": "paragraph",
+          "spans": [
+            {
+              "text": "The settings page is organized by category; the search box at the top locates a category by keyword."
+            }
+          ]
+        },
+        {
+          "kind": "table",
+          "rows": [
+            {
+              "header": true,
+              "cells": [
+                [
+                  {
+                    "text": "Category",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "Contents",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "General",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "Sending, appearance, runtime and diagnostics",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "Models",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "Model list, default model and parameters",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "Tools",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "Built-in tools, MCP, knowledge bases and resources",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "Agent",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "Built-in agent prompt and behaviour",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "Companion",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "Library, display mode and animation",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "Scheduled tasks",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "Scheduled jobs and their runs",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "Memories",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "Long-term memory entries",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "Channels",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "Channel accounts, bindings and logs",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "Prompts",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "Segment editing and final prompt preview",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "Archives",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "Archived threads: review or delete",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "Help",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "Shortcuts, about and diagnostics",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "Devices & interlink",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "Tunnel status, devices and cloud workspace",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "Account",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ],
+                [
+                  {
+                    "text": "Cloud account, sign-in state and usage",
+                    "bold": false,
+                    "code": false,
+                    "kbd": false,
+                    "href": ""
+                  }
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "paragraph",
+          "spans": [
+            {
+              "text": "Language, theme, and font size changes take effect immediately; no restart needed."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "privacy",
+      "title": "Data & Privacy",
+      "group": "Reference",
+      "keywords": [
+        "data",
+        "privacy",
+        "offline",
+        "SQLite",
+        "backup",
+        "storage location"
+      ],
+      "blocks": [
+        {
+          "kind": "h1",
+          "spans": [
+            {
+              "text": "Data & Privacy"
+            }
+          ]
+        },
+        {
+          "kind": "h2",
+          "spans": [
+            {
+              "text": "Data stays on this machine"
+            }
+          ]
+        },
+        {
+          "kind": "list",
+          "marker": "·",
+          "spans": [
+            {
+              "text": "Conversation history, tool records, and configuration are stored in a local SQLite database."
+            }
+          ]
+        },
+        {
+          "kind": "list",
+          "marker": "·",
+          "spans": [
+            {
+              "text": "File assets are stored in the local workspace directory; see \"Files & Workspace\"."
+            }
+          ]
+        },
+        {
+          "kind": "list",
+          "marker": "·",
+          "spans": [
+            {
+              "text": "Offline, you can still browse past threads; network is only needed to start a conversation or call online services."
+            }
+          ]
+        },
+        {
+          "kind": "list",
+          "marker": "·",
+          "spans": [
+            {
+              "text": "Model requests go directly to the service address you configured; Honeycomb does not handle or store them through any third-party relay."
+            }
+          ]
+        },
+        {
+          "kind": "h2",
+          "spans": [
+            {
+              "text": "Backup recommendations"
+            }
+          ]
+        },
+        {
+          "kind": "paragraph",
+          "spans": [
+            {
+              "text": "To back up, copy both the database file and the workspace directory to preserve conversations and file assets in full. Use the same approach when migrating to a new device."
+            }
+          ]
+        },
+        {
+          "kind": "task",
+          "spans": [
+            {
+              "text": "Note: ",
+              "bold": true
+            },
+            {
+              "text": "Exported diagnostics (see \"Diagnostics & Troubleshooting\") contain only key-free information about this machine's settings and capability counts, for troubleshooting."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "troubleshooting",
+      "title": "Diagnostics & Troubleshooting",
+      "group": "Reference",
+      "keywords": [
+        "diagnostics",
+        "troubleshooting",
+        "FAQ",
+        "failure",
+        "FAQ"
+      ],
+      "blocks": [
+        {
+          "kind": "h1",
+          "spans": [
+            {
+              "text": "Diagnostics & Troubleshooting"
+            }
+          ]
+        },
+        {
+          "kind": "h2",
+          "spans": [
+            {
+              "text": "Export diagnostics"
+            }
+          ]
+        },
+        {
+          "kind": "paragraph",
+          "spans": [
+            {
+              "text": "When something goes wrong, click "
+            },
+            {
+              "text": "Export diagnostics",
+              "bold": true
+            },
+            {
+              "text": " under the Help category in settings; the app writes key-free local settings and capability counts into a diagnostics file, for troubleshooting. A popup shows the file location once the export finishes."
+            }
+          ]
+        },
+        {
+          "kind": "h2",
+          "spans": [
+            {
+              "text": "FAQ"
+            }
+          ]
+        },
+        {
+          "kind": "h2",
+          "spans": [
+            {
+              "text": "Model connection failed"
+            }
+          ]
+        },
+        {
+          "kind": "paragraph",
+          "spans": [
+            {
+              "text": "Check that the key and service address in the model configuration are correct, and confirm this machine can reach the service. The \"Probe\" button quickly tells you whether it is a network problem or a parameter problem."
+            }
+          ]
+        },
+        {
+          "kind": "h2",
+          "spans": [
+            {
+              "text": "Reply interrupted or incomplete"
+            }
+          ]
+        },
+        {
+          "kind": "paragraph",
+          "spans": [
+            {
+              "text": "Usually a request timeout or network instability. Raise the timeout in the model configuration and retry; the portion already generated is kept in the thread."
+            }
+          ]
+        },
+        {
+          "kind": "h2",
+          "spans": [
+            {
+              "text": "Tool execution failed"
+            }
+          ]
+        },
+        {
+          "kind": "paragraph",
+          "spans": [
+            {
+              "text": "Expand the working process bar above the message and check the output and duration of the failed entry — in most cases the cause is immediately visible (path does not exist, insufficient permissions, service not running, and so on)."
+            }
+          ]
+        },
+        {
+          "kind": "h2",
+          "spans": [
+            {
+              "text": "Context compaction triggers frequently"
+            }
+          ]
+        },
+        {
+          "kind": "paragraph",
+          "spans": [
+            {
+              "text": "This means the task's context is large. Raise the model's \"Max context\" parameter, or split the long task across several threads."
+            }
+          ]
+        },
+        {
+          "kind": "tip",
+          "spans": [
+            {
+              "text": "Tip: ",
+              "bold": true
+            },
+            {
+              "text": "When troubleshooting execution problems, the trajectory view replays every step round by round."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "shortcuts",
+      "title": "Keyboard Shortcuts",
+      "group": "Reference",
+      "keywords": [
+        "shortcuts",
+        "keyboard",
+        "keys"
+      ],
+      "blocks": [
+        {
+          "kind": "h1",
+          "spans": [
+            {
+              "text": "Keyboard Shortcuts"
+            }
+          ]
+        },
+        {
+          "kind": "paragraph",
+          "spans": [
+            {
+              "text": "The help document browser supports these keyboard shortcuts:"
+            }
+          ]
+        },
+        {
+          "kind": "table",
+          "rows": [
+            {
+              "header": true,
+              "cells": [
+                [
+                  {
+                    "text": "Key"
+                  }
+                ],
+                [
+                  {
+                    "text": "Action"
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "F1",
+                    "kbd": true
+                  }
+                ],
+                [
+                  {
+                    "text": "Return to the help home page"
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "Ctrl+F",
+                    "kbd": true
+                  }
+                ],
+                [
+                  {
+                    "text": "Find within the page"
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "Ctrl+C",
+                    "kbd": true
+                  }
+                ],
+                [
+                  {
+                    "text": "Copy the selection (copies the whole page text when nothing is selected)"
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "Ctrl+A",
+                    "kbd": true
+                  }
+                ],
+                [
+                  {
+                    "text": "Select all text on the current page"
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "Alt+←",
+                    "kbd": true
+                  }
+                ],
+                [
+                  {
+                    "text": "Go back to the previous topic"
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "Alt+→",
+                    "kbd": true
+                  }
+                ],
+                [
+                  {
+                    "text": "Go forward to the next topic"
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "↑ / ↓",
+                    "kbd": true
+                  }
+                ],
+                [
+                  {
+                    "text": "Scroll the document up / down"
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "Page Up / Page Down",
+                    "kbd": true
+                  }
+                ],
+                [
+                  {
+                    "text": "Scroll by page"
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "Home / End",
+                    "kbd": true
+                  }
+                ],
+                [
+                  {
+                    "text": "Jump to the start / end of the page"
+                  }
+                ]
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "glossary",
+      "title": "Glossary",
+      "group": "Reference",
+      "keywords": [
+        "terminology",
+        "terms",
+        "definitions",
+        "concepts"
+      ],
+      "blocks": [
+        {
+          "kind": "h1",
+          "spans": [
+            {
+              "text": "Glossary"
+            }
+          ]
+        },
+        {
+          "kind": "table",
+          "rows": [
+            {
+              "header": true,
+              "cells": [
+                [
+                  {
+                    "text": "Term"
+                  }
+                ],
+                [
+                  {
+                    "text": "Meaning"
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "Honeycomb"
+                  }
+                ],
+                [
+                  {
+                    "text": "The local AI workbench — the application described by this manual."
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "Agent thread"
+                  }
+                ],
+                [
+                  {
+                    "text": "The container for one complete conversation, with its own history, tool records, and model selection."
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "User round"
+                  }
+                ],
+                [
+                  {
+                    "text": "Each message the user sends counts as 1 round."
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "Model round"
+                  }
+                ],
+                [
+                  {
+                    "text": "Each action the model performs (a call, a tool, or a reply) counts as 1 round."
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "Working process"
+                  }
+                ],
+                [
+                  {
+                    "text": "The collapsible bar above a message showing tool calls and intermediate output in real time."
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "Trajectory view"
+                  }
+                ],
+                [
+                  {
+                    "text": "A full view that replays a task's execution timeline round by round."
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "Channel"
+                  }
+                ],
+                [
+                  {
+                    "text": "The access configuration for a model service, including address, key, and parameters. Not the same thing as the doc site's \"channel messaging\" (Feishu, QQ, WeChat, and other IM channels)."
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "MCP"
+                  }
+                ],
+                [
+                  {
+                    "text": "A standard protocol for connecting external tools; tools are provided through MCP servers."
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "Skill"
+                  }
+                ],
+                [
+                  {
+                    "text": "A capability extension package organized as resources."
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "Knowledge base"
+                  }
+                ],
+                [
+                  {
+                    "text": "Long-term knowledge retrieval for the agent."
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "Workspace"
+                  }
+                ],
+                [
+                  {
+                    "text": "The local root directory for file assets."
+                  }
+                ]
+              ]
+            },
+            {
+              "header": false,
+              "cells": [
+                [
+                  {
+                    "text": "Context compaction"
+                  }
+                ],
+                [
+                  {
+                    "text": "Automatic compaction of history when the context nears its limit, so the task can continue."
+                  }
+                ]
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

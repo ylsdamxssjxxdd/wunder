@@ -509,12 +509,13 @@ fn format_tool_call_line(tool: &str, args: &Value, repair: Option<&Value>, is_zh
             .map(str::trim)
             .filter(|value| !value.is_empty())
         {
+            // codex puts the command on the header line; the backticked second
+            // row was a wunder-only detour from that.
             lines.push(if tool_is_zh {
-                format!("• 调用 {tool}{repair_suffix}")
+                format!("• 运行 {}{repair_suffix}", clip_command(command))
             } else {
-                format!("• Called {tool}{repair_suffix}")
+                format!("• Ran {}{repair_suffix}", clip_command(command))
             });
-            lines.push(format!("  └ `{command}`"));
             return lines.join("\n");
         }
     }
@@ -641,6 +642,25 @@ fn extract_patch_preview_lines(patch: &str, max_entries: usize, is_zh: bool) -> 
     } else {
         format_patch_diff_preview_lines(&preview)
     }
+}
+
+/// One command on one header line: a runaway command would push the rest of the
+/// card off screen, so the tail is cut rather than wrapped.
+fn clip_command(command: &str) -> String {
+    const MAX_COMMAND_CHARS: usize = 160;
+    let single = command.lines().next().unwrap_or_default().trim();
+    if single.chars().count() <= MAX_COMMAND_CHARS {
+        return single.to_string();
+    }
+    let mut output = String::new();
+    for (index, ch) in single.chars().enumerate() {
+        if index >= MAX_COMMAND_CHARS {
+            break;
+        }
+        output.push(ch);
+    }
+    output.push('…');
+    output
 }
 
 fn summarize_tool_args(args: &Value) -> String {
@@ -997,8 +1017,6 @@ fn format_apply_patch_result_lines(tool: &str, payload: &Value, is_zh: bool) -> 
     let updated = number_value(data.get("updated"));
     let deleted = number_value(data.get("deleted"));
     let moved = number_value(data.get("moved"));
-    let hunks =
-        number_value(data.get("hunks_applied")).max(number_value(result.get("hunks_applied")));
     let mut lines = Vec::new();
     let files = data.get("files").and_then(Value::as_array);
     if ok == Some(false) {
@@ -1032,9 +1050,8 @@ fn format_apply_patch_result_lines(tool: &str, payload: &Value, is_zh: bool) -> 
         if moved > 0 {
             metrics.push(format!("↦{moved}"));
         }
-        if hunks > 0 {
-            metrics.push(format!("{hunks} hunks"));
-        }
+        // codex counts only what the diff shows: lines added and lines removed.
+        // The hunk count is how the patch was applied, not what changed.
         let metric_suffix = if metrics.is_empty() {
             String::new()
         } else {
@@ -1567,9 +1584,9 @@ mod tests {
             Some(&serde_json::json!({ "strategy": "lossy_json_string_repair" })),
             true,
         );
-        assert!(line.contains("调用"));
-        assert!(line.contains("python3 demo.py"));
-        assert!(line.contains("args repaired"));
+        assert!(line.contains("运行"), "{line}");
+        assert!(line.contains("python3 demo.py"), "{line}");
+        assert!(line.contains("args repaired"), "{line}");
     }
 
     #[test]

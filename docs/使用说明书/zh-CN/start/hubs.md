@@ -57,10 +57,6 @@ updated_at: 2026-10-13
     <strong>工具总览</strong>
     <span>按任务选工具。</span>
   </a>
-  <a class="docs-card" href="/docs/zh-CN/integration/">
-    <strong>接入概览</strong>
-    <span>外部工作流、MCP 端点、渠道 webhook。</span>
-  </a>
 </div>
 
 ## 其它形态（可选）
@@ -84,7 +80,6 @@ updated_at: 2026-10-13
 - [帮助中心](/docs/zh-CN/help/)
 - [故障排查](/docs/zh-CN/help/troubleshooting/)
 - [FAQ](/docs/zh-CN/help/faq/)
-- [认证与安全](/docs/zh-CN/ops/auth-and-security/)
 - [配置说明](/docs/zh-CN/reference/config/)
 
 ## 文档生态

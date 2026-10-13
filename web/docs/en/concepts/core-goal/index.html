@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Goal | 使用说明书</title>
+  <meta name="description" content="The Goal core lets an agent enter goal mode and keep working on one task: three tools drive it, four phases, a default 256-round cap, and automatic blocking after 3 consecutive rounds without progress.">
+  <link rel="stylesheet" href="/docs/site.css?v=c9863d5d7815">
+  <script type="module" src="/docs/site.js?v=c9863d5d7815"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/concepts/core-goal","language":"en","title":"Goal","summary":"The Goal core lets an agent enter goal mode and keep working on one task: three tools drive it, four phases, a default 256-round cap, and automatic blocking after 3 consecutive rounds without progress.","updated_at":"2026-10-13","read_when":[],"source_docs":[],"tab":"Core","group":"The 9 Cores","group_path":["The 9 Cores"],"url":"/docs/en/concepts/core-goal/","headings":[{"id":"section-1","level":1,"text":"Goal"},{"id":"section-2","level":2,"text":"How it works"},{"id":"section-3","level":2,"text":"Key numbers"},{"id":"section-4","level":2,"text":"Where it is used"},{"id":"section-5","level":2,"text":"Boundaries and current limits"}],"prev_slug":"en/concepts/index","next_slug":"en/concepts/core-compatibility","markdown":"# Goal\n\nThe Goal core lets an agent enter goal mode and keep working on one task. Attach a goal to a session and the agent carries on by itself, until it completes, is blocked, or exhausts the round budget.\n\n## How it works\n\nA goal is driven by three tools:\n\n| Tool | Role |\n| --- | --- |\n| `get_goal` | Reads the current goal and its revision |\n| `create_goal` | Creates a goal |\n| `update_goal` | Edits, pauses, resumes, completes, or reports blocked |\n\nA goal has only four phases: `active`, `paused`, `blocked`, `complete`.\n\nUpdates use CAS-on-revision: an update must carry the goal's current revision, and a mismatch is rejected. Started rounds only ever increase.\n\n## Key numbers\n\n| Item | Value |\n| --- | --- |\n| Default goal round cap | 256 |\n| Automatic blocking after no progress | 3 rounds |\n| Phase values | active / paused / blocked / complete |\n\n## Where it is used\n\n| Entry | Location |\n| --- | --- |\n| Interface | `/wunder/chat/sessions/{id}/goal` |\n| Slash command | `/goal` |\n\n## Boundaries and current limits\n\n- There is no token budget and no cooldown between rounds. Whether a goal stops depends on three things only: the round budget, the phase, and whether it is armed.\n- The **armed** state is **not persisted**: after a process restart or a session resume, even if the phase is still `active`, an explicit `update_goal action=resume` is needed to arm it again. When asking \"why has the goal stopped moving\", check first whether it is armed.\n- The desktop form does not expose goal selection; the runtime injects it per session.\n- The Bridge has no goal UI; goal operations happen in the Beehive, the Honeycomb, and the Helm.\n","source_path":"使用说明书/en/concepts/core-goal.md"}</script>
+</body>
+</html>

@@ -139,7 +139,5 @@ WUNDER_HOST=127.0.0.1 WUNDER_PORT=18000 cargo run -p wunder-server
 
 - [舰桥界面](/docs/zh-CN/surfaces/web-admin/)
 - [蜂巢界面](/docs/zh-CN/surfaces/frontend/)
-- [认证与安全](/docs/zh-CN/ops/auth-and-security/)
-- [部署与运行](/docs/zh-CN/ops/deployment/)
 - [配置说明](/docs/zh-CN/reference/config/)
 - [首次运行排查](/docs/zh-CN/start/troubleshooting-first-run/)

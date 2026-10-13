@@ -79,6 +79,3 @@ Some files must be processed after upload (document-to-text, audio transcription
 ## Further reading
 
 - [Workspaces and Working Directory](/docs/en/concepts/workspaces/) — the isolation model
-- [Workspace API](/docs/en/integration/workspace-api/) — the endpoint list
-- [Temp Directory and Document Conversion](/docs/en/integration/temp-dir/) — the transit area
-- [Data & Storage](/docs/en/ops/data-and-storage/) — storage strategy

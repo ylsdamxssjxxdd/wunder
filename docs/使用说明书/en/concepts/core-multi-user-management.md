@@ -79,7 +79,6 @@ Sessions, tasks, workspaces, tools, and channel bindings are all isolated by use
 
 ## Related pages
 
-- [Authentication and Security](/docs/en/ops/auth-and-security/) — keys and configuration on the deployment side
 - [Bridge Panel Guide](/docs/en/reference/admin-panels/) — user management and unit management operations
 - [Quota and Token Usage](/docs/en/concepts/quota-and-token-usage/) — metering details
-- [Integration index](/docs/en/integration/index/) — how local devices and external callers join the Hull
+- [Interlink](/docs/en/reference/interlink/) — how local devices and external callers join the Hull

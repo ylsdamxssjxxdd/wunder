@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>多线程 | 使用说明书</title>
+  <meta name="description" content="多线程核心在单进程内通过并发控制提升吞吐与资源利用：单用户可并发多任务线程，配会话队列、会话锁、并行度上限与日配额。">
+  <link rel="stylesheet" href="/docs/site.css?v=c9863d5d7815">
+  <script type="module" src="/docs/site.js?v=c9863d5d7815"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/concepts/core-multithreading","language":"zh-CN","title":"多线程","summary":"多线程核心在单进程内通过并发控制提升吞吐与资源利用：单用户可并发多任务线程，配会话队列、会话锁、并行度上限与日配额。","updated_at":"2026-10-13","read_when":[],"source_docs":[],"tab":"核心","group":"9 个核心","group_path":["9 个核心"],"url":"/docs/zh-CN/concepts/core-multithreading/","headings":[{"id":"section-1","level":1,"text":"多线程"},{"id":"section-2","level":2,"text":"怎么运作"},{"id":"section-3","level":2,"text":"关键数字"},{"id":"section-4","level":2,"text":"边界与当前限制"}],"prev_slug":"zh-CN/concepts/core-memory","next_slug":"zh-CN/concepts/core-multi-user-management","markdown":"# 多线程\n\n多线程核心在单进程内通过并发控制提升吞吐与资源利用：单个用户可以同时拥有多个任务线程，调度、锁与实时状态都按线程隔离。\n\n## 怎么运作\n\n- **引擎级会话队列**默认开启，配合 `会话让出` 让位。\n- **会话锁** TTL 120 秒并带心跳续约，持有方异常退出后由 TTL 释放。\n- **工具并行度 ≤ 4**：并行执行的工具取读锁，独占执行的工具取写锁。\n- **轮次上限、活跃会话上限、日配额、重试熔断**构成四条硬约束。\n\n## 关键数字\n\n| 项 | 值 |\n| --- | --- |\n| 会话锁 TTL | 120 秒（带心跳） |\n| 工具并行度 | ≤ 4 |\n| 轮次上限 | 默认 1000 |\n\n## 边界与当前限制\n\n- 关闭 `agent_queue.enabled` 后，运行中再发消息会被判「用户忙」，也不再进排队条（舰体启动时会告警）。这是配置取舍，不是故障。\n- blocking 分类配额与有界队列是硬上限，满了即报 busy，不会排队等待。\n","source_path":"使用说明书/zh-CN/concepts/core-multithreading.md"}</script>
+</body>
+</html>

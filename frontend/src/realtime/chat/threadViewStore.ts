@@ -2,8 +2,8 @@
 import { shallowRef, markRaw } from 'vue';
 
 export interface ThreadBodyRef { body_id: string; revision: number; bytes: number }
-export interface ViewMessage { item_id: string; content: string; reasoning?: string; durable_seq?: number; content_offset?: number; body?: ThreadBodyRef; feedback?: unknown; stats?: unknown; tail?: string; failure?: string; attachments?: unknown[] }
-export interface ChatViewRow { root_turn_id: string; execution_turn_id?:string; user_round: number; client_message_id?: string; revision: number; status: string; user: ViewMessage; assistant: ViewMessage; workflow_count: number; failed_count: number; subagents?: any[] }
+export interface ViewMessage { item_id: string; content: string; reasoning?: string; durable_seq?: number; content_offset?: number; reasoning_offset?: number; tail_offset?: number; body?: ThreadBodyRef; feedback?: unknown; stats?: unknown; tail?: string; failure?: string; attachments?: unknown[] }
+export interface ChatViewRow { root_turn_id: string; execution_turn_id?:string; user_round: number; client_message_id?: string; revision: number; status: string; user: ViewMessage; assistant: ViewMessage; workflow_count: number; reasoning_count?: number; reasoning_item_id?: string; failed_count: number; subagents?: any[] }
 export interface ThreadViewPage { runtime_status?:string;active_turn_id?:string; session_id: string; epoch: number; view_seq: number; projection_state: string; thread_empty: boolean | null; latest_round: number; chat: ChatViewRow[]; trajectory: any[]; tiles: any[]; tile_level: number; next_before: number | null; has_more: boolean }
 export type ViewPhase = 'opening' | 'ready' | 'verified_empty' | 'refreshing' | 'error';
 export interface ViewSlot { key: string; rootTurnId: string; user: Record<string, any>; assistant: Record<string, any> }
@@ -36,18 +36,68 @@ function materialize(row: ChatViewRow): ViewSlot {
     turn_id: row.execution_turn_id??row.root_turn_id, root_turn_id: row.root_turn_id, user_round: row.user_round, client_message_id: row.client_message_id,
     __runtime_projected: true, __thread_view:true, final: !running, state:role==='assistant'?(running?'streaming':row.status==='completed'?'final':row.status):'final', __thread_body: m.body, __thread_preview: Boolean(m.body && m.body.bytes > new TextEncoder().encode(m.content).length),
     streaming: role === 'assistant' && running, status: role === 'assistant' ? uiMessageStatus(row.status) : 'completed',
-    workflow_count: row.workflow_count, workflow_failed_count: row.failed_count, feedback: m.feedback, stats: m.stats, reasoning: m.reasoning || '',
+    // The process badge counts every visible process entry.  The server keeps
+    // tool counts separately, so include the aggregated reasoning entry here.
+    workflow_count: row.workflow_count, reasoning_count: Number(row.reasoning_count || 0), reasoning_item_id: row.reasoning_item_id || '', process_count: row.workflow_count + Number(row.reasoning_count || 0) + (role === 'assistant' && String(m.reasoning || '').trim() && !Number(row.reasoning_count || 0) ? 1 : 0), workflow_failed_count: row.failed_count, feedback: m.feedback, stats: m.stats, reasoning: m.reasoning || '',
     __thread_tail: m.tail, failureDetail:m.failure, attachments:m.attachments,
+    __thread_tail_offset: m.tail_offset,
     workflowItems: [], ...(role==='assistant'&&Array.isArray(row.subagents)&&row.subagents.length>0?{subagents:row.subagents}:{}), failed: role === 'assistant' && ['failed','rejected'].includes(row.status), stopped: row.status === 'cancelled' });
   return markRaw({ key: row.client_message_id ? `turn:client:${row.client_message_id}` : `turn:${row.root_turn_id}`, rootTurnId: row.root_turn_id, user: make('user', row.user), assistant: make('assistant', row.assistant) });
+}
+function utf16Units(text: string): number {
+  return [...text].reduce((total, char) => total + char.length, 0);
+}
+function mergeTail(previous: ViewMessage, next: ViewMessage): ViewMessage {
+  const oldText = String(previous.tail || '');
+  const newText = String(next.tail || '');
+  if (!oldText || !newText) return oldText && !newText ? { ...next, tail: oldText, tail_offset: previous.tail_offset } : next;
+  const oldEnd = Number(previous.tail_offset || previous.content_offset || utf16Units(previous.content));
+  const newEnd = Number(next.tail_offset || next.content_offset || utf16Units(next.content));
+  if (!Number.isSafeInteger(oldEnd) || !Number.isSafeInteger(newEnd)) return next;
+  const oldStart = oldEnd - utf16Units(oldText);
+  const newStart = newEnd - utf16Units(newText);
+  if (newStart >= oldEnd) return next;
+  if (oldStart >= newEnd) return previous;
+  const start = Math.min(oldStart, newStart);
+  const end = Math.max(oldEnd, newEnd);
+  const units = new Map<number, string>();
+  let cursor = oldStart;
+  for (const char of oldText) { units.set(cursor, char); cursor += char.length; }
+  cursor = newStart;
+  for (const char of newText) { units.set(cursor, char); cursor += char.length; }
+  let merged = '';
+  for (let at = start; at < end;) {
+    const char = units.get(at);
+    if (!char) break;
+    merged += char;
+    at += char.length;
+  }
+  return { ...next, tail: merged.length > 2048 ? merged.slice(-2048) : merged, tail_offset: end };
 }
 function merge(e: Entry, row: ChatViewRow) {
   const old = e.rows.get(row.root_turn_id);
   if (old && old.revision >= row.revision) return;
-  if(old && old.assistant.item_id===row.assistant.item_id && ['running','queued','waiting_input','waiting_approval'].includes(row.status) &&
-    (old.assistant.content_offset??0)>(row.assistant.content_offset??0)) {
-    row={...row,assistant:{...row.assistant,content:old.assistant.content,tail:old.assistant.tail,content_offset:old.assistant.content_offset,
-      body:row.assistant.body?{...row.assistant.body,bytes:Math.max(row.assistant.body.bytes,old.assistant.body?.bytes??0)}:old.assistant.body}};
+  if(old && old.assistant.item_id===row.assistant.item_id && ['running','queued','waiting_input','waiting_approval'].includes(row.status)) {
+    const oldContentOffset = Number(old.assistant.content_offset || 0);
+    const newContentOffset = Number(row.assistant.content_offset || 0);
+    const oldReasoningOffset = Number(old.assistant.reasoning_offset || 0);
+    const newReasoningOffset = Number(row.assistant.reasoning_offset || 0);
+    const oldContentLength = String(old.assistant.content || '').length;
+    const newContentLength = String(row.assistant.content || '').length;
+    const oldReasoningLength = String(old.assistant.reasoning || '').length;
+    const newReasoningLength = String(row.assistant.reasoning || '').length;
+    const keepOldContent = oldContentOffset > newContentOffset ||
+      (oldContentOffset === newContentOffset && oldContentLength > newContentLength);
+    const keepOldReasoning = oldReasoningOffset > newReasoningOffset ||
+      (oldReasoningOffset === newReasoningOffset && oldReasoningLength > newReasoningLength);
+    const assistant = mergeTail(old.assistant, row.assistant);
+    if (keepOldContent || keepOldReasoning || assistant.tail !== row.assistant.tail) {
+      row={...row,assistant:{...row.assistant,
+        ...(keepOldContent ? {content:old.assistant.content,tail:old.assistant.tail,tail_offset:old.assistant.tail_offset,content_offset:oldContentOffset} : {}),
+        ...(keepOldReasoning ? {reasoning:old.assistant.reasoning,reasoning_offset:oldReasoningOffset} : {}),
+        tail: assistant.tail, tail_offset: assistant.tail_offset,
+        body:row.assistant.body?{...row.assistant.body,bytes:Math.max(row.assistant.body.bytes,old.assistant.body?.bytes??0)}:old.assistant.body}};
+    }
   }
   e.rows.set(row.root_turn_id, markRaw(row)); e.slots.set(row.root_turn_id, materialize(row));
   if (!old) e.order.push(row.root_turn_id);
@@ -59,7 +109,7 @@ function merge(e: Entry, row: ChatViewRow) {
 function bound(e: Entry, historical = false) {
   e.order.sort((a,b) => (e.rows.get(a)?.user_round ?? 0) - (e.rows.get(b)?.user_round ?? 0));
   while (e.order.length > MAX_ROWS) { const id=historical ? e.order.pop()! : e.order.shift()!;e.rows.delete(id);e.slots.delete(id); if(historical)e.atLatest=false; }
-  e.bytes = e.order.reduce((n,id) => { const r=e.rows.get(id)!; return n+2*(r.user.content.length+r.assistant.content.length+(r.assistant.tail?.length??0))+4096; }, 0);
+  e.bytes = e.order.reduce((n,id) => { const r=e.rows.get(id)!; return n+2*(r.user.content.length+r.assistant.content.length+(r.assistant.reasoning?.length??0)+(r.assistant.tail?.length??0))+4096; }, 0);
   let total = [...entries.values()].reduce((n,v)=>n+v.bytes,0);
   for (const [key,v] of entries) { if (total <= MAX_BYTES && entries.size <= 32) break; if (key === activeKey) continue; entries.delete(key);total-=v.bytes; }
 }
@@ -121,10 +171,26 @@ export function removePendingThreadView(key:string,client:string) {const e=entri
 export function applyThreadViewTail(key:string,payload:any):boolean {
   const e=entries.get(key);if(!e)return false;
   const p=payload?.data??payload;const id=String(p?.item_id??'');const delta=String(p?.text??p?.delta??p?.content??'');
-  if(p?.field==='reasoning'||!id||!delta)return true;
+  if(!id||!delta)return true;
   for(const row of e.rows.values()) {
     if(row.assistant.item_id!==id)continue;
     if(!['running','queued','waiting_input','waiting_approval'].includes(row.status))return true;
+    if (String(p?.field || 'content') === 'reasoning') {
+      // Reasoning is a bounded live projection (the durable item remains the
+      // source of truth). Keep enough text for the expanded process entry and
+      // preserve the stream when the server preview has already been capped.
+      const current = String(row.assistant.reasoning || '');
+      const offset = Number(p.reasoning_offset ?? p.offset);
+      const cursor = Number(row.assistant.reasoning_offset || 0);
+      const expected = Number.isSafeInteger(offset) && offset >= 0 ? offset : cursor;
+      if (!Number.isSafeInteger(expected) || expected < 0 || expected !== cursor) return true;
+      const next = current + delta;
+      const bounded = next.length > 32768 ? next.slice(-32768) : next;
+      row.assistant = { ...row.assistant, reasoning: bounded,
+        reasoning_offset: expected + [...delta].reduce((n, ch) => n + ch.length, 0) };
+      e.slots.set(row.root_turn_id, materialize(row));
+      notifyTail();return true;
+    }
     const offset=Number(p.content_offset??p.offset);
     const base=Number(p.base_seq??0);
     if(base>(row.assistant.durable_seq??0))return true;
@@ -140,7 +206,9 @@ export function applyThreadViewTail(key:string,payload:any):boolean {
       const tail=(row.assistant.tail??'')+delta;let out='',bytes=0;for(const ch of [...tail].reverse()){const n=encoder.encode(ch).length;if(bytes+n>2048)break;out=ch+out;bytes+=n;}
       row.assistant={...row.assistant,tail:out};
     }
-    row.assistant={...row.assistant,content_offset:expected+delta.length,
+    const deltaUnits = [...delta].reduce((n, ch) => n + ch.length, 0);
+    row.assistant={...row.assistant,content_offset:expected+deltaUnits,
+      tail_offset: expected + deltaUnits,
       body:row.assistant.body?{...row.assistant.body,bytes:row.assistant.body.bytes+encoder.encode(delta).length}:undefined};
     e.slots.set(row.root_turn_id,materialize(row));notifyTail();return true;
   }

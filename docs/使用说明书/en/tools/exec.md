@@ -12,7 +12,7 @@ updated_at: 2026-10-13
 - You need to call an existing command-line tool
 - You need to run a throwaway program, such as a temporary Python script
 
-To change files only slightly, use [Text Edit (patch form)](/docs/en/tools/apply-patch/); to just read code, use [Workspace Files](/docs/en/tools/workspace-files/).
+To change files only slightly, use `文本编辑` (patch form); to just read code, use [Workspace Files](/docs/en/tools/workspace-files/).
 
 ## How to use it
 

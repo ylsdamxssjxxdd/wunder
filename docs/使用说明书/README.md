@@ -66,12 +66,6 @@
 - 再给按场景的入口
 - 最后给常见问题与延伸阅读
 
-### 接入页（integration）
-
-- 先给选型判断（要不要接、接哪个）
-- 再给最短链路（几步接通）
-- 再给关键设置与常见坑
-
 ### 工具页（tools）
 
 - 先说在什么情况下用它
@@ -79,14 +73,25 @@
 - 再说它自动处理了什么（有意思的点）
 - 再给出问题时怎么判断
 
-### 运维页（ops）
+工具分类以 `README.md` 的「工具矩阵」为准。已移除的工具（`a2a_*`、渠道工具、用户世界工具、`final_response`、`a2ui`）不保留说明页。
 
-- 先做部署或排障分流
-- 再给检查顺序
-- 再给风险点与恢复路径
+### 参考页（reference）
+
+- 先说什么时候来查这一页
+- 再给可复制的命令、端点或配置项
+- 最后给边界与非目标（避免读者误以为做不到的事能做）
+
+## 导航
+
+站点为 5 个标签页：开始 / 核心 / 工具 / 界面 / 参考（英文：Getting Started / Core / Tools / Surfaces / Reference）。
+
+- 「核心」固定为 `docs/总体设计.md` 里定义的 9 个核心，不增删。
+- 帮助类页面（故障排查、FAQ、术语表）归在「参考 › 排障与术语」。
+- 9 个核心之外的概念页归在「参考 › 深入了解」。
 
 ## 发布前检查
 
 1. 运行 `python scripts/build_docs_site.py`
-2. 抽查入口页、接入页、FAQ 是否好读；确认全文无 `read_when`、`source_docs` 与源码路径
-3. 通过 `python scripts/update_feature_log.py --type 文档 ...` 记录本次迭代
+2. 运行 `python temp_dir/verify_nav.py`：校验导航页面存在性、孤儿页与内链死链，三项均须为零
+3. 抽查入口页、工具页、FAQ 是否好读；确认全文无 `read_when`、`source_docs` 与源码路径
+4. 通过 `python scripts/update_feature_log.py --type 文档 ...` 记录本次迭代

@@ -232,5 +232,3 @@ summary: 舰桥各面板的职能、入口位置与常用操作流程。
 ## 延伸阅读
 
 - [系统设置参考](/docs/zh-CN/reference/config/)
-- [渠道管理指南](/docs/zh-CN/ops/channel-runtime/)
-- [监控与评估](/docs/zh-CN/ops/benchmark-and-observability/)

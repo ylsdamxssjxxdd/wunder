@@ -72,7 +72,5 @@ The three forms — the Honeycomb, the Beehive, and the Hull — are each scored
 
 ## Related pages
 
-- [Monitoring and WunderBench](/docs/en/ops/benchmark-and-observability/) — deployment-side operations and acceptance scripts
-- [Channel Runtime](/docs/en/ops/channel-runtime/) — channel troubleshooting details
 - [Stream Events](/docs/en/reference/stream-events/) — WebSocket event fields
 - [Bridge Panel Guide](/docs/en/reference/admin-panels/) — entry points for the monitoring and debug panels

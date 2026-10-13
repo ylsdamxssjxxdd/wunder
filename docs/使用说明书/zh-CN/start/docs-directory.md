@@ -49,8 +49,6 @@ wunder 的文档分七类，各解决一类问题。写文档时不串味：**�
 
 - 核心概念 → `/docs/zh-CN/concepts/`
 - 工具 → `/docs/zh-CN/tools/`
-- 接入 → `/docs/zh-CN/integration/`
-- 运维 → `/docs/zh-CN/ops/`
 - 参考 → `/docs/zh-CN/reference/`
 - 帮助 → `/docs/zh-CN/help/`
 

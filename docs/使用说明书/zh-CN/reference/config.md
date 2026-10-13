@@ -152,9 +152,3 @@ wunder 的设置按职责分为六类：
 - 工作区：网络存储（持久化）
 - 安全：严格配置密钥和路径限制
 - 工具：按角色分配权限
-
-## 延伸阅读
-
-- [部署与运行](/docs/zh-CN/ops/deployment/)
-- [数据管理](/docs/zh-CN/ops/data-and-storage/)
-- [账户与安全](/docs/zh-CN/ops/auth-and-security/)

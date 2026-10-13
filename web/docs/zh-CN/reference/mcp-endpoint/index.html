@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MCP 入口 | 使用说明书</title>
+  <meta name="description" content="wunder 既能把自己作为 MCP 服务暴露出去，也能作为 MCP 客户端接入外部服务。">
+  <link rel="stylesheet" href="/docs/site.css?v=c9863d5d7815">
+  <script type="module" src="/docs/site.js?v=c9863d5d7815"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/reference/mcp-endpoint","language":"zh-CN","title":"MCP 入口","summary":"wunder 既能把自己作为 MCP 服务暴露出去，也能作为 MCP 客户端接入外部服务。","updated_at":"2026-10-13","read_when":[],"source_docs":[],"tab":"参考","group":"接口与端点","group_path":["接口与端点"],"url":"/docs/zh-CN/reference/mcp-endpoint/","headings":[{"id":"section-1","level":1,"text":"MCP 入口"},{"id":"section-2","level":2,"text":"两个方向的分工"},{"id":"section-3","level":2,"text":"最短链路：把 wunder 暴露出去"},{"id":"section-4","level":2,"text":"最短链路：接入外部 MCP"},{"id":"section-5","level":2,"text":"关键设置与常见坑"},{"id":"section-6","level":2,"text":"延伸阅读"}],"prev_slug":"zh-CN/reference/chat-ws","next_slug":"zh-CN/reference/weixin-channel","markdown":"# MCP 入口\n\nMCP 有两个方向，先分清：\n\n- wunder 自己对外暴露的 MCP 服务；\n- wunder 作为客户端去接别人的 MCP 服务。\n\n## 两个方向的分工\n\n- 想让外部系统用 MCP 的方式调用 wunder 的能力 → 用自托管这一边。\n- 想把外部能力接进来给模型用 → 用外部服务这一边。\n\n## 最短链路：把 wunder 暴露出去\n\n对外入口是一个地址，走 Streamable HTTP。\n\n接通顺序：\n\n1. 外部系统按 MCP 协议连上这个地址；\n2. wunder 自动完成协议版本协商，与旧服务互通时会按双方都支持的范围协商，不用手写初始化步骤；\n3. 调用具体工具。\n\n目前内置对外提供两个工具：`excute`（执行）和 `doc2md`（文档转 Markdown）。工具名就是 `excute`，照这个名字调用即可。\n\n## 最短链路：接入外部 MCP\n\n在配置里声明要接的 MCP 服务，给它名字、地址和传输方式，然后打开开关。启用后 wunder 就把它当成一个可调用的服务。外部服务同样用 Streamable HTTP；如果服务是 Python 写的，它按 Python 侧的协议版本协商，不一定具备最新的全部能力。\n\n文档里常提到的外部服务通常承载数据库查询、数据库导出、知识库查询这类工具。\n\n## 关键设置与常见坑\n\n- 接入顺序建议：先在配置里声明服务 → 在舰桥确认工具清单能拉到 → 再开放给模型使用。\n- 舰桥里有 MCP 的配置和调试入口，可以刷新工具清单、直接调远端工具验证。\n- MCP 工具不是旁路：它会和内置工具、A2A 工具、技能、知识库工具、自建工具一起，汇总进同一个工具视图。对模型来说，MCP 只是工具目录的一部分。\n\n## 延伸阅读\n\n- [工具体系](/docs/zh-CN/concepts/tools/)\n- [配置说明](/docs/zh-CN/reference/config/)\n","source_path":"使用说明书/zh-CN/reference/mcp-endpoint.md"}</script>
+</body>
+</html>

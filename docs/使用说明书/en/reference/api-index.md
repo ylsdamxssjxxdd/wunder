@@ -70,7 +70,7 @@ Location: the Bridge → Channel management.
 
 When members of an organization already work in Feishu or WeChat, channel access lets them use the agent without switching tools.
 
-Related: [Channel Management Guide](/docs/en/ops/channel-runtime/), [Bridge Panel Guide](/docs/en/reference/admin-panels/)
+Related: [Bridge Panel Guide](/docs/en/reference/admin-panels/)
 
 ## Scheduled tasks
 

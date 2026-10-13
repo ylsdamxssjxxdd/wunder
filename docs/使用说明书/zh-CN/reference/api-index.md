@@ -71,7 +71,7 @@ summary: wunder 的能力清单、入口位置与相关文档。
 
 渠道接入让飞书、微信等平台的用户在原有平台内使用智能体，不需要切换工具。
 
-相关：[渠道管理指南](/docs/zh-CN/ops/channel-runtime/)、[舰桥面板指南](/docs/zh-CN/reference/admin-panels/)
+相关：[舰桥面板指南](/docs/zh-CN/reference/admin-panels/)
 
 ## 定时任务
 

@@ -31,6 +31,11 @@ pub(crate) struct ToolPresentation {
     pub(crate) workspace_read: bool,
     zh: &'static str,
     en: &'static str,
+    /// What the card reads once the call settles, when the settled state is a
+    /// different sentence: codex says "Waiting for" while it waits and
+    /// "Finished waiting" when the wait is over.
+    zh_done: Option<&'static str>,
+    en_done: Option<&'static str>,
 }
 
 impl ToolPresentation {
@@ -41,6 +46,14 @@ impl ToolPresentation {
             self.en
         }
     }
+
+    pub(crate) fn verb_done(&self, is_zh: bool) -> &'static str {
+        if is_zh {
+            self.zh_done.unwrap_or(self.zh)
+        } else {
+            self.en_done.unwrap_or(self.en)
+        }
+    }
 }
 
 const fn call(access: ToolAccess, zh: &'static str, en: &'static str) -> ToolPresentation {
@@ -49,6 +62,26 @@ const fn call(access: ToolAccess, zh: &'static str, en: &'static str) -> ToolPre
         workspace_read: false,
         zh,
         en,
+        zh_done: None,
+        en_done: None,
+    }
+}
+
+/// A call that reads differently once it settles.
+const fn call_done(
+    access: ToolAccess,
+    zh: &'static str,
+    en: &'static str,
+    zh_done: &'static str,
+    en_done: &'static str,
+) -> ToolPresentation {
+    ToolPresentation {
+        access,
+        workspace_read: false,
+        zh,
+        en,
+        zh_done: Some(zh_done),
+        en_done: Some(en_done),
     }
 }
 
@@ -62,7 +95,67 @@ const fn workspace_call(
         workspace_read: true,
         zh,
         en,
+        zh_done: None,
+        en_done: None,
     }
+}
+
+/// `mcp__server__tool` reads as `server.tool`: the server and the tool are two
+/// names, and the doubled underscore is a transport detail, not something the
+/// reader is meant to parse.
+pub(crate) fn mcp_invocation_label(name: &str) -> Option<String> {
+    let trimmed = name.trim();
+    let rest = trimmed
+        .strip_prefix("mcp__")
+        .or_else(|| trimmed.strip_prefix("mcp_"))?;
+    let mut parts = rest.split("__").filter(|part| !part.trim().is_empty());
+    let server = parts.next()?;
+    match parts.next() {
+        Some(tool) => Some(format!("{server}.{tool}")),
+        None => Some(server.to_string()),
+    }
+}
+
+/// True for the sub-agent control tool in either spelling, so a card can read
+/// its action out of the arguments instead of guessing from the name.
+pub(crate) fn is_subagent_tool(name: &str) -> bool {
+    matches!(name.trim(), "subagent_control" | "子智能体控制")
+}
+
+/// A sub-agent call names what it did to the child in `args.action`. Reading it
+/// out of the arguments keeps the card honest: `Waiting for` and `Closed` are
+/// different sentences, and the tool name alone cannot tell them apart.
+pub(crate) fn present_subagent_action(args: &Value) -> Option<ToolPresentation> {
+    let action = args
+        .get("action")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or_default();
+    let presentation = match action {
+        "spawn" | "batch_spawn" => call(ToolAccess::Delegate, "已派生子智能体", "Spawned"),
+        "send" => call(ToolAccess::Delegate, "已发送输入给", "Sent input to"),
+        "wait" => call_done(
+            ToolAccess::Delegate,
+            "正在等待",
+            "Waiting for",
+            "等待结束",
+            "Finished waiting",
+        ),
+        "close" => call(ToolAccess::Delegate, "已关闭子智能体", "Closed"),
+        "resume" => call_done(
+            ToolAccess::Delegate,
+            "正在恢复子智能体",
+            "Resuming",
+            "已恢复子智能体",
+            "Resumed",
+        ),
+        "interrupt" => call(ToolAccess::Delegate, "已中断子智能体", "Interrupted"),
+        "status" => call(ToolAccess::Delegate, "已查询子智能体", "Checked"),
+        "list" => call(ToolAccess::Delegate, "已列出子智能体", "Listed"),
+        "history" | "report" => call(ToolAccess::Delegate, "已读取子智能体", "Read"),
+        _ => return None,
+    };
+    Some(presentation)
 }
 
 /// Unknown tools keep their own name in the card and this verb in front of it.

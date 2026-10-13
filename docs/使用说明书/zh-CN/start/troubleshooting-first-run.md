@@ -64,7 +64,7 @@ updated_at: 2026-10-13
 
 | 现象 | 优先检查 | 文档 |
 | --- | --- | --- |
-| 打开后 `/login` 循环 | 登录令牌是不透明随机串，**不是 JWT**；重放会触发整族吊销 | [认证与安全](/docs/zh-CN/ops/auth-and-security/) |
+| 打开后 `/login` 循环 | 登录令牌是不透明随机串，**不是 JWT**；重放会触发整族吊销 | 认证与安全 |
 | 长线程打开慢、渲染卡 | 大数据量线程的渲染优化方案尚未落地，性能瓶颈仍在 | [蜂巢界面](/docs/zh-CN/surfaces/frontend/) |
 | WS 断线不恢复 | 断线后有补数端点可补齐；蜂巢只有一条 `/chat/ws` 复用通道 | [蜂巢界面](/docs/zh-CN/surfaces/frontend/) |
 | 附件上传失败 | 临时附件上限 200 MB，持久附件 10 MB | [蜂巢界面](/docs/zh-CN/surfaces/frontend/) |

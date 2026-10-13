@@ -165,6 +165,12 @@
         @scroll.passive="onLedgerScroll"
         @pointerdown.self="clearSelection"
       >
+        <div v-if="records.length > 0 && (truncated || olderLoading)" class="tt-truncated-hint tt-truncated-hint-top" role="status">
+          <span>{{ olderLoading ? '正在读取更早记录…' : '当前展示部分轨迹，可继续查看更早记录。' }}</span>
+          <button :disabled="loading || olderLoading" type="button" @click="olderPage">
+            {{ olderLoading ? '读取中' : '展示更早记录' }}
+          </button>
+        </div>
         <div class="tt-ledger-canvas" :style="{ height: `${ledgerHeight}px` }">
           <table
             class="tt-table"
@@ -247,18 +253,6 @@
             : loadError
               ? t('messenger.trajectory.loadFailed')
               : t('messenger.trajectory.empty') }}
-        </div>
-        <!-- W1-B/W2-G: 服务端按尾窗返回快照（truncated=true 表示更早的轮次被省略），
-             这里如实提示而不是把“有界”当成“无数据”。 -->
-        <div
-          v-if="truncated && !loading && !loadError && records.length > 0"
-          class="tt-truncated-hint"
-          role="status"
-        >
-          当前展示部分轨迹，可分页查看更早记录。
-        </div>
-        <div v-if="records.length > 0 && (truncated || olderLoading)" class="tt-truncated-hint">
-          <button :disabled="loading" @click="olderPage">{{ loading ? '正在读取更早记录…' : '展示更早记录' }}</button>
         </div>
       </div>
 

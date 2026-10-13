@@ -120,8 +120,6 @@ updated_at: 2026-04-10
 
 继续查看：
 
-- [蜂窝本地模式](/docs/zh-CN/ops/desktop-local-mode/)
-- [认证与安全](/docs/zh-CN/ops/auth-and-security/)
 - [配置说明](/docs/zh-CN/reference/config/)
 
 ## 提交问题时建议附带

@@ -14,14 +14,13 @@ updated_at: 2026-10-13
 
 1. Don't know how to use it → see the FAQ and the getting-started docs
 2. A feature misbehaves → see Troubleshooting
-3. Want to integrate or develop → see the Integration Overview
+3. Want to integrate or develop → see the interfaces and endpoints under the reference overview
 
 ## Jump by Symptom
 
 ### Page Won't Open, Login Fails
 
 - [Troubleshooting](/docs/en/help/troubleshooting/)
-- [Authentication & Security](/docs/en/ops/auth-and-security/)
 
 ### Tools Don't Appear, Features Unavailable
 
@@ -31,7 +30,6 @@ updated_at: 2026-10-13
 ### File Upload or Download Fails
 
 - [Troubleshooting](/docs/en/help/troubleshooting/)
-- [Workspace API](/docs/en/integration/workspace-api/)
 
 ### Configuration Problems
 

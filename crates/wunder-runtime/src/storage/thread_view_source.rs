@@ -65,22 +65,36 @@ fn source_chat_rows(
         latest_turns.entry(text(&row[0]).to_owned()).or_insert(row);
     }
 
-    let mut counts = std::collections::HashMap::<String, (i64, i64)>::new();
-    let count_rows = db.query(
-        &format!("SELECT root_turn_id,COUNT(*),SUM(CASE WHEN status IN ('failed','rejected') THEN 1 ELSE 0 END) FROM thread_items WHERE user_id=? AND session_id=? AND root_turn_id IN ({in_roots}) AND visibility='user' AND kind IN ('tool_call','approval','plan','compaction','queue','subagent_run') GROUP BY root_turn_id"),
-        &params,
-    )?;
-    for row in count_rows {
-        counts.insert(text(&row[0]).to_owned(), (int(&row[1]), int(&row[2])));
-    }
-
-    let content = db.json_text("payload", "content");
+    let mut counts = std::collections::HashMap::<String, (i64, i64, i64)>::new();
     let reasoning = format!(
         "COALESCE(NULLIF({},''),{})",
         db.json_text("payload", "reasoning"),
         db.json_text("payload", "reasoning_content")
     );
+    // Do not aggregate every item in a large root here.  A legacy stress
+    // thread can contain thousands of workflow rows in one user turn; the
+    // unbounded GROUP BY made the "load older history" request exceed the
+    // 1.5s presentation transaction deadline.  The chat card only needs a
+    // bounded indicator, so count a small indexed prefix per root.  The
+    // trajectory page remains the source of the complete workflow ledger.
+    for root in &root_ids {
+        let row = one(
+            db,
+            &format!("SELECT SUM(CASE WHEN kind IN ('tool_call','approval','plan','compaction','queue','subagent_run') THEN 1 ELSE 0 END),SUM(CASE WHEN kind IN ('tool_call','approval','plan','compaction','queue','subagent_run') AND status IN ('failed','rejected') THEN 1 ELSE 0 END),SUM(CASE WHEN kind='assistant_message' AND {reasoning} IS NOT NULL AND {reasoning}<>'' THEN 1 ELSE 0 END) FROM (SELECT status,kind,payload FROM thread_items WHERE user_id=? AND session_id=? AND root_turn_id=? AND visibility='user' LIMIT 512) bounded"),
+            &[json!(user), json!(session), json!(root)],
+        )?;
+        if let Some(row) = row {
+            counts.insert(root.clone(), (int(&row[0]), int(&row[1]), int(&row[2])));
+        }
+    }
+
+    let content = db.json_text("payload", "content");
     let item_bytes = db.text_bytes(&content);
+    let stats = format!(
+        "COALESCE({}, {})",
+        db.json_text("payload", "message_stats"),
+        db.json_text(&db.json_text("payload", "meta"), "message_stats")
+    );
     // Resolve the latest user and stable assistant rows with index seeks. A
     // window over every item in a selected root can spill to disk for a giant
     // turn, even when the response only contains a dozen chat rows.
@@ -93,7 +107,7 @@ fn source_chat_rows(
                 ""
             };
             let sql = format!(
-                "SELECT root_turn_id,item_id,revision,created_seq,kind,substr(COALESCE({content},''),1,2048),{item_bytes},substr({reasoning},1,2048) FROM thread_items WHERE user_id=? AND session_id=? AND root_turn_id=? AND visibility='user' AND kind=?{answer_filter} ORDER BY item_index DESC,created_seq DESC LIMIT 1"
+                "SELECT root_turn_id,item_id,revision,created_seq,kind,substr(COALESCE({content},''),1,2048),{item_bytes},substr({reasoning},1,2048),substr({stats},1,4096) FROM thread_items WHERE user_id=? AND session_id=? AND root_turn_id=? AND visibility='user' AND kind=?{answer_filter} ORDER BY item_index DESC,created_seq DESC LIMIT 1"
             );
             if let Some(row) = one(
                 db,
@@ -160,6 +174,25 @@ fn source_chat_rows(
         });
         if is_assistant {
             message.reasoning = text(&row[7]).to_owned();
+            message.reasoning_offset = message.reasoning.encode_utf16().count();
+            if let Ok(stats) = serde_json::from_str::<Value>(text(&row[8])) {
+                message.stats = projection::finite_stats(&json!({"message_stats": stats}));
+            }
+            if message.reasoning.is_empty() {
+                let reasoning_value = format!(
+                    "COALESCE({}, {})",
+                    db.json_text(&db.json_text("b.payload", "data"), "reasoning"),
+                    db.json_text("b.payload", "reasoning")
+                );
+                if let Some(reasoning) = one(
+                    db,
+                    &format!("SELECT substr({reasoning_value},1,2048) FROM thread_item_blocks b WHERE b.user_id=? AND b.session_id=? AND b.item_id=? AND b.field='reasoning' ORDER BY b.block_index LIMIT 1"),
+                    &[json!(user), json!(session), json!(row[1].clone())],
+                )? {
+                    message.reasoning = text(&reasoning[0]).to_owned();
+                    message.reasoning_offset = message.reasoning.encode_utf16().count();
+                }
+            }
         }
         let entry = messages.entry(root).or_default();
         if is_assistant {
@@ -184,7 +217,7 @@ fn source_chat_rows(
             row.status = text(&latest[2]).into();
             row.updated_time = float(&latest[3]);
         }
-        (row.workflow_count, row.failed_count) = counts.get(id).copied().unwrap_or_default();
+        (row.workflow_count, row.failed_count, row.reasoning_count) = counts.get(id).copied().unwrap_or_default();
         row.revision = page.view_seq;
         if let Some((user, assistant)) = messages.remove(id) {
             row.user = user.unwrap_or_default();
@@ -256,32 +289,95 @@ pub(super) fn page(
         {
             let roots = db.query("SELECT turn_id,user_turn_index FROM thread_turns WHERE user_id=? AND session_id=? AND trigger_kind='user' AND user_turn_index<? ORDER BY user_turn_index DESC LIMIT ?", &[json!(user), json!(session), json!(cursor), json!((cap + 1) as i64)])?;
             page.has_more = roots.len() > cap;
-            page.trajectory = roots
-                .into_iter()
-                .take(cap)
-                .map(|root| {
-                    let round = int(&root[1]);
-                    let marker_id = format!("source-round-{round}");
-                    let mut item = projection::trajectory(
-                        &json!({"content":"轮次概览","model_round":0}),
-                        &marker_id,
-                        text(&root[0]),
-                        text(&root[0]),
-                        round,
-                        0,
-                        round,
-                        page.view_seq,
-                        "source_overview",
-                        "completed",
-                        0.0,
-                        0.0,
+            let selected = roots.into_iter().take(cap).collect::<Vec<_>>();
+            page.next_before = selected.first().map(|root| int(&root[1]));
+            if !selected.is_empty() {
+                // A source-backed overview must still expose the shape of a
+                // turn.  Picking only the newest row made every large-thread
+                // overview look like an assistant-only transcript because
+                // the newest item is normally the final assistant message.
+                // Keep at most three bounded representatives per user turn:
+                // input, first workflow/tool event, and final assistant.
+                let root_ids = selected
+                    .iter()
+                    .map(|root| text(&root[0]).to_owned())
+                    .collect::<Vec<_>>();
+                let root_placeholders = placeholders(root_ids.len());
+                let row_content = db.json_text("i.payload", "content");
+                let row_reasoning = format!(
+                    "COALESCE(NULLIF({},''),{})",
+                    db.json_text("i.payload", "reasoning"),
+                    db.json_text("i.payload", "reasoning_content")
+                );
+                let row_tool = db.json_text("i.payload", "tool");
+                let row_model = db.json_text("i.payload", "model_round");
+                let seek_visibility = "x.visibility='user' OR (x.visibility='model_internal' AND x.kind='system_message')";
+                let representative_types = if root_turn_id.is_some() {
+                    vec![
+                        ("system_message", "ASC"),
+                        ("user_message", "ASC"),
+                        ("tool_call", "ASC"),
+                        ("tool_message", "ASC"),
+                        ("assistant_message", "DESC"),
+                    ]
+                } else {
+                    // A summary page stays small even when a single user turn
+                    // contains thousands of tool and model rows.
+                    vec![
+                        ("system_message", "ASC"),
+                        ("user_message", "ASC"),
+                        ("tool_call", "ASC"),
+                        ("assistant_message", "DESC"),
+                    ]
+                };
+                // Use one indexed keyset query per representative kind. The
+                // correlated subquery resolves the item id from
+                // (user,session,root,created_seq) before the payload is read;
+                // unlike a window over the whole set it never parses every
+                // legacy workflow payload in the selected turns.
+                for (kind, order) in representative_types {
+                    let sql = format!(
+                        "SELECT i.item_id,i.turn_id,i.root_turn_id,i.item_index,i.created_seq,i.revision,i.kind,i.status,i.created_time,i.updated_time,t.user_turn_index,substr(COALESCE(NULLIF({row_content},''),NULLIF({row_reasoning},''),''),1,256),substr(COALESCE({row_content},''),1,256),substr({row_reasoning},1,256),substr(COALESCE({row_tool},''),1,96),COALESCE({row_model},'0') FROM thread_turns t JOIN thread_items i ON i.session_id=t.session_id AND i.item_id=(SELECT x.item_id FROM thread_items x WHERE x.user_id=t.user_id AND x.session_id=t.session_id AND x.root_turn_id=t.turn_id AND x.kind=? AND ({seek_visibility}) ORDER BY x.created_seq {order} LIMIT 1) WHERE t.user_id=? AND t.session_id=? AND t.turn_id IN ({root_placeholders})"
                     );
-                    item.detail = None;
-                    item
-                })
-                .collect::<Vec<_>>();
-            page.next_before = page.trajectory.first().map(|row| row.user_round);
-            page.trajectory.reverse();
+                    let mut params = vec![json!(kind), json!(user), json!(session)];
+                    params.extend(root_ids.iter().cloned().map(Value::String));
+                    for row in db.query(&sql, &params)? {
+                        let detail = json!({
+                            "content": text(&row[12]),
+                            "reasoning": text(&row[13]),
+                            "tool": text(&row[14]),
+                            "model_round": text(&row[15]).parse::<i64>().unwrap_or(0)
+                        });
+                        let item_id = text(&row[0]);
+                        let mut projected = projection::trajectory(
+                            &detail,
+                            item_id,
+                            text(&row[1]),
+                            text(&row[2]),
+                            int(&row[10]),
+                            int(&row[3]),
+                            int(&row[4]),
+                            int(&row[5]),
+                            text(&row[6]),
+                            text(&row[7]),
+                            float(&row[8]),
+                            float(&row[9]),
+                        );
+                        projected.detail = Some(BodyRef {
+                            body_id: projection::body_id(item_id, "source_detail"),
+                            revision: int(&row[5]),
+                            bytes: 0,
+                        });
+                        page.trajectory.push(projected);
+                    }
+                }
+            }
+            page.trajectory.sort_by(|left, right| {
+                left.user_round
+                    .cmp(&right.user_round)
+                    .then_with(|| left.item_index.cmp(&right.item_index))
+                    .then_with(|| left.created_seq.cmp(&right.created_seq))
+            });
             return Ok(page);
         }
         let root_filter = if root_turn_id.is_some() {
@@ -294,20 +390,24 @@ pub(super) fn page(
             params.push(json!(root));
         }
         params.extend([json!(cursor), json!((cap + 1) as i64)]);
-        let content = db.json_text("i.payload", "content");
-        let reasoning = db.json_text("i.payload", "reasoning_content");
         let tool = db.json_text("i.payload", "tool");
         let model = db.json_text("i.payload", "model_round");
         let payload_bytes = db.text_bytes("i.payload");
+        let source_content = db.json_text("i.payload", "content");
+        let source_reasoning = format!(
+            "COALESCE(NULLIF({},''),{})",
+            db.json_text("i.payload", "reasoning"),
+            db.json_text("i.payload", "reasoning_content")
+        );
         let rows = {
             let sql = format!(
-                "SELECT i.item_id,i.turn_id,i.root_turn_id,i.item_index,i.created_seq,i.revision,i.kind,i.status,i.created_time,i.updated_time,t.user_turn_index,substr(COALESCE(NULLIF({content},''),{reasoning},''),1,256),substr(COALESCE({tool},''),1,96),COALESCE({model},'0'),{payload_bytes} FROM thread_items i JOIN thread_turns t ON t.user_id=i.user_id AND t.session_id=i.session_id AND t.turn_id=i.turn_id WHERE i.user_id=? AND i.session_id=?{root_filter} AND i.created_seq<? AND i.visibility='user' ORDER BY i.created_seq DESC LIMIT ?"
+                "SELECT i.item_id,i.turn_id,i.root_turn_id,i.item_index,i.created_seq,i.revision,i.kind,i.status,i.created_time,i.updated_time,t.user_turn_index,substr(COALESCE({source_content},''),1,256),substr({source_reasoning},1,256),substr(COALESCE({tool},''),1,96),COALESCE({model},'0'),{payload_bytes} FROM thread_items i JOIN thread_turns t ON t.user_id=i.user_id AND t.session_id=i.session_id AND t.turn_id=i.turn_id WHERE i.user_id=? AND i.session_id=?{root_filter} AND i.created_seq<? AND (i.visibility='user' OR (i.visibility='model_internal' AND i.kind='system_message')) ORDER BY i.created_seq DESC LIMIT ?"
             );
             db.query(&sql, &params)?
         };
         page.has_more = rows.len() > cap;
         for row in rows.into_iter().take(cap) {
-            let payload = json!({"content":text(&row[11]),"tool":text(&row[12]),"model_round":row[13].as_i64().unwrap_or_else(||text(&row[13]).parse::<i64>().unwrap_or(0))});
+            let payload = json!({"content":text(&row[11]),"reasoning":text(&row[12]),"tool":text(&row[13]),"model_round":row[14].as_i64().unwrap_or_else(||text(&row[14]).parse::<i64>().unwrap_or(0))});
             let mut projected = projection::trajectory(
                 &payload,
                 text(&row[0]),
@@ -325,7 +425,7 @@ pub(super) fn page(
             projected.detail = Some(BodyRef {
                 body_id: projection::body_id(text(&row[0]), "source_detail"),
                 revision: int(&row[5]),
-                bytes: int(&row[14]).max(0) as usize,
+                bytes: int(&row[15]).max(0) as usize,
             });
             let size = serde_json::to_vec(&projected)?.len() + 1;
             if bytes + size > budget {
@@ -420,7 +520,7 @@ pub(super) fn body(
         _ => anyhow::bail!("invalid source body field"),
     };
     let sql = format!(
-        "SELECT substr({expression},CAST(CAST(? AS BIGINT) AS INTEGER),2049) FROM thread_items WHERE user_id=? AND session_id=? AND item_id=? AND revision=? AND visibility='user' LIMIT 1"
+        "SELECT substr({expression},CAST(CAST(? AS BIGINT) AS INTEGER),2049) FROM thread_items WHERE user_id=? AND session_id=? AND item_id=? AND revision=? AND (visibility='user' OR (visibility='model_internal' AND kind='system_message')) LIMIT 1"
     );
     let row = one(
         db,

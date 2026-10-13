@@ -241,6 +241,25 @@ mod tests {
             )
             .unwrap();
         let root = turn["turn_id"].as_str().unwrap();
+        storage.append_thread_item("fixture-user", &json!({
+            "session_id":"fixture-large",
+            "turn_id":root,
+            "item_id":format!("{root}:system"),
+            "kind":"system_message",
+            "visibility":"model_internal",
+            "content":"fixture context",
+            "status":"completed"
+        })).unwrap();
+        storage.append_thread_item("fixture-user", &json!({
+            "session_id":"fixture-large",
+            "turn_id":root,
+            "item_id":format!("{root}:tool"),
+            "kind":"tool_call",
+            "tool":"fixture_tool",
+            "visibility":"user",
+            "content":"fixture tool call",
+            "status":"completed"
+        })).unwrap();
         storage.append_thread_item("fixture-user", &json!({"session_id":"fixture-large","turn_id":root,"item_id":format!("{root}:text-1"),"kind":"assistant_message","content":"fixture answer","status":"completed"})).unwrap();
         let page = storage
             .thread_view_page("fixture-user", "fixture-large", "chat", None, 12)
@@ -250,13 +269,28 @@ mod tests {
         let overview = storage
             .thread_view_trajectory_page("fixture-user", "fixture-large", None, None, 12)
             .unwrap();
-        assert_eq!(overview.trajectory.len(), 1);
+        assert_eq!(overview.trajectory.len(), 4);
         assert_eq!(overview.trajectory[0].root_turn_id, root);
-        assert!(overview.trajectory[0].detail.is_none());
+        assert!(overview.trajectory[0].detail.is_some());
+        assert!(overview.trajectory.iter().any(|row| row.kind == "system_message"));
+        assert!(overview.trajectory.iter().any(|row| row.kind == "user_message"));
+        assert!(overview.trajectory.iter().any(|row| row.kind == "tool_call"));
+        assert!(overview.trajectory.iter().any(|row| row.kind == "assistant_message"));
         let detail = storage
             .thread_view_trajectory_page("fixture-user", "fixture-large", None, Some(root), 12)
             .unwrap();
-        assert_eq!(detail.trajectory.len(), 2);
+        assert_eq!(detail.trajectory.len(), 4);
+        let context = detail
+            .trajectory
+            .iter()
+            .find(|row| row.kind == "system_message")
+            .unwrap();
+        let body = context.detail.as_ref().unwrap();
+        let body_page = storage
+            .thread_body_page("fixture-user", "fixture-large", &body.body_id, body.revision, 0)
+            .unwrap();
+        let payload: serde_json::Value = serde_json::from_str(&body_page.chunks.concat()).unwrap();
+        assert_eq!(payload["content"], "fixture context");
         assert!(
             detail.trajectory[0]
                 .detail

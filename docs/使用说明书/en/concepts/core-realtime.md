@@ -105,13 +105,12 @@ The realtime surface between local devices (Honeycomb, Helm) and the cloud is in
 - **Command ledger and approvals**: commands, confirmations, events, and results are all recorded. Risk is tiered L0–L3; `tool.exec` and `agent.spawn` are L3, the default device capability set excludes L3, and L3 approvals cannot be remembered.
 - Interlink governance currently exposes only backend interfaces; **the Bridge has no interlink panel**.
 
-Details and protocol are in [Interlink](/docs/en/integration/interlink/).
+Details and protocol are in [Interlink](/docs/en/reference/interlink/).
 
 ## Further reading
 
 - [Streaming Execution](/docs/en/concepts/streaming/) — token increments and coalescing cadence
 - [Stability](/docs/en/concepts/core-stability/) — timeouts, circuit breaking, and resource governance
 - [Stream Events](/docs/en/reference/stream-events/) — detailed meanings of states and events
-- [Chat WebSocket](/docs/en/integration/chat-ws/) — handshake and message format
-- [Chat Sessions](/docs/en/integration/chat-sessions/) — catch-up and session endpoints
-- [Interlink](/docs/en/integration/interlink/) — tunnels, shadows, commands, and approvals
+- [Chat WebSocket](/docs/en/reference/chat-ws/) — handshake and message format
+- [Interlink](/docs/en/reference/interlink/) — tunnels, shadows, commands, and approvals

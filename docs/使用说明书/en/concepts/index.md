@@ -1,12 +1,10 @@
 ---
 title: Core Concepts
-summary: Why wunder behaves the way it does—10 core design constraints, along with the layers they form, the entries into them, and the reading paths.
+summary: Why wunder behaves the way it does—9 core design constraints, along with the layers they form, the entries into them, and the reading paths.
 updated_at: 2026-10-13
 ---
 
-wunder is an agent-scheduling platform: hand it a goal and it breaks the task down, calls tools, and delivers results. The 10 core concepts here explain **why the system behaves the way it does**, not a list of what it can do. For the feature list, see [Tools](/docs/en/tools/) and the [API Index](/docs/en/reference/api-index/).
-
-![The ten core layers of wunder: the execution engine, access and governance, and delivery assurance](/docs/assets/manual/core-overview-map.svg)
+wunder is an agent-scheduling platform: hand it a goal and it breaks the task down, calls tools, and delivers results. These 9 cores explain **why the system behaves the way it does**, not a list of what it can do. For the feature list, see [Tools](/docs/en/tools/) and the [API Index](/docs/en/reference/api-index/).
 
 ## Four design principles
 
@@ -28,28 +26,27 @@ wunder is an agent-scheduling platform: hand it a goal and it breaks the task do
 
 The Honeycomb and the Helm do not depend on the Hull and can run and ship on their own. The Electron / Tauri front-end shells are no longer maintained day to day and are no longer described as a capability.
 
-## The 10 core concepts
+## The 9 cores
 
 <div class="docs-card-grid docs-card-grid-compact">
-  <a class="docs-card" href="/docs/en/concepts/core-agent-loop/"><strong>Agent Loop</strong><span>How a thread advances round by round to a terminal state, and what brakes exist.</span></a>
-  <a class="docs-card" href="/docs/en/concepts/core-tools/"><strong>Tools</strong><span>The agent does more than talk: tools are the unified interface to execution.</span></a>
-  <a class="docs-card" href="/docs/en/concepts/core-context-compression/"><strong>Context Compression</strong><span>Why a long conversation does not break off when it exceeds the limit.</span></a>
-  <a class="docs-card" href="/docs/en/concepts/core-memory/"><strong>Memory</strong><span>How long-term material is injected once and safely joins execution.</span></a>
-  <a class="docs-card" href="/docs/en/concepts/core-channels/"><strong>Channels</strong><span>How third-party platform entries share one thread runtime.</span></a>
-  <a class="docs-card" href="/docs/en/concepts/core-scheduled-tasks/"><strong>Scheduled Tasks</strong><span>How due messages queue without fighting human messages for the lock.</span></a>
-  <a class="docs-card" href="/docs/en/concepts/core-multi-user-management/"><strong>Multi-user Management</strong><span>Organizations, permissions, quotas, and the governance surface.</span></a>
-  <a class="docs-card" href="/docs/en/concepts/core-realtime/"><strong>Realtime</strong><span>The process is visible, a disconnect can resume, and what you see is what was stored.</span></a>
-  <a class="docs-card" href="/docs/en/concepts/core-stability/"><strong>Stability</strong><span>Errors do not spread, the system can heal itself, and retries are bounded.</span></a>
-  <a class="docs-card" href="/docs/en/concepts/core-observability/"><strong>Observability</strong><span>Thread trajectories and ledgers can explain what happened.</span></a>
+  <a class="docs-card" href="/docs/en/concepts/core-goal/"><strong>Goal</strong><span>Lets an agent enter goal mode and keep working on one task.</span></a>
+  <a class="docs-card" href="/docs/en/concepts/core-compatibility/"><strong>Compatibility</strong><span>Lets the Honeycomb and the Helm run in older operating-system environments under explicit constraints.</span></a>
+  <a class="docs-card" href="/docs/en/concepts/core-context-compression/"><strong>Context compression</strong><span>Keeps context size under control in long conversations while retaining useful information.</span></a>
+  <a class="docs-card" href="/docs/en/concepts/core-subagent/"><strong>Subagents</strong><span>Forks a subtask inside a single thread; an independent executor completes it and returns the result.</span></a>
+  <a class="docs-card" href="/docs/en/concepts/core-scheduled-tasks/"><strong>Scheduled tasks</strong><span>Supports system-level periodic execution and background governance.</span></a>
+  <a class="docs-card" href="/docs/en/concepts/core-channels/"><strong>Channels</strong><span>Connects multiple entries to the same runtime capability.</span></a>
+  <a class="docs-card" href="/docs/en/concepts/core-memory/"><strong>Memory</strong><span>Supports long conversations and long-term material use without polluting the thread's core cognition.</span></a>
+  <a class="docs-card" href="/docs/en/concepts/core-multithreading/"><strong>Multi-threading</strong><span>Raises throughput and resource use through concurrency control inside a single process.</span></a>
+  <a class="docs-card" href="/docs/en/concepts/core-multi-user-management/"><strong>Multi-tenancy</strong><span>Supports the Hull's organization, user, tenant, and permission governance.</span></a>
 </div>
 
 The layers, from the inside out:
 
 | Layer | Cores | What they solve |
 | --- | --- | --- |
-| Execution engine | loop, tools, context compression, memory | A thread can keep running, invoke capabilities, control its length, and use long-term material |
-| Access and governance | channels, scheduled tasks, multi-user management | Different entries and background jobs share one set of rules |
-| Delivery assurance | realtime, stability, observability | The process is visible, the pressure is bearable, and problems can be traced back |
+| Execution engine | context compression, memory, subagents, multi-threading | How one thread runs to completion: it can control its length, use long-term material, fork subtasks, and advance concurrently with other threads |
+| Access and governance | channels, scheduled tasks, multi-tenancy, goal | Who wakes a thread and when, plus the governance surface of organizations, users, and permissions |
+| Platform foundation | compatibility | Which operating systems this engine and its access layer can run on |
 
 ## Going deeper by topic
 
@@ -69,12 +66,17 @@ One layer down, by topic (all under [Reference › In Depth](/docs/en/reference/
 | Persistent goal mode | [Goal Mode](/docs/en/concepts/goal-mode/) |
 | Animated companions | [Companion System](/docs/en/concepts/companion/) |
 | Anomaly and truncation behavior | [Boundary Handling](/docs/en/concepts/boundary-handling/) |
+| How a thread advances round by round | [Agent Loop](/docs/en/concepts/core-agent-loop/) |
+| The four layers of capabilities | [Tools](/docs/en/concepts/core-tools/) |
+| The process is visible and a disconnect can resume | [Realtime](/docs/en/concepts/core-realtime/) |
+| Bounded views, budgets, and circuit breaking | [Stability](/docs/en/concepts/core-stability/) |
+| Logs, metrics, and thread trajectories | [Observability](/docs/en/concepts/core-observability/) |
 
 ## Recommended reading by role
 
 - **First time on the Honeycomb**: [Quickstart](/docs/en/start/quickstart/) → Agent Loop → Tools → Memory → Context Compression.
 - **Administrator / governance**: Multi-user Management → Stability → Observability → Channels → [Configuration Reference](/docs/en/reference/config/).
-- **Integration and development**: [Architecture](/docs/en/concepts/architecture/) → [Hull API](/docs/en/integration/wunder-api/) → [Chat WebSocket](/docs/en/integration/chat-ws/) → Streaming Execution.
+- **Integration and development**: [Architecture](/docs/en/concepts/architecture/) → [Chat WebSocket](/docs/en/reference/chat-ws/) → Streaming Execution.
 
 ## Common misconceptions
 

@@ -319,6 +319,14 @@ export const syncPresetAgents = async ({ presetId, mode = "safe", dryRun = true,
 
 // 9) 用户列表（管理侧）绑定字段：缺失时返回空值，由界面显示「-」并标注契约未就绪
 export const normalizeUserBindingFields = (item) => {
+  // 管理侧用户列表即使没有绑定也会返回完整契约：
+  // `preset_id`/`agent_id` 为 null，`customized_fields` 为空数组。
+  // 不能用字段值是否为空判断契约是否就绪，否则合法的未绑定用户会让
+  // 整个线程管理页误报后端契约缺失。
+  const contractReady =
+    hasOwn(item, "preset_id") &&
+    hasOwn(item, "agent_id") &&
+    hasOwn(item, "customized_fields");
   const customized = Array.isArray(item?.customized_fields)
     ? item.customized_fields
     : Array.isArray(item?.customized)
@@ -330,6 +338,6 @@ export const normalizeUserBindingFields = (item) => {
     preset_id: presetId,
     agent_id: agentId,
     customized_fields: customized.map((value) => String(value || "").trim()).filter(Boolean),
-    available: Boolean(presetId || agentId || customized.length),
+    available: contractReady,
   };
 };

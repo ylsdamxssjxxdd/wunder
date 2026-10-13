@@ -88,7 +88,7 @@ updated_at: 2026-10-13
 ## 延伸阅读
 
 - [会话状态说明](/docs/zh-CN/reference/stream-events/) —— 事件与字段清单
-- [聊天 WebSocket](/docs/zh-CN/integration/chat-ws/) —— 协议与信封
+- [聊天 WebSocket](/docs/zh-CN/reference/chat-ws/) —— 协议与信封
 - [会话与轮次](/docs/zh-CN/concepts/sessions-and-rounds/) —— 条目与轮次粒度
 - [实时性](/docs/zh-CN/concepts/core-realtime/) —— 设计原则
 - [系统架构](/docs/zh-CN/concepts/architecture/) —— 视图与真相的分层

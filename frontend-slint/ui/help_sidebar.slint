@@ -58,15 +58,27 @@ export component HelpSidebar inherits Rectangle {
         accessible-label: "搜索帮助主题";
         edited(text) => { HelpDocs.search-changed(text); }
     }
+    // 目录页分组标题：只在该组第一个条目上方显示一次，其余条目返回空。
+    pure function group-label(i: int) -> string {
+        if i == 0 {
+            return HelpDocs.contents[i].group;
+        }
+        if HelpDocs.contents[i - 1].group != HelpDocs.contents[i].group {
+            return HelpDocs.contents[i].group;
+        }
+        return "";
+    }
     list := ListView {
         x: 4px;
         y: root.active-tab == 1 ? 33px : 67px;
         width: parent.width - 8px;
         height: parent.height - self.y - 4px;
         content-width: self.visible-width;
-        for entry in root.active-tab == 0 ? HelpDocs.contents : root.active-tab == 1 ? HelpDocs.keyword-index : HelpDocs.search-results : Rectangle {
+        for entry[i] in root.active-tab == 0 ? HelpDocs.contents : root.active-tab == 1 ? HelpDocs.keyword-index : HelpDocs.search-results : Rectangle {
+            property <bool> grouped: root.active-tab == 0 && root.group-label(i) != "";
+            property <length> row-y: grouped ? 24px : 0px;
             width: list.visible-width;
-            height: root.active-tab == 0 ? 32px : 54px;
+            height: (root.active-tab == 0 ? 32px : 54px) + row-y;
             background: entry.topic == root.selected-topic ? #2c76b8 : touch.has-hover || focus.has-focus ? #eaf4ff : transparent;
             border-width: 1px;
             border-color: touch.has-hover || focus.has-focus ? #b8d6ef : transparent;
@@ -74,17 +86,36 @@ export component HelpSidebar inherits Rectangle {
             accessible-role: AccessibleRole.button;
             accessible-label: entry.title;
             accessible-action-default => { HelpDocs.topic-opened(entry.topic); }
+            if grouped : Rectangle {
+                x: 0px;
+                y: 0px;
+                width: parent.width;
+                height: 24px;
+                background: #f4f6f8;
+                Text {
+                    x: 7px;
+                    width: parent.width - 14px;
+                    height: parent.height;
+                    text: root.group-label(i);
+                    color: #444444;
+                    font-weight: 700;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+            }
             if root.active-tab == 0 : Text {
                 x: 7px;
+                y: parent.row-y;
                 width: 14px;
-                height: parent.height;
+                height: parent.height - parent.row-y;
                 text: ">";
                 color: entry.topic == root.selected-topic ? #e7f3ff : #707070;
                 vertical-alignment: center;
             }
             Text {
                 x: root.active-tab == 0 ? 21px : 7px;
-                y: 5px;
+                y: 5px + parent.row-y;
                 width: parent.width - self.x - 7px;
                 height: 21px;
                 text: entry.title;
@@ -95,7 +126,7 @@ export component HelpSidebar inherits Rectangle {
             }
             if root.active-tab != 0 : Text {
                 x: 7px;
-                y: 28px;
+                y: 28px + parent.row-y;
                 width: parent.width - 14px;
                 height: 18px;
                 text: entry.detail;

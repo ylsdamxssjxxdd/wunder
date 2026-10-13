@@ -87,5 +87,4 @@ The Honeycomb covers the vast majority of scenarios. Three optional forms:
 - Download and install details → [Honeycomb intro](/docs/en/start/desktop/)
 - Interface map → [Surfaces overview](/docs/en/surfaces/index/)
 - Core concepts → [Core overview](/docs/en/concepts/)
-- Integrating with existing systems → [Integration overview](/docs/en/integration/)
 - All tools → [Tools overview](/docs/en/tools/)

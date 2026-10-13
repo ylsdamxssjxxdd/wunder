@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Subagents | 使用说明书</title>
+  <meta name="description" content="The Subagents core forks a subtask inside a single thread for an independent executor to complete and return to the parent; the only collaborative form is the subagent, and swarm orchestration has been removed from the engine and the protocol layer.">
+  <link rel="stylesheet" href="/docs/site.css?v=c9863d5d7815">
+  <script type="module" src="/docs/site.js?v=c9863d5d7815"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/concepts/core-subagent","language":"en","title":"Subagents","summary":"The Subagents core forks a subtask inside a single thread for an independent executor to complete and return to the parent; the only collaborative form is the subagent, and swarm orchestration has been removed from the engine and the protocol layer.","updated_at":"2026-10-13","read_when":[],"source_docs":[],"tab":"Core","group":"The 9 Cores","group_path":["The 9 Cores"],"url":"/docs/en/concepts/core-subagent/","headings":[{"id":"section-1","level":1,"text":"Subagents"},{"id":"section-2","level":2,"text":"How it works"},{"id":"section-3","level":2,"text":"Boundaries and current limits"}],"prev_slug":"en/concepts/core-context-compression","next_slug":"en/concepts/core-scheduled-tasks","markdown":"# Subagents\n\nThe Subagents core forks a subtask inside a single thread: the parent thread hands one subtask to an independent executor, which runs it and passes the result back to the parent thread.\n\n## How it works\n\n`子智能体控制` (Subagent Control) provides 11 actions:\n\n| Action | Action | Action |\n| --- | --- | --- |\n| `spawn` | `batch_spawn` | `wait` |\n| `interrupt` | `close` | `resume` |\n| `report` | `send` | `status` |\n| `list` | `history` | |\n\nParent–child round references are encoded as `user_round` + `model_round`, and an executor's rounds hang under that pair of parent round references. The sub-session's user message is hidden, and it wakes with auto-wake.\n\n## Boundaries and current limits\n\n- The only collaborative form is the **subagent**. Swarm orchestration (swarm tools, hives, orchestration mode, team runs, swarm packs) has been removed from the engine and the protocol layer; it is not waiting to be implemented, nor hidden behind a switch.\n- Swarm leftovers remain in TUI prompts, front-end i18n labels, and compatibility shims, and empty directories await cleanup. Those leftovers do not mean the capability exists.\n","source_path":"使用说明书/en/concepts/core-subagent.md"}</script>
+</body>
+</html>

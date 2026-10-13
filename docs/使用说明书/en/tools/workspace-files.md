@@ -37,7 +37,7 @@ When you know the path, read that range: give a start and end line, reading one 
 - If the file uses CRLF line endings, it retries the match using the target file's line-ending style.
 - If the replacement has already been made uniquely, it reports that it was already applied.
 
-It suits an edit where you already have the exact original text, it is a single replacement, and you do not need regular expressions or multi-step logic. For complex replacements, regular-expression replacements, edits spanning several stretches, or edits with conditional logic, write a script with [Execute Command](/docs/en/tools/exec/); to generate or overwrite a whole file, use `write_file`; and for a small code patch reviewed with its surrounding context, use [Apply Patch](/docs/en/tools/apply-patch/).
+It suits an edit where you already have the exact original text, it is a single replacement, and you do not need regular expressions or multi-step logic. For complex replacements, regular-expression replacements, edits spanning several stretches, or edits with conditional logic, write a script with [Execute Command](/docs/en/tools/exec/); to generate or overwrite a whole file, use `write_file`; and for a small code patch reviewed with its surrounding context, use the patch form of `文本编辑`.
 
 ## Writing a file
 

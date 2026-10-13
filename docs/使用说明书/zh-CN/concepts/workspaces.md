@@ -77,4 +77,3 @@ summary: 每个用户有且只有一个工作区，工具以它为根；蜂窝�
 
 - [工作区管理参考](/docs/zh-CN/reference/workspace-routing/) —— 文件管理技巧
 - [文件工具说明](/docs/zh-CN/tools/workspace-files/) —— 智能体如何读写文件
-- [数据管理](/docs/zh-CN/ops/data-and-storage/) —— 存储策略

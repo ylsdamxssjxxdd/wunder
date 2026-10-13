@@ -31,6 +31,8 @@ One engine, four shells:
 
 The Honeycomb and the Helm don't depend on the Hull and can be installed and run on their own. The **Bridge** is the management interface that ships with the Hull, starts alongside it, and is aimed at administrators.
 
+See the [form matrix](/docs/en/start/forms/) for the full comparison of tech stack, run model and OS support.
+
 ## Start with the Honeycomb
 
 Individual users go with the Honeycomb by default: download and install, and it opens as a local AI workbench.
@@ -77,7 +79,6 @@ The Honeycomb covers most scenarios; add more as needed:
 - **Download and install** → [Honeycomb quick start](/docs/en/start/desktop/)
 - **Interface map** → [Interface Overview](/docs/en/surfaces/index/)
 - **Understand the system in depth** → [Core Concepts](/docs/en/concepts/)
-- **Integrate with existing systems** → [Integration Overview](/docs/en/integration/)
 - **Documentation hub** → [Documentation Hub](/docs/en/start/hubs/)
 - **Doc ecosystem navigation** → [Common Docs Directory](/docs/en/start/docs-directory/)
 - **First launch fails or something goes wrong** → [Troubleshooting](/docs/en/help/troubleshooting/) or [FAQ](/docs/en/help/faq/)

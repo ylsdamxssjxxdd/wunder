@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Compatibility | 使用说明书</title>
+  <meta name="description" content="The Compatibility core lets the Honeycomb (desktop) and the Helm (cli) run in older operating-system environments under explicit constraints: Windows 7 32-bit and Ubuntu 18.04 each have an offline build chain, and the interface uses software rendering that does not depend on a GPU.">
+  <link rel="stylesheet" href="/docs/site.css?v=c9863d5d7815">
+  <script type="module" src="/docs/site.js?v=c9863d5d7815"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/concepts/core-compatibility","language":"en","title":"Compatibility","summary":"The Compatibility core lets the Honeycomb (desktop) and the Helm (cli) run in older operating-system environments under explicit constraints: Windows 7 32-bit and Ubuntu 18.04 each have an offline build chain, and the interface uses software rendering that does not depend on a GPU.","updated_at":"2026-10-13","read_when":[],"source_docs":[],"tab":"Core","group":"The 9 Cores","group_path":["The 9 Cores"],"url":"/docs/en/concepts/core-compatibility/","headings":[{"id":"section-1","level":1,"text":"Compatibility"},{"id":"section-2","level":2,"text":"Which older systems are supported"},{"id":"section-3","level":2,"text":"Why it runs"},{"id":"section-4","level":2,"text":"What it means for users"},{"id":"section-5","level":2,"text":"Boundaries and current limits"}],"prev_slug":"en/concepts/core-goal","next_slug":"en/concepts/core-context-compression","markdown":"# Compatibility\n\nThe Compatibility core lets the Honeycomb (desktop) and the Helm (cli) run in older operating-system environments, and states explicitly where that runtime environment is constrained.\n\n## Which older systems are supported\n\n| System | Approach |\n| --- | --- |\n| Windows 7, 32-bit | A dedicated `i686-win7-windows-gnu` Tier 3 target plus a build-std offline toolchain |\n| Ubuntu 18.04 x64 / arm64 | An offline build chain and sysroot |\n\n## Why it runs\n\n- **The interface does not depend on a GPU**: Slint uses software rendering.\n- **Building does not depend on network access**: both the Windows 7 32-bit and the Ubuntu 18.04 chains are offline toolchains, and the Ubuntu side carries a sysroot as well.\n- **Command sessions adapt to old terminals**: command sessions are carried over winpty, and output is decoded as GBK.\n- **Startup recovery scan and self-check**: recovery scanning and self-checking run at startup.\n\n## What it means for users\n\nWindows 7 32-bit and Ubuntu 18.04 (x64 / arm64) are not excluded runtime environments; the Honeycomb and the Helm can be installed on old machines and run there. The interface renders on machines without a GPU. Command sessions are carried and decoded in old Windows terminals.\n\n## Boundaries and current limits\n\n- Build scripts still carry dead Tauri links — pointing at directories that no longer exist. That is an engineering gap and says nothing about capability.\n- win7 interlink nodes do not declare `tool.exec`, so the capability surface of old devices is narrower.\n","source_path":"使用说明书/en/concepts/core-compatibility.md"}</script>
+</body>
+</html>

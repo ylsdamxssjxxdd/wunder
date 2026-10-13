@@ -57,8 +57,6 @@ wunder's documentation falls into seven categories, each answering a different k
 
 - Core concepts → `/docs/en/concepts/`
 - Tools → `/docs/en/tools/`
-- Integration → `/docs/en/integration/`
-- Operations → `/docs/en/ops/`
 - Reference → `/docs/en/reference/`
 - Help → `/docs/en/help/`
 

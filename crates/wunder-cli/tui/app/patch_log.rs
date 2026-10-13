@@ -6,13 +6,17 @@ use textwrap::Options;
 use unicode_width::UnicodeWidthStr;
 
 use super::exploring_group::ExploringGroupEntry;
+use super::plan_panel::PlanLogEntry;
 use crate::command_session_display::{CommandSessionDisplayStatus, CommandSessionView};
 use crate::patch_diff::{
     build_patch_diff_preview, PatchDiffBlock, PatchDiffBlockKind, PatchDiffLine, PatchDiffLineKind,
     PatchDiffPreview,
 };
 use crate::tool_display::summarize_tool_result;
-use crate::tool_presentation::{present, target_argument, ToolAccess, ToolPresentation};
+use crate::tool_presentation::{
+    is_subagent_tool, mcp_invocation_label, present, present_subagent_action, target_argument,
+    ToolAccess, ToolPresentation,
+};
 use crate::tui::activity_indicator;
 use crate::tui::theme;
 
@@ -34,6 +38,7 @@ pub(super) enum SpecialLogEntry {
     Command(CommandLogEntry),
     Tool(GenericToolLogEntry),
     Exploring(ExploringGroupEntry),
+    Plan(PlanLogEntry),
 }
 
 impl SpecialLogEntry {
@@ -44,6 +49,7 @@ impl SpecialLogEntry {
             Self::Command(entry) => entry.summary_text(),
             Self::Tool(entry) => entry.summary_text(),
             Self::Exploring(entry) => entry.summary_text(),
+            Self::Plan(entry) => entry.summary_text(),
         }
     }
 
@@ -64,6 +70,7 @@ impl SpecialLogEntry {
             Self::Command(entry) => entry.render_lines_for_width(width, expanded),
             Self::Tool(entry) => entry.render_lines_for_width(width),
             Self::Exploring(entry) => entry.render_lines_for_width(width, expanded),
+            Self::Plan(entry) => entry.render_lines_for_width(width, expanded),
         }
     }
 
@@ -73,6 +80,7 @@ impl SpecialLogEntry {
             Self::Patch(entry) => entry.is_collapsible(width),
             Self::Command(entry) => entry.is_collapsible(),
             Self::Exploring(entry) => entry.is_collapsible(),
+            Self::Plan(entry) => entry.is_collapsible(),
             _ => false,
         }
     }
@@ -133,7 +141,7 @@ pub(super) struct GenericToolLogEntry {
     summary: Option<String>,
     details: Vec<PatchNote>,
     is_zh: bool,
-    presentation: ToolPresentation,
+    pub(super) presentation: ToolPresentation,
 }
 
 impl GenericToolLogEntry {
@@ -214,7 +222,12 @@ impl GenericToolLogEntry {
             }
             _ => {
                 if names_self {
-                    format!("{verb} {}", self.tool_name)
+                    match mcp_invocation_label(self.tool_name.as_str()) {
+                        Some(label) => format!("{verb} {label}"),
+                        None => format!("{verb} {}", self.tool_name),
+                    }
+                } else if self.status == GenericToolLogStatus::Success {
+                    self.presentation.verb_done(self.is_zh).to_string()
                 } else {
                     verb.to_string()
                 }
@@ -1361,14 +1374,26 @@ pub(super) fn build_pending_tool_log(
         summary: Some(summarize_tool_args(args)),
         details: Vec::new(),
         is_zh,
-        presentation: present(tool_name),
+        presentation: resolve_presentation(tool_name, args),
     })
+}
+
+/// The sub-agent control tool is one tool with many meanings; its action decides
+/// the verb. Every other tool keeps the name-driven classifier.
+fn resolve_presentation(tool_name: &str, args: &Value) -> ToolPresentation {
+    if is_subagent_tool(tool_name) {
+        if let Some(presentation) = present_subagent_action(args) {
+            return presentation;
+        }
+    }
+    present(tool_name)
 }
 
 pub(super) fn build_completed_tool_log(
     tool_name: &str,
     payload: &Value,
     is_zh: bool,
+    inherited: Option<ToolPresentation>,
 ) -> SpecialLogEntry {
     let result = payload.get("result").unwrap_or(payload);
     let data = result.get("data").unwrap_or(result);
@@ -1434,7 +1459,7 @@ pub(super) fn build_completed_tool_log(
         summary,
         details,
         is_zh,
-        presentation: present(tool_name),
+        presentation: inherited.unwrap_or_else(|| present(tool_name)),
     })
 }
 
@@ -2512,6 +2537,7 @@ mod tests {
                 }
             }),
             false,
+            None,
         );
         let SpecialLogEntry::Tool(entry) = entry else {
             panic!("expected tool log");
@@ -2902,6 +2928,7 @@ mod tests {
                 }
             }),
             false,
+            None,
         );
         let SpecialLogEntry::Tool(entry) = entry else {
             panic!("expected tool log");
@@ -2942,6 +2969,7 @@ mod tests {
             "read_file",
             &serde_json::json!({ "content": "fn main() {}\n".repeat(60) }),
             false,
+            None,
         );
 
         for width in [40u16, 80, 120] {

@@ -67,22 +67,42 @@ export function resolveVisibleTaskRows<T>(
 // computation instead of rebuilding it. A mutated/replaced array identity (or a
 // different agent/label) naturally misses and recomputes; the memo never changes
 // the returned value, only whether it was recomputed.
-const taskListMemoCache = new WeakMap<Record<string, any>[], Map<string, TaskListItem[]>>();
+type TaskListMemoEntry = { signature: string; items: TaskListItem[] };
+const taskListMemoCache = new WeakMap<Record<string, any>[], Map<string, TaskListMemoEntry>>();
+
+const taskListInputSignature = (sessions: Record<string, any>[]): string => sessions
+  .map((item) => [
+    String(item?.id || ''),
+    String(item?.agent_id || ''),
+    String(item?.title || ''),
+    String(item?.created_at ?? item?.createdAt ?? ''),
+    String(item?.updated_at ?? item?.updatedAt ?? item?.last_message_at ?? item?.lastMessageAt ?? ''),
+    String(item?.runtime_status ?? item?.runtimeStatus ?? item?.thread_status ?? item?.threadStatus ?? item?.status ?? ''),
+    String(item?.consumed_tokens ?? item?.consumedTokens ?? ''),
+    String(item?.tool_calls ?? item?.toolCalls ?? ''),
+    String(item?.model_request_count ?? item?.modelRequestCount ?? item?.quota_used ?? item?.quotaUsed ?? readSessionQuotaUsed(item) ?? ''),
+    item?.orchestration_lock?.active === true || item?.orchestrationLock?.active === true ? '1' : '0',
+    item?.archived === true || item?.is_archived === true || Boolean(item?.archived_at || item?.archivedAt) ? '1' : '0',
+    String(item?.parent_session_id ?? item?.parentSessionId ?? ''),
+    String(item?.spawned_by ?? item?.spawnedBy ?? '')
+  ].join('\u0001'))
+  .join('\u0002');
 
 export function buildTaskList(sessions: Record<string, any>[], agentId: string, fallbackTitle: string): TaskListItem[] {
   if (Array.isArray(sessions)) {
     let byInput = taskListMemoCache.get(sessions);
     if (!byInput) {
-      byInput = new Map<string, TaskListItem[]>();
+      byInput = new Map<string, TaskListMemoEntry>();
       taskListMemoCache.set(sessions, byInput);
     }
     const memoKey = `${String(agentId ?? '')}\u0000${String(fallbackTitle ?? '')}`;
+    const signature = taskListInputSignature(sessions);
     const cached = byInput.get(memoKey);
-    if (cached) {
-      return cached;
+    if (cached?.signature === signature) {
+      return cached.items;
     }
     const built = computeTaskList(sessions, agentId, fallbackTitle);
-    byInput.set(memoKey, built);
+    byInput.set(memoKey, { signature, items: built });
     return built;
   }
   return computeTaskList(sessions, agentId, fallbackTitle);

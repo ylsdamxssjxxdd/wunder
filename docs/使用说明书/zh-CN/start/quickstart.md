@@ -80,5 +80,4 @@ updated_at: 2026-10-13
 - 下载安装细节 → [蜂窝入门](/docs/zh-CN/start/desktop/)
 - 界面地图 → [界面概览](/docs/zh-CN/surfaces/index/)
 - 核心概念 → [核心概览](/docs/zh-CN/concepts/)
-- 接入现有系统 → [接入概览](/docs/zh-CN/integration/)
 - 所有工具 → [工具总览](/docs/zh-CN/tools/)

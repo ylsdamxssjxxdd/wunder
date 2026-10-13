@@ -64,10 +64,6 @@ Everyone starts with the [Honeycomb (desktop)](/docs/en/start/desktop/): downloa
     <strong>Tools overview</strong>
     <span>Pick tools by task.</span>
   </a>
-  <a class="docs-card" href="/docs/en/integration/">
-    <strong>Integration overview</strong>
-    <span>External workflows, MCP endpoints, channel webhooks.</span>
-  </a>
 </div>
 
 ## Other forms (optional)
@@ -91,7 +87,6 @@ Individual users need only the Honeycomb by default; the following are needed on
 - [Help center](/docs/en/help/)
 - [Troubleshooting](/docs/en/help/troubleshooting/)
 - [FAQ](/docs/en/help/faq/)
-- [Authentication and security](/docs/en/ops/auth-and-security/)
 - [Configuration reference](/docs/en/reference/config/)
 
 ## Documentation ecosystem

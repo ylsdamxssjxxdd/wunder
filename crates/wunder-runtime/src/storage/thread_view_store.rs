@@ -144,7 +144,28 @@ fn hydrate_chat_reasoning(
         ),
         &[json!(user), json!(session), json!(row.assistant.item_id)],
     )? {
-        row.assistant.reasoning = text(&value[0]).to_owned();
+        let reasoning = text(&value[0]);
+        if !reasoning.is_empty() {
+            row.assistant.reasoning = reasoning.to_owned();
+            row.assistant.reasoning_offset = reasoning.encode_utf16().count();
+        } else {
+            let block_reasoning = format!(
+                "COALESCE({}, {})",
+                db.json_text(&db.json_text("payload", "data"), "reasoning"),
+                db.json_text("payload", "reasoning")
+            );
+            if let Some(block) = one(
+                db,
+                &format!("SELECT substr({block_reasoning},1,2048) FROM thread_item_blocks WHERE user_id=? AND session_id=? AND item_id=? AND field='reasoning' ORDER BY block_index LIMIT 1"),
+                &[json!(user), json!(session), json!(row.assistant.item_id.clone())],
+            )? {
+                let text = text(&block[0]);
+                if !text.is_empty() {
+                    row.assistant.reasoning = text.to_owned();
+                    row.assistant.reasoning_offset = text.encode_utf16().count();
+                }
+            }
+        }
     }
     Ok(())
 }
@@ -544,6 +565,12 @@ pub(crate) fn project_item(
             row.assistant.content.clear();
         }
         row.assistant.feedback = item.get("feedback").cloned();
+        if !row.assistant.reasoning.is_empty() {
+            if row.reasoning_item_id != id {
+                row.reasoning_count += 1;
+                row.reasoning_item_id = id.to_owned();
+            }
+        }
         row.assistant.stats = projection::finite_stats(&item);
         let content_rev = if let Some(rev) = content_revision {
             rev
@@ -566,6 +593,10 @@ pub(crate) fn project_item(
         projection::set_reasoning(&mut row.assistant, &item);
         if let Some(stats) = projection::finite_stats(&item) {
             row.assistant.stats = Some(stats);
+        }
+        if !row.assistant.reasoning.is_empty() && row.reasoning_item_id != id {
+            row.reasoning_count += 1;
+            row.reasoning_item_id = id.to_owned();
         }
     }
     if kind == "terminal" {
@@ -636,7 +667,7 @@ pub(crate) fn project_block(
     index: i64,
     block: &Value,
 ) -> Result<()> {
-    if field != "content" {
+    if !matches!(field, "content" | "reasoning") {
         return Ok(());
     }
     let Some(i) = one(
@@ -651,8 +682,14 @@ pub(crate) fn project_block(
         return Ok(());
     }
     let data = block.get("data").unwrap_or(block);
-    let content = data.get("content").and_then(Value::as_str).unwrap_or("");
-    let body_id = projection::body_id(id, "stream");
+    let content = data
+        .get(if field == "reasoning" { "reasoning" } else { "content" })
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    if content.is_empty() {
+        return Ok(());
+    }
+    let body_id = projection::body_id(id, if field == "reasoning" { "reasoning" } else { "stream" });
     let Some(r) = one(
         db,
         "SELECT payload FROM thread_chat_rows WHERE session_id=? AND root_turn_id=?",
@@ -663,8 +700,8 @@ pub(crate) fn project_block(
     };
     let mut row: ChatViewRow = serde_json::from_str(text(&r[0]))?;
     // Old executions and delayed blocks cannot replace a newer sealed answer.
-    if int(&i[4]) < row.assistant.created_seq
-        || (row.assistant.item_id == id
+    if (field == "content" && int(&i[4]) < row.assistant.created_seq)
+        || (field == "content" && row.assistant.item_id == id
             && row.assistant.body.as_ref().is_some_and(|b| {
                 b.bytes > 0 && (!b.body_id.ends_with("|stream") || b.revision > 0)
             }))
@@ -678,14 +715,31 @@ pub(crate) fn project_block(
         db.execute("INSERT INTO thread_body_chunks(session_id,user_id,body_id,revision,chunk_index,content) VALUES(?,?,?,0,?,?) ON CONFLICT(session_id,body_id,revision,chunk_index) DO UPDATE SET content=excluded.content",&[json!(session),json!(user),json!(body_id),json!(index*1024+n as i64),json!(c)])?;
     }
     if row.assistant.item_id != id {
-        row.assistant = message_for_stream(id, &body_id);
+        if field == "reasoning"
+            && !row.assistant.item_id.is_empty()
+            && row.assistant.created_seq >= int(&i[4])
+        {
+            return Ok(());
+        }
+        row.assistant = message_for_stream(id, &projection::body_id(id, "stream"));
     }
     let offset = data
-        .get("content_offset")
+        .get(if field == "reasoning" { "reasoning_offset" } else { "content_offset" })
         .and_then(Value::as_i64)
         .unwrap_or(0);
-    // Legacy durable offsets are UTF-16; preview is a byte bounded prefix.
-    if offset as usize == row.assistant.content.encode_utf16().count()
+    // Durable offsets are UTF-16; the row keeps only a bounded UTF-8 preview.
+    if field == "reasoning" {
+        if offset as usize == row.assistant.reasoning_offset
+            && row.assistant.reasoning.len() < 2048
+        {
+            let remaining = 2048 - row.assistant.reasoning.len();
+            row.assistant.reasoning.push_str(&preview(content, remaining));
+        }
+        row.assistant.reasoning_offset = row
+            .assistant
+            .reasoning_offset
+            .max(offset.max(0) as usize + content.encode_utf16().count());
+    } else if offset as usize == row.assistant.content.encode_utf16().count()
         && row.assistant.content.len() < 2048
     {
         let remaining = 2048 - row.assistant.content.len();
@@ -700,16 +754,18 @@ pub(crate) fn project_block(
         .unwrap_or(0)
         .saturating_sub(old_bytes)
         + content.len();
-    row.assistant.body = Some(BodyRef {
-        body_id,
-        revision: 0,
-        bytes,
-    });
+    row.assistant.body = if field == "content" {
+        Some(BodyRef { body_id, revision: 0, bytes })
+    } else {
+        row.assistant.body.clone()
+    };
     row.assistant.created_seq = int(&i[4]);
-    row.assistant.content_offset = row
-        .assistant
-        .content_offset
-        .max(offset.max(0) as usize + content.encode_utf16().count());
+    if field == "content" {
+        row.assistant.content_offset = row
+            .assistant
+            .content_offset
+            .max(offset.max(0) as usize + content.encode_utf16().count());
+    }
     row.assistant.durable_seq = one(
         db,
         "SELECT latest_change_seq FROM thread_logs WHERE session_id=? AND user_id=?",
@@ -717,7 +773,14 @@ pub(crate) fn project_block(
     )?
     .map(|r| int(&r[0]))
     .unwrap_or(0);
-    row.assistant.tail = preview(content, 2048);
+    if field == "content" {
+        row.assistant.tail = preview(content, 2048);
+        row.assistant.tail_offset = offset.max(0) as usize + content.encode_utf16().count();
+    }
+    if field == "reasoning" && row.reasoning_item_id != id {
+        row.reasoning_count += 1;
+        row.reasoning_item_id = id.to_owned();
+    }
     let seq = head(db, user, session)?;
     save_chat(db, user, session, &mut row, seq)
 }
