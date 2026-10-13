@@ -26,6 +26,7 @@ CREATE INDEX IF NOT EXISTS idx_thread_chat_changes ON thread_chat_rows(user_id,s
 CREATE INDEX IF NOT EXISTS idx_thread_view_rebuild ON thread_view_heads(projection_state,session_id);
 CREATE INDEX IF NOT EXISTS idx_thread_blocks_view_rebuild ON thread_item_blocks(user_id,session_id,item_id,field,block_index);
 CREATE INDEX IF NOT EXISTS idx_thread_items_view_rebuild ON thread_items(user_id,session_id,created_seq);
+CREATE INDEX IF NOT EXISTS idx_thread_items_view_root_seq ON thread_items(user_id,session_id,root_turn_id,created_seq DESC);
 CREATE TABLE IF NOT EXISTS thread_trajectory_rows (
  session_id TEXT NOT NULL, user_id TEXT NOT NULL, item_id TEXT NOT NULL,
  root_turn_id TEXT NOT NULL, created_seq BIGINT NOT NULL, revision BIGINT NOT NULL,
@@ -52,6 +53,8 @@ CREATE TABLE IF NOT EXISTS thread_trajectory_tiles (
 
 /// All SQL below uses positional `?` parameters; the PG adapter numbers them.
 pub(crate) trait ViewDb {
+    fn json_text(&self, expression: &str, field: &str) -> String;
+    fn text_bytes(&self, expression: &str) -> String;
     fn query(&mut self, sql: &str, params: &[Value]) -> Result<Vec<Vec<Value>>>;
     fn execute(&mut self, sql: &str, params: &[Value]) -> Result<u64>;
     fn index_chunk(
@@ -79,9 +82,85 @@ fn float(v: &Value) -> f64 {
 }
 
 pub(crate) fn initialize(db: &mut impl ViewDb, user: &str, session: &str) -> Result<()> {
-    db.execute("INSERT INTO thread_view_heads(session_id,user_id,projection_state) SELECT session_id,user_id,CASE WHEN latest_change_seq>0 THEN 'rebuilding' ELSE 'ready' END FROM thread_logs WHERE session_id=? AND user_id=? ON CONFLICT(session_id) DO NOTHING", &[json!(session),json!(user)])?;
+    db.execute("INSERT INTO thread_view_heads(session_id,user_id,projection_state) SELECT session_id,user_id,CASE WHEN latest_change_seq=0 THEN 'ready' WHEN latest_change_seq>? THEN 'source' ELSE 'rebuilding' END FROM thread_logs WHERE session_id=? AND user_id=? ON CONFLICT(session_id) DO NOTHING", &[json!(MAX_SOURCE_CHANGE_SEQ),json!(session),json!(user)])?;
     Ok(())
 }
+
+/// Historical sessions above this bound stay on the durable source-log path.
+/// Replaying millions of legacy items into presentation tables has no user
+/// value because source reads are already keyset-paged and bounded.
+const MAX_SOURCE_CHANGE_SEQ: i64 = 50_000;
+
+pub(crate) fn skip_oversized_rebuilds(db: &mut impl ViewDb) -> Result<()> {
+    let rows = db.query("SELECT h.session_id,h.user_id FROM thread_view_heads h JOIN thread_logs l ON l.session_id=h.session_id AND l.user_id=h.user_id WHERE h.projection_state='rebuilding' AND l.latest_change_seq>? ORDER BY h.session_id LIMIT 64", &[json!(MAX_SOURCE_CHANGE_SEQ)])?;
+    for row in rows {
+        db.execute("UPDATE thread_view_heads SET projection_state='source',rebuild_after=-1 WHERE session_id=? AND user_id=?", &[row[0].clone(), row[1].clone()])?;
+    }
+    Ok(())
+}
+/// Discover one bounded keyset page per maintenance iteration. Presentation
+/// reads stay read-only and database initialization never scans history.
+pub(crate) fn discover_rebuilds(db: &mut impl ViewDb) -> Result<()> {
+    const KEY: &str = "thread_view_discovery_v2";
+    let marker = one(db, "SELECT value FROM meta WHERE key=?", &[json!(KEY)])?;
+    let state: Value = marker.as_ref()
+        .and_then(|r| serde_json::from_str(text(&r[0])).ok()).unwrap_or(Value::Null);
+    if state.get("done").and_then(Value::as_bool) == Some(true) { return Ok(()); }
+    let after = state.get("after").and_then(Value::as_str).unwrap_or("");
+    let rows = db.query("SELECT session_id,user_id,latest_change_seq FROM thread_logs WHERE session_id>? ORDER BY session_id LIMIT 64", &[json!(after)])?;
+    for row in &rows {
+        if int(&row[2]) > 0 {
+            initialize(db, text(&row[1]), text(&row[0]))?;
+        }
+    }
+    let next = rows.last().map(|r| text(&r[0])).unwrap_or(after);
+    let marker = json!({"after": next, "done": rows.len() < 64}).to_string();
+    db.execute("INSERT INTO meta(key,value,updated_time) VALUES(?,?,0) ON CONFLICT(key) DO UPDATE SET value=excluded.value", &[json!(KEY),json!(marker)])?;
+    Ok(())
+}
+
+fn hydrate_chat_reasoning(
+    db: &mut impl ViewDb,
+    user: &str,
+    session: &str,
+    row: &mut ChatViewRow,
+) -> Result<()> {
+    if row.assistant.item_id.is_empty() {
+        return Ok(());
+    }
+    let reasoning = format!(
+        "substr(COALESCE(NULLIF({},''),{}),1,2048)",
+        db.json_text("payload", "reasoning"),
+        db.json_text("payload", "reasoning_content")
+    );
+    if let Some(value) = one(
+        db,
+        &format!("SELECT {reasoning} FROM thread_items WHERE user_id=? AND session_id=? AND item_id=? AND visibility='user' LIMIT 1"),
+        &[json!(user), json!(session), json!(row.assistant.item_id)],
+    )? {
+        row.assistant.reasoning = text(&value[0]).to_owned();
+    }
+    Ok(())
+}
+
+/// Persist a round-robin keyset cursor so one very large historical thread
+/// cannot keep the first pending page occupied forever. Idle polls only read.
+pub(crate) fn pending_rebuilds(db: &mut impl ViewDb) -> Result<Vec<(String, String, i64)>> {
+    skip_oversized_rebuilds(db)?;
+    const KEY: &str = "thread_view_pending_cursor_v1";
+    let marker = one(db, "SELECT value FROM meta WHERE key=?", &[json!(KEY)])?;
+    let after = marker.as_ref().map(|row| text(&row[0])).unwrap_or("");
+    let mut rows = db.query("SELECT user_id,session_id,rebuild_after FROM thread_view_heads WHERE projection_state='rebuilding' AND session_id>? ORDER BY session_id LIMIT 8", &[json!(after)])?;
+    if rows.is_empty() && !after.is_empty() {
+        rows = db.query("SELECT user_id,session_id,rebuild_after FROM thread_view_heads WHERE projection_state='rebuilding' ORDER BY session_id LIMIT 8", &[])?;
+    }
+    if let Some(last) = rows.last() {
+        db.execute("INSERT INTO meta(key,value,updated_time) VALUES(?,?,0) ON CONFLICT(key) DO UPDATE SET value=excluded.value", &[json!(KEY),last[1].clone()])?;
+    }
+    Ok(rows.into_iter().map(|row| (text(&row[0]).into(),text(&row[1]).into(),int(&row[2]))).collect())
+}
+
+
 fn head(db: &mut impl ViewDb, user: &str, session: &str) -> Result<i64> {
     initialize(db, user, session)?;
     db.execute(
@@ -187,7 +266,11 @@ pub(crate) fn project_item(
     id: &str,
 ) -> Result<()> {
     let Some(i)=one(db,"SELECT i.turn_id,i.root_turn_id,i.item_index,i.created_seq,i.revision,i.kind,i.status,i.visibility,i.payload,i.created_time,i.updated_time,t.user_turn_index FROM thread_items i JOIN thread_turns t ON t.session_id=i.session_id AND t.turn_id=i.turn_id WHERE i.session_id=? AND i.user_id=? AND i.item_id=?", &[json!(session),json!(user),json!(id)])? else { return Ok(()); };
-    if text(&i[7]) != "user" {
+    // 系统提示词注入（system_message，model_internal）是 dsh 语境下的上下文
+    // 条目，轨迹必须保留；其余非 user 可见性（model_call 等）仍不入轨迹。
+    if text(&i[7]) != "user"
+        && !(text(&i[7]) == "model_internal" && text(&i[5]) == "system_message")
+    {
         if let Some(old)=one(db,"SELECT status,created_seq FROM thread_trajectory_rows WHERE session_id=? AND user_id=? AND item_id=?",&[json!(session),json!(user),json!(id)])? {
             for level in 0..8 { db.execute("UPDATE thread_trajectory_tiles SET count=count-1,failed=failed-?,running=running-? WHERE session_id=? AND level=? AND bucket=?",&[json!(projection::is_failed(text(&old[0]))),json!(projection::is_running(text(&old[0]))),json!(session),json!(level),json!(int(&old[1])/(128i64 << (level*3)))])?; }
             db.execute("DELETE FROM thread_trajectory_rows WHERE session_id=? AND user_id=? AND item_id=?",&[json!(session),json!(user),json!(id)])?;
@@ -199,6 +282,10 @@ pub(crate) fn project_item(
                 if matches!(text(&i[5]),"tool_call"|"approval"|"plan"|"compaction"|"queue"|"subagent_run") {
                     row.workflow_count=(row.workflow_count-1).max(0);
                     row.failed_count=(row.failed_count-projection::is_failed(text(&old[0]))).max(0);
+                }
+                if text(&i[5])=="subagent_run" {
+                    let removed=id.to_string();
+                    row.subagents.retain(|card| card.get("key").and_then(Value::as_str)!=Some(removed.as_str()));
                 }
                 let seq=head(db,user,session)?;save_chat(db,user,session,&mut row,seq)?;
             }
@@ -345,6 +432,7 @@ pub(crate) fn project_item(
         if !(content.is_empty() && row.assistant.item_id == id && stream) {
             row.assistant = projection::message(id, content, revision);
         }
+        projection::set_reasoning(&mut row.assistant, &item);
         row.assistant.created_seq = int(&i[3]);
         row.assistant.durable_seq=one(db,"SELECT latest_change_seq FROM thread_logs WHERE session_id=? AND user_id=?",&[json!(session),json!(user)])?.map(|r|int(&r[0])).unwrap_or(0);
         if !row.assistant.body.as_ref().is_some_and(|b|b.body_id.ends_with("|stream")) {
@@ -377,6 +465,7 @@ pub(crate) fn project_item(
             }
         }
     } else if kind == "assistant_message" {
+        projection::set_reasoning(&mut row.assistant, &item);
         if let Some(stats) = projection::finite_stats(&item) {
             row.assistant.stats = Some(stats);
         }
@@ -397,6 +486,13 @@ pub(crate) fn project_item(
         row.workflow_count += i64::from(old.is_none());
         row.failed_count +=
             projection::is_failed(status) - old_status.map(projection::is_failed).unwrap_or(0);
+    }
+    if kind == "subagent_run" {
+        // 子智能体进度条目按条目 id 原地推进：每次运行时更新都重写卡片并
+        // 抬升行 revision，让 changes 流把新状态推给前端面板。
+        if let Some(card) = projection::subagent_card(&item, id, revision) {
+            projection::upsert_subagent_card(&mut row.subagents, card);
+        }
     }
     row.updated_time = float(&i[10]);
     save_chat(db, user, session, &mut row, seq)
@@ -511,6 +607,7 @@ pub(crate) fn page(
     session: &str,
     kind: &str,
     before: Option<i64>,
+    root_turn_id: Option<&str>,
     limit: usize,
 ) -> Result<ThreadViewPage> {
     let mut page = ThreadViewPage {
@@ -541,28 +638,52 @@ pub(crate) fn page(
         page.projection_state = "rebuilding".into();
         page.thread_empty = None;
     }
+    if page.projection_state != "ready" {
+        return super::thread_view_source::page(db, user, session, kind, before, root_turn_id, limit, page);
+    }
     let cap = if kind == "trajectory" {
         limit.clamp(1, TRAJECTORY_PAGE_MAX)
     } else {
         limit.clamp(1, CHAT_PAGE_MAX)
     };
     let cursor = before.unwrap_or(i64::MAX);
+    let mut bytes = 4096usize;
     let sql = if kind == "trajectory" {
-        "SELECT payload,created_seq FROM thread_trajectory_rows WHERE user_id=? AND session_id=? AND created_seq<? ORDER BY created_seq DESC LIMIT ?"
+        if let Some(root_turn_id) = root_turn_id {
+            let _ = root_turn_id;
+            "SELECT payload,created_seq FROM thread_trajectory_rows WHERE user_id=? AND session_id=? AND root_turn_id=? AND created_seq<? ORDER BY created_seq DESC LIMIT ?"
+        } else {
+        // The newest execution turn can contain thousands of items.  A first
+        // trajectory paint must still describe the whole conversation, so it
+        // returns one representative item per root user turn. Full records
+        // are fetched only after the user opens a specific turn.
+        let round_cursor = before.unwrap_or(i64::MAX);
+        let overview = db.query(
+            "SELECT r.payload,t.user_turn_index FROM thread_turns t JOIN thread_trajectory_rows r ON r.item_id=(SELECT x.item_id FROM thread_trajectory_rows x WHERE x.user_id=t.user_id AND x.session_id=t.session_id AND x.root_turn_id=t.turn_id ORDER BY x.created_seq DESC LIMIT 1) WHERE t.user_id=? AND t.session_id=? AND t.trigger_kind='user' AND t.user_turn_index<? ORDER BY t.user_turn_index DESC LIMIT ?",
+            &[json!(user), json!(session), json!(round_cursor), json!((cap + 1) as i64)],
+        )?;
+        page.has_more = overview.len() > cap;
+        for row in overview.into_iter().take(cap) {
+            let mut projected: TrajectoryViewRow = serde_json::from_str(text(&row[0]))?;
+            projected.user_round = int(&row[1]);
+            let size = serde_json::to_vec(&projected)?.len() + 1;
+            if bytes + size > TRAJECTORY_RESPONSE_BYTES { page.has_more = true; break; }
+            bytes += size;
+            page.next_before = Some(projected.user_round);
+            page.trajectory.push(projected);
+        }
+        page.trajectory.reverse();
+        return Ok(page);
+        }
     } else {
         "SELECT payload,user_round FROM thread_chat_rows WHERE user_id=? AND session_id=? AND user_round<? ORDER BY user_round DESC LIMIT ?"
     };
-    let rows = db.query(
-        sql,
-        &[
-            json!(user),
-            json!(session),
-            json!(cursor),
-            json!((cap + 1) as i64),
-        ],
-    )?;
+    let mut query_params = vec![json!(user), json!(session)];
+    if root_turn_id.is_some() { query_params.push(json!(root_turn_id.unwrap())); }
+    query_params.push(json!(cursor));
+    query_params.push(json!((cap + 1) as i64));
+    let rows = db.query(sql, &query_params)?;
     page.has_more = rows.len() > cap;
-    let mut bytes = 4096;
     for r in rows.into_iter().take(cap) {
         let size = text(&r[0]).len();
         let budget = if kind == "trajectory" {
@@ -583,6 +704,11 @@ pub(crate) fn page(
         }
     }
     page.chat.reverse();
+    if kind == "chat" {
+        for row in &mut page.chat {
+            hydrate_chat_reasoning(db, user, session, row)?;
+        }
+    }
     page.trajectory.reverse();
     if kind == "trajectory" && page.projection_state == "ready" && page.view_seq > 0 {
         for r in db.query("SELECT bucket,count,failed,running,start,finish FROM thread_trajectory_tiles WHERE session_id=? AND level=? ORDER BY bucket LIMIT 1024", &[json!(session),json!(page.tile_level as i64)])? {
@@ -599,6 +725,9 @@ pub(crate) fn changes(
     session: &str,
     after: i64,
 ) -> Result<ThreadViewChanges> {
+    if after < 0 {
+        return super::thread_view_source::changes(db, user, session, after);
+    }
     let h=one(db,"SELECT view_seq,epoch,projection_state,runtime_status,active_turn_id FROM thread_view_heads WHERE session_id=? AND user_id=?", &[json!(session),json!(user)])?;
     let runtime_status=h.as_ref().map(|r|text(&r[3]).to_string()).unwrap_or_else(||"idle".into());
     let active_turn_id=h.as_ref().map(|r|text(&r[4]).to_string()).unwrap_or_default();
@@ -633,6 +762,9 @@ pub(crate) fn body(
     cursor: i64,
 ) -> Result<ThreadBodyPage> {
     ensure!(cursor >= 0 && rev >= 0, "invalid body cursor");
+    if id.rsplit_once('|').is_some_and(|(_, field)| field.starts_with("source_")) {
+        return super::thread_view_source::body(db, user, session, id, rev, cursor);
+    }
     let rows=db.query("SELECT chunk_index,content FROM thread_body_chunks WHERE session_id=? AND user_id=? AND body_id=? AND revision=? AND chunk_index>=? ORDER BY chunk_index LIMIT 9", &[json!(session),json!(user),json!(id),json!(rev),json!(cursor)])?;
     let mut page = ThreadBodyPage {
         body_id: id.into(),
@@ -715,6 +847,8 @@ pub(crate) fn rebuild(
         project_item(db, user, session, text(&r[0]))?;
         cursor = int(&r[2]);
     }
-    db.execute("UPDATE thread_view_heads SET rebuild_after=?,projection_state=? WHERE session_id=? AND user_id=?", &[json!(if more {cursor}else{-1}),json!("rebuilding"),json!(session),json!(user)])?;
+    // A running legacy answer may exist only in durable blocks. Item completion
+    // must transition into block replay before the projection becomes ready.
+    db.execute("UPDATE thread_view_heads SET rebuild_after=?,projection_state='rebuilding' WHERE session_id=? AND user_id=?", &[json!(if more {cursor}else{-1}),json!(session),json!(user)])?;
     Ok((if more { cursor } else { -1 }, true))
 }

@@ -1,16 +1,19 @@
 ---
 title: 说明书总览
-summary: 从蜂窝开始，按需要进入其他文档。
+summary: 说明书导航页：从蜂窝起步，按需进入界面地图、其它形态与参考。列本轮 start 与 surfaces 两组的全部页面。
 read_when:
-  - 用户不确定先看哪一页
-  - 用户希望快速进入正确文档
+  - 不确定先看哪一页
+  - 想一眼扫到所有入口
 source_docs:
   - docs/使用说明书/zh-CN/index.md
+  - docs/使用说明书/zh-CN/surfaces
+  - docs/使用说明书/zh-CN/start
+updated_at: 2026-10-13
 ---
 
 # 说明书总览
 
-所有人都从[蜂窝（desktop）](/docs/zh-CN/start/desktop/)开始：下载安装，打开就是你的本地 AI 工作台。以下入口按使用频率排列。
+所有人都从[蜂窝（desktop）](/docs/zh-CN/start/desktop/)开始：下载安装，打开就是你的本地 AI 工作台。以下入口按使用频率与本轮定稿页面排列。
 
 ## 先看这里：用起来
 
@@ -21,15 +24,32 @@ source_docs:
   </a>
   <a class="docs-card" href="/docs/zh-CN/start/desktop/">
     <strong>蜂窝入门</strong>
-    <span>下载安装，打开即用。</span>
+    <span>下载安装，打开即用；本地 SQLite，无端口。</span>
+  </a>
+  <a class="docs-card" href="/docs/zh-CN/start/troubleshooting-first-run/">
+    <strong>首次运行排查</strong>
+    <span>装完启动没界面 / 端口不通 / 模型 401 都从这里查。</span>
+  </a>
+</div>
+
+## 界面地图
+
+<div class="docs-card-grid docs-card-grid-compact">
+  <a class="docs-card" href="/docs/zh-CN/surfaces/index/">
+    <strong>界面概览</strong>
+    <span>四个形态的界面分工与能力矩阵。</span>
+  </a>
+  <a class="docs-card" href="/docs/zh-CN/surfaces/desktop-ui/">
+    <strong>蜂窝界面</strong>
+    <span>主窗两页 + 12 个设置分类 + 面板与对话框。</span>
   </a>
   <a class="docs-card" href="/docs/zh-CN/surfaces/frontend/">
     <strong>蜂巢界面</strong>
-    <span>聊天、文件、智能体、工具怎么用。</span>
+    <span>SPA 路由；单条 `/chat/ws` 多路复用；含 TTS 双向语音。</span>
   </a>
-  <a class="docs-card" href="/docs/zh-CN/help/faq/">
-    <strong>FAQ</strong>
-    <span>常见问题快速答复。</span>
+  <a class="docs-card" href="/docs/zh-CN/surfaces/web-admin/">
+    <strong>舰桥界面</strong>
+    <span>4 组 19 项导航；调试面板右侧已是线程轨迹视图。</span>
   </a>
 </div>
 
@@ -46,41 +66,39 @@ source_docs:
   </a>
   <a class="docs-card" href="/docs/zh-CN/integration/">
     <strong>接入概览</strong>
-    <span>找到适合的接入方式。</span>
+    <span>外部工作流、MCP 端点、渠道 webhook。</span>
   </a>
 </div>
 
-## 可选形态：管理与部署
+## 其它形态（可选）
 
-只在需要多人共用或自动化时才需要：
+个人用户默认只需蜂窝；下列是团队协作或自动化场景才需要：
 
 <div class="docs-card-grid docs-card-grid-compact">
   <a class="docs-card" href="/docs/zh-CN/start/server/">
-    <strong>舰体部署（可选）</strong>
-    <span>用户与智能体管理平台，多人共用时才部署。</span>
-  </a>
-  <a class="docs-card" href="/docs/zh-CN/surfaces/web-admin/">
-    <strong>舰桥界面</strong>
-    <span>模型、工具、用户、渠道管理面板。</span>
-  </a>
-  <a class="docs-card" href="/docs/zh-CN/ops/deployment/">
-    <strong>部署与运行</strong>
-    <span>上线前后的关键检查项。</span>
+    <strong>舰体部署</strong>
+    <span>18000 API + 舰桥；18001 nginx 下发蜂巢；sandbox 9001。</span>
   </a>
   <a class="docs-card" href="/docs/zh-CN/start/cli/">
-    <strong>舵机使用（可选）</strong>
-    <span>手工本地操作入口，脚本化、自动化。</span>
+    <strong>舵机使用</strong>
+    <span>TTY ratatui TUI；`exec --json` JSONL；`cloud` 全套。</span>
   </a>
 </div>
 
 ## 我在排障
 
+- [首次运行排查](/docs/zh-CN/start/troubleshooting-first-run/)：按形态定位装 / 启 / 访 三类失败
 - [帮助中心](/docs/zh-CN/help/)
 - [故障排查](/docs/zh-CN/help/troubleshooting/)
+- [FAQ](/docs/zh-CN/help/faq/)
 - [认证与安全](/docs/zh-CN/ops/auth-and-security/)
 - [配置说明](/docs/zh-CN/reference/config/)
 
-## 延伸阅读
+## 文档生态
 
-- [常用说明目录](/docs/zh-CN/start/docs-directory/)
+- [常用说明目录](/docs/zh-CN/start/docs-directory/)：说明书 / 设计文档 / 技术说明书 / API 文档 / 性能标准与评分 / 功能迭代 / 经验教训 的分工与读法
 - [API 索引](/docs/zh-CN/reference/api-index/)
+
+## 首页
+
+回到 [wunder 心舰首页](/docs/zh-CN/index/)。

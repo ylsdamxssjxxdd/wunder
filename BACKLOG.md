@@ -1,13 +1,3 @@
----
-topics: [backlog]
-doc_kind: note
-created: 2026-10-08
----
+# BACKLOG
 
-# Feature Roadmap
-
-> **Rules**: Only active Features (idea/spec/in-progress/review). Move to done after completion.
-> Details in `docs/features/Fxxx-*.md`.
-
-| ID | Name | Status | Owner | Link |
-|----|------|--------|-------|------|
+> 本文件为空壳路线图（无条目、无对应 spec），功能与迭代记录统一收口在 [docs/功能迭代.md](docs/功能迭代.md)，此处不再维护。

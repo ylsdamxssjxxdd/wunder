@@ -117,8 +117,9 @@ impl ThreadLogStore for PostgresStorage {
         b: Option<i64>,
         l: usize,
     ) -> Result<wunder_core::thread_view::ThreadViewPage> {
-        self.view_page(u, s, k, b, l)
+        self.view_page(u, s, k, b, None, l)
     }
+    fn thread_view_trajectory_page(&self,u:&str,s:&str,b:Option<i64>,r:Option<&str>,l:usize)->Result<wunder_core::thread_view::ThreadViewPage>{ self.view_page(u,s,"trajectory",b,r,l) }
     fn thread_view_changes(
         &self,
         u: &str,

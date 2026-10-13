@@ -1,0 +1,144 @@
+{
+  "schema_version": "1",
+  "benchmark": "wunder-performance-score",
+  "shape": "舰体",
+  "shape_key": "server",
+  "version": "fixture-capacity",
+  "generated_at": "2026-10-12T23:14:46Z",
+  "score": null,
+  "coverage_percent": 75.0,
+  "measured_weight": 75.0,
+  "expected_weight": 100,
+  "missing_scenarios": [
+    "S2"
+  ],
+  "hard_failures": [],
+  "scenario_results": [
+    {
+      "key": "S1",
+      "name": "大库日常启动",
+      "weight": 50,
+      "score": 100.0,
+      "weighted_contribution": 50.0,
+      "status": "measured",
+      "metrics": [
+        {
+          "key": "storage_startup_p95_ms",
+          "label": "存储就绪 p95",
+          "value": 114.9218,
+          "score": 100.0,
+          "unit": "ms",
+          "status": "measured"
+        },
+        {
+          "key": "capacity_added_p95_ms",
+          "label": "容量放大附加耗时",
+          "value": 13.841000000000008,
+          "score": 100.0,
+          "unit": "ms",
+          "status": "measured"
+        }
+      ],
+      "gates": [
+        {
+          "key": "index_oids_stable",
+          "label": "已有索引保持",
+          "passed": true,
+          "status": "passed"
+        },
+        {
+          "key": "no_history_scan",
+          "label": "启动不扫描历史",
+          "passed": true,
+          "status": "passed"
+        },
+        {
+          "key": "no_row_rewrite",
+          "label": "启动不重写数据",
+          "passed": true,
+          "status": "passed"
+        }
+      ]
+    },
+    {
+      "key": "S2",
+      "name": "大库空闲驻留",
+      "weight": 25,
+      "score": null,
+      "weighted_contribution": null,
+      "status": "missing",
+      "metrics": [
+        {
+          "key": "server_idle_cpu_percent",
+          "label": "舰体空闲 CPU",
+          "value": null,
+          "score": null,
+          "unit": "percent",
+          "status": "missing"
+        },
+        {
+          "key": "postgres_idle_cpu_percent",
+          "label": "数据库空闲 CPU",
+          "value": null,
+          "score": null,
+          "unit": "percent",
+          "status": "missing"
+        }
+      ],
+      "gates": [
+        {
+          "key": "idle_window_valid",
+          "label": "无请求空闲窗口有效",
+          "passed": null,
+          "status": "missing"
+        }
+      ]
+    },
+    {
+      "key": "S3",
+      "name": "历史重建预算",
+      "weight": 25,
+      "score": 98.16,
+      "weighted_contribution": 24.54,
+      "status": "measured",
+      "metrics": [
+        {
+          "key": "maintenance_duty_ratio",
+          "label": "维护工作时间占比",
+          "value": 0.010184159872477904,
+          "score": 98.16,
+          "unit": "ratio",
+          "status": "measured"
+        }
+      ],
+      "gates": [
+        {
+          "key": "discovery_page_bounded",
+          "label": "发现每批不超过 64 线程",
+          "passed": true,
+          "status": "passed"
+        },
+        {
+          "key": "pending_rotates",
+          "label": "待迁移线程轮转",
+          "passed": true,
+          "status": "passed"
+        },
+        {
+          "key": "durable_resume",
+          "label": "游标重启续跑",
+          "passed": true,
+          "status": "passed"
+        }
+      ]
+    }
+  ],
+  "environment": {
+    "build": "debug",
+    "historical_threads": 100000,
+    "rows_per_large_table": 1000000,
+    "samples": 20,
+    "storage": "PostgreSQL 16"
+  },
+  "status": "部分完成"
+}

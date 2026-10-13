@@ -671,15 +671,26 @@ impl WorkspaceManager {
         }
     }
 
+    /// 相对路径与文件树的基准目录：云端形态是智能体云端目录（用户目录下的
+    /// `workspace`），其余形态就是该作用域的根目录。
     fn user_root(&self, user_id: &str) -> PathBuf {
         if !self.single_root && self.flatten_agent_scope_enabled() {
-            // 云端形态：公开路径与展示名统一指向智能体云端目录（用户目录下的 workspace）。
             return self
                 .root
                 .join(self.plain_cloud_user_id(user_id))
                 .join(AGENT_WORKSPACE_DIR);
         }
         self.workspace_root(user_id)
+    }
+
+    /// `/workspaces/<user>` 这段公共前缀对应的物理目录。云端形态是**用户目录**
+    /// （其下的 `workspace` 才是智能体云端目录），因此公共路径、真实路径与沙箱
+    /// 容器内可见路径三者同名同义，映射互为逆函数。
+    pub(crate) fn public_physical_root(&self, user_id: &str) -> PathBuf {
+        if !self.single_root && self.flatten_agent_scope_enabled() {
+            return self.root.join(self.plain_cloud_user_id(user_id));
+        }
+        self.user_root(user_id)
     }
 
     /// 云端形态纯用户名：剥掉智能体云端作用域标记，得到用户目录 id。
@@ -703,8 +714,8 @@ impl WorkspaceManager {
     }
 
     pub fn display_path(&self, user_id: &str, target: &Path) -> String {
-        let user_root = self.user_root(user_id);
-        let normalized_user_root = normalize_target_path(&user_root);
+        let public_physical_root = self.public_physical_root(user_id);
+        let normalized_user_root = normalize_target_path(&public_physical_root);
         let normalized_target = normalize_target_path(target);
         if let Ok(rel) = normalized_target.strip_prefix(&normalized_user_root) {
             let public_root = self.public_root(user_id);
@@ -728,11 +739,11 @@ impl WorkspaceManager {
             return None;
         }
         let rel = target.strip_prefix(&public_root).ok()?;
-        let user_root = self.user_root(user_id);
+        let physical_root = self.public_physical_root(user_id);
         if rel.as_os_str().is_empty() {
-            Some(user_root)
+            Some(physical_root)
         } else {
-            Some(user_root.join(rel))
+            Some(physical_root.join(rel))
         }
     }
 
@@ -744,7 +755,10 @@ impl WorkspaceManager {
         if public_root.is_empty() {
             return text.to_string();
         }
-        let user_root = self.user_root(user_id).to_string_lossy().replace('\\', "/");
+        let user_root = self
+            .public_physical_root(user_id)
+            .to_string_lossy()
+            .replace('\\', "/");
         if public_root == user_root || !text.contains(&public_root) {
             return text.to_string();
         }
@@ -1104,7 +1118,10 @@ impl WorkspaceManager {
             if let Some(mapped) = self.map_public_path(user_id, &public_target) {
                 return Ok(mapped);
             }
-            return Err(anyhow!(i18n::t("error.path_out_of_bounds")));
+            // 认不出本用户前缀的 `/workspaces/...` 不再判越界：云端文件工具都在沙盒
+            // 内执行（`allow_roots = ["/"]`，且沙盒只挂载本用户目录），这段前缀在容器
+            // 里就是真实路径，按字面使用即可。授权放开的是路径边界，不是租户边界。
+            return Ok(public_target);
         }
         let target_path = Path::new(trimmed);
         if target_path.is_absolute() {
@@ -3551,18 +3568,44 @@ mod tests {
             workspace.scoped_user_id_variants("alice", Some("writer")),
             vec!["alice".to_string()]
         );
-        // 公开路径统一指向智能体云端目录。
+        // 公共前缀 `/workspaces/<user>` 对应**用户目录**；智能体云端目录是其下的
+        // `workspace` 子目录，与沙箱容器内可见路径同名同义。
         let agent_root = workspace.ensure_user_root("alice").expect("ensure root");
         fs::write(agent_root.join("a.txt"), b"a").expect("write a");
         assert_eq!(
             workspace.display_path("alice", &agent_root.join("a.txt")),
-            "/workspaces/alice/a.txt"
+            "/workspaces/alice/workspace/a.txt"
         );
+        // display_path 与 map_public_path 互逆：展示名回读得到同一个文件。
         assert_eq!(
             workspace
-                .map_public_path("alice", &workspace.public_root("alice").join("a.txt"))
-                .expect("map public path"),
+                .map_public_path("alice", &workspace.public_root("alice").join("workspace/a.txt"))
+                .expect("map agent-dir public path"),
             agent_root.join("a.txt")
+        );
+        // 智能体目录之外的用户目录内容同样可寻址（global/skills/knowledge）。
+        let user_dir = dir.path().join("workspaces").join("alice");
+        fs::create_dir_all(user_dir.join("knowledge")).expect("create knowledge");
+        fs::write(user_dir.join("knowledge").join("note.md"), b"n").expect("write note");
+        assert_eq!(
+            workspace
+                .map_public_path("alice", &workspace.public_root("alice").join("knowledge/note.md"))
+                .expect("map user-dir public path"),
+            user_dir.join("knowledge").join("note.md")
+        );
+        assert_eq!(
+            workspace.display_path("alice", &user_dir.join("knowledge").join("note.md")),
+            "/workspaces/alice/knowledge/note.md"
+        );
+        // 作用域 id 与纯用户 id 必须解析到同一处，否则工具写入与下载路由会不同根。
+        let scoped = workspace.scoped_user_id("alice", Some("writer"));
+        assert_eq!(
+            workspace.public_physical_root(&scoped),
+            workspace.public_physical_root("alice")
+        );
+        assert_eq!(
+            workspace.display_path(&scoped, &agent_root.join("a.txt")),
+            workspace.display_path("alice", &agent_root.join("a.txt"))
         );
     }
 
@@ -3864,16 +3907,44 @@ mod tests {
     }
 
     #[test]
-    fn resolve_path_rejects_public_workspace_path_for_another_scope() {
+    fn resolve_path_keeps_foreign_public_workspace_path_literal_instead_of_refusing() {
+        // 全放开：认不出本用户前缀的公共路径不再报「路径越界」，按字面解析。
+        // 隔离由沙盒保证（每用户一个容器、只挂本用户目录、allow_roots = ["/"]），
+        // 不再由这条路径校验兼职。
         let (workspace, _dir) = build_workspace_manager();
-        let error = workspace
+        let resolved = workspace
             .resolve_path(
                 "alice__c__1",
                 "workspaces/bob__c__1/orchestration/demo/round_01/worker/report.md",
             )
-            .expect_err("reject cross-scope public-like path");
+            .expect("foreign public-like path resolves literally");
 
-        assert!(error.to_string().contains("路径越界"));
+        assert_eq!(
+            resolved.to_string_lossy().replace('\\', "/"),
+            "/workspaces/bob__c__1/orchestration/demo/round_01/worker/report.md"
+        );
+    }
+
+    #[test]
+    fn resolve_path_resolves_own_public_workspace_path_into_container_tree() {
+        // 容器内 `/workspaces/<user>` 是真实挂载路径：同一字面路径必须解析到本用户目录，
+        // 且 `workspace` 子目录不被吞掉——命令产物与文件工具因此同根。
+        let (workspace, _dir) = build_workspace_manager();
+        workspace.set_flatten_agent_scope(true);
+        let resolved = workspace
+            .resolve_path("alice__aw__", "/workspaces/alice/workspace/out.png")
+            .expect("resolve own public path");
+        assert!(resolved
+            .to_string_lossy()
+            .replace('\\', "/")
+            .ends_with("alice/workspace/out.png"));
+        assert!(
+            !resolved
+                .to_string_lossy()
+                .replace('\\', "/")
+                .contains("workspace/workspace"),
+            "不得二次追加 workspace 层"
+        );
     }
 
     #[test]

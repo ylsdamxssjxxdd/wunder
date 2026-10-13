@@ -1,201 +1,143 @@
 ---
 title: 子智能体控制
-summary: `subagent_control` 的动作、等待语义、状态语义与返回结构。
+summary: `子智能体控制`（别名 `subagent_control`）派生、跟踪、引导与回收临时子智能体工作单元。
 read_when:
-  - 用户要在当前会话内派生子智能体临时工作
+  - 需要把一块独立工作派生给子智能体，或批量并发派生
+  - 需要等待、中断、关闭或恢复子智能体，或读它的进展与历史
 source_docs:
-  - src/services/tools/subagent_control.rs
-updated_at: 2026-04-10
+  - crates/wunder-runtime/src/services/tools/subagent_control.rs
+  - crates/wunder-runtime/src/services/tools/subagent_control/flow.rs
+  - crates/wunder-runtime/src/services/tools/subagent_control/messaging.rs
+  - crates/wunder-runtime/src/services/tools/subagent_control/targeting.rs
+  - crates/wunder-runtime/src/services/subagents/context.rs
+  - crates/wunder-runtime/src/services/subagents/tree.rs
+  - crates/wunder-runtime/src/services/runtime/thread/mailbox.rs
+  - crates/wunder-runtime/src/services/tools/catalog.rs
+updated_at: 2026-10-13
 ---
 
 # 子智能体控制
 
-`subagent_control` 管理当前会话内临时派生的子智能体运行，动作覆盖派生、查看、等待、打断和恢复。
+规范名：`子智能体控制`　别名：`subagent_control`（`crates/wunder-runtime/src/services/tools/catalog.rs:1227`）。
 
-## 适用场景
+子智能体是**主智能体临时创建的工作单元**：一次派生一个任务线程，任务结束即回收。协作形态只有这一种——**蜂群编排（蜂群工具、蜂房、编排态、team run、蜂群包、广场）已全链路移除**，仓库里不存在对应实现，任何文档与调用都不应再引用它。
 
-它适合：
+## 什么时候用
 
-- 在当前主智能体会话里临时派生子智能体
-- 查看、等待、打断、关闭、恢复这些子运行
-- 做一轮或多轮派生协作
+- 一块工作可以独立完成、结果只需要摘要回来：`spawn`。
+- 同一目标要多路并行尝试或交叉复核：`batch_spawn`。
+- 已经在跑的派生要等结果、看状态、纠偏、打断或关闭：`wait` / `status` / `send` / `interrupt` / `close`。
+- 子智能体自己要向父线程回话：`report`（只有子智能体能用）。
 
-用户侧只有一个智能体实例，因此不需要在多个已有智能体之间调度：需要并行推进时，用它派生子智能体即可。
+线程本身的管理（新建/切换/归档任务线程）用 [会话线程控制](/docs/zh-CN/tools/thread-control/)，不要用本工具。
 
-## 主要动作
+## 动作与目标选择
 
-- `list`
-- `history`
-- `send`
-- `spawn`
-- `batch_spawn`
-- `status`
-- `wait`
-- `interrupt`
-- `close`
-- `resume`
+`action` 必填，枚举十一个（`catalog.rs:813-939`），实现层另有别名（`subagent_control.rs:218-241`）：
 
-## `spawn`
+| 动作 | 归一别名 | 语义 |
+| --- | --- | --- |
+| `list` | `sessions_list`、`列表` | 列出某父线程下的子智能体 |
+| `history` | `sessions_history`、`历史` | 读单个子线程消息历史 |
+| `send` | `sessions_send`、`发送` | 给单个子线程追加一轮指令 |
+| `report` | — | 子 → 父回报（见下） |
+| `spawn` | `sessions_spawn`、`派生` | 派生一个子智能体 |
+| `batch_spawn` | `dispatch`、`批量派生` | 一批派生，带策略与剩余分支处置 |
+| `status` | `inspect`、`状态` | 读目标集当前快照，不等待 |
+| `wait` | `join`、`collect`、`等待` | 阻塞等到完成条件或超时 |
+| `interrupt` | `cancel`、`stop`、`中断` | 取消运行，不改变会话状态 |
+| `close` | `关闭` | 会话状态置 `closed`，可选级联 |
+| `resume` | `reopen`、`恢复` | 状态置回 `active`；带 `message` 时等价于 `send` |
 
-用于拉起新的子智能体运行。
+目标选择子（`subagent_control.rs:27-56`、`targeting.rs:553-588`）：`run_id` / `run_ids` / `session_id` / `session_ids` / `dispatch_id` / `parent_id`，全部为空时默认落在**当前会话作为父线程**（`catalog.rs:2294-2303` 的测试锁定了这个默认）。`limit` 1 起、上限 200、`wait`/`status` 默认 50；`run_ids + session_ids` 超过 200 直接报 `too many subagent targets`。
 
-典型返回会是“已接收但尚未结束”：
+单目标动作（`history` / `send`）要求**恰好一个**子线程：会先按 id 精确解析，失败时在同父线程下找编辑距离 ≤2 的唯一近似 id，再退化为"只有一个子线程就选它"；仍不唯一就报错并提示用 `spawn`/`list` 返回的准确 id（`targeting.rs:91-183`、`223-278`、`509-537`）。
 
-```json
-{
-  "ok": true,
-  "action": "spawn",
-  "state": "accepted",
-  "summary": "Spawned child run ...",
-  "data": {
-    "run_id": "run_xxx",
-    "session_id": "sess_xxx",
-    "status": "accepted"
-  },
-  "next_step_hint": "Use subagent_control.wait/status/history before treating unfinished child runs as complete."
-}
-```
+树边界：所有模型侧选择器都要过 `tree::authorize`——目标必须与调用者同根，且**根线程不能作为 worker 目标**（只读范围选择器例外）；深度上限 `MAX_DEPTH = 32`（`crates/wunder-runtime/src/services/subagents/tree.rs:6`、`57-70`）。
 
-## `list`
+## 参数
 
-```json
-{
-  "ok": true,
-  "action": "list",
-  "state": "completed",
-  "summary": "Found 3 child sessions.",
-  "data": {
-    "total": 3,
-    "items": [
-      {
-        "dispatch_id": "dispatch_xxx",
-        "run_id": "run_xxx",
-        "session_id": "sess_xxx",
-        "status": "running",
-        "terminal": false,
-        "failed": false,
-        "agent_id": "worker-a",
-        "label": "检索资料",
-        "elapsed_s": 12.3,
-        "result_preview": null,
-        "error": null
-      }
-    ]
-  }
-}
-```
+模型侧 schema 关键字段（`catalog.rs:813-939`）：
 
-## `history`
+| 字段 | 类型 / 上限 | 用于 |
+| --- | --- | --- |
+| `action` | string 枚举，必填 | 全部 |
+| `task` / `tasks` | string / 数组最多 64 项 | `spawn` / `batch_spawn` |
+| `tasks[].{task,label,agent_id,model,run_timeout_seconds,cleanup,fork_turns,context_summary}` | 子项对象，闭合 | `batch_spawn` 逐项覆盖 |
+| `label`、`agent_id`、`model` | string | `spawn` / `batch_spawn` 批次默认 |
+| `run_timeout_seconds` | number | 单次派生的运行超时；`spawn` 里同时充当同步等待时长 |
+| `cleanup` | `keep` / `delete` | 子线程收尾方式，默认 `keep` |
+| `fork_turns` | integer 0–16，默认 0 | 派生时复制最近 N 轮用户上下文 |
+| `context_summary` | string ≤16384 UTF-8 字节 | 派生时附带的背景摘要 |
+| `message` | string 1–20000 字节 | `send` / `report` / 带消息的 `resume` |
+| `message_id` | string ≤128 | 重试用幂等 id，同一条消息才复用 |
+| `timeout_seconds` | number | `send` 等待子线程回应的超时 |
+| `wait_seconds` / `poll_interval_seconds` / `wait_mode` | number / number / `all`\|`any`\|`first_success` | `wait` |
+| `strategy` | `parallel_all`\|`first_success`\|`review_then_merge` | `batch_spawn` |
+| `remaining_action` | `keep`\|`interrupt`\|`close` | 提前完成后剩余分支处置 |
+| `include_tools` | boolean | `history` 是否含工具消息 |
+| `limit`、`parent_id`、`session_id(s)`、`run_id(s)`、`dispatch_id` | 见上 | 目标选择 |
 
-```json
-{
-  "ok": true,
-  "action": "history",
-  "state": "completed",
-  "summary": "Loaded 18 messages from child session history.",
-  "data": {
-    "session_id": "sess_xxx",
-    "messages": [ ... ]
-  }
-}
-```
+## 派生与上下文继承
 
-## `status` / `wait`
+`fork_turns` 与 `context_summary` 是**引用数据，不改系统提示词**：`context::prepare` 最多复制 256 条历史项、总量 64 KiB，超出即置 `truncated`，并把父线程近 N 轮以"引用背景"的形式拼在任务文本前面（`crates/wunder-runtime/src/services/subagents/context.rs:8-79`）。`fork_turns > 16` 或摘要超 16384 字节直接失败；`fork_turns=0` 且摘要为空时不读历史。
 
-这两个动作最关键。
+工具系统提示词在该线程首次确定后保持冻结，长期记忆与背景注入只在初始化时发生一次——这正是上下文继承走"引用数据"而不是走 system 的原因。
 
-### `status`
+`spawn`：子线程工具集继承父会话（`ChildSessionToolMode::InheritParentSession`，`crates/wunder-runtime/src/services/tools/session_tool_access.rs:15-19`）。`run_timeout_seconds ≤ 0` 时立即返回 `accepted`（后台跑），`> 0` 时同步等待，每 5 秒发一次 `progress` 事件，超时返回 `timeout`（`crates/wunder-runtime/src/services/tools/session_tool.rs:360-540`）。
 
-看快照，不阻塞：
+`batch_spawn`（`subagent_control.rs:533-865`）：
 
-```json
-{
-  "ok": true,
-  "action": "status",
-  "state": "running",
-  "summary": "1 child runs are still active.",
-  "data": {
-    "status": "running",
-    "items": [ ... ],
-    "selected_items": [ ... ]
-  }
-}
-```
+1. 先对**每个**任务准备上下文，任一准备失败整批不派生（失败不会藏着半个批次）。
+2. 生成 `dispatch_id`（`dispatch_<uuid>`），逐项生成 `run_id`（`run_<uuid>`），逐个派生；单项启动失败会回收该子线程并记为 `failed`。
+3. `strategy` 决定完成条件：`parallel_all` / `review_then_merge` → 等全部；`first_success` → 首个成功即完成。
+4. `remaining_action` 默认值随策略变：`first_success` 默认 `interrupt`，其余默认 `keep`。
+5. `wait_seconds ≤ 0`（默认）不等待，直接返回 `accepted`（有启动失败时返回 `partial`）。
 
-### `wait`
+## 等待、回报与中断
 
-轮询等待，会根据结果变成：
+`wait` 的轮询间隔归一到 0.2–5 秒，默认 1 秒（`subagent_control.rs:17-19`、`flow.rs:330-335`）。等待优先订阅运行信号，无信号时按间隔轮询；父线程被取消时等待直接报 `subagent wait interrupted`。等待可被三类条件终止：完成条件达成、超时、**父信箱收到消息**（`completed_reason` 为 `message_received`）（`flow.rs:67-154`）。
 
-- `completed`
-- `running`
-- `timeout`
-- `partial`
+`send`：若子线程正在跑当前轮且信箱打开，消息直接进当前轮（`delivery = queued_current_turn`）；否则走新一轮发送。目标是自己时报错 `send must target another worker`（`subagent_control.rs:504-531`）。
 
-并且常带：
+`report`：只允许 `spawned_by` 为 `model` 或 `subagent_control` 的临时子线程调用，且父线程必须 `active`；父线程空闲时通过自动唤醒请求投递，返回 `queued_next_turn` 与 `queue_id`；带同一 `message_id` 重试会命中已存在的排队消息而不重复入箱（`subagent_control/messaging.rs:70-138`）。
 
-```json
-{
-  "next_step_hint": "Use subagent_control.wait/status/history before treating unfinished child runs as complete."
-}
-```
+`interrupt` 只请求取消运行（结果为 `cancelling` 或 `unchanged`），不改会话状态；`close` 会把会话状态写成 `closed` 并顺带取消运行，`cascade=true` 时连同后代一起处理；`resume` 把状态改回 `active`（`subagent_control.rs:967-1047`）。
 
-## `interrupt` / `close` / `resume`
+状态归一（`targeting.rs:1095-1149`）：有效状态取"运行记录终态 → 会话已关闭 → 运行时状态 → 记录状态"的顺序；终态集合为 `success`/`error`/`timeout`/`cancelled`/`failed`/`closed`/`idle`/`not_found`；面向协作视图另有映射（`queued→pending_init`、`cancelled→interrupted`、`closed→shutdown` 等）。
 
-这几个动作返回的核心是“哪些子会话被更新了”：
+## 返回
 
-```json
-{
-  "ok": true,
-  "action": "interrupt",
-  "state": "completed",
-  "summary": "interrupt updated 1 child sessions.",
-  "data": {
-    "updated_total": 1,
-    "items": [
-      {
-        "session_id": "sess_xxx",
-        "status": "cancelling"
-      }
-    ]
-  }
-}
-```
+统一骨架 `ok / action / state / summary / data`（`tools/subagent_control.rs:280-446`）：
 
-## 重点理解
+- `list` → `state=completed`，`data.total` + `data.items[]`。
+- `history` → `state=completed`，`data.session_id` + `data.messages`。
+- `send` / `report` → 回执 `state=accepted`，`data.{session_id,message_id,delivery[,queue_id]}`。
+- `interrupt` / `close` / `resume` → 有更新时 `state=completed`，零更新时 `state=noop`，`data.items[]` 带逐项结果。
+- `status` / `wait` / `batch_spawn` → `state` 直接取汇总状态：`completed`（原 `ok`）、`partial`、`running`、`timeout`、`empty`、`error`；`running` / `timeout` 时额外带 `next_step_hint`，提示先 `wait`/`status`/`history` 再判完成。
 
-- `accepted` 不等于完成
-- `status` 是看快照
-- `wait` 才是等待收敛
-- 有 `next_step_hint` 时，说明系统明确希望用户继续跟进而不是直接收尾
+条目为控长度做了压缩（`subagent_control.rs:244-278`）：`root_session_id`、`task_path`、`index`、`dispatch_id`、`run_id`、`session_id`、`status`、`terminal`、`failed`、`updated`、`agent_id`、`label`、`elapsed_s`、`result_preview`、`error`。等待/批次结果的 `data` 另有 `counts{total,done,success,failed,queued,running,selected,selected_success,selected_failed}`、`selected_items`、`remaining_action`、`remaining_active_total`、`settled_total`、`requested_total`、`accepted_total`、`startup_failed_total`、`winner_item`（`first_success`）。
 
-## 保留与复用子智能体
+条目里 `result_preview` 与状态消息被截到 160 字符（`SUBAGENT_SUMMARY_MAX_CHARS`，`subagent_control.rs:20`）。完整内容去 `history` 或该子线程的轨迹里取。
 
-右侧「子智能体」区域保留当前主会话创建的子智能体，不占用工作线程列表。点击条目可查看历史；已完成或已中断的子智能体仍可用于后续任务。
+除返回值外，运行过程还会发事件：`subagent_dispatch_start`、`subagent_dispatch_item_update`、`subagent_dispatch_finish`、`subagent_interrupt`、`subagent_close`、`subagent_resume`、`subagent_status`、`progress`（`flow.rs:257-328`、`subagent_control.rs:988-1036`）。
 
-停止主智能体会同时中断其后台和多级子智能体，并保留历史。用户继续聊天后，主智能体先用 `list` 查看，再按需 `send(session_id,message)` 或 `resume(session_id,message)` 恢复工作或分派新任务。未被选中的子智能体保持待命。`resume` 不带消息只重新开放线程；运行中的子任务可以通过 send 追加指导；中断尚未收敛或线程正在收尾时应等待后重试。
+## 失败与错误元数据
 
+常见的直接错误：`subagent_control action is required`、`unknown subagent_control action: <值>`、`batch_spawn requires at least one task`、`batch_spawn accepts at most 64 tasks`、`fork_turns must be between 0 and 16`、`context_summary exceeds 16384 UTF-8 bytes`、`too many subagent targets`、`subagent target is required`、`subagent wait interrupted`、`message must contain 1..20000 UTF-8 bytes`、`message_id must contain 1..128 bytes`、`message source was interrupted`、`target is interrupted; wait for settlement`、`report is only available to a temporary child agent`、`parent session is closed`。
 
-## 执行中的指导与汇报
+带 `ToolErrorMeta` 的失败会给出 `error_meta{code,hint,retryable,retry_after_ms}`（`crates/wunder-runtime/src/services/tools/tool_error.rs:4-50`）。
 
-- 主智能体可用 `send(session_id,message)` 向运行中的子智能体补充约束，消息在下一次模型动作边界进入上下文，无需先中断。
-- 子智能体可用 `report(message)` 报告阶段发现或阻塞，同时继续自己的工作。父智能体运行中接收消息，空闲时通过任务队列唤醒。
-- `accepted` 只表示接收；`queued_current_turn` 表示当前轮稍后应用，`queued_next_turn` 表示持久排队。取消或异常可使尚未应用的消息失效。
-- 重试可传 `message_id`；相同 ID 必须保持内容一致。运行中去重限当前接收轮最近 256 条，跨已结束轮次 send 视为新任务。
-- 每条消息最多 20000 UTF-8 字节。消息过长、收件箱已满或线程正收尾会明确报错，缩短内容或稍后重试。
-- `wait` 期间收到汇报或指导会提前返回 `completed_reason=message_received`，以便主智能体处理消息；这不代表子任务完成。
-- 超长完成通知自动保留简短摘要和运行引用，完整结果仍在子线程历史中，可用 `status` / `history` 查询。
+## 边界
 
+- **批次上限 64**：schema `maxItems(64)` 与运行时校验一致，超了整批拒绝而不是截断。
+- **信箱有界**：单子线程待发 64 条 / 256 KiB，回执缓存 256 条，全局信箱 8192 个；超限按拒绝处理（`mailbox.rs:9-13`）。
+- **列表有界**：`limit` 上限 200，默认 50；级联收集后代也受同一 `limit` 约束（`targeting.rs:997-1033`）。
+- 桌面模式把 `子智能体控制` 列为默认额外启用工具（`default_tool_profile.rs:33-35`）；非桌面形态需管理员勾选。
+- 子智能体的模型可被 `model` 覆盖，智能体可被 `agent_id` 覆盖；两者都受当前用户的智能体归属校验。
+- `cleanup=delete` 才清理派生线程；`keep` 保留，可继续 `history` 追溯。
 
-## 任务树范围与上下文继承
+## 相关页面
 
-- 子智能体属于创建它的根任务树。所有 list/history/status/wait/send/interrupt/close/resume 选择器统一校验用户与根线程；新开独立主线程不能查询或接管旧树，用户显式分支也不并入临时子智能体树。
-- list 默认仍列当前线程的直属子智能体；使用 parent_id=/root 查看根的直属子线程，使用返回的父线程 ID 查询更深层。结果包含 root_session_id 与稳定 task_path，后者由持久线程 ID 组成，重启后保持一致。session_id 参数接受这两种目标引用。
-- 同树工作线程可互相 send 或读取历史；report 仍固定发送给创建时的直属父线程。向空闲兄弟线程分派新任务时，任务完成通知回到本次派发者，原始父子关系不改变。
-- spawn 与 batch_spawn 支持 fork_turns（整数 0–16，默认 0）以及 context_summary（最多 16 KiB UTF-8）。批量中的每项可覆盖顶层选项，每批最多 64 项。所有上下文先验证，再开始派发。
-- 背景只读取可见用户/助手消息，按根用户轮次选择；不复制 system、工具协议或内部隐藏消息。查询最多 256 项，每项在数据库截短到 16384 字符，背景文本合计最多 64 KiB；截断情况记录到运行元数据。背景作为首次任务的引用材料持久化，后续轮次不重复注入，也不改变冻结的 system prompt。
-
-## 进程重启与继续执行
-
-执行中每 15 秒续约；超过 5 分钟无心跳的子运行，在 list/status 或后续 send 访问时按中断结算，并修复已关联的子线程轮次状态。恢复可重复执行，迟到旧运行不能覆盖已过期状态。有效心跳仍在的运行不会被恢复逻辑接管。
-
-恢复保留历史、模型选择、任务树身份和已记录额度，不自动重放工具。使用 send 或带消息的 resume 显式继续；这会创建新的 run_id，沿用 session_id。重启后尚未过期时会提示等待收敛。
+- 线程管理：[会话线程控制](/docs/zh-CN/tools/thread-control/)
+- 工具与结果裁剪：[工具](/docs/zh-CN/tools/index/)

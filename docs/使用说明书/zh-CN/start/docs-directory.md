@@ -1,71 +1,152 @@
 ---
 title: 常用说明目录
-summary: 按用途列出的文档索引，帮助快速定位到具体页面。
+summary: 仓库文档生态导航：设计文档、技术说明书、API 文档、使用说明书、性能标准与评分、功能迭代、经验教训的分工与读法。
 read_when:
-  - 知道想看什么但不确定在哪
-  - 想了解文档全貌
+  - 不清楚某个问题该去哪一类文档查
+  - 第一次进入仓库想知道有哪些文档、各解决什么
+  - 想在写文档前了解分层与不串味的原则
 source_docs:
-  - docs/wunder补全文档落地方案.md
+  - docs/总体设计.md
+  - docs/设计文档
+  - docs/技术说明书
+  - docs/API文档.md
+  - docs/使用说明书
+  - docs/性能标准.md
+  - docs/性能评分体系.md
+  - docs/性能基线
+  - docs/功能迭代.md
+  - docs/经验教训.md
+  - docs/SOP.md
+updated_at: 2026-10-13
 ---
 
 # 常用说明目录
 
-按用途分类，帮助快速定位。
+wunder 的文档分七类，各解决一类问题。写文档时不串味：**设计文档讲边界与理由**，**技术说明书讲工程执行**（在哪改、怎么跑、怎么查），**API 文档讲接口契约**，**使用说明书讲用户与管理员操作**，**性能标准与评分讲口径与量化**，**功能迭代讲变更流水**，**经验教训讲复发性问题**。
 
-## 入门
+## 七类文档的定位
+
+| 类别 | 位置 | 面向 | 什么时候查 |
+| --- | --- | --- | --- |
+| **总体设计** | `docs/总体设计.md`、`docs/wunder系统简介.md` | 所有读者 | 想一句话了解产品定位与形态分工 |
+| **设计文档** | `docs/设计文档/`（01–13 + 上下文压缩 / 实时同步 / 工具 / 记忆系统 / 目标态系统等专题） | 架构评审、方案取舍 | 想知道**为什么这样设计**、边界在哪 |
+| **技术说明书** | `docs/技术说明书/`（01–13 章 + README） | 工程执行者 | 想知道**在哪改、怎么跑、怎么查** |
+| **API 文档** | `docs/API文档.md` | 接口消费者 | 具体 HTTP / WebSocket 端点契约 |
+| **使用说明书** | `docs/使用说明书/zh-CN/`、`docs/使用说明书/en/` | 用户与管理员 | 具体操作的界面地图与步骤 |
+| **性能标准与评分** | `docs/性能标准.md`、`docs/性能评分体系.md`、`docs/性能基线/` | 运维与基准测试者 | 前后对比、达标判断、形态独立评分 |
+| **功能迭代 / 经验教训** | `docs/功能迭代.md`、`docs/经验教训.md` | 项目维护者 | 每轮变更流水；反复出现的坑 |
+
+## 使用说明书（本站）
+
+`docs/使用说明书/site.json` 控制导航，中英双站。**中文站是权威版本，英文站跟随**。
+
+### 开始
 
 | 页面 | 内容 |
-|------|------|
-| [快速开始](/docs/zh-CN/start/quickstart/) | 跑通第一个任务 |
-| [蜂窝安装](/docs/zh-CN/start/desktop/) | 个人用户下载即用 |
+| --- | --- |
+| [快速开始](/docs/zh-CN/start/quickstart/) | 4 步跑通第一个任务 |
+| [蜂窝入门](/docs/zh-CN/start/desktop/) | 个人用户下载即用 |
 | [舰体部署](/docs/zh-CN/start/server/) | 多人共用、统一管理 |
 | [舵机使用](/docs/zh-CN/start/cli/) | 终端驱动、自动化 |
+| [首次运行排查](/docs/zh-CN/start/troubleshooting-first-run/) | 装 / 启 / 访 三类失败按形态定位 |
+| [说明书总览](/docs/zh-CN/start/hubs/) | 导航首页 |
+| [常用说明目录](/docs/zh-CN/start/docs-directory/) | 本页 |
 
-## 蜂巢与界面
-
-| 页面 | 内容 |
-|------|------|
-| [蜂巢界面](/docs/zh-CN/surfaces/frontend/) | 聊天、文件、智能体、工具 |
-| [蜂窝界面](/docs/zh-CN/surfaces/desktop-ui/) | 本地 AI 工作台 |
-| [舰桥界面](/docs/zh-CN/surfaces/web-admin/) | 管理员后台 |
-
-## 帮助
+### 界面
 
 | 页面 | 内容 |
-|------|------|
-| [帮助中心](/docs/zh-CN/help/) | 问题分流入口 |
-| [故障排查](/docs/zh-CN/help/troubleshooting/) | 按症状找原因 |
-| [FAQ](/docs/zh-CN/help/faq/) | 常见问题快速答复 |
-| [术语表](/docs/zh-CN/help/glossary/) | 核心术语解释 |
+| --- | --- |
+| [界面概览](/docs/zh-CN/surfaces/index/) | 四形态分工 + 能力矩阵 |
+| [蜂窝界面](/docs/zh-CN/surfaces/desktop-ui/) | Slint，主窗两页 + 设置 12 分类 |
+| [蜂巢界面](/docs/zh-CN/surfaces/frontend/) | Vue3 SPA，单条 `/chat/ws` |
+| [舰桥界面](/docs/zh-CN/surfaces/web-admin/) | 4 组 19 项，管理员治理后台 |
 
-## 核心概念
+### 其它分组（本页不列全部，只列站点主标签）
 
-| 页面 | 内容 |
-|------|------|
-| [核心概览](/docs/zh-CN/concepts/) | 系统运行模型 |
-| [会话与轮次](/docs/zh-CN/concepts/sessions-and-rounds/) | 用户轮次和模型轮次 |
-| [工作区与工作目录](/docs/zh-CN/concepts/workspaces/) | 唯一工作区、目录位置与隔离 |
+- 核心概念 → `/docs/zh-CN/concepts/`
+- 工具 → `/docs/zh-CN/tools/`
+- 接入 → `/docs/zh-CN/integration/`
+- 运维 → `/docs/zh-CN/ops/`
+- 参考 → `/docs/zh-CN/reference/`
+- 帮助 → `/docs/zh-CN/help/`
 
-## 接入与开发
+## 设计文档（`docs/设计文档/`）
 
-| 页面 | 内容 |
-|------|------|
-| [接入概览](/docs/zh-CN/integration/) | 找到适合的接入方式 |
-| [工具总览](/docs/zh-CN/tools/) | 按任务选工具 |
+**回答「为什么这样设计」，不写具体怎么改。** 编号 01–13 是主干：
 
-## 运维
+| 编号 | 主题 |
+| --- | --- |
+| 01 | 系统总体设计 |
+| 02 | 智能体核心设计 |
+| 03 | 实时投影系统设计 |
+| 05 | 工具、技能与 MCP 系统设计 |
+| 06 | 记忆、知识与工作区系统设计 |
+| 07 | 接入、网关与渠道系统设计 |
+| 08 | 数据存储与状态模型设计 |
+| 09 | 用户侧前端设计 |
+| 10 | 管理员侧与运营后台设计 |
+| 11 | Desktop-CLI 本地形态设计 |
+| 12 | 安全-权限与隔离设计 |
+| 13 | 可观测性-测试与验收设计 |
 
-| 页面 | 内容 |
-|------|------|
-| [部署与运行](/docs/zh-CN/ops/deployment/) | 上线前后的关键检查项 |
-| [认证与安全](/docs/zh-CN/ops/auth-and-security/) | 令牌、鉴权、沙盒环境 |
-| [蜂窝本地模式](/docs/zh-CN/ops/desktop-local-mode/) | 本地模式的边界与能力 |
+专题子页：`上下文压缩设计.md`、`实时同步设计.md`、`工具设计.md`、`记忆系统设计.md`、`目标态系统设计.md`、`应用补丁工具重构方案.md`；另有 `蜂巢大数据量线程日志渲染优化方案.md`（`docs/` 根，方案重写完成、业务实现待执行）。
 
-## 参考
+## 技术说明书（`docs/技术说明书/`）
 
-| 页面 | 内容 |
-|------|------|
-| [配置说明](/docs/zh-CN/reference/config/) | 配置文件详解 |
-| [API 索引](/docs/zh-CN/reference/api-index/) | 接口索引 |
-| [流式事件参考](/docs/zh-CN/reference/stream-events/) | WebSocket 事件类型 |
-| [舰桥面板索引](/docs/zh-CN/reference/admin-panels/) | 舰桥面板一览 |
+**回答「在哪改、怎么跑、怎么查」，不写边界与理由。** 章节 01–13：
+
+| 编号 | 主题 |
+| --- | --- |
+| 01 | 系统总览与术语 |
+| 02 | 仓库结构与模块职责 |
+| 03 | 运行时与执行链路 |
+| 04 | 实时投影与通信链路 |
+| 05 | 工具、技能、MCP 与外部能力 |
+| 06 | 数据存储、工作区与配置 |
+| 07 | 接口、网关与渠道接入 |
+| 08 | 部署、启动与运行模式 |
+| 09 | 开发、扩展与变更流程 |
+| 10 | 运维、排障与验收 |
+| 11 | 工具结果裁剪与观测链路 |
+| 12 | 形象系统 |
+| 13 | 目标态系统 |
+
+附加：`吞吐测试Docker验收.md`。
+
+## API 文档（`docs/API文档.md`）
+
+单文件，接口消费者视角。所有 HTTP 端点走 `/wunder/*` 前缀（**不是 `/api/*`**）；错误包络由 `crates/wunder-server/../api/errors.rs:132-160` 定义，响应头会写回 `x-trace-id` 与 `x-error-code`。六个 WebSocket 通道（`chat/ws`、`ws`、`gateway/ws`、`interlink/ws`、`interlink/remote_ws`、`user_world/ws`、`desktop/lan/ws`）在此文档中列出，事件名散在发送处没有集中枚举。
+
+## 性能标准与评分（`docs/`）
+
+| 文档 | 内容 |
+| --- | --- |
+| `docs/性能标准.md` | 同环境同入口前后对比 + 标准入口表 |
+| `docs/性能评分体系.md` | 三形态**独立 0–100 加权、不可跨形态相加** |
+| `docs/性能基线/` | 历史基线快照；最新例如 `2026-10-13-server-capacity.md`、`2026-10-13-thread-view-v3.md` |
+
+**口径**：性能不是形容词。任何列表、日志、面板都要能说出分页/限量/有界语义；采样固定用户 `performance_admin`、根 `.wunder_perf`、命令超时 5s（`ops/performance.rs:22-33`）。
+
+## 功能迭代与经验教训
+
+- `docs/功能迭代.md`：每轮变更写入指定分类区块，用 `python scripts/update_feature_log.py --type <类型> --scope <范围> ...`。类型限定：新增 / 变更 / 修复 / 性能 / 文档 / 重构 / 安全 / 工程 / 测试 / 移除 / 弃用。
+- `docs/经验教训.md`：**反复出现的问题，解决后必须写一条**，避免下次再犯同样错误。
+
+## 项目 SOP
+
+`docs/SOP.md`：6 步流程（worktree → quality-gate → peer review → merge-gate → PR → 合并清理）；Biome `pnpm check`、`pnpm lint`；文件 200 行告警 / 350 行硬上限。
+
+## 读法建议
+
+**新用户**：使用说明书 → 快速开始 → 蜂窝入门；出错回首次运行排查。
+**开发者入门**：技术说明书 01–03 → 02 仓库结构与模块 → 03 运行时与执行链路；再读设计文档 01–02 补上「为什么」。
+**加接口**：技术说明书 07 → API 文档 → 设计文档 07。
+**性能问题**：性能标准 → 性能评分体系 → 性能基线；具体分页常量看技术说明书 03–04。
+**运维与验收**：技术说明书 10 → `docs/SOP.md`；`docs/功能迭代.md` 看历史决策；`docs/经验教训.md` 避免重复踩坑。
+
+## 延伸阅读
+
+- [说明书总览](/docs/zh-CN/start/hubs/)
+- [wunder 心舰首页](/docs/zh-CN/index/)
+- [API 索引](/docs/zh-CN/reference/api-index/)
+- [配置说明](/docs/zh-CN/reference/config/)

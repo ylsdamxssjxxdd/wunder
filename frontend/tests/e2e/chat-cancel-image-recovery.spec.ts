@@ -66,7 +66,7 @@ test('cancelled durable blocks and both workspace images survive reload and page
       await page.locator('.messenger-sidebar-settings').first().click();
       await expect(page.locator('[data-testid="messenger-settings"]')).toBeVisible();
       await expect(page.locator('.ai-resource-card')).toHaveCount(0);
-      await page.locator('[data-testid="settings-back"]').first().click();
+      await page.locator('[data-testid="settings-close"]').first().click();
       await expect(page.locator('[data-testid="messenger-settings"]')).toHaveCount(0);
       await assertRestored();
     }
@@ -83,7 +83,7 @@ test('cancelled durable blocks and both workspace images survive reload and page
     await page.locator('.messenger-sidebar-settings').first().click();
     await expect(page.locator('[data-testid="messenger-settings"]')).toBeVisible();
     await expect(page.locator('.ai-resource-card')).toHaveCount(0);
-    await page.locator('[data-testid="settings-back"]').first().click();
+    await page.locator('[data-testid="settings-close"]').first().click();
     await expect(page.locator('[data-testid="messenger-settings"]')).toHaveCount(0);
     downloadGate = undefined;
     releaseDownloads?.();

@@ -2,8 +2,8 @@
 import { shallowRef, markRaw } from 'vue';
 
 export interface ThreadBodyRef { body_id: string; revision: number; bytes: number }
-export interface ViewMessage { item_id: string; content: string; durable_seq?: number; content_offset?: number; body?: ThreadBodyRef; feedback?: unknown; stats?: unknown; tail?: string; failure?: string; attachments?: unknown[] }
-export interface ChatViewRow { root_turn_id: string; execution_turn_id?:string; user_round: number; client_message_id?: string; revision: number; status: string; user: ViewMessage; assistant: ViewMessage; workflow_count: number; failed_count: number }
+export interface ViewMessage { item_id: string; content: string; reasoning?: string; durable_seq?: number; content_offset?: number; body?: ThreadBodyRef; feedback?: unknown; stats?: unknown; tail?: string; failure?: string; attachments?: unknown[] }
+export interface ChatViewRow { root_turn_id: string; execution_turn_id?:string; user_round: number; client_message_id?: string; revision: number; status: string; user: ViewMessage; assistant: ViewMessage; workflow_count: number; failed_count: number; subagents?: any[] }
 export interface ThreadViewPage { runtime_status?:string;active_turn_id?:string; session_id: string; epoch: number; view_seq: number; projection_state: string; thread_empty: boolean | null; latest_round: number; chat: ChatViewRow[]; trajectory: any[]; tiles: any[]; tile_level: number; next_before: number | null; has_more: boolean }
 export type ViewPhase = 'opening' | 'ready' | 'verified_empty' | 'refreshing' | 'error';
 export interface ViewSlot { key: string; rootTurnId: string; user: Record<string, any>; assistant: Record<string, any> }
@@ -24,17 +24,21 @@ function notifyTail(){if(tailTimer===null)tailTimer=setTimeout(()=>{tailTimer=nu
 export function beginThreadView(key: string): number { activeKey = key; const e = entry(key); e.phase = e.rows.size ? 'refreshing' : 'opening'; e.error = ''; notify(); return ++e.generation; }
 export function threadViewGeneration(key: string): number { return entry(key).generation; }
 export function threadViewPhase(key: string): ViewPhase | undefined { void threadViewClock.value; return entries.get(key)?.phase; }
-export function threadViewCursor(key: string): number { return entries.get(key)?.seq ?? 0; }
+export function threadViewCursor(key: string): number { const e=entries.get(key);return e?.epoch===-1 ? -((e.seq??0)+1) : e?.seq??0; }
 export function threadViewHistory(key: string) { const e = entry(key); return { before: e.next, hasMore: e.more }; }
+/** Row status is server vocabulary; message bubbles and audit hooks speak the UI one. */
+function uiMessageStatus(status: string) {
+  return status === 'completed' ? 'final' : status === 'rejected' ? 'failed' : status;
+}
 function materialize(row: ChatViewRow): ViewSlot {
   const running = ['running','queued','waiting_input','waiting_approval'].includes(row.status);
   const make = (role: string, m: ViewMessage) => markRaw({ id: `tturn:${row.root_turn_id}:${role}`, role, content: m.content, item_id: m.item_id,
-    turn_id: row.execution_turn_id??row.root_turn_id, user_round: row.user_round, client_message_id: row.client_message_id,
+    turn_id: row.execution_turn_id??row.root_turn_id, root_turn_id: row.root_turn_id, user_round: row.user_round, client_message_id: row.client_message_id,
     __runtime_projected: true, __thread_view:true, final: !running, state:role==='assistant'?(running?'streaming':row.status==='completed'?'final':row.status):'final', __thread_body: m.body, __thread_preview: Boolean(m.body && m.body.bytes > new TextEncoder().encode(m.content).length),
-    streaming: role === 'assistant' && running, status: role === 'assistant' ? row.status : 'completed',
-    workflow_count: row.workflow_count, workflow_failed_count: row.failed_count, feedback: m.feedback, stats: m.stats,
+    streaming: role === 'assistant' && running, status: role === 'assistant' ? uiMessageStatus(row.status) : 'completed',
+    workflow_count: row.workflow_count, workflow_failed_count: row.failed_count, feedback: m.feedback, stats: m.stats, reasoning: m.reasoning || '',
     __thread_tail: m.tail, failureDetail:m.failure, attachments:m.attachments,
-    workflowItems: [], reasoning: '', failed: role === 'assistant' && ['failed','rejected'].includes(row.status), stopped: row.status === 'cancelled' });
+    workflowItems: [], ...(role==='assistant'&&Array.isArray(row.subagents)&&row.subagents.length>0?{subagents:row.subagents}:{}), failed: role === 'assistant' && ['failed','rejected'].includes(row.status), stopped: row.status === 'cancelled' });
   return markRaw({ key: row.client_message_id ? `turn:client:${row.client_message_id}` : `turn:${row.root_turn_id}`, rootTurnId: row.root_turn_id, user: make('user', row.user), assistant: make('assistant', row.assistant) });
 }
 function merge(e: Entry, row: ChatViewRow) {
@@ -71,7 +75,7 @@ export function commitThreadView(key: string, page: ThreadViewPage, generation?:
   if(!page || page.session_id!==key || !Number.isSafeInteger(page.epoch) || !Number.isSafeInteger(page.view_seq) || !validRows(page.chat))return false;
   if(historical && e.epoch!==page.epoch)return false;
   if (!historical && e.epoch === page.epoch && page.view_seq < e.seq) return false;
-  if (page.projection_state !== 'ready') { e.error = '展示索引正在构建'; e.phase = e.rows.size ? 'ready' : 'error'; notify(); return false; }
+  if (!['ready','source'].includes(page.projection_state)) { e.error = '线程展示暂时不可用，请重试'; e.phase = e.rows.size ? 'ready' : 'error'; notify(); return false; }
   // Candidate validation precedes every mutation; failures retain committed rows.
   if (!historical && !(recovery && !e.atLatest && e.epoch===page.epoch)) {
     // Commit a complete tail window atomically. Optimistic requests survive refresh.

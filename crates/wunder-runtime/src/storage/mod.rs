@@ -23,6 +23,7 @@ mod session_cleanup;
 mod sqlite;
 pub(crate) mod stress_model;
 mod thread_view_projection;
+mod thread_view_source;
 mod thread_view_store;
 
 pub use backend::*;

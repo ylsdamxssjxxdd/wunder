@@ -1,94 +1,95 @@
-# 蜂窝 / 舵机本地形态设计
+# Desktop / CLI 本地形态设计
 
-> 本册于 2026-09-25 按 0.4.x 现状重写：蜂窝默认形态为 `frontend-slint/`（Rust + Slint）同进程原生架构；遗留 WebView 前端壳已移除。
+> 约束范围：本册约束蜂窝与舵机两种本地形态的进程模型、启动与恢复语义、目标平台约束、本地文件安全与最小权限能力声明。分发命令、构建矩阵与配置键见 `../技术说明书/08-部署、启动与运行模式.md`，本册不复述。
 
-## 1. 设计目标
+## 1. 形态定位（不变量）
 
-蜂窝（desktop）与舵机（cli）是 wunder 的两种本地运行形态。它们的意义不是"给舰体再包两层壳"，而是在复用同一核心语义的前提下，为个人用户和自动化场景提供不同的人机接口。
+蜂窝与舵机不是舰体的壳，而是与舰体平级的两种可执行形态，共享 `wunder-core → wunder-runtime` 同一引擎：
 
-## 2. 形态定位
+| 形态 | 定位 | 进程模型 | 存储 |
+| --- | --- | --- | --- |
+| 蜂窝（desktop） | 本地 AI 工作台、个人用户默认入口 | 桌面进程内同进程调用引擎 | 本地 SQLite |
+| 舵机（cli） | 手工本地操作入口、终端驱动与脚本化 | 本地进程，TTY/非 TTY 双模式 | 本地 SQLite |
 
-| 形态 | 面向对象 | 设计重点 |
+执行、工具与存储语义完全复用引擎，**不另起一套执行链路**。Electron / Tauri 前端壳停止日常维护与功能迭代；「停止维护前端壳」不等于「停止维护蜂窝后端」。
+
+## 2. 蜂窝：同进程原生是唯一默认路径
+
+| 事实 | 依据 |
+| --- | --- |
+| 无参数启动即 `NativeDesktop::start()` → `DesktopArgs::native_defaults()`（`port=0, bridge_only=true, native_runtime=true`），自建 tokio Runtime 并 `DesktopRuntime::init` 同进程 | `crates/wunder-desktop/args.rs:53-67`（已实测） |
+| native 路径无 axum、无 TcpListener：不经本机 HTTP/WS，不拉起 bridge 子进程 | `crates/wunder-desktop/native.rs` |
+| Slint 入口只接受 `None | --native`，其余参数直接报「旧 bridge 参数已移除」 | `frontend-slint/src/main.rs:123-126` |
+| 本地能力放 `crates/wunder-desktop/`，以强类型 Rust façade 暴露（`lib.rs` 公开 `args/native/runtime` 三模块 + `NativeDesktop`、事件流、设置等），façade 与 UI 调用点一一对应 | `wunder-desktop/lib.rs:6-24` |
+
+**bridge 只是兼容层**：独立 bridge（默认端口 18123、挂 `build_desktop_router`）仅为既有客户端保留；`lib.rs` 不导出 bridge，只有 bridge bin 才组装它。新能力不得再往 bridge 协议面加。
+
+### 2.1 启动与恢复语义
+
+本地 SQLite 必须假设「进程可能被硬杀」：
+
+- 启动恢复扫描限定数量上限（4096），把 queued/waiting/running/cancelling 的残留会话清理为一致状态，回收会话锁与任务（`services/desktop_runtime_recovery.rs`，已实测）。
+- 蜂窝与舵机不依赖舰体即可运行；互通隧道仅在存在云会话且会话 `interlink.enabled` 开关联动时启动，策略变更即拆隧道。
+- 数据目录收敛在 `WUNDER_HOME` → `~/.wunder`（工作区、temp、设置各有子路径），首启动不要求网络。
+
+## 3. 舵机：双模式与脚本契约
+
+| 模式 | 触发 | 语义 |
 | --- | --- | --- |
-| 蜂窝（Slint 原生） | 个人用户（wunder 主推形态） | 易用、低门槛、低资源占用、可分发、Win7 x86 兼容 |
-| 舵机 | 开发者、自动化和脚本场景 | 可脚本化、可批处理、可纳入流水线 |
+| TUI |  stdin/stdout/stderr 三端均为 TTY（`main.rs:359`，已实测） | ratatui Inline 视口，slash 命令与键位是交互面 |
+| exec | 非 TTY | 一次性执行降级，管道友好 |
 
-二者都必须复用 Wunder 的线程运行时、工具治理和实时投影语义，不能因为本地形态而单独生长出另一套智能体系统。
+不变量：
 
-## 3. 模块组成
+- 舵机同进程调引擎（`CliRuntime.state: Arc<AppState>` → orchestrator stream），不为终端体验重写私有流式协议。
+- `exec --json` 的 JSONL（thread/turn/item.* 事件）是**对外脚本契约**，破坏兼容即破坏用户脚本，改动需走契约测试。
+- 舵机本地形态显式关闭定时任务（`runtime.rs:683 config.cron.enabled = false`）：定时执行需要常驻进程，与终端形态冲突，宁可关闭也不做隐式后台常驻。
+- `cloud` 子命令族与互通隧道（`interlink_tunnel.rs`、`cloud_interlink.rs`）是舵机独有的云端接入面，走 `07` 册的互通协议，不开任何本地监听。
 
-| 模块 | 作用 | 主要目录 |
+## 4. 目标平台约束
+
+蜂窝与舵机面向 **32 位 Win7** 与 **Ubuntu 18.04**（x86_64 / ARM64）：
+
+| 约束 | 设计后果 |
+| --- | --- |
+| Win7 x86：GNU 工具链交叉构建、Slint 软件渲染 + 字体完整内嵌 | 不依赖 D3D/WebView；GUI 栈 API 白名单 |
+| Win7 控制台 GBK 输出 | 命令会话 winpty 路径按平台解码（`tools/command_sessions/desktop.rs`） |
+| Ubuntu 18.04 老 glibc | sysroot 锁定构建，产物目录区分 `*-ubuntu18` |
+| win7 构建的互通节点**不声明 `tool.exec`** | 能力声明跟随构建事实（`07` 册第 4 节），不假装支持 |
+| 路径与编码 | canonicalize 与 Windows verbatim/大小写归一在 `path_utils.rs` 统一处理 |
+
+32 位编译链只用于分发与 PE 验收，不作为日常正确性或性能基线。
+
+## 5. 本地文件安全与最小权限
+
+本地形态默认离线可用、数据不出机器；对系统能力的调用遵循**最小权限、显式能力声明、可观测错误**：
+
+| 面 | 纪律 |
+| --- | --- |
+| 工作区与配置 | 本地 SQLite 与配置文件受文件系统权限保护；路径、备份与迁移保守设计；不把系统能力默默暴露给远端 |
+| LAN overlay | 仅绑私网 CIDR、peer TTL 有界、去重表有界；能力声明当前**只有 `user_world`**（`services/desktop_lan.rs:521` announce 载荷，已实测）——LAN 上的对端只能交换站内消息域内容，拿不到文件、命令或线程能力 |
+| 本地 bridge | 最小权限、显式声明、错误可观测；不承载新能力 |
+| 桌面工具 | 桌面控制/监视需 desktop 模式 + 显式开关；vision 不可用时过滤读图与桌面类工具 |
+| 互通节点侧 | 命令在本地 preflight 按能力集与 `security.allow_commands` 双重裁决（`07` 册） |
+
+## 6. 反例与缺口
+
+| 项 | 现状 | 性质 |
 | --- | --- | --- |
-| Slint 前端 | 蜂窝默认界面（Rust + Slint） | `frontend-slint/`（`ui/` 界面、`src/` 接入与 UI 状态投影） |
-| 蜂窝本地运行时 | 原生桌面运行时、bridge、系统能力与启动装配 | `crates/wunder-desktop` |
-| NativeDesktop | 无参数启动时的同进程原生调用入口，不经本机 HTTP/WS、不拉起 bridge 子进程 | `crates/wunder-desktop::NativeDesktop`（`native.rs`、`native_catalog.rs` 等） |
-| 遗留 bridge | 仅为已有兼容客户端保留的独立桥接入口 | `crates/wunder-desktop/src/bridge.rs`、`crates/wunder-runtime/src/api/desktop.rs` `desktop_lan.rs` |
-| 舵机程序 | 舵机入口与 TUI | `crates/wunder-cli` |
-| 构建入口 | 构建、交叉编译与打包统一入口 | `builders/` |
+| Tauri 死链 | `crates/wunder-desktop/README.md` 历史说明；`scripts/build-win7*.ps1`、根 `Dockerfile` 仍调 `cargo tauri build` / 装 tauri-cli，指向已不存在的目录 | 工程缺口：脚本待清；不影响「Tauri 壳停止维护」口径 |
+| Electron | 全仓零残留 | 文档不得再为其保留任何入口描述 |
+| `args.rs` 帮助文案仍提 Tauri、根 `package.json` 的 `build:desktop` | 指向不存在产物 | 同上，待清 |
+| 蜂窝 Linux 形象浮窗 | 浮窗是 Win32 分层窗口实现，Linux 无等价浮窗 | 平台边界，不得写成全平台能力 |
+| LAN 对端认证强度 | 未证实 | 不书写为「强认证」，列入 `12` 册未证实项 |
 
-## 4. 蜂窝架构
+## 7. 验收判据
 
-蜂窝当前稳定为"Slint 前端 + 进程内原生运行时 + 本地 SQLite"的组合：
+- 蜂窝无参数启动进程数 = 1（无 bridge 子进程），且网络断开时可完成本地线程全流程。
+- 非 TTY 环境自动落 exec 模式；`exec --json` 输出通过既有契约测试。
+- 目标平台产物（win7-x86 / ubuntu18）构建 + 真机运行验收通过；构建成功不替代运行验收。
+- 重启后恢复扫描把中断会话收敛到一致状态，无死锁残留；LAN 宣告载荷不含 `user_world` 之外能力。
 
-- 无参数启动即在同一进程内通过 `NativeDesktop` 原生调用后端，不经本机 HTTP/WebSocket，不拉起 bridge 子进程。
-- 蜂窝页面新增能力使用强类型 Rust façade 暴露给 Slint；本地系统能力放 `crates/wunder-desktop/`。
-- 执行、工具与存储语义复用引擎（wunder-runtime），不另造平行运行时。
-- 数据库采用 SQLite；本地路径、备份、迁移与并发访问保守设计，避免长事务阻塞 UI。
-- 桌面控制、浏览器控制、工作区与本地文件能力通过授权后接入。
-- 独立 bridge 仅服务已有兼容客户端，不影响原生桌面后端的持续维护。
+## 8. 相关文档
 
-### 4.1 渲染与流式约束
-
-- 保持原浅色蜂巢基调，不引入 WebView、浏览器渲染链或重型组件；Slint 以软件渲染与完整内嵌字体保证 Win7 x86 兼容。
-- Markdown 采用最低必要能力：纯文本保底，逐步支持段落、列表和代码块；复杂内容降级为可读文本或占位提示，原始消息与复制内容必须完整保留。
-- 流式输出优先复用后端既有 WebSocket 事件、去重、replay 与补水语义；按帧合并 token 增量（初始约 16–33 ms 刷新节奏），事件缓冲必须有界，合并文本增量不得丢字。
-- 长消息按块组织，已完成块保持稳定，仅更新活动尾块；历史消息使用虚拟列表与限量加载，用户停留底部时才自动跟随输出。
-- 网络读取、事件处理与较重解析放在后台，UI 线程只应用必要增量投影。
-
-## 5. 舵机架构
-
-舵机的长期定位是"同一运行时的脚本化入口"：
-
-- 复用同一线程、tooling、prompt、recovery 语义（`crates/wunder-cli/`）。
-- 支持终端流式输出、批处理和自动化管线集成。
-- 默认本地 SQLite，考虑离线、启动速度、路径权限与配置迁移。
-- 舵机不为了终端交互便利绕开主运行时或重写一套私有流式协议。
-- Win7 兼容构建走 GNU 工具链，见 `docs/方案/wunder-cli-win7-gnu构建SOP.md`。
-
-## 6. 设计原则
-
-本地形态必须遵守以下原则：
-
-- 本地形态与舰体共享同一套语义。
-- 本地接口面可以裁剪，但线程、子智能体、tool、projection 语义不能裁剪错位。
-- 蜂窝与舵机的差异只应体现在壳层、交互层和本地权限接入层。
-- 本地模式仍需保留恢复、日志、工作区和审计能力。
-- 本地 bridge、LAN overlay、系统能力调用要最小权限、显式能力声明、可观测错误，不把系统能力默默暴露给远端。
-
-## 7. 与其他系统的关系
-
-- 与蜂巢：`frontend-slint/` 是独立的 Slint 界面体系，以清晰可用为准，不要求完整复刻 TS 端富文本与视觉细节；`frontend/`（Vue3）仅供舰体形态使用。
-- 与存储系统：蜂窝使用 SQLite，但数据模型与舰体共享抽象。
-- 与工具系统：本地文件、桌面控制、浏览器控制等能力更强，但仍受统一治理。
-- 与实时投影：蜂窝和舵机都消费统一投影语义，而不是私有事件结构。
-
-## 8. 当前演进重点
-
-- Win7 x86 与 Linux（Ubuntu 18.04 x86_64 / ARM64 AppImage）分发链维护，构建入口统一在 `builders/`。
-- Slint 蜂窝能力对齐：智能体管理、设置、文件浏览、头像与个人概况等页面继续以强类型 façade 原生接入。
-- 流式验收覆盖长消息、连续增量、输出期间输入/滚动、断线恢复与最终文本完整性，并记录 UI 更新耗时、积压和内存表现。
-
-## 9. 验收标准
-
-- 蜂窝与舵机能在不依赖完整舰体的情况下独立运行。
-- 二者消费的是同一套线程与实时语义，而不是私有变体。
-- 本地模式依然具备工作区、恢复、工具治理和日志能力。
-- 壳层与业务层职责清晰，不把业务逻辑写进打包壳中。
-- Slint 渲染改动需查看实际截图并通过 Win7 真机运行验收，构建通过不能代替运行验收。
-
-## 10. 相关文档
-
-- `docs/设计文档/01-系统总体设计.md`
-- `docs/技术说明书/08-部署、启动与运行模式.md`
-- `docs/使用说明书/zh-CN/start/desktop.md`
-- `docs/方案/wunder-cli-win7-gnu构建SOP.md`
+- 事实层：`../技术说明书/08-部署、启动与运行模式.md`、`../技术说明书/02-仓库结构与模块职责.md`
+- 相邻：`09-用户侧前端设计.md`（Slint/TUI 交互纪律）、`07-接入、网关与渠道系统设计.md`（互通协议）、`12-安全-权限与隔离设计.md`（本地策略与审批）

@@ -39,13 +39,16 @@ test('speed survives completion off-page, navigation back and reload with readab
     await expect(bubble.locator('.messenger-message-stats')).toContainText('token/s');
     await page.screenshot({ path: resolve(directory, 'speed-after-navigation.png'), fullPage: true });
     // Open the actual tool row to verify the production structured result renderer.
-    const workflow = bubble.locator('.message-tool-workflow');
-    if (!(await workflow.evaluate(node => (node as HTMLDetailsElement).open))) await workflow.locator(':scope > summary').click();
-    const row = bubble.locator('.tool-workflow-entry').filter({ hasText: /schedule_task|定时任务/ });
-    await row.locator(':scope > summary').click();
-    await expect(page.locator('.tool-workflow-structured.is-schedule')).toContainText('Fixture timer');
-    await expect(page.locator('.tool-workflow-structured.is-schedule')).toContainText('2030');
-    await expect(page.locator('.tool-workflow-structured.is-schedule')).not.toContainText('[object]');
+    // The process region is collapsed by default and hydrates from the durable
+    // turn log on first expand, so the user flow here is: open process -> open row.
+    await bubble.locator('.timeline-process-head').click();
+    const row = bubble.locator('.tl-entry').filter({ hasText: /schedule_task|定时任务/ });
+    await expect(row).toHaveCount(1);
+    await row.locator('.tl-entry-head').click();
+    const structured = row.locator('.tool-workflow-structured.is-schedule');
+    await expect(structured).toContainText('Fixture timer');
+    await expect(structured).toContainText('2030');
+    await expect(structured).not.toContainText('[object]');
     await page.screenshot({ path: resolve(directory, 'schedule-readable-result.png'), fullPage: true });
   } finally { await service.dispose(); }
 });

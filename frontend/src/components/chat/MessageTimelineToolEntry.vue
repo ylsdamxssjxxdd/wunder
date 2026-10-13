@@ -39,6 +39,7 @@
         :class="{ 'is-mono': entry.summaryMono }"
         :title="entry.summary"
       >{{ entry.summary }}</span>
+      <span v-if="metricsText" class="tl-entry-metrics">{{ metricsText }}</span>
     </component>
 
     <div v-if="interactive && open" class="tl-entry-body">
@@ -56,6 +57,11 @@
       <MessageToolWorkflowCompactionSection
         v-else-if="entry.compaction"
         :view="entry.compaction.view"
+      />
+
+      <MessageToolWorkflowStructuredSection
+        v-else-if="structuredView"
+        :view="structuredView"
       />
 
       <div v-else-if="outputText" class="tl-entry-output">
@@ -85,18 +91,22 @@ import { computed } from 'vue';
 import { useI18n } from '@/i18n';
 import { requestWorkspaceReveal } from '@/views/messenger/workspace/workspaceChatReference';
 import type { TimelineToolEntry } from './toolTimelineModel';
-import type { ToolWorkflowPatchView } from './toolWorkflowTypes';
+import type { ToolWorkflowPatchView, ToolWorkflowStructuredView } from './toolWorkflowTypes';
 import MessageToolWorkflowPatchSection from './MessageToolWorkflowPatchSection.vue';
 import MessageToolWorkflowCompactionSection from './MessageToolWorkflowCompactionSection.vue';
+import MessageToolWorkflowStructuredSection from './MessageToolWorkflowStructuredSection.vue';
 
 const props = withDefaults(defineProps<{
   entry: TimelineToolEntry;
   open?: boolean;
   /** 渲染补丁卡片用的视图（由调用方按需构建，未提供时退回正文/错误展示）。 */
   patchView?: ToolWorkflowPatchView | null;
+  /** 结构化结果视图（定时任务/读写/检索等），优先级低于补丁与压缩卡。 */
+  structuredView?: ToolWorkflowStructuredView | null;
 }>(), {
   open: false,
-  patchView: null
+  patchView: null,
+  structuredView: null
 });
 
 const emit = defineEmits<{ (event: 'toggle'): void }>();
@@ -104,6 +114,31 @@ const emit = defineEmits<{ (event: 'toggle'): void }>();
 const { t } = useI18n();
 
 const interactive = computed(() => Boolean(props.entry.expandable));
+
+/** 右侧指标文案：`24k token 19ms`；缺一项只显示另一项。 */
+const metricsText = computed(() => {
+  const metrics = props.entry.metrics;
+  if (!metrics) return '';
+  const parts: string[] = [];
+  if (metrics.tokens !== null) parts.push(formatTokenCount(metrics.tokens));
+  if (metrics.durationMs !== null) parts.push(formatDurationMs(metrics.durationMs));
+  return parts.join(' ');
+});
+
+const formatTokenCount = (tokens: number): string => {
+  if (tokens >= 1000) {
+    const thousands = tokens / 1000;
+    const label = thousands >= 10 ? `${Math.round(thousands)}k` : `${thousands.toFixed(1).replace(/\.0$/, '')}k`;
+    return `${label} token`;
+  }
+  return `${Math.round(tokens)} token`;
+};
+
+const formatDurationMs = (ms: number): string => {
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  const seconds = ms / 1000;
+  return `${seconds.toFixed(seconds >= 10 ? 0 : 1).replace(/\.0$/, '')}s`;
+};
 
 /**
  * 工具输出在 DOM 里必须有界（方案 §7.3 C「长输出限高折叠」+ 性能要求）。
@@ -259,6 +294,17 @@ button.tl-entry-head:focus-visible {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* 行最右侧指标：上下文占用 + 耗时，等宽数字避免刷新时跳动。 */
+.tl-entry-metrics {
+  flex: 0 0 auto;
+  margin-left: auto;
+  color: var(--mz-timeline-entry-soft, #9ba0a8);
+  font-size: 11px;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 /* 命令形态的摘要用等宽字体：与输出面板同一族，读起来是「一条命令」。 */

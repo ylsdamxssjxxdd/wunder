@@ -54,3 +54,11 @@ applyThreadViewChanges(key,{view_seq:100,runtime_status:'completed',rows:[]});
 applyThreadViewChanges(key,{view_seq:20,runtime_status:'running',rows:[{...row(1,20),status:'completed',assistant:{item_id:'fixture-answer-1',content:'fixture sealed'}}]});
 assert.equal(threadViewSlots(key)![0].assistant.content,'fixture sealed');assert.equal(threadViewStatus(key),'completed');assert.equal(threadViewCursor(key),100);
 console.log('thread view: durable tail baseline, duplicates, holes, UTF16, finite live tail and interleaved feeder delivery pass');
+
+clearThreadView(key);generation=beginThreadView(key);
+assert.equal(commitThreadView(key,{...page([row(15,300)],300),epoch:-1,projection_state:'source'},generation),true);
+assert.equal(threadViewPhase(key),'ready');assert.equal(threadViewCursor(key),-301);
+assert.equal(threadViewSlots(key)![0].user.user_round,15);
+assert.equal(commitThreadView(key,page([row(15,20)],20),generation),true);
+assert.equal(threadViewCursor(key),20);assert.equal(threadViewSlots(key)![0].user.user_round,15);
+console.log('thread view: bounded source window and projection epoch transition pass');

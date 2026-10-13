@@ -3,7 +3,7 @@
     class="messenger-message"
     :class="{ mine: isUser, 'messenger-message--timeline': true }"
     :data-virtual-key="item.key"
-    :data-turn-id="String(item.message.__runtime_user_turn_id || item.message.user_turn_id || '')"
+    :data-turn-id="String(item.message.__runtime_user_turn_id || item.message.user_turn_id || item.message.root_turn_id || '')"
     :data-message-status="String(item.message.status || '')"
   >
     <div class="messenger-message-main">

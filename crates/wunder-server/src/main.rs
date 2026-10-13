@@ -51,7 +51,7 @@ async fn run_server(runtime_threads: runtime_tuning::ServerRuntimeThreads) -> an
     }
     // 初始化配置存储，用于鉴权与路由行为保持一致。
     let config_path = ConfigStore::config_path_default();
-    let config_store = ConfigStore::new(config_path.clone());
+    let config_store = ConfigStore::try_new(config_path.clone())?;
     let config = admin_skills::normalize_server_admin_skill_layout(&config_store).await;
     let server_mode = resolve_server_mode(&config);
     let log_dir = logging::init_server_tracing(&config, &server_mode, &config_path)?;

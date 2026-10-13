@@ -1,0 +1,83 @@
+{
+  "environment": {
+    "build": "debug",
+    "historical_threads": 100000,
+    "rows_per_large_table": 1000000,
+    "samples": 20,
+    "storage": "PostgreSQL 16"
+  },
+  "raw": {
+    "empty_startup_ms": [
+      75.8057,
+      75.0098,
+      78.659,
+      76.2278,
+      77.02929999999999,
+      76.4113,
+      77.4165,
+      82.2585,
+      75.3654,
+      76.7145,
+      77.8405,
+      77.3134,
+      83.0365,
+      78.681,
+      77.3722,
+      91.8861,
+      94.0417,
+      101.0808,
+      77.9379,
+      108.1535
+    ],
+    "large_startup_ms": [
+      109.4753,
+      116.5158,
+      112.1598,
+      112.5843,
+      110.82549999999999,
+      113.6997,
+      87.9974,
+      110.9559,
+      110.622,
+      112.4261,
+      98.0913,
+      110.43,
+      113.3791,
+      107.9123,
+      111.7766,
+      114.9218,
+      111.3818,
+      99.98440000000001,
+      110.6824,
+      111.16199999999999
+    ],
+    "maintenance_batches": 11,
+    "maintenance_window_s": 60,
+    "one_time_upgrade_ms": 1736.2746
+  },
+  "scenarios": {
+    "S1": {
+      "gates": {
+        "index_oids_stable": true,
+        "no_history_scan": true,
+        "no_row_rewrite": true
+      },
+      "metrics": {
+        "capacity_added_p95_ms": 13.841000000000008,
+        "storage_startup_p95_ms": 114.9218
+      }
+    },
+    "S3": {
+      "gates": {
+        "discovery_page_bounded": true,
+        "durable_resume": true,
+        "pending_rotates": true
+      },
+      "metrics": {
+        "maintenance_duty_ratio": 0.010184159872477904
+      }
+    }
+  },
+  "shape": "server",
+  "version": "fixture-capacity"
+}

@@ -1,7 +1,7 @@
 // Config store: read and persist a single config file.
 use crate::config::{
     config_path_default as resolve_default_config_path, load_config_from_path, resolve_config_path,
-    Config,
+    try_load_config_from_path, Config,
 };
 use crate::i18n;
 use anyhow::{Context, Result};
@@ -20,6 +20,12 @@ pub struct ConfigStore {
 }
 
 impl ConfigStore {
+    pub fn try_new(config_path: PathBuf) -> Result<Self> {
+        let config_path = resolve_config_path(&config_path);
+        let config = try_load_config_from_path(&config_path)?;
+        Ok(Self::from_value(config_path, config))
+    }
+
     pub fn new(config_path: PathBuf) -> Self {
         let config_path = resolve_config_path(&config_path);
         let config = load_config_from_path(&config_path);

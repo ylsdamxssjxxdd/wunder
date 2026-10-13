@@ -21,6 +21,7 @@ import { flushBackgroundPublication } from '@/realtime/chat/chatBackgroundPublic
 import { resolveChatRuntimeRenderableKey } from '@/realtime/chat/chatRuntimeMessageKeys';
 import { resolveChatRuntimeMessageRenderKey } from '@/realtime/chat/chatRuntimeRenderAdapter';
 import { threadViewClock } from '@/realtime/chat/threadViewStore';
+import { threadViewPhase, threadViewSlots } from '@/realtime/chat/threadViewStore';
 import { readThreadBody } from '@/realtime/chat/threadBodyReader';
 import { buildChatThreadMaterializedSlots } from '@/realtime/chat/chatThreadRuntime';
 import { chatQueueState } from '@/stores/chatQueueState';
@@ -4025,6 +4026,13 @@ function installMessengerControllerConversationOpenActions(ctx: MessengerControl
           ctx.markMessengerPerfTrace(perfTrace, 'uiReady');
           await sessionDetailTask;
           if (sessionDetailError) {
+              const committedThread = threadViewPhase(normalizedSessionId) === 'ready' &&
+                  (threadViewSlots(normalizedSessionId)?.length ?? 0) > 0;
+              if (committedThread && isForegroundSession()) {
+                  console.error('[thread-view] session metadata hydration failed after transcript commit', sessionDetailError);
+                  ctx.finishMessengerPerfTrace(perfTrace, 'ok', { transcriptCommitted: true, metadataHydrationFailed: true });
+                  return;
+              }
               throw sessionDetailError;
           }
           ctx.markMessengerPerfTrace(perfTrace, 'afterLoadSessionDetail');
@@ -4045,6 +4053,13 @@ function installMessengerControllerConversationOpenActions(ctx: MessengerControl
               return;
           }
           if (!sessionDetail) {
+              const committedThread = threadViewPhase(normalizedSessionId) === 'ready' &&
+                  (threadViewSlots(normalizedSessionId)?.length ?? 0) > 0;
+              if (committedThread) {
+                  console.error('[thread-view] session metadata missing after transcript commit', { sessionId: normalizedSessionId });
+                  ctx.finishMessengerPerfTrace(perfTrace, 'ok', { transcriptCommitted: true, metadataMissing: true });
+                  return;
+              }
               ctx.finishMessengerPerfTrace(perfTrace, 'fail', { reason: 'sessionDetailMissing' });
               ElMessage.warning(ctx.t('messenger.error.openConversation'));
               return;

@@ -1,117 +1,132 @@
 ---
 title: 工具体系
-summary: 智能体的能力来自多种工具来源，但调度、展示和权限统一管理。理解工具来源和边界，用好工具。
+summary: 工具从注册、选择、分发到结果落地的完整链路，以及并行度、超时、预算与裁剪常量。排查「工具为什么没被调到、结果为什么被裁」时看这页。
+read_when:
+  - 工具没出现在模型可见列表里，要逐层定位卡在哪一环
+  - 工具结果被裁剪或被压缩，想知道是哪一层做的
+  - 要接 MCP、技能或知识库，需要命名与路由规则
+  - 判断工具能否并行、超时和预算是多少
+source_docs:
+  - crates/wunder-runtime/src/orchestrator/tool_calls.rs
+  - crates/wunder-runtime/src/orchestrator/execute_tools.rs
+  - crates/wunder-runtime/src/services/tools/dispatch.rs
+  - crates/wunder-runtime/src/services/tools/catalog.rs
+  - crates/wunder-runtime/src/orchestrator/constants.rs
+  - crates/wunder-runtime/src/orchestrator/tool_parallel.rs
+  - crates/wunder-runtime/src/orchestrator/tool_result_payload.rs
+  - crates/wunder-runtime/src/services/tool_result_display.rs
+  - crates/wunder-runtime/src/services/llm.rs
+  - crates/wunder-runtime/src/services/mcp.rs
+updated_at: 2026-10-13
 ---
 
 # 工具体系
 
-## 原理
+这页讲机制链路。分层概念、默认集与命名口径见 [工具（核心概念）](/docs/zh-CN/concepts/core-tools/)，逐个工具的用法见 [工具总览](/docs/zh-CN/tools/)。
 
-wunder 的智能体不只会"说话"，还会"做事"。做事的能力全部来自工具。工具有多种来源，但最终统一调度。
-
-### 五种工具来源
+## 一次工具调用的链路
 
 ```
-内置工具 ← 系统自带，最稳定
-    +
-MCP 工具 ← 外部服务接入
-    +
-技能（Skills） ← 流程化经验包
-    +
-知识库 ← 可检索的参考资料
-    +
-用户工具 ← 个人扩展能力
-    ↓
-统一调度层（智能体统一使用）
+模型输出
+  → tool_calls.rs        解析与清洗 tool calls（参数修复、raw 字符串化还原）
+  → execute_tools.rs     编排：策略与审批、钩子、超时、预算、并行判定
+  → tools/dispatch.rs    真正分发（别名 → 技能 → MCP → 知识库 → 内置）
+  → ToolResultPayload    统一结果结构（orchestrator/tool_result_payload.rs）
+  → finalize_tool_result 模型输入通道裁剪（execute_tools.rs:741）
+  → 线程日志落库 + 事件推送（展示通道另算）
 ```
 
-### 内置工具
+两个容易写错的点：
 
-系统自带的基础能力，覆盖最常见的场景：
+- `tool_pipeline.rs` 只是 `PreExecute → Execute → PostExecute → Result` 的四阶段模型，**钩子默认关闭**，它不是执行主链。
+- 业务失败的识别在 `orchestrator/result_normalizer.rs`，不是分发层报错。「工具返回了但业务没成」是正常路径，模型会读到失败原因。
 
-| 类别 | 工具举例 | 用途 |
-|------|----------|------|
-| 文件操作 | 读取、写入、搜索、列表 | 处理工作区文件 |
-| 命令执行 | 执行命令 | 运行脚本和代码 |
-| 网络操作 | 网页抓取 | 获取网页内容 |
-| 桌面操作 | 截图、控制 | 蜂窝控制 |
-| 会话管理 | 线程控制、记忆管理 | 管理对话状态 |
-| 协作 | 子智能体控制 | 把一个任务拆成临时工作单元并行推进 |
+## 工具不可见的逐层定位
 
-### MCP 工具
+| 卡在哪 | 判据 | 位置 |
+| --- | --- | --- |
+| 没被注册 | 名字不在规范名/别名表里，也没有对应 MCP/技能/知识库 | `services/tools/catalog.rs` |
+| 被临时下架 | `网页搜索`、`ptc`：代码保留但一律不可见 | `services/default_tool_profile.rs:75`、`catalog.rs:1338` |
+| 不在能力选择层 | 管理员未给该智能体选中这个能力 | `services/agent_abilities.rs`、`services/abilities/` |
+| 被形态过滤 | 桌面模式隐藏 `get_goal`/`create_goal`/`update_goal`/`会话线程控制`/`会话让出` | `default_tool_profile.rs:23-29` |
+| 被能力门槛过滤 | 无 vision 时过滤读图与桌面类；多模态四件套需对应模型；`网页抓取`/浏览器需启用配置 | `catalog.rs:1336-1376`、`1401` 附近 |
+| 名字被短路 | 别名与技能名同名时，前面的路由先命中 | `dispatch.rs:21-44` |
 
-MCP（Model Context Protocol）是接入外部能力的标准协议。通过 MCP 可以接入：
-- 数据库操作工具
-- 第三方 API 服务
-- 专业领域的工具
+## 命名与动态注册
 
-### 技能（Skills）
+- MCP 工具：`server@tool`；`packaged: true` 的服务器折叠为单工具 `server@__mcp_pack__`，动作 `list` / `get` / `call`（`services/tools/mcp_pack.rs:9-35`）。
+- 展示名冲突处理：工具名跨服务器重名时追加服务端名段，同服务器内重名再加运行时名哈希后缀（`catalog.rs:63-118`）。
+- 技能名本身可直接调用；知识库**按库名逐个注册**，没有单一 `knowledge` 工具。
+- 用户工具别名进 `UserToolBindings.alias_map`，**dispatch 最优先按别名路由**。
 
-技能是"流程化的经验包"，封装了某类任务的完整方法：
-- 操作说明文档
-- 执行步骤和约束
-- 示例文件和资源
+## 并行、超时与预算
 
-技能让智能体面对特定任务时有成熟方法论可以参考。
+| 项 | 值 | 出处 |
+| --- | --- | --- |
+| 并行度上限 | 4 | `orchestrator/constants.rs:39`、`execute_support.rs:119` |
+| 并行判定 | 一批 tool calls 是否可并行在编排层判定 | `execute_tools.rs:388` |
+| 锁语义 | 可并行工具取读锁、独占工具取写锁（RwLock 守卫） | `execute_tools.rs:784-804`、`tool_parallel.rs:6-45` |
+| 工具默认超时 | 120 秒（下限 1 秒） | `constants.rs:36-37` |
+| 工具调用预算 | 每轮 10000 | `execute_support.rs:118` |
+| 记忆召回预算 | 每轮 2000 | `execute_support.rs:121` |
 
-## 作用
+并行白名单之外的工具串行执行，这是刻意的：写类与执行类要独占。
 
-### 统一的必要性
+## 结果的两条裁剪通道
 
-如果不同来源的工具各自为政：
-- 智能体不知道该用哪个工具
-- 界面无法统一展示
-- 权限和审计被打散
-- 排障找不到问题在哪一层
+| 通道 | 常量与行为 | 影响 |
+| --- | --- | --- |
+| 展示 | `services/tool_result_display.rs`：preview 2400 字符、16 行，超出追加省略号 | 只影响客户端渲染；原始消息与复制内容完整保留 |
+| 模型输入 | `finalize_tool_result`（`execute_tools.rs:741`）→ 按预算截断头尾；旧的可复现观测交给 microcompaction | 决定模型下一步看到什么 |
 
-wunder 的做法：**来源不同，调度统一**。所有工具在同一层面被管理、被调用、被审计。
+入模预算在 `orchestrator/constants.rs:41-50`：头尾各 10000 字符；数组最多 128 项（头 48 + 尾 16）；分页型结果 500 项（头 180 + 尾 60）。裁剪会带 `...(truncated)...` 标记，模型能看到「被裁了」。
 
-### 工具描述的重要性
+microcompaction 的口径：保留最近 5 组，旧观测收成 768 字节预览，且至少省下 256 token 才动手（`orchestrator/microcompaction.rs:7-9`）。
 
-好的工具描述让智能体准确调用。差的描述导致误用和幻觉。工具描述需要：
-- 准确说明工具用途
-- 明确适用场景
-- 说清参数含义
-- 标注限制条件
+## MCP 接入事实
 
-## 实践
+- 客户端配置字段：`name / endpoint / transport / headers / auth / allow_tools / packaged / tool_specs`（`wunder-core/src/config.rs:1737-1759`）。
+- 内置 MCP 服务端：`/wunder/mcp`，streamable-http（`services/mcp_impl.rs:80-88`），暴露 `wunder@excute` 与 `doc2md`（源码里就是 `excute` 这个拼写）；`mcp` feature 关闭时返回 501（`services/mcp.rs:22-32`）。
+- `extra_mcp/` 是独立 Python FastMCP 服务，自带配置与工具集，不属于本引擎。
 
-### 查看可用工具
+## 协议与 provider 差异
 
-在左栏底部「设置」→「工具」里可以看到：
-- 当前可用的工具列表
-- 每个工具的功能说明
-- 工具的来源（内置/MCP/技能等）
+`resolve_tool_call_mode`（`services/llm.rs:305-319`）：
 
-### 工具权限
+| 情况 | 模式 |
+| --- | --- |
+| 模型显式配置 `tool_call_mode` | 按配置 |
+| provider 为 `openai` | FreeformCall（文本协议工具调用） |
+| 其余 provider | FunctionCall（原生函数调用） |
+| 无法识别的值 | 兜底 ToolCall（tag/xml 文本协议） |
 
-不是所有工具对所有用户都可用：
-- 管理员控制哪些工具被启用
-- 敏感工具有审批机制
-- 不同运行形态可能有不同工具集
+freeform 的 lark 语法目前只为 `文本编辑` 的补丁形态准备（`services/tools/freeform.rs`）；参数修复与嵌套还原在 `wunder-core/src/tool_args.rs`。
 
-### 工具审批
+Win7 没有独立的工具协议分支；已证实的差异只在互通侧——老 Win7 节点不声明 `tool.exec` 能力。
 
-当智能体调用敏感工具时：
-1. 系统暂停执行
-2. 弹出审批请求，说明要做什么
-3. 用户批准或拒绝
-4. 根据用户的决定继续或调整
+## 已移除 / 已合并（写文档与配置时按此对齐）
 
-审批模式可以调整严格程度（由管理员配置）。
+| 状态 | 项 |
+| --- | --- |
+| 已移除 | 用户世界工具、渠道工具、`a2a_*` 工具、`final_response`、`a2ui` 工具、LSP 查询/节点调用工具、独立「休眠等待」工具 |
+| 已合并 | `apply_patch` 并入 **`文本编辑`**（同一工具三形态：替换 / 补丁 / 子命令） |
+| 语义变更 | `会话让出` 取代旧「休眠等待」的说法 |
+| 临时下架 | `网页搜索`、`ptc`（保留代码，不可见） |
 
-### 工具结果
+## 常见误解
 
-工具返回的结果会被智能体用于下一步判断。如果结果太大，系统会自动精简以保持对话能继续。
-
-## 常见误区
-
-- **工具越多越好？** 不是。工具太多且描述不清反而让智能体更容易选错。
-- **技能只是文档？** 不是。技能是智能体可以主动读取的运行资源。
-- **所有工具始终可用？** 不是。工具可见性受配置、运行形态和安全策略影响。
+- **「`tool_pipeline.rs` 是执行主链」** — 不是，它是四阶段模型，钩子默认关闭。
+- **「结果被截了就是模型看不到了」** — 展示通道与模型输入通道分开，见上表。
+- **「工具越多越聪明」** — 相反。名字多、描述含糊会提高选错率，默认集刻意收敛在 13 个内置 + 1 个技能。
+- **「工具报错就是调用失败」** — 业务失败会作为正常结果返回给模型，带原因与下一步提示。
+- **「所有工具都能并行」** — 只有并行白名单内的读类可以，写与执行独占。
+- **「Win7 有工具协议回退」** — 未证实，不存在这条分支。
 
 ## 延伸阅读
 
-- [工具总览](/docs/zh-CN/tools/) —— 所有工具的详细说明
-- [工具（核心）](/docs/zh-CN/concepts/core-tools/) —— 工具设计原则
-- [提示词与技能](/docs/zh-CN/concepts/prompt-and-skills/) —— 技能如何工作
+- [工具（核心概念）](/docs/zh-CN/concepts/core-tools/) —— 四层模型与默认集
+- [工具总览](/docs/zh-CN/tools/) —— 逐个工具的参数说明
+- [上下文压缩](/docs/zh-CN/concepts/core-context-compression/) —— microcompaction 与历史压缩
+- [实时性](/docs/zh-CN/concepts/core-realtime/) —— 工具事件怎么推给客户端
+- [稳定性](/docs/zh-CN/concepts/core-stability/) —— 超时、预算与熔断
+- [配置参考](/docs/zh-CN/reference/config/) —— MCP 与工具开关配置项

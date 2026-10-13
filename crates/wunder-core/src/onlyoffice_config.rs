@@ -4,6 +4,7 @@ use std::env;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OnlyOfficeConfig {
     #[serde(default)]
+    #[serde(deserialize_with = "crate::config::deserialize_bool_from_any")]
     pub enabled: bool,
     #[serde(default)]
     pub document_server_url: Option<String>,

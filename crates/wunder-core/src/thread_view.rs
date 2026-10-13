@@ -22,6 +22,8 @@ pub struct ViewMessage {
     pub item_id: String,
     pub content: String,
     #[serde(default)]
+    pub reasoning: String,
+    #[serde(default)]
     pub created_seq: i64,
     #[serde(default)]
     pub durable_seq: i64,
@@ -51,6 +53,8 @@ pub struct ChatViewRow {
     pub assistant: ViewMessage,
     pub workflow_count: i64,
     pub failed_count: i64,
+    #[serde(default)]
+    pub subagents: Vec<Value>,
     pub created_time: f64,
     pub updated_time: f64,
 }

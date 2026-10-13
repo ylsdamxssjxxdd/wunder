@@ -1,198 +1,106 @@
 # 工具、技能与 MCP 系统设计
 
-## 1. 目标
+> 约束范围：本册约束能力面（工具 / 技能 / abilities / 用户工具 / MCP）的分层语义、dispatch 与工具画像的兑现方式、工具协议解析边界、临时下架与已移除的口径分界、结果裁剪双通道。端点清单、配置字段与工具参数表见 `../技术说明书/05-工具、技能、MCP与外部能力.md` 与 `../技术说明书/11-工具结果裁剪与观测链路.md`，本册不复述。
 
-wunder 的能力系统由三层组成：
+## 1. 四层能力模型
 
-- 工具：模型直接调用的最小执行单元
-- 技能：对工具和流程的可复用组织
-- MCP：把外部资源和外部能力接入 wunder 的扩展边界
+wunder 的能力面是四层，不是一套概念的四个别名。混用任何两层都会导致治理错位：
 
-三者不是平行孤岛，而是同一能力体系的三个视角。
+| 层 | 定义 | 真相位置 | 设计含义 |
+| --- | --- | --- | --- |
+| 工具 | 模型直接调用的最小执行体 | `services/tools/catalog.rs` 注册、`services/tools/dispatch.rs` 分发 | 有 schema、有审批档、有超时、有结果归一 |
+| 技能 | 可复用的知识与脚本包，不是新运行时原语 | `services/skills.rs`：目录 = `SKILL.md`（frontmatter）+ 入口 `run.py`/`skill.py`/`main.py` | 组织工具，不替代工具；技能名本身可被直接调用（`dispatch.rs:34-37`） |
+| abilities | 管理员选择层的统一描述符 | `services/abilities/`、`services/agent_abilities.rs`，`source = builtin \| mcp \| skill \| knowledge \| user_* \| shared` | 治理面的选择单元：管理员勾选的是能力，不是执行体 |
+| 用户工具 | 开发者自定义接口的入口 | `services/user_tools.rs`，`UserToolKind::Mcp \| Skill \| Knowledge` | 开发者把外部东西接进来；别名进 `UserToolBindings.alias_map` |
 
-## 2. 总体关系
+「对开发者来说一切都是接口，对大模型来说一切皆工具」在这两层兑现：
 
-```mermaid
-flowchart TD
-    A[模型] --> B[工具面]
-    B --> C[工具执行]
+- **接口侧**：用户工具的三种形态（MCP / 技能 / 知识库）都是注册进来的接口，不要求写 Rust。
+- **工具侧**：无论来源，最终都折叠成模型可见的一个工具名，走同一条 dispatch。
 
-    D[技能] --> B
-    D --> C
+## 2. dispatch 统一入口（不变量）
 
-    E[MCP] --> C
-    E --> F[外部资源/外部服务]
+`services/tools/dispatch.rs:26-45` 是唯一路由事实。优先级固定：
 
-    C --> G[结果归一化]
-    G --> A
-```
-
-含义是：
-
-- 模型首先看到的是工具面
-- 技能负责把多个工具组织成稳定流程
-- MCP 负责把 wunder 之外的能力接进来
-
-## 3. 设计边界
-
-| 项 | 边界 |
-| --- | --- |
-| 工具 | 面向模型的直接调用能力 |
-| 技能 | 面向流程复用，不是新的运行时原语 |
-| MCP | 面向外部接入，不绕开 wunder 的治理链 |
-| 治理 | 审批、超时、隔离、重试、观测必须统一落在运行时 |
-
-因此：
-
-- 技能不能绕开工具治理
-- MCP 不能绕开工具治理
-- 高风险能力不能只靠提示词约束
-
-## 4. 工具系统定位
-
-工具系统是模型与真实世界的主通道。  
-其设计目标不是“把后端原样暴露给模型”，而是“给模型一个可调用、可纠错、可治理的能力面”。
-
-当前工具系统已经分成四层：
-
-| 层 | 作用 | 主要落点 |
+| 序 | 路由 | 依据 |
 | --- | --- | --- |
-| 模型侧工具面 | 暴露工具名、短 description、canonical schema | `crates/wunder-runtime/src/services/tools/catalog.rs` |
-| 兼容解析层 | 吃掉别名、历史字段和兼容输入 | `crates/wunder-runtime/src/services/tools.rs`、各工具实现 |
-| 执行治理层 | 调度、审批、并行、超时、失败治理 | `crates/wunder-runtime/src/services/tools/dispatch.rs`、`crates/wunder-runtime/src/orchestrator/` |
-| 返回归一层 | 统一成功包、失败包和 compact 结果 | `build_model_tool_success*`、`build_failed_tool_result` |
+| 1 | 用户工具别名 | `alias_map` 按归一化名命中即转发 `execute_user_tool` |
+| 2 | 技能名 | `context.skills` 命中直接 `execute_skill` |
+| 3 | MCP 工具 | `server@tool` 形状判定（含打包折叠 `server@__mcp_pack__`） |
+| 4 | 知识库名 | 按库动态注册，`find_knowledge_base` 命中转发 |
+| 5 | 内置工具 | `execute_builtin_tool` 按规范名 match |
 
-更细的工具设计原则见：
+由此推出三条不变量：
 
-- [工具设计](C:\Users\sjxx\Desktop\wunder\docs\设计文档\工具设计.md)
+1. **没有旁路**。技能、MCP、知识库都从这同一个入口进，因此审批、超时、并行、裁剪、观测对四类能力一致生效；任何「新能力直接挂 handler 不进 dispatch」的做法破坏本册。
+2. **动态注册不进内置 match**。知识库名取代旧的 `knowledge` 单工具、MCP 工具名带 `server@` 前缀（冲突加后缀哈希，`catalog.rs:63-118`）、打包 MCP 折叠为单工具（动作为 list/get/call，`tools/mcp_pack.rs`）——它们由 catalog 动态生成，不是 `dispatch.rs` 里的分支。
+3. **归一先于路由**。模型侧工具名大多是中文规范名（如 `执行命令`、`文本编辑`、`计划面板`），英文别名经 `resolve_tool_name` 归一（`catalog.rs:1184`，如 `programmatic_tool_call` → `ptc`）。文档与代码提及工具必须给「规范名 + 别名」。
 
-## 5. 技能系统定位
+## 3. 工具协议按 provider 解析的边界
 
-技能的目标不是增加另一套执行引擎，而是把稳定流程沉淀成可复用资产。
+`resolve_tool_call_mode`（`services/llm.rs:305-319`，已实测）：
 
-适合做成技能的场景：
-
-- 固定的文档生产流程
-- 稳定的资料加工流程
-- 团队约定好的任务模板
-- 一类工具组合的最佳实践
-
-不适合做成技能的场景：
-
-- 只是一个普通工具的别名
-- 没有稳定流程结构，只有临时 prompt
-- 试图绕开工具治理直接执行高风险动作
-
-### 技能与工具的关系
-
-```mermaid
-flowchart LR
-    A[技能说明 SKILL.md] --> B[选择工具]
-    B --> C[调用工具]
-    C --> D[返回结果]
-    D --> E[继续技能流程]
-```
-
-结论：
-
-- 技能组织工具
-- 技能不替代工具
-
-## 6. MCP 系统定位
-
-MCP 的目标是把 wunder 之外的能力接进来，但仍纳入 wunder 的统一治理。
-
-它适合：
-
-- 接入外部知识或资源
-- 接入第三方系统能力
-- 跨应用、跨仓库、跨组织域协作
-
-它不应该变成：
-
-- 绕过 wunder 内部工具系统的捷径
-- 另一套完全独立的执行平面
-
-### MCP 的位置
-
-```mermaid
-flowchart LR
-    A[模型] --> B[工具调用]
-    B --> C[wunder 工具运行时]
-    C --> D[MCP 适配层]
-    D --> E[外部服务/外部资源]
-    E --> C
-    C --> A
-```
-
-## 7. 当前能力目录
-
-| 模块 | 主要目录 |
+| 优先级 | 规则 |
 | --- | --- |
-| 工具实现 | `crates/wunder-runtime/src/services/tools/` |
-| 工具目录与注册 | `crates/wunder-runtime/src/services/tools/catalog.rs` |
-| 工具路由分发 | `crates/wunder-runtime/src/services/tools/dispatch.rs` |
-| 技能 | `crates/wunder-runtime/src/services/skills.rs` `config/skills/` |
-| MCP | `crates/wunder-runtime/src/services/mcp.rs` `extra_mcp/` |
-| 浏览器与桌面桥接 | `crates/wunder-runtime/src/services/browser/` `crates/wunder-runtime/src/services/tools/desktop_control.rs` |
+| 1 | 模型显式配置 `tool_call_mode` 优先 |
+| 2 | provider 归一为 `openai` → `FreeformCall` |
+| 3 | 其余 → `FunctionCall` |
+| 4 | 未知配置值兜底 → `ToolCall`（tag/xml 文本协议） |
 
-## 8. 当前落地状态
+- freeform（lark 语法）当前只为 `文本编辑` 的 apply_patch 形态准备（`services/tools/freeform.rs`）。
+- `文本编辑` 是一个工具三形态（替换 / 补丁 / 子命令），`apply_patch` 已并入，不再是独立工具。
+- 另有 ChatCompletions / Responses 双 API 并存；Win7 **没有**独立协议分支，「win7 工具协议回退」未证实，不得书写。
+- 模型输出的 tool calls 由 `orchestrator/tool_calls.rs` 解析清洗、`tool_args.rs` 修复 raw 字符串化与嵌套参数，之后才进 dispatch。
 
-### 8.1 工具面
+## 4. 临时下架 ≠ 已移除（口径分界）
 
-当前工具面已经从“后端直出”转向“模型侧收口”：
+这是本册最容易被写错的一条。以 `services/default_tool_profile.rs` 为唯一口径源：
 
-- 大多数高频工具已切到短 description
-- 大量低频兼容字段已不再直接暴露给模型
-- 多动作工具保留，但统一以 `action` 为入口
-- 大多数工具结果已进入统一成功/失败包
+| 状态 | 判据 | 实例 |
+| --- | --- | --- |
+| 临时下架 | `TEMPORARILY_HIDDEN_TOOL_NAMES = ["网页搜索", "ptc"]`（:75，注释明写「恢复时移除对应条目即可」）；catalog 仍注册、dispatch 仍有分支 | `网页搜索`、`ptc` |
+| 已移除 | 代码无 dispatch 分支、无注册 | 用户世界工具、渠道工具、`a2a_*`、`final_response`、`a2ui`、LSP 查询/节点调用、独立「休眠等待」工具（`sleep` 语义现为 `会话让出`） |
+| 已合并 | 旧名归一到新工具 | `apply_patch` → `文本编辑` |
 
-### 8.2 技能面
+正确表述：临时下架的工具「代码保留、当前对模型与用户不可见，恢复只需移除隐藏条目」；写成「已移除」是错的。
 
-当前技能仍保持“产品化流程层”的定位，主要承担：
+分档规则（同一文件）：默认内置集不含目标类与桌面类；`get_goal`/`create_goal`/`update_goal`、`会话线程控制`、`会话让出` 对桌面隐藏、由运行时按会话自动注入；桌面额外默认 `读图工具`、`桌面监视器`、`桌面控制器`、`子智能体控制`。可用性门槛（模型能力驱动）：读图与桌面类需 vision，多模态四件套（`语音生成`/`声转文`/`图像生成`/`视频生成`）需对应模型可用，`网页抓取` 需配置启用。
 
-- 流程复用
-- 文档化说明
-- 团队能力沉淀
+「浏览器」不是一个工具：启用浏览器注册的是 17 个 `browser_*` 原生面工具（`services/browser/playwright.rs:23-39`），聚合名只是文档口径。
 
-### 8.3 MCP 面
+## 5. 结果裁剪双通道（必须分开建模）
 
-当前 MCP 仍是外部接入边界，不直接替代内置工具系统。  
-设计上应继续坚持：
+| 通道 | 位置 | 语义 | 约束 |
+| --- | --- | --- | --- |
+| 展示通道 | `services/tool_result_display.rs`，preview 2400 字符 / 16 行 | 客户端可读摘要 | 只影响人看到的，不影响模型输入；原始结果必须完整可查 |
+| 模型输入通道 | `finalize_tool_result`（`orchestrator/execute_tools.rs:741`）+ microcompaction + model_observation | 进入下轮 prompt 的观测 | 受 token 预算、头尾各 10000 字符等裁剪常量（`orchestrator/constants.rs:41-50`）与「只信任 provider 观测到的 token」约束 |
 
-- 统一治理
-- 统一观测
-- 统一返回规范
+为什么必须分开：模型输入通道直接改变上下文与 prompt 前缀，裁剪策略要与缓存复用、微压缩（旧观测折成 768B 预览、保留最近 5 组）联动演进；展示通道只受人的可读性约束。合并成一条通道会导致「为了展示好看截断模型输入」或「为了模型完整撑爆 UI」两类事故。细节链路见 `../技术说明书/11-工具结果裁剪与观测链路.md`。
 
-## 9. 当前主要问题
+## 6. MCP 边界
 
-| 方向 | 当前现实 |
-| --- | --- |
-| 工具 | 少数协议型工具与内部子结果仍保留特例 shape |
-| 技能 | 技能说明质量仍依赖具体技能内容，不完全统一 |
-| MCP | 外部返回体与内置工具返回体的一致性还可继续增强 |
-| 文档 | 工具设计细节与总览设计需要持续保持同步 |
+- 内置 MCP 服务端：streamable-http，端点 `/wunder/mcp`（`services/mcp.rs`）；feature `mcp` 关闭时返回 501。暴露工具名沿用源码拼写（`wunder@excute`、`doc2md`）。
+- 客户端侧只证实了 streamable-http 传输；stdio 未证实，不得书写。
+- `extra_mcp/` 是独立 Python FastMCP 服务，作为外部 MCP 服务器接入，不受 wunder 进程治理，其工具经 `server@tool` 进入统一 dispatch 后受同等治理。
 
-## 10. 演进原则
+MCP 的定位是把外部能力接进来，**不绕开**审批、超时、裁剪与观测；也不允许长成第二套执行平面。
 
-后续演进建议按下面顺序推进：
+## 7. 反例与缺口
 
-1. 先收口模型侧工具面，再扩展新工具。
-2. 先把高频工具结果做 compact，再考虑新观测字段。
-3. 技能优先沉淀稳定流程，不做临时能力堆砌。
-4. MCP 优先做统一治理，不优先做功能数量膨胀。
+| 项 | 现状 | 性质 |
+| --- | --- | --- |
+| `网页搜索`/`ptc` 被写成「已移除」 | 现有 zh-CN/en 使用说明书 `tools/index.md`、`tools/web_fetch.md` 该条口径错 | 文档缺陷，正确口径见第 4 节 |
+| 工具预算与并行度 | 每轮工具预算 10000、并行度 ≤4、可并行白名单（`tool_parallel.rs`）；钩子管线 `tool_pipeline.rs` 默认关闭，不是执行主链 | 勿把 pipeline 写成主链 |
+| 协议型工具特例 shape | 少数工具仍保留内部子结果特例形态，未完全进入统一成功/失败包 | 已知待收口 |
+| dispatch 未知名兜底 | 返回「未知内置工具」错误而非静默丢弃 | 保持：错误必须可观测 |
 
-## 11. 相关文档
+## 8. 验收判据
 
-- [工具设计](C:\Users\sjxx\Desktop\wunder\docs\设计文档\工具设计.md)
-- `docs/工具结构优化表.md`
-- `docs/工具返回内容优化表.md`
+- 新增任何能力（内置工具、技能、MCP、知识库、用户工具）都能在 `dispatch.rs` 的路由序中找到唯一落点，且复用同一审批、超时、裁剪链。
+- 文档中每个工具名都能对应 catalog 中「规范名 + 别名」，且状态标注（默认 / 分档 / 临时下架 / 已移除）与 `default_tool_profile.rs` 一致。
+- 展示裁剪改动不回归影响模型输入长度；模型输入裁剪改动不回归影响客户端完整结果。
 
-## 12. 沙盒并发执行边界
+## 9. 相关文档
 
-- `crates/wunder-runtime/src/sandbox/file_runtime.rs` 维护进程内文件工具上下文；存储初始化由异步等待门与阻塞任务内的初始化锁保护，取消调用方不能释放尚未完成的数据库初始化。失败只做短时退避，不永久缓存故障。
-- 文件上下文缓存按完整目录路由隔离，容量为 128、空闲 TTL 为 300 秒；缓存淘汰不改变仍在执行的请求所持有的目录映射。请求身份、会话和参数始终在调用时传入。
-- `WorkspaceManager` 的存储写队列在首次持久化写入时创建；纯文件工具不启动后台写线程。禁用 LSP 的沙盒上下文也不启动清理定时任务。
-- 命令流有端到端超时，消费者断线会取消执行 future。直接子进程由 `kill_on_drop` 回收，输出捕获任务由 RAII guard 取消。该机制不提供任意脱离父进程的后台进程树管理。
-- HTTP 响应丢失不能证明工具未执行；除连接未建立或流式路由不支持外，失败不自动回退或重放有副作用的工具。
-- PTC 每次调用生成独立脚本目录，保留脚本供排障；本地与沙盒共用 `services/tools/ptc_script.rs`，不通过用户级全局执行锁串行化独立任务。
+- 事实层：`../技术说明书/05-工具、技能、MCP与外部能力.md`、`../技术说明书/11-工具结果裁剪与观测链路.md`
+- 上层：`01-系统总体设计.md`；相邻：`02-智能体核心设计.md`（执行主链）、`12-安全-权限与隔离设计.md`（审批分档）

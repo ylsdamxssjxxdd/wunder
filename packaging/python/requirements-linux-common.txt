@@ -1,4 +1,3 @@
-# AI生成
 # Slim Linux-friendly Python package set for Wunder Desktop supplement.
 # Mirrors requirements-win7-common.txt so agent-generated Python behaves the
 # same on Win7 and Linux; the only divergence is h5py (2.10.0 has no aarch64

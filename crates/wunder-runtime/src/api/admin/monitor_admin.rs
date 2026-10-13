@@ -189,6 +189,7 @@ async fn admin_runtime_metrics() -> Json<Value> {
     runtime_metrics::record_loop_tick("api.admin.runtime_metrics", "request");
     Json(json!({
         "runtime": runtime_metrics::snapshot(),
+        "thread_view_maintenance": crate::services::thread_view_rebuild::snapshot(),
     }))
 }
 

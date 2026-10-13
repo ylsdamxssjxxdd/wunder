@@ -65,9 +65,10 @@ services:
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:${WUNDER_PORT:-18000}/wunder/i18n >/dev/null || exit 1"]
       start_period: 900s
-      interval: 5s
+      start_interval: 5s
+      interval: 30s
       timeout: 3s
-      retries: 60
+      retries: 10
     depends_on:
       wunder-postgres:
         condition: service_healthy
@@ -160,9 +161,10 @@ services:
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9001/health || exit 1"]
       start_period: 300s
-      interval: 5s
+      start_interval: 5s
+      interval: 30s
       timeout: 3s
-      retries: 20
+      retries: 4
     restart: always
 
   extra-mcp:
@@ -203,9 +205,11 @@ services:
       - ./config/data/postgres:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U wunder -d wunder"]
-      interval: 5s
+      start_period: 30s
+      start_interval: 5s
+      interval: 30s
       timeout: 3s
-      retries: 10
+      retries: 2
     restart: always
 
   wunder-frontend:

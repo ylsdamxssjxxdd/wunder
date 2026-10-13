@@ -1,110 +1,150 @@
 ---
 title: 渠道
-summary: 不同入口共享同一套核心能力。无论用蜂窝、蜂巢还是飞书微信，体验一致。
+summary: 渠道是入口适配层，不是第二套系统。当前只有 7 个已注册 adapter，长连接只有 4 个；telegram、discord、slack、LINE、DingTalk 没有实现，只是通用 webhook 目录项。
+read_when:
+  - 要接飞书、微信、QQ、XMPP 或通用 webhook，需要确认真实支持状态
+  - 消息进不来或出不去，要定位是入站队列、路由绑定还是出站重试
+  - 想知道同一个群里不同用户会落到哪个智能体与工作区
+  - 文档或旧材料把某个平台写成「已支持」，需要核对
+source_docs:
+  - crates/wunder-runtime/src/channels/adapter.rs
+  - crates/wunder-runtime/src/channels/registry.rs
+  - crates/wunder-runtime/src/channels/service.rs
+  - crates/wunder-runtime/src/channels/catalog.rs
+  - crates/wunder-runtime/src/channels/binding.rs
+  - crates/wunder-runtime/src/channels/inbound_queue.rs
+  - crates/wunder-runtime/src/channels/outbox.rs
+  - crates/wunder-runtime/src/channels/rate_limit.rs
+  - crates/wunder-runtime/src/api/channel.rs
+  - crates/wunder-runtime/src/channels/workspace_routing.rs
+updated_at: 2026-10-13
 ---
 
 # 渠道
 
-## 原理
+## 心智模型：渠道只是入口
 
-wunder 支持多种使用入口：
-- 蜂窝
-- 蜂巢（web）
-- 舵机
-- 飞书、企业微信、微信、QQ 等第三方平台
+一切执行都在引擎里，渠道只做两件事：**把外部消息解析成统一入站形态**，**把统一出站形态投回外部协议**。协议适配到入口为止，不复制业务逻辑、不自建存储、不改变线程语义。
 
-但这些入口不是各自独立的系统。它们共享同一套**执行引擎**：调度、线程、工具、事件、治理都是统一的。
+因此：同一个任务线程可以从蜂巢发消息、从飞书续聊、用蜂窝收尾；渠道不会创造第二套执行。
 
-### 渠道 = 入口层
+> 先分清两个词。**形态**（蜂窝/蜂巢/舵机/舰体）是运行与接入形状，**渠道**（飞书/QQ/微信…）是站外平台。旧文档常把「多入口共用一套引擎」这句话说对，但把渠道清单写错——错在支持范围，不在理念。
 
-渠道只负责：
-- 接收用户的消息（从什么平台进来）
-- 传递系统返回（把结果送回去）
+## 支持状态（以代码为准）
 
-不负责的：
-- 不重新定义业务逻辑
-- 不改变执行方式
-- 不独立存储数据
+契约是 `ChannelAdapter { verify_inbound, parse_inbound, send_outbound, health_check }`（`channels/adapter.rs:29-52`）。默认注册表只有 **7 个 adapter**（`channels/registry.rs:63-71`）：
 
-### 多入口共用一套引擎
+| 渠道 | 接入方式 | 实现状态 |
+| --- | --- | --- |
+| **飞书 feishu** | 长连接 + webhook | 完整实现，有专用 webhook |
+| **QQ Bot qqbot** | 长连接 + webhook | 完整实现，有专用 webhook |
+| **微信 weixin** | 长连接（iLink 长轮询） | 完整实现，规模最大 |
+| **XMPP xmpp** | 长连接 + webhook | **默认 feature 关闭时是占位 stub**：出入站一律返回 `xmpp feature is disabled`（`channels/xmpp.rs:7-15`）；启用 `xmpp` feature 才是真实现 |
+| **企业微信 wechat** | webhook-only | 部分实现（收发与签名校验），无长连接 |
+| **公众号 wechat_mp** | webhook-only | 部分实现，无长连接 |
+| **WhatsApp Cloud whatsapp_cloud** | webhook-only | 部分实现，无长连接 |
 
-不管从哪个渠道进来，最终都落到同一条线程执行。这意味着：
-- 在蜂窝里开的会话，在蜂巢也能看到
-- 从飞书发的消息，和蜂巢发的消息，智能体用同样的方式处理
-- 渠道只是"面子"不同，"里子"是同一套
+长连接 supervisor **只有 4 个**：`feishu` / `qqbot` / `xmpp` / `weixin`（`channels/service.rs:232-245`）。`wechat`、`wechat_mp`、`whatsapp_cloud` 是纯 webhook 回调。
 
-## 作用
+### 没有实现的平台
 
-### 对用户
+`telegram`、`discord`、`slack`、`LINE`、`DingTalk` **没有任何 adapter**。它们只作为 `webhook_mode: "generic"` 的目录项存在于 `channels/catalog.rs:75-122`：走通用 webhook 入口 + 通用解析，不会做平台专属的签名校验、富文本映射、附件下载或主动推送。
 
-**体验一致**：习惯用飞书就继续在飞书用，习惯用蜂巢就用蜂巢。能力是一样的。
+**任何文档把这几个写成「已支持渠道」都是错的。** 正确表述：目录可见、可挂通用 webhook 收发文本，不具备平台专属适配。
 
-**跨端续聊**：在飞书开了个会话，需要传大文件就去蜂巢上传，回来接着聊。
+## 消息怎么找到智能体和工作区
 
-### 对管理员
+入站消息先做**绑定解析**（`channels/binding.rs:16`）：按特异性打分取唯一最优绑定，分数并列再比 `priority`。
 
-**统一治理**：舰桥配置对所有渠道统一生效，不用每个渠道单独管理。
+| 维度 | 分值 | 说明 |
+| --- | --- | --- |
+| `peer_id` 精确匹配 | 8 | 支持 `*` 通配（通配不计分） |
+| `peer_kind` 匹配 | 4 | dm/direct/single/user 互相视为同类 |
+| `account_id` 匹配 | 2 | 空即通配 |
+| `channel` 匹配 | 1 | 空即通配 |
 
-**渠道管理**：可以统一查看各渠道的运行状态、消息收发情况、异常告警。
+命中后得到 `agent_id` 与 `tool_overrides`，再由 `resolve_channel_workspace_id`（`channels/workspace_routing.rs:5`）决定工作区：缺省与 `default`/`__default__` 别名都指向该用户的默认智能体工作区。舰体形态下工作区按用户摊平为唯一云端目录，所以**同用户不同渠道进来的文件落点一致**。
 
-## 渠道接入方式
+## 有界与重试（数值都有出处）
 
-| 渠道 | 接入方式 | 适合场景 |
-|------|----------|----------|
-| **蜂窝** | 本地安装 | 个人日常使用 |
-| **蜂巢（web）** | 浏览器访问 | 团队舰体（server）模式，云端 AI 工作台 |
-| **飞书** | Webhook + 长连接 | 组织内部协作 |
-| **企业微信** | Webhook | 企业通信 |
-| **微信** | 官方渠道 | 个人用户 |
-| **QQ Bot** | 官方 API | QQ 用户 |
+### 入站
 
-## 关键规则
+| 项 | 值 | 出处 |
+| --- | --- | --- |
+| 入站队列容量 | 512 | `channels/inbound_queue.rs:10` |
+| 并发处理 | 8 | `:11` |
+| 入队超时 | 80 ms | `:12` |
 
-### 协议适配只到入口
+队列满或入队超时即视为**背压**：用有界队列的通用入队逻辑，失败时报队列忙（`core/bounded_queue.rs`），不无限堆积。表现为平台侧重投或短暂延迟，不是消息被静默丢弃后还要靠人工找回。
 
-接入层负责协议适配（把飞书消息转成系统能理解的格式，反之亦然），但业务逻辑是统一的。
+### 出站
 
-### 线程语义一致
+出站走**持久 outbox + 指数退避**（`channels/outbox.rs:4-27`），默认值：
 
-不管从哪个渠道来的请求，最终都进入同一线程执行。渠道不会创造独立的执行逻辑。
+| 项 | 值 |
+| --- | --- |
+| 轮询间隔 | 500 ms |
+| 单批 | 50 条 |
+| 最大重试 | 5 次 |
+| 退避基数 / 上限 | 2 s / 60 s（`base × 2^retry`，封顶上限） |
 
-### 状态同步
+出站 worker 由 `channels.outbox.worker_enabled`（`wunder-core/src/config.rs:2051`）控制：关掉后投递改在入队处同步尝试一次（`channels/service/outbox.rs:50` `try_deliver_outbox_if_worker_disabled`），不再由轮询循环重投。**排查「收到但不回」时先确认这个开关**：关掉 worker 且同步那一次失败，消息就停在 outbox 里等人工处理。
 
-渠道接入的消息有完整的生命周期管理：
-- 接收 → 排队 → 执行 → 结果投递
-- 失败会自动重试
-- 投递有 outbox 机制保证最终一致性
+### 限流
 
-## 实践
+按渠道账号维度做**令牌桶 QPS + 并发上限**（`channels/rate_limit.rs:40-90`），由 `ChannelRateLimitConfig` 驱动；两者都为 0 表示不限流。触发限流时不占并发额度，交给 outbox 退避重投。
 
-### 配置渠道账号
+## 附件与媒体
 
-1. 在对应平台创建应用/机器人（如飞书应用）
-2. 获取凭证（AppID、AppSecret 等）
-3. 在舰桥添加渠道账号
-4. 配置 Webhook 回调地址（平台把消息推给 wunder）
-5. 测试消息收发是否正常
+| 环节 | 位置 | 行为 |
+| --- | --- | --- |
+| 入站媒体 | `channels/media.rs`（`MediaProcessor::process_inbound`） | 下载、转码、落到该渠道对应工作区，再交给引擎 |
+| 平台文件下载 | `channels/feishu_files.rs`、`channels/weixin_files.rs` | 平台专属下载入口，写入工作区 |
+| 待取文件 | `channels/pending_files.rs` | 先占位、后按需取 |
+| 出站附件 | `channels/outbound_attachments.rs` | 从正文/Markdown/工作区路径抽取附件再上传 |
+| 运行日志 | `channels/runtime_log.rs` | 启动与运行状态记录 |
 
-### 渠道常见问题排查
+渠道客户端通常不认内部路径，所以附件要走上传-回链，而不是把路径字符串丢给用户。
 
-如果渠道消息没收到：
-- 检查渠道账号状态是否在线
-- 查看 Webhook 配置是否正确
-- 检查平台侧的消息推送日志
-- 在舰桥查看渠道运行日志
+## Webhook 形态与校验
 
-### 文件附件处理
+| 端点 | 说明 |
+| --- | --- |
+| `POST /wunder/channel/{provider}/webhook` | 通用入口（`api/channel.rs:117`） |
+| `POST /wunder/channel/feishu/webhook`、`POST /wunder/channel/qqbot/webhook` | 专用入口（`:107`、`:116`） |
 
-渠道客户端通常无法直接理解内部文件路径，所以附件会临时转成下载链接。如果渠道里的附件打不开，通常需要检查临时目录服务。
+校验方式按平台不同（`api/channel.rs:33-198`）：
 
-## 常见误区
+- `hub.verify_token` —— 平台配置校验回环。
+- `x-hub-signature-256` —— 内容签名。
+- 企业微信 `msg_signature` + `encrypt_type` —— 加密消息验签与解密。
 
-- **渠道是独立系统？** 不是。渠道只是入口，核心是统一的。
-- **不同渠道能力不同？** 核心能力相同，但入口形式可能有差异（如飞书可能不支持某些文件操作）。
-- **蜂窝和舰体是两个系统？** 不是。蜂窝（desktop）是本地优先的运行形态，舰体（server）是云端多用户形态，但引擎是同一套，蜂窝和舵机不依赖舰体。
+通用 webhook 不做平台专属验签，这意味着走 generic 的平台需要自己保证来源可信（网关侧或反向代理侧收口）。
+
+## 排障顺序
+
+1. **在线状态**：长连接渠道看 supervisor 是否在跑（`channels.long_connection.<provider>.supervisor`）；webhook-only 渠道没有「在线」概念，只看回调是否到达。
+2. **回调有没有进来**：平台侧推送日志 + 渠道运行日志。
+3. **有没有被路由到**：检查绑定打分结果与 `enabled`；绑定了别的智能体看起来就像「没反应」。
+4. **进来了没回**：看 outbox 是否有滞留记录、出站 worker 是否被关、限流是否命中。
+5. **XMPP 特别项**：确认二进制是否启用了 `xmpp` feature——默认关闭时它是 stub，报错文案直接是 `xmpp feature is disabled`。
+
+## 常见误解
+
+- **「telegram/discord/slack/LINE/DingTalk 已支持」** — 没有 adapter，只是 generic 目录项。
+- **「企业微信和公众号有长连接」** — 它们是 webhook-only，长连接只有飞书、QQ Bot、XMPP、微信 weixin 四个。
+- **「XMPP 开箱可用」** — 默认 feature 关闭时是占位 stub。
+- **「渠道能配置业务逻辑」** — 渠道只有 `agent_id` 与 `tool_overrides` 两层覆盖，其余在引擎与管理侧。
+- **「渠道不同能力不同」** — 核心能力同一套，差异在协议表达（富文本、附件、卡片）与是否支持长连接。
+- **「入站队列会无限排队保证不丢」** — 队列 512 有界、入队 80 ms 超时，超出走背压由平台重投。
+- **「出站失败就丢了」** — 持久 outbox + 指数退避重试，最多 5 次。
+- **「蜂窝/舵机也要经过渠道层」** — 不是。蜂窝同进程原生调用，舵机走 CLI 自己的接入，二者不依赖舰体。
 
 ## 延伸阅读
 
-- [系统架构](/docs/zh-CN/concepts/architecture/) —— 三层架构详解
-- [渠道管理指南](/docs/zh-CN/ops/channel-runtime/) —— 运维和排障
-- [渠道工具（已移除）](/docs/zh-CN/tools/channel/) —— 渠道相关工具说明
+- [渠道运行时运维](/docs/zh-CN/ops/channel-runtime/) —— 部署、监控与排障
+- [渠道 webhook 接入](/docs/zh-CN/integration/channel-webhook/) —— 回调端点与校验
+- [微信渠道接入](/docs/zh-CN/integration/weixin-channel/) —— weixin 长轮询细节
+- [工作区路由参考](/docs/zh-CN/reference/workspace-routing/) —— 绑定到工作区的映射规则
+- [实时性](/docs/zh-CN/concepts/core-realtime/) —— 事件推送与补水
+- [舰桥面板指南](/docs/zh-CN/reference/admin-panels/) —— 渠道账号配置入口

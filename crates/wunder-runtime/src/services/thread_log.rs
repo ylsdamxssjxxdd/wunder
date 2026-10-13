@@ -247,6 +247,15 @@ pub fn event_item(session_id: &str, event_type: &str, data: &Value) -> Option<Va
     if event_type == "llm_request" {
         item["visibility"] = json!("admin");
     }
+    // 工具事件与 append_tool_log 写同一时间线条目，二者最后写入者不定；
+    // 在持久化必经点补 schema，保证调用级 schema 不会因覆盖顺序丢失。
+    if kind == "tool_call" {
+        if let Some(tool) = item.get("tool").and_then(Value::as_str) {
+            if let Some(schema) = crate::tools::runtime_tool_schema(tool) {
+                item["schema"] = schema;
+            }
+        }
+    }
     // 上下文类事件（plan/approval/terminal/compaction/subagent_message）只有
     // 结构化字段、没有可读正文；轨迹 UI 渲染 `content`，这里补出最贴切的文本，
     // 对齐 dsh 中每种 kind 都有可读内容的做法。
@@ -626,6 +635,23 @@ mod tests {
                 &json!({"turn_id":"turn","model_round":2,"stage":"guard","summary":"guard passed"}),
             );
             assert!(item.is_none(), "{event_type} must stay out of the timeline");
+        }
+    }
+
+    #[test]
+    fn tool_events_carry_call_schema_regardless_of_writer_order() {
+        // tool_result 事件与 append_tool_log 写同一时间线条目，最后写入者不定；
+        // 事件路径必须在持久化点补 schema，避免调用级 schema 被覆盖丢失。
+        for event_type in ["tool_call", "tool_result"] {
+            let item = event_item(
+                "s",
+                event_type,
+                &json!({"turn_id":"turn","model_round":1,"tool":"读取文件","tool_call_id":"call_1","ok":true}),
+            )
+            .expect("tool events enter the timeline");
+            let schema = item.get("schema").expect("durable tool items keep the call schema");
+            assert_eq!(schema["name"], "读取文件");
+            assert!(schema["parameters"].is_object());
         }
     }
 }

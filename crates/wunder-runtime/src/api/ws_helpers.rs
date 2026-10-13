@@ -325,7 +325,10 @@ pub(crate) async fn resume_thread_view(
                 );
                 return;
             }
-            Ok(page) if page.view_seq > after => {
+            // Source cursors encode durable sequences as negative values. An
+            // unchanged source page must stay idle; changes request a refresh
+            // above instead of advancing into the projection's cursor space.
+            Ok(page) if page.epoch >= 0 && page.view_seq > after => {
                 idle = 0;
                 after = page.view_seq;
                 if try_send_ws_event(

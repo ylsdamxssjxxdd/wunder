@@ -1,5 +1,5 @@
 //! Write-time display projection, shared by both transactional stores.
-use serde_json::Value;
+use serde_json::{json, Value};
 use wunder_core::thread_view::{preview, BodyRef, ChatViewRow, TrajectoryViewRow, ViewMessage};
 
 pub(crate) fn body_id(item_id: &str, field: &str) -> String {
@@ -17,6 +17,15 @@ pub(crate) fn message(item_id: &str, content: &str, revision: i64) -> ViewMessag
         }),
         ..Default::default()
     }
+}
+
+pub(crate) fn set_reasoning(message: &mut ViewMessage, payload: &Value) {
+    message.reasoning = payload
+        .get("reasoning")
+        .or_else(|| payload.get("reasoning_content"))
+        .and_then(Value::as_str)
+        .map(|value| preview(value, 2048))
+        .unwrap_or_default();
 }
 
 pub(crate) fn stable_answer(item_id: &str, turn_id: &str, kind: &str) -> bool {
@@ -49,11 +58,25 @@ pub(crate) fn trajectory(
     updated: f64,
 ) -> TrajectoryViewRow {
     let content = item.get("content").and_then(Value::as_str).unwrap_or("");
+    // 工具条目的事件负载里工具名字段是 `tool`（tool_name 从不存在）。
+    let tool = item.get("tool").and_then(Value::as_str);
     let summary = if content.is_empty() {
-        item.get("summary")
-            .or_else(|| item.get("tool_name"))
-            .and_then(Value::as_str)
-            .unwrap_or(kind)
+        if kind == "tool_call" {
+            // 工具行必须展示调用的是什么工具，而不是回退成裸 kind。
+            tool.unwrap_or(kind)
+        } else if kind == "assistant_message" {
+            // 工具调用轮的助手条目没有正文；思考摘要是该条目的可视主体。
+            item.get("reasoning")
+                .or_else(|| item.get("reasoning_content"))
+                .and_then(Value::as_str)
+                .filter(|v| !v.is_empty())
+                .unwrap_or(kind)
+        } else {
+            item.get("summary")
+                .and_then(Value::as_str)
+                .filter(|v| !v.is_empty())
+                .unwrap_or(kind)
+        }
     } else {
         content
     };
@@ -68,10 +91,7 @@ pub(crate) fn trajectory(
         kind: preview(kind, 48),
         status: preview(status, 48),
         summary: preview(summary, 256),
-        tool_name: item
-            .get("tool_name")
-            .and_then(Value::as_str)
-            .map(|v| preview(v, 96)),
+        tool_name: tool.map(|v| preview(v, 96)),
         model_round: item.get("model_round").and_then(Value::as_i64).unwrap_or(0),
         started_at: item
             .get("started_at")
@@ -117,4 +137,176 @@ pub(crate) fn finite_stats(item: &Value) -> Option<Value> {
         .map(|(k, v)| (preview(k, 64), v.clone()))
         .collect::<serde_json::Map<_, _>>();
     Some(Value::Object(fields))
+}
+
+/// 每个聊天行最多保留的子智能体卡片数：进度卡是展示件，超出窗口的旧运行
+/// 由轨迹视图承载。
+pub(crate) const MAX_ROW_SUBAGENTS: usize = 8;
+
+/// 子智能体进度卡片（写时投影）：从 `subagent_run` 条目的 `runtime` 负载里
+/// 抽出面板直接消费的标量与有界指标，不复制子会话正文或执行配置。
+pub(crate) fn subagent_card(item: &Value, id: &str, revision: i64) -> Option<Value> {
+    let runtime = item.get("runtime")?.as_object()?;
+    let mut card = serde_json::Map::new();
+    card.insert("key".into(), json!(preview(id, 96)));
+    for field in ["run_id", "session_id", "dispatch_id", "run_kind", "title", "label", "status"] {
+        if let Some(v) = runtime
+            .get(field)
+            .and_then(Value::as_str)
+            .filter(|v| !v.is_empty())
+        {
+            card.insert(field.into(), json!(preview(v, 128)));
+        }
+    }
+    for field in ["terminal", "failed"] {
+        if let Some(v) = runtime.get(field).and_then(Value::as_bool) {
+            card.insert(field.into(), json!(v));
+        }
+    }
+    if let Some(v) = runtime.get("can_terminate").and_then(Value::as_bool) {
+        card.insert("canTerminate".into(), json!(v));
+    }
+    for field in ["latest_message", "summary", "user_message"] {
+        if let Some(v) = runtime
+            .get(field)
+            .and_then(Value::as_str)
+            .filter(|v| !v.is_empty())
+        {
+            card.insert(field.into(), json!(preview(v, 256)));
+        }
+    }
+    for field in ["updated_time", "started_time", "queued_time", "elapsed_s"] {
+        if let Some(v) = runtime.get(field).and_then(Value::as_f64) {
+            card.insert(field.into(), json!(v));
+        }
+    }
+    if let Some(metrics) = runtime.get("metrics").and_then(Value::as_object) {
+        let bounded = metrics
+            .iter()
+            .filter(|(_, v)| v.is_number() || v.is_boolean() || v.is_string())
+            .take(16)
+            .map(|(k, v)| (preview(k, 64), v.clone()))
+            .collect::<serde_json::Map<_, _>>();
+        card.insert("metrics".into(), Value::Object(bounded));
+    }
+    card.insert("updated_seq".into(), json!(revision));
+    Some(Value::Object(card))
+}
+
+/// 同一 key 原地更新（子智能体进度推进复用同一条目），新运行追加并裁掉最旧。
+pub(crate) fn upsert_subagent_card(cards: &mut Vec<Value>, card: Value) {
+    let key = card
+        .get("key")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    if let Some(existing) = cards
+        .iter_mut()
+        .find(|c| c.get("key").and_then(Value::as_str) == Some(key.as_str()))
+    {
+        *existing = card;
+        return;
+    }
+    cards.push(card);
+    while cards.len() > MAX_ROW_SUBAGENTS {
+        cards.remove(0);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn project(kind: &str, item: &Value) -> TrajectoryViewRow {
+        trajectory(
+            item,
+            "item-1",
+            "turn-1",
+            "turn-1",
+            1,
+            0,
+            1,
+            1,
+            kind,
+            "completed",
+            0.0,
+            1.0,
+        )
+    }
+
+    #[test]
+    fn tool_rows_surface_the_called_tool_not_the_raw_kind() {
+        let row = project(
+            "tool_call",
+            &json!({"tool":"读取文件","args":{"path":"/tmp/a"},"ok":true}),
+        );
+        assert_eq!(row.tool_name.as_deref(), Some("读取文件"));
+        assert_eq!(row.summary, "读取文件");
+    }
+
+    #[test]
+    fn empty_assistant_rows_fall_back_to_the_reasoning_preview() {
+        let row = project(
+            "assistant_message",
+            &json!({"content":"","reasoning_content":"正在读取文件以确认路径"}),
+        );
+        assert_eq!(row.summary, "正在读取文件以确认路径");
+    }
+
+    #[test]
+    fn context_rows_keep_their_body_text() {
+        let row = project(
+            "system_message",
+            &json!({"content":"你是 WUNDER，一个强大的智能体。","meta":{"type":"system_prompt"}}),
+        );
+        assert_eq!(row.summary, "你是 WUNDER，一个强大的智能体。");
+    }
+
+    #[test]
+    fn subagent_cards_expose_the_panel_contract_without_child_payloads() {
+        let item = json!({
+            "runtime": {
+                "session_id": "child-session", "run_id": "run-1", "title": "研究子任务",
+                "status": "running", "terminal": false, "failed": false, "can_terminate": true,
+                "latest_message": "正在读取资料", "result": {"heavy": true}, "metadata": {"x": 1},
+                "metrics": {"tool_calls": 3, "context_tokens": 1024, "child_turn_id": "turn-9"}
+            }
+        });
+        let card = subagent_card(&item, "turn-1:subagent-run-1", 7).expect("card");
+        assert_eq!(card["key"], "turn-1:subagent-run-1");
+        assert_eq!(card["session_id"], "child-session");
+        assert_eq!(card["status"], "running");
+        assert_eq!(card["canTerminate"], true);
+        assert_eq!(card["latest_message"], "正在读取资料");
+        assert_eq!(card["metrics"]["tool_calls"], 3);
+        // 面板契约不需要子会话正文副本；结果与元数据永不进卡片。
+        assert!(card.get("result").is_none());
+        assert!(card.get("metadata").is_none());
+
+        let mut cards = Vec::new();
+        upsert_subagent_card(&mut cards, card);
+        let updated = subagent_card(
+            &json!({"runtime": {"session_id": "child-session", "run_id": "run-1",
+                "status": "completed", "terminal": true, "can_terminate": false,
+                "metrics": {"tool_calls": 5}}}),
+            "turn-1:subagent-run-1",
+            9,
+        )
+        .expect("card");
+        upsert_subagent_card(&mut cards, updated);
+        assert_eq!(cards.len(), 1);
+        assert_eq!(cards[0]["status"], "completed");
+        assert_eq!(cards[0]["updated_seq"], 9);
+
+        for index in 0..(MAX_ROW_SUBAGENTS + 2) {
+            let item = json!({"runtime": {"run_id": format!("run-{index}"), "status": "completed"}});
+            if let Some(card) = subagent_card(&item, &format!("turn-1:subagent-run-{index}"), index as i64) {
+                upsert_subagent_card(&mut cards, card);
+            }
+        }
+        assert_eq!(cards.len(), MAX_ROW_SUBAGENTS);
+        // 窗口裁剪丢掉最旧的运行，同 key 的进度推进永远保留最新一份。
+        assert!(cards.iter().all(|c| c["key"] != "turn-1:subagent-run-1"));
+    }
 }

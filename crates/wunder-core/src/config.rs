@@ -77,6 +77,7 @@ pub struct Config {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CloudConfig {
     #[serde(default = "default_cloud_enabled")]
+    #[serde(deserialize_with = "crate::config::deserialize_bool_from_any")]
     pub enabled: bool,
     #[serde(default = "default_cloud_max_concurrent_calls_per_user")]
     pub max_concurrent_calls_per_user: usize,
@@ -150,6 +151,7 @@ fn default_cloud_queue_max_queue_per_user() -> usize {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InterlinkConfig {
     #[serde(default = "default_interlink_enabled")]
+    #[serde(deserialize_with = "crate::config::deserialize_bool_from_any")]
     pub enabled: bool,
     #[serde(default = "default_interlink_max_channels_per_device")]
     pub max_channels_per_device: usize,
@@ -315,6 +317,7 @@ pub struct ProjectDocConfig {
     /// Include documents discovered from the workspace folder upward to the
     /// project root (the nearest ancestor holding `.git`).
     #[serde(default = "default_project_doc_enabled")]
+    #[serde(deserialize_with = "crate::config::deserialize_bool_from_any")]
     pub enabled: bool,
     /// Byte budget for the concatenated documents; the last one is truncated.
     #[serde(default = "default_project_doc_max_bytes")]
@@ -385,6 +388,7 @@ pub struct SecurityConfig {
     #[serde(default)]
     pub approval_mode: Option<String>,
     #[serde(default = "default_allow_user_registration")]
+    #[serde(deserialize_with = "crate::config::deserialize_bool_from_any")]
     pub allow_user_registration: bool,
 }
 
@@ -415,6 +419,7 @@ pub struct CorsConfig {
     pub allow_origins: Option<Vec<String>>,
     pub allow_methods: Option<Vec<String>>,
     pub allow_headers: Option<Vec<String>>,
+    #[serde(default, deserialize_with = "crate::config::deserialize_optional_bool_from_any")]
     pub allow_credentials: Option<bool>,
 }
 
@@ -519,6 +524,7 @@ pub struct VirtualLlmLogConfig {
     #[serde(default)]
     pub file: String,
     #[serde(default)]
+    #[serde(deserialize_with = "crate::config::deserialize_bool_from_any")]
     pub enabled: bool,
     #[serde(default)]
     pub format: String,
@@ -537,6 +543,7 @@ fn default_virtual_llm_logs_root() -> String {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentQueueConfig {
     #[serde(default = "default_agent_queue_enabled")]
+    #[serde(deserialize_with = "crate::config::deserialize_bool_from_any")]
     pub enabled: bool,
     #[serde(default = "default_agent_queue_poll_interval_ms")]
     pub poll_interval_ms: u64,
@@ -602,16 +609,22 @@ fn default_user_agent_worker_cards_root() -> String {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PresetCustomizable {
     #[serde(default)]
+    #[serde(deserialize_with = "crate::config::deserialize_bool_from_any")]
     pub system_prompt: bool,
     #[serde(default)]
+    #[serde(deserialize_with = "crate::config::deserialize_bool_from_any")]
     pub welcome: bool,
     #[serde(default)]
+    #[serde(deserialize_with = "crate::config::deserialize_bool_from_any")]
     pub model_name: bool,
     #[serde(default)]
+    #[serde(deserialize_with = "crate::config::deserialize_bool_from_any")]
     pub reasoning_effort: bool,
     #[serde(default)]
+    #[serde(deserialize_with = "crate::config::deserialize_bool_from_any")]
     pub tool_names: bool,
     #[serde(default)]
+    #[serde(deserialize_with = "crate::config::deserialize_bool_from_any")]
     pub approval_mode: bool,
 }
 
@@ -666,6 +679,7 @@ pub struct UserAgentPresetConfig {
     #[serde(default)]
     pub system_prompt: String,
     #[serde(default)]
+    #[serde(deserialize_with = "crate::config::deserialize_bool_from_any")]
     pub preview_skill: bool,
     #[serde(default)]
     pub model_name: Option<String>,
@@ -731,10 +745,12 @@ pub struct LlmModelConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub simulation: Option<crate::virtual_model::VirtualModelOptions>,
     #[serde(default, alias = "enabled")]
+    #[serde(deserialize_with = "crate::config::deserialize_optional_bool_from_any")]
     pub enable: Option<bool>,
     /// `true` exposes this llm model to logged-in local clients via
     /// `/wunder/cloud/v1/models`; absent/false keeps it server-only.
     #[serde(default)]
+    #[serde(deserialize_with = "crate::config::deserialize_optional_bool_from_any")]
     pub expose: Option<bool>,
     pub provider: Option<String>,
     #[serde(default)]
@@ -755,12 +771,16 @@ pub struct LlmModelConfig {
     #[serde(default)]
     pub thinking_token_budget: Option<u32>,
     #[serde(default)]
+    #[serde(deserialize_with = "crate::config::deserialize_optional_bool_from_any")]
     pub support_vision: Option<bool>,
     #[serde(default)]
+    #[serde(deserialize_with = "crate::config::deserialize_optional_bool_from_any")]
     pub support_hearing: Option<bool>,
     #[serde(default)]
+    #[serde(deserialize_with = "crate::config::deserialize_optional_bool_from_any")]
     pub stream: Option<bool>,
     #[serde(default)]
+    #[serde(deserialize_with = "crate::config::deserialize_optional_bool_from_any")]
     pub stream_include_usage: Option<bool>,
     #[serde(default)]
     pub history_compaction_ratio: Option<f32>,
@@ -773,6 +793,7 @@ pub struct LlmModelConfig {
     #[serde(default)]
     pub stop: Option<Vec<String>>,
     #[serde(default)]
+    #[serde(deserialize_with = "crate::config::deserialize_optional_bool_from_any")]
     pub mock_if_unconfigured: Option<bool>,
     #[serde(default)]
     pub tts_voice: Option<String>,
@@ -823,8 +844,10 @@ pub struct LlmModelConfig {
     #[serde(default)]
     pub video_flow_shift: Option<f32>,
     #[serde(default)]
+    #[serde(deserialize_with = "crate::config::deserialize_optional_bool_from_any")]
     pub video_enable_frame_interpolation: Option<bool>,
     #[serde(default)]
+    #[serde(deserialize_with = "crate::config::deserialize_optional_bool_from_any")]
     pub video_sync_mode: Option<bool>,
 }
 
@@ -864,6 +887,7 @@ pub struct ToolsConfig {
 pub struct HooksConfig {
     /// 是否启用钩子（默认关闭，避免影响既有行为）。
     #[serde(default)]
+    #[serde(deserialize_with = "crate::config::deserialize_bool_from_any")]
     pub enabled: bool,
     /// 声明的命令钩子列表。
     #[serde(default)]
@@ -903,6 +927,7 @@ pub struct ToolVisibilityRule {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BrowserConfig {
     #[serde(default)]
+    #[serde(deserialize_with = "crate::config::deserialize_bool_from_any")]
     pub enabled: bool,
     /// Active browser provider id; see `services::browser::provider`.
     #[serde(default = "default_browser_provider")]
@@ -970,6 +995,7 @@ pub struct BrowserLimitsConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BrowserRuntimePlaywrightConfig {
     #[serde(default = "default_browser_headless")]
+    #[serde(deserialize_with = "crate::config::deserialize_bool_from_any")]
     pub headless: bool,
     #[serde(default = "default_browser_viewport_width")]
     pub viewport_width: u32,
@@ -1002,22 +1028,28 @@ pub struct BrowserRuntimePlaywrightConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BrowserSecurityConfig {
     #[serde(default)]
+    #[serde(deserialize_with = "crate::config::deserialize_bool_from_any")]
     pub allow_private_network: bool,
     #[serde(default)]
     pub hostname_allowlist: Vec<String>,
     #[serde(default = "default_browser_deny_file_scheme")]
+    #[serde(deserialize_with = "crate::config::deserialize_bool_from_any")]
     pub deny_file_scheme: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BrowserDockerConfig {
     #[serde(default)]
+    #[serde(deserialize_with = "crate::config::deserialize_bool_from_any")]
     pub enabled: bool,
     #[serde(default = "default_browser_headless")]
+    #[serde(deserialize_with = "crate::config::deserialize_bool_from_any")]
     pub force_headless: bool,
     #[serde(default = "default_browser_docker_use_no_sandbox")]
+    #[serde(deserialize_with = "crate::config::deserialize_bool_from_any")]
     pub use_no_sandbox: bool,
     #[serde(default = "default_browser_docker_disable_dev_shm_usage")]
+    #[serde(deserialize_with = "crate::config::deserialize_bool_from_any")]
     pub disable_dev_shm_usage: bool,
     #[serde(default = "default_browser_docker_browser_data_root")]
     pub browser_data_root: String,
@@ -1030,6 +1062,7 @@ pub struct BrowserDockerConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct CronConfig {
+    #[serde(deserialize_with = "crate::config::deserialize_bool_from_any")]
     pub enabled: bool,
     #[serde(default, deserialize_with = "deserialize_usize_from_any")]
     pub max_concurrent_runs: usize,
@@ -1088,6 +1121,7 @@ pub struct WebToolsConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WebSearchToolConfig {
     #[serde(default = "default_web_search_enabled")]
+    #[serde(deserialize_with = "crate::config::deserialize_bool_from_any")]
     pub enabled: bool,
     #[serde(default = "default_web_search_provider")]
     pub provider: String,
@@ -1126,6 +1160,7 @@ pub struct WebSearchFirecrawlConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WebFetchToolConfig {
     #[serde(default = "default_web_fetch_enabled")]
+    #[serde(deserialize_with = "crate::config::deserialize_bool_from_any")]
     pub enabled: bool,
     #[serde(default = "default_web_fetch_provider")]
     pub provider: String,
@@ -1160,6 +1195,7 @@ pub struct WebFetchToolConfig {
     )]
     pub cache_ttl_secs: u64,
     #[serde(default)]
+    #[serde(deserialize_with = "crate::config::deserialize_bool_from_any")]
     pub allow_private_network: bool,
     #[serde(default)]
     pub hostname_allowlist: Vec<String>,
@@ -1181,6 +1217,7 @@ pub struct WebFetchFirecrawlConfig {
     )]
     pub timeout_secs: u64,
     #[serde(default = "default_web_fetch_firecrawl_only_main_content")]
+    #[serde(deserialize_with = "crate::config::deserialize_bool_from_any")]
     pub only_main_content: bool,
     #[serde(
         default = "default_web_fetch_firecrawl_max_age_ms",
@@ -1190,14 +1227,17 @@ pub struct WebFetchFirecrawlConfig {
     #[serde(default = "default_web_fetch_firecrawl_proxy")]
     pub proxy: String,
     #[serde(default = "default_web_fetch_firecrawl_store_in_cache")]
+    #[serde(deserialize_with = "crate::config::deserialize_bool_from_any")]
     pub store_in_cache: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BrowserToolConfig {
     #[serde(default)]
+    #[serde(deserialize_with = "crate::config::deserialize_bool_from_any")]
     pub enabled: bool,
     #[serde(default = "default_browser_headless")]
+    #[serde(deserialize_with = "crate::config::deserialize_bool_from_any")]
     pub headless: bool,
     #[serde(default = "default_browser_viewport_width")]
     pub viewport_width: u32,
@@ -1216,6 +1256,7 @@ pub struct BrowserToolConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DesktopControllerConfig {
     #[serde(default)]
+    #[serde(deserialize_with = "crate::config::deserialize_bool_from_any")]
     pub enabled: bool,
     #[serde(default = "default_desktop_controller_norm_width")]
     pub norm_width: i32,
@@ -1660,6 +1701,7 @@ pub struct McpConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct LspConfig {
     #[serde(default)]
+    #[serde(deserialize_with = "crate::config::deserialize_bool_from_any")]
     pub enabled: bool,
     #[serde(default)]
     pub timeout_s: u64,
@@ -1687,6 +1729,7 @@ pub struct LspServerConfig {
     #[serde(default)]
     pub initialization_options: Option<Value>,
     #[serde(default)]
+    #[serde(deserialize_with = "crate::config::deserialize_bool_from_any")]
     pub enabled: bool,
 }
 
@@ -1697,8 +1740,10 @@ pub struct McpServerConfig {
     #[serde(default)]
     pub allow_tools: Vec<String>,
     #[serde(default)]
+    #[serde(deserialize_with = "crate::config::deserialize_bool_from_any")]
     pub packaged: bool,
     #[serde(default)]
+    #[serde(deserialize_with = "crate::config::deserialize_bool_from_any")]
     pub enabled: bool,
     #[serde(default)]
     pub transport: Option<String>,
@@ -1746,8 +1791,10 @@ pub struct KnowledgeBaseConfig {
     pub description: String,
     pub root: String,
     #[serde(default)]
+    #[serde(deserialize_with = "crate::config::deserialize_bool_from_any")]
     pub enabled: bool,
     #[serde(default)]
+    #[serde(deserialize_with = "crate::config::deserialize_optional_bool_from_any")]
     pub shared: Option<bool>,
     #[serde(default)]
     pub base_type: Option<String>,
@@ -1756,6 +1803,7 @@ pub struct KnowledgeBaseConfig {
     #[serde(default)]
     pub ragflow_dataset_id: Option<String>,
     #[serde(default)]
+    #[serde(deserialize_with = "crate::config::deserialize_optional_bool_from_any")]
     pub ragflow_dataset_managed: Option<bool>,
     #[serde(default)]
     pub chunk_method: Option<String>,
@@ -1912,8 +1960,10 @@ pub struct StorageConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ChannelsConfig {
     #[serde(default)]
+    #[serde(deserialize_with = "crate::config::deserialize_bool_from_any")]
     pub enabled: bool,
     #[serde(default)]
+    #[serde(deserialize_with = "crate::config::deserialize_bool_from_any")]
     pub allow_unknown_accounts: bool,
     #[serde(default = "default_channel_session_strategy")]
     pub session_strategy: String,
@@ -1932,16 +1982,20 @@ pub struct ChannelsConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GatewayConfig {
     #[serde(default)]
+    #[serde(deserialize_with = "crate::config::deserialize_bool_from_any")]
     pub enabled: bool,
     #[serde(default)]
     pub auth_token: Option<String>,
     #[serde(default = "default_gateway_protocol_version")]
     pub protocol_version: i32,
     #[serde(default)]
+    #[serde(deserialize_with = "crate::config::deserialize_bool_from_any")]
     pub allow_unpaired_nodes: bool,
     #[serde(default)]
+    #[serde(deserialize_with = "crate::config::deserialize_bool_from_any")]
     pub node_token_required: bool,
     #[serde(default)]
+    #[serde(deserialize_with = "crate::config::deserialize_bool_from_any")]
     pub allow_gateway_token_for_nodes: bool,
     #[serde(default)]
     pub allowed_origins: Vec<String>,
@@ -1993,6 +2047,7 @@ pub struct ChannelRateLimitOverride {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ChannelOutboxConfig {
     #[serde(default)]
+    #[serde(deserialize_with = "crate::config::deserialize_bool_from_any")]
     pub worker_enabled: bool,
     #[serde(default)]
     pub poll_interval_ms: u64,
@@ -2021,6 +2076,7 @@ pub struct ChannelMediaConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ChannelAsrConfig {
     #[serde(default)]
+    #[serde(deserialize_with = "crate::config::deserialize_bool_from_any")]
     pub enabled: bool,
     #[serde(default)]
     pub provider: Option<String>,
@@ -2039,6 +2095,7 @@ pub struct ChannelAsrConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ChannelTtsConfig {
     #[serde(default)]
+    #[serde(deserialize_with = "crate::config::deserialize_bool_from_any")]
     pub enabled: bool,
     #[serde(default)]
     pub provider: Option<String>,
@@ -2061,6 +2118,7 @@ pub struct ChannelTtsConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ChannelOcrConfig {
     #[serde(default)]
+    #[serde(deserialize_with = "crate::config::deserialize_bool_from_any")]
     pub enabled: bool,
     #[serde(default)]
     pub endpoint: Option<String>,
@@ -2075,6 +2133,7 @@ pub struct ChannelOcrConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ChannelGeocodeConfig {
     #[serde(default)]
+    #[serde(deserialize_with = "crate::config::deserialize_bool_from_any")]
     pub enabled: bool,
     #[serde(default)]
     pub endpoint: Option<String>,
@@ -2430,20 +2489,32 @@ pub fn load_config() -> Config {
 }
 
 pub fn load_config_from_path(path: &Path) -> Config {
-    let mut value = load_config_value_from_path(path);
-    expand_yaml_env(&mut value);
-    let mut config = serde_yaml::from_value::<Config>(value).unwrap_or_else(|err| {
+    try_load_config_from_path(path).unwrap_or_else(|err| {
         eprintln!("failed to parse config, falling back to defaults: {err}");
-        Config::default()
-    });
+        let mut config = Config::default();
+        apply_env_overrides(&mut config);
+        config
+    })
+}
+
+/// Strict deployment loader: an invalid configured file must not start an API
+/// service with unrelated defaults. Local bootstrap callers retain the legacy
+/// optional-file loader above.
+pub fn try_load_config_from_path(path: &Path) -> anyhow::Result<Config> {
+    use anyhow::Context;
+    let content = read_yaml_content_with_fallback(&path.display().to_string())
+        .context("read configuration failed")?;
+    let mut value: Value = serde_yaml::from_str(&content).context("parse configuration YAML failed")?;
+    expand_yaml_env(&mut value);
+    let mut config = serde_yaml::from_value::<Config>(value).context("invalid configuration")?;
     if let Some(example_path) = resolve_example_config_path(&resolve_config_path(path)) {
         if example_path.exists() {
-            let example = load_config_from_path(&example_path);
+            let example = try_load_config_from_path(&example_path)?;
             restore_generated_sparse_config_sections(&mut config, &example);
         }
     }
     apply_env_overrides(&mut config);
-    config
+    Ok(config)
 }
 
 fn apply_env_overrides(config: &mut Config) {
@@ -2764,6 +2835,22 @@ fn expand_yaml_env(value: &mut Value) {
     }
 }
 
+pub(crate) fn deserialize_bool_from_any<'de, D: Deserializer<'de>>(d: D) -> Result<bool, D::Error> {
+    deserialize_optional_bool_from_any(d)?.ok_or_else(|| de::Error::custom("expected a boolean"))
+}
+
+pub(crate) fn deserialize_optional_bool_from_any<'de, D: Deserializer<'de>>(d: D) -> Result<Option<bool>, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Boolean { Native(bool), Text(String) }
+    Option::<Boolean>::deserialize(d)?.map(|value| match value {
+        Boolean::Native(b) => Ok(b),
+        Boolean::Text(s) if s.trim().eq_ignore_ascii_case("true") => Ok(true),
+        Boolean::Text(s) if s.trim().eq_ignore_ascii_case("false") => Ok(false),
+        _ => Err(de::Error::custom("expected true or false")),
+    }).transpose()
+}
+
 fn expand_env_placeholders(input: &str) -> String {
     let mut output = String::with_capacity(input.len());
     let mut rest = input;
@@ -3066,12 +3153,68 @@ storage:
         )
         .expect("write config");
 
-        let config = load_config_from_path(&config_path);
+        let config = try_load_config_from_path(&config_path).expect("load typed fixture config");
 
         assert_eq!(config.mcp.servers.len(), 1);
         assert_eq!(config.mcp.servers[0].name, "extra_mcp");
 
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_load_config_accepts_boolean_strings_from_deployment_templates() {
+        let root = std::env::temp_dir().join(format!(
+            "wunder-config-boolean-string-{}",
+            unique_test_suffix()
+        ));
+        fs::create_dir_all(&root).expect("create temp dir");
+        let config_path = root.join("wunder.yaml");
+        fs::write(
+            &config_path,
+            "cors:\n  allow_credentials: \"false\"\nsecurity:\n  allow_user_registration: \"true\"\n",
+        )
+        .expect("write config");
+
+        let config = try_load_config_from_path(&config_path).expect("load quoted booleans");
+
+        assert_eq!(config.cors.allow_credentials, Some(false));
+        assert!(config.security.allow_user_registration);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn typed_boolean_parsing_preserves_strings_and_rejects_invalid_values() {
+        let sparse: Config = serde_yaml::from_str("cors:\n  allow_origins: ['*']\n").unwrap();
+        assert_eq!(sparse.cors.allow_credentials, None);
+        let config: Config = serde_yaml::from_str(
+            "security:\n  api_key: 'true'\nbrowser:\n  enabled: 'false'\nllm:\n  models:\n    fixture-model:\n      model: 'false'\n      support_vision: 'true'\n      stream: null\n",
+        ).unwrap();
+        assert_eq!(config.security.api_key.as_deref(), Some("true"));
+        assert!(!config.browser.enabled);
+        let model = &config.llm.models["fixture-model"];
+        assert_eq!(model.model.as_deref(), Some("false"));
+        assert_eq!(model.support_vision, Some(true));
+        assert_eq!(model.stream, None);
+        assert!(serde_yaml::from_str::<Config>("browser:\n  enabled: fixture-invalid\n").is_err());
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("fixture.yaml");
+        fs::write(&path, "browser:\n  enabled: fixture-invalid\n").unwrap();
+        assert!(try_load_config_from_path(&path).is_err());
+    }
+
+    #[test]
+    fn shipped_deployment_template_deserializes_after_environment_expansion() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../config/wunder-example.yaml");
+        let config = try_load_config_from_path(&path).expect("deployment template must parse");
+        assert!(config.agent_queue.enabled);
+        assert!(!config.mcp.servers.is_empty());
+        // A whole placeholder is still parsed according to its destination
+        // field; arbitrary text such as model names and keys remains text.
+        let mut value: Value = serde_yaml::from_str("browser:\n  enabled: ${WUNDER_FIXTURE_MISSING_BOOLEAN:-true}\nsecurity:\n  api_key: ${WUNDER_FIXTURE_MISSING_BOOLEAN:-true}\n").unwrap();
+        expand_yaml_env(&mut value);
+        let config: Config = serde_yaml::from_value(value).unwrap();
+        assert!(config.browser.enabled);
+        assert_eq!(config.security.api_key.as_deref(), Some("true"));
     }
 
     /// The chat composer queue is a product behaviour in 蜂巢 and 蜂窝: a
@@ -3081,9 +3224,8 @@ storage:
     #[test]
     fn test_chat_runtime_queue_ships_enabled() {
         assert!(AgentQueueConfig::default().enabled);
-        // Read the template as text: `load_config_from_path` on this file falls
-        // back to defaults (its `${VAR}` placeholders land on numeric fields),
-        // so a parsed read here would pass no matter what the file says.
+        // Inspect the shipped value directly; optional-file loaders can fall
+        // back to defaults, which would hide a broken product default.
         let template = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .and_then(|crates| crates.parent())

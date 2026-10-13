@@ -35,15 +35,59 @@ export class ChatMockService {
       queue_ahead: ahead, queue_total: ahead + 1, active_ahead: 2, wait_ahead: ahead + 2 });
   }
 
+  /** One presentation row per user round: sibling execution turns merge into their root. */
+  private turnGroups(): Row[][] {
+    const groups = new Map<string, Row[]>();
+    for (const turn of this.turns) {
+      const root = String(turn.root_turn_id ?? turn.turn_id);
+      groups.set(root, [...(groups.get(root) ?? []), turn]);
+    }
+    return [...groups.values()];
+  }
+  /** Mirrors `ChatViewRow` in wunder-core: preview prefix + body ref + live tail while running. */
   viewRows() {
-    return this.turns.map(turn=>{
-      const items=[...this.items.values()].filter(i=>i.turn_id===turn.turn_id);
-      const answer=items.filter(i=>i.kind==='assistant_message'&&String(i.item_id).includes(':text-')).at(-1);
-      const user=items.find(i=>i.kind==='user_message');
-      return {root_turn_id:turn.root_turn_id??turn.turn_id,user_round:turn.user_round,client_message_id:turn.client_message_id,revision:this.changes.length,status:turn.status,
-        user:{item_id:user?.item_id??'',content:user?.content??turn.content},assistant:{item_id:answer?.item_id??'',content:answer?.content??'',stats:answer?.meta?.message_stats},
-        workflow_count:items.filter(i=>i.kind==='tool_call').length,failed_count:items.filter(i=>i.kind==='tool_call'&&i.status==='failed').length};
+    return this.turnGroups().map(group => {
+      const root = group[0];
+      const execution = group.at(-1)!;
+      const turnIds = new Set(group.map(turn => String(turn.turn_id)));
+      const items = [...this.items.values()].filter(item => turnIds.has(String(item.turn_id)));
+      const answer = items.filter(i => i.kind === 'assistant_message' && String(i.item_id).includes(':text-')).at(-1);
+      const user = items.find(i => i.kind === 'user_message');
+      const status = String(execution.status);
+      const running = ['queued', 'running', 'waiting_input', 'waiting_approval'].includes(status);
+      const block = this.blocks.get(String(answer?.item_id ?? ''));
+      // Durable text blocks are the persistent prefix; the item row can lag or stay
+      // empty after a cancel while the retained block still carries text.
+      const persisted = String((block as Row | undefined)?.content ?? (block as Row | undefined)?.data?.content ?? '');
+      const content = String(answer?.content ?? '') || persisted;
+      const userContent = String(user?.content ?? root.content ?? '');
+      const bytes = (text: string) => new TextEncoder().encode(text).length;
+      const failure = items.find(i => i.kind === 'terminal')?.error?.message ?? '';
+      const message = (item: Row | undefined, text: string) => ({
+        item_id: String(item?.item_id ?? ''), content: text,
+        body: item ? { body_id: `${item.item_id}|${running && item === answer ? 'stream' : 'content'}`,
+          revision: running && item === answer ? 0 : Number(item.revision ?? 1), bytes: bytes(text) } : null,
+      });
+      return {
+        execution_turn_id: String(execution.turn_id), root_turn_id: String(root.turn_id),
+        user_round: Number(root.user_round), client_message_id: root.client_message_id ?? null,
+        revision: this.changes.length, status,
+        user: { ...message(user, userContent), tail: '', failure: '', attachments: [] },
+        assistant: { ...message(answer, content), content_offset: content.length,
+          tail: running ? persisted : '', failure, stats: answer?.meta?.message_stats, attachments: [] },
+        workflow_count: items.filter(i => i.kind === 'tool_call').length,
+        failed_count: items.filter(i => i.kind === 'tool_call' && i.status === 'failed').length,
+        subagents: [], created_time: Number(root.user_round) * 1000, updated_time: this.changes.length,
+      };
     });
+  }
+  private runtimeHead() {
+    const active = this.turns.filter(turn => ['queued', 'running', 'waiting_input', 'waiting_approval']
+      .includes(String(turn.status))).at(-1);
+    return { runtime_status: active ? String(active.status) : 'idle', active_turn_id: String(active?.turn_id ?? '') };
+  }
+  private viewChanges() {
+    return { epoch: 1, view_seq: this.changes.length, rows: this.viewRows().slice(-12), ...this.runtimeHead() };
   }
   snapshot() { return { cursor: this.changes.length, turns: this.turns.map(turn => ({
     turn_id: turn.turn_id, root_turn_id: turn.root_turn_id ?? turn.turn_id,
@@ -70,7 +114,7 @@ export class ChatMockService {
       revision: payload.revision, payload: structuredClone(payload) };
     this.changes.push(change);
     for (const sub of this.subscriptions) {
-      if(sub.display){const rows=this.viewRows().filter(r=>r.root_turn_id===payload.turn_id);this.send(sub,'thread_view_change',{epoch:1,view_seq:this.changes.length,rows});}
+      if(sub.display){const frame=this.viewChanges();frame.rows=frame.rows.filter(row=>row.root_turn_id===payload.turn_id||row.execution_turn_id===payload.turn_id);this.send(sub,'thread_view_change',frame);}
       else {this.send(sub, 'thread_change', change);if (this.duplicateNext) this.send(sub, 'thread_change', change);}
     }
   }
@@ -256,7 +300,7 @@ export class ChatMockService {
           this.send(sub, 'stream_started', turn);
         }
         const after = Number(message.payload?.after_change_seq ?? 0);
-        if(sub.display)this.send(sub,'thread_view_change',{epoch:1,view_seq:this.changes.length,rows:this.viewRows().slice(-12)});
+        if(sub.display)this.send(sub,'thread_view_change',this.viewChanges());
         else for (const change of this.changes.filter(change => change.change_seq > after)) this.send(sub, 'thread_change', change);
       });
     });
@@ -283,9 +327,27 @@ export class ChatMockService {
       else if (path === '/chat/sessions') data = request.method() === 'POST' ? session : { items: [session], total: 1 };
       else if(path.endsWith('/view/bootstrap')||path.endsWith('/view/chat')) {
         const before=Number(new URL(request.url()).searchParams.get('before')??Number.MAX_SAFE_INTEGER);const rows=this.viewRows().filter(r=>r.user_round<before);const chat=rows.slice(-12);
-        data={session,page:{session_id:MOCK_SESSION,epoch:1,view_seq:this.changes.length,projection_state:'ready',thread_empty:this.turns.length===0,latest_round:this.round,chat,trajectory:new URL(request.url()).searchParams.get('kind')==='trajectory'?[...this.items.values()].slice(-80).map((item,i)=>({item_id:item.item_id,root_turn_id:item.turn_id,turn_id:item.turn_id,user_round:item.user_round,item_index:i,created_seq:i+1,revision:item.revision,kind:item.kind,status:item.status,summary:item.content??item.tool??item.kind,tool_name:item.tool,model_round:1,started_at:1+i,completed_at:2+i,detail:{body_id:`${item.item_id}|detail`,revision:item.revision,bytes:128}})):[],tiles:[],tile_level:0,next_before:chat[0]?.user_round??null,has_more:rows.length>chat.length}};
+        data={session,page:{session_id:MOCK_SESSION,epoch:1,view_seq:this.changes.length,...this.runtimeHead(),projection_state:'ready',thread_empty:this.turns.length===0,latest_round:this.round,chat,trajectory:new URL(request.url()).searchParams.get('kind')==='trajectory'?[...this.items.values()].slice(-80).map((item,i)=>({item_id:item.item_id,root_turn_id:item.turn_id,turn_id:item.turn_id,user_round:item.user_round,item_index:i,created_seq:i+1,revision:item.revision,kind:item.kind,status:item.status,summary:item.content??item.tool??item.kind,tool_name:item.tool,model_round:1,started_at:1+i,completed_at:2+i,detail:{body_id:`${item.item_id}|detail`,revision:item.revision,bytes:128}})):[],tiles:[],tile_level:0,next_before:chat[0]?.user_round??null,has_more:rows.length>chat.length}};
       }
       else if(path.includes('/bodies/')) {const id=decodeURIComponent(path.split('/bodies/')[1]).split('|')[0];data={body_id:id,revision:1,chunks:[JSON.stringify(this.items.get(id)??{})],next_cursor:1,has_more:false};}
+      else if(/\/thread-log\/turns\/[^/]+$/.test(path)) {
+        // The process panel expands on demand and reads durable item rows of the
+        // user round, including the execution turns merged under that root.
+        const turnId = decodeURIComponent(path.slice(path.lastIndexOf('/') + 1));
+        const group = new Set(this.turns
+          .filter(turn => String(turn.turn_id) === turnId || String(turn.root_turn_id ?? turn.turn_id) === turnId)
+          .map(turn => String(turn.turn_id)));
+        const rows = [...this.items.values()].filter(item => group.has(String(item.turn_id)));
+        const after = Number(new URL(request.url()).searchParams.get('item_after') ?? -1);
+        const limit = Number(new URL(request.url()).searchParams.get('limit') ?? 100);
+        const batch = rows.slice(after + 1, after + 1 + limit);
+        const nextAfter = after + batch.length;
+        data = { turn: { turn_id: turnId, user_round: this.turns.find(turn => String(turn.turn_id) === turnId)?.user_round ?? 0,
+          items: batch.map((item, index) => ({ item_id: item.item_id, turn_id: item.turn_id, kind: item.kind,
+            status: item.status, revision: item.revision, visibility: item.visibility,
+            seq: after + 1 + index, payload: structuredClone(item) })),
+          has_more: nextAfter < rows.length - 1, next_after: nextAfter } };
+      }
       else if(path.endsWith('/view/search'))data={hits:[],has_more:false};
       else if (path.endsWith('/thread-log/snapshot')) data = this.snapshot();
       else if (path === `/chat/sessions/${MOCK_SESSION}`) data = { ...session, messages: [], transcript: [], thread_change_cursor: this.changes.length };

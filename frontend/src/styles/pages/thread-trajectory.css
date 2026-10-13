@@ -486,11 +486,20 @@
 }
 
 .tt-content-cell {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  display: table-cell;
+  vertical-align: middle;
   min-width: 0;
   padding-left: 4px !important;
+}
+
+.tt-content-cell > .tt-kind-slot,
+.tt-content-cell > .tt-record-content {
+  display: inline-flex;
+  vertical-align: middle;
+}
+
+.tt-content-cell > .tt-kind-slot {
+  margin-right: 8px;
 }
 
 .tt-kind-slot {

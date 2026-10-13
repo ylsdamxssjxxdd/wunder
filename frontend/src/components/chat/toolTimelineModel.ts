@@ -17,6 +17,7 @@ import {
 } from './toolWorkflowRunModel';
 import { buildCollapsedToolWorkflowSummary } from './toolWorkflowCollapsedSummary';
 import { isTimelineEditToolRun } from './toolTimelinePatch';
+import { resolveToolIconClass } from '@/utils/abilityVisuals';
 import {
   buildCompactionDisplay,
   resolveCompactionInstanceLabel,
@@ -24,6 +25,12 @@ import {
 } from '@/utils/chatCompactionUi';
 
 export type TimelineEntryStatus = 'loading' | 'completed' | 'failed' | 'cancelled';
+
+/** 条目右侧指标：上下文占用 token 与工具执行耗时。 */
+export type TimelineToolMetrics = {
+  tokens: number | null;
+  durationMs: number | null;
+};
 
 export type TimelineTargetChip = {
   key: string;
@@ -40,6 +47,8 @@ export type TimelineToolEntry = {
   /** 工具显示名。 */
   toolLabel: string;
   toolIconClass: string;
+  /** 右侧指标（token 占用 / 耗时）。 */
+  metrics: TimelineToolMetrics;
   /** 一行摘要：只描述调用本身（命令 / 路径 / query 等关键参数）。 */
   summary: string;
   /** 摘要是否为命令/代码形态（用等宽字体渲染）。 */
@@ -391,6 +400,58 @@ const resolveRunExitCode = (run: RawToolRun): number | null => {
   return null;
 };
 
+const positiveFinite = (value: unknown): number | null => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value > 0 ? value : null;
+  if (typeof value === 'string') {
+    const parsed = Number.parseFloat(value.trim());
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  }
+  return null;
+};
+
+/**
+ * 从条目 detail（原始事件体的 JSON 串）读取指标：
+ * - 上下文占用 = request_context_tokens，缺省回退 request_usage；
+ * - 耗时 = meta.duration_ms（finalize_tool_result 写入）。
+ * 先做子串短路再解析，避免为无指标的大 detail 付出整段 JSON 解析成本。
+ */
+const readItemMetrics = (detail: unknown): TimelineToolMetrics | null => {
+  if (typeof detail !== 'string') return null;
+  if (
+    !detail.includes('request_usage') &&
+    !detail.includes('request_context_tokens') &&
+    !detail.includes('duration_ms')
+  ) {
+    return null;
+  }
+  const parsed = parseDetailObject(detail);
+  if (!parsed) return null;
+  const usage = asObject(parsed.request_usage);
+  const meta = asObject(parsed.meta);
+  const input = positiveFinite(usage?.input_tokens);
+  const output = positiveFinite(usage?.output_tokens);
+  const tokens =
+    positiveFinite(parsed.request_context_tokens) ??
+    positiveFinite(usage?.total_tokens) ??
+    (input !== null ? input + (output ?? 0) : null);
+  const durationMs = positiveFinite(meta?.duration_ms) ?? positiveFinite(parsed.duration_ms);
+  if (tokens === null && durationMs === null) return null;
+  return { tokens, durationMs };
+};
+
+const resolveRunMetrics = (run: RawToolRun): TimelineToolMetrics => {
+  const merged: TimelineToolMetrics = { tokens: null, durationMs: null };
+  // 结果侧优先（终态耗时），调用侧兜底（运行中即可显示上下文占用）。
+  for (const item of [run.resultItem, run.outputItem, run.callItem]) {
+    const metrics = readItemMetrics(item?.detail);
+    if (!metrics) continue;
+    merged.durationMs = merged.durationMs ?? metrics.durationMs;
+    merged.tokens = merged.tokens ?? metrics.tokens;
+    if (merged.tokens !== null && merged.durationMs !== null) return merged;
+  }
+  return merged;
+};
+
 /**
  * 输出正文与错误块的去重：命令失败时 stderr 常被同时填进错误摘要与输出正文，
  * 展开后同一份堆栈渲染两遍。判定为「同一份内容」时丢弃输出正文（错误块已覆盖）。
@@ -459,6 +520,7 @@ const resolveCompactionEntry = (
     status,
     toolLabel,
     toolIconClass: 'fa-compress',
+    metrics: { tokens: null, durationMs: null },
     summary: truncateSingleLine([instanceLabel, display.summaryTitle || display.resultSummary].filter(Boolean).join(' · ')),
     summaryMono: false,
     targets: [],
@@ -510,6 +572,7 @@ export const buildTimelineToolEntry = (
     status,
     toolLabel,
     toolIconClass: resolveTimelineToolIcon(run.toolName),
+    metrics: resolveRunMetrics(run),
     summary,
     summaryMono: isExecuteCommandToolName(run.toolName),
     targets,
@@ -522,29 +585,11 @@ export const buildTimelineToolEntry = (
   };
 };
 
-const ICON_BY_TOOL: Array<{ match: string[]; icon: string }> = [
-  { match: ['apply_patch', '\u5e94\u7528\u8865\u4e01', '\u6587\u672c\u7f16\u8f91', '\u7f16\u8f91', 'str_replace_editor'], icon: 'fa-file-pen' },
-  { match: ['glob', '\u6587\u4ef6\u540d\u901a\u914d'], icon: 'fa-folder-tree' },
-  { match: ['execute_command', '\u6267\u884c\u547d\u4ee4'], icon: 'fa-terminal' },
-  { match: ['read_file', '\u8bfb\u53d6\u6587\u4ef6'], icon: 'fa-file-lines' },
-  { match: ['read_image', 'view_image', '\u8bfb\u56fe'], icon: 'fa-image' },
-  { match: ['write_file', '\u5199\u5165\u6587\u4ef6'], icon: 'fa-file-circle-plus' },
-  { match: ['list_files', '\u5217\u51fa\u6587\u4ef6'], icon: 'fa-folder-tree' },
-  { match: ['search_content', '\u641c\u7d22\u5185\u5bb9'], icon: 'fa-magnifying-glass' },
-  { match: ['web_search', 'web_fetch', '\u7f51\u9875'], icon: 'fa-globe' },
-  { match: ['skill', '\u6280\u80fd'], icon: 'fa-wand-magic-sparkles' }
-];
-
-const resolveTimelineToolIcon = (toolName: unknown): string => {
-  const normalized = String(toolName || '').trim().toLowerCase();
-  if (!normalized) return 'fa-toolbox';
-  for (const candidate of ICON_BY_TOOL) {
-    if (candidate.match.some((token) => normalized === token || normalized.includes(token))) {
-      return candidate.icon;
-    }
-  }
-  return 'fa-toolbox';
-};
+// 工具图标统一走共享 resolver（web/shared/tool-visuals 的规则集），
+// 覆盖浏览器 / 记忆 / 知识库 / 目标 / 子智能体 / 媒体生成等全部内置与 MCP 工具；
+// 未命中时由 resolver 回退 fa-toolbox。
+const resolveTimelineToolIcon = (toolName: unknown): string =>
+  resolveToolIconClass({ name: toolName, kind: 'tool', group: 'builtin', source: 'builtin' });
 
 export type TimelineToolEntries = {
   runs: RawToolRun[];

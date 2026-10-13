@@ -48,7 +48,7 @@ impl SqliteStorage {
             tx.execute("UPDATE thread_items SET created_seq=rowid", [])?;
             tx.execute("UPDATE thread_logs SET latest_change_seq=MAX(latest_change_seq, COALESCE((SELECT MAX(created_seq) FROM thread_items WHERE thread_items.session_id=thread_logs.session_id),0))", [])?;
         }
-        tx.execute_batch("CREATE INDEX IF NOT EXISTS idx_thread_items_context_seq ON thread_items(user_id,session_id,created_seq DESC) WHERE kind IN ('user_message','assistant_message','tool_message','system_message');")?;
+        tx.execute_batch("CREATE INDEX IF NOT EXISTS idx_thread_items_context_seq ON thread_items(user_id,session_id,created_seq DESC) WHERE kind IN ('user_message','assistant_message','tool_message','system_message'); CREATE INDEX IF NOT EXISTS idx_thread_items_view_root_seq ON thread_items(user_id,session_id,root_turn_id,created_seq DESC);")?;
         tx.commit()?;
         Ok(())
     }
@@ -1760,14 +1760,8 @@ impl SqliteSchemaStorage for SqliteStorage {
         self.ensure_thread_item_block_fields(&conn)?;
         conn.execute_batch(crate::storage::thread_view_store::SCHEMA)?;
         conn.execute_batch(super::thread_view_store::SEARCH_SCHEMA)?;
-        if !conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM meta WHERE key='thread_view_v1_discovered')",
-            [],
-            |r| r.get::<_, bool>(0),
-        )? {
-            conn.execute("INSERT INTO thread_view_heads(session_id,user_id,projection_state) SELECT session_id,user_id,'rebuilding' FROM thread_logs WHERE latest_user_turn>0 ON CONFLICT(session_id) DO NOTHING", [])?;
-            conn.execute("INSERT INTO meta(key,value,updated_time) VALUES('thread_view_v1_discovered','1',0) ON CONFLICT(key) DO NOTHING",[])?;
-        }
+        // Maintenance discovers historical heads in bounded keyset pages;
+        // never scan all thread_logs while opening the database.
         self.ensure_tool_log_columns(&conn)?;
         // A hard cutover intentionally discards obsolete duplicate history.
         conn.execute("DROP TABLE IF EXISTS chat_history", [])?;

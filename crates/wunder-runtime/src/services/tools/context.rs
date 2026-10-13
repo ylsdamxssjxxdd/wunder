@@ -255,6 +255,10 @@ pub(crate) fn collect_allow_roots(context: &ToolContext<'_>) -> Vec<PathBuf> {
     if is_desktop_local_mode(context.config) {
         roots.extend(unrestricted_filesystem_roots());
     }
+    // 云端形态：智能体在自己的用户目录内不受限——`workspace` 之外的
+    // global/agents/skills/knowledge 同样可读写。只放开本用户目录，不放开别人的。
+    // 放在末尾，相对路径仍以智能体云端目录为首选基准。
+    roots.push(context.workspace.public_physical_root(context.workspace_id));
     dedupe_roots(roots)
 }
 

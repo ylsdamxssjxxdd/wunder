@@ -108,6 +108,8 @@ export const getThreadViewBootstrap = (id: string, params: QueryParams = {}, opt
   api.get(`/chat/sessions/${encodeURIComponent(id)}/view/bootstrap`, { params, timeout:3000, ...options });
 export const getThreadViewChatPage = (id: string, params: QueryParams = {}, options: { signal?: AbortSignal } = {}) =>
   api.get(`/chat/sessions/${encodeURIComponent(id)}/view/chat`, { params, timeout:3000, ...options });
+export const getThreadViewTrajectoryPage = (id: string, params: QueryParams = {}, options: { signal?: AbortSignal } = {}) =>
+  api.get(`/chat/sessions/${encodeURIComponent(id)}/view/trajectory`, { params, timeout:3000, ...options });
 export const getThreadViewBody = (id: string, bodyId: string, params: QueryParams = {}, options: { signal?: AbortSignal } = {}) =>
   api.get(`/chat/sessions/${encodeURIComponent(id)}/bodies/${encodeURIComponent(bodyId)}`, { params, timeout:3000, ...options });
 export const getThreadLogTurn = (sessionId: string, turnId: string, params: QueryParams = {}, options: { signal?: AbortSignal } = {}) =>

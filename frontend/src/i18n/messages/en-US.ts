@@ -1040,6 +1040,10 @@ export default {
   'chat.timeline.downloadMarkdown': 'Download Markdown',
   'chat.timeline.workProcess': 'Work process',
   'chat.timeline.workProcessSteps': '{count} steps',
+  'chat.timeline.workProcessFailed': '{count} failed',
+  'chat.timeline.processLoading': 'Loading work process…',
+  'chat.timeline.processFailed': 'Failed to load the work process',
+  'chat.timeline.processRetry': 'Retry',
   'chat.timeline.processed': 'Processed',
   'chat.timeline.toolGroupOpen': 'Ran tools {count} times',
   'chat.timeline.toolGroupCount': ' runs',
@@ -2318,6 +2322,7 @@ export default {
   'messenger.empty.selectConversation': 'Select a conversation to start chatting',
   'messenger.empty.input': 'Select a conversation to send messages',
   'messenger.error.openConversation': 'Failed to open conversation',
+  'messenger.trajectory.backToOverview': 'Back to turn overview',
   'messenger.error.agentRequired': 'Please select an agent first',
   'messenger.agentSettings.unsavedHint':
     'You have unsaved agent settings. Press Ctrl/Cmd + S to save quickly.',

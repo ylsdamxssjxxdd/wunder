@@ -239,6 +239,7 @@ reqwest = { version = "0.13", default-features = false, features = ["json", "str
 sysinfo = { version = "0.29.11", optional = true }
 
 [dev-dependencies]
-rusqlite.workspace = true
+# 测试目标也会编译 sqlite 视图层（progress_handler 需要 hooks）。
+rusqlite = { workspace = true, features = ["hooks"] }
 tempfile.workspace = true
 tower.workspace = true

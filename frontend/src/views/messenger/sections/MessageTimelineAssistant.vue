@@ -1,19 +1,28 @@
 <template>
   <div
     class="timeline-assistant"
-    :data-turn-id="String(message.__runtime_user_turn_id || message.user_turn_id || '')"
+    :data-turn-id="String(message.__runtime_user_turn_id || message.user_turn_id || message.root_turn_id || '')"
   >
-    <div v-if="Number(message.workflow_count)>0" class="timeline-process-summary">
-      <button type="button" @click="controller.openSessionTrajectory?.(activeSessionId)">工作过程：{{ message.workflow_count }} 条记录<span v-if="message.workflow_failed_count"> · {{ message.workflow_failed_count }} 条失败</span></button>
-    </div>
-    <pre v-if="message.__thread_tail && message.__thread_preview && message.streaming" class="timeline-live-tail">{{ message.__thread_tail }}</pre>
+    <MessageTimelineTurnProcess
+      v-if="Number(message.workflow_count)>0 || Boolean(String(message.reasoning || '').trim())"
+      :session-id="activeSessionId"
+      :turn-id="processTurnId"
+      :count="Number(message.workflow_count)||0"
+      :failed-count="Number(message.workflow_failed_count)||0"
+      :reasoning="String(message.reasoning || '')"
+      :live-tail="liveTail"
+      @open-change="processOpen = $event"
+    />
+    <!-- 有工具的轮次：流式文本进过程区实时行，不外显为正文；过程区收起时外显保证输出可见；
+         无工具轮次保持正文直播，活动尾部挂在持久前缀之后。 -->
+    <pre v-if="liveTailOutside" ref="liveTailEl" class="timeline-live-tail">{{ message.__thread_tail }}</pre>
     <!--
       时间线主体（形态对齐桌面端 `frontend-slint/src/timeline.rs`）：模型每轮的正式
       输出是一段独立打印，思考与工具调用按到达顺序折成可开合的批次夹在段与段之间。
       块的顺序由投影层按 `created_seq` 定好；块渲染由 MessageTimelineBlocks 与
       子智能体详情弹窗共用，旧式单段正文（问候语、无块旧行）回退到本组件渲染。
     -->
-    <ThreadBodyViewport v-if="message.__thread_preview && message.__thread_body" :session-id="activeSessionId" :body="message.__thread_body" :preview="String(message.content||'')" :cache-key="`thread:${item.key}`" />
+    <ThreadBodyViewport v-if="!liveInProcess && message.__thread_preview && message.__thread_body" :session-id="activeSessionId" :body="message.__thread_body" :preview="String(message.content||'')" :cache-key="`thread:${item.key}`" />
     <MessageTimelineBlocks
       v-else-if="hasProjectionBlocks"
       :blocks="timelineBlocks"
@@ -59,7 +68,7 @@
       </template>
     </MessageTimelineBlocks>
     <div
-      v-else-if="hasBody"
+      v-else-if="hasBody && !liveInProcess"
       class="timeline-body-block"
       :class="{ 'is-streaming': bodyStreaming }"
       data-turn-slot="body"
@@ -219,12 +228,13 @@
 
 <script setup lang="ts">
 import ThreadBodyViewport from '@/components/chat/ThreadBodyViewport.vue';
-import { computed, onBeforeUnmount, ref, triggerRef, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref, triggerRef, watch } from 'vue';
 
 import MessageMarkdownBody from '@/components/chat/MessageMarkdownBody.vue';
 import MessageStats from '@/components/chat/MessageStats.vue';
 import MessageSubagentPanel from '@/components/chat/MessageSubagentPanel.vue';
 import MessageTimelineBlocks from '@/components/chat/MessageTimelineBlocks.vue';
+import MessageTimelineTurnProcess from '@/components/chat/MessageTimelineTurnProcess.vue';
 import { resolveRuntimeMessageContentSource, resolveRuntimeMessageContentSubscriptionIds } from '@/components/chat/messageRuntimeContent';
 import { createToolWorkflowRenderBatcher } from '@/components/chat/toolWorkflowRenderBatcher';
 import type { ChatRuntimeTimelineBlock } from '@/realtime/chat/chatRuntimeTypes';
@@ -267,6 +277,45 @@ const runtimeUserTurnId = computed(() =>
 );
 const runtimeModelTurnId = computed(() =>
   String(message.value.__runtime_model_turn_id || message.value.model_turn_id || message.value.modelTurnId || '')
+);
+// 工作过程按用户轮次展开：服务端按根轮聚合条目，必须传根轮 ID——
+// 流式期间行上的 turn_id 是执行轮（模型轮）ID，用它查不到条目，过程区会是空的。
+const processTurnId = computed(() =>
+  String(message.value.root_turn_id || message.value.turn_id || message.value.__runtime_user_turn_id || message.value.user_turn_id || '')
+);
+
+/**
+ * 有工具的轮次在流式期间的正文门禁：模型每轮的中间输出都会先顶到答案位
+ * （服务端在该轮提交 tool_calls 时才清掉），若照常外显，用户会看到
+ * 「一开头的输出被当成最终回复」，工具一提交正文又消失——来回抖动。
+ * 规则：已经出现过工具（workflow_count>0）且仍在流式时，正文区不渲染，
+ * 流式文本经 live-tail 进过程区实时行；轮次完成（streaming=false）后正文恢复。
+ * 无工具的普通轮次不受影响，保持流式正文直播。
+ */
+const liveInProcess = computed(() =>
+  Boolean(message.value.streaming && Number(message.value.workflow_count || 0) > 0)
+);
+const liveTail = computed(() => (liveInProcess.value ? String(message.value.__thread_tail || '') : ''));
+// 过程区展开状态（子组件上报）：决定 liveInProcess 时活动尾部是否需要外显。
+const processOpen = ref(false);
+const liveTailEl = ref<HTMLPreElement | null>(null);
+const liveTailOutside = computed(() => {
+  const tail = message.value.__thread_tail;
+  if (!tail || !message.value.streaming) return false;
+  // 有工具轮次：正文区已让位，过程区收起时 tail 必须外显，否则流式期间无输出可见。
+  if (liveInProcess.value) return !processOpen.value;
+  // 无工具轮次：正文区显示持久前缀（preview），活动尾部外显跟随。
+  return Boolean(message.value.__thread_preview);
+});
+// 外显尾部自动跟随：用户未上滚查看时始终贴底，与正文直播的跟随语义一致。
+watch(
+  () => String(message.value.__thread_tail || '').length,
+  async () => {
+    if (!liveTailOutside.value) return;
+    await nextTick();
+    const el = liveTailEl.value;
+    if (el) el.scrollTop = el.scrollHeight;
+  }
 );
 
 const resolveAgentMessageKey = controller.resolveAgentMessageKey;
@@ -338,8 +387,16 @@ const bodyStreaming = computed(() =>
  * 统计行保留「每次行发布换一个浅拷贝」的既有口径：`MessageStats` 的计算属性
  * 以行对象身份作为失效信号，原地改写不会让它失效。这里刻意**不**再订阅内容
  * 时钟——那会把统计重算压到每个投影帧上，属于性能退化。
+ * 线程视图行的行对象随 merge 换新（失效信号仍成立），但它没有投影侧的
+ * `workflowStreaming`/`stream_incomplete` 标志，状态条会把它当成非运行行，
+ * 「请求中/模型输出中」状态气泡因此消失；这里把 streaming 映射到判活字段。
  */
-const statsMessage = computed(() => ({ ...props.item.message }));
+const statsMessage = computed(() => {
+  const m = props.item.message;
+  if (!m?.__thread_view) return { ...m };
+  const streaming = Boolean(m.streaming);
+  return { ...m, streaming, workflowStreaming: streaming };
+});
 
 const handleHistoryHydrated = (detail: Record<string, unknown>): void => {
   Object.assign(message.value, detail, {
@@ -463,7 +520,7 @@ watch(
 </script>
 
 <style scoped>
-.timeline-live-tail{max-height:160px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;}
+.timeline-live-tail{display:block;box-sizing:border-box;margin:0;padding:6px 24px;max-height:160px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;}
 .timeline-assistant {
   display: flex;
   flex-direction: column;

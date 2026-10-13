@@ -350,7 +350,9 @@ if (-not [string]::IsNullOrWhiteSpace($requirementsRel)) {
       }
     }
   } else {
-    Invoke-Python -PythonExe $pythonExe -Arguments @('-m', 'pip', 'install', '--no-cache-dir', '--only-binary=:all:', '-r', $requirementsPath, '-i', $indexUrl)
+    # Requirements files may carry non-ASCII comments; without UTF-8 mode pip
+    # decodes them with the runner locale (cp1252) and aborts the whole install.
+    Invoke-Python -PythonExe $pythonExe -Arguments @('-X', 'utf8', '-m', 'pip', 'install', '--no-cache-dir', '--only-binary=:all:', '-r', $requirementsPath, '-i', $indexUrl)
   }
 }
 

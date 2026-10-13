@@ -4,6 +4,7 @@ use std::env;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DrawioConfig {
     #[serde(default)]
+    #[serde(deserialize_with = "crate::config::deserialize_bool_from_any")]
     pub enabled: bool,
     #[serde(default)]
     pub editor_url: Option<String>,

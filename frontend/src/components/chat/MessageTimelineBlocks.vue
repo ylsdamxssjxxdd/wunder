@@ -61,6 +61,7 @@
             :entry="row.entry"
             :open="entryOpenKeys.includes(row.key)"
             :patch-view="patchViewFor(row.entry)"
+            :structured-view="structuredViewFor(row.entry)"
             @toggle="toggleEntry(row.key)"
           />
         </template>
@@ -118,8 +119,9 @@ import {
   type TimelineToolEntry
 } from './toolTimelineModel';
 import { buildTimelinePatchView } from './toolTimelinePatch';
+import { buildTimelineStructuredView } from './toolTimelineStructured';
 import { MAX_OPEN_ENTRIES_PER_TURN } from './timelineGroupState';
-import type { ToolWorkflowPatchView } from './toolWorkflowTypes';
+import type { ToolWorkflowPatchView, ToolWorkflowStructuredView } from './toolWorkflowTypes';
 import type { WorkflowItem } from './toolWorkflowRunModel';
 import type { ChatRuntimeTimelineBlock } from '@/realtime/chat/chatRuntimeTypes';
 import { t } from '@/i18n';
@@ -396,8 +398,20 @@ const patchViews = computed<Record<string, ToolWorkflowPatchView | null>>(() => 
   return views;
 });
 
+const structuredViews = computed<Record<string, ToolWorkflowStructuredView | null>>(() => {
+  const views: Record<string, ToolWorkflowStructuredView | null> = {};
+  allToolEntries.value.forEach((entry) => {
+    if (entry.kind !== 'tool') return;
+    views[entry.key] = buildTimelineStructuredView(entry.run, t);
+  });
+  return views;
+});
+
 const patchViewFor = (entry: TimelineToolEntry): ToolWorkflowPatchView | null =>
   patchViews.value[entry.key] || null;
+
+const structuredViewFor = (entry: TimelineToolEntry): ToolWorkflowStructuredView | null =>
+  structuredViews.value[entry.key] || null;
 
 const toggleProcess = (): void => {
   processOpen.value = !processOpen.value;

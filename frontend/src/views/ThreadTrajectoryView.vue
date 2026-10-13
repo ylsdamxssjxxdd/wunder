@@ -13,6 +13,15 @@
         </svg>
       </button>
       <button
+        v-if="detailRootTurn"
+        class="tt-toggle tt-overview"
+        type="button"
+        :title="t('messenger.trajectory.backToOverview')"
+        @click="backToOverview"
+      >
+        {{ t('messenger.trajectory.backToOverview') }}
+      </button>
+      <button
         class="tt-toggle"
         type="button"
         :class="{ 'tt-toggle-active': showDuration }"
@@ -75,18 +84,12 @@
       </button>
     </header>
 
-    <div class="tt-page-controls">
-      <button v-if="trajectoryMore" :disabled="loading" @click="load(trajectoryBefore ?? undefined)">读取较早记录</button>
-      <button @click="load()">最新记录</button>
-      <span>当前摘要页</span>
-    </div>
     <div v-if="searchQuery" class="tt-search-results">
       <span v-if="searchLoading">搜索中…</span><span v-if="searchError">搜索失败，请重试</span>
       <button v-for="hit in searchHits" :key="`${hit.body.body_id}:${hit.cursor}`" @click="openSearchHit(hit)">{{ hit.snippet }}</button>
       <span v-if="searchMore">已返回前 20 个命中，请缩小关键词范围</span>
       <pre v-if="searchText">{{ searchText }}</pre>
     </div>
-    <canvas ref="overviewCanvas" class="tt-overview-canvas" title="全线程记录摘要：红色包含失败，黄色包含运行中记录" />
     <div
       v-if="timeline"
       class="tt-timeline"
@@ -252,7 +255,10 @@
           class="tt-truncated-hint"
           role="status"
         >
-          为控制首屏开销，仅展示最近的轨迹轮次。
+          当前展示部分轨迹，可分页查看更早记录。
+        </div>
+        <div v-if="records.length > 0 && (truncated || olderLoading)" class="tt-truncated-hint">
+          <button :disabled="loading" @click="olderPage">{{ loading ? '正在读取更早记录…' : '展示更早记录' }}</button>
         </div>
       </div>
 
@@ -429,7 +435,7 @@ import { computed, markRaw, nextTick, onBeforeUnmount, onMounted, reactive, ref,
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useI18n } from '@/i18n'
-import { searchThreadView, getThreadViewBootstrap, getThreadViewBody } from '@/api/chat'
+import { searchThreadView, getThreadViewBootstrap, getThreadViewTrajectoryPage, getThreadViewBody } from '@/api/chat'
 import ThreadBodyViewport from '@/components/chat/ThreadBodyViewport.vue'
 import { exportSingleSessionLog } from '@/utils/sessionLogExport'
 import { renderMarkdown } from '@/utils/markdown'
@@ -474,6 +480,7 @@ const { t } = useI18n()
 const modelT: Translate = (key, params) => t(`messenger.${key}`, params as never)
 
 const loading = ref(true)
+const olderLoading = ref(false)
 const loadError = ref(false)
 // W1-B：服务端只返回尾窗（truncated=true 表示更早轮次被截断）。这是有界读取的
 // 正常结果，不是错误，也不应被当成空态。
@@ -482,11 +489,11 @@ const truncated = ref(false)
 // 快照转成深层响应式代理（会引发 CPU/内存爆炸）；写入的大对象以 markRaw 包裹。
 const rawTurns = shallowRef<unknown[]>([])
 const displayPage=shallowRef<any>(null)
-const trajectoryBefore=ref<number|null>(null)
-const trajectoryMore=ref(false)
+const pageBefore=ref<number|null>(null),pageHistory=ref<(number|null)[]>([])
+const detailRootTurn=ref<string|null>(null)
 const details=shallowRef<Record<string,unknown>>({})
-const overviewCanvas=ref<HTMLCanvasElement|null>(null)
 const detailRefById=new Map<string,any>()
+const turnRootByRound=new Map<number,string>()
 
 // 大线程日志的快照可能非常庞大（压测会话可达百万级条目），单次全量拉取
 // 会长时间占用主线程并可能触发默认 30s 超时。这里给一个显式上界并在
@@ -730,29 +737,55 @@ function formatAxisDuration(ms: number): string {
 /* 数据加载                                                          */
 /* ---------------------------------------------------------------- */
 
-async function load(before?:number): Promise<void> {
+async function load(before:number|null=null, appendOlder=false): Promise<boolean> {
   const sessionId=String(route.query.session??'').trim()
-  if(!sessionId){loading.value=false;loadError.value=true;return}
+  if(!sessionId){loading.value=false;loadError.value=true;return false}
   loadAbort?.abort();const controller=new AbortController();loadAbort=controller
-  loading.value=true;loadError.value=false
+  if (appendOlder) olderLoading.value=true
+  else loading.value=true
+  loadError.value=false
   let timedOut=false;const deadline=setTimeout(()=>{timedOut=true;controller.abort()},TRAJECTORY_REQUEST_TIMEOUT_MS)
   try {
-    const response=await getThreadViewBootstrap(sessionId,{kind:'trajectory',...(before===undefined?{}:{before})},{signal:controller.signal})
-    if(controller.signal.aborted||loadAbort!==controller)return
+    const response=detailRootTurn.value
+      ? await getThreadViewTrajectoryPage(sessionId,{root_turn_id:detailRootTurn.value,...(before!==null ? {before} : {}),limit:100},{signal:controller.signal})
+      : before===null
+        ? await getThreadViewBootstrap(sessionId,{kind:'trajectory'},{signal:controller.signal})
+        : await getThreadViewTrajectoryPage(sessionId,{before,limit:80},{signal:controller.signal})
+    if(controller.signal.aborted||loadAbort!==controller)return false
     const page=response.data.data.page
-    if(page.projection_state!=='ready')throw new Error('display projection rebuilding')
-    displayPage.value=markRaw(page);trajectoryBefore.value=page.next_before;trajectoryMore.value=page.has_more
+    if(!['ready','source'].includes(page.projection_state))throw new Error('display unavailable')
+    if(before!==null && displayPage.value?.epoch!==page.epoch){return await load()}
+    const previousHeight = ledgerEl.value?.scrollHeight ?? 0
+    const previousTop = ledgerEl.value?.scrollTop ?? 0
+    displayPage.value=markRaw(page)
     detailAbort?.abort();selectedIndex.value=null;details.value={};scrollTop.value=0;
-    truncated.value=false;rawTurns.value=summaryTurns(page.trajectory)
-    await nextTick();drawOverview()
+    pageBefore.value=before;if(before===null)pageHistory.value=[]
+    truncated.value=page.has_more
+    const incoming = summaryTurns(page.trajectory, !appendOlder)
+    rawTurns.value = appendOlder ? mergeTrajectoryTurns(incoming, rawTurns.value) : incoming
+    if (appendOlder) {
+      await nextTick()
+      const nextHeight = ledgerEl.value?.scrollHeight ?? previousHeight
+      if (ledgerEl.value) ledgerEl.value.scrollTop = previousTop + nextHeight - previousHeight
+    }
+    return true
   }catch{if(loadAbort===controller && (!controller.signal.aborted||timedOut))loadError.value=true}
-  finally{clearTimeout(deadline);if(loadAbort===controller){loadAbort=null;loading.value=false}}
+  finally{clearTimeout(deadline);if(loadAbort===controller){loadAbort=null;loading.value=false;olderLoading.value=false}}
+  return false
 }
-function summaryTurns(rows:any[]):unknown[] {
-  detailRefById.clear()
+async function olderPage(){const cursor=displayPage.value?.next_before;if(!truncated.value||loading.value||olderLoading.value||cursor==null)return
+  await load(cursor, true)
+}
+async function previousPage(){const cursor=pageHistory.value.at(-1);if(loading.value||cursor===undefined)return
+  const history=pageHistory.value.slice(0,-1);if(await load(cursor))pageHistory.value=history
+}
+function summaryTurns(rows:any[], resetMaps=true):unknown[] {
+  if(resetMaps)detailRefById.clear()
+  if(resetMaps)turnRootByRound.clear()
   const turns=new Map<string,any>()
   for(const row of rows){
     detailRefById.set(row.item_id,row.detail)
+    turnRootByRound.set(Number(row.user_round),String(row.root_turn_id||''))
     let turn=turns.get(row.root_turn_id)
     if(!turn){turn={turn_id:row.root_turn_id,user_turn_index:row.user_round,items:[]};turns.set(row.root_turn_id,turn)}
     turn.items.push({item_id:row.item_id,item_index:row.item_index,kind:row.kind,status:row.status,created_time:row.started_at,updated_time:row.completed_at,
@@ -760,12 +793,32 @@ function summaryTurns(rows:any[]):unknown[] {
   }
   return markRaw([...turns.values()])
 }
-function drawOverview(){
- const canvas=overviewCanvas.value,page=displayPage.value;if(!canvas||!page)return
- const width=Math.min(4096,canvas.clientWidth||600),dpr=Math.min(2,window.devicePixelRatio||1);canvas.width=width*dpr;canvas.height=48*dpr
- const ctx=canvas.getContext('2d');if(!ctx)return;ctx.scale(dpr,dpr);ctx.clearRect(0,0,width,48)
- const tiles=page.tiles??[],step=width/Math.max(1,tiles.length),max=Math.max(1,...tiles.map((t:any)=>t.count))
- for(let i=0;i<tiles.length;i++){const t=tiles[i],height=Math.max(2,t.count/max*40);ctx.fillStyle=t.failed?'#c94545':t.running?'#ce9b31':'#688ba9';ctx.fillRect(i*step,48-height,Math.max(1,step-1),height)}
+function mergeTrajectoryTurns(incoming: unknown[], existing: unknown[]): unknown[] {
+  const merged = new Map<string, any>()
+  for (const turn of [...existing, ...incoming] as any[]) {
+    const id = String(turn?.turn_id || turn?.root_turn_id || turn?.user_turn_index || '')
+    if (!id) continue
+    const prior = merged.get(id)
+    if (!prior) merged.set(id, turn)
+    else {
+      const items = [...(prior.items || []), ...(turn.items || [])]
+      const unique = new Map(items.map((item: any) => [String(item.item_id || `${item.item_index}:${item.kind}`), item]))
+      prior.items = [...unique.values()].sort((a: any, b: any) => Number(a.item_index || 0) - Number(b.item_index || 0))
+    }
+  }
+  return markRaw([...merged.values()].sort((a: any, b: any) => Number(a.user_turn_index || 0) - Number(b.user_turn_index || 0)))
+}
+async function loadTurnDetail(round:number):Promise<void> {
+  const root=turnRootByRound.get(round); if(!root || loading.value) return
+  detailRootTurn.value=root
+  await load()
+}
+async function backToOverview(): Promise<void> {
+  if (loading.value || !detailRootTurn.value) return
+  detailRootTurn.value = null
+  pageHistory.value = []
+  pageBefore.value = null
+  await load()
 }
 let detailAbort:AbortController|null=null
 const detailLoading=ref(false),detailError=ref(false)
@@ -822,7 +875,6 @@ function onKeyDown(event: KeyboardEvent): void {
 }
 
 function updateSizes(): void {
-  drawOverview()
   if (ledgerEl.value) ledgerViewport.value = ledgerEl.value.clientHeight
 }
 
@@ -842,7 +894,7 @@ watch(trackEl, (el) => {
   trackResizeObserver.observe(el)
 })
 
-watch(()=>route.query.session,()=>{rawTurns.value=[];displayPage.value=null;details.value={};searchQuery.value='';searchAbort?.abort();detailAbort?.abort();void load()})
+watch(()=>route.query.session,()=>{detailRootTurn.value=null;rawTurns.value=[];displayPage.value=null;details.value={};searchQuery.value='';searchAbort?.abort();detailAbort?.abort();void load()})
 
 onMounted(() => {
   void load()
@@ -933,6 +985,7 @@ function requestDotFor(record: TableRecord): RequestDot | null {
 function onRowDoubleClick(record: TableRecord): void {
   if (record.collapsedSummary) return
   if (record.turnStart) {
+    if (record.turn !== null && turnRootByRound.has(Number(record.turn))) { void loadTurnDetail(Number(record.turn)); return }
     const next = new Set(collapsedTurns.value)
     if (next.has(record.turn)) next.delete(record.turn)
     else next.add(record.turn)
@@ -1570,5 +1623,4 @@ function formatTokens(value: number | undefined): string {
 </script>
 
 <style scoped>
-.tt-overview-canvas{width:100%;height:48px;flex:none}.tt-page-controls{display:flex;gap:12px;align-items:center;padding:6px 12px;font-size:12px}
 </style>

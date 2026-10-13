@@ -45,6 +45,7 @@ struct ViewQuery {
     q: Option<String>,
     kind: Option<String>,
     before: Option<i64>,
+    root_turn_id: Option<String>,
     limit: Option<usize>,
     after: Option<i64>,
     revision: Option<i64>,
@@ -66,7 +67,7 @@ async fn read(
     let kind = kind.to_string();
     let result=blocking::run_view("api.chat.view.bootstrap",move || {
         let record=storage.get_chat_session(&user,&session)?.ok_or_else(||anyhow::anyhow!("SESSION_NOT_FOUND"))?;
-        let page=storage.thread_view_page(&user,&session,&kind,query.before,query.limit.unwrap_or(if kind=="trajectory" {TRAJECTORY_PAGE_SIZE} else {CHAT_PAGE_SIZE}))?;
+        let page=if kind=="trajectory" { storage.thread_view_trajectory_page(&user,&session,query.before,query.root_turn_id.as_deref(),query.limit.unwrap_or(TRAJECTORY_PAGE_SIZE))? } else { storage.thread_view_page(&user,&session,&kind,query.before,query.limit.unwrap_or(CHAT_PAGE_SIZE))? };
         let model_override=workspace.load_session_model_override(&user,&session);
         let agent=record.agent_id.as_ref().map(|id|storage.get_user_agent(&user,id)).transpose()?.flatten();
         let mut metadata=super::sessions::session_model_view(&config,agent.as_ref(),model_override.as_deref());

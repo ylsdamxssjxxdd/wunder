@@ -38,6 +38,12 @@ fn params(p: &[Value]) -> Vec<Box<dyn ToSql + Sync + Send>> {
         .collect()
 }
 impl ViewDb for Db<'_, '_> {
+    fn json_text(&self, expression: &str, field: &str) -> String {
+        format!("({expression})::jsonb->>'{field}'")
+    }
+    fn text_bytes(&self, expression: &str) -> String {
+        format!("octet_length({expression})")
+    }
     fn index_chunk(
         &mut self,
         user: &str,
@@ -139,7 +145,15 @@ impl PostgresStorage {
     pub(super) fn view_pending(&self) -> Result<Vec<(String, String, i64)>> {
         self.ensure_initialized()?;
         let mut c = self.conn()?;
-        Ok(c.query("SELECT user_id,session_id,rebuild_after FROM thread_view_heads WHERE projection_state='rebuilding' ORDER BY ABS(rebuild_after),session_id LIMIT 8",&[])?.into_iter().map(|r|(r.get(0),r.get(1),r.get(2))).collect())
+        let mut tx = c.transaction()?;
+        tx.batch_execute("SET LOCAL statement_timeout='1500ms'; SET LOCAL lock_timeout='100ms'")?;
+        if !tx.query_one("SELECT pg_try_advisory_xact_lock(1937202,hashtext(current_schema()))", &[])?.get::<_, bool>(0) {
+            return Ok(Vec::new());
+        }
+        view::discover_rebuilds(&mut Db(&mut tx))?;
+        let rows = view::pending_rebuilds(&mut Db(&mut tx))?;
+        tx.commit()?;
+        Ok(rows)
     }
 
     pub(super) fn view_page(
@@ -148,13 +162,14 @@ impl PostgresStorage {
         s: &str,
         k: &str,
         b: Option<i64>,
+        r: Option<&str>,
         l: usize,
     ) -> Result<ThreadViewPage> {
         self.ensure_initialized()?;
         let mut c = self.conn()?;
         let mut tx = c.transaction()?;
         tx.batch_execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY; SET LOCAL statement_timeout='1500ms'")?;
-        let p = view::page(&mut Db(&mut tx), u, s, k, b, l)?;
+        let p = view::page(&mut Db(&mut tx), u, s, k, b, r, l)?;
         tx.commit()?;
         Ok(p)
     }
@@ -187,12 +202,20 @@ impl PostgresStorage {
         self.ensure_initialized()?;
         let mut c = self.conn()?;
         let mut tx = c.transaction()?;
+        tx.batch_execute("SET LOCAL statement_timeout='1500ms'; SET LOCAL lock_timeout='100ms'")?;
         // The normal writer also locks the thread envelope. Serialize the
         // backfill with it so revision checks and statistics cannot race.
         tx.query_opt(
-            "SELECT user_id FROM thread_logs WHERE session_id=$1 AND user_id=$2 FOR UPDATE",
+            "SELECT user_id FROM thread_logs WHERE session_id=$1 AND user_id=$2 FOR UPDATE NOWAIT",
             &[&s, &u],
         )?;
+        if let Some(row) = tx.query_opt("SELECT rebuild_after,projection_state FROM thread_view_heads WHERE session_id=$1 AND user_id=$2", &[&s,&u])? {
+            let current: i64 = row.get(0);
+            let more = row.get::<_,String>(1) == "rebuilding";
+            // Another replica or a live writer can advance the projection
+            // while this page waits. Never replay an obsolete cursor.
+            if more && current != a { return Ok((current,true)); }
+        }
         let p = view::rebuild(&mut Db(&mut tx), u, s, a)?;
         tx.commit()?;
         Ok(p)

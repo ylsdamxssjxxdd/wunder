@@ -1,4 +1,3 @@
-# AI生成
 # Slim Win7-friendly Python package set for Wunder Desktop supplement.
 # Focus: networking, tables/dataframes, office document IO, lightweight video IO, geo/weather plotting, and database access.
 

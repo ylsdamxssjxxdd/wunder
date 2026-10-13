@@ -167,7 +167,11 @@ export const startSessionWatcher = (store, sessionId) => {
     sessionId: key,
     message: () => ({
       type: 'watch', request_id: requestId, session_id: key,
-      payload: { after_change_seq: 0, view_seq: threadViewCursor(key) }
+      // after_change_seq stays the durable ThreadLog cursor: a peer without view projection replays from here, not from 0.
+      payload: {
+        after_change_seq: getChatThreadState(key)?.lastSeq ?? 0,
+        view_seq: threadViewCursor(key)
+      }
     }),
     onEvent,
     signal: controller.signal,

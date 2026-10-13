@@ -19,6 +19,12 @@ fn search_scope(user: &str, session: &str) -> String {
 fn body_key(id:&str)->String {use sha2::{Digest,Sha256};format!("b{:x}",Sha256::digest(id.as_bytes()))}
 pub(super) struct Db<'a>(pub &'a Connection);
 impl ViewDb for Db<'_> {
+    fn json_text(&self, expression: &str, field: &str) -> String {
+        format!("json_extract({expression},'$.{field}')")
+    }
+    fn text_bytes(&self, expression: &str) -> String {
+        format!("length(CAST(({expression}) AS BLOB))")
+    }
     fn index_chunk(
         &mut self,
         user: &str,
@@ -131,11 +137,14 @@ impl SqliteStorage {
         Db(&self.view_connection()?).search(u, s, q)
     }
     pub(super) fn view_pending(&self) -> Result<Vec<(String, String, i64)>> {
-        let conn = self.view_connection()?;
-        let mut stmt=conn.prepare("SELECT user_id,session_id,rebuild_after FROM thread_view_heads WHERE projection_state='rebuilding' ORDER BY ABS(rebuild_after),session_id LIMIT 8")?;
-        let rows = stmt
-            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
+        self.ensure_initialized()?;
+        let mut conn = self.open()?;
+        conn.busy_timeout(std::time::Duration::from_millis(100))?;
+        // A deferred transaction keeps idle polling free of SQLite write locks.
+        let tx = conn.transaction()?;
+        view::discover_rebuilds(&mut Db(&tx))?;
+        let rows = view::pending_rebuilds(&mut Db(&tx))?;
+        tx.commit()?;
         Ok(rows)
     }
 
@@ -145,11 +154,12 @@ impl SqliteStorage {
         s: &str,
         k: &str,
         b: Option<i64>,
+        r: Option<&str>,
         l: usize,
     ) -> Result<ThreadViewPage> {
         let mut conn = self.view_connection()?;
         let tx = conn.transaction()?;
-        let page = view::page(&mut Db(&tx), u, s, k, b, l)?;
+        let page = view::page(&mut Db(&tx), u, s, k, b, r, l)?;
         tx.commit()?;
         Ok(page)
     }
@@ -173,7 +183,16 @@ impl SqliteStorage {
     pub(super) fn view_rebuild(&self, u: &str, s: &str, a: i64) -> Result<(i64, bool)> {
         self.ensure_initialized()?;
         let mut conn = self.open()?;
+        conn.busy_timeout(std::time::Duration::from_millis(100))?;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(1500);
+        conn.progress_handler(1000, Some(move || std::time::Instant::now() > deadline));
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        // Maintenance callers may have read their cursor before another
+        // process advanced it. Ordinary explicit rebuilds remain supported.
+        let current = tx.query_row("SELECT rebuild_after,projection_state FROM thread_view_heads WHERE session_id=? AND user_id=?", rusqlite::params![s,u], |r| Ok((r.get::<_,i64>(0)?,r.get::<_,String>(1)?)));
+        if let Ok((cursor,state)) = current {
+            if state == "rebuilding" && cursor != a { return Ok((cursor,true)); }
+        }
         let result = view::rebuild(&mut Db(&tx), u, s, a)?;
         tx.commit()?;
         Ok(result)
@@ -185,6 +204,132 @@ mod tests {
     use super::*;
     use crate::storage::ThreadLogStore;
     use serde_json::json;
+
+    #[test]
+    fn oversized_legacy_threads_use_source_pages_without_entering_rebuild_queue() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = SqliteStorage::new(dir.path().join("fixture.db").to_string_lossy().into());
+        storage.ensure_initialized().unwrap();
+        let conn = storage.open().unwrap();
+        conn.execute("INSERT INTO thread_logs(session_id,user_id,latest_user_turn,latest_change_seq,created_time,updated_time) VALUES('fixture-large','fixture-user',1,50001,1,1)", []).unwrap();
+        {
+            let mut db = Db(&conn);
+            view::initialize(&mut db, "fixture-user", "fixture-large").unwrap();
+            assert!(view::pending_rebuilds(&mut db).unwrap().is_empty());
+        }
+        let state: String = conn.query_row("SELECT projection_state FROM thread_view_heads WHERE session_id='fixture-large'", [], |row| row.get(0)).unwrap();
+        assert_eq!(state, "source");
+        let page = storage.thread_view_page("fixture-user", "fixture-large", "chat", None, 12).unwrap();
+        assert_eq!(page.projection_state, "source");
+        assert!(page.chat.is_empty());
+    }
+
+    #[test]
+    fn rebuilding_threads_read_tail_windows_and_original_bodies_without_writes() {
+        let dir=tempfile::tempdir().unwrap();
+        let db=SqliteStorage::new(dir.path().join("fixture.db").to_string_lossy().into());
+        let mut turns=Vec::new();
+        for n in 0..15 {
+            let receipt=db.accept_thread_turn("fixture-user","fixture-thread",&json!({"content":format!("fixture input {n}")})).unwrap();
+            let turn=receipt["turn_id"].as_str().unwrap().to_owned();
+            db.append_thread_item("fixture-user",&json!({"session_id":"fixture-thread","turn_id":turn,"item_id":format!("{turn}:text-1"),"kind":"assistant_message","content":"😀fixture answer".repeat(700),"status":"completed"})).unwrap();
+            db.update_thread_turn("fixture-user","fixture-thread",&turn,"completed","",&json!({})).unwrap();
+            turns.push(turn);
+        }
+        let conn=db.open().unwrap();
+        conn.execute("UPDATE thread_view_heads SET projection_state='rebuilding',rebuild_after=1",[]).unwrap();
+        let before:i64=conn.query_row("SELECT view_seq FROM thread_view_heads",[],|r|r.get(0)).unwrap();
+        let page=db.thread_view_page("fixture-user","fixture-thread","chat",None,12).unwrap();
+        assert_eq!(page.projection_state,"source");assert_eq!(page.epoch,-1);
+        assert_eq!(page.chat.len(),12);assert_eq!(page.chat.last().unwrap().user_round,15);
+        assert!(page.has_more);assert_eq!(page.next_before,Some(4));
+        assert_eq!(page.chat.last().unwrap().user.content,"fixture input 14");
+        let older=db.thread_view_page("fixture-user","fixture-thread","chat",page.next_before,12).unwrap();
+        assert_eq!(older.chat.len(),3);assert!(!older.has_more);
+        let body=page.chat.last().unwrap().assistant.body.as_ref().unwrap();
+        let mut cursor=0;let mut full=String::new();
+        loop {
+            let chunk=db.thread_body_page("fixture-user","fixture-thread",&body.body_id,body.revision,cursor).unwrap();
+            assert!(serde_json::to_vec(&chunk).unwrap().len()<128*1024);
+            full.push_str(&chunk.chunks.concat());if !chunk.has_more {break;}cursor=chunk.next_cursor.unwrap();
+        }
+        assert_eq!(full,"😀fixture answer".repeat(700));
+        assert!(db.thread_body_page("fixture-other","fixture-thread",&body.body_id,body.revision,0).unwrap().chunks.is_empty());
+        let trajectory=db.thread_view_page("fixture-user","fixture-thread","trajectory",None,10).unwrap();
+        assert_eq!(trajectory.trajectory.len(),10);assert!(trajectory.has_more);
+        assert!(trajectory.trajectory.last().unwrap().detail.as_ref().unwrap().body_id.ends_with("|source_detail"));
+        assert!(!db.thread_view_changes("fixture-user","fixture-thread",-page.view_seq-1).unwrap().reset_required);
+        conn.execute("UPDATE thread_view_heads SET projection_state='ready'",[]).unwrap();
+        assert!(db.thread_view_changes("fixture-user","fixture-thread",-page.view_seq-1).unwrap().reset_required);
+        assert_eq!(conn.query_row("SELECT view_seq FROM thread_view_heads",[],|r|r.get::<_,i64>(0)).unwrap(),before);
+    }
+
+    #[test]
+    fn source_stream_pages_preserve_unicode_and_every_block() {
+        let dir=tempfile::tempdir().unwrap();
+        let db=SqliteStorage::new(dir.path().join("fixture.db").to_string_lossy().into());
+        let receipt=db.accept_thread_turn("fixture-user","fixture-thread",&json!({"content":"fixture input"})).unwrap();
+        let turn=receipt["turn_id"].as_str().unwrap();
+        let id=format!("{turn}:text-1");
+        db.append_thread_item("fixture-user",&json!({"session_id":"fixture-thread","turn_id":turn,"item_id":id,"kind":"assistant_message","content":"","status":"running"})).unwrap();
+        let blocks=["😀fixture first".repeat(400),"fixture second".into(),"".into(),"😀fixture last".repeat(200)];
+        for (index,content) in blocks.iter().enumerate(){
+            db.upsert_thread_text_block("fixture-user","fixture-thread",&json!({"item_id":id,"field":"content","block_index":index,"event_id":index+1,"data":{"content":content}})).unwrap();
+        }
+        let conn=db.open().unwrap();
+        conn.execute("UPDATE thread_view_heads SET projection_state='rebuilding'",[]).unwrap();
+        let page=db.thread_view_page("fixture-user","fixture-thread","chat",None,12).unwrap();
+        let message=&page.chat[0].assistant;
+        let body=message.body.as_ref().unwrap();
+        assert!(body.body_id.ends_with("|source_stream"));
+        assert!(body.bytes>message.content.len());
+        let mut cursor=0;let mut full=String::new();let mut reads=0;
+        loop{
+            let chunk=db.thread_body_page("fixture-user","fixture-thread",&body.body_id,body.revision,cursor).unwrap();
+            full.push_str(&chunk.chunks.concat());reads+=1;assert!(reads<20);
+            if !chunk.has_more{break;}
+            let next=chunk.next_cursor.unwrap();assert!(next>cursor);cursor=next;
+        }
+        assert_eq!(full,blocks.concat());
+        conn.execute("UPDATE thread_items SET visibility='internal' WHERE item_id=?",[id]).unwrap();
+        assert!(db.thread_body_page("fixture-user","fixture-thread",&body.body_id,body.revision,0).unwrap().chunks.is_empty());
+    }
+
+    #[test]
+    fn historical_discovery_is_bounded_resumable_and_reads_do_not_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("fixture.db").to_string_lossy().into_owned();
+        let db = SqliteStorage::new(path.clone());
+        db.ensure_initialized().unwrap();
+        {
+            let mut c = db.open().unwrap();
+            let tx = c.transaction().unwrap();
+            for n in 0..130 {
+                tx.execute("INSERT INTO thread_logs(session_id,user_id,latest_user_turn,latest_change_seq,created_time,updated_time) VALUES(?,'fixture-user',1,1,0,0)", [format!("fixture-{n:04}")]).unwrap();
+            }
+            tx.commit().unwrap();
+        }
+        // Reopening performs schema checks, not a history-wide discovery.
+        let db = SqliteStorage::new(path.clone());
+        db.ensure_initialized().unwrap();
+        let heads = |db: &SqliteStorage| db.open().unwrap().query_row("SELECT COUNT(*) FROM thread_view_heads", [], |r| r.get::<_,i64>(0)).unwrap();
+        assert_eq!(heads(&db), 0);
+        let page = db.thread_view_page("fixture-user", "fixture-0000", "chat", None, 12).unwrap();
+        assert_eq!(page.projection_state, "source");
+        assert_eq!(heads(&db), 0, "a display read must never initialize a writable head");
+        let first = db.pending_thread_view_rebuilds().unwrap();
+        assert_eq!(first.len(), 8);
+        assert_eq!(heads(&db), 64);
+        let db = SqliteStorage::new(path);
+        let second = db.pending_thread_view_rebuilds().unwrap();
+        assert_eq!(second.len(), 8);
+        assert!(first.iter().all(|a| second.iter().all(|b| a.1 != b.1)), "large threads must not starve later pending threads");
+        assert_eq!(heads(&db), 128, "discovery resumes from its durable keyset cursor");
+        db.pending_thread_view_rebuilds().unwrap();
+        assert_eq!(heads(&db), 130);
+        db.pending_thread_view_rebuilds().unwrap();
+        assert_eq!(heads(&db), 130);
+    }
     #[test]
     fn thread_view_preserves_user_identity_and_bounded_complete_bodies() {
         let dir = tempfile::tempdir().unwrap();

@@ -3,13 +3,125 @@ use anyhow::Result;
 use chrono::Local;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::Ordering;
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+const SCHEMA_MARKER: &str = "postgres_schema_fingerprint_v1";
+
+// Include every source of startup DDL. Changes automatically invalidate the
+// marker; an unchanged deployment never repeats data cleanup or index DDL.
+fn schema_fingerprint() -> &'static str {
+    use sha2::{Digest, Sha256};
+    static VALUE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    VALUE.get_or_init(|| {
+        let mut hash = Sha256::new();
+        for source in [
+            include_str!("schema.rs"),
+            include_str!("queue_control.rs"),
+            crate::storage::thread_view_store::SCHEMA,
+            super::thread_view_store::SEARCH_SCHEMA,
+        ] {
+            hash.update(source.as_bytes());
+        }
+        format!("{:x}", hash.finalize())
+    })
+}
+
+fn schema_is_current(conn: &mut PgConn<'_>) -> Result<bool> {
+    if !conn.query_one("SELECT to_regclass('meta') IS NOT NULL", &[])?.get::<_, bool>(0) {
+        return Ok(false);
+    }
+    Ok(conn.query_opt("SELECT value FROM meta WHERE key=$1", &[&SCHEMA_MARKER])?
+        .is_some_and(|row| row.get::<_, String>(0) == schema_fingerprint()))
+}
+
+fn partitions_are_current(conn: &mut PgConn<'_>) -> Result<bool> {
+    Ok(conn.query_opt("SELECT value FROM meta WHERE key='postgres_partition_window_v1'", &[])?
+        .is_some_and(|row| row.get::<_, String>(0) == chrono::Utc::now().format("%Y-%m").to_string()))
+}
+
+// Session locks are required because partition/index DDL cannot all run in a
+// transaction. Always unlock before returning this connection to its pool.
+struct SchemaConnection<'a>(Option<PgConn<'a>>);
+impl<'a> std::ops::Deref for SchemaConnection<'a> {
+    type Target = PgConn<'a>;
+    fn deref(&self) -> &Self::Target { self.0.as_ref().expect("schema connection") }
+}
+impl std::ops::DerefMut for SchemaConnection<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target { self.0.as_mut().expect("schema connection") }
+}
+impl Drop for SchemaConnection<'_> {
+    fn drop(&mut self) {
+        let Some(mut conn) = self.0.take() else { return; };
+        if conn.query_one("SELECT pg_advisory_unlock(1937201, hashtext(current_schema()))", &[]).is_err() {
+            // A broken connection must not retain a session lock in the pool.
+            let client = deadpool_postgres::Object::take(conn.client);
+            drop(client);
+        }
+    }
+}
 
 pub(super) trait PostgresSchemaStorage {
     fn ensure_initialized_impl(&self) -> Result<()>;
 }
 
 impl PostgresStorage {
+    fn ensure_data_cleanup(&self, conn: &mut PgConn<'_>, key: &str, statements: &[&str]) -> Result<()> {
+        if conn.query_opt("SELECT key FROM meta WHERE key=$1", &[&key])?.is_some() {
+            return Ok(());
+        }
+        let mut tx = conn.transaction()?;
+        for sql in statements { tx.execute(sql, &[])?; }
+        tx.execute("INSERT INTO meta(key,value,updated_time) VALUES($1,'done',$2) ON CONFLICT(key) DO NOTHING", &[&key,&Self::now_ts()])?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    fn ensure_partition_window(&self, conn: &mut PgConn<'_>) -> Result<()> {
+        for table in PARTITIONED_TABLES {
+            self.ensure_time_partitions(conn, table, 1, 3)?;
+        }
+        let month = chrono::Utc::now().format("%Y-%m").to_string();
+        conn.execute("INSERT INTO meta(key,value,updated_time) VALUES('postgres_partition_window_v1',$1,$2) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_time=excluded.updated_time", &[&month,&Self::now_ts()])?;
+        Ok(())
+    }
+
+    fn ensure_log_time_index(&self, conn: &mut PgConn<'_>, table: &str, name: &str) -> Result<()> {
+        let existing = conn.query_opt(
+            "SELECT am.amname,i.indisvalid FROM pg_class c \
+             JOIN pg_namespace n ON n.oid=c.relnamespace \
+             JOIN pg_index i ON i.indexrelid=c.oid JOIN pg_am am ON am.oid=c.relam \
+             WHERE n.nspname=current_schema() AND c.relname=$1",
+            &[&name],
+        )?;
+        if existing.as_ref().is_some_and(|r| r.get::<_, String>(0) == "btree" && r.get::<_, bool>(1)) {
+            return Ok(());
+        }
+        // Migrate an old BRIN once. Keep the old index available until its
+        // replacement is ready; subsequent boots preserve the existing btree.
+        let target = if existing.is_some() { format!("{name}_btree") } else { name.into() };
+        let started = Instant::now();
+        // A cancelled concurrent build can leave an invalid replacement. It
+        // must be removed before IF NOT EXISTS, which otherwise skips repair.
+        let invalid = conn.query_opt(
+            "SELECT NOT i.indisvalid FROM pg_index i JOIN pg_class c ON c.oid=i.indexrelid \
+             WHERE c.relnamespace=current_schema()::regnamespace AND c.relname=$1", &[&target],
+        )?.is_some_and(|row| row.get::<_, bool>(0));
+        if invalid {
+            execute_index_ddl(conn, &format!("DROP INDEX CONCURRENTLY IF EXISTS {target}"), &format!("DROP INDEX IF EXISTS {target}"))?;
+        }
+        execute_index_ddl(
+            conn,
+            &format!("CREATE INDEX CONCURRENTLY IF NOT EXISTS {target} ON {table} (created_time)"),
+            &format!("CREATE INDEX IF NOT EXISTS {target} ON {table} (created_time)"),
+        )?;
+        if existing.is_some() {
+            execute_index_ddl(conn, &format!("DROP INDEX CONCURRENTLY IF EXISTS {name}"), &format!("DROP INDEX IF EXISTS {name}"))?;
+            conn.execute(&format!("ALTER INDEX {target} RENAME TO {name}"), &[])?;
+        }
+        tracing::info!(index = name, elapsed_ms = started.elapsed().as_secs_f64()*1000.0, "postgres time index prepared");
+        Ok(())
+    }
+
     fn ensure_thread_item_block_fields(&self, conn: &mut PgConn<'_>) -> Result<()> {
         let mut tx = conn.transaction()?;
         let exists: bool = tx.query_one("SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='thread_item_blocks' AND column_name='field')", &[])?.get(0);
@@ -34,7 +146,7 @@ impl PostgresStorage {
                 UPDATE thread_items i SET created_seq=n.seq FROM numbered n WHERE i.session_id=n.session_id AND i.item_id=n.item_id;
                 UPDATE thread_logs SET latest_change_seq=GREATEST(latest_change_seq,COALESCE((SELECT MAX(created_seq) FROM thread_items WHERE thread_items.session_id=thread_logs.session_id),0));")?;
         }
-        tx.batch_execute("CREATE INDEX IF NOT EXISTS idx_thread_items_context_seq ON thread_items(user_id,session_id,created_seq DESC) WHERE kind IN ('user_message','assistant_message','tool_message','system_message');")?;
+        tx.batch_execute("CREATE INDEX IF NOT EXISTS idx_thread_items_context_seq ON thread_items(user_id,session_id,created_seq DESC) WHERE kind IN ('user_message','assistant_message','tool_message','system_message'); CREATE INDEX IF NOT EXISTS idx_thread_items_view_root_seq ON thread_items(user_id,session_id,root_turn_id,created_seq DESC);")?;
         tx.commit()?;
         Ok(())
     }
@@ -190,10 +302,9 @@ impl PostgresStorage {
             "ALTER TABLE user_tokens ADD COLUMN IF NOT EXISTS family_id TEXT",
             &[],
         )?;
-        conn.execute(
+        self.ensure_data_cleanup(conn, "schema_data_token_scope_v1", &[
             "UPDATE user_tokens SET session_scope = 'default' WHERE session_scope IS NULL OR btrim(session_scope) = ''",
-            &[],
-        )?;
+        ])?;
         let _ = conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_user_tokens_user_scope_created ON user_tokens (user_id, session_scope, created_at)",
             &[],
@@ -435,10 +546,9 @@ impl PostgresStorage {
             "ALTER TABLE channel_sessions ALTER COLUMN thread_id SET DEFAULT ''",
             &[],
         );
-        let _ = conn.execute(
+        self.ensure_data_cleanup(conn, "schema_data_channel_thread_v1", &[
             "UPDATE channel_sessions SET thread_id = '' WHERE thread_id IS NULL",
-            &[],
-        );
+        ])?;
         ensure_table_columns(
             conn,
             "channel_messages",
@@ -797,25 +907,17 @@ impl PostgresStorage {
                 &[],
             )?;
         }
-        let _ = conn.execute(
+        self.ensure_data_cleanup(conn, "schema_data_memory_defaults_v1", &[
             "UPDATE memory_fragments SET tags = '[]' WHERE tags IS NULL OR btrim(tags) = ''",
-            &[],
-        );
-        let _ = conn.execute(
             "UPDATE memory_fragments SET entities = '[]' WHERE entities IS NULL OR btrim(entities) = ''",
-            &[],
-        );
-        let _ = conn.execute(
-            "UPDATE memory_fragments SET valid_from = COALESCE(NULLIF(valid_from, 0), updated_at, created_at, 0)",
-            &[],
-        );
+            "UPDATE memory_fragments SET valid_from = COALESCE(updated_at, created_at, 0) WHERE valid_from IS NULL OR valid_from = 0",
+        ])?;
         Ok(())
     }
     fn ensure_monitor_defaults(&self, conn: &mut PgConn<'_>) -> Result<()> {
-        conn.execute(
+        self.ensure_data_cleanup(conn, "schema_data_monitor_time_v1", &[
             "UPDATE monitor_sessions SET updated_time = 0 WHERE updated_time IS NULL",
-            &[],
-        )?;
+        ])?;
         conn.execute(
             "ALTER TABLE monitor_sessions ALTER COLUMN updated_time SET DEFAULT 0",
             &[],
@@ -858,26 +960,6 @@ impl PostgresStorage {
                  ON artifact_logs (created_time, session_id)",
             ),
             (
-                "DROP INDEX CONCURRENTLY IF EXISTS idx_tool_logs_time",
-                "DROP INDEX IF EXISTS idx_tool_logs_time",
-            ),
-            (
-                "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_tool_logs_time \
-                 ON tool_logs (created_time)",
-                "CREATE INDEX IF NOT EXISTS idx_tool_logs_time \
-                 ON tool_logs (created_time)",
-            ),
-            (
-                "DROP INDEX CONCURRENTLY IF EXISTS idx_artifact_logs_time",
-                "DROP INDEX IF EXISTS idx_artifact_logs_time",
-            ),
-            (
-                "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_artifact_logs_time \
-                 ON artifact_logs (created_time)",
-                "CREATE INDEX IF NOT EXISTS idx_artifact_logs_time \
-                 ON artifact_logs (created_time)",
-            ),
-            (
                 "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_monitor_sessions_updated \
                  ON monitor_sessions (updated_time)",
                 "CREATE INDEX IF NOT EXISTS idx_monitor_sessions_updated \
@@ -892,10 +974,11 @@ impl PostgresStorage {
         ];
 
         for (concurrent, fallback) in statements {
-            if conn.execute(concurrent, &[]).is_err() {
-                conn.execute(fallback, &[])?;
-            }
+            execute_index_ddl(conn, concurrent, fallback)?;
         }
+
+        self.ensure_log_time_index(conn, "tool_logs", "idx_tool_logs_time")?;
+        self.ensure_log_time_index(conn, "artifact_logs", "idx_artifact_logs_time")?;
 
         if conn
             .execute(
@@ -952,6 +1035,20 @@ impl PostgresStorage {
     }
 }
 
+fn execute_index_ddl(conn: &mut PgConn<'_>, concurrent: &str, fallback: &str) -> Result<()> {
+    if let Err(error) = conn.execute(concurrent, &[]) {
+        // PostgreSQL cannot create/drop partitioned parent indexes concurrently.
+        // Do not turn other failures (e.g. cancellation/lock timeout) into an
+        // unbounded synchronous retry.
+        let unsupported = error.downcast_ref::<tokio_postgres::Error>()
+            .and_then(|e| e.as_db_error())
+            .is_some_and(|e| *e.code() == tokio_postgres::error::SqlState::FEATURE_NOT_SUPPORTED);
+        if !unsupported { return Err(error); }
+        conn.execute(fallback, &[])?;
+    }
+    Ok(())
+}
+
 /// Tables ranged by created_time; guarded so ensure_time_partitions only
 /// ever touches partitioned parents.
 const PARTITIONED_TABLES: &[&str] = &[
@@ -1005,6 +1102,7 @@ impl PostgresSchemaStorage for PostgresStorage {
         let mut attempts = 0u32;
         loop {
             attempts += 1;
+            let started = Instant::now();
             let mut conn = match self.conn() {
                 Ok(conn) => conn,
                 Err(err) => {
@@ -1015,6 +1113,22 @@ impl PostgresSchemaStorage for PostgresStorage {
                     continue;
                 }
             };
+            if schema_is_current(&mut conn)? && partitions_are_current(&mut conn)? {
+                self.initialized.store(true, Ordering::SeqCst);
+                tracing::info!(elapsed_ms = started.elapsed().as_secs_f64()*1000.0, "postgres schema unchanged");
+                return Ok(());
+            }
+            // Serialize migrations across server replicas, without locking
+            // application tables on the ordinary startup path.
+            conn.query_one("SELECT pg_advisory_lock(1937201, hashtext(current_schema()))", &[])?;
+            let mut conn = SchemaConnection(Some(conn));
+            if schema_is_current(&mut conn)? {
+                if !partitions_are_current(&mut conn)? {
+                    self.ensure_partition_window(&mut conn)?;
+                }
+                self.initialized.store(true, Ordering::SeqCst);
+                return Ok(());
+            }
             // Legacy session_goals shapes must be cleared before the batch
             // runs, otherwise the batch's phase index fails against the old
             // table and the hard cutover cannot rebuild it.
@@ -2187,6 +2301,10 @@ impl PostgresSchemaStorage for PostgresStorage {
             );
             match result {
                 Ok(_) => {
+                    tracing::info!(
+                        elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
+                        "postgres schema base batch ready"
+                    );
                     self.ensure_monitor_defaults(&mut conn)?;
                     self.ensure_user_account_quota_columns(&mut conn)?;
                     self.ensure_user_account_level_columns(&mut conn)?;
@@ -2199,16 +2317,13 @@ impl PostgresSchemaStorage for PostgresStorage {
                     self.ensure_thread_item_block_fields(&mut conn)?;
                     conn.batch_execute(crate::storage::thread_view_store::SCHEMA)?;
                     conn.batch_execute(super::thread_view_store::SEARCH_SCHEMA)?;
-                    if conn
-                        .query_opt(
-                            "SELECT key FROM meta WHERE key='thread_view_v1_discovered'",
-                            &[],
-                        )?
-                        .is_none()
-                    {
-                        conn.execute("INSERT INTO thread_view_heads(session_id,user_id,projection_state) SELECT session_id,user_id,'rebuilding' FROM thread_logs WHERE latest_user_turn>0 ON CONFLICT(session_id) DO NOTHING", &[])?;
-                        conn.execute("INSERT INTO meta(key,value,updated_time) VALUES('thread_view_v1_discovered','1',0) ON CONFLICT(key) DO NOTHING",&[])?;
-                    }
+                    tracing::info!(
+                        elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
+                        "postgres schema thread view ready"
+                    );
+                    // Historical view heads are discovered in bounded keyset
+                    // pages by maintenance after startup, never by a full scan
+                    // on this initialization path.
                     // A hard cutover intentionally discards obsolete duplicate history.
                     conn.execute("DROP TABLE IF EXISTS chat_history", &[])?;
                     self.ensure_model_context_table_retired(&mut conn)?;
@@ -2222,15 +2337,16 @@ impl PostgresSchemaStorage for PostgresStorage {
                     self.ensure_cron_columns(&mut conn)?;
                     self.ensure_memory_fragment_columns(&mut conn)?;
                     self.ensure_performance_indexes(&mut conn)?;
-                    for table in [
-                        "thread_items",
-                        "thread_item_blocks",
-                        "thread_log_changes",
-                        "tool_logs",
-                        "artifact_logs",
-                    ] {
-                        self.ensure_time_partitions(&mut conn, table, 1, 3)?;
-                    }
+                    tracing::info!(
+                        elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
+                        "postgres schema indexes ready"
+                    );
+                    self.ensure_partition_window(&mut conn)?;
+                    tracing::info!(
+                        elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
+                        "postgres schema partitions ready"
+                    );
+                    conn.execute("INSERT INTO meta(key,value,updated_time) VALUES($1,$2,$3) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_time=excluded.updated_time", &[&SCHEMA_MARKER,&schema_fingerprint(),&Self::now_ts()])?;
                     self.initialized.store(true, Ordering::SeqCst);
                     return Ok(());
                 }
@@ -2244,3 +2360,7 @@ impl PostgresSchemaStorage for PostgresStorage {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "schema_tests.rs"]
+mod tests;

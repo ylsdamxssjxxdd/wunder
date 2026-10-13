@@ -96,6 +96,10 @@ pub trait ThreadLogStore {
         before: Option<i64>,
         limit: usize,
     ) -> Result<crate::thread_view::ThreadViewPage>;
+    fn thread_view_trajectory_page(&self, user_id:&str, session_id:&str, before:Option<i64>, root_turn_id:Option<&str>, limit:usize) -> Result<crate::thread_view::ThreadViewPage> {
+        let _ = root_turn_id;
+        self.thread_view_page(user_id, session_id, "trajectory", before, limit)
+    }
     fn thread_view_changes(
         &self,
         user_id: &str,
