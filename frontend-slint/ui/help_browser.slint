@@ -1,0 +1,177 @@
+import { HelpDocs } from "help_models.slint";
+import { HelpButton, HelpSeparator, HelpInput } from "help_controls.slint";
+import { HelpSidebar } from "help_sidebar.slint";
+import { HelpDocument } from "help_document.slint";
+
+// Embedded help browser for the settings help page. It reuses the classic
+// desktop help form: a toolbar (history / copy / find / zoom), a three-tab
+// sidebar (contents / index / search) and the typeset document. All state
+// lives in the HelpDocs global; the controller binds it natively.
+export component HelpBrowser inherits Rectangle {
+    background: #ffffff;
+    // Relayed layout signal: the document width change drives re-typesetting.
+    out property <float> document-width: document.content-width;
+    changed document-width => {
+        HelpDocs.document-width = self.document-width;
+        HelpDocs.layout-changed();
+    }
+    clipboard := TextInput {
+        visible: false;
+        width: 0px;
+        height: 0px;
+        read-only: true;
+        property <int> copy-request <=> HelpDocs.copy-request;
+        changed copy-request => {
+            self.text = HelpDocs.copy-text;
+            self.select-all();
+            self.copy();
+        }
+    }
+    FocusScope {
+        // capture 阶段拦截：焦点在文档或查找框内时快捷键依然生效。
+        capture-key-pressed(event) => {
+            if event.text == Key.F1 { HelpDocs.topic-opened(0); return accept; }
+            if event.modifiers.control && (event.text == "f" || event.text == "F") { find-input.focus(); find-input.select-all(); return accept; }
+            if event.modifiers.alt && event.text == Key.LeftArrow { HelpDocs.history-requested(-1); return accept; }
+            if event.modifiers.alt && event.text == Key.RightArrow { HelpDocs.history-requested(1); return accept; }
+            reject
+        }
+        VerticalLayout {
+            spacing: 0px;
+            Rectangle {
+                height: 34px;
+                background: @linear-gradient(180deg, #ffffff, #e4e4e4);
+                Rectangle { y: 33px; width: parent.width; height: 1px; background: #b8b8b8; }
+                HorizontalLayout {
+                    padding-left: 6px;
+                    padding-right: 6px;
+                    padding-top: 3px;
+                    padding-bottom: 4px;
+                    spacing: 2px;
+                    HelpButton {
+                        width: 27px;
+                        label: "后退 (Alt+←)";
+                        icon: "M 12 19 L 5 12 L 12 5 M 5 12 L 19 12";
+                        enabled: HelpDocs.can-back;
+                        clicked => { HelpDocs.history-requested(-1); }
+                    }
+                    HelpButton {
+                        width: 27px;
+                        label: "前进 (Alt+→)";
+                        icon: "M 12 5 L 19 12 L 12 19 M 5 12 L 19 12";
+                        enabled: HelpDocs.can-forward;
+                        clicked => { HelpDocs.history-requested(1); }
+                    }
+                    HelpButton {
+                        width: 27px;
+                        label: "主页 (F1)";
+                        icon: "M 3 10 L 12 3 L 21 10 L 21 21 L 14 21 L 14 14 L 10 14 L 10 21 L 3 21 Z";
+                        clicked => { HelpDocs.topic-opened(0); }
+                    }
+                    Rectangle { width: 13px; HelpSeparator {} }
+                    HelpButton {
+                        width: 27px;
+                        label: "复制";
+                        icon: "M 9 9 L 21 9 L 21 21 L 9 21 Z M 5 15 L 3 15 L 3 3 L 15 3 L 15 5";
+                        clicked => { HelpDocs.copy-requested(); }
+                    }
+                    HelpButton {
+                        width: 27px;
+                        label: "查找 (Ctrl+F)";
+                        icon: "M 21 21 L 16 16 M 18 10 A 8 8 0 1 1 2 10 A 8 8 0 1 1 18 10";
+                        clicked => { find-input.focus(); find-input.select-all(); }
+                    }
+                    find-input := HelpInput {
+                        width: 180px;
+                        height: 24px;
+                        text <=> HelpDocs.find-text;
+                        placeholder-text: "在当前页查找";
+                        accessible-label: "在当前页查找";
+                        edited(text) => { HelpDocs.find-changed(text); }
+                    }
+                    Rectangle { width: 13px; HelpSeparator {} }
+                    HelpButton {
+                        width: 27px;
+                        label: "放大";
+                        icon: "M 21 21 L 16 16 M 18 10 A 8 8 0 1 1 2 10 A 8 8 0 1 1 18 10 M 6 10 L 14 10 M 10 6 L 10 14";
+                        enabled: HelpDocs.zoom-percent < 160;
+                        clicked => {
+                            HelpDocs.zoom-percent = min(160, HelpDocs.zoom-percent + 10);
+                            HelpDocs.layout-changed();
+                        }
+                    }
+                    HelpButton {
+                        width: 27px;
+                        label: "缩小";
+                        icon: "M 21 21 L 16 16 M 18 10 A 8 8 0 1 1 2 10 A 8 8 0 1 1 18 10 M 6 10 L 14 10";
+                        enabled: HelpDocs.zoom-percent > 80;
+                        clicked => {
+                            HelpDocs.zoom-percent = max(80, HelpDocs.zoom-percent - 10);
+                            HelpDocs.layout-changed();
+                        }
+                    }
+                    HelpButton {
+                        width: 27px;
+                        label: "实际大小";
+                        icon: "M 3 10 A 9 9 0 1 1 5 18 M 3 4 L 3 10 L 9 10";
+                        clicked => {
+                            HelpDocs.zoom-percent = 100;
+                            HelpDocs.layout-changed();
+                        }
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                    if HelpDocs.find-text != "" : Text {
+                        text: HelpDocs.match-count == 0 ? "没有匹配内容" : "\{HelpDocs.match-count} 处匹配";
+                        color: #666666;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+            Rectangle {
+                private property <bool> stacked: root.width <= 760px;
+                HelpSidebar {
+                    x: 0px;
+                    y: 0px;
+                    width: parent.stacked ? parent.width : 286px;
+                    height: parent.stacked ? 240px : parent.height;
+                }
+                VerticalLayout {
+                    x: parent.stacked ? 0px : 286px;
+                    y: parent.stacked ? 240px : 0px;
+                    width: parent.stacked ? parent.width : parent.width - 286px;
+                    height: parent.stacked ? parent.height - 240px : parent.height;
+                    spacing: 0px;
+                    Rectangle {
+                        height: 33px;
+                        background: #f7f7f7;
+                        Rectangle { y: 32px; width: parent.width; height: 1px; background: #cfcfcf; }
+                        Path {
+                            x: 10px;
+                            y: 8px;
+                            width: 17px;
+                            height: 17px;
+                            viewbox-width: 24;
+                            viewbox-height: 24;
+                            commands: "M 22 12 A 10 10 0 1 1 2 12 A 10 10 0 1 1 22 12 M 9 9 A 3 3 0 0 1 15 9 C 15 11 12 11 12 13 M 12 17 L 12.01 17";
+                            fill: transparent;
+                            stroke: #17a81a;
+                            stroke-width: 1.3px;
+                            stroke-line-cap: round;
+                        }
+                        Text {
+                            x: 34px;
+                            width: parent.width - 44px;
+                            height: parent.height;
+                            text: HelpDocs.topic-title;
+                            color: #333333;
+                            font-weight: 600;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                    }
+                    document := HelpDocument {}
+                }
+            }
+        }
+    }
+}

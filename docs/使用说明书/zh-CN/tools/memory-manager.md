@@ -1,109 +1,33 @@
 ---
 title: 记忆管理
-summary: 说明 `memory_manager` 的当前动作、精简结构，以及“短索引注入 + get 取全文”的使用方式。
-read_when:
-  - 用户要新增、检索、读取、更新或删除长期记忆碎片
-source_docs:
-  - src/services/tools/memory_manager_tool.rs
-  - src/services/memory_fragments.rs
+summary: 管理当前智能体在当前用户下的长期记忆碎片：列出、搜索、读取、新增、更新、删除，以及“短索引注入 + 按需取全文”的用法。
 updated_at: 2026-04-12
 ---
 
 # 记忆管理
 
-`memory_manager` 用于管理当前智能体在当前用户作用域下的长期记忆。
+`memory_manager` 用来管理当前智能体在当前用户作用域下的长期记忆。
 
-支持的动作：
-
-- `list`
-- `search`
-- `get`
-- `add`
-- `update`
-- `remove`
-- `clear`
+支持的动作：`list`、`search`、`get`、`add`、`update`、`remove`、`clear`。
 
 ## 使用原则
 
-- system prompt 默认只注入短 `memory_id + title` 索引
-- 不会自动注入完整 `content`
-- 需要完整细节时，先用 `list/search` 找到 `memory_id`，再用 `get`
-- 模型侧 `memory_id` 尽量保持 8 个字符以内，方便搜索与定位
-- `add/update` 只使用当前核心字段：
-  - `title`
-  - `content`
-  - `tag`
-  - `related_memory_id`
-  - `memory_time`
+- 系统提示里默认只注入一条短索引（记忆 id + 标题），**不会**把完整内容一起塞进去。
+- 需要细节时，先用 `list` / `search` 找到记忆 id，再用 `get` 取全文。
+- 记忆 id 尽量保持在 8 个字符以内，方便搜索和定位。
+- `add` / `update` 只用当前的核心字段：标题、内容、标签、关联记忆 id、记忆时间。
 
-## `list`
+## 各个动作
 
-返回最近记忆索引，默认 30 条。
+- `list`：返回最近的记忆索引，默认 30 条。每条包含 id、标题、标签和更新时间。
+- `search`：按标题或内容匹配，默认 10 条。命中项会给出片段，以及是在标题还是内容里匹配到的。
+- `get`：按 id 读取完整内容，还会带上关联记忆 id 和记忆时间。
+- `add`：新增一条，把标题、内容、标签、记忆时间一起给。
+- `update`：按 id 更新。
+- `remove`：按 id 删除。
+- `clear`：清空。
 
-```json
-{
-  "action": "list",
-  "data": {
-    "count": 1,
-    "items": [
-      {
-        "memory_id": "0695f345",
-        "title": "用户姓名",
-        "tag": "profile",
-        "updated_at": 1775957851
-      }
-    ]
-  }
-}
-```
-
-## `search`
-
-搜索标题或内容匹配项，默认 10 条。
-
-```json
-{
-  "action": "search",
-  "data": {
-    "query": "周华健",
-    "count": 1,
-    "items": [
-      {
-        "memory_id": "0695f345",
-        "title": "用户姓名",
-        "tag": "profile",
-        "snippet": "用户的名字是周华健。这是用户在对话开始时自我介绍提供的信息。",
-        "matched_in": ["content"],
-        "updated_at": 1775957851
-      }
-    ]
-  }
-}
-```
-
-## `get`
-
-按 `memory_id` 读取完整内容。
-
-```json
-{
-  "action": "get",
-  "data": {
-    "memory_id": "0695f345",
-    "item": {
-      "memory_id": "0695f345",
-      "title": "用户姓名",
-      "content": "用户的名字是周华健。这是用户在对话开始时自我介绍提供的信息。",
-      "tag": "profile",
-      "related_memory_id": null,
-      "memory_time": 1775957820,
-      "updated_at": 1775957851
-    }
-  }
-}
-```
-
-## 写入示例
+写入示例：
 
 ```json
 {
@@ -115,17 +39,8 @@ updated_at: 2026-04-12
 }
 ```
 
-## 关键约束
+## 边界
 
-以下旧字段不再作为推荐输入：
-
-- `summary`
-- `tags`
-- `entities`
-- `category`
-
-实用规则：
-
-- `list/search` 是主检索动作
-- `get` 是唯一完整详情读取动作
-- 写入只影响后续新线程，不会回写已冻结线程的 system prompt
+- 旧的 `summary`、`tags`、`entities`、`category` 不再作为推荐输入。
+- `list` / `search` 是主检索动作，`get` 是唯一的完整详情读取动作。
+- 写入只影响后续新线程，不会回写已经冻结线程的系统提示。

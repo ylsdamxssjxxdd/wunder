@@ -1,113 +1,55 @@
 ---
 title: 微信 iLink 渠道
-summary: `weixin` 是 wunder 的新微信渠道（iLink 协议），与 `wechat` / `wechat_mp` 不同；本文给出选型、扫码接入、运行态检查与故障定位。
-read_when:
-  - 用户要接入新微信渠道并替换旧的 `wechat` / `wechat_mp`
-  - 用户想确认能否直接扫系统生成的二维码
-  - 用户在排查 `context_token` 缺失、会话过期、文件下载失败
-source_docs:
-  - docs/方案/新微信渠道落地方案.md
-  - docs/API文档.md
-  - src/channels/weixin.rs
-  - src/channels/service.rs
-  - src/api/user_channels.rs
+summary: 新微信渠道用 iLink 协议，跟旧的公众号、企业微信不是一套。
 ---
 
 # 微信 iLink 渠道
 
-`weixin` 是独立 provider，不是旧微信渠道的参数变体。  
-在 wunder 中请按以下规则选型，避免接错。
+`weixin` 是独立的渠道，不是旧微信渠道换个参数。选错会白忙一场。
 
-## 30 秒选型
+## 新旧渠道对照
 
-| 场景 | 选择 |
+| 场景 | 选哪个 |
 | --- | --- |
 | 企业微信应用回调 | `wechat`（旧） |
 | 微信公众号回调 | `wechat_mp`（旧） |
-| iLink 协议微信能力（openclaw-weixin） | `weixin`（新） |
+| iLink 协议的微信能力 | `weixin`（新） |
 
-## 关键差异（新旧区分）
+新旧的主要区别：
 
-| 维度 | `weixin`（新） | `wechat` / `wechat_mp`（旧） |
-| --- | --- | --- |
-| 入站模型 | 长轮询 `ilink/bot/getupdates` | Webhook 回调 |
-| 回复关键字段 | 必须带 `context_token` | 不依赖 `context_token` |
-| 登录方式 | 扫码获得 `bot_token` | 传统 app/corp 参数 |
-| 媒体链路 | CDN + AES 解密/加密 | 平台原生接口 |
-| 推荐状态 | 新接入优先 | 维护态/兼容存量 |
+- 入站方式：`weixin` 用长轮询拉取更新，旧版用 Webhook 回调。
+- 回复要求：`weixin` 回复时必须带上本次会话的上下文标识，旧版不依赖。
+- 登录方式：`weixin` 扫码拿机器人令牌，旧版用传统的企业 / 公众号参数。
+- 媒体：`weixin` 走 CDN，加解密自己处理，旧版走平台原生接口。
+- 状态：新接入优先用 `weixin`，旧版处于维护 / 兼容存量。
 
-## 用户侧扫码接入（已支持）
+## 最短链路：扫码接入
 
-用户在渠道设置选择 `weixin` 后，可直接执行：
+在渠道设置里选 `weixin` 后：
 
-1. 点击“生成二维码”
-2. 用微信扫码
-3. 点击“等待确认”
-4. 系统自动回填 `bot_token`、`ilink_bot_id`、`ilink_user_id`、`api_base`
-5. 保存账号配置
+1. 点“生成二维码”；
+2. 用微信扫码；
+3. 点“等待确认”；
+4. 系统自动回填机器人令牌、机器人 ID、用户 ID 和接口地址；
+5. 保存账号配置。
 
-说明：
-- 回填成功后必须保存，长轮询 worker 才会真正生效。
-- 二维码会话有 TTL，过期需重新生成。
+两点注意：回填成功后**必须保存**，长轮询才会真正生效；二维码有有效期，过期要重新生成。
 
-## 最小可用配置（P0）
+## 关键设置与常见坑
 
-```json
-{
-  "weixin": {
-    "api_base": "https://ilinkai.weixin.qq.com",
-    "bot_token": "<required>",
-    "ilink_bot_id": "<required>",
-    "long_connection_enabled": true
-  }
-}
-```
+- 必填三项：接口地址、机器人令牌、机器人 ID；再打开长连接开关。
+- 还有几项可选增强：CDN 地址、机器人类型、允许的来话范围、轮询与接口超时、连续失败后的退避、路由标记。
+- 媒体链路排查顺序：是否开了媒体、CDN 地址是否可达、解密密钥是否正确、附件是否超出大小限制。
+- 回复报“缺少会话上下文标识”：说明这次回复没拿到上一条入站消息的会话标识。确认回复走的是同一会话，且入站消息里保留了它。
+- 长时间收不到消息：依次看账号是否处于活跃状态、长连接是否开启、令牌和机器人 ID 是否有效、舰桥运行态里会话是否已过期。
+- 会话频繁过期：一般是登录态失效，重新扫码拿新令牌并保存即可。
 
-可选增强项：
-- `cdn_base`
-- `bot_type`
-- `allow_from`
-- `poll_timeout_ms` / `api_timeout_ms`
-- `max_consecutive_failures` / `backoff_ms`
-- `route_tag`
+## 从旧渠道迁过来
 
-## 文件与媒体链路
-
-当前实现已支持：
-- 出站附件：先 `getuploadurl`，再 CDN 上传，最后 `sendmessage` 引用媒体
-- 入站附件：解析 `item_list` 媒体项，下载 CDN 对象并解密后落地到工作区
-
-排查优先级：
-1. `media_enabled` 是否开启
-2. `cdn_base` 是否可达
-3. AES key 是否正确（base64/raw16 或 hex32）
-4. 附件是否超出大小限制
-
-## 常见问题定位
-
-### 报错 `weixin outbound context_token missing`
-
-原因：回复消息没拿到上一条入站的 `context_token`。  
-处理：确认当前回复链路是否基于同一会话，且入站消息元数据已保留 `weixin_context_token`。
-
-### 长时间收不到消息
-
-检查：
-- 账号状态是否 `active`
-- `long_connection_enabled` 是否开启
-- `bot_token` / `ilink_bot_id` 是否有效
-- 舰桥运行态是否出现 `long_connection_session_expired`
-
-### 会话频繁过期（session expired）
-
-通常是登录态失效，建议重新扫码，获取新的 token 并保存。
-
-## 对接建议（迁移旧微信渠道时）
-
-1. 并行运行：先保留旧渠道，新增流量优先 `weixin`
-2. 分批切换：按账号逐步迁移
-3. 观察指标：入站成功率、出站成功率、首包时延、失败 TopN
-4. 稳定后再把旧渠道标记为维护态
+1. 先并行运行：保留旧渠道，新流量优先走 `weixin`；
+2. 按账号分批切换；
+3. 盯住入站成功率、出站成功率、首包时延和失败排行；
+4. 稳定后再把旧渠道标为维护态。
 
 ## 延伸阅读
 

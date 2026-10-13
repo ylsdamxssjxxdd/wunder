@@ -1,26 +1,14 @@
 ---
 title: 舵机（cli）使用
-summary: 手工本地操作入口。TTY 下进 ratatui TUI，非 TTY 降级为一次性 exec；22 条 slash 命令、exec --json JSONL 契约、cloud 子命令全套；舵机侧关闭定时任务与引擎排队。
-read_when:
-  - 需要在终端里用 wunder
-  - 要把 wunder 集成到脚本、CI/CD 或管道
-  - 需要 cloud 子命令做设备互通运维
-source_docs:
-  - crates/wunder-cli/main.rs
-  - crates/wunder-cli/args.rs
-  - crates/wunder-cli/runtime.rs
-  - crates/wunder-cli/slash_command.rs
-  - crates/wunder-cli/tui/app.rs
-  - crates/wunder-cli/exec_events.rs
-  - crates/wunder-cli/cloud_command.rs
+summary: 手工本地操作入口。终端里进交互界面，管道里自动降级为一次性执行；22 条斜杠命令、exec --json 事件流、cloud 子命令全套；舵机侧关闭定时任务与引擎排队。
 updated_at: 2026-10-13
 ---
 
 # 舵机（cli）使用
 
-舵机（cli，`crates/wunder-cli/`）是 wunder 的**手工本地操作入口**，属于可选形态：日常使用装蜂窝（desktop）即可；终端驱动、脚本化与自动化场景才用舵机。它同进程调引擎（`CliRuntime.state: Arc<AppState>` → `runtime.state.kernel.orchestrator.stream`），复用 AppState、配置、工具与存储语义，不另起一套执行链路。
+舵机（cli）是 wunder 的**手工本地操作入口**，属于可选形态：日常使用装蜂窝（desktop）即可；终端驱动、脚本化与自动化场景才用舵机。它同进程调用引擎，复用同一套配置、工具与存储，不另起一套执行链路。
 
-## 适用场景
+## 什么时候用舵机
 
 | 场景 | 选舵机 |
 | --- | --- |
@@ -42,19 +30,18 @@ cargo build --release -p wunder-cli
 ./target/release/wunder-cli
 ```
 
-- **TTY**（stdin/stdout/stderr 全部是 TTY）：进入 **ratatui TUI**，`Viewport::Inline`（`crates/wunder-cli/tui/mod.rs:191`）
-- **非 TTY**：自动降级为**一次性 exec**（`main.rs:216-233`）；管道、脚本走这条
-- **数据目录**：`WUNDER_HOME` → `~/.wunder`（`runtime.rs:1018-1029`）
-- **引擎 YAML**：生成于 `<temp>/config/wunder.yaml`（`runtime.rs:610-632`）
-- **用户配置**：`~/.wunder/config.toml`（`runtime.rs:104-108`）
+- **TTY**（stdin/stdout/stderr 全部是 TTY）：进入**交互式界面**
+- **非 TTY**：自动降级为**一次性执行**；管道、脚本走这条
+- **数据目录**：`WUNDER_HOME` → `~/.wunder`
+- **用户配置**：`~/.wunder/config.toml`
 
-## 子命令（`args.rs:228-259`）
+## 子命令
 
 | 子命令 | 别名 | 作用 |
 | --- | --- | --- |
-| `exec` | `e` | 非交互执行一次智能体任务；`--json` 走 JSONL 事件契约 |
+| `exec` | `e` | 非交互执行一次智能体任务；`--json` 走 JSONL 事件流 |
 | `resume` | — | 恢复历史会话 |
-| `tool` | — | 直接运行 builtin / MCP / skill 工具 |
+| `tool` | — | 直接运行内置 / MCP / 技能工具 |
 | `mcp` | — | 管理本地 MCP 服务器 |
 | `skills` | — | 管理当前用户本地技能 |
 | `config` | — | 查看与修改运行配置 |
@@ -63,7 +50,7 @@ cargo build --release -p wunder-cli
 | `cloud` | — | 管理本地云端连接与设备互通 |
 | `completion` | — | 生成 Shell 补全脚本 |
 
-### `cloud` 子命令（`args.rs:268-299`）
+### cloud 子命令
 
 设备互通与云工作区运维全套：
 
@@ -76,15 +63,15 @@ cloud send / watch               # 经互通台账驱动线程
 cloud audit / approve            # 命令台账与审批
 ```
 
-### `exec --json` JSONL 契约
+### exec --json 事件流
 
-`crates/wunder-cli/exec_events.rs` 定义：每行一个 JSON 对象，事件名 `thread` / `turn` / `item.*`。用于管道与自动化：
+每行一个 JSON 对象，事件名 `thread` / `turn` / `item.*`。用于管道与自动化：
 
 ```bash
 wunder-cli exec --json "整理当前目录的文件" | jq -c 'select(.type=="item.text")'
 ```
 
-## Slash 命令（22 条，`slash_command.rs:183-208`）
+## 斜杠命令（22 条）
 
 | 命令 | 别名 | 作用 |
 | --- | --- | --- |
@@ -110,9 +97,9 @@ wunder-cli exec --json "整理当前目录的文件" | jq -c 'select(.type=="ite
 | `/exit` | — | 退出 |
 | `/quit` | `/q` | 退出 |
 
-**没有** `cloud`、`cron`、`channel`、`memory`、`knowledge` 斜杠命令：`cloud` 是子命令形式；后四者在舵机上无管理界面。
+**没有** `cloud`、`cron`、`channel`、`memory`、`knowledge` 斜杠命令：`cloud` 是子命令形式；后四者在舵机上没有管理界面。
 
-## 键位（权威表 `tui/app.rs:2241-2280`）
+## 键位
 
 | 键 | 作用 |
 | --- | --- |
@@ -137,7 +124,7 @@ wunder-cli exec --json "整理当前目录的文件" | jq -c 'select(.type=="ite
 | `F3` | 查看输出并选中卡片 |
 | `Enter`（F3 面板内） | 展开 / 收起 |
 | `F2` | 运行提醒 |
-| `F4` | 切换鼠标模式（与 codex 的差异） |
+| `F4` | 切换鼠标模式 |
 | `?` | 快捷键面板 |
 | `←` | 任务中心 |
 
@@ -152,19 +139,19 @@ wunder-cli
 
 ## 舵机独有能力（其他界面没有）
 
-- `exec --json` JSONL 脚本契约
-- `cloud` 子命令全套（`args.rs:268-299`）
+- `exec --json` 事件流脚本契约
+- `cloud` 子命令全套
 - `doctor` 本地运行环境诊断
 - `stress-thread` 本地合成线程
 - `completion` Shell 补全
 - `tool` / `mcp` / `skills` 直接命令行运行（不走智能体主循环）
 
-## 舵机**没有**的东西
+## 舵机没有的东西
 
-- **定时任务被显式关闭**：`runtime.rs:683 config.cron.enabled = false`。`cron.enabled=false` 时**只拒绝 add/update/enable/run**，status、列表、删除与禁用仍可用（`services/cron.rs:116-121`）——所以你能看到旧任务列表，但舵机不会再排新任务。
-- **引擎排队也被显式关闭**：`runtime.rs:682 config.agent_queue.enabled = false`。后果是**运行中再发一条消息不会进排队条**，而是直接撞会话锁被判「该用户已有会话正在执行」，等满忙窗口才返回。这与蜂窝相反——蜂窝在 native 模式会强制打开队列。要在运行中插话、排队或改写下一条，请用蜂窝或蜂巢。
-- **渠道 / 知识库 / 长期记忆 / 形象** 只有工具卡文案映射（`tool_presentation.rs:117,141`），**没有管理界面**
-- **无 ASR**：舵机没有语音输入；贴图靠 `Ctrl+V` 与拖拽
+- **定时任务被显式关闭**：不能新增、修改、启用或立即运行定时任务；但查看状态、列表、删除与禁用仍可用——所以你能看到旧任务列表，舵机却不会再排新任务。
+- **引擎排队也被显式关闭**：运行中再发一条消息不会进排队条，而是直接撞会话锁，被判「该用户已有会话正在执行」，要等满忙窗口才返回。这和蜂窝相反——蜂窝会强制打开队列。想在运行中插话、排队或改写下一条，请用蜂窝或蜂巢。
+- **渠道 / 知识库 / 长期记忆 / 形象**在舵机上**没有管理界面**
+- **无语音输入**：舵机没有 ASR；贴图靠 `Ctrl+V` 与拖拽
 - **无交互式终端 UI**：宿主本身就是终端；shell 走 `!` 前缀
 - **无截图采集 / 托盘 / 全局热键**
 
@@ -173,6 +160,7 @@ wunder-cli
 舵机默认把运行时文件放在 `~/.wunder` 下：
 
 - 运行时配置与 SQLite 状态：`~/.wunder/cli/WUNDER_TEMP/`
+- 引擎配置 YAML：生成在 `<temp>/config/wunder.yaml`
 - 用户工具与技能：`~/.wunder/user_tools/` 与 `~/.wunder/skills/`
 - 临时文件 API：`WUNDER_TEMP_DIR_ROOT` 指向同一个 `~/.wunder/cli/WUNDER_TEMP/`
 
@@ -184,17 +172,17 @@ wunder-cli
 - 批量任务：外部调度循环调 `exec`
 - 管道：`cat input.txt | wunder-cli` 触发非 TTY 降级
 - 与 `tool` / `mcp` / `skills` 组合做纯工具运行
-- **定时任务不在舵机里做**：舵机关闭了 cron；请放到蜂窝（`ui/cron_page.slint`）或蜂巢（`SettingsCronCategory`）
+- **定时任务不在舵机里做**：舵机关闭了 cron；请放到蜂窝或蜂巢的定时任务页面
 
 ## 常见问题
 
-**能进图形界面吗？** 不能。需要 GUI 用蜂窝。
+**图形界面**：不支持，需要 GUI 请用蜂窝。
 
-**能建定时任务吗？** 不能，舵机显式关闭 cron。
+**定时任务**：不支持，舵机显式关闭 cron。
 
-**能在管道里用吗？** 可以。非 TTY 自动降级为一次性 exec；`--json` 出 JSONL。
+**管道使用**：支持。非 TTY 自动降级为一次性 exec；`--json` 出 JSONL。
 
-**如何做本地环境体检？** `wunder-cli doctor`。
+**本地环境体检**：`wunder-cli doctor`。
 
 ## 延伸阅读
 

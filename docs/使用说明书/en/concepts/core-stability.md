@@ -1,79 +1,107 @@
 ---
 title: Stability
-summary: The Stability core explains why wunder must use structural governance to control fault propagation rather than relying on prompts, luck, and manual monitoring for stability.
-read_when:
-  - You are troubleshooting, stress-testing, or designing high-risk execution paths
-  - You want to determine which layer a fault-tolerance capability should belong to
-source_docs:
-  - docs/总体设计.md
+summary: Errors that do not spread, failures that can recover, and problems that can be reviewed. Stability comes from four kinds of hard constraint — bounds, budgets, circuit breaking, and a single writer — plus a consistent error structure and clear actions when something goes wrong.
+updated_at: 2026-10-13
 ---
 
-# Stability
-
-Stability is not a safety net added at the end — it is a hard target that wunder must be built around from the very beginning. The system faces not simple Q&A exchanges, but composite pipelines involving long sessions, high concurrency, multiple tools, and multiple entry points.
+Stability rests on three things: **containing the spread** (one failing link does not bring down the others), **being able to recover** (failures have a formal recovery path), and **being able to review** (errors are structured and classifiable). It comes down to four kinds of hard constraint: bounds, budgets, circuit breaking, and a single writer.
 
 ![Stability diagram: risk sources pass through isolation governance and recovery paths to prevent cascading failures and form a regressable system](/docs/assets/manual/core-stability.svg)
 
-## Bottom Line
+## Every queue is bounded, and a full queue reports busy
 
-- Stability is not "fewer errors" — it is "when errors happen, they do not propagate, they can be recovered from, and they can be reviewed."
-- The greatest danger in a long-running agent system is not a sporadic error, but an error that is not structurally contained.
-- Relying solely on prompts, manual operations, or one-off hotfixes cannot sustain a truly stable system.
+Every queue has a fixed capacity. A write that fails and times out returns "queue busy" and records a busy metric. There is **no unbounded buffer and no silent drop**.
 
-## Why It Must Be a Standalone Core
+| Queue | Bound |
+| --- | --- |
+| Per-subscription event write queue | 256 |
+| Slow-client watermark | remaining capacity ≤ 2 |
+| Single event fetch | 200 |
+| Thread changes per page | 200 |
+| Channel ingress | capacity 512 / concurrency 8 / enqueue wait 80 ms |
+| Workspace write queue | 2048 |
 
-Without stability as a core concern, problems typically emerge at scale like this:
+Background tasks all start with a tag; a long run raises an alert, and one loop crashing does not take down the process. When troubleshooting, the task tag in the logs tells you which loop it was.
 
-- A tool produces oversized output and drags down the entire context window.
-- A network hiccup or model timeout breaks the entire execution chain.
-- An anomaly at one entry point drags other entry points into an inconsistent state.
+## Limits and budgets
 
-These problems cannot be solved by "retry a few more times" — they require structural governance.
+| Item | Value |
+| --- | --- |
+| User input cap | 1,048,576 characters; image attachments not counted |
+| Default model call timeout | 120 seconds |
+| Default tool timeout | 120 seconds (floor of 1 second) |
+| Tool concurrency | ≤ 4 |
+| Turn cap | 1000 by default for non-admins (floor of 2) |
+| Tool-call budget per turn | 10000 |
+| Memory-recall budget per turn | 2000 |
+| Session lock lifetime / heartbeat | 120 seconds / 5 seconds |
+| Active session cap | 300 by default (constrains non-admins) |
+| Approval cache | 600 seconds |
 
-## What This Core Really Protects
+Session queueing is on by default. With it turned off, sending a message while a run is in progress is immediately judged "user busy" and no queue entry is created either (the Hull warns about this at startup). This is a configuration trade-off, not a failure.
 
-- Protects execution continuity — after an error, the system can continue rather than the entire chain becoming useless.
-- Protects resource boundaries — high concurrency, long sessions, and large tool outputs must not grow unbounded.
-- Protects system maintainability — similar problems must be categorizable, reproducible, and regression-testable.
+## Session locks and the single writer
 
-## Key Constraints
+**The same task thread executes serially, and different threads do not block each other**: scheduling, locking, and realtime state are all isolated per thread.
 
-| Constraint | Purpose |
-|------|------|
-| Stability depends on structural guarantees | Cannot rely only on prompts or manual intervention as a safety net |
-| High-risk paths prioritize propagation control | Model, tools, network, and storage all need isolation strategies |
-| Recovery must have a formal path | Timeouts, cancellations, disconnections, and failures must all have follow-up actions |
-| Similar issues must be regression-verifiable | Avoid fixing once, forgetting, and repeating the same mistake |
+A session lock is a persistent lock with a 120-second lifetime, renewed by a heartbeat every 5 seconds. Waiters back off rather than polling on a fixed interval: backoff starts after two attempts, is capped at 3 seconds, and includes jitter; a wait longer than 30 seconds raises an alert. A fixed 0.2-second poll is deliberately avoided here, since a saturated system would otherwise turn its own polling into a storage storm.
 
-## Design Highlights
+**The single-writer principle**: the thread log has exactly one write path. On submission:
 
-### Highlight 1: Stability is first about "controlling propagation"
+1. Each session first passes through a gate that serializes it, so change order matches submission order;
+2. The storage call is one short blocking transaction;
+3. **The cursor is published to the change channel only after the transaction succeeds** — the channel carries a wake-up signal, not the truth;
+4. Idempotent no-ops (a replayed acceptance, an unchanged state, duplicate feedback) produce no change and no notification; a failed submission never publishes a cursor.
 
-The real danger is not a single-point failure — it is a failure that takes down threads, tools, connections, queues, and data consistency all at once.
+Callers must not assemble their own cursors, and must not notify the change channel before the transaction completes. This principle keeps "the order the client sees" consistent with "the order written to storage", and it is what makes lossless catch-up possible after a disconnect.
 
-### Highlight 2: Recovery paths must be as formal as the main path
+Long-held locks and slow clients are two problems called out for governance: a lock is covered by its lifetime plus heartbeat in case the holder disappears, and a slow client is detected by the watermark, sent a `resume_recommended` first, and then uncoupled (see [Realtime](/docs/en/concepts/core-realtime/)).
 
-Resume-after-recovery, retries, redelivery, transaction rollback, outbox patterns, and atomic writes are not side-channel tricks — they are part of the main system.
+## Recovery and circuit breaking
 
-### Highlight 3: Resource governance is part of stability
+| Scenario | Mechanism |
+| --- | --- |
+| Streaming stalls | The idle watchdog judges by how long there has been no activity, not by total elapsed time |
+| The model returns empty or unusable output | Retried once with thinking off; if it still fails, an output error is reported |
+| Context over its limit | Progressive compression (triggered at three points: history, overflow, and pre-sampling); overflow recovery at most 8 times |
+| The same kind of failure recurring | Circuit broken by failure fingerprint |
+| Network or subscription disconnect | Cursor catch-up, without replaying the whole history |
 
-An oversized context, excessively long output, excessive concurrency, and queue backlog are fundamentally stability problems, not just performance problems.
+Retry circuit breaking counts by the same fingerprint; the thresholds are:
 
-## Common Misconceptions
+| Condition | Threshold |
+| --- | --- |
+| Non-retryable failure | 5 times |
+| Parameter or structure failure | 2 times (a deterministic error will not improve by waiting, so after two it gives a hint to change course) |
+| Retryable failure / the same tool failing repeatedly | 5 times |
+| Successes without progress | 4 times |
 
-- Just because the model produced a response does not mean the system is stable.
-- Retries are not a cure-all — error isolation and resource governance are equally critical.
-- A "sporadic issue that got fixed" without structured review is usually just temporarily quiet.
+A fingerprint keeps at most 240 characters of detail. **Circuit breaking looks at how many times the same problem repeats, not at how many calls were made in total**, so a ten-thousand-call tool budget will not be burned away by a single infinite loop.
 
-## Boundaries with Other Cores
+## What an error looks like from the outside
 
-- Distinction from [Context Compression](/docs/en/concepts/core-context-compression/): Compression manages window pressure; stability manages all high-risk paths.
-- Distinction from [Realtime](/docs/en/concepts/core-realtime/): Realtime is about how state is delivered; stability is about whether state and execution remain consistent under abnormal conditions.
-- Distinction from [Observability](/docs/en/concepts/core-observability/): Observability helps discover and review stability issues but does not directly replace stability design.
+Every interface error uses the same structure: it marks the failure and carries an error code, a description for the user, the corresponding HTTP status, an actionable hint, and a trace id and timestamp for tracking, with the trace id and error code also written back in the response headers.
 
-## Further Reading
+**Judge by the error code, not by the message text** — message text changes with language and version, whereas the mapping between error code and HTTP status is the contract.
 
-- [Core Overview](/docs/en/concepts/)
-- [Boundary Handling](/docs/en/concepts/boundary-handling/)
-- [Troubleshooting](/docs/en/help/troubleshooting/)
-- [Performance and Observability](/docs/en/ops/benchmark-and-observability/)
+## Whether to wait or to act
+
+| What you see | What the system is doing | What to do |
+| --- | --- | --- |
+| Shows compacting or queued | Normal processing | Wait |
+| `slow_client` or `resume_recommended` appears | The subscription was uncoupled to protect the stream | Rebuild the projection through the catch-up endpoints |
+| Judged "user busy" | That task thread is still executing (the session lock is held) | Queue, or yield/cancel that thread |
+| Stopped after the same tool failed repeatedly | Fingerprint circuit breaking has tripped | Change the parameters or the path; resubmitting is useless |
+| Reports an output error | The one-time recovery has been used up | Change the model configuration or rephrase |
+| Reports insufficient quota | The admission-stage deduction did not pass | See [Quota and Token Usage](/docs/en/concepts/quota-and-token-usage/) |
+| The UI and backend state disagree | The projection is behind | Refresh or re-enter; if it still disagrees, look at the runtime state |
+| You need to start completely over | — | Use "reset work state" (cancels the user's sessions and tasks, clears the workspace, and returns a brand-new session) |
+
+## Further reading
+
+- [Boundary Handling](/docs/en/concepts/boundary-handling/) — behavior and values for each boundary case
+- [Realtime](/docs/en/concepts/core-realtime/) — catch-up, cursors, and backpressure
+- [Context Compression](/docs/en/concepts/core-context-compression/) — details of over-limit compression
+- [Observability](/docs/en/concepts/core-observability/) — metrics and logs
+- [Troubleshooting](/docs/en/help/troubleshooting/) — steps for handling real problems
+- [Authentication and Security](/docs/en/ops/auth-and-security/) — permissions and risk governance

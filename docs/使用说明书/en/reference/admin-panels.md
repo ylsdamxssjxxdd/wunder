@@ -1,134 +1,211 @@
 ---
-title: Admin Panels
-summary: The admin frontend groups governance panels by responsibility — system, agents, debugging, and documentation — so each concern has a clear home.
-read_when:
-  - You are using the admin side for the first time
-  - You want to know where to find a specific configuration, monitoring view, or documentation entry
-source_docs:
-  - docs/设计文档/01-系统总体设计.md
-  - web/index.html
+title: Bridge Panel Guide
+summary: What each panel in the Bridge manages and where its entry lives.
+updated_at: 2026-10-13
 ---
 
-# Admin Panels
+The Bridge is the administrator's workbench: configure the system, manage users, and watch how things are running.
 
-The key value of the admin frontend is grouping governance entry points by function instead of cramming everything onto one page.
+## Panel groups at a glance
 
-## System Group
+<div class="docs-card-grid docs-card-grid-compact">
+  <a class="docs-card" href="#system-group"><strong>System group</strong><span>Global configuration and status</span></a>
+  <a class="docs-card" href="#agent-group"><strong>Agent group</strong><span>Model and capability configuration</span></a>
+  <a class="docs-card" href="#debug-group"><strong>Debug group</strong><span>Testing and performance evaluation</span></a>
+  <a class="docs-card" href="#documentation-group"><strong>Documentation group</strong><span>User guide and interface reference</span></a>
+</div>
 
-This group is oriented toward global governance:
+## System group
 
-- Internal Status
-- System Settings
-- Organization Management
-- User Management
+### Internal status
 
-If you need to check runtime state, organizational structure, or global configuration, start here.
+Shows how the system is running, including active sessions, system load, and the state of key components.
 
-### User Management Supplement
+### System settings
 
-The settings dialog in User Management now also handles Quota account governance:
+Configures global parameters, including the service address and port, security settings, storage settings, and tool switches.
 
-- You can directly modify a regular user's Quota balance
-- You can grant or deduct credits with proper accounting semantics
-- Deductions validate the available balance to prevent over-drafting
-- Admin accounts are not subject to these balance restrictions
+### Organization management
 
-The user list splits online presence by client: Hive (web), Honeycomb (desktop), and Helm (CLI).
+Manages the organizational structure: create and manage organizations, their hierarchy, and their members.
 
-## Agent Group
+### User management
 
-This group is oriented toward conversation and capability governance:
+Manages user accounts: view the user list, create users, edit user details, and manage quota accounts (grant, deduct, set balance).
 
-- Model Configuration
-- Thread Management
-- Preset Agents (templates, each user bound 1:1; bindings and sync live here)
-- Tool Management
-- System Prompt Templates
+Inside a user's settings, the quota actions are:
 
-If you need to see "how models are configured and exposed", start here.
+- **Set the balance directly**: overwrites the current balance, which is useful for correcting the recorded figure
+- **Grant quota**: increases the balance and records the cumulative amount received
+- **Deduct quota**: reduces the balance and records the cumulative amount consumed
+- Administrator accounts are not subject to balance limits
 
-## Debug Group
+The online status in the user list is split by client: Beehive (web), Honeycomb (desktop), and Helm (command line).
 
-This group is oriented toward engineering validation:
+## Agent group
 
-- Throughput Testing: choose a model, concurrency, input length and output length for each run. Preset values remain available, while bounded integer values can be entered directly; the selected concurrency is launched in parallel and the right side shows aggregate metrics. History curves are grouped by model, concurrency and output length. Only the latest 50 summaries are retained; tests create no sessions or thread logs.
-- Virtual models have Fast (default), Medium and Slow profiles: prefill at 2000 / 500 / 100 tokens/s and reasoning/answer generation at 200 / 50 / 10 tokens/s. Random replies and throughput simulations emit reasoning before the answer; replay uses recorded reasoning within the configured capability and budget. Benchmark reasoning defaults to one quarter of the total output budget and respects the reasoning switch and budget. History retains the profile and separates curves accordingly.
-- Performance Testing
-- Capability Evaluation
-- Debug Panel
-- LSP
+### Model configuration
 
-If you are doing integration testing, load testing, or capability verification, this group is the most important.
+Manages the AI models available: add a model by filling in its API key and endpoint, configure model parameters, and set the default model.
+
+### Thread management
+
+Views and manages active threads: thread status, force-cancelling a thread, and viewing thread logs.
+
+### Preset agents
+
+Manages preset agent templates (there can be several, and each user is bound one-to-one to one of them):
+
+- Create, edit, and delete presets
+- Configure a preset's tools, model, prompts, and the fields the user may customize
+- View bound users and adjust bindings in bulk (bind, rebind, unbind); unbinding requires naming a new preset
+- Sync to bound users' instances — sync only the fields a user has not customized, or force-overwrite everything, with a dry run that previews how many users are affected
+
+### Tool management
+
+Manages the tools available: view the built-in tool list, configure external MCP tools, and set tool permissions.
+
+### System prompts
+
+Manages the global prompt templates: view and edit system templates, switch the default template pack, and create new packs.
+
+## Debug group
+
+### Throughput testing
+
+Choose a model, a concurrency list, an input length, and an output length. Each run tests one concurrency level from the list in order and fires that many requests at once. The default concurrency list is `1,2,4,8`, the default input is `8.2k` tokens, and the default output is `128` tokens; the usual presets are kept, and you can also type any integer within range. Token counts are shown as `k` from 1,000 and as `m` from 100,000. History snapshots show the input usage actually measured by the API. The right side shows the aggregated input and output, the first-token latency, the generation speed, and the total time; the history curve plots concurrency on the horizontal axis and shows both overall and per-request speeds.
+
+Engines that support it receive a fixed-length output parameter; other endpoints may finish early, and the actual usage and the reason for ending are kept in the details. Tests create no sessions or thread logs and keep only the last 50 performance summaries. The details and curves separate overall prefill and generation speed, per-prefill speed, and per-generation speed; speeds are shown as `k tok/s` from 1,000 and as `m tok/s` from 100,000. Selecting history entries compares performance curves by concurrency; the vertical axis uses concurrency 1 as the 0% baseline and shows relative change, hovering reveals the measured speed, and you can reuse a configuration or export the selected data.
+
+For virtual models, model configuration offers fast, medium, and slow profiles, defaulting to fast: prefill at 2000 / 500 / 100 tokens/s and reasoning plus generation at 200 / 50 / 10 tokens/s. Random replies and throughput simulations both reason before generating content, and log replay uses the recorded reasoning within the configured capability and budget. Throughput tests default to reasoning equal to one quarter of the total output and can be tuned with the reasoning switch and budget; simulated records are tagged and grouped separately by profile.
 
 ### Simulated model capabilities
 
-Virtual models use the context, output, vision and hearing settings, with additional reasoning/tool switches and token costs per image or audio part. Empty limits default to 128k context and 4k output. Input (including tool schemas) plus reserved output exceeding context returns a context error. Unsupported media is rejected. Media recognition is not performed.
+With a virtual model selected in model configuration, you can set the maximum context, maximum output, vision, hearing, reasoning, and tool capabilities. Context and output left empty default to 128k and 4k. When the input (including tool definitions) plus the output budget exceeds the window, a context-overflow is reported. Turning off vision or hearing makes the corresponding media requests fail. Images and audio can each carry a per-item token count; this only simulates usage and time and does not recognize content.
 
-Replay follows Tool calling mode: native `function_call`, text `tool_call`, or native/text fallback for `freeform_call` depending on the API mode. Names and arguments come from the log; no manual tool configuration is needed. Tools use normal permissions and approvals, then replay advances to the next model round. Exhausted logs fail rather than repeat old calls. Synthetic replies do not initiate tools. Output limits prevent partial tool arguments from executing. Reasoning settings also apply to throughput tests.
+Replay follows the tool-calling mode: `function_call` uses the native tool channel, `tool_call` uses the text protocol, and `freeform_call` falls back to native or text depending on the API mode. Tool names and arguments come straight from the log, so nothing has to be filled in by hand; tool execution still follows permissions and approvals, and replay continues to the next model round once results come back. Running out of log entries raises an error rather than repeating old calls. Synthetic replies do not initiate tools. An over-long output is marked as a length termination, incomplete tool arguments are not executed, and the reasoning capability and budget also apply to throughput tests.
 
-## Documentation Group
+### Performance testing
 
-The admin side now groups documentation entries separately, mainly including:
+Tests response performance with single-request latency measurement and performance sampling.
 
-- User Guide
-- API Reference
+### Capability evaluation
 
-They serve different purposes.
+Evaluates an agent's capability level with task-completion quality assessment and capability regression tests.
 
-### User Guide
+### Debug panel
 
-This is an embedded entry point to the public documentation site.
+Live debugging tools: real-time request tracing, tool-call logs, and error investigation.
 
-Good for looking up:
+### LSP
 
-- Getting Started
-- Core Concepts
-- Integration
-- Operations
-- Reference
+Language service protocol debugging: code intelligence service status and LSP configuration validation.
 
-### API Reference
+## Documentation group
 
-Good for:
+### User guide
 
-- Quickly looking up `/wunder` and related endpoints
-- Viewing fields, examples, and integration methods
+This is the documentation site you are reading now:
 
-## What Different Roles Use Most
+- Getting started
+- Concepts
+- Operating references
+- Troubleshooting
 
-### Administrators
+### Interface reference
 
-Most frequently use:
+Lists interface information:
 
-- System Settings
-- User Management
-- User Guide
+- Endpoint addresses
+- Field descriptions
+- Usage examples
 
-### Developers
+## Panels by role
 
-Most frequently use:
+### Administrators' day-to-day work
 
-- Debug Panel
-- API Reference
-- Tool Management
-- Performance Testing
+Most used:
 
-### Delivery or Training Staff
+- System settings (tuning configuration)
+- User management (handling user issues)
+- User guide (looking up how to do something)
 
-Most frequently use:
+### Technical operations
 
-- User Guide
+Most used:
 
-## A Practical Tip
+- Internal status (system health)
+- Thread management (handling abnormal sessions)
+- Performance testing (tracking down performance problems)
+- Debug panel (locating issues)
 
-If you are not sure where to start investigating a problem, follow this order:
+### Operations staff
 
-1. Check the User Guide for existing documentation
-2. Check the API Reference for field definitions
-3. Go to the relevant governance panel to verify
+Most used:
 
-## Further Reading
+- User management (user service)
+- Organization management (organizational changes)
+- User guide (how-to guidance)
 
-- [Admin Interface](/docs/en/surfaces/web-admin/)
-- [Configuration Reference](/docs/en/reference/config/)
-- [Stream Events Reference](/docs/en/reference/stream-events/)
+## Common workflows
+
+### Adding a new user
+
+1. User management → create user
+2. Set the username, password, and organization
+3. Grant quota as needed
+4. The user can now log in and start working
+
+### Changing system settings
+
+1. System settings → find the relevant option
+2. Change the value
+3. Save (usually takes effect immediately)
+4. Confirm the effect in Internal status
+
+### Handling an abnormal session
+
+1. Thread management → look at the abnormal thread
+2. Check the thread logs and status
+3. To stop it, click cancel
+4. Review the related logs to locate the problem
+
+## Quick locator
+
+| I want to… | Go to this panel |
+|---------|------------|
+| Add a user | User management |
+| Grant a user quota | User management → open the user → Settings |
+| See how the system is running | Internal status |
+| Adjust system configuration | System settings |
+| Add a new model | Model configuration |
+| View active sessions | Thread management or Internal status |
+| Handle a stuck thread | Thread management → cancel |
+| Test system performance | Performance testing or Throughput testing |
+| Look up how to use something | User guide |
+
+## How to reach the Bridge
+
+The Bridge is usually reached at its own address:
+
+- Open the Bridge URL in a browser
+- Sign in with an administrator account
+- The management panels are available once you are in
+
+The exact address is fixed at deployment time; ask whoever deployed the system or check the deployment documentation.
+
+## Security reminders
+
+The Bridge holds the highest privileges in the system:
+
+- Only authorized administrators can access it
+- Administrator passwords should be strong
+- Rotate administrator passwords regularly
+- Confirm the scope of impact before acting
+- Keep records of important actions
+
+## Further reading
+
+- [System Settings Reference](/docs/en/reference/config/)
+- [Channel Management Guide](/docs/en/ops/channel-runtime/)
+- [Monitoring and Evaluation](/docs/en/ops/benchmark-and-observability/)

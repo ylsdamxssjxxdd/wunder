@@ -1,110 +1,17 @@
 ---
 title: Channel Tool
-summary: The contact lookup, message sending, and synchronous or asynchronous receipt structures of `channel_tool`.
-read_when:
-  - You need to list external channel contacts or send a channel message
-source_docs:
-  - src/services/tools/channel_tool.rs
-updated_at: 2026-04-10
+summary: The channel tool has been removed from wunder; kept only as a historical reference.
+updated_at: 2026-10-13
 ---
 
-# Channel Tool
+> **Removed**: This tool has been removed from wunder and is not visible to the agent or users; kept only as a historical reference.
 
-> **Removed**: This tool has been removed from wunder and is not visible to the agent or users; this page is kept as a historical reference.
+It once had two actions:
 
-`channel_tool` mainly has two actions:
+- `list_contacts`: list contacts on an external channel, filterable by keyword; the result carried a total, paging information, and the source scope.
+- `send_message`: send a channel message to a contact.
 
-- `list_contacts`
-- `send_message`
+On sending, `wait` decided which receipt you got:
 
-## `list_contacts`
-
-### Minimum arguments
-
-```json
-{
-  "action": "list_contacts",
-  "channel": "xmpp",
-  "account_id": "acc_xxx",
-  "keyword": "alice"
-}
-```
-
-### Success result
-
-```json
-{
-  "ok": true,
-  "action": "list_contacts",
-  "state": "completed",
-  "summary": "Listed 12 contacts.",
-  "data": {
-    "action": "list_contacts",
-    "items": [ ... ],
-    "total": 12,
-    "offset": 0,
-    "limit": 20,
-    "warnings": [],
-    "resolved_scope": {
-      "source": "session",
-      "channel": "xmpp",
-      "account_id": "acc_xxx"
-    }
-  }
-}
-```
-
-## `send_message`
-
-### Minimum arguments
-
-```json
-{
-  "action": "send_message",
-  "to": "alice@example.com",
-  "peer_kind": "user",
-  "content": "Hello",
-  "wait": true
-}
-```
-
-### With `wait=true`
-
-This is closer to a synchronous delivery result:
-
-```json
-{
-  "ok": true,
-  "action": "send_message",
-  "state": "completed",
-  "summary": "Sent channel message.",
-  "data": {
-    "delivery": { ... },
-    "resolved": { ... }
-  }
-}
-```
-
-### With `wait=false`
-
-This is closer to "queued in outbox":
-
-```json
-{
-  "ok": true,
-  "action": "send_message",
-  "state": "accepted",
-  "summary": "Queued channel message for delivery.",
-  "data": {
-    "outbox_id": "out_xxx",
-    "status": "pending",
-    "resolved": { ... }
-  },
-  "next_step_hint": "..."
-}
-```
-
-## Key points
-
-- The message body is always `content`
-- `wait` determines whether you receive a final delivery result or only a queued-delivery result
+- `wait=true`: closer to a synchronous "delivered" result
+- `wait=false`: closer to "queued in the outbox", returning only a queued status

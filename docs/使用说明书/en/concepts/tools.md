@@ -1,101 +1,112 @@
 ---
 title: Tool System
-summary: wunder is not built around "the model answers." It is built around "the model selects and orchestrates tools to finish work."
-read_when:
-  - You need to understand why wunder is more than chat
-  - You need to understand tool sources, boundaries, and orchestration
-source_docs:
-  - docs/设计文档/01-系统总体设计.md
-  - docs/API文档.md
-  - docs/工具调用.md
+summary: The full path a tool takes from registration and selection through dispatch to its result landing, along with parallelism, timeouts, budgets, and clipping conventions.
+updated_at: 2026-10-13
 ---
 
-# Tool System
+Layered concepts, the default set, and naming conventions live in [Tools (core concepts)](/docs/en/concepts/core-tools/), and per-tool usage is in the [Tools overview](/docs/en/tools/).
 
-The core of wunder is not "the model answers." The core is "the model orchestrates tools to complete tasks."
+## The path of one tool call
 
-## Focus of this page
+```
+Model output
+  → Parse and clean the tool call (repair parameters, restore values that were stringified)
+  → Orchestration: policy and approval, hooks, timeout, budget, whether it can run in parallel
+  → Dispatch: alias → skill → MCP → knowledge base → built-in
+  → A unified result structure
+  → Clipping before it reaches the model
+  → Session record persistence + event push (the display channel is separate)
+```
 
-- where tools in wunder actually come from
-- why tools from different sources can still be orchestrated together
-- why tool visibility can change inside the same session
+Two points are easy to get wrong:
 
-## Key conclusions
+- The four stages "pre → execute → post → result" only describe the model; **hooks are off by default** and are not the main execution chain.
+- A business failure is not raised as an error in the dispatch layer but returned as a normal path. "The tool returned but the business did not succeed" is normal, and the model reads the reason for the failure.
 
-- For the model, capabilities should be unified as tools whenever possible instead of being scattered across implicit mechanisms.
-- For developers, many system capabilities also need to become tools before they can be orchestrated, governed, and observed.
-- Tool sources may differ, but the orchestration layer, display layer, and permission layer should stay as unified as possible.
+## Why a tool is "invisible"
 
-## Where tools come from
+| Where it is stuck | Criterion |
+| --- | --- |
+| Not registered | The name is not in the canonical-name / alias table, and no matching MCP, skill, or knowledge base exists |
+| Temporarily withdrawn | Web search and `ptc`: the code is still there but they are invisible in every case |
+| Not in the capability selection layer | The administrator has not selected that capability for this agent |
+| Filtered by form | Desktop mode hides target-management actions and session thread control / session yield |
+| Filtered by a capability threshold | Without vision, image reading and desktop tools are filtered out; the multimodal set needs a matching model; web fetching / browser need configuration enabled first |
+| Name short-circuited | When an alias and a skill share a name, the earlier route matches first |
 
-At minimum, the current system includes:
+## Naming and dynamic registration
 
-- built-in tools
-- MCP tools
-- Skills
-- knowledge-base tools
-- user tools
+- MCP tools are named "server @ tool"; a package-enabled server folds into a single tool operated through three actions: list, get detail, and call.
+- When a tool name collides across servers, a server-name segment is appended; a collision within one server adds a runtime suffix.
+- A skill name can be called directly; a knowledge base is **registered library by library**, and there is no single "knowledge base" tool.
+- A user-defined tool alias enters the alias table and is **routed by alias first** during dispatch.
 
-## What built-in tools cover first
+## Parallelism, timeouts, and budgets
 
-Built-in tools carry the most basic and most stable execution surface.
+| Item | Value |
+| --- | --- |
+| Parallelism ceiling | 4 |
+| Parallel decision | Whether a batch of tool calls can run in parallel is decided in the orchestration layer |
+| Lock semantics | A parallelizable tool takes a read lock; an exclusive tool takes a write lock |
+| Default tool timeout | 120 seconds (minimum 1 second) |
+| Tool-call budget | 10000 per round |
+| Memory-recall budget | 2000 per round |
 
-Common examples include:
+Tools outside the parallelism allowlist run serially, deliberately: write and execution tools are exclusive.
 
-- files and workspace: reading files, writing files, applying patches, searching content, listing files
-- runtime operations: command execution, and sleep or wait
-- web and desktop: `web_fetch`, browser automation, and desktop control
-- sessions and collaboration: thread control, subagent control, and memory management
+## Two clipping channels for results
 
-If you want to choose a specific tool right now, go directly to [Tools Overview](/docs/en/tools/).
+| Channel | Behavior | Impact |
+| --- | --- | --- |
+| Display | Preview 2400 characters and 16 lines, with an ellipsis beyond that | Affects client rendering only; the original message and copied content stay complete |
+| Model input | Truncate head and tail by budget; older reproducible observations go to micro-compaction | Decides what the model sees next |
 
-## What MCP is for
+The budget into the model: 10000 characters at each of head and tail; arrays at most 128 items (48 head + 16 tail); paged results 500 items (180 head + 60 tail). Clipping adds a "truncated" marker, so the model can see that content was cut.
 
-MCP brings capabilities from outside wunder into the same orchestration space.
+Micro-compaction conventions: keep the most recent 5 groups, collapse older observations into a 768-byte preview, and only act when at least 256 tokens are saved.
 
-It does not replace built-in tools. It extends them by bringing in external services such as:
+## MCP integration
 
-- databases
-- external services
-- third-party system bridges
+- An external MCP client must be configured with a name, endpoint, transport, request headers, authentication, allowed tools, whether to package, and tool specs.
+- The hull's built-in MCP service endpoint is `/wunder/mcp` (streamable-http), exposing two tools, `wunder@excute` and `doc2md`; it returns 501 when the matching capability is off.
+- The standalone Python FastMCP service carries its own configuration and toolset and is not part of this engine.
 
-## What Skills are for
+## The protocol follows the provider
 
-A Skill is closer to a packaged method than to a single action.
+The tool-call protocol is decided by the provider:
 
-It usually bundles:
+| Situation | Mode |
+| --- | --- |
+| The model explicitly configures a tool-call mode | Follow the configuration |
+| The provider is openai | Text-protocol tool calls |
+| Any other provider | Native function calls |
+| An unrecognized value | Fall back to the tag / xml text protocol |
 
-- a method
-- a sequence of steps
-- a set of constraints
-- best practices for a certain class of task
+The text protocol's lark syntax is currently reserved for the patch form of text editing; parameter repair and nested restoration happen in the core library. There is no separate tool-protocol branch for Win7; the confirmed difference is only on the interop side — an older Win7 node does not declare the "execute command" capability.
 
-## What knowledge bases and user tools solve
+## Removed and merged
 
-- Knowledge bases provide controlled context sources, especially for rules, long documents, and domain material.
-- User tools let different users extend the system for their own workflows while still staying inside the system's governance boundary.
+| Status | Item |
+| --- | --- |
+| Removed | User-world tools, channel tools, `a2a_*` tools, `final_response`, `a2ui` tools, LSP query / node-call tools, and the standalone sleep-and-wait tool |
+| Merged | `apply_patch` merged into **text editing** (one tool with three forms: replace / patch / subcommand) |
+| Semantics changed | Session yield replaces the old sleep-and-wait |
+| Temporarily withdrawn | Web search and `ptc` (code kept, invisible) |
 
-## Why the tool system must be unified
+## Common mistakes
 
-If different tool sources all behave independently, several problems follow:
-
-- the model cannot tell which class of capability to prefer
-- the frontend cannot present and search tools consistently
-- permissions, audit, and governance become fragmented
-- troubleshooting becomes much harder because the failing layer is unclear
-
-wunder's approach is: sources may differ, but orchestration and presentation should be unified whenever possible.
-
-## Common misunderstandings
-
-- `web_fetch`, browser automation, and desktop control are all tools, but they do not share the same capability boundary.
-- A Skill is not just another name for a tool. It is closer to a model-readable operating manual.
-- Tool visibility is not determined by code alone. It also depends on runtime form, configuration, and session context.
+- The four-stage model is not the main execution chain, and hooks are off by default.
+- A clipped result does not mean the model cannot see it: the display channel and the model input channel are separate.
+- More tools do not make the agent smarter; quite the opposite: many names and vague descriptions raise the error rate, so the default set is deliberately restrained.
+- A tool error is not a failed call: a business failure is returned to the model as a normal result with a reason and a next-step hint.
+- Not every tool can run in parallel: only reads on the parallelism allowlist can, while writes and executions are exclusive.
+- Win7 has no tool-protocol fallback branch.
 
 ## Further reading
 
-- [Tools Overview](/docs/en/tools/)
-- [Web Fetch](/docs/en/tools/web-fetch/)
-- [MCP Endpoint](/docs/en/integration/mcp-endpoint/)
-- [A2A Interface](/docs/en/integration/a2a/)
-- [Architecture](/docs/en/concepts/architecture/)
+- [Tools (core concepts)](/docs/en/concepts/core-tools/) — the four-layer model and the default set
+- [Tools overview](/docs/en/tools/) — parameter documentation for each tool
+- [Context compression](/docs/en/concepts/core-context-compression/) — micro-compaction and history compression
+- [Real-time behavior](/docs/en/concepts/core-realtime/) — how tool events are pushed to the client
+- [Stability](/docs/en/concepts/core-stability/) — timeouts, budgets, and circuit breaking
+- [Configuration reference](/docs/en/reference/config/) — MCP and tool toggle settings

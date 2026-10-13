@@ -1,42 +1,35 @@
 ---
 title: External Login and Embedding
-summary: wunder reserves `/wunder/auth/external/*` as the interface for external system embedding and passwordless access.
-read_when:
-  - You want to enter wunder directly from an external system
-  - You want to understand the purposes of external login, launch, and token_login
-source_docs:
-  - docs/API文档.md
-  - docs/设计文档/01-系统总体设计.md
-  - config/wunder-example.yaml
-  - src/api/auth.rs
+summary: Bring users who are already logged in to an external system straight into wunder without asking them to type a password again; they can land on the chat page or on a specific agent.
+updated_at: 2026-10-13
 ---
 
-# External Login and Embedding
-
-wunder currently reserves a complete set of external access interfaces:
+When your users are already logged in elsewhere and you want them to enter wunder without retyping a password, use this group of interfaces:
 
 - `/wunder/auth/external/*`
 
-These are not for regular administrator login, but for:
+This is a separate matter from logging in to your own admin backend.
 
-- External system embedding
-- Passwordless redirection
-- User identity alignment
-- Issuing wunder's own login session
+## Applicability
 
-## Why Not Reuse Regular Login
+- Embedding wunder into an external system, or a passwordless redirect → use these.
+- Aligning an external identity with wunder, or issuing a login state of wunder's own → use these.
+- Ordinary admin login or username-and-password login → not these.
 
-External system integration typically has these characteristics:
+Different external systems integrate differently: some are suited to first requesting a one-time credential and then exchanging it for a login state, while others are suited to a direct redirect. wunder therefore keeps several entries.
 
-- Users are already logged in to the external system
-- wunder only handles session handover, not suitable for asking users to enter passwords again
-- After login, should redirect directly to a specific chat or embedded page
+## Exchanging an External Identity for a wunder Session
 
-Therefore, wunder specifically reserves the external access interface.
+The most common approach is exchanging a token for a login state:
 
-## Common Interfaces
+1. The external system brings a token and a user identity, and may also carry a target agent name.
+2. wunder exchanges it for its own access token and also returns the bound agent ID.
+3. If the name matches an existing agent the current user can access, it additionally enters focus mode.
+4. The frontend always enters the embed page: by default the message page, or the focus page when an agent matches, with the left sidebar hidden.
 
-Currently, the codebase has at least these entry points:
+A shorter entry brings the user identity in directly, without generating a token in the external system first.
+
+The entries available on this path:
 
 - `POST /wunder/auth/external/login`
 - `POST /wunder/auth/external/code`
@@ -45,86 +38,16 @@ Currently, the codebase has at least these entry points:
 - `POST /wunder/auth/external/token_login`
 - `POST /wunder/auth/external/exchange`
 
-For the most common scenarios, handle as follows:
+## Where Users Land
 
-- `token_login`
+External links all land inside the embed page: the default message page carries at least the "messages" section, the default agent additionally carries the "default" entry, and focus mode carries the matched agent ID. Embedding the agent page is also possible, and likewise hides the left sidebar.
 
-## What `token_login` Is Suitable For
+wunder does more than hand the token back; based on whether a named agent matched, it decides which page the user lands on. An embedded user equally has only one agent instance in its own session.
 
-The most typical usage currently:
+## Key Settings and Common Pitfalls
 
-- External system provides `token + user_id`, optionally with `agent_name`
-- wunder directly exchanges for its own `access_token`
-- Also returns `agent_id`
-- When `agent_name` matches an existing agent accessible to the current user, additionally returns `focus_mode=true`
-- Frontend always enters the embed shell; inside that shell it opens either the message page or the focused agent page while keeping the left sidebar hidden
-
-There is also a shorter entry:
-
-- `/login?user_id=<id>[&agent_name=<name>]`
-
-This form is useful when you do not want the external system to mint a JWT first and only need to pass a user identity into wunder.
-
-In other words, it's more like a bridging interface for "exchanging external identity for wunder session".
-
-## Why launch / code Still Exist
-
-Different external systems have different integration approaches.
-
-Some systems are suitable for:
-
-- First request a one-time code
-- Then exchange for login session
-
-Some systems are suitable for:
-
-- Direct launch
-- Direct redirect to target page
-
-wunder retains these entry points to be compatible with different embedding methods, rather than requiring all integrators to follow a fixed process.
-
-## What Ensures Security Boundaries
-
-The key configuration for this chain is:
-
-- `security.external_auth_key`
-
-If not explicitly configured, it will automatically fall back to:
-
-- `security.api_key`
-
-So it's not "open by default".
-
-## Where to Redirect After Integration
-
-Currently, the most typical destinations fall into two categories:
-
-- No `agent_name` passed, or name doesn't match existing agent: `/app/embed/chat?section=messages&entry=default`
-- Matches existing agent and enters focus mode: `/app/embed/chat?section=messages&agent_id=<agent_id>`
-- Desktop equivalents: `/desktop/embed/chat?section=messages&entry=default` and `/desktop/embed/chat?section=messages&agent_id=<agent_id>`
-
-In other words, external links now land on the `/embed/chat` shell consistently; the default message page will at least carry `section=messages`, default-agent fallback additionally carries `entry=default`, and focus mode carries the matched `agent_id`.
-If you need the embedded agent page, you can also enter with `section=agents&agent_id=<agent_id>` while still keeping the left sidebar hidden. wunder doesn't just return a token, but also decides the final main content state based on whether a specified agent is matched. Embedded users also have exactly one agent instance in their own session.
-
-## What Scenarios This Chain Is Suitable For
-
-Suitable for:
-
-- Unified portal embedding wunder
-- External system single sign-on into a specific agent
-- Team system bringing user identity into wunder
-
-Not suitable for:
-
-- Replacing administrator backend login
-- Replacing regular user account/password system
-
-## Common Pitfalls
-
-- Only configured external JWT, but didn't configure external_auth_key fallback
-- Only got the token, didn't handle the returned `agent_id`
-- Wanted to change current thread prompt, but forgot external link only affects new threads
-- Treating external passwordless login as a regular open interface
+- This path has its own key; when it is not configured separately, it falls back to the platform's general key, so it is not open by default.
+- Common pitfalls: configuring only the external token but forgetting the key fallback; getting only the token and not handling the returned agent ID; wanting to change the current thread's prompt when an external link only affects new threads; treating the passwordless entry as a public interface.
 
 ## Further Reading
 

@@ -1,252 +1,18 @@
 ---
 title: 工具总览
-summary: 当前 wunder 工具体系、统一返回骨架、状态语义、例外项与选型建议。
-read_when:
-  - 要先判断该用哪一类工具
-  - 要理解工具最新的返回结构
-source_docs:
-  - src/services/tools.rs
-  - src/services/tools/catalog.rs
-  - src/services/tools/tool_error.rs
-  - docs/工具返回内容优化表.md
+summary: wunder 的工具按用途分成几类；选型入口、结果形态约定，以及不套统一外壳的几个例外。
 updated_at: 2026-10-10
 ---
 
 # 工具总览
 
-查这组文档时按三步走：
+wunder 的工具体系覆盖文件、命令、Web、桌面、协作、系统连接等场景。大多数内置工具的成功和失败结果都收敛到一套统一外壳，少数工具例外。
 
-1. 先判断这件事该用哪类工具
-2. 再确认这个工具成功、失败分别怎么返回
-3. 最后看关键动作和最小必填参数
+## 按场景选工具
 
-## 核心约定
+### 只有关键词，想找网页来源
 
-wunder 的内置工具大多收敛到统一返回骨架，不再是每个工具各回各的格式。模型和前端都应优先读取以下顶层字段：
-
-- 顶层 `ok`
-- 顶层 `action`
-- 顶层 `state`
-- 顶层 `summary`
-- 顶层 `data`
-
-也就是说，业务结果优先在 `data` 里取。`crates/wunder-runtime/src/services/tools.rs` 里有 `tool_result_data()` / `tool_result_field()` 这类兼容读取方式，文档也按这个约定来理解。
-
-## 统一成功返回
-
-绝大多数内置工具成功时返回：
-
-```json
-{
-  "ok": true,
-  "action": "tool_action",
-  "state": "completed",
-  "summary": "Human-readable summary.",
-  "data": {
-    "tool_specific": "payload"
-  }
-}
-```
-
-部分工具还会附带：
-
-```json
-{
-  "next_step_hint": "What to do next"
-}
-```
-
-### 常见 `state`
-
-- `completed`：本次动作已经完成
-- `dry_run`：只做校验或预演，没有真正执行
-- `accepted`：任务已接收，但还没拿到最终结果
-- `running`：仍在运行中
-- `yielded`：已让出当前轮次控制权，不是最终回复
-- `awaiting_input`：已经打开前端面板，正在等用户输入
-- `partial`：只完成了一部分，通常需要继续跟进
-- `timeout`：等待超时，但并不一定代表目标彻底失败
-- `noop`：动作合法，但没有实际改动
-
-## 统一失败返回
-
-大多数内置工具失败时返回：
-
-```json
-{
-  "ok": false,
-  "error": "Human-readable error message.",
-  "sandbox": false,
-  "data": {
-    "tool_specific": "debug payload",
-    "error_meta": {
-      "code": "TOOL_EXAMPLE_ERROR",
-      "hint": "What to fix before retrying.",
-      "retryable": false,
-      "retry_after_ms": null
-    }
-  },
-  "error_meta": {
-    "code": "TOOL_EXAMPLE_ERROR",
-    "hint": "What to fix before retrying.",
-    "retryable": false,
-    "retry_after_ms": null
-  }
-}
-```
-
-阅读失败结果时优先看：
-
-1. `error_meta.code`
-2. `error_meta.hint`
-3. `data` 里的上下文
-
-## 例外工具
-
-下面这些工具要单独记：
-
-### `final_response`（已移除）
-
-该工具已从 wunder 中移除，对智能体与用户均不可见；以下为其历史返回结构，仅供排查参考：
-
-```json
-{
-  "answer": "给用户的最终回复"
-}
-```
-
-### `a2ui`
-
-它本质上是向前端发结构化 UI 指令，返回也保持薄包装：
-
-```json
-{
-  "uid": "optional-surface-id",
-  "a2ui": [ ... ],
-  "content": "optional text"
-}
-```
-
-### `schedule_task`
-
-它当前走的是压缩后的调度返回，不带统一的 `ok/action/state/summary/data` 骨架。常见成功结果更像：
-
-```json
-{
-  "action": "add",
-  "job": {
-    "job_id": "job_xxx",
-    "name": "日报提醒",
-    "enabled": true,
-    "schedule": {
-      "kind": "every",
-      "every_ms": 300000
-    },
-    "next_run_at": "2026-04-10T10:00:00+08:00",
-    "last_run_at": null
-  },
-  "deduped": false
-}
-```
-
-### 浏览器工具组（`browser_*`）
-
-浏览器不再是单个工具，而是一组以 `browser_` 开头的原生工具（共 17 个，如 `browser_navigate`、`browser_click`、`browser_take_screenshot`，详见 [浏览器](/docs/zh-CN/tools/browser/)）。成功结果采用 MCP 风格内容块结构（`content` + `provider` 字段），不使用统一的 `ok/action/state/summary/data` 骨架。
-
-### `web_search`（已移除）
-
-`web_search` 曾用于用关键词搜索公开网页，结果在 `data.results`。**该工具已移除，对智能体与用户不可见**；以下为其历史返回结构，仅供排查参考：
-
-```json
-{
-  "ok": true,
-  "action": "web_search",
-  "state": "completed",
-  "summary": "Found 5 web results.",
-  "data": {
-    "query": "example",
-    "provider": "configured-provider",
-    "results": [
-      {
-        "title": "Example",
-        "url": "https://example.com",
-        "description": "..."
-      }
-    ]
-  }
-}
-```
-
-历史上它用于找候选 URL；现已移除，需要网页正文时直接用 `web_fetch`。
-
-### `web_fetch`
-
-`web_fetch` 的成功结果目前也是直接返回抓取结果对象，而不是统一成功骨架：
-
-```json
-{
-  "url": "https://example.com",
-  "final_url": "https://example.com",
-  "status": 200,
-  "title": "Example",
-  "content_type": "text/html",
-  "content_kind": "html",
-  "fetch_strategy": "direct_http",
-  "format": "markdown",
-  "extractor": "readability",
-  "truncated": false,
-  "cached": false,
-  "fetched_at": "2026-04-10T03:00:00Z",
-  "content": "..."
-}
-```
-
-### `文本编辑`（旧名 `apply_patch`）
-
-`文本编辑`（canonical `edit_file2`）成功时走统一骨架；其 `apply_patch` 形态失败时会有自己额外的 patch 错误码和 hint，错误语义比普通文件工具更严格。
-
-## 工具分层
-
-### 1. 基础收尾与前端协同
-
-- [最终回复（已移除）](/docs/zh-CN/tools/final-response/)
-- [面板与 a2ui](/docs/zh-CN/tools/panels-and-a2ui/)
-- [会话让出](/docs/zh-CN/tools/sleep/)：`sessions_yield` 归入回合控制思路
-
-### 2. 工作区与代码
-
-- [工作区文件](/docs/zh-CN/tools/workspace-files/)
-- [执行命令](/docs/zh-CN/tools/exec/)
-- [应用补丁（已并入 文本编辑）](/docs/zh-CN/tools/apply-patch/)
-- [ptc（已移除）](/docs/zh-CN/tools/ptc/)
-- [技能调用](/docs/zh-CN/tools/skill-call/)
-- [读图工具](/docs/zh-CN/tools/read-image/)
-
-### 3. Web 与桌面
-
-- [网页抓取](/docs/zh-CN/tools/web-fetch/)
-- [浏览器](/docs/zh-CN/tools/browser/)
-- [桌面控制](/docs/zh-CN/tools/desktop-control/)
-
-### 4. 线程与子智能体
-
-- [会话线程控制](/docs/zh-CN/tools/thread-control/)
-- [子智能体控制](/docs/zh-CN/tools/subagent-control/)
-
-### 5. 系统连接与记忆
-
-- [自我状态](/docs/zh-CN/tools/self-status/)
-- [记忆管理](/docs/zh-CN/tools/memory-manager/)
-- [用户世界工具](/docs/zh-CN/tools/user-world/)
-- [渠道工具（已移除）](/docs/zh-CN/tools/channel/)
-- [A2A 工具（已移除）](/docs/zh-CN/tools/a2a-tools/)
-- [定时任务](/docs/zh-CN/tools/schedule-task/)
-
-## 选型建议
-
-### 只有关键词，需要找网页来源
-
-`web_search` 已移除；直接给出 URL 时用 [网页抓取](/docs/zh-CN/tools/web-fetch/) 读取正文即可。
+网页搜索已经移除；手上有明确的 URL 时，直接用 [网页抓取](/docs/zh-CN/tools/web-fetch/) 读正文。
 
 ### 只读网页正文
 
@@ -258,35 +24,78 @@ wunder 的内置工具大多收敛到统一返回骨架，不再是每个工具�
 
 ### 要看本地代码
 
-通常顺序是：
-
-1. [工作区文件](/docs/zh-CN/tools/workspace-files/) 先列目录或搜索
-2. [工作区文件](/docs/zh-CN/tools/workspace-files/) 再读片段
+通常顺序是：先用 [工作区文件](/docs/zh-CN/tools/workspace-files/) 列目录或搜索，再读片段。
 
 ### 要改代码
 
-- 小而精确、带上下文匹配的修改：用 [应用补丁（已并入 文本编辑）](/docs/zh-CN/tools/apply-patch/)（即 `文本编辑` 的 patch 形态）
-- 一次精确文本替换：用 [工作区文件](/docs/zh-CN/tools/workspace-files/) 里的 `文本编辑`（`edit_file2`）
-- 复杂替换逻辑：用 [执行命令](/docs/zh-CN/tools/exec/) 跑脚本（`ptc` 已移除）
+- 小而精确、带上下文匹配的修改：用 [应用补丁（已并入 文本编辑）](/docs/zh-CN/tools/apply-patch/)
+- 一次精确文本替换：用 [工作区文件](/docs/zh-CN/tools/workspace-files/) 里的 `文本编辑`
+- 复杂替换逻辑：用 [执行命令](/docs/zh-CN/tools/exec/) 跑脚本
 - 整文件重写：用 [工作区文件](/docs/zh-CN/tools/workspace-files/) 里的 `write_file`
 - 要编译、测试、跑脚本：用 [执行命令](/docs/zh-CN/tools/exec/)
-- 纯 Python 临时程序：优先用 [执行命令](/docs/zh-CN/tools/exec/)（`ptc` 已移除）
 
 ### 要做协作
 
 - 当前会话里临时拉起子运行：用 [子智能体控制](/docs/zh-CN/tools/subagent-control/)
-- 管理任务线程/分支线程：用 [会话线程控制](/docs/zh-CN/tools/thread-control/)
+- 管理任务线程 / 分支线程：用 [会话线程控制](/docs/zh-CN/tools/thread-control/)
 
-## 本次改版要点
+## 工具分组
 
-- 大多数内置工具已经统一到了 `ok/action/state/summary/data`
-- `data` 成为主要结果承载区
-- 很多工具的 schema 明显收紧，模型侧更强调扁平、显式、`additionalProperties: false`
-- `subagent_control`、`thread_control` 都已经转成“动作明确、状态明确、后续 hint 明确”的风格
-- `schedule_task`、浏览器工具组（`browser_*`）、`web_fetch`、`a2ui` 仍然属于需要单独记忆的例外
+### 收尾与前端协同
 
-## 下一步
+- [最终回复（已移除）](/docs/zh-CN/tools/final-response/)
+- [计划面板 / 问询面板 / 会话让出](/docs/zh-CN/tools/panels-and-a2ui/)
+- [会话让出](/docs/zh-CN/tools/sleep/)
 
-- 关心“文件和代码怎么读写”，直接看 [工作区文件](/docs/zh-CN/tools/workspace-files/)
-- 关心“子智能体怎么拉起和回收”，直接看 [子智能体控制](/docs/zh-CN/tools/subagent-control/)
-- 关心“当前某个工具具体返回什么”，跳到对应单工具页，那里按最新实现列出了成功返回结构
+### 工作区与代码
+
+- [工作区文件](/docs/zh-CN/tools/workspace-files/)
+- [执行命令](/docs/zh-CN/tools/exec/)
+- [应用补丁（已并入 文本编辑）](/docs/zh-CN/tools/apply-patch/)
+- [技能调用](/docs/zh-CN/tools/skill-call/)
+- [读图工具](/docs/zh-CN/tools/read-image/)
+- [ptc（已移除）](/docs/zh-CN/tools/ptc/)
+
+### Web 与桌面
+
+- [网页抓取](/docs/zh-CN/tools/web-fetch/)
+- [浏览器](/docs/zh-CN/tools/browser/)
+- [桌面控制](/docs/zh-CN/tools/desktop-control/)
+
+### 线程与子智能体
+
+- [会话线程控制](/docs/zh-CN/tools/thread-control/)
+- [子智能体控制](/docs/zh-CN/tools/subagent-control/)
+
+### 系统连接与记忆
+
+- [自我状态](/docs/zh-CN/tools/self-status/)
+- [记忆管理](/docs/zh-CN/tools/memory-manager/)
+- [用户世界工具](/docs/zh-CN/tools/user-world/)
+- [渠道工具（已移除）](/docs/zh-CN/tools/channel/)
+- [A2A 工具（已移除）](/docs/zh-CN/tools/a2a-tools/)
+- [定时任务](/docs/zh-CN/tools/schedule-task/)
+
+## 结果怎么读
+
+大多数内置工具成功时返回一套统一外壳：是否成功、动作名、状态、一句摘要，以及承载业务结果的数据区。业务结果优先在数据区里取。部分工具还会再补一句“下一步该怎么做”。
+
+常见的状态包括：已完成、仅预演、已接收、运行中、已让出、等待输入、部分完成、超时、无改动。超时不一定代表彻底失败。
+
+失败时也走统一外壳：一句错误、可读的原因说明和修复提示，以及能帮助定位的数据。
+
+几个不套统一外壳的例外：
+
+- **最终回复**（已移除）：只是终结信号，只回一条给用户的答案。
+- **`a2ui`**：向前端发结构化界面指令，返回是薄包装。
+- **定时任务**：返回压缩后的调度结果。
+- **浏览器工具组**：结果采用内容块结构（见 [浏览器](/docs/zh-CN/tools/browser/)）。
+- **网页搜索**（已移除）：曾用于关键词搜公开网页，结果在数据区的 `results` 里；现在要正文直接用网页抓取。
+- **网页抓取**：成功时直接返回抓取结果对象。
+- **文本编辑**（旧名 `apply_patch`）：成功走统一外壳；补丁形态失败时，错误语义比普通文件工具更严格。
+
+## 延伸阅读
+
+- 文件和代码的读写：[工作区文件](/docs/zh-CN/tools/workspace-files/)
+- 子智能体的派生与回收：[子智能体控制](/docs/zh-CN/tools/subagent-control/)
+- 单个工具的返回：见对应工具页

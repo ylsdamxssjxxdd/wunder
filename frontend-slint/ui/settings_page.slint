@@ -11,6 +11,7 @@ import { ChannelsPage } from "channels_page.slint";
 import { ToolsPage, ToolResource } from "tools_page.slint";
 import { ExpertData, MemoryCard, ArchiveCard, RuntimePoint, HeatCard } from "expert_data.slint";
 import { AvatarDialogState } from "avatar_dialog.slint";
+import { HelpBrowser } from "help_browser.slint";
 
 // Web-style settings navigation entry: 36px circular icon badge, title and
 // subtitle rows, solid accent background with white text when selected.
@@ -1239,15 +1240,25 @@ export component SettingsPage inherits Rectangle {
                         }
                     }
                     if root.settings-tab == 11 : Rectangle { vertical-stretch: 1;
-                        VerticalLayout { padding: 24px; spacing: 12px; alignment: start;
-                            Text { height: 28px; text: I18n.st_tab_help; color: Theme.text; font-size: Theme.font-headline; font-weight: 700; }
-                            Text { text: I18n.st_help_native_note; color: Theme.muted; font-size: Theme.font-md; wrap: word-wrap; }
-                            Text { height: 22px; text: I18n.st_diagnostics; color: Theme.text; font-size: Theme.font-lg; font-weight: 600; }
-                            HorizontalLayout { height: 32px; spacing: 8px;
-                                Action { width: 110px; label: I18n.st_export_diagnostics; show-label: true; enabled: !root.loading; clicked => { root.export-diagnostics(); } }
-                                Text { height: 30px; text: I18n.st_diagnostics_note; color: Theme.muted; font-size: Theme.font-xs; vertical-alignment: center; overflow: elide; }
+                        VerticalLayout { padding: 24px; padding-top: 20px; spacing: 12px;
+                            // 帮助文档浏览器：目录/索引/搜索侧栏 + 工具栏 + 排版正文，
+                            // 状态全部保存在 HelpDocs 全局里，切页不丢阅读进度。
+                            Rectangle {
+                                vertical-stretch: 1;
+                                background: Theme.panel;
+                                border-width: 1px;
+                                border-color: Theme.border;
+                                border-radius: Theme.radius-sm;
+                                clip: true;
+                                HelpBrowser {}
                             }
-                            Rectangle { vertical-stretch: 1; }
+                            VerticalLayout { spacing: 8px;
+                                Text { height: 22px; text: I18n.st_diagnostics; color: Theme.text; font-size: Theme.font-lg; font-weight: 600; }
+                                HorizontalLayout { height: 32px; spacing: 8px;
+                                    Action { width: 110px; label: I18n.st_export_diagnostics; show-label: true; enabled: !root.loading; clicked => { root.export-diagnostics(); } }
+                                    Text { height: 30px; text: I18n.st_diagnostics_note; color: Theme.muted; font-size: Theme.font-xs; vertical-alignment: center; overflow: elide; }
+                                }
+                            }
                         }
                     }
                     if root.settings-tab == 2 : ToolsPage {

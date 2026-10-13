@@ -1,183 +1,84 @@
 ---
 title: Companion System
-summary: Use sprite-animated companions in the Honeycomb (desktop) and the Beehive (web) so agents accompany your work in a livelier way.
+summary: A companion is a visual layer attached to an agent — a ZIP companion package plus a sprite sheet that follows the runtime state and takes no part in any execution logic.
+read_when:
+  - You want to add, replace, or trim a desktop pet and need to know the package format
+  - A companion shows the wrong animation or the wrong size
+  - You need to know who may upload companions and where they are stored
+source_docs:
+  - crates/wunder-runtime/src/services/companions.rs
+  - crates/wunder-runtime/src/api/companions.rs
+  - crates/wunder-runtime/src/api/admin/resource_admin.rs
+  - frontend-slint/src/companion_sprite.rs
+  - crates/wunder-desktop/native_companion_overlay.rs
+updated_at: 2026-10-13
 ---
 
-# Companion System
+A companion is a visual layer of company: it plays an animation that matches the session's runtime state and occasionally shows a message bubble. **It takes no part in execution and does not affect scheduling; deleting a companion changes no functionality.**
 
-The companion system lets you give an agent a cute sprite-animated character. The companion floats on screen, plays different animations based on the agent's state, and can display message bubbles.
+## What a companion package looks like
 
-## When It Helps
+A companion package is a ZIP that holds exactly two things: a manifest and a sprite-sheet image.
 
-Companions fit these scenarios:
+- The manifest (`pet.json`) is JSON and states the companion's id, display name, and description, along with where the sprite-sheet file lives.
+- The sprite sheet is a single image whose path the manifest gives.
+- Size limits: the whole ZIP is at most 24 MB, and the single sprite-sheet file is at most 18 MB.
+- Import guards against path traversal inside the archive.
 
-- **Long-running tasks**: while the agent works on something complex, the companion shows a "running" animation so you know it is busy
-- **Desktop company**: on the desktop app the companion stays visible, like a little assistant beside your work
-- **Customizable companion**: pick or import a companion in agent settings, so the runtime state is visible at a glance
+Companion files live in one fixed companion directory (`config/data/companions/global`, overridable through `WUNDER_COMPANIONS_ROOT`); embedded forms such as the Honeycomb and the Helm pin this directory to their own data directory. The directory starts empty, so no companion package ships built in and an empty list is normal.
 
-## Enabling Companions
+## Sprite-sheet specification
 
-### Desktop
+- Every frame is a fixed **192 × 208** pixels, and frames of the same state line up horizontally in the same row; **one state occupies one row**.
+- The row number is the state (rows 0–8):
 
-1. Open the settings panel
-2. Find the "Companion" setting
-3. Turn on "Enable companion"
-4. Pick a companion from the list
+| Row | State | Row | State |
+| --- | --- | --- | --- |
+| 0 | idle | 5 | failed |
+| 1 | running-right | 6 | waiting |
+| 2 | running-left | 7 | running |
+| 3 | waving | 8 | review |
+| 4 | jumping | | |
 
-### Web
+- The session's runtime state maps to an animation row: running → running (row 7), completed → jumping (row 4), waiting → waiting (row 6), error → failed (row 5), and everything else falls back to idle (row 0). Clicking the companion plays the waving animation once.
+- A companion package may declare fewer rows or frames: out-of-range rows or frames are degraded by a bounds check and never crash.
 
-1. Click your avatar in the top-right corner
-2. Go to "Preferences"
-3. Find the "Companion" section
-4. Enable and pick a companion
+## How each form presents it
 
-## Where Companions Come From
+| Form | Presentation |
+| --- | --- |
+| Honeycomb (Windows) | Native floating window: a Win32 layered window per pet, with dragging and the frame clock on a separate message thread that does not occupy the UI thread |
+| Honeycomb (Linux) | **No equivalent floating window**; the desktop pet exists only on Windows |
+| Beehive | An in-page overlay that follows the chat state |
+| Bridge | A companion management panel: upload, edit, delete, and export global companions |
+| Helm | No companion UI; it only points the companion directory at the local data directory |
 
-### Global companions
+## Scale and position
 
-Uploaded by system administrators, visible to all users. These are usually reviewed and of reliable quality.
+| Item | Range |
+| --- | --- |
+| Stored / menu scale | 0.5–1.6 (presets 0.5 / 0.8 / 1.0 / 1.2 / 1.4 / 1.6) |
+| Render scale | 0.5–1.8 |
+| Position | Clamped to the screen work area with margins kept; drag results are saved |
 
-### Private companions
+The Honeycomb stores position, per-companion show / scale overrides, and the global message-hint switch in a local file; the Beehive stores them in the browser (clearing browser data resets position and preferences).
 
-Companions you import yourself, available only in your browser.
+## Who can change companions
 
-**How to import:**
+- The user side is read-only: four GET endpoints only — the global list, one companion's detail, its sprite sheet, and its exported package (`/wunder/companions/global*`).
+- All adding, changing, and deleting sits on the administrator side (`/wunder/admin/companions*`): list, import, edit and delete, sprite sheet, export package. The import request-body limit matches the ZIP limit (24 MB).
+- A "private companion" in the Beehive takes effect only in the current browser and is not uploaded to the server; a global companion is uploaded by an administrator through the Bridge and is then visible to all users. The Bridge is the only upload path.
 
-1. Prepare a companion package (ZIP file)
-2. Click "Import companion" in the companion settings
-3. Choose the ZIP file
-4. It is selected automatically after a successful import
+## Easy to get wrong
 
-## Companion Package Format
+- A companion is not "another kind of agent"; it is only the visual shell of an agent, and one agent binds one companion.
+- Users cannot upload a companion to the server from the Beehive; server-side companions are always managed by administrators through the Bridge, and private imports stay in the local browser.
+- The Honeycomb on Linux has no desktop floating window — the overlay is a Win32 implementation with no Linux equivalent.
+- Companion animation does not affect task execution: the runtime state drives the animation, not the other way around.
+- The system ships no companion package; an administrator uploads them.
 
-To create your own companion, prepare:
+## Related
 
-### File structure
-
-```
-my-companion.zip
-├── pet.json        # manifest
-└── spritesheet.webp # sprite sheet image
-```
-
-### Manifest (pet.json)
-
-```json
-{
-  "id": "my-companion",
-  "displayName": "My Companion",
-  "description": "A custom sprite companion",
-  "spritesheetPath": "spritesheet.webp"
-}
-```
-
-### Sprite sheet requirements
-
-- **Formats**: WebP, PNG, GIF, or JPEG
-- **Size**: max 18MB per file
-- **Package**: max 24MB for the whole ZIP
-
-### Sprite sheet layout
-
-The sprite sheet is a vertically stacked frame sequence; the system picks rows by state:
-
-- Row 1: idle
-- Row 2: running
-- Row 3: waving
-- Row 4: jumping
-- Row 5: failed
-- Row 6: waiting
-- Row 7: review
-
-## Interacting with Companions
-
-### Click
-
-Clicking a companion plays the waving animation and shows its name.
-
-### Drag
-
-Dragging moves the companion around the screen. The position is saved automatically.
-
-### Context menu
-
-Right-clicking opens a menu:
-
-- **Open conversation**: jump to that agent's chat
-- **Show/hide**: toggle companion visibility
-- **Scale**: adjust size (0.5x - 1.6x)
-
-## Message Bubbles
-
-When an agent replies, a bubble appears above its companion:
-
-- The bubble shows a summary of the latest reply
-- It disappears automatically
-- Bubbles can be turned off in settings
-
-## Setting a Companion for an Agent
-
-### Option 1: Agent settings panel
-
-1. Open the agent details
-2. Find the "Icon / companion" setting
-3. Choose "Use companion"
-4. Pick a companion from the dropdown
-5. Adjust display options (show/hide, scale)
-
-### Option 2: Edit agent configuration
-
-Set the `icon` field in the agent's configuration:
-
-```json
-{
-  "icon": {
-    "kind": "companion",
-    "scope": "global",
-    "id": "cat-assistant",
-    "show": true,
-    "scale": 1.0,
-    "messageHints": true
-  }
-}
-```
-
-## FAQ
-
-### The companion does not show
-
-Check:
-
-1. Is the companion feature enabled?
-2. Is a companion selected?
-3. Is the companion hidden for that agent?
-4. Does the browser support WebGL (some older browsers may not)?
-
-### Import fails
-
-Common causes:
-
-- ZIP file exceeds 24MB
-- Sprite sheet image exceeds 18MB
-- `pet.json` is malformed
-- Required fields are missing (id, displayName, spritesheetPath)
-
-### Companion position resets
-
-The position is stored in browser local storage. Clearing browser data resets it to the default position.
-
-## Admin Operations
-
-If you are a system administrator, upload global companions through the admin console:
-
-1. Go to "System settings" → "Companion management"
-2. Click "Upload companion"
-3. Choose the companion ZIP package
-4. After upload it is visible to all users
-
-You can also edit a companion's display name and description, or delete ones you no longer need.
-
-## Next Steps
-
-- [Goal Mode](/docs/en/concepts/goal-mode/) — keep agents working until the goal is done
-- [Agent Loop](/docs/en/concepts/core-agent-loop/) — how agents execute tasks
+- [Goal Mode](/docs/en/concepts/goal-mode/) — the goal-continuation round that the companion's "running" animation corresponds to
+- [Bridge Panel Guide](/docs/en/reference/admin-panels/) — working with the companion management panel
+- [Agent Loop](/docs/en/concepts/core-agent-loop/) — where the runtime state really comes from

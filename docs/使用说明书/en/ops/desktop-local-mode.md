@@ -1,123 +1,70 @@
 ---
 title: Desktop Local Mode
-summary: Desktop local mode is not a scaled-down server, but a local-first, persistent-directory-first runtime form.
-read_when:
-  - You primarily use wunder-desktop
-  - You need to determine what local mode versus remote server mode are each suitable for
-source_docs:
-  - docs/API文档.md
-  - src/api/desktop.rs
-  - frontend/src/components/messenger/DesktopRuntimeSettingsPanel.vue
-updated_at: 2026-04-11
+summary: Desktop local mode is a local-first, persistent-directory-first runtime form.
+updated_at: 2026-10-13
 ---
 
-# Desktop Local Mode
+Desktop local mode is a local-first, directory-persistent runtime form. It is not a scaled-down server, and it is not a server that happens to be missing the admin console.
 
-Desktop local mode is the wunder runtime form closest to real personal use today.
+## Local Mode Characteristics
 
-## First, What NOT to Think of It As
+### The Working Directory Is Persistent
 
-Don't think of it as:
-
-- A mini server
-- A server that just lacks the admin backend
-- A temporary trial-play mode
-
-Its more accurate positioning is:
-
-- Local-first runtime form
-- Desktop workstation
-- Complete standalone local working form
-
-## Key Characteristics of Local Mode
-
-### Working Directory is Persistent
-
-In local mode, the working directory is not a temporary sandbox.
-
-- `WUNDER_WORK/` is treated as a persistent directory
-- No 24-hour automatic cleanup
+In local mode the working directory is not a temporary sandbox. It is treated as a persistent directory and does not go through 24-hour automatic cleanup.
 
 ### The Working Directory Is a Real Local Directory
 
-In the local form the working directory sits directly on a persistent directory on your machine:
+In the local form the working directory sits directly on a persistent directory on the user's own machine:
 
-- contents persist and are not subject to periodic cleanup
-- the agent reads and writes that directory directly, with no mapping back and forth between a "sandbox directory" and the real one
-- the only difference from the cloud form is location: in the cloud it is a single per-user directory under the server data root; locally it is a persistent directory on your machine
-- both forms follow "one agent instance and one working directory per user", with no container layering
+- Its contents persist and do not go through periodic cleanup
+- The agent reads and writes that directory directly, with no round trips between a "sandbox directory" and the real one
+- The only difference from the cloud form is location: in the cloud it is a single per-user directory under the server data root, while locally it is a persistent directory on the machine
+- Both forms follow "one agent instance and one working directory per user", with no container layering
 
-### Prioritizes Bundled Runtime
+### Uses the Bundled Runtime First
 
-Desktop local mode prioritizes using the Python runtime bundled with the installer, reducing initial configuration cost.
+Desktop local mode prefers the Python runtime bundled with the installer.
 
-## Why Local Mode is Suitable as the First Entry Point
+## Local Mode Coverage
 
-Because it covers the complete main pipeline in one go:
+The complete main pipeline for personal use — the user-side interface, conversation execution, tool calls, workspace files, agent settings, and subagents — is all covered in local mode, so daily use does not require switching to another form.
 
-- User-side interface
-- Conversation execution
-- Tool invocation
-- Workspace files
-- Agent settings
-- Subagents
+## File Capabilities in Local Mode
 
-## What's Special About File Capabilities in Local Mode
+In local mode, the built-in file tools can access local absolute paths. This is more flexible than pure workspace restrictions, and it also means users need to be clearer about the boundaries of local directories.
 
-A current key convention is:
+## One-Click Reset of Working State
 
-- In local mode, built-in file tools can access local absolute paths
+Local mode provides a one-click reset of working state, which fits these situations:
 
-This is more flexible than pure workspace restrictions, but also means you need to be clearer about local directory boundaries.
-
-## What is One-Click Reset Working State
-
-Local mode now offers `One-Click Reset Working State`.
-
-It's suitable for these scenarios:
-
-- Conversation stuck in running state
-- Subagent run state is clearly inconsistent
-- Half-finished runtime files left in workspace
+- A conversation is stuck in the running state
+- Subagent run states are clearly inconsistent
+- Half-finished runtime files are left in the workspace
 - You want the agent to return to clean task threads
 
-After execution:
+When it runs, it:
 
-- Aborts currently running conversations for the user
+- Aborts the conversations the current user still has running
 - Clears queued tasks
 - Rebuilds task threads for the agent
-- Cleans corresponding working state directories
+- Cleans up the corresponding working-state directories
 
-## What Gets Preserved After Reset
+## What Is Preserved After a Reset
 
-This reset targets "working state," not "long-term assets."
+A reset targets working state and leaves long-term assets untouched. The typical content it preserves includes global configuration, skills, the knowledge base, and user long-term configuration.
 
-Typical content that will be preserved includes:
+What it does is clean up the runtime scene, rather than restore factory settings.
 
-- `global`
-- `skills`
-- `knowledge`
-- User long-term configurations
+## When to Switch to a Hull (Server)
 
-So it's more like "cleaning up the runtime scene," not "factory reset."
+If you only use it personally, local mode is usually enough. Once you start needing multi-user governance, the admin console, unit or organization control, and unified channel and service integration, switch to Beehive (web, provided with the Hull) and access it from a browser.
 
-## When to Switch to Server
+## Boundaries of Local Mode
 
-If you're just using it personally, local mode is usually sufficient.
-
-When you start needing these capabilities, switch to the Hull (server) form accessed from a browser:
-
-- Multi-user governance
-- Admin backend
-- Organization/company control
-- Unified channel and service integration
-
-## Common Pitfalls in Local Mode
-
-- Treating local mode as stateless runtime
-- Expecting local directories to be split again into "personal container / agent container"
-- Thinking prompt modifications will write back to the current old thread
-- Thinking resetting working state will also delete long-term skills or knowledge
+- Local mode is stateful: the working directory persists and is not run statelessly.
+- Local directories are no longer split into a "personal container / agent container": one user corresponds to one agent instance and one working directory, with no container layering.
+- Editing a prompt only affects later task threads and does not write back to an old thread that is still running.
+- Resetting working state only cleans up the current working state and does not delete long-term skills or knowledge.
 
 ## Further Reading
 

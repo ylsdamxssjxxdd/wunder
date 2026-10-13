@@ -1,40 +1,13 @@
 ---
 title: Final Response
-summary: The sole job of `final_response` is to end the current turn with the reply for the user.
-read_when:
-  - You have finished tool calls and reasoning and are ready to answer the user
-source_docs:
-  - src/services/tools/dispatch.rs
-  - src/services/tools/catalog.rs
-updated_at: 2026-04-10
+summary: The Final Response tool has been removed from wunder; kept only as a historical reference.
+updated_at: 2026-10-13
 ---
 
-# Final Response
+> **Removed**: This tool has been removed from wunder and is not visible to the agent or users; kept only as a historical reference.
 
-> **Removed**: This tool has been removed from wunder and is not visible to the agent or users; this page is kept as a historical reference.
+It was not an ordinary business tool but a **termination signal**: calling it closed the current turn, and its content became the final reply to the user.
 
-`final_response` is not a normal business tool. It is only a termination signal.
+It did not use the unified result shell and returned only a single answer for the user.
 
-## Input
-
-```json
-{
-  "content": "This is the final reply"
-}
-```
-
-## Return
-
-```json
-{
-  "answer": "This is the final reply"
-}
-```
-
-## Key points
-
-- It does not use the unified success envelope
-- It does not include `ok`, `action`, `state`, `summary`, or `data`
-- It should only be called when the task is genuinely ready to close
-
-If the system still needs to wait for a child task, keep polling, or request more input from the user, this is not the right tool yet.
+It was meant to be called only when the task was genuinely closing; while still waiting on a child task, still polling, or waiting for user input, it was the wrong tool.

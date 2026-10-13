@@ -1,38 +1,28 @@
 ---
 title: 舰体（server）部署
-summary: 可选形态。用户与智能体管理平台：多租户、权限治理、渠道接入、智能体应用发布。舰体启动后同端口挂舰桥（18000），蜂巢 dist 走独立 nginx 容器（18001）。
-read_when:
-  - 需要多人共用 wunder
-  - 需要管理员后台与统一治理
-  - 需要接入渠道或对外发布智能体应用
-source_docs:
-  - crates/wunder-server/src/main.rs
-  - docker-compose-x86.yml
-  - config/wunder.yaml
-  - frontend/nginx.conf
-  - builders/build.sh
+summary: 可选形态。多人共用的用户与智能体管理平台：多租户、权限治理、渠道接入、智能体应用发布。舰体启动后同端口挂舰桥（18000），蜂巢由独立的网页服务容器下发（18001）。
 updated_at: 2026-10-13
 ---
 
 # 舰体（server）部署
 
-舰体（server）是 wunder 的**用户与智能体管理平台**（`crates/wunder-server/` + 引擎），属于可选形态：个人用装蜂窝（desktop）就够了，只有在需要多租户、用户与单位管理、渠道接入、智能体应用构建发布与网关统一调度时才部署舰体。
+舰体（server）是 wunder 的**用户与智能体管理平台**，属于可选形态：个人用装蜂窝（desktop）就够了，只有在需要多租户、用户与单位管理、渠道接入、智能体应用构建发布与网关统一调度时才部署舰体。
 
 ## 三件套与端口
 
 舰体部署后同时提供 **三个访问入口**（默认端口，均可用环境变量覆盖）：
 
-| 界面 | 载体 | 默认端口 | 来源 |
-| --- | --- | --- | --- |
-| **舰体 API** | `crates/wunder-server/`（Rust bin） | **18000**（`WUNDER_HOST` / `WUNDER_PORT` 覆盖；`main.rs:151-159`） | `config/wunder.yaml:23-25` `host: 0.0.0.0, port: 18000, mode: api` |
-| **舰桥** | 原生 HTML + JS（`web/`），**无构建步骤** | 与舰体同端口 18000（`main.rs:117` `mount_static(app, "web", "/")`） | — |
-| **蜂巢** | Vue3 SPA（`frontend/`），构建产物 `frontend/dist` | 独立 **nginx 容器 18001**（`${NGINX_PORT:-18001}:80`，`docker-compose-x86.yml:265-283`） | 配置 `frontend/nginx.conf` |
+| 界面 | 载体 | 默认端口 |
+| --- | --- | --- |
+| **舰体 API** | 舰体服务本体 | **18000**（可用 `WUNDER_HOST` / `WUNDER_PORT` 覆盖） |
+| **舰桥** | 舰体自带的原生管理页面，无需构建 | 与舰体同端口 18000 |
+| **蜂巢** | 独立前端应用，构建后由网页服务容器下发 | 独立容器 **18001**（可用 `NGINX_PORT` 覆盖） |
 
-注意：**蜂巢的 dist 不是由舰体静态托管的**——旧 README 与旧文档写「由舰体静态托管」是错的；舰体进程只挂 `web`（舰桥）与头像/ppt 目录。
+注意：**蜂巢不由舰体托管**。舰体进程只负责舰桥页面与头像、ppt 等目录；蜂巢由独立的网页服务容器在 18001 下发。
 
-其它相关服务：sandbox 模式使用默认端口 **9001**（`WUNDER_SERVER_MODE=sandbox`，`main.rs:45-51,177-181`）；onlyoffice 18080；drawio 18081；PostgreSQL 5432；extra-mcp 18004。
+其它相关服务端口：沙箱模式 9001、onlyoffice 18080、drawio 18081、PostgreSQL 5432、extra-mcp 18004。
 
-## 适用场景
+## 什么时候需要舰体
 
 | 场景 | 选舰体 |
 | --- | --- |
@@ -47,10 +37,10 @@ updated_at: 2026-10-13
 
 - Docker 与 Docker Compose（推荐方式）
 - 至少 4 GB 可用内存
-- PostgreSQL（compose 内含 `postgres:16`；单机也可切 `WUNDER_STORAGE_BACKEND=sqlite`）
-- 时间区：compose 默认 `TZ=Asia/Shanghai`
+- PostgreSQL（compose 已内置；单机也可以改用 SQLite）
+- 时区：compose 默认 `Asia/Shanghai`
 
-## 最短路径：docker compose 部署
+## docker compose 部署
 
 ```bash
 # 获取代码
@@ -64,7 +54,7 @@ docker compose -f docker-compose-x86.yml up -d
 docker compose -f docker-compose-arm.yml up -d
 ```
 
-compose 服务（x86/arm 同构，`docker-compose-x86.yml`）：`wunder-server`（`${WUNDER_PORT:-18000}`，入口 `docker-rust-entry.sh run-or-build`）、`sandbox`（9001 `/health`）、`onlyoffice`（18080）、`drawio`（18081）、`extra-mcp`、`postgres:16`（5432）、`wunder-frontend`（node:22.14 构建 dist）、`wunder-nginx`（18001）。
+一次会起这些服务：舰体服务（默认 18000）、沙箱（9001，带 `/health`）、onlyoffice（18080）、drawio（18081）、extra-mcp、PostgreSQL（5432）、蜂巢前端构建容器、网页服务容器（18001）。
 
 ## 本机运行（cargo）
 
@@ -79,9 +69,9 @@ cargo run -p wunder-server
 WUNDER_HOST=127.0.0.1 WUNDER_PORT=18000 cargo run -p wunder-server
 ```
 
-配置加载优先级（`wunder-core/src/config.rs:2478-2518`）：`WUNDER_CONFIG_PATH` 或 `config/wunder.yaml` → YAML 内 `${ENV}` 展开 → 环境变量最后生效（`WUNDER_STORAGE_BACKEND` / `WUNDER_SQLITE_DB_PATH` / `WUNDER_POSTGRES_DSN` / `WUNDER_POSTGRES_POOL_SIZE`）→ 缺失字段与 example 模板做稀疏合并。
+配置读取顺序：先用 `WUNDER_CONFIG_PATH` 指定的文件，没指定就读 `config/wunder.yaml`；YAML 里的 `${ENV}` 占位会展开；环境变量优先级最高、最后生效；缺失的字段会用示例模板补齐。
 
-已知隐患：`config/wunder-example.yaml` 用 `load_config_from_path` 解析会失败并静默回落到 `Config::default()`（`docs/功能迭代.md` 2026-10-12 工程条目）。
+已知问题：直接拿 `config/wunder-example.yaml` 启动会解析失败，并静默回落到默认配置——请显式指向 `config/wunder.yaml`，或用 `WUNDER_CONFIG_PATH` 指定。
 
 ## 访问入口
 
@@ -96,55 +86,54 @@ WUNDER_HOST=127.0.0.1 WUNDER_PORT=18000 cargo run -p wunder-server
 
 ## 首次登录
 
-管理员凭据从 `config/wunder.yaml` 与初始化管理读取；示例值请以中性占位写：`<admin-user>` / 部署环境注入的密钥或口令，**不写默认密码或真实凭据**。首次登录后立即修改管理员口令。
+管理员凭据在 `config/wunder.yaml` 里，首次登录后请立即修改管理员口令。
 
-Argon2 存口令（`services/user_store.rs:223-234`）；token 是不透明随机串（`wund_<uuid>` / `wundr_<uuid>` / `wundc_<uuid>`，`services/user_store.rs:27,28`），**不是 JWT**；刷新是 OAuth 式族轮换，重放即整族吊销（`api/auth.rs:368-412`）。
+口令用 Argon2 加密存储；登录令牌是不透明随机串（形如 `wund_<uuid>`、`wundr_<uuid>`、`wundc_<uuid>`，**不是 JWT**）；刷新按族轮换，同一个刷新令牌被重放会整族吊销。
 
 ## 部署后必做
 
-1. **改管理员口令**（Argon2 落库）
-2. **舰桥 → 模型配置**：添加 LLM / TTS / 图像 / 视频模型端点与 API Key（示例用 `<api-key>` 占位，不用真实值）
-3. **舰桥 → 单位管理**：确认组织树（最深 4 级，`services/org_units.rs:9-10`），必要时导入 `config/org_units.json`
-4. **舰桥 → 预设智能体**：创建 worker card 模板，声明哪些字段允许用户自定义（`services/worker_card_files.rs:1-2`）
-5. **舰桥 → 用户管理**：添加用户或开放注册（`config.allow_user_registration`）
-6. **如需接入渠道**：飞书 / 企业微信 / 微信 / QQ Bot / WhatsApp Cloud / weixin / xmpp（默认 7 个 adapter，`channels/registry.rs:63-71`）
-7. **观察健康**：舰桥「内部状态」+ `/wunder/admin/monitor`
+1. **改管理员口令**
+2. **舰桥 → 模型配置**：添加 LLM / TTS / 图像 / 视频模型端点与 API Key
+3. **舰桥 → 单位管理**：确认组织树（最深 4 级），必要时导入 `config/org_units.json`
+4. **舰桥 → 预设智能体**：创建预设智能体卡片模板，声明哪些字段允许用户自定义
+5. **舰桥 → 用户管理**：添加用户，或开放自助注册
+6. **如需接入渠道**：飞书 / 企业微信 / 微信 / QQ Bot / WhatsApp Cloud / weixin / xmpp（默认提供 7 个）
+7. **观察健康**：舰桥「内部状态」页，以及 `/wunder/admin/monitor` 接口
 
 ## 主要能力
 
 ### 多租户与治理
 
-- 用户与单位分层管理；权限按角色分配（admin / leader / user），数据按 `user_id` / `agent_id` 隔离
-- presence 拆蜂巢 / 蜂窝 / 舵机三列（`api/admin/identity_admin.rs:686-735`）
-- 等级与配额（`MAX_USER_LEVEL=200`，`services/user_leveling.rs:3-30`）
+- 用户与单位分层管理；权限按角色分配（admin / leader / user），数据按用户与智能体隔离
+- 在线状态分蜂巢 / 蜂窝 / 舵机三列展示
+- 用户等级与配额（上限 200 级）
 
 ### 渠道接入
 
-- 默认注册 7 个 adapter：whatsapp_cloud / feishu / qqbot / wechat / wechat_mp / weixin / xmpp（`channels/registry.rs:63-71`）
-- 长连接 supervisor 只有 feishu / qqbot / xmpp / weixin 四个，其余是 webhook-only
-- **`telegram` / `discord` / `slack` / `LINE` / `DingTalk` 未支持**，只在 catalog 里作为通用 webhook 目录项存在
-- 入站有界队列容量 512、并发 8、入队超时 80ms；出站持久 outbox + 指数退避
+- 默认注册 7 个：WhatsApp Cloud / 飞书 / QQ Bot / 微信 / 微信公众号 / weixin / xmpp
+- 其中飞书 / QQ Bot / xmpp / weixin 走长连接，其余只走 webhook
+- **Telegram / Discord / Slack / LINE / 钉钉未支持**，只在目录里作为通用 webhook 条目存在
+- 入站队列容量 512、并发 8、入队超时 80ms；出站消息持久化并做指数退避重试
 
 ### 可观测性
 
-- 日志：控制台彩色层 + JSONL 文件层（daily rolling，`server.jsonl`）；目录 `observability.server_log_dir` 默认 `./config/data/logs/server`；级别默认 `info`；**保留期默认 0 = 永不清理**（`wunder-core/src/config.rs:1943-1945`）
-- 运行时指标：blocking / queues / long_tasks / loop_ticks + alerts + thresholds（`core/runtime_metrics.rs`）
-- WS 日志 `target="wunder.ws"`（`api/ws_log.rs`）
-- 渠道运行日志：内存环形 300 条 + 20s 洪泛去重窗（`channels/service.rs:78-79,212-213`）
+- 日志同时输出到控制台与 JSONL 文件（按天滚动），默认写在 `./config/data/logs/server`，级别默认 `info`，默认永不清理（保留期 0）
+- 运行时指标：阻塞、队列、长任务、循环节拍，外加告警与阈值
+- 渠道运行日志：内存里保留最近 300 条，并对 20 秒内的重复洪泛去重
 
 ### 安全与隔离
 
-- 云端读/写/执行类工具一律**在沙盒内执行**（`execute_in_sandbox`），无沙盒端点直接失败、**不回落宿主**；每用户一个容器只挂本用户目录，租户隔离由沙盒承担（2026-10-13 口径）
-- exec 策略三态 allow / audit / enforce（`wunder-core/src/exec_policy.rs:6-10`）
+- 云端的读 / 写 / 执行类工具一律**在沙盒内运行**；没有可用沙盒端点时直接失败、**不回落到宿主**。每个用户一个容器，只挂本用户目录，租户隔离由沙盒承担。
+- exec 策略三态：allow / audit / enforce
 - 审批模式 suggest / auto_edit / full_auto，默认 full_auto
 - 高危命令名单：rm、rm -rf、mkfs、dd、chmod 777
-- 沙箱容器 cpu 8.0 / mem 8096MB / pids 256 / timeout 300s
+- 沙箱容器资源：CPU 8 核、内存 8096MB、进程数 256、超时 300s
 
 ## 配置文件
 
-`config/` 内容：`wunder.yaml`（引擎主配置）、`wunder-example.yaml`、`sandbox-runtime.yaml`、`mcp_config.json(+example)`、`org_units.json(+example)`、`i18n.messages.json`、`app_version.json`、`fonts.conf`、`matplotlibrc`；子目录 `benchmark/ data/ fonts/ ppt_templates/ preset_worker_cards/ prompts/ skills/`。
+`config/` 目录里有引擎主配置 `wunder.yaml`、示例配置、沙箱运行时配置、MCP 配置、组织单位、国际化文案、版本号、字体与绘图配置等，另有 `benchmark/`、`data/`、`fonts/`、`ppt_templates/`、`preset_worker_cards/`、`prompts/`、`skills/` 等子目录。
 
-管理 API 的 `update()` 支持运行中热更（`api/admin.rs:108/490/743`），ConfigStore 单文件 YAML 回写 + 原子 version 计数（`core/config_store.rs:60-90`）。
+配置支持运行中热更新，改动会直接写回 YAML 文件。
 
 ## 延伸阅读
 

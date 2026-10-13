@@ -1,72 +1,83 @@
 ---
 title: wunder
-summary: wunder is an agent orchestration platform. Install the desktop app (the local AI workbench), describe a goal, and the agent breaks it down, calls tools, and delivers results.
+summary: wunder is an agent orchestration platform. The Honeycomb is the local AI workbench on your computer, the Beehive is the cloud workbench in a browser, the Helm is the terminal entry point, and the Hull is the shared management platform for teams.
 read_when:
-  - First time learning about wunder
-  - Need to quickly decide where to start
+  - You are new to wunder and choosing which form to use
+  - You want the entry point to the whole manual
 source_docs:
-  - README.md
+  - frontend-slint/ui/theme.slint
+  - frontend/src/router/index.ts
+  - web/index.html
+  - crates/wunder-server/src/main.rs
+updated_at: 2026-10-13
 ---
 
 # wunder
 
 <p class="docs-eyebrow">An agent orchestration platform</p>
 
-## The Honeycomb: your local AI workbench
+wunder is an agent orchestration platform. You give it a goal, and it breaks the task down on its own, calls tools, and hands the results back.
 
-You use wunder through the **Honeycomb (desktop)**. It is the local AI workbench — a desktop app covering chat, files, agent settings, and tools. Install it, describe your goal, and the agent breaks the goal down, calls tools, and delivers results — no server deployment required.
+## Four Forms by Scenario
+
+One engine, four shells:
+
+| Form | In one line | Who it's for |
+| --- | --- | --- |
+| **Honeycomb** | An AI workbench installed on your own computer | Individual users (the default entry point) |
+| **Beehive** | A cloud workbench you open in a browser | Team members after the Hull is deployed |
+| **Helm** | Command the agent from the terminal | Command-line users / automation scripts |
+| **Hull** | A shared management and governance platform | Administrators |
+
+The Honeycomb and the Helm don't depend on the Hull and can be installed and run on their own. The **Bridge** is the management interface that ships with the Hull, starts alongside it, and is aimed at administrators.
+
+## Start with the Honeycomb
+
+Individual users go with the Honeycomb by default: download and install, and it opens as a local AI workbench.
 
 ```text
-Download → Configure a model → Describe your goal → Get results
+Download the Honeycomb → Configure a model → Describe your goal → Get results
 ```
 
-Individual users can start right after installing; [Quick Start](/docs/en/start/quickstart/) gets your first task done in 4 steps.
+See [Quick Start](/docs/en/start/quickstart/) and [Honeycomb quick start](/docs/en/start/desktop/) for the details.
 
-## What it can do
+## What It Can Do
 
-- **Files & code**: read files, edit code, run commands, refactor projects
+- **Files and code**: read, edit, run commands, refactor projects
 - **Office automation**: organize documents, generate reports, process spreadsheets, take meeting notes
-- **Task splitting**: when work can run in parallel, the agent spawns temporary subagents, collects their results, and merges them back
-- **Continuous tasks**: scheduled checks, recurring reminders, cross-channel message handling
-- **System integration**: connect external services, turn recurring flows into skills
+- **Parallel subtasks**: when several lines of work need to move at once, the main agent spins up a few subagents to work in parallel, then merges their results as they come back
+- **Scheduled tasks**: periodic checks, recurring reminders, cross-channel message handling
+- **External service connections**: turn common flows into skills
+- **Device interconnection**: once a local device joins the cloud, the cloud can issue commands to the local node with your approval
 
-## Workbench structure
+## One Agent, Many Parallel Tasks
 
-The Honeycomb uses a two-column layout: the left sidebar holds new task, search, the workspace thread tree, the working directory, and settings; the right side is chat. All daily chat, file handling, agent settings, and tool usage happen here. Every user has exactly one agent instance and one fixed workspace. See [Meet Beehive](/docs/en/surfaces/frontend/).
+- One agent can carry **several independent task threads at the same time**, without interfering with each other.
+- You can also have several workspaces: a local directory, a cloud workspace, and a remote device workspace reached through device interconnection, distinguished by name in the interface.
+- Sending a message mid-run won't bounce back: the **session queue** is on by default, so new messages wait in the queue instead of hitting a "user busy" error.
 
-The system is organized top-down:
+## Interface at a Glance
 
-![Top-down structure from wunder to thread: wunder, user, agent, and thread progressively land in a concrete conversation.](/docs/assets/manual/08-hierarchy-structure.svg)
+- [Honeycomb interface](/docs/en/surfaces/desktop-ui/): the main window has two pages, "Chat" and "Settings"; everything else appears as panels and dialogs
+- [Beehive interface](/docs/en/surfaces/frontend/): a single-page app in the browser
+- [Bridge interface](/docs/en/surfaces/web-admin/): the administrator's governance and debugging backend
+- [Interface Overview](/docs/en/surfaces/index/): how the four forms compare
 
-You send a message → the agent keeps working in its thread, spawning temporary subagents when work can be split.
+## Further Reading
 
-## Key features
+The Honeycomb covers most scenarios; add more as needed:
 
-| Feature | Description |
-|------|------|
-| **Local-first** | The Honeycomb runs locally, out of the box, and can operate local files and the desktop |
-| **One agent per user** | Each user has exactly one agent instance; work that can run in parallel is split across temporary subagents |
-| **Rich tool ecosystem** | Built-in tools + MCP external tools + skill packs + knowledge bases |
-| **Long sessions** | Context compaction and long-term memory keep long sessions working |
-| **Open interfaces** | WebSocket real-time, RESTful API, A2A interop standard |
+- **Hull (server)**: shared use, permission management, channel access, unified publishing. See [Hull deployment](/docs/en/start/server/).
+- **Beehive (web)**: after the Hull is deployed, members open the cloud workbench in a browser.
+- **Helm (cli)**: terminal and automation scenarios. See [Using the Helm](/docs/en/start/cli/).
 
-## Need more? Three optional forms
-
-The Honeycomb covers most scenarios. wunder also ships three optional forms — use them when you need them:
-
-- **The Hull (server)**: the user and agent management platform, deployed only when multiple people need to share one system. Multi-user, permissions, channel access; it provides the Beehive (web, the cloud AI workbench, accessed in a browser) and the Bridge (the admin UI). See the [Hull deployment guide](/docs/en/start/server/).
-- **The Beehive (web)**: the cloud AI workbench, provided with the Hull; members access it in a browser. See the [Beehive Interface](/docs/en/surfaces/frontend/).
-- **The Helm (cli)**: the manual local entry point for terminals and automation, script-driven. See the [Helm guide](/docs/en/start/cli/).
-
-## Quick navigation
+## Quick Navigation
 
 - **First time** → [Quick Start](/docs/en/start/quickstart/)
-- **Download & install** → [Honeycomb quick start](/docs/en/start/desktop/)
-- **Understand the system** → [Core Concepts](/docs/en/concepts/)
+- **Download and install** → [Honeycomb quick start](/docs/en/start/desktop/)
+- **Interface map** → [Interface Overview](/docs/en/surfaces/index/)
+- **Understand the system in depth** → [Core Concepts](/docs/en/concepts/)
 - **Integrate with existing systems** → [Integration Overview](/docs/en/integration/)
-- **Running into issues** → [Troubleshooting](/docs/en/help/troubleshooting/) or [FAQ](/docs/en/help/faq/)
-
-## Further reading
-
-- [Documentation Hub](/docs/en/start/hubs/)
-- [API Index](/docs/en/reference/api-index/)
+- **Documentation hub** → [Documentation Hub](/docs/en/start/hubs/)
+- **Doc ecosystem navigation** → [Common Docs Directory](/docs/en/start/docs-directory/)
+- **First launch fails or something goes wrong** → [Troubleshooting](/docs/en/help/troubleshooting/) or [FAQ](/docs/en/help/faq/)

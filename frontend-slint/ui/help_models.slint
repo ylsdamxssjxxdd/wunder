@@ -1,0 +1,72 @@
+// Data contracts for the settings help browser. The Rust side typesets the
+// manual into absolute-positioned runs and rectangles (parley layout), and the
+// Slint side only projects them. All browser state lives in the HelpDocs
+// global so the view can be created and destroyed with the settings tab
+// without losing the reading position.
+export struct HelpEntry {
+    topic: int,
+    title: string,
+    detail: string,
+}
+
+export struct HelpTextRun {
+    x: float,
+    y: float,
+    width: float,
+    height: float,
+    text: string,
+    size: float,
+    weight: int,
+    color: color,
+    family: string,
+}
+
+export struct HelpRect {
+    x: float,
+    y: float,
+    width: float,
+    height: float,
+    fill: color,
+    border: color,
+    border-width: float,
+    radius: float,
+}
+
+export global HelpDocs {
+    in property <[HelpEntry]> contents;
+    in property <[HelpEntry]> keyword-index;
+    in property <[HelpEntry]> search-results;
+    in property <[HelpTextRun]> runs;
+    in property <[HelpRect]> decorations;
+    in property <[HelpRect]> matches;
+    in property <[HelpRect]> selection;
+    in property <float> document-height: 600;
+    in property <bool> can-back: false;
+    in property <bool> can-forward: false;
+    in property <bool> over-link: false;
+    in property <int> match-count: 0;
+    in property <string> topic-title: "开始";
+    in property <int> selected-topic: 0;
+    in-out property <int> active-tab: 0;
+    in-out property <int> zoom-percent: 100;
+    in-out property <string> search-text;
+    in-out property <string> find-text;
+    in-out property <float> document-width: 0;
+    // Clipboard handoff: the controller computes the text to copy and bumps
+    // copy-request; the mounted view performs the clipboard write.
+    in-out property <string> copy-text;
+    in-out property <int> copy-request: 0;
+    // Scroll coordination: the controller bumps scroll-request after opening a
+    // topic and reveal-request to scroll the first find hit into view.
+    in-out property <int> scroll-request: 0;
+    in-out property <int> reveal-request: 0;
+    in-out property <float> reveal-y: 0;
+    callback topic-opened(int);
+    callback history-requested(int);
+    callback search-changed(string);
+    callback find-changed(string);
+    callback layout-changed();
+    callback pointer(float, float, int);
+    callback select-all();
+    callback copy-requested();
+}

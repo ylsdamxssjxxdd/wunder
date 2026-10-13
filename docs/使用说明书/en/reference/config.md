@@ -1,88 +1,159 @@
 ---
-title: Configuration
-summary: When configuration doesn't take effect, first confirm which layer you're modifying, rather than suspecting the program isn't reading it.
-read_when:
-  - You are checking where a specific configuration should be written
-  - You need to distinguish between base configuration, runtime overrides, and external MCP configuration
-source_docs:
-  - config/wunder-example.yaml
-  - docs/API文档.md
-  - docs/设计文档/01-系统总体设计.md
+title: System Settings Reference
+summary: What the common settings mean and what to set them to.
+updated_at: 2026-10-13
 ---
 
-# Configuration
+## Settings categories
 
-wunder's configuration is not handled by a single file, but is organized in layers.
+wunder's settings fall into a few broad categories by responsibility:
 
-Key takeaway: When troubleshooting configuration issues, first distinguish between "base configuration, runtime overrides, and external MCP configuration" layers.
+- **Basic settings**: service address, port, and run mode
+- **Security settings**: access control and permission boundaries
+- **Storage settings**: where and how data is stored
+- **Tool settings**: which tools are available
+- **Model settings**: AI model selection and parameters
+- **Channel settings**: external platform access
 
-## Key Points on This Page
+## Basic settings
 
-- Where specific configurations should be modified
-- Which configurations are read by server vs extra_mcp
-- Why your configuration changes may not have taken effect
+### Service address and port
 
-## Key Configuration Files
+These decide the network address and port the wunder service listens on.
 
-- `config/wunder.yaml`
-- `config/wunder-example.yaml`
-- `~/.wunder/cli/WUNDER_TEMP/config/wunder.yaml` (CLI runtime copy)
-- `config/mcp_config.json`
+- For local use, the defaults are fine
+- For a team deployment, set an address the team can reach
 
-## What Each File Is Responsible For
+### Run mode
 
-### `config/wunder.yaml`
+This decides the form wunder runs in.
 
-- Official base configuration
-- Usually the first place to look when deploying server
+- **Honeycomb local mode**: suited to individual local use, with all data stored locally
+- **Hull mode**: suited to teams and organizations, with multi-user support and centralized management
 
-### `config/wunder-example.yaml`
+Pick Honeycomb local mode for individual use; pick Hull mode when you need multi-user collaboration and centralized management.
 
-- Example configuration and fallback template
-- When the official configuration is missing, the system falls back to this file according to current logic
+### Concurrency limit
 
-### `~/.wunder/cli/WUNDER_TEMP/config/wunder.yaml`
+This caps how many sessions can be active at once, so the system does not get overloaded.
 
-- The configuration file actually used by CLI/Desktop at runtime
-- Usually corresponds to the content saved from the admin panel
-- Not recommended to mix manual edits with base configuration
+- For individual use, the default is enough
+- For team use, adjust it to the number of users and the available hardware
 
-### `config/mcp_config.json`
+## Security settings
 
-- Independent MCP service configuration
-- Especially for database and knowledge base related tools
+### API key
 
-## Find Configuration by Problem
+This protects access to the Bridge and the Hull interfaces. A few points:
 
-- For service listening and concurrency limits, see `server.*`
-- For authentication, commands, and path control, see `security.*`
-- For external MCP service integration, see `mcp.*`
-- For A2A service integration, see `a2a.*`
-- For storage and vector capabilities, see `storage.*`
-- For browser, only need to check `tools.browser.enabled`, `browser.enabled`, and `browser.docker.enabled`; other parameters use system defaults
+- The key should be long enough — over 16 characters, mixing letters, digits, and symbols
+- Do not use a key that is easy to guess
+- Rotate the key regularly
 
-## Items You're Most Likely to Modify First
+### Path access control
 
-- Service basics: `server.host`, `server.port`, `server.max_active_sessions`
-- Security controls: `security.api_key`, `security.external_auth_key`, `security.allow_commands`, `security.allow_paths`, `security.deny_globs`
-  - Note: Setting `security.allow_paths` to `*` opens the entire filesystem; if `deny_globs` is also present, matching paths will still be blocked.
-- MCP: `mcp.timeout_s`, `mcp.servers[]`
-- A2A: `a2a.timeout_s`, `a2a.services[]`
+This limits the file paths the agent may touch and the commands it may run.
 
-## Three Things to Check When Configuration Doesn't Take Effect
+- **Allowed paths**: the directories the agent may work in
+- **Denied patterns**: the file types or paths that are off limits
 
-1. Whether you modified the repository configuration or the runtime copy
-2. Which path the currently running instance actually reads from
-3. Whether this configuration is consumed by server, desktop, or extra_mcp
+As a safety practice, do not open the whole filesystem: name the working directories the agent may use and block sensitive system directories.
 
-## Common Misconceptions
+### External auth key
 
-- Treating `wunder-example.yaml` as the official configuration for long-term modifications.
-- Modifying both repository `config/wunder.yaml` and runtime copy `~/.wunder/cli/WUNDER_TEMP/config/wunder.yaml` simultaneously; first confirm which file the current instance actually uses.
-- Assuming all configurations are read by the server process; in reality, `extra_mcp` has its own configuration file.
+When wunder is embedded in another system, this key verifies incoming external requests. It fits cases such as calling wunder from another system or an embedded integration.
 
-## Further Reading
+## Storage settings
+
+### Database type
+
+This decides which database stores business data.
+
+- **SQLite**: a lightweight local database, the default for Honeycomb local mode
+- **PostgreSQL**: a full-scale database, suited to the Hull multi-user mode
+
+### Workspace location
+
+This decides where user files and agent artifacts are stored. A few points:
+
+- In Hull mode, make sure the workspace directory is persistent (use NAS or network storage)
+- Do not put the workspace in a temporary directory
+
+### Vector storage
+
+This is the storage backend used by knowledge-base retrieval, saved alongside the main storage backend: PostgreSQL in Hull mode and SQLite in Honeycomb local mode. Configure it when you need knowledge-base retrieval.
+
+## Tool settings
+
+### Built-in tool switches
+
+These control which built-in tools the agent may use. In sensitive environments, consider turning off command-execution tools and opening only what is actually needed.
+
+### Browser tools
+
+These let the agent browse pages and take screenshots. Enable them directly for local use; a Hull deployment may need Docker container support.
+
+### MCP extension tools
+
+These connect external tool services over the MCP protocol. Use them when you need specialized database operations, particular API calls, or third-party services.
+
+## Model settings
+
+### Available model list
+
+This decides which AI models the agent can choose from.
+
+- Adding a model means supplying its API key and endpoint
+- Different models have different billing and different strengths
+- Offering several options lets users pick what fits
+
+### Context limit
+
+This caps the conversation context so it stays within what the model handles. Setting it to the model's maximum is fine; when the limit is reached, the system compresses older content automatically.
+
+## Channel settings
+
+### Channel account binding
+
+This binds accounts on external platforms such as Feishu and WeCom. Create an app on the platform, obtain its credentials, and fill in the configuration for that channel type.
+
+### Webhook configuration
+
+This lets an external platform push messages to wunder. Set up a publicly reachable receiving address and configure the webhook URL on the external platform.
+
+## When configuration takes effect
+
+### Timing of changes
+
+- **New settings**: take effect for new sessions immediately
+- **Existing sessions**: do not change; they keep the settings from when they were created
+
+### Configuration layers
+
+- **System defaults**: the bottom layer that any unset value falls back to
+- **Per-user settings**: override the system defaults and affect only that user
+- **Agent settings**: the top layer, affecting only that agent
+
+**Order of precedence**: agent settings > user settings > system defaults.
+
+## Recommended configuration by scenario
+
+### Individual local use (Honeycomb desktop)
+
+- Database: SQLite (default)
+- Workspace: a local directory
+- Security: limit sensitive paths reasonably
+- Tools: open them as needed
+
+### Team collaboration (Hull server)
+
+- Database: PostgreSQL
+- Workspace: network storage (persistent)
+- Security: configure keys and path limits strictly
+- Tools: assign permissions by role
+
+## Further reading
 
 - [Deployment and Running](/docs/en/ops/deployment/)
-- [MCP Endpoint](/docs/en/integration/mcp-endpoint/)
-- [A2A Interface](/docs/en/integration/a2a/)
+- [Data & Storage](/docs/en/ops/data-and-storage/)
+- [Authentication & Security](/docs/en/ops/auth-and-security/)

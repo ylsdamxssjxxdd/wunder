@@ -1,24 +1,19 @@
 ---
 title: Read Image
-summary: The purpose and return structure of `read_image`.
-read_when:
-  - You need to send a local image into the current model context
-source_docs:
-  - src/services/tools/read_image_tool.rs
-updated_at: 2026-06-05
+summary: Send a local image, animated GIF, or video into the current conversation so the agent can look at the material directly.
+updated_at: 2026-10-13
 ---
 
-# Read Image
+Read Image sends a local image, animated GIF, or video into the current conversation.
 
-`read_image` prepares local visual media and appends the derived visual context into the upcoming model conversation as an additional message.
+## When to use it
 
-It now supports:
+- You have a screenshot, photo, or design draft and want the agent to read what is in it.
+- You have an animated GIF or a video and want a rough, frame-by-frame look.
 
-- static images
-- animated GIFs
-- local videos
+## How to use it
 
-## Minimum arguments
+Pass a file path:
 
 ```json
 {
@@ -26,7 +21,7 @@ It now supports:
 }
 ```
 
-GIF example:
+For a GIF you can add a frame interval; for a video you can set how many frames to take per second:
 
 ```json
 {
@@ -35,8 +30,6 @@ GIF example:
 }
 ```
 
-Video example:
-
 ```json
 {
   "path": "captures/demo.mp4",
@@ -44,32 +37,13 @@ Video example:
 }
 ```
 
-## Success result
+## What it does automatically
 
-```json
-{
-  "ok": true,
-  "action": "read_image",
-  "state": "completed",
-  "summary": "Prepared visual media screenshots/demo.png for model inspection.",
-  "data": {
-    "path": "screenshots/demo.png",
-    "resolved_path": "C:/.../screenshots/demo.png",
-    "media_kind": "image",
-    "size_bytes": 182233,
-    "result": {
-      "kind": "image"
-    }
-  }
-}
-```
+- A static image enters the context as image input unchanged; the model only needs the path, and the intent to look comes from the current conversation.
+- A GIF is not handed to the model whole: by default only the first frame is taken, and if you give a frame interval it samples frames at that interval.
+- A video is organized into a series of image frames; if the video has an audio track, the transcript is attached as well.
+- The result states the material's type and size, but that only means the material is ready, not that the model has analyzed it: once it is ready, ask about it.
 
-## Key point
+## Diagnosing problems
 
-- Static images are forwarded as image input.
-- The tool only needs `path`; the current conversation supplies the inspection intent.
-- GIFs are normalized before entering the model context.
-  Default behavior is first frame only.
-  Set `frame_step` to sample frames by interval.
-- Videos are normalized into image frames and optional audio transcript context.
-- The tool result itself is not the analysis conclusion. It only means the visual media has been prepared for inspection.
+Look at the result first: whether the path resolved to a real file, whether the material type is right, and whether the byte size is what you expect. A wrong path or an unsupported material type reports an error directly.

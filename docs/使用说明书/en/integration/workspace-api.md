@@ -1,49 +1,30 @@
 ---
 title: Workspace API
-summary: "/wunder/workspace* is not just a file interface - it pins every user to their own single cloud directory."
-read_when:
-  - "You are building workspace panels, file upload/download, or artifact callbacks"
-  - "You need to know why container_id no longer has any effect"
-source_docs:
-  - "docs/API文档.md"
-  - "docs/设计文档/01-系统总体设计.md"
+summary: The workspace does more than file read and write — it pins every user to their own single cloud directory.
+updated_at: 2026-10-13
 ---
 
-# Workspace API
+This page applies to file trees, editors, upload/download, and artifact panels.
 
-If you are building file trees, editors, upload/download, or artifact panels, read this page first.
+`/wunder/workspace*` is more than file read and write: it decides whose user directory a file lands in.
 
-`/wunder/workspace*` is not just a file read/write interface - it determines which user directory a file lands in.
+## Workspace vs. Temp Directory
 
-## Key Points on This Page
+- An artifact you want to keep long-term → the workspace.
+- Transit, or a temporary download link → the [temp directory](/docs/en/integration/temp-dir/).
 
-- What workspace-related interfaces are available
-- How routing converges on "one directory per user"
-- When to use the workspace instead of `temp_dir`
+## How Routing Is Decided
 
-## Routing Rules (Read First)
+There is only one path: the request carries the signed-in user's identity → the server resolves that user's workspace root → it locates the entry under that root by relative path. Every endpoint uses workspace-relative paths and never exposes the server's real directories.
 
-Workspace routing now has exactly one path:
+Boundaries:
 
-1. The request carries the authenticated user's identity.
-2. The server resolves that user's workspace root.
-3. The entry is located under that root by the relative path in the request.
-
-Additional notes:
-
-- `container_id` is converged: the parameter is still accepted during the transition, but it no longer selects a directory — any value resolves against the user root. The frontend offers no container choice.
-- `agent_id` no longer participates in directory derivation; it only affects conversation and configuration binding. Each user has exactly one agent instance.
+- During the transition the container ID parameter is still accepted, but it no longer decides the directory — any value resolves against the user root, and the frontend offers no container choice.
+- The agent ID does not take part in directory derivation; it only affects session and configuration binding. Each user has exactly one agent instance.
 - Subagents share the same user directory as the main agent.
+- Each user has one fixed cloud directory that cannot be added or replaced.
 
-## Where This Set of Interfaces Is Used
-
-- File tree and directory browsing
-- File preview and editing
-- Upload, download, and archive packaging
-- Persistent callback of tool artifacts
-- Directory usage statistics (file count, directory count, used capacity, recently modified files)
-
-## How to Distinguish Common Interfaces
+## Common Endpoints
 
 - `GET/DELETE /wunder/workspace`
 - `GET /wunder/workspace/content`
@@ -58,24 +39,23 @@ Additional notes:
 - `POST /wunder/workspace/batch`
 - `POST /wunder/workspace/file`
 
-If you are building a file panel, you can understand it this way:
+When building a file panel, map them like this:
 
 - Directory page: `GET /wunder/workspace`
 - File preview: `GET /wunder/workspace/content`
 - Search: `GET /wunder/workspace/search`
-- Usage bar and welcome-page overview: `GET /wunder/workspace/stats`
+- Usage bar and overview: `GET /wunder/workspace/stats`
 - Write file: `POST /wunder/workspace/file`
 - Upload: `POST /wunder/workspace/upload`
 - Export: `GET /wunder/workspace/download` or `archive`
 
-The `/workspace*` group returns bare objects (no `data` wrapper). In `stats`, `quota_bytes: null` means no quota is configured — the frontend then shows only the used amount and renders no quota denominator.
+## Key Settings and Common Pitfalls
 
-## Common Misconceptions
-
-- Treating the workspace as a temporary directory. The workspace is for persistent artifacts; `temp_dir` is for transient transfers.
-- Passing real disk absolute paths directly. Every interface here uses workspace-relative paths.
-- Thinking `container_id` can switch to another directory. It cannot: the server always resolves against the user root.
-- Thinking the workspace can be added or replaced. It cannot: each user has one fixed cloud directory.
+- This group of endpoints returns bare objects directly, with no data wrapper.
+- When no quota is configured in usage statistics, the quota field is empty and the frontend shows only the amount used, rendering no quota denominator.
+- Do not use the workspace as a temp directory; the workspace suits persistent artifacts.
+- Do not pass real disk absolute paths — everything here uses workspace-relative paths.
+- Passing a container ID will not switch to another directory.
 
 ## Further Reading
 

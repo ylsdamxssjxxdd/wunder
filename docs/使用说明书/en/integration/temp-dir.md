@@ -1,107 +1,50 @@
 ---
 title: Temp Directory and Document Conversion
-summary: `/wunder/temp_dir/*` handles temporary upload, download, and transit; document conversion and chat attachment preprocessing are handled by separate public conversion, debug conversion, and chat-domain conversion endpoints.
-read_when:
-  - You need to send download links to external systems
-  - You need to distinguish the responsibilities of workspace, temp_dir, and doc2md
-source_docs:
-  - docs/API文档.md
-  - docs/设计文档/01-系统总体设计.md
-  - src/api/temp_dir.rs
-  - src/api/doc2md.rs
-  - src/api/chat.rs
+summary: Temporary uploads, downloads, and transit all go through the temp directory; documents, audio, and video get one conversion or media pass before they enter a session.
+updated_at: 2026-10-13
 ---
 
-# Temp Directory and Document Conversion
+`temp_dir` is a transit layer, not a formal workspace. Don't treat it as long-term storage.
 
-In wunder, `temp_dir` is a transit layer, not a formal workspace.
+## Temp Directory vs. Workspace
 
-## What This Page Covers
+- Temporary upload for the system to process → the temp directory.
+- You need to send an external client a clickable download link → the temp directory.
+- You need to turn a doc / pdf / ppt / xlsx into Markdown → run it through document conversion first.
+- You need an artifact to persist over time → put it in the workspace, not the temp directory.
 
-This page explains only four things:
+## Common Endpoints
 
-- What should go into `temp_dir`
-- When you should run files through document conversion first
-- How chat-domain attachment preprocessing endpoints differ
-- Why many external channels ultimately receive `/wunder/temp_dir/download` links
+- Document to Markdown: `POST /wunder/doc2md/convert`
+- Convert (requires authentication): `POST /wunder/attachments/convert`
+- Document attachments inside a session: `POST /wunder/chat/attachments/convert`
+- Audio / video processing inside a session: `POST /wunder/chat/attachments/media/process`
+- Download: `GET /wunder/temp_dir/download`
+- Upload: `POST /wunder/temp_dir/upload`
+- List: `GET /wunder/temp_dir/list`
+- Remove: `POST /wunder/temp_dir/remove`
 
-## Most Commonly Used Endpoints
+## How the Four Conversions Differ
 
-- `POST /wunder/doc2md/convert`
-- `POST /wunder/attachments/convert`
-- `POST /wunder/chat/attachments/convert`
-- `POST /wunder/chat/attachments/media/process`
-- `GET /wunder/temp_dir/download`
-- `POST /wunder/temp_dir/upload`
-- `GET /wunder/temp_dir/list`
-- `POST /wunder/temp_dir/remove`
+| Endpoint | Where it is used | What comes out |
+| --- | --- | --- |
+| `POST /wunder/doc2md/convert` | Public document conversion | Markdown content |
+| `POST /wunder/attachments/convert` | Debug panel, authentication integration testing | The same as above, but requires authentication |
+| `POST /wunder/chat/attachments/convert` | Document attachments in the chat input area | Text attachments assembled for the session |
+| `POST /wunder/chat/attachments/media/process` | Audio / video in the chat input area | Audio transcription results, or image frames plus an audio track split out of video |
 
-## When to Use These Endpoints
+Two additions: images generally do not need conversion — send them straight as session attachments. Video is never sent to the model directly; it is first split into an image sequence and an audio track, and re-extracting frames relies on the source file's public path.
 
-- You need to temporarily upload a file for system processing
-- You need to send a clickable download link to an external client
-- You need to convert a doc/pdf/ppt/xlsx file to Markdown first
-- You are building debug panel attachment parsing
-- You are preprocessing document, audio, or video attachments in the chat input area
+## Why What You Get Back Is a Download Link
 
-## How the Four High-Frequency Endpoints Differ
+Many external clients cannot read wunder's internal workspace paths. So in outgoing content, internal paths are rewritten into clickable temporary download links that outside clients can actually open. During chat media processing the source file usually lands in the workspace public path first, and when it is handed out for external download it may still be swapped for a temporary download link.
 
-You can remember them like this:
+## Key Settings and Common Pitfalls
 
-| Endpoint | Target Audience | Typical Output |
-|----------|----------------|----------------|
-| `/wunder/doc2md/convert` | Public document conversion | Markdown content |
-| `/wunder/attachments/convert` | Debug panel / auth integration testing | Same as `doc2md`, but requires authentication |
-| `/wunder/chat/attachments/convert` | Chat input area document attachments | Text-type `attachments` for chat domain assembly |
-| `/wunder/chat/attachments/media/process` | Chat input area audio / video attachments | Audio transcription results, or extracted image frames + audio track attachments from video |
-
-Two additional notes:
-
-- Images generally do not go through these conversion endpoints -- they can be sent directly as chat attachments.
-- Video is never sent directly to the model; it is first split into an image sequence and an audio track. Re-extracting frames relies on `source_public_path`.
-
-## Why Many Files End Up as `temp_dir` Download Links
-
-Because many external clients do not understand wunder's internal workspace paths.
-
-So the system rewrites:
-
-- `/workspaces/...`
-
-into:
-
-- `/wunder/temp_dir/download?...`
-
-This way channel clients or external web pages can actually open the link.
-
-During chat media preprocessing, source files typically land in the workspace public path first; when it is time to serve them to external clients for download, the system may still rewrite them as `temp_dir` download links.
-
-## Common Misconceptions
-
-### Treating `temp_dir` as Long-Term Storage
-
-Incorrect.
-
-It is a transit area, not a long-term business data store.
-
-### Treating Converted Markdown as the Workspace Master File
-
-Not necessarily.
-
-First determine whether you need the file for "temporary consumption" or "ongoing processing."
-
-### Assuming `temp_dir` Is Only for the Admin Panel
-
-Also incorrect.
-
-It is a formal public transit layer used by many external channel workflows.
-
-## Implementation Guidelines
-
-- `temp_dir` is suitable for transit and distribution, not for long-term business file storage.
-- For document conversion, first determine whether it falls under public capability, debug panel, or chat input area.
-- Audio / video attachments should go through `POST /wunder/chat/attachments/media/process` -- do not feed raw video directly as model input.
-- External channels can open files via clickable links, which typically rely on `temp_dir` download links.
+- The temp directory is for transit and distribution, not for holding business files long-term.
+- Before converting, tell apart whether it belongs to the public capability, the debug panel, or the chat input area.
+- Audio / video go through media processing; do not feed raw video to the model as input.
+- External channels can open files precisely because of this download link.
 
 ## Further Reading
 

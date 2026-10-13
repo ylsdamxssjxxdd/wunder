@@ -1,88 +1,63 @@
 ---
 title: Thread Control
-summary: The actions, thread relationships, and return structure of `thread_control`.
-read_when:
-  - You need to create, switch, archive, restore
-source_docs:
-  - src/services/tools/thread_control_tool.rs
-updated_at: 2026-04-10
+summary: Letting the agent move several things forward at once: create, switch, rename, archive, and restore task threads.
+updated_at: 2026-10-13
 ---
 
-# Thread Control
+The tool is `thread_control`, also known as `session_thread`.
 
-`thread_control` manages conversation threads between the current user and the current agent. It does not manage child-agent runs.
+A single agent can hold several independent task threads at once, and scheduling, locking, and live status are all isolated per thread. This tool manages the task threads themselves; the temporary units of work that a subagent dispatches and reclaims once done are a different matter, covered in [Subagent Control](/docs/en/tools/subagent-control/).
 
-## Main actions
+## When to use it
 
-- `list`
-- `info`
-- `create`
-- `switch`
-- `back`
-- `update_title`
-- `archive`
-- `restore`
+- The user raises a separate, independent matter that should be carried by a new thread rather than continued in the current one.
+- You need to switch between threads, go back to a parent thread, or rename a thread.
+- You need to archive or restore a thread, or look at its ancestors and child threads.
 
-## Return envelope
+## How to use it
 
-Successful calls share this structure:
+Each call specifies one action:
 
-```json
-{
-  "ok": true,
-  "action": "create",
-  "state": "completed",
-  "summary": "Created a new thread.",
-  "data": { ... }
-}
-```
+- `list`: list threads by scope.
+- `info`: view a single thread's details, together with its parent thread and direct child threads.
+- `create`: create a thread, inheriting the parent thread's agent and tool overrides by default.
+- `switch`: switch to a given thread.
+- `back`: switch back to the current thread's parent thread.
+- `update_title`: change the title.
+- `archive` / `restore`: archive / restore.
 
-Some actions also include `next_step_hint`.
+The available fields are `session_id` (the target thread, the current thread by default), `parent_session_id` (used only when creating, the current thread by default), `title` (for creating or renaming; when omitted on creation the thread is called "New session" by default), `scope`, `status`, and `limit`.
 
-## `list`
+`scope` decides which threads are listed:
 
-Typical result:
+- `branch` (the default): the ancestor chain from the root to the current thread, plus the current thread and its direct child threads; each one is marked as an ancestor, the current thread, or a child.
+- `children`: the direct child threads of the target thread.
+- `roots`: the root threads that have no parent thread.
+- `all`: all threads by status and agent scope.
 
-```json
-{
-  "ok": true,
-  "action": "list",
-  "state": "completed",
-  "summary": "Listed 5 threads.",
-  "data": {
-    "scope": "branch",
-    "status": "active",
-    "items": [
-      {
-        "id": "sess_xxx",
-        "title": "Tool documentation update",
-        "status": "active",
-        "created_at": "2026-04-10T10:00:00+08:00",
-        "updated_at": "2026-04-10T10:03:00+08:00",
-        "last_message_at": "2026-04-10T10:03:00+08:00",
-        "agent_id": "agent_docs",
-        "parent_session_id": null,
-        "spawn_label": null,
-        "runtime_status": "idle"
-      }
-    ]
-  }
-}
-```
+Each thread in the list shows which one it is, its status, and when its latest message arrived. The "runtime status" there comes from live in-memory monitoring and is not the same measure as the persisted "active / archived".
 
-## `create`
+## What it handles
 
-The key point is that creation can also be combined with:
+- A newly created thread inherits the parent thread's agent and tool overrides.
+- Archiving, restoring, and switching write the change to storage and refresh the session's modification time.
+- When archiving is combined with switching away, it picks another active thread under the same agent to switch to.
 
-- `switch`
+## When something goes wrong
 
-That means you can create a thread and immediately switch to it for the next task.
+- A missing user identity, a target thread that does not exist, a rename with no title, or a "back to parent" when the current thread has no parent all raise clear errors.
+- Viewing details, switching, archiving, and restoring all check agent ownership; an explicitly given agent that does not match the target thread is rejected as a permission error.
+- A list holds at most 200 entries, and expanding child threads is bound by the same limit.
+- The "switch away while archiving" only happens when switching is enabled and another active thread really exists under the same agent, and it picks the first other thread in the list, which may not be the intended one.
+- A rename forces the status of a non-archived thread back to active.
+- Switching threads is not the same as switching work: scheduling and locks are isolated per thread, and a thread you switch to that is running shows its status in live monitoring.
+- It never deletes a thread; archiving is reversible and a restore brings it back.
 
+## Form differences
 
-## Difference from `subagent_control`
+Honeycomb lists this tool as a system-level hidden tool, in neither the default set nor the desktop selectable set; Beehive, Helm, and Hull expose it according to the administrator's selection.
 
-- `thread_control`: manages the conversation threads themselves
-- `subagent_control`: manages temporary child-agent runs
+## Related pages
 
-If you want to manage task threads or archive status, use `thread_control`.  
-If you need to wait for a subagent, interrupt it, or inspect its history, use `subagent_control`.
+- Temporarily dispatched units of work: [Subagent Control](/docs/en/tools/subagent-control/)
+- Thread and round model: [Core Concepts · Sessions and Rounds](/docs/en/concepts/sessions-and-rounds/)

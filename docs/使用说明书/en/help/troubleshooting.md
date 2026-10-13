@@ -1,127 +1,120 @@
 ---
 title: Troubleshooting
-summary: Find the cause by symptom. Quick diagnosis for most issues.
-read_when:
-  - wunder won't start or behaves abnormally
-  - You've confirmed it's not a simple usage question
-source_docs:
-  - docs/API文档.md
-updated_at: 2026-04-10
+summary: Cause and check points by symptom.
+updated_at: 2026-10-13
 ---
 
-# Troubleshooting
+Find the cause by symptom.
 
-Find the cause by symptom. Don't jump straight to logs.
+## Health check
 
-## 60-Second Health Check
-
-1. Is the service running? Can you open the page?
-2. Is login working? Are your credentials correct?
-3. Is the model configured correctly? Does the API Key work?
+1. Make sure the service is running and the page opens.
+2. Make sure you can sign in and your account and password are correct.
+3. Make sure the model is configured correctly and the API key works.
 
 ## Find by Symptom
 
 ### Login Fails or Access Denied
 
 Check:
-- Are your username and password correct?
-- Are you using the right entry point (admin vs. user)?
-- Is your account disabled?
+- Whether your username and password are correct
+- Whether you used the wrong entry point for the Bridge and the Beehive
+- Whether your account is disabled
 
 ### Configuration Changes Not Taking Effect
 
 Check:
-- Did you edit the correct config file?
-- Does the change require a service restart?
-- Is the current instance actually loading your config?
+- Whether you edited the right configuration file
+- Whether the change needs a service restart
+- Whether the running instance actually loaded the changed configuration
 
-### Service Starts But Features Don't Work
-
-Check:
-- Is the database connected properly?
-- Are external tool services (MCP, A2A) online?
-- Is the sandbox service reachable?
-
-### Real-time Updates Not Working, Can't See Intermediate Steps
+### Service Starts but Features Are Unavailable
 
 Check:
-- Is your network connection stable?
-- Is WebSocket being blocked by a firewall or proxy?
-- Does it recover after refreshing the page?
+- Whether the database is connected properly
+- Whether the external tool services (MCP, A2A) are online
+- Whether the sandbox service is reachable
 
-### Tools Not Appearing or Can't Be Called
-
-Check:
-- Is the tool enabled?
-- Are MCP / A2A services running?
-- Does the current agent have that tool mounted?
-- Is it waiting for approval but you didn't see the prompt?
-
-### Attachment Uploaded But Can't Send
+### Real-time Status Not Updating, No Intermediate Steps Visible
 
 Check:
-- Is the file type supported (images, audio, video, common documents)?
-- Is the file still being processed (send button is disabled until processing completes)?
-- Does the workspace have write permission?
+- Whether your network connection is stable
+- Whether WebSocket is being blocked by a firewall or proxy
+- Whether it recovers after refreshing the page
 
-### Forgot Password
+### Tools Don't Appear or Can't Be Called
+
+Check:
+- Whether the tool is enabled
+- Whether the MCP / A2A service is running
+- Whether the current agent has that tool mounted
+- Whether it is waiting for approval and you missed the prompt
+
+### Attachment Uploaded but Can't Be Sent
+
+Check:
+- Whether the file type is supported (images, audio, video, common documents)
+- Whether the file is still being processed (the send button stays disabled until processing finishes)
+- Whether the workspace has write permission
+
+### Password Recovery
 
 Click "Reset Password" on the login page. You only need:
 - Username
 - Email
 - New password
 
-No old password required, and no need to be logged in first.
+No old password is required, and you don't need to sign in first.
 
-### Password Change Fails
+### Password Change Won't Save
 
 Check:
-- Did you enter your current password (required when changing password while logged in)?
-- Do the new password and confirmation match?
-- Is the new password the same as the current one?
+- Whether you entered your current password (changing a password while signed in always verifies the old one)
+- Whether the new password and the confirmation match
+- Whether the new password is the same as the current one
 
 ### New Thread Button Is Grayed Out
 
-This is not a bug. The system disables new thread creation while the current agent is running. Wait for it to finish or stop the current session.
+The button is briefly disabled while a thread is being created or switched. Threads running in the background can still start or switch, and an existing unused empty thread is reused first.
 
-### Session State Is Completely Messed Up
+### Session State Completely Messed Up
 
-Use "System Settings → Reset Workspace State".
+Use "System Settings → Reset Working State".
 
 It will:
 - Stop running sessions and tasks
 - Rebuild clean threads
 
-It will NOT delete your skills, knowledge bases, or other long-term assets.
+It will not delete skills, knowledge bases, or other long-term assets.
 
-### Microphone or Screenshot Button Not Working
+### Microphone or Screenshot Button Unavailable
 
 Check:
-- Are you in an environment that supports these features?
-- Has the browser granted microphone/screen permissions?
-- Is the desktop bridge working properly?
+- Whether you are in an environment that supports these features
+- Whether the browser has been granted microphone/screen permission
+- Whether the desktop bridge is working properly
 
 ### Help Manual Blank or Won't Open
 
 Check:
-- Has the docs site been built?
-- Is the reverse proxy correctly configured for the `/docs/` path?
+- Whether the docs site has been built
+- Whether the reverse proxy is configured correctly for the `/docs/` path
 
-### Collect a report for chat slowdowns
+### Capturing a Performance Report for Chat Stutter
 
-Open **More → Settings → Performance capture**:
+Open "More → Settings → Performance Capture" and follow three steps:
 
-1. Click **Start**, return to chat and reproduce the slowdown while streaming, scrolling or switching pages.
-2. Return to settings and click **Download JSON** to save a report for your issue report.
-3. Click **Stop**. You can still download afterward; starting again creates a new report.
+1. Click "Start", then return to chat and reproduce the stutter while replying, scrolling, or switching pages.
+2. Go back to settings and click "Download JSON"; the browser downloads the report directly, ready to attach to your issue report.
+3. Click "Stop" to end capture. You can still download afterward; starting again creates a new report.
 
-No console or reload is needed to start. Reloading continues capture in this tab and retains earlier statistics, for up to 30 minutes. Unsupported browser metrics are marked unavailable.
+No console or reload is needed to start. If you reload the page yourself, this tab keeps capturing and retains the statistics from before the reload, for up to 30 minutes. Browser metrics that aren't supported are marked unavailable.
 
-Reports include frame gaps, main-thread long tasks, slow input events, chat rendering/loading timings, sampled DOM/heap peaks, and browser/app versions. They exclude messages, tool arguments, accounts, session identifiers and file paths. Downloading does not stop capture or upload any data.
+The report includes frame gaps, main-thread long tasks, slower input events, chat rendering and loading timings, periodically sampled DOM/memory peaks, and the browser and app versions. It excludes message bodies, call arguments, accounts, session identifiers, and file paths. Downloading doesn't end capture and doesn't upload any file.
 
-Include the action and approximate time of the slowdown with the file. Model response totals and Worker waiting times are listed separately from main-thread stalls.
+When you submit, add what you did and when the stutter happened. Total model reply time and Worker wait time are not the same as main-thread stutter, and the report lists them separately.
 
-## Still Not Resolved?
+## Still Unresolved
 
 Continue with:
 
@@ -129,9 +122,9 @@ Continue with:
 - [Authentication & Security](/docs/en/ops/auth-and-security/)
 - [Configuration Reference](/docs/en/reference/config/)
 
-## When Reporting an Issue, Include
+## What to Include When Reporting an Issue
 
-- Runtime mode: desktop / server / cli
-- Steps to reproduce the problem
+- Runtime form: desktop / server / cli
+- Steps that reproduce the problem
 - Key error messages
 - Whether it involves subagents, MCP, A2A, etc.

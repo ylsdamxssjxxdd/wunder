@@ -1,0 +1,95 @@
+import { ScrollView } from "std-widgets.slint";
+import { HelpDocs, HelpTextRun, HelpRect } from "help_models.slint";
+
+// The typeset help document: the controller lays the topic out with parley and
+// ships absolute-positioned runs/rects; this view only projects them, handles
+// scrolling, text selection and link activation.
+export component HelpDocument inherits Rectangle {
+    // Local mirrors of the global coordination signals; `changed` handlers are
+    // declared on the local two-way aliases.
+    property <int> scroll-request <=> HelpDocs.scroll-request;
+    property <int> reveal-request <=> HelpDocs.reveal-request;
+    background: #ffffff;
+    forward-focus: keyboard;
+    out property <float> content-width: scroll.visible-width / 1px;
+    changed scroll-request => { scroll.content-y = 0px; }
+    changed reveal-request => {
+        scroll.content-y = -min(max(0px, HelpDocs.reveal-y * 1px - 12px), max(0px, scroll.content-height - scroll.visible-height));
+    }
+    keyboard := FocusScope {
+        key-pressed(event) => {
+            if event.modifiers.control && (event.text == "a" || event.text == "A") { HelpDocs.select-all(); return accept; }
+            if event.text == Key.DownArrow || event.text == Key.PageDown {
+                scroll.content-y = max(min(0px, scroll.visible-height - scroll.content-height), scroll.content-y - (event.text == Key.PageDown ? scroll.visible-height * 0.9 : 40px));
+                return accept;
+            }
+            if event.text == Key.UpArrow || event.text == Key.PageUp {
+                scroll.content-y = min(0px, scroll.content-y + (event.text == Key.PageUp ? scroll.visible-height * 0.9 : 40px));
+                return accept;
+            }
+            if event.text == Key.Home { scroll.content-y = 0px; return accept; }
+            if event.text == Key.End { scroll.content-y = min(0px, scroll.visible-height - scroll.content-height); return accept; }
+            reject
+        }
+    }
+    scroll := ScrollView {
+        content-width: self.visible-width;
+        content-height: max(self.visible-height, HelpDocs.document-height * 1px);
+        Rectangle {
+            width: scroll.visible-width;
+            height: scroll.content-height;
+            for box in HelpDocs.decorations : Rectangle {
+                x: box.x * 1px;
+                y: box.y * 1px;
+                width: box.width * 1px;
+                height: box.height * 1px;
+                background: box.fill;
+                border-color: box.border;
+                border-width: box.border-width * 1px;
+                border-radius: box.radius * 1px;
+            }
+            for mark in HelpDocs.matches : Rectangle {
+                x: mark.x * 1px;
+                y: mark.y * 1px;
+                width: mark.width * 1px;
+                height: mark.height * 1px;
+                background: mark.fill;
+            }
+            for mark in HelpDocs.selection : Rectangle {
+                x: mark.x * 1px;
+                y: mark.y * 1px;
+                width: mark.width * 1px;
+                height: mark.height * 1px;
+                background: mark.fill;
+            }
+            for run in HelpDocs.runs : Text {
+                x: run.x * 1px;
+                y: run.y * 1px;
+                width: run.width * 1px;
+                height: run.height * 1px;
+                text: run.text;
+                font-size: run.size * 1px;
+                font-weight: run.weight;
+                color: run.color;
+                font-family: run.family;
+                vertical-alignment: center;
+            }
+            pointer := TouchArea {
+                mouse-cursor: HelpDocs.over-link ? MouseCursor.pointer : MouseCursor.text;
+                pointer-event(event) => {
+                    if event.button == PointerEventButton.left && event.kind == PointerEventKind.down {
+                        keyboard.focus();
+                        HelpDocs.pointer(self.mouse-x / 1px, self.mouse-y / 1px, 0);
+                    }
+                    if event.button == PointerEventButton.left && event.kind == PointerEventKind.up {
+                        HelpDocs.pointer(self.mouse-x / 1px, self.mouse-y / 1px, 2);
+                    }
+                    if event.kind == PointerEventKind.cancel { HelpDocs.pointer(0, 0, 4); }
+                }
+                moved => { HelpDocs.pointer(self.mouse-x / 1px, self.mouse-y / 1px, 1); }
+                changed mouse-x => { if !self.pressed { HelpDocs.pointer(self.mouse-x / 1px, self.mouse-y / 1px, 3); } }
+                changed mouse-y => { if !self.pressed { HelpDocs.pointer(self.mouse-x / 1px, self.mouse-y / 1px, 3); } }
+            }
+        }
+    }
+}

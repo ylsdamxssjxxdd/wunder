@@ -1,110 +1,45 @@
 ---
 title: A2A Interface
-summary: wunder exposes A2A JSON-RPC standard access via /a2a and provides a capability discovery entry through AgentCard.
-read_when:
-  - You want wunder to be called by other agent systems
-  - You want to plug external A2A services into wunder's tool system
-source_docs:
-  - docs/API文档.md
-  - docs/设计文档/01-系统总体设计.md
-  - src/api/a2a.rs
-  - config/wunder-example.yaml
+summary: wunder both exposes its capabilities to other agent systems over the A2A protocol and mounts external A2A services as tools the model can call.
+updated_at: 2026-10-13
 ---
 
-# A2A Interface
+If the other side is "another agent system" that you want to call back and forth over one shared protocol, use A2A. If the calls only happen inside your own business system, [wunder API](/docs/en/integration/wunder-api/) is simpler.
 
-A2A solves the problem of "how agent systems interoperate in a standardized way".
+A2A works in two directions in wunder:
 
-In wunder, this pathway has two layers of meaning:
+- Expose wunder's capabilities so external agent platforms can call them.
+- Bring external A2A services in as tools the model can use.
 
-1. wunder itself exposes an A2A service.
-2. wunder can also mount external A2A services as `a2a@service` tools for the model to call.
+## A2A Fit Criteria
 
-## Exposed Endpoints
+Good fit: an external agent platform treats wunder as a remote collaborator, or cross-system collaboration needs a clear protocol boundary.
 
-- `POST /a2a`
+Poor fit: ordinary file operations that only run inside this system, single-machine built-in capabilities, and synchronous calls that have no reason to cross systems. Keep those local.
+
+## External Systems Calling wunder
+
+wunder provides these endpoints:
+
+- `POST /a2a`: the main call entry
 - `GET /.well-known/agent-card.json`
 - `GET /a2a/agentCard`
 - `GET /a2a/extendedAgentCard`
 
-## Current Protocol Characteristics
+External systems send requests as JSON-RPC 2.0. The protocol version is 1.0, and streaming responses are supported. They first read the AgentCard to learn who wunder is, where the entry is, what skills it offers, what tool categories it supports, and whether it supports streaming; when an API key is configured, the AgentCard also declares the matching security scheme.
 
-- Request protocol: JSON-RPC 2.0
-- A2A protocol version: `1.0`
-- Supports streaming responses
-- Supports AgentCard capability discovery
-- When `api_key` is configured, AgentCard also declares the API Key security scheme
+## wunder Calling External Services
 
-## What Is AgentCard For
+Declare an external A2A service in the configuration, give it a name and a service address, then switch it on. Once enabled, the service appears to the model as a callable tool whose name comes from the service name, in the form `a2a@<service name>`.
 
-AgentCard is primarily used to tell external systems:
+The system also ships two helper tools, one for observing task status and one for waiting for a result to settle, which are handier when running long tasks.
 
-- What your service is called
-- What its entry URL is
-- What skills it supports
-- What tool categories it supports
-- Whether it supports streaming
+## Key Settings and Common Pitfalls
 
-In other words, AgentCard is the "discovery and self-introduction" layer.
-
-## When to Use `POST /a2a`
-
-Suitable for these scenarios:
-
-- Letting external agent platforms treat wunder as a remote collaborator
-- Letting external systems tap into wunder's model and tool capabilities through a unified standard
-- Cross-system agent orchestration, rather than single-system tool calls only
-
-## Difference from `/wunder`
-
-- `/wunder` is more like wunder's own unified execution entry
-- `/a2a` is more like an external interoperability protocol entry
-
-If you are integrating internal business system calls, start with `/wunder`.
-
-If you are connecting to "another agent system", prefer `/a2a`.
-
-## How to Use External A2A Inside wunder
-
-You can declare external A2A services in the configuration file:
-
-```yaml
-a2a:
-  services:
-    - name: wunder
-      endpoint: http://127.0.0.1:8000/a2a
-      enabled: false
-```
-
-Once enabled, this service appears on the tool side as `a2a@wunder`.
-
-The system also includes two built-in helper tools:
-
-- `a2a观察`
-- `a2a等待`
-
-They are used to observe task status and wait for result convergence, respectively.
-
-## Things to Note When Integrating
-
-- A2A service names become part of the tool name, e.g. `a2a@service_name`
-- Services with `service_type=internal` typically require a fixed `user_id`
-- Whether self-invocation is allowed is controlled by `allow_self`
-- Timeout is controlled by `a2a.timeout_s`
-
-## Tasks Suited for A2A
-
-Things well-suited for A2A:
-
-- Remote specialized capabilities
-- Cross-system agent collaboration
-- External agent calls requiring clear protocol boundaries
-
-Things not suited for A2A:
-
-- Ordinary file tools that only run within this system
-- Single-machine built-in capabilities
-- Synchronous calls that have no need to cross systems
+- The service name becomes part of the tool name, so choose it carefully.
+- External services of the internal type usually need a fixed user identity.
+- Whether wunder is allowed to call itself is a separate switch.
+- Calls have a timeout limit, so assess it in advance when the remote side is slow.
 
 ## Further Reading
 

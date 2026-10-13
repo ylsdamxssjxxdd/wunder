@@ -1,107 +1,96 @@
 ---
 title: Sessions and Rounds
-summary: wunder splits a conversation into sessions, threads, user rounds, and model rounds.
-read_when:
-  - You need to understand session state, event streams, and counting conventions
-  - You need to distinguish user rounds, model rounds, and token occupancy
-source_docs:
-  - docs/设计文档/01-系统总体设计.md
-  - docs/API文档.md
+summary: How a conversation is numbered: threads, user rounds, model rounds, timeline entries, and the authoritative counting conventions.
+updated_at: 2026-10-13
 ---
 
-# Sessions and Rounds
+The numbering keeps **"how many times the user asked" separate from "how many steps the agent took"**. Statistics, replay, queueing, and token accounting all depend on this coordinate system.
 
-wunder does not treat a conversation as a single request. It treats it as a continuously evolving session.
+## Hierarchy
 
-## What is a session?
+```
+Agent
+└── Task thread (= session; one agent can have several at once)
+     └── User round (incremented per accepted input)
+          └── Model round (incremented per model call)
+               └── Entry (visible reply, tool call, approval, subagent message, …)
+```
 
-A session usually contains:
+| Concept | What it is | Decided by |
+| --- | --- | --- |
+| **Thread / session** | The main body of a continuous stretch of execution and dialogue; one session id runs through scheduling, locking, and state | Starting a thread starts a session; a subagent is an independent session traced back by its parent session id |
+| **User round** | One accepted human input | Incremented in the session on acceptance; a uniqueness constraint guarantees "one root per round" |
+| **Model round** | **One model call** of the engine's main loop, which may include a batch of tool calls | Incremented once per sample of the main loop |
+| **Entry** | The smallest renderable record on the timeline | Upserted by a stable entry id when it is written |
 
-- user input
-- model responses
-- tool calls
-- intermediate events
-- the final result
+These four layers are the coordinates:
 
-For complex work, one session may last for many turns and include multiple model calls and tool invocations.
+| Coordinate | Meaning |
+| --- | --- |
+| User round | Which user round it belongs to |
+| Model round | Which model call within that round (empty before sampling begins) |
+| Round id | The persistent id of that user round, used as the prefix of the entry identifier |
+| Target round | This round was started by the target driver rather than by a person, so a goal action that needs human authority is not started twice |
 
-## What is a thread?
+## Counting conventions
 
-A thread is the higher-level structure that organizes a session.
+- **One model round = one model call**, not "one action". Tool calls belong to a batch within the same model round and are **not** counted as separate model rounds.
+- **One model round produces exactly one visible output item**: refreshing several times within the same model round only updates that item and never appends duplicate bubbles.
+- **A tool-batch entry on the timeline is not an independent model round.** Each tool call is its own entry (merging "in progress → done / failed" by call id), so the number of steps is usually larger than the number of model rounds.
+- **A continuation round does not consume a user round**: a continuation that carries a root-round reference (for example, the target driver taking over) reuses the same user round and only adds model rounds within it.
+- A user round publishes a change only when it is **genuinely newly created**; a replayed acceptance is an idempotent no-op that produces no new round and notifies no subscribers.
 
-The current system requires:
+## Idempotency and queueing
 
-- an agent thread's system prompt must be frozen after it is first determined
-- long-term memory may only be injected once during thread initialization
-- later rounds continue reusing the same thread context
+| Mechanism | Convention |
+| --- | --- |
+| Submit idempotency | The same client message id reuses the existing round, so a network retry does not create an extra round |
+| Serialization within a session | The session lock is isolated per session, with a 120-second timeout and a 5-second heartbeat; an abnormal exit releases it on timeout |
+| Queueing | The queue toggle is on by default; messages sent while running enter the queue and run in order |
+| Turning queueing off | A message sent while running is judged "user busy" and not queued (the hull warns at startup), so do not turn it off as a performance tweak |
+| Background delivery | Scheduled messages take the forced-enqueue path so they are not lost while competing for the lock with human messages |
 
-So a thread is not just a UI label. It is the actual boundary for stability and context consistency.
+## What appears on the timeline
 
-## User rounds and model rounds
+A session records only events with timeline value:
 
-wunder explicitly splits rounds into two layers.
+| Entry type | State flow |
+| --- | --- |
+| Tool call | In progress → done / failed (merged by the same call id) |
+| Model call | Numbered by model round |
+| Visible reply | The output item of that model round |
+| Approval | Waiting → decided |
+| Subagent message | Uses the producer-supplied message id as a persistent identity, so a replay never becomes a new entry |
+| Queue ledger | Pending → running (upserted on the same entry); the interface skips it |
 
-### User rounds
+**Not recorded**: transport deltas, heartbeats, progress, context occupancy, workspace updates, model usage, and streaming retries, together with lifecycle receipts (ended, status, model response, and so on — failure details are carried by the round's terminal state). These are visible in the stream but should not become empty timeline entries.
 
-Each message sent by the user counts as one user round.
+## How the interface reads it
 
-This represents a clear business-input boundary.
+- The chat page shows **one user round per row** (12 per page by default, up to 20), folding everything between the final reply into a "**working process**".
+- The working process is collapsed by default; the first expansion fetches that user round's persistent entries on demand rather than pulling the entire history into the frontend.
+- The entry-by-entry panorama lives in the "**thread trace**" view (80 per page by default, up to 100), with long bodies fetched in 8 KB chunks.
+- The directory list reads the tail of each round (highest user round, that round's state, a recent-activity summary, and the backfill cursor), querying a page of sessions in one batch.
 
-### Model rounds
+## How to use it
 
-Each action executed by the model counts as one model round.
+- **When to start a new session**: changing topic; needing to apply new agent settings, a prompt template, or long-term memory (an existing session's prompt is already frozen); or when the context has grown long and is starting to lose early detail.
+- **When to keep the current one**: the same task is still unfinished, or you need to reference earlier output. Continuing does not recompute the base; it only adds rounds.
+- **How to point at "a certain step"**: give the coordinates "user round + model round", or the entry id directly; for tool batches give the entry sequence number only and do not call it "round N".
 
-Actions include:
+## Common mistakes
 
-- one model call
-- one tool call
-- one final reply
-
-So one user round usually contains multiple model rounds.
-
-## Why this distinction matters
-
-If you do not separate the two kinds of rounds, these questions blur together:
-
-- how many times did the user actually ask something
-- how many steps did the model take to answer that one question
-- at which step did a tool explosion happen
-- where should current speed, latency, and token statistics be attached
-
-Once user rounds and model rounds are separated, timelines, replay, alerts, and billing-related conventions become much clearer.
-
-## Token statistics
-
-wunder records token occupancy, meaning how many tokens the current context actually occupies.
-
-It is not:
-
-- the total billing cost of a platform
-- a simple sum of every provider-side billing field
-
-When you inspect the chat UI, debugging UI, or replay data, you should first read token counts as **current thread context load**.
-
-## Streaming events and termination
-
-During one user round, the event stream usually shows:
-
-- input arrival
-- model start
-- tool calls and observations
-- incremental output
-- a termination event
-
-Whether execution truly finished should be judged by termination semantics, not just by whether any streaming text appeared.
-
-If you are integrating or troubleshooting, at minimum keep these separate:
-
-- whether the session is still alive
-- whether the current thread runtime is still active
-- whether the current round has already emitted a terminating event
+- **"One round = one question and answer"** — one user round can contain many model rounds, and each model round can carry a batch of tool calls.
+- **"Step count = round count"** — they are not equal; steps (entries) are usually more.
+- **"A session and a thread are two things"** — in this system they are the same: the session is the carrier of the conversation and its records, and the thread is its executing body.
+- **"Submitting again charges an extra round"** — a retry with the same client message id is idempotent.
+- **"A subagent's input shows up in the parent session"** — a sub-session's opening user message is hidden by default and skips automatic memory extraction, so it does not pollute your memory.
+- **"Token statistics = the provider's bill"** — a session records context occupancy (trusting only the value the model reports), not a billing figure.
 
 ## Further reading
 
-- [Streaming Execution](/docs/en/concepts/streaming/)
-- [Presence and Runtime](/docs/en/concepts/presence-and-runtime/)
-- [Streaming Events Reference](/docs/en/reference/stream-events/)
-- [wunder API](/docs/en/integration/wunder-api/)
+- [The agent loop](/docs/en/concepts/core-agent-loop/) — how model rounds advance and terminate
+- [Streaming execution](/docs/en/concepts/streaming/) — the relationship between entries and deltas
+- [Context compression](/docs/en/concepts/core-context-compression/) — how history is trimmed
+- [Long-term memory](/docs/en/concepts/memory/) — memory isolated by scope
+- [Session states](/docs/en/reference/stream-events/) — events and state fields

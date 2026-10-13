@@ -1,79 +1,86 @@
 ---
 title: Scheduled Tasks
-summary: The Scheduled Tasks core explains why wunder treats time-driven background tasks as a first-class system capability rather than leaving them to ad-hoc external scripts.
+summary: Scheduled tasks run the agent at a chosen time: three schedule kinds — at for a one-off point, every for a fixed interval, cron for a recurring pattern — with leases, backoff, and auto-disable, so tasks survive a process restart.
 read_when:
-  - You are designing inspection, reminders, background maintenance, or delayed execution tasks
-  - You want to distinguish online threads from system-level async tasks
+  - You want a report, inspection, or reminder to run on a schedule instead of by hand
+  - A scheduled task did not run, ran twice, or was disabled on its own
+  - You need to know which forms support scheduling and which do not
 source_docs:
-  - docs/总体设计.md
+  - crates/wunder-runtime/src/services/cron.rs
+  - crates/wunder-runtime/src/services/cron_schedule.rs
+  - crates/wunder-runtime/src/services/cron/policy.rs
+  - crates/wunder-runtime/src/api/cron.rs
+updated_at: 2026-10-13
 ---
 
-# Scheduled Tasks
+Scheduled tasks let the agent run automatically at a chosen time, for periodic reports, inspections, and reminders.
 
-Scheduled tasks let wunder do more than just respond to incoming requests — they allow the system to proactively execute governance and business actions along the system timeline. What they solve is how time-driven tasks become part of a unified system capability, not how to write an external cron script.
+This is **engine-level scheduling**: the task definition is persisted in storage, and a background loop claims work by due time, independent of which session you happen to be viewing. Every run is recorded (`/wunder/cron/runs`): whether it ran, whether it succeeded, and when it will run next; failures come with backoff and auto-disable; and a process restart does not lose the task definitions.
 
-![Scheduled Tasks diagram: scheduling rules enter the scheduler, then dispatch to background execution and execution records](/docs/assets/manual/core-scheduled-tasks.svg)
+This differs from waiting inside a session: yielding in a session only affects the current thread, whereas a scheduled task creates a new run in the future.
 
-## Bottom Line
+![Scheduled tasks diagram: scheduling rules enter the scheduler, then dispatch to background execution and execution records](/docs/assets/manual/core-scheduled-tasks.svg)
 
-- Scheduled tasks are not an upgraded `sleep`; they are a system-level async scheduling capability.
-- Time itself is a system input, so scheduling, execution, recording, and failure recovery must all be under formal governance.
-- Any task that runs long-term or affects user or system state should not live in an opaque external script.
+## Three kinds of schedule
 
-## Why It Must Be a Standalone Core
+The `kind` field is one of `at`, `every`, or `cron`.
 
-Without scheduled tasks as a core capability, periodic behaviors in the system typically scatter to:
+| Kind | Semantics | Input | Bounds |
+| --- | --- | --- | --- |
+| `at` | One-off point in time | An RFC3339 timestamp | At most 365 days ahead; auto-disabled once it runs (disabled with a reason if it fails) |
+| `every` | Fixed interval | `every_ms` (optional start time) | 1,000 ms ≤ interval ≤ 86,400,000 ms (24 hours) |
+| `cron` | Recurring expression | A 5–7 field expression plus an optional timezone | Fields accept only digits and `* / - , ?`; the timezone is parsed as a named timezone, defaulting to the local timezone |
 
-- External cron scripts.
-- Frontend polling timers.
-- A manual trigger button used by some administrator.
+Natural language also works in tools and quick input, and the system converts it into the kinds above: `every 5 minutes` becomes a fixed interval, and `daily at 9am` and `weekdays at 6pm` become the corresponding cron expressions; when it cannot parse the input, it suggests the formats that are accepted.
 
-The shared problem: triggering, execution, failure handling, tracing, and permission boundaries are no longer unified, and background tasks gradually spin out of control.
+Content limits: a task name is at most 128 characters, and a trigger message at most 16,384 characters.
 
-## What This Core Really Protects
+## Where results are delivered
 
-- Protects scheduling semantics — there must be clear rules for why a task starts at a given time.
-- Protects execution boundaries — background tasks must not be conflated with online session semantics.
-- Protects traceability — every planned execution must have a status, a record, and a failure reason.
+`session_target` has two values.
 
-## Key Constraints
+| Value | Behavior |
+| --- | --- |
+| `main` (default) | The result is delivered to the bound current session, continuing the same conversation |
+| `isolated` | Each run creates a separate thread session and keeps a link back to the parent session |
 
-| Constraint | Purpose |
-|------|------|
-| Must be separated from online thread semantics | Avoids mixing background scheduling with live sessions |
-| Execution records must be traceable | Answers "did it run, why did it fail, when is the next run" |
-| Failure retry must have a strategy | Prevents a single transient failure from disabling a task permanently |
-| Periodic tasks must have boundaries | Avoids unbounded accumulation and resource contention |
+Choose `isolated` for recurring tasks that need a trail and should not disturb the main conversation; choose `main` when you want the result appended directly to the existing context.
 
-## Design Highlights
+## Execution guarantees
 
-### Highlight 1: Bring "time" into the system, not leave it outside
+In multi-instance deployments a **lease** prevents duplicate execution: when a task is claimed, the runner's identity, a run token, and a lease expiry are written, and the lease is renewed with a heartbeat while the run lasts; if the process crashes, the lease expires and another instance can claim the task. Each record also carries a deduplication key and a consecutive-failure count, and writes down why it was disabled.
 
-Once the system needs scheduled inspections, scheduled reminders, or scheduled maintenance, time has become part of the business. It should therefore be governed by the system.
+Default scheduling parameters:
 
-### Highlight 2: Scheduled tasks are a background execution chain, not a synchronous wait chain
+| Parameter | Default |
+| --- | --- |
+| Max concurrent runs | 1 |
+| Poll interval | 1000 ms |
+| Max idle sleep | 5000 ms |
+| Lease lifetime / heartbeat | 300 seconds / 60 seconds |
+| Consecutive-failure auto-disable threshold | 5 |
 
-`sleep` is more like a brief pause within the current flow; a scheduled task is more like "the system promises to do something at a future point in time."
+After a failure, backoff steps up with the consecutive-failure count: **30 seconds → 60 seconds → 5 minutes → 15 minutes → 1 hour**, then stays at the last step. Once the failure limit is reached, the task is auto-disabled with a written reason; re-enabling it resets the failure count.
 
-### Highlight 3: Scheduling capability must natively carry execution records
+## The master switch
 
-A scheduling system without execution history, next-run time, and last status is essentially unusable in operations.
+With the master switch off (`cron.enabled=false`), **only four kinds of write operation are rejected — `add`, `update`, `enable`, and `run`** (each with a clear message). Status, list, a single detail, run records, delete, and disable all remain available, so existing tasks can still be reviewed and cleaned up. This is not a blanket refusal of the whole interface.
 
-## Common Misconceptions
+## Where to create one, and support by form
 
-- `sleep` is not a scheduled task — the former is about synchronous waiting, the latter about async scheduling.
-- Scheduled tasks are not a script escape hatch outside the main system — they are a formal governance capability.
-- The more automated periodic execution becomes, the more it needs clear records and fallback governance.
+| Surface | Status |
+| --- | --- |
+| API | `/wunder/cron/*`, 11 endpoints in all (status / list / runs / add / update / remove / enable / disable / get / run / action), on the **user side**, isolated by user ownership |
+| Tool | The built-in scheduled-tasks tool (canonical name `定时任务`, alias `schedule_task`), sharing the same handler as the API, so the model can create tasks on its own |
+| Beehive | A scheduled-tasks category page under settings |
+| Honeycomb | A scheduled-tasks page plus a native entry point, calling the same handler in-process |
+| Helm | **No scheduled tasks**: the local engine explicitly disables the scheduler at startup, and there is no related slash command |
+| Bridge | No user-level task management page; it exists only as a template configuration under preset agents |
 
-## Boundaries with Other Cores
+When you need something to run on a schedule, configure it on the Beehive, the Honeycomb, or the Hull side.
 
-- Distinction from [Agent Loop](/docs/en/concepts/core-agent-loop/): The agent loop handles "how the current turn runs"; scheduled tasks handle "when to start a future run."
-- Distinction from [Stability](/docs/en/concepts/core-stability/): Stability handles failure recovery; scheduled tasks give periodic execution a formal entry point.
-- Distinction from [Observability](/docs/en/concepts/core-observability/): Observability records the results of scheduled executions; scheduled tasks define the schedules themselves.
+## Related pages
 
-## Further Reading
-
-- [Core Overview](/docs/en/concepts/)
-- [Scheduled Tasks](/docs/en/tools/schedule-task/)
-- [Deployment and Operations](/docs/en/ops/deployment/)
-- [Operations Overview](/docs/en/ops/)
+- [Schedule Task](/docs/en/tools/schedule-task/) — tool parameters and usage
+- [Stability](/docs/en/concepts/core-stability/) — the wider view of backoff and bounded design
+- [Agent Loop](/docs/en/concepts/core-agent-loop/) — how a triggered task enters the execution chain

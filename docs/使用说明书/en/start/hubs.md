@@ -1,86 +1,104 @@
 ---
-title: Documentation Hub
-summary: Start with the Honeycomb, then dive deeper as needed.
+title: Manual Overview
+summary: The manual's navigation page: start from the Honeycomb and move into the interface map, other forms, and reference as needed. Every page in the start and surfaces groups is here.
 read_when:
-  - You're not sure where to start
-  - You want to jump to the right docs quickly
+  - You want the map of the whole manual and where to enter it
+  - You are troubleshooting and need to jump to the right form's page
 source_docs:
-  - docs/使用说明书/en/index.md
+  - docs/使用说明书/site.json
+  - frontend-slint/run.bat
+  - crates/wunder-server/src/main.rs
+updated_at: 2026-10-13
 ---
 
-# Documentation Hub
+# Manual Overview
 
-Everyone starts with the [Honeycomb (desktop)](/docs/en/start/desktop/): download, install, and you have your local AI workbench. Entries below are ordered by how often you'll need them.
+Everyone starts with the [Honeycomb (desktop)](/docs/en/start/desktop/): download and install it, and opening it gives you your local AI workbench. The entries below are ordered by how often you'll need them.
 
-## Start here: get running
+## Getting started
 
 <div class="docs-card-grid docs-card-grid-compact">
   <a class="docs-card" href="/docs/en/start/quickstart/">
     <strong>Quick Start</strong>
-    <span>Complete your first task in 4 steps.</span>
+    <span>Get your first task running in 4 steps.</span>
   </a>
   <a class="docs-card" href="/docs/en/start/desktop/">
-    <strong>Honeycomb quick start</strong>
-    <span>Download, install, and go.</span>
+    <strong>Honeycomb intro</strong>
+    <span>Download, install, open, go; data stays on your machine, no port taken.</span>
   </a>
-  <a class="docs-card" href="/docs/en/surfaces/frontend/">
-    <strong>Beehive Interface</strong>
-    <span>Chat, files, agents, and tools.</span>
-  </a>
-  <a class="docs-card" href="/docs/en/help/faq/">
-    <strong>FAQ</strong>
-    <span>Quick answers to common questions.</span>
+  <a class="docs-card" href="/docs/en/start/troubleshooting-first-run/">
+    <strong>First-run troubleshooting</strong>
+    <span>No interface after install / port unreachable / model 401.</span>
   </a>
 </div>
 
-## Go deeper
+## Interface map
+
+<div class="docs-card-grid docs-card-grid-compact">
+  <a class="docs-card" href="/docs/en/surfaces/index/">
+    <strong>Surfaces overview</strong>
+    <span>The four forms' interface division and capability matrix.</span>
+  </a>
+  <a class="docs-card" href="/docs/en/surfaces/desktop-ui/">
+    <strong>Honeycomb interface</strong>
+    <span>The main window's two pages + 12 settings categories + panels and dialogs.</span>
+  </a>
+  <a class="docs-card" href="/docs/en/surfaces/frontend/">
+    <strong>Beehive interface</strong>
+    <span>The single-page app in the browser, with two-way voice.</span>
+  </a>
+  <a class="docs-card" href="/docs/en/surfaces/web-admin/">
+    <strong>Bridge interface</strong>
+    <span>The admin's governance and debugging backend.</span>
+  </a>
+</div>
+
+## Going deeper
 
 <div class="docs-card-grid docs-card-grid-compact">
   <a class="docs-card" href="/docs/en/concepts/">
-    <strong>Core Concepts</strong>
-    <span>Understand how the system works.</span>
+    <strong>Core overview</strong>
+    <span>Understand the system's running model.</span>
   </a>
   <a class="docs-card" href="/docs/en/tools/">
-    <strong>Tools Overview</strong>
+    <strong>Tools overview</strong>
     <span>Pick tools by task.</span>
   </a>
   <a class="docs-card" href="/docs/en/integration/">
-    <strong>Integration Overview</strong>
-    <span>Find the right integration path.</span>
+    <strong>Integration overview</strong>
+    <span>External workflows, MCP endpoints, channel webhooks.</span>
   </a>
 </div>
 
-## Optional forms: admin & deployment
+## Other forms (optional)
 
-Only needed when multiple people share one system or you automate workflows:
+Individual users need only the Honeycomb by default; the following are needed only for team collaboration or automation:
 
 <div class="docs-card-grid docs-card-grid-compact">
   <a class="docs-card" href="/docs/en/start/server/">
-    <strong>Hull deployment (optional)</strong>
-    <span>The user and agent management platform — deploy only for multi-user governance.</span>
-  </a>
-  <a class="docs-card" href="/docs/en/surfaces/web-admin/">
-    <strong>Bridge Interface</strong>
-    <span>Models, tools, users, and channels.</span>
-  </a>
-  <a class="docs-card" href="/docs/en/ops/deployment/">
-    <strong>Deployment & Operations</strong>
-    <span>Key checks before and after going live.</span>
+    <strong>Hull deployment</strong>
+    <span>18000 serves the API and the Bridge; 18001 delivers the Beehive; sandbox on 9001.</span>
   </a>
   <a class="docs-card" href="/docs/en/start/cli/">
-    <strong>Helm guide (optional)</strong>
-    <span>The manual local entry point — scripting, automation.</span>
+    <strong>Helm usage</strong>
+    <span>An interactive session in the terminal; `exec --json` event stream; the full `cloud` set.</span>
   </a>
 </div>
 
-## Troubleshooting
+## Troubleshooting entry
 
-- [Help Center](/docs/en/help/)
+- [First-run troubleshooting](/docs/en/start/troubleshooting-first-run/): locate install / launch / access failures by form
+- [Help center](/docs/en/help/)
 - [Troubleshooting](/docs/en/help/troubleshooting/)
-- [Authentication & Security](/docs/en/ops/auth-and-security/)
-- [Configuration Reference](/docs/en/reference/config/)
+- [FAQ](/docs/en/help/faq/)
+- [Authentication and security](/docs/en/ops/auth-and-security/)
+- [Configuration reference](/docs/en/reference/config/)
 
-## Further reading
+## Documentation ecosystem
 
-- [Docs Directory](/docs/en/start/docs-directory/)
-- [API Index](/docs/en/reference/api-index/)
+- [Documentation directory](/docs/en/start/docs-directory/): how the manual / design docs / technical manual / API reference / performance standards and scoring / changelog / lessons-learned divide the work and how to read them
+- [API index](/docs/en/reference/api-index/)
+
+## Home
+
+Back to the [wunder home page](/docs/en/index/).

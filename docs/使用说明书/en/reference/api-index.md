@@ -1,136 +1,126 @@
 ---
-title: API Index
-summary: This is an index page for wunder's most commonly used interface groups, used for quickly locating endpoints rather than replacing the full API documentation.
-read_when:
-  - You are looking for which category an interface roughly belongs to
-  - You don't want to browse through the complete `docs/API文档.md` directly
-source_docs:
-  - docs/API文档.md
-  - docs/设计文档/01-系统总体设计.md
+title: Feature and Capability Quick Reference
+summary: What wunder can do and where each capability lives, organized by feature area.
+updated_at: 2026-10-13
 ---
 
-# API Index
+Capabilities are listed by category below, each with its entry point.
 
-This is not a complete API manual, but an index page for wunder's main interface groups.
+## Chat
 
-## Core Execution Endpoints
+Location: the workbench (Honeycomb or Beehive) → the New task button in the left sidebar, or the thread list under the workspace.
 
-- `POST /wunder`
-- `POST /wunder/system_prompt`
-- `GET /wunder/tools`
+- Ask questions and get answers
+- Upload files for the agent to analyze
+- Have the agent carry out tasks such as writing code, processing files, or searching for information
+- Review chat history and pick up earlier conversations
 
-Recommended reading:
+Related: [Session Status Guide](/docs/en/reference/stream-events/), [Prompts and Personalization](/docs/en/reference/prompt-templates/)
 
-- [wunder API](/docs/en/integration/wunder-api/)
+## Working directory
 
-## Chat Session Domain
+Location: the workbench → the Working directory area below the workspace in the left sidebar.
 
-- `GET/POST /wunder/chat/sessions`
-- `POST /wunder/chat/attachments/convert`
-- `POST /wunder/chat/attachments/media/process`
-- `POST /wunder/chat/sessions/{session_id}/messages`
-- `POST /wunder/chat/sessions/{session_id}/cancel`
-- `GET /wunder/chat/ws`
+- Upload documents, images, audio, and other files for the agent to use
+- Download files the agent generates
+- Browse and manage your single cloud directory
+- See the files produced while the agent works
 
-Recommended reading:
+Related: [Workspace Routing and File Management](/docs/en/reference/workspace-routing/)
 
-- [Chat Sessions](/docs/en/integration/chat-sessions/)
-- [Temp Directory and Document Conversion](/docs/en/integration/temp-dir/)
-- [Chat WebSocket](/docs/en/integration/chat-ws/)
-- [Sessions and Rounds](/docs/en/concepts/sessions-and-rounds/)
+## Agent settings
 
-## Workspace Domain
+Location: the workbench → Settings at the bottom of the left sidebar → Agent.
 
-Every user has exactly one workspace — a single cloud directory. Paths are workspace-relative, and the historical `container_id` parameter no longer selects a directory.
+Every user has exactly one agent instance, generated from a one-to-one binding to an admin-side preset. There is no user-side entry point to create, delete, switch, or sort agents.
 
-- `GET/DELETE /wunder/workspace`
-- `GET /wunder/workspace/content`
-- `GET /wunder/workspace/search`
-- `GET /wunder/workspace/stats`
-- `POST /wunder/workspace/upload`
-- `GET /wunder/workspace/download`
-- `GET /wunder/workspace/archive`
-- `POST /wunder/workspace/dir`
-- `POST /wunder/workspace/move`
-- `POST /wunder/workspace/copy`
-- `POST /wunder/workspace/batch`
-- `POST /wunder/workspace/file`
+- View the current agent instance and the preset it is bound to
+- Edit the fields the preset allows you to customize, such as the default model, approval mode, and tool set
+- Set the agent's answer style (prompt template)
+- Manage the agent's long-term memory
 
-Recommended reading:
+Related: [Prompts and Personalization](/docs/en/reference/prompt-templates/), [Tool System](/docs/en/concepts/tools/)
 
-- [Workspace API](/docs/en/integration/workspace-api/)
-- [Workspace Routing and File Management](/docs/en/reference/workspace-routing/)
-- [Workspaces and Working Directory](/docs/en/concepts/workspaces/)
+## Tools and skills
 
-## Current Agent
+Location: the workbench → Settings at the bottom of the left sidebar → Tools. The user side only views and toggles; the tool catalog is maintained by admins.
 
-Each user has exactly one agent instance, generated from a 1:1 admin-side preset binding. There is no user-side create, delete, switch, or sort entry point.
+- View the available tool list
+- Configure skills (preset capability packs)
+- Add knowledge bases so the agent can draw on your own material
 
-- `GET /wunder/agents`
-- `GET /wunder/agents/models`
-- `/wunder/memories/*`
+The built-in tools cover:
 
-Recommended reading:
+- File operations: read, write, and search files
+- Web operations: search and fetch page content
+- Code operations: run commands and write code
+- System operations: screenshots and system status
+- More capabilities are added through MCP
 
-- [Prompts and Skills](/docs/en/concepts/prompt-and-skills/)
-- [Long-term Memory](/docs/en/concepts/memory/)
+Related: [Tool System](/docs/en/concepts/tools/), [Prompts and Skills](/docs/en/concepts/prompt-and-skills/)
 
-## A2A
+## Channel access
 
-- `POST /a2a`
-- `GET /.well-known/agent-card.json`
-- `GET /a2a/agentCard`
-- `GET /a2a/extendedAgentCard`
+Location: the Bridge → Channel management.
 
-Recommended reading:
+- Bind accounts on Feishu, WeCom, WeChat, QQ, and other platforms
+- Let users on those external platforms reach the agent
+- View channel status and message logs
+- Troubleshoot channel-related problems
 
-- [A2A Interface](/docs/en/integration/a2a/)
+When members of an organization already work in Feishu or WeChat, channel access lets them use the agent without switching tools.
 
-## MCP
+Related: [Channel Management Guide](/docs/en/ops/channel-runtime/), [Bridge Panel Guide](/docs/en/reference/admin-panels/)
 
-- `POST /wunder/mcp`
-- `GET/POST /wunder/admin/mcp`
-- `POST /wunder/admin/mcp/tools`
-- `POST /wunder/admin/mcp/tools/call`
+## Scheduled tasks
 
-Recommended reading:
+Location: the workbench → Settings at the bottom of the left sidebar → Scheduled tasks.
 
-- [MCP Endpoint](/docs/en/integration/mcp-endpoint/)
+- Create tasks that run on a schedule
+- View execution history
+- Manage, pause, and delete scheduled tasks
 
-## User World
+This suits recurring work such as a daily summary report or a periodic system check.
 
-- `GET /wunder/user_world/contacts`
-- `GET /wunder/user_world/groups`
-- `GET /wunder/user_world/conversations`
-- `GET /wunder/user_world/ws`
+## System settings
 
-## Admin Interfaces
+Location: the workbench → Settings at the bottom of the left sidebar.
 
-Most admin interfaces are under:
+- Change the interface language
+- Configure the service address to connect to
+- Manage your personal account information
+- View usage statistics and quota balance
 
-- `/wunder/admin/*`
+Related: [System Settings Reference](/docs/en/reference/config/)
 
-They cover:
+## Bridge features (administrators only)
 
-- Models
-- Tools
-- Users and Organizations
-- Preset Agents
-- Benchmarks
-- Channel Governance
+Location: open the Bridge address in a browser. The main panels are:
 
-## When to Return to Full API Documentation
+- System settings: global configuration
+- User management: user accounts and quota accounts
+- Organization management: organizational structure
+- Model configuration: the AI models you can choose
+- Tool management: the available tool list
+- Channel monitoring: external channel status
+- Performance monitoring: how the system is running
 
-You should go back to the full documentation when you need:
+Related: [Bridge Panel Guide](/docs/en/reference/admin-panels/), [System Settings Reference](/docs/en/reference/config/)
 
-- Field-level request bodies
-- Response structures
-- Error codes
-- Authentication details
-- Backward compatibility fields
+## Locate by need
 
-## Further Reading
+| I want to… | Where to go |
+|---------|--------|
+| Start a conversation | New task in the left sidebar → just type |
+| Upload a file for the agent to analyze | Use upload or drag files into the working directory area in the left sidebar, or add an attachment in the composer |
+| See the files the agent generates | The working directory area in the left sidebar |
+| Customize the agent's style | Settings at the bottom of the left sidebar → Agent → prompt template |
+| Create a scheduled task | Settings at the bottom of the left sidebar → Scheduled tasks → create task |
+| Manage users (administrator) | Bridge → User management |
+| Configure channels (administrator) | Bridge → Channel management |
 
-- [wunder API](/docs/en/integration/wunder-api/)
-- [Configuration](/docs/en/reference/config/)
+## Further reading
+
+- [Core Concepts](/docs/en/concepts/)
+- [Quick Start](/docs/en/start/quickstart/)
 - [Troubleshooting](/docs/en/help/troubleshooting/)

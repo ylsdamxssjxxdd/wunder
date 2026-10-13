@@ -1,110 +1,19 @@
 ---
 title: 渠道工具
-summary: `channel_tool` 的联系人查询、发信与同步/异步回执结构。
-read_when:
-  - 用户要列外部渠道联系人或发送渠道消息
-source_docs:
-  - src/services/tools/channel_tool.rs
+summary: 渠道工具已从 wunder 移除，本页仅作历史参考。
 updated_at: 2026-04-10
 ---
 
 # 渠道工具
 
-> **已移除**：该工具已从 wunder 中移除，对智能体与用户均不可见；本页仅作历史参考。
+> **已移除**：该工具已从 wunder 移除，对智能体与用户均不可见；本页仅作历史参考。
 
-`channel_tool` 主要有两个动作：
+它原本有两个动作：
 
-- `list_contacts`
-- `send_message`
+- `list_contacts`：列出外部渠道的联系人，可按关键词过滤；结果带总数、分页信息和来源范围。
+- `send_message`：向联系人发送渠道消息。
 
-## `list_contacts`
+发送时由 `wait` 决定拿到哪种回执：
 
-### 最小参数
-
-```json
-{
-  "action": "list_contacts",
-  "channel": "xmpp",
-  "account_id": "acc_xxx",
-  "keyword": "alice"
-}
-```
-
-### 成功返回
-
-```json
-{
-  "ok": true,
-  "action": "list_contacts",
-  "state": "completed",
-  "summary": "Listed 12 contacts.",
-  "data": {
-    "action": "list_contacts",
-    "items": [ ... ],
-    "total": 12,
-    "offset": 0,
-    "limit": 20,
-    "warnings": [],
-    "resolved_scope": {
-      "source": "session",
-      "channel": "xmpp",
-      "account_id": "acc_xxx"
-    }
-  }
-}
-```
-
-## `send_message`
-
-### 最小参数
-
-```json
-{
-  "action": "send_message",
-  "to": "alice@example.com",
-  "peer_kind": "user",
-  "content": "你好",
-  "wait": true
-}
-```
-
-### `wait=true` 时
-
-更接近同步投递完成：
-
-```json
-{
-  "ok": true,
-  "action": "send_message",
-  "state": "completed",
-  "summary": "Sent channel message.",
-  "data": {
-    "delivery": { ... },
-    "resolved": { ... }
-  }
-}
-```
-
-### `wait=false` 时
-
-更接近已入发件箱：
-
-```json
-{
-  "ok": true,
-  "action": "send_message",
-  "state": "accepted",
-  "summary": "Queued channel message for delivery.",
-  "data": {
-    "outbox_id": "out_xxx",
-    "status": "pending",
-    "resolved": { ... }
-  },
-  "next_step_hint": "..."
-}
-```
-
-## 重点
-
-- 正文统一用 `content`
-- `wait` 决定用户拿到的是“已送达结果”还是“已排队结果”
+- `wait=true`：更接近“已送达”的同步结果
+- `wait=false`：更接近“已入发件箱”，只拿到排队状态

@@ -4083,8 +4083,17 @@ function installMessengerControllerConversationOpenActions(ctx: MessengerControl
           ctx.finishMessengerPerfTrace(perfTrace, 'ok');
       }
       catch (error) {
-          if (!isForegroundSession()) {
-              ctx.finishMessengerPerfTrace(perfTrace, 'ok', { stale: true });
+          // A navigation can cancel the previous session bootstrap after its
+          // bounded thread view has already painted. Axios reports that as a
+          // cancellation (or the old request may fail while the new route is
+          // active); neither belongs to the session the user is viewing and
+          // must not surface a false "open failed" toast.
+          const routeSessionId = String(ctx.route?.query?.session_id || '').trim();
+          const errorRecord = (error && typeof error === 'object') ? error as Record<string, unknown> : {};
+          const cancelled = errorRecord.name === 'AbortError' ||
+              errorRecord.code === 'ERR_CANCELED';
+          if (!isForegroundSession() || cancelled || (routeSessionId && routeSessionId !== normalizedSessionId)) {
+              ctx.finishMessengerPerfTrace(perfTrace, 'ok', { stale: true, cancelled });
               return;
           }
           ctx.finishMessengerPerfTrace(perfTrace, 'fail', {

@@ -1,136 +1,160 @@
 ---
 title: Authentication and Security
-summary: wunder needs to distinguish between API Keys, user tokens, external auth, and tool execution boundaries.
-read_when:
-  - You are deploying wunder to a long-running environment
-  - You need to determine which credentials to use for which entry points
-source_docs:
-  - docs/API文档.md
-  - docs/设计文档/01-系统总体设计.md
-  - src/core/auth.rs
-  - config/wunder-example.yaml
+summary: Tell the account types and permission levels apart, set clear security boundaries, and keep the system running within controlled limits.
+updated_at: 2026-10-13
 ---
 
-# Authentication and Security
+Account and permission problems fall into three categories: a difference between the identity types themselves, a tool running outside its bounds, or cross-user access. Everyday configuration covers three areas: limiting which paths and commands the agent may act on, routing sensitive operations through approval, and keeping each user's data isolated inside their own directory.
 
-wunder has more than one identity type and entry point, so authentication is not just about "is there a token or not."
+## Account Types
 
-## Four Types of Credentials
+wunder has several identity types, each serving a different purpose.
 
-### API Key
+### Administrator Accounts
 
-Used primarily for these entry points:
+- Hold system governance permissions
+- Can manage users and configure the system
+- Are not subject to quota or balance limits
+- Own the configuration of security policies
 
-- `/wunder`
-- `/a2a`
-- `/wunder/mcp`
-- Admin endpoints
+### Regular User Accounts
 
-Transmission methods:
+- Use the system day to day
+- Are subject to quota and balance limits
+- Can reach only their own data
+- Each has a single agent instance and a single fixed cloud working directory, which cannot be added to or replaced
 
-- `X-API-Key`
-- `Authorization: Bearer <api_key>`
+### External Identities
 
-### User Bearer Token
+These are identities mapped in from external platforms such as Feishu and WeCom. They are not necessarily registered users, but they still get their own isolated space.
 
-Used primarily for user-facing endpoints:
+## Layered Security
 
-- `/wunder/chat/*`
-- `/wunder/user_world/*`
-- `/wunder/workspace/*`
-- `/wunder/user_tools/*`
+Security is layered, tightening from top to bottom:
 
-### External Embed Auth
-
-Used when embedding wunder into external systems:
-
-- `/wunder/auth/external/*`
-
-Corresponding configuration:
-
-- `security.external_auth_key`
-
-### Logged-in User Identity
-
-This layer represents the real business identity for registered users, organizations, and organizational governance.
-
-It is not the same concept as the arbitrary `user_id` passed into `/wunder` calls.
-
-## An Important Distinction
-
-The `user_id` passed to `/wunder` does not have to be a registered user.
-
-It can simply be:
-
-- A thread isolation identifier
-- A workspace isolation identifier
-- An external system mapping identifier
-
-Real registered user management goes through the user system endpoints.
-
-## Path Protection Boundaries
-
-In the current implementation, you can roughly understand:
-
-- `/a2a` is treated as a protected entry point
-- `/wunder/mcp` is treated as a protected entry point
-- User chat and workspace paths are user-mode endpoints
-- `/docs/` serves as a static documentation site, separate from these business auth paths
-
-The documentation is placed at `/docs/` specifically to avoid getting entangled in the `/wunder/*` auth logic.
+```
+┌─────────────────────────────────────┐
+│   Operation security: tool approval │
+│   and permission control            │
+├─────────────────────────────────────┤
+│   Interface security: authentication│
+│   rate limiting, and CORS           │
+├─────────────────────────────────────┤
+│   Transport security: HTTPS and     │
+│   encrypted communication           │
+├─────────────────────────────────────┤
+│   Network security: network         │
+│   isolation and sandboxing          │
+└─────────────────────────────────────┘
+```
 
 ## Tool Execution Security
 
-wunder's security boundaries are not only at the HTTP layer, but also at the tool layer.
+### Path Control
 
-Key constraints include:
+Admins can configure:
 
-- `allow_commands`
-- `allow_paths`
-- `deny_globs`
-- Sandboxed downstream execution
+- **Allowed paths**: the directories the agent may work in
+- **Blocked patterns**: file types or paths the agent may not touch
 
-In other words, even if the model can call tools, what it can actually do is still constrained by configuration.
+A few principles apply:
 
-## Thread Safety Conventions
+- Don't expose the whole filesystem without limits
+- Name the allowed directories explicitly
+- Block access to sensitive system directories
 
-These two conventions are very important:
+### Command Control
 
-- A thread's system prompt must be frozen once initially established
-- Long-term memory can only be injected once during thread initialization
+- Control which commands the agent may run
+- High-risk commands require approval
+- Admins can set an allowlist or a denylist
 
-This is not a formality requirement, but to ensure:
+### Approval
 
-- Prompt caching stability
-- Predictable thread behavior
-- Long-running tasks don't drift due to repeated system prompt rewrites
+Sensitive operations need the user's confirmation, including editing important files, running sensitive commands, and reaching restricted paths. How strict the approval mode is can be configured.
 
-## WebSocket and Approval Isolation
+## Data Isolation
 
-The current system has unified pending approval requests into a shared registry, but different entry points still consume them isolated by `source`.
+### User-Level Isolation
 
-This means:
+- Workspace: each user can reach only their own files
+- Sessions: each user sees only their own conversations
+- Configuration: personal settings don't affect anyone else
 
-- Chat/WS approvals won't mistakenly clear channel approvals
-- Channel-side approvals won't mistakenly operate WebSocket sessions
+### Working-Directory Isolation
 
-## Security Configuration to Check First
+Each user has a single fixed cloud directory, and path checks are bounded by that user's root: reads and writes that step outside are rejected, and one user cannot reach another. Sub-agents share the same user directory as the main agent, so there is no further layer split by agent or container.
 
-- `security.api_key`
-- `security.external_auth_key`
-- `allow_commands`
-- `allow_paths`
-- `deny_globs`
-- Whether the sandbox environment is enabled
+### Database Isolation
 
-## Registration and Batch Account Creation
+Every data access passes a permission check, which prevents cross-user reads.
 
-Admins can toggle **Allow user registration** in the admin System Settings panel. When it is disabled, the Beehive frontend hides the registration entry and the registration API rejects new self-service signups. Admins can still create accounts from User Management.
+## User Registration and Batch Provisioning
 
-In User Management, click **Add User** and choose an Excel file to batch import accounts. The first row must include `username` and `password`; optional columns include `email`, `unit_id`, `status`, and `roles`. The importer creates accounts row by row, reports failed rows in the result, and does not roll back accounts that were already created.
+Admins can toggle **Allow user registration** in Bridge's system settings. Once it is off, the sign-in page no longer shows a registration entry, and the registration endpoint rejects new self-service sign-ups; admins can still add accounts from user management.
+
+On Bridge's user management page, click **Add User** and pick an Excel file to import accounts in bulk. The first row must include at least `username` and `password`, and the Chinese headers `用户名/账号` and `密码` are also accepted; optional columns include `email`, `unit_id`, `status`, and `roles`. The import creates accounts row by row, lists any failed rows in the result, and leaves accounts that were already created intact.
+
+## Security Configuration Essentials
+
+### API Keys
+
+- Use keys that are complex enough, at 16 or more characters with mixed character types
+- Rotate keys regularly
+- Never hardcode them in code or configuration
+- Never commit them to version control
+
+### Transport Security
+
+- Production must use HTTPS
+- Configure TLS certificates and renew them automatically
+- WebSockets use the wss protocol
+
+### CORS Policy
+
+- Allow only the domains you actually need
+- Don't use the wildcard `*`
+- Keep development and production separate
+
+### Log Auditing
+
+- Record key operations such as sign-in, configuration changes, and file operations
+- Retain logs long enough
+- Mask sensitive information
+
+## Handling Security Incidents
+
+### Leaked Keys
+
+1. Rotate the key immediately
+2. Check for abnormal access
+3. Review the logs to establish the scope of impact
+
+### Unauthorized Access
+
+1. Check the permission configuration
+2. Confirm data isolation is working
+3. Reset user status if needed
+
+### Brute-Force Attempts
+
+1. Configure sign-in rate limiting
+2. Set an account lockout policy
+3. Watch for abnormal sign-in attempts
+
+## Pre-Launch Checklist
+
+- [ ] API keys are complex enough
+- [ ] HTTPS is configured
+- [ ] The CORS policy is tightened
+- [ ] The tool approval mode is configured
+- [ ] Path and command limits are in place
+- [ ] Database access is controlled
+- [ ] Log auditing is enabled
+- [ ] Admin passwords are rotated regularly
 
 ## Further Reading
 
-- [Deployment and Runtime](/docs/en/ops/deployment/)
-- [wunder API](/docs/en/integration/wunder-api/)
 - [Configuration Reference](/docs/en/reference/config/)
+- [Multi-User Management](/docs/en/concepts/core-multi-user-management/)
+- [Admin Panels Index](/docs/en/reference/admin-panels/)

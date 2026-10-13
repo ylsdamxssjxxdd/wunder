@@ -1,109 +1,157 @@
 ---
-title: Desktop Guide
-summary: wunder's default form. Download, install, and start — no server needed.
+title: Starting with the Honeycomb (Desktop)
+summary: wunder's default way to work: a local AI workbench. Download, install, open, go — no Hull to deploy first; it calls the engine natively in-process, takes no port, and routes through no HTTP/WebSocket relay.
 read_when:
-  - You want to get wunder running right away
-  - You want the local AI workbench rather than deploying a full server
+  - You are installing or first launching the Honeycomb
+  - You need to know where its local data lives or how to migrate it
 source_docs:
-  - docs/API文档.md
-  - frontend/src/components/messenger/DesktopRuntimeSettingsPanel.vue
-  - frontend/src/components/messenger/MessengerSettingsPanel.vue
+  - frontend-slint/Cargo.toml
+  - frontend-slint/run.bat
+  - crates/wunder-desktop/args.rs
+  - crates/wunder-desktop/native.rs
+  - crates/wunder-desktop/runtime.rs
+  - crates/wunder-runtime/src/services/desktop_runtime_recovery.rs
+updated_at: 2026-10-13
 ---
 
-# Desktop Guide
+# Starting with the Honeycomb (Desktop)
 
-The desktop app is wunder's default form: a **local AI workbench**. Download and install it, and you can hand goals to the agent — no server required.
+The Honeycomb (desktop) is wunder's desktop edition and the **default way to work**: a **local AI workbench**. It needs no Hull (server) deployment. It calls the engine natively in-process, has no port of its own, and routes through no HTTP/WebSocket relay.
 
-Open it and you can hand goals to the agent right away. No server required.
+## When to choose the Honeycomb
 
-## When to Choose Desktop
-
-| Scenario | Choose Desktop |
-|----------|---------------|
-| Want to start immediately, no deployment | ✅ |
-| Need to work with local files, windows, browsers | ✅ |
+| Scenario | Choose the Honeycomb |
+| --- | --- |
+| Want to start right away, without deploying a service first | ✅ |
+| Need to work with local files, windows, and browsers | ✅ |
 | Prefer a graphical interface | ✅ |
-| Might connect to remote later, but start local first | ✅ |
-| Need multi-user governance and admin backend | ❌ Choose Server |
+| Need an interactive terminal and screenshot capture | ✅ |
+| Need a tray, system notifications, and global hotkeys | ✅ |
+| May connect to a remote later, but want to get running now | ✅ |
+| Need multi-user governance and an admin backend | ❌ Choose the Hull (server) |
+| Need to access it in a browser | ❌ Choose the Beehive (web, ships with the Hull) |
 
-## What You'll See
+## Install and launch
 
-Desktop uses a two-column layout:
+- **Executable**: `wunder-frontend-slint`
+- **Development launch**: on Windows, use the project's bundled `run.bat`
+- **Platforms**: primarily targets 32-bit Win7 and Ubuntu 18.04; modern Windows / Linux also run
+- **No port, no required arguments**: it calls the engine in-process right after launch
+- There's also a compatibility bridge port (default 18123) that serves only legacy-compatible clients; day-to-day use doesn't go through it
+- The Electron / Tauri frontend shells are **no longer maintained day-to-day and get no new features** (this doesn't mean the Honeycomb backend stops being maintained)
 
-- **Left sidebar** (fixed 240px): new task, search, the workspace and thread tree, the working directory (file tree + toolbar + usage bar), and settings at the bottom
-- **Right column**: the welcome page or the chat page (header + timeline + composer)
+## Local data
 
-File preview and online editing open as overlays without changing the two-column structure. Every user has exactly one agent instance and one fixed working directory.
+| Content | Location |
+| --- | --- |
+| Root directory | `WUNDER_HOME` → `~/.wunder` by default |
+| Workspace | `~/.wunder/workspace` |
+| Temporary directory | `WUNDER_DESKTOP_TEMP_ROOT` |
+| Desktop settings | `<temp>/config/desktop.settings.json` |
+| Sessions and tool logs | local SQLite |
 
-## 5 Steps to Get Started
+To move to a new machine, copy `~/.wunder` across. On startup it scans the work tree (up to 4096 items), restores the state of unfinished tasks from last time, and clears session locks and leftover tasks.
 
-### 1. Download and Install
+## Interface layout (the main window has only two pages)
 
-Get the installer for your system from Releases, install and launch.
+The main window has only two pages, Chat and Settings; everything else hangs off them as panels and dialogs.
 
-### 2. First Launch
+### Chat page
 
-After launching, a lightweight splash screen appears first while local working directories, configuration, and sessions are prepared. The window appearing does not mean sessions are ready yet; you can start working once the workbench opens. First launches and slower devices may need more preparation time. If the splash screen reports a failure, click retry or reload.
+- **Left column**: the task and thread tree, the **working-directory area** (local file tree + usage bar + **cloud workspaces**), and the settings entry at the bottom
+- **Right column**: the top bar (workspace / thread name) + timeline + composer
+- With no thread selected, a welcome page shows; file preview and online editing pop out as overlays without changing the two-column structure
+- One agent can run several **independent task threads** in parallel, and workspaces can be **multiple**: local + cloud + remote device workspaces reached through device interlink
 
-### 3. Configure Model
+### Settings page
 
-Go to "System Settings" → "Model Configuration", enter:
+**12 categories**: General, Account, Model, Tools, Agents, Personas, Scheduled, Memory, Channels, Prompt packs, Archive, Help.
+
+The category navigation supports search filtering. There is **no "device interlink" category**.
+
+## Get running in 5 steps
+
+### 1. Download and install
+
+Download the installer for your system from Releases.
+
+### 2. First launch
+
+On launch, a lightweight splash screen appears first while local working directories, configuration, and sessions are prepared. The window appearing doesn't mean sessions are ready; you can start working once the workbench opens. First launches or slower devices may take longer to prepare.
+
+### 3. Configure the model
+
+Settings → Model → Add:
 
 - API Key
-- Endpoint URL
-- Model name
+- Endpoint URL (a neutral endpoint such as `https://example.com/v1`)
+- Model name and parameters (temperature, context length, and so on)
 
-Click "Test Connection" before saving to confirm it works.
+Confirm with "Test connection" before saving. This is also where you hook up TTS, image, and video models; **TTS can currently only be configured — there is no playback implementation**.
 
-### 4. Set Up Your Profile
+### 4. Complete your account profile
 
-After first login, it's a good idea to:
+Settings → Account: username, email, avatar; set a login password if you plan to use it long-term.
 
-- Go to "My Profile → Edit" to change your username or email
-- Set a new login password if you plan to use it long-term
+### 5. Start your first conversation
 
-### 5. Start Your First Conversation
-
-Go back to the chat page and type:
+Back on the chat page, type:
 
 ```
-List the files in the current workspace
+List the files in the current working directory
 ```
 
-You'll see: model starts → tools work step by step → final reply appears in the chat area.
+When you see the model think → a batch of tools → the final reply landing in the chat area, you're up and running.
 
-## Two Common Interaction Constraints
+## What only the Honeycomb can do
 
-### Can't Create New Thread While Running
+- **Interactive terminal** (winpty on Windows, PTY on Linux)
+- **Screenshot capture** (X11 on Linux, Win32 APIs on Windows)
+- **Tray and system notifications**
+- **Global hotkeys**
+- **Voice input**
 
-When the current agent is still running, the "New Thread" button is disabled. This is normal protection — wait for it to finish or stop the current session first.
+## About device interlink
 
-### Subagent Activity Indicator
+Only **two** interlink surfaces are available in the Honeycomb:
 
-When a task has spawned subagents, the chat area shows that child runs are still working, so you can tell whether the task has really finished.
+1. The **cloud workspaces** in the sidebar's working-directory area: when the network is unavailable they clearly show "offline" alongside a "connect" button
+2. The **remote command approval dialog**: high-risk commands (L3) in device interlink pop up for confirmation with a red border, showing the command level, risk, and source, plus a "don't remember" hint
 
-## Workspace State Messed Up?
+The Settings page still holds a set of device-interlink options, but they aren't wired to any interface; **that entry point is not open yet**.
 
-If your sessions, subagents, or workspace get into a bad state, use **"Reset Workspace State"** in System Settings.
+## One-click workspace state reset
 
-It clears running states but does NOT delete your skills, knowledge bases, or other long-term assets.
+When sessions, subagents, or workspaces get into a bad state, use "Settings → General → Reset workspace state":
 
-## Local Mode Extras
+- **It does**: stop running sessions, clear queued tasks, clean up session locks
+- **It keeps**: skills, knowledge bases, long-term memory, user configuration, workspace files, session history
 
-In Desktop local mode, the chat area also shows:
+It **clears working state**; it is not a factory reset.
 
-- 🎤 Microphone button (voice input)
-- 📷 Screenshot button (screen capture analysis)
+## Two interaction constraints
 
-Availability depends on your machine's permissions.
+- **The session queue is on by default**: sending another message during a run queues it instead of rejecting it as "user busy." Turn it off and messages sent during a run are bounced outright without entering the queue bar.
+- **The subagent activity indicator**: when a task has spawned subagents, the chat area shows the child runs that are still working; subagents are temporary work units the main agent creates, reclaimed once the task ends.
 
-## Need Help? Open the Manual
+## Common questions
 
-Settings at the bottom of the left sidebar → Help. You can browse docs without leaving the app.
+**Where data lives**
+The workspace is under `~/.wunder/workspace`, session history is in local SQLite, and configuration is in `<temp>/config/desktop.settings.json`.
 
-## Next Steps
+**Migrating to another computer**
+Yes. Copy `~/.wunder` to the new machine.
 
-- Understand the interface: [Beehive Interface](/docs/en/surfaces/frontend/)
-- Understand local mode boundaries: [Desktop Local Mode](/docs/en/ops/desktop-local-mode/)
-- Learn about task splitting: [Subagent Control](/docs/en/tools/subagent-control/)
-- Running into issues: [Troubleshooting](/docs/en/help/troubleshooting/)
+**Networking in local mode**
+Yes. "Local first" only means data stays on your machine; it doesn't affect reaching remote models or web pages.
+
+**Sharing among several people**
+The Honeycomb focuses on single-user local scenarios; for team collaboration, deploy the Hull and have members use the Beehive.
+
+## Further reading
+
+- [Quick Start](/docs/en/start/quickstart/)
+- [Honeycomb Interface](/docs/en/surfaces/desktop-ui/)
+- [Surfaces Overview](/docs/en/surfaces/index/)
+- [First-Run Troubleshooting](/docs/en/start/troubleshooting-first-run/)
+- [Troubleshooting](/docs/en/help/troubleshooting/)

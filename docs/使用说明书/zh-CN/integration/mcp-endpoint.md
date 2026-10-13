@@ -1,107 +1,43 @@
 ---
 title: MCP 入口
-summary: wunder 同时支持自托管 MCP 服务 `/wunder/mcp` 与外部 MCP 服务接入。
-read_when:
-  - 用户要把 wunder 作为 MCP 服务暴露出去
-  - 用户要理解 wunder 内部 MCP 与 extra_mcp 的关系
-source_docs:
-  - docs/API文档.md
-  - docs/设计文档/01-系统总体设计.md
-  - src/services/mcp.rs
-  - config/wunder-example.yaml
+summary: wunder 既能把自己作为 MCP 服务暴露出去，也能作为 MCP 客户端接入外部服务。
 ---
 
 # MCP 入口
 
-当前 Rust MCP 使用 rmcp 3.5.0，内置服务通过 Streamable HTTP 支持 MCP 2026-07-28 的请求级元数据协商。外部服务接入也统一使用 SDK 的 Streamable HTTP 客户端；旧版 SSE 传输和自写初始化客户端已移除。
+MCP 有两个方向，先分清：
 
-MCP 在 wunder 里是正式接入面。
+- wunder 自己对外暴露的 MCP 服务；
+- wunder 作为客户端去接别人的 MCP 服务。
 
-先分清两件事：
+## 两个方向的分工
 
-1. wunder 自己暴露的 MCP 服务是 `/wunder/mcp`
-2. wunder 也可以作为 MCP 客户端去接别的服务，比如 `extra_mcp`
+- 想让外部系统用 MCP 的方式调用 wunder 的能力 → 用自托管这一边。
+- 想把外部能力接进来给模型用 → 用外部服务这一边。
 
-## 自托管 MCP 端点
+## 最短链路：把 wunder 暴露出去
 
-- `POST /wunder/mcp`
-- 传输方式：Streamable HTTP
-- 协议协商：SDK 自动优先使用 2026-07-28；与旧服务互通时由 SDK 按支持列表协商，不要手写 `initialize`
+对外入口是一个地址，走 Streamable HTTP。
 
-当前 Rust 端内置暴露两个工具：
+接通顺序：
 
-- `excute`
-- `doc2md`
+1. 外部系统按 MCP 协议连上这个地址；
+2. wunder 自动完成协议版本协商，与旧服务互通时会按双方都支持的范围协商，不用手写初始化步骤；
+3. 调用具体工具。
 
-注意，工具名当前实际就是 `excute`。这是现有公开工具标识，调用方应按该名称传递。
+目前内置对外提供两个工具：`excute`（执行）和 `doc2md`（文档转 Markdown）。工具名就是 `excute`，照这个名字调用即可。
 
-## 自托管 MCP 的适用场景
+## 最短链路：接入外部 MCP
 
-适合这些场景：
+在配置里声明要接的 MCP 服务，给它名字、地址和传输方式，然后打开开关。启用后 wunder 就把它当成一个可调用的服务。外部服务同样用 Streamable HTTP；如果服务是 Python 写的，它按 Python 侧的协议版本协商，不一定具备最新的全部能力。
 
-- 让外部系统通过 MCP 方式调用 wunder 的能力
-- 把 wunder 挂入另一个 MCP 编排体系
-- 在同一套协议下暴露内部任务执行与文档解析能力
+文档里常提到的外部服务通常承载数据库查询、数据库导出、知识库查询这类工具。
 
-## 配置示例
+## 关键设置与常见坑
 
-```yaml
-mcp:
-  servers:
-    - name: wunder
-      endpoint: http://127.0.0.1:8000/wunder/mcp
-      enabled: false
-      transport: streamable-http
-```
-
-启用后，wunder 会把这个 MCP 服务视为一个可调用的 MCP server。
-
-## external MCP 和 extra_mcp
-
-仓库里还保留了一个典型外部 MCP 服务：
-
-- `extra_mcp`
-
-它通常用来承载：
-
-- `db_query`
-- `db_export`
-- `kb_query`
-
-`extra_mcp` 默认也使用 Streamable HTTP。Python 服务的 SDK 依赖由其独立运行环境管理；它会按 Python SDK 支持的版本与客户端协商，不能假定其具备 Rust rmcp 3.5.0 的全部 2026-07-28 扩展。
-
-也就是说：
-
-- `/wunder/mcp` 偏“wunder 自己暴露出去”
-- `extra_mcp` 偏“wunder 去接进来的外部能力”
-
-## 舰桥查看 MCP
-
-舰桥已有一套 MCP 配置和调试入口，用来：
-
-- 配置 `mcp.servers`
-- 刷新工具清单
-- 调试远端工具调用
-
-因此文档接入顺序通常是：
-
-1. 先在配置里声明 MCP server
-2. 再在舰桥确认工具规格是否能拉到
-3. 最后在 agent 或工具目录里开放给模型使用
-
-## MCP 和工具目录的关系
-
-wunder 不会把 MCP 当成“旁路系统”。
-
-它会把 MCP 工具和这些能力一起汇总进工具视图：
-
-- 内置工具
-- A2A 工具
-- Skills
-- 知识库工具
-- 用户自建工具
-
-所以对模型来说，MCP 最终还是工具目录的一部分。
+- 接入顺序建议：先在配置里声明服务 → 在舰桥确认工具清单能拉到 → 再开放给模型使用。
+- 舰桥里有 MCP 的配置和调试入口，可以刷新工具清单、直接调远端工具验证。
+- MCP 工具不是旁路：它会和内置工具、A2A 工具、技能、知识库工具、自建工具一起，汇总进同一个工具视图。对模型来说，MCP 只是工具目录的一部分。
 
 ## 延伸阅读
 

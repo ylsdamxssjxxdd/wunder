@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>技能调用 | 使用说明书</title>
-  <meta name="description" content="`skill_call` 如何把技能正文、根目录和一级文件树返回给模型。">
+  <meta name="description" content="把一个技能的说明和目录加载进当前对话，让智能体照着技能流程干活。">
   <link rel="stylesheet" href="/docs/site.css?v=c9863d5d7815">
   <script type="module" src="/docs/site.js?v=c9863d5d7815"></script>
 </head>
@@ -55,6 +55,6 @@
       </aside>
     </div>
   </div>
-  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/tools/skill-call","language":"zh-CN","title":"技能调用","summary":"`skill_call` 如何把技能正文、根目录和一级文件树返回给模型。","updated_at":"2026-04-10","read_when":["用户要加载某个 `SKILL.md` 及其目录信息"],"source_docs":["src/services/tools.rs"],"tab":"工具","group":"文件与代码","group_path":["文件与代码"],"url":"/docs/zh-CN/tools/skill-call/","headings":[{"id":"section-1","level":1,"text":"技能调用"},{"id":"section-2","level":2,"text":"最小参数"},{"id":"section-3","level":2,"text":"成功返回"},{"id":"section-4","level":2,"text":"返回要点"},{"id":"section-5","level":2,"text":"常见失败"}],"prev_slug":"zh-CN/tools/read-image","next_slug":"zh-CN/tools/web-fetch","markdown":"# 技能调用\n\n`skill_call` 把技能内容加载进当前上下文，让模型按技能流程继续工作。\n\n## 最小参数\n\n```json\n{\n  \"name\": \"openai-docs\"\n}\n```\n\n## 成功返回\n\n```json\n{\n  \"ok\": true,\n  \"action\": \"skill_call\",\n  \"state\": \"completed\",\n  \"summary\": \"Loaded skill openai-docs.\",\n  \"data\": {\n    \"name\": \"openai-docs\",\n    \"description\": \"Use official OpenAI docs...\",\n    \"path\": \"C:/.../SKILL.md\",\n    \"root\": \"C:/.../openai-docs\",\n    \"content\": \"# SKILL ... {{SKILL_ROOT}} ...\",\n    \"tree\": [\n      \"SKILL.md\",\n      \"references/\",\n      \"scripts/\"\n    ]\n  }\n}\n```\n\n## 返回要点\n\n- `content` 会做适合模型阅读的渲染\n- `root` 会明确返回技能根目录\n- 文中可用 `{{SKILL_ROOT}}` 占位\n- `tree` 只列出技能根目录下一级文件和文件夹，让模型知道可继续读取哪些附加资源\n\n## 常见失败\n\n- 技能名为空\n- 技能不存在\n- 技能名有歧义\n- 技能文件读取失败\n\n这些错误通常直接以普通错误返回，不属于复杂异步工具。\n","source_path":"使用说明书/zh-CN/tools/skill-call.md"}</script>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/tools/skill-call","language":"zh-CN","title":"技能调用","summary":"把一个技能的说明和目录加载进当前对话，让智能体照着技能流程干活。","updated_at":"2026-04-10","read_when":[],"source_docs":[],"tab":"工具","group":"文件与代码","group_path":["文件与代码"],"url":"/docs/zh-CN/tools/skill-call/","headings":[{"id":"section-1","level":1,"text":"技能调用"},{"id":"section-2","level":2,"text":"什么时候用"},{"id":"section-3","level":2,"text":"怎么用"},{"id":"section-4","level":2,"text":"它会自动做什么"},{"id":"section-5","level":2,"text":"出问题时怎么判断"}],"prev_slug":"zh-CN/tools/read-image","next_slug":"zh-CN/tools/web-fetch","markdown":"# 技能调用\n\n技能是一套写好的做法。技能调用把某个技能的说明加载进当前对话，让智能体按这套流程继续做事。\n\n## 什么时候用\n\n- 你想让智能体按某个已有的技能来做，而不是自由发挥。\n- 智能体需要先读到技能的说明，才知道下一步怎么做。\n\n## 怎么用\n\n参数是技能名：\n\n```json\n{\n  \"name\": \"openai-docs\"\n}\n```\n\n## 它会自动做什么\n\n- 把技能说明整理成适合模型阅读的样子，再放进上下文。\n- 明确给出技能的根目录；说明里用 `{{SKILL_ROOT}}` 占位的地方会被解析到这个根目录。\n- 顺带列出技能根目录下的第一层文件和文件夹，让智能体知道还有哪些附加资料可以按需再读。\n\n## 出问题时怎么判断\n\n技能名为空、技能不存在、技能名有歧义、技能文件读不出来，都会直接报错。这类错误是普通错误，不是需要等待的异步任务。\n","source_path":"使用说明书/zh-CN/tools/skill-call.md"}</script>
 </body>
 </html>

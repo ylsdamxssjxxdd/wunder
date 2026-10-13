@@ -32,6 +32,10 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 base64 = "0.22"
 pulldown-cmark = "0.10"
 vt100 = "0.15"
+# Reuse Slint's own text shaper for the native help document typesetting;
+# the vendored 0.11 tree is already in the build graph via the patch below.
+parley = { version = "=0.11.1", default-features = false, features = ["std"] }
+serde = { version = "1", default-features = false, features = ["std", "derive"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # The native screenshot path uses XGetImage on Linux. Keep this optional from

@@ -1,0 +1,136 @@
+import { Button } from "std-widgets.slint";
+
+// Help browser controls follow the classic light desktop help face reused from
+// the reference workbench: flat buttons, hairline separators and a compact
+// single-line input.
+
+export component HelpInput inherits Rectangle {
+    in-out property <string> text <=> editor.text;
+    in property <string> placeholder-text: "";
+    in property <bool> enabled: true;
+    callback accepted(string);
+    callback edited(string);
+    public function select-all() { editor.select-all(); }
+    min-width: 1px;
+    background: root.enabled ? #ffffff : #f3f3f3;
+    border-color: editor.has-focus ? #d1842a : #a9a9a9;
+    border-width: 1px;
+    border-radius: 2px;
+    clip: true;
+    forward-focus: editor;
+    accessible-role: text-input;
+    accessible-value <=> root.text;
+    accessible-label: root.placeholder-text;
+    focus-padding := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: MouseCursor.text;
+        clicked => { editor.focus(); }
+    }
+    Rectangle {
+        x: 1px; y: 1px;
+        width: parent.width - 2px;
+        height: parent.height - 2px;
+        clip: true;
+        Text {
+            x: 6px;
+            width: parent.width - 12px;
+            height: parent.height;
+            text: root.text == "" && editor.preedit-text == "" ? root.placeholder-text : "";
+            color: #8a8a8a;
+            vertical-alignment: center;
+            overflow: elide;
+            accessible-role: none;
+        }
+        editor := TextInput {
+            private property <length> computed-x: 6px;
+            x: min(6px, max(parent.width - self.width - 6px - self.text-cursor-width, self.computed-x));
+            width: max(parent.width - 12px - self.text-cursor-width, self.preferred-width);
+            height: parent.height;
+            enabled: root.enabled;
+            single-line: true;
+            color: root.enabled ? #202020 : #777777;
+            vertical-alignment: center;
+            selection-background-color: #2c76b855;
+            selection-foreground-color: #202020;
+            cursor-position-changed(cursor-position) => {
+                if cursor-position.x + self.computed-x < 6px {
+                    self.computed-x = -cursor-position.x + 6px;
+                } else if cursor-position.x + self.computed-x > parent.width - 6px - self.text-cursor-width {
+                    self.computed-x = parent.width - cursor-position.x - 6px - self.text-cursor-width;
+                }
+            }
+            accepted => { root.accepted(self.text); }
+            edited => { root.edited(self.text); }
+        }
+    }
+}
+
+export component HelpButton inherits Rectangle {
+    in property <string> label;
+    in property <string> icon;
+    in property <bool> enabled: true;
+    in property <bool> active: false;
+    in property <bool> tab: false;
+    callback clicked();
+    forward-focus: button;
+    min-width: 0px;
+    min-height: 0px;
+    background: root.tab
+        ? (root.active ? #ffffff : @linear-gradient(180deg, #f8f8f8, #dedede))
+        : hover.has-hover || button.has-focus ? @linear-gradient(180deg, #ffffff, #d9ecfb) : transparent;
+    border-width: 1px;
+    border-color: root.tab
+        ? #b6b6b6
+        : root.enabled && (hover.has-hover || button.has-focus) ? #8bb7df : transparent;
+    border-radius: root.tab ? 3px : 2px;
+    accessible-role: AccessibleRole.button;
+    accessible-label: root.label;
+    accessible-action-default => { root.clicked(); }
+    if root.icon != "" : Path {
+        x: (parent.width - 17px) / 2;
+        y: (parent.height - 17px) / 2;
+        width: 17px;
+        height: 17px;
+        viewbox-width: 24;
+        viewbox-height: 24;
+        commands: root.icon;
+        fill: transparent;
+        stroke: root.enabled ? #242424 : #9a9a9a;
+        stroke-width: 1.3px;
+        stroke-line-cap: round;
+        stroke-line-join: round;
+    }
+    if root.icon == "" : Text {
+        text: root.label;
+        color: #323232;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    button := Button {
+        width: parent.width;
+        height: parent.height;
+        text: root.label;
+        enabled: root.enabled;
+        opacity: 0;
+        clicked => { root.clicked(); }
+    }
+    hover := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => { button.focus(); root.clicked(); }
+    }
+    if root.tab && root.active : Rectangle {
+        x: 1px;
+        y: parent.height - 2px;
+        width: parent.width - 2px;
+        height: 2px;
+        background: #ffffff;
+    }
+}
+
+export component HelpSeparator inherits Rectangle {
+    width: 1px;
+    height: 22px;
+    background: #bdbdbd;
+    Rectangle { x: 1px; width: 1px; height: parent.height; background: #ffffff; }
+}

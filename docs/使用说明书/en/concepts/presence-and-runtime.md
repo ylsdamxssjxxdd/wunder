@@ -1,101 +1,60 @@
 ---
-title: "Runtime and Online Status"
-summary: "wunder doesn't just return message content; it continuously maintains runtime projections of threads and sessions to express states like loaded, waiting, streaming, and idle."
-read_when:
-  - "You are building session lists, status badges, or runtime panels"
-  - "You are troubleshooting whether a thread is stuck or has finished"
-source_docs:
-  - "docs/API文档.md"
-  - "src/api/chat.rs"
-  - "src/core/session_runtime.rs"
+title: Runtime and Online Status
+summary: A conversation is not just static history: it also carries runtime state such as running, waiting for approval, or waiting for input, and that state tells you what the session is doing right now.
+updated_at: 2026-10-13
 ---
 
-# Runtime and Online Status
+A conversation is more than a chat log. It also carries **runtime state** that tells you what the session is doing right now.
 
-wunder sessions are not static history records; they always carry a layer of runtime state.
+## Two layers of state
 
-## Key Points on This Page
+The first layer is what the session is doing at this moment.
 
-- Whether a thread is still alive
-- Why session lists need `runtime`
-- What `running`, `thread_status`, and `terminal_status` each express
+| State | Meaning |
+| --- | --- |
+| Running | Actively working |
+| Waiting for approval | Paused on an action that needs your go-ahead |
+| Waiting for your input | The agent is waiting for you to add information |
+| Interrupting | Being interrupted |
+| Idle | Nothing to do, waiting for your next message |
+| Not loaded | Not yet loaded into memory |
 
-## Don't Confuse the Two Layers of State
+The second layer is a summary snapshot the interface reads directly: whether output is still streaming, whether the session is waiting, whether it is loaded, whether it is active, and whether it has already reached a terminal state.
 
-### Thread Event Status
+## Where it shows up in the interface
 
-The `thread_status` in the event stream is more like "what the thread is doing right now."
+- **Session list**: the status badges come straight from runtime state — a green dot means an active session, a spinning icon means running, and a waiting icon means waiting for approval or input.
+- **Session detail**: the status indicator tells you which stage you are at, whether you can send a new message, and whether any approval is pending.
 
-Common values include:
+## Judging a stuck session
 
-- `running`
-- `waiting_approval`
-- `waiting_user_input`
-- `interrupting`
-- `idle`
-- `not_loaded`
+Runtime state is the starting point for troubleshooting.
 
-### Session Runtime Projection
+| You want to know | Look at |
+| --- | --- |
+| Whether it is still running | Whether output is still streaming |
+| Whether it is waiting | Whether it is in a waiting state |
+| Whether it has finished | Whether it has reached a terminal state |
+| Whether it can still be observed | Whether it is loaded and active |
 
-The chat domain further aggregates status into a `runtime` object for direct consumption by list and detail pages.
+Do not rely on a single coarse running / not-running flag. It cannot tell "still streaming" apart from "waiting for approval", and it says nothing about whether the session is loaded or has reached a terminal state. Read the full set of snapshot fields instead.
 
-Key fields include:
+## When state looks inconsistent
 
-- `status`
-- `loaded`
-- `active`
-- `streaming`
-- `waiting`
-- `watcher_count`
-- `pending_approval_count`
-- `monitor_status`
-- `monitor_stage`
-- `terminal_status`
+If the interface and the actual state do not match:
 
-## Why Not Just Keep a Single `running`
+1. Wait a few seconds to see whether it recovers on its own.
+2. Refresh the page or restart the app.
+3. Use "Reset working state".
 
-Because `running=true/false` is too coarse.
+## Common mistakes
 
-It cannot answer these questions:
+- Waiting for approval is a **pause**, not an ending — it is still within the session lifecycle.
+- State belongs on the list and event pages too, not only the detail page.
+- The event stream carries the timeline while the runtime snapshot carries the present moment; they are not the same layer.
 
-- Is it continuously outputting, or waiting for approval
-- Is the session loaded into memory
-- Are there any watchers attached to this thread
-- Has this round already reached `completed/failed/cancelled/rejected`
+## Further reading
 
-So wunder now retains `running` as a compatibility field, but stable integrations should look at `runtime`.
-
-## Most Common Status Judgments on Session Pages
-
-If you are building a list or detail page, this approach is usually sufficient:
-
-- Is it still continuously executing: check `runtime.streaming`
-- Is it in a waiting state: check `runtime.waiting`
-- Has it reached a terminal state: check `runtime.terminal_status`
-- Can it still be observed: check `runtime.loaded` and `runtime.active`
-
-## When It's Easiest to Make Mistakes
-
-### Treating "Waiting for Approval" as "Already Finished"
-
-This causes the frontend to incorrectly restore the input box or hide the approval area.
-
-### Only Reading Status on Detail Pages
-
-Session lists, event pages, and thread panels should all reuse the same runtime semantics.
-
-### Mixing Event Stream and Summary State into One Layer
-
-Events are responsible for the timeline, `runtime` is responsible for the current snapshot.
-
-## Implementation Suggestions
-
-- `thread_status` is suitable for expressing thread state during the process.
-- `runtime` is suitable for direct consumption by session lists, detail pages, and control panels.
-- `running` is just a compatibility field and should no longer serve as a complete state machine.
-
-## Further Reading
-
-- [Sessions and Rounds](/docs/en/concepts/sessions-and-rounds/)
-- [Streaming Execution](/docs/en/concepts/streaming/)
-- [Chat Sessions](/docs/en/integration/chat-sessions/)
+- [Session states](/docs/en/reference/stream-events/) — what each state means in detail
+- [The agent loop](/docs/en/concepts/core-agent-loop/) — how state changes
+- [Streaming execution](/docs/en/concepts/streaming/) — how state is pushed

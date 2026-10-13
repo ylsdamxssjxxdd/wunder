@@ -1,65 +1,29 @@
 ---
 title: 用户世界工具
-summary: 站内用户查询与站内消息投递。
-read_when:
-  - 用户要查站内用户，或给站内用户发送消息
-source_docs:
-  - src/services/tools.rs
+summary: 查询站内有哪些用户，并给站内用户发消息。
 updated_at: 2026-04-10
 ---
 
 # 用户世界工具
 
-`user_world` 主要两个动作：
+`user_world` 管两件事：查站内有哪些用户，以及给站内用户发消息。
 
-- `list_users`
-- `send_message`
+## 什么时候用
 
-## `list_users`
+- 需要看看站内有哪些人、某个用户是否还在用。
+- 需要把一条消息发给站内用户，或带上附件发出去。
 
-```json
-{
-  "ok": true,
-  "action": "list_users",
-  "state": "completed",
-  "summary": "Listed 20 users from user world.",
-  "data": {
-    "items": [
-      {
-        "user_id": "user_xxx",
-        "username": "alice",
-        "status": "active",
-        "unit_id": "unit_xxx"
-      }
-    ],
-    "total": 20,
-    "offset": 0,
-    "limit": 20
-  }
-}
-```
+## 怎么用
 
-## `send_message`
+两个动作：
 
-```json
-{
-  "ok": true,
-  "action": "send_message",
-  "state": "completed",
-  "summary": "Processed 2 user world message deliveries.",
-  "data": {
-    "results": [
-      {
-        "user_id": "user_xxx",
-        "status": "sent"
-      }
-    ],
-    "staged_files": []
-  }
-}
-```
+- `list_users`：列出站内用户，返回用户名、状态和所属单位等，并带总数与分页信息。
+- `send_message`：给用户发消息，逐个用户返回是否发送成功。
 
-## 重点
+## 它会自动做什么
 
-- 这是站内用户世界，不是外部渠道
-- 有附件落地时，会在 `staged_files` 里体现
+这是站内的用户世界，不是外部渠道，消息只在这个范围内投递。如果消息带了附件，附件落地的情况会单独列出来。
+
+## 出问题时怎么判断
+
+发消息的结果会逐个用户给出状态；没成功的用户会在结果里标出来，并带上返回的提示。

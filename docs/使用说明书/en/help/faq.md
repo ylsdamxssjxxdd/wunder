@@ -1,65 +1,58 @@
 ---
 title: FAQ
-summary: Common questions about using wunder. Check here first before detailed troubleshooting.
-read_when:
-  - You have a usage question
-  - You want to quickly determine if something is a bug
-source_docs:
-  - docs/API文档.md
-updated_at: 2026-04-10
+summary: Common conclusions for using wunder, ahead of symptom-level troubleshooting.
+updated_at: 2026-10-13
 ---
 
-# FAQ
+## Registration and Sign-in
 
-## Do I need to register an account first?
+No registration is required. You can start a conversation under any name, and the system creates the matching identity automatically.
 
-No. You can start a conversation with any name, and the system will create an identity for you automatically.
+## Cost and Usage
 
-## Does the Token count shown equal my cost?
+The token count is not the cost. It only reflects the context length of the current conversation, and the actual cost depends on your model provider's billing rules.
 
-No. The Token count is just a reference for the current conversation's context length. Actual cost depends on your model provider's pricing.
+## Scope of Requirement Settings
 
-## Does the agent re-learn my requirements every time I send a message?
+Requirements set at the start of a conversation are remembered and locked in. Later messages follow them, so you don't need to repeat them.
 
-No. Requirements you set at the beginning of a conversation are remembered and locked in. Subsequent messages will follow them without you needing to repeat.
+## When Memory Loads
 
-## Does the agent re-read my long-term memory every conversation turn?
+Long-term memory loads once, at the start of a conversation. It is not re-read on every turn.
 
-No. Your long-term memory is loaded once at the start of the conversation, not repeatedly in every turn.
+## When the New Thread Button Is Disabled
 
-## Why is the "New Thread" button sometimes grayed out?
+The button is briefly disabled while a thread is being created or switched. Threads already running in the background do not block a new thread, and an existing unused empty thread is reused first.
 
-Because the current agent is still running. Wait for it to finish, or stop the current session first.
+## Subagents
 
-## What is a subagent and when is it used?
+A subagent is a temporary work unit the agent creates during a task, used to split off work that can proceed in parallel and get it done; once the result is returned to the main thread, the subagent is reclaimed. It is not a separate agent — on the user side there is always exactly one agent instance.
 
-A subagent is a temporary work unit the agent creates during a task, so work that can run in parallel gets done at once. Results are reported back to the main thread and the subagent is reclaimed. It is not a separate agent — users always have exactly one agent instance.
+## Honeycomb and Hull Dependency
 
-## Does Desktop require deploying Server first?
+Deploying the Hull is not required. The Honeycomb can run locally on its own. Deploy the Hull when you need multi-person collaboration and unified management.
 
-No. Desktop can run independently locally. Deploy Server when you need multi-user collaboration and unified management.
-
-## How do I change my username or password?
+## Changing Your Username and Password
 
 Go to "My Profile → Edit". Changing your password requires entering your current password.
 
-## What if I forgot my password?
+## Password Recovery
 
 Click "Reset Password" on the login page. You only need your username, email, and a new password — no old password required.
 
-## Will uploaded files be automatically deleted?
+## Cleanup of Uploaded Files
 
-Files in the temporary directory may be cleaned up. Put important files in the workspace's persistent directory.
+Files in the temporary directory may be cleaned up. Keep important files in the workspace's persistent directory.
 
-## Why can't I see some tools in a session?
+## Tool Visibility
 
-Possible reasons: the tool is not enabled, MCP/A2A services are not running, or the current agent doesn't have that tool mounted.
+Possible causes: the tool is not enabled, the MCP/A2A service is not running, or the current agent does not have that tool mounted.
 
-## What's the difference between `web_fetch` and the browser tool?
+## Difference Between web_fetch and the Browser Tool
 
-- **web_fetch**: Grabs the main text content of a webpage
-- **Browser tool**: Operates a webpage like a real person (clicking, scrolling, filling forms)
+- web_fetch: grabs the main text content of a webpage
+- The browser tool: operates a webpage like a real person (clicking, scrolling, filling forms)
 
-## Where should I look when something goes wrong?
+## Where to Look When Something Goes Wrong
 
 Start with [Troubleshooting](/docs/en/help/troubleshooting/).

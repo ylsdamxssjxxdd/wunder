@@ -1,152 +1,127 @@
 ---
 title: Beehive Interface
-summary: Beehive is the cloud AI workbench (web, provided with the Hull). Two columns: the left sidebar holds new task, search, the workspace thread tree, the working directory, and settings; the right side is chat. The Honeycomb (desktop, the local AI workbench) shares this layout.
+summary: The Beehive is the cloud AI workbench, provided with the Hull deployment and reached in a browser. Its settings include tools, memory, channels, scheduled tasks, devices, and archive; it supports two-way voice (TTS included) and has no interactive terminal.
+read_when:
+  - You use the Beehive in a browser and want to know where each capability lives
+  - You are checking what the Beehive can do that the Honeycomb cannot (and vice versa)
+source_docs:
+  - frontend/src/router/index.ts
+  - frontend/src/api/chat.ts
+  - docker-compose-x86.yml
+  - frontend/nginx.conf
+  - crates/wunder-server/src/main.rs
+updated_at: 2026-10-13
 ---
 
 # Beehive Interface
 
-Beehive is the cloud AI workbench. Conversations, file handling, and settings all happen here. Individuals use the [desktop app](/docs/en/start/desktop/) (the Honeycomb, the local AI workbench); team members open the Beehive in a web browser.
+The Beehive is wunder's **cloud AI workbench**: once the Hull is deployed, members open it in a browser and start working. It has no process of its own; the pages ship alongside the Hull deployment. Concretely, the built pages in `frontend/dist` are served by an nginx container (port 18001 by default) — the Hull itself only serves the Bridge's static directory, not the Beehive.
 
-## Two-column layout
+## Opening and signing in
 
-```
-┌──────────────┬─────────────────────────────────────┐
-│  Sidebar     │  Chat header (workspace / thread)   │
-│  (240px)     ├─────────────────────────────────────┤
-│  New task    │                                     │
-│  Search      │  Timeline                           │
-│  ─ Workspace ─                                     │
-│   Thread A   │                                     │
-│   Thread B   ├─────────────────────────────────────┤
-│  ─ Working dir ─  Composer (model / send)          │
-│  File tree   │                                     │
-│  Usage bar   │                                     │
-│  Settings    │  Status bar                         │
-└──────────────┴─────────────────────────────────────┘
-```
+Open the deployed address in a browser. If you are not signed in you land on the login page, where you can register directly. After signing in you go straight to your agent's chat page.
 
-- **Left sidebar** (fixed 240px): new task button, search box, workspace and thread tree, the **working directory** area (file tree + toolbar + usage bar), and the settings entry at the bottom
-- **Right column** (fluid): the welcome page when no thread is selected, otherwise the chat page (header + timeline + composer)
+- **Chat**: the main workspace, covered under "Main area"
+- **Embedded chat**: a conversation embedded inside another page
+- **External workflow landing pages**: pages for external flows reached by link
+- **Settings**: you stay on the chat page, with the right side switching to the matching settings category
+- **Thread trajectory**: the execution record of a whole thread
+- **Admin console**: admins get separate user, agent, and system management pages after signing in
 
-The two sidebar halves scroll independently, and the divider between them can be dragged; on narrow screens the sidebar becomes a drawer overlay.
+## Main area
 
-## Chat
+The Beehive's main area is a three-column chat workspace:
 
-### Input area
+- **Left column**: new task, search, workspace and thread tree, working directory, settings entry
+- **Right column**: chat top bar + timeline + input area
+- **Overlays**: file preview, inline editing, companion overlay
 
-Use the input area to start tasks, add context, and control the current thread. Common controls include:
+One agent can hold several independent task threads at once, and there can be several workspaces: your own cloud workspace (`/workspaces/<user>/workspace`) plus remote device workspaces reached through device interconnection.
 
-| Area | Purpose |
-|------|---------|
-| **Message input** | Enter natural-language tasks, questions, or slash commands |
-| **Attachment entry** | Select or drag local files; after processing, they are sent with the message |
-| **Send / stop** | Send when idle, or stop the current execution while running |
-| **Model switch** | Switch the active model right in the composer instead of jumping to settings |
-| **Approval mode** | Choose how strictly tool execution is approved (a security boundary) |
-| **Reasoning effort** | Brain icon filled with orange from the bottom: empty for no thinking, half-full for medium, full for highest; stays gray when following the model default, which does not reflect the actual thinking budget |
-| **Work threads** | Each running entry has a light animation. You can switch or create another thread while the original continues in the background |
+## Realtime updates and connectivity
 
-The web worker-thread panel uses the same outer panel and inner list as the working directory panel. The title keeps a permanent status icon with an activity count; with no active threads it shows a gray idle icon and 0. Clicking once shows only running, queued, or waiting-for-interaction threads; clicking again restores all threads and the previous scroll position. After all activity ends, the filter button stays so you can leave the filter at any time. Drag-to-reorder still works while filtering.
+All realtime traffic runs over **a single WebSocket** (`/chat/ws`), which the client multiplexes: new messages, execution progress, and approval prompts all arrive through it. The Beehive does not open several WebSocket channels at once. After a reconnect, the state is filled in by ordinary requests, so you do not have to reload the page.
 
-For tasks that need existing files, put the files in the working directory area of the left sidebar first, then mention the relative path or file name in your message; you can also use "Reference to chat" from a file row menu to pull it into the composer.
+If the network or a proxy blocks that one connection, realtime state stops updating; refreshing the page usually restores it.
 
-### Context and tool timing
+## Rendering long conversations
 
-The input area's "used / capacity" shows the input tokens of the most recent model request. While output is streaming it keeps the last confirmed value, and updates after the next request is observed; after compaction it may drop or reset, and a brief gap in statistics will not flash empty.
+The timeline does not lay out an entire thread at once; it loads by window as you scroll, so a long thread does not freeze when opened. Parsing and rendering also run in background workers, so they do not block the main thread.
 
-In the agent loop, the context and token usage belong to the model request that issued that tool. Multiple parallel tools from the same request share these numbers — do not add them up per entry. Timing shows how long the tool took (including approval waits during processing); very fast calls may show `0ms`, and failed or cancelled calls also record their duration.
+The rendering optimization for extremely large threads is a rewritten plan whose production implementation is not fully in place. Very long threads can still stutter.
 
-### Slash commands
+## Settings categories
 
-| Command | Action |
-|---------|--------|
-| `/new` | Create new thread |
-| `/stop` | Stop current execution |
-| `/compact` | Manually compress conversation |
-| `/help` | Open help docs |
+The Beehive's settings hang off the chat page as categories and share the same backend capabilities as the Honeycomb. They include:
 
-`/compact` counts as a user turn. Its summary appears immediately in the following assistant bubble, with progress in the agent loop and no separate divider. Switching threads or refreshing preserves the summary and completed status.
+- **General / Account / Models / Agent / Companion / Prompt packs / Help** (the same as the Honeycomb)
+- **Tools**: four tabs — built-in / MCP / skills / knowledge bases
+- **Memory**: long-term memory management
+- **Channels**: channel binding and status
+- **Scheduled**: scheduled tasks
+- **Devices**: entry to device-interconnection management
+- **Archive**: archived threads
 
-### Protection mechanisms
+## Differences from the Honeycomb
 
-- **Attachment processing**: send button disabled until processing completes
-- **Background execution**: switching, creating, refreshing, or temporarily going offline does not cancel existing work threads. Reopening restores status and pending approvals from persisted events
-- **Empty thread reuse**: clicking "New thread" first opens an unused empty thread that already belongs to the current agent; clicking again after switching to another thread reuses the same one, avoiding piles of duplicate new sessions. Threads that already sent messages, are running, or were spawned by subagents are never reused as empty threads.
-- **Deletion sync**: after an administrator deletes a thread, the client cleans up the entry and its cache on the next list refresh or switch, so you never need to clear browser data manually. If you click a stale entry that has not refreshed yet, the page shows a notice and returns to that agent's input page instead of leaving an unopenable thread.
+| Item | Beehive | Honeycomb |
+| --- | --- | --- |
+| Running mode | Reached in a browser, in the cloud | A desktop app installed on your own computer |
+| Data storage | Hull storage | Local |
+| Interactive terminal | ❌ No | ✅ Yes |
+| Voice input / output | Both directions ✅ (TTS included) | Input ✅, output ❌ |
+| Device interconnection | ✅ Devices category + interconnection view | ⚠️ Cloud workspace + approval pop-up only; settings category not opened |
+| Tray / system notifications / global hotkey / screenshot | ❌ | ✅ |
+| Attachment upload limit | Temporary attachments 200 MB, persistent attachments 10 MB | Local files referenced directly |
 
-### Automatic retries
+## Input area
 
-If the model generates an invalid tool call or no usable content, the message status shows the reason, attempt count, and waiting time. You can stop the task during recovery. Normal progress resumes after recovery, and loading stops when the turn fails or is stopped. Refreshing or reopening the thread also restores recorded retry status.
+- **Message input**: natural language, plus slash commands
+- **Attachments**: pick locally or drag and drop
+- **Send / stop**: sends when idle, turns into stop while running
+- **Model switch**: change models right in the input area, without jumping to settings
+- **Approval mode**: Suggest / Auto-edit / Fully automatic (fully automatic by default)
+- **Reasoning level**: the brain icon at the bottom; gray follows the model, while empty / half-full / full mean no thinking / medium / highest
+- **Work-thread panel**: shares the same outer panel as the working directory; a status icon and activity count stay at the right of the title; the filter button remains after all activity ends, so you can leave the filter at any time, and drag-to-reorder still works while filtering
 
-## Working directory
+## Timeline and status
 
-The "Working directory" area below the workspace tree in the left sidebar shows your single workspace (a persistent local directory in the Honeycomb; a server-side user directory in the web UI). You can:
+- Below each reply, "Work process" folds away intermediate thinking, tool batches, and interim output
+- Status: 🔄 Running / ⏳ Waiting (needs your input or approval) / ✅ Complete
+- Context usage and duration belong to the model request that issued the tool; tools running in parallel within one request share the same numbers and are not added up per entry
+- Very fast calls may show `0ms`; failed and cancelled calls also record their duration
 
-- browse the directory structure (directories expand lazily)
-- upload, download, delete, rename, move, and copy files
-- preview text, images, PDF, Office documents, and diagrams
-- multi-select to batch delete or download an archive
-- use "Reference to chat" in a file row menu to pull a file into the composer
-- see used capacity and file count at the bottom of the area
+## Slash commands
 
-## Agent settings
+Type them into the message box:
 
-Every user has exactly one agent instance, generated from a 1:1 admin-side preset binding. There is no user-side entry point to create, delete, switch, or sort agents. In **Settings** at the bottom of the left sidebar you can:
+- `/new` — create a new thread
+- `/stop` — stop the current execution
+- `/compact` — compress the conversation on demand
+- `/help` — open the help docs
+- `/goal` — goal management
 
-- view the current agent instance and its bound preset
-- edit the fields the preset allows you to customize (default model, approval mode, tool set, and so on)
-- configure prompt templates and skills
-- add dedicated memory
-- the agent can still own multiple independent threads
+`/compact` also counts as one user turn; the compressed summary appears right in the reply bubble after the command and survives switching threads or refreshing the page.
 
-Fields the preset does not open for customization are shown as "set by admin" and stay read-only.
+## Protection mechanisms
 
-## Tools & skills
+- **Attachment processing**: the send button is disabled until processing finishes
+- **Background running**: switching, creating, refreshing, or briefly going offline does not cancel running work threads; once you reconnect, status and pending approvals are restored from saved events
+- **Empty-thread reuse**: a new thread prefers an empty thread the current agent has not used yet; threads that have sent messages, are running, or were spawned by subagents are never reused
+- **Deletion sync**: after an admin deletes a thread, your side clears the entry and its cache on the next list refresh or switch; clicking a stale entry shows a notice and returns you to the input page
 
-- View the available tools list (user-side is read-only plus toggles; the catalog is maintained by admins)
-- Configure skills (capability packages)
-- Add knowledge bases for agent reference
+## Common questions
 
-## Scheduled tasks
+- **The Beehive and the Bridge are two separate interfaces**: the Beehive faces users, the Bridge faces admins, and the two are kept apart.
+- **The Beehive is built for sharing**: it is itself a team / multi-user setting, where members sign in with a Hull account. For a single machine, the Honeycomb is recommended.
+- **The Beehive has no terminal**: when you need a shell, use the Honeycomb or the Helm.
+- **Voice output (TTS) works here**: the Beehive supports two-way voice, TTS included; the Honeycomb is input-only, with no playback.
+- **How device interconnection is used**: the Beehive is the full entry; settings live under the "Devices" category, and command approvals pop up inline in the timeline.
 
-- Create scheduled tasks
-- View execution history
-- Manage, pause, delete tasks
-- Manually trigger an execution
+## Further Reading
 
-## My profile & settings
-
-### My profile
-
-- Avatar, username, level
-- Experience progress bar
-- Usage statistics (sessions, tool calls, Token consumption)
-- Quota account balance and trends
-
-### Account management
-
-- Change username, email, password
-- View organization membership
-
-### System settings
-
-- Interface language switching
-- Reset workspace state (for recovery)
-
-### Help manual
-
-- Embedded docs access without leaving Beehive
-
-## Status indicators
-
-Watch for status indicators in the interface:
-
-- 🔄 Running = Currently executing
-- ⏳ Waiting = Needs your input or approval
-- ✅ Complete = Ready to continue
-
-## Further reading
-
-- [Desktop Guide](/docs/en/start/desktop/)
-- [Desktop Interface](/docs/en/surfaces/desktop-ui/)
+- [Interface Overview](/docs/en/surfaces/index/)
+- [Honeycomb Interface](/docs/en/surfaces/desktop-ui/)
+- [Bridge Interface](/docs/en/surfaces/web-admin/)
+- [Hull deployment](/docs/en/start/server/)
 - [Troubleshooting](/docs/en/help/troubleshooting/)

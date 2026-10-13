@@ -1,78 +1,137 @@
 ---
 title: Channel Runtime
-summary: Channel issues often stem not from the model, but from the access chain: accounts, persistent connections, webhooks, outbox, and download link rewriting.
-read_when:
-  - You are troubleshooting channel anomalies for Feishu, WeChat, QQBot, WhatsApp, XMPP, etc.
-  - You want to know what channel runtime interfaces are available on both admin and user sides
-source_docs:
-  - docs/API文档.md
-  - docs/设计文档/01-系统总体设计.md
+summary: Connecting and running external channels such as Feishu and WeChat day to day. Channel problems often lie in the access layer rather than the model.
+updated_at: 2026-10-13
 ---
 
-# Channel Runtime
+Channels are the bridge between wunder and external platforms. Once connected, users can talk to the agent directly from tools they already know, such as Feishu, WeCom, and Telegram, and every channel's connection and runtime state is managed from one place in Bridge. When a channel acts up, check the access layer before the model: the great majority of failures come from accounts, callback addresses, or the inbound and outbound paths rather than from the agent itself.
 
-Many channel issues appear as "the model didn't respond," but actually fail much earlier at the access layer.
+## How Channels Work
 
-## Key Points on This Page
+Channel adapters come in two kinds: some platforms use a dedicated adapter, and others use a generic webhook.
 
-- Is the account actually online?
-- Is the persistent connection alive?
-- Is inbound traffic coming in?
-- Is outbound traffic stuck in the outbox?
+### Message Flow
 
-## Most Important Admin Endpoints
+```
+External platforms (Feishu / WeChat / QQ / WhatsApp / XMPP / Telegram / Discord / Slack / LINE / DingTalk, etc.)
+        ↓ Webhook / persistent connection / generic webhook routing
+    Unified access layer
+        ↓
+    Inbound queue (fast intake)
+        ↓
+    Dispatch execution (message processing)
+        ↓
+    Outbound queue (reply delivery)
+        ↓
+    Channel adapter (send to platform)
+```
 
-- `GET /wunder/admin/channels/accounts`
-- `POST /wunder/admin/channels/accounts/batch`
-- `DELETE /wunder/admin/channels/accounts/{channel}/{account_id}`
-- `GET /wunder/admin/channels/accounts/{channel}/{account_id}/impact`
-- `GET /wunder/admin/channels/bindings`
-- `GET /wunder/admin/channels/user_bindings`
-- `GET /wunder/admin/channels/sessions`
+### Key Components
 
-These endpoints help answer:
+| Component | Role |
+| --- | --- |
+| **Channel account** | An identity bound to an external platform |
+| **Binding** | The mapping between a channel user and a system user |
+| **Inbound path** | External messages entering the system |
+| **Outbound path** | System replies sent out to the outside |
+| **Runtime logs** | A record of channel runtime state |
 
-- Which accounts are abnormal?
-- Which bindings will be affected?
-- Which `user_id` / `agent_id` a channel session is actually bound to?
+## Adding a New Channel
 
-## User-Side Runtime Log Endpoints
+1. **Create an app on the external platform**
+   - For example a Feishu custom app or a WeCom app
+   - Obtain the credentials such as the app ID and app secret
 
-- `GET /wunder/channels/runtime_logs`
-- `POST /wunder/channels/runtime_logs/probe`
+2. **Add the channel account in Bridge**
+   - Bridge → Channel Management → Add account
+   - Fill in the channel type and credential details
 
-These endpoints help answer:
+3. **Configure the webhook**
+   - Set the message receiving address
+   - Configure the webhook URL on the external platform
+   - Make sure the address is reachable from outside
 
-- Have there been recent persistent connection failures, reconnects, or runtime warnings for accounts visible to the current user?
-- Is the log panel blocked by permissions or filter conditions?
+4. **Test the connection**
+   - Send a test message from the external platform
+   - Check that the reply arrives
+   - Confirm in the runtime logs
 
-## When Not to Blame the Model First
+5. **Bind users**
+   - Bind channel users to system users
+   - Confirm messages route correctly
 
-If you see these symptoms, check the channel layer first:
+## Monitoring Channel Health
 
-- Webhook configuration exists, but no inbound traffic
-- Outbound keeps retrying or failing
-- Persistent connection channels are intermittently working
-- External clients cannot open files
+### Bridge
 
-## Why Files Often Become Download Links in Channels
+- Channel account status (online or offline)
+- Message send and receive statistics
+- Abnormal-activity alerts
 
-Because channel clients typically cannot directly understand wunder's internal `/workspaces/...` paths.
+### Beehive
 
-So before outbound, these paths are rewritten to:
+- The runtime log panel
+- Connection status
+- Recent activity
 
-- `/wunder/temp_dir/download`
+## Troubleshooting Channel Problems
 
-If this link breaks, it looks like "the message was sent, but the attachment won't open."
+Work down through the layers in this order:
 
-## Implementation Recommendations
+**1. Account online status**
+- Check the account status in Bridge
+- If it is offline, check the credentials and the network
 
-- Channel issues often occur in accounts, persistent connections, outbox, and download rewriting—not necessarily model issues.
-- Admin side (Bridge): check accounts, bindings, and channel sessions; user side (Beehive): check runtime logs.
-- When external attachments won't open, prioritize checking the `temp_dir` download path and rewriting logic.
+**2. Callback reachability**
+- Check that the webhook address is reachable
+- Look at the platform's message push logs
+- Confirm the callback address has not changed
+
+**3. Inbound intake**
+- Confirm the external message has entered the system
+- Check the inbound logs
+
+**4. Outbound delivery**
+- Check whether replies are piling up in the queue
+- Check the outbound queue state
+- Look for failed sends
+
+**5. File attachments**
+- Confirm the channel client can open the attachment link
+- Check that the temporary-directory download service is working
+
+## Common Channel Problems
+
+| Symptom | Likely cause | Where to look |
+| --- | --- | --- |
+| Messages don't arrive | Webhook not connected | Check the address and configuration |
+| Messages can't be sent | Outbound queue backlog | Check the outbound queue |
+| Attachments won't open | Broken download link | Check the temporary directory |
+| Connection drops in and out | Network or credential problem | Check the account and the network |
+| Duplicate replies | Duplicate message delivery | Check idempotent handling |
+
+## Routine Channel Maintenance
+
+### Regular Checks
+
+- Account online status
+- Whether messages send and receive normally
+- Whether there is any backlog or failure
+
+### Account Management
+
+- Manage channel accounts in bulk
+- Review the impact scope of a binding
+- Clean up invalid bindings
+
+### Log Management
+
+- Read the runtime logs to understand anomalies
+- Archive old logs regularly
+- Watch for alerts and reconnect records
 
 ## Further Reading
 
-- [Channel Webhook](/docs/en/integration/channel-webhook/)
-- [Temp Directory and Document Conversion](/docs/en/integration/temp-dir/)
-- [Admin Interface](/docs/en/surfaces/web-admin/)
+- [Channels (Core Concept)](/docs/en/concepts/core-channels/)
+- [Stability](/docs/en/concepts/core-stability/) — error recovery mechanisms
+- [Admin Panels Index](/docs/en/reference/admin-panels/) — where the management entry points are

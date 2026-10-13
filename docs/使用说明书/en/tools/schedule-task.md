@@ -1,39 +1,19 @@
 ---
 title: Schedule Task
-summary: Recommended `schedule_task` usage, thread delivery semantics, and recurring behavior.
-read_when:
-  - You need to create, update, inspect, or trigger scheduled jobs
-source_docs:
-  - src/services/tools/dispatch.rs
-  - src/services/cron.rs
-updated_at: 2026-04-29
+summary: Creates, changes, inspects, runs right away, and enables or disables scheduled jobs.
+updated_at: 2026-10-13
 ---
 
-# Schedule Task
+Schedule Task creates, changes, inspects, runs right away, and enables or disables jobs that run automatically at a set time (a scheduled inspection, a recurring reminder, cross-channel message handling).
 
-`schedule_task` creates, updates, inspects, runs, enables, and disables scheduled jobs.
+## When to use it
 
-It is a deliberate exception in the current tool system:
+- Something should not be done only once, but repeated on a fixed cadence.
+- Something should run automatically once at a designated moment.
 
-- the input side supports model-friendly flat fields
-- the success side returns compact scheduling objects
-- it does not use the unified `ok/action/state/summary/data` envelope
+## How to use it
 
-## Supported actions
-
-- `add`
-- `update`
-- `remove`
-- `enable`
-- `disable`
-- `get`
-- `list`
-- `run`
-- `status`
-
-## Recommended style
-
-Prefer flat fields first instead of building a full nested `job` object:
+A call specifies the action and the job's content. The flat form uses top-level fields:
 
 ```json
 {
@@ -47,121 +27,52 @@ Prefer flat fields first instead of building a full nested `job` object:
 }
 ```
 
-Only use the nested `schedule` object when you need exact control:
+For precise control over timing, use a nested time rule, which takes a cron expression and a time zone:
 
 ```json
 {
   "action": "add",
   "job_id": "job_cron_demo",
-  "schedule": {
-    "kind": "cron",
-    "cron": "*/5 * * * *",
-    "tz": "Asia/Shanghai"
-  },
+  "schedule": { "kind": "cron", "cron": "*/5 * * * *", "tz": "Asia/Shanghai" },
   "message": "Run the inspection",
   "session": "isolated"
 }
 ```
 
-## Field guide
+Supported actions: `add` (create), `update` (change), `remove` (delete), `enable` / `disable` (enable or disable), `get` (view one), `list` (list), `run` (run once right away), and `status` (scheduler status).
 
-- `action`: operation to perform.
-- `job_id`: stable job identifier reused for later management calls.
-- `name`: short display name.
-- `schedule_text`: preferred shortcut using natural language or cron text.
-- `schedule`: precise `at/every/cron` object when needed.
-- `message`: content the agent should receive when the job fires.
-- `session`: execution thread strategy, either `main` or `isolated`.
-- `enabled`: whether the job starts active.
+Common fields:
 
-## `session` semantics
+- `action`: the action to perform.
+- `job_id`: the job's identifier, used for changing, deleting, enabling or disabling, running right away, and querying.
+- `name`: the job's display name.
+- `schedule_text`: the time rule, written in natural language or cron text.
+- `schedule`: used only when you need to express precisely "at a moment / every so often / cron".
+- `message`: the message sent to the agent when the job fires.
+- `session`: which thread the job runs in, `main` or `isolated` only.
+- `enabled`: whether the job is enabled right after creation.
 
-- `main`
-  At fire time, send the message into the agent's **current task thread**.
-  It does not keep using the old thread captured when the job was created.
+## Where a job runs
 
-- `isolated`
-  At fire time, run in a fresh isolated thread first, then send the result back into the agent's **current task thread**.
+`session` decides where this happens:
 
-If the agent does not currently have a bound task thread, the runtime falls back to the job's stored `session_id`.
+- `main`: runs in the thread the job is bound to. By default it is bound to the thread you created the job in; switching pages later, opening a new thread, or another thread becoming active does not change the binding. When busy it queues into the shared task queue, and you can also stop it from the bound thread.
+- `isolated`: runs in a fresh child thread under the bound thread. The result is delivered back to the bound thread as a standalone "completed turn" rather than being fed to the model again as a new user instruction; the child thread and the result turn each have their own identity, and an error does not get written into the previous turn's assistant bubble.
 
-## Do recurring jobs pile up?
+If the bound thread is archived or deleted, or its owning agent does not match, the job fails explicitly rather than quietly picking another thread to stand in.
 
-No. They do not accumulate one backlog item per missed tick.
+## Recurring jobs do not pile up
 
-Current behavior:
+The behavior is closer to "keep the latest cadence" than "catch up on every missed run":
 
-- one recurring job can have at most one active run at a time
-- if a job is scheduled `every 1s` but one run takes much longer than 1 second, it will not fan out into many concurrent copies
-- missed intervals are skipped or coalesced, and the next run is advanced from the current time base
+- A single recurring job has at most one run active at any moment.
+- Even if it is written as once per second while a single run takes far longer than a second, it will not fan out into a pile of identical concurrent jobs.
+- Missed intervals are skipped or coalesced, and the next run time is pushed forward again from the current time.
 
-This means recurring jobs behave more like "keep the latest cadence" than "replay every missed interval".
+## Diagnosing problems
 
-## Success results
-
-### `status`
-
-```json
-{
-  "action": "status",
-  "scheduler": {
-    "enabled": true,
-    "poll_interval_ms": 1000,
-    "running_jobs": 1,
-    "next_run_at": 1760000000,
-    "next_run_at_text": "2026-04-29T10:00:00+08:00"
-  },
-  "user_jobs": {
-    "total": 3,
-    "enabled": 2,
-    "running": 1,
-    "next_run_at": 1760000000,
-    "next_run_at_text": "2026-04-29T10:00:00+08:00"
-  }
-}
-```
-
-### `add`, `update`, and `get`
-
-```json
-{
-  "action": "add",
-  "job": {
-    "job_id": "job_daily_report",
-    "name": "Daily report reminder",
-    "enabled": true,
-    "schedule": {
-      "kind": "every",
-      "every_ms": 300000
-    },
-    "next_run_at": "2026-04-29T10:00:00+08:00",
-    "last_run_at": null,
-    "last_status": null
-  }
-}
-```
-
-### `list`
-
-```json
-{
-  "action": "list",
-  "jobs": [
-    {
-      "job_id": "job_daily_report",
-      "name": "Daily report reminder",
-      "enabled": true,
-      "schedule": { "kind": "every", "every_ms": 300000 },
-      "next_run_at": "2026-04-29T10:00:00+08:00",
-      "last_run_at": null,
-      "last_status": null
-    }
-  ]
-}
-```
-
-## Notes
-
-- If both `schedule_text` and `schedule` are provided, `schedule` wins.
-- `schedule.every_ms` must be at least `1000`.
-- Arguments must be a complete JSON object. If the JSON is incomplete, the tool now reports invalid arguments directly.
+- `run` returning `queued: true` only means the asynchronous run has been accepted, not that it has finished. Do not repeatedly poll for it within the turn that created the job; finish the current reply first.
+- Querying a job shows the thread it is bound to, whether it is running, and its last result and last error; it displays local-time-zone time, the run rule, and the bound thread, while the raw result stays in the thread log.
+- When a time rule provides both `schedule_text` and `schedule`, `schedule` wins; the smallest interval is 1 second. Arguments must be complete JSON; if it is not closed, the arguments are reported invalid directly.
+- The server must have scheduling enabled first. When it is off, create, update, enable, and manual run return explicit errors, but the job list can still be read and the scheduler status still shown; a service already running needs a config reload or restart to pick up the change.
+- Scheduled runs inherit the approval mode, model, tool capabilities, and workspace configuration of the owning user and agent. An isolated thread keeps the bound thread's explicit tool restrictions and freezes its own starting tool baseline, and still obeys the user's tool permissions: an agent that requires approval does not become fully automatic just because a schedule triggered it.

@@ -1,80 +1,88 @@
 ---
-title: Core Channels
-summary: Core Channels explains why wunder allows multiple entry points, but absolutely forbids these entries from growing into multiple independent runtimes.
-read_when:
-  - You are integrating multiple entry points
-  - You want to determine whether a capability belongs in the core or the integration layer
-source_docs:
-  - docs/总体设计.md
+title: Channels
+summary: Feishu, QQ, WeChat, XMPP, and generic webhooks differ in support level; an inbound message is routed to its agent and workspace by binding.
+updated_at: 2026-10-13
 ---
 
-# Core Channels
+## A channel is only an entry point
 
-wunder has multiple runtime forms and access methods, but these entry points should not grow into mutually fragmented systems. Core Channels focuses on the balance between "how entry points diversify" and "how the core remains singular."
+All execution happens in the engine. A channel does just two things: parse an external message into a unified inbound shape, and deliver the unified outbound shape back into an external protocol. Protocol adaptation stops at the entry; a channel does not copy business logic, does not keep its own storage, and does not change thread semantics.
 
-![Channels diagram: HTTP, WebSocket, Desktop, CLI, third-party channels all accessing a unified runtime core](/docs/assets/manual/core-channels.svg)
+So the same task thread can take a message from Beehive, continue it from Feishu, and finish it from Honeycomb; a channel never creates a second execution path.
 
-## Bottom Line
+A form (Honeycomb / Beehive / Helm / Hull) is the shape of running and access; a channel (Feishu / QQ / WeChat …) is an off-site platform.
 
-- Channels are just entry layer differences, not business core differences.
-- New entries should prioritize reusing existing capabilities like threads, tools, events, and governance, rather than duplicating logic.
-- The more channels you build, the more you need to converge, not create more exceptions.
+## Which channels are supported today
 
-## Why It Must Be a Core Concept
+- **Feishu (feishu)**: a persistent connection plus a webhook, fully implemented, with a dedicated webhook entry point.
+- **QQ Bot (qqbot)**: a persistent connection plus a webhook, fully implemented, with a dedicated webhook entry point.
+- **WeChat (weixin)**: runs on a persistent connection (iLink long polling), fully implemented, and the largest in scale.
+- **XMPP (xmpp)**: a persistent connection plus a webhook. It is disabled by default and is only a placeholder then, returning a "not enabled" notice for all send and receive; it becomes a real implementation only once explicitly turned on.
+- **WeCom (wechat)**: webhook only, partially implemented (send, receive, and signature verification), with no persistent connection.
+- **WeChat Official Account (wechat_mp)**: webhook only, partially implemented, with no persistent connection.
+- **WhatsApp Cloud (whatsapp_cloud)**: webhook only, partially implemented, with no persistent connection.
 
-Without Channels as a core, the system easily evolves like this:
+Only four channels use a persistent connection: Feishu, QQ Bot, XMPP, and WeChat (weixin). WeCom, the Official Account, and WhatsApp Cloud are pure webhook callbacks.
 
-- Chat WebSocket has its own state machine.
-- `/wunder` SSE has its own state machine.
-- Desktop/CLI each adds another layer of special cases.
-- Third-party channels, after protocol translation, casually rewrite business logic.
+The following platforms have no adapter at all: telegram, discord, slack, LINE, DingTalk. They exist only as generic-webhook directory entries, handled through the generic entry point and generic parsing — with no platform-specific signature verification, rich-text mapping, attachment download, or proactive push. The accurate statement is that they are visible in the directory and can send and receive text over a generic webhook, but they have no platform-specific adapter.
 
-The end result is multiple entry points each doing their own thing, with thread semantics, tool semantics, and event semantics no longer unified.
+## How a message finds its agent and workspace
 
-## What This Core Truly Protects
+An inbound message is first resolved by binding: candidates are scored by specificity, the single best one is taken, and priority breaks a tie.
 
-- Protects core singularity: All entries share the same threads, tools, events, and governance capabilities.
-- Protects protocol boundaries: The integration layer handles protocol adaptation, not redefining business reality.
-- Protects evolution speed: New entries can extend without rebuilding an entire system.
+| Dimension | Score | Notes |
+| --- | --- | --- |
+| Exact peer_id match | 8 | Supports the * wildcard, and a wildcard scores nothing |
+| peer_kind match | 4 | dm/direct/single/user are treated as the same kind |
+| account_id match | 2 | Empty means wildcard |
+| channel match | 1 | Empty means wildcard |
 
-## Key Constraints
+A hit yields the target agent and any tool overrides, after which the workspace is decided: empty, as well as the default and __default__ aliases, all point to that user's default agent workspace. In the Hull form, workspaces are flattened per user into a single cloud directory, so files arriving from different channels for the same user land in the same place.
 
-| Constraint | Purpose |
-|------|------|
-| Multiple entries, one core | Avoid one system growing into multiple semi-independent products |
-| Integration layer only does protocol adaptation | Prevent entry layer from tampering with thread, tool, and event semantics |
-| New channels prioritize reusing existing capabilities | Control maintenance cost and behavioral drift |
-| Local forms also preserve core semantics | Desktop and CLI cannot become exceptional systems |
+## The boundaries of inbound, outbound, and rate limiting
 
-## Design Priorities
+Inbound uses a bounded queue: capacity 512, concurrency 8, enqueue timeout 80 ms. A full queue or an enqueue timeout counts as backpressure and reports "queue busy" rather than piling up without limit. The visible effect is that the platform redelivers or briefly delays; messages are not silently dropped.
 
-### Priority 1: Channel diversification cannot break thread semantics
+Outbound runs on a persistent queue with exponential backoff, defaulting to a 500 ms polling interval, batches of 50, and at most 5 retries, with a backoff base of 2 s and a ceiling of 60 s.
 
-Regardless of whether messages come from web, desktop, CLI, or third-party platforms, they should ultimately fall back to the same thread and event system.
+Outbound delivery has a switch. When it is off, delivery is instead attempted once synchronously at enqueue time and is no longer redelivered by the polling loop. When troubleshooting a "received but no reply" case, check this switch first: once it is off and that one synchronous attempt fails, the message sits in the outbound queue waiting for manual handling.
 
-### Priority 2: Entry differences are "surface," not "skeleton"
+Rate limiting is a token bucket of QPS plus a concurrency cap per channel account; both at 0 means no limiting. A rate-limited request does not consume a concurrency slot and is handed to the outbound queue for backoff redelivery.
 
-Different channels can have different authentication, protocols, message formats, and connection methods, but these should all stop at the entry surface.
+## Attachments and media
 
-### Priority 3: More entries means unified semantics matter more
+Inbound media is downloaded, transcoded, and dropped into the workspace for that channel before being handed to the engine; platform-specific files have their own download entry points and likewise write into the workspace; and a further kind of pending file is reserved first and fetched on demand. Outbound attachments are extracted from the body, from Markdown, or from a workspace path and then uploaded. Channel clients usually do not understand internal paths, so attachments go out as an upload link rather than a path string thrown at the user.
 
-Channels are not about showing off by connecting more, but about making the same capabilities available across different entries. The real challenge is expanding entries without expanding chaos.
+## Webhook entry points and verification
 
-## Common Misconceptions
+The generic entry point is `POST /wunder/channel/{provider}/webhook`; Feishu and QQ Bot have their own dedicated entry points at `POST /wunder/channel/feishu/webhook` and `POST /wunder/channel/qqbot/webhook`.
 
-- Desktop, CLI, and Server are runtime form differences, not three independent product cores.
-- Third-party channel integration is protocol adaptation, not re-implementing an orchestration system.
-- More channels means more need for convergence, not more need for exceptional branches.
+Verification differs by platform: some loop back a verification token from configuration, some use a content signature, and WeCom additionally verifies the signature and decrypts the encrypted message. The generic webhook does no platform-specific verification, so platforms that use the generic entry point need to close this off themselves at a gateway or reverse proxy to guarantee a trustworthy source.
 
-## Boundaries with Other Cores
+## Troubleshooting message problems
 
-- Difference from [Realtime](/docs/en/concepts/core-realtime/): Channels discuss "where it comes in from," realtime discusses "how state continuously goes out."
-- Difference from [Multi-user Management](/docs/en/concepts/core-multi-user-management/): Channels discuss entry unification, multi-user management discusses governance unification.
-- Difference from [Stability](/docs/en/concepts/core-stability/): Channels are responsible for not fragmenting, stability is responsible for not crashing.
+1. **Presence**: for a persistent-connection channel, check whether its connection process is running; a webhook-only channel has no notion of presence, so check only whether the callback arrives.
+2. **Whether the callback arrives**: check the platform-side push logs and the channel's runtime logs.
+3. **Whether it was routed**: check the binding score and the enabled state; a binding to a different agent looks exactly like no response at all.
+4. **Arrived but no reply**: check for records stuck in the outbound queue, whether the outbound delivery loop is off, and whether rate limiting was hit.
+5. **XMPP specifics**: confirm whether it is enabled — while disabled by default it is only a placeholder, and errors say so directly.
 
-## Further Reading
+## Points not to mix up
 
-- [Core Overview](/docs/en/concepts/)
-- [System Architecture](/docs/en/concepts/architecture/)
-- [Integration Overview](/docs/en/integration/)
-- [Chat WebSocket](/docs/en/integration/chat-ws/)
+- telegram / discord / slack / LINE / DingTalk have no adapter; they are only generic directory entries.
+- WeCom and the Official Account have no persistent connection; only Feishu, QQ Bot, XMPP, and WeChat have one.
+- XMPP is not usable out of the box; while disabled by default it is a placeholder.
+- A channel cannot be configured with business logic; it has only two layers, the target agent and tool overrides, and everything else lives in the engine and on the management side.
+- The core capabilities are the same across channels; the differences are only in protocol expression (rich text, attachments, cards) and whether a persistent connection is supported.
+- The inbound queue does not guarantee no loss by queuing forever; it is bounded at 512 with an 80 ms enqueue timeout, and anything beyond goes to backpressure and platform redelivery.
+- A failed outbound delivery is not dropped outright; it uses a persistent queue with exponential backoff and at most 5 retries.
+- Honeycomb and Helm do not go through the channel layer: Honeycomb is a native in-process call, and Helm uses its own access path.
+
+## Related pages
+
+- [Channel Runtime Operations](/docs/en/ops/channel-runtime/) — deployment, monitoring, and troubleshooting
+- [Channel Webhook Integration](/docs/en/integration/channel-webhook/) — callback endpoints and verification
+- [WeChat Channel Integration](/docs/en/integration/weixin-channel/) — the details of weixin long polling
+- [Workspace Routing Reference](/docs/en/reference/workspace-routing/) — the rules that map a binding to a workspace
+- [Realtime](/docs/en/concepts/core-realtime/) — event push and refill
+- [Bridge Panel Guide](/docs/en/reference/admin-panels/) — where channel accounts are configured

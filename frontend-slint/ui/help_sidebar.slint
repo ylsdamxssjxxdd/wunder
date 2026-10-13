@@ -1,0 +1,127 @@
+import { ListView } from "std-widgets.slint";
+import { HelpDocs } from "help_models.slint";
+import { HelpButton, HelpInput } from "help_controls.slint";
+
+// Contents / index / search sidebar of the help browser, bound to the
+// HelpDocs global so the reading state survives tab switches.
+export component HelpSidebar inherits Rectangle {
+    background: #ffffff;
+    // Local mirrors so the list reset handlers can watch changes.
+    property <int> active-tab <=> HelpDocs.active-tab;
+    property <string> query <=> HelpDocs.search-text;
+    property <int> selected-topic <=> HelpDocs.selected-topic;
+    changed active-tab => { list.content-y = 0px; }
+    changed query => { list.content-y = 0px; }
+    Rectangle {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: 29px;
+        background: #eeeeee;
+        Rectangle { y: 28px; width: parent.width; height: 1px; background: #a9a9a9; }
+        HorizontalLayout {
+            padding-left: 4px;
+            padding-right: 4px;
+            padding-top: 2px;
+            spacing: 0px;
+            for label[i] in ["目录", "索引", "搜索"] : HelpButton {
+                label: label;
+                tab: true;
+                active: root.active-tab == i;
+                clicked => { root.active-tab = i; }
+            }
+        }
+    }
+    if root.active-tab == 0 : Rectangle {
+        x: 4px;
+        y: 37px;
+        width: parent.width - 8px;
+        height: 30px;
+        Text {
+            x: 7px;
+            width: parent.width - 14px;
+            height: parent.height;
+            text: "使用手册";
+            color: #444444;
+            font-weight: 700;
+            vertical-alignment: center;
+        }
+        Rectangle { y: parent.height - 1px; width: parent.width; height: 1px; background: #dddddd; }
+    }
+    if root.active-tab == 2 : HelpInput {
+        x: 7px;
+        y: 36px;
+        width: parent.width - 14px;
+        height: 24px;
+        text <=> root.query;
+        placeholder-text: "搜索帮助主题";
+        accessible-label: "搜索帮助主题";
+        edited(text) => { HelpDocs.search-changed(text); }
+    }
+    list := ListView {
+        x: 4px;
+        y: root.active-tab == 1 ? 33px : 67px;
+        width: parent.width - 8px;
+        height: parent.height - self.y - 4px;
+        content-width: self.visible-width;
+        for entry in root.active-tab == 0 ? HelpDocs.contents : root.active-tab == 1 ? HelpDocs.keyword-index : HelpDocs.search-results : Rectangle {
+            width: list.visible-width;
+            height: root.active-tab == 0 ? 32px : 54px;
+            background: entry.topic == root.selected-topic ? #2c76b8 : touch.has-hover || focus.has-focus ? #eaf4ff : transparent;
+            border-width: 1px;
+            border-color: touch.has-hover || focus.has-focus ? #b8d6ef : transparent;
+            border-radius: 2px;
+            accessible-role: AccessibleRole.button;
+            accessible-label: entry.title;
+            accessible-action-default => { HelpDocs.topic-opened(entry.topic); }
+            if root.active-tab == 0 : Text {
+                x: 7px;
+                width: 14px;
+                height: parent.height;
+                text: ">";
+                color: entry.topic == root.selected-topic ? #e7f3ff : #707070;
+                vertical-alignment: center;
+            }
+            Text {
+                x: root.active-tab == 0 ? 21px : 7px;
+                y: 5px;
+                width: parent.width - self.x - 7px;
+                height: 21px;
+                text: entry.title;
+                color: entry.topic == root.selected-topic ? #ffffff : #202020;
+                font-weight: root.active-tab == 0 ? 400 : 700;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+            if root.active-tab != 0 : Text {
+                x: 7px;
+                y: 28px;
+                width: parent.width - 14px;
+                height: 18px;
+                text: entry.detail;
+                color: entry.topic == root.selected-topic ? #e7f3ff : #666666;
+                overflow: elide;
+                vertical-alignment: center;
+            }
+            focus := FocusScope {
+                key-pressed(event) => {
+                    if event.text == " " || event.text == "\n" { HelpDocs.topic-opened(entry.topic); return accept; }
+                    reject
+                }
+            }
+            touch := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { focus.focus(); HelpDocs.topic-opened(entry.topic); }
+            }
+        }
+    }
+    if root.active-tab == 2 && HelpDocs.search-results.length == 0 : Text {
+        x: 14px;
+        y: 77px;
+        width: parent.width - 28px;
+        height: 30px;
+        text: "没有匹配的帮助主题";
+        color: #777777;
+    }
+    Rectangle { x: parent.width - 1px; width: 1px; height: parent.height; background: #9f9f9f; }
+}

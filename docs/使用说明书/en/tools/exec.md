@@ -1,156 +1,45 @@
 ---
 title: Execute Command
-summary: The budgets, dry-run behavior, output guards, and return structure of `execute_command`.
-read_when:
-  - You need to run shell commands, compile, test, or invoke an existing CLI
-source_docs:
-  - src/services/tools.rs
-updated_at: 2026-09-28
+summary: Run shell commands, compile, test, or call an existing command-line tool; it supports previews, resource budgets, and output guards.
+updated_at: 2026-10-13
 ---
 
-# Execute Command
+`execute_command` runs shell commands, compiles, tests, or calls an existing command-line tool. It supports a preview (`dry_run`), carries command budgets and output guards, and automatically hands patch text that arrives by mistake over to `Text Edit`.
 
-`execute_command` is no longer just "send shell text and read stdout." Its current design centers on three changes:
+## When to use it
 
-- it supports `dry_run`
-- it enforces execution budgets and output guards
-- it automatically intercepts patch text and reroutes it to the patch form of `Text Edit`
+- You need to run a compile, test, build, or script
+- You need to call an existing command-line tool
+- You need to run a throwaway program, such as a temporary Python script
 
-## Minimum arguments
+To change files only slightly, use [Text Edit (patch form)](/docs/en/tools/apply-patch/); to just read code, use [Workspace Files](/docs/en/tools/workspace-files/).
 
-```json
-{
-  "content": "cargo check --release"
-}
-```
+## How to use it
 
-## Common arguments
+Give the command to run, and you can also specify a working directory. Common arguments:
 
-- `content`
-- `workdir`
-- `timeout_s` (default 120 seconds; pass 0 to disable)
-- `run_in_background` (default false, blocking execution)
-- `yield_time_ms` (only with `run_in_background`)
-- `budget`
-- `dry_run`
+- **Timeout** `timeout_s`: 120 seconds by default; pass 0 for no limit.
+- **Background** `run_in_background`: off by default, meaning the call blocks until the command finishes.
+- **Yield wait** `yield_time_ms`: used only together with background mode.
+- **Budget** `budget`: caps time, output bytes, and the maximum number of commands.
+- **Preview** `dry_run`: validates the plan without actually running it.
 
-Common fields inside `budget`:
+## Blocking or background
 
-- `time_budget_ms`
-- `output_budget_bytes`
-- `max_commands`
+Execution blocks by default: one call waits until the command exits or the timeout is reached, then returns the full output at once; on timeout the process is killed and the partial output collected so far is returned.
 
-## Success result
+Set `run_in_background` only for long-running commands: after a brief wait, a command that is still running returns immediately, with a next-step hint in the result. Poll it afterwards with a command session: `yield_time_ms` can go up to 60000, letting one call keep waiting until the command exits — do not spin in an idle loop waiting for a background command. Empty input only polls; when input is needed, write it with `write_stdin`.
 
-```json
-{
-  "ok": true,
-  "action": "execute_command",
-  "state": "completed",
-  "summary": "Executed 1 commands.",
-  "data": {
-    "results": [
-      {
-        "command": "cargo check --release",
-        "command_index": 0,
-        "command_session_id": "cmd_xxx",
-        "returncode": 0,
-        "stdout": "...",
-        "stderr": "",
-        "output_meta": {
-          "truncated": false,
-          "total_bytes": 1024,
-          "omitted_bytes": 0,
-          "stdout": { "truncated": false },
-          "stderr": { "truncated": false }
-        }
-      }
-    ],
-    "budget": {
-      "time_budget_ms": 60000,
-      "output_budget_bytes": 32768,
-      "max_commands": 4
-    },
-    "output_guard": {
-      "truncated": false,
-      "commands": 1,
-      "truncated_commands": 0,
-      "total_bytes": 1024,
-      "omitted_bytes": 0,
-      "effective_total_bytes": 32768
-    },
-    "sandbox": false
-  }
-}
-```
+Only a bounded preview of the output is kept. Cancelling the current thread terminates the active commands of that thread and of its child threads.
 
-If output was trimmed by the guard, the result may also include:
+## What it does automatically
 
-```json
-{
-  "next_step_hint": "Command output was truncated by the output guard..."
-}
-```
+- **Output guard**: command output over the threshold is trimmed, keeping a preview within a bounded range and noting in the result that the output was truncated.
+- **Budget**: time, output bytes, and the maximum number of commands can all be capped, so a single command cannot eat too many resources.
+- **Patch handoff**: if the content passed in is not a command but a complete `*** Begin Patch ... *** End Patch` block, the system hands it to the patch form of `Text Edit` and marks on the result that this call was intercepted from `execute_command`.
 
-## Background command sessions
+## Diagnosing failures
 
-Blocking by default: the call waits until the command exits or `timeout_s` (default 120 seconds; pass 0 to disable) is reached, then returns the full output at once. On timeout the process is killed and `timed_out` plus the collected partial output are returned.
-
-Set `run_in_background: true` only for long-running commands: after a brief `yield_time_ms` wait (default 750ms) a still-running command returns `state: "running"`, a `command_session_id`, and a `data.next_step` instruction. Poll it with `command_session`; `yield_time_ms` up to 60000 lets one poll wait until the command exits. Never idle with sleep to wait for a command:
-
-```json
-{"command_session_id":"cmd_xxx","yield_time_ms":500}
-```
-
-For interactive commands, use `action: "write_stdin"` with `input`. Output previews are bounded, and cancelling a thread terminates its active commands and those of its child threads.
-
-## `dry_run`
-
-```json
-{
-  "ok": true,
-  "action": "execute_command",
-  "state": "dry_run",
-  "summary": "Validated command plan without execution.",
-  "data": {
-    "dry_run": true,
-    "workdir": "C:/.../workspace",
-    "command_count": 1,
-    "commands": ["cargo check --release"],
-    "timeout_s": 60,
-    "budget": { ... },
-    "output_guard": { ... },
-    "sandbox": false
-  }
-}
-```
-
-## Failure results
-
-Non-zero exits, timeouts, and bad working directories all use the unified failure envelope. Common error codes include:
-
-- `TOOL_EXEC_COMMAND_REQUIRED`
-- `TOOL_EXEC_WORKDIR_NOT_FOUND`
-- `TOOL_EXEC_WORKDIR_NOT_DIR`
-- `TOOL_EXEC_NOT_ALLOWED`
-- `TOOL_EXEC_TIMEOUT`
-- `TOOL_EXEC_NON_ZERO_EXIT`
-- `TOOL_EXEC_BUDGET_COMMAND_LIMIT`
-
-On timeouts or non-zero exits, `data.results` still keeps the collected stdout and stderr so the model can continue diagnosing the problem.
-
-## Special behavior: patch text sent by mistake
-
-If `content` is not a command but a complete `*** Begin Patch ... *** End Patch` block, the system automatically redirects execution to the patch form of `Text Edit` and adds:
-
-```json
-{
-  "intercepted_from": "execute_command"
-}
-```
-
-## When not to use it
-
-- If you only need a small file edit, use [Text Edit (patch form)](/docs/en/tools/apply-patch/)
-- If you need a temporary Python helper, run a script with [Execute Command](/docs/en/tools/exec/) (`ptc` has been removed)
-- If you only want to read code, use [Workspace Files](/docs/en/tools/workspace-files/)
+- A non-zero exit, a timeout, a working directory that is missing or not a directory, a disallowed command, or exceeding the command budget all fail.
+- On a timeout or a non-zero exit, the collected output is still kept in the result, so you can keep diagnosing.
+- The administrator event details add up to 4 diagnostics, each with the command, its index, the exit code, and a bounded tail of output; the failure message sent to the model is compressed into one error line plus a next-step hint.

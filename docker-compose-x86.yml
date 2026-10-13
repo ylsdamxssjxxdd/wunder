@@ -273,7 +273,10 @@ services:
         condition: service_started
       wunder-frontend:
         condition: service_completed_successfully
-    command: ["/bin/sh", "-lc", "until [ -f /usr/share/nginx/html/index.html ]; do echo '[wunder-nginx] waiting for frontend dist/index.html'; sleep 1; done; exec nginx -g 'daemon off;'"]
+    # Bump the command marker whenever the mounted nginx configuration
+    # changes so a plain `docker compose up -d` recreates this container and
+    # loads the new resolver/upstream settings.
+    command: ["/bin/sh", "-lc", ": wunder-nginx-config-v2; until [ -f /usr/share/nginx/html/index.html ]; do echo '[wunder-nginx] waiting for frontend dist/index.html'; sleep 1; done; exec nginx -g 'daemon off;'"]
     restart: always
     volumes:
       - ./frontend/dist:/usr/share/nginx/html:ro${NGINX_BIND_OPTS:-}
@@ -281,3 +284,4 @@ services:
       - ./frontend/public/config.json:/etc/wunder/config.json:ro${NGINX_BIND_OPTS:-}
     ports:
       - "${NGINX_PORT:-18001}:80"
+

@@ -1,82 +1,85 @@
 ---
 title: Multi-user Management
-summary: The Multi-user Management core explains why wunder must build organization, user, permission, and quota account governance into the system skeleton from day one, rather than bolting it on later.
+summary: Users, units, and permission boundaries in the Hull (server) form — login state, presence, the unit tree, levels and credits, agent definition documents, and data isolation.
 read_when:
-  - You are deploying server or designing the admin side
-  - You want to understand why multi-user governance cannot be retrofitted
+  - You are setting up accounts, units, or roles for a Hull deployment
+  - A token, a refresh, or a session on another device behaves unexpectedly
+  - You need to know what Credits measure, and how a worker card differs from a thread
 source_docs:
-  - docs/总体设计.md
+  - crates/wunder-runtime/src/services/user_store.rs
+  - crates/wunder-runtime/src/api/auth.rs
+  - crates/wunder-core/src/auth.rs
+  - crates/wunder-runtime/src/services/presence/mod.rs
+  - crates/wunder-runtime/src/services/user_leveling.rs
+  - crates/wunder-runtime/src/services/worker_card_files.rs
+updated_at: 2026-10-13
 ---
 
-# Multi-user Management
+Multi-user governance is a foundational capability of the Hull (server) form; the Honeycomb (desktop) and the Helm (cli) are local, single-machine forms with no account system. Concrete panel operations are covered in the reference section.
 
-wunder targets both organizations and individuals, but once it enters server mode, multi-user governance is no longer an auxiliary feature — it is the system skeleton itself. It determines not what the backend looks like, but how the entire operational boundary is established.
+## The three gates of identity
 
-![Multi-user management diagram: identity layer, governance layer, isolation layer, and result layer converging in sequence](/docs/assets/manual/core-multi-user-management.svg)
+- **Management gate**: management paths (such as `/wunder/admin/*`) require an API key or a Bearer token on the server side, and the account must be an administrator; a unit head is separately allowed on designated paths.
+- **User ownership**: a user-facing request is first resolved to a user by Bearer, then its ownership is checked, ensuring it can touch only its own sessions, tools, and tasks.
+- **Realtime channels**: a WebSocket connection carries a token in its handshake, and each of the six realtime channels authenticates on its own.
 
-## Bottom Line
+## Login state uses opaque tokens
 
-- Multi-user management is not just a "login system"; it is the sum of operational boundaries, resource boundaries, and governance boundaries.
-- If data isolation, permission boundaries, and quota account control are not designed upfront, you will almost certainly need to rework them later.
-- The admin panel is not a showcase page — it is the formal entry point for system governance capabilities.
+| Credential | Shape | Default lifetime |
+| --- | --- | --- |
+| Access token | A random string starting with `wund_`, verified by looking it up in the database | 7 days |
+| Refresh token | A random string starting with `wundr_` | 30 days |
+| External-login one-time code | Starting with `wundc_`, held in memory | Short-lived |
 
-## Why It Must Be a Core
+A few key semantics:
 
-Without multi-user management as a core, the system will expose structural problems as it grows:
+- **These are not JWTs.** A token carries no claims and cannot be parsed offline; validation is a database lookup, so revocation takes effect immediately.
+- **Refresh is an OAuth-style family rotation**: one refresh issues a new access plus a new refresh, both in the same rotation family; presenting an already-revoked token to refresh again is judged to be a stolen token, and the whole family (including the access token in use) is revoked at once.
+- **The session scope decides who can renew**: login reads the `x-wunder-session-scope` header, and only local scopes such as the Honeycomb and the Helm get a refresh chain that can renew; browser sessions do not take this path.
+- **Logging in again from the same scope evicts the old session**: when the same user logs in again from the same scope, the old session receives a notice that it has been superseded and is disconnected. When troubleshooting a connection that dropped on another client, first check whether it was the same scope logging in again.
+- Passwords are stored as Argon2 hashes; plaintext never reaches the database.
 
-- Not knowing whether a request represents a "logged-in user" or an "externally mapped user_id."
-- Threads, workspaces, tool visibility, and channels all lacking consistent boundaries.
-- Quota account governance and permissions can only be patched at the API layer, never truly resolved at runtime.
+## Presence is split by form
 
-## What This Core Actually Protects
+Presence is recorded separately by client type, with the Beehive (web), the Honeycomb (desktop), and the Helm (cli) as three independent lines; roughly 90 seconds without a touch counts as offline, with a sweep interval of 30 seconds (minimum 10 seconds). As a result, presence in the user list is split into web, desktop, and cli columns — "online" is no longer a yes-or-no value, and to see who is online on which form you look at the matching column. The management exit is at `/wunder/admin/gateway/presence`.
 
-- Identity boundaries: distinguishing logged-in users, organization users, virtual `user_id`s, and externally mapped identities.
-- Operational boundaries: threads, workspaces, tools, and resources must all know "who owns this, who can touch it."
-- Governance boundaries: administrators having management privileges does not mean the system has no boundaries everywhere.
+## The unit tree and the unit-head scope
 
-## Key Constraints
+At startup, if the unit table is empty, it is automatically seeded from a unit template. The unit tree is at most 4 levels deep.
 
-| Constraint | Purpose |
-|------|------|
-| Default to multi-user concurrent design | Avoid discovering later that the system only supports single-user scenarios |
-| Data isolation must be designed upfront | Workspaces, sessions, configurations, and logs must have clear boundaries from the start |
-| Permissions and quota account governance cannot be retrofitted | Otherwise "can view but cannot manage, can invoke but cannot control" gray zones easily appear |
-| Admin panel and runtime share the same governance model | What administrators see must be consistent with actual runtime behavior |
+The unit-head role is allowed only on the two paths `/wunder/admin/org_units` and `/wunder/admin/user_accounts`; its data scope equals the units it heads plus their descendant units, and stepping outside that scope is a permission denial. The frontend's check is only a convenience; the unit-head boundary is ultimately enforced by the server.
 
-## Design Highlights
+## Levels and credits are two different things
 
-### Highlight 1: Identity and isolation are two separate layers
+**Levels** lean toward growth display: XP equals the integer number of seconds the session has run, the level cap is 200 (`MAX_USER_LEVEL`), and the XP needed to reach the next level increases as `240 + 28L + 0.9L²`. Levels unlock no resource; they only reflect time spent.
 
-Logged-in users, API Key callers, externally embedded mapped identities, and virtual `user_id`s are not all the same thing. The system must distinguish "who is being authenticated" from "whose boundary is the isolation built around."
+**Credits** lean toward governance: every user holds an integer Credits account with a balance, cumulative issuance, cumulative consumption, and a daily grant (1000 per day by default). It is an abstract allowance of issuance and deduction, **not a token count** — each request sent to the model service deducts exactly 1 Credit, independent of token metering. When the balance is short, a new request is rejected by quota and returns a snapshot of the remaining allowance; administrator accounts are exempt from deduction but still record request counts.
 
-### Highlight 2: Multi-user governance will inevitably sink into the runtime
+## An agent's definition document is not the same thing as a thread
 
-It will not stay in backend forms; it will ultimately materialize in:
+| Concept | What it is |
+| --- | --- |
+| worker card (`.worker-card.json`) | An agent's **portable definition document**, holding basic information (identifier, name, description, icon), prompts, capabilities, interaction, runtime settings, and preset publication status |
+| Thread / session | The continuous unit of execution once an agent is invoked; one agent can hold several independent task threads at once |
 
-- Thread ownership
-- Workspace isolation
-- Tool visibility
-- Quota accounts and resource governance
+After a preset agent is published, you can control which units can see it and decide which fields a bound user may change. Note that the disk directory for preset cards (`user_agents.worker_cards_root`) is an **empty string by default** — without explicit configuration there is no preset card loaded from disk, so this capability does not ship out of the box. Approval mode has three values, `suggest`, `auto_edit`, and `full_auto`, with `full_auto` the default. Sessions bind to an agent by agent id, and their task threads stay independent of one another.
 
-### Highlight 3: Administrator capabilities must be strong, but boundaries must remain clear
+## Where data isolation lives
 
-Administrators can govern the system, but this does not mean the system can lose its sense of boundaries. The healthy approach is "authorized to govern, but still traceable and limitable."
+Sessions, tasks, workspaces, tools, and channel bindings are all isolated by user ownership, and the user-facing side checks ownership handler by handler. Cloud files and execution boundaries are carried by a sandbox: read-write and execute operations run in each user's own container, mounting only that user's own directory, and path checking is no longer responsible for tenant isolation. Quotas, levels, and presence are account-level; model configuration and preset agents are unit-level or global-level.
 
-## Common Misconceptions
+## A few clarifications
 
-- The access semantics of `user_id` and backend registered users are not the same concept.
-- Data isolation cannot be adequately handled by database table field patches alone.
-- The admin panel is not "build features first, then assemble a UI"; it is the formal entry point for governance capabilities.
+- A token is not a self-contained JWT and cannot be parsed offline — it is an opaque random string, verified by a database lookup, and revocation takes effect immediately.
+- A lost refresh cannot be replaced by resending the old one; replaying an old refresh triggers whole-family revocation, and the correct move is to log in again.
+- Credits are not a token budget; they are an integer request allowance, one deduction per model request, with token usage metered separately.
+- A unit head cannot manage every admin page; it is allowed only on the unit and user-account paths, and only within descendant units.
+- A worker card is not a task thread; it is an agent's definition document, while a thread is a unit of execution — two different layers.
+- The system does not ship a set of preset agent cards; the preset card directory is empty by default, and nothing exists until it is configured.
 
-## Boundaries with Other Cores
+## Related pages
 
-- Difference from [Channels](/docs/en/concepts/core-channels/): channels address entry-point convergence, multi-user management addresses the governance boundaries behind those entry points.
-- Difference from [Scheduled Tasks](/docs/en/concepts/core-scheduled-tasks/): scheduled tasks must also obey multi-user ownership and permissions.
-- Difference from [Observability](/docs/en/concepts/core-observability/): observability must be sliceable by user and organization; the slicing rules come from multi-user management.
-
-## Further Reading
-
-- [Core Overview](/docs/en/concepts/)
-- [Server Deployment](/docs/en/start/server/)
-- [Authentication & Security](/docs/en/ops/auth-and-security/)
-- [Admin Panel Index](/docs/en/reference/admin-panels/)
+- [Authentication and Security](/docs/en/ops/auth-and-security/) — keys and configuration on the deployment side
+- [Bridge Panel Guide](/docs/en/reference/admin-panels/) — user management and unit management operations
+- [Quota and Token Usage](/docs/en/concepts/quota-and-token-usage/) — metering details
+- [Integration index](/docs/en/integration/index/) — how local devices and external callers join the Hull

@@ -1,29 +1,18 @@
 ---
 title: ptc
-summary: The current behavior and return structure of the temporary Python script execution tool.
-read_when:
-  - You need a complete Python snippet to finish a local task
-source_docs:
-  - src/services/tools.rs
-  - src/services/tools/catalog.rs
-updated_at: 2026-09-21
+summary: ptc was the temporary Python script execution tool; it has been removed from wunder, and this page is a historical reference.
+updated_at: 2026-10-13
 ---
 
-# ptc
+> **Removed**: ptc has been removed from wunder and is not visible to the agent or users; this page is a historical reference. To run commands now, use [Execute Command](/docs/en/tools/exec/).
 
-> **Removed**: This tool has been removed from wunder and is not visible to the agent or users; this page is kept as a historical reference.
+ptc stood for programmatic tool call. It wrote a complete Python script into a temporary file, ran it under a given directory, and handed back `stdout`, `stderr`, and the exit code.
 
-`ptc` stands for programmatic tool call. Its job is to:
+It was not a drop-in replacement for running a shell: plain command-line work always preferred [Execute Command](/docs/en/tools/exec/).
 
-- write a complete Python script into a temporary file
-- run it under the specified `workdir`
-- return `stdout`, `stderr`, and `returncode`
+## How it worked
 
-It is not a generic replacement for shell execution. For ordinary command-line work, prefer [Execute Command](/docs/en/tools/exec/).
-
-Each invocation saves its script under `ptc_temp/<invocation_id>/` so concurrent calls with the same filename cannot overwrite each other. Use the returned `path` to locate the script; `workdir` remains the execution directory.
-
-## Minimum arguments
+A call provided two things: the script filename and the script content.
 
 ```json
 {
@@ -32,54 +21,20 @@ Each invocation saves its script under `ptc_temp/<invocation_id>/` so concurrent
 }
 ```
 
-## Success result
+Each call stored its script separately under `ptc_temp/<invocation_id>/`, so scripts with the same filename could not overwrite each other when a workspace was shared. The returned `path` pointed at that script, and the `workdir` you gave remained the directory the program actually ran in.
 
-```json
-{
-  "ok": true,
-  "action": "ptc",
-  "state": "completed",
-  "summary": "Executed Python script C:/.../ptc_temp/<invocation_id>/helper.py.",
-  "data": {
-    "path": "ptc_temp/<invocation_id>/helper.py",
-    "workdir": ".",
-    "returncode": 0,
-    "stdout": "hello\n",
-    "stderr": ""
-  }
-}
-```
+It returned the script path, the run directory, the exit code, `stdout`, and `stderr`; even on failure these were usually kept.
 
-## Failure results
+## What it was good for
 
-Common error codes:
+- Temporary data processing.
+- Short Python parsing tasks.
+- A few steps of Python logic that were not worth turning into a separate project file.
 
-- `TOOL_PTC_INVALID_FILENAME`
-- `TOOL_PTC_CONTENT_REQUIRED`
-- `TOOL_PTC_EXEC_ERROR`
-- `TOOL_PTC_TIMEOUT`
-- `TOOL_PTC_EXEC_FAILED`
+## What it was not good for
 
-On failure, `data` usually still preserves:
+- Shell workflows chaining several commands.
+- Script projects that needed long-term maintenance.
+- Complex system build pipelines.
 
-- `path`
-- `workdir`
-- `returncode`
-- `stdout`
-- `stderr`
-
-## Usage boundary
-
-Good fit:
-
-- temporary data processing
-- small Python parsers
-- a few steps of Python logic that are not worth turning into a durable project file
-
-Poor fit:
-
-- multi-command shell workflows
-- persistent script projects
-- complex build pipelines
-
-For those cases, [Execute Command](/docs/en/tools/exec/) is a better fit.
+Those were better handled by [Execute Command](/docs/en/tools/exec/).

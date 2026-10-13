@@ -1,137 +1,120 @@
 ---
 title: Deployment and Running
-summary: Before deploying wunder, distinguish between desktop, local development, and server paths, then discuss startup commands.
-read_when:
-  - You need to deploy wunder
-  - You need to confirm where to place databases, MCP, sandbox, and workspaces
-source_docs:
-  - README.md
-  - docs/API文档.md
-  - docs/设计文档/01-系统总体设计.md
-  - config/wunder-example.yaml
+summary: Decide on a runtime form and prepare the environment before deploying. A Hull (server) deployment needs at least a database, workspace storage, and the backend service.
+updated_at: 2026-10-13
 ---
 
-# Deployment and Running
+## Runtime Forms
 
-Before deploying wunder, don't rush to ask "how to start"—first ask "which runtime form do I need?"
+The three runtime forms have different setup costs.
 
-## Key Points on This Page
+| Form | Best For | What You Need |
+|------|----------|---------------|
+| **Honeycomb (desktop)** | Personal use | Download the installer and start working |
+| **Hull (server)** | Teams and organizations | Server + database + configuration |
+| **Local development** | Development and debugging | A local build environment |
 
-- How to choose the right deployment path first
-- What minimum components to prepare on the server side
-- Which endpoints to check first after startup
+## Honeycomb Deployment
 
-## Decide These Four Things First
+The simplest path:
 
-- Will you use it locally as an individual, or deploy it for a team online?
-- Should you use PostgreSQL or SQLite for the database?
-- Where will workspaces be located, and should they be persisted?
-- Should sandbox, MCP, and static frontend be deployed together?
+1. Download the installer.
+2. Install and start it.
+3. Start using it.
 
-## Choose Deployment Path by Goal
+No extra configuration is required. Data stays on the local machine and uses SQLite.
 
-### Honeycomb (desktop)
+For detailed steps, see [Desktop Getting Started](/docs/en/start/desktop/).
 
-- Suitable for direct personal use
-- Local-first
-- Comes with desktop shell
-- Does not require building a complete server first
+## Hull Deployment
 
-### Hull (server)
+### Minimum Requirements
 
-- Suitable for teams, organizations, and unified governance
-- Multi-user, multi-tenant
-- Bridge (admin console) and Beehive (the cloud AI workbench) working together
-- Can connect to sandbox, MCP, A2A, and external channels
+| Component | Description | Required |
+|-----------|-------------|----------|
+| Backend service | Serves external APIs and scheduling | Yes |
+| PostgreSQL | Primary database | Yes |
+| Workspace storage | Space for user files | Yes |
+| Frontend static assets | Beehive/Bridge pages | Recommended |
+| MCP service | External tool capabilities | As needed |
+| Sandbox service | Isolated execution environment | As needed |
+| Vector database | Knowledge base retrieval | As needed |
 
-### Local Development
+### Recommended Deployment Method
 
-- Suitable for developer integration testing
-- Rust backend and frontend dev server debugging in layers
-- Can start only one layer for partial verification
+Docker Compose is recommended:
 
-## If You Deploy Server, What's the Minimum Required
+- All components come up in one step, with configuration kept in a single file
+- Upgrades are a matter of replacing images
 
-In a typical deployment, at minimum these components are involved:
+### Configuration to Prepare
 
-- `wunder-server`
-- PostgreSQL
-- Persistent user workspaces
+Before deploying, prepare the service listen address and port, the API key used for access, the database connection details, the configuration file location, and the sandbox service address (when the sandbox is enabled). In a Docker environment, the server build enables MCP, host metrics, and web fetch by default.
 
-If you need more complete capabilities, connect as needed:
+### Network Planning
 
-- `wunder-sandbox`
-- `extra-mcp`
-- Static resource services for Beehive (the cloud AI workbench) or Bridge (admin console)
+Plan the external network entry points before deploying:
 
-## How to Plan External Paths
+| Entry Point | Purpose |
+|-------------|---------|
+| Main service address | Backend APIs |
+| WebSocket channel | Real-time communication |
+| Bridge address | Admin console |
+| Docs site address | User manual |
 
-- `/wunder`
-- `/wunder/chat/*`
-- `/a2a`
-- `/.well-known/agent-card.json`
-- `/docs/`
+Keeping them all under a single domain and separating them by path is recommended.
 
-These endpoints can all be mounted under the same service domain—don't wait until just before going live to piece them together.
+### Post-Startup Checks
 
-## Check These First After Startup
+After startup, check in this order:
 
-1. Can `/wunder` return a response?
-2. Can `/wunder/chat/ws` establish a connection?
-3. Can `/a2a/agentCard` be read?
-4. Is `/wunder/mcp` reachable?
-5. Can `/docs/` be opened normally?
+1. Confirm the backend service is running
+2. Confirm the database connection is healthy
+3. Confirm a WebSocket connection can be established
+4. Confirm Bridge opens
+5. Confirm the user side is reachable
+6. Confirm the docs site is reachable
 
-## Key Configuration Files
+### System Status Under Docker
 
-- `config/wunder.yaml`
-- `config/wunder-example.yaml`
-- `~/.wunder/cli/WUNDER_TEMP/config/wunder.yaml` (CLI runtime)
-- `config/mcp_config.json`
+The CPU, memory, process, load, and disk metrics in the admin-side system status come from the host metrics capability enabled when the server is built, and the user-side web fetch tool comes from the web fetch capability. The images published by default include both. If the build options are overridden manually in the configuration, host metrics and web fetch must be kept; otherwise system resource metrics degrade to zero values and the user-side agent tool list will not show web fetch.
 
-## Common Environment Variables
+The fetch service configured on the admin side is synced to web search as well. The web search entry has been removed in the current version, though, so no matter how the fetch service is configured, the user-side agent tool list will not show it.
 
-- `WUNDER_HOST`
-- `WUNDER_PORT`
-- `WUNDER_API_KEY`
-- `WUNDER_POSTGRES_DSN`
-- `WUNDER_SANDBOX_ENDPOINT`
-- `WUNDER_SANDBOX_DOCKER_READ_ONLY`
-- `WUNDER_SERVER_FEATURES`
-- `WUNDER_MCP_HOST`
-- `WUNDER_CONFIG_PATH`
-- `WUNDER_USER_TOOLS_ROOT`
+### Browsers Under Docker
 
-## System Status Under Docker
+To use browser tools under Docker:
 
-The admin-side system status CPU, memory, process, load, and disk metrics depend on the `host-metrics` Rust feature, and the `web_fetch` tool depends on the `web-fetch` feature. Compose now defaults to `WUNDER_SERVER_FEATURES=mcp,host-metrics,web-fetch`; if you override this variable in `.env`, keep both `host-metrics` and `web-fetch` or host resource metrics will degrade to zero values and the user-side agent tool list will not show `web_fetch`.
+- Make sure Chromium is installed when the image is built
+- Allocate enough shared memory (2 GB)
+- Enable the browser-related configuration
 
-The admin-side Firecrawl settings are also synced to `web_search`. However, `web_search` has been removed, so the user-side agent tool list will not show it even when the fetch provider is `firecrawl` (or is `auto` with a Firecrawl API key/custom URL configured).
+### Sandbox Write Permissions Under Docker
 
-## Browser Runtime Under Docker
+The sandbox container keeps a writable root filesystem by default, so file tools can reach arbitrary paths inside the container. Sandbox read-only restrictions work at two levels: one on the wunder request side, and one controlled by Docker's container-level read-only switch. If a file tool reports a read-only file system when writing a root path (such as `/test_file.txt`), the running container is usually still using an old read-only configuration; recreating the sandbox container resolves it.
 
-- Current Compose defaults to installing Playwright Chromium during image build
-- Current Compose defaults to enabling `WUNDER_BROWSER_ENABLED=true`, `WUNDER_BROWSER_TOOL_ENABLED=true`, and `WUNDER_BROWSER_DOCKER_ENABLED=true`
-- `shm_size: 2gb` reserves space for Chromium's `/dev/shm`, avoiding crashes, freezes, blank pages, or screenshot failures due to insufficient shared memory in the container
+## Upgrade Strategy
 
-## Sandbox Write Permissions Under Docker
+- Rolling updates: replace instances one at a time without interrupting service
+- Database migration: handled automatically by the system, with no manual step
+- Configuration compatibility: new versions adapt to older configuration formats on their own
 
-Current Compose keeps the `wunder-sandbox` container root filesystem writable by default so file tools can write arbitrary container paths. `WUNDER_SANDBOX_READONLY_ROOTFS` controls wunder's request-level sandbox flag; Docker Compose's container-level `read_only` flag is controlled separately by `WUNDER_SANDBOX_DOCKER_READ_ONLY`, which defaults to `false`. If a file tool writes a root path such as `/test_file.txt` and gets `Read-only file system (os error 30)`, check whether the running sandbox container was created from an older `read_only: true` config and recreate it.
+## Common Deployment Issues
 
-## Most Overlooked Deployment Issues
-
-- Started only the server, but didn't prepare Postgres
-- Enabled MCP configuration, but the target service isn't connected
-- Workspaces not persisted, causing outputs to be lost
-- Put long-term business data into the `config/data/` runtime directory
-- Admin system status resource metrics show zero because `WUNDER_SERVER_FEATURES` was overridden without `host-metrics`
-- User-side agents do not show `web_fetch` because `WUNDER_SERVER_FEATURES` was overridden without `web-fetch`
-- User-side agents do not show `web_search` because `web_search` has been removed (independent of Firecrawl configuration) — this is expected
-- Sandbox file tools still fail with `Read-only file system` because an old `wunder-sandbox` container was created with Docker `read_only: true`
-- Mistakenly treated desktop local mode as a server deployment method
+| Problem | Cause | Solution |
+|---------|-------|----------|
+| Startup fails | PostgreSQL isn't ready | Make sure the database starts first |
+| WebSocket won't connect | Port or proxy misconfiguration | Check the port and reverse proxy settings |
+| Workspace is lost | No persistent storage | Mount a data volume |
+| Temp files pile up | No cleanup strategy | Configure a periodic cleanup task |
+| Bridge system status resource metrics are zero | The build options were overridden and the host metrics capability is missing | Restore the default build configuration and rebuild the service and sandbox |
+| Users can't see web fetch | The build options were overridden and the web fetch capability is missing | Restore the default build configuration and rebuild the service and sandbox |
+| Users can't see web search | The web search entry has been removed, independent of the fetch service configuration | This is expected; no action needed |
+| Browser tools are unavailable | Chromium wasn't installed when the image was built | Check the image build configuration |
+| File tools fail to write to a root path | The sandbox container still has a read-only root filesystem | Confirm the sandbox write switch is at its default setting and recreate the sandbox container |
 
 ## Further Reading
 
-- [Server Deployment](/docs/en/start/server/)
-- [Authentication and Security](/docs/en/ops/auth-and-security/)
+- [Server Getting Started](/docs/en/start/server/)
+- [Data and Storage](/docs/en/ops/data-and-storage/)
 - [Configuration Reference](/docs/en/reference/config/)

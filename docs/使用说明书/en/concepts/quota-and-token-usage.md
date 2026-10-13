@@ -1,37 +1,38 @@
 ---
 title: Quota and Token Usage
-summary: Each model request costs 1 credit; regular users receive 1000 credits daily. Token usage remains diagnostic.
+summary: Each model request costs 1 credit and 1000 are granted daily; token usage is observed only and never deducted.
+updated_at: 2026-10-13
 ---
 
-# Quota and Token Usage
+Quota limits how many model requests you can make. Regular users receive **1000 credits** per day, the same regardless of organization or level.
 
-Regular users receive **1000 credits daily**, regardless of organization or user level. Unspent credits accumulate. The daily grant is applied once on the first account operation that day; inactive days are not backfilled.
+- Unused credits accumulate. The grant is applied once on the day's first use or account adjustment; days when nothing was used are **not** backfilled.
+- Each real model request costs **1 credit**, including the next model call inside a tool loop, compaction summaries, and failed retries.
+- Streaming chunks, standalone tool execution, and history replay cost **no** credits.
+- A request consumes a credit even if it fails; when the balance is insufficient, no new model request is dispatched.
+- Administrators and unregistered virtual users are not limited by quota.
 
-Each actual model request costs **1 credit**, including tool-loop continuations, compaction requests, and retries. Stream chunks, standalone tool execution, and history replay cost no additional credits. Failed dispatched requests still consume a credit. Insufficient balance prevents dispatch. Administrators and unregistered virtual users retain their existing exemptions.
+## Viewing and adjusting
 
-## View and manage credits
+On the user side, "My Profile" shows the current balance and the daily grant. Administrators can set the balance directly in "User management → Settings", or grant and deduct credits:
 
-My Profile shows available credits and the daily grant. Administrators can set the final balance or grant/deduct credits in User Management → Settings. An exact set is the final balance after settling today's grant. Grants increase cumulative grants; deductions increase cumulative usage. Overdrafts are rejected atomically.
+- A value set directly is the final balance after the day's grant is carried over.
+- A grant increases "cumulative granted", while a deduction counts toward "cumulative used"; an operation is rejected when the balance is insufficient.
 
-| Field | Meaning |
-| --- | --- |
-| `quota_balance` | Available credits |
-| `quota_granted_total` | Cumulative grants |
-| `quota_used_total` | Cumulative usage and administrative deductions |
-| `daily_quota_grant` | Daily grant |
-| `last_quota_grant_date` | Last grant date |
+The account shows several numbers: available credits, cumulative granted, cumulative used and administrative deductions, the daily grant, and the most recent grant date.
 
-Concurrent threads share the user account and cannot overspend. Levels still track experience but no longer award credits. On first upgrade, existing token-balance accounts start with 1000 credits; historical tokens are not converted. Restarting does not reset the balance.
+Multiple sessions share one user credit account, and concurrent requests cannot overdraw it. User levels still accumulate experience but no longer award credits. On the first upgrade, an old token-balance account is initialized to 1000 credits and is **not** converted from its historical token count; a restart afterward does not reset the balance either.
 
-## Token observations
+## Tokens are for observation only
 
-Input, output, reasoning and context tokens remain available for runtime diagnostics. They do not determine the credit charge. Short and long model requests both cost 1 credit.
+Token usage continues to describe a model's input, output, reasoning, and context size, and it **never affects the credit deduction**. A short request and a long request both cost 1 credit.
 
-- `context_occupancy_tokens`: latest observed context occupancy.
-- `request_consumed_tokens` / `round_usage.total_tokens`: cumulative model tokens for a user request.
-- `token_usage` / `model_usage`: model usage events.
-- `model_request_usage`: emitted for every real model request, with separate request-count, billing, per-turn credit, and account-snapshot fields.
+The token metrics you can see include:
 
-Thread model requests and credit consumption are separate metrics. A billable regular-user request normally increments both by one. An exempt request such as an administrator request still increments the thread request count, while its credit consumption remains zero. In `model_request_usage`, `session_request_count` is the absolute thread total, `account_credits_consumed` is the current user-turn debit, and `account` is only an account balance snapshot. Legacy `quota_usage` is retained only to read historical records.
+- Context occupancy: the context size most recently observed.
+- The cumulative model tokens consumed within one user request.
+- Model usage events, plus the request count, whether it was charged, the credit consumed in that turn, and the account snapshot for each real model request.
 
-[User management](/docs/en/concepts/core-multi-user-management/) · [Admin panels](/docs/en/reference/admin-panels/)
+In a session, "model request count" and "credit consumption" are two different metrics: for a regular user, one billable model request normally increases each by one; in an exempt case such as an administrator, the request count still increases but credit consumption stays at zero. The account snapshot only shows the balance at that moment and does not represent how much this request deducted. Old credit records are kept only for reading history.
+
+[Multi-user management](/docs/en/concepts/core-multi-user-management/) · [Admin panels guide](/docs/en/reference/admin-panels/)

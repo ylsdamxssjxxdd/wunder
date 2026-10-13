@@ -1,13 +1,6 @@
 ---
 title: 帮助
-summary: 遇到问题先来这里，按症状快速分流。
-read_when:
-  - 用户要快速定位问题
-  - 用户想区分使用疑问与系统故障
-source_docs:
-  - docs/API文档.md
-  - docs/设计文档/01-系统总体设计.md
-  - docs/使用说明书/zh-CN/help/troubleshooting.md
+summary: 按症状分流的帮助入口：故障排查、FAQ、术语表。
 ---
 
 # 帮助
@@ -18,7 +11,7 @@ source_docs:
 - [FAQ](/docs/zh-CN/help/faq/) — 常见问题快速答复
 - [术语表](/docs/zh-CN/help/glossary/) — 核心术语解释
 
-## 先判断问题类型
+## 问题类型
 
 1. 不会用 → 看 FAQ 和入门文档
 2. 功能异常 → 看故障排查

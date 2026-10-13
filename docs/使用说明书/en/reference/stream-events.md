@@ -1,151 +1,206 @@
 ---
-title: Stream Events
-summary: When integrating with wunder's streaming pipeline, the most important thing is not memorizing every event, but knowing which events carry true lifecycle semantics.
-read_when:
-  - You are integrating SSE or WebSocket
-  - You want to understand why turn_terminal, approval_resolved, and thread_status matter
-source_docs:
-  - docs/API文档.md
-  - docs/设计文档/01-系统总体设计.md
-  - src/orchestrator/execute.rs
-  - src/api/chat.rs
+title: Session Status Guide
+summary: What the various statuses in a chat mean, what the agent is doing, and what to do when something goes wrong.
+updated_at: 2026-10-13
 ---
 
-# Stream Events
+During a conversation the interface shows statuses such as thinking, calling a tool, compressing context, or retrying after an error.
 
-wunder has many streaming events, but what truly matters is not "how many", but "which ones carry state semantics".
+## Status overview
 
-## Core Event Priority
+A conversation usually passes through these states from start to finish:
 
-- `thread_status`
-- `approval_resolved`
-- `turn_terminal`
+```
+Waiting → Thinking / running → Done
+             ↓
+       Needs approval → waiting for your decision → continues
+             ↓
+       Error / cancelled → ends
+```
 
-If you only consume the legacy `final` or `error` events, you can easily misjudge thread state.
+## Basic statuses
 
-## Category 1: Process Events
+### Waiting
 
-These events are primarily used to visualize the execution process:
+**Meaning**: the request has been submitted and is queued for handling.
 
-- `progress`
-- `llm_output_delta`
-- `round_usage`
-- `tool_call`
-- `tool_output_delta`
-- `tool_result`
+**When it appears**:
 
-They tell you what the model and tools are doing, but they are not responsible for determining "whether a turn has ended."
+- When the system is busy
+- When several requests are running at once
 
-### How to Understand `round_usage`
+**What to do**: wait; it usually starts soon.
 
-If you need to display token statistics, the event you should consume first is `round_usage`:
+### Thinking
 
-- `round_usage.context_occupancy_tokens`: the current context occupancy after the request settles
-- `round_usage.total_tokens`: the consumption accumulated across model calls in the current request
-- `round_usage.request_consumed_tokens`: explicit alias for the current request consumption; the cumulative consumption for the entire session is the sum of these values across requests
+**Meaning**: the agent is analyzing your request and preparing to answer or act.
 
-`token_usage` is still valuable, but it is more focused on individual model call details and is no longer the sole authority for thread-level context occupancy.
+Understanding the problem and working out a plan takes time, so this is a normal state. Wait a moment rather than resending the same message.
 
-## Category 2: Queueing & Waiting Events
+### Running tools
 
-Typical events include:
+**Meaning**: the agent is using tools to carry out the task, such as reading a file, searching the web, or running code.
 
-- `queued`
-- `approval_request`
+**Messages you may see**:
 
-They indicate:
+- "Reading file…"
+- "Searching…"
+- "Running…"
 
-- The request has entered the queue
-- The current turn is waiting for approval
+Complex tasks often need several tools working together, and the interface shows the progress.
 
-## Category 3: Closure Events
+### Done
 
-### `approval_resolved`
+**Meaning**: the agent has finished and given its final answer.
 
-This indicates that an approval has reached a terminal state.
+**What you can do next**:
 
-Whether approved, rejected, or cancelled, this event should be the definitive signal that "the approval flow is fully resolved."
+- Follow up with another question
+- Review the content or files it produced
+- Start a new task
 
-### `turn_terminal`
+## Approval statuses
 
-This is the sole terminal semantic for the current execution turn.
+### Approval needed
 
-Its `status` may include:
+**Meaning**: the agent wants to perform an action that needs your confirmation, such as changing an important file or running a risky command.
 
-- `completed`
-- `failed`
-- `cancelled`
-- `rejected`
+**When it appears**:
 
-If you are building a state machine, use this as the primary indicator that "a turn has ended."
+- The agent wants to change an important file
+- The agent wants to run a sensitive command
+- An approval mode is configured
 
-### `thread_status`
+**What you see**:
 
-This describes the current runtime state of the thread.
+- An approval popup or prompt
+- A description of the action the agent wants to take
 
-Typical states include:
+**What to do**:
 
-- `running`
-- `waiting_approval`
-- `waiting_user_input`
-- `interrupting`
-- `idle`
-- `not_loaded`
+- Read the description carefully
+- Decide whether to approve
+- Click Approve to continue, or Reject to stop it
 
-It answers "is the thread alive right now, and where is it stuck?"
+### Approval resolved
 
-## Why You Cannot Rely on `final` Alone
+**Meaning**: you have made a decision on the approval request.
 
-Because `final` is more like "there is a final answer text."
+**Two outcomes**:
 
-But in real-world execution you will also encounter:
+- **Approved**: the agent continues with the action
+- **Rejected**: the agent drops it and may look for another approach
 
-- Rejections
-- Cancellations
-- Waiting for approval
-- Mid-execution failures
+## Abnormal statuses
 
-In these scenarios, looking only at `final` is insufficient.
+### Failed
 
-## Minimum Handling for New Integrations
+**Meaning**: the agent ran into a problem and could not finish the task.
 
-If you are building a new client, at minimum correctly handle:
+**Possible causes**:
 
-- `queued`
-- `thread_status`
-- `approval_request`
-- `approval_resolved`
-- `turn_terminal`
-- `error`
+- A file is missing or unreadable
+- A network request failed
+- A tool errored out
+- The AI model service had a problem
 
-This ensures your state machine does not only work on the "happy path."
+**What to do**:
 
-## Chat WebSocket Boundary
+- Read the error for the cause
+- Adjust the request as it suggests, such as giving the right file path
+- Retry
 
-For chat sessions, `/wunder/chat/ws` is the realtime authority:
+### Cancelled
 
-- Use WebSocket for `start`, `resume`, `watch`, `cancel`, approval decisions, and realtime status.
-- Do not fall back to SSE when a chat WebSocket disconnects; reconnect and replay with `resume/watch`.
-- Non-chat streaming endpoints, such as `/wunder` or A2A, keep their own protocol semantics.
+**Meaning**: the conversation was stopped, either by you or by the system.
 
-This boundary prevents two transport projections from disagreeing about the same chat turn.
+**When it appears**:
 
-## A Simple Decision Guide
+- You clicked Stop
+- The system timed out and cancelled
+- Some other deliberate stop
 
-If you just want to know whether a turn has ended:
+**What you can do next**:
 
-- Check `turn_terminal`
+- Start the conversation again
+- Review the record of what ran before the cancellation
 
-If you want to know the current thread state:
+### Stuck session
 
-- Check `thread_status`
+**Symptoms**: it stays in one state for a long time with no progress.
 
-If you want to know whether the approval flow has fully resolved:
+**Possible causes**:
 
-- Check `approval_resolved`
+- The network connection dropped
+- The backend service had a problem
+- Task handling timed out
 
-## Further Reading
+**What to do**:
 
-- [wunder API](/docs/en/integration/wunder-api/)
-- [Chat WebSocket](/docs/en/integration/chat-ws/)
-- [API Index](/docs/en/reference/api-index/)
+1. Wait a few minutes first (sometimes processing just takes a while)
+2. If it is genuinely stuck, click Stop
+3. Use the reset work state option in settings to clear an abnormal state
+4. If that still does not help, contact an administrator or see the troubleshooting guide
+
+## Connection status
+
+### Connected
+
+**Meaning**: the network connection to the backend service is fine.
+
+### Disconnected
+
+**Meaning**: the network connection to the backend service has dropped.
+
+**Symptoms**:
+
+- You cannot send new messages
+- The status display looks wrong
+- A "connection lost" notice appears
+
+**What to do**:
+
+- Check your network
+- Refresh the page or restart the app
+- Wait for it to reconnect automatically
+
+## Where status indicators appear
+
+In the chat interface, status appears in these places:
+
+- **Above the conversation**: the overall status of the current session
+- **Beside a message bubble**: the processing status of that message
+- **In the progress area**: detailed progress of tool execution
+
+## Common situations
+
+### Why responses slow down
+
+Possible reasons:
+
+- The task is complex and needs several steps
+- The AI model service is responding slowly
+- The system is under high load
+
+Wait rather than resending the same message.
+
+### Why the agent waits for approval
+
+The action may be risky or affect important files. This is a safety mechanism that makes sure sensitive actions are confirmed. To see fewer approvals, talk to an administrator about adjusting the approval mode.
+
+### When the status display looks wrong
+
+1. Wait first and see whether it recovers on its own
+2. Use the reset work state option
+3. Refresh the page or restart the app
+4. Check the troubleshooting guide
+
+### Seeing what the agent did recently
+
+The lower or right part of the chat usually holds a run trace or a record of tool calls, showing which tools the agent used, which files it read, and what actions it performed.
+
+## Further reading
+
+- [Troubleshooting](/docs/en/help/troubleshooting/)
+- [Core Agent Loop](/docs/en/concepts/core-agent-loop/)
+- [Tool System](/docs/en/concepts/tools/)

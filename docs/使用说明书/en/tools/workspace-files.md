@@ -1,336 +1,48 @@
 ---
 title: Workspace Files
-summary: The latest arguments and return structures for `list_files`, `search_content`, `read_file`, `write_file`, and `edit_file2`.
-read_when:
-  - You need to browse the workspace, search code, read files, or write files
-source_docs:
-  - src/services/tools.rs
-  - src/services/tools/search_content_tool.rs
-updated_at: 2026-04-10
+summary: Browsing the workspace, searching content, reading files, and writing files.
+updated_at: 2026-10-13
 ---
 
-# Workspace Files
+The most common operations in the local workspace are these: listing a directory, searching content, reading a file, editing a file, and writing a file.
 
-This page covers the five most commonly used local tools:
+## Choosing between the tools
 
-- `list_files`
-- `search_content`
-- `read_file`
-- `write_file`
-- `edit_file2`
+- To see the directory structure first: `list_files`.
+- When you already know the word you are looking for and want to locate it: `search_content`.
+- When you know the path and want to read a range: `read_file`.
+- To create or overwrite a whole file: `write_file`.
+- To make one exact text replacement: `edit_file2`.
 
-All five use the unified success and failure envelope.
+## Listing a directory
 
-## When to prefer them
+Give a path and it lists the directory; you can limit how many levels deep to look and how many entries to return at once. Directory entries are marked with a trailing slash, and large listings are paginated; the result tells you whether another page exists and gives the cursor for continuing.
 
-- To inspect a directory first: `list_files`
-- To locate a keyword first: `search_content`
-- To read a known path and a specific range: `read_file`
-- To create or overwrite a whole file: `write_file`
-- To do one exact text replacement: `edit_file2`
+## Searching content
 
-## `list_files`
+It searches a directory by keyword and returns the files and positions that match. You can restrict the file type, choose case-sensitive or regular-expression matching, and include a few lines of context before and after each hit; you can also cap how many hits and how many files are scanned. When the result is truncated it says why, and to preview the search plan without running it for real you can turn on a dry run.
 
-### Minimum arguments
+## Reading a file
 
-```json
-{
-  "path": ".",
-  "max_depth": 2,
-  "limit": 200
-}
-```
+When you know the path, read that range: give a start and end line, reading one file at a time, or pass several files and line ranges to read in a batch. The result assembles the content into directly readable text and gives a summary for each file; when the default window is not enough or the budget truncates the output, it tells you that more reading is needed.
 
-### Success result
+## Editing a file
 
-```json
-{
-  "ok": true,
-  "action": "list_files",
-  "state": "completed",
-  "summary": "Listed 120 entries from frontend/src.",
-  "data": {
-    "path": "frontend/src",
-    "items": ["views/", "components/", "main.ts"],
-    "offset": 0,
-    "limit": 200,
-    "returned": 120,
-    "has_more": false,
-    "next_offset": null,
-    "next_cursor": null,
-    "max_depth": 2
-  }
-}
-```
+`edit_file2` does one exact replacement, swapping one stretch of original text for new text:
 
-Important fields:
+- The original text must match the file's current content exactly.
+- To delete text, set the new text to an empty string.
+- When replacing several places at once, you can make it require the match count to be exact, and it errors when they do not line up.
+- If the original text accidentally includes a file header or line numbers copied from reading the file, it tries to strip them automatically when the match fails.
+- If the file uses CRLF line endings, it retries the match using the target file's line-ending style.
+- If the replacement has already been made uniquely, it reports that it was already applied.
 
-- `items`: the directory entries, with `/` appended to directories
-- `next_cursor`: used to continue pagination when a directory is large
-- `has_more`: whether another page exists
+It suits an edit where you already have the exact original text, it is a single replacement, and you do not need regular expressions or multi-step logic. For complex replacements, regular-expression replacements, edits spanning several stretches, or edits with conditional logic, write a script with [Execute Command](/docs/en/tools/exec/); to generate or overwrite a whole file, use `write_file`; and for a small code patch reviewed with its surrounding context, use [Apply Patch](/docs/en/tools/apply-patch/).
 
-## `search_content`
+## Writing a file
 
-### Minimum arguments
+`write_file` is for creating or overwriting a whole file. If the workspace has a matching language service, a diagnostic runs alongside the write. It is not meant for small, precise code edits (use the patch form) or for running scripts or builds (use [Execute Command](/docs/en/tools/exec/)).
 
-```json
-{
-  "query": "spawn_agent",
-  "path": "src",
-  "max_matches": 50
-}
-```
+## When something goes wrong
 
-### Common arguments
-
-- `query` / `pattern`
-- `path`
-- `file_pattern`
-- `query_mode`
-- `context_before`
-- `context_after`
-- `max_matches`
-- `max_files`
-- `max_candidates`
-- `budget`
-- `dry_run`
-
-### Success result
-
-```json
-{
-  "ok": true,
-  "action": "search_content",
-  "state": "completed",
-  "summary": "Found 8 hits in 3 files.",
-  "data": {
-    "query": "spawn_agent",
-    "query_used": "spawn_agent",
-    "path": "src",
-    "query_mode": "literal",
-    "matched_file_count": 3,
-    "returned_match_count": 8,
-    "truncated": false,
-    "truncation_reasons": [],
-    "elapsed_ms": 132,
-    "hits": [
-      {
-        "path": "services/tools/subagent_control.rs",
-        "line": 240,
-        "content": "spawn(context, args).await",
-        "segments": [
-          { "text": "spawn", "matched": true }
-        ],
-        "matched_terms": ["spawn_agent"],
-        "before": [],
-        "after": []
-      }
-    ]
-  }
-}
-```
-
-Important fields:
-
-- `hits`: the actual search matches meant for the model to read
-- `truncated` and `truncation_reasons`: mandatory to inspect when the result was cut by budget
-- in `dry_run` mode, the tool returns the search plan rather than real matches
-
-## `read_file`
-
-### Minimum arguments
-
-```json
-{
-  "path": "src/services/tools.rs",
-  "start_line": 1,
-  "end_line": 120
-}
-```
-
-Batch mode is also supported:
-
-```json
-{
-  "files": [
-    {
-      "path": "src/services/tools.rs",
-      "line_ranges": [[1, 120]]
-    }
-  ]
-}
-```
-
-### Success result
-
-```json
-{
-  "ok": true,
-  "action": "read_file",
-  "state": "completed",
-  "summary": "Read 1 files.",
-  "data": {
-    "content": ">>> src/services/tools.rs\n1: use ...",
-    "files": [
-      {
-        "path": "src/services/tools.rs",
-        "mode": "slice",
-        "requested_ranges": [[1, 120]],
-        "loaded_ranges": [[1, 120]],
-        "read_lines": 120,
-        "total_lines": 3000,
-        "complete": false,
-        "truncated_by_size": false,
-        "used_default_range": false
-      }
-    ],
-    "dry_run": false,
-    "requested_files": 1,
-    "processed_files": 1,
-    "budget_file_limit_hit": false,
-    "timeout_hit": false,
-    "output_budget_hit": false,
-    "output_budget_omitted_bytes": 0,
-    "content_bytes_before_budget": 4096,
-    "budget": {
-      "time_budget_ms": null,
-      "output_budget_bytes": null,
-      "max_files": null
-    },
-    "continuation_required": true,
-    "continuation_hint": "..."
-  }
-}
-```
-
-Important fields:
-
-- `content`: the assembled text block ready to read directly
-- `files`: the per-file summary
-- `continuation_required`: appears when the default window was not enough or output was truncated by budget
-
-## `edit_file2`
-
-### Minimum arguments
-
-```json
-{
-  "path": "docs/demo.md",
-  "old_text": "old",
-  "new_text": "new"
-}
-```
-
-### Good fit
-
-- One exact text replacement only
-- `old_text` must match the current file content exactly
-- To delete text, set `new_text` to an empty string
-- To replace multiple identical matches, set `expected_count`; the tool will fail unless the count matches exactly
-- If `old_text` accidentally includes `read_file` headers or line numbers, the tool tries to strip them after the first match fails
-- If the file uses CRLF line endings, the tool retries with the target file's line-ending style
-- If the replacement has already been applied uniquely, the tool returns `already_applied` instead of failing
-
-### Success result
-
-```json
-{
-  "ok": true,
-  "action": "edit_file2",
-  "state": "completed",
-  "summary": "Updated file docs/demo.md with 1 edit steps.",
-  "data": {
-    "path": "docs/demo.md",
-    "dry_run": false,
-    "ensure_newline": false,
-    "existed": true,
-    "previous_bytes": 12,
-    "bytes": 12,
-    "edit_count": 1,
-    "already_applied_count": 0,
-    "edits": [
-      {
-        "action": "replace",
-        "changed": true,
-        "already_applied": false,
-        "matches": 1,
-        "bytes": 3
-      }
-    ]
-  }
-}
-```
-
-### When to prefer it
-
-- You already read the exact current text with `read_file`
-- The edit can be expressed as one `old_text` -> `new_text` replacement
-- You do not need regex, conditions, marker-bounded replacement, or multiple edit steps
-- If `old_text` matches multiple places, make it longer with surrounding context; only set `expected_count` when you intentionally want all matches replaced
-
-### When not to use it
-
-- For complex replacements, regex, scattered edits, or conditional logic, use `programmatic_tool_call` with a small Python script.
-- For full-file creation or replacement, use `write_file`.
-- For small code patches that need surrounding context, prefer [Apply Patch](/docs/en/tools/apply-patch/).
-
-## `write_file`
-
-### Minimum arguments
-
-```json
-{
-  "path": "docs/demo.md",
-  "content": "# Demo"
-}
-```
-
-### Success result
-
-```json
-{
-  "ok": true,
-  "action": "write_file",
-  "state": "completed",
-  "summary": "Created file docs/demo.md.",
-  "data": {
-    "path": "docs/demo.md",
-    "bytes": 7,
-    "dry_run": false,
-    "existed": false,
-    "previous_bytes": 0,
-    "target": "C:/.../docs/demo.md",
-    "lsp": {
-      "enabled": true,
-      "matched": true,
-      "touched": true,
-      "diagnostics": null,
-      "error": null
-    }
-  }
-}
-```
-
-### When not to use it
-
-- For small code edits with clear context, prefer [Apply Patch](/docs/en/tools/apply-patch/).
-- For one exact text replacement, use `edit_file2`.
-- Do not use it to run scripts or builds. Use [Execute Command](/docs/en/tools/exec/) instead.
-
-## How to read failures
-
-For all four tools, inspect these first on failure:
-
-- `error_meta.code`
-- `error_meta.hint`
-- `data`
-
-Common error codes:
-
-- `TOOL_LIST_PATH_NOT_FOUND`
-- `TOOL_SEARCH_INVALID_ARGS`
-- `TOOL_SEARCH_PATH_NOT_FOUND`
-- `TOOL_READ_NOT_FOUND`
-- `TOOL_READ_BINARY_FILE`
-- `TOOL_WRITE_PATH_REQUIRED`
-- `TOOL_WRITE_FAILED`
+When any of these tools fails it puts the reason in the result; look mainly at the error code, the hint, and the attached data, which usually shows directly whether the path is missing, the arguments are wrong, or the file cannot be read.

@@ -2626,6 +2626,7 @@ export default {
   'messenger.trajectory.summaryTurn': '… {steps} 个步骤 · {tools} 个工具调用',
   'messenger.trajectory.summaryAssistantTools': '… {count} 个工具调用',
   'messenger.trajectory.noContent': '无内容',
+  'messenger.trajectory.largeTurnOverview': '此轮内容较多，双击加载完整轨迹',
   'messenger.trajectory.toolUnnamed': '工具',
   'messenger.trajectory.paramUnavailable': '未捕获参数',
   'messenger.trajectory.noOutput': '无输出',

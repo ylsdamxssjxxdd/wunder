@@ -1,82 +1,104 @@
 ---
 title: Tools
-summary: The Tools core explains why wunder must unify all capabilities as tools, and why tools must simultaneously serve model invocation, execution governance, and frontend display.
-read_when:
-  - You are designing built-in tools, MCP, or Skills
-  - You want to understand why tool returns must be concise and clear
-source_docs:
-  - docs/总体设计.md
+summary: The agent's ability to act comes from a four-layer structure: executor tools, skills that package callable knowledge and scripts, capabilities the administrator selects, and tools the user connects. Keeping the layers distinct is what keeps "selectable" separate from "invokable".
+updated_at: 2026-10-13
 ---
 
-# Tools
+The agent's ability to act is collectively called "tools," but tools, skills, capabilities, and user tools are four different layers, and conflating them is the most common cause of broken configuration.
 
-wunder's focus is not "making models respond more like humans," but "enabling models to stably invoke the correct capabilities and consume the returned results."
+![Tools layer diagram: tool description, execution layer, model input results, and display projection—four related layers](/docs/assets/manual/core-tools.svg)
 
-![Tools layer diagram: tool specification, execution layer, model input results, display projection—four layers of relationship](/docs/assets/manual/core-tools.svg)
+## The four layers
 
-## Key Takeaways
+| Layer | What it is | Who uses it | How to tell |
+| --- | --- | --- | --- |
+| **Tool** | Executor: one call reads a file, runs a command, or sends a request | The model calls it directly; the engine dispatches and runs it | Registered in the tool catalog and carries a dispatch branch |
+| **Skill** | Knowledge-and-script package: a directory holding the `SKILL.md` body and an entry script | The model can call it by skill name, or read the body through the skill-call action | Registered in the skill catalog |
+| **Capability** | Selection unit on the governance side: a unified descriptor an administrator uses to choose what an agent may use | Configured on the admin side; never enters the execution chain | Its source is built-in, MCP, skill, knowledge base, user MCP, user skill, user knowledge base, or shared |
+| **User tool** | An extension the user connects, in three kinds: MCP, skill, knowledge base | Mounted per user; the alias enters the routing table | Registered in the user tool catalog |
 
-- Tools are not an add-on capability list, but the unified interface through which the system exposes capabilities to models.
-- A tool that's easy for humans to read but hard for models to invoke is a bad tool in wunder.
-- Tool design must simultaneously consider invocation accuracy, context cost, permission governance, and frontend workflow display.
+**Tools are executors; skills are callable knowledge and scripts; capabilities are the administrator's selection layer; user tools are the three kinds of user-side connection.** A capability being selected does not mean an executor exists, and an executor existing does not mean the model can see it.
 
-## Why It Must Be Listed as a Core
+## Names: canonical name plus alias
 
-Without "tools" as a core, wunder would experience two types of degradation:
+Most of the tool names the model sees are Chinese canonical names, with English aliases alongside, and a normalization pass runs before every invocation.
 
-- Capabilities scattered across prompts, implicit logic, and temporary interfaces—models won't know how to stably invoke them.
-- Frontend can only see "the model saying what it did," but cannot see what was actually executed.
+| Canonical | Common aliases | Canonical | Common aliases |
+| --- | --- | --- | --- |
+| `执行命令` | `execute_command` | `读取文件` | `read_file` |
+| `命令会话` | `command_session`, `write_command_stdin` | `写入文件` | `write_file` |
+| `ptc` | `programmatic_tool_call` | `文本编辑` | `edit`, `patch`, `apply_patch`, `应用补丁` |
+| `列出文件` | `list_files` | `搜索内容` | `search_content` |
+| `glob` | — | `技能调用` | `skill_call`, `skill_get` |
+| `计划面板` | `update_plan` | `问询面板` | `question_panel`, `ask_panel` |
+| `定时任务` | `schedule_task` | `记忆管理` | `memory_manager`, `memory_manage` |
+| `子智能体控制` | `subagent_control` | `网页抓取` | `web_fetch` |
 
-wunder unifying capabilities into tools essentially unifies three things: model mental model, execution protocol, and display protocol.
+When a tool is written down in configuration, logs, or documentation, give both the canonical name and the alias; writing only one makes the two easy to mismatch.
 
-## What This Core Truly Protects
+## Dynamic registration: the model sees more than the built-in list
 
-- Protects model invocation quality: Parameters and descriptions must minimize model guessing.
-- Protects execution governance: Budgets, permissions, approvals, and failure feedback must enter a unified pipeline.
-- Protects frontend visibility: Tool workflows need to be stably displayed, tracked, and replayed.
+The names that enter the model's tool list are assembled from four kinds of dynamic registration.
 
-## Key Constraints
+| Source | Name on the model side | Notes |
+| --- | --- | --- |
+| MCP server | `server@tool` | Registered tool by tool; on a name clash the display name gains a server-name or hash suffix |
+| Packed MCP | `server@__mcp_pack__` | A server marked as packed folds into a single tool whose actions are list, get, and call |
+| Skill | The skill name itself | A skill name can be called directly; the skill-call action reads the body and substitutes the skill root-path placeholder |
+| Knowledge base | The knowledge base name | Registered one base at a time, replacing the old single knowledge tool |
+| User-tool alias | The alias | Dispatch routes by alias first; a hit goes straight to the user tool |
 
-| Constraint | Purpose |
-|------|------|
-| Descriptions must be clear | Reduces model misuse and hallucinatory invocations |
-| Parameters must be structured | Makes model invocation more like "filling a form" rather than "freestyling" |
-| Returns must be concise and clear | Prevents observation noise from polluting context in return |
-| Facts and display must be separated | UI cards are projections, not the tool's actual execution results |
+Dispatch order is alias → skill → MCP → knowledge base → built-in tools, and a hit earlier in the chain short-circuits the rest.
 
-## Design Focus
+## Defaults and per-form differences
 
-### Focus One: wunder Doesn't Just Make Models "Talk," It Makes Models "Do"
+Default tool sets, the desktop hidden set, and the desktop extra set all have a single registration; do not keep a second copy in the docs or the configuration.
 
-Files, commands, browsers, desktops, user worlds, channels, memory management—these are all fundamentally execution capabilities and shouldn't each have their own protocols.
+| Set | Contents |
+| --- | --- |
+| Default built-ins (13) | `定时任务`, `记忆管理`, `执行命令`, `命令会话`, `ptc`, `列出文件`, `glob`, `搜索内容`, `读取文件`, `网页抓取`, `技能调用`, `写入文件`, `文本编辑` |
+| Default skill | `技能创建器` |
+| Desktop hidden (neither selectable nor on by default) | `get_goal`, `create_goal`, `update_goal` (injected automatically by the runtime per session), `会话线程控制`, `会话让出` |
+| Desktop extras, on by default | `读图工具`, `桌面监视器`, `桌面控制器`, `子智能体控制` |
 
-### Focus Two: Tool Results Should Serve Scheduling First, Then Display
+`网页搜索` and `ptc` are **temporarily withdrawn, not deleted**: the code is kept and dispatch still recognizes them, but the availability check returns unavailable for both, so neither the model nor the user can see them. To restore them, remove the matching entries from the withdrawal list.
 
-A tool returning tens of thousands of characters of raw logs may seem information-rich to users, but is usually a disaster for models. Truly good tool returns prioritize delivering:
+Visibility also runs through a few real gates.
 
-- The most critical facts at the moment
-- Signals needed to proceed to the next step
-- Actionable hints when failure occurs
+| Gate | Effect |
+| --- | --- |
+| The model has no vision | Filters out `读图工具` and the desktop tools |
+| The matching model or service is not configured | Speech generation, speech-to-text, image generation, and video generation each go unavailable |
+| Configuration not enabled | `网页抓取`, `网页搜索`, the 17 native browser tools, and the desktop tools |
+| Form | The desktop form filters out the hidden set |
 
-### Focus Three: A Unified Tool System Is More Important Than "More Tools"
+Browser is not a single tool: once enabled it registers 17 native tools named `browser_*`, and the aggregate display name "Browser" is only a documentation convention.
 
-Built-in tools, MCP, Skills, knowledge bases, and user tools come from different sources, but ultimately must all enter a unified scheduling perspective. Otherwise, permissions, auditing, retrieval, and workflow display will all scatter.
+## Result trimming runs on two tracks
 
-## Common Misconceptions
+**Display trimming and model-input trimming are separate and do not affect each other**.
 
-- Skills are not a parallel world alongside tools—they are essentially solidified process capabilities.
-- More tools isn't necessarily better; vague descriptions and overlapping boundaries directly lower model invocation quality.
-- "Can return a lot of content" is not a virtue; being consumable by models at low cost is.
+| Track | Rule | Affects |
+| --- | --- | --- |
+| Display | A preview of at most 2,400 characters or 16 lines, with an ellipsis past that | Only the client display; the raw result is kept in full and can be copied |
+| Model input | Trimmed by budget, with reproducible old observations compressed | What the model sees at the next step |
 
-## Boundaries with Other Cores
+Seeing "…" in the UI does not mean the model sees that same truncated copy; and when the model's context has been compressed to a preview, the UI may still show the full content. To judge context pressure, look at the compression page and the usage page, not the collapsing in the UI.
 
-- Difference from [Agent Loop](/docs/en/concepts/core-agent-loop/): Agent loop defines the main flow, tools define the invokable capabilities within the main flow.
-- Difference from [Context Compression](/docs/en/concepts/core-context-compression/): Compression solves "what to do when results are too large," tools solve "how to expose capabilities to models."
-- Difference from [Observability](/docs/en/concepts/core-observability/): Observability handles replaying tool trajectories, tools produce the trajectories.
+## Approval tiers
 
-## Further Reading
+Approvals are filed by the tool's risk category, and there are four categories: read-only, file write, running a command or a script, and controlling host capabilities.
 
-- [Core Overview](/docs/en/concepts/)
-- [Tool System](/docs/en/concepts/tools/)
-- [Prompts and Skills](/docs/en/concepts/prompt-and-skills/)
-- [Tools Overview](/docs/en/tools/)
+- Pending requests are registered in two kinds by source: chat connection and channel.
+- The cache that lets one approval cover a short window lasts 600 seconds within the same session.
+- Execution policy has three states: allow, audit, and enforce; under enforce, high-risk actions must have human approval.
+- A front-end confirmation cannot replace back-end authorization.
+
+## Further reading
+
+- [Tool System](/docs/en/concepts/tools/) — the dispatch chain, trimming constants, and protocol differences
+- [Tools Overview](/docs/en/tools/) — arguments and usage for each tool
+- [Context Compression](/docs/en/concepts/core-context-compression/) — how the model-input track saves tokens
+- [Prompts and Skills](/docs/en/concepts/prompt-and-skills/) — `SKILL.md` and skill injection
+- [Multi-user and Capability Management](/docs/en/concepts/core-multi-user-management/) — how administrators choose capabilities
+- [Configuration Reference](/docs/en/reference/config/) — tool- and capability-related settings

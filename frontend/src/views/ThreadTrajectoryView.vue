@@ -784,6 +784,15 @@ function summaryTurns(rows:any[], resetMaps=true):unknown[] {
   if(resetMaps)turnRootByRound.clear()
   const turns=new Map<string,any>()
   for(const row of rows){
+    if (row.kind === 'source_overview') {
+      turnRootByRound.set(Number(row.user_round),String(row.root_turn_id||''))
+      const root = String(row.root_turn_id || '')
+      if (root && !turns.has(root)) turns.set(root,{turn_id:root,user_turn_index:row.user_round,source_overview:true,items:[{
+        item_id:row.item_id,item_index:0,kind:'assistant_message',status:'completed',created_time:row.started_at,updated_time:row.completed_at,
+        payload:{content:t('messenger.trajectory.largeTurnOverview')},
+      }]})
+      continue
+    }
     detailRefById.set(row.item_id,row.detail)
     turnRootByRound.set(Number(row.user_round),String(row.root_turn_id||''))
     let turn=turns.get(row.root_turn_id)

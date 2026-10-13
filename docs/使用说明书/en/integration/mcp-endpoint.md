@@ -1,102 +1,42 @@
 ---
 title: MCP Endpoint
-summary: wunder supports both a self-hosted MCP service at `/wunder/mcp` and external MCP service integration.
-read_when:
-  - You want to expose wunder as an MCP service
-  - You need to understand the relationship between wunder's internal MCP and extra_mcp
-source_docs:
-  - docs/API文档.md
-  - docs/设计文档/01-系统总体设计.md
-  - src/services/mcp.rs
-  - config/wunder-example.yaml
+summary: wunder can both expose itself as an MCP service and act as an MCP client to connect to external services.
+updated_at: 2026-10-13
 ---
 
-# MCP Endpoint
+MCP has two directions:
 
-MCP is not a secondary capability in wunder -- it is a first-class integration surface.
+- the MCP service wunder exposes to the outside;
+- wunder acting as a client to connect to someone else's MCP service.
 
-You need to distinguish two things up front:
+## Direction: Self-Hosted vs. External
 
-1. wunder exposes its own MCP service at `/wunder/mcp`
-2. wunder can also act as an MCP client to connect to external services, such as `extra_mcp`
+- You want external systems to call wunder's capabilities over MCP → use the self-hosted side.
+- You want to bring external capabilities in for the model to use → use the external-service side.
 
-## Self-Hosted MCP Endpoint
+## Expose wunder
 
-- `POST /wunder/mcp`
-- Transport: Streamable HTTP
+The outward entry is a single address, served over Streamable HTTP.
 
-The Rust backend currently exposes two built-in tools:
+The order in which it comes together:
 
-- `excute`
-- `doc2md`
+1. The external system connects to that address following the MCP protocol;
+2. wunder negotiates the protocol version automatically; when it interoperates with an older service it settles on a version both sides support, so the initialization step does not have to be written by hand;
+3. Call the specific tools.
 
-Note that the tool name is literally `excute` -- the documentation reflects the current code as-is. Do not rewrite it as `execute`.
+Two tools are built in for external callers: `excute` (execute) and `doc2md` (document to Markdown). The tool name is literally `excute`; call it by exactly that name.
 
-## When to Use the Self-Hosted MCP
+## Connect an External MCP
 
-Suitable for these scenarios:
+Declare the MCP service you want to connect in the configuration — give it a name, an address, and a transport — then switch it on. Once enabled, wunder treats it as a callable service. External services also use Streamable HTTP; if the service is written in Python, it negotiates according to the Python side's protocol version and may not carry every latest capability.
 
-- Letting external systems invoke wunder capabilities via MCP
-- Integrating wunder into another MCP orchestration framework
-- Exposing internal task execution and document parsing capabilities under a unified protocol
+A typical example is the external service often mentioned in the documentation, which usually hosts tools such as database query, database export, and knowledge-base query.
 
-## Configuration Example
+## Key Settings and Common Pitfalls
 
-```yaml
-mcp:
-  servers:
-    - name: wunder
-      endpoint: http://127.0.0.1:8000/wunder/mcp
-      enabled: false
-      transport: streamable-http
-```
-
-Once enabled, wunder treats this MCP service as a callable MCP server.
-
-## External MCP vs extra_mcp
-
-The repository also retains a typical external MCP service:
-
-- `extra_mcp`
-
-It is typically used to host:
-
-- `db_query`
-- `db_export`
-- `kb_query`
-
-In other words:
-
-- `/wunder/mcp` is for "what wunder exposes outward"
-- `extra_mcp` is for "external capabilities wunder brings in"
-
-## How the Admin Panel Handles MCP
-
-The admin panel provides a set of MCP configuration and debugging tools for:
-
-- Configuring `mcp.servers`
-- Refreshing the tool list
-- Debugging remote tool invocations
-
-The typical integration order is therefore:
-
-1. Declare the MCP server in configuration
-2. Verify in the admin panel that tool specs can be fetched
-3. Expose the tools to the model via the agent or tool catalog
-
-## Relationship Between MCP and the Tool Catalog
-
-wunder does not treat MCP as a side channel.
-
-It aggregates MCP tools together with these capabilities into a unified tool view:
-
-- Built-in tools
-- A2A tools
-- Skills
-- Knowledge base tools
-- User-created tools
-
-So from the model's perspective, MCP tools are ultimately part of the tool catalog.
+- Suggested integration order: declare the service in the configuration → confirm in Bridge that the tool list can be fetched → then expose it to the model.
+- Bridge has MCP configuration and debugging entries where you can refresh the tool list and call remote tools directly to verify them.
+- MCP tools are not a side channel: they are aggregated together with built-in tools, A2A tools, skills, knowledge-base tools, and self-built tools into one tool view. To the model, MCP is just part of the tool catalog.
 
 ## Further Reading
 

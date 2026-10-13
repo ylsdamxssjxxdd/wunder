@@ -1,21 +1,14 @@
 ---
 title: 说明书总览
-summary: 说明书导航页：从蜂窝起步，按需进入界面地图、其它形态与参考。列本轮 start 与 surfaces 两组的全部页面。
-read_when:
-  - 不确定先看哪一页
-  - 想一眼扫到所有入口
-source_docs:
-  - docs/使用说明书/zh-CN/index.md
-  - docs/使用说明书/zh-CN/surfaces
-  - docs/使用说明书/zh-CN/start
+summary: 说明书导航页：从蜂窝起步，按需进入界面地图、其它形态与参考。start 与 surfaces 两组的全部页面都在这里。
 updated_at: 2026-10-13
 ---
 
 # 说明书总览
 
-所有人都从[蜂窝（desktop）](/docs/zh-CN/start/desktop/)开始：下载安装，打开就是你的本地 AI 工作台。以下入口按使用频率与本轮定稿页面排列。
+所有人都从[蜂窝（desktop）](/docs/zh-CN/start/desktop/)开始：下载安装，打开就是你的本地 AI 工作台。以下入口按使用频率排列。
 
-## 先看这里：用起来
+## 开始使用
 
 <div class="docs-card-grid docs-card-grid-compact">
   <a class="docs-card" href="/docs/zh-CN/start/quickstart/">
@@ -24,7 +17,7 @@ updated_at: 2026-10-13
   </a>
   <a class="docs-card" href="/docs/zh-CN/start/desktop/">
     <strong>蜂窝入门</strong>
-    <span>下载安装，打开即用；本地 SQLite，无端口。</span>
+    <span>下载安装，打开即用；数据存在本机，不占端口。</span>
   </a>
   <a class="docs-card" href="/docs/zh-CN/start/troubleshooting-first-run/">
     <strong>首次运行排查</strong>
@@ -45,11 +38,11 @@ updated_at: 2026-10-13
   </a>
   <a class="docs-card" href="/docs/zh-CN/surfaces/frontend/">
     <strong>蜂巢界面</strong>
-    <span>SPA 路由；单条 `/chat/ws` 多路复用；含 TTS 双向语音。</span>
+    <span>浏览器里的单页应用，含双向语音。</span>
   </a>
   <a class="docs-card" href="/docs/zh-CN/surfaces/web-admin/">
     <strong>舰桥界面</strong>
-    <span>4 组 19 项导航；调试面板右侧已是线程轨迹视图。</span>
+    <span>管理员的治理与调试后台。</span>
   </a>
 </div>
 
@@ -72,20 +65,20 @@ updated_at: 2026-10-13
 
 ## 其它形态（可选）
 
-个人用户默认只需蜂窝；下列是团队协作或自动化场景才需要：
+个人用户默认用蜂窝；下列是团队协作或自动化场景才需要：
 
 <div class="docs-card-grid docs-card-grid-compact">
   <a class="docs-card" href="/docs/zh-CN/start/server/">
     <strong>舰体部署</strong>
-    <span>18000 API + 舰桥；18001 nginx 下发蜂巢；sandbox 9001。</span>
+    <span>18000 提供 API 与舰桥；18001 下发蜂巢；沙箱 9001。</span>
   </a>
   <a class="docs-card" href="/docs/zh-CN/start/cli/">
     <strong>舵机使用</strong>
-    <span>TTY ratatui TUI；`exec --json` JSONL；`cloud` 全套。</span>
+    <span>终端里进交互界面；`exec --json` 事件流；`cloud` 全套。</span>
   </a>
 </div>
 
-## 我在排障
+## 排障入口
 
 - [首次运行排查](/docs/zh-CN/start/troubleshooting-first-run/)：按形态定位装 / 启 / 访 三类失败
 - [帮助中心](/docs/zh-CN/help/)

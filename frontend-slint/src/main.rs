@@ -15,6 +15,7 @@ mod entity_state;
 mod expert_ui;
 mod file_dialog;
 mod file_icons;
+mod help_browser;
 mod hotkey;
 mod message_blocks;
 mod timeline;
@@ -70,6 +71,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .ok_or("missing smoke-check output directory")?;
         return smoke::run(&app, std::path::PathBuf::from(directory));
     }
+    // 帮助文档控制器：填充目录/索引并绑定 HelpDocs 全局回调。
+    help_browser::bind(&app);
     if first_argument.as_deref() == Some(std::ffi::OsStr::new("--timeline-probe")) {
         // §十二.2: measure the worst-case timeline on the real renderer without
         // depending on the rest of the smoke check.

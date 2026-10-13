@@ -1,144 +1,169 @@
 ---
 title: Monitoring and WunderBench
-summary: wunder's observability surface is composed of session monitoring, tool statistics, performance sampling, throughput stress testing, and WunderBench together.
-read_when:
-  - You are troubleshooting thread, tool, or model pipeline issues
-  - You need to distinguish the responsibilities of monitor, throughput, performance, and WunderBench
-source_docs:
-  - docs/API文档.md
-  - docs/设计文档/01-系统总体设计.md
-  - src/api/admin.rs
+summary: Observability covers distinct jobs: session monitoring watches threads, tool statistics watch hotspots, performance sampling watches the pipeline, and WunderBench watches model quality.
+updated_at: 2026-10-13
 ---
 
-# Monitoring and WunderBench
+Observability is split into five areas, each watching something different: whether a thread is stuck, whether a tool is misbehaving, whether the pipeline has slowed down, how speed changes as context grows, and whether model quality has regressed. Most problems need two or three of these together: session monitoring pins down the thread or tool at fault, metrics and logs confirm the scope, and WunderBench shows whether the model side changed.
 
-wunder splits "can we see the problem" and "can we quantify the problem" into separate pipelines.
+## Observability Capabilities at a Glance
 
-## Key Points on This Page
+| Capability | What it watches | Main use |
+| --- | --- | --- |
+| **Session monitoring** | Thread runtime details | Locate thread state, stalls, and anomalies |
+| **Tool statistics** | Tool usage | Find the busiest or least stable tools |
+| **Performance sampling** | The system pipeline baseline | Judge capacity and latency bottlenecks |
+| **Throughput stress testing** | Model performance across length combinations | Watch how speed changes as context grows |
+| **WunderBench** | Task completion quality | Assess how a model performs in wunder and spot regressions |
 
-- Where to look for online thread and tool issues
-- The difference between performance sampling and throughput stress testing
-- Why WunderBench is not just a simple stress test
+## Session Monitoring
 
-## Four Categories of Capabilities
+What it shows:
 
-### Server Runtime Logs
+- The list of active threads
+- The current state and stage of each thread
+- Token usage statistics
+- Tool-call records
+- The event timeline
 
-The server version `wunder-server` additionally writes runtime logs to the local `config/data/logs/server/` directory.
+Use it to investigate stuck or abnormal threads, look at the execution detail of a session, force-cancel an abnormal thread, and trigger context compression.
 
-- Only the server variant writes local logs; Honeycomb (desktop) and Helm (cli) do not write here.
-- Files are daily-rotated JSONL, retained for 14 days by default, making it easy to grep directly, archive, or connect to collection systems.
-- When the service exits abnormally, first check the latest logs for `panic`, `server exited unexpectedly`, HTTP 5xx / failure records.
+## Tool Statistics
 
-### Session Monitoring
+What it shows:
 
-Main endpoints:
+- Call counts per tool
+- The tool-call success rate
+- Which users use which tools
+- How tool calls relate to thread state
 
-- `GET /wunder/admin/monitor`
-- `GET /wunder/admin/monitor/{session_id}`
-- `POST /wunder/admin/monitor/{session_id}/cancel`
-- `POST /wunder/admin/monitor/{session_id}/compaction`
+Turn to it when a tool has become a performance bottleneck, when calls are unusually frequent, or when you need to assess tool usage patterns.
 
-This pipeline addresses:
+## Performance and Throughput
 
-- What the thread is doing right now
-- What events occurred recently
-- Current token usage, stage, and duration
+### Performance Sampling
 
-### Tool Usage Statistics
+Measures the latency baseline of a single request:
 
-Main endpoint:
+- Model response speed
+- Tool execution speed
+- End-to-end latency
 
-- `GET /wunder/admin/monitor/tool_usage`
+### Throughput Stress Testing
 
-It addresses:
+Each run tests one model, one concurrency list, and one input-length and output-length combination directly against the model API, stepping through the list in order; each item fires that many requests in parallel and reports first-token latency, generation speed, and actual usage at each concurrency level.
 
-- Which tool was used the most recently and by whom
-- Whether there's a correlation between tool calls and thread state
+Input and output keep common presets while also accepting free integer entry within a safe range. The default concurrency list is `1,2,4,8`, the default input is `8.2k` tokens, and the default output is `128` tokens. On the page, token counts show as `k` from 1,000 up and as `m` from 100,000 up. Only supported engines accept fixed-length control parameters; other endpoints get an upper limit and are checked for whether the target was met.
 
-### Performance and Throughput
+Choosing a virtual model lets you validate the measurement flow. Under Model Configuration → Simulation speed, pick Fast, Medium, or Slow, with Fast as the default: prefill runs at 2000 / 500 / 100 tokens/s, and reasoning and generation run at 200 / 50 / 10 tokens/s. A throughput simulation reasons first and generates content next; reasoning takes a quarter of the requested output total by default and can be adjusted with the simulation reasoning switch and the output budget, and it is listed separately in the details. Details are marked as simulated and tagged with the speed, and history curves are grouped by preset. First-token latency includes the prefill wait; a Fast run with 1m input takes about 524 seconds, so raise the model timeout accordingly or stop it while waiting. A simulation runs the same maximum-context and maximum-output checks, and anything over the limit is recorded as a failure; the default context is 128k, so set the window large enough to hold input plus output before testing 1m.
 
-Main endpoints:
+A test does not create thread logs, and only the 50 most recent summaries are kept. Details and curves show the overall prefill and generation speed along with a separate single-prefill speed and single-generation speed; speeds use `k tok/s` from 1,000 up and `m tok/s` from 100,000 up. Selecting history rows plots the speed curve against the concurrency axis; the vertical axis uses concurrency 1 within the same test as a 0% baseline and shows the percentage change at later concurrency levels, with the measured speed on hover. Results are not additionally flagged as met or not met.
 
-- `/wunder/admin/throughput/*`
-- `/wunder/admin/performance/sample`
+### How the Two Differ
 
-These are not the same thing:
+- **Performance sampling**: latency at the single-request level
+- **Throughput stress testing**: model API performance across different context and output lengths
 
-- Throughput tests one model, concurrency, input length and output length combination per run. Presets remain available, and bounded integer values can be entered directly. The selected requests run in parallel and aggregate usage, first-token latency and throughput are reported. Input size is estimated and actual API usage is reported separately. Supported engines receive fixed-length controls; other APIs receive an output limit and results are checked for target attainment. No sessions or thread logs are created. Only the latest 50 summaries are retained. Select history rows to compare curves by input length or time, reuse settings, or export selected data.
-- Performance sampling is more about pipeline baseline sampling, not involving model capability evaluation
-- Virtual models offer Fast (default), Medium and Slow under Model Configuration → Simulation speed. Prefill runs at 2000 / 500 / 100 tokens/s; reasoning and answer generation run at 200 / 50 / 10 tokens/s. The benchmark emits reasoning first, using one quarter of the requested total output budget by default (subject to the reasoning switch and budget), then the answer. Reasoning counts are shown separately. Details retain the selected speed and curves group by profile. First-token latency includes prefill: a 1m input takes about 524 seconds on Fast, so configure a sufficient timeout or cancel while waiting. Simulation enforces context and output limits and records violations as failures. The default context is 128k; set a window large enough for input plus output before testing 1m inputs.
+## WunderBench Model Evaluation
 
-### WunderBench
+What it evaluates:
 
-Main endpoint:
+- Task completion quality scores
+- Tool-call success rate, stability, efficiency, and context consumption
+- Capability comparisons between models
+- Regression detection between versions
+- Full-bank evaluation, or manual re-runs filtered by task group or task ID
 
-- `/wunder/admin/wunderbench/*`
+### How It Divides Work with Throughput Testing
 
-It is model evaluation for wunder's real agent pipeline. It prepares tasks, runs the model through tools and workspace operations, captures artifacts, and produces automated scores plus a scorecard.
+- **Throughput stress testing**: focuses on response and generation speed across length combinations
+- **WunderBench**: focuses on whether tasks can be completed in the real agent pipeline, and whether quality has regressed
 
-Evaluation scope:
+Use WunderBench to assess a new release, compare models, verify that an optimization worked, and inform the default model, the judge model, and tool-enablement policy.
 
-- `full`: all available tasks
-- Optional `suite_ids` or `task_ids` filters for focused reruns
+### Output and Export
 
-Key scorecard fields:
+Evaluation results give:
 
-- `readiness`: `production_ready`, `usable`, `risky`, or `not_ready`
-- `overall_score`: mean task score
-- `reliability_score`: pass-rate oriented score
-- `tool_success_score`: tool result success rate
-- `stability_score`: completion and variance signal
-- `weakest_suites` / `top_failures`: where to investigate first
+- A usability verdict in one of four bands: production_ready, usable, risky, not_ready
+- The mean task score
+- A pass-rate-oriented reliability score
+- The tool-result success rate
+- A stability score built from completion rate and round-to-round variance
+- The task groups most in need of review, and the failed items
 
-Exporting evaluation records:
+There are two ways to export an evaluation record: click **Export evaluation record** on the WunderBench page, or call `GET /wunder/admin/wunderbench/runs/{run_id}/export`.
 
-- Use the WunderBench page's export button or `GET /wunder/admin/wunderbench/runs/{run_id}/export`.
-- The export is a JSON replay package containing run metadata, task aggregates, attempts, task specs, artifacts, transcripts, and persisted monitor logs for each model attempt.
-- New WunderBench runs use admin debug logging for benchmark threads, so exported records include fuller model/tool/runtime events for model and system optimization.
-- For profile usage, scoring semantics, exports, and task authoring, see [WunderBench Model Evaluation](/docs/en/ops/wunderbench/).
+The exported JSON contains run information, task aggregates, per-attempt detail, task specs, artifact summaries, conversation records, and the persisted monitoring logs for each model attempt. Newly started WunderBench runs record evaluation threads with admin debug logging, so the export can be used to review model requests, model output, tool calls, tool results, workspace updates, and token and speed statistics.
 
-## Why Separate Them
+For detailed usage, scoring rules, and extending the task bank, see [WunderBench Model Evaluation](/docs/en/ops/wunderbench/).
 
-Because these types of problems are inherently different:
+## Key Metrics
 
-- Online thread anomalies: check monitor
-- Whether a tool has become a hotspot or bottleneck: check tool_usage
-- How model latency and generation speed change with context length: check throughput
-- Whether a change caused capability regression: check WunderBench
+### Health Metrics
 
-## Key Fields to Remember When Observing
+| Metric | Normal range | Alert threshold |
+| --- | --- | --- |
+| Active sessions | Below 80% of the maximum | Above 80% |
+| Queue depth | Below 50 | Above 100 |
+| Error rate | Below 1% | Above 5% |
+| Average latency | Below 10s | Above 30s |
 
-- `trace_id`: Cross-module tracing
-- `log_profile`: `normal` or `debug`
-- `round_usage.context_occupancy_tokens`: Current context occupancy
-- `round_usage.total_tokens`: Current request consumption
-- `prefill_*` / `decode_*`: Speed and duration breakdown
+### Resource Metrics
 
-## Common Misconceptions
+| Metric | What to watch |
+| --- | --- |
+| CPU usage | Whether there are abnormal spikes |
+| Memory usage | Whether it keeps growing, which may mean a leak |
+| Disk usage | Whether workspaces and logs have grown too large |
+| Network traffic | Whether there is abnormal traffic |
 
-### Using WunderBench as a substitute for online monitoring
+### Business Metrics
 
-WunderBench cannot replace real thread monitoring.
+| Metric | What to watch |
+| --- | --- |
+| Daily active users | The system usage trend |
+| Daily token consumption | The resource usage trend |
+| Tool-call distribution | How users use tools |
+| Channel message volume | Usage across channels |
 
-### Using throughput stress testing as a substitute for capability evaluation
+## Hull Logs
 
-Throughput measures model API performance for a length combination; it does not evaluate answer quality.
+In Hull (server) mode, runtime logs are stored under `config/data/logs/server/`:
 
-### Only looking at one layer of logs
+- Daily-rotated JSONL files
+- Retained for 14 days by default
+- Records of requests, tool calls, errors, and more
+- When something goes wrong, check the latest logs first
 
-Many issues require looking at monitor, tool_usage, and channel runtime together.
+## Routine Checks and Evaluation
 
-## Implementation Recommendations
+### Every Day
 
-- Use `monitor` for online threads.
-- Use `tool_usage` for tool hotspots and call coverage.
-- Use `throughput` for model API length scenarios and `performance` for pipeline baselines.
-- Use `wunderbench` for task quality and capability regression.
+- System health
+- The error-rate trend
+- Queue backlog
+- Disk space
+
+### Weekly or Monthly
+
+- The token consumption trend
+- Tool usage statistics
+- Performance baseline changes
+- WunderBench results
+
+## Troubleshooting Order
+
+When a problem comes up, work through this order:
+
+1. Use session monitoring to find the abnormal thread
+2. Look at the tool-call records
+3. Check the performance metrics
+4. Read the Hull logs
 
 ## Further Reading
 
-- [WunderBench Model Evaluation](/docs/en/ops/wunderbench/)
-- [Channel Runtime](/docs/en/ops/channel-runtime/)
-- [Stream Events Reference](/docs/en/reference/stream-events/)
-- [Admin Panels Index](/docs/en/reference/admin-panels/)
+- [Observability](/docs/en/concepts/core-observability/) — the design principles behind observability
+- [WunderBench Model Evaluation](/docs/en/ops/wunderbench/) — full-bank evaluation, exports, and extending the task bank
+- [Session State Reference](/docs/en/reference/stream-events/) — what the state metrics mean
+- [Admin Panels Index](/docs/en/reference/admin-panels/) — where the monitoring entry points are

@@ -1,113 +1,54 @@
 ---
 title: WeChat iLink Channel
-summary: "`weixin` is wunder's new WeChat channel (iLink protocol), different from `wechat` / `wechat_mp`; this article covers selection, QR code integration, runtime checks, and troubleshooting."
-read_when:
-  - "You need to integrate the new WeChat channel and replace old `wechat` / `wechat_mp`"
-  - "You want to confirm if users can directly scan system-generated QR codes"
-  - "You are troubleshooting `context_token` missing, session expired, or file download failures"
-source_docs:
-  - docs/方案/新微信渠道落地方案.md
-  - docs/API文档.md
-  - src/channels/weixin.rs
-  - src/channels/service.rs
-  - src/api/user_channels.rs
+summary: The new WeChat channel uses the iLink protocol and is not the same thing as the legacy Official Account or WeCom channels.
+updated_at: 2026-10-13
 ---
 
-# WeChat iLink Channel
+`weixin` is an independent channel, not an old WeChat channel with different parameters.
 
-`weixin` is an independent provider, not a parameter variant of old WeChat channels.  
-In wunder, please follow the rules below for selection to avoid incorrect integration.
+## Choosing a Channel
 
-## 30-Second Selection Guide
-
-| Scenario | Choice |
+| Scenario | Choose |
 | --- | --- |
 | Enterprise WeChat app callback | `wechat` (legacy) |
 | WeChat Official Account callback | `wechat_mp` (legacy) |
-| iLink protocol WeChat capability (openclaw-weixin) | `weixin` (new) |
+| WeChat capability over the iLink protocol | `weixin` (new) |
 
-## Key Differences (New vs Old)
+The main differences between new and old:
 
-| Dimension | `weixin` (new) | `wechat` / `wechat_mp` (legacy) |
-| --- | --- | --- |
-| Inbound model | Long polling `ilink/bot/getupdates` | Webhook callback |
-| Reply key field | Must include `context_token` | No `context_token` dependency |
-| Login method | Scan QR code to get `bot_token` | Traditional app/corp parameters |
-| Media link | CDN + AES decrypt/encrypt | Platform native API |
-| Recommended status | Preferred for new integrations | Maintenance mode/legacy support |
+- Inbound: `weixin` pulls updates by long polling; the legacy version uses Webhook callbacks.
+- Reply requirement: a `weixin` reply must carry the context identifier of the current session; the legacy version does not depend on it.
+- Login: `weixin` scans a QR code to obtain the bot token; the legacy version uses traditional enterprise / Official Account parameters.
+- Media: `weixin` goes through a CDN and handles encryption and decryption itself; the legacy version goes through the platform's native interface.
+- Status: prefer `weixin` for new integrations; the legacy version is in maintenance / compatibility mode for existing deployments.
 
-## User-Side QR Code Integration (Supported)
+## Connecting by QR Code
 
-After selecting `weixin` in channel settings, users can directly:
+After choosing `weixin` in the channel settings:
 
-1. Click "Generate QR Code"
-2. Scan with WeChat
-3. Click "Wait for Confirmation"
-4. System auto-fills `bot_token`, `ilink_bot_id`, `ilink_user_id`, `api_base`
-5. Save account configuration
+1. Click "Generate QR code";
+2. Scan it with WeChat;
+3. Click "Wait for confirmation";
+4. The system fills in the bot token, bot ID, user ID, and interface address automatically;
+5. Save the account configuration.
 
-Notes:
-- After successful auto-fill, you must save for the long polling worker to take effect.
-- QR code session has TTL; regenerate if expired.
+Two notes: after the auto-fill, you **must save** for long polling to actually take effect; the QR code has a validity period and must be regenerated once it expires.
 
-## Minimum Viable Configuration (P0)
+## Key Settings and Common Pitfalls
 
-```json
-{
-  "weixin": {
-    "api_base": "https://ilinkai.weixin.qq.com",
-    "bot_token": "<required>",
-    "ilink_bot_id": "<required>",
-    "long_connection_enabled": true
-  }
-}
-```
+- Three required fields: interface address, bot token, and bot ID; then turn on the long-connection switch.
+- A few optional enhancements remain: CDN address, bot type, allowed caller range, polling and interface timeouts, backoff after consecutive failures, and route tag.
+- Media-link troubleshooting order: whether media is enabled, whether the CDN address is reachable, whether the decryption key is correct, and whether the attachment exceeds the size limit.
+- A reply reporting "missing session context identifier" means the reply did not receive the context identifier from the previous inbound message. Confirm the reply goes through the same session and that the inbound message preserved it.
+- Not receiving messages for a long time: check in order whether the account is active, whether the long connection is on, whether the token and bot ID are valid, and whether the session has expired in the Bridge runtime view.
+- Sessions expiring frequently: usually the login state is lost; scan again for a new token and save.
 
-Optional enhancements:
-- `cdn_base`
-- `bot_type`
-- `allow_from`
-- `poll_timeout_ms` / `api_timeout_ms`
-- `max_consecutive_failures` / `backoff_ms`
-- `route_tag`
+## Migrating from the Old Channel
 
-## File and Media Link
-
-Current implementation supports:
-- Outbound attachments: First `getuploadurl`, then CDN upload, finally `sendmessage` references the media
-- Inbound attachments: Parse `item_list` media items, download CDN objects and decrypt before saving to workspace
-
-Troubleshooting priority:
-1. Whether `media_enabled` is on
-2. Whether `cdn_base` is reachable
-3. Whether AES key is correct (base64/raw16 or hex32)
-4. Whether attachment exceeds size limit
-
-## Common Issue Diagnosis
-
-### Error `weixin outbound context_token missing`
-
-Cause: Reply message didn't get the `context_token` from the previous inbound message.  
-Resolution: Confirm current reply chain is based on the same session, and inbound message metadata has preserved `weixin_context_token`.
-
-### Not receiving messages for a long time
-
-Check:
-- Whether account status is `active`
-- Whether `long_connection_enabled` is on
-- Whether `bot_token` / `ilink_bot_id` is valid
-- Whether admin console runtime shows `long_connection_session_expired`
-
-### Session frequently expired
-
-Usually login state is lost. Recommend re-scanning to get new token and save.
-
-## Integration Recommendations (When Migrating from Old WeChat Channel)
-
-1. Parallel run: Keep old channel first, new traffic prefers `weixin`
-2. Batch switch: Migrate by account gradually
-3. Monitor metrics: Inbound success rate, outbound success rate, first packet latency, failure TopN
-4. Mark old channel as maintenance mode after stable
+1. Run in parallel first: keep the old channel and let new traffic prefer `weixin`;
+2. Switch over by account, in batches;
+3. Watch inbound success rate, outbound success rate, first-packet latency, and the failure ranking;
+4. Once stable, mark the old channel as maintenance mode.
 
 ## Further Reading
 

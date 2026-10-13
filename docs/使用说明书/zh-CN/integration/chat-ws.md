@@ -1,51 +1,28 @@
 ---
 title: 聊天 WebSocket
-summary: `/wunder/chat/ws` 是 wunder 聊天唯一实时通道；实时会话不再提供 SSE 兜底。
-read_when:
-  - 用户在开发聊天 UI 或桌面实时会话
-  - 用户要处理 start/resume/watch/cancel/approval
-source_docs:
-  - docs/API文档.md
-  - docs/设计文档/01-系统总体设计.md
-  - src/api/chat_ws.rs
+summary: 聊天的实时通道，同时也是会话控制通道：启动执行、断线续传、观察、取消、回传审批都在同一条连接上。
 ---
 
 # 聊天 WebSocket
 
-`/wunder/chat/ws` 不只是“事件推流”，它同时是会话控制通道。
+`/wunder/chat/ws` 不只是把事件推给你，它同时是会话的控制通道。聊天和桌面实时会话都用它，不再做 SSE 兜底。
 
 ## 适用场景
 
-- 聊天工作台或桌面会话
-- 同连接内执行 `start / resume / watch / cancel`
-- 需要长连接保活与实时状态一致性
+- 做聊天工作台或桌面会话；
+- 要在同一条连接里启动、续传、观察、取消一次执行；
+- 需要长连接保活和一致的实时状态。
 
-## 端点
+## 最短链路：几步接通
 
-- `GET /wunder/chat/ws`
+1. 先创建会话，拿到会话 ID；
+2. 建立 WebSocket 连接；
+3. 发送 `connect` 握手；
+4. 收到 `ready`；
+5. 发送 `start` 启动执行；
+6. 持续消费 `event`，直到收到本轮终态 `turn_terminal`。
 
-## 连接后可做的动作
-
-- `connect`：握手与协议协商
-- `start`：启动一次执行
-- `resume`：断线后续传事件
-- `watch`：只观察某个会话
-- `cancel`：取消当前执行
-- `approval`：回传审批决策
-- `ping`：保活
-
-服务端关键回包：`ready`、`event`、`error`、`pong`
-
-## 最短接入顺序
-
-1. `POST /wunder/chat/sessions` 拿到 `session_id`
-2. 建立 `WebSocket /wunder/chat/ws`
-3. 发送 `connect`
-4. 收到 `ready`
-5. 发送 `start`
-6. 消费后续 `event`，直至 `turn_terminal`
-
-## 最小握手示例
+握手示例：
 
 ```json
 {
@@ -58,7 +35,7 @@ source_docs:
 }
 ```
 
-## 启动一次执行
+启动一次执行：
 
 ```json
 {
@@ -72,28 +49,32 @@ source_docs:
 }
 ```
 
-## 客户端建议重点消费的事件
+## 连接上能做什么
 
-- `queued`
-- `approval_resolved`
-- `error`
-- `turn_terminal`
+- `connect`：握手与协议协商
+- `start`：启动一次执行
+- `resume`：断线后把落下的补回来
+- `watch`：只观察某个会话
+- `cancel`：取消当前执行
+- `approval`：回传审批决定
+- `ping`：保活
 
-`turn_terminal` 是单轮执行的终态信号，建议作为前端收敛条件。
+服务端主要回 `ready`、`event`、`error`、`pong`。
 
-## 常见误区
+## 关键设置与常见坑
 
-- `start` 必须显式传 `session_id`。
-- 文本字段是 `content`，不是 `/wunder` 的 `question`。
-- `resume`（补事件）和 `watch`（观察会话）不是同一个动作。
-- WS 审批只处理 `source=chat_ws` 的审批项。
+- 重点消费这几类事件：排队中、审批已处理、出错、本轮结束。`turn_terminal` 是单轮执行的终态信号，适合作为前端收敛条件。
+- `start` 必须显式带上会话 ID。
+- 正文用 `content`，不是 `/wunder` 的 `question`。
+- `resume`（补事件）和 `watch`（看运行态）是两个不同动作。
+- 这条连接上的审批只处理来自 WebSocket 的审批项。
 
-## 断线恢复
+## 断线了怎么办
 
-WS 断线时不要回退到 SSE。客户端应重新连接 `/wunder/chat/ws`，再按场景发送：
+不要退回 SSE。重新连上 `/wunder/chat/ws`，再按场景发送：
 
-- `resume`：携带最后处理到的事件游标，补齐断线期间事件。
-- `watch`：重新观察当前会话运行态。
+- `resume`：带上最后处理到的事件位置，补齐断线期间的事件；
+- `watch`：重新观察当前会话的运行态。
 
 ## 延伸阅读
 

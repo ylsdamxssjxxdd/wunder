@@ -1,7 +1,7 @@
 //! Small transactional display tables. Reads never decode execution payloads.
 use super::thread_view_projection as projection;
-use anyhow::{ensure, Result};
-use serde_json::{json, Value};
+use anyhow::{Result, ensure};
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use wunder_core::thread_view::*;
 
@@ -89,7 +89,7 @@ pub(crate) fn initialize(db: &mut impl ViewDb, user: &str, session: &str) -> Res
 /// Historical sessions above this bound stay on the durable source-log path.
 /// Replaying millions of legacy items into presentation tables has no user
 /// value because source reads are already keyset-paged and bounded.
-const MAX_SOURCE_CHANGE_SEQ: i64 = 50_000;
+pub(super) const MAX_SOURCE_CHANGE_SEQ: i64 = 50_000;
 
 pub(crate) fn skip_oversized_rebuilds(db: &mut impl ViewDb) -> Result<()> {
     let rows = db.query("SELECT h.session_id,h.user_id FROM thread_view_heads h JOIN thread_logs l ON l.session_id=h.session_id AND l.user_id=h.user_id WHERE h.projection_state='rebuilding' AND l.latest_change_seq>? ORDER BY h.session_id LIMIT 64", &[json!(MAX_SOURCE_CHANGE_SEQ)])?;
@@ -103,9 +103,13 @@ pub(crate) fn skip_oversized_rebuilds(db: &mut impl ViewDb) -> Result<()> {
 pub(crate) fn discover_rebuilds(db: &mut impl ViewDb) -> Result<()> {
     const KEY: &str = "thread_view_discovery_v2";
     let marker = one(db, "SELECT value FROM meta WHERE key=?", &[json!(KEY)])?;
-    let state: Value = marker.as_ref()
-        .and_then(|r| serde_json::from_str(text(&r[0])).ok()).unwrap_or(Value::Null);
-    if state.get("done").and_then(Value::as_bool) == Some(true) { return Ok(()); }
+    let state: Value = marker
+        .as_ref()
+        .and_then(|r| serde_json::from_str(text(&r[0])).ok())
+        .unwrap_or(Value::Null);
+    if state.get("done").and_then(Value::as_bool) == Some(true) {
+        return Ok(());
+    }
     let after = state.get("after").and_then(Value::as_str).unwrap_or("");
     let rows = db.query("SELECT session_id,user_id,latest_change_seq FROM thread_logs WHERE session_id>? ORDER BY session_id LIMIT 64", &[json!(after)])?;
     for row in &rows {
@@ -135,7 +139,9 @@ fn hydrate_chat_reasoning(
     );
     if let Some(value) = one(
         db,
-        &format!("SELECT {reasoning} FROM thread_items WHERE user_id=? AND session_id=? AND item_id=? AND visibility='user' LIMIT 1"),
+        &format!(
+            "SELECT {reasoning} FROM thread_items WHERE user_id=? AND session_id=? AND item_id=? AND visibility='user' LIMIT 1"
+        ),
         &[json!(user), json!(session), json!(row.assistant.item_id)],
     )? {
         row.assistant.reasoning = text(&value[0]).to_owned();
@@ -157,9 +163,11 @@ pub(crate) fn pending_rebuilds(db: &mut impl ViewDb) -> Result<Vec<(String, Stri
     if let Some(last) = rows.last() {
         db.execute("INSERT INTO meta(key,value,updated_time) VALUES(?,?,0) ON CONFLICT(key) DO UPDATE SET value=excluded.value", &[json!(KEY),last[1].clone()])?;
     }
-    Ok(rows.into_iter().map(|row| (text(&row[0]).into(),text(&row[1]).into(),int(&row[2]))).collect())
+    Ok(rows
+        .into_iter()
+        .map(|row| (text(&row[0]).into(), text(&row[1]).into(), int(&row[2])))
+        .collect())
 }
-
 
 fn head(db: &mut impl ViewDb, user: &str, session: &str) -> Result<i64> {
     initialize(db, user, session)?;
@@ -199,8 +207,14 @@ fn save_body(
     content: &str,
 ) -> Result<i64> {
     let fingerprint = format!("{:x}", Sha256::digest(content.as_bytes()));
-    if let Some(m)=one(db,"SELECT revision,fingerprint FROM thread_body_manifests WHERE session_id=? AND user_id=? AND body_id=?",&[json!(session),json!(user),json!(id)])? {
-        if text(&m[1])==fingerprint {return Ok(int(&m[0]));}
+    if let Some(m) = one(
+        db,
+        "SELECT revision,fingerprint FROM thread_body_manifests WHERE session_id=? AND user_id=? AND body_id=?",
+        &[json!(session), json!(user), json!(id)],
+    )? {
+        if text(&m[1]) == fingerprint {
+            return Ok(int(&m[0]));
+        }
     }
     for (index, chunk) in chunks(content).enumerate() {
         db.execute("INSERT INTO thread_body_chunks(session_id,user_id,body_id,revision,chunk_index,content) VALUES(?,?,?,?,?,?) ON CONFLICT(session_id,body_id,revision,chunk_index) DO NOTHING", &[json!(session),json!(user),json!(id),json!(rev),json!(index as i64),json!(chunk)])?;
@@ -216,7 +230,14 @@ pub(crate) fn project_turn(
     session: &str,
     turn: &str,
 ) -> Result<()> {
-    let Some(t) = one(db,"SELECT root_turn_id,user_turn_index,client_message_id,status,created_time,updated_time,trigger_kind FROM thread_turns WHERE session_id=? AND user_id=? AND turn_id=?", &[json!(session),json!(user),json!(turn)])? else { return Ok(()); };
+    let Some(t) = one(
+        db,
+        "SELECT root_turn_id,user_turn_index,client_message_id,status,created_time,updated_time,trigger_kind FROM thread_turns WHERE session_id=? AND user_id=? AND turn_id=?",
+        &[json!(session), json!(user), json!(turn)],
+    )?
+    else {
+        return Ok(());
+    };
     let root = text(&t[0]);
     let root_record=one(db,"SELECT user_turn_index,client_message_id,created_time FROM thread_turns WHERE session_id=? AND user_id=? AND turn_id=?",&[json!(session),json!(user),json!(root)])?.unwrap_or_else(||vec![t[1].clone(),t[2].clone(),t[4].clone()]);
     let latest=one(db,"SELECT status,updated_time,turn_id FROM thread_turns WHERE session_id=? AND user_id=? AND root_turn_id=? ORDER BY created_time DESC,turn_id DESC LIMIT 1",&[json!(session),json!(user),json!(root)])?.unwrap_or_else(||vec![t[3].clone(),t[5].clone(),json!(turn)]);
@@ -241,20 +262,34 @@ pub(crate) fn project_turn(
     row.status = text(&latest[0]).into();
     row.updated_time = float(&latest[1]);
     let seq = head(db, user, session)?;
-    if projection::is_running(&row.status)==0 {
-        if let Some(body)=row.assistant.body.as_mut().filter(|b|b.body_id.ends_with("|stream") && b.revision==0) {
+    if projection::is_running(&row.status) == 0 {
+        if let Some(body) = row
+            .assistant
+            .body
+            .as_mut()
+            .filter(|b| b.body_id.ends_with("|stream") && b.revision == 0)
+        {
             // Freeze the committed partial output without concatenating its
             // chunks. Copy/read now binds to an immutable body version.
             db.execute("INSERT INTO thread_body_chunks(session_id,user_id,body_id,revision,chunk_index,content) SELECT session_id,user_id,body_id,?,chunk_index,content FROM thread_body_chunks WHERE session_id=? AND user_id=? AND body_id=? AND revision=0 ON CONFLICT DO NOTHING",&[json!(seq),json!(session),json!(user),json!(body.body_id)])?;
-            body.revision=seq;
+            body.revision = seq;
         }
     }
     save_chat(db, user, session, &mut row, seq)?;
     db.execute("UPDATE thread_view_heads SET latest_round=CASE WHEN latest_round<? THEN ? ELSE latest_round END WHERE session_id=?", &[json!(row.user_round),json!(row.user_round),json!(session)])?;
-    let active=one(db,"SELECT status,turn_id FROM thread_turns WHERE user_id=? AND session_id=? AND status IN ('queued','running','waiting_input','waiting_approval') ORDER BY user_turn_index DESC,created_time DESC LIMIT 1",&[json!(user),json!(session)])?;
+    let active = one(
+        db,
+        "SELECT status,turn_id FROM thread_turns WHERE user_id=? AND session_id=? AND status IN ('queued','running','waiting_input','waiting_approval') ORDER BY user_turn_index DESC,created_time DESC LIMIT 1",
+        &[json!(user), json!(session)],
+    )?;
     let latest_root=one(db,"SELECT payload FROM thread_chat_rows WHERE user_id=? AND session_id=? ORDER BY user_round DESC LIMIT 1",&[json!(user),json!(session)])?.and_then(|r|serde_json::from_str::<ChatViewRow>(text(&r[0])).ok());
-    let status=active.as_ref().map(|r|text(&r[0])).unwrap_or_else(||latest_root.as_ref().map(|r|r.status.as_str()).unwrap_or("idle"));
-    let id=active.as_ref().map(|r|text(&r[1])).unwrap_or("");
+    let status = active.as_ref().map(|r| text(&r[0])).unwrap_or_else(|| {
+        latest_root
+            .as_ref()
+            .map(|r| r.status.as_str())
+            .unwrap_or("idle")
+    });
+    let id = active.as_ref().map(|r| text(&r[1])).unwrap_or("");
     db.execute("UPDATE thread_view_heads SET runtime_status=?,active_turn_id=? WHERE session_id=? AND user_id=?",&[json!(status),json!(id),json!(session),json!(user)])?;
     Ok(())
 }
@@ -265,29 +300,77 @@ pub(crate) fn project_item(
     session: &str,
     id: &str,
 ) -> Result<()> {
-    let Some(i)=one(db,"SELECT i.turn_id,i.root_turn_id,i.item_index,i.created_seq,i.revision,i.kind,i.status,i.visibility,i.payload,i.created_time,i.updated_time,t.user_turn_index FROM thread_items i JOIN thread_turns t ON t.session_id=i.session_id AND t.turn_id=i.turn_id WHERE i.session_id=? AND i.user_id=? AND i.item_id=?", &[json!(session),json!(user),json!(id)])? else { return Ok(()); };
+    let Some(i) = one(
+        db,
+        "SELECT i.turn_id,i.root_turn_id,i.item_index,i.created_seq,i.revision,i.kind,i.status,i.visibility,i.payload,i.created_time,i.updated_time,t.user_turn_index FROM thread_items i JOIN thread_turns t ON t.session_id=i.session_id AND t.turn_id=i.turn_id WHERE i.session_id=? AND i.user_id=? AND i.item_id=?",
+        &[json!(session), json!(user), json!(id)],
+    )?
+    else {
+        return Ok(());
+    };
     // 系统提示词注入（system_message，model_internal）是 dsh 语境下的上下文
     // 条目，轨迹必须保留；其余非 user 可见性（model_call 等）仍不入轨迹。
     if text(&i[7]) != "user"
         && !(text(&i[7]) == "model_internal" && text(&i[5]) == "system_message")
     {
-        if let Some(old)=one(db,"SELECT status,created_seq FROM thread_trajectory_rows WHERE session_id=? AND user_id=? AND item_id=?",&[json!(session),json!(user),json!(id)])? {
-            for level in 0..8 { db.execute("UPDATE thread_trajectory_tiles SET count=count-1,failed=failed-?,running=running-? WHERE session_id=? AND level=? AND bucket=?",&[json!(projection::is_failed(text(&old[0]))),json!(projection::is_running(text(&old[0]))),json!(session),json!(level),json!(int(&old[1])/(128i64 << (level*3)))])?; }
-            db.execute("DELETE FROM thread_trajectory_rows WHERE session_id=? AND user_id=? AND item_id=?",&[json!(session),json!(user),json!(id)])?;
-            for field in ["content","detail","stream"] {for table in ["thread_body_search","thread_body_chunks","thread_body_manifests"] {db.execute(&format!("DELETE FROM {table} WHERE session_id=? AND user_id=? AND body_id=?"),&[json!(session),json!(user),json!(projection::body_id(id,field))])?;}}
-            if let Some(r)=one(db,"SELECT payload FROM thread_chat_rows WHERE session_id=? AND root_turn_id=?",&[json!(session),i[1].clone()])? {
-                let mut row:ChatViewRow=serde_json::from_str(text(&r[0]))?;
-                if row.user.item_id==id {row.user=ViewMessage::default();}
-                if row.assistant.item_id==id {row.assistant=ViewMessage::default();}
-                if matches!(text(&i[5]),"tool_call"|"approval"|"plan"|"compaction"|"queue"|"subagent_run") {
-                    row.workflow_count=(row.workflow_count-1).max(0);
-                    row.failed_count=(row.failed_count-projection::is_failed(text(&old[0]))).max(0);
+        if let Some(old) = one(
+            db,
+            "SELECT status,created_seq FROM thread_trajectory_rows WHERE session_id=? AND user_id=? AND item_id=?",
+            &[json!(session), json!(user), json!(id)],
+        )? {
+            for level in 0..8 {
+                db.execute("UPDATE thread_trajectory_tiles SET count=count-1,failed=failed-?,running=running-? WHERE session_id=? AND level=? AND bucket=?",&[json!(projection::is_failed(text(&old[0]))),json!(projection::is_running(text(&old[0]))),json!(session),json!(level),json!(int(&old[1])/(128i64 << (level*3)))])?;
+            }
+            db.execute(
+                "DELETE FROM thread_trajectory_rows WHERE session_id=? AND user_id=? AND item_id=?",
+                &[json!(session), json!(user), json!(id)],
+            )?;
+            for field in ["content", "detail", "stream"] {
+                for table in [
+                    "thread_body_search",
+                    "thread_body_chunks",
+                    "thread_body_manifests",
+                ] {
+                    db.execute(
+                        &format!(
+                            "DELETE FROM {table} WHERE session_id=? AND user_id=? AND body_id=?"
+                        ),
+                        &[
+                            json!(session),
+                            json!(user),
+                            json!(projection::body_id(id, field)),
+                        ],
+                    )?;
                 }
-                if text(&i[5])=="subagent_run" {
-                    let removed=id.to_string();
-                    row.subagents.retain(|card| card.get("key").and_then(Value::as_str)!=Some(removed.as_str()));
+            }
+            if let Some(r) = one(
+                db,
+                "SELECT payload FROM thread_chat_rows WHERE session_id=? AND root_turn_id=?",
+                &[json!(session), i[1].clone()],
+            )? {
+                let mut row: ChatViewRow = serde_json::from_str(text(&r[0]))?;
+                if row.user.item_id == id {
+                    row.user = ViewMessage::default();
                 }
-                let seq=head(db,user,session)?;save_chat(db,user,session,&mut row,seq)?;
+                if row.assistant.item_id == id {
+                    row.assistant = ViewMessage::default();
+                }
+                if matches!(
+                    text(&i[5]),
+                    "tool_call" | "approval" | "plan" | "compaction" | "queue" | "subagent_run"
+                ) {
+                    row.workflow_count = (row.workflow_count - 1).max(0);
+                    row.failed_count =
+                        (row.failed_count - projection::is_failed(text(&old[0]))).max(0);
+                }
+                if text(&i[5]) == "subagent_run" {
+                    let removed = id.to_string();
+                    row.subagents.retain(|card| {
+                        card.get("key").and_then(Value::as_str) != Some(removed.as_str())
+                    });
+                }
+                let seq = head(db, user, session)?;
+                save_chat(db, user, session, &mut row, seq)?;
             }
         }
         return Ok(());
@@ -298,7 +381,11 @@ pub(crate) fn project_item(
     let kind = text(&i[5]);
     let status = text(&i[6]);
     let mut item: Value = serde_json::from_str(text(&i[8]))?;
-    let old=one(db,"SELECT status,created_seq,revision FROM thread_trajectory_rows WHERE session_id=? AND item_id=?", &[json!(session),json!(id)])?;
+    let old = one(
+        db,
+        "SELECT status,created_seq,revision FROM thread_trajectory_rows WHERE session_id=? AND item_id=?",
+        &[json!(session), json!(id)],
+    )?;
     if old.as_ref().is_some_and(|r| int(&r[2]) >= revision) {
         return Ok(());
     }
@@ -434,9 +521,20 @@ pub(crate) fn project_item(
         }
         projection::set_reasoning(&mut row.assistant, &item);
         row.assistant.created_seq = int(&i[3]);
-        row.assistant.durable_seq=one(db,"SELECT latest_change_seq FROM thread_logs WHERE session_id=? AND user_id=?",&[json!(session),json!(user)])?.map(|r|int(&r[0])).unwrap_or(0);
-        if !row.assistant.body.as_ref().is_some_and(|b|b.body_id.ends_with("|stream")) {
-            row.assistant.content_offset=content.encode_utf16().count();
+        row.assistant.durable_seq = one(
+            db,
+            "SELECT latest_change_seq FROM thread_logs WHERE session_id=? AND user_id=?",
+            &[json!(session), json!(user)],
+        )?
+        .map(|r| int(&r[0]))
+        .unwrap_or(0);
+        if !row
+            .assistant
+            .body
+            .as_ref()
+            .is_some_and(|b| b.body_id.ends_with("|stream"))
+        {
+            row.assistant.content_offset = content.encode_utf16().count();
         }
         if item
             .get("tool_calls")
@@ -506,7 +604,20 @@ pub(crate) fn project_feedback(
     id: &str,
     feedback: &Value,
 ) -> Result<()> {
-    let Some(r)=one(db,"SELECT payload FROM thread_chat_rows WHERE session_id=? AND user_id=? AND root_turn_id=(SELECT root_turn_id FROM thread_items WHERE session_id=? AND user_id=? AND item_id=?)",&[json!(session),json!(user),json!(session),json!(user),json!(id)])?else{return Ok(());};
+    let Some(r) = one(
+        db,
+        "SELECT payload FROM thread_chat_rows WHERE session_id=? AND user_id=? AND root_turn_id=(SELECT root_turn_id FROM thread_items WHERE session_id=? AND user_id=? AND item_id=?)",
+        &[
+            json!(session),
+            json!(user),
+            json!(session),
+            json!(user),
+            json!(id),
+        ],
+    )?
+    else {
+        return Ok(());
+    };
     let mut row: ChatViewRow = serde_json::from_str(text(&r[0]))?;
     if row.assistant.item_id == id {
         row.assistant.feedback = Some(feedback.clone());
@@ -528,7 +639,14 @@ pub(crate) fn project_block(
     if field != "content" {
         return Ok(());
     }
-    let Some(i)=one(db,"SELECT turn_id,root_turn_id,kind,visibility,created_seq FROM thread_items WHERE session_id=? AND user_id=? AND item_id=?",&[json!(session),json!(user),json!(id)])? else {return Ok(());};
+    let Some(i) = one(
+        db,
+        "SELECT turn_id,root_turn_id,kind,visibility,created_seq FROM thread_items WHERE session_id=? AND user_id=? AND item_id=?",
+        &[json!(session), json!(user), json!(id)],
+    )?
+    else {
+        return Ok(());
+    };
     if text(&i[3]) != "user" || !projection::stable_answer(id, text(&i[0]), text(&i[2])) {
         return Ok(());
     }
@@ -545,7 +663,12 @@ pub(crate) fn project_block(
     };
     let mut row: ChatViewRow = serde_json::from_str(text(&r[0]))?;
     // Old executions and delayed blocks cannot replace a newer sealed answer.
-    if int(&i[4])<row.assistant.created_seq || (row.assistant.item_id==id && row.assistant.body.as_ref().is_some_and(|b|b.bytes>0 && (!b.body_id.ends_with("|stream")||b.revision>0))) {
+    if int(&i[4]) < row.assistant.created_seq
+        || (row.assistant.item_id == id
+            && row.assistant.body.as_ref().is_some_and(|b| {
+                b.bytes > 0 && (!b.body_id.ends_with("|stream") || b.revision > 0)
+            }))
+    {
         return Ok(());
     }
     // Body block identities are stable across duplicate event delivery.
@@ -582,9 +705,18 @@ pub(crate) fn project_block(
         revision: 0,
         bytes,
     });
-    row.assistant.created_seq=int(&i[4]);
-    row.assistant.content_offset=row.assistant.content_offset.max(offset.max(0) as usize+content.encode_utf16().count());
-    row.assistant.durable_seq=one(db,"SELECT latest_change_seq FROM thread_logs WHERE session_id=? AND user_id=?",&[json!(session),json!(user)])?.map(|r|int(&r[0])).unwrap_or(0);
+    row.assistant.created_seq = int(&i[4]);
+    row.assistant.content_offset = row
+        .assistant
+        .content_offset
+        .max(offset.max(0) as usize + content.encode_utf16().count());
+    row.assistant.durable_seq = one(
+        db,
+        "SELECT latest_change_seq FROM thread_logs WHERE session_id=? AND user_id=?",
+        &[json!(session), json!(user)],
+    )?
+    .map(|r| int(&r[0]))
+    .unwrap_or(0);
     row.assistant.tail = preview(content, 2048);
     let seq = head(db, user, session)?;
     save_chat(db, user, session, &mut row, seq)
@@ -617,9 +749,14 @@ pub(crate) fn page(
         thread_empty: Some(true),
         ..Default::default()
     };
-    let h=one(db,"SELECT epoch,view_seq,latest_round,latest_item_seq,projection_state,runtime_status,active_turn_id FROM thread_view_heads WHERE session_id=? AND user_id=?", &[json!(session),json!(user)])?;
+    let h = one(
+        db,
+        "SELECT epoch,view_seq,latest_round,latest_item_seq,projection_state,runtime_status,active_turn_id FROM thread_view_heads WHERE session_id=? AND user_id=?",
+        &[json!(session), json!(user)],
+    )?;
     if let Some(h) = h {
-        page.runtime_status=text(&h[5]).into();page.active_turn_id=text(&h[6]).into();
+        page.runtime_status = text(&h[5]).into();
+        page.active_turn_id = text(&h[6]).into();
         page.epoch = int(&h[0]);
         page.view_seq = int(&h[1]);
         page.latest_round = int(&h[2]);
@@ -639,7 +776,16 @@ pub(crate) fn page(
         page.thread_empty = None;
     }
     if page.projection_state != "ready" {
-        return super::thread_view_source::page(db, user, session, kind, before, root_turn_id, limit, page);
+        return super::thread_view_source::page(
+            db,
+            user,
+            session,
+            kind,
+            before,
+            root_turn_id,
+            limit,
+            page,
+        );
     }
     let cap = if kind == "trajectory" {
         limit.clamp(1, TRAJECTORY_PAGE_MAX)
@@ -653,33 +799,38 @@ pub(crate) fn page(
             let _ = root_turn_id;
             "SELECT payload,created_seq FROM thread_trajectory_rows WHERE user_id=? AND session_id=? AND root_turn_id=? AND created_seq<? ORDER BY created_seq DESC LIMIT ?"
         } else {
-        // The newest execution turn can contain thousands of items.  A first
-        // trajectory paint must still describe the whole conversation, so it
-        // returns one representative item per root user turn. Full records
-        // are fetched only after the user opens a specific turn.
-        let round_cursor = before.unwrap_or(i64::MAX);
-        let overview = db.query(
+            // The newest execution turn can contain thousands of items.  A first
+            // trajectory paint must still describe the whole conversation, so it
+            // returns one representative item per root user turn. Full records
+            // are fetched only after the user opens a specific turn.
+            let round_cursor = before.unwrap_or(i64::MAX);
+            let overview = db.query(
             "SELECT r.payload,t.user_turn_index FROM thread_turns t JOIN thread_trajectory_rows r ON r.item_id=(SELECT x.item_id FROM thread_trajectory_rows x WHERE x.user_id=t.user_id AND x.session_id=t.session_id AND x.root_turn_id=t.turn_id ORDER BY x.created_seq DESC LIMIT 1) WHERE t.user_id=? AND t.session_id=? AND t.trigger_kind='user' AND t.user_turn_index<? ORDER BY t.user_turn_index DESC LIMIT ?",
             &[json!(user), json!(session), json!(round_cursor), json!((cap + 1) as i64)],
         )?;
-        page.has_more = overview.len() > cap;
-        for row in overview.into_iter().take(cap) {
-            let mut projected: TrajectoryViewRow = serde_json::from_str(text(&row[0]))?;
-            projected.user_round = int(&row[1]);
-            let size = serde_json::to_vec(&projected)?.len() + 1;
-            if bytes + size > TRAJECTORY_RESPONSE_BYTES { page.has_more = true; break; }
-            bytes += size;
-            page.next_before = Some(projected.user_round);
-            page.trajectory.push(projected);
-        }
-        page.trajectory.reverse();
-        return Ok(page);
+            page.has_more = overview.len() > cap;
+            for row in overview.into_iter().take(cap) {
+                let mut projected: TrajectoryViewRow = serde_json::from_str(text(&row[0]))?;
+                projected.user_round = int(&row[1]);
+                let size = serde_json::to_vec(&projected)?.len() + 1;
+                if bytes + size > TRAJECTORY_RESPONSE_BYTES {
+                    page.has_more = true;
+                    break;
+                }
+                bytes += size;
+                page.next_before = Some(projected.user_round);
+                page.trajectory.push(projected);
+            }
+            page.trajectory.reverse();
+            return Ok(page);
         }
     } else {
         "SELECT payload,user_round FROM thread_chat_rows WHERE user_id=? AND session_id=? AND user_round<? ORDER BY user_round DESC LIMIT ?"
     };
     let mut query_params = vec![json!(user), json!(session)];
-    if root_turn_id.is_some() { query_params.push(json!(root_turn_id.unwrap())); }
+    if root_turn_id.is_some() {
+        query_params.push(json!(root_turn_id.unwrap()));
+    }
     query_params.push(json!(cursor));
     query_params.push(json!((cap + 1) as i64));
     let rows = db.query(sql, &query_params)?;
@@ -728,9 +879,19 @@ pub(crate) fn changes(
     if after < 0 {
         return super::thread_view_source::changes(db, user, session, after);
     }
-    let h=one(db,"SELECT view_seq,epoch,projection_state,runtime_status,active_turn_id FROM thread_view_heads WHERE session_id=? AND user_id=?", &[json!(session),json!(user)])?;
-    let runtime_status=h.as_ref().map(|r|text(&r[3]).to_string()).unwrap_or_else(||"idle".into());
-    let active_turn_id=h.as_ref().map(|r|text(&r[4]).to_string()).unwrap_or_default();
+    let h = one(
+        db,
+        "SELECT view_seq,epoch,projection_state,runtime_status,active_turn_id FROM thread_view_heads WHERE session_id=? AND user_id=?",
+        &[json!(session), json!(user)],
+    )?;
+    let runtime_status = h
+        .as_ref()
+        .map(|r| text(&r[3]).to_string())
+        .unwrap_or_else(|| "idle".into());
+    let active_turn_id = h
+        .as_ref()
+        .map(|r| text(&r[4]).to_string())
+        .unwrap_or_default();
     let seq = h.as_ref().map(|r| int(&r[0])).unwrap_or(0);
     let epoch = h.as_ref().map(|r| int(&r[1])).unwrap_or(1);
     let ready = h.as_ref().is_none_or(|r| text(&r[2]) == "ready");
@@ -740,7 +901,9 @@ pub(crate) fn changes(
         || rows.len() > 20
         || rows.iter().map(|r| text(&r[0]).len()).sum::<usize>() > 60 * 1024;
     Ok(ThreadViewChanges {
-        runtime_status,active_turn_id,epoch,
+        runtime_status,
+        active_turn_id,
+        epoch,
         view_seq: seq,
         reset_required: reset,
         rows: if reset {
@@ -762,7 +925,10 @@ pub(crate) fn body(
     cursor: i64,
 ) -> Result<ThreadBodyPage> {
     ensure!(cursor >= 0 && rev >= 0, "invalid body cursor");
-    if id.rsplit_once('|').is_some_and(|(_, field)| field.starts_with("source_")) {
+    if id
+        .rsplit_once('|')
+        .is_some_and(|(_, field)| field.starts_with("source_"))
+    {
         return super::thread_view_source::body(db, user, session, id, rev, cursor);
     }
     let rows=db.query("SELECT chunk_index,content FROM thread_body_chunks WHERE session_id=? AND user_id=? AND body_id=? AND revision=? AND chunk_index>=? ORDER BY chunk_index LIMIT 9", &[json!(session),json!(user),json!(id),json!(rev),json!(cursor)])?;
@@ -793,8 +959,8 @@ pub(crate) fn rebuild(
     session: &str,
     after: i64,
 ) -> Result<(i64, bool)> {
-    let started=std::time::Instant::now();
-    let budget=std::time::Duration::from_millis(40);
+    let started = std::time::Instant::now();
+    let budget = std::time::Duration::from_millis(40);
     if after < 0 {
         let position=one(db,"SELECT rebuild_block_item,rebuild_block_field,rebuild_block_index FROM thread_view_heads WHERE session_id=? AND user_id=?",&[json!(session),json!(user)])?.unwrap_or_else(||vec![json!(""),json!(""),json!(-1)]);
         let blocks=db.query("SELECT item_id,field,block_index FROM thread_item_blocks WHERE user_id=? AND session_id=? AND (item_id,field,block_index)>(?,?,?) ORDER BY item_id,field,block_index LIMIT 65",&[json!(user),json!(session),position[0].clone(),position[1].clone(),position[2].clone()])?;
@@ -802,13 +968,33 @@ pub(crate) fn rebuild(
         let mut more = blocks.len() > 64;
         let mut last = cursor;
         let mut position = position;
-        let mut bytes=0;
+        let mut bytes = 0;
         for r in blocks.into_iter().take(64) {
-            if last>cursor && (started.elapsed()>=budget||bytes>=2*1024*1024){more=true;break;}
-            let Some(payload)=one(db,"SELECT payload FROM thread_item_blocks WHERE session_id=? AND user_id=? AND item_id=? AND field=? AND block_index=?",&[json!(session),json!(user),r[0].clone(),r[1].clone(),r[2].clone()])?else{continue;};
-            bytes+=text(&payload[0]).len();
+            if last > cursor && (started.elapsed() >= budget || bytes >= 2 * 1024 * 1024) {
+                more = true;
+                break;
+            }
+            let Some(payload) = one(
+                db,
+                "SELECT payload FROM thread_item_blocks WHERE session_id=? AND user_id=? AND item_id=? AND field=? AND block_index=?",
+                &[
+                    json!(session),
+                    json!(user),
+                    r[0].clone(),
+                    r[1].clone(),
+                    r[2].clone(),
+                ],
+            )?
+            else {
+                continue;
+            };
+            bytes += text(&payload[0]).len();
             let block: Value = serde_json::from_str(text(&payload[0]))?;
-            let committed=one(db,"SELECT payload FROM thread_chat_rows WHERE session_id=? AND user_id=? AND root_turn_id=(SELECT root_turn_id FROM thread_items WHERE session_id=? AND item_id=?)",&[json!(session),json!(user),json!(session),r[0].clone()])?;
+            let committed = one(
+                db,
+                "SELECT payload FROM thread_chat_rows WHERE session_id=? AND user_id=? AND root_turn_id=(SELECT root_turn_id FROM thread_items WHERE session_id=? AND item_id=?)",
+                &[json!(session), json!(user), json!(session), r[0].clone()],
+            )?;
             if committed.is_some_and(|c| {
                 serde_json::from_str::<ChatViewRow>(text(&c[0]))
                     .ok()
@@ -841,9 +1027,26 @@ pub(crate) fn rebuild(
     let mut more = ids.len() > 64;
     let mut cursor = after;
     for r in ids.into_iter().take(64) {
-        if cursor>after && started.elapsed()>=budget {more=true;break;}
-        let root=one(db,"SELECT root_turn_id FROM thread_turns WHERE session_id=? AND user_id=? AND turn_id=?",&[json!(session),json!(user),r[1].clone()])?;
-        if let Some(root)=root{if one(db,"SELECT root_turn_id FROM thread_chat_rows WHERE session_id=? AND root_turn_id=?",&[json!(session),root[0].clone()])?.is_none(){project_turn(db,user,session,text(&r[1]))?;}}
+        if cursor > after && started.elapsed() >= budget {
+            more = true;
+            break;
+        }
+        let root = one(
+            db,
+            "SELECT root_turn_id FROM thread_turns WHERE session_id=? AND user_id=? AND turn_id=?",
+            &[json!(session), json!(user), r[1].clone()],
+        )?;
+        if let Some(root) = root {
+            if one(
+                db,
+                "SELECT root_turn_id FROM thread_chat_rows WHERE session_id=? AND root_turn_id=?",
+                &[json!(session), root[0].clone()],
+            )?
+            .is_none()
+            {
+                project_turn(db, user, session, text(&r[1]))?;
+            }
+        }
         project_item(db, user, session, text(&r[0]))?;
         cursor = int(&r[2]);
     }

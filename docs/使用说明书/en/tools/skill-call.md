@@ -1,18 +1,19 @@
 ---
 title: Skill Call
-summary: How `skill_call` returns the skill body, root directory, and top-level file tree to the model.
-read_when:
-  - You need to load a `SKILL.md` file and its directory context
-source_docs:
-  - src/services/tools.rs
-updated_at: 2026-04-10
+summary: Loading a skill's instructions and its directory into the current conversation so the agent can work through that skill's process.
+updated_at: 2026-10-13
 ---
 
-# Skill Call
+A skill call loads a skill's instructions into the current conversation so the agent can carry on by following that skill's process.
 
-`skill_call` does not execute a skill. It **loads the skill content into the current context** so the model can continue by following that skill's workflow.
+## When to use it
 
-## Minimum arguments
+- You want the agent to follow an existing skill instead of improvising.
+- The agent needs to read the skill's instructions first before it can know what to do next.
+
+## How to use it
+
+Pass the skill name:
 
 ```json
 {
@@ -20,41 +21,12 @@ updated_at: 2026-04-10
 }
 ```
 
-## Success result
+## What it handles
 
-```json
-{
-  "ok": true,
-  "action": "skill_call",
-  "state": "completed",
-  "summary": "Loaded skill openai-docs.",
-  "data": {
-    "name": "openai-docs",
-    "description": "Use official OpenAI docs...",
-    "path": "C:/.../SKILL.md",
-    "root": "C:/.../openai-docs",
-    "content": "# SKILL ... {{SKILL_ROOT}} ...",
-    "tree": [
-      "SKILL.md",
-      "references/",
-      "scripts/"
-    ]
-  }
-}
-```
+- It formats the skill instructions so they are easy for the model to read, then puts them into context.
+- It states the skill's root directory explicitly; a `{{SKILL_ROOT}}` placeholder in the instructions resolves to that root.
+- It also lists the top-level files and folders under the skill root, so the agent knows what supporting material it can read next.
 
-## Key changes
+## When something goes wrong
 
-- `content` is rendered in a form that is easier for the model to read
-- `root` explicitly returns the skill root directory
-- `{{SKILL_ROOT}}` can be used as a placeholder inside the content
-- `tree` lists only top-level files and folders under the skill root so the model can decide which supporting resources to read next
-
-## Common failures
-
-- the skill name is empty
-- the skill does not exist
-- the skill name is ambiguous
-- the skill file could not be read
-
-These failures are usually returned as ordinary direct errors. This is not a complex asynchronous tool.
+An empty skill name, a skill that does not exist, an ambiguous name, or a skill file that cannot be read all fail immediately. These are ordinary errors, not asynchronous work that needs waiting.

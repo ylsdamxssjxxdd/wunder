@@ -1,161 +1,71 @@
 ---
 title: Prompts and Skills
-summary: wunder treats system prompts and skills as governed runtime objects rather than temporary text scattered across the codebase.
-read_when:
-  - You need to understand why a thread's system prompt is frozen
-  - You need to understand the relationship between Skills, template packs, and `skill_call`
-source_docs:
-  - docs/设计文档/01-系统总体设计.md
-  - docs/API文档.md
-  - config/wunder-example.yaml
+summary: The system prompt shapes the agent's persona, and skills are its operating manuals for a class of task.
+updated_at: 2026-10-13
 ---
 
-# Prompts and Skills
+An agent's behavior is decided by two things: its **system prompt** (who it is, how it thinks, what principles it holds) and its **skills** (the concrete method it follows for a class of task).
 
-In wunder, prompts and skills are not optional annotations. They are part of the main execution chain.
+## The system prompt
 
-## First separate the two categories
+The system prompt is the agent's working manual. It sets out the role it plays, the engineering principles it follows, how it uses tools, how it calls on skills, and what memory context it remembers.
 
-### System prompts
+**The system prompt is fixed when the session is created and stays frozen afterward.** This keeps the agent's behavior consistent within the same session.
 
-These define how the model should understand itself, the tool protocol, engineering constraints, and memory context inside the current thread.
+## Skills
 
-### Skills
+A skill is an operating manual for the agent. It bundles a full method, execution scripts, examples and resources, and the constraints and boundaries that apply. When it needs to, the agent reads the complete skill document.
 
-These define what additional operating manuals, resource paths, and execution conventions the model can read in the current session.
+A skill packages a method for a class of task, so similar tasks follow the same method and results stay consistent.
 
-Both affect model behavior, but they serve different roles.
+Skills come in three layers.
 
-## Why the thread prompt must be frozen
+| Layer | Description | Editable |
+| --- | --- | --- |
+| Built-in | Shipped with the system | Read-only |
+| Custom | Created by a user or administrator | Editable |
+| External | Imported from outside | Depends on the source |
 
-wunder currently enforces one especially important rule:
+## Prompt template packs
 
-- a thread's system prompt must be frozen after it is first determined
+wunder supports several prompt template packs: a Chinese pack (Chinese style by default), an English pack (English style by default), and custom packs tailored as needed.
 
-This is not conservative for its own sake. It is a stability requirement:
+To switch, open the agent settings, find "Prompt template", pick one, and save.
 
-- it prevents a thread from drifting as the conversation grows
-- it prevents long-term memory from repeatedly invalidating prompt caching
-- it reduces personality inconsistency across long sessions
-- it makes failures easier to reproduce and diagnose
+**When it takes effect**: a new conversation uses the new template while existing conversations are unchanged. Changing a template and seeing no change in the current conversation is expected; starting a new conversation picks it up.
 
-So keep this straight:
+To build a custom template, copy a built-in one, edit the sections (role, principles, additional notes, and so on), and save it to use.
 
-- a new thread builds a new system prompt
-- an existing thread is not rewritten just because the template pack changed
+## A rule that is easy to trip over
 
-## How prompt template packs are organized
+Resource paths inside a skill document are written as **placeholders** rather than hard-coded paths. A skill lives in a different actual location in each runtime form, so the system substitutes the correct path when the skill is used.
 
-The current prompt system is organized in segmented files such as:
+## Prompts, skills, and memory each cover their own ground
 
-- `role`
-- `engineering`
-- `tools_protocol`
-- `skills_protocol`
-- `memory`
-- `extra`
+| | Responsibility |
+| --- | --- |
+| Prompt | Defines the long-lived, stable boundary of behavior |
+| Skill | Defines the additional execution protocol for a class of task |
+| Memory | Defines the long-term facts injected when a session initializes |
 
-The system supports multiple template packs, and `prompt_templates.active` selects the currently active one.
+The three work together, but their responsibilities are not mixed.
 
-## When prompt changes take effect
+## Working with templates and skills
 
-Prompt templates do not hot-rewrite the current thread. They primarily affect:
+A template has a clear role, concise principles (keep the important constraints rather than piling them on), no internal contradictions, and is tuned against real results.
 
-- new threads
-- new sessions
-- new system-prompt preview results
+Skills are managed on the "Tools" page: see installed skills, enable or disable them, create a skill for a particular working scenario, and share one with the team.
 
-Already established threads are not rewritten retroactively.
+Combining prompt templates, skills, and models produces agents of different styles: a coding assistant, a copywriter, a data analyst, a translation expert.
 
-If you changed a template pack and the current conversation did not change, do not assume the save failed. First check whether you are still inside an existing thread.
+## Common mistakes
 
-## What a Skill is
-
-A Skill can be understood as a structured operating package for the model.
-
-It usually contains:
-
-- `SKILL.md`
-- scripts
-- example files
-- resource directories
-
-Once enabled, the model receives the Skill protocol and Skill entry information, and can use `skill_call` to read the full Skill content when needed.
-
-## Skill layers
-
-wunder currently groups skills into three layers:
-
-- `builtin`
-- `custom`
-- `external`
-
-This is really a governance boundary:
-
-- built-in skills are read-only by default
-- user-uploaded or admin-uploaded content goes into the custom directory
-- external skills are closer to imported external capabilities
-
-So "can this skill be modified?" does not have one universal answer. It depends on which layer the skill belongs to.
-
-## Why `skill_call` matters
-
-Many systems only expose the name of a skill but not the actual documentation, which forces the model to guess repeatedly.
-
-wunder's built-in `skill_call` is explicit:
-
-- it returns the complete `SKILL.md` by skill name
-- it returns the skill directory structure
-- it avoids overly aggressive clipping
-
-This turns a Skill from "just a name in the prompt" into "an operating manual the model can actively read."
-
-## What `{{SKILL_ROOT}}` is for
-
-Resource paths inside a Skill should normally be written with:
-
-- `{{SKILL_ROOT}}`
-
-The reason is practical:
-
-- the real filesystem path may differ across server, desktop, and cli
-- hard-coded local paths break as soon as the skill moves
-
-When `skill_call` returns the skill content, this placeholder is replaced with the absolute path visible to the model in the current runtime.
-
-## How prompts, skills, and memory work together
-
-The clean way to read them is:
-
-- the system prompt defines the long-lived stable boundary
-- a Skill defines the additional execution protocol for a class of work
-- memory defines the long-term fact snapshot injected during thread initialization
-
-All three matter, but they should not be mixed together conceptually.
-
-## Common misunderstandings
-
-### Misunderstanding 1: changing the prompt template changes the current thread immediately
-
-It does not.
-
-It primarily affects new threads.
-
-### Misunderstanding 2: a Skill is just a documentation file
-
-Not in wunder.
-
-It is a runtime resource the model can explicitly load and read.
-
-### Misunderstanding 3: memory rewrites the system prompt every round
-
-It does not.
-
-The current rule is one injection during initialization, then the thread prompt remains frozen.
+- Changing a template does not affect the current conversation right away; it only affects new conversations.
+- A skill is not just a documentation file; it is a runtime resource the agent can actively read.
+- Memory does not rewrite the prompt every round; it is injected once at initialization.
 
 ## Further reading
 
-- [Tool System](/docs/en/concepts/tools/)
-- [Long-term Memory](/docs/en/concepts/memory/)
-- [Configuration Reference](/docs/en/reference/config/)
-- [Streaming Events Reference](/docs/en/reference/stream-events/)
+- [Prompts and personalization](/docs/en/reference/prompt-templates/) — how to work with templates
+- [Memory (core)](/docs/en/concepts/core-memory/) — the design principles of memory
+- [Tool system](/docs/en/concepts/tools/) — how tools and skills relate

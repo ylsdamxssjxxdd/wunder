@@ -2652,6 +2652,7 @@ export default {
   'messenger.trajectory.summaryTurn': '… {steps} steps · {tools} tool calls',
   'messenger.trajectory.summaryAssistantTools': '… {count} tool calls',
   'messenger.trajectory.noContent': 'No content',
+  'messenger.trajectory.largeTurnOverview': 'Large turn. Double-click to load its full trajectory.',
   'messenger.trajectory.toolUnnamed': 'Tool',
   'messenger.trajectory.paramUnavailable': 'Parameters not captured',
   'messenger.trajectory.noOutput': 'No output',

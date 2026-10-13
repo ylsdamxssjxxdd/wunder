@@ -1,79 +1,89 @@
 ---
 title: Interface Overview
-summary: Users work in the Honeycomb (local AI workbench) or the Beehive (cloud AI workbench); admins govern with the Bridge.
+summary: Four forms, four interfaces — the Honeycomb (local AI workbench), the Beehive (cloud AI workbench), the Helm (terminal interface), and the Bridge (admin governance console). Look up interface capabilities by form.
+read_when:
+  - You are choosing between the forms and need to know what each interface can do
+  - You expect a capability in one interface and want to check whether it exists there at all
+source_docs:
+  - frontend-slint/ui/theme.slint
+  - frontend-slint/ui/settings_page.slint
+  - frontend/src/router/index.ts
+  - web/index.html
+  - crates/wunder-cli/tui/app.rs
+updated_at: 2026-10-13
 ---
 
 # Interface Overview
 
-wunder's interfaces fall into two groups: **workbenches** (for users) and the **Bridge** (for admins).
+wunder's interfaces fall into four kinds by form: the **Honeycomb** (local AI workbench), the **Beehive** (cloud AI workbench), the **Helm** (terminal interface), and the **Bridge** (admin governance console). All four share one engine, but they differ in how you open them, what you can do, and how they present.
 
-## Two workbenches
+## What each interface is
 
-Users access wunder through two workbenches, chosen by scenario:
+| Interface | Who uses it | What it is | How to open it |
+| --- | --- | --- | --- |
+| **Honeycomb** | Individual users | Local AI workbench | Install the desktop app and open it; it uses no port |
+| **Beehive** | Team members | Cloud AI workbench | Open the deployed address in a browser |
+| **Helm** | Terminal and automation users | Manual local entry point | Start it in a terminal |
+| **Bridge** | Administrators | Governance and debugging console | Open the Hull address in a browser |
 
-| Workbench | Form | Positioning | Best for |
-|------|------|------|------|
-| **Honeycomb (desktop)** | Desktop app | Local AI workbench | Individual users; runs locally with direct access to local files and the desktop, out of the box |
-| **Beehive (web)** | Web app | Cloud AI workbench | Team members; accessed in a browser, shared by many, governed by the Hull |
+## The main area of each interface
 
-Both workbenches cover the same interface and capabilities: chat, the working directory, agent settings, tools, and settings. The Honeycomb adds local file access, a local runtime, and one-click reset on top of the Beehive. Individual users default to the Honeycomb; after a team deploys the Hull, members open the Beehive in a browser.
+The **Honeycomb**'s main window has **only two pages**: chat and settings. Everything else sits in panels and dialogs — sidebar, input area, timeline, terminal view, tools dialog, companion dialog, workspace dialog, working directory, thread trajectory, subagent details, channels page, scheduled page, settings sections, activity card, expert data, patch-diff card, screenshot overlay, and tray and system notifications. The settings navigation has **12 categories**: General, Account, Models, Tools, Agent, Companion, Scheduled, Memory, Channels, Prompt packs, Archive, and Help. There is **no "Device interconnection" category**.
 
-## The Bridge: governance backend
+The **Beehive** is a single-page app in the browser whose main area is the messenger: left column + timeline + input area, with chat and the working directory joined together. Settings exist as categories, including tools, memory, channels, scheduled tasks, devices, and archive.
 
-The Bridge is for administrators. It is the management UI of the Hull (the user and agent management platform), handling system configuration, user management, and channel monitoring, fully separated from the user-facing workbenches.
+The **Helm** runs in a terminal: a chat area above and an input area below, driven by slash commands.
 
-## Interface entries
+The **Bridge** is the governance and debugging console, densely laid out for scanning. Its top-level navigation has **4 groups and 19 items**:
 
-<div class="docs-card-grid docs-card-grid-compact">
-  <a class="docs-card" href="/docs/en/surfaces/frontend/"><strong>Beehive Interface</strong><span>Two-column layout, chat, working directory, settings.</span></a>
-  <a class="docs-card" href="/docs/en/surfaces/desktop-ui/"><strong>Honeycomb Interface</strong><span>Local capabilities and reset unique to the Honeycomb.</span></a>
-  <a class="docs-card" href="/docs/en/surfaces/web-admin/"><strong>Bridge Interface</strong><span>User management, system configuration, channel monitoring.</span></a>
-</div>
+- System (4): Internal status, System settings, Organization management, User management
+- Agents (6): Model configuration, Thread management, Preset agents, Companion management, Tool management, System prompts
+- Debug (6): Throughput, Performance, Capability evaluation, Multimodal debugging, Debug panel, LSP
+- Docs (2): Manual, API
 
-## The two-column layout
+Tool management groups built-in tools, MCP, knowledge bases, skills, and tool visibility together. In the debug panel, the former log area on the right is now a **thread-trajectory view**.
 
-Both the Honeycomb and the Beehive use a two-column layout:
+## Capability matrix
 
-```
-┌──────────────┬─────────────────────────────┐
-│ Left column  │ Right column                │
-│ New task/    │ Chat: top bar + timeline +  │
-│ Search       │ input area                  │
-│ Workspace &  │ Welcome page when no thread │
-│ thread tree  │ is selected                 │
-│ Working dir. │                             │
-│ Settings     │                             │
-└──────────────┴─────────────────────────────┘
-```
+What each interface has and lacks; details are on each form's own page.
 
-The left column is fixed at 240px, top to bottom: new task, search, the workspace and thread tree, the **working directory** (file tree + toolbar + usage bar), and the settings entry at the bottom. The right column adapts, showing the welcome page or the chat page of the current thread; file preview and inline editing open as overlays without changing the two-column structure.
+| Capability | Honeycomb | Beehive | Bridge | Helm |
+| --- | --- | --- | --- | --- |
+| Thread list + timeline | ✅ | ✅ | ✅ (thread management) | ✅ |
+| Archive | ✅ category in settings | ✅ | Unverified | ✅ restored by command |
+| Tools / MCP / skills panel | ✅ tools dialog | ✅ settings Tools category (built-in / MCP / skills / knowledge bases) | ✅ tool management group | ✅ matching subcommands |
+| Knowledge bases | ✅ | ✅ | ✅ | ❌ not implemented |
+| Long-term memory | ✅ settings + expert-data card | ✅ | ❌ not implemented | ❌ not implemented |
+| Scheduled tasks | ✅ | ✅ | ⚠️ only as a "Preset agents" template | ❌ switched off |
+| Channel binding | ✅ | ✅ | ⚠️ only as a "Preset agents" template | ❌ not implemented |
+| Companion system | ✅ including the desktop floating window | ✅ | ✅ | ❌ not implemented |
+| Workspace files | ✅ | ✅ | ✅ | ⚠️ command-line file operations and file references only |
+| Interactive terminal | ✅ | ❌ not implemented | ❌ not implemented | Not applicable (it already runs in a terminal) |
+| Device interconnection | ⚠️ sidebar cloud workspace + approval pop-up; settings category not opened | ✅ settings Devices category + interconnection view | ❌ not implemented (backend API only) | ✅ matching subcommands |
+| Voice input / TTS | Input ✅ / output ❌ | Both directions ✅ | ❌ | No speech recognition (paste / drag in images only) |
+| Screenshot capture | ✅ | ❌ | ❌ | ❌ |
+| Tray / system notifications / global hotkey | ✅ | ❌ | ❌ | ❌ |
 
-Every user has exactly one agent instance and one fixed workspace, so the left column holds only that single workspace and thread tree — no multi-agent list, create, or switch entry, and no way to change the directory.
+## Choosing by scenario
 
-## Choose by scenario
+- **Personal daily use**: install the [Honeycomb](/docs/en/start/desktop/), which covers local files, desktop control, a terminal, screenshots, voice input, and the tray.
+- **Team collaboration**: once the Hull is deployed, members open the [Beehive](/docs/en/surfaces/frontend/) in a browser.
+- **Terminal and automation**: use the [Helm](/docs/en/start/cli/); it supports JSON output and cloud subcommands.
+- **Admin governance**: use the [Bridge](/docs/en/surfaces/web-admin/).
 
-### Individual users
+## Common misconceptions
 
-Install the [Honeycomb](/docs/en/start/desktop/) and work in your local AI workbench.
+- **The Bridge does not chat**: it is the governance and debugging console, and regular users never see it after signing in.
+- **The Beehive and the Bridge are not the same interface**: the Beehive faces users and the Bridge faces admins, with different routing and visual conventions.
+- **The Honeycomb has no "Device interconnection" settings panel**: the 12 settings categories do not include interconnection; the only interconnection the Honeycomb offers is in two places — the cloud workspace under "Working directory" in the sidebar, and the approval pop-up for remote commands. The interconnection entry in settings was built but never wired up, so it cannot be opened today.
+- **The Honeycomb cannot play voice (TTS)**: voice input works and TTS models can be configured in settings, but there is no playback. For spoken output, use the Beehive.
+- **The Helm cannot create scheduled tasks**: scheduling is explicitly switched off in the Helm, and channels, knowledge bases, long-term memory, and companions have no management interface either.
+- **The Bridge has no user-level scheduled tasks, channel management, long-term memory, or interconnection panel**: scheduled tasks and channels exist only as templates under "Preset agents"; long-term memory and the interconnection panel were never implemented.
 
-### Team members
+## Further Reading
 
-After the Hull is deployed, open the [Beehive](/docs/en/surfaces/frontend/) (the cloud AI workbench) in a browser.
-
-### Administrators
-
-Mainly use:
-- The [Bridge](/docs/en/surfaces/web-admin/) (governance — the management UI of the user and agent management platform)
-- The Beehive (daily work)
-
-## Common pitfalls
-
-- **Can I chat from the Bridge?** No. The Bridge is a governance backend, not for daily conversation.
-- **Can the Honeycomb be shared by many?** The Honeycomb is a local AI workbench for a single local user; for team collaboration deploy the Hull and use the Beehive.
-- **Do the Beehive and the Bridge share one UI?** No. Different responsibilities, separate interfaces.
-
-## Further reading
-
+- [Honeycomb Interface](/docs/en/surfaces/desktop-ui/)
 - [Beehive Interface](/docs/en/surfaces/frontend/)
-- [Honeycomb Installation](/docs/en/start/desktop/)
-- [Core Concepts](/docs/en/concepts/)
+- [Bridge Interface](/docs/en/surfaces/web-admin/)
+- [Using the Helm](/docs/en/start/cli/)
+- [Core concepts](/docs/en/concepts/)

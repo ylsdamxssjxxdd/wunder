@@ -1,137 +1,124 @@
 ---
 title: Data and Storage
-summary: wunder's persistence requires distinguishing between databases, workspaces, vector storage, and temporary directories.
-read_when:
-  - You need to deploy or migrate data
-  - You want to understand what PostgreSQL, SQLite, workspaces, and temp_dir each store
-source_docs:
-  - config/wunder-example.yaml
-  - docs/API文档.md
-  - docs/设计文档/01-系统总体设计.md
+summary: The database, workspace, vector store, and temporary directory — what each holds, what persists, and what gets cleaned up.
+updated_at: 2026-10-13
 ---
 
-# Data and Storage
+The four kinds of data live in different places: business data in the database, user files in the workspace, the retrieval index in the vector store, and upload and download transit in the temporary directory. Backups center on the database and the workspace; the temporary directory does not need to be kept.
 
-When deploying wunder, the most confusing aspect is often "what should be persisted versus what's just a temporary directory."
+## The Four Kinds of Data
 
-## First, Distinguish Four Categories of Data
+| Kind | Contents | Storage | Lifecycle |
+| --- | --- | --- | --- |
+| **Business data** | Users, sessions, configuration | Database | Persistent |
+| **File data** | User files, agent output | Workspace | Persistent |
+| **Vector data** | Knowledge-base retrieval | Vector store | Persistent |
+| **Temporary data** | Upload and download transit | Temporary directory | Short-lived |
 
-### Relational Primary Data
+The distinction is between what should persist and what is only temporary transit.
 
-This is the core business data.
+## Choosing a Database
 
-For example:
+### SQLite and PostgreSQL
 
-- Conversations
-- Users
-- Channels
-- Memories
-- User world messages
-- Admin configurations
+| | SQLite | PostgreSQL |
+| --- | --- | --- |
+| **Best for** | Honeycomb local mode | Hull multi-user mode |
+| **Character** | Lightweight, no extra installation | Production-grade, handles high concurrency |
+| **Deployment** | Created automatically | Needs a separate deployment |
 
-### Workspace Files
+- Personal use (Honeycomb desktop) → SQLite
+- Team use (Hull server) → PostgreSQL
 
-This is the persistent file space generated during user and agent operations.
+### What the Database Stores
 
-It is not the same category as the database.
+The database holds all the core business data:
 
-### Vector Knowledge Base
+- User accounts and organization information
+- Session records and message history
+- Agent configuration
+- Channel bindings and runtime logs
+- System configuration
 
-This is retrieval-related data and should not be conflated with regular conversation tables.
+### Backup
 
-### Temporary Directory
+- **PostgreSQL**: regular full backups plus log-based increments
+- **SQLite**: copy the database file regularly
+- Verify that backups can actually be restored
 
-This is a transit zone, not a long-term storage area.
+## Workspace
 
-## What `storage.backend` Determines
+The workspace is the single fixed cloud directory per user: one directory per user, partitioned by the server under its data root. Users cannot add, delete, replace, or bind a folder from their own machine.
 
-The configuration currently supports:
+### What It Stores
 
-- `auto`
-- `sqlite`
-- `postgres`
-
-It determines the primary business storage backend.
-
-## Typical Choices for Hull (server) and Honeycomb (desktop)
-
-Current best practice:
-
-- Hull (server): Prefer PostgreSQL
-- Honeycomb (desktop): Prefer SQLite
-
-This is not a matter of style, but determined by the runtime form:
-
-- Hull is oriented toward multi-user, multi-tenant, and sustained concurrency
-- Honeycomb is more single-machine, local, and lightweight persistence
-
-## What Goes in Vector Storage
-
-Vector knowledge base related capabilities use the configured primary storage backend:
-
-- PostgreSQL in Hull (server) deployments
-- SQLite in Honeycomb (desktop) and local deployments
-
-They primarily handle vector retrieval-side data such as document chunks and embedding vectors.
-
-So don't think of it as "a replacement for the primary business database."
-
-## What Goes in Workspaces
-
-The workspace is **one fixed cloud directory per user**: one directory per user, partitioned by the server under its data root. Users cannot add, delete, or replace it, and cannot bind a folder from their own machine.
-
-The workspace root is typically controlled by:
-
-- `workspace.root`
-
-It contains:
-
-- User-uploaded files
-- Files produced by the agent
+- Files the user uploads
+- Files the agent generates
 - Skill and knowledge files
 - Runtime snapshots and diagnostics
 
-Paths handed to models and API consumers are workspace-relative; server absolute paths are never exposed. Back up and migrate the workspace as a whole per user directory, keeping the directory structure unchanged.
+### Storage Notes
 
-## What is `temp_dir`
+- **Hull mode**: the workspace must be persisted, on NAS or network storage
+- **Honeycomb mode**: the workspace is a persistent directory on the user's own machine
+- Don't put the workspace in the temporary directory
+- Back up and migrate it as a whole per user directory, keeping the directory structure unchanged
 
-`/wunder/temp_dir/*` corresponds to the temporary directory.
+### Space Management
 
-It is suitable for:
+- Check workspace usage regularly; the interface shows a usage bar
+- Clean up unneeded files promptly
+- Consider an archiving strategy for large files
 
-- Upload transit
-- Download forwarding
-- External clients fetching temporary files
+## Vector Knowledge Base
 
-It is NOT suitable for:
+The vector store handles semantic retrieval for the knowledge base, so the agent can quickly find the relevant content.
 
-- Storing long-term business materials
-- Using as a formal workspace
+- The vector store is not a replacement for the primary database
+- It only handles retrieval
+- Back it up together with the primary database
 
-## Why Workspaces and temp_dir Must Be Separate
+## Temporary Directory
 
-Because their lifecycles are different:
+The temporary directory is the transit area for file transfer:
 
-- Workspaces emphasize sustained reference
-- temp_dir emphasizes temporary distribution and transit
+- Temporary holding during uploads
+- Forwarding during downloads
+- Intermediate files during document conversion
 
-If mixed together, troubleshooting and cleanup become painful.
+When managing it:
 
-## Typical Persistence Checklist
+- Don't keep long-term files there
+- Temporary files are cleaned up periodically
+- Configure an automatic cleanup policy in production
 
-After deployment, at minimum confirm:
+## Data Migration
 
-1. The primary database is your expected backend
-2. The workspace directory has persistent volumes
-3. The primary database is persisted because vector data is stored there
-4. `temp_dir` is not being used as long-term storage
+### From SQLite to PostgreSQL
+
+When a growing team needs to move from local mode to server mode:
+
+1. Export the SQLite data
+2. Configure the PostgreSQL connection
+3. Import the data into PostgreSQL
+4. Migrate the workspace files
+5. Verify data integrity
+
+### Workspace Migration
+
+1. Copy the whole workspace directory
+2. Keep the directory structure unchanged
+3. Update the path the configuration points to
+4. Verify the files are accessible
 
 ## Common Misconceptions
 
-- Thinking SQLite and PostgreSQL are just "performance differences"
-- Writing workspace outputs only to temp_dir
-- Forgetting to persist `/workspaces`
-- Thinking vector storage will automatically save all business data
+| Claim that gets things wrong | What is actually true |
+| --- | --- |
+| SQLite and PostgreSQL differ only in performance | They suit different runtime forms |
+| The temporary directory can hold long-term files | The temporary directory gets cleaned up |
+| The vector store holds all data | The vector store holds only retrieval data |
+| The workspace goes in the config directory | config is a runtime directory, not a data directory |
 
 ## Further Reading
 

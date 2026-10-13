@@ -1,27 +1,14 @@
 ---
 title: Apply Patch
-summary: The precise editing semantics, success result, and patch-specific failure codes of `apply_patch`.
-read_when:
-  - You need a small, reviewable, replayable, and precise edit
-source_docs:
-  - src/services/tools/apply_patch_tool.rs
-  - src/services/tools/tool_apply_patch.lark
-updated_at: 2026-05-14
+summary: Use patch text for small, reviewable, precise edits; `apply_patch` has been merged into `Text Edit`.
+updated_at: 2026-10-13
 ---
 
-# Apply Patch
+> **Merged**: `Apply Patch` (`apply_patch`) has been merged into `Text Edit` (`edit_file`) and is no longer exposed as a standalone tool; only the legacy invocation name is still recognized.
 
-> **Removed**: `Apply Patch` (`apply_patch`) has been merged into `Text Edit` (`edit_file`) and is no longer exposed as a standalone tool. Only the legacy invocation name is still resolved. This page is kept as a historical reference.
+The patch form suits precise edits with few files, few changes, and clear context, while keeping context so changes stay easy to review. Whole-file writes go to `write_file`; command execution goes to `execute_command`.
 
-`apply_patch` is currently the best tool for edits that involve a small number of files, a small number of hunks, and explicit surrounding context.
-
-Its role is narrow by design:
-
-- it is not a whole-file writing tool
-- it is not a command execution tool
-- it is a structured, incremental, and verifiable tool for precise edits
-
-## The input is grammar text, not JSON Patch
+## Writing a patch
 
 Minimum example:
 
@@ -34,33 +21,28 @@ Minimum example:
 *** End Patch
 ```
 
-From the model side, the only common inputs are:
+On the model side there are only two common arguments: `input` and `dry_run`.
 
-- `input`
-- `dry_run`
+## Recommended flow
 
-## Minimal Stable Workflow
-
-Follow this order for the highest success rate:
-
-1. Use `read_file` to fetch the target file or exact excerpt first
+1. Read the target file or the exact excerpt first
 2. Build only one very small patch at a time
-3. If you are unsure whether the context is stable, add `dry_run` first
-4. Only apply for real after the preview succeeds
-5. If the edit spans many distant regions or is close to a whole-file rewrite, switch to `write_file` or a Python script
+3. When unsure whether the context is stable, add `dry_run` to preview first
+4. Once the preview passes, drop `dry_run` and submit for real
+5. If the edit spans many scattered regions or is close to a whole-file rewrite, switch to `write_file` or a script
 
-## Hard rules for Update File hunks
+## Hard rules for Update File
 
-- After `@@`, every line must start with a prefix: space / `-` / `+`
-- A blank context line cannot be empty; it must be written as a line containing exactly one leading space
-- When a line changes, write it explicitly as `-old_line` followed by `+new_line`
-- Do not leave both the old and new versions as ordinary context lines
-- Never copy `read_file` display artifacts such as `>>> path`, `N: ` line numbers, or separators
-- Prefer 2-3 lines of raw current-file context around each change
+- After `@@`, every line must start with a prefix: a space, `-`, or `+`
+- A blank context line cannot be left empty; write it as a line with a single leading space
+- To change a line, write `-old line` followed by `+new line`
+- Do not write both the old and the new line as ordinary context lines
+- Do not copy the `>>> path` header, line numbers, or separators from read results
+- Around each change, keep 2-3 lines of the original context where possible
 
-The tool tolerates a few common input mistakes to improve first-call success: omitting `*** Begin Patch` when the payload starts with a file operation header, using unified diff headers such as `@@ -1,3 +1,3 @@`, writing `@@` inside `Add File`, or forgetting `+` prefixes in `Add File`. These are compatibility repairs; models should still prefer the smallest standard form.
+The tool tolerates a few common small deviations (for example a missing `*** Begin Patch`, a unified-diff header like `@@ -1,3 +1,3 @@`, a stray `@@` inside `Add File`, or missing `+` prefixes in `Add File`). That is only to raise first-call success; the smallest standard form is still preferred.
 
-## Minimum Add File Format
+## Adding a file
 
 ```text
 *** Begin Patch
@@ -70,141 +52,50 @@ The tool tolerates a few common input mistakes to improve first-call success: om
 *** End Patch
 ```
 
-## Success result
+## Preview with `dry_run`
 
-```json
-{
-  "ok": true,
-  "action": "apply_patch",
-  "state": "completed",
-  "summary": "Applied patch touching 2 files.",
-  "data": {
-    "changed_files": 2,
-    "added": 1,
-    "updated": 1,
-    "deleted": 0,
-    "moved": 0,
-    "hunks_applied": 3,
-    "files": [
-      {
-        "action": "update",
-        "path": "src/main.rs",
-        "to_path": null,
-        "hunks": 1
-      }
-    ],
-    "lsp": [
-      {
-        "path": "C:/.../src/main.rs",
-        "state": {
-          "enabled": true,
-          "matched": true,
-          "touched": true
-        }
-      }
-    ]
-  }
-}
-```
+`dry_run` shares the same staging, target-conflict checks, and context matching as a real run, but discards the staged result without writing to disk. Previewing first is safest when you are unsure of the format, when the edit location is sensitive, or when you are using the tool for the first time.
 
-## `dry_run`
+## Change previews
 
-`dry_run` performs the same staging, target-conflict checks, and hunk-context matching as a real application, then discards the staged result without writing to disk. Prefer it when:
+The result carries a change preview: at most 80 lines per file, and at most 320 lines and 24 KiB across a single call. Lines beyond the remaining budget are omitted whole, while the visible lines keep their exact content and original line numbers. The same limit applies to a preview run, affects display only, never shrinks the actual edit, and is not a backup of deleted content.
 
-- you just built the first patch from a fresh `read_file` result
-- the edit location is sensitive and you expect context matching risk
-- a weaker model is making its first attempt with this tool
+The model receives only the file summary and exact added/removed line counts, not the preview body.
 
-```json
-{
-  "ok": true,
-  "action": "apply_patch",
-  "state": "dry_run",
-  "summary": "Validated patch touching 2 files without applying it.",
-  "data": {
-    "dry_run": true,
-    "changed_files": 2,
-    "added": 1,
-    "updated": 1,
-    "deleted": 0,
-    "moved": 0,
-    "hunks_applied": 3,
-    "files": [ ... ],
-    "lsp": []
-  }
-}
-```
+## Diagnosing failures
 
-## Diff previews
+Patch failures usually fall into a few kinds: an empty patch, oversized input, too many file operations or hunks, a task failure during execution, and parsing failures, path escapes, target conflicts, or context mismatches. What the user sees is a single failure message plus a next-step hint.
 
-The UI and administrator result retains `files[].diff_blocks` as a preview: at most 80 lines per file, 320 lines per call, and 24 KiB of line text across the call. Lines that exceed the remaining byte budget are omitted whole, preserving the text and original line numbers of visible rows. `added_lines` and `deleted_lines` report exact totals at the result and file level; `diff_lines_omitted` reports omitted preview rows. These limits apply only to the preview, including `dry_run`, and never reduce the actual edit. The preview is not a backup of deleted content.
+Common failure causes:
 
-The model receives file summaries and exact change counts without the diff body. Existing tool logs retain the invocation and bounded result for tracing.
+- The patch body is wrapped in another layer of JSON or a Markdown code fence
+- Raw file content is pasted after `@@` without a prefix on every line
+- A blank context line is written as a truly empty line
+- Both the old and the new line are written as space-prefixed context lines
+- Line numbers or the `>>> path` header were copied from a read result
+- Too many scattered regions are changed in a single patch, beyond its scope
+- The `-old line` and `+new line` are effectively identical, so the patch succeeds yet changes nothing
 
-## Failure results
+## More specific corrective hints
 
-`apply_patch` still uses the unified failure envelope, but its error codes are more specific than those of general file tools:
+When context matching fails, the tool tries to say which kind of problem it is, not just that the context was not found:
 
-- `PATCH_LIMIT_INPUT_TOO_LARGE`
-- `PATCH_FORMAT_EMPTY_PATCH`
-- `PATCH_LIMIT_TOO_MANY_FILE_OPS`
-- `PATCH_LIMIT_TOO_MANY_CHUNKS`
-- `PATCH_RUNTIME_TASK_FAILED`
+- a hunk that has only context and no real change → an empty hunk
+- a later hunk reusing the same anchor set as an earlier empty hunk → a duplicate anchor, one `@@` block too many
+- a line being deleted and also kept as a context line
+- a patch that looks like it changes something but leaves the file unchanged → distinguish "context only" from "old and new lines are the same"
 
-It can also emit parsing errors, path-escape errors, target conflicts, and context-mismatch errors that are specific to patch application.
+When you see these hints: delete empty hunks that have no `+` / `-`; merge an insertion or replacement at the same spot back into one hunk; do not let two consecutive hunks reuse the same anchors; and for insertion-only hunks keep both the leading and trailing original lines where possible.
 
-## Common failure causes
+## Where it fits
 
-- wrapping the patch body in JSON or markdown again
-- pasting raw file lines after `@@` without line prefixes
-- leaving a blank context line truly empty
-- writing both the old and new versions as space-prefixed context lines
-- copying `read_file` display line numbers or the `>>> path` header
-- trying to edit too many distant regions in a single patch
-- making the `-old_line` and `+new_line` effectively identical, so the patch applies but changes nothing
+It suits small-to-medium precise editing: changing a few lines of code, adding a small function, adjusting a few independent files.
 
-## Typical corrective hints
-
-For some `PATCH_CONTEXT_NOT_FOUND` cases, the tool now tries to provide a concrete corrective hint instead of only saying that the context was not found. For example:
-
-- if the previous chunk contains only context and no real edit, the hint will call it an "empty hunk"
-- if the next chunk reuses the same anchor after that empty hunk, the hint will explain that the failure is caused by a duplicate anchor / extra `@@` block
-- if a context line is duplicated as a delete line, the hint will point out that the deleted line should not also appear as context
-- if the patch appears to do work but the file ends up unchanged, the hint will distinguish between "context-only" and "old/new lines are the same"
-
-When you see such hints, prefer these fixes first:
-
-- remove empty hunks that contain no `+` or `-`
-- merge one insertion or replacement back into a single hunk
-- do not let two consecutive hunks reuse the same anchor lines
-- for insertion-only hunks, keep both leading and trailing unchanged lines when possible instead of relying on one-sided anchoring
-
-## When to use it and when not to
-
-This version has relaxed some scope limits compared with the earliest implementation, so a single patch may cover more scattered regions. It is still best used for small-to-medium precise edits rather than whole-file rewrites.
-
-Good fit:
-
-- changing a few lines of code
-- adding a small helper function
-- adjusting a few independent files
-
-Poor fit:
-
-- rewriting a whole file
-- generating a large amount of documentation or assets
-- edits that require running a script before the final content is known
-- large refactors that touch many distant regions
-
-For those cases, consider:
-
-- whole-file replacement: `write_file`
-- command-first workflows: `execute_command`
+It does not suit whole-file rewrites, bulk generation of documents or assets, edits that need a script to run before the result is known, or large refactors across many scattered regions. For whole-file rewrites use `write_file`; to run a command first, use `execute_command`.
 
 ## Difference from `write_file`
 
-- `apply_patch`: preserves context and is easier to review
-- `write_file`: writes the final content directly
+- `apply_patch`: keeps context, easier to review
+- `write_file`: overwrites with the final content directly
 
-If you already know exactly what the entire new file should be, `write_file` is more direct.  
-If you only need a precise change, `apply_patch` is safer.
+When the whole file's final content is known, `write_file` is more direct; the patch form targets precise changes.

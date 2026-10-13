@@ -1,42 +1,36 @@
 ---
 title: 外部登录与免登嵌入
-summary: wunder 保留 `/wunder/auth/external/*` 作为外部系统嵌入和免登接入面。
-read_when:
-  - 用户要从外部系统直接进入 wunder
-  - 用户想分清 external login、launch 和 token_login 的用途
-source_docs:
-  - docs/API文档.md
-  - docs/设计文档/01-系统总体设计.md
-  - config/wunder-example.yaml
-  - src/api/auth.rs
+summary: 把外部系统里已登录的用户直接带进 wunder，免去再输一次密码；既能跳聊天页，也能跳到指定智能体。
 ---
 
 # 外部登录与免登嵌入
 
-wunder 当前保留了一整组外部接入接口：
+如果用户已经在别的系统里登录了，想让他们不重复输密码就进入 wunder，用这组接口：
 
 - `/wunder/auth/external/*`
 
-它们解决的是以下场景，而非普通管理员登录：
+它跟你自己的管理员后台登录是两回事。
 
-- 外部系统嵌入
-- 免登跳转
-- 对齐用户身份
-- 发放 wunder 自己的登录态
+## 适用范围
 
-## 不能直接复用普通登录的原因
+- 外部系统嵌入 wunder、免登跳转 → 用这里。
+- 要把外部身份对齐到 wunder、发一个 wunder 自己的登录态 → 用这里。
+- 普通的管理员登录或账号密码登录 → 不走这里。
 
-因为外部系统接入通常有这些特点：
+不同外部系统的接法不一样：有的适合先要一次性凭证，再换取登录态；有的适合直接跳转。所以 wunder 保留了几种入口，你不必强行套同一条流程。
 
-- 用户已经在外部系统里登录了
-- wunder 只负责承接会话，不适合再让用户输一遍密码
-- 登录后还要直接跳到指定聊天或嵌入页面
+## 最短链路：外部身份换 wunder 会话
 
-所以 wunder 专门保留了 external 接入面。
+最常用的是用令牌换登录态：
 
-## 常见接口
+1. 外部系统带来一个令牌和一个用户标识，也可以附带一个目标智能体名字；
+2. wunder 换回自己的访问令牌，同时返回绑定的智能体 ID；
+3. 如果带的名字正好命中当前用户能访问的已有智能体，会额外进入聚焦模式；
+4. 前端统一进嵌入页：默认进消息页，命中智能体就进聚焦页，左侧栏隐藏。
 
-当前代码里至少有这些入口：
+如果不想在外部系统里先生成令牌，还有一个更短的入口，直接把用户标识带进来即可。
+
+这条链路可用的入口：
 
 - `POST /wunder/auth/external/login`
 - `POST /wunder/auth/external/code`
@@ -45,76 +39,16 @@ wunder 当前保留了一整组外部接入接口：
 - `POST /wunder/auth/external/token_login`
 - `POST /wunder/auth/external/exchange`
 
-最常见场景先用 `token_login`。
+## 会跳到哪
 
-## `token_login` 的适用场景
+外链统一落在嵌入页里：默认消息页至少带“消息”分区，默认智能体会额外带“默认入口”，聚焦模式则带上命中的智能体 ID。要嵌智能体页也可以，同样不显示左侧栏。
 
-当前最典型的用法是：
+wunder 不是只把令牌递回来，它还会根据是否命中指定智能体，决定你最终停在哪一页。嵌入用户在自己的会话里同样只有一个智能体实例。
 
-- 外部系统拿 `token + user_id`，也可以附带 `agent_name`
-- wunder 直接换出自己的 `access_token`
-- 同时返回 `agent_id`
-- 当 `agent_name` 命中当前用户可访问的已有智能体时，额外返回 `focus_mode=true`
-- 前端统一进入嵌入页；在嵌入页内根据结果进入消息页或聚焦智能体页，并保持左侧栏隐藏
+## 关键设置与常见坑
 
-还支持一个更短的入口 `/login?user_id=<id>[&agent_name=<name>]`，适合不想在外部系统里先生成 JWT、直接把用户 ID 带进 wunder 的场景。
-
-也就是说，它更像“外部身份换 wunder 会话”的桥接接口。
-
-## launch / code 的存在原因
-
-因为不同外部系统的接法不一样。
-
-有些系统适合：
-
-- 先申请一次性 code
-- 再交换登录态
-
-有些系统适合：
-
-- 直接 launch
-- 直接跳目标页面
-
-wunder 保留这些入口，是为了兼容不同嵌入方式，而不是要求所有接入方都走一条固定流程。
-
-## 安全边界保障
-
-这条链路的关键配置是：
-
-- `security.external_auth_key`
-
-如果它未显式配置，会自动回退到 `security.api_key`，所以默认并不是“裸开”。
-
-## 接入后会跳到哪里
-
-当前最典型的落点分两类：
-
-- 未传 `agent_name`，或名称未命中已有智能体：`/app/embed/chat?section=messages&entry=default`
-- 命中已有智能体并进入聚焦模式：`/app/embed/chat?section=messages&agent_id=<agent_id>`
-- desktop 对应 `/desktop/embed/chat?section=messages&entry=default` 与 `/desktop/embed/chat?section=messages&agent_id=<agent_id>`
-
-也就是说，外链会统一落到 `/embed/chat` 壳子里；默认消息页至少会带 `section=messages`，默认智能体会额外带 `entry=default`，聚焦模式则会带命中的 `agent_id`。
-需要嵌入态智能体页时，也可以继续带 `section=agents&agent_id=<agent_id>` 进入，同样不会显示左侧栏。wunder 不是只返回 token，还会根据是否命中指定智能体决定最终主内容状态。嵌入用户在自己的会话里同样只有唯一一个智能体实例。
-
-## 这套链路的适用场景
-
-适合：
-
-- 统一门户嵌入 wunder
-- 外部系统单点进入指定智能体
-- 团队系统把用户身份带进 wunder
-
-不适合：
-
-- 替代管理员后台登录
-- 替代普通用户账号密码体系
-
-## 常见误区
-
-- 只配了外部 JWT，却没配 external_auth_key 回退
-- 只拿到 token，没有处理返回的 `agent_id`
-- 想改当前线程提示词，却忘了外链只会影响新线程
-- 把外部免登当成了普通开放接口
+- 这条链路有单独的密钥；没单独配时会回退到平台通用密钥，所以默认不是裸开的。
+- 常见坑：只配了外部令牌却忘了密钥回退；只拿到令牌没处理返回的智能体 ID；想改当前线程的提示词，但外链只影响新线程；把免登入口当成了公开接口。
 
 ## 延伸阅读
 

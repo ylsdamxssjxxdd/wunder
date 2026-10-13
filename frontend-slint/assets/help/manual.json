@@ -1,0 +1,640 @@
+{
+  "topics": [
+    {
+      "id": "welcome",
+      "title": "欢迎",
+      "keywords": ["开始", "欢迎", "手册", "帮助"],
+      "blocks": [
+        { "kind": "h1", "spans": [{ "text": "蜂窝使用手册" }] },
+        {
+          "kind": "lead",
+          "spans": [
+            { "text": "蜂窝是本地 AI 工作台：把目标交给智能体，它拆解任务、调用工具、交付结果。所有数据保存在本机，不经云端中转。" }
+          ]
+        },
+        {
+          "kind": "paragraph",
+          "spans": [
+            { "text": "这份手册介绍蜂窝的核心能力与日常操作。左侧" },
+            { "text": "目录", "bold": true },
+            { "text": "按主题组织内容，" },
+            { "text": "索引", "bold": true },
+            { "text": "按关键词检索，" },
+            { "text": "搜索", "bold": true },
+            { "text": "支持全文匹配。点击正文中的绿色链接可以跳转到相关主题。" }
+          ]
+        },
+        {
+          "kind": "cards",
+          "cards": [
+            { "target": "quickstart", "title": [{ "text": "快速上手" }], "summary": [{ "text": "新建线程、发送消息、切换模型，几分钟完成第一次对话。" }] },
+            { "target": "interface", "title": [{ "text": "界面导览" }], "summary": [{ "text": "认识侧栏、线程列表、工作过程与轨迹视图。" }] },
+            { "target": "threads", "title": [{ "text": "智能体线程" }], "summary": [{ "text": "了解用户轮次、模型轮次、工具调用与上下文压缩。" }] },
+            { "target": "settings", "title": [{ "text": "设置总览" }], "summary": [{ "text": "常规偏好、模型配置、云账号与设备互通的入口。" }] }
+          ]
+        },
+        {
+          "kind": "tip",
+          "spans": [
+            { "text": "提示：", "bold": true },
+            { "text": "在设置分类列表顶部的搜索框输入关键词，可以直接定位到对应分类。" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "quickstart",
+      "title": "快速上手",
+      "keywords": ["新建线程", "发送消息", "切换模型", "对话", "第一次"],
+      "blocks": [
+        { "kind": "h1", "spans": [{ "text": "快速上手" }] },
+        { "kind": "h2", "spans": [{ "text": "新建线程" }] },
+        {
+          "kind": "paragraph",
+          "spans": [
+            { "text": "点击侧栏的" },
+            { "text": "新建线程", "bold": true },
+            { "text": "按钮即可开始。每个线程都有独立的历史、工具调用记录与模型选择，互不干扰。" }
+          ]
+        },
+        { "kind": "h2", "spans": [{ "text": "发送消息" }] },
+        {
+          "kind": "list", "marker": "·", "spans": [{ "text": "在输入框输入内容，按发送键（默认 Enter，可在设置中改为 Ctrl+Enter）发送。" }]
+        },
+        {
+          "kind": "list", "marker": "·", "spans": [{ "text": "智能体会流式输出回复；调用工具的过程显示在回复上方的" }, { "text": "工作过程", "bold": true }, { "text": "折叠条中，点击可就地展开。" }]
+        },
+        {
+          "kind": "list", "marker": "·", "spans": [{ "text": "支持截图、录音等多模态输入，随消息一起发送给智能体。" }]
+        },
+        { "kind": "h2", "spans": [{ "text": "为线程选择模型" }] },
+        {
+          "kind": "paragraph",
+          "spans": [
+            { "text": "输入框旁的模型切换器只影响" },
+            { "text": "当前线程", "bold": true },
+            { "text": "，不会改动默认配置。线程建立后，系统提示词与模型即在该线程内保持稳定。" }
+          ]
+        },
+        {
+          "kind": "callout",
+          "spans": [
+            { "text": "所有对话数据保存在本地 SQLite 数据库中，离线也能查看历史线程。" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "interface",
+      "title": "界面导览",
+      "keywords": ["界面", "侧栏", "工作过程", "轨迹", "布局"],
+      "blocks": [
+        { "kind": "h1", "spans": [{ "text": "界面导览" }] },
+        { "kind": "h2", "spans": [{ "text": "主界面布局" }] },
+        {
+          "kind": "paragraph",
+          "spans": [
+            { "text": "主窗口分为三个区域：左侧" },
+            { "text": "侧栏", "bold": true },
+            { "text": "承载线程列表与主要入口；中间是" },
+            { "text": "对话区", "bold": true },
+            { "text": "，展示消息气泡与工作过程；底部是" },
+            { "text": "输入区", "bold": true },
+            { "text": "，提供模型切换与发送控制。" }
+          ]
+        },
+        { "kind": "h2", "spans": [{ "text": "工作过程" }] },
+        {
+          "kind": "paragraph",
+          "spans": [
+            { "text": "智能体执行任务时的工具调用、中间输出会实时进入" },
+            { "text": "工作过程", "bold": true },
+            { "text": "折叠条。每个工具条目右侧标注了上下文占用与执行耗时，例如 " },
+            { "text": "5.6k token 262ms", "code": true },
+            { "text": "。" }
+          ]
+        },
+        { "kind": "h2", "spans": [{ "text": "轨迹视图" }] },
+        {
+          "kind": "paragraph",
+          "spans": [
+            { "text": "轨迹视图按轮次完整回放一次任务的执行时间线，包括模型思考、工具调用与上下文压缩事件，适合排查复杂任务的执行过程。" }
+          ]
+        },
+        {
+          "kind": "task",
+          "spans": [
+            { "text": "建议：", "bold": true },
+            { "text": "日常使用看工作过程即可；需要完整复盘时再打开轨迹视图。" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "threads",
+      "title": "智能体线程",
+      "keywords": ["轮次", "工具调用", "上下文压缩", "子智能体", "线程"],
+      "blocks": [
+        { "kind": "h1", "spans": [{ "text": "智能体线程" }] },
+        { "kind": "h2", "spans": [{ "text": "用户轮次与模型轮次" }] },
+        {
+          "kind": "paragraph",
+          "spans": [
+            { "text": "用户每发送一条消息记 1 个" },
+            { "text": "用户轮次", "bold": true },
+            { "text": "；模型每执行一次动作（模型调用、工具调用或最终回复）记 1 个" },
+            { "text": "模型轮次", "bold": true },
+            { "text": "。一次任务可以包含多轮用户轮次与多轮模型轮次。" }
+          ]
+        },
+        { "kind": "h2", "spans": [{ "text": "工具调用" }] },
+        {
+          "kind": "paragraph",
+          "spans": [
+            { "text": "对大模型来说一切皆工具。智能体在执行任务时会按需调用工具，调用条目实时显示在工作过程中，并标注上下文占用与耗时。" }
+          ]
+        },
+        { "kind": "h2", "spans": [{ "text": "上下文压缩" }] },
+        {
+          "kind": "paragraph",
+          "spans": [
+            { "text": "当上下文接近上限时，系统会自动压缩历史内容并显示压缩卡片，压缩后上下文占用会明显下降，任务得以继续执行。" }
+          ]
+        },
+        { "kind": "h2", "spans": [{ "text": "子智能体" }] },
+        {
+          "kind": "paragraph",
+          "spans": [
+            { "text": "复杂任务会被拆解给子智能体执行。子智能体是主智能体临时创建的工作单元，执行过程以工具条目形式显示在工作过程中。" }
+          ]
+        },
+        {
+          "kind": "callout",
+          "spans": [
+            { "text": "线程的系统提示词在首次创建后保持冻结；长期记忆只在线程初始化时注入一次，保证模型提示词缓存的稳定性。" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "models",
+      "title": "模型",
+      "keywords": ["模型", "参数", "默认模型", "渠道", "多模态参数", "温度"],
+      "blocks": [
+        { "kind": "h1", "spans": [{ "text": "模型" }] },
+        {
+          "kind": "paragraph",
+          "spans": [
+            { "text": "在设置的" },
+            { "text": "模型配置", "bold": true },
+            { "text": "分类中添加和管理模型。每个模型可以单独配置密钥、服务地址与各类参数。" }
+          ]
+        },
+        { "kind": "h2", "spans": [{ "text": "常用参数" }] },
+        {
+          "kind": "table",
+          "rows": [
+            { "header": true, "cells": [[{ "text": "参数" }], [{ "text": "说明" }]] },
+            { "header": false, "cells": [[{ "text": "温度" }], [{ "text": "控制输出随机性，数值越高越发散。" }]] },
+            { "header": false, "cells": [[{ "text": "超时" }], [{ "text": "单次请求的最长等待时间。" }]] },
+            { "header": false, "cells": [[{ "text": "最大输出" }], [{ "text": "单轮回复的输出长度上限。" }]] },
+            { "header": false, "cells": [[{ "text": "最大上下文" }], [{ "text": "会话上下文的长度上限，超过后触发压缩。" }]] },
+            { "header": false, "cells": [[{ "text": "最大轮数" }], [{ "text": "单次任务允许的模型轮次上限。" }]] }
+          ]
+        },
+        { "kind": "h2", "spans": [{ "text": "多模态参数" }] },
+        {
+          "kind": "paragraph",
+          "spans": [
+            { "text": "同一个模型记录可以分别配置对话（LLM）、语音识别（ASR）、语音合成（TTS）、图像生成与视频生成的参数，按需填写即可。" }
+          ]
+        },
+        {
+          "kind": "tip",
+          "spans": [
+            { "text": "提示：", "bold": true },
+            { "text": "保存前可以使用「探测」按钮校验上下文长度或音色列表是否可用。" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "tools",
+      "title": "工具与技能",
+      "keywords": ["工具", "技能", "MCP", "知识库", "服务器"],
+      "blocks": [
+        { "kind": "h1", "spans": [{ "text": "工具与技能" }] },
+        {
+          "kind": "paragraph",
+          "spans": [
+            { "text": "设置中的" },
+            { "text": "工具与技能", "bold": true },
+            { "text": "页面集中管理智能体可以调用的能力，分为内置工具、MCP 工具、技能、知识库等分栏。" }
+          ]
+        },
+        { "kind": "h2", "spans": [{ "text": "分栏说明" }] },
+        {
+          "kind": "list", "marker": "·", "spans": [{ "text": "内置工具：随应用提供的本地能力，如文件读写、终端执行等。" }]
+        },
+        {
+          "kind": "list", "marker": "·", "spans": [{ "text": "MCP 工具：通过 MCP 服务器接入的外部工具。" }]
+        },
+        {
+          "kind": "list", "marker": "·", "spans": [{ "text": "技能：以资源形式组织的扩展能力包。" }]
+        },
+        {
+          "kind": "list", "marker": "·", "spans": [{ "text": "知识库：为智能体提供长期知识检索能力。" }]
+        },
+        {
+          "kind": "callout",
+          "spans": [
+            { "text": "本地能力以最小权限原则运行：系统能力调用必须显式声明，不会默默暴露给远端。" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cron",
+      "title": "定时任务",
+      "keywords": ["定时", "计划", "周期", "cron"],
+      "blocks": [
+        { "kind": "h1", "spans": [{ "text": "定时任务" }] },
+        {
+          "kind": "paragraph",
+          "spans": [
+            { "text": "定时任务让智能体按计划自动执行。在设置的" },
+            { "text": "定时任务", "bold": true },
+            { "text": "分类中创建任务，指定执行周期与目标描述，到点后智能体会按该计划执行。" }
+          ]
+        },
+        {
+          "kind": "paragraph",
+          "spans": [
+            { "text": "每次执行的记录会保留在任务详情中，可以查看最近运行结果与产出。" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "workspace",
+      "title": "文件与工作区",
+      "keywords": ["文件", "工作区", "本地", "存储", "导出"],
+      "blocks": [
+        { "kind": "h1", "spans": [{ "text": "文件与工作区" }] },
+        {
+          "kind": "paragraph",
+          "spans": [
+            { "text": "蜂窝使用本地工作区目录存放文件资产。设置中的" },
+            { "text": "工作区目录", "bold": true },
+            { "text": "指定根路径，智能体产出的文件、导出的内容都保存在本地。" }
+          ]
+        },
+        {
+          "kind": "paragraph",
+          "spans": [
+            { "text": "会话中的文件、截图与生成内容可以通过文件面板查看和管理，支持拖拽与系统文件管理器互操作。" }
+          ]
+        },
+        {
+          "kind": "task",
+          "spans": [
+            { "text": "建议：", "bold": true },
+            { "text": "把工作区放在空间充足的磁盘分区，定期备份重要产出。" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "multimodal",
+      "title": "多模态输入",
+      "keywords": ["截图", "录音", "语音识别", "语音合成", "图像生成", "视频生成"],
+      "blocks": [
+        { "kind": "h1", "spans": [{ "text": "多模态输入" }] },
+        { "kind": "h2", "spans": [{ "text": "截图与图片" }] },
+        {
+          "kind": "paragraph",
+          "spans": [
+            { "text": "通过输入区的截图入口可以截取屏幕内容，也可以直接粘贴或拖拽图片到输入框。图片会随消息发送给智能体，用于识别与理解。" }
+          ]
+        },
+        { "kind": "h2", "spans": [{ "text": "录音与语音识别" }] },
+        {
+          "kind": "paragraph",
+          "spans": [
+            { "text": "按住输入区的录音按钮开始录音，松开后自动识别为文字填入输入框，确认后即可发送。语音识别使用" },
+            { "text": "模型配置", "href": "models" },
+            { "text": "里设置的服务。" }
+          ]
+        },
+        { "kind": "h2", "spans": [{ "text": "语音合成与生成能力" }] },
+        {
+          "kind": "paragraph",
+          "spans": [
+            { "text": "配置 TTS 音色后，智能体的回复可以朗读播出；图像与视频生成参数配置后，智能体可以在任务中调用相应能力产出内容。" }
+          ]
+        },
+        {
+          "kind": "tip",
+          "spans": [
+            { "text": "提示：", "bold": true },
+            { "text": "多模态能力依赖对应参数是否填写，未配置的项目不会出现在输入区。" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "memory",
+      "title": "记忆",
+      "keywords": ["记忆", "长期记忆", "提示词", "注入"],
+      "blocks": [
+        { "kind": "h1", "spans": [{ "text": "记忆" }] },
+        {
+          "kind": "paragraph",
+          "spans": [
+            { "text": "长期记忆为智能体提供跨会话的背景信息。记忆条目的管理入口在设置中，可以查看、编辑与清理已积累的内容。" }
+          ]
+        },
+        { "kind": "h2", "spans": [{ "text": "注入时机" }] },
+        {
+          "kind": "paragraph",
+          "spans": [
+            { "text": "记忆只在线程初始化时注入一次，随后该线程的系统提示词保持冻结。这样同一线程的多轮请求可以命中模型服务的提示词缓存，响应更快、费用更低。" }
+          ]
+        },
+        {
+          "kind": "callout",
+          "spans": [
+            { "text": "因此新建线程后追加的记忆不会影响已存在的线程；需要使用新记忆时，开启一个新线程即可。" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "interlink",
+      "title": "设备互通",
+      "keywords": ["设备互通", "互传", "局域网", "云端中转"],
+      "blocks": [
+        { "kind": "h1", "spans": [{ "text": "设备互通" }] },
+        {
+          "kind": "paragraph",
+          "spans": [
+            { "text": "设备互通让蜂窝与其他设备之间互传内容。登录" },
+            { "text": "云账号", "bold": true },
+            { "text": "后，可以在设置中把当前设备接入互通网络，跨设备发送文字与文件。" }
+          ]
+        },
+        { "kind": "h2", "spans": [{ "text": "连接方式" }] },
+        {
+          "kind": "list", "marker": "·", "spans": [{ "text": "局域网发现：同一网络内的设备可以直接互传，不经外部服务。" }]
+        },
+        {
+          "kind": "list", "marker": "·", "spans": [{ "text": "云端中转：不同网络之间通过云账号中转，适合远程场景。" }]
+        },
+        {
+          "kind": "callout",
+          "spans": [
+            { "text": "互存认证基于登录身份，本地能力调用遵循最小权限原则，不会把系统能力暴露给远端设备。" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "settings",
+      "title": "设置总览",
+      "keywords": ["设置", "语言", "主题", "云账号", "偏好"],
+      "blocks": [
+        { "kind": "h1", "spans": [{ "text": "设置总览" }] },
+        {
+          "kind": "paragraph",
+          "spans": [{ "text": "设置页面按分类组织，顶部搜索框可以按关键词快速定位分类。" }]
+        },
+        {
+          "kind": "table",
+          "rows": [
+            { "header": true, "cells": [[{ "text": "分类" }], [{ "text": "内容" }]] },
+            { "header": false, "cells": [[{ "text": "常规" }], [{ "text": "工作区目录、语言、Python/Git/rg 路径与局域网发现。" }]] },
+            { "header": false, "cells": [[{ "text": "云账号" }], [{ "text": "登录云端账号、查看用量与同步开关。" }]] },
+            { "header": false, "cells": [[{ "text": "模型配置" }], [{ "text": "模型接入与参数管理。" }]] },
+            { "header": false, "cells": [[{ "text": "工具与技能" }], [{ "text": "工具、MCP、技能与知识库管理。" }]] },
+            { "header": false, "cells": [[{ "text": "定时任务" }], [{ "text": "计划任务与执行记录。" }]] },
+            { "header": false, "cells": [[{ "text": "偏好" }], [{ "text": "主题、字号、发送键等界面偏好。" }]] },
+            { "header": false, "cells": [[{ "text": "设备互通" }], [{ "text": "与其他设备互传内容、云端中转配置。" }]] },
+            { "header": false, "cells": [[{ "text": "帮助" }], [{ "text": "本帮助文档与诊断导出。" }]] }
+          ]
+        },
+        {
+          "kind": "paragraph",
+          "spans": [
+            { "text": "语言、主题与字号修改后立即生效，无需重启。" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "privacy",
+      "title": "数据与隐私",
+      "keywords": ["数据", "隐私", "离线", "SQLite", "备份", "存储位置"],
+      "blocks": [
+        { "kind": "h1", "spans": [{ "text": "数据与隐私" }] },
+        { "kind": "h2", "spans": [{ "text": "数据都在本机" }] },
+        {
+          "kind": "list", "marker": "·", "spans": [{ "text": "对话历史、工具记录与配置保存在本地 SQLite 数据库中。" }]
+        },
+        {
+          "kind": "list", "marker": "·", "spans": [{ "text": "文件资产保存在本地工作区目录，见「文件与工作区」。" }]
+        },
+        {
+          "kind": "list", "marker": "·", "spans": [{ "text": "离线状态下可以正常查看历史线程；只有发起对话与调用在线服务时才需要网络。" }]
+        },
+        {
+          "kind": "list", "marker": "·", "spans": [{ "text": "模型请求直连你所配置的服务地址，蜂窝不经手、不存储第三方中转。" }]
+        },
+        { "kind": "h2", "spans": [{ "text": "备份建议" }] },
+        {
+          "kind": "paragraph",
+          "spans": [
+            { "text": "需要备份时，同时备份数据库文件与工作区目录即可完整保留会话与文件资产。更换设备迁移时按同样方式复制。" }
+          ]
+        },
+        {
+          "kind": "task",
+          "spans": [
+            { "text": "说明：", "bold": true },
+            { "text": "导出诊断信息（见「诊断与排查」）只包含与本机设置和能力计数相关的密钥无关内容，用于排查问题。" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "troubleshooting",
+      "title": "诊断与排查",
+      "keywords": ["诊断", "排查", "常见问题", "故障", "FAQ"],
+      "blocks": [
+        { "kind": "h1", "spans": [{ "text": "诊断与排查" }] },
+        { "kind": "h2", "spans": [{ "text": "导出诊断信息" }] },
+        {
+          "kind": "paragraph",
+          "spans": [
+            { "text": "遇到问题时，点击设置「帮助」分类下方的" },
+            { "text": "导出诊断信息", "bold": true },
+            { "text": "，应用会把密钥无关的本机设置与能力计数写入诊断文件，便于排查问题。导出完成后会弹窗提示文件位置。" }
+          ]
+        },
+        { "kind": "h2", "spans": [{ "text": "常见问题" }] },
+        { "kind": "h2", "spans": [{ "text": "模型连接失败" }] },
+        {
+          "kind": "paragraph",
+          "spans": [
+            { "text": "检查模型配置中的密钥与服务地址是否正确，确认本机可以访问该服务。使用「探测」按钮可以快速定位是网络问题还是参数问题。" }
+          ]
+        },
+        { "kind": "h2", "spans": [{ "text": "回复中断或不完整" }] },
+        {
+          "kind": "paragraph",
+          "spans": [
+            { "text": "多为请求超时或网络波动。适当调大模型配置中的超时时间后重试；已产出的部分内容会保留在线程中。" }
+          ]
+        },
+        { "kind": "h2", "spans": [{ "text": "工具执行失败" }] },
+        {
+          "kind": "paragraph",
+          "spans": [
+            { "text": "展开消息上方的工作过程折叠条，查看失败条目的输出与耗时，多数情况能直接看出原因（路径不存在、权限不足、服务未启动等）。" }
+          ]
+        },
+        { "kind": "h2", "spans": [{ "text": "频繁触发上下文压缩" }] },
+        {
+          "kind": "paragraph",
+          "spans": [
+            { "text": "说明任务上下文较大。可以调大该模型的「最大上下文」参数，或把长任务拆分为多个线程分别处理。" }
+          ]
+        },
+        {
+          "kind": "tip",
+          "spans": [
+            { "text": "提示：", "bold": true },
+            { "text": "排查执行类问题时，轨迹视图能按轮次完整回放每一步。" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "shortcuts",
+      "title": "快捷键",
+      "keywords": ["快捷键", "键盘", "按键"],
+      "blocks": [
+        { "kind": "h1", "spans": [{ "text": "快捷键" }] },
+        {
+          "kind": "paragraph",
+          "spans": [{ "text": "帮助文档浏览器支持以下键盘快捷键：" }]
+        },
+        {
+          "kind": "table",
+          "rows": [
+            { "header": true, "cells": [[{ "text": "按键" }], [{ "text": "作用" }]] },
+            { "header": false, "cells": [[{ "text": "F1", "kbd": true }], [{ "text": "回到帮助主页" }]] },
+            { "header": false, "cells": [[{ "text": "Ctrl+F", "kbd": true }], [{ "text": "页内查找" }]] },
+            { "header": false, "cells": [[{ "text": "Ctrl+C", "kbd": true }], [{ "text": "复制选中内容（未选中时复制整页文本）" }]] },
+            { "header": false, "cells": [[{ "text": "Ctrl+A", "kbd": true }], [{ "text": "全选当前页文本" }]] },
+            { "header": false, "cells": [[{ "text": "Alt+←", "kbd": true }], [{ "text": "后退到上一个主题" }]] },
+            { "header": false, "cells": [[{ "text": "Alt+→", "kbd": true }], [{ "text": "前进到下一个主题" }]] },
+            { "header": false, "cells": [[{ "text": "↑ / ↓", "kbd": true }], [{ "text": "上下滚动文档" }]] },
+            { "header": false, "cells": [[{ "text": "Page Up / Page Down", "kbd": true }], [{ "text": "按页滚动" }]] },
+            { "header": false, "cells": [[{ "text": "Home / End", "kbd": true }], [{ "text": "跳到页首 / 页尾" }]] }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "glossary",
+      "title": "术语表",
+      "keywords": ["术语", "名词", "定义", "概念"],
+      "blocks": [
+        { "kind": "h1", "spans": [{ "text": "术语表" }] },
+        {
+          "kind": "table",
+          "rows": [
+            { "header": true, "cells": [[{ "text": "术语" }], [{ "text": "含义" }]] },
+            { "header": false, "cells": [[{ "text": "蜂窝" }], [{ "text": "本地 AI 工作台，本手册描述的应用。" }]] },
+            { "header": false, "cells": [[{ "text": "智能体线程" }], [{ "text": "一次完整对话的容器，拥有独立的历史、工具记录与模型选择。" }]] },
+            { "header": false, "cells": [[{ "text": "用户轮次" }], [{ "text": "用户每发送一条消息记 1 轮。" }]] },
+            { "header": false, "cells": [[{ "text": "模型轮次" }], [{ "text": "模型每执行一次动作（调用、工具、回复）记 1 轮。" }]] },
+            { "header": false, "cells": [[{ "text": "工作过程" }], [{ "text": "消息上方实时展示工具调用与中间输出的折叠条。" }]] },
+            { "header": false, "cells": [[{ "text": "轨迹视图" }], [{ "text": "按轮次回放任务执行时间线的完整视图。" }]] },
+            { "header": false, "cells": [[{ "text": "渠道" }], [{ "text": "模型服务的接入配置，含地址、密钥与参数。" }]] },
+            { "header": false, "cells": [[{ "text": "MCP" }], [{ "text": "接入外部工具的标准协议，工具经 MCP 服务器提供。" }]] },
+            { "header": false, "cells": [[{ "text": "技能" }], [{ "text": "以资源形式组织的扩展能力包。" }]] },
+            { "header": false, "cells": [[{ "text": "知识库" }], [{ "text": "为智能体提供长期知识检索的能力。" }]] },
+            { "header": false, "cells": [[{ "text": "工作区" }], [{ "text": "本地存放文件资产的根目录。" }]] },
+            { "header": false, "cells": [[{ "text": "上下文压缩" }], [{ "text": "上下文接近上限时自动压缩历史内容以继续任务。" }]] }
+          ]
+        }
+      ]
+    }
+  ],
+  "index": [
+    { "keyword": "欢迎", "topic": 0 },
+    { "keyword": "手册", "topic": 0 },
+    { "keyword": "新建线程", "topic": 1 },
+    { "keyword": "发送消息", "topic": 1 },
+    { "keyword": "切换模型", "topic": 1 },
+    { "keyword": "第一次对话", "topic": 1 },
+    { "keyword": "界面", "topic": 2 },
+    { "keyword": "侧栏", "topic": 2 },
+    { "keyword": "布局", "topic": 2 },
+    { "keyword": "工作过程", "topic": 2 },
+    { "keyword": "轨迹", "topic": 2 },
+    { "keyword": "轮次", "topic": 3 },
+    { "keyword": "工具调用", "topic": 3 },
+    { "keyword": "上下文压缩", "topic": 3 },
+    { "keyword": "子智能体", "topic": 3 },
+    { "keyword": "线程", "topic": 3 },
+    { "keyword": "模型", "topic": 4 },
+    { "keyword": "参数", "topic": 4 },
+    { "keyword": "温度", "topic": 4 },
+    { "keyword": "默认模型", "topic": 1 },
+    { "keyword": "渠道", "topic": 4 },
+    { "keyword": "工具", "topic": 5 },
+    { "keyword": "技能", "topic": 5 },
+    { "keyword": "MCP", "topic": 5 },
+    { "keyword": "知识库", "topic": 5 },
+    { "keyword": "定时任务", "topic": 6 },
+    { "keyword": "计划任务", "topic": 6 },
+    { "keyword": "文件", "topic": 7 },
+    { "keyword": "工作区", "topic": 7 },
+    { "keyword": "导出文件", "topic": 7 },
+    { "keyword": "截图", "topic": 8 },
+    { "keyword": "录音", "topic": 8 },
+    { "keyword": "语音识别", "topic": 8 },
+    { "keyword": "语音合成", "topic": 8 },
+    { "keyword": "图像生成", "topic": 8 },
+    { "keyword": "视频生成", "topic": 8 },
+    { "keyword": "多模态", "topic": 8 },
+    { "keyword": "记忆", "topic": 9 },
+    { "keyword": "长期记忆", "topic": 9 },
+    { "keyword": "提示词缓存", "topic": 9 },
+    { "keyword": "设备互通", "topic": 10 },
+    { "keyword": "互传", "topic": 10 },
+    { "keyword": "局域网", "topic": 10 },
+    { "keyword": "云端中转", "topic": 10 },
+    { "keyword": "设置", "topic": 11 },
+    { "keyword": "语言", "topic": 11 },
+    { "keyword": "主题", "topic": 11 },
+    { "keyword": "偏好", "topic": 11 },
+    { "keyword": "云账号", "topic": 10 },
+    { "keyword": "数据", "topic": 12 },
+    { "keyword": "隐私", "topic": 12 },
+    { "keyword": "离线", "topic": 12 },
+    { "keyword": "备份", "topic": 12 },
+    { "keyword": "存储位置", "topic": 12 },
+    { "keyword": "诊断", "topic": 13 },
+    { "keyword": "排查", "topic": 13 },
+    { "keyword": "常见问题", "topic": 13 },
+    { "keyword": "故障", "topic": 13 },
+    { "keyword": "快捷键", "topic": 14 },
+    { "keyword": "键盘", "topic": 14 },
+    { "keyword": "术语", "topic": 15 },
+    { "keyword": "名词解释", "topic": 15 }
+  ],
+  "image_sizes": []
+}

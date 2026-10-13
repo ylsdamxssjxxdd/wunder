@@ -1,115 +1,138 @@
 ---
-title: Prompt Templates
-summary: wunder splits system prompts into template packs and segment files. Administrators manage system template packs. The user side currently provides two built-in template packs (Chinese and English) by default and supports switching or copying them into custom packs.
-read_when:
-  - You want to modify system prompt template packs
-  - You want to understand the relationship between `default-zh`, `default-en`, and custom packs on the user side
-  - You are troubleshooting why switching template packs takes effect for new threads but not existing ones
-source_docs:
-  - docs/API文档.md
-  - docs/设计文档/01-系统总体设计.md
-  - src/api/admin_prompt_templates.rs
-  - src/api/user_prompt_templates.rs
+title: Prompts and Personalization
+summary: Customize the agent's role and answer style — pick a built-in template, or write your own.
+updated_at: 2026-10-13
 ---
 
-# Prompt Templates
+A prompt template sets the agent's role and answer style. Pick a built-in one, or write your own, and the agent works to that agreement.
 
-This page only covers how template packs are organized, how fallback works, and when changes take effect. It does not re-explain "why prompts are needed."
+## Prompt templates
 
-## Current Segments
+A prompt template is the agent's handbook. It defines:
 
-System prompt templates are organized into these segments:
+- The role
+- How to think and answer
+- The working principles and limits
+- How to use tools and skills
 
-- `role`
-- `engineering`
-- `tools_protocol`
-- `skills_protocol`
-- `memory`
-- `extra`
+Switch to another template and the agent's style and emphasis change with it.
 
-You manage these segment files, not one monolithic hardcoded prompt.
+## Built-in template packs
 
-## Admin-Side Template Packs
+wunder ships two built-in packs.
 
-Endpoints:
+### Chinese pack (default-zh)
 
-- `GET /wunder/admin/prompt_templates`
-- `POST /wunder/admin/prompt_templates/active`
-- `GET/PUT /wunder/admin/prompt_templates/file`
-- `POST /wunder/admin/prompt_templates/packs`
-- `DELETE /wunder/admin/prompt_templates/packs/{pack_id}`
+- Thinks and answers in Chinese
+- Fits Chinese-language conversations
+- The default Chinese assistant style
 
-Constraints:
+### English pack (default-en)
 
-- The `default` pack is read-only
-- Non-`default` packs are stored in `./config/data/prompt_templates`
-- After an admin switches the active pack, new system template reads will prioritize the current active pack, falling back to the system `default` for any missing segments
+- Thinks and answers in English
+- Fits English-language conversations
+- The default English assistant style
 
-## User-Side Template Packs
+Pick the pack that matches the language the user mostly works in.
 
-Endpoints:
+## What a pack is made of
 
-- `GET /wunder/prompt_templates`
-- `POST /wunder/prompt_templates/active`
-- `GET/PUT /wunder/prompt_templates/file`
-- `POST /wunder/prompt_templates/packs`
-- `DELETE /wunder/prompt_templates/packs/{pack_id}`
+Each pack is assembled from several segments that together form the agent's complete handbook:
 
-The user side currently provides two read-only built-in template packs:
+| Segment | Purpose |
+|------|------|
+| Role | Defines who the agent is and what role it plays |
+| Engineering principles | Defines how it works and thinks |
+| Tool protocol | Defines how it uses tools |
+| Skill protocol | Defines how it invokes skills |
+| Memory | Defines how it uses long-term memory |
+| Extra notes | Additional instructions |
 
-- `default-zh`: reads Chinese system templates
-- `default-en`: reads English system templates
+## Switching packs
 
-Notes:
+### Switching in the interface
 
-- On first use, or when a historical setting still uses the compatibility alias `default`, the system automatically resolves to `default-zh` or `default-en` based on the current system language
-- The user interface displays `default-zh` and `default-en` by default, and no longer shows `default` as a primary option
-- After a user manually switches to `default-zh` or `default-en`, the selected language template is fixed and will no longer drift with system language changes
-- Both built-in packs are read-only; they essentially mirror the currently active admin system template pack but with different language locks
-- User-created custom packs only affect new threads for that user going forward
+1. Go to Settings at the bottom of the left sidebar → Agent
+2. Find the prompt template option
+3. Choose the pack you want
+4. Save
 
-## User-Side Fallback Chain
+### When it takes effect
 
-You can understand the resolution order as follows:
+- **New conversations**: ones created after the switch use the new template
+- **Existing conversations**: unchanged, keeping the template from when they were created
 
-1. Look up the user's currently selected pack
-2. If it is a custom pack, read the language-specific segments from the custom pack first
-3. When the custom pack is missing segments, fall back to the current admin active system template pack
-4. When the system template pack is also missing segments, fall back to the system `default`
+## Creating a custom template
 
-For built-in packs:
+### How to create one
 
-- `default-zh` only reads from the Chinese template chain
-- `default-en` only reads from the English template chain
+1. In the template settings page, click New template pack
+2. Pick a template to copy as the base (starting from a built-in one is recommended)
+3. Edit the content of each segment
+4. Save, and it is ready to use
 
-So even if a user changes the interface language, as long as they have explicitly selected the Chinese or English pack, the runtime system prompt will continue using the language version bound to that pack.
+### Editing tips
 
-## Creating a Custom Pack
+- **Role segment**: state the role, such as "coding assistant" or "data analysis expert"
+- **Engineering principles**: set the answer style (concise or detailed, formal or casual)
+- **Tool protocol**: usually leave it alone
+- **Extra notes**: put your own specific requirements here
 
-When a user creates a new template pack, it typically "copies the currently selected template pack":
+### Example: a coding assistant template
 
-- If the current selection is `default-zh` or `default-en`, an editable copy is created from the current system template content
-- If the current selection is a custom pack, the copy is derived from that custom pack
+The role segment might read:
 
-This allows users to select a Chinese or English built-in pack first, then quickly derive their own styled pack.
+```
+You are a professional coding assistant, skilled in several programming languages and software engineering practices.
+Your answers should:
+- show clear, complete code examples
+- explain in a concise, easy-to-follow way
+- follow best practices
+- pay attention to security
+```
 
-## When Changes Take Effect
+## How templates layer
 
-The rules for when template updates take effect are straightforward:
+The agent's final prompt is combined from several layers:
 
-- New threads will build their system prompt using the latest templates
-- Existing threads whose system prompt has already been initialized and frozen will not be rewritten
+1. **System template**: the global base set by an administrator
+2. **User template**: the pack the user picked
+3. **Agent settings**: extra configuration for that particular agent
 
-This is consistent with the design of freezing system prompts at thread initialization time, and is not an anomaly.
+An upper layer overrides a lower one, and anything missing falls back to the lower layer.
 
-## Implementation Recommendations
+## Common situations
 
-- To modify built-in default content, first copy from `default-zh` or `default-en` into a custom pack, then edit that
-- To lock in a Chinese or English style, simply switch to the corresponding built-in pack
-- To change the default style for all users on the user side, have the admin switch the system active template pack first
+### Why an existing conversation keeps its template
 
-## Further Reading
+A conversation fixes its prompt when it is created and then keeps it frozen, so behavior stays consistent and does not shift partway through.
 
-- [Prompts & Skills](/docs/en/concepts/prompt-and-skills/)
-- [Chat Sessions](/docs/en/integration/chat-sessions/)
-- [Configuration Reference](/docs/en/reference/config/)
+### Changing one conversation's prompt
+
+An existing conversation's prompt cannot be edited directly. Start a new conversation to use the new template, or copy the content you want to keep into a new conversation and continue there.
+
+### Different agents can use different templates
+
+Each agent configures its template independently.
+
+### Longer is not always better
+
+A template should state the key requirements clearly and avoid redundancy and contradiction; a long or self-contradictory one runs counter to that.
+
+### A Chinese template can still answer in English
+
+The template only sets a default tendency; ask for English in the conversation and the agent will follow.
+
+## Usage notes
+
+- Start from a built-in template, then customize from there
+- Create a separate pack for each scenario if you like
+- State the key requirements clearly and keep it short
+- Do not put contradictory requirements in the same template
+- Review it occasionally and drop entries you no longer need
+
+## Further reading
+
+- [Feature and Capability Quick Reference](/docs/en/reference/api-index/) — where agent management lives
+- [Prompts and Skills](/docs/en/concepts/prompt-and-skills/)
+- [Long-term Memory](/docs/en/concepts/memory/)

@@ -1,8 +1,6 @@
 # 工具、技能、MCP 与外部能力
 
-这页是工程执行手册，回答四个问题：**工具在哪注册、怎么启用、怎么加新工具、结果怎么读**。出问题时的排障入口在最后两节。
-
-不是设计文档（边界与理由见 `docs/设计文档/05-工具、技能与 MCP 系统设计.md`），不是用户教程（操作路径见 `docs/使用说明书/`）。
+不是设计文档（边界与理由见 `docs/设计文档/05-工具、技能与 MCP 系统设计.md`），不是用户教程（操作路径见 `docs/使用说明书/`）。§11 是排障入口。
 
 约定：所有路径为仓库相对路径；行号为写作时实测位置，代码变动后以就近符号为准。
 
@@ -166,7 +164,7 @@ services/tools/dispatch.rs:27  真正分发到实现
 
 ### 5.4 结果契约
 
-工具实现返回统一收敛为 `ToolResultPayload`（`orchestrator/tool_result_payload.rs:4`），业务失败识别在 `result_normalizer.rs`。
+工具实现的返回值统一收敛为 `ToolResultPayload`（`orchestrator/tool_result_payload.rs:4`），业务失败识别在 `result_normalizer.rs`。
 
 统一返回骨架为 `ok` / `action` / `state` / `summary` / `data` 五段，失败时带 `error_meta`（错误码、可重试性、提示）。写新工具时：`summary` 给人和模型一眼读懂，`data` 只放结构化事实，不要塞长文本日志。`ToolResultPayload.timestamp` 当前未被使用（`tool_result_payload.rs:8`，仓内已标 dead code），不要依赖。
 

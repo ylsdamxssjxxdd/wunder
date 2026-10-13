@@ -1,180 +1,73 @@
 ---
 title: Subagent Control
-summary: The actions, waiting semantics, state semantics, and return structure of `subagent_control`.
-read_when:
-  - You need to spawn temporary child agents inside the current session
-source_docs:
-  - src/services/tools/subagent_control.rs
-updated_at: 2026-04-10
+summary: Letting the main agent hand a self-contained piece of work to subagents, then track, wait on, guide, and reclaim them.
+updated_at: 2026-10-13
 ---
 
-# Subagent Control
+The tool is `subagent_control`.
 
-`subagent_control` is now a clear multi-action tool rather than the older simple "spawn a child thread" interface.
+A subagent is a unit of work the main agent creates temporarily: it dispatches one task thread and reclaims it once the task ends. This is currently the only form of collaboration.
 
-## When it fits
+## When to use it
 
-Good fit:
+- A piece of work can be finished on its own and only a summary needs to come back: dispatch one subagent.
+- One goal needs several parallel attempts or mutual review: dispatch a batch at once.
+- Work already dispatched needs its status checked, its result waited on, correction, interruption, or shut-down.
+- A subagent itself needs to report back to its parent thread (only a subagent can do this).
 
-- temporarily spawning child agents inside the current main-agent session
-- inspecting, waiting for, interrupting, closing, or resuming those child runs
-- performing one or more rounds of delegated collaboration
+All of these actions hang off the current thread. Creating, switching, and archiving threads themselves is a separate matter, handled by [Thread Control](/docs/en/tools/thread-control/).
 
-Not a fit:
+## How to use it
 
-- Users own exactly one agent instance, so there is no pool of existing agents to dispatch between; spawn a subagent when work can run in parallel instead.
+Each call specifies one action:
 
-## Main actions
+- `list`: list the child threads under a parent thread.
+- `history`: read the message history of a child thread.
+- `send`: append a round of instructions to a child thread.
+- `report`: a child thread reports back to its parent.
+- `spawn`: dispatch one subagent.
+- `batch_spawn`: dispatch a batch at once, with a strategy and handling for the remaining branches.
+- `status`: read a target's current snapshot without waiting.
+- `wait`: wait until the completion condition is met or a timeout occurs.
+- `interrupt`: cancel a run.
+- `close`: close a session, optionally cascading.
+- `resume`: restore it to active; with a message it is the same as one append instruction.
 
-- `list`
-- `history`
-- `send`
-- `spawn`
-- `batch_spawn`
-- `status`
-- `wait`
-- `interrupt`
-- `close`
-- `resume`
+When no target is given, the current session is treated as the parent thread by default; you can also point at a target using a dispatched run id, session id, or batch id.
 
-## `spawn`
+When dispatching, you can also specify:
 
-This action starts a new child-agent run.
+- `label`: a recognizable name for the child thread.
+- `agent_id`, `model`: override the subagent or the model it uses; both are checked against the current user's agent ownership.
+- `run_timeout_seconds`: the timeout of a single run; in a synchronous dispatch it is also the wait duration.
+- `fork_turns`: copy the most recent rounds of user context, 0–16, 0 by default.
+- `context_summary`: attach a background summary.
+- `cleanup`: how to wrap up, `keep` (the default, kept and inspectable) or `delete` (cleaned up).
 
-A typical result is "accepted but not finished":
+## What it handles
 
-```json
-{
-  "ok": true,
-  "action": "spawn",
-  "state": "accepted",
-  "summary": "Spawned child run ...",
-  "data": {
-    "run_id": "run_xxx",
-    "session_id": "sess_xxx",
-    "status": "accepted"
-  },
-  "next_step_hint": "Use subagent_control.wait/status/history before treating unfinished child runs as complete."
-}
-```
+**How context is inherited.** The copied context and background summary are reference data and never change the subagent's system prompt: the parent thread's most recent rounds are prepended to the task text as quoted background, copying at most 256 history entries and 64 KiB in total, with anything beyond marked as truncated. A `fork_turns` above 16, or a summary above 16384 bytes, fails immediately; when `fork_turns` is 0 and no summary is written, no history is read. A subagent inherits its parent session's tool set by default, and its tool system prompt stays frozen once it is first determined; long-term memory and background injection happen only once, at initialization.
 
-## `list`
+**Dispatching one and dispatching a batch.**
 
-```json
-{
-  "ok": true,
-  "action": "list",
-  "state": "completed",
-  "summary": "Found 3 child sessions.",
-  "data": {
-    "total": 3,
-    "items": [
-      {
-        "dispatch_id": "dispatch_xxx",
-        "run_id": "run_xxx",
-        "session_id": "sess_xxx",
-        "status": "running",
-        "terminal": false,
-        "failed": false,
-        "agent_id": "worker-a",
-        "label": "Research materials",
-        "elapsed_s": 12.3,
-        "result_preview": null,
-        "error": null
-      }
-    ]
-  }
-}
-```
+- One: when the timeout is 0 or negative it returns at once and runs in the background; when it is positive it waits synchronously for a result, sending progress every 5 seconds and returning a timeout if the wait expires.
+- A batch: context is prepared for every task first, and if any single preparation fails the whole batch is not dispatched (no half batch is left behind). It then dispatches one by one, reclaiming any that fails to start and marking it failed. The completion condition follows the strategy: run all in parallel / review then merge → wait for all; first success → finished at the first success. Once it finishes early, the remaining branches are kept by default, or interrupted by default under the first-success strategy.
 
-## `history`
+**Waiting, sending, and reporting.** A wait subscribes to the completion signal first, and when there is no signal it polls at a fixed interval that settles around one second (between 0.2 and 5 seconds). A wait can end for three reasons: the completion condition is met, it times out, or the parent thread receives a message. When a child thread is running its current turn and its mailbox is open, a message sent to it goes straight into that turn; otherwise it starts a new one, and sending a message to itself raises an error. When a child reports back, an idle parent thread is woken automatically to receive it, and submitting the same message again does not enqueue it a second time.
 
-```json
-{
-  "ok": true,
-  "action": "history",
-  "state": "completed",
-  "summary": "Loaded 18 messages from child session history.",
-  "data": {
-    "session_id": "sess_xxx",
-    "messages": [ ... ]
-  }
-}
-```
+**Interrupting and closing.** An interrupt only requests cancellation of the run and does not change session state; a close sets the session state to closed and cancels the run along with it, and can also cascade to its descendants; a resume sets the state back to active.
 
-## `status` and `wait`
+## When something goes wrong
 
-These are the two most important actions.
+- A single call can select at most 200 targets; beyond that it reports that there are too many targets.
+- Single-target actions such as reading history or sending a message require exactly one child thread: it first looks up by exact id, then looks for a unique close name under the same parent thread, then falls back to picking the only child thread when there is just one; if it is still not unique it errors and asks you to use the exact id returned by a dispatch or a list.
+- A target must share the same root as the caller, and the root thread cannot be a dispatch target; nesting depth is capped at 32 levels.
+- A batch holds at most 64 tasks; beyond that the whole batch is rejected rather than truncated.
+- Each child thread's outbound messages and receipt cache are bounded, and a full one is treated as a rejection; a list holds at most 200 entries, 50 by default.
+- Result previews and status messages in an entry are truncated to 160 characters; the full content is available from the history or that child thread's trail.
+- In Honeycomb this tool is on by default as an extra; the other forms require an administrator to select it.
 
-### `status`
+## Related pages
 
-Snapshot only, without blocking:
-
-```json
-{
-  "ok": true,
-  "action": "status",
-  "state": "running",
-  "summary": "1 child runs are still active.",
-  "data": {
-    "status": "running",
-    "items": [ ... ],
-    "selected_items": [ ... ]
-  }
-}
-```
-
-### `wait`
-
-This action polls and waits. Depending on what happens, `state` may become:
-
-- `completed`
-- `running`
-- `timeout`
-- `partial`
-
-It often includes:
-
-```json
-{
-  "next_step_hint": "Use subagent_control.wait/status/history before treating unfinished child runs as complete."
-}
-```
-
-## `interrupt`, `close`, and `resume`
-
-These actions focus on which child sessions were updated:
-
-```json
-{
-  "ok": true,
-  "action": "interrupt",
-  "state": "completed",
-  "summary": "interrupt updated 1 child sessions.",
-  "data": {
-    "updated_total": 1,
-    "items": [
-      {
-        "session_id": "sess_xxx",
-        "status": "cancelling"
-      }
-    ]
-  }
-}
-```
-
-## Key interpretation
-
-- `accepted` does not mean completed
-- `status` is for snapshots
-- `wait` is for convergence
-- if `next_step_hint` exists, the system is explicitly telling you to follow up rather than wrap up
-
-
-## Task tree and bounded background
-
-All selectors are restricted to the same user and root task tree. Independent user forks remain a separate scope. `list` defaults to direct children; `parent_id=/root` selects the root children. Results expose stable `root_session_id` and `task_path`; `session_id` also accepts that path. Same-tree workers can send guidance/tasks to one another. Reports still target the durable direct parent; a new dispatched task reports completion to its dispatcher without reparenting the worker.
-
-`spawn` and `batch_spawn` accept `fork_turns` (integer 0–16, default 0) and `context_summary` (at most 16 KiB UTF-8). Per-task values override batch defaults; batches accept at most 64 tasks and validate all background before dispatch. Only visible user/assistant text is copied, grouped by root user turn, with at most 256 items, 16384 characters per database row and 64 KiB total background. System/tool/internal messages are excluded. Truncation is recorded. Background is quoted data in the initial task, never a change to the frozen system prompt or a recurring injection.
-
-Executions renew a heartbeat every 15 seconds. After five minutes without renewal, list/status/send lazily settles an expired child as interrupted, preserving history, model selection and tree identity. Recovery is idempotent and fences late writes. It never replays tools automatically. Send a new task (or resume with a message) to continue in the same session with a new run ID; before expiry, wait for settlement.
+- Thread management: [Thread Control](/docs/en/tools/thread-control/)
+- Tools and result trimming: [Tools](/docs/en/tools/index/)

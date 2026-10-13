@@ -1,131 +1,44 @@
 ---
 title: Memory Manager
-summary: Explains the `memory_manager` actions, compact structure, and the "short index injection + get full detail" workflow.
-read_when:
-  - You need to add, search, read, update, or remove long-term memory fragments
-source_docs:
-  - src/services/tools/memory_manager_tool.rs
-  - src/services/memory_fragments.rs
-updated_at: 2026-04-12
+summary: Manage the current agent's long-term memory fragments under the current user: list, search, read, add, update, and remove, along with the "short index injection plus fetch-on-demand" pattern.
+updated_at: 2026-10-13
 ---
 
-# Memory Manager
+`memory_manager` manages the current agent's long-term memory within the current user scope.
 
-`memory_manager` manages long-term memory for the current agent inside the current user scope.
+Supported actions: `list`, `search`, `get`, `add`, `update`, `remove`, `clear`.
 
-Supported actions:
+## How it works
 
-- `list`
-- `search`
-- `get`
-- `add`
-- `update`
-- `remove`
-- `clear`
+- By default the system prompt receives only a short index (memory id plus title); the full content is **not** injected along with it.
+- When detail is needed, first use `list` / `search` to find the memory id, then use `get` to fetch the full text.
+- Keep memory ids within 8 characters when possible, so they are easy to search and locate.
+- `add` / `update` use only the current core fields: title, content, tag, related memory id, and memory time.
 
-## Usage Rules
+## Actions
 
-- The system prompt only receives compact memory indexes: `memory_id + title`
-- Full `content` is not auto-injected into the prompt
-- Use `list/search` first, then `get(memory_id)` for the full detail
-- Model-facing `memory_id` should stay within 8 characters when possible
-- `add/update` should use only the compact field set:
-  - `title`
-  - `content`
-  - `tag`
-  - `related_memory_id`
-  - `memory_time`
+- `list`: returns recent memory indexes, 30 by default. Each entry contains id, title, tag, and update time.
+- `search`: matches on title or content, 10 by default. A match includes a snippet and whether it matched in the title or the content.
+- `get`: reads the full content by id, and also returns the related memory id and memory time.
+- `add`: adds one entry, given title, content, tag, and memory time together.
+- `update`: updates by id.
+- `remove`: removes by id.
+- `clear`: clears everything.
 
-## `list`
-
-Returns recent memory indexes. Default limit is 30.
-
-```json
-{
-  "action": "list",
-  "data": {
-    "count": 1,
-    "items": [
-      {
-        "memory_id": "0695f345",
-        "title": "User name",
-        "tag": "profile",
-        "updated_at": 1775957851
-      }
-    ]
-  }
-}
-```
-
-## `search`
-
-Searches matching titles or content. Default limit is 10.
-
-```json
-{
-  "action": "search",
-  "data": {
-    "query": "Zhou Huajian",
-    "count": 1,
-    "items": [
-      {
-        "memory_id": "0695f345",
-        "title": "User name",
-        "tag": "profile",
-        "snippet": "The user's name is Zhou Huajian. This came from the user's self-introduction.",
-        "matched_in": ["content"],
-        "updated_at": 1775957851
-      }
-    ]
-  }
-}
-```
-
-## `get`
-
-Loads the full detail for one memory.
-
-```json
-{
-  "action": "get",
-  "data": {
-    "memory_id": "0695f345",
-    "item": {
-      "memory_id": "0695f345",
-      "title": "User name",
-      "content": "The user's name is Zhou Huajian. This came from the user's self-introduction.",
-      "tag": "profile",
-      "related_memory_id": null,
-      "memory_time": 1775957820,
-      "updated_at": 1775957851
-    }
-  }
-}
-```
-
-## Write Example
+Write example:
 
 ```json
 {
   "action": "add",
   "title": "User name",
-  "content": "The user's name is Zhou Huajian. This came from the user's self-introduction.",
+  "content": "The user's name is Zhou Huajian. This came from the user's self-introduction at the start of the conversation.",
   "tag": "profile",
   "memory_time": "2026-04-12T08:37:00+08:00"
 }
 ```
 
-## Important Notes
+## Boundaries
 
-These old fields are no longer part of the recommended protocol:
-
-- `summary`
-- `tags`
-- `entities`
-- `category`
-
-Practical rule:
-
-- `list/search` are the main retrieval actions
-- `get` is the only full-detail read action
-- Writes only affect later new threads, not an already frozen thread system prompt
+- The old `summary`, `tags`, `entities`, and `category` are no longer recommended inputs.
+- `list` / `search` are the main retrieval actions, and `get` is the only action that reads full detail.
+- Writes only affect later new threads; they do not write back into the system prompt of a thread that is already frozen.

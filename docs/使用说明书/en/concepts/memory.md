@@ -1,74 +1,66 @@
 ---
 title: Long-term Memory
-summary: wunder's long-term memory design revolves around thread freezing, one-time injection, and structured memory fragments.
-read_when:
-  - You need to understand why long-term memory emphasizes freezing and one-time injection
-  - You need to troubleshoot the relationship between thread memory and the system prompt
-source_docs:
-  - docs/设计文档/01-系统总体设计.md
-  - docs/API文档.md
+summary: How the agent "remembers" your preferences, background, and long-term material—structured memory is injected once when a conversation starts, then supplemented by recall as it runs.
+updated_at: 2026-10-13
 ---
 
-# Long-term Memory
+wunder's memory holds to one principle: **stability over flexibility**.
 
-wunder's long-term memory design is not "append more text to the system prompt every round."
+## Three core rules
 
-It does the opposite. It treats thread stability as the primary concern.
+1. **Injected once when the session is created**: long-term memory is written into the system prompt once, when the conversation starts.
+2. **Frozen while running**: later turns do not change the system prompt.
+3. **Supplemented by recall when needed**: while running, recall adds material, but it does not rewrite the foundation.
 
-## Core rules
+The reason it is not updated every round: if the system prompt were rewritten each round, the agent's behavior would be unstable (drifting as the conversation goes on), cache hits would fall (making it slower), and problems would be hard to trace (you could not say what background it was working from at the time).
 
-The current system enforces two mandatory constraints:
-
-1. once an agent thread's system prompt is first determined, it must remain frozen
-2. long-term memory may only be injected once during thread initialization
-
-Later rounds may not repeatedly rewrite the thread's system prompt.
-
-## Why it is designed this way
-
-The reasons are direct:
-
-- to preserve prompt caching
-- to reduce context drift
-- to keep thread behavior more stable
-- to make it traceable which prompt a thread actually ran on
+**One injection plus freezing equals stable behavior plus a traceable background.**
 
 ## What memory looks like
 
-Long-term memory currently uses structured memory fragments.
+Memory is made of **structured fragments**, not one long free-form passage. A fragment is found by lookup, replaced without affecting the rest, marked invalid when outdated, and carries traceable version relationships.
 
-It is not treated as one large free-form paragraph. Instead, it is organized in a form better suited to:
+## What memory can hold
 
-- matching
-- replacement
-- invalidation
-- version tracking
+- **Who you are**: preferences and habits, work background, past decisions.
+- **Organizational knowledge**: team rules and standards, project background, domain expertise.
+- **Personalization**: adjusting the answer style to your preferences, referring to your past context, and giving targeted suggestions.
 
-## Memory and recall
+## Initialization injection vs runtime recall
 
-Part of memory is injected when the thread is initialized.
+| | Initialization injection | Runtime recall |
+| --- | --- | --- |
+| Timing | When the session is created | During the conversation |
+| How | Written into the system prompt | Added as a tool result |
+| Effect | Becomes the session's cognitive foundation | Does not rewrite the foundation |
+| Scope | The life of the whole session | The current round |
 
-If that initial injection is not enough, the orchestration and tool layers can still use recall-style mechanisms to retrieve more material, rather than repeatedly rewriting the thread system prompt.
+## Managing memory
 
-## Memory and context compression
+- **View**: see the current memory in the agent settings.
+- **Add**: tell the agent "remember this preference," or add it by hand in settings.
+- **Delete**: remove fragments that are outdated or unneeded.
+- **Update**: add a new fragment to replace an old one.
 
-Even after compression, the system still has to decide whether memory is sufficient.
+When it takes effect: a **new conversation** uses the latest memory at once; an **existing conversation** is unaffected and keeps using the memory from when it was created. So after updating memory, you need to start a new conversation for it to apply.
 
-So the right distinction is:
+## Memory and the knowledge base are not the same
 
-- the frozen initial injection at thread creation
-- the later recall that supplements context after compression
+| | Memory | Knowledge base |
+| --- | --- | --- |
+| Content | Structured personal / organizational facts | Documents, material, and standards |
+| When used | Injected at initialization | Retrieved while running |
+| Update frequency | Relatively stable | Can be updated often |
+| Good for | Preferences, background, decision records | Reference material, technical documents |
 
-These are related, but they are not the same mechanism.
+## Easy things to get wrong
 
-## The easiest mistakes to make here
-
-- treating long-term memory as a dynamic per-round system prompt
-- treating recall results as permanent writes back into the thread prompt
-- treating token occupancy as a total billing number
+- Memory is not updated every round; it is injected once at initialization.
+- The results of recall are not written back into the system prompt; they are only a temporary supplement.
+- More memory is not better: too much crowds the context and can interfere with judgment.
 
 ## Further reading
 
-- [Sessions and Rounds](/docs/en/concepts/sessions-and-rounds/)
-- [Architecture](/docs/en/concepts/architecture/)
-- [FAQ](/docs/en/help/faq/)
+- [Memory (core)](/docs/en/concepts/core-memory/) — the design principles of memory
+- [Prompts and Skills](/docs/en/concepts/prompt-and-skills/) — how the system prompt is organized
+- [Workspaces and Working Directory](/docs/en/concepts/workspaces/) — workspace management

@@ -1,143 +1,95 @@
 ---
 title: Architecture
-summary: wunder uses one unified orchestration engine. Beehive is how users reach that engine; the deployment form decides where the engine runs.
-read_when:
-  - You want to understand wunder as a whole system
-  - You need to see how APIs, orchestration, tools, frontends, and storage cooperate
-source_docs:
-  - docs/设计文档/01-系统总体设计.md
+summary: All four forms share the same core and engine; real execution happens inside sessions, and the interface reads a bounded display view.
+updated_at: 2026-10-13
 ---
 
-# Architecture
+All four forms share the same core and engine; real execution happens inside sessions, and the interface reads a bounded display view.
 
-wunder has a clear architectural goal: use one unified engine to support multiple capability sources, reached by users through Beehive.
+## Four forms, each with its own delivery surface
 
-## Forms and positioning
+| Form | How it is delivered | Interface |
+| --- | --- | --- |
+| Honeycomb | A desktop app; the engine ships inside the local process and calls in-process by default without local HTTP | Native UI, compiled into the app |
+| Beehive | A web app; its build artifacts are served read-only by a separate web service, not hosted by the Hull itself | Single-page app |
+| Helm | A command-line program; when terminal conditions are not met it degrades to one-shot execution instead of the full-screen interactive interface | Terminal UI |
+| Hull | A server process, mounting Bridge and a few static directories | Bridge (no build step) |
 
-wunder has four forms, each with a clear position. All of them run the same engine behind the scenes; the differences are only in where they run and what they govern:
+There is only one core and one engine; the four forms differ only at the access layer.
 
-### Hull (server)
+## What a message passes through
 
-**Who it's for**: teams, organizations
+From the moment you send a message to the moment the final reply is stored, the order is fixed:
 
-**Characteristics**:
-- **Positioning**: the **user and agent management platform**
-- Supports multiple users simultaneously
-- Centralized management of users, permissions, and resources
-- Can integrate external channels
-- Suited for production deployments
-- Provides the Beehive (web, the cloud AI workbench); members access it via a web browser
+| Step | What it does |
+| --- | --- |
+| Access | The main chat channel takes the request and can submit, resume, observe, cancel, and approve it |
+| Admission | The session runtime decides whether to run it immediately or queue it — the single decision point for "dispatch or queue" |
+| Record the user round | A user round is allocated idempotently; this is the only write entry for the session record |
+| Prepare the request | Context, visible tools, and the system prompt are assembled, and a decision is made on whether to freeze |
+| Main loop | Every model call increments the model round by one |
+| Run tools | Policy and approval, hooks, timeouts, and budget come first, then the call is dispatched to the actual tool |
+| Final reply | Multiple refreshes within the same model round update the same visible output item and never append duplicate bubbles |
+| Real-time push | Emitting an event writes to the persistence layer synchronously, and subscribers are notified only after the write completes |
 
-### Honeycomb (desktop)
+Three places that are easy to mislocate:
 
-**Who it's for**: individual users
+- The status registry the interface queries for a session's current state is a different thing from the session runtime that actually runs execution.
+- In-process wake signals only exist to accelerate; across multiple instances, correctness comes from polling convergence, not from them.
+- The four phases of a tool — pre, execute, post, result — are only a descriptive model; hooks are off by default and are not part of the execution main chain.
 
-**Characteristics**:
-- Local install, runs out of the box (this is the **local AI workbench**, the default form for individual users)
-- Can operate local files, windows, and browsers
-- Persistent local workspace
+## Data and storage
 
+- Storage is split by purpose: thread logs, sessions, workspaces, memory fragments, and so on each form their own group, and the engine depends only on this set of interfaces without caring which database sits underneath.
+- For the choice of database: with no configuration it is SQLite, and configured as PostgreSQL it runs on PostgreSQL.
+- There is no version table and no migration-script directory. Tables are created idempotently on startup and new columns are detected at startup, so there is no such thing as migrating by version number.
+- Every kind of record — sessions, round tails, workspaces, media attachments, memory fragments, knowledge vectors, users and quotas, channel bindings, interop shadows — is defined together.
 
-### Helm (cli)
+## What the interface sees is a bounded view, not an execution snapshot
 
-**Who it's for**: developers, automation scenarios
+What you see is a bounded display view, not a full history you can page through to the end, and not a complete snapshot of execution.
 
-**Characteristics**:
-- Terminal-driven, scriptable
-- The **manual local entry point** for hands-on work, not a second workbench
-- JSONL output for easy integration
+| View | Per page | Cap | Response budget |
+| --- | --- | --- | --- |
+| Chat page (one row per user round) | 12 | 20 | 128 KB |
+| Thread trace page (per entry) | 80 | 100 | 192 KB |
+| Body chunks | 8 KB per chunk | — | fetched on demand |
 
-Users spend almost all their time in the two workbenches: the Honeycomb (local AI workbench) or the Beehive (cloud AI workbench). The Helm is a complementary entry for hands-on terminal work and automation.
+The mechanisms that go with it: a write also produces a projection table and a truncated preview; when a projection is not ready it falls back to a bounded window over the source table; background rebuilds stay at no more than 1% duty cycle; and each change push fetches 200 items. Do not mistake the machinery that measures historical usage and budgets for context compression for a pagination module — it does not handle pagination.
 
-## Top-level structure
+## External interfaces
 
-From the repository layout and the current implementation, wunder can be understood in five layers:
+| Surface | Fact |
+| --- | --- |
+| HTTP | Routes share the `/wunder/*` prefix, and error responses have exactly one source format |
+| WebSocket | Six channels: chat, the core request surface, gateway, interop tunnel, interop remote observer, and world / LAN |
+| Gateway | Not an HTTP gateway, but an access registry plus targeted RPC plus online-presence broadcast; its only transport is `/wunder/gateway/ws` |
+| Channels | Adapter registration; a bounded inbound queue, and a persistent outbound outbox with backoff retry |
+| Interop | Local nodes are outbound-only; one tunnel carries three planes; capabilities are tiered L0–L3, and the default device capability set excludes L3 |
+| MCP | The Hull has a built-in service endpoint at `/wunder/mcp` (streamable-http), and external MCP clients are registered in configuration |
 
-1. access layer
-2. orchestration layer
-3. tools and capability layer
-4. storage and workspace layer
-5. frontend layer
+## Runtime defaults
 
-## Access layer
+| Item | Default |
+| --- | --- |
+| Hull listen | `0.0.0.0:8000`, overridable by environment variable or configuration |
+| Active session cap | 300 (unlimited for administrators) |
+| Session lock | 120 s timeout, 5 s heartbeat |
+| Model / tool timeout | 120 s each |
+| Model round cap | 1000 for non-administrators |
 
-The access layer mainly includes:
+## Common misconceptions
 
-- the `/wunder` primary interface
-- chat WebSocket
-- the user-facing frontend
-- the admin console (Bridge)
-- channel entry points
-- A2A and MCP entry points
-
-Its role is to unify how the outside world enters the system.
-
-## Orchestration layer
-
-This is the Engine, mainly composed of:
-
-- `crates/wunder-runtime/src/api/`
-- `crates/wunder-runtime/src/orchestrator/`
-- `crates/wunder-runtime/src/services/`
-- `crates/wunder-runtime/src/core/`
-
-It is responsible for:
-
-- parsing requests
-- managing sessions and threads
-- building model context
-- issuing model calls
-- handling tool calls
-- recording events and state
-
-## Tools and capability layer
-
-wunder's capabilities do not come from one place only. It unifies multiple sources:
-
-- built-in tools
-- MCP tools
-- Skills
-- knowledge-base capabilities
-- user tools
-- temporary subagents spawned by the main agent
-
-This is one of the biggest differences between wunder and a pure chat product.
-
-## Storage and workspace layer
-
-Workspaces and storage are the basis of long-running behavior:
-
-- user workspaces store durable files and artifacts
-- session data supports history and replay
-- monitoring and events support observability
-- long-term memory supports memory injection during thread initialization
-
-## Frontend layer
-
-wunder currently has two user-visible surfaces:
-
-- Workbenches (user-facing): the Honeycomb desktop app (`wunder-desktop`, the **local AI workbench**) and the Beehive web app (`frontend/`, the **cloud AI workbench**, provided with the Hull) — this is where users do daily work
-- Bridge (admin console): `web/` — the governance backend
-
-Beehive and Bridge share the same underlying capabilities, but serve different interaction goals. The user frontend and the admin console must remain separate.
-
-## The most important architectural constraints right now
-
-- `server` (Hull) is the **user and agent management platform** for teams and organizations; Beehive (web) is the cloud AI workbench it provides
-- Honeycomb (the desktop app) is the **local AI workbench**, the default form for individual users
-- `cli` (Helm) is the **manual local entry point** for developers and automation
-- Beehive and Bridge must remain separate
-- all forms build on the same Engine; Honeycomb and Helm do not depend on the Hull
-- chat real-time state is WebSocket-only; non-chat streaming endpoints keep their own protocol boundaries
-
-## Diagram
-
-The manual includes a core hierarchy diagram that is useful for establishing system boundaries first:
-
-- [Hierarchy Diagram: wunder -> user -> agent -> thread](/docs/assets/manual/08-hierarchy-structure.svg)
+- **"The Beehive page is hosted by the Hull."** No. The Hull mounts only Bridge and a few static directories; Beehive's build artifacts are served by a separate web service.
+- **"The front end needs several fetches to get the full history."** The front end was never meant to get the full history; it consumes a paginated view and fetches body chunks on demand.
+- **"Honeycomb calls its own backend over local HTTP."** By default it is a native in-process call; the standalone compatibility bridge is kept only for existing clients.
+- **"Swarm orchestration is still part of the architecture."** The engine and scheduling surface no longer have this module; only an empty directory remains, and session write permission is always writable.
 
 ## Further reading
 
-- [Sessions and Rounds](/docs/en/concepts/sessions-and-rounds/)
-- [Tool System](/docs/en/concepts/tools/)
-- [Deployment and Operations](/docs/en/ops/deployment/)
+- [Agent Loop](/docs/en/concepts/core-agent-loop/) — the main loop and braking
+- [Sessions and Rounds](/docs/en/concepts/sessions-and-rounds/) — the numbering conventions
+- [Streaming Execution](/docs/en/concepts/streaming/) — push, refill, and backpressure
+- [Workspaces and Working Directories](/docs/en/concepts/workspaces/) — paths and sandbox boundaries
+- [Deployment and Operations](/docs/en/ops/deployment/) — orchestration, ports, and builds
+- [Configuration Reference](/docs/en/reference/config/) — every configuration option

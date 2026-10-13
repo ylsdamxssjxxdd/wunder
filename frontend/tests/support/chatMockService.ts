@@ -3,7 +3,7 @@ import type { Row } from './chatEvidenceAnalysis';
 
 export const MOCK_SESSION = 'fixture-thread';
 export const MOCK_AGENT = 'fixture-agent';
-type Subscription = { socket: WebSocketRoute; request: string; display?: boolean };
+type Subscription = { socket: WebSocketRoute; request: string; display?: boolean; turnId?: string };
 
 /** In-process protocol peer. Only HTTP/WS are mocked; no application store is accessed. */
 export class ChatMockService {
@@ -82,8 +82,10 @@ export class ChatMockService {
     });
   }
   private runtimeHead() {
-    const active = this.turns.filter(turn => ['queued', 'running', 'waiting_input', 'waiting_approval']
-      .includes(String(turn.status))).at(-1);
+    // A user round stays hot while its latest execution turn is hot; settling the
+    // root before the continuation exists would flash an idle head.
+    const active = this.turnGroups().map(group => group.at(-1)!)
+      .find(turn => ['queued', 'running', 'waiting_input', 'waiting_approval'].includes(String(turn.status)));
     return { runtime_status: active ? String(active.status) : 'idle', active_turn_id: String(active?.turn_id ?? '') };
   }
   private viewChanges() {
@@ -114,8 +116,11 @@ export class ChatMockService {
       revision: payload.revision, payload: structuredClone(payload) };
     this.changes.push(change);
     for (const sub of this.subscriptions) {
-      if(sub.display){const frame=this.viewChanges();frame.rows=frame.rows.filter(row=>row.root_turn_id===payload.turn_id||row.execution_turn_id===payload.turn_id);this.send(sub,'thread_view_change',frame);}
-      else {this.send(sub, 'thread_change', change);if (this.duplicateNext) this.send(sub, 'thread_change', change);}
+      if(sub.display){const frame=this.viewChanges();frame.rows=frame.rows.filter(row=>row.root_turn_id===payload.turn_id||row.execution_turn_id===payload.turn_id);this.send(sub,'thread_view_change',frame);continue;}
+      // A send-scoped stream observes only its own turn, like the server task.
+      if (sub.turnId && String(change.turn_id) !== sub.turnId) continue;
+      this.send(sub, 'thread_change', change);
+      if (this.duplicateNext) this.send(sub, 'thread_change', change);
     }
   }
   private item(turn: Row, suffix: string, kind: string, status: string, extra: Row = {}) {
@@ -169,14 +174,14 @@ export class ChatMockService {
       // Production accepts the command, then starts a separate internal
       // execution turn under the SAME user round. Do not flatten this in mocks.
       const root = turn;
-      this.state(root, 'completed');
       turn = { ...root, turn_id: `${root.turn_id}-continuation`, root_turn_id: root.turn_id,
-        trigger_kind: 'continuation', content: '', client_message_id: '', status: 'queued', goalRun: true };
+        trigger_kind: 'continuation', content: '', client_message_id: '', status: 'running', goalRun: true };
       this.turns.push(turn);
       this.active = turn;
       this.commit('turn_upsert', turn);
       this.item(turn, 'user', 'user_message', 'completed', { role: 'user',
         content: 'Internal fixture continuation.', visibility: 'model_internal', root_turn_id: root.turn_id });
+      this.state(root, 'completed');
     }
     this.state(turn, 'running');
     if (this.items.has(`${turn.turn_id}:queue`)) this.item(turn, 'queue', 'queue', 'completed', {
@@ -289,11 +294,18 @@ export class ChatMockService {
         this.record({ transport: 'ws', type: message.type, payload: message.payload });
         const sub = { socket, request: message.request_id, display: message.payload?.view_seq!==undefined };
         if (message.type === 'cancel') { this.cancel(); return; }
-        if (!['start', 'watch', 'resume'].includes(message.type)) {
-          if (!['ping', 'pong', 'unwatch'].includes(message.type)) this.failures.push('unexpected-ws-request');
+        if (message.type === 'unwatch') {
+          this.subscriptions = this.subscriptions.filter(prior => prior.socket !== socket || !prior.display);
           return;
         }
-        this.subscriptions = this.subscriptions.filter(prior => prior.socket !== socket);
+        if (!['start', 'watch', 'resume'].includes(message.type)) {
+          if (!['ping', 'pong'].includes(message.type)) this.failures.push('unexpected-ws-request');
+          return;
+        }
+        // A socket carries concurrent feeds: the display watch plus the send's
+        // own stream. Only a watch replaces the previous watch on this socket.
+        this.subscriptions = this.subscriptions.filter(prior =>
+          prior.socket !== socket || !(prior.display && sub.display) && prior.request !== sub.request);
         this.subscriptions.push(sub);
         if (message.type === 'start') {
           const turn = this.accept(message.payload.content, message.payload.client_message_id);

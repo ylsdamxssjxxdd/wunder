@@ -1,291 +1,100 @@
 ---
 title: Goal Mode
-summary: Set a goal so the agent keeps working until the task is complete or the budget runs out. Ideal for complex tasks that need multiple rounds.
+summary: Goal mode is a session-level persistent goal driven by a model-round budget — set it once, and the agent keeps going on its own until it completes, gets blocked, or spends the budget.
+read_when:
+  - You want an agent to push a long task forward without you sending a message every round
+  - A goal stopped advancing and you need to know why
+  - You need to know which goal actions the model may take, and in which round
+source_docs:
+  - crates/wunder-runtime/src/services/goal/types.rs
+  - crates/wunder-runtime/src/services/goal/driver.rs
+  - crates/wunder-runtime/src/services/goal/tools.rs
+  - crates/wunder-runtime/src/services/goal/authority.rs
+  - crates/wunder-runtime/src/api/chat_goal.rs
+updated_at: 2026-10-13
 ---
 
-# Goal Mode
+## What it is
 
-Goal mode is a task-driven mode. Once you set a goal, the agent keeps working until the goal is complete, automatically handling waiting, retries, budget checks, and other edge cases along the way.
+Goal mode hangs a **goal** on a **session** and pairs it with a driver that lives only in the current process. Whenever the session goes idle, the driver submits the next continuation (a goal round), and each round spends one unit of the model-round budget; whether it keeps going or stops is decided by the budget, the phase, and whether the goal is blocked.
 
-## When to Use
+A goal carries this information.
 
-Goal mode fits:
+| Item | Meaning |
+| --- | --- |
+| Objective | What to do, up to 4,000 characters |
+| Phase | One of `active`, `paused`, `blocked`, `complete` — these four and nothing else |
+| Continuation-round budget (`max_goal_rounds`) | The most automatic continuations that may run; defaults to 256 when the goal is created |
+| Started rounds (`rounds_started`) | Only ever increases; it is never reset backwards |
+| Revision | Increments on every change; an update must carry the goal id and its exact current revision, and a mismatch is rejected (compare-and-set on revision) |
+| Blocked reason | When blocked, a machine code (`blocked_code`) plus a plain-language explanation (`blocked_message`) |
 
-- **Complex tasks**: work that needs multiple rounds, such as "develop a complete user authentication module"
-- **Long-running tasks**: the agent must keep working and cannot finish in one reply
-- **Clear completion criteria**: the task has a well-defined "done"
-- **Budget control**: you want to cap the tokens the agent can spend
+## When to use it
 
-**Poor fit for goal mode:**
+| Situation | Recommendation |
+| --- | --- |
+| Long tasks with a clear completion condition that the model should push forward over several rounds | Use goal mode |
+| Something a single round of Q&A can resolve | Just send a message |
+| Work that needs you in the decision loop often | Talk directly, and add the question panel when needed |
+| You only want the current round to go deeper | An ordinary round is enough; a model round has no built-in one-step-one-answer limit |
 
-- Simple Q&A (one reply solves it)
-- Open-ended exploration (no clear completion criteria)
-- Tasks needing frequent human intervention
+## The four phases
 
-## Starting Goal Mode
+| Phase | Meaning | How it is entered | How it is left |
+| --- | --- | --- | --- |
+| `active` | Able to continue | Create a goal, or resume | `paused` / `blocked` / `complete` |
+| `paused` | Sitting still; a person can resume at any time | A manual pause, or a continuation round that was interrupted | Resume |
+| `blocked` | Automatic continuation stops | The model self-reports the same blocking condition once at least 3 consecutive continuation rounds have run; or the driver fails to enqueue (`queue-failed`) | Resume (after the blocking condition is resolved) |
+| `complete` | Achieved | The model or a person marks it complete, and only when it is truly done | Reopen with a new goal |
 
-### Option 1: Use a Command
+Whether the next round starts depends on a single gate: **the phase is `active`, the goal is armed inside the process, and `rounds_started` has not reached the budget** — all three must hold to continue. A person's message always wins; a continuation round never competes with a person for the session.
 
-Type in the chat input:
+## Boundaries that are easy to misread
 
-```
-/goal Develop the user authentication module
-```
+- The budget is counted in **model rounds**, not tokens. The system does not track how many tokens a goal burns, there is no token budget, and there is no design in which the budget runs out and drops the goal into some restricted state.
+- There is **no cooldown** between rounds. As soon as the session is idle, the driver immediately decides whether to send the next round.
+- **"Blocked" does not mean "hard"**: difficulty, uncertainty, and unfinished work are not reasons to report blocked. The agent must name a concrete blocking condition that persists across rounds.
 
-### Option 2: Use the Goal Editor
+## Arming is not persisted
 
-1. Click the target icon above the chat panel (bullseye icon)
-2. Enter the goal description in the dialog
-3. Optional: set a token budget
-4. Click "Start"
+Whether a goal is armed is an in-process flag and **is not stored in the database**. After a process restart, a session restore, or a fork, the driver will not pick up automatically even if the phase is still `active` — it has to be armed again with an explicit `update_goal` carrying `action=resume`. When asking why a goal stopped moving, first check whether it is still armed.
 
-### Option 3: Let the Agent Create It
+## How the model operates on a goal
 
-The agent can create a goal through the `goal` tool (action=create). This usually happens when the agent decides the task needs sustained execution.
+The model side operates on a goal through three built-in tools.
 
-## Goal Status
+| Tool | Effect |
+| --- | --- |
+| `get_goal` | Reads the current goal, including the id and revision that `update_goal` requires; the authoritative value must be fetched before an update |
+| `create_goal` | Infers and creates a goal from a person's direct request; the objective is required and the round budget is optional |
+| `update_goal` | Edit / pause / resume / complete / report blocked (`action=blocked`); needs the goal id plus the current revision, and reporting blocked is rejected before the minimum round count is reached |
 
-| Status | Meaning | Color |
-|--------|---------|-------|
-| Active | Executing | Green |
-| Paused | Paused by the user | Yellow |
-| Budget limited | Token budget exhausted | Red |
-| Complete | Goal finished | Gray |
+Authority does not come from anything the model writes: human entry points stamp `__source = "human"` onto the turn and the goal-round driver stamps `__goal_round`. Edit, pause, and resume are allowed only in a person's round; complete and report-blocked are additionally allowed in the goal's **own automatic continuation rounds**.
 
-### Active
+The Honeycomb (desktop) **does not expose these three tools for users to pick** (they are hidden built-in capabilities); the runtime injects them per session, and the Beehive (web) and the Helm (cli) reuse the same injection.
 
-While the goal is active:
+## Where it is available
 
-- The agent keeps executing
-- Each round automatically continues to the next
-- The companion shows the "running" animation
-- The message list shows a goal divider
+| Entry | Location |
+| --- | --- |
+| API | `GET`/`PUT`/`DELETE /wunder/chat/sessions/{id}/goal` (user side; requires an ownership check) |
+| Slash command | `/goal [<objective>\|clear\|edit <objective>\|pause\|resume]` |
+| Beehive | A goal bar in the message area |
+| Honeycomb | A goal banner above the input box, with inline editing |
+| Helm | The `/goal` command |
+| Bridge | **No goal UI** (the governance surface offers no goal operations) |
 
-### Paused
+## A few points that are often misread
 
-After pausing:
+- A goal does not stop on a token limit; it looks only at the round budget, the phase, and arming.
+- After a service restart an active goal does not resume on its own; a resume action is needed to arm it again.
+- The model cannot mark a goal blocked at will: the same blocking condition must persist across at least 3 continuation rounds.
+- A goal is not "a tool named goal" but three tools — `get_goal`, `create_goal`, `update_goal`; the old single tool and the old injection marker no longer exist.
+- The Bridge has no goal panel; use the Beehive, the Honeycomb, or the Helm.
+- Clearing a goal does not undo work already done: messages, tool results, and file changes already stored are kept.
 
-- The agent stops executing
-- Resume with `/goal resume`
-- Or resume from the goal editor
+## Related pages
 
-### Budget Limited
-
-When a token budget was set and is exhausted:
-
-- The goal automatically enters budget-limited status
-- The agent stops executing
-- User intervention is required (raise the budget or clear the goal)
-
-### Complete
-
-After the agent marks completion via the `goal` tool (action=update):
-
-- The goal is marked complete
-- Automatic execution stops
-- The completion time is shown
-
-## Token Budget
-
-### Setting a Budget
-
-Set a token budget in the goal editor:
-
-```
-Goal: Develop the user authentication module
-Budget: 100000 tokens
-```
-
-### Budget Consumption
-
-After each round, the system accumulates:
-
-- Input tokens
-- Output tokens
-- Tool call tokens
-
-When total consumption reaches the budget, the goal automatically enters "budget limited" status.
-
-### Budget Suggestions
-
-Pick a reasonable budget based on complexity:
-
-| Task type | Suggested budget |
-|-----------|------------------|
-| Simple feature | 10,000 - 30,000 |
-| Medium feature | 30,000 - 100,000 |
-| Complex feature | 100,000 - 500,000 |
-| Large project | 500,000+ |
-
-## Execution Flow
-
-### Automatic Continuation
-
-While the goal is active, execution continues automatically:
-
-1. A round finishes
-2. Goal status and budget are checked
-3. A 1-second cooldown is observed
-4. The continuation prompt is injected
-5. The next round starts
-
-### Waiting for User Input
-
-If the agent needs your input to continue:
-
-- The goal does not auto-continue
-- It resumes after you reply
-
-### Completion
-
-When the agent judges the goal complete, it marks completion via the `goal` tool (action=update), and automatic execution stops.
-
-## Leaving Goal Mode
-
-### Normal Exit
-
-The agent exits automatically after completing the task.
-
-### Manual Exit
-
-Click the stop button on the chat panel, or use:
-
-```
-/stop
-```
-
-or
-
-```
-/cancel
-```
-
-### Notes
-
-- Leaving goal mode clears the current goal
-- Actions already taken are not rolled back
-- You can set a new goal afterwards
-
-## Frontend Display
-
-### Goal Divider
-
-The start of a goal shows a divider in the message list:
-
-```
-────────── Goal started: Develop the user authentication module ──────────
-```
-
-### Status Badge
-
-The top of the chat panel shows the current goal status:
-
-- Active: 🟢 goal in progress
-- Paused: 🟡 goal paused
-- Budget limited: 🔴 budget exhausted
-- Complete: ⚪ goal completed
-
-### Goal Lock
-
-While goal mode is active:
-
-- You cannot switch to another session
-- You cannot change agent settings
-- The companion shows the running state
-
-## Command Reference
-
-| Command | Purpose |
-|---------|---------|
-| `/goal` | Open the goal editor |
-| `/goal <description>` | Set a goal directly |
-| `/goal --tokens 100000 <description>` | Set a goal with a budget |
-| `/goal pause` | Pause the goal (command only) |
-| `/goal resume` | Resume the goal (command only) |
-| `/goal clear` | Clear the goal (command only) |
-| `/stop` or `/cancel` | Leave goal mode |
-
-## Best Practices
-
-### Clear Goal Descriptions
-
-A good goal description:
-
-```
-Develop the user authentication module, including:
-1. Registration (email verification)
-2. Login (with remember-me)
-3. Password reset (email link)
-4. Session management (auto expiry)
-```
-
-A poor goal description:
-
-```
-Write some code
-```
-
-### Reasonable Budgets
-
-- Not too low: the task may not finish
-- Not too high: budget control loses meaning
-- Adjust based on complexity
-
-### Intervene in Time
-
-- Watch the agent's progress
-- Correct course early when it drifts
-- Pause the goal to adjust direction when needed
-
-## FAQ
-
-### The goal never completes
-
-Possible causes:
-
-- The goal description is not specific enough
-- The agent judges there is still work to do
-- A blocking problem was hit
-
-Fixes:
-
-- Review the agent's output
-- Provide more context
-- Exit manually and set a more specific goal
-
-### Budget exhausted but task unfinished
-
-Fixes:
-
-- Set the goal again with a higher budget
-- Narrow the task scope
-- Complete it in stages
-
-### Goal execution interrupted
-
-Possible causes:
-
-- Network issues
-- Service restart
-- System error
-
-Fixes:
-
-- Check the network connection
-- Refresh the page
-- Set the goal again
-
-## Relationship to Other Features
-
-| Feature | Relationship |
-|---------|--------------|
-| Companion system | The companion shows the running state during execution |
-| Context compression | The goal description is preserved as important context |
-| Subagents | A goal run can spawn temporary work units to advance in parallel |
-| Tool system | The agent operates goals through the `goal` tool |
-
-## Next Steps
-
-- [Companion System](/docs/en/concepts/companion/) — give agents an animated companion
-- [Agent Loop](/docs/en/concepts/core-agent-loop/) — how agents execute tasks
-- [Context Compression](/docs/en/concepts/core-context-compression/) — how long conversations stay efficient
+- [Sessions and Rounds](/docs/en/concepts/sessions-and-rounds/) — the smallest unit the budget spends
+- [Agent Loop](/docs/en/concepts/core-agent-loop/) — how continuation rounds enter the main execution loop
+- [Companion System](/docs/en/concepts/companion/) — how the running state appears on the companion

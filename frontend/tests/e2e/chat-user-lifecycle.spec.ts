@@ -16,12 +16,33 @@ test('user operations drive the production chat through mocked HTTP and WebSocke
   const errors: string[] = [];
   const coverage: Record<string, boolean> = {};
   const completedNoticeRounds = new Set<number>();
+  // Rounds that must announce completion; 3 is stopped and 6 is a manual compaction.
+  const NOTICE_ROUNDS = [1, 2, 4, 5, 7, 8, 10, 11];
   let transientErrors = 0;
   page.on('pageerror', error => errors.push(error.message));
   page.on('console', message => {
     if (message.type() === 'error' || message.text().startsWith('[Vue warn]')) errors.push(message.text());
   });
   await page.addInitScript(installChatTurnDomAudit);
+  await page.addInitScript(() => {
+    // A completion toast only lives ~3s, so asserting it is still mounted later
+    // races its lifetime. Record every notice the moment it mounts instead.
+    const notices: string[] = [];
+    (window as any).__completionNotices = notices;
+    const seen = new WeakSet<Element>();
+    const observer = new MutationObserver(() => {
+      document.querySelectorAll('.el-message--success').forEach(node => {
+        if (seen.has(node)) return;
+        const text = (node.textContent || '').trim();
+        // The root node can mount before Vue writes its text, so a node is only
+        // consumed once its notice text is actually readable.
+        if (!/has completed the task|已完成任务/.test(text)) return;
+        seen.add(node);
+        notices.push(text);
+      });
+    });
+    observer.observe(document, { childList: true, subtree: true });
+  });
   try {
     await page.goto('/login');
     await page.locator('input[autocomplete="username"]').fill('fixture-user');
@@ -34,8 +55,9 @@ test('user operations drive the production chat through mocked HTTP and WebSocke
     // Do not attribute initial route hydration and font layout to a chat turn.
     await page.waitForTimeout(300);
     await page.evaluate(() => (window as any).wunderPerf.start());
-    await expect(page.locator('.messenger-message:not(.mine)')).toHaveCount(1);
-    coverage.greeting = true;
+    // 空线程首屏已是会话活动网格（浮动设置窗口之外唯一的欢迎态），不再渲染问候气泡。
+    await expect(page.locator('.messenger-thread-activity')).toHaveCount(1);
+    coverage.emptyState = true;
     const send = async (content: string) => {
       await page.getByTestId('chat-composer-input').fill(content);
       await page.getByTestId('chat-composer-input').press('Control+Enter');
@@ -49,8 +71,8 @@ test('user operations drive the production chat through mocked HTTP and WebSocke
       await expect(assistant.locator('.messenger-message-stats')).toContainText('token/s');
       await expect(assistant.locator('.messenger-message-stats')).not.toContainText('Queued');
       if (requireNotice) {
-        await expect(page.locator('.el-message--success')
-          .filter({ hasText: /has completed the task|已完成任务/ }).last()).toBeVisible();
+        await expect.poll(() => page.evaluate(() => (window as any).__completionNotices.length))
+          .toBe(NOTICE_ROUNDS.indexOf(round) + 1);
         completedNoticeRounds.add(round);
       }
     };
@@ -80,10 +102,17 @@ test('user operations drive the production chat through mocked HTTP and WebSocke
     coverage.stop = true;
     service.autoCompactNext = true;
     await send('Continue the context fixture.'); await completed(5);
-    await send('/compact');
+    await page.getByTestId('chat-composer-input').fill('/compact');
+    await page.getByTestId('chat-composer-input').press('Control+Enter');
+    // A visible command suggestion makes the first send complete the command
+    // instead of submitting it; that is the composer's product behaviour.
+    await expect(page.getByTestId('chat-composer-input')).toHaveValue('/compact ');
+    await page.getByTestId('chat-composer-input').press('Control+Enter');
+    await expect(page.getByTestId('chat-composer-input')).toHaveValue('');
     await expect(page.getByTestId('messenger-message-list')).toContainText('Retained fixture summary.');
     await expect(page.getByTestId('chat-composer-send')).toHaveAttribute('data-mode', 'send');
-    await send('Verify the retained fixture.'); await completed(7);
+    await send('Verify the retained fixture.');
+    await completed(7);
     service.holdNext = true;
     await send('/goal Verify the fixture objective.');
     await expect(page.getByTestId('messenger-message-list')).toContainText('Partial reply 8.');
@@ -129,8 +158,8 @@ test('user operations drive the production chat through mocked HTTP and WebSocke
     await send('Verify after the queued request.');
     await completed(11);
     const before = await captureConversation(page, directory);
-    expect(before.map(row => [row.turnId, row.role])).toEqual([['', 'assistant'],
-      ...Array.from({ length: 11 }, (_, index) => [[`fixture-turn-${index + 1}`, 'user'], [`fixture-turn-${index + 1}`, 'assistant']]).flat()]);
+    expect(before.map(row => [row.turnId, row.role])).toEqual(
+      Array.from({ length: 11 }, (_, index) => [[`fixture-turn-${index + 1}`, 'user'], [`fixture-turn-${index + 1}`, 'assistant']]).flat());
     expect(before.filter(row => row.role === 'user').map(row => row.turnId)).toEqual(
       Array.from({ length: 11 }, (_, index) => `fixture-turn-${index + 1}`));
     for (let round = 1; round <= 11; round++) {
@@ -173,7 +202,7 @@ test('user operations drive the production chat through mocked HTTP and WebSocke
     transientErrors = audit.duplicate + audit.structure;
     expect(audit.samples).toBeGreaterThan(0);
     expect(transientErrors).toBe(0);
-    expect([...completedNoticeRounds].sort((left, right) => left - right)).toEqual([1, 2, 4, 5, 7, 8, 10, 11]);
+    expect([...completedNoticeRounds].sort((left, right) => left - right)).toEqual(NOTICE_ROUNDS);
     coverage.completionNotice = completedNoticeRounds.size === 8;
     await page.reload();
     await expect(page.getByTestId('chat-composer-input')).toBeVisible();
@@ -199,7 +228,7 @@ test('user operations drive the production chat through mocked HTTP and WebSocke
     const analysis = await saveChatEvidence(directory, { mode: 'mock-service', snapshot: service.snapshot(),
       changes: service.changes, performance, expectedUserTurns: 11, collectionErrors: service.failures,
       browserErrors: errors.length, transientRenderingErrors: transientErrors, coverage,
-      requiredCoverage: ['greeting', 'stop', 'reconnect', 'queue', 'render', 'tools', 'compaction', 'goal', 'reload', 'completionNotice', 'structureMutation'] }, service.export());
+      requiredCoverage: ['emptyState', 'stop', 'reconnect', 'queue', 'render', 'tools', 'compaction', 'goal', 'reload', 'completionNotice', 'structureMutation'] }, service.export());
     await writeFile(resolve(directory, 'transport.json'), JSON.stringify(redactEvidence({ requests: service.requests, connections: service.connections, errors }), null, 2));
     await testInfo.attach('analysis', { body: JSON.stringify(analysis), contentType: 'application/json' });
     expect.soft(analysis.findings.filter(item => item.severity === 'error')).toEqual([]);

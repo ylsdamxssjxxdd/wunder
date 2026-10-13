@@ -1,42 +1,26 @@
 ---
-title: "wunder API"
-summary: "`/wunder` is the unified execution entry point, suitable for capability calls; when building a complete chat product, prefer `/wunder/chat/*`."
-read_when:
-  - "You need to integrate wunder from a business system"
-  - "You need to decide between `/wunder` and `/wunder/chat/*`"
-source_docs:
-  - "docs/API文档.md"
-  - "docs/设计文档/01-系统总体设计.md"
+title: wunder API
+summary: Call wunder as an execution capability — one request, one result; move to the chat domain when you want a full chat product.
+updated_at: 2026-10-13
 ---
 
-# wunder API
+`POST /wunder` suits "calling wunder as an execution capability". For a session list, resume, cancel, or a live workbench, go straight to the chat domain.
 
-`POST /wunder` is suitable for "calling wunder as an execution capability".
+## /wunder vs. the Chat Domain
 
-If you need session lists, resumption, cancellation, or real-time workbench, it's recommended to go directly to the chat domain: `/wunder/chat/*`.
+- One request triggers one execution and you only care about the result → use `/wunder`.
+- You need history, resume, cancel, stable agent binding, or to read a frozen prompt → use [chat sessions](/docs/en/integration/chat-sessions/).
 
-## When to Prefer `/wunder`
+## Stable Agent Binding
 
-- One request triggers one execution
-- Caller only needs `user_id + question` semantics
-- Need quick integration with streaming output support (SSE)
+`GET /wunder/agents` → `POST /wunder/chat/sessions` → `POST /wunder/chat/sessions/{session_id}/messages`
 
-## When Not to Use Only `/wunder`
+1. Get the target agent ID first;
+2. Create a session and bind that agent;
+3. Send a message;
+4. Consume streaming events over WebSocket or the resume endpoint.
 
-- You need complete session lifecycle management
-- You need stable agent binding and read frozen prompts
-- You want to build chat product-level UI (history, resume, cancel, observe)
-
-## Recommended Integration Path (Stable Agent Binding)
-
-`GET /wunder/agents` -> `POST /wunder/chat/sessions` -> `POST /wunder/chat/sessions/{session_id}/messages`
-
-1. Use `GET /wunder/agents` to get target `agent_id`
-2. Use `POST /wunder/chat/sessions` to create a session and bind an agent
-3. Use `POST /wunder/chat/sessions/{session_id}/messages` to send messages
-4. Use WS or `resume` to consume streaming events
-
-## Request Fields (Minimum Set)
+## Minimal Request
 
 ```json
 {
@@ -46,38 +30,34 @@ If you need session lists, resumption, cancellation, or real-time workbench, it'
 }
 ```
 
-Common additional fields:
+Common additions:
 
-- `session_id`: Reuse session
-- `agent_id`: Specify agent scope
-- `model_name`: Temporarily override model
-- `tool_names`: Explicitly mount tools
-- `config_overrides`: Partial config override
-- `attachments`: Attachment input (images can be passed directly; documents, audio, video should be preprocessed first)
+- `session_id`: reuse a session
+- `agent_id`: specify the agent
+- `model_name`: temporarily switch the model
+- `tool_names`: explicitly mount tools
+- `config_overrides`: partial configuration override
+- `attachments`: attachment input
 
-## Don't Throw Attachments Directly to `/wunder`
+## Don't Dump Attachments Straight In
 
-The official frontend now handles attachments with different paths:
+The official frontend splits attachments by kind:
 
-- Images: Can be directly used as visual context in `attachments`
-- Documents: Usually go through `/wunder/chat/attachments/convert` or `/wunder/doc2md/convert` first, converted to text before submission
-- Audio: Go through `/wunder/chat/attachments/media/process` first to convert speech to text attachments
-- Video: Go through `/wunder/chat/attachments/media/process` first, split into image sequences and audio track attachments; raw video is not sent directly to the model
+- Images: can be sent directly as visual context.
+- Documents: convert to text first, then submit.
+- Audio: transcribe to text first.
+- Video: split into an image sequence and an audio track first; the raw video is never sent to the model.
 
-If you bypass these preprocessing steps and call `/wunder` directly, you are responsible for attachment decomposition, transcription, frame extraction, and size control.
+Bypassing these preprocessing steps and calling `/wunder` directly puts attachment breakdown, transcription, frame extraction, and size control on the caller.
 
-## Identity Field Notes
+## Key Settings and Common Pitfalls
 
-- `user_id` represents the caller and isolation space, does not require a registered user.
+- `user_id` represents the caller and the isolation space; it need not be a registered user.
 - `agent_id` represents the target agent.
+- `/wunder` supports specifying an agent, but that does not mean it has the full capabilities of the chat domain; session governance has to be filled in yourself.
+- Don't read `user_id` as "it must come from the user management table" — that creates needless integration restrictions.
 
-## Common Misconceptions
-
-- `/wunder` supporting `agent_id` doesn't mean it's equivalent to full chat domain capabilities.
-- If calling `/wunder` directly, many session governance capabilities need to be implemented by yourself.
-- Misunderstanding `user_id` as "must come from user management table" leads to unnecessary integration restrictions.
-
-## Related Interfaces
+## Related Endpoints
 
 - `POST /wunder`
 - `POST /wunder/system_prompt`

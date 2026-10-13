@@ -1,257 +1,131 @@
 ---
 title: Operations Overview
-summary: wunder operations covers deployment, storage, security, channel runtime, and observability. The goal is sustainable, stable operation -- not just "it started successfully."
-read_when:
-  - You are deploying or taking over a wunder runtime environment
-  - You need to quickly locate operations and governance entry points
-source_docs:
-  - docs/设计文档/01-系统总体设计.md
-  - docs/API文档.md
+summary: Deployment, storage, security, channels, and monitoring — five main threads. The goal is to keep the system running stably over the long term.
+updated_at: 2026-10-13
 ---
 
-# Operations Overview
-
-Think of wunder operations as **five main threads**: deployment, storage, security, channels, and observability.
-
-The goal: keep the system **running stably for 10+ years**, not just "it started successfully."
-
----
+The operations section is aimed at the people responsible for deploying and maintaining the system, and covers five main threads: deployment, data and storage, accounts and security, channel management, and monitoring and model evaluation.
 
 ## Operations Entry Points
 
 <div class="docs-card-grid docs-card-grid-compact">
-  <a class="docs-card" href="/docs/en/ops/deployment/">
-    <strong>Deployment and Runtime</strong>
-    <span>Startup paths, dependencies, and health checks.</span>
-  </a>
-  <a class="docs-card" href="/docs/en/ops/data-and-storage/">
-    <strong>Data and Storage</strong>
-    <span>Postgres/SQLite/workspaces/temp_dir.</span>
-  </a>
-  <a class="docs-card" href="/docs/en/ops/auth-and-security/">
-    <strong>Authentication and Security</strong>
-    <span>Token system, boundaries, and approval policies.</span>
-  </a>
-  <a class="docs-card" href="/docs/en/ops/channel-runtime/">
-    <strong>Channel Runtime</strong>
-    <span>Webhooks, persistent connections, outbox, and recovery.</span>
-  </a>
-  <a class="docs-card" href="/docs/en/ops/benchmark-and-observability/">
-    <strong>Monitoring and WunderBench</strong>
-    <span>Throughput, latency, errors, and capacity assessment.</span>
-  </a>
-  <a class="docs-card" href="/docs/en/ops/wunderbench/">
-    <strong>WunderBench Model Evaluation</strong>
-    <span>Full-suite evaluation, scoring, exports, and task extension.</span>
-  </a>
-  <a class="docs-card" href="/docs/en/ops/desktop-local-mode/">
-    <strong>Desktop Local Mode</strong>
-    <span>Local runtime boundaries and governance essentials.</span>
-  </a>
+  <a class="docs-card" href="/docs/en/ops/deployment/"><strong>Deployment and Runtime</strong><span>Choose a form, prepare the environment, and run startup checks.</span></a>
+  <a class="docs-card" href="/docs/en/ops/data-and-storage/"><strong>Data and Storage</strong><span>Managing data for databases, workspaces, and the knowledge base.</span></a>
+  <a class="docs-card" href="/docs/en/ops/auth-and-security/"><strong>Accounts and Security</strong><span>Account systems, permission boundaries, and security settings.</span></a>
+  <a class="docs-card" href="/docs/en/ops/channel-runtime/"><strong>Channel Management</strong><span>Integrating and operating external channels such as Feishu and WeChat.</span></a>
+  <a class="docs-card" href="/docs/en/ops/benchmark-and-observability/"><strong>Monitoring and WunderBench</strong><span>System health, performance observation, and model evaluation.</span></a>
+  <a class="docs-card" href="/docs/en/ops/wunderbench/"><strong>WunderBench Model Evaluation</strong><span>Full-suite evaluation, scoring, exports, and bank extension.</span></a>
+  <a class="docs-card" href="/docs/en/ops/desktop-local-mode/"><strong>Desktop Local Mode</strong><span>The traits of local desktop runtime and how to maintain it.</span></a>
 </div>
 
----
-
-## The Five Operations Threads
+## The Five Threads
 
 ### 1. Deployment and Runtime
 
-**Goal**: One-click startup, health checks, graceful upgrades
+**Goal**: Choose the right runtime form, start it smoothly, and pass health checks.
 
-**Key points**:
-- Docker Compose is the recommended deployment method
-- Separate build, dependencies, and runtime stages
-- Health checks: frontend waits for backend, Nginx waits for frontend
-- Upgrade strategy: rolling updates, automatic data migration
+**Key Decisions**:
 
-**Checklist**:
-- [ ] Docker and Docker Compose versions are recent enough
-- [ ] No port conflicts (18000, 18002; also check 18001 if exposing the frontend dev server directly)
-- [ ] Data volume mounts are correct
-- [ ] Health checks pass
-
----
+- Personal use or team use
+- PostgreSQL or SQLite
+- Where the workspace lives
 
 ### 2. Data and Storage
 
-**Goal**: No data loss, fast recovery, sufficient performance
+**Goal**: No data loss, fast recovery, and enough storage performance.
 
-**Storage tiers**:
+**Storage Tiers**:
 
-| Tier | Technology | Purpose | Backup Strategy |
-|------|-----------|---------|-----------------|
-| **Relational data** | PostgreSQL | Users, sessions, configuration | Periodic full backup + binlog |
-| **Vector data** | PostgreSQL / SQLite | Knowledge base retrieval | Backup with the primary database |
-| **File storage** | Local disk/NAS | User workspaces | Filesystem backup |
-| **Temporary data** | Local disk | Uploads, downloads, conversions | Periodic cleanup |
+| Storage Tier | Purpose | Backup Advice |
+|--------------|---------|---------------|
+| Database | Users, sessions, configuration | Periodic full backup |
+| Workspace | User files and outputs | Filesystem backup |
+| Vector store | Knowledge base retrieval | Back up with the database |
+| Temp directory | Transfer for uploads and downloads | Periodic cleanup, no backup needed |
 
-**Important reminders**:
-- Do NOT mix long-lived business data into the `config/data/` runtime directory
-- Do NOT treat `temp_dir` as a business repository
-- DO persist user workspaces
-- DO have a backup strategy for PostgreSQL
+### 3. Accounts and Security
 
----
+**Goal**: Clear permissions, controlled access, and traceable audits.
 
-### 3. Authentication and Security
+**Security Points**:
 
-**Goal**: Prevent unauthorized access, maintain audit trails, ensure data security
+- The API key is complex enough
+- Path and command access is restricted
+- The approval mode is configured as needed
 
-**Security layers**:
+### 4. Channel Management
 
-```
-┌─────────────────────────────────────┐
-│   Application: tool approval,       │
-│   permission control                │
-│   - approval_mode                  │
-│   - tool allowlist/blocklist        │
-└─────────────────────────────────────┘
-              ↑
-┌─────────────────────────────────────┐
-│   API layer: auth, CORS, rate limit │
-│   - API Key / Bearer Token         │
-│   - CORS policy                     │
-│   - Rate limiting                   │
-└─────────────────────────────────────┘
-              ↑
-┌─────────────────────────────────────┐
-│   Network: HTTPS, reverse proxy     │
-│   - Nginx TLS termination          │
-│   - Origin validation               │
-└─────────────────────────────────────┘
-              ↑
-┌─────────────────────────────────────┐
-│   Infrastructure: network isolation,│
-│   container security                │
-│   - Network policies                │
-│   - Container read-only root FS     │
-└─────────────────────────────────────┘
-```
+**Goal**: No lost messages, stable connections, and discoverable exceptions.
 
-**Key configuration**:
-- `security.api_key`: Admin API Key (make it complex!)
-- `security.cors.allowed_origins`: Tighten CORS policy
-- `tools.builtin.enabled`: Control built-in tool visibility
-- `approval_mode`: Tool approval level
+**Monitoring Points**:
 
----
-
-### 4. Channel Runtime
-
-**Goal**: No message loss, automatic reconnection, observability
-
-**Channel architecture**:
-
-```
-External channels (Feishu/WeChat/QQ/XMPP)
-        ↓ Webhook / Persistent connection
-   ChannelHub (unified entry point)
-        ↓
-   Inbound queue (fast acknowledgment)
-        ↓
-   Dispatch execution (async processing)
-        ↓
-   channel_outbox (outbound queue)
-        ↓
-   Channel adapter (delivery + retry)
-```
-
-**Monitoring essentials**:
-- Inbound success/failure/retry counts
-- Outbound success/failure/retry counts
-- Persistent connection status (online/offline)
-- Outbox backlog depth
-
-**Recovery mechanisms**:
-- Webhook: Idempotent processing + retries
-- Persistent connections: Auto-reconnect + heartbeat
-- Outbox: Persistence + background worker
-
----
+- Account online status
+- Normal message send and receive
+- Whether the outbound queue is backing up
 
 ### 5. Monitoring and WunderBench
 
-**Goal**: Detect problems early, plan capacity, tune performance
+**Goal**: Find problems early and quantify system behavior.
 
-**Key metrics**:
+**Observability Focus**:
 
-| Metric | Description | Alert Threshold |
-|--------|-------------|-----------------|
-| **Active sessions** | Currently executing sessions | > max_active_sessions * 0.8 |
-| **Queue depth** | Pending agent_tasks | > 100 |
-| **Error rate** | Failed requests / total requests | > 5% |
-| **Average latency** | End-to-end response time | > 30s |
-| **Token consumption** | Context usage, check `round_usage.context_occupancy_tokens` first | Approaching max_context |
-
-**Built-in capabilities**:
-- Throughput stress-test endpoint
-- Performance sampling endpoint
-- WunderBench capability evaluation
-- Session monitoring dashboard
-
----
+- Active session count and queue depth
+- Error rate and response latency
+- Token consumption trends
 
 ## Troubleshooting Priority
 
-When something goes wrong, investigate in this order:
+When the system has problems, investigate in this order:
 
-1. **Is the entry point reachable?**
-   - HTTP status code?
-   - Can WebSocket connect?
-   - DNS resolution normal?
+1. **Is the entry point reachable** — first confirm the page opens and connections can be established.
+2. **Is the account permission normal** — confirm the login is valid and the token has not expired.
+3. **Are dependency services healthy** — confirm the database is available and MCP services are connected.
+4. **Is the running state healthy** — confirm sessions are not stuck and queues are not backing up.
+5. **Are metrics abnormal** — confirm the error rate and latency have not spiked.
 
-2. **Is authentication correct?**
-   - Is the API Key correct?
-   - Has the Token expired?
-   - Any CORS errors?
+## What to Do in Production
 
-3. **Are dependencies ready?**
-   - PostgreSQL healthy?
-   - Sandbox healthy?
-   - MCP services healthy?
+### Required
 
-4. **Is the runtime healthy?**
-   - Session runtime state?
-   - Channel connection state?
-   - Outbox backlog?
+- [ ] Use PostgreSQL (not SQLite)
+- [ ] Database automatic backup is configured
+- [ ] Workspace storage is persisted (NAS/network storage)
+- [ ] HTTPS certificate is configured
+- [ ] The API key is complex enough
 
-5. **Are metrics abnormal?**
-   - Error rate spike?
-   - Latency spike?
-   - Queue depth spike?
+### Recommended
 
----
+- [ ] The CORS policy is tightened
+- [ ] Log collection is configured
+- [ ] Monitoring alerts are set up
+- [ ] The temp directory is cleaned up periodically
 
-## Production Environment Checklist
+## Operations Advice by Scenario
 
-- [ ] Using PostgreSQL instead of SQLite
-- [ ] Database automatic backup configured
-- [ ] Workspace storage persisted (NAS/network storage)
-- [ ] HTTPS certificate configured with auto-renewal
-- [ ] CORS policy tightened to necessary domains only
-- [ ] API Key is sufficiently complex (>16 chars, mixed characters)
-- [ ] Log collection configured (ELK/Loki, etc.)
-- [ ] Monitoring alerts set up (Prometheus/Grafana, etc.)
-- [ ] Resource limits configured (Docker cgroups)
-- [ ] Channel outbox worker enabled
-- [ ] Periodic cleanup strategy for temp_dir
+### Personal Honeycomb Use
 
----
+Little operations work is needed: update the app regularly, keep workspace files from getting too large, and use the reset feature when something goes wrong.
+
+### Small-Team Hull (Server)
+
+Covers database backups, user management and token issuance, and basic monitoring.
+
+### Organizational Production Environment
+
+Full operations are needed: a complete backup strategy, a monitoring and alerting system, security audits, channel management, and performance tuning.
 
 ## Common Misconceptions
 
-| Misconception | Correct Understanding |
-|---------------|-----------------------|
-| Process alive = service available | Must check entry point and dependency health |
-| Channel problem = model problem | Check the integration layer first, then the model |
-| temp_dir can store long-term data | temp_dir is temporary storage and will be cleaned up |
-| Deployment is done = all done | You need monitoring, backups, and upgrades |
+| Symptom | Correct Understanding |
+|---------|-----------------------|
+| A live process means the service is available | Also confirm the entry point and dependency health |
+| Treating a channel problem as a model problem | Check the integration layer first, then the model |
+| Storing long-term data in the temp directory | The temp directory gets cleaned up |
+| Deployment done means everything is done | Monitoring, backups, and maintenance are still needed |
 
----
+## Further Reading
 
-## Next Steps
-
-- Having issues? See [Troubleshooting](/docs/en/help/troubleshooting/)
-- Evaluating models? See [WunderBench Model Evaluation](/docs/en/ops/wunderbench/)
-- Looking for references? See [Reference Overview](/docs/en/reference/)
-- Have questions? See [FAQ](/docs/en/help/faq/)
+- [Deployment and Running](/docs/en/ops/deployment/)
+- [WunderBench Model Evaluation](/docs/en/ops/wunderbench/)
+- [Troubleshooting](/docs/en/help/troubleshooting/)
+- [Reference Overview](/docs/en/reference/)

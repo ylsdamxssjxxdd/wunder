@@ -1,40 +1,29 @@
 ---
 title: Channel Webhook
-summary: wunder uses /wunder/channel/{provider}/webhook as a unified inbound entry for external channels, then hands off to ChannelHub and the outbox for processing.
-read_when:
-  - You want to connect Feishu, WeCom, QQBot, XMPP, and other channels into wunder
-  - You want to understand the relationship between Webhook, persistent connections, and the outbox
-source_docs:
-  - docs/API文档.md
-  - docs/设计文档/01-系统总体设计.md
-  - docs/设计文档/07-接入、网关与渠道系统设计.md
-  - src/api/channel.rs
-  - src/channels/catalog.rs
+summary: Inbound messages from external channels (Feishu, WeChat, QQ, XMPP, and others) all arrive through a single Webhook address and are then handled asynchronously in the background.
+updated_at: 2026-10-13
 ---
 
-# Channel Webhook
-
-Channel integration in wunder is not a "peripheral feature" but one of the official entry points.
-
-Its unified entry is:
+External channels such as Feishu, WeChat, QQ, and XMPP deliver inbound messages through one address:
 
 - `/wunder/channel/{provider}/webhook`
 
-## Core Goals of This Pipeline
+## Webhook vs. Persistent Connection
 
-Unified handling of:
+Some channels push events mainly over a Webhook, while others also support a persistent connection as a supplement (Feishu, QQBot, and XMPP all keep persistent connections running). Connecting a channel therefore involves more than configuring one address.
 
-- Signature verification
-- Channel message normalization
-- Fast acknowledgment (ACK)
-- Background async scheduling
-- Outbound delivery and retry
+## Four Steps to Connect
 
-So the Webhook is just the entry point, not the entire logic.
+1. The channel's request first enters the Webhook.
+2. The adapter verifies the signature and normalizes the message into wunder's format.
+3. After a quick acknowledgment, the message enters a background queue and runs asynchronously.
+4. The result is delivered back to the channel through the outbound buffer.
 
-## Existing Typical Entries
+The Webhook must acknowledge quickly: it must not stall on model inference, and an outbound failure should not in turn choke inbound processing.
 
-The system currently supports these typical channel entries:
+## Channels Supported Out of the Box
+
+The inbound addresses already in place:
 
 - `/wunder/channel/feishu/webhook`
 - `/wunder/channel/wechat/webhook`
@@ -43,96 +32,14 @@ The system currently supports these typical channel entries:
 - `/wunder/channel/whatsapp/webhook`
 - `/wunder/channel/xmpp/webhook`
 
-Also preserved:
+A unified `/wunder/channel/{provider}/webhook` is kept as well, dispatching by registered provider.
 
-- `/wunder/channel/{provider}/webhook`
+## Key Settings and Common Pitfalls
 
-For dispatch through the unified adapter registry.
-
-## Why a Unified Entry
-
-If every channel had its own inbound pipeline, things would quickly spiral out of control:
-
-- Signature verification logic scattered
-- Inconsistent outbound retry behavior
-- Inconsistent monitoring and logging standards
-- Increasing cost to onboard new channels
-
-That is why wunder currently uses `ChannelAdapterRegistry` to uniformly assemble adapters.
-
-## What Happens After a Webhook Comes In
-
-It is best understood as four steps:
-
-1. The channel request enters the Webhook
-2. The adapter verifies the signature and normalizes the message
-3. The message is quickly ACKed and enters the background queue
-4. Execution results are delivered outbound through the outbox
-
-This means:
-
-- The Webhook should not block for a long time on model inference
-- Outbound failures should not in turn choke inbound processing
-
-## Are Persistent Connections and Webhooks Opposed
-
-No.
-
-Some channels are primarily Webhook-based; others support persistent connections as a supplement.
-
-For example, the system already maintains running persistent connections for:
-
-- Feishu persistent connection
-- QQBot persistent connection
-- XMPP persistent connection
-
-So you should not think of "channel integration" as simply having a single Webhook URL.
-
-## What Does the Outbox Do
-
-The outbox is the outbound buffer layer.
-
-It is responsible for:
-
-- Async delivery
-- Retries
-- Failure status recording
-- Compatibility with official adapters and fallback URLs
-
-This turns the channel pipeline from "synchronous request / synchronous response" into a truly recoverable async system.
-
-## Why Files Get Rewritten to Download Links
-
-Many channel clients cannot directly understand wunder's internal workspace paths.
-
-So the system rewrites the following in message bodies and attachments:
-
-- `/workspaces/...`
-
-into:
-
-- `/wunder/temp_dir/download?...`
-
-This way external channel clients can actually open them.
-
-## What to Look at in the Admin Panel
-
-If you are troubleshooting channel issues, the admin side should first check:
-
-- Channel monitoring page
-- Account running status
-- Inbound/outbound statistics
-- Runtime logs
-
-This is more effective than staring only at model logs, because many issues actually occur at the integration layer.
-
-## Most Common Problems
-
-- Channel account configuration exists, but the webhook is not connected
-- Signature verification failure
-- Outbox keeps retrying
-- Persistent connection configured but the worker is not running
-- File links not rewritten, causing external clients to fail to open them
+- Outbound traffic has its own buffer layer, handling asynchronous delivery, retries on failure, and status recording, with fallback addresses also covered here. The channel path is therefore recoverable, and a single failure does not lose the message.
+- Channel clients cannot make sense of wunder's internal workspace paths. In outgoing bodies and attachments, internal paths are rewritten into clickable temporary download links so external clients can open them.
+- Check common problems in this order: the account is configured but the Webhook is not reachable; signature verification fails; outbound keeps retrying; a persistent connection is configured but the background process is not running; file links are not rewritten so external clients cannot open them.
+- When troubleshooting, start from the admin panel's channel monitoring, account running status, and inbound/outbound statistics rather than from model logs alone, because many problems lie in the integration layer.
 
 ## Further Reading
 

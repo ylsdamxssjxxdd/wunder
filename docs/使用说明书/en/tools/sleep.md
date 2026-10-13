@@ -1,49 +1,31 @@
 ---
 title: Sessions Yield
-summary: Semantics and use cases of `sessions_yield`.
-read_when:
-  - You need to temporarily yield control of the current turn and wait for an external result
-source_docs:
-  - src/services/tools/sessions_yield_tool.rs
-updated_at: 2026-09-28
+summary: Letting the agent stop the current turn on purpose, hand control back to the system, and carry on once an external result arrives.
+updated_at: 2026-10-13
 ---
 
-# Sessions Yield
+A sessions yield means the current turn stops here; it is not a final reply. It is used when something has already been handed off externally and work resumes once the result comes back.
 
-`sessions_yield` means: **the current turn yields control and does not produce a final reply.**
+## When to use it
 
-The standalone `sleep` tool has been removed: command execution blocks by default and returns the result; to wait for a background command, use the `command_session` poll window (`yield_time_ms`) instead of idle waiting.
+- Use it when you need to tell the system explicitly to stop this turn and resume later, after an external result.
+- Waiting for a command to finish does not need it.
 
-## Minimum arguments
+## How to use it
 
-```json
-{
-  "message": "The task was submitted and is waiting for an external result"
-}
-```
-
-## Success result
+You can include a short note explaining why this turn is stopping:
 
 ```json
 {
-  "ok": true,
-  "action": "sessions_yield",
-  "state": "yielded",
-  "summary": "Yielded the current turn and is waiting.",
-  "data": {
-    "status": "yielded",
-    "message": "The task was submitted and is waiting for an external result"
-  },
-  "meta": {
-    "turn_control": {
-      "kind": "yield",
-      "message": "The task was submitted and is waiting for an external result"
-    }
-  }
+  "message": "The task has been submitted; waiting for an external result"
 }
 ```
 
-## When to use
+## How it differs from a final reply
 
-- Use it to explicitly tell the system "stop this turn here and wait for an external resume."
-- Not needed for waiting on commands: `execute_command` blocks by default; poll background commands with `command_session`.
+- A sessions yield gives up control of this turn; when the external result comes back, a new turn starts.
+- A final reply means this turn has really finished and hands the conclusion to you.
+
+## Do not use it to wait for commands
+
+The standalone sleep tool has been removed. Waiting for a command to finish does not need it: command execution blocks by default and returns only once there is a result, and to wait for a background command you use the wait window offered by the command session rather than idling.

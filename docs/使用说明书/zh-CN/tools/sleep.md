@@ -1,20 +1,21 @@
 ---
 title: 会话让出
-summary: `sessions_yield` 的语义与适用场景。
-read_when:
-  - 需要暂时让出当前轮次控制权、等待外部结果
-source_docs:
-  - src/services/tools/sessions_yield_tool.rs
+summary: 让智能体主动结束当前轮次、把控制权交还系统，等外部结果回来再继续。
 updated_at: 2026-09-28
 ---
 
 # 会话让出
 
-`sessions_yield` 表示：**当前轮次让出控制权，不是最终回复。**
+会话让出表示「当前轮次先停在这里」，不是最终回复。用在一件事已经交给外部、需要等结果回来再接着做的时候。
 
-独立的 `sleep`（休眠等待）工具已移除：命令执行默认阻塞返回结果，等待后台命令请用 `command_session` 的 `yield_time_ms` 等待窗口，不要空转等待。
+## 什么时候用
 
-## 最小参数
+- 需要明确告诉系统「这轮先停、等外部恢复」时用它。
+- 等待命令跑完不需要它。
+
+## 怎么用
+
+可以带一句说明，告诉系统这轮为什么先停：
 
 ```json
 {
@@ -22,28 +23,11 @@ updated_at: 2026-09-28
 }
 ```
 
-## 成功返回
+## 它和最终回复的区别
 
-```json
-{
-  "ok": true,
-  "action": "sessions_yield",
-  "state": "yielded",
-  "summary": "Yielded the current turn and is waiting.",
-  "data": {
-    "status": "yielded",
-    "message": "已提交任务，等待外部结果"
-  },
-  "meta": {
-    "turn_control": {
-      "kind": "yield",
-      "message": "已提交任务，等待外部结果"
-    }
-  }
-}
-```
+- 会话让出是把这一轮的控制权让出去，之后外部结果回来会再开新的一轮。
+- 最终回复是这一轮真的做完了、把结论交给你。
 
-## 使用场景
+## 等待命令不要用它
 
-- 需要明确告诉系统“这轮先停在这里、等待外部恢复”时使用。
-- 等待命令完成不需要它：`execute_command` 默认阻塞返回；后台命令用 `command_session` 轮询。
+独立的「休眠等待」工具已经移除。等命令跑完不需要它：命令执行默认会阻塞到有结果才返回；要等后台命令，用命令会话提供的等待窗口去取，别空转等待。

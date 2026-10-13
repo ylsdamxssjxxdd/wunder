@@ -10,7 +10,7 @@ docker compose -p wunder-throughput -f packaging/docker/docker-compose-throughpu
 docker compose -p wunder-throughput -f packaging/docker/docker-compose-throughput.yml logs -f server
 ```
 
-服务启动时以 Release、8 编译任务构建。首次构建完成后访问 `http://127.0.0.1:18000`，使用隔离库初始化的管理员账号登录，进入“调试 → 吞吐量测试”。接口测试使用准备脚本生成的本地随机密钥；浏览器测试使用隔离库默认管理员，也可通过 `WUNDER_TEST_ADMIN_USER` / `WUNDER_TEST_ADMIN_PASSWORD` 设置。密钥只写本地文件，不输出到测试日志。
+服务启动时以 Release、8 编译任务构建。首次构建完成后访问 `http://127.0.0.1:18000`，使用隔离库初始化的管理员账号登录，进入「调试 → 吞吐量测试」。接口测试使用准备脚本生成的本地随机密钥；浏览器测试使用隔离库默认管理员，也可通过 `WUNDER_TEST_ADMIN_USER` / `WUNDER_TEST_ADMIN_PASSWORD` 设置。密钥只写本地文件，不输出到测试日志。
 
 ```powershell
 node tests/throughput-admin-smoke.mjs
@@ -47,7 +47,7 @@ node tests/virtual-model-browser.mjs
 
 服务重启后恢复 9 条摘要，未恢复旧请求，表计数保持不变；正常管理员登录、导航返回、WebSocket 重连与历史详情曲线检查通过。浮点指标按 12 位有效数字比较，允许 JSON 解码的末位舍入差异。
 
-Windows x64 MSVC Release 的 runtime 检查（同时启用 SQLite/PostgreSQL）无错误或告警；流解析与三档测量 8 项、虚拟模型与回放 14 项、普通虚拟调用 1 项定向测试通过。Linux x86_64 Release 服务构建通过。端到端数据库验证使用 PostgreSQL；SQLite 覆盖普通虚拟调用回归，未另起完整 SQLite 服务进行浏览器验收。管理员页面的独立 Playwright 回归覆盖长度档位、提交参数、停止、错误提示、历史选择、导出、中英文和窄屏布局；模型配置真实浏览器验证三档选择、保存、切换回显与默认快档。
+Windows x64 MSVC Release 的 runtime 检查（同时启用 SQLite/PostgreSQL）无错误或告警；流解析与三档测量 8 项、虚拟模型与回放 14 项、普通虚拟调用 1 项定向测试通过。Linux x86_64 Release 服务构建通过。端到端数据库验证使用 PostgreSQL；SQLite 覆盖普通虚拟调用回归，未另起完整 SQLite 服务做浏览器验收。管理员页面的独立 Playwright 回归覆盖长度档位、提交参数、停止、错误提示、历史选择、导出、中英文和窄屏布局；模型配置真实浏览器验证三档选择、保存、切换回显与默认快档。
 
 ## 并发语义
 

@@ -1,11 +1,11 @@
 ---
 title: 功能与能力速查
-summary: wunder 能做什么，每个能力在哪使用。按功能类别组织，方便快速定位。
+summary: wunder 的能力清单、入口位置与相关文档。
 ---
 
 # 功能与能力速查
 
-按使用场景列出 wunder 的主要能力，并标注每项能力对应的功能入口。
+能力按类别分组，每项标注入口位置。
 
 ## 智能对话
 
@@ -16,10 +16,7 @@ summary: wunder 能做什么，每个能力在哪使用。按功能类别组织�
 - 让智能体执行各种任务（写代码、处理文件、搜索信息等）
 - 查看对话历史和继续之前的会话
 
-**相关参考**
-
-- [会话状态说明](/docs/zh-CN/reference/stream-events/)
-- [提示词与个性化](/docs/zh-CN/reference/prompt-templates/)
+相关：[会话状态说明](/docs/zh-CN/reference/stream-events/)、[提示词与个性化](/docs/zh-CN/reference/prompt-templates/)
 
 ## 工作目录
 
@@ -30,9 +27,7 @@ summary: wunder 能做什么，每个能力在哪使用。按功能类别组织�
 - 浏览和管理属于自己的唯一云端目录
 - 查看智能体工作过程中产生的文件
 
-**相关参考**
-
-- [工作区路由与文件管理](/docs/zh-CN/reference/workspace-routing/)
+相关：[工作区路由与文件管理](/docs/zh-CN/reference/workspace-routing/)
 
 ## 智能体设置
 
@@ -45,10 +40,7 @@ summary: wunder 能做什么，每个能力在哪使用。按功能类别组织�
 - 设置智能体的回答风格（提示词模板）
 - 管理智能体的长期记忆
 
-**相关参考**
-
-- [提示词与个性化](/docs/zh-CN/reference/prompt-templates/)
-- [工具体系概念](/docs/zh-CN/concepts/tools/)
+相关：[提示词与个性化](/docs/zh-CN/reference/prompt-templates/)、[工具体系概念](/docs/zh-CN/concepts/tools/)
 
 ## 工具与技能
 
@@ -66,26 +58,20 @@ summary: wunder 能做什么，每个能力在哪使用。按功能类别组织�
 - 系统操作：截图、获取系统状态
 - 更多能力通过 MCP 扩展
 
-**相关参考**
-
-- [工具体系概念](/docs/zh-CN/concepts/tools/)
-- [提示词与技能概念](/docs/zh-CN/concepts/prompt-and-skills/)
+相关：[工具体系概念](/docs/zh-CN/concepts/tools/)、[提示词与技能概念](/docs/zh-CN/concepts/prompt-and-skills/)
 
 ## 渠道接入
 
-位置：舰桥 → "渠道管理"。
+位置：舰桥 → 「渠道管理」。
 
 - 绑定飞书/企业微信/微信/QQ 等账号
 - 让外部平台的用户也能使用智能体
 - 查看渠道运行状态和消息日志
 - 排查渠道相关问题
 
-当组织成员习惯在飞书、微信里沟通时，用渠道接入让他们不用换工具就能使用智能体。
+渠道接入让飞书、微信等平台的用户在原有平台内使用智能体，不需要切换工具。
 
-**相关参考**
-
-- [渠道管理指南](/docs/zh-CN/ops/channel-runtime/)
-- [舰桥面板指南](/docs/zh-CN/reference/admin-panels/)
+相关：[渠道管理指南](/docs/zh-CN/ops/channel-runtime/)、[舰桥面板指南](/docs/zh-CN/reference/admin-panels/)
 
 ## 定时任务
 
@@ -106,9 +92,7 @@ summary: wunder 能做什么，每个能力在哪使用。按功能类别组织�
 - 管理个人账户信息
 - 查看使用统计和额度余额
 
-**相关参考**
-
-- [系统设置参考](/docs/zh-CN/reference/config/)
+相关：[系统设置参考](/docs/zh-CN/reference/config/)
 
 ## 舰桥功能（管理员专用）
 
@@ -122,10 +106,7 @@ summary: wunder 能做什么，每个能力在哪使用。按功能类别组织�
 - 渠道监控：外部渠道状态
 - 性能监控：系统运行状态
 
-**相关参考**
-
-- [舰桥面板指南](/docs/zh-CN/reference/admin-panels/)
-- [系统设置参考](/docs/zh-CN/reference/config/)
+相关：[舰桥面板指南](/docs/zh-CN/reference/admin-panels/)、[系统设置参考](/docs/zh-CN/reference/config/)
 
 ## 按需求快速定位
 
