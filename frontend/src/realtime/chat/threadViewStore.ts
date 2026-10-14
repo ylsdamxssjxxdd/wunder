@@ -1,10 +1,11 @@
+// AI生成
 // The display window is independent of connection and execution-log state.
 import { shallowRef, markRaw } from 'vue';
 
 export interface ThreadBodyRef { body_id: string; revision: number; bytes: number }
 export interface ViewMessage { item_id: string; content: string; reasoning?: string; durable_seq?: number; content_offset?: number; reasoning_offset?: number; tail_offset?: number; body?: ThreadBodyRef; feedback?: unknown; stats?: unknown; tail?: string; failure?: string; attachments?: unknown[] }
 export interface ChatViewRow { root_turn_id: string; execution_turn_id?:string; user_round: number; client_message_id?: string; revision: number; status: string; user: ViewMessage; assistant: ViewMessage; workflow_count: number; reasoning_count?: number; reasoning_item_id?: string; failed_count: number; subagents?: any[] }
-export interface ThreadViewPage { runtime_status?:string;active_turn_id?:string; session_id: string; epoch: number; view_seq: number; projection_state: string; degraded?: boolean; diagnostic?: string | null; thread_empty: boolean | null; latest_round: number; chat: ChatViewRow[]; trajectory: any[]; tiles: any[]; tile_level: number; next_before: number | null; has_more: boolean }
+export interface ThreadViewPage { runtime_status?:string;active_turn_id?:string; session_id: string; epoch: number; view_seq: number; projection_state: string; degraded?: boolean; diagnostic?: string | null; thread_empty: boolean | null; latest_round: number; chat: ChatViewRow[]; trajectory: any[]; tiles: any[]; tile_level: number; next_before: number | null; has_more: boolean; next_after?: number | null; has_newer?: boolean }
 export type ViewPhase = 'opening' | 'ready' | 'verified_empty' | 'refreshing' | 'error';
 export interface ViewSlot { key: string; rootTurnId: string; user: Record<string, any>; assistant: Record<string, any> }
 interface Entry { phase: ViewPhase; epoch: number; seq: number; generation: number; rows: Map<string, ChatViewRow>; slots: Map<string, ViewSlot>; order: string[]; next: number | null; more: boolean; bytes: number; error: string; atLatest: boolean; latestRound: number; latestStatus: string }
@@ -13,6 +14,7 @@ export const threadViewClock = shallowRef(0);
 const MAX_BYTES = 48 * 1024 * 1024;
 const MAX_ROWS = 100;
 let activeKey = '';
+let nextGeneration = 0;
 function entry(key: string): Entry {
   let e = entries.get(key);
   if (!e) { e = { phase: 'opening', epoch: 0, seq: 0, generation: 0, rows: new Map(), slots: new Map(), order: [], next: null, more: false, bytes: 0, error: '', atLatest: true, latestRound: 0, latestStatus: 'idle' }; entries.set(key, e); }
@@ -21,11 +23,24 @@ function entry(key: string): Entry {
 let tailTimer:ReturnType<typeof setTimeout>|null=null;
 function notify() { threadViewClock.value++; }
 function notifyTail(){if(tailTimer===null)tailTimer=setTimeout(()=>{tailTimer=null;notify();},16);}
-export function beginThreadView(key: string): number { activeKey = key; const e = entry(key); e.phase = e.rows.size ? 'refreshing' : 'opening'; e.error = ''; notify(); return ++e.generation; }
+export function beginThreadView(key: string): number { activeKey = key; const e = entry(key); e.phase = e.rows.size ? 'refreshing' : 'opening'; e.error = ''; e.generation = ++nextGeneration; notify(); return e.generation; }
 export function threadViewGeneration(key: string): number { return entry(key).generation; }
 export function threadViewPhase(key: string): ViewPhase | undefined { void threadViewClock.value; return entries.get(key)?.phase; }
 export function threadViewCursor(key: string): number { const e=entries.get(key);return e?.epoch===-1 ? -((e.seq??0)+1) : e?.seq??0; }
 export function threadViewHistory(key: string) { const e = entry(key); return { before: e.next, hasMore: e.more }; }
+/**
+ * Cursor pair for a bounded transcript window. Keep the legacy history shape
+ * stable for callers that only walk toward the beginning of a thread.
+ */
+export function threadViewWindow(key: string) {
+  const e = entry(key);
+  return {
+    before: e.next,
+    hasMore: e.more,
+    after: e.rows.get(e.order.at(-1) ?? '')?.user_round ?? null,
+    hasNewer: !e.atLatest,
+  };
+}
 export function pauseThreadViewHistory(key: string) { const e = entry(key); e.more = false; notify(); }
 /** Row status is server vocabulary; message bubbles and audit hooks speak the UI one. */
 export const uiMessageStatus = (status: string) =>
@@ -108,7 +123,11 @@ function merge(e: Entry, row: ChatViewRow) {
 }
 function bound(e: Entry, historical = false) {
   e.order.sort((a,b) => (e.rows.get(a)?.user_round ?? 0) - (e.rows.get(b)?.user_round ?? 0));
-  while (e.order.length > MAX_ROWS) { const id=historical ? e.order.pop()! : e.order.shift()!;e.rows.delete(id);e.slots.delete(id); if(historical)e.atLatest=false; }
+  const evictsOlder = !historical && e.order.length > MAX_ROWS;
+  while (e.order.length > MAX_ROWS) { const id=historical ? e.order.pop()! : e.order.shift()!;e.rows.delete(id);e.slots.delete(id); if(historical)e.atLatest=false; else e.more=true; }
+  // The other edge was evicted during forward navigation or a live append.
+  // Its next read must start at the retained boundary, not the old page cursor.
+  if ((evictsOlder || e.next === null) && e.order.length) e.next = e.rows.get(e.order[0])!.user_round;
   e.bytes = e.order.reduce((n,id) => { const r=e.rows.get(id)!; return n+2*(r.user.content.length+r.assistant.content.length+(r.assistant.reasoning?.length??0)+(r.assistant.tail?.length??0))+4096; }, 0);
   let total = [...entries.values()].reduce((n,v)=>n+v.bytes,0);
   for (const [key,v] of entries) { if (total <= MAX_BYTES && entries.size <= 32) break; if (key === activeKey) continue; entries.delete(key);total-=v.bytes; }
@@ -119,12 +138,19 @@ function validRows(rows: unknown): rows is ChatViewRow[] {
     ['user','assistant'].every(k => r[k] && typeof r[k].content === 'string' && r[k].content.length <= 8192 && typeof r[k].item_id === 'string'));
 }
 export function threadViewAtLatest(key:string):boolean {void threadViewClock.value;return entries.get(key)?.atLatest ?? true;}
-export function commitThreadView(key: string, page: ThreadViewPage, generation?: number, historical = false, recovery=false): boolean {
+export function threadViewHasNewerPage(key: string, page: ThreadViewPage, generation: number): boolean {
+  const e = entries.get(key);
+  return Boolean(e && e.generation === generation && ['ready', 'verified_empty'].includes(e.phase) &&
+    page && page.session_id === key && Number.isSafeInteger(page.view_seq) && validRows(page.chat) &&
+    ['ready', 'source'].includes(page.projection_state) && !page.degraded &&
+    e.epoch === page.epoch && e.seq > page.view_seq);
+}
+export function commitThreadView(key: string, page: ThreadViewPage, generation?: number, historical = false, recovery=false, forward=false): boolean {
   const e = entry(key);
   if (generation !== undefined && e.generation !== generation) return false;
   if(!page || page.session_id!==key || !Number.isSafeInteger(page.epoch) || !Number.isSafeInteger(page.view_seq) || !validRows(page.chat))return false;
-  if(historical && e.epoch!==page.epoch)return false;
-  if (!historical && e.epoch === page.epoch && page.view_seq < e.seq) return false;
+  if((historical || forward) && e.epoch!==page.epoch)return false;
+  if (!historical && !forward && e.epoch === page.epoch && page.view_seq < e.seq) return false;
   if (page.degraded || page.projection_state === 'degraded') {
     e.error = page.diagnostic === 'view_timeout' ? '线程内容正在整理，已保留当前可见记录' : '线程展示暂时降级';
     e.phase = e.rows.size ? 'ready' : 'opening';
@@ -133,7 +159,7 @@ export function commitThreadView(key: string, page: ThreadViewPage, generation?:
   }
   if (!['ready','source'].includes(page.projection_state)) { e.error = '线程展示暂时不可用，请重试'; e.phase = e.rows.size ? 'ready' : 'error'; notify(); return false; }
   // Candidate validation precedes every mutation; failures retain committed rows.
-  if (!historical && !(recovery && !e.atLatest && e.epoch===page.epoch)) {
+  if (!historical && !forward && !(recovery && !e.atLatest && e.epoch===page.epoch)) {
     // Commit a complete tail window atomically. Optimistic requests survive refresh.
     const covered=new Set(page.chat.map(r=>r.root_turn_id));
     for(const id of e.order)if(!id.startsWith('pending:')&&!covered.has(id)){e.rows.delete(id);e.slots.delete(id);}
@@ -142,9 +168,10 @@ export function commitThreadView(key: string, page: ThreadViewPage, generation?:
     e.latestRound=page.latest_round;e.latestStatus=page.runtime_status??page.chat.at(-1)?.status??'idle';
   }
   for (const row of page.chat)if(!recovery||e.atLatest||e.rows.has(row.root_turn_id))merge(e,row);
-  if (!historical) { e.seq=page.view_seq;e.epoch=page.epoch; }
+  if (!historical && !forward) { e.seq=page.view_seq;e.epoch=page.epoch; }
   if(!historical && page.runtime_status)e.latestStatus=page.runtime_status;
-  if(!recovery||e.atLatest){e.next=page.next_before;e.more=page.has_more;}
+  if (forward) e.atLatest = !page.has_newer;
+  else if(!recovery||e.atLatest){e.next=page.next_before;e.more=page.has_more;}
   e.phase=page.thread_empty === true && !e.rows.size ? 'verified_empty' : 'ready';
   bound(e,historical);notify();return true;
 }
@@ -160,6 +187,23 @@ export function applyThreadViewChanges(key: string, payload: { runtime_status?:s
 export function failThreadView(key: string, generation: number, error: unknown) { const e=entry(key);if(e.generation!==generation)return;e.error=String(error);e.phase=e.rows.size?'ready':'error';notify(); }
 export function threadViewError(key:string):string {void threadViewClock.value;return entries.get(key)?.error ?? '';}
 export function threadViewSlots(key:string):ViewSlot[] | null {void threadViewClock.value;const e=entries.get(key);return e ? e.order.map(id=>e.slots.get(id)!).filter(Boolean) : null;}
+/**
+ * True once the display window is the authoritative render source.
+ *
+ * `beginThreadView` creates the entry (phase `opening`) before the bootstrap
+ * request resolves, so a view entry on its own proves nothing: an open that is
+ * still in flight, or one that failed, leaves zero rows. Until a page commits
+ * (rows present, or the server declared the thread ready/empty) the durable
+ * thread state still owns the transcript, so durable frames must keep applying
+ * and durable turn rows must keep rendering. Treating the bare entry as
+ * authoritative silently starved that pipeline: the reconnect `text_block`
+ * that heals a dropped tail never reached the state, and the page went blank.
+ */
+export function threadViewCommitted(key:string):boolean {
+  void threadViewClock.value;
+  const e=entries.get(key);
+  return Boolean(e && (e.order.length > 0 || e.phase === 'ready' || e.phase === 'verified_empty'));
+}
 export function submitThreadView(key:string,client:string,content:string) { const e=entry(key);const id=`pending:${client}`;if(e.rows.has(id))return;
   merge(e,{root_turn_id:id,user_round:Math.max(e.latestRound,...[...e.rows.values()].map(r=>r.user_round))+1,client_message_id:client,revision:-1,status:'running',user:{item_id:'',content},assistant:{item_id:'',content:''},workflow_count:0,failed_count:0});e.phase='ready';bound(e);notify(); }
 export function resetThreadViews(){entries.clear();notify();}
@@ -174,6 +218,29 @@ export function settlePendingThreadView(key:string,client:string,status:string,d
   r.status=status;r.assistant={...r.assistant,content:detail};e.slots.set(id,materialize(r));notify();
 }
 export function removePendingThreadView(key:string,client:string) {const e=entries.get(key);if(!e)return;const id=`pending:${client}`;e.rows.delete(id);e.slots.delete(id);e.order=e.order.filter(v=>v!==id);notify();}
+/** Remove a queued turn after the optimistic row has already been bound to a
+ * durable root_turn_id. Queue withdrawal must address both identities because
+ * the binding can race the cancel response. */
+export function removeThreadViewTurnByClientMessageId(key:string,client:string) {
+  const e = entries.get(key);
+  const cleaned = String(client || '').trim();
+  if (!e || !cleaned) return;
+  const removed = new Set<string>();
+  for (const [id, row] of e.rows) {
+    if (String(row.client_message_id || '').trim() === cleaned || id === `pending:${cleaned}`) {
+      removed.add(id);
+      e.rows.delete(id);
+      e.slots.delete(id);
+    }
+  }
+  if (!removed.size) return;
+  e.order = e.order.filter((id) => !removed.has(id));
+  e.bytes = e.order.reduce((n,id) => {
+    const row = e.rows.get(id);
+    return n + (row ? 2 * (row.user.content.length + row.assistant.content.length + (row.assistant.reasoning?.length ?? 0) + (row.assistant.tail?.length ?? 0)) + 4096 : 0);
+  }, 0);
+  notify();
+}
 export function applyThreadViewTail(key:string,payload:any):boolean {
   const e=entries.get(key);if(!e)return false;
   const p=payload?.data??payload;const id=String(p?.item_id??'');const delta=String(p?.text??p?.delta??p?.content??'');

@@ -103,6 +103,14 @@ pub struct TrajectoryTile {
     pub running: i64,
     pub start: f64,
     pub end: f64,
+    /// Per-lane activity totals. Older projections can omit these fields;
+    /// consumers must use `count` as a bounded all-activity fallback.
+    #[serde(default)]
+    pub input_count: i64,
+    #[serde(default)]
+    pub model_count: i64,
+    #[serde(default)]
+    pub tool_count: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -129,6 +137,11 @@ pub struct ThreadViewPage {
     pub tile_level: usize,
     pub next_before: Option<i64>,
     pub has_more: bool,
+    /// Exclusive forward cursor for returning through an evicted window.
+    #[serde(default)]
+    pub next_after: Option<i64>,
+    #[serde(default)]
+    pub has_newer: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

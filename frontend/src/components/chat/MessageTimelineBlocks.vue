@@ -495,32 +495,63 @@ watch(
   gap: 8px;
   box-sizing: border-box;
   width: 100%;
-  height: 34px;
+  height: 40px;
   padding: 0 24px;
   border: 0;
-  border-radius: 6px;
+  border-radius: 0;
   background: transparent;
   color: var(--mz-text-secondary, #3d3d3d);
-  font-size: calc(13px * var(--messenger-font-scale, 1));
+  font-size: calc(14px * var(--messenger-font-scale, 1));
   text-align: left;
   cursor: pointer;
 }
 
+/* The work-process row is an unobtrusive disclosure, not a selected list row.
+   Hover feedback lives on the chevron button so scanning the timeline remains calm. */
 .timeline-process-head:hover {
-  background: var(--mz-timeline-hover, #f6f5f3);
+  background: transparent;
+}
+
+.timeline-process-head:focus-visible {
+  outline: none;
+}
+
+.timeline-process-head:focus-visible .timeline-process-gutter::before {
+  border-color: rgba(var(--ui-accent-rgb), 0.48);
+  box-shadow: 0 0 0 2px rgba(var(--ui-accent-rgb), 0.14);
 }
 
 .timeline-process-gutter {
   position: relative;
   flex: 0 0 auto;
   align-self: stretch;
-  width: 20px;
+  width: 34px;
+}
+
+.timeline-process-gutter::before {
+  content: '';
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  left: -7px;
+  width: 32px;
+  box-sizing: border-box;
+  border: 1px solid var(--mz-border, #e8e6e3);
+  border-radius: 10px;
+  background: var(--mz-surface, #ffffff);
+  box-shadow: 0 1px 2px rgba(31, 35, 41, 0.06);
+  transition: border-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.timeline-process-gutter:hover::before {
+  border-color: var(--mz-border-strong, #d8d5d0);
+  box-shadow: 0 2px 5px rgba(31, 35, 41, 0.08);
 }
 
 .timeline-process-gutter-line {
   position: absolute;
-  top: calc(50% + 7px);
-  bottom: 0;
+  top: 40px;
+  bottom: -12px;
   left: 9.5px;
   width: 1px;
   background: var(--mz-timeline-line, #e2dfda);
@@ -528,6 +559,7 @@ watch(
 
 .timeline-process-arrow {
   position: absolute;
+  z-index: 1;
   top: 50%;
   left: 4px;
   width: 12px;
@@ -545,18 +577,18 @@ watch(
 
 .timeline-process-title {
   flex: 0 0 auto;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .timeline-process-count {
   flex: 0 0 auto;
-  padding: 1px 7px;
-  border-radius: 999px;
-  background: var(--mz-selected, #edeae6);
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
   color: var(--mz-text-muted, #8a8f99);
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 400;
-  line-height: 16px;
+  line-height: inherit;
   white-space: nowrap;
 }
 

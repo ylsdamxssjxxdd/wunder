@@ -1,8 +1,8 @@
 # wunder (Xinjian)
 
-wunder is an **agent orchestration platform**: hand a goal to an agent, and it decomposes the task, calls tools, and delivers results.
+wunder is an **agent orchestration platform**:
 
-The product ships in four forms, each with a fixed role: **Pupa** (desktop) is a local AI workbench — the default entry point for individual users and the flagship app; **Beehive** (web) is a cloud AI workbench provided alongside the **Hull** (server); **Helm** (cli) is the hands-on local entry point — terminal-driven, scriptable; the **Hull** is the user-and-agent management platform — multi-tenancy, users and org units, agent app building and publishing, unified gateway access and scheduling, with built-in tool chains, knowledge bases, and long-term memory. The **Bridge** (`web/`) is the governance console built into the Hull, for administrators.
+The core tenets are speed, stability, light weight, and universality. Actual tests show it can easily handle scenarios with 1,000 user message rounds, where each user message round contains 1,000 model inference turns.
 
 ## Form Matrix
 

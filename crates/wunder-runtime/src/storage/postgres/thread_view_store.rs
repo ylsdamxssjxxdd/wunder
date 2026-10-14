@@ -171,6 +171,7 @@ impl PostgresStorage {
         s: &str,
         k: &str,
         b: Option<i64>,
+        a: Option<i64>,
         r: Option<&str>,
         l: usize,
     ) -> Result<ThreadViewPage> {
@@ -178,7 +179,7 @@ impl PostgresStorage {
         let mut c = self.conn()?;
         let mut tx = c.transaction()?;
         tx.batch_execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY; SET LOCAL statement_timeout='1500ms'")?;
-        let p = view::page(&mut Db(&mut tx), u, s, k, b, r, l)?;
+        let p = view::page(&mut Db(&mut tx), u, s, k, b, a, r, l)?;
         tx.commit()?;
         Ok(p)
     }

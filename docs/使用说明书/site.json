@@ -36,6 +36,12 @@
                 ]
               },
               {
+                "group": "四个核心",
+                "pages": [
+                  "zh-CN/concepts/index"
+                ]
+              },
+              {
                 "group": "进阶（可选形态）",
                 "pages": [
                   "zh-CN/start/server",
@@ -49,16 +55,14 @@
                   "zh-CN/start/docs-directory",
                   "zh-CN/start/troubleshooting-first-run"
                 ]
-              }
-            ]
-          },
-          {
-            "tab": "核心",
-            "groups": [
+              },
               {
-                "group": "四个核心",
+                "group": "帮助",
                 "pages": [
-                  "zh-CN/concepts/index"
+                  "zh-CN/help/index",
+                  "zh-CN/help/troubleshooting",
+                  "zh-CN/help/faq",
+                  "zh-CN/help/glossary"
                 ]
               }
             ]
@@ -152,6 +156,13 @@
             "tab": "能力",
             "groups": [
               {
+                "group": "概览",
+                "pages": [
+                  "zh-CN/capabilities/index",
+                  "zh-CN/capabilities/api-index"
+                ]
+              },
+              {
                 "group": "核心能力",
                 "pages": [
                   "zh-CN/concepts/core-goal",
@@ -166,43 +177,9 @@
                 ]
               },
               {
-                "group": "概览",
-                "pages": [
-                  "zh-CN/capabilities/index"
-                ]
-              },
-              {
-                "group": "接口与端点",
-                "pages": [
-                  "zh-CN/capabilities/api-index",
-                  "zh-CN/capabilities/chat-ws",
-                  "zh-CN/capabilities/mcp-endpoint",
-                  "zh-CN/capabilities/weixin-channel"
-                ]
-              },
-              {
-                "group": "配置与数据",
-                "pages": [
-                  "zh-CN/capabilities/config",
-                  "zh-CN/capabilities/workspace-routing",
-                  "zh-CN/capabilities/stream-events",
-                  "zh-CN/capabilities/prompt-templates",
-                  "zh-CN/capabilities/admin-panels"
-                ]
-              },
-              {
                 "group": "三端互通",
                 "pages": [
                   "zh-CN/capabilities/interlink"
-                ]
-              },
-              {
-                "group": "排障与术语",
-                "pages": [
-                  "zh-CN/help/index",
-                  "zh-CN/help/troubleshooting",
-                  "zh-CN/help/faq",
-                  "zh-CN/help/glossary"
                 ]
               },
               {
@@ -224,7 +201,15 @@
                   "zh-CN/concepts/quota-and-token-usage",
                   "zh-CN/concepts/goal-mode",
                   "zh-CN/concepts/companion",
-                  "zh-CN/concepts/boundary-handling"
+                  "zh-CN/concepts/boundary-handling",
+                  "zh-CN/capabilities/stream-events",
+                  "zh-CN/capabilities/prompt-templates",
+                  "zh-CN/capabilities/config",
+                  "zh-CN/capabilities/workspace-routing",
+                  "zh-CN/capabilities/admin-panels",
+                  "zh-CN/capabilities/weixin-channel",
+                  "zh-CN/capabilities/chat-ws",
+                  "zh-CN/capabilities/mcp-endpoint"
                 ]
               }
             ]
@@ -253,6 +238,12 @@
                 ]
               },
               {
+                "group": "The Four Cores",
+                "pages": [
+                  "en/concepts/index"
+                ]
+              },
+              {
                 "group": "Advanced (Optional Forms)",
                 "pages": [
                   "en/start/server",
@@ -266,16 +257,14 @@
                   "en/start/docs-directory",
                   "en/start/troubleshooting-first-run"
                 ]
-              }
-            ]
-          },
-          {
-            "tab": "Core",
-            "groups": [
+              },
               {
-                "group": "The Four Cores",
+                "group": "Help",
                 "pages": [
-                  "en/concepts/index"
+                  "en/help/index",
+                  "en/help/troubleshooting",
+                  "en/help/faq",
+                  "en/help/glossary"
                 ]
               }
             ]
@@ -362,6 +351,13 @@
             "tab": "Capabilities",
             "groups": [
               {
+                "group": "Overview",
+                "pages": [
+                  "en/capabilities/index",
+                  "en/capabilities/api-index"
+                ]
+              },
+              {
                 "group": "Core Capabilities",
                 "pages": [
                   "en/concepts/core-goal",
@@ -376,43 +372,9 @@
                 ]
               },
               {
-                "group": "Overview",
-                "pages": [
-                  "en/capabilities/index"
-                ]
-              },
-              {
-                "group": "Interfaces and Endpoints",
-                "pages": [
-                  "en/capabilities/api-index",
-                  "en/capabilities/chat-ws",
-                  "en/capabilities/mcp-endpoint",
-                  "en/capabilities/weixin-channel"
-                ]
-              },
-              {
-                "group": "Configuration and Data",
-                "pages": [
-                  "en/capabilities/config",
-                  "en/capabilities/workspace-routing",
-                  "en/capabilities/stream-events",
-                  "en/capabilities/prompt-templates",
-                  "en/capabilities/admin-panels"
-                ]
-              },
-              {
                 "group": "Three-endpoint Interop",
                 "pages": [
                   "en/capabilities/interlink"
-                ]
-              },
-              {
-                "group": "Troubleshooting and Glossary",
-                "pages": [
-                  "en/help/index",
-                  "en/help/troubleshooting",
-                  "en/help/faq",
-                  "en/help/glossary"
                 ]
               },
               {
@@ -434,7 +396,15 @@
                   "en/concepts/quota-and-token-usage",
                   "en/concepts/goal-mode",
                   "en/concepts/companion",
-                  "en/concepts/boundary-handling"
+                  "en/concepts/boundary-handling",
+                  "en/capabilities/stream-events",
+                  "en/capabilities/prompt-templates",
+                  "en/capabilities/config",
+                  "en/capabilities/workspace-routing",
+                  "en/capabilities/admin-panels",
+                  "en/capabilities/weixin-channel",
+                  "en/capabilities/chat-ws",
+                  "en/capabilities/mcp-endpoint"
                 ]
               }
             ]

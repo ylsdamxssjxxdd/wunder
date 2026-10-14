@@ -2,6 +2,8 @@ use ratatui::layout::Constraint;
 use ratatui::layout::Direction;
 use ratatui::layout::Layout;
 use ratatui::layout::Rect;
+use ratatui::style::Modifier;
+use ratatui::style::Style;
 use ratatui::text::Line;
 use ratatui::text::Span;
 use ratatui::text::Text;
@@ -13,6 +15,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::tui::activity_indicator;
 use crate::tui::app::TuiApp;
+use crate::tui::text_tabs;
 use crate::tui::theme;
 
 const INPUT_PROMPT: &str = "› ";
@@ -57,6 +60,9 @@ pub(crate) fn draw_input(frame: &mut Frame, area: Rect, app: &mut TuiApp, is_zh:
 
     let warning = app.warning_notice(is_zh, area.width);
     let cloud = app.cloud_error_notice().map(str::to_string);
+    // The gap row between the transcript and the draft exists only while it has something
+    // to say, so an idle composer keeps its full text band (codex composer_gap).
+    let gap = app.composer_gap_line(area.width, is_zh);
     // Bands stack: a cloud failure (plan §6.2) gets its own row above the
     // warning counter so neither signal can erase the other.
     let mut constraints: Vec<Constraint> = Vec::new();
@@ -64,6 +70,11 @@ pub(crate) fn draw_input(frame: &mut Frame, area: Rect, app: &mut TuiApp, is_zh:
         constraints.push(Constraint::Length(1));
     }
     if warning.is_some() {
+        constraints.push(Constraint::Length(1));
+    }
+    // The gap never wraps: its label ladder already shed words to fit the width, so the
+    // band asks for the one row it can fill. Anything else would eat the draft's rows.
+    if gap.is_some() {
         constraints.push(Constraint::Length(1));
     }
     constraints.push(Constraint::Min(1));
@@ -88,6 +99,14 @@ pub(crate) fn draw_input(frame: &mut Frame, area: Rect, app: &mut TuiApp, is_zh:
         ]);
         frame.render_widget(Paragraph::new(notice_line), warning_area);
     }
+    if let Some(gap_line) = gap {
+        let gap_area = sections[next];
+        next += 1;
+        render_gap(frame, app, gap_area, gap_line);
+    } else {
+        // A hidden control owns nothing: an empty rectangle answers every pointer.
+        app.set_gap_hit_area(Rect::default());
+    }
     let (input_area, footer_area) = (sections[next], sections[next + 1]);
 
     let prompt_width = UnicodeWidthStr::width(INPUT_PROMPT) as u16;
@@ -99,8 +118,7 @@ pub(crate) fn draw_input(frame: &mut Frame, area: Rect, app: &mut TuiApp, is_zh:
     };
     app.set_input_viewport(text_area.width.max(1));
     app.set_input_hit_area(text_area);
-    let (input_text, cursor_x, cursor_y) =
-        app.input_view(text_area.width.max(1), text_area.height.max(1));
+    let view = app.input_view(text_area.width.max(1), text_area.height.max(1));
 
     if input_area.height > 0 && input_area.width > 0 {
         let prompt_style =
@@ -132,7 +150,12 @@ pub(crate) fn draw_input(frame: &mut Frame, area: Rect, app: &mut TuiApp, is_zh:
             ))])
         } else {
             let inline_placeholders = app.inline_input_placeholders();
-            render_input_text(input_text.as_str(), inline_placeholders.as_slice())
+            let lines = view
+                .lines
+                .iter()
+                .map(|line| project_input_line(line, inline_placeholders.as_slice()))
+                .collect::<Vec<_>>();
+            Text::from(lines)
         };
 
         frame.render_widget(
@@ -150,10 +173,41 @@ pub(crate) fn draw_input(frame: &mut Frame, area: Rect, app: &mut TuiApp, is_zh:
     }
 
     if text_area.width > 0 && text_area.height > 0 {
-        let x = text_area.x + cursor_x.min(text_area.width.saturating_sub(1));
-        let y = text_area.y + cursor_y.min(text_area.height.saturating_sub(1));
+        let x = text_area.x + view.cursor_x.min(text_area.width.saturating_sub(1));
+        let y = text_area.y + view.cursor_y.min(text_area.height.saturating_sub(1));
         frame.set_cursor_position((x, y));
     }
+}
+
+/// Paint the gap's single row centred over the draft, the way codex places the reading
+/// control, and hand back the rectangle it owns for the next pointer event. A control the
+/// reader can hover must also be a control they can press, so the rectangle and the painted
+/// label are derived from the same line here.
+fn render_gap(frame: &mut Frame, app: &mut TuiApp, area: Rect, line: Line<'static>) {
+    if area.height == 0 || area.width == 0 {
+        app.set_gap_hit_area(Rect::default());
+        return;
+    }
+    let width = line.width().min(usize::from(area.width)) as u16;
+    if width == 0 {
+        app.set_gap_hit_area(Rect::default());
+        return;
+    }
+    let target = Rect {
+        x: area.x + area.width.saturating_sub(width) / 2,
+        y: area.y,
+        width,
+        height: 1,
+    };
+    // Hover is reversed video plus weight: under `NO_COLOR` every hue degrades to Reset,
+    // so the state a pointer leaves behind has to be carried by the modifier alone.
+    let style = if app.gap_hovered(target) {
+        theme::selection_mark().add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+    };
+    app.set_gap_hit_area(target);
+    frame.render_widget(Paragraph::new(line.style(style)), target);
 }
 
 fn build_footer_line(app: &mut TuiApp, width: u16) -> Option<Line<'static>> {
@@ -184,25 +238,55 @@ fn build_footer_line(app: &mut TuiApp, width: u16) -> Option<Line<'static>> {
     Some(Line::from(spans))
 }
 
-fn render_input_text(text: &str, large_paste_placeholders: &[String]) -> Text<'static> {
-    let lines = text
-        .split('\n')
-        .map(|line| render_input_line(line, large_paste_placeholders))
-        .collect::<Vec<_>>();
-    Text::from(lines)
+/// Project one visible draft line for the frame. First the placeholder split, so a
+/// pasted-content badge keeps its link styling across the projection; then `expand_line`
+/// carries every tab to `text_tabs`' eight-column stop. Ratatui measures the *projected*
+/// line with plain `UnicodeWidthStr` maths (a tab reads zero-width there), so projecting
+/// before `Paragraph` is what makes its wrap agree with the composer's own wrap and the
+/// pointer hit test. The draft itself is never projected — `self.input`, copy and submit
+/// keep the user's literal tabs.
+///
+/// The split works span by span and never rejoins the line first: the mark a pointer
+/// gesture leaves on the draft rides the span's own style, so flattening the spans into one
+/// string here would silently erase the selection the frame is supposed to show.
+fn project_input_line(line: &Line<'_>, large_paste_placeholders: &[String]) -> Line<'static> {
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    for span in &line.spans {
+        push_span_around_badges(
+            &mut spans,
+            span.content.as_ref(),
+            span.style,
+            large_paste_placeholders,
+        );
+    }
+    if spans.is_empty() {
+        spans.push(Span::raw(String::new()));
+    }
+    text_tabs::expand_line(&Line::from(spans).style(line.style))
 }
 
-fn render_input_line(line: &str, large_paste_placeholders: &[String]) -> Line<'static> {
-    if line.is_empty() || large_paste_placeholders.is_empty() {
-        return Line::from(line.to_string());
+/// Cut one span's text at every badge, keeping the span's style on the plain parts and
+/// patching the badge style onto the badge itself, so a selection mark and a link badge can
+/// share a row without one of them losing.
+fn push_span_around_badges(
+    spans: &mut Vec<Span<'static>>,
+    text: &str,
+    style: Style,
+    large_paste_placeholders: &[String],
+) {
+    if text.is_empty() {
+        return;
+    }
+    if large_paste_placeholders.is_empty() {
+        spans.push(Span::styled(text.to_string(), style));
+        return;
     }
 
-    let mut spans = Vec::new();
     let mut cursor = 0usize;
-    while cursor < line.len() {
+    while cursor < text.len() {
         let mut next_match: Option<(usize, &str)> = None;
         for placeholder in large_paste_placeholders {
-            let Some(offset) = line[cursor..].find(placeholder.as_str()) else {
+            let Some(offset) = text[cursor..].find(placeholder.as_str()) else {
                 continue;
             };
             let match_start = cursor + offset;
@@ -220,21 +304,21 @@ fn render_input_line(line: &str, large_paste_placeholders: &[String]) -> Line<'s
         }
 
         let Some((match_start, placeholder)) = next_match else {
-            spans.push(Span::raw(line[cursor..].to_string()));
+            spans.push(Span::styled(text[cursor..].to_string(), style));
             break;
         };
 
         if match_start > cursor {
-            spans.push(Span::raw(line[cursor..match_start].to_string()));
+            spans.push(Span::styled(
+                text[cursor..match_start].to_string(),
+                style,
+            ));
         }
-        spans.push(Span::styled(placeholder.to_string(), theme::link_text()));
+        spans.push(Span::styled(
+            placeholder.to_string(),
+            style.patch(theme::link_text()),
+        ));
         cursor = match_start + placeholder.len();
-    }
-
-    if spans.is_empty() {
-        Line::from(line.to_string())
-    } else {
-        Line::from(spans)
     }
 }
 
@@ -435,6 +519,73 @@ mod tests {
     }
 
     #[test]
+    fn projection_expands_tabs_to_stops_and_keeps_the_badge_span() {
+        // gate 0..4, tab pads to 8, the badge (5 cells) sits at 8..13, its tab pads to 16.
+        let line = Line::from("gate\t[p-1]\tend".to_string());
+        let projected = project_input_line(&line, &["[p-1]".to_string()]);
+        let text = render_spans(projected.spans.clone());
+        assert_eq!(text, "gate    [p-1]   end");
+        assert!(
+            !text.contains('\t'),
+            "the frame text carries no tab cell"
+        );
+        let badge = projected
+            .spans
+            .iter()
+            .find(|span| span.content.contains("[p-1]"))
+            .expect("the badge keeps its own span");
+        assert_eq!(
+            badge.style.fg,
+            theme::link_text().fg,
+            "projection may not repaint the placeholder"
+        );
+        assert_eq!(
+            line.spans.iter().next().unwrap().content.as_ref(),
+            "gate\t[p-1]\tend",
+            "projection never rewrites the logical line it was handed"
+        );
+    }
+
+    #[test]
+    fn the_projection_keeps_a_selection_mark_on_its_own_run() {
+        use ratatui::style::Modifier;
+
+        // The draft line arrives with the mark already on the selected bytes: the projection
+        // may not flatten the spans, or the selection the reader dragged out disappears.
+        let line = Line::from(vec![
+            Span::raw("gate\t"),
+            Span::styled(
+                "sel\tected",
+                crate::tui::theme::selection_mark().patch(theme::link_text()),
+            ),
+            Span::raw(" tail"),
+        ]);
+        let projected = project_input_line(&line, &[]);
+        let marked = projected
+            .spans
+            .iter()
+            .filter(|span| span.style.add_modifier.contains(Modifier::REVERSED))
+            .collect::<Vec<_>>();
+        assert_eq!(marked.len(), 1, "exactly the marked run carries the style");
+        let text = marked[0].content.as_ref();
+        assert!(
+            text.contains("sel") && text.contains("ected"),
+            "the run keeps its characters: {text:?}"
+        );
+        assert!(
+            !text.contains('\t'),
+            "and the tab inside it was projected like every other cell: {text:?}"
+        );
+        assert!(
+            !projected.spans[0]
+                .style
+                .add_modifier
+                .contains(Modifier::REVERSED),
+            "the run before it stays unmarked"
+        );
+    }
+
+    #[test]
     fn footer_uses_labels_when_width_allows() {
         let spans = build_footer_spans(
             vec![
@@ -530,7 +681,7 @@ mod tests {
             .iter()
             .find(|span| span.content.contains("重连中"))
             .expect("badge span");
-        assert_eq!(warning.style.fg, Some(ratatui::style::Color::Yellow));
+        assert_eq!(warning.style.fg, theme::warning_text().fg);
     }
 
     #[test]

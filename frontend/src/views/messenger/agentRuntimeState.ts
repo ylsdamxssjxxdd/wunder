@@ -1,5 +1,9 @@
 import type { AgentRuntimeState } from './model';
 
+export const NON_SUCCESS_TERMINAL_STATUS = new Set([
+  'cancelled', 'canceled', 'stopped', 'interrupted', 'rejected', 'failed', 'error', 'system_error'
+]);
+
 export const WAITING_SESSION_RUNTIME_STATUS_SET = new Set([
   'queued',
   'waiting_approval',

@@ -123,6 +123,16 @@ pub(super) trait PostgresThreadLogStorage {
         limit: i64,
         include_internal: bool,
     ) -> Result<Option<Value>>;
+    fn get_thread_turn_page_impl(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        turn_id: &str,
+        before: Option<i64>,
+        after: Option<i64>,
+        limit: i64,
+        include_internal: bool,
+    ) -> Result<Option<Value>>;
     fn get_thread_item_impl(
         &self,
         user_id: &str,
@@ -1056,6 +1066,26 @@ impl PostgresThreadLogStorage for PostgresStorage {
         limit: i64,
         include_internal: bool,
     ) -> Result<Option<Value>> {
+        self.get_thread_turn_page_impl(
+            user_id,
+            session_id,
+            turn_id,
+            None,
+            Some(after),
+            limit,
+            include_internal,
+        )
+    }
+    fn get_thread_turn_page_impl(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        turn_id: &str,
+        before: Option<i64>,
+        after: Option<i64>,
+        limit: i64,
+        include_internal: bool,
+    ) -> Result<Option<Value>> {
         self.ensure_initialized()?;
         let mut conn = self.conn()?;
         let limit = limit.clamp(1, 100);
@@ -1065,13 +1095,35 @@ impl PostgresThreadLogStorage for PostgresStorage {
             return Ok(None);
         };
         let root_id = turn["root_turn_id"].as_str().unwrap_or(turn_id);
-        let mut items=conn.query("SELECT item_id,item_index,kind,status,revision,payload,created_time,updated_time,turn_id,visibility FROM thread_items WHERE user_id=$1 AND session_id=$2 AND root_turn_id=$3 AND item_index>$4 AND ($5 OR visibility='user') ORDER BY item_index LIMIT $6", &[&user_id,&session_id,&root_id,&after,&include_internal,&fetch])?.into_iter().map(item_row).collect::<Vec<_>>();
+        // A turn may contain an unbounded number of model/tool items.  Keep
+        // both directions keyset-addressable so clients can evict one edge of
+        // their local window and later recover it without an offset scan.
+        let older = before.filter(|cursor| *cursor >= 0);
+        let newer = after.filter(|cursor| *cursor >= 0);
+        let mut items = if let Some(cursor) = older {
+            let mut page = conn.query("SELECT item_id,item_index,kind,status,revision,payload,created_time,updated_time,turn_id,visibility FROM thread_items WHERE user_id=$1 AND session_id=$2 AND root_turn_id=$3 AND item_index<$4 AND ($5 OR visibility='user') ORDER BY item_index DESC LIMIT $6", &[&user_id,&session_id,&root_id,&cursor,&include_internal,&fetch])?.into_iter().map(item_row).collect::<Vec<_>>();
+            page.reverse();
+            page
+        } else {
+            let cursor = newer.unwrap_or(-1);
+            conn.query("SELECT item_id,item_index,kind,status,revision,payload,created_time,updated_time,turn_id,visibility FROM thread_items WHERE user_id=$1 AND session_id=$2 AND root_turn_id=$3 AND item_index>$4 AND ($5 OR visibility='user') ORDER BY item_index LIMIT $6", &[&user_id,&session_id,&root_id,&cursor,&include_internal,&fetch])?.into_iter().map(item_row).collect::<Vec<_>>()
+        };
         let has_more = items.len() > limit as usize;
-        items.truncate(limit as usize);
-        let next = items
-            .last()
-            .and_then(|v| v["item_index"].as_i64())
-            .unwrap_or(after);
+        if older.is_some() && has_more {
+            // The DESC query was reversed for chronological rendering; discard
+            // the one extra item that sits beyond this older page at its head.
+            items.remove(0);
+        } else {
+            items.truncate(limit as usize);
+        }
+        let first = items.first().and_then(|v| v["item_index"].as_i64());
+        let last = items.last().and_then(|v| v["item_index"].as_i64());
+        let has_older = if older.is_some() { has_more } else if let Some(first) = first {
+            conn.query_one("SELECT EXISTS(SELECT 1 FROM thread_items WHERE user_id=$1 AND session_id=$2 AND root_turn_id=$3 AND item_index<$4 AND ($5 OR visibility='user'))", &[&user_id,&session_id,&root_id,&first,&include_internal])?.get::<_, bool>(0)
+        } else { false };
+        let has_newer = if older.is_none() { has_more } else if let Some(last) = last {
+            conn.query_one("SELECT EXISTS(SELECT 1 FROM thread_items WHERE user_id=$1 AND session_id=$2 AND root_turn_id=$3 AND item_index>$4 AND ($5 OR visibility='user'))", &[&user_id,&session_id,&root_id,&last,&include_internal])?.get::<_, bool>(0)
+        } else { false };
         if !include_internal {
             for item in &mut items {
                 if let Some(map) = item["payload"].as_object_mut() {
@@ -1082,7 +1134,10 @@ impl PostgresThreadLogStorage for PostgresStorage {
         }
         turn["items"] = json!(items);
         turn["has_more"] = json!(has_more);
-        turn["next_after"] = json!(next);
+        turn["has_older"] = json!(has_older);
+        turn["has_newer"] = json!(has_newer);
+        turn["next_before"] = json!(first);
+        turn["next_after"] = json!(last);
         Ok(Some(turn))
     }
     fn get_thread_item_impl(

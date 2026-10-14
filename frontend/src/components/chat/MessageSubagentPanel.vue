@@ -425,7 +425,6 @@ const terminate = async (item: SubagentPanelItem) => {
   overflow: auto;
   padding-top: 4px;
   border-top: 1px solid var(--el-border-color-lighter, #ebeef5);
-  scrollbar-gutter: stable;
   word-break: break-word;
 }
 

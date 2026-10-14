@@ -4758,7 +4758,6 @@ onBeforeUnmount(() => {
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
-  scrollbar-gutter: stable;
   padding: 10px 10px 14px;
   scroll-padding-bottom: 14px;
   border-radius: 12px;

@@ -104,14 +104,21 @@ export const getSessionEventsWithParams = (
 ) => api.get(`/chat/sessions/${id}/events`, { params, ...options });
 export const getThreadLogTurns = (id: string, params: QueryParams = {}, options: { signal?: AbortSignal } = {}) =>
   api.get(`/chat/sessions/${id}/thread-log/turns`, { params, ...options });
-export const getThreadViewBootstrap = (id: string, params: QueryParams = {}, options: { signal?: AbortSignal } = {}) =>
-  api.get(`/chat/sessions/${encodeURIComponent(id)}/view/bootstrap`, { params, timeout:3000, ...options });
-export const getThreadViewChatPage = (id: string, params: QueryParams = {}, options: { signal?: AbortSignal } = {}) =>
-  api.get(`/chat/sessions/${encodeURIComponent(id)}/view/chat`, { params, timeout:3000, ...options });
-export const getThreadViewTrajectoryPage = (id: string, params: QueryParams = {}, options: { signal?: AbortSignal } = {}) =>
-  api.get(`/chat/sessions/${encodeURIComponent(id)}/view/trajectory`, { params, timeout:3000, ...options });
-export const getThreadViewBody = (id: string, bodyId: string, params: QueryParams = {}, options: { signal?: AbortSignal } = {}) =>
-  api.get(`/chat/sessions/${encodeURIComponent(id)}/bodies/${encodeURIComponent(bodyId)}`, { params, timeout:3000, ...options });
+type ThreadViewRequestOptions = { signal?: AbortSignal; timeout?: number };
+
+// The server deliberately bounds the projection query, but a bootstrap also
+// hydrates session metadata from the ordinary database lane.  A three-second
+// client deadline made a successful transcript look like an open failure when
+// that lane was briefly busy (especially for legacy large threads).  Keep the
+// timeout explicit and overridable for tests while leaving cancellation intact.
+export const getThreadViewBootstrap = (id: string, params: QueryParams = {}, options: ThreadViewRequestOptions = {}) =>
+  api.get(`/chat/sessions/${encodeURIComponent(id)}/view/bootstrap`, { params, ...options, timeout: options.timeout ?? 10000 });
+export const getThreadViewChatPage = (id: string, params: QueryParams = {}, options: ThreadViewRequestOptions = {}) =>
+  api.get(`/chat/sessions/${encodeURIComponent(id)}/view/chat`, { params, ...options, timeout: options.timeout ?? 5000 });
+export const getThreadViewTrajectoryPage = (id: string, params: QueryParams = {}, options: ThreadViewRequestOptions = {}) =>
+  api.get(`/chat/sessions/${encodeURIComponent(id)}/view/trajectory`, { params, ...options, timeout: options.timeout ?? 5000 });
+export const getThreadViewBody = (id: string, bodyId: string, params: QueryParams = {}, options: ThreadViewRequestOptions = {}) =>
+  api.get(`/chat/sessions/${encodeURIComponent(id)}/bodies/${encodeURIComponent(bodyId)}`, { params, ...options, timeout: options.timeout ?? 5000 });
 export const getThreadLogTurn = (sessionId: string, turnId: string, params: QueryParams = {}, options: { signal?: AbortSignal } = {}) =>
   api.get(`/chat/sessions/${sessionId}/thread-log/turns/${encodeURIComponent(turnId)}`, { params, ...options });
 // Atomic thread snapshot (plan §5 M2-C): cursor + turn/item/block rows read in

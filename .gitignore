@@ -100,3 +100,4 @@ supplement-build/
 # Virtual-model simulation scratch outputs (harmless landing zone)
 .temp/
 docs/性能基线/assets
+test-results

@@ -61,6 +61,10 @@ pub(crate) fn trajectory(
     updated: f64,
 ) -> TrajectoryViewRow {
     let content = item.get("content").and_then(Value::as_str).unwrap_or("");
+    let model_context = item
+        .pointer("/meta/type")
+        .and_then(Value::as_str)
+        == Some("model_context_internal");
     // 工具条目的事件负载里工具名字段是 `tool`（tool_name 从不存在）。
     let tool = item.get("tool").and_then(Value::as_str);
     let summary = if kind == "system_message" {
@@ -106,7 +110,7 @@ pub(crate) fn trajectory(
         item_index: index,
         created_seq: seq,
         revision,
-        kind: preview(kind, 48),
+        kind: preview(if model_context { "context" } else { kind }, 48),
         status: preview(status, 48),
         summary: preview(&summary, 256),
         overview_only: false,

@@ -7,7 +7,8 @@
   "layout": {
     "pythonRoot": "opt/python",
     "gitRoot": "opt/git",
-    "rgRoot": "opt/rg"
+    "rgRoot": "opt/rg",
+    "ffmpegRoot": "opt/ffmpeg"
   },
   "python": {
     "version": "3.8.18",
@@ -108,6 +109,31 @@
       }
     }
   },
+  "ffmpeg": {
+    "version": "4.4.1",
+    "flavor": "ffmpeg-static prebuilt",
+    "source": "eugeneware/ffmpeg-static",
+    "releaseTag": "b4.4.1",
+    "notes": [
+      "Same upstream source and version as the Win7 supplement so media handling behaves identically on every desktop platform.",
+      "Upstream ships gzipped single-binary builds that decompress to a static ffmpeg; only ffmpeg is bundled (no ffprobe), matching the Win7 pack.",
+      "Self-contained static builds, so the same archive runs on the Ubuntu 18.04 (glibc 2.27) baseline and on the arm64 pack alike."
+    ],
+    "archives": {
+      "amd64": {
+        "fileName": "ffmpeg-b4.4.1-linux-x64.gz",
+        "url": "https://github.com/eugeneware/ffmpeg-static/releases/download/b4.4.1/linux-x64.gz",
+        "sha256": "e8eb59e6d519eef28e571111dbc200a2c58a4d17be5f3f7eac41fb066d3f1a0f",
+        "elfMachine": "x86-64"
+      },
+      "arm64": {
+        "fileName": "ffmpeg-b4.4.1-linux-arm64.gz",
+        "url": "https://github.com/eugeneware/ffmpeg-static/releases/download/b4.4.1/linux-arm64.gz",
+        "sha256": "c4633e344b2c8e8a38990821a4c27eb956425d5fabc349f526a2bd2eb3eb791c",
+        "elfMachine": "AArch64"
+      }
+    }
+  },
   "fonts": [
     "NotoSansSC-VF.ttf",
     "msyh.ttc",
@@ -119,6 +145,7 @@
     "extractInto": "desktop install root (Win7-style install dir) or the directory holding the .AppImage file",
     "pythonRoot": "opt/python",
     "gitRoot": "opt/git",
-    "rgRoot": "opt/rg"
+    "rgRoot": "opt/rg",
+    "ffmpegRoot": "opt/ffmpeg"
   }
 }

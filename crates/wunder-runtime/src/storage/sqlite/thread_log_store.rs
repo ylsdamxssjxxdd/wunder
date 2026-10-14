@@ -117,6 +117,16 @@ pub(super) trait SqliteThreadLogStorage {
         limit: i64,
         include_internal: bool,
     ) -> Result<Option<Value>>;
+    fn get_thread_turn_page_impl(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        turn_id: &str,
+        before: Option<i64>,
+        after: Option<i64>,
+        limit: i64,
+        include_internal: bool,
+    ) -> Result<Option<Value>>;
     fn get_thread_item_impl(
         &self,
         user_id: &str,
@@ -946,6 +956,26 @@ impl SqliteThreadLogStorage for SqliteStorage {
         limit: i64,
         include_internal: bool,
     ) -> Result<Option<Value>> {
+        self.get_thread_turn_page_impl(
+            user_id,
+            session_id,
+            turn_id,
+            None,
+            Some(after),
+            limit,
+            include_internal,
+        )
+    }
+    fn get_thread_turn_page_impl(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        turn_id: &str,
+        before: Option<i64>,
+        after: Option<i64>,
+        limit: i64,
+        include_internal: bool,
+    ) -> Result<Option<Value>> {
         self.ensure_initialized()?;
         let conn = self.open()?;
         let limit = limit.clamp(1, 100);
@@ -961,22 +991,33 @@ impl SqliteThreadLogStorage for SqliteStorage {
             return Ok(None);
         };
         let root_id = turn["root_turn_id"].as_str().unwrap_or(turn_id);
-        let mut items = {
+        let older = before.filter(|cursor| *cursor >= 0);
+        let newer = after.filter(|cursor| *cursor >= 0);
+        let mut items = if let Some(cursor) = older {
+            let mut stmt = conn.prepare("SELECT item_id,item_index,kind,status,revision,payload,created_time,updated_time,turn_id,visibility FROM thread_items WHERE user_id=? AND session_id=? AND root_turn_id=? AND item_index<? AND (? OR visibility='user') ORDER BY item_index DESC LIMIT ?")?;
+            let mut rows = stmt.query_map(params![user_id, session_id, root_id, cursor, include_internal, fetch], item_row)?.collect::<rusqlite::Result<Vec<_>>>()?;
+            rows.reverse();
+            rows
+        } else {
+            let cursor = newer.unwrap_or(-1);
             let mut stmt = conn.prepare("SELECT item_id,item_index,kind,status,revision,payload,created_time,updated_time,turn_id,visibility FROM thread_items WHERE user_id=? AND session_id=? AND root_turn_id=? AND item_index>? AND (? OR visibility='user') ORDER BY item_index LIMIT ?")?;
-            let rows = stmt
-                .query_map(
-                    params![user_id, session_id, root_id, after, include_internal, fetch],
-                    item_row,
-                )?
-                .collect::<rusqlite::Result<Vec<_>>>()?;
+            let rows = stmt.query_map(params![user_id, session_id, root_id, cursor, include_internal, fetch], item_row)?.collect::<rusqlite::Result<Vec<_>>>()?;
             rows
         };
         let has_more = items.len() > limit as usize;
-        items.truncate(limit as usize);
-        let next = items
-            .last()
-            .and_then(|v| v["item_index"].as_i64())
-            .unwrap_or(after);
+        if older.is_some() && has_more {
+            items.remove(0);
+        } else {
+            items.truncate(limit as usize);
+        }
+        let first = items.first().and_then(|v| v["item_index"].as_i64());
+        let last = items.last().and_then(|v| v["item_index"].as_i64());
+        let has_older = if older.is_some() { has_more } else if let Some(first) = first {
+            conn.query_row("SELECT EXISTS(SELECT 1 FROM thread_items WHERE user_id=? AND session_id=? AND root_turn_id=? AND item_index<? AND (? OR visibility='user'))", params![user_id,session_id,root_id,first,include_internal], |row| row.get::<_, bool>(0))?
+        } else { false };
+        let has_newer = if older.is_none() { has_more } else if let Some(last) = last {
+            conn.query_row("SELECT EXISTS(SELECT 1 FROM thread_items WHERE user_id=? AND session_id=? AND root_turn_id=? AND item_index>? AND (? OR visibility='user'))", params![user_id,session_id,root_id,last,include_internal], |row| row.get::<_, bool>(0))?
+        } else { false };
         if !include_internal {
             for item in &mut items {
                 if let Some(map) = item["payload"].as_object_mut() {
@@ -987,7 +1028,10 @@ impl SqliteThreadLogStorage for SqliteStorage {
         }
         turn["items"] = json!(items);
         turn["has_more"] = json!(has_more);
-        turn["next_after"] = json!(next);
+        turn["has_older"] = json!(has_older);
+        turn["has_newer"] = json!(has_newer);
+        turn["next_before"] = json!(first);
+        turn["next_after"] = json!(last);
         Ok(Some(turn))
     }
     fn get_thread_item_impl(
@@ -1374,6 +1418,50 @@ mod tests {
         json!({"role":"user","content":format!("message {id}"),"client_message_id":format!("message-{id}")})
     }
     #[test]
+    fn turn_item_pages_are_bidirectional_and_bounded() {
+        use wunder_core::storage_backend::ThreadLogStore;
+        let dir = tempfile::tempdir().unwrap();
+        let db = SqliteStorage::new(dir.path().join("item-pages.db").to_string_lossy().into_owned());
+        let accepted = db.accept_thread_turn("fixture-owner", "fixture-thread", &input(1)).unwrap();
+        let turn = accepted["turn_id"].as_str().unwrap();
+        for index in 0..250 {
+            db.append_thread_item("fixture-owner", &json!({
+                "session_id":"fixture-thread", "turn_id":turn,
+                "item_id":format!("fixture-item-{index}"), "kind":"assistant_message",
+                "visibility":"user", "content":format!("fixture {index}")
+            })).unwrap();
+        }
+        let tail = db.get_thread_turn_page(
+            "fixture-owner", "fixture-thread", turn, Some(i64::MAX), None, 80, false,
+        ).unwrap().unwrap();
+        let tail_items = tail["items"].as_array().unwrap();
+        assert_eq!(tail_items.len(), 80);
+        assert_eq!(tail_items.first().unwrap()["item_index"], json!(171));
+        assert_eq!(tail_items.last().unwrap()["item_index"], json!(250));
+        assert_eq!(tail["has_older"], json!(true));
+        assert_eq!(tail["has_newer"], json!(false));
+
+        let older = db.get_thread_turn_page(
+            "fixture-owner", "fixture-thread", turn,
+            tail["next_before"].as_i64(), None, 80, false,
+        ).unwrap().unwrap();
+        let older_items = older["items"].as_array().unwrap();
+        assert_eq!(older_items.len(), 80);
+        assert_eq!(older_items.first().unwrap()["item_index"], json!(91));
+        assert_eq!(older_items.last().unwrap()["item_index"], json!(170));
+        assert_eq!(older["has_older"], json!(true));
+        assert_eq!(older["has_newer"], json!(true));
+
+        let newer = db.get_thread_turn_page(
+            "fixture-owner", "fixture-thread", turn,
+            None, older["next_after"].as_i64(), 80, false,
+        ).unwrap().unwrap();
+        let newer_items = newer["items"].as_array().unwrap();
+        assert_eq!(newer_items.first().unwrap()["item_index"], json!(171));
+        assert_eq!(newer_items.last().unwrap()["item_index"], json!(250));
+        assert_eq!(newer["has_newer"], json!(false));
+    }
+    #[test]
     fn thread_snapshot_before_first_turn_is_empty_and_existing_owner_is_checked() {
         use wunder_core::storage_backend::ThreadLogStore;
         let dir = tempfile::tempdir().unwrap();
@@ -1497,6 +1585,26 @@ mod tests {
         crate::services::thread_log::hydrate_active_text(&db, "owner", "thread", &mut message)
             .unwrap();
         assert_eq!(message["content"], "final answer");
+
+        let sealed = json!({"session_id":"thread", "turn_id":accepted["turn_id"],
+            "item_id":"sealed-answer", "kind":"assistant_message", "role":"assistant",
+            "visibility":"user", "status":"completed", "content":"", "reasoning":""});
+        db.append_thread_item("owner", &sealed).unwrap();
+        db.upsert_thread_text_block("owner", "thread", &json!({
+            "item_id":"sealed-answer", "field":"content", "block_index":0,
+            "event_id":301, "data":{"content":"intermediate print"}
+        })).unwrap();
+        db.upsert_thread_text_block("owner", "thread", &json!({
+            "item_id":"sealed-answer", "field":"reasoning_content", "block_index":0,
+            "event_id":302, "data":{"reasoning_content":"durable thought"}
+        })).unwrap();
+        let mut sealed_payload = json!({"item_id":"sealed-answer", "role":"assistant",
+            "status":"completed", "content":"", "reasoning":""});
+        crate::services::thread_log::hydrate_active_text(
+            &db, "owner", "thread", &mut sealed_payload
+        ).unwrap();
+        assert_eq!(sealed_payload["content"], "intermediate print");
+        assert_eq!(sealed_payload["reasoning"], "durable thought");
     }
     #[test]
     fn durable_catalog_survives_more_than_five_hundred_turns() {

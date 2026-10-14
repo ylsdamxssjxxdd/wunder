@@ -1,4 +1,5 @@
 import { threadViewCursor, commitThreadView, threadViewGeneration, threadViewStatus, threadViewSlots, resetThreadViews, failThreadView } from '@/realtime/chat/threadViewStore';
+import { resetThreadViewLoads } from './threadViewLoader';
 import { getThreadViewBootstrap } from '@/api/chat';
 // AI生成
 // AI生成
@@ -436,6 +437,7 @@ export const finalizeManualCompactionAsRequestFailed = (message, error): void =>
 };
 
 export const resetChatRuntimeState = () => {
+  resetThreadViewLoads();
   resetThreadViews();
   Array.from(sessionRuntime.keys()).forEach((sessionId) => {
     abortResumeStream(sessionId);

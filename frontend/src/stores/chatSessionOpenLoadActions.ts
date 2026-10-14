@@ -1,4 +1,4 @@
-import { openThreadView, olderThreadView } from './threadViewLoader';
+import { openThreadView, olderThreadView, newerThreadView } from './threadViewLoader';
 // AI生成
 
 import { sessionCatalogCheckIds, sessionCatalogCandidateIds, mergeSessionCatalogPage, cacheSessionCatalog } from './chatSessionCatalog';
@@ -349,6 +349,9 @@ export const chatSessionOpenLoadActions = {
       const key=resolveSessionKey(sessionId);
       if(!key || isSessionUnavailable(this,key))return null;
       return openThreadView(this,key,options);
+    },
+    async loadNewerHistory(sessionId: string) {
+      return newerThreadView(this, resolveSessionKey(sessionId || this.activeSessionId));
     },
     async loadOlderHistory(sessionId, options: { limit?: number; beforeId?: number } = {}) {
       void options;

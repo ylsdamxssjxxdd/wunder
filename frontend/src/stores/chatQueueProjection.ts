@@ -117,6 +117,12 @@ export const hasOnlyQueueMarkers = (message: unknown): boolean => {
   return items.every(isQueueMarkerItem);
 };
 
+const hasExplicitQueuedStatus = (message: unknown): boolean => {
+  const source = message as Record<string, any> | null | undefined;
+  const statuses = [source?.status, source?.state, source?.runtime_status, source?.runtimeStatus];
+  return statuses.some((value) => cleanText(value).toLowerCase() === 'queued');
+};
+
 /** 历史补水后的排队标记条目 id 形如 `queue:<queue_id>`，用它也能对上排队条。 */
 const markerQueueIdsOf = (message: unknown): Set<string> => {
   const source = message as Record<string, any> | null | undefined;
@@ -141,6 +147,10 @@ export const isParkedQueueTurn = (
   assistantMessage: unknown
 ): boolean => {
   if (!hasOnlyQueueMarkers(assistantMessage)) return false;
+  // The queue strip is the owner of an explicitly queued, still-empty turn.
+  // Do not wait for the asynchronous queue list to catch up: during that gap
+  // the thread-view row would otherwise flash as a duplicate empty bubble.
+  if (hasExplicitQueuedStatus(assistantMessage)) return true;
   const user = userMessage as Record<string, any> | null | undefined;
   const clientMessageId = cleanText(user?.client_message_id ?? readMessageId(user));
   if (clientMessageId && items.some((item) => item.clientMessageId === clientMessageId)) {

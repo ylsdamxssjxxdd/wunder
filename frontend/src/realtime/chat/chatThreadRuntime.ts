@@ -34,7 +34,7 @@ import {
   materializeChatRuntimeProjectionList
 } from './chatRuntimeRenderAdapter';
 import { chatPerf } from '@/utils/chatPerf';
-import { threadViewSlots, submitThreadView, clearThreadView, applyThreadViewChanges, applyThreadViewTail,threadViewStatus } from './threadViewStore';
+import { threadViewSlots, threadViewCommitted, submitThreadView, clearThreadView, applyThreadViewChanges, applyThreadViewTail,threadViewStatus } from './threadViewStore';
 
 interface ChatThreadRuntimeEntry {
   key: string;
@@ -494,7 +494,10 @@ export const applyChatThreadServerEvent = (
   payload: unknown,
   hooks: ChatThreadServerEventHooks = {}
 ): boolean => {
-  if(eventType==='thread_item_tail' && applyThreadViewTail(key,payload))return true;
+  // The display window only owns the live tail once it has committed a page.
+  // While an open is still in flight (or failed) `applyThreadViewTail` finds no
+  // row and would swallow the delta, so fall through to the durable state.
+  if(eventType==='thread_item_tail' && threadViewCommitted(key) && applyThreadViewTail(key,payload))return true;
   if (eventType === 'thread_view_change') {
     const wire = payload as any;
     const data = wire?.data ?? wire;
@@ -513,7 +516,9 @@ export const applyChatThreadServerEvent = (
   }
   if(eventType==='thread_view_required'){hooks.onSnapshotRequired?.({});return true;}
   if (CONTROL_EVENT.test(eventType)||eventType==='final') return false;
-  if(threadViewSlots(key)!==null)return true;
+  // An uncommitted window entry must not shadow the durable transcript either:
+  // the frames below are the only producer of it until the page commits.
+  if(threadViewCommitted(key))return true;
   const entry = ensureChatThreadRuntime(key);
   if (eventType === 'thread_snapshot_required') {
     dispatchSnapshotRequired(store, key, payload, hooks);
@@ -554,7 +559,9 @@ export type ChatThreadMaterializedSlot = {
 
 export const buildChatThreadMaterializedSlots = (key: string): ChatThreadMaterializedSlot[] | null => {
   const view = threadViewSlots(key);
-  if (view !== null) return view;
+  // Prefer the committed window, but keep rendering from the durable state
+  // while an open is still in flight so the transcript never blanks out.
+  if (view !== null && threadViewCommitted(key)) return view;
   const entry = registry.get(key);
   if (!entry) return null;
   const slots = buildChatThreadTurnSlots(entry.state);

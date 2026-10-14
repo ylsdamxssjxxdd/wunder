@@ -47,14 +47,15 @@ CREATE TABLE IF NOT EXISTS thread_trajectory_tiles (
  session_id TEXT NOT NULL, level BIGINT NOT NULL, bucket BIGINT NOT NULL,
  count BIGINT NOT NULL, failed BIGINT NOT NULL, running BIGINT NOT NULL,
  start DOUBLE PRECISION NOT NULL, finish DOUBLE PRECISION NOT NULL,
+ input_count BIGINT NOT NULL DEFAULT 0, model_count BIGINT NOT NULL DEFAULT 0,
+ tool_count BIGINT NOT NULL DEFAULT 0,
  PRIMARY KEY(session_id,level,bucket)
 );
 "#;
 
 /// All SQL below uses positional `?` parameters; the PG adapter numbers them.
 pub(crate) trait ViewDb {
-    /// PostgreSQL can use a partition-pruned lateral lookup for source
-    /// representatives. SQLite keeps the portable fallback query.
+    /// PostgreSQL and SQLite use the same bounded source query shape.
     fn is_postgres(&self) -> bool {
         false
     }
@@ -89,6 +90,37 @@ fn float(v: &Value) -> f64 {
 pub(crate) fn initialize(db: &mut impl ViewDb, user: &str, session: &str) -> Result<()> {
     db.execute("INSERT INTO thread_view_heads(session_id,user_id,projection_state) SELECT session_id,user_id,CASE WHEN latest_change_seq=0 THEN 'ready' WHEN latest_change_seq>? THEN 'source' ELSE 'rebuilding' END FROM thread_logs WHERE session_id=? AND user_id=? ON CONFLICT(session_id) DO NOTHING", &[json!(MAX_SOURCE_CHANGE_SEQ),json!(session),json!(user)])?;
     Ok(())
+}
+
+/// Classification used by the bounded overview pyramid.  Keep this beside the
+/// write projection so both current and historical readers share exactly the
+/// same three-lane semantics as the trajectory UI.
+fn tile_lane(kind: &str) -> (i64, i64, i64) {
+    match kind {
+        "tool_call" | "tool_result" | "tool_message" | "subagent" | "subagent_run" => (0, 0, 1),
+        "assistant_message" | "compaction" | "compacted" => (0, 1, 0),
+        _ => (1, 0, 0),
+    }
+}
+
+fn trajectory_visibility(visibility: &str, kind: &str, payload: &Value) -> bool {
+    if visibility == "user" || (visibility == "model_internal" && kind == "system_message") {
+        return true;
+    }
+    // Model context is usually hidden from the chat transcript, but a small,
+    // semantically named subset explains how an execution received a result
+    // from another agent. It is safe to show as a bounded trajectory record;
+    // arbitrary hidden prompts and tool observations remain private.
+    visibility == "model_internal"
+        && kind == "user_message"
+        && payload
+            .pointer("/meta/type")
+            .and_then(Value::as_str)
+            == Some("model_context_internal")
+        && payload
+            .pointer("/meta/source")
+            .and_then(Value::as_str)
+            == Some("agent_inbox")
 }
 
 /// Historical sessions above this bound stay on the durable source-log path.
@@ -334,18 +366,23 @@ pub(crate) fn project_item(
     else {
         return Ok(());
     };
-    // 系统提示词注入（system_message，model_internal）是 dsh 语境下的上下文
-    // 条目，轨迹必须保留；其余非 user 可见性（model_call 等）仍不入轨迹。
-    if text(&i[7]) != "user"
-        && !(text(&i[7]) == "model_internal" && text(&i[5]) == "system_message")
-    {
+    let parsed_item: Value = serde_json::from_str(text(&i[8]))?;
+    // System prompts stay as redacted context. Agent inbox deliveries are the
+    // other intentional internal exception: they explain an actual handoff,
+    // while every other hidden model message remains out of the user ledger.
+    if !trajectory_visibility(text(&i[7]), text(&i[5]), &parsed_item) {
         if let Some(old) = one(
             db,
-            "SELECT status,created_seq FROM thread_trajectory_rows WHERE session_id=? AND user_id=? AND item_id=?",
+            "SELECT status,created_seq,payload FROM thread_trajectory_rows WHERE session_id=? AND user_id=? AND item_id=?",
             &[json!(session), json!(user), json!(id)],
         )? {
+            let old_kind = serde_json::from_str::<Value>(text(&old[2]))
+                .ok()
+                .and_then(|value| value.get("kind").and_then(Value::as_str).map(str::to_owned))
+                .unwrap_or_default();
+            let (old_input, old_model, old_tool) = tile_lane(&old_kind);
             for level in 0..8 {
-                db.execute("UPDATE thread_trajectory_tiles SET count=count-1,failed=failed-?,running=running-? WHERE session_id=? AND level=? AND bucket=?",&[json!(projection::is_failed(text(&old[0]))),json!(projection::is_running(text(&old[0]))),json!(session),json!(level),json!(int(&old[1])/(128i64 << (level*3)))])?;
+                db.execute("UPDATE thread_trajectory_tiles SET count=count-1,failed=failed-?,running=running-?,input_count=input_count-?,model_count=model_count-?,tool_count=tool_count-? WHERE session_id=? AND level=? AND bucket=?",&[json!(projection::is_failed(text(&old[0]))),json!(projection::is_running(text(&old[0]))),json!(old_input),json!(old_model),json!(old_tool),json!(session),json!(level),json!(int(&old[1])/(128i64 << (level*3)))])?;
             }
             db.execute(
                 "DELETE FROM thread_trajectory_rows WHERE session_id=? AND user_id=? AND item_id=?",
@@ -406,10 +443,10 @@ pub(crate) fn project_item(
     let revision = int(&i[4]);
     let kind = text(&i[5]);
     let status = text(&i[6]);
-    let mut item: Value = serde_json::from_str(text(&i[8]))?;
+    let mut item = parsed_item;
     let old = one(
         db,
-        "SELECT status,created_seq,revision FROM thread_trajectory_rows WHERE session_id=? AND item_id=?",
+        "SELECT status,created_seq,revision,payload FROM thread_trajectory_rows WHERE session_id=? AND item_id=?",
         &[json!(session), json!(id)],
     )?;
     if old.as_ref().is_some_and(|r| int(&r[2]) >= revision) {
@@ -486,9 +523,15 @@ pub(crate) fn project_item(
     }
     db.execute("INSERT INTO thread_trajectory_rows(session_id,user_id,item_id,root_turn_id,created_seq,revision,status,payload) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(session_id,item_id) DO UPDATE SET revision=excluded.revision,status=excluded.status,payload=excluded.payload", &[json!(session),json!(user),json!(id),json!(root),json!(int(&i[3])),json!(revision),json!(status),json!(serde_json::to_string(&traj)?)])?;
     let old_status = old.as_ref().map(|r| text(&r[0]));
+    let (input_count, model_count, tool_count) = tile_lane(kind);
+    let old_lane = old
+        .as_ref()
+        .and_then(|row| serde_json::from_str::<Value>(text(&row[3])).ok())
+        .and_then(|value| value.get("kind").and_then(Value::as_str).map(tile_lane))
+        .unwrap_or((0, 0, 0));
     for level in 0..8 {
         let bucket = int(&i[3]) / (128i64 << (level * 3));
-        db.execute("INSERT INTO thread_trajectory_tiles(session_id,level,bucket,count,failed,running,start,finish) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(session_id,level,bucket) DO UPDATE SET count=thread_trajectory_tiles.count+excluded.count,failed=thread_trajectory_tiles.failed+excluded.failed,running=thread_trajectory_tiles.running+excluded.running,finish=CASE WHEN thread_trajectory_tiles.finish<excluded.finish THEN excluded.finish ELSE thread_trajectory_tiles.finish END", &[json!(session),json!(level),json!(bucket),json!(i64::from(old.is_none())),json!(projection::is_failed(status)-old_status.map(projection::is_failed).unwrap_or(0)),json!(projection::is_running(status)-old_status.map(projection::is_running).unwrap_or(0)),json!(float(&i[9])),json!(float(&i[10]))])?;
+        db.execute("INSERT INTO thread_trajectory_tiles(session_id,level,bucket,count,failed,running,start,finish,input_count,model_count,tool_count) VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(session_id,level,bucket) DO UPDATE SET count=thread_trajectory_tiles.count+excluded.count,failed=thread_trajectory_tiles.failed+excluded.failed,running=thread_trajectory_tiles.running+excluded.running,input_count=thread_trajectory_tiles.input_count+excluded.input_count,model_count=thread_trajectory_tiles.model_count+excluded.model_count,tool_count=thread_trajectory_tiles.tool_count+excluded.tool_count,finish=CASE WHEN thread_trajectory_tiles.finish<excluded.finish THEN excluded.finish ELSE thread_trajectory_tiles.finish END", &[json!(session),json!(level),json!(bucket),json!(i64::from(old.is_none())),json!(projection::is_failed(status)-old_status.map(projection::is_failed).unwrap_or(0)),json!(projection::is_running(status)-old_status.map(projection::is_running).unwrap_or(0)),json!(float(&i[9])),json!(float(&i[10])),json!(input_count-old_lane.0),json!(model_count-old_lane.1),json!(tool_count-old_lane.2)])?;
     }
     db.execute("UPDATE thread_view_heads SET latest_item_seq=CASE WHEN latest_item_seq<? THEN ? ELSE latest_item_seq END WHERE session_id=?", &[json!(int(&i[3])),json!(int(&i[3])),json!(session)])?;
     let Some(r) = one(
@@ -831,9 +874,11 @@ pub(crate) fn page(
     session: &str,
     kind: &str,
     before: Option<i64>,
+    after: Option<i64>,
     root_turn_id: Option<&str>,
     limit: usize,
 ) -> Result<ThreadViewPage> {
+    anyhow::ensure!(before.is_none() || after.is_none(), "ambiguous page direction");
     let mut page = ThreadViewPage {
         session_id: session.into(),
         epoch: 1,
@@ -874,6 +919,7 @@ pub(crate) fn page(
             session,
             kind,
             before,
+            after,
             root_turn_id,
             limit,
             page,
@@ -884,88 +930,25 @@ pub(crate) fn page(
     } else {
         limit.clamp(1, CHAT_PAGE_MAX)
     };
-    let cursor = before.unwrap_or(i64::MAX);
+    let cursor = after.or(before).unwrap_or(i64::MAX);
     let mut bytes = 4096usize;
     let sql = if kind == "trajectory" {
-        if let Some(root_turn_id) = root_turn_id {
-            let _ = root_turn_id;
+        if root_turn_id.is_some() {
             "SELECT payload,created_seq FROM thread_trajectory_rows WHERE user_id=? AND session_id=? AND root_turn_id=? AND created_seq<? ORDER BY created_seq DESC LIMIT ?"
         } else {
-            // Overview pages stay bounded by user turns, not workflow items.
-            // Show input, first workflow action, and final answer per turn;
-            // opening any representative fetches that turn's full keyset pages.
-            let round_cursor = before.unwrap_or(i64::MAX);
-            let overview_cap = cap.min(20);
-            let roots = db.query(
-                "SELECT turn_id,user_turn_index FROM thread_turns WHERE user_id=? AND session_id=? AND trigger_kind='user' AND user_turn_index<? ORDER BY user_turn_index DESC LIMIT ?",
-                &[json!(user), json!(session), json!(round_cursor), json!((overview_cap + 1) as i64)],
-            )?;
-            page.has_more = roots.len() > overview_cap;
-            let selected = roots.into_iter().take(overview_cap).collect::<Vec<_>>();
-            for root in &selected {
-                let root_id = text(&root[0]);
-                let round = int(&root[1]);
-                let kind_expr = db.json_text("payload", "kind");
-                let representative_queries = [
-                    ("user_message", "ASC", false),
-                    (
-                        "tool_call','approval','plan','compaction','subagent_run",
-                        "ASC",
-                        true,
-                    ),
-                    ("assistant_message", "DESC", false),
-                ];
-                let mut representatives = Vec::with_capacity(3);
-                for (kind, order, multiple) in representative_queries {
-                    let sql = if multiple {
-                        format!("SELECT payload FROM thread_trajectory_rows WHERE user_id=? AND session_id=? AND root_turn_id=? AND {kind_expr} IN ('{kind}') ORDER BY created_seq {order} LIMIT 1")
-                    } else {
-                        format!("SELECT payload FROM thread_trajectory_rows WHERE user_id=? AND session_id=? AND root_turn_id=? AND {kind_expr}=? ORDER BY created_seq {order} LIMIT 1")
-                    };
-                    let values = if multiple {
-                        vec![json!(user), json!(session), json!(root_id)]
-                    } else {
-                        vec![json!(user), json!(session), json!(root_id), json!(kind)]
-                    };
-                    if let Some(row) = one(db, &sql, &values)? {
-                        let mut projected: TrajectoryViewRow = serde_json::from_str(text(&row[0]))?;
-                        projected.user_round = round;
-                        projected.overview_only = true;
-                        representatives.push(projected);
-                    }
-                }
-                representatives.sort_by_key(|row| row.created_seq);
-                let group_bytes = representatives
-                    .iter()
-                    .map(|row| serde_json::to_vec(row).map(|bytes| bytes.len() + 1))
-                    .collect::<std::result::Result<Vec<_>, _>>()?
-                    .into_iter()
-                    .sum::<usize>();
-                if bytes + group_bytes > TRAJECTORY_RESPONSE_BYTES {
-                    page.has_more = true;
-                    break;
-                }
-                bytes += group_bytes;
-                page.next_before = Some(round);
-                page.trajectory.extend(representatives);
-            }
-            page.trajectory.sort_by(|left, right| {
-                left.user_round
-                    .cmp(&right.user_round)
-                    .then_with(|| left.created_seq.cmp(&right.created_seq))
-            });
-            return Ok(page);
+            "SELECT payload,created_seq FROM thread_trajectory_rows WHERE user_id=? AND session_id=? AND created_seq<? ORDER BY created_seq DESC LIMIT ?"
         }
     } else {
         "SELECT payload,user_round FROM thread_chat_rows WHERE user_id=? AND session_id=? AND user_round<? ORDER BY user_round DESC LIMIT ?"
     };
     let mut query_params = vec![json!(user), json!(session)];
-    if root_turn_id.is_some() {
+    if kind == "trajectory" && root_turn_id.is_some() {
         query_params.push(json!(root_turn_id.unwrap()));
     }
     query_params.push(json!(cursor));
     query_params.push(json!((cap + 1) as i64));
-    let rows = db.query(sql, &query_params)?;
+    let sql = if after.is_some() { sql.replace("<?", ">?").replace(" DESC", " ASC") } else { sql.to_owned() };
+    let rows = db.query(&sql, &query_params)?;
     page.has_more = rows.len() > cap;
     for r in rows.into_iter().take(cap) {
         let size = text(&r[0]).len();
@@ -986,20 +969,39 @@ pub(crate) fn page(
             page.chat.push(serde_json::from_str(text(&r[0]))?);
         }
     }
-    page.chat.reverse();
+    if after.is_none() { page.chat.reverse(); }
     if kind == "chat" {
         for row in &mut page.chat {
             hydrate_chat_reasoning(db, user, session, row)?;
         }
     }
-    page.trajectory.reverse();
+    if after.is_none() { page.trajectory.reverse(); }
     if kind == "trajectory" && page.projection_state == "ready" && page.view_seq > 0 {
-        for r in db.query("SELECT bucket,count,failed,running,start,finish FROM thread_trajectory_tiles WHERE session_id=? AND level=? ORDER BY bucket LIMIT 1024", &[json!(session),json!(page.tile_level as i64)])? {
-            let tile=TrajectoryTile {bucket:int(&r[0]),count:int(&r[1]),failed:int(&r[2]),running:int(&r[3]),start:float(&r[4]),end:float(&r[5])};
+        for r in db.query("SELECT bucket,count,failed,running,start,finish,input_count,model_count,tool_count FROM thread_trajectory_tiles WHERE session_id=? AND level=? ORDER BY bucket LIMIT 1024", &[json!(session),json!(page.tile_level as i64)])? {
+            let tile=TrajectoryTile {bucket:int(&r[0]),count:int(&r[1]),failed:int(&r[2]),running:int(&r[3]),start:float(&r[4]),end:float(&r[5]),input_count:int(&r[6]),model_count:int(&r[7]),tool_count:int(&r[8])};
             let size=serde_json::to_vec(&tile)?.len()+1;if bytes+size>TRAJECTORY_RESPONSE_BYTES {break;}bytes+=size;page.tiles.push(tile);
         }
     }
+    finish_page_cursors(&mut page, kind, before, after);
     Ok(page)
+}
+
+// Responses are always chronological, regardless of seek direction. Only the
+// requested edge needs a LIMIT+1 probe; the supplied cursor proves the other edge.
+pub(super) fn finish_page_cursors(page: &mut ThreadViewPage, kind: &str, before: Option<i64>, after: Option<i64>) {
+    if after.is_some() {
+        page.has_newer = page.has_more;
+        page.has_more = true;
+    } else {
+        page.has_newer = before.is_some();
+    }
+    if kind == "trajectory" {
+        page.next_before = page.trajectory.first().map(|row| row.created_seq);
+        page.next_after = page.trajectory.last().map(|row| row.created_seq);
+    } else {
+        page.next_before = page.chat.first().map(|row| row.user_round);
+        page.next_after = page.chat.last().map(|row| row.user_round);
+    }
 }
 
 pub(crate) fn changes(

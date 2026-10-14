@@ -160,12 +160,13 @@ impl SqliteStorage {
         s: &str,
         k: &str,
         b: Option<i64>,
+        a: Option<i64>,
         r: Option<&str>,
         l: usize,
     ) -> Result<ThreadViewPage> {
         let mut conn = self.view_connection()?;
         let tx = conn.transaction()?;
-        let page = view::page(&mut Db(&tx), u, s, k, b, r, l)?;
+        let page = view::page(&mut Db(&tx), u, s, k, b, a, r, l)?;
         tx.commit()?;
         Ok(page)
     }
@@ -212,6 +213,65 @@ mod tests {
     use super::*;
     use crate::storage::ThreadLogStore;
     use serde_json::json;
+
+    #[test]
+    fn source_chat_batches_page_queries_and_preserves_block_fallbacks() {
+        struct Counted<'a> { db: Db<'a>, queries: usize, rows: usize }
+        impl ViewDb for Counted<'_> {
+            fn json_text(&self, expression: &str, field: &str) -> String { self.db.json_text(expression, field) }
+            fn text_bytes(&self, expression: &str) -> String { self.db.text_bytes(expression) }
+            fn query(&mut self, sql: &str, p: &[Value]) -> Result<Vec<Vec<Value>>> {
+                self.queries += 1;
+                let rows = self.db.query(sql, p)?;
+                self.rows += rows.len();
+                Ok(rows)
+            }
+            fn execute(&mut self, _: &str, _: &[Value]) -> Result<u64> { panic!("page reads must not write") }
+            fn index_chunk(&mut self, _: &str, _: &str, _: &str, _: i64, _: i64, _: &str) -> Result<()> { unreachable!() }
+            fn search(&mut self, _: &str, _: &str, _: &str) -> Result<ThreadSearchPage> { unreachable!() }
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let storage = SqliteStorage::new(dir.path().join("fixture.db").to_string_lossy().into());
+        for n in 1..=21 {
+            let turn = storage.accept_thread_turn("fixture-user", "fixture-thread", &json!({"content":format!("input {n}")})).unwrap();
+            let root = turn["turn_id"].as_str().unwrap();
+            storage.append_thread_item("fixture-user", &json!({"session_id":"fixture-thread", "turn_id":root,"item_id":format!("{root}:tool"),"kind":"tool_call","status":"failed","tool":"fixture_tool"})).unwrap();
+            let item = format!("{root}:text-1");
+            storage.append_thread_item("fixture-user", &json!({"session_id":"fixture-thread", "turn_id":root,"item_id":item,"kind":"assistant_message","content":"","status":"completed"})).unwrap();
+            for (field, data) in [("content",json!({"content":format!("answer {n}")})), ("reasoning",json!({"reasoning":format!("reason {n}")}))] {
+                storage.upsert_thread_text_block("fixture-user","fixture-thread",&json!({"item_id":item,"field":field,"block_index":0,"event_id":n,"data":data})).unwrap();
+            }
+        }
+        let conn = storage.open().unwrap();
+        conn.execute("UPDATE thread_view_heads SET projection_state='source'", []).unwrap();
+        let mut db = Counted { db: Db(&conn), queries: 0, rows: 0 };
+        let small = view::page(&mut db,"fixture-user","fixture-thread","chat",None,None,None,1).unwrap();
+        let small_queries = db.queries;
+        db.queries = 0;
+        db.rows = 0;
+        let large = view::page(&mut db,"fixture-user","fixture-thread","chat",None,None,None,20).unwrap();
+        assert_eq!(large.chat.len(), 20);
+        assert_eq!(db.queries, small_queries, "round trips must not grow with page size");
+        assert!(db.queries <= 10);
+        assert!(db.rows <= 150, "do not return every execution or workflow item");
+        assert!(large.has_more);
+        assert_eq!(large.next_before, Some(2));
+        assert_eq!(small.chat[0].assistant.content, "answer 21");
+        for row in &large.chat {
+            assert_eq!(row.user.content, format!("input {}", row.user_round));
+            assert_eq!(row.assistant.content, format!("answer {}", row.user_round));
+            assert_eq!(row.assistant.reasoning, format!("reason {}", row.user_round));
+            assert_eq!((row.workflow_count, row.failed_count), (1, 1));
+        }
+        let older = view::page(&mut db,"fixture-user","fixture-thread","chat",large.next_before,None,None,20).unwrap();
+        assert_eq!(older.chat.len(), 1);
+        assert_eq!(older.chat[0].user_round, 1);
+        assert!(!older.has_more);
+        let newer = view::page(&mut db,"fixture-user","fixture-thread","chat",None,Some(1),None,20).unwrap();
+        assert_eq!(newer.chat.first().map(|row| row.user_round), Some(2));
+        assert_eq!(newer.chat.last().map(|row| row.user_round), Some(21));
+        assert!(!newer.has_newer);
+    }
 
     #[test]
     fn oversized_legacy_threads_use_source_pages_without_entering_rebuild_queue() {
@@ -317,14 +377,99 @@ mod tests {
                 0,
             )
             .unwrap();
-        let payload: serde_json::Value = serde_json::from_str(&body_page.chunks.concat()).unwrap();
-        assert_eq!(payload["content"], "fixture context");
+        // Internal system prompts remain visible as a bounded timeline row,
+        // but their body is deliberately redacted at the source-read
+        // boundary.  The trajectory must not turn the debug view into a
+        // prompt/credential disclosure channel.
+        assert!(body_page.chunks.is_empty());
         assert!(detail.trajectory[0]
             .detail
             .as_ref()
             .unwrap()
             .body_id
             .ends_with("|source_detail"));
+    }
+
+    #[test]
+    fn source_trajectory_pages_every_item_in_created_sequence_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = SqliteStorage::new(dir.path().join("fixture.db").to_string_lossy().into());
+        db.ensure_initialized().unwrap();
+        let conn = db.open().unwrap();
+        conn.execute("INSERT INTO thread_logs(session_id,user_id,latest_user_turn,latest_change_seq,created_time,updated_time) VALUES('fixture-source-pages','fixture-user',1,50001,1,1)", []).unwrap();
+        {
+            let mut view_db = Db(&conn);
+            view::initialize(&mut view_db, "fixture-user", "fixture-source-pages").unwrap();
+        }
+        let receipt = db
+            .accept_thread_turn(
+                "fixture-user",
+                "fixture-source-pages",
+                &json!({"content":"fixture input"}),
+            )
+            .unwrap();
+        let turn = receipt["turn_id"].as_str().unwrap().to_owned();
+        for index in 0..25 {
+            db.append_thread_item(
+                "fixture-user",
+                &json!({
+                    "session_id":"fixture-source-pages",
+                    "turn_id":turn,
+                    "item_id":format!("{turn}:tool-{index}"),
+                    "kind":"tool_call",
+                    "tool":format!("fixture_tool_{index}"),
+                    "visibility":"user",
+                    "status":"completed"
+                }),
+            )
+            .unwrap();
+        }
+
+        let first = db
+            .thread_view_trajectory_page(
+                "fixture-user",
+                "fixture-source-pages",
+                None,
+                None,
+                10,
+            )
+            .unwrap();
+        assert_eq!(first.projection_state, "source");
+        assert_eq!(first.trajectory.len(), 10);
+        assert!(first.has_more);
+        let before = first.next_before.expect("source page cursor");
+        assert!(first.trajectory.iter().all(|row| !row.overview_only));
+        assert!(first.trajectory.iter().all(|row| row.kind == "tool_call"));
+
+        let second = db
+            .thread_view_trajectory_page(
+                "fixture-user",
+                "fixture-source-pages",
+                Some(before),
+                None,
+                10,
+            )
+            .unwrap();
+        assert_eq!(second.trajectory.len(), 10);
+        assert!(second.has_more);
+        assert!(second.trajectory.iter().all(|row| !row.overview_only));
+        assert!(second
+            .trajectory
+            .iter()
+            .all(|row| row.created_seq < before));
+
+        let third = db
+            .thread_view_trajectory_page(
+                "fixture-user",
+                "fixture-source-pages",
+                second.next_before,
+                None,
+                10,
+            )
+            .unwrap();
+        assert_eq!(third.trajectory.len(), 6);
+        assert!(!third.has_more);
+        assert!(third.trajectory.iter().all(|row| !row.overview_only));
     }
 
     #[test]
@@ -662,13 +807,13 @@ mod tests {
             .unwrap()
             .tiles
             .is_empty());
-        assert_eq!(trajectory.trajectory.len(), 3);
+        assert_eq!(trajectory.trajectory.len(), 34);
         assert!(trajectory
             .trajectory
             .iter()
             .all(|row| row.root_turn_id == turn));
         assert!(trajectory.trajectory.iter().all(|row| row.detail.is_some()));
-        assert!(trajectory.trajectory.iter().all(|row| row.overview_only));
+        assert!(trajectory.trajectory.iter().all(|row| !row.overview_only));
         assert!(trajectory
             .trajectory
             .iter()
@@ -682,8 +827,8 @@ mod tests {
             .iter()
             .any(|row| row.kind == "assistant_message"));
         assert!(
-            trajectory.tiles.is_empty(),
-            "large source overview avoids scanning all item statuses"
+            trajectory.tiles.len() <= 1024,
+            "source overview reads only bounded precomputed tiles"
         );
         let details = db
             .thread_view_trajectory_page("fixture-user", "fixture-thread", None, Some(turn), 80)

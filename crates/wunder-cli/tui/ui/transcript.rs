@@ -4,12 +4,21 @@ use ratatui::widgets::{Paragraph, Wrap};
 use ratatui::Frame;
 
 use crate::tui::app::TuiApp;
+use crate::tui::text_tabs;
 use crate::tui::theme;
 
 pub(crate) fn draw(frame: &mut Frame, area: Rect, viewport: Rect, app: &mut TuiApp, is_zh: bool) {
-    let mut rendered = app.transcript_rendered_view(viewport.width, viewport.height, is_zh);
-    app.paint_transcript_selection(rendered.lines.as_mut_slice());
-    let transcript = Paragraph::new(Text::from(rendered.lines)).wrap(Wrap { trim: false });
+    let rendered = app.transcript_rendered_view(viewport.width, viewport.height, is_zh);
+    // The cache keeps logical text; the frame renders tabs expanded to eight-column stops
+    // so ratatui's own wrap measurement and the terminal's tab rendering agree. The
+    // selection is marked in that same display-column space, on the projected lines.
+    let mut lines: Vec<Line<'static>> = rendered
+        .lines
+        .iter()
+        .map(text_tabs::expand_line)
+        .collect();
+    app.paint_transcript_selection(lines.as_mut_slice());
+    let transcript = Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false });
     frame.render_widget(transcript.scroll((rendered.local_scroll, 0)), area);
 }
 
@@ -21,7 +30,11 @@ pub(crate) fn draw_view(frame: &mut Frame, area: Rect, app: &mut TuiApp, is_zh: 
         .split(area);
     let body_height = chunks[1].height;
 
-    let lines = app.transcript_view_frame(chunks[1].width, body_height);
+    let lines = app
+        .transcript_view_frame(chunks[1].width, body_height)
+        .iter()
+        .map(text_tabs::expand_line)
+        .collect::<Vec<_>>();
     let status = app.transcript_view_status(chunks[1].width);
     frame.render_widget(
         Paragraph::new(Text::from(view_status_line(status, is_zh))),

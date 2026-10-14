@@ -56,3 +56,18 @@ test('merged tool call inherits failure state from its result item', () => {
 
   assert.equal(tool.isError, true);
 });
+
+test('agent mailbox deliveries are readable context instead of tool rows', () => {
+  const [context] = buildToolCells([{
+    kind: 'subagent_message',
+    status: 'completed',
+    payload: {
+      event_type: 'subagent_message',
+      message: 'fixture completion report',
+      delivery: 'applied',
+    },
+  }]);
+
+  assert.equal(context.kind, 'context');
+  assert.equal(context.text, 'fixture completion report');
+});

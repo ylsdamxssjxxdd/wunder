@@ -5,6 +5,7 @@
 - `opt/python`：给智能体、本地脚本与 Python 工具调用使用的内置 Python
 - `opt/git`：给 `git clone`、`git status`、补丁应用与仓库操作使用的内置 Git
 - `opt/rg`：给 `search_content` 与命令行检索使用的内置 ripgrep
+- `opt/ffmpeg`：给音视频抽帧、抽音轨与转码使用的内置静态 ffmpeg
 
 补充包设计目标与 Win7 版一致：**解压到桌面程序同级目录即可生效**。
 
@@ -23,6 +24,10 @@
     `NO_GETTEXT/NO_TCLTK/NO_PERL/NO_PYTHON` 精简内嵌树，保留 https clone 能力。
 - ripgrep：`14.1.1`
   - amd64 使用静态 musl 构建；arm64 官方未发布 musl 资产，使用 gnu 构建。
+- ffmpeg：`4.4.1`（eugeneware/ffmpeg-static `b4.4.1`）
+  - 与 Win7 补充包同源同版本，保证三端音视频处理行为一致（对齐 Windows）。
+  - 上游为自包含静态单文件构建，Ubuntu 18.04（glibc 2.27）与 arm64 包可直接运行；
+    当前仅内置 `ffmpeg`（不含 `ffprobe`），与 Win7 包保持一致。
 
 ## Python 依赖
 
@@ -58,7 +63,8 @@ docker run --rm --platform linux/amd64 \
 - `WUNDER_SUPPLEMENT_REQUIREMENTS`：requirements 覆盖
 
 脚本自带 sha256 校验（python-build-standalone 与 ripgrep 取官方 `.sha256`
-sidecar，Git 源码包哈希固定在 manifest 中），下载缓存在构建根目录的
+sidecar，Git 源码包与 ffmpeg 单文件构建的哈希固定在 manifest 中；ffmpeg
+上游未发布 `.sha256` sidecar），下载缓存在构建根目录的
 `downloads/` 下，重复执行直接复用。
 
 ## 默认输出
@@ -72,6 +78,7 @@ opt/
   python/
   git/
   rg/
+  ffmpeg/
 README-linux-supplement.txt
 wunder-linux-supplement.json
 ```

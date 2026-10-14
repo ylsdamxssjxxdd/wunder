@@ -54,10 +54,18 @@
 .panel-logs.panel-trajectory {
   display: flex;
   padding: 0;
+  position: fixed;
+  inset: 0;
+  z-index: 210;
+  background: #ffffff;
 }
 
 .panel-logs.panel-trajectory > .debug-trajectory {
   flex: 1 1 auto;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  border-radius: 0;
 }
 
 .debug-trajectory {

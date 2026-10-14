@@ -73,7 +73,7 @@ import { installActiveChatRealtimeRecovery } from '@/views/messenger/activeChatR
 import { isAgentAlreadyOpen } from '@/views/messenger/agentOpenState';
 import { resolveAgentConfiguredAbilityNames, resolveAgentOverviewAbilityCounts } from '@/views/messenger/agentOverviewAbilities';
 import { buildDefaultAgentOverviewSource } from '@/views/messenger/agentOverviewCards';
-import { TERMINAL_SESSION_RUNTIME_STATUS_SET, WAITING_SESSION_RUNTIME_STATUS_SET, hasAgentTerminalSettlementEvidence, isWaitingMessengerRuntimeStatus, resolveAgentRuntimeStateFromSignals, resolveAgentRuntimeTerminalStateFromSessionStatus, shouldNotifyAgentTaskCompletion, shouldPreserveMissingAgentRuntimeState, shouldSettleAgentRuntimeFromTerminalSession, shouldSettleAgentSessionsFromRuntimeState } from '@/views/messenger/agentRuntimeState';
+import { NON_SUCCESS_TERMINAL_STATUS, TERMINAL_SESSION_RUNTIME_STATUS_SET, WAITING_SESSION_RUNTIME_STATUS_SET, hasAgentTerminalSettlementEvidence, isWaitingMessengerRuntimeStatus, resolveAgentRuntimeStateFromSignals, resolveAgentRuntimeTerminalStateFromSessionStatus, shouldNotifyAgentTaskCompletion, shouldPreserveMissingAgentRuntimeState, shouldSettleAgentRuntimeFromTerminalSession, shouldSettleAgentSessionsFromRuntimeState } from '@/views/messenger/agentRuntimeState';
 import { resolveAgentSelectionAfterRemoval } from '@/views/messenger/agentSelection';
 import { scheduleMessengerBootstrapBackgroundTasks, settleMessengerBootstrapTasks, shouldUseNonBlockingDesktopMessageBootstrap, splitMessengerBootstrapTasks } from '@/views/messenger/bootstrap';
 import { buildAgentApprovalOptions, normalizeAgentApprovalMode, useComposerApprovalMode } from '@/views/messenger/composerApprovalMode';
@@ -1591,10 +1591,6 @@ type WorldVoicePlaybackRuntime = {
   currentMessageKey: string;
   currentResourceKey: string;
 };
-
-const NON_SUCCESS_TERMINAL_STATUS = new Set([
-  'cancelled', 'canceled', 'stopped', 'interrupted', 'rejected', 'failed', 'error', 'system_error'
-]);
 
 const METAFILE_IMAGE_CONTENT_TYPES = new Set([
   'image/wmf',
@@ -3961,7 +3957,7 @@ function installMessengerControllerConversationOpenActions(ctx: MessengerControl
       if (!normalizedSessionId)
           return;
       const existingTask = openingAgentSessionTasks.get(normalizedSessionId);
-      if (existingTask) {
+      if (existingTask && String(ctx.chatStore.activeSessionId || '').trim() === normalizedSessionId) {
           return existingTask;
       }
       const task = (async () => {
@@ -10562,6 +10558,11 @@ function installMessengerControllerLifecycleMessageViewport(ctx: MessengerContro
               return [];
           }
           return ctx.chatStore.loadOlderHistory(sessionId);
+      },
+      loadNewerHistory: async () => {
+          const sessionId = String(ctx.chatStore.activeSessionId || '').trim();
+          return ctx.isAgentConversationActive.value && sessionId
+              ? ctx.chatStore.loadNewerHistory(sessionId) : [];
       }
   });
 }

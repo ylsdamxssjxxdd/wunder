@@ -15,7 +15,7 @@ summary: 按症状分流的帮助入口：故障排查、FAQ、术语表。
 
 1. 不会用 → 看 FAQ 和入门文档
 2. 功能异常 → 看故障排查
-3. 想接入开发 → 看[能力概览](/docs/zh-CN/capabilities/)里的接口与端点
+3. 想接入开发 → 看[能力概览](/docs/zh-CN/capabilities/)
 
 ## 按症状跳转
 

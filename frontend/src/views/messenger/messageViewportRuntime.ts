@@ -36,6 +36,7 @@ export type MessageViewportRuntimeOptions = {
   estimateVirtualOffsetTop: (keys: string[], index: number) => number;
   resolveVirtualMessageHeight: (key: string) => number;
   loadOlderHistory?: () => Promise<unknown[] | unknown>;
+  loadNewerHistory?: () => Promise<unknown[] | unknown>;
   // Optional session-scoped persistence for the measured height table. When
   // provided, the table is hydrated for the current session on creation and
   // written back on prune/dispose. Both caps live in the store.
@@ -660,36 +661,48 @@ export const createMessageViewportRuntime = (
 
   const maybeLoadOlderHistory = async () => {
     const container = options.messageListRef.value;
-    if (
-      olderHistoryLoadInFlight ||
-      !container ||
-      options.showChatSettingsView.value ||
-      !options.isAgentConversationActive.value ||
-      container.scrollTop > 96 ||
-      typeof options.loadOlderHistory !== 'function'
-    ) {
-      return;
-    }
-
+    if (olderHistoryLoadInFlight || disposed || !container || options.showChatSettingsView.value ||
+        !options.isAgentConversationActive.value) return;
+    const forward = container.scrollTop > 96 &&
+      container.scrollHeight - container.clientHeight - container.scrollTop <= 160;
+    if (!forward && container.scrollTop > 96) return;
+    const load = forward ? options.loadNewerHistory : options.loadOlderHistory;
+    if (!load) return;
     olderHistoryLoadInFlight = true;
-    const previousScrollHeight = container.scrollHeight;
-    const previousScrollTop = container.scrollTop;
+    const conversation = options.activeConversationKey?.value;
+    const previousTop = container.scrollTop;
+    const previousHeight = container.scrollHeight;
+    const keys = options.agentRenderableMessages.value.map(row => row.key);
+    const top = container.getBoundingClientRect().top;
+    const anchor = Array.from(container.querySelectorAll<HTMLElement>('[data-chat-measure]'))
+      .find(node => node.getBoundingClientRect().bottom > top);
+    const anchorKey = anchor?.dataset.virtualKey;
+    const anchorOffset = anchor ? anchor.getBoundingClientRect().top - top : 0;
+    const oldIndex = anchorKey ? keys.indexOf(anchorKey) : -1;
     try {
-      const loaded = await options.loadOlderHistory();
-      const loadedCount = Array.isArray(loaded) ? loaded.length : 0;
-      if (loadedCount <= 0) return;
+      const loaded = await load();
+      if (!Array.isArray(loaded) || !loaded.length || disposed || conversation !== options.activeConversationKey?.value) return;
+      options.autoStickToBottom.value = false;
       await nextTick();
-      const nextContainer = options.messageListRef.value;
-      if (!nextContainer) return;
-      const heightDelta = Math.max(0, nextContainer.scrollHeight - previousScrollHeight);
-      nextContainer.scrollTop = previousScrollTop + heightDelta;
+      const nextKeys = options.agentRenderableMessages.value.map(row => row.key);
+      const nextIndex = anchorKey ? nextKeys.indexOf(anchorKey) : -1;
+      // A page can add at one edge and evict at the other: total height is not
+      // an anchor. Seek the same stable row in the new bounded window first.
+      const delta = oldIndex >= 0 && nextIndex >= 0
+        ? options.estimateVirtualOffsetTop(nextKeys, nextIndex) - options.estimateVirtualOffsetTop(keys, oldIndex)
+        : forward ? 0 : Math.max(0, container.scrollHeight - previousHeight);
+      container.scrollTop = previousTop + delta;
+      syncMessageVirtualMetrics();
+      await nextTick();
+      measureVisibleMessageHeights();
+      await nextTick();
+      const restored = Array.from(container.querySelectorAll<HTMLElement>('[data-chat-measure]'))
+        .find(node => node.dataset.virtualKey === anchorKey);
+      if (restored) container.scrollTop += restored.getBoundingClientRect().top - container.getBoundingClientRect().top - anchorOffset;
       syncMessageVirtualMetrics();
       updateMessageScrollState();
-      scheduleMessageViewportRefresh({
-        updateScrollState: true,
-        measure: true,
-        reason: 'older-history-loaded'
-      });
+      rememberCurrentScroll();
+      scheduleMessageViewportRefresh({ updateScrollState: true, measure: true, reason: 'history-window-loaded' });
     } finally {
       olderHistoryLoadInFlight = false;
     }

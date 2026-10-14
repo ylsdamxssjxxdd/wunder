@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {beginThreadView,commitThreadView,threadViewSlots,threadViewPhase,threadViewCursor,applyThreadViewChanges,submitThreadView,failThreadView,clearThreadView,applyThreadViewTail,threadViewAtLatest,threadViewStatus,pauseThreadViewHistory,threadViewHistory} from '../../src/realtime/chat/threadViewStore';
+import {beginThreadView,commitThreadView,threadViewSlots,threadViewPhase,threadViewCursor,applyThreadViewChanges,submitThreadView,failThreadView,clearThreadView,applyThreadViewTail,threadViewAtLatest,threadViewStatus,pauseThreadViewHistory,threadViewHistory,threadViewWindow,removeThreadViewTurnByClientMessageId} from '../../src/realtime/chat/threadViewStore';
 const row=(round:number,revision=1)=>({root_turn_id:`fixture-turn-${round}`,user_round:round,revision,status:'completed',user:{item_id:`fixture-user-${round}`,content:'fixture input'},assistant:{item_id:`fixture-answer-${round}`,content:'fixture answer'},workflow_count:0,failed_count:0});
 const page=(chat:any[],seq=1)=>({session_id:'fixture-thread',epoch:1,view_seq:seq,projection_state:'ready',thread_empty:chat.length===0,latest_round:chat.length,chat,trajectory:[],tiles:[],tile_level:0,next_before:1,has_more:false});
 const key='fixture-thread';
@@ -40,6 +40,23 @@ applyThreadViewChanges(key,{view_seq:1000,rows:[{...row(101,1000),status:'runnin
 assert.deepEqual(threadViewSlots(key)!.map(s=>s.rootTurnId),historicalIds);assert.equal(threadViewStatus(key),'running');
 console.log('thread view: invalid candidates, epoch reset, UTF16 tail, bounded historical browsing and independent activity pass');
 
+// Walking beyond the retained window must be reversible: this simulates an
+// old page evicting its tail, then the user scrolling back down through `after`.
+clearThreadView(key);generation=beginThreadView(key);
+const range=(from:number,to:number)=>Array.from({length:to-from+1},(_,index)=>row(from+index,1000+index));
+commitThreadView(key,{...page(range(101,200),2000),next_before:101,has_more:true},generation);
+commitThreadView(key,{...page(range(81,100),2001),next_before:81,has_more:true},generation,true);
+assert.equal(threadViewSlots(key)!.length,100);assert.equal(threadViewSlots(key)![0].user.user_round,81);
+assert.equal(threadViewWindow(key).hasNewer,true);
+commitThreadView(key,{...page(range(181,200),2001),next_before:181,next_after:200,has_more:false,has_newer:false},generation,false,false,true);
+assert.equal(threadViewSlots(key)!.length,100);assert.equal(threadViewSlots(key)![0].user.user_round,101);
+assert.equal(threadViewSlots(key)!.at(-1)!.user.user_round,200);assert.equal(threadViewWindow(key).hasNewer,false);
+assert.equal(threadViewWindow(key).before,101);
+commitThreadView(key,{...page(range(81,100),2002),next_before:81,has_more:true},generation,true);
+assert.equal(threadViewSlots(key)![0].user.user_round,81);
+assert.equal(threadViewSlots(key)!.at(-1)!.user.user_round,180);
+console.log('thread view: bidirectional bounded window preserves reversible history traversal pass');
+
 clearThreadView(key);generation=beginThreadView(key);
 const live={...row(1,10),status:'running',assistant:{item_id:'fixture-answer-1',content:'😀',durable_seq:5,content_offset:2,body:{body_id:'fixture-answer-1|stream',revision:0,bytes:4}}};
 commitThreadView(key,page([live],10),generation);
@@ -64,3 +81,25 @@ assert.equal(threadViewSlots(key)![0].user.user_round,15);
 assert.equal(commitThreadView(key,page([row(15,20)],20),generation),true);
 assert.equal(threadViewCursor(key),20);assert.equal(threadViewSlots(key)![0].user.user_round,15);
 console.log('thread view: bounded source window and projection epoch transition pass');
+
+
+// Each model round has an independent assistant item.  A new reasoning stream
+// must replace the row-level preview identity so the process renderer can append
+// it after prior durable reasoning instead of reusing the completed entry.
+clearThreadView(key);generation=beginThreadView(key);
+const firstReasoning={...row(1,1),status:'running',reasoning_count:1,reasoning_item_id:'fixture-answer-1:text-1',assistant:{item_id:'fixture-answer-1:text-1',content:'',reasoning:'first thought',reasoning_offset:13}};
+commitThreadView(key,page([firstReasoning],1),generation);
+applyThreadViewTail(key,{item_id:'fixture-answer-1:text-1',field:'reasoning',offset:13,text:' one'});
+const secondReasoning={...row(1,2),status:'running',reasoning_count:2,reasoning_item_id:'fixture-answer-1:text-2',assistant:{item_id:'fixture-answer-1:text-2',content:'',reasoning:'second thought',reasoning_offset:14}};
+applyThreadViewChanges(key,{view_seq:2,rows:[secondReasoning]});
+const activeReasoning=threadViewSlots(key)![0].assistant;
+assert.equal(activeReasoning.reasoning_item_id,'fixture-answer-1:text-2');
+assert.equal(activeReasoning.reasoning,'second thought');
+assert.equal(activeReasoning.process_count,2);
+console.log('thread view: active reasoning identity follows the newest model item pass');
+
+clearThreadView(key);generation=beginThreadView(key);
+commitThreadView(key,page([{...row(1,1),status:'queued',client_message_id:'fixture-queued'}]),generation);
+removeThreadViewTurnByClientMessageId(key,'fixture-queued');
+assert.equal(threadViewSlots(key)!.length,0);
+console.log('thread view: queued durable row is removable by client message id pass');

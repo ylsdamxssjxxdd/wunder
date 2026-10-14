@@ -3,6 +3,7 @@ use anyhow::{anyhow, Result};
 use chrono::TimeZone;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use futures::StreamExt;
+use ratatui::layout::Position;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
@@ -13,7 +14,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc::{self, error::TryRecvError};
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use unicode_width::UnicodeWidthStr;
 use wunder_server::approval::{
     new_channel as new_approval_channel, ApprovalRequest, ApprovalRequestKind, ApprovalResponse,
 };
@@ -75,17 +76,22 @@ const SUPPRESSED_CLIPBOARD_PASTE_TIMEOUT: Duration = Duration::from_millis(1200)
 mod commands;
 mod exploring_group;
 mod input_placeholders;
+mod input_selection;
 mod plan_panel;
 mod text_selection;
 mod thread_ui_state;
+mod transcript_search;
 mod transcript_view;
+use input_selection::MouseSelection;
 use text_selection::build_transcript_hit_map;
-use text_selection::SelectionPoint;
+use text_selection::SelectionUnit;
 use text_selection::TranscriptHitMap;
 use text_selection::TranscriptSelection;
+use text_selection::WindowPoint;
 #[cfg(test)]
 use text_selection::CLIPBOARD_WRITER;
 use thread_ui_state::ThreadUiState;
+use transcript_search::TranscriptSearch;
 
 pub(super) mod helpers;
 mod patch_log;
@@ -195,6 +201,20 @@ struct TranscriptRenderCache {
 pub struct PopupView {
     pub lines: Vec<String>,
     pub selected_index: Option<usize>,
+}
+
+/// One frame's worth of composer content: the visible wrapped draft lines as styled
+/// `Line`s, kept **logical** (tabs stay tabs, placeholders stay text), plus the caret in
+/// the projected display space. The composer owns the last step before the screen —
+/// placeholder span styling and the `text_tabs` tab projection — so copy and submit keep
+/// reading the draft's own characters while the frame reaches eight-column stops. Carrying
+/// `Line`s instead of a joined string is what lets a later selection pass paint spans
+/// without the display layer reparsing text.
+#[derive(Debug, Clone)]
+pub struct InputView {
+    pub lines: Vec<Line<'static>>,
+    pub cursor_x: u16,
+    pub cursor_y: u16,
 }
 
 /// Stable identity of one tool invocation inside a thread. The session scope is
@@ -486,6 +506,20 @@ pub struct TuiApp {
     input_hit_area: Rect,
     input_hit_start: usize,
     input_hit_lines: Vec<WrappedInputLine>,
+    /// A pointer gesture over the draft: the anchor and the unit it was cut to. Booked in
+    /// byte offsets of the draft, so a scroll cannot orphan it and a resize does not have
+    /// to re-point it.
+    input_selection: Option<MouseSelection>,
+    /// A manual top wrap row for the composer band, `None` while the band auto-follows the
+    /// caret. The wheel and a drag that runs off the edge set it; any caret motion or edit
+    /// hands the band back to the caret.
+    input_scroll: Option<usize>,
+    /// The composer's own click chain, kept apart from the transcript's so a double click
+    /// in one region cannot chain into the other.
+    input_click_at: Option<Instant>,
+    input_click_row: usize,
+    input_click_column: usize,
+    input_click_count: u8,
     history_archived_entries: usize,
     pending_scrollback_lines: Vec<Line<'static>>,
     banner: crate::empty_state_animation::WelcomeLogo,
@@ -614,7 +648,40 @@ pub struct TuiApp {
     /// badge in the warning colour while the engine reports a reconnecting
     /// connection.
     cloud_badge_reconnecting: bool,
+    /// The composer gap (codex `transcript_view/composer_gap.rs`): one optional row
+    /// between the transcript and the draft, shared by the return-to-latest control and
+    /// the copy feedback. The renderer owns the hit rectangle every frame, so a hidden
+    /// control can never intercept a pointer.
+    gap_hit_area: Rect,
+    /// The last pointer the frame saw, so hover is a style the renderer can re-derive
+    /// from its own rectangle rather than a second source of truth.
+    gap_pointer: Option<Position>,
+    gap_pressed: bool,
+    /// Rows the tail grew while the reader was away from it. Cleared the moment the last
+    /// row is visible again, and only ever incremented by the delta one frame observed,
+    /// so no pass has to re-count the transcript.
+    unseen_tail_lines: usize,
+    /// `(viewport width, total rendered lines)` as of the last frame. The width is part of
+    /// the key because a re-wrap changes the line count without any new content.
+    tail_line_baseline: Option<(u16, usize)>,
+    /// A copy that just landed, shown until it expires.
+    copy_feedback: Option<CopyFeedback>,
+    /// The transcript's own literal search: its query, the hits a bounded per-frame scan
+    /// collected, and the reading position to hand back on exit.
+    transcript_search: TranscriptSearch,
 }
+
+/// One copy result in the composer gap. `expires_at: None` is the shape a pending
+/// (not yet confirmed) copy would take; today every write confirms synchronously, so
+/// live copies always carry a deadline.
+#[derive(Debug, Clone, Copy)]
+struct CopyFeedback {
+    characters: usize,
+    expires_at: Option<Instant>,
+}
+
+/// How long the gap keeps a copy result before it yields back to the reading control.
+const COPY_FEEDBACK_TTL: Duration = Duration::from_secs(4);
 
 impl TuiApp {
     pub async fn new(
@@ -650,6 +717,12 @@ impl TuiApp {
             input_hit_area: Rect::default(),
             input_hit_start: 0,
             input_hit_lines: Vec::new(),
+            input_selection: None,
+            input_scroll: None,
+            input_click_at: None,
+            input_click_row: 0,
+            input_click_column: 0,
+            input_click_count: 0,
             history_archived_entries: 0,
             pending_scrollback_lines: Vec::new(),
             banner: crate::empty_state_animation::WelcomeLogo::default(),
@@ -752,6 +825,13 @@ impl TuiApp {
             cloud_badge: None,
             cloud_badge_refreshed_at: None,
             cloud_badge_reconnecting: false,
+            gap_hit_area: Rect::default(),
+            gap_pointer: None,
+            gap_pressed: false,
+            unseen_tail_lines: 0,
+            tail_line_baseline: None,
+            copy_feedback: None,
+            transcript_search: TranscriptSearch::default(),
         };
         app.load_persisted_history();
         app.load_popup_recents();
@@ -868,7 +948,7 @@ impl TuiApp {
         self.frame_requester.schedule_frame();
     }
 
-    /// The wheel gives way to the conversation the moment either side has something to say.
+    /// The welcome logo gives way to the conversation as soon as it advances.
     fn banner_retired(&self) -> bool {
         self.banner.is_eligible() && (!self.input.is_empty() || self.logs.len() > self.banner_cells)
     }
@@ -881,7 +961,7 @@ impl TuiApp {
         self.banner.reserved_rows(screen)
     }
 
-    /// Paint the banner band, retiring it first if the conversation moved on.
+    /// Paint the welcome logo, retiring it first if the conversation moved on.
     pub(crate) fn paint_banner(
         &mut self,
         screen: Rect,
@@ -903,6 +983,15 @@ impl TuiApp {
         if self.tunnel_open {
             self.frame_requester
                 .schedule_frame_in(crate::interlink_tunnel::POLL_INTERVAL);
+        }
+        // A live copy result owns the gap until it expires, and nothing else would
+        // repaint it away, so the expiry itself schedules the next frame.
+        if let Some(expiry) = self.copy_feedback.and_then(|feedback| feedback.expires_at) {
+            self.frame_requester.schedule_frame_in(
+                expiry
+                    .saturating_duration_since(Instant::now())
+                    .max(Duration::from_millis(50)),
+            );
         }
         if self.thread_is_running(self.session_id.as_str()) {
             self.frame_requester
@@ -2449,11 +2538,25 @@ impl TuiApp {
     }
 
     pub fn set_input_viewport(&mut self, width: u16) {
-        self.input_viewport_width = width.max(1);
+        let width = width.max(1);
+        if self.input_viewport_width != width {
+            // A new width is a new wrap, so the row a manual offset pointed at is no longer
+            // the row the text breaks at. The offset is dropped and the band follows the
+            // caret again; the mark itself is byte-based and rides the re-wrap untouched.
+            self.input_scroll = None;
+            self.reset_input_clicks();
+        }
+        self.input_viewport_width = width;
     }
 
     /// The rect the composer text was painted into, prompt glyph excluded.
     pub fn set_input_hit_area(&mut self, area: Rect) {
+        if usize::from(self.input_hit_area.height.max(1)) != usize::from(area.height.max(1)) {
+            // Fewer rows to show, or more: the band's own geometry changed, so a manual
+            // offset has to be re-anchored on the caret rather than clamped onto a view the
+            // reader never asked for.
+            self.input_scroll = None;
+        }
         self.input_hit_area = area;
     }
 
@@ -2475,11 +2578,14 @@ impl TuiApp {
         std::mem::take(&mut self.pending_scrollback_lines)
     }
 
+    /// Drop the derived row maps and the render cache so the next frame rebuilds them.
+    /// A mark is not part of this: it is booked against a card and the line of it the
+    /// reader picked, so an append, a fold or a resize leaves it where it was. A mark is
+    /// retired by the card leaving the transcript, never by the numbers around it moving.
     fn invalidate_transcript_metrics(&mut self) {
         self.transcript_view.invalidate();
         self.transcript_rendered_lines = 0;
         self.transcript_hit = TranscriptHitMap::default();
-        self.transcript_selection = None;
         self.transcript_render_revision = self.transcript_render_revision.wrapping_add(1);
         self.transcript_render_cache = None;
     }
@@ -2982,7 +3088,7 @@ impl TuiApp {
             .map(|session| session.session_id.clone())
     }
 
-    pub fn input_view(&mut self, viewport_width: u16, viewport_height: u16) -> (String, u16, u16) {
+    pub fn input_view(&mut self, viewport_width: u16, viewport_height: u16) -> InputView {
         self.sync_large_paste_placeholders();
         self.sync_attachment_placeholders();
         self.clamp_input_cursor_outside_attachment_placeholder();
@@ -2997,21 +3103,32 @@ impl TuiApp {
         );
 
         let visual_line_count = lines.len().max(cursor_row.saturating_add(1));
-        let mut start_line = visual_line_count.saturating_sub(height);
-        if cursor_row < start_line {
-            start_line = cursor_row;
-        }
-        if cursor_row >= start_line.saturating_add(height) {
-            start_line = cursor_row.saturating_sub(height.saturating_sub(1));
-        }
+        // A manual top row — the wheel, or a drag that ran off the band's edge — is eaten
+        // before anything else, and the hit map below is recorded against it. The drag hit
+        // test resolves a pointer against this same top row between frames, so the frame and
+        // the gesture cannot disagree by a row, which is what makes an edge drag advance one
+        // row at a time instead of sticking or jumping two.
+        let start_line = match self.input_scroll {
+            Some(offset) => offset.min(lines.len().saturating_sub(height)),
+            None => {
+                let mut start_line = visual_line_count.saturating_sub(height);
+                if cursor_row < start_line {
+                    start_line = cursor_row;
+                }
+                if cursor_row >= start_line.saturating_add(height) {
+                    start_line = cursor_row.saturating_sub(height.saturating_sub(1));
+                }
+                start_line
+            }
+        };
 
         let end_line = (start_line + height).min(visual_line_count);
         let mut display_lines = Vec::with_capacity(end_line.saturating_sub(start_line));
         for line_index in start_line..end_line {
             if let Some(line) = lines.get(line_index) {
-                display_lines.push(self.input[line.start..line.end].to_string());
+                display_lines.push(self.draft_row_for_view(*line));
             } else {
-                display_lines.push(String::new());
+                display_lines.push(Line::from(String::new()));
             }
         }
 
@@ -3019,10 +3136,13 @@ impl TuiApp {
         self.input_hit_start = start_line;
         self.input_hit_lines = lines;
 
-        let display = display_lines.join("\n");
         let cursor_y = cursor_row.saturating_sub(start_line) as u16;
         let cursor_x = cursor_col as u16;
-        (display, cursor_x, cursor_y)
+        InputView {
+            lines: display_lines,
+            cursor_x,
+            cursor_y,
+        }
     }
 
     pub fn transcript_render_window(&mut self, viewport_height: u16) -> TranscriptRenderWindow {
@@ -3085,6 +3205,10 @@ impl TuiApp {
         let render_window = self.transcript_render_window(height);
         let transcript_total_lines = render_window.total_lines;
         let transcript_scroll = render_window.local_scroll;
+        // The gap's unread count rides the total this frame already had to know, so a
+        // reader away from the tail learns how many rows the tail gained without a second
+        // pass over the transcript.
+        self.note_tail_activity(transcript_total_lines, width);
         // Alt+R drops the card styling and the markdown spans so a terminal
         // selection copies plain text; codex calls this raw scrollback mode.
         let raw_output = self.raw_output;
@@ -3125,16 +3249,15 @@ impl TuiApp {
         let next_hit = build_transcript_hit_map(
             &transcript_lines,
             &render_window,
+            self.logs.as_slice(),
             usize::from(transcript_scroll) + usize::from(height),
             usize::from(transcript_scroll),
             width,
         );
-        // A mark lives in document rows, so it only survives a rebuild that moved nothing:
-        // scrolling, a resize or new content all drop it, while selecting does not.
-        let selection_survives = self.transcript_hit.scroll == next_hit.scroll
-            && self.transcript_hit.width == next_hit.width
-            && self.transcript_hit.rows.first() == next_hit.rows.first();
-        if !selection_survives {
+        // A mark is booked against the card and the line of it the reader picked, so a
+        // rebuild that only moved the window keeps it: the mark goes when a card it names
+        // has left the transcript, which is the one thing a row map cannot project back.
+        if self.transcript_selection.is_some() && !self.transcript_selection_is_alive() {
             self.transcript_selection = None;
         }
         self.transcript_hit = next_hit;
@@ -3225,6 +3348,204 @@ impl TuiApp {
             }
         }
         self.invalidate_transcript_metrics();
+    }
+
+    // -------------------------------------------------------------- the composer gap
+    //
+    // One optional row between the transcript and the draft, shared by two signals in a
+    // fixed order (codex `transcript_view/composer_gap.rs`): an unexpired copy result
+    // first, then the return-to-latest control, then nothing at all. The band exists only
+    // while it has content, so an idle composer never pays a row for it.
+
+    /// Whether the tail's last row is on screen: the one state that makes a
+    /// return-to-latest control meaningless.
+    pub(crate) fn is_at_transcript_tail(&self) -> bool {
+        self.transcript_offset_from_bottom == 0
+    }
+
+    /// Rows the tail gained since the reader left it. Updated from the line total a frame
+    /// already computed, so it costs a subtraction, never a re-count of the transcript.
+    fn note_tail_activity(&mut self, total_lines: usize, width: u16) {
+        if self.is_at_transcript_tail() {
+            self.unseen_tail_lines = 0;
+        } else if let Some((baseline_width, baseline_total)) = self.tail_line_baseline {
+            // A different width is a different wrap, not new content: re-anchor silently.
+            if baseline_width == width {
+                self.unseen_tail_lines = self
+                    .unseen_tail_lines
+                    .saturating_add(total_lines.saturating_sub(baseline_total));
+            }
+        }
+        self.tail_line_baseline = Some((width, total_lines));
+    }
+
+    /// Whether a search editor owns the keyboard. codex hides the reading control while a
+    /// transcript search is being edited: the row is the query's, and a control the reader
+    /// cannot act on with the same keys would only compete with it for their attention.
+    fn gap_search_editing(&self) -> bool {
+        self.transcript_search.editing
+    }
+
+    /// Everything that retires the control for one frame: the tail is already visible, a
+    /// mark in either region owns the reader's attention, the Ctrl+T view or a modal owns
+    /// the screen, or a search editor owns the keyboard.
+    fn gap_control_hidden(&mut self) -> bool {
+        self.is_at_transcript_tail()
+            || self.transcript_selection.is_some()
+            || self.has_input_selection()
+            || self.transcript_view_open()
+            || self.modal_surface_open()
+            || self.gap_search_editing()
+    }
+
+    /// The reading control's text, shed word by word until one row fits, the way codex
+    /// picks its label. `None` means the control is hidden or nothing fits at all.
+    fn follow_control_line(&mut self, width: u16, is_zh: bool) -> Option<Line<'static>> {
+        if width == 0 || self.gap_control_hidden() {
+            return None;
+        }
+        let count = self.unseen_tail_lines.to_string();
+        let ladder: &[(&str, &[(&str, &str)])] = if self.unseen_tail_lines > 0 {
+            &[
+                ("gap_follow_full", &[("count", count.as_str())]),
+                ("gap_follow_count", &[("count", count.as_str())]),
+                ("gap_follow_min", &[]),
+            ]
+        } else {
+            &[("gap_follow_back", &[]), ("gap_follow_min", &[])]
+        };
+        ladder
+            .iter()
+            .map(|(key, args)| crate::locale::ui_text(is_zh, key, args))
+            .find(|text| UnicodeWidthStr::width(text.as_str()) <= usize::from(width))
+            .map(|text| Line::from(Span::styled(text, super::theme::secondary_text())))
+    }
+
+    /// What the gap paints this frame: a live copy result, else the search editor's own row,
+    /// else the reading control. Returns `None` when the band holds nothing, which is also
+    /// when it must not exist.
+    ///
+    /// This is also where the scan advances: the band is asked exactly once per frame, after
+    /// the transcript has settled its viewport width, so one bounded step here costs nothing
+    /// extra and the count it shows is the count this frame actually collected.
+    pub(crate) fn composer_gap_line(&mut self, width: u16, is_zh: bool) -> Option<Line<'static>> {
+        let budget = self.transcript_search.frame_budget;
+        self.advance_transcript_search(budget);
+        let now = Instant::now();
+        if self
+            .copy_feedback
+            .is_some_and(|feedback| feedback.expires_at.is_some_and(|expiry| expiry <= now))
+        {
+            self.copy_feedback = None;
+        }
+        if let Some(feedback) = self.copy_feedback {
+            let count = feedback.characters.to_string();
+            let ladder: &[(&str, &[(&str, &str)])] = &[
+                ("gap_copied", &[("count", count.as_str())]),
+                ("gap_copied_short", &[("count", count.as_str())]),
+                ("gap_copied_min", &[]),
+            ];
+            if let Some(text) = ladder
+                .iter()
+                .map(|(key, args)| crate::locale::ui_text(is_zh, key, args))
+                .find(|text| UnicodeWidthStr::width(text.as_str()) <= usize::from(width))
+            {
+                return Some(Line::from(Span::styled(
+                    text,
+                    super::theme::accent_text(),
+                )));
+            }
+            // Even the shortest result does not fit: the band yields to what comes next.
+        }
+        if self.gap_search_editing() {
+            return self.transcript_search_line(width, is_zh);
+        }
+        self.follow_control_line(width, is_zh)
+    }
+
+    /// The rectangle the control was painted into this frame. A hidden control writes an
+    /// empty rect, and an empty rect answers `false` for every pointer, so a control the
+    /// reader cannot see can never eat their click.
+    pub(crate) fn set_gap_hit_area(&mut self, area: Rect) {
+        self.gap_hit_area = area;
+    }
+
+    pub(crate) fn gap_hit_area(&self) -> Rect {
+        self.gap_hit_area
+    }
+
+    /// Whether the pointer sits on the gap control's own rectangle. While a search owns the
+    /// row the band shows the query instead of a control, so nothing is hoverable: the row is
+    /// the reader's status line, not a button.
+    pub(crate) fn gap_hovered(&self, area: Rect) -> bool {
+        !self.gap_search_editing()
+            && self
+                .gap_pointer
+                .is_some_and(|point| !area.is_empty() && area.contains(point))
+    }
+
+    /// Leave the reading position and follow the tail again. This is the same boundary a
+    /// `End` press and the wheel's last notch already reach, so the three cannot drift
+    /// apart, and it deliberately does not select a card: coming back to the tail is a
+    /// reading gesture, not a pick.
+    pub(crate) fn return_to_latest(&mut self) {
+        self.scroll_transcript_to_bottom();
+        self.unseen_tail_lines = 0;
+        self.request_redraw();
+    }
+
+    /// The gap's own pointer routing, answered before either region sees the event.
+    /// `true` means the event belonged to the control. A search row is not a control: while
+    /// the editor is up the band only reports, so a press there must not silently move the
+    /// reader back to the tail.
+    fn handle_gap_mouse(&mut self, mouse: &MouseEvent) -> bool {
+        if self.modal_surface_open()
+            || self.transcript_view_open()
+            || self.gap_search_editing()
+        {
+            self.gap_pressed = false;
+            return false;
+        }
+        let area = self.gap_hit_area;
+        if area.is_empty() {
+            self.gap_pressed = false;
+            return false;
+        }
+        let point = Position::new(mouse.column, mouse.row);
+        let inside = area.contains(point);
+        let was_hovered = self
+            .gap_pointer
+            .is_some_and(|previous| area.contains(previous));
+        self.gap_pointer = Some(point);
+        match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) if inside => {
+                self.gap_pressed = true;
+                self.request_redraw();
+                true
+            }
+            MouseEventKind::Up(MouseButton::Left) if self.gap_pressed => {
+                self.gap_pressed = false;
+                if inside {
+                    self.return_to_latest();
+                }
+                self.request_redraw();
+                true
+            }
+            MouseEventKind::Moved if inside != was_hovered => {
+                self.request_redraw();
+                false
+            }
+            _ => false,
+        }
+    }
+
+    /// Show a copy result in the gap for a moment. Only the character count is kept, so a
+    /// long copy never pins its text in the app state.
+    fn show_copy_feedback(&mut self, characters: usize) {
+        self.copy_feedback = Some(CopyFeedback {
+            characters,
+            expires_at: Some(Instant::now() + COPY_FEEDBACK_TTL),
+        });
     }
 
     fn scroll_transcript_up(&mut self, lines: u16) {
@@ -3339,10 +3660,18 @@ impl TuiApp {
                 .is_some_and(|entry| self.expanded_cards.contains(&entry.cell_id))
     }
 
+    /// How many lines an entry takes in the window, measured the way the frame renders it.
+    /// Raw scrollback (`Alt+R`) drops the card styling and the blank separator row, so it
+    /// counts the entry text alone: metrics, the row map and the selection identity all
+    /// key on this number, and a second line budget here would mis-point every card after
+    /// the first.
     fn entry_visual_line_count(&mut self, index: usize, width: usize) -> usize {
         let Some(kind) = self.logs.get(index).map(|entry| entry.kind) else {
             return 1;
         };
+        if self.raw_output {
+            return raw_entry_lines(self.logs[index].text.as_str()).len();
+        }
         let expanded = self.card_is_expanded(index);
         let streaming = self.entry_is_streaming(kind, index);
         let Some(entry) = self.logs.get_mut(index) else {
@@ -3941,6 +4270,9 @@ impl TuiApp {
         }
         self.input.clear();
         self.input_cursor = 0;
+        // The draft is gone: a mark on its bytes would point at nothing (or at the next
+        // draft's bytes), so the whole gesture is retired, not re-pointed.
+        self.forget_input_gesture();
         self.pending_paste.clear();
         self.pending_large_pastes.clear();
         self.clear_pending_attachments();
@@ -3984,6 +4316,8 @@ impl TuiApp {
         if self.pending_large_pastes.is_empty() {
             return;
         }
+        // Pruning the badge list cannot move a byte of the draft, so a pointer mark stays
+        // valid here — unlike the attachment relabel below, which rewrites the draft.
         self.pending_large_pastes
             .retain(|(placeholder, _)| self.input.contains(placeholder));
     }
@@ -4015,6 +4349,9 @@ impl TuiApp {
                 previous.as_slice(),
                 self.pending_attachments.as_slice(),
             );
+            // Relabelling the placeholders rewrote the draft, so every byte offset a
+            // gesture picked now names different text: the mark goes with the rewrite.
+            self.forget_input_gesture();
             self.input_cursor = clamp_cursor_out_of_attachment_placeholder(
                 self.input.as_str(),
                 self.input_cursor.min(self.input.len()),
@@ -4071,6 +4408,9 @@ impl TuiApp {
             previous.as_slice(),
             self.pending_attachments.as_slice(),
         );
+        // Dropping an attachment rewrites the draft around it, which strands the byte
+        // offsets a pointer gesture chose.
+        self.forget_input_gesture();
         self.input_cursor = clamp_cursor_out_of_attachment_placeholder(
             self.input.as_str(),
             self.input_cursor.min(self.input.len()),
@@ -4099,6 +4439,7 @@ impl TuiApp {
         }
         self.input.replace_range(remove_start..remove_end, "");
         self.input_cursor = remove_start;
+        self.forget_input_gesture();
 
         let previous = self.pending_attachments.clone();
         self.pending_attachments.remove(matched.index);
@@ -4107,6 +4448,8 @@ impl TuiApp {
             previous.as_slice(),
             self.pending_attachments.as_slice(),
         );
+        // Same reason as the other placeholder rewrites: the draft changed under the mark.
+        self.forget_input_gesture();
         self.input_cursor = clamp_cursor_out_of_attachment_placeholder(
             self.input.as_str(),
             self.input_cursor.min(self.input.len()),
@@ -4121,6 +4464,7 @@ impl TuiApp {
         let previous = self.pending_attachments.clone();
         self.pending_attachments.clear();
         self.input = replace_attachment_placeholders(self.input.as_str(), previous.as_slice(), &[]);
+        self.forget_input_gesture();
         self.input_cursor = self.input_cursor.min(self.input.len());
     }
 
@@ -4204,6 +4548,9 @@ impl TuiApp {
             previous.as_slice(),
             self.pending_attachments.as_slice(),
         );
+        // Attaching relabels every placeholder token in the draft, so a mark picked against
+        // the old byte layout cannot be trusted to name the same run any more.
+        self.forget_input_gesture();
         self.input_cursor = clamp_cursor_out_of_attachment_placeholder(
             self.input.as_str(),
             self.input_cursor.min(self.input.len()),
@@ -4348,6 +4695,17 @@ impl TuiApp {
         }
 
         if self.handle_transcript_view_key(key) {
+            return Ok(());
+        }
+
+        // A transcript search editor is a modal reader: it answers every key that is not the
+        // app-wide interrupt and exit, and it answers them *before* the composer's emacs
+        // arms, so Ctrl+U clears its query instead of the draft and a typed character never
+        // becomes a slash command.
+        if self.transcript_search_is_editing()
+            && self.focus_area == FocusArea::Transcript
+            && self.handle_transcript_search_key(key)
+        {
             return Ok(());
         }
 
@@ -4614,12 +4972,25 @@ impl TuiApp {
                     self.insert_char_at_cursor('\n');
                     return Ok(());
                 }
+                // An empty draft while the reader is away from the tail is not a send, it
+                // is the same request the gap control answers with a click (codex's empty
+                // Enter returns to latest). A draft with text in it still submits.
+                if self.config_wizard.is_none()
+                    && self.input.trim().is_empty()
+                    && !self.is_at_transcript_tail()
+                {
+                    self.return_to_latest();
+                    return Ok(());
+                }
                 self.reset_plain_char_burst();
                 self.flush_key_paste_burst_if_due(true);
                 self.flush_pending_paste();
 
                 let raw_line = std::mem::take(&mut self.input);
                 self.input_cursor = 0;
+                // Submitting empties the draft, so the gesture that made it is retired with
+                // it rather than left to mark the next draft's bytes.
+                self.forget_input_gesture();
                 self.history_cursor = None;
                 if self.config_wizard.is_some() || !raw_line.trim().is_empty() {
                     self.submit_line(raw_line).await?;
@@ -4979,6 +5350,13 @@ impl TuiApp {
                 self.toggle_focus_area();
                 true
             }
+            // codex puts transcript search on F3; this client already spent that key on the
+            // focus toggle, so the entry point is `/` while the transcript holds the keyboard
+            // — where it cannot be mistaken for the draft's slash command.
+            KeyCode::Char('/') if Self::transcript_search_opener(key) => {
+                self.begin_transcript_search();
+                true
+            }
             // codex's pager bindings that the transcript focus did not answer:
             // `k`/`j` scroll a row, Space and Ctrl+F/Ctrl+B page, Ctrl+U/Ctrl+D
             // move half a page, and `q` leaves the transcript.
@@ -5034,6 +5412,9 @@ impl TuiApp {
         };
         self.input = text;
         self.input_cursor = self.input.len();
+        // A draft that arrives from somewhere else (a card, an editor, another thread) is
+        // not the text a gesture was made on, so its marks cannot carry over.
+        self.forget_input_gesture();
         self.pending_large_pastes.clear();
         self.history_cursor = None;
         self.history_search = None;
@@ -5120,6 +5501,9 @@ impl TuiApp {
         }
         self.input = cleaned;
         self.input_cursor = self.input.len();
+        // The editor's text replaces the draft wholesale: the gesture that was made on the
+        // old bytes goes.
+        self.forget_input_gesture();
         self.focus_area = FocusArea::Input;
         self.push_log(
             LogKind::Info,
@@ -5258,6 +5642,9 @@ impl TuiApp {
         let (draft, saved_scroll) = self.thread_registry.view_state(session_id);
         self.input = draft;
         self.input_cursor = self.input.len();
+        // Switching threads swaps the draft for another thread's, so the gesture made on
+        // the previous one is retired rather than re-pointed at unknown bytes.
+        self.forget_input_gesture();
         self.pending_large_pastes.clear();
         self.history_cursor = None;
         self.history_search = None;
@@ -5673,7 +6060,12 @@ impl TuiApp {
     pub fn on_mouse(&mut self, mouse: MouseEvent) {
         if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Right)) {
             // The right button copies what is marked, the way codex does it, and only
-            // reaches for the clipboard when nothing is selected.
+            // reaches for the clipboard when nothing is selected. Either region's mark goes
+            // through the same clipboard channel as the other.
+            if self.has_input_selection() && self.mouse_in_composer_region(&mouse) {
+                self.copy_input_selection();
+                return;
+            }
             if self.transcript_selection.is_some() && self.mouse_in_transcript_region(&mouse) {
                 self.copy_transcript_selection();
                 return;
@@ -5700,14 +6092,29 @@ impl TuiApp {
             return;
         }
 
+        // The gap answers before either region: its rectangle is the one the last frame
+        // painted, so a hidden control — which paints no rectangle at all — cannot take
+        // the click meant for the transcript or the draft under it.
+        if self.handle_gap_mouse(&mouse) {
+            return;
+        }
+
         match mouse.kind {
+            // The wheel moves the window, never the mark: a selection is booked against
+            // the card and its line, so it is still there when the reader scrolls back.
             MouseEventKind::ScrollUp if self.mouse_in_transcript_region(&mouse) => {
-                self.transcript_selection = None;
                 self.scroll_transcript_up(3)
             }
             MouseEventKind::ScrollDown if self.mouse_in_transcript_region(&mouse) => {
-                self.transcript_selection = None;
                 self.scroll_transcript_down(3)
+            }
+            // Over the draft the wheel scrolls the composer's own band and leaves the caret
+            // on the character it was pointing at; a draft that fits has nothing to scroll.
+            MouseEventKind::ScrollUp if self.mouse_in_composer_region(&mouse) => {
+                self.scroll_input_at_pointer(-1);
+            }
+            MouseEventKind::ScrollDown if self.mouse_in_composer_region(&mouse) => {
+                self.scroll_input_at_pointer(1);
             }
             MouseEventKind::Down(MouseButton::Left) => self.handle_pointer_press(&mouse),
             MouseEventKind::Drag(MouseButton::Left) => self.handle_pointer_drag(&mouse),
@@ -5732,7 +6139,8 @@ impl TuiApp {
     /// ahead of the transcript: a click inside it puts the caret under the pointer.
     /// Otherwise the transcript row owns a card, and the card's last row is its disclosure
     /// control, so that click folds or unfolds; a second or third click on text picks up
-    /// the word or the line instead.
+    /// the word or the line instead, and a shift+click moves only the free end of a range
+    /// the reader already has.
     fn handle_pointer_press(&mut self, mouse: &MouseEvent) {
         if self.modal_surface_open() {
             return;
@@ -5751,11 +6159,19 @@ impl TuiApp {
             }
             return;
         }
-        if let Some(cursor) = self.input_cursor_at_pointer(mouse) {
+        if self.mouse_in_composer_region(mouse) {
+            // The composer answers first and counts its own clicks: a double click here
+            // never chains with one in the transcript, and the gesture is cut before the
+            // caret is placed, so the second press takes a word and the third a line.
             self.focus_area = FocusArea::Input;
-            self.input_cursor = cursor;
             self.transcript_selection = None;
-            self.reset_pointer_clicks();
+            if let Some(hit) = self.input_hit(mouse) {
+                let clicks = self.count_input_click(hit.row, hit.column);
+                self.press_input_at(hit, clicks);
+            } else {
+                self.reset_input_clicks();
+                self.clear_input_selection();
+            }
             self.request_redraw();
             return;
         }
@@ -5766,38 +6182,49 @@ impl TuiApp {
             return;
         };
         self.focus_area = FocusArea::Transcript;
+        // A press anywhere retires the other region's mark: one pointer, one selection.
+        self.clear_input_selection();
+        // Shift+click extends, it does not restart: the anchor stays where the reader put
+        // it. codex also drops the click counter here, so a shift+click never feeds a
+        // double or triple click, and it never reaches for a disclosure row (exactly
+        // codex's rule that only a plain click toggles a card).
+        if mouse.modifiers == KeyModifiers::SHIFT {
+            self.reset_pointer_clicks();
+            if self.has_selection_range() {
+                self.extend_selection_at(point);
+                self.request_redraw();
+            }
+            return;
+        }
         self.transcript_selection = None;
-        if let Some(index) = self.transcript_hit.rows.get(point.row).copied() {
+        if let Some(index) = self.transcript_hit.rows.get(point.row).copied().flatten() {
             self.transcript_selected = Some(index);
-            let is_card_last_row = self
+            let next = self
                 .transcript_hit
                 .rows
                 .get(point.row + 1)
-                .is_none_or(|next| *next != index);
+                .copied()
+                .flatten();
+            let is_card_last_row = next.is_none_or(|next| next != index);
             if is_card_last_row && self.toggle_selected_card() {
                 self.reset_pointer_clicks();
                 return;
             }
         }
         let clicks = self.count_pointer_click(point);
-        if clicks >= 2 {
-            self.select_word_or_line(point, clicks);
-            return;
-        }
-        self.transcript_selection = Some(TranscriptSelection {
-            anchor: point,
-            head: point,
-            dragging: true,
-        });
+        self.begin_selection_at(point, clicks);
         self.request_redraw();
     }
 
-    fn transcript_point(&self, mouse: &MouseEvent) -> Option<SelectionPoint> {
+    /// The raw hit of a pointer on the current window: a document row of that window and
+    /// a display column inside it. The gesture turns it into a stable address straight
+    /// away, so nothing downstream may keep this row.
+    fn transcript_point(&self, mouse: &MouseEvent) -> Option<WindowPoint> {
         let row = self.transcript_row_at(self.transcript_mouse_region, mouse.row)?;
         if row >= self.transcript_hit.rows.len() {
             return None;
         }
-        Some(SelectionPoint {
+        Some(WindowPoint {
             row,
             column: usize::from(mouse.column.saturating_sub(self.transcript_mouse_region.x)),
         })
@@ -5806,11 +6233,13 @@ impl TuiApp {
     fn reset_pointer_clicks(&mut self) {
         self.pointer_click_at = None;
         self.pointer_click_count = 0;
+        self.pointer_click_row = 0;
+        self.pointer_click_column = 0;
     }
 
     /// Presses within the double-click window and on the same cell count up; anything
     /// else restarts the count.
-    fn count_pointer_click(&mut self, point: SelectionPoint) -> u8 {
+    fn count_pointer_click(&mut self, point: WindowPoint) -> u8 {
         let repeated = self.pointer_click_at.is_some_and(|at| {
             Instant::now().saturating_duration_since(at).as_millis() < 400
                 && self.pointer_click_row == point.row
@@ -5827,61 +6256,9 @@ impl TuiApp {
         self.pointer_click_count
     }
 
-    /// A double click takes the word under the pointer, a triple click the whole line.
-    /// Both copy straight away, which is what codex's copy-on-select does with them.
-    fn select_word_or_line(&mut self, point: SelectionPoint, clicks: u8) {
-        if clicks >= 3 {
-            let Some(origin) = self.transcript_hit.origins.get(point.row).copied() else {
-                return;
-            };
-            let first = self
-                .transcript_hit
-                .origins
-                .iter()
-                .position(|entry| entry.line == origin.line)
-                .unwrap_or(point.row);
-            let last = self
-                .transcript_hit
-                .origins
-                .iter()
-                .rposition(|entry| entry.line == origin.line)
-                .unwrap_or(point.row);
-            self.transcript_selection = Some(TranscriptSelection {
-                anchor: SelectionPoint {
-                    row: first,
-                    column: 0,
-                },
-                head: SelectionPoint {
-                    row: last,
-                    column: usize::MAX,
-                },
-                // Left dragging so the release that follows the click copies it, which is
-                // what a double or triple click means under copy-on-select.
-                dragging: true,
-            });
-            self.request_redraw();
-            return;
-        }
-        let lines = self.transcript_window_lines();
-        let Some((from, to)) = self.word_bounds_at(lines.as_slice(), point) else {
-            return;
-        };
-        self.transcript_selection = Some(TranscriptSelection {
-            anchor: SelectionPoint {
-                row: point.row,
-                column: from,
-            },
-            head: SelectionPoint {
-                row: point.row,
-                column: to,
-            },
-            dragging: true,
-        });
-        self.request_redraw();
-    }
-
     /// Extend a drag over the transcript, or keep moving the caret when it started in the
-    /// composer.
+    /// composer. The moving end takes a stable address, so a drag that runs while the
+    /// window is sliding underneath it still marks the text it started on.
     fn handle_pointer_drag(&mut self, mouse: &MouseEvent) {
         if self
             .transcript_selection
@@ -5891,32 +6268,34 @@ impl TuiApp {
             let Some(point) = self.transcript_point(mouse) else {
                 return;
             };
-            if let Some(selection) = self.transcript_selection.as_mut() {
-                selection.head = point;
+            if self.extend_selection_at(point) {
+                self.request_redraw();
             }
-            self.request_redraw();
             return;
         }
-        if let Some(cursor) = self.input_cursor_at_pointer(mouse) {
-            self.input_cursor = cursor;
+        if self.input_selection.as_ref().is_some_and(|selection| selection.dragging)
+            && self.drag_input_to(mouse)
+        {
             self.request_redraw();
         }
     }
 
     /// A release ends the drag. Whatever the drag picked up goes to the clipboard; a
-    /// press that never moved stays a plain click.
+    /// press that never moved stays a plain click. A word or line pick is a range even
+    /// when both ends name the same line, so its release copies.
     fn handle_pointer_release(&mut self) {
-        let Some(selection) = self.transcript_selection.as_mut() else {
-            return;
-        };
-        if !selection.dragging {
-            return;
+        if let Some(selection) = self.transcript_selection.as_mut() {
+            if selection.dragging {
+                selection.dragging = false;
+                let stationary_character_click =
+                    selection.unit == SelectionUnit::Character && selection.anchor == selection.head;
+                if !stationary_character_click {
+                    self.copy_transcript_selection();
+                }
+                return;
+            }
         }
-        selection.dragging = false;
-        if selection.anchor == selection.head {
-            return;
-        }
-        self.copy_transcript_selection();
+        self.release_input_gesture();
     }
 
     /// Open what a Ctrl+click landed on. A link that silently does nothing reads as a
@@ -5941,10 +6320,20 @@ impl TuiApp {
     }
 
     /// Copy the marked range. A successful copy says nothing on the transcript: the mark
-    /// is the feedback, and a log line here would rebuild the window and erase it.
+    /// is the feedback, and a log line here would rebuild the window and erase it. The
+    /// gap row above the draft carries the count instead, for a moment.
     fn copy_transcript_selection(&mut self) {
         let lines = self.transcript_window_lines();
         let text = self.transcript_selection_text(lines.as_slice());
+        self.publish_clipboard_text(text.as_str());
+    }
+
+    /// The one clipboard channel. Under tests the write goes to the seam
+    /// `CLIPBOARD_WRITER` holds so a test can read back what a gesture would have copied
+    /// without touching the machine's real clipboard; a real run hands it to the terminal.
+    /// Both marks — transcript and composer — come through here, so there is exactly one
+    /// seam to arm and never a second static.
+    fn publish_clipboard_text(&mut self, text: &str) {
         if text.is_empty() {
             return;
         }
@@ -5955,48 +6344,24 @@ impl TuiApp {
         #[cfg(not(test))]
         let writer: Option<fn(&str) -> anyhow::Result<()>> = Some(write_system_clipboard_text);
         let outcome = match writer {
-            Some(write) => write(text.as_str()),
+            Some(write) => write(text),
             None => Ok(()),
         };
-        if let Err(error) = outcome {
-            let hint = crate::locale::tr(
-                self.display_language.as_str(),
-                "复制到剪贴板失败",
-                "clipboard copy failed",
-            );
-            self.push_log(LogKind::Error, format!("{hint}: {error}"));
+        match outcome {
+            // A successful copy says nothing on the transcript — the mark is the feedback —
+            // but the gap row above the draft carries the character count for a moment, so
+            // a copy that never reached the terminal is distinguishable from a silent one.
+            Ok(()) => self.show_copy_feedback(text.chars().count()),
+            Err(error) => {
+                let hint = crate::locale::tr(
+                    self.display_language.as_str(),
+                    "复制到剪贴板失败",
+                    "clipboard copy failed",
+                );
+                self.push_log(LogKind::Error, format!("{hint}: {error}"));
+            }
         }
         self.request_redraw();
-    }
-
-    /// Byte offset in the draft under the pointer, using the wrap the composer last drew
-    /// with. `None` when the pointer is not on the text the reader can edit.
-    fn input_cursor_at_pointer(&self, mouse: &MouseEvent) -> Option<usize> {
-        let area = self.input_hit_area;
-        if area.width == 0 || area.height == 0 || self.input_hit_lines.is_empty() {
-            return None;
-        }
-        if mouse.row < area.y || mouse.row >= area.y.saturating_add(area.height) {
-            return None;
-        }
-        if mouse.column < area.x {
-            // The prompt glyph and the row's left margin both mean "start of the draft".
-            return (mouse.column >= self.input_mouse_region.x
-                && mouse.row == self.input_mouse_region.y)
-                .then_some(0);
-        }
-        if mouse.column >= area.x.saturating_add(area.width) {
-            return None;
-        }
-        let row = self.input_hit_start + usize::from(mouse.row - area.y);
-        let column = usize::from(mouse.column - area.x);
-        let line = self.input_hit_lines.get(row)?;
-        Some(byte_index_for_display_column(
-            self.input.as_str(),
-            line.start,
-            line.end,
-            column,
-        ))
     }
 
     pub async fn submit_line(&mut self, line: String) -> Result<()> {
@@ -6233,6 +6598,9 @@ impl TuiApp {
         Ok(())
     }
     fn apply_first_suggestion(&mut self) {
+        // Completion rewrites the token under the caret (or the whole draft for a slash
+        // command), so a mark picked against the current bytes is retired first.
+        self.forget_input_gesture();
         let trimmed = self.input.trim_start();
         if trimmed.starts_with('/') {
             let body = trimmed.trim_start_matches('/');
@@ -6252,6 +6620,8 @@ impl TuiApp {
             };
             self.input = format!("/{suggestion} ");
             self.input_cursor = self.input.len();
+            // Completing a slash command rewrites the draft from scratch.
+            self.forget_input_gesture();
             self.pending_large_pastes.clear();
             return;
         }
@@ -6311,6 +6681,8 @@ impl TuiApp {
         if let Some(cursor) = self.history_cursor {
             self.input = self.history.get(cursor).cloned().unwrap_or_default();
             self.input_cursor = self.input.len();
+            // A history step replaces the draft wholesale, so the mark cannot follow.
+            self.forget_input_gesture();
             self.pending_large_pastes.clear();
         }
     }
@@ -6324,12 +6696,14 @@ impl TuiApp {
             self.history_cursor = None;
             self.input = self.history_draft.clone();
             self.input_cursor = self.input.len();
+            self.forget_input_gesture();
             self.pending_large_pastes.clear();
             return;
         }
         self.history_cursor = Some(next);
         self.input = self.history.get(next).cloned().unwrap_or_default();
         self.input_cursor = self.input.len();
+        self.forget_input_gesture();
         self.pending_large_pastes.clear();
     }
 
@@ -6498,6 +6872,7 @@ impl TuiApp {
         if let Some(index) = found {
             self.input = self.history.get(index).cloned().unwrap_or_default();
             self.input_cursor = self.input.len();
+            self.forget_input_gesture();
             self.pending_large_pastes.clear();
             self.history_cursor = None;
         }
@@ -6506,12 +6881,16 @@ impl TuiApp {
     fn accept_history_search(&mut self) {
         self.history_search = None;
         self.input_cursor = self.input.len();
+        // The preview replaced the draft while the search ran; the mark made on either
+        // version names the wrong bytes now.
+        self.forget_input_gesture();
     }
 
     fn cancel_history_search(&mut self) {
         if let Some(search) = self.history_search.take() {
             self.input = search.original_input;
             self.input_cursor = self.input.len();
+            self.forget_input_gesture();
         }
     }
 
@@ -6524,6 +6903,13 @@ impl TuiApp {
     }
 
     fn insert_char_at_cursor(&mut self, ch: char) {
+        // A mark first: what the reader picked is what a typed character replaces, and the
+        // caret ends up after the replacement, not inside the run it removed.
+        let mut buffer = [0u8; 4];
+        let encoded = ch.encode_utf8(&mut buffer);
+        if self.replace_input_selection_with(encoded) {
+            return;
+        }
         self.clamp_input_cursor_outside_attachment_placeholder();
         if self.input_cursor > self.input.len() {
             self.input_cursor = self.input.len();
@@ -6539,6 +6925,11 @@ impl TuiApp {
         if text.is_empty() {
             return;
         }
+        // The same rule as a typed character: pasted text, a badge or an attachment
+        // placeholder all replace the marked run and leave the caret past it.
+        if self.replace_input_selection_with(text) {
+            return;
+        }
         self.clamp_input_cursor_outside_attachment_placeholder();
         if self.input_cursor > self.input.len() {
             self.input_cursor = self.input.len();
@@ -6551,6 +6942,10 @@ impl TuiApp {
     }
 
     fn backspace_at_cursor(&mut self) {
+        // Backspace on a mark removes the whole run rather than one character of it.
+        if self.delete_input_selection() {
+            return;
+        }
         if self.input_cursor == 0 {
             return;
         }
@@ -6569,6 +6964,10 @@ impl TuiApp {
     }
 
     fn delete_at_cursor(&mut self) {
+        // Same as backspace: a mark is one deletion.
+        if self.delete_input_selection() {
+            return;
+        }
         if self.input_cursor >= self.input.len() {
             return;
         }
@@ -6586,6 +6985,9 @@ impl TuiApp {
     }
 
     fn move_cursor_left(&mut self) {
+        // A caret move collapses the mark and hands the band back to the caret;
+        // the caret itself keeps the place the gesture left it at.
+        self.note_input_caret_motion();
         if self.input_cursor == 0 {
             return;
         }
@@ -6594,6 +6996,9 @@ impl TuiApp {
     }
 
     fn move_cursor_right(&mut self) {
+        // A caret move collapses the mark and hands the band back to the caret;
+        // the caret itself keeps the place the gesture left it at.
+        self.note_input_caret_motion();
         if self.input_cursor >= self.input.len() {
             return;
         }
@@ -6616,6 +7021,9 @@ impl TuiApp {
     }
 
     fn move_cursor_to_line_start_with_wrap(&mut self, move_up_at_bol: bool) {
+        // A caret move collapses the mark and hands the band back to the caret;
+        // the caret itself keeps the place the gesture left it at.
+        self.note_input_caret_motion();
         let line_start = self.line_start_index();
         if move_up_at_bol && self.input_cursor == line_start && line_start > 0 {
             let prev_end = line_start.saturating_sub(1);
@@ -6632,6 +7040,9 @@ impl TuiApp {
     }
 
     fn move_cursor_to_line_end_with_wrap(&mut self, move_down_at_eol: bool) {
+        // A caret move collapses the mark and hands the band back to the caret;
+        // the caret itself keeps the place the gesture left it at.
+        self.note_input_caret_motion();
         let line_end = self.line_end_index();
         if move_down_at_eol && self.input_cursor == line_end && line_end < self.input.len() {
             let next_start = line_end + 1;
@@ -6648,6 +7059,9 @@ impl TuiApp {
     }
 
     fn move_cursor_word_left(&mut self) {
+        // A caret move collapses the mark and hands the band back to the caret;
+        // the caret itself keeps the place the gesture left it at.
+        self.note_input_caret_motion();
         let mut cursor = self.input_cursor.min(self.input.len());
         if cursor == 0 {
             return;
@@ -6685,6 +7099,9 @@ impl TuiApp {
     }
 
     fn move_cursor_word_right(&mut self) {
+        // A caret move collapses the mark and hands the band back to the caret;
+        // the caret itself keeps the place the gesture left it at.
+        self.note_input_caret_motion();
         let mut cursor = self.input_cursor.min(self.input.len());
         let len = self.input.len();
         if cursor >= len {
@@ -6723,6 +7140,11 @@ impl TuiApp {
     }
 
     fn delete_word_left(&mut self) {
+        // A kill key on a mark cuts the marked run instead of extending the gesture
+        // from the caret, so Ctrl+Y yanks back exactly what the reader removed.
+        if self.cut_input_selection() {
+            return;
+        }
         let end = self.input_cursor.min(self.input.len());
         if end == 0 {
             return;
@@ -6772,6 +7194,11 @@ impl TuiApp {
     }
 
     fn delete_word_right(&mut self) {
+        // A kill key on a mark cuts the marked run instead of extending the gesture
+        // from the caret, so Ctrl+Y yanks back exactly what the reader removed.
+        if self.cut_input_selection() {
+            return;
+        }
         let start = self.input_cursor.min(self.input.len());
         let len = self.input.len();
         if start >= len {
@@ -6822,6 +7249,11 @@ impl TuiApp {
     }
 
     fn delete_to_line_start(&mut self) {
+        // A kill key on a mark cuts the marked run instead of extending the gesture
+        // from the caret, so Ctrl+Y yanks back exactly what the reader removed.
+        if self.cut_input_selection() {
+            return;
+        }
         let end = self.input_cursor.min(self.input.len());
         if let Some(matched) = find_attachment_placeholder_covering_cursor(
             self.input.as_str(),
@@ -6840,6 +7272,11 @@ impl TuiApp {
     }
 
     fn delete_to_line_end(&mut self) {
+        // A kill key on a mark cuts the marked run instead of extending the gesture
+        // from the caret, so Ctrl+Y yanks back exactly what the reader removed.
+        if self.cut_input_selection() {
+            return;
+        }
         let start = self.input_cursor.min(self.input.len());
         if let Some(matched) = find_attachment_placeholder_covering_cursor(
             self.input.as_str(),
@@ -6860,6 +7297,9 @@ impl TuiApp {
     /// codex's `Ctrl+U`/`Ctrl+K`/`Ctrl+W` feed a buffer that `Ctrl+Y` yanks
     /// back. Consecutive kills append, so `Ctrl+K Ctrl+K` yanks both lines.
     fn kill_range(&mut self, start: usize, end: usize) {
+        // Any byte range that leaves the draft shifts every offset a gesture picked, so the
+        // mark goes with it rather than pointing at different words afterwards.
+        self.clear_input_selection();
         let end = end.min(self.input.len());
         if start >= end {
             return;
@@ -6875,6 +7315,11 @@ impl TuiApp {
             return;
         }
         let text = self.kill_buffer.clone();
+        // Yanking into a mark replaces it, the way any other insertion does.
+        if self.replace_input_selection_with(text.as_str()) {
+            self.history_cursor = None;
+            return;
+        }
         let at = self.input_cursor.min(self.input.len());
         self.input.insert_str(at, text.as_str());
         self.input_cursor = at + text.len();
@@ -6883,6 +7328,9 @@ impl TuiApp {
     }
 
     fn move_cursor_up(&mut self) {
+        // A caret move collapses the mark and hands the band back to the caret;
+        // the caret itself keeps the place the gesture left it at.
+        self.note_input_caret_motion();
         self.input_cursor = move_cursor_vertical(
             &self.input,
             usize::from(self.input_viewport_width.max(1)),
@@ -6893,6 +7341,9 @@ impl TuiApp {
     }
 
     fn move_cursor_down(&mut self) {
+        // A caret move collapses the mark and hands the band back to the caret;
+        // the caret itself keeps the place the gesture left it at.
+        self.note_input_caret_motion();
         self.input_cursor = move_cursor_vertical(
             &self.input,
             usize::from(self.input_viewport_width.max(1)),
@@ -7465,7 +7916,9 @@ impl TuiApp {
         if index >= self.logs.len() {
             return;
         }
-        self.logs.remove(index);
+        let dropped = self.logs.remove(index);
+        // A mark that named this card has no text to name any more.
+        self.forget_transcript_selection_of(dropped.cell_id);
         if index < self.history_archived_entries {
             self.history_archived_entries = self.history_archived_entries.saturating_sub(1);
         }
@@ -7503,6 +7956,9 @@ impl TuiApp {
         }
         let dropped = self.logs.remove(0);
         self.expanded_cards.remove(&dropped.cell_id);
+        // The card is gone, so is any mark on it: it must not be re-pointed at whatever
+        // now sits in the slot it left behind.
+        self.forget_transcript_selection_of(dropped.cell_id);
         if self.history_archived_entries > 0 {
             self.history_archived_entries = self.history_archived_entries.saturating_sub(1);
         }

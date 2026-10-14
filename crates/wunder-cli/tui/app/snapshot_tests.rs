@@ -1697,6 +1697,10 @@ async fn a_click_while_a_modal_is_up_does_not_reach_the_cards_behind_it() {
 /// real clipboard.
 static COPIED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
 
+/// The sink is process-wide, so the tests that read it take turns: two of them in flight
+/// would otherwise count each other's copies.
+static CLIPBOARD_TURN: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn record_clipboard_write(text: &str) -> anyhow::Result<()> {
     COPIED
         .lock()
@@ -1708,11 +1712,16 @@ fn record_clipboard_write(text: &str) -> anyhow::Result<()> {
 struct ClipboardSeam;
 
 impl ClipboardSeam {
-    fn arm() {
+    /// Hold the returned guard until the copy has been read back.
+    fn arm() -> std::sync::MutexGuard<'static, ()> {
+        let turn = CLIPBOARD_TURN
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         *CLIPBOARD_WRITER
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(record_clipboard_write);
         Self::drain();
+        turn
     }
 
     fn drain() {
@@ -1753,7 +1762,7 @@ async fn a_drag_across_the_transcript_marks_rows_and_the_release_copies_them() {
         .iter()
         .position(|row| row.contains("Ran cargo test"))
         .expect("the command card is on screen");
-    ClipboardSeam::arm();
+    let _clipboard_turn = ClipboardSeam::arm();
 
     mouse(&mut app, MouseEventKind::Down(MouseButton::Left), start, 2);
     mouse(
@@ -1805,7 +1814,7 @@ async fn double_and_triple_clicks_take_the_word_and_the_line() {
         .position(|line| line.contains("Ran cargo test"))
         .expect("the command card is on screen");
     let column = before[row].find("cargo").expect("the word is on that row") as u16 + 1;
-    ClipboardSeam::arm();
+    let _clipboard_turn = ClipboardSeam::arm();
 
     for _ in 0..2 {
         mouse(
@@ -1883,5 +1892,2626 @@ async fn the_horizontal_arrows_open_and_close_the_selected_card() {
     assert!(
         !app.set_selected_card_expanded(true),
         "nothing to open on a card that hides nothing"
+    );
+}
+
+/// A tab in a transcript row is drawn as projected text: the row that really renders at
+/// eight-column stops, not one where the tab sits as a single 1-column cell.
+#[tokio::test]
+async fn a_tab_in_a_transcript_row_projects_to_the_next_eight_column_stop() {
+    let root = TempRoot::new("tab_display");
+    let mut app = fixture_app(root.path()).await;
+    // Raw scrollback keeps the entry text verbatim, so the frame shows exactly this row.
+    app.logs.clear();
+    app.raw_output = true;
+    app.push_log(LogKind::User, "gate\tvalue".to_string());
+
+    let mut terminal = Terminal::new(TestBackend::new(40, 12)).expect("terminal");
+    terminal
+        .draw(|frame| crate::tui::ui::draw(frame, &mut app))
+        .expect("draw");
+    let buffer = terminal.backend().buffer().clone();
+    let row = (0..12u16)
+        .find(|&row| buffer[(0, row)].symbol() == "g")
+        .expect("the tab row is on screen");
+
+    assert_eq!(buffer[(3, row)].symbol(), "e", "gate sits at 0..4");
+    for column in 4..8u16 {
+        assert_eq!(
+            buffer[(column, row)].symbol(),
+            " ",
+            "the tab pads its stop with spaces at column {column}"
+        );
+    }
+    assert_eq!(
+        buffer[(8, row)].symbol(),
+        "v",
+        "value resumes at the next eight-column stop"
+    );
+}
+
+/// The pointer answers in projected display columns: padding right of a tab belongs to
+/// the tab, so a double click there is between words and takes the word to its left,
+/// while the copy still carries the logical text with the tab inside it.
+#[tokio::test]
+async fn a_double_click_past_a_tab_hits_the_projected_columns() {
+    use crossterm::event::{MouseButton, MouseEventKind};
+
+    let root = TempRoot::new("tab_hit");
+    let mut app = fixture_app(root.path()).await;
+    app.logs.clear();
+    app.raw_output = true;
+    app.push_log(LogKind::User, "gate\tvalue".to_string());
+    let before = draw_rows(&mut app, 40, 12);
+    let row = before
+        .iter()
+        .position(|line| line.starts_with("gate"))
+        .expect("the tab row is on screen");
+    let _clipboard_turn = ClipboardSeam::arm();
+
+    // Buffer column 6 is tab padding (gate covers 0..4, the tab covers 4..8). Counting
+    // the tab as one column would place column 6 inside "value" instead.
+    for _ in 0..2 {
+        mouse(&mut app, MouseEventKind::Down(MouseButton::Left), row, 7);
+        mouse(&mut app, MouseEventKind::Up(MouseButton::Left), row, 7);
+    }
+    let copied = ClipboardSeam::copied();
+    assert_eq!(
+        copied.last().map(String::as_str),
+        Some("gate"),
+        "the padding double click takes the word to the left: {copied:?}"
+    );
+
+    // A third click on the same spot takes the whole line, and that copy keeps the tab.
+    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), row, 7);
+    mouse(&mut app, MouseEventKind::Up(MouseButton::Left), row, 7);
+    let copied = ClipboardSeam::copied();
+    assert_eq!(
+        copied.last().map(String::as_str),
+        Some("gate\tvalue"),
+        "the whole-line copy is logical text, tab and all: {copied:?}"
+    );
+}
+
+/// A pointer event that says which keys were down: shift+click is its own gesture, so a
+/// test has to be able to ask for it.
+fn mouse_held(
+    app: &mut TuiApp,
+    kind: crossterm::event::MouseEventKind,
+    row: usize,
+    column: u16,
+    modifiers: KeyModifiers,
+) {
+    app.on_mouse(crossterm::event::MouseEvent {
+        kind,
+        column,
+        row: u16::try_from(row).expect("row fits"),
+        modifiers,
+    });
+}
+
+/// The transcript as raw scrollback (`Alt+R`): one window line per card, text verbatim, so
+/// a test can name a card by the text on its row and know which row is which card with no
+/// renderer in between.
+fn raw_single_line_cards(app: &mut TuiApp, texts: &[impl AsRef<str>]) {
+    app.logs.clear();
+    app.raw_output = true;
+    for text in texts {
+        app.push_log(LogKind::User, text.as_ref().to_string());
+    }
+    app.transcript_offset_from_bottom = 0;
+    app.transcript_selected = None;
+}
+
+/// The screen rows carrying the selection mark — the reversed video `theme::selection_mark`
+/// puts on the picked run — with the text drawn on them. Naming a mark by its text is what
+/// lets a test say "the same text is still marked" across a scroll that moved the rows.
+fn marked_rows(app: &mut TuiApp, width: u16, height: u16) -> Vec<(usize, String)> {
+    use ratatui::style::Modifier;
+
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("terminal");
+    terminal
+        .draw(|frame| crate::tui::ui::draw(frame, app))
+        .expect("draw");
+    let buffer = terminal.backend().buffer().clone();
+    (0..height)
+        .filter_map(|row| {
+            let text: String = (0..width)
+                .map(|column| buffer[(column, row)].symbol().to_string())
+                .collect::<String>()
+                .trim_end()
+                .to_string();
+            let marked = (0..width)
+                .any(|column| buffer[(column, row)].modifier.contains(Modifier::REVERSED));
+            marked.then_some((usize::from(row), text))
+        })
+        .collect()
+}
+
+/// Only the rows this fixture drew, so a decoration elsewhere cannot be mistaken for a mark.
+fn marked_cards(app: &mut TuiApp, width: u16, height: u16) -> Vec<(usize, String)> {
+    marked_rows(app, width, height)
+        .into_iter()
+        .filter(|(_, text)| text.contains("item-"))
+        .collect()
+}
+
+/// The rows inside the transcript band that show one of the fixture's cards, in order.
+/// Only the band the layout recorded answers to the pointer and the wheel, and the footer
+/// echoes a card's text too, so a row picked by content alone can be outside the band.
+fn banded_card_rows(rows: &[String], region: Rect) -> Vec<(usize, String)> {
+    let top = usize::from(region.y);
+    let bottom = (top + usize::from(region.height)).min(rows.len());
+    (top..bottom)
+        .filter(|row| rows[*row].starts_with("item-"))
+        .map(|row| (row, rows[row].trim_end().to_string()))
+        .collect()
+}
+
+/// A mark is booked against the card and the line of it the reader pressed, so the window
+/// can scroll away and back and the same text is still marked and still copies the same.
+#[tokio::test]
+async fn a_mark_survives_scrolling_away_and_back_to_the_same_text() {
+    use crossterm::event::{MouseButton, MouseEventKind};
+
+    let root = TempRoot::new("selection_scroll");
+    let mut app = fixture_app(root.path()).await;
+    // One tall card and a short one: a stack of single-line cards is archived into the
+    // terminal's own scrollback as it stops fitting, which leaves the in-app window with
+    // nothing to scroll. A card taller than the band stays, with its own lines to slide.
+    let body: Vec<String> = (1..=30).map(|n| format!("item-a{n:02}")).collect();
+    raw_single_line_cards(&mut app, &[body.join("\n").as_str(), "item-tail"]);
+    let width = 60u16;
+    let height = 24u16;
+    let before = draw_rows(&mut app, width, height);
+    let band = banded_card_rows(&before, app.transcript_mouse_region);
+    let a28 = band
+        .iter()
+        .find(|(_, text)| text == "item-a28")
+        .expect("line 28 of the tall card is on screen");
+    let a30 = band
+        .iter()
+        .find(|(_, text)| text == "item-a30")
+        .expect("line 30 of the tall card is on screen");
+    let a29 = band
+        .iter()
+        .find(|(_, text)| text == "item-a29")
+        .expect("line 29 of the tall card is on screen");
+    assert_eq!(
+        (a29.0, a30.0),
+        (a28.0 + 1, a28.0 + 2),
+        "the three rows are next to each other"
+    );
+
+    let _clipboard_turn = ClipboardSeam::arm();
+    mouse(
+        &mut app,
+        MouseEventKind::Down(MouseButton::Left),
+        a28.0,
+        2,
+    );
+    mouse(&mut app, MouseEventKind::Drag(MouseButton::Left), a30.0, 6);
+    mouse(&mut app, MouseEventKind::Up(MouseButton::Left), a30.0, 6);
+    let expected = format!("{}\n{}\n{}", &a28.1[2..], &a29.1, &a30.1[..6]);
+    let first_copy = ClipboardSeam::copied()
+        .pop()
+        .expect("the release copied the drag");
+    assert_eq!(
+        first_copy, expected,
+        "the drag runs from column 2 of line 28 to column 6 of line 30"
+    );
+    let mark_before = marked_cards(&mut app, width, height);
+    assert!(!mark_before.is_empty(), "the drag left a visible mark");
+    let anchor_before = app
+        .transcript_selection
+        .expect("a mark is open")
+        .anchor;
+    assert_eq!(
+        anchor_before.cell_id, app.logs[0].cell_id,
+        "the anchor names the tall card"
+    );
+    assert_eq!(
+        anchor_before.line_within_cell, 27,
+        "and the twenty-eighth line of it, not a window row"
+    );
+
+    // The wheel moves the window and nothing else. A frame is drawn while the picked
+    // lines are off the window: there is nothing to mark there, and that is no reason to
+    // forget where the mark was.
+    let inside = usize::from(app.transcript_mouse_region.y + 1);
+    for _ in 0..6 {
+        mouse(&mut app, MouseEventKind::ScrollUp, inside, 4);
+    }
+    let away = marked_cards(&mut app, width, height);
+    assert!(
+        away.is_empty(),
+        "the picked lines left the window, so nothing is drawn: {away:?}"
+    );
+    assert!(
+        app.transcript_selection.is_some(),
+        "scrolling away may not drop the mark"
+    );
+    for _ in 0..6 {
+        mouse(&mut app, MouseEventKind::ScrollDown, inside, 4);
+    }
+
+    let selection = app.transcript_selection.expect("the mark is still open");
+    assert_eq!(
+        selection.anchor, anchor_before,
+        "a scroll must not re-point the anchor"
+    );
+    let mark_after = marked_cards(&mut app, width, height);
+    assert_eq!(
+        mark_after, mark_before,
+        "the same text is marked on the same rows once the window is back"
+    );
+
+    // A right click copies what is marked without moving the gesture.
+    mouse_held(
+        &mut app,
+        MouseEventKind::Down(MouseButton::Right),
+        mark_after[0].0,
+        6,
+        KeyModifiers::NONE,
+    );
+    assert_eq!(
+        ClipboardSeam::copied().last().map(String::as_str),
+        Some(first_copy.as_str()),
+        "the copy after a scroll reads exactly as it did before"
+    );
+}
+
+/// The tail growing while a mark is open — a streamed answer, a new card — neither drops
+/// the mark nor shifts it onto other text.
+#[tokio::test]
+async fn the_mark_still_names_its_own_text_while_the_transcript_grows() {
+    use crossterm::event::{MouseButton, MouseEventKind};
+
+    let root = TempRoot::new("selection_append");
+    let mut app = fixture_app(root.path()).await;
+    let cards: Vec<String> = (1..=18).map(|n| format!("item-{n:02}")).collect();
+    raw_single_line_cards(&mut app, &cards);
+    let before = draw_rows(&mut app, 60, 24);
+    let band = banded_card_rows(&before, app.transcript_mouse_region);
+    let row = band.last().expect("the transcript band shows cards").0;
+    assert!(row >= 1, "the drag needs a row above it: {row}");
+
+    let _clipboard_turn = ClipboardSeam::arm();
+    mouse(
+        &mut app,
+        MouseEventKind::Down(MouseButton::Left),
+        row - 1,
+        0,
+    );
+    mouse(&mut app, MouseEventKind::Drag(MouseButton::Left), row, 4);
+    mouse(&mut app, MouseEventKind::Up(MouseButton::Left), row, 4);
+    let first_copy = ClipboardSeam::copied().pop().expect("the release copied");
+    let anchor_before = app
+        .transcript_selection
+        .expect("a mark is open")
+        .anchor;
+    let texts_before: Vec<String> = marked_cards(&mut app, 60, 24)
+        .into_iter()
+        .map(|(_, text)| text)
+        .collect();
+    assert!(!texts_before.is_empty(), "the drag left a visible mark");
+
+    // A new card lands at the tail, which is what a streaming round does to the window.
+    app.push_log(LogKind::User, "item-19".to_string());
+    let mark_after = marked_cards(&mut app, 60, 24);
+    let selection = app
+        .transcript_selection
+        .expect("an append must not drop the mark");
+    assert_eq!(
+        selection.anchor, anchor_before,
+        "the anchor still names the same card and line"
+    );
+    let texts_after: Vec<String> = mark_after.into_iter().map(|(_, text)| text).collect();
+    assert_eq!(
+        texts_after, texts_before,
+        "the growing tail may neither drop the mark nor move it onto other cards"
+    );
+    assert!(
+        texts_after.iter().any(|text| text.starts_with("item-18")),
+        "the card the reader pressed is still one of them: {texts_after:?}"
+    );
+
+    mouse_held(
+        &mut app,
+        MouseEventKind::Down(MouseButton::Right),
+        row,
+        2,
+        KeyModifiers::NONE,
+    );
+    assert_eq!(
+        ClipboardSeam::copied().last().map(String::as_str),
+        Some(first_copy.as_str()),
+        "the copy still reads what the reader picked"
+    );
+}
+
+/// A card that leaves the transcript for good takes its mark with it, and the neighbour
+/// that slides into its slot is never mistaken for the picked text.
+#[tokio::test]
+async fn trimming_the_selected_card_clears_the_mark_and_a_neighbour_keeps_its_own() {
+    use crossterm::event::{MouseButton, MouseEventKind};
+
+    let root = TempRoot::new("selection_trim");
+    let mut app = fixture_app(root.path()).await;
+    raw_single_line_cards(&mut app, &["item-01", "item-02", "item-03", "item-04"]);
+    let before = draw_rows(&mut app, 60, 24);
+    let first = before
+        .iter()
+        .position(|line| line.starts_with("item-01"))
+        .expect("the oldest card is on screen");
+    assert!(
+        before[first + 1].starts_with("item-02"),
+        "one raw line per card: {before:?}"
+    );
+
+    let _clipboard_turn = ClipboardSeam::arm();
+    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), first, 0);
+    mouse(&mut app, MouseEventKind::Drag(MouseButton::Left), first + 1, 7);
+    mouse(
+        &mut app,
+        MouseEventKind::Up(MouseButton::Left),
+        first + 1,
+        7,
+    );
+    assert_eq!(
+        app.transcript_selection
+            .expect("a mark is open")
+            .anchor
+            .cell_id,
+        app.logs[0].cell_id,
+        "the anchor is booked against the oldest card"
+    );
+
+    app.pop_oldest_log_entry();
+    assert!(
+        app.transcript_selection.is_none(),
+        "the card is gone, so the mark goes rather than re-pointing"
+    );
+
+    // A mark on the second card survives that same trim, on its own text.
+    raw_single_line_cards(&mut app, &["item-01", "item-02", "item-03", "item-04"]);
+    let before = draw_rows(&mut app, 60, 24);
+    let second = before
+        .iter()
+        .position(|line| line.starts_with("item-02"))
+        .expect("the second card is on screen");
+    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), second, 0);
+    mouse(&mut app, MouseEventKind::Drag(MouseButton::Left), second, 7);
+    mouse(&mut app, MouseEventKind::Up(MouseButton::Left), second, 7);
+    let picked = ClipboardSeam::copied()
+        .pop()
+        .expect("the drag copied its own card");
+    assert_eq!(picked, "item-02");
+
+    app.pop_oldest_log_entry();
+    let selection = app
+        .transcript_selection
+        .expect("a trim of a different card keeps the mark");
+    assert_eq!(
+        selection.anchor.cell_id, app.logs[0].cell_id,
+        "the picked card is now the oldest, and still the same card"
+    );
+    let marked = marked_cards(&mut app, 60, 24);
+    assert!(
+        marked.iter().any(|(_, text)| text == "item-02"),
+        "the mark followed the card into its new row: {marked:?}"
+    );
+    mouse_held(
+        &mut app,
+        MouseEventKind::Down(MouseButton::Right),
+        marked[0].0,
+        2,
+        KeyModifiers::NONE,
+    );
+    assert_eq!(
+        ClipboardSeam::copied().last().map(String::as_str),
+        Some("item-02"),
+        "and copies the text it was put on, not the neighbour that took its row"
+    );
+}
+
+/// Shift+click is codex's extend gesture: the anchor the reader pressed stays, the free
+/// end moves, and the click never feeds the double or triple click counter.
+#[tokio::test]
+async fn a_shift_click_moves_the_free_end_and_leaves_the_anchor_put_down() {
+    use crossterm::event::{MouseButton, MouseEventKind};
+
+    let root = TempRoot::new("selection_shift");
+    let mut app = fixture_app(root.path()).await;
+    let cards: Vec<String> = (1..=16).map(|n| format!("item-{n:02}")).collect();
+    raw_single_line_cards(&mut app, &cards);
+    let before = draw_rows(&mut app, 60, 24);
+    let band = banded_card_rows(&before, app.transcript_mouse_region);
+    assert!(
+        band.len() >= 6,
+        "the gesture needs six card rows inside the band: {band:?}"
+    );
+    // A row with room both above and below it inside the band: only the band answers to
+    // the pointer, so a row outside it is not a gesture at all.
+    let row = band[2].0;
+    assert_eq!(
+        (band[3].0, band[4].0),
+        (row + 1, row + 2),
+        "one raw line per card keeps the rows next to each other: {band:?}"
+    );
+
+    let _clipboard_turn = ClipboardSeam::arm();
+    // Press and drag a short way, so a range is open to extend.
+    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), row, 0);
+    mouse(&mut app, MouseEventKind::Drag(MouseButton::Left), row, 3);
+    mouse(&mut app, MouseEventKind::Up(MouseButton::Left), row, 3);
+    let short = ClipboardSeam::copied().pop().expect("the drag copied");
+    let anchor_before = app
+        .transcript_selection
+        .expect("a mark is open")
+        .anchor;
+    assert_eq!(short, "ite", "three columns of one line: {short:?}");
+
+    mouse_held(
+        &mut app,
+        MouseEventKind::Down(MouseButton::Left),
+        row + 2,
+        5,
+        KeyModifiers::SHIFT,
+    );
+    assert_eq!(
+        app.pointer_click_count, 0,
+        "a shift+click is not a click toward a double click"
+    );
+    mouse_held(
+        &mut app,
+        MouseEventKind::Up(MouseButton::Left),
+        row + 2,
+        5,
+        KeyModifiers::SHIFT,
+    );
+
+    let selection = app.transcript_selection.expect("still the same range");
+    assert_eq!(selection.anchor, anchor_before, "the anchor stayed put");
+    assert_ne!(selection.head, anchor_before, "the free end moved");
+    let landed = before[row + 2].trim_end();
+    let landed_card = app
+        .logs
+        .iter()
+        .find(|entry| entry.text == landed)
+        .expect("the card the shift landed on");
+    assert_eq!(
+        selection.head.cell_id, landed_card.cell_id,
+        "and the free end is booked against the card it landed on"
+    );
+    let tail: String = before[row + 2].chars().take(5).collect();
+    let expected = format!(
+        "{}\n{}\n{}",
+        before[row].trim_end(),
+        before[row + 1].trim_end(),
+        tail.trim_end()
+    );
+    assert_eq!(
+        ClipboardSeam::copied().last().map(String::as_str),
+        Some(expected.as_str()),
+        "the copy runs from the anchor to the new end"
+    );
+
+    // Shifting to the other side of the anchor flips the range instead of emptying it.
+    mouse_held(
+        &mut app,
+        MouseEventKind::Down(MouseButton::Left),
+        row - 1,
+        4,
+        KeyModifiers::SHIFT,
+    );
+    mouse_held(
+        &mut app,
+        MouseEventKind::Up(MouseButton::Left),
+        row - 1,
+        4,
+        KeyModifiers::SHIFT,
+    );
+    let copied = ClipboardSeam::copied().pop().expect("the copy arrived");
+    let backwards: String = before[row - 1].chars().skip(4).collect();
+    assert_eq!(
+        copied,
+        backwards.trim_end(),
+        "a backwards shift reads the range the other way"
+    );
+    assert_eq!(
+        app.transcript_selection.expect("still open").anchor,
+        anchor_before,
+        "and even then the anchor is where it was pressed"
+    );
+}
+
+/// On a row carrying a tab, a shift+click and a double click both count columns the way
+/// the frame drew them: the tab carries the line to its next eight-column stop, so a
+/// pointer inside its padding is not inside the word that follows it.
+#[tokio::test]
+async fn shift_and_double_clicks_on_a_tab_row_answer_at_the_eight_column_stops() {
+    use crossterm::event::{MouseButton, MouseEventKind};
+
+    let root = TempRoot::new("selection_shift_tab");
+    let mut app = fixture_app(root.path()).await;
+    raw_single_line_cards(&mut app, &["gate\tvalue"]);
+    let before = draw_rows(&mut app, 40, 12);
+    let row = before
+        .iter()
+        .position(|line| line.starts_with("gate"))
+        .expect("the tab row is on screen");
+
+    let _clipboard_turn = ClipboardSeam::arm();
+    // gate covers 0..4, the tab its padding 4..8, value sits at 8..13.
+    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), row, 0);
+    mouse(&mut app, MouseEventKind::Drag(MouseButton::Left), row, 3);
+    mouse(&mut app, MouseEventKind::Up(MouseButton::Left), row, 3);
+    ClipboardSeam::drain();
+
+    for (head, expect) in [
+        (6usize, "gate"),
+        (8usize, "gate"),
+        (9usize, "gate\tv"),
+        (13usize, "gate\tvalue"),
+    ] {
+        mouse_held(
+            &mut app,
+            MouseEventKind::Down(MouseButton::Left),
+            row,
+            u16::try_from(head).expect("column fits"),
+            KeyModifiers::SHIFT,
+        );
+        mouse_held(
+            &mut app,
+            MouseEventKind::Up(MouseButton::Left),
+            row,
+            u16::try_from(head).expect("column fits"),
+            KeyModifiers::SHIFT,
+        );
+        assert_eq!(
+            ClipboardSeam::copied().last().map(String::as_str),
+            Some(expect),
+            "a shift+click at column {head} cuts at the stop, not at the character count: {:?}",
+            ClipboardSeam::copied()
+        );
+    }
+    ClipboardSeam::drain();
+
+    // A range that starts inside the padding drops the tab: the tab's own column is
+    // before the anchor, so it never travels to the clipboard.
+    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), row, 6);
+    mouse(&mut app, MouseEventKind::Drag(MouseButton::Left), row, 7);
+    mouse(&mut app, MouseEventKind::Up(MouseButton::Left), row, 7);
+    mouse_held(
+        &mut app,
+        MouseEventKind::Down(MouseButton::Left),
+        row,
+        13,
+        KeyModifiers::SHIFT,
+    );
+    mouse_held(
+        &mut app,
+        MouseEventKind::Up(MouseButton::Left),
+        row,
+        13,
+        KeyModifiers::SHIFT,
+    );
+    assert_eq!(
+        ClipboardSeam::copied().last().map(String::as_str),
+        Some("value"),
+        "column 6 is the tab's padding, so the copy starts at v: {:?}",
+        ClipboardSeam::copied()
+    );
+    ClipboardSeam::drain();
+
+    // Two clicks on that padding take the word to their left, and the word anchor keeps
+    // its own bound when a shift+click walks the free end into the next word.
+    for _ in 0..2 {
+        mouse(&mut app, MouseEventKind::Down(MouseButton::Left), row, 6);
+        mouse(&mut app, MouseEventKind::Up(MouseButton::Left), row, 6);
+    }
+    assert_eq!(
+        ClipboardSeam::copied().last().map(String::as_str),
+        Some("gate"),
+        "the padding double click is between words and takes the left one: {:?}",
+        ClipboardSeam::copied()
+    );
+    mouse_held(
+        &mut app,
+        MouseEventKind::Down(MouseButton::Left),
+        row,
+        12,
+        KeyModifiers::SHIFT,
+    );
+    mouse_held(
+        &mut app,
+        MouseEventKind::Up(MouseButton::Left),
+        row,
+        12,
+        KeyModifiers::SHIFT,
+    );
+    assert_eq!(
+        ClipboardSeam::copied().last().map(String::as_str),
+        Some("gate\tvalue"),
+        "the free end snaps to the word it landed in, eight-column stops and all: {:?}",
+        ClipboardSeam::copied()
+    );
+}
+
+/// A mark is drawn by patching spans, never by rewrapping, so at any sampled width every
+/// row still fits the frame with a selection open.
+#[tokio::test]
+async fn a_marked_transcript_stays_inside_the_frame_at_every_sampled_width() {
+    use crossterm::event::{MouseButton, MouseEventKind};
+
+    let root = TempRoot::new("selection_widths");
+    let mut app = fixture_app(root.path()).await;
+    let cards: Vec<String> = (1..=12).map(|n| format!("item-{n:02}")).collect();
+    raw_single_line_cards(&mut app, &cards);
+    let _clipboard_turn = ClipboardSeam::arm();
+
+    for width in [20u16, 24, 40, 80, 120] {
+        let height = 24u16;
+        let before = draw_rows(&mut app, width, height);
+        let band = banded_card_rows(&before, app.transcript_mouse_region);
+        let row = band.last().expect("the band shows cards").0;
+        assert!(row >= 1, "the drag needs a row above it at {width}: {band:?}");
+        mouse(
+            &mut app,
+            MouseEventKind::Down(MouseButton::Left),
+            row,
+            1,
+        );
+        mouse(
+            &mut app,
+            MouseEventKind::Drag(MouseButton::Left),
+            row - 1,
+            width.saturating_sub(1),
+        );
+        mouse(
+            &mut app,
+            MouseEventKind::Up(MouseButton::Left),
+            row - 1,
+            width.saturating_sub(1),
+        );
+        let rows = draw_rows(&mut app, width, height);
+        assert!(
+            rows.iter()
+                .all(|line| line.chars().count() <= usize::from(width)),
+            "no row may exceed the frame at {width} columns with a mark open"
+        );
+        assert!(
+            !marked_cards(&mut app, width, height).is_empty(),
+            "the mark is drawn at {width} columns"
+        );
+        app.transcript_selection = None;
+    }
+}
+
+/// What a press books is the card's identity, and a press that never moved is still a
+/// click rather than a copy.
+#[tokio::test]
+async fn a_mark_is_booked_against_the_card_not_the_row_it_was_pressed_on() {
+    use crossterm::event::{MouseButton, MouseEventKind};
+
+    let root = TempRoot::new("selection_identity");
+    let mut app = fixture_app(root.path()).await;
+    raw_single_line_cards(&mut app, &["item-01", "item-02", "item-03"]);
+    let before = draw_rows(&mut app, 60, 24);
+    let row = before
+        .iter()
+        .position(|line| line.starts_with("item-02"))
+        .expect("the middle card is on screen");
+
+    let _clipboard_turn = ClipboardSeam::arm();
+    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), row, 2);
+    let selection = app.transcript_selection.expect("a press opens a mark");
+    assert_eq!(
+        selection.anchor.cell_id, app.logs[1].cell_id,
+        "the anchor names the card, not a window row"
+    );
+    assert_eq!(
+        selection.head.cell_id, app.logs[1].cell_id,
+        "and so does the free end it started on"
+    );
+    assert_eq!(
+        selection.unit,
+        SelectionUnit::Character,
+        "one click is a character pick"
+    );
+
+    mouse(&mut app, MouseEventKind::Up(MouseButton::Left), row, 2);
+    assert!(
+        ClipboardSeam::copied().is_empty(),
+        "a press that never moved is a click, not a copy: {:?}",
+        ClipboardSeam::copied()
+    );
+}
+
+/// The composer projects tabs before drawing: a draft carrying a literal tab reaches the
+/// next eight-column stop on the frame, exactly like the transcript's projection — and the
+/// draft itself keeps the tab.
+#[tokio::test]
+async fn a_tab_in_the_draft_reaches_the_next_eight_column_stop_on_the_frame() {
+    let root = TempRoot::new("composer_tab_stop");
+    let mut app = fixture_app(root.path()).await;
+    app.input = "gate\tvalue".to_string();
+    app.input_cursor = app.input.len();
+    let rows = draw_rows(&mut app, 80, 24);
+    let draft_row = rows
+        .iter()
+        .find(|row| row.contains("gate") && row.contains("value"))
+        .expect("the draft is on screen");
+    assert!(
+        draft_row.contains("gate    value"),
+        "the tab pads columns 4..8 on the frame: {draft_row:?}"
+    );
+
+    // The projection is display-only: the draft and the view handed to the painter keep
+    // the logical text, tab included, so copy and submit round-trip what the user typed.
+    assert_eq!(app.input, "gate\tvalue", "the draft keeps its literal tab");
+    let area = app.input_hit_area;
+    let view = app.input_view(area.width.max(1), area.height.max(1));
+    let joined = view
+        .lines
+        .iter()
+        .flat_map(|line| line.spans.iter())
+        .map(|span| span.content.as_ref())
+        .collect::<String>();
+    assert!(
+        joined.contains("gate\tvalue"),
+        "the view hands the composer logical text: {joined:?}"
+    );
+    assert!(
+        !joined.contains("gate    value"),
+        "and never a pre-projected copy: {joined:?}"
+    );
+}
+
+/// Hit testing answers in the projected column space: clicking the first cell of a word
+/// that sits behind a tab's padding lands the caret on that word, not on whatever the
+/// one-column-tab arithmetic would have counted there.
+#[tokio::test]
+async fn a_click_on_a_tab_words_projected_column_lands_on_that_word() {
+    use crossterm::event::{MouseButton, MouseEventKind};
+
+    let root = TempRoot::new("composer_tab_hit");
+    let mut app = fixture_app(root.path()).await;
+    app.input = "gate\tvalue".to_string();
+    app.input_cursor = 0;
+    let _ = draw_rows(&mut app, 80, 24);
+    let area = app.input_hit_area;
+
+    // "gate" owns columns 0..4, the tab pads 4..8, "value" starts at column 8. The bytes
+    // are g0 a1 t2 e3 \t4 v5 — a projected column 8 must give byte 5.
+    mouse(
+        &mut app,
+        MouseEventKind::Down(MouseButton::Left),
+        usize::from(area.y),
+        area.x + 8,
+    );
+    assert_eq!(
+        app.input_cursor, 5,
+        "the click landed on the word the pointer was over"
+    );
+
+    // A column inside the tab's padding belongs to the tab, so the caret sits before it.
+    mouse(
+        &mut app,
+        MouseEventKind::Down(MouseButton::Left),
+        usize::from(area.y),
+        area.x + 6,
+    );
+    assert_eq!(app.input_cursor, 4, "tab padding is the tab");
+}
+
+/// A tabbed draft that has to wrap breaks where the *projected* columns say it should. A
+/// tab counted as one column gains three characters on the first row and splits the next
+/// word mid-character, so this is the assertion that pins the wrap measurement to the same
+/// eight-column stop the frame renders.
+#[tokio::test]
+async fn a_tabbed_draft_wraps_at_the_projected_columns_not_one_per_tab() {
+    let root = TempRoot::new("composer_tab_wrap");
+    let mut app = fixture_app(root.path()).await;
+    app.input = "gate\tvalue and a tail that goes on".to_string();
+    app.input_cursor = app.input.len();
+    let rows = draw_rows(&mut app, 20, 24);
+    let area = app.input_hit_area;
+    let first = rows
+        .get(usize::from(area.y))
+        .expect("the composer row is on screen");
+    assert!(
+        first.contains("gate"),
+        "the draft opens in the composer row: {first:?}"
+    );
+    let continuation = rows
+        .get(usize::from(area.y) + 1)
+        .expect("the wrapped draft has a second row");
+    assert!(
+        continuation.trim_start().starts_with("a tail"),
+        "the tab must cost columns 4..8, so the break falls before \"a\": {continuation:?}"
+    );
+}
+
+/// Up/down in a multi-line draft with tabs keeps the *display* column: the caret returns
+/// to the same visual cell, which under eight-column stops is not the character index the
+/// old one-column-tab counting would have aimed at.
+#[tokio::test]
+async fn arrow_keys_in_a_tabbed_draft_hold_the_display_column_not_the_char_index() {
+    let root = TempRoot::new("composer_vertical_tab");
+    let mut app = fixture_app(root.path()).await;
+    // Line 0: gate(0..4) tab(4..8) value(8..13). Line 1: hh(0..2) tab(2..8) target(8..14).
+    app.input = "gate\tvalue\nhh\ttarget".to_string();
+    let _ = draw_rows(&mut app, 80, 24);
+
+    // Caret before the 't' of "target" (byte 14), i.e. display column 8 of line 1.
+    app.input_cursor = 14;
+    app.on_key(key(KeyCode::Up)).await.expect("up");
+    assert_eq!(
+        app.input_cursor, 5,
+        "column 8 on line 0 is the 'v' of value; one-column tabs would have aimed at 3"
+    );
+
+    app.on_key(key(KeyCode::Down)).await.expect("down");
+    assert_eq!(
+        app.input_cursor, 14,
+        "and the way back lands on the same visual cell"
+    );
+}
+
+/// The composer must survive the same width sweep as the transcript: a draft mixing a
+/// long sentence, fullwidth characters and tabs never puts a glyph outside the frame at
+/// any sampled width, and the caret stays inside the visible band.
+#[tokio::test]
+async fn the_composer_stays_inside_the_frame_at_every_sampled_width() {
+    let root = TempRoot::new("composer_widths");
+    let mut app = fixture_app(root.path()).await;
+    app.input = "gate\t你好 item-1 value\ttail\n中\tsecond line with a long stretch of filler text that must wrap cleanly at every sampled width".to_string();
+    // Caret at the head so the first visible rows always carry the draft's opening.
+    app.input_cursor = 0;
+
+    for width in [20u16, 24, 40, 80, 120] {
+        let height = 24u16;
+        let rows = draw_rows(&mut app, width, height);
+        assert!(
+            rows.iter()
+                .all(|row| row.chars().count() <= usize::from(width)),
+            "no composer row may exceed the frame at {width} columns: {rows:?}"
+        );
+        assert!(
+            rows.iter().any(|row| row.contains("gate")),
+            "the draft head is still on screen at {width} columns"
+        );
+
+        let area = app.input_hit_area;
+        assert!(
+            area.width > 0 && area.height > 0,
+            "the composer kept a text area at {width} columns"
+        );
+        let view = app.input_view(area.width.max(1), area.height.max(1));
+        assert!(
+            view.cursor_x < area.width && view.cursor_y < area.height,
+            "the caret stays inside the visible band at {width} columns: {:?}",
+            (view.cursor_x, view.cursor_y, area)
+        );
+    }
+}
+
+// ------------------------------------------------------------ composer pointer gestures
+
+/// The rows the draft is painted on, out of a `marked_rows` sweep: a mark anywhere else on
+/// the screen belongs to another region and must not be read as the composer's.
+fn marked_draft_rows(app: &mut TuiApp, width: u16, height: u16) -> Vec<(usize, String)> {
+    let area = app.input_hit_area;
+    let top = usize::from(area.y);
+    let bottom = (top + usize::from(area.height)).min(usize::from(height));
+    marked_rows(app, width, height)
+        .into_iter()
+        .filter(|(row, _)| *row >= top && *row < bottom)
+        .collect()
+}
+
+/// The text the draft band shows, top row first: the window the wheel and an edge drag move.
+/// The prompt glyph and the gutter it reserves are trimmed, so a row reads as draft text.
+fn draft_band_rows(app: &mut TuiApp, width: u16, height: u16) -> Vec<String> {
+    let rows = draw_rows(app, width, height);
+    let area = app.input_hit_area;
+    let top = usize::from(area.y);
+    let bottom = (top + usize::from(area.height)).min(rows.len());
+    rows[top..bottom]
+        .iter()
+        .map(|row| {
+            row.trim_start_matches(|cell| cell == ' ' || cell == '\u{203a}')
+                .to_string()
+        })
+        .collect()
+}
+
+/// A prepared attachment, built the way the placeholder module's own fixtures are: the draft
+/// carries the token text and the payload never leaves the test.
+fn fixture_attachment(source: &str) -> crate::attachments::PreparedAttachment {
+    crate::attachments::PreparedAttachment {
+        source: source.to_string(),
+        payload: wunder_server::schemas::AttachmentPayload {
+            name: Some(source.to_string()),
+            content: None,
+            content_type: None,
+            public_path: None,
+        },
+        kind: crate::attachments::AttachmentKind::Image,
+        size_bytes: 1,
+        detail: None,
+    }
+}
+
+/// The mark a composer drag leaves is a style, never a rewrite; the keystroke after the
+/// release replaces the marked run and the caret ends up past what it typed, which is the
+/// rule that an edit continues from the far end of the pick.
+#[tokio::test]
+async fn a_drag_across_the_draft_marks_the_run_and_the_next_keystroke_replaces_it() {
+    use crossterm::event::{MouseButton, MouseEventKind};
+
+    let root = TempRoot::new("draft_drag_mark");
+    let mut app = fixture_app(root.path()).await;
+    let _clipboard_turn = ClipboardSeam::arm();
+    app.input = "summarise the flaky gate".to_string();
+    app.input_cursor = 0;
+    let before = draw_rows(&mut app, 80, 24);
+    let area = app.input_hit_area;
+    let row = usize::from(area.y);
+
+    mouse(
+        &mut app,
+        MouseEventKind::Down(MouseButton::Left),
+        row,
+        area.x + 10,
+    );
+    mouse(
+        &mut app,
+        MouseEventKind::Drag(MouseButton::Left),
+        row,
+        area.x + 16,
+    );
+    assert_eq!(
+        app.input_selection_range(),
+        Some((10, 16)),
+        "columns 10..16 of an ASCII draft are the same bytes"
+    );
+
+    let marked = draw_rows(&mut app, 80, 24);
+    assert_eq!(marked, before, "highlighting may not move a character");
+    let marks = marked_draft_rows(&mut app, 80, 24);
+    assert_eq!(marks.len(), 1, "one draft row carries the mark: {marks:?}");
+    assert!(marks[0].1.contains("summarise"), "{marks:?}");
+
+    // The release ends the gesture and copies what it picked, the way the transcript does.
+    mouse(&mut app, MouseEventKind::Up(MouseButton::Left), row, area.x + 16);
+    assert_eq!(
+        ClipboardSeam::copied(),
+        vec!["the fl".to_string()],
+        "the release copies the marked run"
+    );
+    assert!(
+        app.has_input_selection(),
+        "and the mark stays until an edit retires it"
+    );
+
+    app.on_key(key(KeyCode::Char('x')))
+        .await
+        .expect("type over the mark");
+    assert_eq!(app.input, "summarise xaky gate", "the run is replaced");
+    assert_eq!(app.input_cursor, 11, "the caret lands after the replacement");
+    assert!(!app.has_input_selection());
+    assert!(
+        marked_draft_rows(&mut app, 80, 24).is_empty(),
+        "and the frame stops marking it"
+    );
+}
+
+/// Backspace and Delete take a marked run whole instead of eating one character of it.
+#[tokio::test]
+async fn backspace_and_delete_on_a_marked_run_remove_the_whole_selection() {
+    let root = TempRoot::new("draft_delete_mark");
+    let mut app = fixture_app(root.path()).await;
+    let _clipboard_turn = ClipboardSeam::arm();
+    app.input = "summarise the flaky gate".to_string();
+    app.input_cursor = 0;
+    let _ = draw_rows(&mut app, 80, 24);
+    let area = app.input_hit_area;
+    let row = usize::from(area.y);
+
+    let drag = |app: &mut TuiApp, from: u16, to: u16| {
+        use crossterm::event::{MouseButton as MB, MouseEventKind as MK};
+        mouse(app, MK::Down(MB::Left), row, area.x + from);
+        mouse(app, MK::Drag(MB::Left), row, area.x + to);
+    };
+
+    drag(&mut app, 10, 16);
+    assert_eq!(app.input_selection_range(), Some((10, 16)));
+    app.on_key(key(KeyCode::Backspace))
+        .await
+        .expect("backspace over the mark");
+    assert_eq!(app.input, "summarise aky gate");
+    assert_eq!(app.input_cursor, 10, "the caret parks at the run's start");
+    assert!(!app.has_input_selection());
+
+    // A fresh draft, drawn again so the pointer answers against the wrap it will see.
+    app.input = "summarise the flaky gate".to_string();
+    app.input_cursor = 0;
+    let _ = draw_rows(&mut app, 80, 24);
+
+    drag(&mut app, 13, 19);
+    assert_eq!(app.input_selection_range(), Some((13, 19)));
+    app.on_key(key(KeyCode::Delete))
+        .await
+        .expect("delete over the mark");
+    assert_eq!(app.input, "summarise the gate");
+    assert_eq!(app.input_cursor, 13);
+    assert!(marked_draft_rows(&mut app, 80, 24).is_empty());
+}
+
+/// An arrow key collapses the mark and keeps the caret where the drag left it: the gesture
+/// is over, the position is not.
+#[tokio::test]
+async fn an_arrow_key_after_a_drag_drops_the_mark_and_keeps_the_caret() {
+    use crossterm::event::{MouseButton, MouseEventKind};
+
+    let root = TempRoot::new("draft_mark_motion");
+    let mut app = fixture_app(root.path()).await;
+    let _clipboard_turn = ClipboardSeam::arm();
+    app.input = "summarise the flaky gate".to_string();
+    app.input_cursor = 0;
+    let _ = draw_rows(&mut app, 80, 24);
+    let area = app.input_hit_area;
+    let row = usize::from(area.y);
+
+    mouse(
+        &mut app,
+        MouseEventKind::Down(MouseButton::Left),
+        row,
+        area.x + 10,
+    );
+    mouse(
+        &mut app,
+        MouseEventKind::Drag(MouseButton::Left),
+        row,
+        area.x + 16,
+    );
+    assert_eq!(app.input_cursor, 16);
+    assert!(app.has_input_selection());
+
+    app.on_key(key(KeyCode::Left)).await.expect("left");
+    assert_eq!(app.input_cursor, 15, "the caret moves from the drag's end");
+    assert!(
+        !app.has_input_selection(),
+        "and the mark it was carrying is dropped"
+    );
+    assert!(marked_draft_rows(&mut app, 80, 24).is_empty());
+
+    mouse(
+        &mut app,
+        MouseEventKind::Down(MouseButton::Left),
+        row,
+        area.x + 4,
+    );
+    mouse(
+        &mut app,
+        MouseEventKind::Drag(MouseButton::Left),
+        row,
+        area.x + 8,
+    );
+    app.on_key(key(KeyCode::Right)).await.expect("right");
+    assert_eq!(app.input_cursor, 9, "the same for the other direction");
+    assert!(!app.has_input_selection());
+}
+
+/// Two clicks take the word, three take the whole logical line, and the columns that carry
+/// them are the projected ones: a tab pads to its eight-column stop, and a click inside that
+/// padding belongs to the character before it. A click past the row's last character is on
+/// padding, so repeating it stays an insert point instead of turning into a pick.
+#[tokio::test]
+async fn a_double_click_in_the_draft_takes_the_word_and_a_triple_the_logical_line() {
+    use crossterm::event::{MouseButton, MouseEventKind};
+
+    let root = TempRoot::new("draft_click_select");
+    let mut app = fixture_app(root.path()).await;
+    let _clipboard_turn = ClipboardSeam::arm();
+    // gate 0..4, tab 4..8, 中 8..10, tab 10..16, value 16..21, space, item-2 22..28.
+    app.input = "gate\t中\tvalue item-2".to_string();
+    app.input_cursor = 0;
+    let _ = draw_rows(&mut app, 80, 24);
+    let area = app.input_hit_area;
+    let row = usize::from(area.y);
+
+    let clicks = |app: &mut TuiApp, times: u8, column: u16| {
+        use crossterm::event::{MouseButton as MB, MouseEventKind as MK};
+        for _ in 0..times {
+            mouse(app, MK::Down(MB::Left), row, area.x + column);
+            mouse(app, MK::Up(MB::Left), row, area.x + column);
+        }
+    };
+
+    // The fullwidth character, hit on one of its own columns.
+    clicks(&mut app, 2, 9);
+    assert_eq!(
+        app.input_selection_range(),
+        Some((5, 8)),
+        "the one-character word 中 is the three bytes it occupies"
+    );
+    assert_eq!(
+        ClipboardSeam::copied()
+            .last()
+            .map(String::as_str)
+            .expect("a word pick copies on release"),
+        "中"
+    );
+
+    // The second tab's padding belongs to the character before it: the same word again.
+    ClipboardSeam::drain();
+    clicks(&mut app, 2, 12);
+    assert_eq!(app.input_selection_range(), Some((5, 8)));
+
+    // The word that sits behind the padding, and then the whole line.
+    clicks(&mut app, 2, 17);
+    assert_eq!(app.input_selection_range(), Some((9, 14)), "value");
+    clicks(&mut app, 3, 17);
+    assert_eq!(
+        app.input_selection_range(),
+        Some((0, 21)),
+        "three clicks take the logical line, not the wrap row"
+    );
+
+    // Padding past the last character is not text: three clicks there still just place the
+    // caret, and nothing is marked.
+    clicks(&mut app, 3, 30);
+    assert_eq!(app.input_cursor, 21, "the caret sits at the end of the draft");
+    assert!(
+        !app.has_input_selection(),
+        "and a click on trailing padding never selects"
+    );
+
+    // A logical line means "up to the hard newline": the middle row of a three-line draft.
+    app.input = "item-1\nitem-2\nitem-3".to_string();
+    app.input_cursor = 0;
+    let _ = draw_rows(&mut app, 80, 24);
+    let area = app.input_hit_area;
+    let second = usize::from(area.y) + 1;
+    for _ in 0..3 {
+        mouse(
+            &mut app,
+            MouseEventKind::Down(MouseButton::Left),
+            second,
+            area.x + 2,
+        );
+        mouse(
+            &mut app,
+            MouseEventKind::Up(MouseButton::Left),
+            second,
+            area.x + 2,
+        );
+    }
+    assert_eq!(
+        app.input_selection_range(),
+        Some((7, 13)),
+        "the second logical line only"
+    );
+    assert_eq!(
+        ClipboardSeam::copied().last().map(String::as_str),
+        Some("item-2"),
+        "and it copies that line"
+    );
+}
+
+/// The wheel over the draft scrolls the draft, not the caret: the character the caret points
+/// at stays the one it points at, and the transcript is untouched. Any caret motion hands the
+/// band back to auto-follow.
+#[tokio::test]
+async fn the_wheel_over_the_draft_scrolls_it_without_moving_the_caret() {
+    use crossterm::event::MouseEventKind;
+
+    let root = TempRoot::new("draft_wheel");
+    let mut app = fixture_app(root.path()).await;
+    let _clipboard_turn = ClipboardSeam::arm();
+    let _ = draw_rows(&mut app, 80, 24);
+    let band = usize::from(app.input_hit_area.height.max(1));
+    let lines = (1..=(band + 2))
+        .map(|index| format!("item-{index}"))
+        .collect::<Vec<_>>();
+    app.input = lines.join("\n");
+    app.input_cursor = 0;
+    let _ = draw_rows(&mut app, 80, 24);
+    let area = app.input_hit_area;
+    let transcript_offset = app.transcript_offset_from_bottom;
+
+    let before = draft_band_rows(&mut app, 80, 24);
+    assert_eq!(
+        before.first().map(String::as_str),
+        Some("item-1"),
+        "the band opens on the draft's first row: {before:?}"
+    );
+
+    mouse(
+        &mut app,
+        MouseEventKind::ScrollDown,
+        usize::from(area.y) + 1,
+        area.x + 2,
+    );
+    let travelled = lines.len() - band;
+    assert_eq!(
+        app.input_scroll,
+        Some(travelled.min(3)),
+        "one notch is three rows, clamped to the draft's own travel"
+    );
+    let after = draft_band_rows(&mut app, 80, 24);
+    assert_ne!(after, before, "the content moved under the band: {after:?}");
+    assert_eq!(
+        after.first().map(String::as_str),
+        lines.get(3.min(travelled)).map(String::as_str),
+        "and it advanced to the row the offset names"
+    );
+    assert_eq!(app.input_cursor, 0, "the caret never left the first character");
+    assert!(
+        app.input.starts_with("item-1"),
+        "so the text it points at is still the draft's opening"
+    );
+    assert_eq!(
+        app.transcript_offset_from_bottom, transcript_offset,
+        "and the wheel over the draft did not scroll the transcript"
+    );
+
+    // A caret motion is the reader asking to see the caret: the band follows it again.
+    app.on_key(key(KeyCode::Right)).await.expect("right");
+    assert_eq!(app.input_scroll, None, "the manual offset is released");
+    let followed = draft_band_rows(&mut app, 80, 24);
+    assert_eq!(
+        followed.first().map(String::as_str),
+        Some("item-1"),
+        "and the band is back on the caret's row: {followed:?}"
+    );
+}
+
+/// A drag that runs off the top or bottom of the band keeps extending: the draft advances one
+/// row per event and the mark grows by exactly that row, then stops at the draft's end.
+#[tokio::test]
+async fn a_drag_past_the_draft_band_edge_extends_the_mark_one_row_at_a_time() {
+    use crossterm::event::{MouseButton, MouseEventKind};
+
+    let root = TempRoot::new("draft_edge_drag");
+    let mut app = fixture_app(root.path()).await;
+    let _clipboard_turn = ClipboardSeam::arm();
+    let _ = draw_rows(&mut app, 80, 24);
+    let band = usize::from(app.input_hit_area.height.max(1));
+    let lines = (1..=(band + 2))
+        .map(|index| format!("item-{index}"))
+        .collect::<Vec<_>>();
+    app.input = lines.join("\n");
+    app.input_cursor = 0;
+    let _ = draw_rows(&mut app, 80, 24);
+    let area = app.input_hit_area;
+    // Every row is six characters plus a newline, so one row is seven bytes.
+    let row_start = |row: usize| 7 * row + 2;
+
+    // Anchor on the band's last visible row, then drag one row below it.
+    let last = usize::from(area.y) + band - 1;
+    mouse(
+        &mut app,
+        MouseEventKind::Down(MouseButton::Left),
+        last,
+        area.x + 2,
+    );
+    assert_eq!(app.input_cursor, row_start(band - 1));
+    let anchor = app.input_cursor;
+
+    mouse(
+        &mut app,
+        MouseEventKind::Drag(MouseButton::Left),
+        last + 1,
+        area.x + 2,
+    );
+    assert_eq!(app.input_scroll, Some(1), "the draft advanced exactly one row");
+    assert_eq!(
+        app.input_selection_range(),
+        Some((anchor, row_start(band))),
+        "and the mark grew by exactly the row that came into view"
+    );
+
+    mouse(
+        &mut app,
+        MouseEventKind::Drag(MouseButton::Left),
+        last + 1,
+        area.x + 2,
+    );
+    assert_eq!(app.input_scroll, Some(2), "one more row, one more event");
+    assert_eq!(
+        app.input_selection_range(),
+        Some((anchor, row_start(band + 1)))
+    );
+
+    // The draft is out of rows to show: the gesture stops growing instead of racing away.
+    mouse(
+        &mut app,
+        MouseEventKind::Drag(MouseButton::Left),
+        last + 1,
+        area.x + 2,
+    );
+    assert_eq!(app.input_scroll, Some(2), "no travel left below the band");
+    assert_eq!(
+        app.input_selection_range(),
+        Some((anchor, row_start(band + 1)))
+    );
+
+    // Now the other edge: anchor on the band's first visible row and drag above it.
+    app.input_selection = None;
+    app.input_cursor = 0;
+    mouse(
+        &mut app,
+        MouseEventKind::Down(MouseButton::Left),
+        usize::from(area.y),
+        area.x + 2,
+    );
+    let anchor = app.input_cursor;
+    assert_eq!(anchor, row_start(2), "the anchor is the row the band opens on");
+
+    mouse(
+        &mut app,
+        MouseEventKind::Drag(MouseButton::Left),
+        usize::from(area.y) - 1,
+        area.x + 2,
+    );
+    assert_eq!(app.input_scroll, Some(1), "the draft went back one row");
+    assert_eq!(app.input_selection_range(), Some((row_start(1), anchor)));
+
+    mouse(
+        &mut app,
+        MouseEventKind::Drag(MouseButton::Left),
+        usize::from(area.y) - 1,
+        area.x + 2,
+    );
+    assert_eq!(app.input_scroll, Some(0), "to the top of the draft");
+    assert_eq!(
+        app.input_selection_range(),
+        Some((row_start(0), anchor))
+    );
+
+    mouse(
+        &mut app,
+        MouseEventKind::Drag(MouseButton::Left),
+        usize::from(area.y) - 1,
+        area.x + 2,
+    );
+    assert_eq!(app.input_scroll, Some(0), "and no further");
+
+    let marks = marked_draft_rows(&mut app, 80, 24);
+    assert!(
+        !marks.is_empty(),
+        "a run that spans the band is visible on the frame"
+    );
+    mouse(
+        &mut app,
+        MouseEventKind::Up(MouseButton::Left),
+        usize::from(area.y) - 1,
+        area.x + 2,
+    );
+    let copied = ClipboardSeam::copied()
+        .last()
+        .cloned()
+        .expect("the release copies the grown run");
+    assert_eq!(copied.lines().count(), 3, "{copied:?}");
+    assert!(copied.contains("item-2"), "{copied:?}");
+}
+
+/// The right button copies what is marked in either region and reaches for the clipboard only
+/// when nothing is: the transcript's rule, now the draft's too.
+#[tokio::test]
+async fn a_right_click_copies_a_marked_draft_run_and_pastes_when_there_is_none() {
+    use crossterm::event::{MouseButton, MouseEventKind};
+
+    let root = TempRoot::new("draft_right_click");
+    let mut app = fixture_app(root.path()).await;
+    let _clipboard_turn = ClipboardSeam::arm();
+    app.input = "summarise the flaky gate".to_string();
+    app.input_cursor = 0;
+    let _ = draw_rows(&mut app, 80, 24);
+    let area = app.input_hit_area;
+    let row = usize::from(area.y);
+
+    mouse(
+        &mut app,
+        MouseEventKind::Down(MouseButton::Left),
+        row,
+        area.x + 10,
+    );
+    mouse(
+        &mut app,
+        MouseEventKind::Drag(MouseButton::Left),
+        row,
+        area.x + 16,
+    );
+    mouse(
+        &mut app,
+        MouseEventKind::Up(MouseButton::Left),
+        row,
+        area.x + 16,
+    );
+    ClipboardSeam::drain();
+
+    app.focus_area = FocusArea::Transcript;
+    mouse(
+        &mut app,
+        MouseEventKind::Down(MouseButton::Right),
+        row,
+        area.x + 12,
+    );
+    assert_eq!(
+        ClipboardSeam::copied(),
+        vec!["the fl".to_string()],
+        "the marked run goes to the clipboard"
+    );
+    assert_eq!(
+        app.focus_area,
+        FocusArea::Transcript,
+        "and copying is not a focus change"
+    );
+
+    // A plain click leaves no run, so the button keeps its old job, which is paste. The
+    // system read is production's own path; what a test can pin is that no mark was copied.
+    // Somewhere else along the row: a second click on the same cell would be a double click.
+    mouse(
+        &mut app,
+        MouseEventKind::Down(MouseButton::Left),
+        row,
+        area.x + 20,
+    );
+    assert!(
+        !app.has_input_selection(),
+        "a single click marks nothing, wherever it lands"
+    );
+    ClipboardSeam::drain();
+    app.focus_area = FocusArea::Transcript;
+    mouse(
+        &mut app,
+        MouseEventKind::Down(MouseButton::Right),
+        row,
+        area.x + 20,
+    );
+    assert!(
+        ClipboardSeam::copied().is_empty(),
+        "with nothing marked the right button does not copy"
+    );
+    assert!(
+        matches!(app.focus_area, FocusArea::Input),
+        "and it falls through to the paste path"
+    );
+}
+
+/// A draft replaced wholesale is not the text a gesture was made on. Every rewrite path
+/// retires the mark rather than re-pointing it at bytes that name different words now.
+#[tokio::test]
+async fn a_rewritten_draft_retires_the_mark_instead_of_pointing_at_the_wrong_bytes() {
+    let root = TempRoot::new("draft_rewrite_drops_mark");
+    let mut app = fixture_app(root.path()).await;
+    let _clipboard_turn = ClipboardSeam::arm();
+
+    // Each draft has to be drawn before the pointer answers against its wrap, and the band
+    // can move a row when a counter appears above it, so the area is read after every draw.
+    let mark = |app: &mut TuiApp, draft: &str| {
+        use crossterm::event::{MouseButton as MB, MouseEventKind as MK};
+        app.input = draft.to_string();
+        app.input_cursor = 0;
+        let _ = draw_rows(app, 80, 24);
+        let area = app.input_hit_area;
+        let row = usize::from(area.y);
+        mouse(app, MK::Down(MB::Left), row, area.x + 2);
+        mouse(app, MK::Drag(MB::Left), row, area.x + 9);
+        assert!(app.has_input_selection(), "the gesture marked a run first");
+    };
+
+    // Esc drops the draft.
+    mark(&mut app, "summarise the flaky gate");
+    assert!(app.clear_input_draft());
+    assert!(!app.has_input_selection(), "a cleared draft keeps no mark");
+
+    // A history step replaces it.
+    app.history = vec!["older draft of the gate".to_string()];
+    mark(&mut app, "summarise the flaky gate");
+    app.history_up();
+    assert_eq!(app.input, "older draft of the gate");
+    assert!(!app.has_input_selection(), "a stepped draft keeps no mark");
+
+    // Walking back down replaces it again.
+    mark(&mut app, "summarise the flaky gate");
+    app.history_down();
+    assert!(!app.has_input_selection(), "and so does the way back");
+
+    // Prefilling from a card is a foreign draft.
+    mark(&mut app, "summarise the flaky gate");
+    let user_card = app
+        .logs
+        .iter()
+        .position(|entry| entry.kind == LogKind::User)
+        .expect("the fixture has a user card");
+    app.transcript_selected = Some(user_card);
+    assert!(app.prefill_selected_user_message());
+    assert!(!app.has_input_selection(), "a prefilled draft keeps no mark");
+
+    // Relabelling attachment placeholders rewrites the draft under the mark.
+    app.pending_attachments = vec![
+        fixture_attachment("gate.png"),
+        fixture_attachment("item-2.png"),
+    ];
+    mark(&mut app, "[Image #1] [Image #2] tail");
+    app.input = "[Image #1] tail".to_string();
+    app.sync_attachment_placeholders();
+    assert_eq!(
+        app.pending_attachments.len(),
+        1,
+        "the placeholder that vanished retired its attachment"
+    );
+    assert!(
+        !app.has_input_selection(),
+        "and the relabel dropped the mark"
+    );
+    app.pending_attachments.clear();
+
+    // Enter submits: the draft is taken away, so the mark goes with it. A whitespace-only
+    // draft never reaches the engine, so the assertion stays about the draft.
+    mark(&mut app, "         ");
+    app.on_key(key(KeyCode::Enter)).await.expect("enter");
+    assert!(app.input.is_empty(), "the draft was submitted away");
+    assert!(
+        !app.has_input_selection() && app.input_scroll.is_none(),
+        "and the gesture went with it"
+    );
+}
+
+/// The mark has to survive the width sweep the rest of the frame is held to: at every sampled
+/// width a selected draft stays inside the band, moves no character, and keeps the caret in
+/// the rows the reader can see.
+#[tokio::test]
+async fn a_marked_draft_stays_inside_the_frame_at_every_sampled_width() {
+    use crossterm::event::{MouseButton, MouseEventKind};
+
+    let root = TempRoot::new("marked_draft_widths");
+    let mut app = fixture_app(root.path()).await;
+    let _clipboard_turn = ClipboardSeam::arm();
+    for width in [20u16, 24, 40, 80, 120] {
+        let height = 24u16;
+        app.input = "gate\t你好 item-1 value\ttail\n中\tsecond line with a long stretch of filler text that must wrap cleanly at every sampled width".to_string();
+        app.input_cursor = 0;
+        app.input_selection = None;
+        app.input_scroll = None;
+        let before = draw_rows(&mut app, width, height);
+        assert!(
+            before
+                .iter()
+                .any(|row| row.contains("gate") && row.contains("item-")),
+            "the unmarked frame opens on the draft's own text at {width} columns: {before:?}"
+        );
+        let area = app.input_hit_area;
+        assert!(
+            area.width > 0 && area.height > 0,
+            "the composer kept a text area at {width} columns"
+        );
+
+        // The last row the band shows *and* the draft fills: a short draft at a wide frame
+        // leaves rows below it that no pointer can answer on.
+        let band = usize::from(area.height.max(1));
+        let rows = app.input_hit_lines.len().max(1);
+        let last_row = usize::from(area.y) + band.min(rows) - 1;
+        mouse(
+            &mut app,
+            MouseEventKind::Down(MouseButton::Left),
+            usize::from(area.y),
+            area.x + 2,
+        );
+        mouse(
+            &mut app,
+            MouseEventKind::Drag(MouseButton::Left),
+            last_row,
+            area.x + area.width.saturating_sub(2),
+        );
+        assert!(
+            app.has_input_selection(),
+            "a drag across the band marks a run at {width} columns: caret {}, band {band}, rows {rows}, last_row {last_row}, gesture {:?}",
+            app.input_cursor,
+            app.input_selection,
+        );
+
+        let marked = draw_rows(&mut app, width, height);
+        assert!(
+            marked
+                .iter()
+                .all(|row| row.chars().count() <= usize::from(width)),
+            "no composer row may exceed the frame at {width} columns: {marked:?}"
+        );
+        let marks = marked_draft_rows(&mut app, width, height);
+        assert!(
+            !marks.is_empty(),
+            "and the mark is on the draft band at {width} columns"
+        );
+
+        // The mark is a style and nothing else: with the same caret in the same window, the
+        // frame the mark was taken off has to read exactly like the one it was put on.
+        app.clear_input_selection();
+        let unmarked = draw_rows(&mut app, width, height);
+        assert_eq!(
+            marked, unmarked,
+            "the mark may not move a character at {width} columns"
+        );
+
+        let view = app.input_view(area.width.max(1), area.height.max(1));
+        assert!(
+            view.cursor_x < area.width && view.cursor_y < area.height,
+            "the caret stays inside the visible band at {width} columns: {:?}",
+            (view.cursor_x, view.cursor_y, area)
+        );
+    }
+}
+
+// ------------------------------------------------------------ the composer gap
+
+/// The row the gap band occupies, trimmed: `None` when the band painted nothing, which is
+/// also the only case in which it may ask for a row of its own.
+fn gap_text(app: &mut TuiApp, width: u16, height: u16) -> Option<String> {
+    let rows = draw_rows(app, width, height);
+    let area = app.gap_hit_area();
+    if area.is_empty() {
+        return None;
+    }
+    Some(rows[usize::from(area.y)].trim().to_string())
+}
+
+/// Take the reader off the tail for real: anchor the tail count on a frame the reader
+/// actually saw at the bottom, scroll away, then let the tail gain rows behind them.
+fn detach_from_tail(app: &mut TuiApp, rows: usize) {
+    let _ = draw_rows(app, 80, 24);
+    app.scroll_transcript_up(4);
+    assert!(
+        !app.is_at_transcript_tail(),
+        "the transcript can scroll at this size"
+    );
+    for index in 0..rows {
+        app.push_log(
+            LogKind::Assistant,
+            format!("item-{index} gate value stays on one row"),
+        );
+    }
+}
+
+/// Away from the tail the band counts the rows it gained; back at the tail it is gone.
+#[tokio::test]
+async fn the_gap_counts_the_rows_the_tail_gained_while_the_reader_was_away() {
+    let root = TempRoot::new("gap_unseen");
+    let mut app = fixture_app(root.path()).await;
+    // One frame at the tail anchors the baseline, and shows the band is absent there.
+    assert_eq!(
+        gap_text(&mut app, 80, 24),
+        None,
+        "a following reader gets no band"
+    );
+
+    app.scroll_transcript_up(4);
+    assert!(
+        !app.is_at_transcript_tail(),
+        "the transcript can scroll at this size"
+    );
+    let before = app.total_transcript_lines();
+    for index in 0..3 {
+        app.push_log(
+            LogKind::Assistant,
+            format!("item-{index} gate value stays on one row"),
+        );
+    }
+    let gained = app.total_transcript_lines().saturating_sub(before);
+    assert!(gained > 0, "the tail really did gain rows");
+
+    let text = gap_text(&mut app, 80, 24).expect("the band shows once the tail is away");
+    assert!(
+        text.contains(&gained.to_string()),
+        "the band names the {gained} rows it gained: {text:?}"
+    );
+    assert!(text.contains("new") && text.contains("End"), "{text:?}");
+
+    // Returning to the tail clears the count and the band with it, at any count. The
+    // count is spent when the tail has actually been painted, not on the scroll itself.
+    app.scroll_transcript_to_bottom();
+    assert_eq!(
+        gap_text(&mut app, 80, 24),
+        None,
+        "nothing to return to means no band"
+    );
+    assert_eq!(app.unseen_tail_lines, 0, "the count is spent at the tail");
+}
+
+/// A mark, the Ctrl+T view or a modal owns the reader's attention, so the control yields.
+#[tokio::test]
+async fn a_mark_in_either_region_retires_the_gap_control() {
+    use crossterm::event::{MouseButton, MouseEventKind};
+
+    let root = TempRoot::new("gap_hidden");
+    let mut app = fixture_app(root.path()).await;
+    detach_from_tail(&mut app, 3);
+    assert!(
+        gap_text(&mut app, 80, 24).is_some(),
+        "the band is up before the marks arrive"
+    );
+
+    // A drag over the transcript marks rows and stays marked without a release.
+    let before = draw_rows(&mut app, 80, 24);
+    let start = before
+        .iter()
+        .position(|row| row.contains("Ran cargo test"))
+        .expect("the command card is on screen");
+    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), start, 2);
+    mouse(
+        &mut app,
+        MouseEventKind::Drag(MouseButton::Left),
+        start + 1,
+        20,
+    );
+    assert!(
+        app.transcript_selection.is_some(),
+        "the transcript carries a mark"
+    );
+    assert_eq!(
+        gap_text(&mut app, 80, 24),
+        None,
+        "a marked transcript retires the control"
+    );
+
+    // The composer's own mark does the same, and it is a different region's mark.
+    app.transcript_selection = None;
+    app.input = "summarise the flaky gate".to_string();
+    app.input_cursor = 0;
+    let _ = draw_rows(&mut app, 80, 24);
+    let area = app.input_hit_area;
+    mouse(
+        &mut app,
+        MouseEventKind::Down(MouseButton::Left),
+        usize::from(area.y),
+        area.x + 1,
+    );
+    mouse(
+        &mut app,
+        MouseEventKind::Drag(MouseButton::Left),
+        usize::from(area.y),
+        area.x + 8,
+    );
+    assert!(app.has_input_selection(), "the draft carries a mark");
+    assert_eq!(
+        gap_text(&mut app, 80, 24),
+        None,
+        "a marked draft retires the control too"
+    );
+
+    // Ctrl+T and any modal surface own the screen, so the control is decided away even
+    // though those frames never reach the composer's own band.
+    app.input_selection = None;
+    app.on_key(ctrl(KeyCode::Char('t')))
+        .await
+        .expect("open the transcript view");
+    assert!(
+        app.transcript_view_open(),
+        "the full-transcript view is up"
+    );
+    assert!(
+        app.composer_gap_line(80, false).is_none(),
+        "the view owns the frame"
+    );
+    app.on_key(ctrl(KeyCode::Char('t')))
+        .await
+        .expect("close the transcript view");
+    app.shortcuts_visible = true;
+    assert!(
+        app.composer_gap_line(80, false).is_none(),
+        "a modal owns the frame"
+    );
+    app.shortcuts_visible = false;
+    assert!(
+        app.composer_gap_line(80, false).is_some(),
+        "and it comes back when nothing owns it"
+    );
+}
+
+/// The band's rectangle is the control's hit area: a press-release on it follows the tail
+/// again, and the band is gone from the frame that answers.
+#[tokio::test]
+async fn a_click_on_the_gap_control_follows_the_tail_again() {
+    use crossterm::event::{MouseButton, MouseEventKind};
+
+    let root = TempRoot::new("gap_click");
+    let mut app = fixture_app(root.path()).await;
+    detach_from_tail(&mut app, 3);
+    let _ = draw_rows(&mut app, 80, 24);
+
+    let area = app.gap_hit_area();
+    assert!(!area.is_empty() && area.height == 1, "the band owns one row");
+    let centre = area.x + area.width / 2;
+    mouse(&mut app, MouseEventKind::Moved, usize::from(area.y), centre);
+    let hovered = draw_rows(&mut app, 80, 24);
+    assert!(
+        marked_rows(&mut app, 80, 24)
+            .iter()
+            .any(|(row, _)| *row == usize::from(area.y)),
+        "a pointer on the band is a state the reader can see: {hovered:?}"
+    );
+
+    mouse(
+        &mut app,
+        MouseEventKind::Down(MouseButton::Left),
+        usize::from(area.y),
+        centre,
+    );
+    assert!(app.gap_pressed, "the press is the control's own");
+    assert!(
+        app.transcript_selected.is_none(),
+        "a press on the band is not a pick on a card"
+    );
+    mouse(
+        &mut app,
+        MouseEventKind::Up(MouseButton::Left),
+        usize::from(area.y),
+        centre,
+    );
+    assert!(!app.gap_pressed, "and the release leaves no button held");
+    assert!(app.is_at_transcript_tail(), "the release follows the tail");
+    assert_eq!(app.unseen_tail_lines, 0);
+    assert_eq!(
+        gap_text(&mut app, 80, 24),
+        None,
+        "the band is gone from the frame that answered"
+    );
+}
+
+/// A hidden control paints no rectangle, so the row it would have used keeps answering
+/// the region that actually owns it — here the draft under it.
+#[tokio::test]
+async fn a_hidden_band_leaves_its_row_to_the_draft_under_it() {
+    use crossterm::event::{MouseButton, MouseEventKind};
+
+    let root = TempRoot::new("gap_passthrough");
+    let mut app = fixture_app(root.path()).await;
+    app.input = "summarise the flaky gate".to_string();
+    app.input_cursor = 0;
+    let _ = draw_rows(&mut app, 80, 24);
+    assert!(
+        app.gap_hit_area().is_empty(),
+        "the band is hidden while the tail is visible"
+    );
+
+    let area = app.input_hit_area;
+    mouse(
+        &mut app,
+        MouseEventKind::Down(MouseButton::Left),
+        usize::from(area.y),
+        area.x + 6,
+    );
+    assert_eq!(
+        app.input_cursor, 6,
+        "the click reached the draft instead of being eaten by an invisible control"
+    );
+}
+
+/// A copy answers in the band for a moment, then gives the row back. One release still
+/// writes the clipboard exactly once, and its content is untouched by the feedback.
+#[tokio::test]
+async fn a_copy_shows_its_count_in_the_band_then_yields_the_row() {
+    use crossterm::event::{MouseButton, MouseEventKind};
+
+    let root = TempRoot::new("gap_copy_feedback");
+    let mut app = fixture_app(root.path()).await;
+    let _clipboard_turn = ClipboardSeam::arm();
+    let before = draw_rows(&mut app, 80, 24);
+    let start = before
+        .iter()
+        .position(|row| row.contains("Ran cargo test"))
+        .expect("the command card is on screen");
+
+    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), start, 2);
+    mouse(
+        &mut app,
+        MouseEventKind::Drag(MouseButton::Left),
+        start + 1,
+        40,
+    );
+    mouse(
+        &mut app,
+        MouseEventKind::Up(MouseButton::Left),
+        start + 1,
+        40,
+    );
+    let copied = ClipboardSeam::copied();
+    assert_eq!(copied.len(), 1, "one release writes once: {copied:?}");
+    let characters = copied[0].chars().count();
+
+    let text = gap_text(&mut app, 80, 24).expect("the copy answers in the band");
+    assert!(
+        text.contains(&characters.to_string()) && text.contains("Copied"),
+        "the band carries the count it copied: {text:?}"
+    );
+
+    // The mark is still up, so the control cannot show; expire the result and the row is
+    // simply not there.
+    app.copy_feedback
+        .as_mut()
+        .expect("a live copy result")
+        .expires_at = Some(Instant::now());
+    assert_eq!(
+        gap_text(&mut app, 80, 24),
+        None,
+        "an expired result leaves nothing behind"
+    );
+
+    // Clear the mark, leave the tail and let it gain rows: the spent copy result yields
+    // the row back to the reading control.
+    app.transcript_selection = None;
+    app.scroll_transcript_up(4);
+    app.push_log(
+        LogKind::Assistant,
+        "item-9 gate value stays on one row".to_string(),
+    );
+    let text = gap_text(&mut app, 80, 24).expect("the control takes the row back");
+    assert!(text.contains("new"), "{text:?}");
+    assert!(
+        !text.contains("Copied"),
+        "the copy result is spent, not queued: {text:?}"
+    );
+}
+
+/// An empty draft plus a detached tail is a request to come back, not a send.
+#[tokio::test]
+async fn an_empty_enter_from_a_detached_tail_returns_to_latest() {
+    let root = TempRoot::new("gap_enter");
+    let mut app = fixture_app(root.path()).await;
+    detach_from_tail(&mut app, 3);
+    let entries = app.logs.len();
+
+    app.on_key(key(KeyCode::Enter)).await.expect("enter");
+    assert!(
+        app.is_at_transcript_tail(),
+        "the empty press follows the tail"
+    );
+    assert_eq!(app.logs.len(), entries, "and sends nothing");
+    assert!(app.input.is_empty());
+
+    // A draft with text in it still submits, tail or not.
+    app.scroll_transcript_up(4);
+    app.input = "gate".to_string();
+    app.input_cursor = app.input.len();
+    app.on_key(key(KeyCode::Enter))
+        .await
+        .expect("submit a real draft");
+    assert!(app.input.is_empty(), "the draft went out");
+    assert_eq!(app.logs.len(), entries + 1, "one entry per send");
+}
+
+/// The band never costs the draft its rows and never exceeds the columns it was given.
+#[tokio::test]
+async fn the_gap_band_stays_inside_the_frame_at_every_sampled_width() {
+    let root = TempRoot::new("gap_widths");
+    for width in [20u16, 24, 40, 80, 120] {
+        let height = 24u16;
+        let mut app = fixture_app(root.path()).await;
+        detach_from_tail(&mut app, 4);
+        let rows = draw_rows(&mut app, width, height);
+        let area = app.gap_hit_area();
+        assert!(
+            !area.is_empty(),
+            "the band is up at {width} columns: {rows:?}"
+        );
+        assert_eq!(area.height, 1, "one row, never a wrapped second one");
+        assert!(
+            area.x + area.width <= width && area.y + 1 <= height,
+            "the band stays inside the frame at {width} columns: {area:?}"
+        );
+        assert!(
+            rows.iter()
+                .all(|row| row.chars().count() <= usize::from(width)),
+            "no row may exceed the frame at {width} columns: {rows:?}"
+        );
+        assert!(
+            app.input_hit_area.height >= 1,
+            "the draft keeps a row of its own at {width} columns: {:?}",
+            app.input_hit_area
+        );
+        let text = rows[usize::from(area.y)].trim();
+        assert!(
+            !text.is_empty() && UnicodeWidthStr::width(text) <= usize::from(width),
+            "the band's own text fits at {width} columns: {text:?}"
+        );
+    }
+}
+
+/// What the band says and when it says it is decided by text and by the mark of a
+/// rectangle, never by a hue: under a colourless terminal the state still reads.
+#[tokio::test]
+async fn the_gap_carries_its_state_without_color() {
+    use crossterm::event::MouseEventKind;
+    use ratatui::style::Modifier;
+
+    let root = TempRoot::new("gap_colorless");
+    let mut app = fixture_app(root.path()).await;
+    detach_from_tail(&mut app, 3);
+    assert!(
+        app.unseen_tail_lines == 0,
+        "the count only lands on a frame the reader was shown"
+    );
+
+    let line = app
+        .composer_gap_line(80, false)
+        .expect("the control is decided by state alone");
+    let style = line.spans[0].style;
+    assert!(
+        style.fg.is_none() && style.bg.is_none(),
+        "nothing for a colourless terminal to degrade: {style:?}"
+    );
+
+    let plain = draw_rows(&mut app, 80, 24);
+    let area = app.gap_hit_area();
+    let row = usize::from(area.y);
+
+    // The hover state itself: reversed video and weight only, so it survives a terminal
+    // where every colour degrades to Reset.
+    let patch = crate::tui::theme::selection_mark().add_modifier(Modifier::BOLD);
+    assert!(
+        patch.fg.is_none() && patch.bg.is_none(),
+        "the hover patch is a modifier, not a colour: {patch:?}"
+    );
+    mouse(&mut app, MouseEventKind::Moved, row, area.x + 1);
+    let hovered = draw_rows(&mut app, 80, 24);
+    assert_eq!(
+        plain[row], hovered[row],
+        "hover may not move a character of the band's text"
+    );
+    assert!(
+        marked_rows(&mut app, 80, 24)
+            .iter()
+            .any(|(marked_row, text)| *marked_row == row && text.contains("new")),
+        "a pointer inside the band marks its own row"
+    );
+
+    // The rectangle is the whole rule: leave it and the same row reads as unmarked again.
+    mouse(&mut app, MouseEventKind::Moved, row + 1, area.x + 1);
+    let elsewhere = marked_rows(&mut app, 80, 24);
+    assert!(
+        !elsewhere
+            .iter()
+            .any(|(marked_row, _)| *marked_row == row),
+        "a pointer off the band leaves it unmarked: {elsewhere:?}"
+    );
+}
+
+// --------------------------------------------------------- transcript search
+//
+// The search editor is entered from the transcript focus with `/`, its scan advances one
+// bounded step per frame, and its row in the composer gap reports the query and the counts.
+// The helpers below drive exactly that: every keystroke is followed by a real frame, because
+// the frame is the only thing that moves the scan forward.
+
+use super::transcript_search::SearchProgress;
+use super::transcript_search::SEARCH_MATCH_CAP;
+
+/// Open the search the way the reader does: take the transcript focus, then press `/`.
+async fn open_search(app: &mut TuiApp) {
+    app.focus_area = FocusArea::Transcript;
+    app.on_key(key(KeyCode::Char('/')))
+        .await
+        .expect("`/` opens the transcript search");
+    assert!(app.transcript_search.editing, "the search editor is up");
+}
+
+/// One query character at a time, each followed by a frame: the count the band shows after a
+/// keystroke is the count that frame's bounded scan collected.
+async fn type_query(app: &mut TuiApp, text: &str, width: u16, height: u16) {
+    for ch in text.chars() {
+        app.on_key(key(KeyCode::Char(ch)))
+            .await
+            .expect("a query character");
+        let _ = draw_rows(app, width, height);
+    }
+}
+
+/// Type a query one key at a time *without* drawing: the scan then stands where the test
+/// leaves it, so the bounded steps can be counted instead of guessed at.
+async fn write_query(app: &mut TuiApp, text: &str) {
+    for ch in text.chars() {
+        app.on_key(key(KeyCode::Char(ch)))
+            .await
+            .expect("a query character");
+    }
+}
+
+/// Press `/` while the transcript holds the keyboard, and Esc out again: the slash must not
+/// become draft text, and the reading position the reader parked on must come back.
+#[tokio::test]
+async fn slash_opens_the_search_and_escape_restores_the_reading_position() {
+    let root = TempRoot::new("search_enter");
+    let mut app = fixture_app(root.path()).await;
+    detach_from_tail(&mut app, 4);
+    app.scroll_transcript_to_top();
+    let origin = app.transcript_offset_from_bottom;
+    assert!(origin > 0, "the reader is parked away from the tail");
+
+    open_search(&mut app).await;
+    assert!(app.input.is_empty(), "the slash did not fall into the draft");
+    assert_eq!(
+        app.transcript_search.origin_offset, origin,
+        "the origin is the scroll from the tail the reader left"
+    );
+
+    type_query(&mut app, "item-3", 80, 24).await;
+    assert_eq!(app.transcript_search.query, "item-3");
+    assert!(
+        app.input.is_empty(),
+        "a typed query never reaches the draft: {:?}",
+        app.input
+    );
+    assert_eq!(
+        app.transcript_search.matches.len(),
+        1,
+        "one card carries the query"
+    );
+
+    app.on_key(key(KeyCode::Enter))
+        .await
+        .expect("step to the hit");
+    assert_eq!(app.transcript_search.current, Some(0));
+    assert!(
+        app.is_at_transcript_tail(),
+        "the newest card's line is on screen at the tail"
+    );
+    assert_ne!(
+        app.transcript_offset_from_bottom, origin,
+        "the jump really did move the window"
+    );
+
+    app.on_key(key(KeyCode::Esc)).await.expect("leave the search");
+    assert!(
+        !app.transcript_search.editing,
+        "the editor is closed and the keys are the composer's again"
+    );
+    assert_eq!(
+        app.transcript_offset_from_bottom, origin,
+        "Esc hands the reading position back"
+    );
+    assert!(app.transcript_search.query.is_empty(), "nothing is left");
+}
+
+/// The count narrows as the query grows; Enter walks the hits and wraps at either end,
+/// Shift+Enter walks back, and a query edit drops the accepted hit rather than keeping it.
+#[tokio::test]
+async fn the_query_narrows_the_hits_and_enter_walks_them_in_a_circle() {
+    let root = TempRoot::new("search_walk");
+    let mut app = fixture_app(root.path()).await;
+    raw_single_line_cards(
+        &mut app,
+        &[
+            "gate item-1 value",
+            "gate item-12 value",
+            "gate item-2 value",
+            "no hit here",
+        ],
+    );
+    let _ = draw_rows(&mut app, 80, 24);
+    open_search(&mut app).await;
+
+    type_query(&mut app, "item", 80, 24).await;
+    assert_eq!(
+        app.transcript_search.matches.len(),
+        3,
+        "four cards, three of them holding the query"
+    );
+
+    for expected in [1usize, 2, 3, 1] {
+        app.on_key(key(KeyCode::Enter))
+            .await
+            .expect("step to the next hit");
+        assert_eq!(
+            app.transcript_search.current,
+            Some(expected - 1),
+            "Enter walks forward and wraps at the end"
+        );
+    }
+    app.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT))
+        .await
+        .expect("step back");
+    assert_eq!(
+        app.transcript_search.current,
+        Some(2),
+        "Shift+Enter steps back and wraps at the start"
+    );
+
+    // A longer query narrows the list, and the hit the reader stood on goes with it.
+    type_query(&mut app, "-1", 80, 24).await;
+    assert_eq!(
+        app.transcript_search.matches.len(),
+        2,
+        "the query reached two cards"
+    );
+    assert_eq!(
+        app.transcript_search.current, None,
+        "a refined query has no accepted hit yet"
+    );
+    type_query(&mut app, "2", 80, 24).await;
+    assert_eq!(
+        app.transcript_search.matches.len(),
+        1,
+        "one card still carries the longer query"
+    );
+
+    // Backspace widens it again rather than only ever shrinking the text.
+    app.on_key(key(KeyCode::Backspace))
+        .await
+        .expect("one character off the query");
+    let _ = draw_rows(&mut app, 80, 24);
+    assert_eq!(
+        app.transcript_search.matches.len(),
+        2,
+        "the shortened query collects its hits again"
+    );
+}
+
+/// Stepping to a hit scrolls its line into the band the reader sees: the row is absent from
+/// the frame before the step and present after it.
+#[tokio::test]
+async fn stepping_to_a_hit_brings_its_line_onto_the_screen() {
+    let root = TempRoot::new("search_jump");
+    let mut app = fixture_app(root.path()).await;
+    detach_from_tail(&mut app, 8);
+    app.scroll_transcript_to_top();
+    let before = draw_rows(&mut app, 80, 24);
+    assert!(
+        !before.iter().any(|row| row.contains("item-7")),
+        "the newest card is off screen while the reader is at the top: {before:?}"
+    );
+
+    open_search(&mut app).await;
+    type_query(&mut app, "item-7", 80, 24).await;
+    assert_eq!(app.transcript_search.matches.len(), 1);
+
+    app.on_key(key(KeyCode::Enter))
+        .await
+        .expect("step to the hit");
+    let after = draw_rows(&mut app, 80, 24);
+    assert!(
+        after.iter().any(|row| row.contains("item-7")),
+        "the hit's line is in the frame after the step: {after:?}"
+    );
+}
+
+/// A search editor owns the gap row: the reading control steps aside for it, and the row
+/// reports without answering a pointer as a button would.
+#[tokio::test]
+async fn the_reading_control_gives_the_band_row_to_the_search_editor() {
+    use crossterm::event::MouseButton;
+    use crossterm::event::MouseEventKind;
+
+    let root = TempRoot::new("search_gap");
+    let mut app = fixture_app(root.path()).await;
+    detach_from_tail(&mut app, 3);
+    let text = gap_text(&mut app, 80, 24).expect("the control is up away from the tail");
+    assert!(
+        text.contains("new"),
+        "the reading control owns the row: {text}"
+    );
+
+    open_search(&mut app).await;
+    assert!(
+        app.gap_search_editing(),
+        "the gap asks the search editor, not a constant"
+    );
+    let text = gap_text(&mut app, 80, 24).expect("the band keeps its row for the query");
+    assert!(
+        text.contains("0/0"),
+        "an empty query reports that nothing has been collected yet: {text}"
+    );
+    assert!(
+        !text.contains("new") && !text.contains("latest"),
+        "the reading control is hidden while a search owns the keyboard: {text}"
+    );
+
+    let area = app.gap_hit_area();
+    mouse(&mut app, MouseEventKind::Moved, usize::from(area.y), area.x + 1);
+    assert!(
+        !app.gap_hovered(area),
+        "a reporting row carries no hover state: {area:?}"
+    );
+    mouse(
+        &mut app,
+        MouseEventKind::Down(MouseButton::Left),
+        usize::from(area.y),
+        area.x + 1,
+    );
+    mouse(
+        &mut app,
+        MouseEventKind::Up(MouseButton::Left),
+        usize::from(area.y),
+        area.x + 1,
+    );
+    assert!(
+        !app.is_at_transcript_tail(),
+        "and a press there did not send the reader to the tail"
+    );
+    assert!(
+        app.transcript_search.editing,
+        "the editor still owns the keyboard"
+    );
+}
+
+/// The hit list stops at its ceiling and tells the reader so: the scan is finished, the count
+/// it collected is the count it kept, and the band writes it as a floor.
+#[tokio::test]
+async fn the_hit_list_stops_at_its_ceiling_and_shows_it_as_a_floor() {
+    let root = TempRoot::new("search_cap");
+    let cards: Vec<String> = (0..(SEARCH_MATCH_CAP + 20))
+        .map(|index| format!("item-{index} gate value"))
+        .collect();
+    let mut app = fixture_app(root.path()).await;
+    raw_single_line_cards(&mut app, cards.as_slice());
+    app.set_transcript_viewport(80, 24);
+    open_search(&mut app).await;
+    write_query(&mut app, "gate").await;
+
+    // No real time and no frame guessing: the scan is stepped until it says it is through.
+    loop {
+        match app.advance_transcript_search(usize::MAX) {
+            SearchProgress::Done => break,
+            SearchProgress::More => continue,
+            SearchProgress::Idle => panic!("the search closed itself mid-scan"),
+        }
+    }
+    assert_eq!(
+        app.transcript_search.matches.len(),
+        SEARCH_MATCH_CAP,
+        "the ceiling is the whole list, not a hint"
+    );
+    assert!(
+        app.transcript_search.has_more,
+        "the scan stopped early, which is exactly what the flag is for"
+    );
+
+    // The row is asked for directly: a frame here would hand the head of a 220-card
+    // transcript to scrollback, and the addressable document is what the list covers.
+    let line = app
+        .composer_gap_line(80, false)
+        .expect("the search row is up");
+    let text = line
+        .spans
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect::<String>();
+    assert!(
+        text.contains(&format!("{SEARCH_MATCH_CAP}+")),
+        "the band reports the count as a floor: {text}"
+    );
+    assert!(
+        !text.contains(&format!("{SEARCH_MATCH_CAP}/")),
+        "never a count that reads as exact: {text}"
+    );
+}
+
+/// One frame eats a bounded piece of the document, and the bounded frames together collect
+/// exactly what a single unbounded pass collects.
+#[tokio::test]
+async fn one_frame_scans_a_bounded_piece_and_the_frames_together_scan_the_document() {
+    let root = TempRoot::new("search_frames");
+    let cards: Vec<String> = (0..60)
+        .map(|index| format!("item-{index} gate value"))
+        .collect();
+
+    // One pass over the whole document, as the reference list.
+    let mut once = fixture_app(root.path()).await;
+    raw_single_line_cards(&mut once, cards.as_slice());
+    once.set_transcript_viewport(80, 24);
+    open_search(&mut once).await;
+    write_query(&mut once, "gate").await;
+    assert_eq!(
+        once.advance_transcript_search(usize::MAX),
+        SearchProgress::Done,
+        "an unbounded budget reads the document in one step"
+    );
+    let reference = once.transcript_search.matches.clone();
+    assert_eq!(reference.len(), 60, "one hit per card");
+
+    // The same document, one small budget at a time.
+    let mut stepped = fixture_app(root.path()).await;
+    raw_single_line_cards(&mut stepped, cards.as_slice());
+    stepped.set_transcript_viewport(80, 24);
+    open_search(&mut stepped).await;
+    write_query(&mut stepped, "gate").await;
+
+    assert_eq!(
+        stepped.advance_transcript_search(64),
+        SearchProgress::More,
+        "a bounded frame hands the document back unfinished"
+    );
+    let first_frame = stepped.transcript_search.matches.len();
+    assert!(
+        first_frame > 0 && first_frame < reference.len(),
+        "the frame collected something but not everything: {first_frame}"
+    );
+    assert!(
+        !stepped.transcript_search.scan_done,
+        "and it left the cursor inside the document"
+    );
+
+    let mut frames = 1usize;
+    loop {
+        match stepped.advance_transcript_search(64) {
+            SearchProgress::Done => break,
+            SearchProgress::More => frames += 1,
+            SearchProgress::Idle => panic!("the search closed itself mid-scan"),
+        }
+    }
+    assert!(
+        frames > 2,
+        "the same document took {frames} bounded frames, never one"
+    );
+    assert_eq!(
+        stepped.transcript_search.matches, reference,
+        "frame by frame must equal one pass, in the same order"
+    );
+}
+
+/// A scan is retired when the document it read moved — an append or a trim — and is kept when
+/// only the window moved. Scroll position is not document identity.
+#[tokio::test]
+async fn a_moved_document_rescans_and_a_moved_window_does_not() {
+    let root = TempRoot::new("search_stale");
+    let cards: Vec<String> = (0..30)
+        .map(|index| format!("item-{index} gate value"))
+        .collect();
+    let mut app = fixture_app(root.path()).await;
+    raw_single_line_cards(&mut app, cards.as_slice());
+    app.set_transcript_viewport(80, 24);
+    open_search(&mut app).await;
+    write_query(&mut app, "gate").await;
+    assert_eq!(app.advance_transcript_search(usize::MAX), SearchProgress::Done);
+    let hits = app.transcript_search.matches.len();
+    assert_eq!(hits, 30);
+
+    // A scroll moves the window, not the document: the finished scan stands, and a frame with
+    // a one-byte budget proves there is nothing left to read rather than a restart.
+    let revision = app.transcript_render_revision;
+    app.scroll_transcript_up(1);
+    assert!(
+        !app.is_at_transcript_tail(),
+        "the window really did move off the tail"
+    );
+    assert_eq!(
+        app.transcript_render_revision, revision,
+        "a scroll is not a document change"
+    );
+    assert_eq!(
+        app.advance_transcript_search(1),
+        SearchProgress::Done,
+        "a finished scan is not run again by a scroll"
+    );
+    assert_eq!(app.transcript_search.matches.len(), hits);
+
+    // An append is a document change: the list restarts and reads the new card.
+    app.push_log(LogKind::User, "gate item-30 value".to_string());
+    assert_ne!(
+        app.transcript_render_revision, revision,
+        "an append bumps the document revision"
+    );
+    assert_eq!(
+        app.advance_transcript_search(1),
+        SearchProgress::More,
+        "the scan starts over, so one byte is not the whole document"
+    );
+    assert!(
+        app.transcript_search.matches.len() < hits + 1,
+        "nothing stale is left from the previous pass: {}",
+        app.transcript_search.matches.len()
+    );
+    loop {
+        match app.advance_transcript_search(usize::MAX) {
+            SearchProgress::Done => break,
+            SearchProgress::More => continue,
+            SearchProgress::Idle => panic!("the search closed itself mid-scan"),
+        }
+    }
+    assert_eq!(
+        app.transcript_search.matches.len(),
+        hits + 1,
+        "the appended card is collected"
+    );
+
+    // A trim is one too: the hit that named the trimmed card has no text left to name.
+    app.pop_oldest_log_entry();
+    loop {
+        match app.advance_transcript_search(usize::MAX) {
+            SearchProgress::Done => break,
+            SearchProgress::More => continue,
+            SearchProgress::Idle => panic!("the search closed itself mid-scan"),
+        }
+    }
+    assert_eq!(
+        app.transcript_search.matches.len(),
+        hits,
+        "the trimmed card's hit went with it"
+    );
+}
+
+/// The row carries the query and its place in the hits at every sampled width: it sheds the
+/// query's tail before it sheds the row, never spills past the frame, and never takes the
+/// draft's last row.
+#[tokio::test]
+async fn the_search_row_carries_the_query_and_the_counts_at_every_sampled_width() {
+    let root = TempRoot::new("search_widths");
+    let mut app = fixture_app(root.path()).await;
+    raw_single_line_cards(
+        &mut app,
+        &[
+            "gate item-1 value",
+            "gate item-2 value",
+            "a plain card with no query in it",
+        ],
+    );
+    let _ = draw_rows(&mut app, 80, 24);
+    open_search(&mut app).await;
+
+    // Nothing typed yet, at the narrowest sampled frame: still one row, still readable.
+    let text = gap_text(&mut app, 20, 24).expect("the row is up with an empty query");
+    assert!(
+        text.contains("0/0"),
+        "an empty query reports no hits rather than nothing: {text}"
+    );
+
+    type_query(&mut app, "gate item", 20, 24).await;
+    assert_eq!(app.transcript_search.matches.len(), 2);
+    for width in [20u16, 24, 40, 80, 120] {
+        let rows = draw_rows(&mut app, width, 24);
+        let area = app.gap_hit_area();
+        assert!(!area.is_empty(), "the search row is up at {width} columns");
+        assert_eq!(area.height, 1, "one row, never a wrapped second one");
+        assert!(
+            area.x + area.width <= width && area.y + 1 <= 24,
+            "the row stays inside the frame at {width} columns: {area:?}"
+        );
+        assert!(
+            rows.iter()
+                .all(|row| row.chars().count() <= usize::from(width)),
+            "no row may exceed the frame at {width} columns: {rows:?}"
+        );
+        assert!(
+            app.input_hit_area.height >= 1,
+            "the draft keeps a row of its own at {width} columns: {:?}",
+            app.input_hit_area
+        );
+        let text = rows[usize::from(area.y)].trim();
+        assert!(
+            UnicodeWidthStr::width(text) <= usize::from(width),
+            "the row's own text fits at {width} columns: {text:?}"
+        );
+        assert!(
+            text.contains("0/2"),
+            "the counts are the scan's own at {width} columns: {text:?}"
+        );
+    }
+
+    // The accepted hit's ordinal rides along, and a query too long for the frame sheds its
+    // tail instead of spilling or disappearing. The frame stays at the loop's last width: a
+    // resize re-wraps the document, which restarts the scan and retires the accepted hit.
+    app.on_key(key(KeyCode::Enter))
+        .await
+        .expect("step to the hit");
+    let text = gap_text(&mut app, 120, 24).expect("the row is up");
+    assert!(text.contains("1/2"), "the band shows the hit's place: {text}");
+
+    write_query(&mut app, " a long query that runs past the frame").await;
+    let rows = draw_rows(&mut app, 20, 24);
+    let area = app.gap_hit_area();
+    assert!(!area.is_empty(), "a long query still owns its row");
+    let text = rows[usize::from(area.y)].trim();
+    assert!(
+        text.contains('\u{2026}'),
+        "the query sheds its tail before the row goes: {text:?}"
+    );
+    assert!(
+        UnicodeWidthStr::width(text) <= 20,
+        "and the shed row stays inside twenty columns: {text:?}"
     );
 }

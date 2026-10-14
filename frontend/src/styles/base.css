@@ -30,7 +30,12 @@
   --ui-accent-disabled: #e3ddd9;
   --ui-accent-link-hover: #b55637;
   --accent: var(--ui-accent);
-  --scrollbar-size: 7px;
+  /* Thin transparent tracks keep scrollable panes aligned with their content.
+     Do not reserve a gutter: native overlay-capable engines paint this track
+     over the edge instead of changing a pane's usable width. */
+  --scrollbar-size: 5px;
+  --scrollbar-thumb: rgba(128, 128, 128, 0.24);
+  --scrollbar-thumb-hover: rgba(128, 128, 128, 0.48);
 }
 
 :root[data-user-accent='eva-orange'] {
@@ -210,22 +215,35 @@ body {
   background: var(--user-edit-selection-bg);
 }
 
-::-webkit-scrollbar {
-  width: var(--scrollbar-size);
-  height: var(--scrollbar-size);
+/* All Honeycomb scroll containers share a low-profile overlay-like track.
+   Keeping the gutter automatic avoids reserving a blank column in panes that
+   do not overflow; browsers with overlay scrollbars keep it above content. */
+:root * {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+  scrollbar-gutter: auto;
 }
 
-::-webkit-scrollbar-track {
-  background: transparent;
+/* Keep component-specific scroll regions on the same compact track too. */
+:root *::-webkit-scrollbar {
+  width: var(--scrollbar-size) !important;
+  height: var(--scrollbar-size) !important;
 }
 
-::-webkit-scrollbar-thumb {
-  background: rgba(128, 128, 128, 0.42);
-  border-radius: 999px;
+:root *::-webkit-scrollbar-track {
+  background: transparent !important;
 }
 
-::-webkit-scrollbar-thumb:hover {
-  background: rgba(128, 128, 128, 0.58);
+:root *::-webkit-scrollbar-thumb {
+  border: 1px solid transparent !important;
+  border-radius: 999px !important;
+  background: var(--scrollbar-thumb) !important;
+  background-clip: padding-box !important;
+}
+
+:root *::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover) !important;
+  background-clip: padding-box !important;
 }
 
 .el-overlay-dialog {

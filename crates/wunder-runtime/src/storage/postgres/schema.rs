@@ -204,6 +204,14 @@ impl PostgresStorage {
         tx.commit()?;
         Ok(())
     }
+    fn ensure_thread_trajectory_tile_columns(&self, conn: &mut PgConn<'_>) -> Result<()> {
+        conn.batch_execute(
+            "ALTER TABLE thread_trajectory_tiles ADD COLUMN IF NOT EXISTS input_count BIGINT NOT NULL DEFAULT 0;
+             ALTER TABLE thread_trajectory_tiles ADD COLUMN IF NOT EXISTS model_count BIGINT NOT NULL DEFAULT 0;
+             ALTER TABLE thread_trajectory_tiles ADD COLUMN IF NOT EXISTS tool_count BIGINT NOT NULL DEFAULT 0;",
+        )?;
+        Ok(())
+    }
     fn ensure_user_account_quota_columns(&self, conn: &mut PgConn<'_>) -> Result<()> {
         let mut tx = conn.transaction()?;
         // Serializes startup migrations across server instances.
@@ -2383,6 +2391,7 @@ impl PostgresSchemaStorage for PostgresStorage {
                     self.ensure_thread_item_sequence(&mut conn)?;
                     self.ensure_thread_item_block_fields(&mut conn)?;
                     conn.batch_execute(crate::storage::thread_view_store::SCHEMA)?;
+                    self.ensure_thread_trajectory_tile_columns(&mut conn)?;
                     conn.batch_execute(super::thread_view_store::SEARCH_SCHEMA)?;
                     tracing::info!(
                         elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,

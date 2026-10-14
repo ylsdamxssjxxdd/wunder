@@ -100,6 +100,8 @@ struct ThreadChangesQuery {
     #[serde(default)]
     item_after: Option<i64>,
     #[serde(default)]
+    item_before: Option<i64>,
+    #[serde(default)]
     from_block: Option<i64>,
     #[serde(default)]
     field: Option<String>,
@@ -176,11 +178,12 @@ async fn get_thread_turn(
     let storage = state.storage.clone();
     let lookup_session = session_id.clone();
     let turn = blocking::run_db("api.chat.thread_log.turn", move || {
-        let mut turn = storage.get_thread_turn(
+        let mut turn = storage.get_thread_turn_page(
             &user_id,
             &lookup_session,
             &turn_id,
-            query.item_after.unwrap_or(-1),
+            query.item_before,
+            query.item_after,
             query.limit.unwrap_or(100),
             false,
         )?;

@@ -2,7 +2,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Build the Linux Wunder supplement pack (opt/python + opt/git + opt/rg) for
+# Build the Linux Wunder supplement pack (opt/python + opt/git + opt/rg +
+# opt/ffmpeg) for
 # amd64/arm64. The script must run inside an Ubuntu 18.04 container so every
 # binary matches the desktop release baseline (glibc 2.27); the arm64 pack is
 # produced by running the same script in the arm64 variant of the image.
@@ -65,6 +66,7 @@ emit(
     python=data["python"],
     git=data["git"],
     rg=data["rg"],
+    ffmpeg=data["ffmpeg"],
     fonts=data.get("fonts", []),
     install=data["install"],
 )
@@ -104,9 +106,15 @@ python_archive_url="$(json_field "python.archives.$arch.url")"
 python_archive_file="$(json_field "python.archives.$arch.fileName")"
 rg_archive_url="$(json_field "rg.archives.$arch.url")"
 rg_archive_file="$(json_field "rg.archives.$arch.fileName")"
+ffmpeg_version="$(json_field ffmpeg.version)"
+ffmpeg_flavor="$(json_field ffmpeg.flavor)"
+ffmpeg_archive_url="$(json_field "ffmpeg.archives.$arch.url")"
+ffmpeg_archive_file="$(json_field "ffmpeg.archives.$arch.fileName")"
+ffmpeg_archive_sha256="$(json_field "ffmpeg.archives.$arch.sha256")"
 
 [[ -n "$python_archive_url" && "$python_archive_url" != "null" ]] || fail "no python archive for $arch"
 [[ -n "$rg_archive_url" && "$rg_archive_url" != "null" ]] || fail "no ripgrep archive for $arch"
+[[ -n "$ffmpeg_archive_url" && "$ffmpeg_archive_url" != "null" ]] || fail "no ffmpeg archive for $arch"
 
 default_build_root="$repo_root/$(json_field default_build_root)"
 build_root="${WUNDER_SUPPLEMENT_BUILD_ROOT:-$default_build_root}"
@@ -125,8 +133,9 @@ index_url="${WUNDER_SUPPLEMENT_PYPI_INDEX:-$python_index_default}"
 python_root="$package_root/opt/python"
 git_root="$package_root/opt/git"
 rg_root="$package_root/opt/rg"
+ffmpeg_root="$package_root/opt/ffmpeg"
 rm -rf "$stage_dir"
-mkdir -p "$python_root" "$git_root" "$rg_root"
+mkdir -p "$python_root" "$git_root" "$rg_root" "$ffmpeg_root"
 
 obtain_file() {
   # obtain_file <url> <destination> <expected-sha256>
@@ -284,6 +293,17 @@ rg_license="$(find "$rg_extract" -type f \( -iname 'LICENSE*' -o -iname 'COPYING
 [[ -z "$rg_license" ]] || cp -f "$rg_license" "$rg_root/"
 rm -rf "$rg_extract"
 
+# Bundled static ffmpeg mirrors the Win7 pack (same upstream: eugeneware
+# ffmpeg-static, tag b4.4.1). Upstream publishes a single gzipped static
+# binary with no tar wrapper and no sha256 sidecar, so the digest is pinned in
+# the manifest and the file is decompressed straight into opt/ffmpeg/bin.
+log "staging ffmpeg $ffmpeg_version ($ffmpeg_flavor)"
+obtain_file "$ffmpeg_archive_url" "$downloads_dir/$ffmpeg_archive_file" "$ffmpeg_archive_sha256"
+ffmpeg_bin="$ffmpeg_root/bin/ffmpeg"
+mkdir -p "$ffmpeg_root/bin"
+gzip -dc "$downloads_dir/$ffmpeg_archive_file" > "$ffmpeg_bin"
+chmod 0755 "$ffmpeg_bin"
+
 requirements_entries="$("$python_bin" - "$requirements_path" <<'PYEOF'
 import sys
 
@@ -305,22 +325,23 @@ Python: $python_version ($python_flavor)
 Python packages: $(echo "$requirements_entries" | wc -l) pinned requirements (see wunder-linux-supplement.json)
 Git: $git_flavor $git_version
 Ripgrep: $rg_flavor $rg_version
+FFmpeg: $ffmpeg_flavor $ffmpeg_version (opt/ffmpeg/bin/ffmpeg)
 Browsers: Playwright Chromium in opt/python/ms-playwright (when bundled)
 
 Usage:
 1. Close Wunder Desktop.
 2. Extract this archive into the desktop install directory, or (AppImage)
    into the directory that holds the .AppImage file.
-3. Ensure the target now contains opt/python, opt/git, and opt/rg.
+3. Ensure the target now contains opt/python, opt/git, opt/rg, and opt/ffmpeg.
 4. Start Wunder Desktop again; the native runtime prepends opt/python,
-   opt/git, and opt/rg to PATH automatically.
+   opt/git, opt/rg, and opt/ffmpeg to PATH automatically.
 EOF
 
-python3 - "$manifest_json" "$arch" "$build_root" "$python_archive_url" "$git_tarball_url" "$rg_archive_url" "$requirements_path" "$package_root/wunder-linux-supplement.json" <<'PYEOF'
+python3 - "$manifest_json" "$arch" "$build_root" "$python_archive_url" "$git_tarball_url" "$rg_archive_url" "$ffmpeg_archive_url" "$requirements_path" "$package_root/wunder-linux-supplement.json" <<'PYEOF'
 import json, sys
 from datetime import datetime, timezone
 
-payload, arch, build_root, python_url, git_url, rg_url, requirements_path, destination = sys.argv[1:9]
+payload, arch, build_root, python_url, git_url, rg_url, ffmpeg_url, requirements_path, destination = sys.argv[1:10]
 manifest = json.loads(payload)
 requirements = []
 with open(requirements_path, encoding="utf-8") as handle:
@@ -357,6 +378,12 @@ output = {
         "flavor": manifest["rg"]["flavor"],
         "source": manifest["rg"]["source"],
         "url": rg_url,
+    },
+    "ffmpeg": {
+        "version": manifest["ffmpeg"]["version"],
+        "flavor": manifest["ffmpeg"]["flavor"],
+        "source": manifest["ffmpeg"]["source"],
+        "url": ffmpeg_url,
     },
     "install": manifest["install"],
 }
@@ -416,8 +443,9 @@ log "validated Python profile imports"
 "$python_bin" --version
 "$git_bin" --version
 "$rg_root/bin/rg" --version | head -n 1
+"$ffmpeg_bin" -version | head -n 1
 
-for staged_binary in "$python_bin" "$git_bin" "$rg_root/bin/rg"; do
+for staged_binary in "$python_bin" "$git_bin" "$rg_root/bin/rg" "$ffmpeg_bin"; do
   # -L resolves aliases (opt/python/bin/python3 is a symlink to python3.8);
   # without it file reports "symbolic link to …" and no ELF at all.
   staged_machine="$(file -bL "$staged_binary")"

@@ -81,9 +81,9 @@ test('挂起中的轮次由排队条承载，时间线不放这一行', () => {
   assert.ok(isParkedQueueTurn(items, { role: 'user', message_id: 'cm-1' }, hydrated));
 });
 
-test('开跑、已产出或已不在队列里的轮次照常渲染', () => {
+test('开跑、已产出或不再明确排队的轮次照常渲染', () => {
   const items = [parkedItem()];
-  assert.equal(isParkedQueueTurn([], queuedUser, queuedAssistant), false, '条目不在队列');
+  assert.ok(isParkedQueueTurn([], queuedUser, queuedAssistant), '队列列表尚未同步时仍由排队条承载');
   assert.equal(isParkedQueueTurn(items, queuedUser, { ...queuedAssistant, content: '开始回答了' }), false);
   assert.equal(
     isParkedQueueTurn(items, queuedUser, {
@@ -97,9 +97,13 @@ test('开跑、已产出或已不在队列里的轮次照常渲染', () => {
   // 标记里的 queue_id 也能钉住这一轮，即使用户侧 id 对不上（补水形状）。
   assert.ok(isParkedQueueTurn(items, { role: 'user', message_id: 'other' }, queuedAssistant));
   assert.equal(
-    isParkedQueueTurn(items, { role: 'user', message_id: 'other' }, { ...queuedAssistant, workflowItems: [] }),
+    isParkedQueueTurn(items, { role: 'user', message_id: 'other' }, {
+      ...queuedAssistant,
+      status: 'running',
+      workflowItems: []
+    }),
     false,
-    '既对不上 client_message_id 也没有排队标记'
+    '已经开跑且没有排队标记'
   );
   assert.equal(hasOnlyQueueMarkers({ role: 'user', content: '' }), false, '用户消息不是助手侧判定对象');
 });
@@ -147,7 +151,8 @@ test('排队让位与剪枝真的接在渲染与撤下路径上', () => {
   const sendActions = readSource('stores/chatSendActions.ts');
   assert.ok(
     /dropParkedQueueTurn\(clientMessageId: unknown\)/.test(sendActions) &&
-      /selectParkedTurnMessageIds\(this\.messages/.test(sendActions),
+      /selectParkedTurnMessageIds\(this\.messages/.test(sendActions) &&
+      /removeThreadViewTurnByClientMessageId\(sessionId,cleanedClientMessageId\)/.test(sendActions),
     'store 上的剪枝动作缺失'
   );
 });

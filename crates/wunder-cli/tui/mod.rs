@@ -9,6 +9,7 @@ mod markdown_render;
 mod markdown_stream;
 mod scrollback;
 mod theme;
+mod text_tabs;
 mod thread_registry;
 mod transcript;
 mod ui;

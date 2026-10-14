@@ -1113,8 +1113,8 @@ pub(crate) fn embedded_supplement_roots_for_env(app_dir: &Path) -> Vec<PathBuf> 
 
 fn prepend_embedded_tool_paths(app_dir: &Path) {
     // Keep bundled supplement paths ahead of the system PATH so extracting
-    // opt/python/opt/git/opt/rg into a supplement root becomes effective
-    // immediately.
+    // opt/python/opt/git/opt/rg/opt/ffmpeg into a supplement root becomes
+    // effective immediately.
     let relative_candidates = [
         "opt/python",
         "opt/python/Scripts",
@@ -1128,6 +1128,8 @@ fn prepend_embedded_tool_paths(app_dir: &Path) {
         "opt/rg/bin",
         "opt/ripgrep",
         "opt/ripgrep/bin",
+        "opt/ffmpeg",
+        "opt/ffmpeg/bin",
     ];
     for root in embedded_supplement_roots_for_env(app_dir) {
         for candidate in relative_candidates {

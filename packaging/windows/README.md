@@ -5,7 +5,7 @@
 - `opt/python`：给智能体、本地脚本与 Python 工具调用使用的内置 Python
 - `opt/git`：给 `git clone`、`git status`、补丁应用与仓库操作使用的内置 Git
 - `opt/rg`：给 `search_content` 与命令行检索使用的内置 ripgrep
-- `opt/ffmpeg`：随包附带的静态 ffmpeg（Windows 补充包专用；当前桌面运行时只自动接线 python/git/rg）
+- `opt/ffmpeg`：随包附带的静态 ffmpeg（`opt/ffmpeg/bin` 已由桌面运行时自动接入 `PATH`）
 
 补充包设计目标：**直接解压到桌面安装目录即可生效**。
 
@@ -13,7 +13,7 @@
 
 - Win7 `setup.exe` 安装包默认不再内置 Python、Git 与 ripgrep。
 - 如需 Python/Git/ripgrep，请单独分发并解压 `wunder-supplement-win7-*.zip` 到安装目录根部。
-- 原生桌面运行时会自动识别安装目录中的 `opt/python`、`opt/git` 与 `opt/rg`。
+- 原生桌面运行时会自动识别安装目录中的 `opt/python`、`opt/git`、`opt/rg` 与 `opt/ffmpeg`。
 
 ## 版本选择
 
@@ -90,13 +90,15 @@ wunder-win7-supplement.json
 原生 Win7 桌面程序启动时会自动：
 
 - 把安装目录写入 `WUNDER_DESKTOP_APP_DIR`
-- 将 `opt/python`、`opt/python/Scripts`、`opt/git/cmd`、`opt/git/bin`、`opt/rg`、`opt/rg/bin` 追加到 `PATH` 前部
+- 将 `opt/python`、`opt/python/Scripts`、`opt/git/cmd`、`opt/git/bin`、`opt/rg`、`opt/rg/bin`、`opt/ffmpeg/bin` 追加到 `PATH` 前部
 
 这样桥接层与智能体工具调用就能优先命中内置 Python / Git / rg。
 
 ## 兼容性提示
 
 - Python 3.8 embeddable package 在 Win7 上建议配合 `KB2533623` 与 Universal CRT 更新使用。
+- `opt/ffmpeg` 仅内置 `ffmpeg`（eugeneware/ffmpeg-static `b4.4.1`），不含 `ffprobe`；
+  依赖 `WUNDER_FFPROBE_BIN`/`ffprobe` 的音视频探测接口仍需系统或用户侧提供 ffprobe。
 - `common` 档位（当前唯一档位）会额外内置 `pip / setuptools / wheel`，并按 `packaging/python/requirements-win7-common.txt` 预装办公文档、数据库、轻量视频、地图/雷达与绘图库。
 - 默认 Python 包索引为清华 Tuna：`https://pypi.tuna.tsinghua.edu.cn/simple`；如需切回官方源，可使用 `-PythonPackageIndexUrl https://pypi.org/simple`。
 - 两个档位都保持 Win7 友好，优先使用二进制 wheel，避免现场编译依赖。

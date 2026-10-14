@@ -13,6 +13,7 @@ use crate::tool_display::summarize_tool_result;
 
 const MAX_INLINE_JSON_CHARS: usize = 180;
 const MAX_PATCH_RESULT_FILES: usize = 24;
+const MAX_TARGET_PREVIEW_JSON_BYTES: usize = 220;
 const COMMAND_LIVE_PRINT_HEAD_CHARS: usize = 2_000;
 const COMMAND_LIVE_PRINT_TAIL_CHARS: usize = 1_500;
 
@@ -1010,7 +1011,7 @@ fn truncate_by_chars(text: &str, max_chars: usize) -> (String, bool) {
     (output, true)
 }
 
-fn format_apply_patch_result_lines(tool: &str, payload: &Value, is_zh: bool) -> Vec<String> {
+fn format_apply_patch_result_lines(_tool: &str, payload: &Value, is_zh: bool) -> Vec<String> {
     let result = extract_tool_result_object(payload);
     let data = extract_tool_result_data(result);
     let ok = result.get("ok").and_then(Value::as_bool);
@@ -1024,22 +1025,20 @@ fn format_apply_patch_result_lines(tool: &str, payload: &Value, is_zh: bool) -> 
     let mut lines = Vec::new();
     let files = data.get("files").and_then(Value::as_array);
     if ok == Some(false) {
-        lines.push(if tool_is_zh {
-            "✘ 补丁应用失败".to_string()
-        } else {
-            "✘ Failed to apply patch".to_string()
-        });
+        lines.push(crate::locale::ui_text(
+            tool_is_zh,
+            "patch_apply_failed",
+            &[],
+        ));
     } else {
         let noun = if changed_files == 1 {
-            if tool_is_zh {
-                "1 个文件".to_string()
-            } else {
-                "1 file".to_string()
-            }
-        } else if tool_is_zh {
-            format!("{changed_files} 个文件")
+            crate::locale::ui_text(tool_is_zh, "changed_files_one", &[])
         } else {
-            format!("{changed_files} files")
+            crate::locale::ui_text(
+                tool_is_zh,
+                "changed_files_count",
+                &[("count", &changed_files.to_string())],
+            )
         };
         let mut metrics = Vec::new();
         if added > 0 {
@@ -1061,11 +1060,11 @@ fn format_apply_patch_result_lines(tool: &str, payload: &Value, is_zh: bool) -> 
         } else {
             format!(" ({})", metrics.join(", "))
         };
-        lines.push(if tool_is_zh {
-            format!("• 已修改 {noun}{metric_suffix}")
-        } else {
-            format!("• Edited {noun}{metric_suffix}")
-        });
+        lines.push(crate::locale::ui_text(
+            tool_is_zh,
+            "patch_edited",
+            &[("files", &noun), ("metrics", &metric_suffix)],
+        ));
     }
     if let Some(error) = result
         .get("error")
@@ -1123,12 +1122,41 @@ fn format_apply_patch_result_lines(tool: &str, payload: &Value, is_zh: bool) -> 
     }
 
     if lines.len() == 1 {
-        push_tree_line(
-            &mut lines,
-            wunder_server::tool_result_display::tool_result_display(tool, payload, false),
-        );
+        if let Some(preview) = tool_target_preview(payload, data) {
+            push_tree_line(&mut lines, preview);
+        }
     }
     lines
+}
+
+/// Neutral fallback for a tool result nothing summarised: the target the call
+/// addressed, else the one sentence the tool itself returned, else a short JSON
+/// preview. The runtime's display helper is written for the Chinese native clients -
+/// its labels are fixed Chinese and it has no language parameter - so neither this
+/// renderer nor the TUI borrows its prose. Same reading as the tool card in
+/// `tui/app/patch_log.rs`, with the extra step of preferring the tool's own message
+/// over raw protocol JSON.
+pub(crate) fn tool_target_preview(payload: &Value, data: &Value) -> Option<String> {
+    let args = payload
+        .get("args")
+        .or_else(|| payload.get("arguments"))
+        .unwrap_or(&Value::Null);
+    ["path", "file_path", "command", "cmd", "query", "url"]
+        .iter()
+        .find_map(|key| args.get(*key).and_then(Value::as_str))
+        .map(|value| value.lines().next().unwrap_or(value).trim().to_string())
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            ["message", "text", "summary"]
+                .iter()
+                .find_map(|key| data.get(*key).and_then(Value::as_str))
+                .map(|value| value.lines().next().unwrap_or(value).trim().to_string())
+                .filter(|value| !value.is_empty())
+        })
+        .or_else(|| {
+            let compact = compact_json_within(data, MAX_TARGET_PREVIEW_JSON_BYTES);
+            (!compact.is_empty() && compact != "{}" && compact != "null").then_some(compact)
+        })
 }
 
 fn format_execute_command_result_lines(tool: &str, result: &Value, is_zh: bool) -> Vec<String> {
@@ -1153,15 +1181,9 @@ fn format_execute_command_result_lines(tool: &str, result: &Value, is_zh: bool) 
     let duration_ms = number_value(result.get("meta").and_then(|meta| meta.get("duration_ms")));
     let tool_is_zh = is_zh;
     let header = if returncode != 0 {
-        if tool_is_zh {
-            format!("✘ {tool} 失败")
-        } else {
-            format!("✘ {tool} failed")
-        }
-    } else if tool_is_zh {
-        format!("• 已完成 {tool}")
+        crate::locale::ui_text(tool_is_zh, "tool_failed", &[("tool", tool)])
     } else {
-        format!("• Completed {tool}")
+        crate::locale::ui_text(tool_is_zh, "tool_completed", &[("tool", tool)])
     };
     let mut metrics = Vec::new();
     metrics.push(format!("exit={returncode}"));
@@ -1406,15 +1428,9 @@ fn format_generic_tool_result_lines(tool: &str, payload: &Value, is_zh: bool) ->
 
     let tool_is_zh = is_zh;
     let mut header = if ok == Some(false) {
-        if tool_is_zh {
-            format!("✘ {tool} 失败")
-        } else {
-            format!("✘ {tool} failed")
-        }
-    } else if tool_is_zh {
-        format!("• 已完成 {tool}")
+        crate::locale::ui_text(tool_is_zh, "tool_failed", &[("tool", tool)])
     } else {
-        format!("• Completed {tool}")
+        crate::locale::ui_text(tool_is_zh, "tool_completed", &[("tool", tool)])
     };
     if let Some(badge) = repair.and_then(format_repair_badge) {
         header.push(' ');
@@ -1455,20 +1471,15 @@ fn format_generic_tool_result_lines(tool: &str, payload: &Value, is_zh: bool) ->
             push_tree_line(&mut lines, text);
         }
     } else if lines.len() == 1 {
-        push_tree_line(
-            &mut lines,
-            wunder_server::tool_result_display::tool_result_display(tool, payload, false),
-        );
+        if let Some(preview) = tool_target_preview(payload, extract_tool_result_data(result)) {
+            push_tree_line(&mut lines, preview);
+        }
     }
     lines
 }
 
 fn tool_only_completion_fallback(is_zh: bool) -> String {
-    if is_zh {
-        "已完成本轮任务，结果见上方工具输出。".to_string()
-    } else {
-        "Done. Review the tool results above.".to_string()
-    }
+    crate::locale::ui_text(is_zh, "tool_only_summary", &[])
 }
 
 fn format_repair_summary(repair: &Value) -> Option<String> {
@@ -1536,6 +1547,25 @@ mod tests {
         assert!(colored.red("bad").contains("\u{1b}[31;1m"));
     }
 
+    /// The header a successful patch result should carry. Read from the copy table so
+    /// the test never re-spells the wording it checks.
+    fn edited_header(is_zh: bool, files: i64, metrics: &str) -> String {
+        let noun = if files == 1 {
+            crate::locale::ui_text(is_zh, "changed_files_one", &[])
+        } else {
+            crate::locale::ui_text(
+                is_zh,
+                "changed_files_count",
+                &[("count", &files.to_string())],
+            )
+        };
+        crate::locale::ui_text(
+            is_zh,
+            "patch_edited",
+            &[("files", &noun), ("metrics", metrics)],
+        )
+    }
+
     #[test]
     fn apply_patch_result_lines_include_change_markers() {
         let payload = serde_json::json!({
@@ -1552,10 +1582,100 @@ mod tests {
                 }
             }
         });
-        let lines = format_apply_patch_result_lines("应用补丁", &payload, true);
-        assert!(lines[0].contains("已修改 2 个文件"));
-        assert!(lines.iter().any(|line| line.contains("A src/new.rs")));
-        assert!(lines.iter().any(|line| line.contains("D src/old.rs")));
+        for is_zh in [true, false] {
+            let lines = format_apply_patch_result_lines("apply_patch", &payload, is_zh);
+            assert_eq!(lines[0], edited_header(is_zh, 2, ""), "{lines:?}");
+            assert!(lines.iter().any(|line| line.contains("A src/new.rs")));
+            assert!(lines.iter().any(|line| line.contains("D src/old.rs")));
+        }
+    }
+
+    #[test]
+    fn patch_result_metrics_stay_out_of_the_translated_wording() {
+        let payload = serde_json::json!({
+            "result": { "ok": true, "data": { "changed_files": 1, "added": 3, "deleted": 1 } }
+        });
+        for is_zh in [true, false] {
+            let lines = format_apply_patch_result_lines("apply_patch", &payload, is_zh);
+            assert_eq!(lines[0], edited_header(is_zh, 1, " (+3, -1)"), "{lines:?}");
+        }
+    }
+
+    #[test]
+    fn patch_failure_header_follows_the_display_language() {
+        let payload = serde_json::json!({ "result": { "ok": false } });
+        let zh = format_apply_patch_result_lines("apply_patch", &payload, true);
+        let en = format_apply_patch_result_lines("apply_patch", &payload, false);
+        assert_eq!(zh[0], crate::locale::ui_text(true, "patch_apply_failed", &[]));
+        assert_eq!(en[0], crate::locale::ui_text(false, "patch_apply_failed", &[]));
+        assert_ne!(zh[0], en[0], "one header must not serve both languages");
+    }
+
+    #[test]
+    fn tool_result_headers_follow_the_display_language() {
+        let done = serde_json::json!({ "result": { "ok": true } });
+        let failed = serde_json::json!({ "result": { "ok": false } });
+        for is_zh in [true, false] {
+            let lines = format_generic_tool_result_lines("sample_tool", &done, is_zh);
+            assert_eq!(
+                lines[0],
+                crate::locale::ui_text(is_zh, "tool_completed", &[("tool", "sample_tool")]),
+                "{lines:?}"
+            );
+            let lines = format_generic_tool_result_lines("sample_tool", &failed, is_zh);
+            assert_eq!(
+                lines[0],
+                crate::locale::ui_text(is_zh, "tool_failed", &[("tool", "sample_tool")]),
+                "{lines:?}"
+            );
+        }
+        assert_ne!(
+            format_generic_tool_result_lines("sample_tool", &done, true)[0],
+            format_generic_tool_result_lines("sample_tool", &done, false)[0]
+        );
+    }
+
+    #[test]
+    fn command_result_headers_follow_the_display_language() {
+        let payload = serde_json::json!({
+            "results": [{ "command": "python3 demo.py", "returncode": 1 }]
+        });
+        for is_zh in [true, false] {
+            let lines = format_execute_command_result_lines("sample_tool", &payload, is_zh);
+            assert_eq!(
+                lines[0],
+                format!(
+                    "{} (exit=1)",
+                    crate::locale::ui_text(is_zh, "tool_failed", &[("tool", "sample_tool")])
+                ),
+                "{lines:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn summarised_tool_results_never_borrow_the_other_languages_prose() {
+        let payload = serde_json::json!({
+            "tool": "custom_tool",
+            "args": { "path": "assets/note.txt" },
+            "result": { "ok": true, "data": {} }
+        });
+        let zh = format_generic_tool_result_lines("custom_tool", &payload, true);
+        let en = format_generic_tool_result_lines("custom_tool", &payload, false);
+        assert_eq!(
+            zh[1..],
+            en[1..],
+            "the preview line is data, not wording, so both languages must agree"
+        );
+        assert!(
+            en[1..].iter().all(|line| !has_han(line)),
+            "english session picked up Chinese prose: {en:?}"
+        );
+    }
+
+    fn has_han(text: &str) -> bool {
+        text.chars()
+            .any(|ch| ('\u{4e00}'..='\u{9fff}').contains(&ch))
     }
 
     #[test]
@@ -1651,17 +1771,19 @@ mod tests {
 
     #[test]
     fn unknown_results_keep_user_text_without_protocol_json() {
-        let output = format_generic_tool_result_lines(
-            "custom_tool",
-            &serde_json::json!({
-                "ok": true, "data": {"message": "Useful result", "query_handle": "hidden", "cursor": 999}
-            }),
-            false,
-        )
-        .join("\n");
-        assert!(output.contains("Useful result"));
-        assert!(!output.contains("hidden"));
-        assert!(!output.contains("999"));
+        for is_zh in [true, false] {
+            let output = format_generic_tool_result_lines(
+                "custom_tool",
+                &serde_json::json!({
+                    "ok": true, "data": {"message": "Useful result", "query_handle": "hidden", "cursor": 999}
+                }),
+                is_zh,
+            )
+            .join("\n");
+            assert!(output.contains("Useful result"), "{output}");
+            assert!(!output.contains("hidden"), "{output}");
+            assert!(!output.contains("999"), "{output}");
+        }
     }
 
     #[test]
@@ -1677,14 +1799,17 @@ mod tests {
     }
 
     #[test]
-    fn tool_only_completion_fallback_is_human_readable() {
-        assert_eq!(
-            tool_only_completion_fallback(false),
-            "Done. Review the tool results above."
-        );
-        assert_eq!(
+    fn tool_only_completion_fallback_follows_the_display_language() {
+        for is_zh in [true, false] {
+            assert_eq!(
+                tool_only_completion_fallback(is_zh),
+                crate::locale::ui_text(is_zh, "tool_only_summary", &[]),
+                "language taken from the table must be the language rendered"
+            );
+        }
+        assert_ne!(
             tool_only_completion_fallback(true),
-            "已完成本轮任务，结果见上方工具输出。"
+            tool_only_completion_fallback(false)
         );
     }
 }

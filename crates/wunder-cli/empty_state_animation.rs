@@ -82,6 +82,7 @@ fn logo_fit(screen: Rect) -> Option<(u16, u16)> {
 }
 
 fn paint_frame(width: u16, height: u16) -> Vec<Line<'static>> {
+    let colours_enabled = std::env::var_os("NO_COLOR").is_none();
     let mut lines = Vec::with_capacity(usize::from(height));
     for row in 0..usize::from(height) {
         let mut spans = Vec::with_capacity(usize::from(width));
@@ -93,12 +94,20 @@ fn paint_frame(width: u16, height: u16) -> Vec<Line<'static>> {
             .saturating_sub(1);
             let top = logo_colour(source_x, source_y_top);
             let bottom = logo_colour(source_x, source_y_bottom);
-            spans.push(match (top, bottom) {
-                (None, None) => Span::raw(" "),
-                (Some(foreground), None) => Span::styled("▀", Style::default().fg(foreground)),
-                (None, Some(foreground)) => Span::styled("▄", Style::default().fg(foreground)),
-                (Some(foreground), Some(background)) => {
-                    Span::styled("▀", Style::default().fg(foreground).bg(background))
+            spans.push(if !colours_enabled {
+                if top.is_some() || bottom.is_some() {
+                    Span::raw("▀")
+                } else {
+                    Span::raw(" ")
+                }
+            } else {
+                match (top, bottom) {
+                    (None, None) => Span::raw(" "),
+                    (Some(foreground), None) => Span::styled("▀", Style::default().fg(foreground)),
+                    (None, Some(foreground)) => Span::styled("▄", Style::default().fg(foreground)),
+                    (Some(foreground), Some(background)) => {
+                        Span::styled("▀", Style::default().fg(foreground).bg(background))
+                    }
                 }
             });
         }

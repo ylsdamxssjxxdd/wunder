@@ -53,9 +53,8 @@ wunder's documentation falls into seven categories, each answering a different k
 | [Beehive interface](/docs/en/surfaces/frontend/) | The single-page app in the browser |
 | [Bridge interface](/docs/en/surfaces/web-admin/) | The admin governance backend |
 
-### Other groups (this page lists only the site's main tabs, not everything)
+### Other sections
 
-- Core → `/docs/en/concepts/`
 - Tools → `/docs/en/tools/`
 - Capabilities → `/docs/en/capabilities/`
 - Help → `/docs/en/help/`

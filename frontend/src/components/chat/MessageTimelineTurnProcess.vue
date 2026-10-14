@@ -28,21 +28,18 @@
       </span>
     </button>
 
-    <div v-if="open" class="timeline-process-body">
-      <MessageTimelineThinkingEntry
-        v-if="reasoningText && (!loaded || !rows.some((row) => row.kind === 'reasoning' && row.key === `reasoning:${reasoningItemId}`))"
-        :entry="reasoningEntry"
-        :open="openKeys.has('reasoning:projected')"
-        @toggle="toggleKey('reasoning:projected')"
-      />
+    <div v-if="open" ref="processBodyRef" class="timeline-process-body" @scroll.passive="handleProcessScroll" @wheel.passive="handleProcessWheel" @pointerdown="pageAnchor = null" @keydown="pageAnchor = null">
       <div v-if="loading && !loaded" class="timeline-process-note">{{ t('chat.timeline.processLoading') }}</div>
       <template v-else-if="error">
         <div class="timeline-process-note">{{ t('chat.timeline.processFailed') }}</div>
         <button class="timeline-process-retry" type="button" @click="load">{{ t('chat.timeline.processRetry') }}</button>
       </template>
       <template v-else>
+        <div v-if="hasOlderItems" class="timeline-process-page-state timeline-process-page-state-top" role="status">
+          {{ pageError ? t('chat.timeline.processPageFailed') : loadingMore ? t('chat.timeline.processLoading') : t('chat.timeline.processScrollEarlier') }}
+        </div>
         <div class="timeline-group">
-        <template v-for="row in rows" :key="row.key">
+        <div v-for="row in rows" :key="row.key" :data-process-key="row.key">
           <MessageTimelineThinkingEntry
             v-if="row.kind === 'reasoning'"
             :entry="row.entry"
@@ -63,29 +60,33 @@
               :content="row.text"
               :explicit-content="true"
               :assistant-display="true"
+              @rendered="restorePageAnchor"
             />
           </div>
-        </template>
         </div>
-        <button
-          v-if="hasMoreItems || omittedRuns > 0"
-          class="timeline-process-more"
-          type="button"
-          :disabled="loadingMore || !hasMoreItems"
-          @click="loadMore"
-        >
-          {{ loadingMore ? t('chat.timeline.processLoading') : hasMoreItems ? t('chat.timeline.processLoadEarlier') : t('chat.timeline.omittedRuns', { count: omittedRuns }) }}
-        </button>
+        </div>
+        <!-- Live reasoning belongs after the durable process rows until its own
+             record arrives.  Rendering it before the list made each new model
+             round appear to overwrite the first completed reasoning entry. -->
+        <MessageTimelineThinkingEntry
+          v-if="reasoningText && !hasCurrentReasoningRow && !hasNewerItems"
+          :entry="reasoningEntry"
+          :open="openKeys.has(currentReasoningRowKey)"
+          @toggle="toggleKey(currentReasoningRowKey)"
+        />
+        <div v-if="hasNewerItems" class="timeline-process-page-state" role="status">
+          {{ pageError ? t('chat.timeline.processPageFailed') : loadingMore ? t('chat.timeline.processLoading') : t('chat.timeline.processScrollLater') }}
+        </div>
         <!-- 有工具轮次的流式尾部：正文区在流式期间让位，活动文本在这里直播，
              轮次完成后由正文区接管（buildRows 会排除最后一条助手正文，不重复）。 -->
-        <div v-if="liveTail" class="timeline-body-block timeline-live-print">{{ liveTail }}</div>
+        <div v-if="liveTail && !hasNewerItems" class="timeline-body-block timeline-live-print">{{ liveTail }}</div>
       </template>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref, shallowRef, triggerRef, watch } from 'vue';
 
 import MessageMarkdownBody from './MessageMarkdownBody.vue';
 import MessageTimelineThinkingEntry from './MessageTimelineThinkingEntry.vue';
@@ -94,7 +95,6 @@ import { t } from '@/i18n';
 import { getThreadLogTurn } from '@/api/chat';
 import {
   buildTimelineToolEntry,
-  TIMELINE_ENTRY_RENDER_LIMIT,
   type TimelineReasoningEntry,
   type TimelineToolEntry
 } from './toolTimelineModel';
@@ -117,6 +117,8 @@ const props = defineProps<{
   liveTail?: string;
   reasoning?: string;
   reasoningItemId?: string;
+  /** The item-scoped reasoning stream may still be active after the process log loads. */
+  reasoningStreaming?: boolean;
   /** Stable terminal assistant item from the chat view row. The lazy log can
    * contain several assistant prints; only this item belongs in the answer
    * block, all earlier prints stay in the work process. */
@@ -133,13 +135,19 @@ const loading = ref(false);
 const error = ref(false);
 const loaded = ref(false);
 const rows = shallowRef<ProcessRow[]>([]);
-const omittedRuns = ref(0);
-const hasMoreItems = ref(false);
+/** A work process can be much larger than a message body. Keep its retained
+ * data and DOM bounded; both edges are independently keyset-paged. */
+const PROCESS_ITEM_PAGE_SIZE = 100;
+const PROCESS_ITEM_WINDOW = 400;
+const hasOlderItems = ref(false);
+const hasNewerItems = ref(false);
 const loadingMore = ref(false);
-const nextAfter = ref(-1);
-const loadMoreItems = ref<Array<Record<string, unknown>>>([]);
-const visibleRunLimit = ref(TIMELINE_ENTRY_RENDER_LIMIT);
+const pageError = ref(false);
+const firstItemIndex = ref<number | null>(null);
+const lastItemIndex = ref<number | null>(null);
+const processItems = shallowRef<Array<Record<string, unknown>>>([]);
 const openKeys = ref(new Set<string>());
+const processBodyRef = ref<HTMLElement | null>(null);
 const patchViews = new Map<string, ToolWorkflowPatchView | null>();
 const structuredViews = new Map<string, ToolWorkflowStructuredView | null>();
 let loadAbort: AbortController | null = null;
@@ -148,12 +156,20 @@ let reloadTimer: number | null = null;
 const cacheKeyPrefix = computed(() => `turn-process:${props.sessionId}:${props.turnId}:`);
 const reasoningText = computed(() => String(props.reasoning || '').trim());
 const reasoningSummary = computed(() => firstLine(reasoningText.value));
+/** The server gives the current reasoning item's durable identity.  Keep a
+ * local fallback only for an older source that does not expose it yet. */
+const currentReasoningItemId = computed(() => String(props.reasoningItemId || '').trim());
+const fallbackReasoningKey = ref('projected:0');
+const currentReasoningRowKey = computed(() => `reasoning:${currentReasoningItemId.value || fallbackReasoningKey.value}`);
+const hasCurrentReasoningRow = computed(() =>
+  rows.value.some((row) => row.kind === 'reasoning' && row.key === currentReasoningRowKey.value)
+);
 const firstLine = (text: string): string => {
   const normalized = text.replace(/\s+/g, ' ').trim();
   return normalized.length > 160 ? `${normalized.slice(0, 160)}…` : normalized;
 };
 const reasoningEntry = computed<TimelineReasoningEntry>(() => ({
-  kind: 'reasoning', key: 'reasoning:projected', streaming: Boolean(props.reasoning && !loaded.value),
+  kind: 'reasoning', key: currentReasoningRowKey.value, streaming: Boolean(props.reasoningStreaming),
   summary: firstLine(reasoningText.value), text: reasoningText.value
 }));
 
@@ -189,92 +205,161 @@ const structuredViewFor = (entry: TimelineToolEntry): ToolWorkflowStructuredView
   return structuredViews.get(entry.key) ?? null;
 };
 
-const load = async (): Promise<void> => {
+const itemIndex = (item: Record<string, unknown> | undefined): number | null => {
+  const value = item?.item_index;
+  return typeof value === 'number' && Number.isSafeInteger(value) ? value : null;
+};
+
+const rebuildRows = (): void => {
+  rows.value = buildRows(processItems.value);
+  firstItemIndex.value = itemIndex(processItems.value[0]);
+  lastItemIndex.value = itemIndex(processItems.value.at(-1));
+  const keys = new Set(rows.value.map(row => row.key));
+  openKeys.value = new Set([...openKeys.value].filter(key => keys.has(key) || key === currentReasoningRowKey.value));
+  // Derived tool views are tied to a row revision. Drop them when a new page
+  // arrives so neither an evicted row nor an outdated result stays cached.
+  patchViews.clear();
+  structuredViews.clear();
+};
+
+type ProcessPageDirection = 'initial' | 'older' | 'newer' | 'refresh';
+let pageRetryAfter = 0;
+let fillFrame: number | null = null;
+let fillBudget = 4;
+let pageAnchor: { key?: string; offset: number; follow: boolean } | null = null;
+let anchorFrame: number | null = null;
+let restoredScrollTop = 0;
+// Markdown renders asynchronously. Keep the same anchor through those height
+// changes too, until the reader scrolls again, instead of anchoring empty blocks.
+const restorePageAnchor = (): void => {
+  if (anchorFrame !== null || !pageAnchor) return;
+  anchorFrame = window.requestAnimationFrame(() => {
+    anchorFrame = null;
+    const body = processBodyRef.value;
+    if (!body || !pageAnchor) return;
+    if (pageAnchor.follow) body.scrollTop = body.scrollHeight;
+    else {
+      const row = [...body.querySelectorAll<HTMLElement>('[data-process-key]')]
+        .find(node => node.dataset.processKey === pageAnchor?.key);
+      if (row) body.scrollTop += row.getBoundingClientRect().top - body.getBoundingClientRect().top - pageAnchor.offset;
+    }
+    restoredScrollTop = body.scrollTop;
+  });
+};
+const fillShortPage = (): void => {
+  if (fillFrame !== null || !open.value || fillBudget <= 0) return;
+  fillFrame = window.requestAnimationFrame(() => {
+    fillFrame = null;
+    const body = processBodyRef.value;
+    if (!body || body.scrollHeight > body.clientHeight + 2 || loadAbort) return;
+    const direction = hasOlderItems.value ? 'older' : hasNewerItems.value ? 'newer' : null;
+    if (direction) { fillBudget--; void loadPage(direction); }
+  });
+};
+
+const loadPage = async (direction: ProcessPageDirection): Promise<void> => {
   const sessionId = props.sessionId.trim();
   const turnId = props.turnId.trim();
-  if (!sessionId || !turnId) return;
+  if (!sessionId || !turnId || loadAbort || !open.value) return;
+  const initial = direction === 'initial';
+  const older = direction === 'older';
+  const refresh = direction === 'refresh';
+  if (older && (!hasOlderItems.value || firstItemIndex.value === null)) return;
+  if (direction === 'newer' && (!hasNewerItems.value || lastItemIndex.value === null)) return;
+  if (refresh && hasNewerItems.value) return; // Never move a reader away from history.
   const controller = new AbortController();
-  loadAbort?.abort();
   loadAbort = controller;
-  loading.value = true;
+  loading.value = initial;
+  loadingMore.value = !initial;
   error.value = false;
+  pageError.value = false;
   try {
-    // 展开时只读一个有界窗口；较大的轮次通过“加载更早过程”继续向前
-    // 拉取，避免一次把历史测试日志复制进 DOM。
-    const items: Array<Record<string, unknown>> = [];
-    let after = -1;
-    let more = false;
-    for (let page = 0; page < 4; page += 1) {
-      const response = await getThreadLogTurn(
-        sessionId,
-        turnId,
-        { item_after: after, limit: 100 },
-        { signal: controller.signal }
-      );
-      if (controller.signal.aborted) return;
-      const turn = response.data?.data?.turn;
-      const batch = Array.isArray(turn?.items) ? turn.items : [];
-      items.push(...batch);
-      more = Boolean(turn?.has_more);
-      if (!more || batch.length === 0) break;
-      const next = Number(turn.next_after);
-      if (!Number.isSafeInteger(next) || next <= after) {
-        more = false;
-        break;
-      }
-      after = next;
-    }
+    // A high exclusive bound requests the latest page with an indexed DESC
+    // query. Subsequent pages use the actual first/last durable item index.
+    const params = initial ? { item_before: Number.MAX_SAFE_INTEGER, limit: PROCESS_ITEM_PAGE_SIZE }
+      : older ? { item_before: firstItemIndex.value, limit: PROCESS_ITEM_PAGE_SIZE }
+      : { item_after: refresh ? (itemIndex(processItems.value.at(-20)) ?? firstItemIndex.value ?? 0) - 1 : lastItemIndex.value,
+          limit: PROCESS_ITEM_PAGE_SIZE };
+    const response = await getThreadLogTurn(sessionId, turnId, params, { signal: controller.signal });
     if (controller.signal.aborted) return;
-    loadMoreItems.value = items;
-    visibleRunLimit.value = TIMELINE_ENTRY_RENDER_LIMIT;
-    rows.value = buildRows(items);
-    nextAfter.value = after;
-    hasMoreItems.value = more;
+    const turn = response.data?.data?.turn;
+    if (!Array.isArray(turn?.items)) throw new Error('Invalid process page');
+    const batch = turn.items as Array<Record<string, unknown>>;
+    // Capture geometry immediately before applying the page, after any user
+    // scrolling during the request. Total-height deltas cannot anchor a window
+    // that adds rows at one edge and evicts rows at the other.
+    const body = processBodyRef.value;
+    const top = body?.getBoundingClientRect().top ?? 0;
+    const anchor = body && [...body.querySelectorAll<HTMLElement>('[data-process-key]')]
+      .find(node => node.getBoundingClientRect().bottom > top);
+    const anchorKey = anchor?.dataset.processKey;
+    const anchorOffset = anchor ? anchor.getBoundingClientRect().top - top : 0;
+    const follow = initial || (refresh && body && body.scrollHeight - body.clientHeight - body.scrollTop <= 72);
+    pageAnchor = { key: anchorKey, offset: anchorOffset, follow: Boolean(follow) };
+    if (initial) {
+      processItems.value = batch;
+      hasOlderItems.value = Boolean(turn.has_older ?? turn.has_more);
+      hasNewerItems.value = Boolean(turn.has_newer);
+    } else if (batch.length) {
+      const byId = new Map(processItems.value.map(item => [String(item.item_id), item]));
+      for (const item of batch) byId.set(String(item.item_id), item);
+      const merged = [...byId.values()].sort((a, b) => (itemIndex(a) ?? 0) - (itemIndex(b) ?? 0));
+      const evicted = merged.length > PROCESS_ITEM_WINDOW;
+      processItems.value = older ? merged.slice(0, PROCESS_ITEM_WINDOW) : merged.slice(-PROCESS_ITEM_WINDOW);
+      if (older) {
+        hasOlderItems.value = Boolean(turn.has_older ?? turn.has_more);
+        hasNewerItems.value ||= evicted;
+      } else {
+        hasNewerItems.value = Boolean(turn.has_newer ?? turn.has_more);
+        hasOlderItems.value ||= evicted;
+      }
+    } else if (older) hasOlderItems.value = false;
+    else hasNewerItems.value = false;
+    rebuildRows();
     loaded.value = true;
+    await nextTick();
+    if (controller.signal.aborted || !body) return;
+    if (follow) body.scrollTop = body.scrollHeight;
+    else if (anchorKey) {
+      const restored = [...body.querySelectorAll<HTMLElement>('[data-process-key]')]
+        .find(node => node.dataset.processKey === anchorKey);
+      if (restored) body.scrollTop += restored.getBoundingClientRect().top - body.getBoundingClientRect().top - anchorOffset;
+    }
+    restoredScrollTop = body.scrollTop;
+    restorePageAnchor();
   } catch {
-    if (!controller.signal.aborted) error.value = true;
+    if (!controller.signal.aborted) {
+      if (initial) error.value = true;
+      else pageError.value = true;
+      pageRetryAfter = Date.now() + 1500;
+    }
   } finally {
     if (loadAbort === controller) {
       loadAbort = null;
       loading.value = false;
+      loadingMore.value = false;
+      if (!pageError.value && !error.value) fillShortPage();
     }
   }
 };
 
-const loadMore = async (): Promise<void> => {
-  if (!hasMoreItems.value || loadingMore.value || loadAbort || !props.sessionId || !props.turnId) return;
-  // Preserve chronological order: reveal the next bounded set already in
-  // memory before asking the server for a later item page.
-  if (omittedRuns.value > 0) {
-    visibleRunLimit.value += TIMELINE_ENTRY_RENDER_LIMIT;
-    rows.value = buildRows(loadMoreItems.value);
-    return;
-  }
-  const controller = new AbortController();
-  loadAbort = controller;
-  loadingMore.value = true;
-  try {
-    const response = await getThreadLogTurn(props.sessionId, props.turnId,
-      { item_after: nextAfter.value, limit: 100 }, { signal: controller.signal });
-    if (controller.signal.aborted) return;
-    const turn = response.data?.data?.turn;
-    const batch = Array.isArray(turn?.items) ? turn.items : [];
-    if (!batch.length) { hasMoreItems.value = false; return; }
-    // The API is forward-paged. Keep a bounded client window so repeatedly
-    // expanding a pathological turn cannot grow memory without limit.
-    const mergedItems = loadMoreItems.value.concat(batch).slice(-10000);
-    loadMoreItems.value = mergedItems;
-    visibleRunLimit.value += TIMELINE_ENTRY_RENDER_LIMIT;
-    rows.value = buildRows(mergedItems);
-    const next = Number(turn.next_after);
-    hasMoreItems.value = Boolean(turn.has_more && Number.isSafeInteger(next) && next > nextAfter.value);
-    if (Number.isSafeInteger(next) && next > nextAfter.value) nextAfter.value = next;
-  } catch {
-    // The already-rendered process remains usable; retrying the button is safe.
-  } finally {
-    if (loadAbort === controller) loadAbort = null;
-    loadingMore.value = false;
-  }
+const load = (): Promise<void> => loadPage('initial');
+const handleProcessScroll = (): void => {
+  const body = processBodyRef.value;
+  if (!body || loadingMore.value || Date.now() < pageRetryAfter) return;
+  if (Math.abs(body.scrollTop - restoredScrollTop) > 2) pageAnchor = null;
+  fillBudget = 4;
+  if (body.scrollTop <= 96 && hasOlderItems.value) void loadPage('older');
+  else if (body.scrollHeight - body.clientHeight - body.scrollTop <= 96 && hasNewerItems.value) void loadPage('newer');
+};
+// A page containing only filtered items may not create a scrollbar. A wheel
+// gesture must still be able to continue reading it without a load button.
+const handleProcessWheel = (event: WheelEvent): void => {
+  pageAnchor = null;
+  const body = processBodyRef.value;
+  if (!body || body.scrollHeight > body.clientHeight + 2 || Date.now() < pageRetryAfter) return;
+  fillBudget = 4;
+  void loadPage(event.deltaY < 0 ? 'older' : 'newer');
 };
 
 const resetState = (): void => {
@@ -286,31 +371,95 @@ const resetState = (): void => {
   error.value = false;
   loaded.value = false;
   rows.value = [];
-  loadMoreItems.value = [];
-  visibleRunLimit.value = TIMELINE_ENTRY_RENDER_LIMIT;
-  hasMoreItems.value = false;
-  nextAfter.value = -1;
-  omittedRuns.value = 0;
+  pageError.value = false;
+  pageRetryAfter = 0;
+  fillBudget = 4;
+  if (fillFrame !== null) window.cancelAnimationFrame(fillFrame);
+  fillFrame = null;
+  if (anchorFrame !== null) window.cancelAnimationFrame(anchorFrame);
+  anchorFrame = null;
+  pageAnchor = null;
+  processItems.value = [];
+  hasOlderItems.value = false;
+  hasNewerItems.value = false;
+  firstItemIndex.value = null;
+  lastItemIndex.value = null;
   openKeys.value = new Set();
+  fallbackReasoningKey.value = 'projected:0';
+  processBodyRef.value = null;
   patchViews.clear();
   structuredViews.clear();
 };
 
 // 轮次身份变化（虚拟列表行复用）即复位；轮次仍在运行时步数会增长，展开态跟随刷新。
 watch(() => [props.sessionId, props.turnId], resetState);
+
+// Some legacy row sources do not yet carry `reasoning_item_id`. Their current
+// preview still represents one model round; advance a local identity when its
+// text clears and starts again so a later thought is appended, never recycled.
+watch(
+  () => [currentReasoningItemId.value, reasoningText.value] as const,
+  ([itemId, text], [previousItemId, previousText]) => {
+    if (itemId || !text || previousItemId || !previousText) return;
+    const sequence = Number(fallbackReasoningKey.value.split(':')[1] || '0') + 1;
+    fallbackReasoningKey.value = `projected:${sequence}`;
+  }
+);
+
+/**
+ * The lazy log is deliberately not refetched for every reasoning tail.  Once
+ * its current row exists, replace only that shallow row's entry in place; Vue
+ * keeps all other keyed process DOM stable and the live text cannot jump to a
+ * completed entry above it.
+ */
+const syncCurrentReasoningRow = (): void => {
+  if (!loaded.value) return;
+  let changed = false;
+  // A subsequent model request starts a different item. Mark the preceding
+  // thought final immediately, before the debounced log refresh supplies its
+  // durable status, so an old row never keeps the live spinner.
+  for (let index = 0; index < rows.value.length; index += 1) {
+    const row = rows.value[index];
+    if (row.kind !== 'reasoning' || !row.entry.streaming || row.key === currentReasoningRowKey.value) continue;
+    rows.value[index] = {
+      kind: 'reasoning', key: row.key,
+      entry: { ...row.entry, streaming: false }
+    };
+    changed = true;
+  }
+  if (currentReasoningItemId.value && reasoningText.value) {
+    const index = rows.value.findIndex((row) => row.kind === 'reasoning' && row.key === currentReasoningRowKey.value);
+    const current = index >= 0 ? rows.value[index] : null;
+    if (current?.kind === 'reasoning') {
+      const next = reasoningEntry.value;
+      if (current.entry.text !== next.text || current.entry.streaming !== next.streaming) {
+        rows.value[index] = { kind: 'reasoning', key: current.key, entry: next };
+        changed = true;
+      }
+    }
+  }
+  if (changed) triggerRef(rows);
+};
+watch(
+  () => [currentReasoningItemId.value, reasoningText.value, Boolean(props.reasoningStreaming), loaded.value],
+  syncCurrentReasoningRow
+);
+
 // 流式期间步数高频增长：防抖跟随刷新（尾部触发），避免每次步数变化都整段重拉造成抖动。
 watch(
-  () => props.count,
+  () => [props.count, props.finalItemId],
   () => {
     if (!open.value || !loaded.value) return;
     clearReloadTimer();
     reloadTimer = window.setTimeout(() => {
       reloadTimer = null;
-      if (open.value) void load();
+      if (open.value) void loadPage('refresh');
     }, 600);
   }
 );
 onBeforeUnmount(() => {
+  if (anchorFrame !== null) window.cancelAnimationFrame(anchorFrame);
+  if (fillFrame !== null) window.cancelAnimationFrame(fillFrame);
   clearReloadTimer();
   loadAbort?.abort();
 });
@@ -452,18 +601,22 @@ const buildRows = (items: Array<Record<string, unknown>>): ProcessRow[] => {
   if (!slots.length) return rows;
   // run 折叠（call/output/result 配对）复用既有链路；有界窗口与折叠提示同投影语义。
   const runs = buildWorkflowToolRuns(mappedItems);
-  omittedRuns.value = Math.max(runs.length - visibleRunLimit.value, 0);
-  const visibleRuns = runs.slice(0, visibleRunLimit.value);
   const entryByItemId = new Map<string, TimelineToolEntry>();
-  for (const run of visibleRuns) {
+  for (const run of runs) {
     const entry = buildTimelineToolEntry(run, t);
     entryByItemId.set(String(run.key), entry);
-    if (run.callItem) entryByItemId.set(String(run.callItem.id ?? ''), entry);
+    for (const item of [run.callItem, run.outputItem, run.resultItem]) {
+      if (item) entryByItemId.set(String(item.id ?? ''), entry);
+    }
   }
+  const emittedTools = new Set<string>();
   for (const slot of slots) {
     if (slot.type === 'tool') {
       const entry = entryByItemId.get(String(slot.item?.item_id || ''));
-      if (entry) rows.push({ kind: 'tool', key: `tool:${entry.key}`, entry });
+      if (entry && !emittedTools.has(entry.key)) {
+        emittedTools.add(entry.key);
+        rows.push({ kind: 'tool', key: `tool:${entry.key}`, entry });
+      }
       continue;
     }
     const payload = flattenItemPayload(slot.item?.payload);
@@ -474,13 +627,20 @@ const buildRows = (items: Array<Record<string, unknown>>): ProcessRow[] => {
     // The bounded display row carries only the newest reasoning preview. Merge
     // it into its durable assistant item so it stays at the right point in the
     // timeline instead of being pinned above all process records.
-    const reasoning = persistedReasoning ||
-      (itemId === String(props.reasoningItemId || '') ? reasoningText.value : '');
+    const isCurrentReasoning = itemId === currentReasoningItemId.value;
+    // The thread-view row contains the newest bounded preview. Prefer it for
+    // its matching durable item so the active entry updates without a reload.
+    const reasoning = (isCurrentReasoning ? reasoningText.value : '') || persistedReasoning;
     if (reasoning) {
+      const key = `reasoning:${itemId}`;
       rows.push({
         kind: 'reasoning',
-        key: `reasoning:${itemId}`,
-        entry: { kind: 'reasoning', key: `reasoning:${itemId}`, streaming: false, summary: firstLine(reasoning), text: reasoning }
+        key,
+        entry: {
+          kind: 'reasoning', key,
+          streaming: isCurrentReasoning && Boolean(props.reasoningStreaming),
+          summary: firstLine(reasoning), text: reasoning
+        }
       });
     }
     const content = typeof payload.content === 'string' ? payload.content.trim() : '';
@@ -498,17 +658,11 @@ const buildRows = (items: Array<Record<string, unknown>>): ProcessRow[] => {
 .timeline-turn-process {
   width: 100%;
   min-width: 0;
-  border: 1px solid transparent;
-  border-radius: 10px;
-  background: var(--mz-timeline-hover, #f6f5f3);
-  overflow: hidden;
-  transition: background-color 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
+  background: transparent;
 }
 
 .timeline-turn-process.is-open {
-  border-color: var(--mz-border, #e8e6e3);
-  background: var(--mz-surface, #ffffff);
-  box-shadow: 0 1px 2px rgba(31, 35, 41, 0.04);
+  background: transparent;
 }
 
 .timeline-process-head {
@@ -517,36 +671,63 @@ const buildRows = (items: Array<Record<string, unknown>>): ProcessRow[] => {
   gap: 8px;
   box-sizing: border-box;
   width: 100%;
-  height: 34px;
+  height: 40px;
   padding: 0 24px;
   border: 0;
-  border-radius: 6px;
+  border-radius: 0;
   background: transparent;
   color: var(--mz-text-secondary, #3d3d3d);
-  font-size: calc(13px * var(--messenger-font-scale, 1));
+  font-size: calc(14px * var(--messenger-font-scale, 1));
   text-align: left;
   cursor: pointer;
 }
 
+/* The work-process row is an unobtrusive disclosure, not a selected list row.
+   Hover feedback lives on the chevron button so scanning the timeline remains calm. */
 .timeline-process-head:hover {
-  background: var(--mz-selected, #edeae6);
+  background: transparent;
 }
 
-.timeline-turn-process.is-open .timeline-process-head:hover {
-  background: var(--mz-timeline-hover, #f6f5f3);
+.timeline-process-head:focus-visible {
+  outline: none;
+}
+
+.timeline-process-head:focus-visible .timeline-process-gutter::before {
+  border-color: rgba(var(--ui-accent-rgb), 0.48);
+  box-shadow: 0 0 0 2px rgba(var(--ui-accent-rgb), 0.14);
 }
 
 .timeline-process-gutter {
   position: relative;
   flex: 0 0 auto;
   align-self: stretch;
-  width: 20px;
+  width: 34px;
+}
+
+.timeline-process-gutter::before {
+  content: '';
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  left: -7px;
+  width: 32px;
+  box-sizing: border-box;
+  border: 1px solid var(--mz-border, #e8e6e3);
+  border-radius: 10px;
+  background: var(--mz-surface, #ffffff);
+  box-shadow: 0 1px 2px rgba(31, 35, 41, 0.06);
+  transition: border-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.timeline-process-gutter:hover::before {
+  border-color: var(--mz-border-strong, #d8d5d0);
+  box-shadow: 0 2px 5px rgba(31, 35, 41, 0.08);
 }
 
 .timeline-process-gutter-line {
   position: absolute;
-  top: calc(50% + 7px);
-  bottom: 0;
+  top: 40px;
+  bottom: -12px;
   left: 9.5px;
   width: 1px;
   background: var(--mz-timeline-line, #e2dfda);
@@ -554,6 +735,7 @@ const buildRows = (items: Array<Record<string, unknown>>): ProcessRow[] => {
 
 .timeline-process-arrow {
   position: absolute;
+  z-index: 1;
   top: 50%;
   left: 4px;
   width: 12px;
@@ -571,25 +753,19 @@ const buildRows = (items: Array<Record<string, unknown>>): ProcessRow[] => {
 
 .timeline-process-title {
   flex: 0 0 auto;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .timeline-process-count {
   flex: 0 0 auto;
-  padding: 1px 7px;
-  border-radius: 999px;
-  background: var(--mz-selected, #edeae6);
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
   color: var(--mz-text-muted, #8a8f99);
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 400;
-  line-height: 16px;
+  line-height: inherit;
   white-space: nowrap;
-}
-
-/* 展开态徽章带一点主色，呼应卡片的「活动区」身份。 */
-.timeline-turn-process.is-open .timeline-process-count {
-  background: var(--mz-primary-tint, #f6e9e3);
-  color: var(--mz-primary, #c96443);
 }
 
 .timeline-process-latest {
@@ -608,20 +784,7 @@ const buildRows = (items: Array<Record<string, unknown>>): ProcessRow[] => {
   max-height: min(420px, 48vh);
   overflow-y: auto;
   overscroll-behavior: contain;
-  scrollbar-gutter: stable;
-}
-
-.timeline-process-body::-webkit-scrollbar {
-  width: 8px;
-}
-
-.timeline-process-body::-webkit-scrollbar-thumb {
-  border-radius: 4px;
-  background: var(--mz-border, #e8e6e3);
-}
-
-.timeline-process-body::-webkit-scrollbar-track {
-  background: transparent;
+  overflow-anchor: none;
 }
 
 .timeline-process-note {
@@ -640,25 +803,25 @@ const buildRows = (items: Array<Record<string, unknown>>): ProcessRow[] => {
   cursor: pointer;
 }
 
-.timeline-process-more {
+.timeline-process-page-state {
   display: block;
   max-width: calc(100% - 48px);
   margin: 8px 24px 12px 52px;
   padding: 5px 10px;
   border: 1px solid rgba(100, 116, 139, 0.22);
   border-radius: 6px;
-  background: #fff;
+  background: var(--mz-surface, #fff);
   color: var(--mz-text-secondary, #64748b);
   font-size: 12px;
-  cursor: pointer;
+  cursor: default;
 }
 
-.timeline-process-more:hover:not(:disabled) {
+.timeline-process-page-state:hover {
   border-color: rgba(59, 130, 246, 0.38);
   color: var(--mz-text, #1f2937);
 }
 
-.timeline-process-more:disabled {
+.timeline-process-page-state[aria-busy="true"] {
   cursor: wait;
   opacity: 0.65;
 }

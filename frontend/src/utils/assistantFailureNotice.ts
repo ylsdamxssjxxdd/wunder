@@ -1,3 +1,4 @@
+// AI生成
 import { formatStructuredErrorText } from './streamError';
 import { isAssistantMessageRunning } from './assistantMessageRuntime';
 import { hasActiveSubagentItems } from './subagentRuntime';
@@ -27,6 +28,10 @@ const FAILURE_STATUSES = new Set([
 
 const SUCCESS_STATUSES = new Set(['completed', 'complete', 'done', 'finished', 'success', 'succeeded']);
 const PENDING_STATUSES = new Set(['loading', 'pending', 'running', 'streaming']);
+// Admission failures terminate the turn before any model/tool item exists. The
+// durable projection keeps the server's raw status (`rejected`), while the
+// bubble speaks the UI vocabulary (`failed`, see uiMessageStatus); accept both.
+const ADMISSION_FAILURE_STATUSES = new Set(['failed', 'rejected']);
 
 const normalizeText = (value: unknown): string =>
   String(value ?? '')
@@ -175,7 +180,7 @@ export const resolveAssistantFailureNotice = (
   if (isAssistantMessageRunning(message) || hasActiveSubagentItems(message.subagents)) return null;
   // Admission failures can terminate before any model/tool item exists.
   // Their reason is attached by durable turn identity, never by latest bubble.
-  if (status === 'failed' && typeof message.failureDetail === 'string' && message.failureDetail.trim()) {
+  if (ADMISSION_FAILURE_STATUSES.has(status) && typeof message.failureDetail === 'string' && message.failureDetail.trim()) {
     return resolveFailureDetail({ detail: message.failureDetail }, t);
   }
   const terminal = resolveLatestTerminalWorkflowItem(message);

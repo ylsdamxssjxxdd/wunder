@@ -24,54 +24,71 @@ pub fn project_visible_item(message: &mut Value, kind: &str, turn_status: &str) 
     }
 }
 
-/// Hydrate only unfinished visible messages. Completed messages already own their
-/// final text; recovery reads the active fields in bounded database pages.
+/// Recover durable stream text when an assistant payload is missing a field.
+/// Text blocks can be the only copy of an intermediate print, even after the
+/// item and turn have completed. Existing payload text always takes precedence.
 pub fn hydrate_active_text(
     storage: &dyn StorageBackend,
     user_id: &str,
     session_id: &str,
     message: &mut Value,
 ) -> anyhow::Result<()> {
-    if message["role"] != "assistant"
-        || !matches!(
-            message["status"].as_str(),
-            Some(
-                "running" | "streaming" | "waiting_input" | "cancelled" | "interrupted" | "failed"
-            )
-        )
+    if message
+        .get("role")
+        .and_then(Value::as_str)
+        .is_some_and(|role| role != "assistant")
     {
         return Ok(());
     }
     let Some(item_id) = message["item_id"].as_str().map(str::to_owned) else {
         return Ok(());
     };
-    for field in ["content", "reasoning"] {
-        let mut from = 0;
+    for (field, block_fields) in [
+        ("content", &["content"][..]),
+        ("reasoning", &["reasoning", "reasoning_content"][..]),
+    ] {
+        if message[field].as_str().is_some_and(|value| !value.is_empty()) {
+            continue;
+        }
+        if field == "reasoning"
+            && message["reasoning_content"]
+                .as_str()
+                .is_some_and(|value| !value.is_empty())
+        {
+            message[field] = message["reasoning_content"].clone();
+            continue;
+        }
         let mut text = String::new();
-        loop {
-            let (blocks, next, more) = storage.list_thread_item_blocks_page(
-                user_id,
-                session_id,
-                &item_id,
-                Some(field),
-                from,
-                100,
-                false,
-            )?;
-            for block in blocks {
-                let data = block.get("data").unwrap_or(&block);
-                if let Some(part) = data[field].as_str() {
-                    text.push_str(part);
+        for block_field in block_fields {
+            let mut from = 0;
+            loop {
+                let (blocks, next, more) = storage.list_thread_item_blocks_page(
+                    user_id,
+                    session_id,
+                    &item_id,
+                    Some(block_field),
+                    from,
+                    100,
+                    false,
+                )?;
+                for block in blocks {
+                    let data = block.get("data").unwrap_or(&block);
+                    if let Some(part) = data[block_field].as_str() {
+                        text.push_str(part);
+                    }
                 }
+                if !more {
+                    break;
+                }
+                let next = next
+                    .map(|next| next.saturating_add(1))
+                    .filter(|next| *next > from)
+                    .ok_or_else(|| anyhow::anyhow!("text block cursor did not advance"))?;
+                from = next;
             }
-            if !more {
+            if !text.is_empty() {
                 break;
             }
-            let next = next
-                .map(|next| next.saturating_add(1))
-                .filter(|next| *next > from)
-                .ok_or_else(|| anyhow::anyhow!("text block cursor did not advance"))?;
-            from = next;
         }
         if !text.is_empty() {
             message[field] = json!(text);

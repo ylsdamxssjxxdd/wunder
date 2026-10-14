@@ -3,8 +3,10 @@ name: Chat frontend contract
 on:
   pull_request:
     paths: ['frontend/**', 'crates/wunder-runtime/src/storage/**', 'crates/wunder-runtime/src/services/**', 'package*.json', '.github/workflows/chat-frontend.yml']
-  push:
-    paths: ['frontend/**', 'crates/wunder-runtime/src/storage/**', 'crates/wunder-runtime/src/services/**', 'package*.json', '.github/workflows/chat-frontend.yml']
+  # push 触发已按需求停用：上传 commit 不再自动跑该 mock 契约流水线。
+  # 需要时用 workflow_dispatch 手动触发，或恢复下面这段 paths 过滤。
+  # push:
+  #   paths: ['frontend/**', 'crates/wunder-runtime/src/storage/**', 'crates/wunder-runtime/src/services/**', 'package*.json', '.github/workflows/chat-frontend.yml']
   workflow_dispatch:
 
 permissions:

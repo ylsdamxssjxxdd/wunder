@@ -14,7 +14,7 @@ updated_at: 2026-10-13
 
 1. Don't know how to use it → see the FAQ and the getting-started docs
 2. A feature misbehaves → see Troubleshooting
-3. Want to integrate or develop → see the interfaces and endpoints under the capabilities overview
+3. Want to integrate or develop → see the [capabilities overview](/docs/en/capabilities/)
 
 ## Jump by Symptom
 

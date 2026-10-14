@@ -1,6 +1,7 @@
 use super::*;
 use crate::patch_diff::{build_patch_diff_preview, format_patch_diff_preview_lines};
 use crate::tool_display::summarize_tool_result;
+use crate::tui::text_tabs;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy)]
@@ -765,7 +766,7 @@ pub(super) fn wrapped_visual_line_count_parts(prefix: &str, text: &str, width: u
             continue;
         }
 
-        let char_width = display_char_width(ch);
+        let char_width = display_char_width(ch, line_columns);
         if line_columns > 0 && line_columns.saturating_add(char_width) > width {
             line_count = line_count.saturating_add(1);
             line_columns = 0;
@@ -781,6 +782,12 @@ pub(super) fn wrapped_visual_line_count(text: &str, width: usize) -> usize {
     wrapped_visual_line_count_parts("", text, width)
 }
 
+/// Up/down across the composer's wrapped lines.
+///
+/// The caret keeps its *display column* — measured with `text_tabs`' eight-column tab
+/// stops, the same projection the terminal renders — not its character index. On a draft
+/// with pasted tabs this is deliberate: the caret stays under the visual cell the user
+/// left, instead of sliding sideways by however many columns the tab happened to pad.
 pub(super) fn move_cursor_vertical(text: &str, width: usize, cursor: usize, delta: i8) -> usize {
     let lines = build_wrapped_input_lines(text, width);
     if lines.len() <= 1 {
@@ -818,7 +825,10 @@ pub(super) fn build_wrapped_input_lines(text: &str, width: usize) -> Vec<Wrapped
             continue;
         }
 
-        let char_width = display_char_width(ch);
+        // Column-aware: a tab is measured from the display column the line has already
+        // consumed, so the break decision matches what the composer's projected frame
+        // (tabs expanded to `text_tabs`' eight-column stops) will render.
+        let char_width = display_char_width(ch, line_columns);
         if line_columns > 0 && line_columns.saturating_add(char_width) > width {
             lines.push(WrappedInputLine {
                 start: line_start,
@@ -864,15 +874,18 @@ pub(super) fn cursor_visual_position(
     (lines.len().saturating_sub(1), col)
 }
 
-pub(super) fn display_char_width(ch: char) -> usize {
-    UnicodeWidthChar::width_cjk(ch)
-        .or_else(|| UnicodeWidthChar::width(ch))
-        .unwrap_or(0)
-        .max(1)
+/// The one character-width rule for the composer, delegated to `text_tabs`: a tab
+/// advances from display column `column` to the next eight-column stop, everything else
+/// uses its display width (never zero). Counting a tab as one fixed column here is what
+/// used to make wrap, pointer hits and vertical caret motion disagree with the frame.
+pub(super) fn display_char_width(ch: char, column: usize) -> usize {
+    text_tabs::char_advance(ch, column)
 }
 
+/// Projected display width of a logical piece of text, tabs included (see
+/// `text_tabs::projected_width`).
 pub(super) fn display_width(text: &str) -> usize {
-    text.chars().map(display_char_width).sum()
+    text_tabs::projected_width(text)
 }
 
 pub(super) fn normalize_wrapped_cursor_position(
@@ -1023,28 +1036,23 @@ pub(super) fn next_char_boundary(text: &str, index: usize) -> usize {
     cursor.min(text.len())
 }
 
+/// Byte offset of the caret a display column lands on inside one wrapped line.
+///
+/// The column is answered through `text_tabs::logical_index_at`, the same hit rule the
+/// transcript uses: a column inside a tab's padding or a wide character's cell belongs to
+/// that character, so the caret sits at the character's start rather than drifting to the
+/// neighbour left of it. `column` is measured from the line's own start (column 0).
 pub(super) fn byte_index_for_display_column(
     text: &str,
     start: usize,
     end: usize,
     column: usize,
 ) -> usize {
-    let mut consumed = 0usize;
-    let mut cursor = start;
-
-    for (offset, ch) in text[start..end].char_indices() {
-        if consumed >= column {
-            return start + offset;
-        }
-        let width = display_char_width(ch);
-        consumed = consumed.saturating_add(width);
-        cursor = start + offset + ch.len_utf8();
-        if consumed >= column {
-            return cursor;
-        }
-    }
-
-    cursor.min(end)
+    let line = &text[start..end];
+    let index = text_tabs::logical_index_at(line, column);
+    line.char_indices()
+        .nth(index)
+        .map_or(end, |(offset, _)| start + offset)
 }
 
 pub(super) fn is_word_char(ch: char) -> bool {
@@ -1594,7 +1602,7 @@ fn extract_apply_patch_file_line(file: &Value) -> Option<String> {
     Some(format!("  {marker} {text}"))
 }
 
-fn format_apply_patch_result_lines(tool: &str, payload: &Value, is_zh: bool) -> Vec<String> {
+fn format_apply_patch_result_lines(_tool: &str, payload: &Value, is_zh: bool) -> Vec<String> {
     let result = extract_tool_result_object(payload);
     let data = extract_tool_result_data(result);
     let ok = result.get("ok").and_then(Value::as_bool);
@@ -1614,22 +1622,20 @@ fn format_apply_patch_result_lines(tool: &str, payload: &Value, is_zh: bool) -> 
     let mut lines = Vec::new();
     let files = data.get("files").and_then(Value::as_array);
     if ok == Some(false) {
-        lines.push(if tool_is_zh {
-            "✘ 补丁应用失败".to_string()
-        } else {
-            "✘ Failed to apply patch".to_string()
-        });
+        lines.push(crate::locale::ui_text(
+            tool_is_zh,
+            "patch_apply_failed",
+            &[],
+        ));
     } else {
         let noun = if changed_files == 1 {
-            if tool_is_zh {
-                "1 个文件".to_string()
-            } else {
-                "1 file".to_string()
-            }
-        } else if tool_is_zh {
-            format!("{changed_files} 个文件")
+            crate::locale::ui_text(tool_is_zh, "changed_files_one", &[])
         } else {
-            format!("{changed_files} files")
+            crate::locale::ui_text(
+                tool_is_zh,
+                "changed_files_count",
+                &[("count", &changed_files.to_string())],
+            )
         };
         let mut metrics = Vec::new();
         if added > 0 {
@@ -1652,11 +1658,11 @@ fn format_apply_patch_result_lines(tool: &str, payload: &Value, is_zh: bool) -> 
         } else {
             format!(" ({})", metrics.join(", "))
         };
-        lines.push(if tool_is_zh {
-            format!("• 已修改 {noun}{metric_suffix}")
-        } else {
-            format!("• Edited {noun}{metric_suffix}")
-        });
+        lines.push(crate::locale::ui_text(
+            tool_is_zh,
+            "patch_edited",
+            &[("files", &noun), ("metrics", &metric_suffix)],
+        ));
     }
     if let Some(error) = result
         .get("error")
@@ -1715,10 +1721,9 @@ fn format_apply_patch_result_lines(tool: &str, payload: &Value, is_zh: bool) -> 
     }
 
     if lines.len() == 1 {
-        push_tree_line(
-            &mut lines,
-            wunder_server::tool_result_display::tool_result_display(tool, payload, false),
-        );
+        if let Some(preview) = crate::render::tool_target_preview(payload, data) {
+            push_tree_line(&mut lines, preview);
+        }
     }
     lines
 }
@@ -1738,15 +1743,9 @@ pub(super) fn format_tool_result_lines(tool: &str, payload: &Value, is_zh: bool)
     let ok = result.get("ok").and_then(Value::as_bool);
     let tool_is_zh = is_zh;
     let mut lines = vec![if ok == Some(false) {
-        if tool_is_zh {
-            format!("✘ {tool} 失败")
-        } else {
-            format!("✘ {tool} failed")
-        }
-    } else if tool_is_zh {
-        format!("• 已完成 {tool}")
+        crate::locale::ui_text(tool_is_zh, "tool_failed", &[("tool", tool)])
     } else {
-        format!("• Completed {tool}")
+        crate::locale::ui_text(tool_is_zh, "tool_completed", &[("tool", tool)])
     }];
     if let Some(error) = result
         .get("error")
@@ -1776,11 +1775,10 @@ pub(super) fn format_tool_result_lines(tool: &str, payload: &Value, is_zh: bool)
             };
             push_tree_line(&mut lines, text);
         }
-    } else {
-        push_tree_line(
-            &mut lines,
-            wunder_server::tool_result_display::tool_result_display(tool, payload, false),
-        );
+    } else if let Some(preview) =
+        crate::render::tool_target_preview(payload, extract_tool_result_data(result))
+    {
+        push_tree_line(&mut lines, preview);
     }
     lines
 }
@@ -1811,15 +1809,9 @@ pub(super) fn format_execute_command_result_lines(
 
     let tool_is_zh = is_zh;
     let header = if matches!(returncode, Some(code) if code != 0) {
-        if tool_is_zh {
-            format!("✘ {tool} 失败")
-        } else {
-            format!("✘ {tool} failed")
-        }
-    } else if tool_is_zh {
-        format!("• 已完成 {tool}")
+        crate::locale::ui_text(tool_is_zh, "tool_failed", &[("tool", tool)])
     } else {
-        format!("• Completed {tool}")
+        crate::locale::ui_text(tool_is_zh, "tool_completed", &[("tool", tool)])
     };
     let mut metrics = Vec::new();
     if let Some(returncode) = returncode {
@@ -2243,6 +2235,111 @@ mod snapshot_history_tests {
     fn empty_snapshot_yields_no_records() {
         assert!(snapshot_history_records(&json!({})).is_empty());
         assert!(snapshot_history_records(&json!({"items": []})).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod tool_line_language_tests {
+    use super::*;
+
+    fn has_han(text: &str) -> bool {
+        text.chars()
+            .any(|ch| ('\u{4e00}'..='\u{9fff}').contains(&ch))
+    }
+
+    /// Expected wording pulled from the copy table itself, so a test checks the
+    /// mechanism instead of re-spelling the sentence it asserts.
+    fn expected(key: &str, is_zh: bool, args: &[(&str, &str)]) -> String {
+        crate::locale::ui_text(is_zh, key, args)
+    }
+
+    #[test]
+    fn tool_result_headers_follow_the_display_language() {
+        let done = serde_json::json!({ "result": { "ok": true } });
+        let failed = serde_json::json!({ "result": { "ok": false } });
+        for is_zh in [true, false] {
+            let lines = format_tool_result_lines("sample_tool", &done, is_zh);
+            assert_eq!(
+                lines[0],
+                expected("tool_completed", is_zh, &[("tool", "sample_tool")]),
+                "{lines:?}"
+            );
+            let lines = format_tool_result_lines("sample_tool", &failed, is_zh);
+            assert_eq!(
+                lines[0],
+                expected("tool_failed", is_zh, &[("tool", "sample_tool")]),
+                "{lines:?}"
+            );
+        }
+        assert_ne!(
+            format_tool_result_lines("sample_tool", &done, true)[0],
+            format_tool_result_lines("sample_tool", &done, false)[0]
+        );
+    }
+
+    #[test]
+    fn patch_result_headers_follow_the_display_language() {
+        let ok_payload = serde_json::json!({
+            "result": { "ok": true, "data": { "changed_files": 3, "hunks_applied": 4 } }
+        });
+        let failed_payload = serde_json::json!({ "result": { "ok": false } });
+        for is_zh in [true, false] {
+            let lines = format_tool_result_lines("apply_patch", &ok_payload, is_zh);
+            let noun = expected("changed_files_count", is_zh, &[("count", "3")]);
+            assert_eq!(
+                lines[0],
+                expected(
+                    "patch_edited",
+                    is_zh,
+                    &[("files", &noun), ("metrics", " (4 hunks)")]
+                ),
+                "{lines:?}"
+            );
+            let lines = format_tool_result_lines("apply_patch", &failed_payload, is_zh);
+            assert_eq!(
+                lines[0],
+                expected("patch_apply_failed", is_zh, &[]),
+                "{lines:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn command_result_headers_follow_the_display_language() {
+        let result = serde_json::json!({
+            "data": { "results": [{ "command": "python3 demo.py", "returncode": 0 }] }
+        });
+        for is_zh in [true, false] {
+            let lines = format_execute_command_result_lines("sample_tool", &result, is_zh);
+            assert_eq!(
+                lines[0],
+                format!(
+                    "{} (exit=0)",
+                    expected("tool_completed", is_zh, &[("tool", "sample_tool")])
+                ),
+                "{lines:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn unsummarised_results_use_a_language_neutral_preview() {
+        let payload = serde_json::json!({
+            "tool": "custom_tool",
+            "args": { "path": "assets/note.txt" },
+            "result": { "ok": true, "data": {} }
+        });
+        let zh = format_tool_result_lines("custom_tool", &payload, true);
+        let en = format_tool_result_lines("custom_tool", &payload, false);
+        assert_eq!(
+            zh[1..],
+            en[1..],
+            "the preview is data, not wording: both languages must show the same line"
+        );
+        assert!(
+            en.iter().all(|line| !has_han(line)),
+            "english session picked up the Chinese client's prose: {en:?}"
+        );
     }
 }
 

@@ -144,21 +144,19 @@ test('user operations drive the production chat through mocked HTTP and WebSocke
     service.duplicateNext = true;
     await send('Queue the next fixture request.');
     await expect.poll(() => service.turns.at(-1)?.status).toBe('queued');
-    await expect(page.locator('.messenger-message[data-turn-id="fixture-turn-10"]:not(.mine)')).toHaveAttribute('data-message-status', 'queued');
-    const queuedBubble = page.locator('.messenger-message[data-turn-id="fixture-turn-10"]:not(.mine)');
-    await expect(queuedBubble.locator('.messenger-message-stats')).toContainText('3 ahead');
-    await queuedBubble.screenshot({ path: resolve(directory, 'queue-three-ahead.png') });
+    // The queue list can lag this durable view update. A queued, empty turn is
+    // owned by the composer queue and must never flash as an assistant bubble.
+    const queuedTurn = page.locator('.messenger-turn[data-root-turn-id="fixture-turn-10"]');
+    await expect(queuedTurn).toHaveCount(0);
     service.updateQueueAhead(1);
-    await expect(queuedBubble.locator('.messenger-message-stats')).toContainText('1 ahead');
+    await expect(queuedTurn).toHaveCount(0);
     await page.reload();
-    await expect(queuedBubble.locator('.messenger-message-stats')).toContainText('Queued · 1 ahead');
+    await expect(queuedTurn).toHaveCount(0);
     service.updateQueueAhead(0);
-    await expect(queuedBubble.locator('.messenger-message-stats')).toContainText('0 ahead');
-    await queuedBubble.screenshot({ path: resolve(directory, 'queue-next.png') });
+    await expect(queuedTurn).toHaveCount(0);
     coverage.queue = true;
     service.release();
     await completed(10);
-    await expect(queuedBubble.locator('.messenger-message-stats')).not.toContainText('Queued');
     service.failToolNext = true;
     await send('Verify after the queued request.');
     await completed(11);

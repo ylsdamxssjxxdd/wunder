@@ -58,7 +58,11 @@ async fn read(
     session: String,
     query: ViewQuery,
     kind: &str,
+    include_metadata: bool,
 ) -> Result<Json<Value>, Response> {
+    if query.before.is_some() && query.after.is_some() {
+        return Err(error_response(StatusCode::BAD_REQUEST, "before and after are mutually exclusive".into()));
+    }
     let user = resolve_user(&state, &headers, None).await?.user.user_id;
     let storage = state.storage.clone();
     let config = state.config_store.get().await;
@@ -86,23 +90,11 @@ async fn read(
     let view_user = user.clone();
     let view_session = query_session.clone();
     let page = match blocking::run_view("api.chat.view.bootstrap", move || {
-        let result = if kind == "trajectory" {
-            view_storage.thread_view_trajectory_page(
-                &view_user,
-                &view_session,
-                query.before,
-                query.root_turn_id.as_deref(),
-                query.limit.unwrap_or(TRAJECTORY_PAGE_SIZE),
-            )
-        } else {
-            view_storage.thread_view_page(
-                &view_user,
-                &view_session,
-                &kind,
-                query.before,
-                query.limit.unwrap_or(CHAT_PAGE_SIZE),
-            )
-        };
+        let result = view_storage.thread_view_window(
+            &view_user, &view_session, &kind, query.before, query.after,
+            query.root_turn_id.as_deref(),
+            query.limit.unwrap_or(if kind == "trajectory" { TRAJECTORY_PAGE_SIZE } else { CHAT_PAGE_SIZE }),
+        );
         result.or_else(|error| {
             if is_view_timeout(&error) {
                 Ok(degraded_page(&view_session))
@@ -126,6 +118,13 @@ async fn read(
             )
         }
     };
+    // Paging endpoints only need the bounded projection.  Re-running model,
+    // agent, context and goal hydration for every scroll request coupled a
+    // cheap indexed page to the ordinary DB lane and made large legacy
+    // threads appear to fail after their first paint.
+    if !include_metadata {
+        return Ok(Json(json!({"data": {"session": {"id": record.session_id}, "page": page}})));
+    }
     let mut result=match blocking::run_db("api.chat.view.metadata",move || {
         let model_override=workspace.load_session_model_override(&user,&query_session);
         let agent=record.agent_id.as_ref().map(|id|storage.get_user_agent(&user,id)).transpose()?.flatten();
@@ -234,7 +233,7 @@ async fn bootstrap(
             "invalid view kind".into(),
         ));
     }
-    read(s, h, id, q, &kind).await
+    read(s, h, id, q, &kind, true).await
 }
 async fn chat_page(
     State(s): State<Arc<AppState>>,
@@ -242,7 +241,7 @@ async fn chat_page(
     Path(id): Path<String>,
     Query(q): Query<ViewQuery>,
 ) -> Result<Json<Value>, Response> {
-    read(s, h, id, q, "chat").await
+    read(s, h, id, q, "chat", false).await
 }
 async fn trajectory_page(
     State(s): State<Arc<AppState>>,
@@ -250,7 +249,7 @@ async fn trajectory_page(
     Path(id): Path<String>,
     Query(q): Query<ViewQuery>,
 ) -> Result<Json<Value>, Response> {
-    read(s, h, id, q, "trajectory").await
+    read(s, h, id, q, "trajectory", false).await
 }
 async fn body(
     State(s): State<Arc<AppState>>,
@@ -435,6 +434,14 @@ mod tests {
                 StatusCode::OK,
             ),
             (
+                "/wunder/chat/sessions/fixture-thread/view/chat?before=100&limit=20",
+                StatusCode::OK,
+            ),
+            (
+                "/wunder/chat/sessions/fixture-thread/view/trajectory?limit=20",
+                StatusCode::OK,
+            ),
+            (
                 "/wunder/chat/sessions/fixture-thread/view/search?q=fixture",
                 StatusCode::OK,
             ),
@@ -455,6 +462,11 @@ mod tests {
             assert!(bytes.len() < 192 * 1024);
             let payload: Value = serde_json::from_slice(&bytes).unwrap();
             assert!(payload["data"].is_object());
+            if path.contains("/view/chat?") || path.contains("/view/trajectory?") {
+                assert_eq!(payload["data"]["session"]["id"], "fixture-thread");
+                assert_eq!(payload["data"]["session"].as_object().unwrap().len(), 1);
+                assert!(payload["data"]["page"].is_object());
+            }
             let denied = app
                 .clone()
                 .oneshot(
@@ -469,4 +481,5 @@ mod tests {
             assert_eq!(denied.status(), StatusCode::NOT_FOUND);
         }
     }
+
 }

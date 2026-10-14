@@ -109,6 +109,12 @@ impl ThreadLogStore for PostgresStorage {
         self.view_pending()
     }
 
+    fn thread_view_window(
+        &self, u: &str, s: &str, k: &str, b: Option<i64>, a: Option<i64>,
+        r: Option<&str>, l: usize,
+    ) -> Result<wunder_core::thread_view::ThreadViewPage> {
+        self.view_page(u, s, k, b, a, r, l)
+    }
     fn thread_view_page(
         &self,
         u: &str,
@@ -117,7 +123,7 @@ impl ThreadLogStore for PostgresStorage {
         b: Option<i64>,
         l: usize,
     ) -> Result<wunder_core::thread_view::ThreadViewPage> {
-        self.view_page(u, s, k, b, None, l)
+        self.view_page(u, s, k, b, None, None, l)
     }
     fn thread_view_trajectory_page(
         &self,
@@ -127,7 +133,7 @@ impl ThreadLogStore for PostgresStorage {
         r: Option<&str>,
         l: usize,
     ) -> Result<wunder_core::thread_view::ThreadViewPage> {
-        self.view_page(u, s, "trajectory", b, r, l)
+        self.view_page(u, s, "trajectory", b, None, r, l)
     }
     fn thread_view_changes(
         &self,
@@ -341,6 +347,26 @@ impl ThreadLogStore for PostgresStorage {
         include_internal: bool,
     ) -> Result<Option<Value>> {
         self.get_thread_turn_impl(user_id, session_id, turn_id, after, limit, include_internal)
+    }
+    fn get_thread_turn_page(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        turn_id: &str,
+        before: Option<i64>,
+        after: Option<i64>,
+        limit: i64,
+        include_internal: bool,
+    ) -> Result<Option<Value>> {
+        self.get_thread_turn_page_impl(
+            user_id,
+            session_id,
+            turn_id,
+            before,
+            after,
+            limit,
+            include_internal,
+        )
     }
     fn get_thread_item(
         &self,

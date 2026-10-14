@@ -122,6 +122,14 @@
           @dblclick="clearSelection"
         >
           <span
+            v-for="span in projectedOverviewSpans"
+            :key="span.key"
+            class="tt-span tt-span-overview"
+            :class="spanClasses(span)"
+            :style="spanStyle(span)"
+            :title="overviewSpanTitle(span)"
+          />
+          <span
             v-for="boundary in projectedBoundaries"
             :key="`b${boundary.turn}`"
             class="tt-turn-boundary"
@@ -165,11 +173,8 @@
         @scroll.passive="onLedgerScroll"
         @pointerdown.self="clearSelection"
       >
-        <div v-if="records.length > 0 && (truncated || olderLoading)" class="tt-truncated-hint tt-truncated-hint-top" role="status">
-          <span>{{ olderLoading ? '正在读取更早记录…' : '当前展示部分轨迹，可继续查看更早记录。' }}</span>
-          <button :disabled="loading || olderLoading" type="button" @click="olderPage">
-            {{ olderLoading ? '读取中' : '展示更早记录' }}
-          </button>
+        <div class="tt-truncated-hint tt-truncated-hint-top" role="status" aria-live="polite">
+          <span>{{ olderLoading ? '正在读取记录…' : historyError ? '读取暂时失败，继续滚动可重试' : truncated ? '向上滚动查看更早记录' : '已到最早记录' }}</span>
         </div>
         <div class="tt-ledger-canvas" :style="{ height: `${ledgerHeight}px` }">
           <table
@@ -188,6 +193,7 @@
                 :class="rowClasses(row.record)"
                 :data-timeline-focus="focusAttr(row.record)"
                 :data-record-index="row.record.cell.index"
+                :data-record-id="row.record.cell.recordId"
                 @click="selectIndex(row.record.cell.index, { fromLedger: true })"
                 @dblclick.stop="onRowDoubleClick(row.record)"
               >
@@ -489,7 +495,11 @@ const truncated = ref(false)
 // 快照转成深层响应式代理（会引发 CPU/内存爆炸）；写入的大对象以 markRaw 包裹。
 const rawTurns = shallowRef<unknown[]>([])
 const displayPage=shallowRef<any>(null)
-const pageBefore=ref<number|null>(null),pageHistory=ref<(number|null)[]>([])
+const historyError = ref(false)
+const summaryRows = shallowRef<any[]>([])
+const hasNewer = ref(false)
+const TRAJECTORY_WINDOW_ROWS = 600
+let retryHistoryAt = 0
 const detailRootTurn=ref<string|null>(null)
 const details=shallowRef<Record<string,unknown>>({})
 const detailRefById=new Map<string,any>()
@@ -604,16 +614,94 @@ const windowTopPx = computed(() => {
 
 const timeline = computed(() => deriveTimeline(turns.value, timelineMode.value))
 
+type OverviewSpan = TimelineSpan & { count: number; aggregate: true }
+
+const overviewTimeline = computed(() => {
+  const page = displayPage.value
+  const tiles = Array.isArray(page?.tiles) ? page.tiles : []
+  if (tiles.length === 0) return null
+  const level = Number.isFinite(Number(page?.tile_level)) ? Number(page.tile_level) : 0
+  const bucketWidth = 128 * (8 ** level)
+  const detailLaneCounts = [0, 0, 0]
+  for (const span of timeline.value?.spans ?? []) detailLaneCounts[span.lane] = (detailLaneCounts[span.lane] ?? 0) + 1
+  const detailTotal = detailLaneCounts.reduce((sum, value) => sum + value, 0)
+  const ratios = detailTotal > 0
+    ? detailLaneCounts.map(value => value / detailTotal)
+    : [0.2, 0.5, 0.3]
+  const spans: OverviewSpan[] = []
+  let start = Infinity
+  let end = -Infinity
+  for (const tile of tiles) {
+    const bucket = Number(tile?.bucket)
+    const total = Math.max(0, Number(tile?.count) || 0)
+    if (!Number.isFinite(bucket) || total <= 0) continue
+    const explicit = [Number(tile?.input_count) || 0, Number(tile?.model_count) || 0, Number(tile?.tool_count) || 0]
+    const explicitTotal = explicit.reduce((sum, value) => sum + value, 0)
+    const laneCounts = explicitTotal > 0
+      ? explicit
+      : [
+          Math.round(total * ratios[0]),
+          Math.round(total * ratios[1]),
+          Math.max(0, total - Math.round(total * ratios[0]) - Math.round(total * ratios[1])),
+        ]
+    const rawStart = timelineMode.value === 'sequence'
+      ? bucket * bucketWidth
+      : Number(tile?.start) * 1000
+    const rawEnd = timelineMode.value === 'sequence'
+      ? (bucket + 1) * bucketWidth
+      : Math.max(rawStart, Number(tile?.end) * 1000)
+    if (!Number.isFinite(rawStart) || !Number.isFinite(rawEnd)) continue
+    start = Math.min(start, rawStart)
+    end = Math.max(end, rawEnd)
+    for (let lane = 0; lane < 3; lane += 1) {
+      if (laneCounts[lane] <= 0) continue
+      spans.push({
+        start: rawStart,
+        end: Math.max(rawEnd, rawStart + (timelineMode.value === 'sequence' ? 1 : 0.001)),
+        index: -(spans.length + 1),
+        isError: Number(tile?.failed) > 0,
+        kind: lane === 0 ? 'context' : lane === 1 ? 'message' : 'tool',
+        label: `${laneCounts[lane]} events`,
+        lane,
+        ttftFraction: null,
+        count: laneCounts[lane],
+        aggregate: true,
+      })
+    }
+  }
+  return spans.length > 0 ? { start, end: Math.max(end, start + 1), spans, turnBoundaries: [] } : null
+})
+
 const domain = computed(() => {
-  const model = timeline.value
+  const model = overviewTimeline.value ?? timeline.value
   if (!model) return { start: 0, end: 1 }
   return { start: model.start, end: Math.max(model.end, model.start + 1) }
 })
 
-watch(timeline, (model) => {
+watch([timeline, overviewTimeline], ([detailModel, overviewModel]) => {
+  const model = overviewModel ?? detailModel
   if (!model) return
   viewStart.value = model.start
   viewSpan.value = Math.max(1, model.end - model.start)
+})
+
+const projectedOverviewSpans = computed(() => {
+  const model = overviewTimeline.value
+  if (!model) return []
+  const width = trackWidth.value || 600
+  const span = Math.max(1e-9, viewSpan.value)
+  return model.spans.map((modelSpan, i) => {
+    const left = ((modelSpan.start - viewStart.value) / span) * width
+    const pw = ((modelSpan.end - modelSpan.start) / span) * width
+    return {
+      key: `overview-${modelSpan.index}-${i}`,
+      model: modelSpan,
+      left,
+      width: Math.max(1, pw),
+      dimmed: false,
+      outside: false,
+    }
+  }).filter(item => item.left + item.width > 0 && item.left < width)
 })
 
 /** 选中变化后，若对应 span 不在时间线视口内则自动平移视口（对齐参考实现）。 */
@@ -737,55 +825,89 @@ function formatAxisDuration(ms: number): string {
 /* 数据加载                                                          */
 /* ---------------------------------------------------------------- */
 
-async function load(before:number|null=null, appendOlder=false): Promise<boolean> {
-  const sessionId=String(route.query.session??'').trim()
-  if(!sessionId){loading.value=false;loadError.value=true;return false}
-  loadAbort?.abort();const controller=new AbortController();loadAbort=controller
-  if (appendOlder) olderLoading.value=true
-  else loading.value=true
-  loadError.value=false
-  let timedOut=false;const deadline=setTimeout(()=>{timedOut=true;controller.abort()},TRAJECTORY_REQUEST_TIMEOUT_MS)
+async function load(cursor: number | null = null, direction: 'older' | 'newer' | null = null): Promise<boolean> {
+  const sessionId = String(route.query.session ?? '').trim()
+  if (!sessionId) { loading.value = false; loadError.value = true; return false }
+  loadAbort?.abort()
+  const controller = new AbortController()
+  loadAbort = controller
+  if (direction) olderLoading.value = true
+  else { loading.value = true; historyError.value = false; retryHistoryAt = 0 }
+  loadError.value = false
+  let timedOut = false
+  const deadline = setTimeout(() => { timedOut = true; controller.abort() }, TRAJECTORY_REQUEST_TIMEOUT_MS)
   try {
-    const response=detailRootTurn.value
-      ? await getThreadViewTrajectoryPage(sessionId,{root_turn_id:detailRootTurn.value,...(before!==null ? {before} : {}),limit:100},{signal:controller.signal})
-      : before===null
-        ? await getThreadViewBootstrap(sessionId,{kind:'trajectory'},{signal:controller.signal})
-        : await getThreadViewTrajectoryPage(sessionId,{before,limit:80},{signal:controller.signal})
-    if(controller.signal.aborted||loadAbort!==controller)return false
-    const page=response.data.data.page
-    if(page.degraded || page.projection_state === 'degraded') {
-      // A timeout describes the projection, not the session. Keep the current
-      // ledger and let the next refresh fill the page.
-      if (displayPage.value) return true
-      displayPage.value=markRaw(page)
-      loadError.value=false
-      return true
-    }
-    if(!['ready','source'].includes(page.projection_state))throw new Error('display unavailable')
-    if(before!==null && displayPage.value?.epoch!==page.epoch){return await load()}
-    const previousHeight = ledgerEl.value?.scrollHeight ?? 0
-    const previousTop = ledgerEl.value?.scrollTop ?? 0
-    displayPage.value=markRaw(page)
-    detailAbort?.abort();selectedIndex.value=null;details.value={};scrollTop.value=0;
-    pageBefore.value=before;if(before===null)pageHistory.value=[]
-    truncated.value=page.has_more
-    const incoming = summaryTurns(page.trajectory, !appendOlder)
-    rawTurns.value = appendOlder ? mergeTrajectoryTurns(incoming, rawTurns.value) : incoming
-    if (appendOlder) {
+    const params = { root_turn_id: detailRootTurn.value,
+      ...(cursor === null ? {} : { [direction === 'newer' ? 'after' : 'before']: cursor }),
+      limit: detailRootTurn.value ? 100 : 80 }
+    const response = !direction && !detailRootTurn.value
+      ? await getThreadViewBootstrap(sessionId, { kind: 'trajectory' }, { signal: controller.signal })
+      : await getThreadViewTrajectoryPage(sessionId, params, { signal: controller.signal })
+    if (controller.signal.aborted || loadAbort !== controller) return false
+    const page = response.data.data.page
+    if (page.degraded || !['ready', 'source'].includes(page.projection_state)) throw new Error('Display temporarily unavailable')
+    if (direction && displayPage.value?.epoch !== page.epoch) return await load()
+    const ledger = ledgerEl.value
+    const previousTop = ledger?.scrollTop ?? 0
+    const selectedId = selectedCell.value?.recordId
+    const anchorNode = ledger && Array.from(ledger.querySelectorAll<HTMLElement>('[data-record-id]'))
+      .find(node => node.getBoundingClientRect().bottom > ledger.getBoundingClientRect().top + 36)
+    const anchorId = anchorNode?.dataset.recordId
+    const anchorOffset = anchorNode && ledger ? anchorNode.getBoundingClientRect().top - ledger.getBoundingClientRect().top : 0
+    const oldIndex = rows.value.findIndex(row => row.record.cell.recordId === anchorId)
+    const oldOffset = oldIndex < 0 ? 0 : rowPrefix.value[oldIndex]
+    const merged = new Map((direction ? summaryRows.value : []).map(row => [row.item_id, row]))
+    for (const row of page.trajectory) merged.set(row.item_id, row)
+    const ordered = [...merged.values()].sort((a, b) => a.created_seq - b.created_seq)
+    const evicted = ordered.length > TRAJECTORY_WINDOW_ROWS
+    summaryRows.value = markRaw(direction === 'older'
+      ? ordered.slice(0, TRAJECTORY_WINDOW_ROWS) : ordered.slice(-TRAJECTORY_WINDOW_ROWS))
+    if (direction === 'older') { truncated.value = page.has_more; hasNewer.value ||= evicted }
+    else if (direction === 'newer') { hasNewer.value = Boolean(page.has_newer); truncated.value ||= evicted }
+    else { truncated.value = page.has_more; hasNewer.value = false }
+    displayPage.value = markRaw(page)
+    rawTurns.value = summaryTurns(summaryRows.value)
+    // Auxiliary state must have the same lifetime as the bounded ledger.
+    const rounds = new Set(summaryRows.value.map(row => row.user_round))
+    collapsedTurns.value = new Set([...collapsedTurns.value].filter(round => rounds.has(round)))
+    const groups = new Set(allRecords.value.filter(record => record.group).map(record => requestIdentity(record.turn, record.group!)))
+    collapsedAssistants.value = new Set([...collapsedAssistants.value].filter(key => groups.has(key)))
+    selectedIndex.value = direction && selectedId
+      ? allRecords.value.find(record => record.cell.recordId === selectedId)?.cell.index ?? null : null
+    if (selectedIndex.value === null) { detailAbort?.abort(); details.value = {} }
+    await nextTick()
+    updateSizes()
+    if (ledgerEl.value) {
+      const nextIndex = rows.value.findIndex(row => row.record.cell.recordId === anchorId)
+      ledgerEl.value.scrollTop = direction
+        ? Math.max(0, previousTop + (nextIndex < 0 ? 0 : rowPrefix.value[nextIndex] - oldOffset))
+        : ledgerEl.value.scrollHeight
+      scrollTop.value = ledgerEl.value.scrollTop
       await nextTick()
-      const nextHeight = ledgerEl.value?.scrollHeight ?? previousHeight
-      if (ledgerEl.value) ledgerEl.value.scrollTop = previousTop + nextHeight - previousHeight
+      const node = Array.from(ledgerEl.value.querySelectorAll<HTMLElement>('[data-record-id]'))
+        .find(row => row.dataset.recordId === anchorId)
+      if (direction && node) ledgerEl.value.scrollTop += node.getBoundingClientRect().top - ledgerEl.value.getBoundingClientRect().top - anchorOffset
+      scrollTop.value = ledgerEl.value.scrollTop
     }
+    historyError.value = false
     return true
-  }catch{if(loadAbort===controller && (!controller.signal.aborted||timedOut))loadError.value=true}
-  finally{clearTimeout(deadline);if(loadAbort===controller){loadAbort=null;loading.value=false;olderLoading.value=false}}
+  } catch {
+    if (loadAbort === controller && (!controller.signal.aborted || timedOut)) {
+      if (direction) { historyError.value = true; retryHistoryAt = Date.now() + 2000 }
+      else loadError.value = true
+    }
+  } finally {
+    clearTimeout(deadline)
+    if (loadAbort === controller) { loadAbort = null; loading.value = false; olderLoading.value = false }
+  }
   return false
 }
-async function olderPage(){const cursor=displayPage.value?.next_before;if(!truncated.value||loading.value||olderLoading.value||cursor==null)return
-  await load(cursor, true)
-}
-async function previousPage(){const cursor=pageHistory.value.at(-1);if(loading.value||cursor===undefined)return
-  const history=pageHistory.value.slice(0,-1);if(await load(cursor))pageHistory.value=history
+async function loadEdge(direction: 'older' | 'newer') {
+  if (loading.value || olderLoading.value || Date.now() < retryHistoryAt ||
+      !(direction === 'older' ? truncated.value : hasNewer.value)) return
+  const cursor = (direction === 'older' ? summaryRows.value[0] : summaryRows.value.at(-1))?.created_seq
+  if (cursor == null) return
+  await load(cursor, direction)
 }
 function summaryTurns(rows:any[], resetMaps=true):unknown[] {
   if(resetMaps)detailRefById.clear()
@@ -811,21 +933,6 @@ function summaryTurns(rows:any[], resetMaps=true):unknown[] {
   }
   return markRaw([...turns.values()])
 }
-function mergeTrajectoryTurns(incoming: unknown[], existing: unknown[]): unknown[] {
-  const merged = new Map<string, any>()
-  for (const turn of [...existing, ...incoming] as any[]) {
-    const id = String(turn?.turn_id || turn?.root_turn_id || turn?.user_turn_index || '')
-    if (!id) continue
-    const prior = merged.get(id)
-    if (!prior) merged.set(id, turn)
-    else {
-      const items = [...(prior.items || []), ...(turn.items || [])]
-      const unique = new Map(items.map((item: any) => [String(item.item_id || `${item.item_index}:${item.kind}`), item]))
-      prior.items = [...unique.values()].sort((a: any, b: any) => Number(a.item_index || 0) - Number(b.item_index || 0))
-    }
-  }
-  return markRaw([...merged.values()].sort((a: any, b: any) => Number(a.user_turn_index || 0) - Number(b.user_turn_index || 0)))
-}
 async function loadTurnDetail(round:number):Promise<void> {
   const root=turnRootByRound.get(round); if(!root || loading.value) return
   detailRootTurn.value=root
@@ -837,8 +944,6 @@ function openOverviewTurn(round:number|null):void {
 async function backToOverview(): Promise<void> {
   if (loading.value || !detailRootTurn.value) return
   detailRootTurn.value = null
-  pageHistory.value = []
-  pageBefore.value = null
   await load()
 }
 let detailAbort:AbortController|null=null
@@ -915,7 +1020,7 @@ watch(trackEl, (el) => {
   trackResizeObserver.observe(el)
 })
 
-watch(()=>route.query.session,()=>{detailRootTurn.value=null;rawTurns.value=[];displayPage.value=null;details.value={};searchQuery.value='';searchAbort?.abort();detailAbort?.abort();void load()})
+watch(()=>route.query.session,()=>{detailRootTurn.value=null;summaryRows.value=[];rawTurns.value=[];displayPage.value=null;details.value={};searchQuery.value='';searchAbort?.abort();detailAbort?.abort();void load()})
 
 onMounted(() => {
   void load()
@@ -950,6 +1055,8 @@ function onLedgerScroll(): void {
   if (!ledgerEl.value) return
   scrollTop.value = ledgerEl.value.scrollTop
   ledgerViewport.value = ledgerEl.value.clientHeight
+  if (scrollTop.value <= 160) void loadEdge('older')
+  else if (ledgerEl.value.scrollHeight - ledgerViewport.value - scrollTop.value <= 160) void loadEdge('newer')
 }
 
 function rowClasses(record: TableRecord): Record<string, boolean> {
@@ -1618,11 +1725,20 @@ function spanStyle(span: { model: TimelineSpan; left: number; width: number }): 
     width: `${span.width}px`,
     top: `${7 + span.model.lane * 14}px`,
   }
+  if ((span.model as OverviewSpan).aggregate) {
+    style.opacity = '0.32'
+    style.pointerEvents = 'none'
+  }
   if (span.model.kind === 'message' && span.model.ttftFraction !== null && span.width > 6) {
     const split = Math.round(span.width * span.model.ttftFraction)
     style.background = `linear-gradient(90deg, rgba(65,118,230,0.92) ${split}px, rgba(65,118,230,0.45) ${split}px)`
   }
   return style
+}
+
+function overviewSpanTitle(span: { model: TimelineSpan }): string {
+  const count = Number((span.model as OverviewSpan).count || 0)
+  return count > 0 ? `${count} 条记录（聚合概览）` : '聚合概览'
 }
 
 const selectionStyle = computed(() => {

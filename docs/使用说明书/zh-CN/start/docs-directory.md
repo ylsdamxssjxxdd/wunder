@@ -45,9 +45,8 @@ wunder 的文档分七类，各解决一类问题。写文档时不串味：**�
 | [蜂巢界面](/docs/zh-CN/surfaces/frontend/) | 浏览器里的单页应用 |
 | [舰桥界面](/docs/zh-CN/surfaces/web-admin/) | 管理员治理后台 |
 
-### 其它分组（本页不列全部，只列站点主标签）
+### 其它分区
 
-- 核心 → `/docs/zh-CN/concepts/`
 - 工具 → `/docs/zh-CN/tools/`
 - 能力 → `/docs/zh-CN/capabilities/`
 - 帮助 → `/docs/zh-CN/help/`

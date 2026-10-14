@@ -344,7 +344,11 @@ function extractUsage(payload: RawRecord): TrajUsage | undefined {
 function resolveKind(rawKind: string, payload: RawRecord): TrajKind {
   if (metaOf(payload).type === 'system_prompt') return 'system'
   if (rawKind === 'assistant_message' || rawKind === 'assistant') return 'message'
-  if (rawKind === 'subagent' || rawKind === 'subagent_message') return 'subtool'
+  // Mailbox deliveries are execution context, not a tool invocation. Keeping
+  // them in the context lane makes handoffs visible in the same timeline as
+  // the model input that consumed them.
+  if (rawKind === 'subagent_message') return 'context'
+  if (rawKind === 'subagent' || rawKind === 'subagent_run') return 'subtool'
   if (rawKind === 'tool_message' || rawKind === 'tool_call'
     || rawKind === 'tool_result' || rawKind === 'tool') return 'tool'
   if (rawKind === 'compaction' || rawKind === 'compacted' || rawKind === 'compaction_summary') {

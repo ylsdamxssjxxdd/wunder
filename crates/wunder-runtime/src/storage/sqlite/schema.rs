@@ -49,6 +49,31 @@ impl SqliteStorage {
             tx.execute("UPDATE thread_logs SET latest_change_seq=MAX(latest_change_seq, COALESCE((SELECT MAX(created_seq) FROM thread_items WHERE thread_items.session_id=thread_logs.session_id),0))", [])?;
         }
         tx.execute_batch("CREATE INDEX IF NOT EXISTS idx_thread_items_context_seq ON thread_items(user_id,session_id,created_seq DESC) WHERE kind IN ('user_message','assistant_message','tool_message','system_message'); CREATE INDEX IF NOT EXISTS idx_thread_items_view_root_seq ON thread_items(user_id,session_id,root_turn_id,created_seq DESC);")?;
+        // The tile pyramid gained lane counters after the initial projection
+        // shipped. Keep this migration tiny and metadata-only; existing tiles
+        // remain valid and use count as their compatibility fallback.
+        let tile_columns = load_table_columns(&tx, "thread_trajectory_tiles")?;
+        for (name, ddl) in [
+            ("input_count", "ALTER TABLE thread_trajectory_tiles ADD COLUMN input_count INTEGER NOT NULL DEFAULT 0"),
+            ("model_count", "ALTER TABLE thread_trajectory_tiles ADD COLUMN model_count INTEGER NOT NULL DEFAULT 0"),
+            ("tool_count", "ALTER TABLE thread_trajectory_tiles ADD COLUMN tool_count INTEGER NOT NULL DEFAULT 0"),
+        ] {
+            if !tile_columns.is_empty() && !tile_columns.contains(name) { tx.execute(ddl, [])?; }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    fn ensure_thread_trajectory_tile_columns(&self, conn: &Connection) -> Result<()> {
+        let tx = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
+        let columns = load_table_columns(&tx, "thread_trajectory_tiles")?;
+        for (name, ddl) in [
+            ("input_count", "ALTER TABLE thread_trajectory_tiles ADD COLUMN input_count INTEGER NOT NULL DEFAULT 0"),
+            ("model_count", "ALTER TABLE thread_trajectory_tiles ADD COLUMN model_count INTEGER NOT NULL DEFAULT 0"),
+            ("tool_count", "ALTER TABLE thread_trajectory_tiles ADD COLUMN tool_count INTEGER NOT NULL DEFAULT 0"),
+        ] {
+            if !columns.is_empty() && !columns.contains(name) { tx.execute(ddl, [])?; }
+        }
         tx.commit()?;
         Ok(())
     }
@@ -1760,6 +1785,7 @@ impl SqliteSchemaStorage for SqliteStorage {
         self.ensure_thread_item_block_fields(&conn)?;
         conn.execute_batch(crate::storage::thread_view_store::SCHEMA)?;
         conn.execute_batch(super::thread_view_store::SEARCH_SCHEMA)?;
+        self.ensure_thread_trajectory_tile_columns(&conn)?;
         // Maintenance discovers historical heads in bounded keyset pages;
         // never scan all thread_logs while opening the database.
         self.ensure_tool_log_columns(&conn)?;

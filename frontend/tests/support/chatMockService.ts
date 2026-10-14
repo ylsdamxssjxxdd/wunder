@@ -20,6 +20,7 @@ export class ChatMockService {
   private queue: Row[] = [];
   private active: Row | null = null;
   private tasks = new Set<Promise<void>>();
+  private withheldProcessItemIds = new Set<string>();
   private stopped = false;
   private agentRuntimeState: 'idle' | 'running' = 'idle';
   holdNext = false;
@@ -34,7 +35,25 @@ export class ChatMockService {
     this.item(turn, 'queue', 'queue', 'queued', { event_type: 'queue_update',
       queue_ahead: ahead, queue_total: ahead + 1, active_ahead: 2, wait_ahead: ahead + 2 });
   }
-
+  /** A log page with one durable thought and one newer live preview. */
+  seedDeferredReasoningTurn() {
+    const turn = { turn_id: `fixture-turn-${++this.round}`, user_round: this.round,
+      content: 'Fixture reasoning task', status: 'running' };
+    this.turns.push(turn);
+    this.commit('turn_upsert', turn);
+    this.item(turn, 'user', 'user_message', 'completed', { role: 'user', content: turn.content });
+    this.item(turn, 'text-1', 'assistant_message', 'completed', {
+      role: 'assistant', model_round: 1, reasoning: 'Earlier completed thought.'
+    });
+    this.item(turn, 'tool-1', 'tool_call', 'completed', {
+      tool: 'read_file', tool_call_id: 'fixture-reasoning-tool', event_type: 'tool_result'
+    });
+    this.item(turn, 'text-2', 'assistant_message', 'running', {
+      role: 'assistant', model_round: 2, reasoning: 'New live thought.'
+    });
+    this.withheldProcessItemIds.add(`${turn.turn_id}:text-2`);
+    return turn;
+  }
   /** One presentation row per user round: sibling execution turns merge into their root. */
   private turnGroups(): Row[][] {
     const groups = new Map<string, Row[]>();
@@ -68,14 +87,19 @@ export class ChatMockService {
         body: item ? { body_id: `${item.item_id}|${running && item === answer ? 'stream' : 'content'}`,
           revision: running && item === answer ? 0 : Number(item.revision ?? 1), bytes: bytes(text) } : null,
       });
+      const reasoningItems = items.filter(item => item.kind === 'assistant_message' && String(item.reasoning ?? '').trim());
+      const activeReasoning = String(answer?.reasoning ?? '');
       return {
         execution_turn_id: String(execution.turn_id), root_turn_id: String(root.turn_id),
         user_round: Number(root.user_round), client_message_id: root.client_message_id ?? null,
         revision: this.changes.length, status,
         user: { ...message(user, userContent), tail: '', failure: '', attachments: [] },
         assistant: { ...message(answer, content), content_offset: content.length,
+          reasoning: activeReasoning, reasoning_offset: activeReasoning.length,
           tail: running ? persisted : '', failure, stats: answer?.meta?.message_stats, attachments: [] },
         workflow_count: items.filter(i => i.kind === 'tool_call').length,
+        reasoning_count: reasoningItems.length,
+        reasoning_item_id: activeReasoning ? String(answer?.item_id ?? '') : '',
         failed_count: items.filter(i => i.kind === 'tool_call' && i.status === 'failed').length,
         subagents: [], created_time: Number(root.user_round) * 1000, updated_time: this.changes.length,
       };
@@ -374,7 +398,7 @@ export class ChatMockService {
       if (!pathname.startsWith('/wunder/')) return route.continue();
       const path = pathname.slice('/wunder'.length);
       const payload = request.postDataJSON();
-      this.record({ transport: 'http', path, method: request.method() });
+      this.record({ transport: 'http', path, query: new URL(request.url()).search, method: request.method() });
       const session = { id: MOCK_SESSION, agent_id: MOCK_AGENT, title: 'Fixture conversation',
         updated_at: '2026-01-01T00:00:00Z', status: 'active', running: Boolean(this.active) };
       const agent = { id: MOCK_AGENT, name: 'Fixture Agent', description: '', tool_names: ['read_file'] };
@@ -390,9 +414,19 @@ export class ChatMockService {
       else if (path === `/agents/${MOCK_AGENT}`) data = agent;
       else if (path === '/chat/sessions') data = request.method() === 'POST' ? session : { items: [session], total: 1 };
       else if(path.endsWith('/view/bootstrap')||path.endsWith('/view/chat')||path.endsWith('/view/trajectory')) {
-        const before=Number(new URL(request.url()).searchParams.get('before')??Number.MAX_SAFE_INTEGER);const rows=this.viewRows().filter(r=>r.user_round<before);const chat=rows.slice(-12);
         const query = new URL(request.url()).searchParams;
-        data={session,page:{session_id:MOCK_SESSION,epoch:1,view_seq:this.changes.length,...this.runtimeHead(),projection_state:'ready',thread_empty:this.turns.length===0,latest_round:this.round,chat,trajectory:(query.get('kind')==='trajectory'||path.endsWith('/view/trajectory'))?this.trajectoryRows(query.get('root_turn_id')??undefined):[],tiles:[],tile_level:0,next_before:chat[0]?.user_round??null,has_more:rows.length>chat.length}};
+        const before = query.has('before') ? Number(query.get('before')) : Number.MAX_SAFE_INTEGER;
+        const after = query.has('after') ? Number(query.get('after')) : null;
+        const allRows = this.viewRows();
+        const eligible = after === null ? allRows.filter(row => row.user_round < before) : allRows.filter(row => row.user_round > after);
+        const chatLimit = Math.min(Number(query.get('limit') ?? 12), 20);
+        const chat = after === null ? eligible.slice(-chatLimit) : eligible.slice(0, chatLimit);
+        const trajectoryAll = this.trajectoryRows(query.get('root_turn_id') ?? undefined);
+        const trajectoryEligible = after === null ? trajectoryAll.filter(row => Number(row.created_seq) < before) : trajectoryAll.filter(row => Number(row.created_seq) > after);
+        const trajectory = after === null ? trajectoryEligible.slice(-80) : trajectoryEligible.slice(0, 80);
+        const isTrajectory = query.get('kind') === 'trajectory' || path.endsWith('/view/trajectory');
+        const result: Row[] = (isTrajectory ? trajectory : chat) as Row[];
+        data={session,page:{session_id:MOCK_SESSION,epoch:1,view_seq:this.changes.length,...this.runtimeHead(),projection_state:'ready',thread_empty:this.turns.length===0,latest_round:this.round,chat:isTrajectory?[]:chat,trajectory:isTrajectory?trajectory:[],tiles:[],tile_level:0,next_before:result[0]?.[isTrajectory?'created_seq':'user_round']??null,next_after:result.at(-1)?.[isTrajectory?'created_seq':'user_round']??null,has_more:after===null?(isTrajectory?trajectoryEligible:eligible).length>result.length:true,has_newer:after===null?query.has('before'):(isTrajectory?trajectoryEligible:eligible).length>result.length}};
       }
       else if(path.includes('/bodies/')) {const id=decodeURIComponent(path.split('/bodies/')[1]).split('|')[0];data={body_id:id,revision:1,chunks:[JSON.stringify(this.items.get(id)??{})],next_cursor:1,has_more:false};}
       else if(/\/thread-log\/turns\/[^/]+$/.test(path)) {
@@ -402,16 +436,23 @@ export class ChatMockService {
         const group = new Set(this.turns
           .filter(turn => String(turn.turn_id) === turnId || String(turn.root_turn_id ?? turn.turn_id) === turnId)
           .map(turn => String(turn.turn_id)));
-        const rows = [...this.items.values()].filter(item => group.has(String(item.turn_id)));
-        const after = Number(new URL(request.url()).searchParams.get('item_after') ?? -1);
-        const limit = Number(new URL(request.url()).searchParams.get('limit') ?? 100);
-        const batch = rows.slice(after + 1, after + 1 + limit);
-        const nextAfter = after + batch.length;
+        const rows = [...this.items.values()].filter(item =>
+          group.has(String(item.turn_id)) && !this.withheldProcessItemIds.has(String(item.item_id))
+        );
+        const query = new URL(request.url()).searchParams;
+        const after = Number(query.get('item_after') ?? -1);
+        const before = query.has('item_before') ? Number(query.get('item_before')) : null;
+        const limit = Math.min(100, Number(query.get('limit') ?? 100));
+        const start = before === null ? after + 1 : Math.max(0, Math.min(before, rows.length) - limit);
+        const batch = rows.slice(start, before === null ? start + limit : Math.min(before, rows.length));
+        const end = start + batch.length - 1;
         data = { turn: { turn_id: turnId, user_round: this.turns.find(turn => String(turn.turn_id) === turnId)?.user_round ?? 0,
           items: batch.map((item, index) => ({ item_id: item.item_id, turn_id: item.turn_id, kind: item.kind,
             status: item.status, revision: item.revision, visibility: item.visibility,
-            seq: after + 1 + index, payload: structuredClone(item) })),
-          has_more: nextAfter < rows.length - 1, next_after: nextAfter } };
+            item_index: start + index, seq: start + index, payload: structuredClone(item) })),
+          has_more: before === null ? end < rows.length - 1 : start > 0,
+          has_older: start > 0, has_newer: end < rows.length - 1,
+          next_before: batch.length ? start : null, next_after: batch.length ? end : null } };
       }
       else if(path.endsWith('/view/search'))data={hits:[],has_more:false};
       else if (path.endsWith('/thread-log/snapshot')) data = this.snapshot();

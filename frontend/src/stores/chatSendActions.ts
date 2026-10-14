@@ -1,4 +1,4 @@
-import { threadViewSlots, threadViewCursor,settlePendingThreadView,removePendingThreadView } from '@/realtime/chat/threadViewStore';
+import { threadViewSlots, threadViewCursor,settlePendingThreadView,removeThreadViewTurnByClientMessageId } from '@/realtime/chat/threadViewStore';
 import { applyChatThreadEffects, applyThreadViewEffects, syncChatThreadShell } from './chatThreadEffects';
 import { defineStore } from 'pinia';
 
@@ -1308,20 +1308,36 @@ export const chatSendActions = {
     dropParkedQueueTurn(clientMessageId: unknown) {
       const sessionId = String(this.activeSessionId || '').trim();
       const cleanedClientMessageId = String(clientMessageId || '').trim();
+      if (!sessionId || !cleanedClientMessageId) return;
       const staleIds = new Set(selectParkedTurnMessageIds(this.messages, cleanedClientMessageId));
-      if (!sessionId || !staleIds.size) return;
       for (let index = this.messages.length - 1; index >= 0; index -= 1) {
         const message = this.messages[index] as Record<string, unknown> | null;
         const messageId = String(
           message?.message_id ?? message?.messageId ?? message?.id ?? ''
         ).trim();
-        if (staleIds.has(messageId)) {
+        const messageClientId = String(
+          message?.client_message_id ?? message?.clientMessageId ?? ''
+        ).trim();
+        if (staleIds.has(messageId) || messageClientId === cleanedClientMessageId) {
           this.messages.splice(index, 1);
         }
       }
       const threadState = getChatThreadState(sessionId);
-      threadState?.turns.delete(`pending:${cleanedClientMessageId}`);
-      removePendingThreadView(sessionId,cleanedClientMessageId);
+      if (threadState) {
+        const removedTurnIds = new Set<string>();
+        for (const [turnId, turn] of threadState.turns) {
+          if (turn.clientMessageId !== cleanedClientMessageId && turnId !== `pending:${cleanedClientMessageId}`) continue;
+          removedTurnIds.add(turnId);
+          threadState.turns.delete(turnId);
+        }
+        for (const [itemId, item] of threadState.items) {
+          if (!removedTurnIds.has(item.turnId)) continue;
+          threadState.items.delete(itemId);
+          threadState.blocks.delete(itemId);
+          threadState.tails.delete(itemId);
+        }
+      }
+      removeThreadViewTurnByClientMessageId(sessionId,cleanedClientMessageId);
       cacheSessionMessages(sessionId, this.messages);
       markRuntimeProjectionChanged(this, {
         sessionId,

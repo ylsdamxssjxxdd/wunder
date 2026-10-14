@@ -629,6 +629,8 @@ struct AdminThreadChangesQuery {
     #[serde(default)]
     item_after: Option<i64>,
     #[serde(default)]
+    item_before: Option<i64>,
+    #[serde(default)]
     from_block: Option<i64>,
     #[serde(default)]
     field: Option<String>,
@@ -680,11 +682,12 @@ async fn admin_thread_turn(
     let storage = state.storage.clone();
     let lookup = session_id.clone();
     let turn = crate::core::blocking::run_db("api.admin.thread_log.turn", move || {
-        storage.get_thread_turn(
+        storage.get_thread_turn_page(
             &user_id,
             &lookup,
             &turn_id,
-            query.item_after.unwrap_or(-1),
+            query.item_before,
+            query.item_after,
             query.limit.unwrap_or(100),
             true,
         )

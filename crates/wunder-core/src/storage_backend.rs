@@ -87,6 +87,17 @@ pub trait ConversationLogStore {
 /// from the short lived stream event buffer: turns are the pagination unit and
 /// items are stable, idempotently replaceable records.
 pub trait ThreadLogStore {
+    /// Bidirectional keyset window; `before` and `after` are mutually exclusive.
+    fn thread_view_window(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        kind: &str,
+        before: Option<i64>,
+        after: Option<i64>,
+        root_turn_id: Option<&str>,
+        limit: usize,
+    ) -> Result<crate::thread_view::ThreadViewPage>;
     /// Presentation pages select only precomputed, bounded summaries.
     fn thread_view_page(
         &self,
@@ -273,6 +284,20 @@ pub trait ThreadLogStore {
         session_id: &str,
         turn_id: &str,
         after: i64,
+        limit: i64,
+        include_internal: bool,
+    ) -> Result<Option<Value>>;
+    /// Read a bounded item page from one turn using an exclusive keyset
+    /// cursor. `before` returns the page immediately older than the cursor,
+    /// while `after` returns the page immediately newer than it. Results are
+    /// chronological; absent cursors start at the beginning of the turn.
+    fn get_thread_turn_page(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        turn_id: &str,
+        before: Option<i64>,
+        after: Option<i64>,
         limit: i64,
         include_internal: bool,
     ) -> Result<Option<Value>>;

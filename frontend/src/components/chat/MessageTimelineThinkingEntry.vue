@@ -8,11 +8,10 @@
     >
       <span class="tl-gutter" aria-hidden="true">
         <span class="tl-gutter-line"></span>
-        <span class="tl-gutter-node" :class="{ 'is-loading': entry.streaming }"></span>
-      </span>
-      <span class="tl-thinking-status" :class="{ 'is-streaming': entry.streaming }" aria-hidden="true">
-        <i v-if="entry.streaming" class="fa-solid fa-circle-notch fa-spin"></i>
-        <i v-else class="fa-solid fa-check"></i>
+        <span class="tl-thinking-status" :class="{ 'is-streaming': entry.streaming }">
+          <i v-if="entry.streaming" class="fa-solid fa-circle-notch fa-spin"></i>
+          <i v-else class="fa-solid fa-check"></i>
+        </span>
       </span>
       <span class="tl-thinking-label">
         {{ entry.streaming ? t('chat.timeline.thinkingRunning') : t('chat.timeline.thinkingDone') }}
@@ -59,7 +58,7 @@ const { t } = useI18n();
   padding: 0 24px;
   margin: 0;
   border: 0;
-  background: transparent;
+  background: var(--mz-panel, #fbfaf8);
   color: inherit;
   font: inherit;
   text-align: left;
@@ -92,24 +91,11 @@ const { t } = useI18n();
   background: var(--mz-timeline-line, #e2dfda);
 }
 
-.tl-gutter-node {
-  position: absolute;
-  top: 9px;
-  left: 7px;
-  width: 6px;
-  height: 6px;
-  border-radius: 3px;
-  background: rgba(62, 156, 126, 0.65);
-}
-
-.tl-gutter-node.is-loading {
-  background: var(--mz-thought, #3e9c7e);
-}
-
-/* 状态点 12px（简化形态，与工具条目一致）：完成 = 描边圆圈 + 勾，
-   运行中 = 灰色转圈（fa-circle-notch 自带圆环造型，去掉容器边框）。 */
 .tl-thinking-status {
-  flex: 0 0 auto;
+  position: absolute;
+  z-index: 1;
+  top: 7px;
+  left: 3.5px;
   width: 12px;
   height: 12px;
   box-sizing: border-box;
@@ -121,7 +107,7 @@ const { t } = useI18n();
   font-size: 7px;
   line-height: 1;
   color: var(--mz-text-muted, #8a8f99);
-  background: transparent;
+  background: var(--mz-panel, #fbfaf8);
 }
 
 .tl-thinking-status.is-streaming {

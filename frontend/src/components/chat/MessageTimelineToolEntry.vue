@@ -9,12 +9,11 @@
     >
       <span class="tl-gutter" aria-hidden="true">
         <span class="tl-gutter-line"></span>
-        <span class="tl-gutter-node" :class="`is-${entry.status}`"></span>
-      </span>
-      <span class="tl-entry-status" :class="`is-${entry.status}`" aria-hidden="true">
-        <i v-if="entry.status === 'loading'" class="fa-solid fa-circle-notch fa-spin"></i>
-        <i v-else-if="entry.status === 'failed' || entry.status === 'cancelled'" class="fa-solid fa-xmark"></i>
-        <i v-else class="fa-solid fa-check"></i>
+        <span class="tl-entry-status" :class="`is-${entry.status}`">
+          <i v-if="entry.status === 'loading'" class="fa-solid fa-circle-notch fa-spin"></i>
+          <i v-else-if="entry.status === 'failed' || entry.status === 'cancelled'" class="fa-solid fa-xmark"></i>
+          <i v-else class="fa-solid fa-check"></i>
+        </span>
       </span>
       <span v-if="entry.toolLabel" class="tl-entry-tool">
         <i :class="['fa-solid', entry.toolIconClass]" aria-hidden="true"></i>
@@ -223,29 +222,11 @@ button.tl-entry-head:focus-visible {
 
 /* 节点圆点：已完成 = `thought` 65% 透明（沿用桌面端 `transparentize(0.35)`），
    运行中 = `thought` 实色，失败/取消 = `danger`。 */
-.tl-gutter-node {
-  position: absolute;
-  top: 9px;
-  left: 7px;
-  width: 6px;
-  height: 6px;
-  border-radius: 3px;
-  background: rgba(62, 156, 126, 0.65);
-}
-
-.tl-gutter-node.is-loading {
-  background: var(--mz-thought, #3e9c7e);
-}
-
-.tl-gutter-node.is-failed,
-.tl-gutter-node.is-cancelled {
-  background: var(--mz-danger, #d04a43);
-}
-
-/* 状态点 12px（简化形态）：完成 = 描边圆圈 + 勾，失败/取消 = 描边圆圈 + 叉，
-   运行中 = 灰色转圈（fa-circle-notch 自带圆环造型，去掉容器边框）。 */
 .tl-entry-status {
-  flex: 0 0 auto;
+  position: absolute;
+  z-index: 1;
+  top: 7px;
+  left: 3.5px;
   width: 12px;
   height: 12px;
   box-sizing: border-box;
@@ -257,7 +238,7 @@ button.tl-entry-head:focus-visible {
   font-size: 7px;
   line-height: 1;
   color: var(--mz-text-muted, #8a8f99);
-  background: transparent;
+  background: var(--mz-panel, #fbfaf8);
 }
 
 .tl-entry-status.is-loading {
