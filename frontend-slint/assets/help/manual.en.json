@@ -15924,198 +15924,6 @@
       ]
     },
     {
-      "id": "shortcuts",
-      "title": "Keyboard Shortcuts",
-      "group": "Reference",
-      "keywords": [
-        "shortcuts",
-        "keyboard",
-        "keys"
-      ],
-      "blocks": [
-        {
-          "kind": "h1",
-          "spans": [
-            {
-              "text": "Keyboard Shortcuts"
-            }
-          ]
-        },
-        {
-          "kind": "paragraph",
-          "spans": [
-            {
-              "text": "The help document browser supports these keyboard shortcuts:"
-            }
-          ]
-        },
-        {
-          "kind": "table",
-          "rows": [
-            {
-              "header": true,
-              "cells": [
-                [
-                  {
-                    "text": "Key"
-                  }
-                ],
-                [
-                  {
-                    "text": "Action"
-                  }
-                ]
-              ]
-            },
-            {
-              "header": false,
-              "cells": [
-                [
-                  {
-                    "text": "F1",
-                    "kbd": true
-                  }
-                ],
-                [
-                  {
-                    "text": "Return to the help home page"
-                  }
-                ]
-              ]
-            },
-            {
-              "header": false,
-              "cells": [
-                [
-                  {
-                    "text": "Ctrl+F",
-                    "kbd": true
-                  }
-                ],
-                [
-                  {
-                    "text": "Find within the page"
-                  }
-                ]
-              ]
-            },
-            {
-              "header": false,
-              "cells": [
-                [
-                  {
-                    "text": "Ctrl+C",
-                    "kbd": true
-                  }
-                ],
-                [
-                  {
-                    "text": "Copy the selection (copies the whole page text when nothing is selected)"
-                  }
-                ]
-              ]
-            },
-            {
-              "header": false,
-              "cells": [
-                [
-                  {
-                    "text": "Ctrl+A",
-                    "kbd": true
-                  }
-                ],
-                [
-                  {
-                    "text": "Select all text on the current page"
-                  }
-                ]
-              ]
-            },
-            {
-              "header": false,
-              "cells": [
-                [
-                  {
-                    "text": "Alt+←",
-                    "kbd": true
-                  }
-                ],
-                [
-                  {
-                    "text": "Go back to the previous topic"
-                  }
-                ]
-              ]
-            },
-            {
-              "header": false,
-              "cells": [
-                [
-                  {
-                    "text": "Alt+→",
-                    "kbd": true
-                  }
-                ],
-                [
-                  {
-                    "text": "Go forward to the next topic"
-                  }
-                ]
-              ]
-            },
-            {
-              "header": false,
-              "cells": [
-                [
-                  {
-                    "text": "↑ / ↓",
-                    "kbd": true
-                  }
-                ],
-                [
-                  {
-                    "text": "Scroll the document up / down"
-                  }
-                ]
-              ]
-            },
-            {
-              "header": false,
-              "cells": [
-                [
-                  {
-                    "text": "Page Up / Page Down",
-                    "kbd": true
-                  }
-                ],
-                [
-                  {
-                    "text": "Scroll by page"
-                  }
-                ]
-              ]
-            },
-            {
-              "header": false,
-              "cells": [
-                [
-                  {
-                    "text": "Home / End",
-                    "kbd": true
-                  }
-                ],
-                [
-                  {
-                    "text": "Jump to the start / end of the page"
-                  }
-                ]
-              ]
-            }
-          ]
-        }
-      ]
-    },
-    {
       "id": "glossary",
       "title": "Glossary",
       "group": "Reference",
@@ -16731,32 +16539,20 @@
       "topic": 24
     },
     {
-      "keyword": "shortcuts",
-      "topic": 25
-    },
-    {
-      "keyword": "keyboard",
-      "topic": 25
-    },
-    {
-      "keyword": "keys",
-      "topic": 25
-    },
-    {
       "keyword": "terminology",
-      "topic": 26
+      "topic": 25
     },
     {
       "keyword": "terms",
-      "topic": 26
+      "topic": 25
     },
     {
       "keyword": "definitions",
-      "topic": 26
+      "topic": 25
     },
     {
       "keyword": "concepts",
-      "topic": 26
+      "topic": 25
     }
   ]
 }

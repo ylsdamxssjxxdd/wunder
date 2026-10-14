@@ -720,9 +720,11 @@ export component MainWindow inherits Window {
     callback refresh-agent-model-options();
     callback toggle-agent-tool-option(string);
     callback save-agent-form();
+    callback queue-agent-save();
     // Unsaved-change tracking for the agent editor: the clean baseline is
     // captured in Rust, every bound field change recomputes the dirty flag.
     in-out property <bool> agent-dirty: false;
+    in-out property <bool> agent-save-pending: false;
     in-out property <string> agent-form-snapshot;
     in-out property <bool> agent-leave-confirm-open: false;
     // The avatar glyph stays empty until the profile loads: the shell fills it
@@ -792,7 +794,7 @@ export component MainWindow inherits Window {
     // query is filtered natively and the matching categories come back as one
     // flag per category, in §9.2 order.
     in-out property <string> settings-query: "";
-    in-out property <[bool]> settings-category-flags: [true, true, true, true, true, true, true, true, true, true, true];
+    in-out property <[bool]> settings-category-flags: [true, true, true, true, true, true, true, true, true, true, true, true];
     callback filter-settings-categories(string);
     // Help is not a category anymore: the general page raises this to open the
     // standalone help window.
@@ -1354,6 +1356,8 @@ export component MainWindow inherits Window {
         add-agent-question => { root.add-agent-question(); }
         remove-agent-question(index) => { root.remove-agent-question(index); }
         save-agent-form => { root.save-agent-form(); }
+        agent-save-pending <=> root.agent-save-pending;
+        queue-agent-save => { root.queue-agent-save(); }
         refresh-agent-dirty => { root.refresh-agent-dirty(); }
         permission-mode <=> root.permission-mode;
         open-info(title, text) => { root.open-info(title, text); }

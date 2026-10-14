@@ -130,7 +130,7 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
-  padding-top: 12px;
+  padding-top: 4px;
   overflow: hidden;
 }
 
@@ -160,14 +160,22 @@
   color: var(--mz-text);
   font-size: var(--mz-font-base);
   cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
 }
 
 .messenger-sidebar-workspace-row:hover {
   background: var(--mz-hover);
 }
 
+/* 选中工作区用主题色淡染（图标同步实心化），与下方线程行的中性灰选中底
+   （--mz-selected）在层级和色相上都拉开，不再撞在一起。 */
 .messenger-sidebar-workspace-row.is-selected {
-  background: var(--mz-selected);
+  background: var(--mz-primary-tint);
+  color: var(--mz-text);
+}
+
+.messenger-sidebar-workspace-row.is-selected .messenger-sidebar-workspace-icon {
+  color: var(--mz-primary);
 }
 
 /* 工作区行拖拽排序（云端偏好，§6.3）：拖起半透明，悬停目标行给上沿指示。 */
@@ -272,6 +280,7 @@ button.messenger-sidebar-workspace-row {
   /* §5.2: thread rows are indented one rail step under the workspace row. */
   padding-left: calc(var(--mz-thread-indent) - 6px);
   border-radius: 7px;
+  transition: background-color 120ms ease;
 }
 
 .mz-thread-row:hover {

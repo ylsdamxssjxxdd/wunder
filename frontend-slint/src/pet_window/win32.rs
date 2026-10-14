@@ -15,22 +15,22 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use std::time::Instant;
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, SIZE, WPARAM};
 use windows_sys::Win32::Graphics::Gdi::{
-    BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BLENDFUNCTION, CreateCompatibleDC, CreateDIBSection,
-    CreateFontW, DeleteDC, DeleteObject, DIB_RGB_COLORS, DrawTextW, DT_CALCRECT, DT_END_ELLIPSIS,
-    DT_WORDBREAK, GetDeviceCaps, GetDC, HFONT, LOGPIXELSX, RGBQUAD, ReleaseDC, SelectObject,
-    SetBkMode, SetTextColor, TRANSPARENT,
+    CreateCompatibleDC, CreateDIBSection, CreateFontW, DeleteDC, DeleteObject, DrawTextW, GetDC,
+    GetDeviceCaps, ReleaseDC, SelectObject, SetBkMode, SetTextColor, BITMAPINFO, BITMAPINFOHEADER,
+    BI_RGB, BLENDFUNCTION, DIB_RGB_COLORS, DT_CALCRECT, DT_END_ELLIPSIS, DT_WORDBREAK, HFONT,
+    LOGPIXELSX, RGBQUAD, TRANSPARENT,
 };
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::Threading::GetCurrentThreadId;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    AppendMenuW, CreatePopupMenu, CreateWindowExW, CREATESTRUCTW, CS_HREDRAW, DefWindowProcW,
-    DestroyMenu, DestroyWindow, DispatchMessageW, GetMessageW, GetCursorPos, IDC_ARROW,
-    LoadCursorW, MF_CHECKED, MF_SEPARATOR, MF_STRING, MSG, PostQuitMessage, PostThreadMessageW,
-    RegisterClassExW, SetForegroundWindow, SetTimer, ShowWindow, SPI_GETWORKAREA, SW_SHOWNOACTIVATE,
-    SystemParametersInfoW, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu,
-    TranslateMessage, ULW_ALPHA, UpdateLayeredWindow, WNDCLASSEXW, WM_APP, WM_LBUTTONDOWN,
-    WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCCREATE, WM_NCDESTROY, WM_RBUTTONUP, WM_TIMER, WS_EX_LAYERED,
+    AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow,
+    DispatchMessageW, GetCursorPos, GetMessageW, LoadCursorW, PostQuitMessage, PostThreadMessageW,
+    RegisterClassExW, SetForegroundWindow, SetTimer, ShowWindow, SystemParametersInfoW,
+    TrackPopupMenu, TranslateMessage, UpdateLayeredWindow, CREATESTRUCTW, CS_HREDRAW, IDC_ARROW,
+    MF_CHECKED, MF_SEPARATOR, MF_STRING, MSG, SPI_GETWORKAREA, SW_SHOWNOACTIVATE, TPM_NONOTIFY,
+    TPM_RETURNCMD, TPM_RIGHTBUTTON, ULW_ALPHA, WM_APP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE,
+    WM_NCCREATE, WM_NCDESTROY, WM_RBUTTONUP, WM_TIMER, WNDCLASSEXW, WS_EX_LAYERED,
     WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 
@@ -150,7 +150,8 @@ pub fn work_area() -> Option<(f64, f64, f64, f64)> {
             right: 0,
             bottom: 0,
         };
-        let ok = SystemParametersInfoW(SPI_GETWORKAREA, 0, &mut rect as *mut RECT as *mut c_void, 0);
+        let ok =
+            SystemParametersInfoW(SPI_GETWORKAREA, 0, &mut rect as *mut RECT as *mut c_void, 0);
         if ok == 0 {
             return None;
         }
@@ -342,8 +343,10 @@ unsafe fn handle_command(command: PetCommand, context: &mut Loop<'_>) {
 
 /// Replace the visual, restarting the clock when the animation itself changed.
 fn apply_visual(state: &mut WindowState, visual: PetVisual) {
-    let clock_of =
-        |anim: &Option<PetAnim>| anim.as_ref().map(|anim| (anim.row, anim.frames, anim.frame_millis));
+    let clock_of = |anim: &Option<PetAnim>| {
+        anim.as_ref()
+            .map(|anim| (anim.row, anim.frames, anim.frame_millis))
+    };
     let same_clock = clock_of(&state.visual.anim) == clock_of(&visual.anim);
     let same_size = state.visual.width == visual.width && state.visual.height == visual.height;
     state.visual = visual;
@@ -380,7 +383,11 @@ unsafe fn show_menu(
         AppendMenuW(
             menu,
             flags,
-            if item.separator { 0 } else { item.code as usize },
+            if item.separator {
+                0
+            } else {
+                item.code as usize
+            },
             if item.separator {
                 std::ptr::null()
             } else {
@@ -476,7 +483,14 @@ fn dib_info(width: i32, height: i32) -> BITMAPINFO {
 /// 32-bit DIB selected into `dc`, returning the handle and its pixel base.
 unsafe fn dib_section(dc: isize, width: i32, height: i32) -> Option<(isize, *mut u8)> {
     let mut bits: *mut c_void = std::ptr::null_mut();
-    let bitmap = CreateDIBSection(dc, &dib_info(width, height), DIB_RGB_COLORS, &mut bits, 0, 0);
+    let bitmap = CreateDIBSection(
+        dc,
+        &dib_info(width, height),
+        DIB_RGB_COLORS,
+        &mut bits,
+        0,
+        0,
+    );
     (bitmap != 0 && !bits.is_null()).then_some((bitmap, bits as *mut u8))
 }
 
@@ -519,7 +533,12 @@ unsafe fn layout_bubble(wanted: &(String, BubbleTone), dpi: f64) -> Option<Bubbl
         right: max_width,
         bottom: max_height,
     };
-    text_metrics(dc, &utf, &mut measure, DT_CALCRECT | DT_WORDBREAK | DT_END_ELLIPSIS);
+    text_metrics(
+        dc,
+        &utf,
+        &mut measure,
+        DT_CALCRECT | DT_WORDBREAK | DT_END_ELLIPSIS,
+    );
     let text_width = (measure.right - measure.left).clamp(1, max_width);
     let text_height = (measure.bottom - measure.top).clamp(1, max_height);
     let width = text_width + padding * 2;
@@ -528,8 +547,7 @@ unsafe fn layout_bubble(wanted: &(String, BubbleTone), dpi: f64) -> Option<Bubbl
     let layout = match dib_section(dc, width, height) {
         Some((bitmap, bits)) => {
             SelectObject(dc, bitmap);
-            let pixels =
-                std::slice::from_raw_parts_mut(bits, (width * height * 4) as usize);
+            let pixels = std::slice::from_raw_parts_mut(bits, (width * height * 4) as usize);
             pixels.fill(0);
             let mut target = RECT {
                 left: padding,
@@ -580,7 +598,10 @@ unsafe extern "system" fn wndproc(
     match message {
         WM_NCCREATE => {
             let create = &*(lparam as *const CREATESTRUCTW);
-            STATES.with(|slot| slot.borrow_mut().insert(hwnd, create.lpCreateParams as usize));
+            STATES.with(|slot| {
+                slot.borrow_mut()
+                    .insert(hwnd, create.lpCreateParams as usize)
+            });
             DefWindowProcW(hwnd, message, wparam, lparam)
         }
         WM_NCDESTROY => {
@@ -704,8 +725,7 @@ unsafe fn tick(state: &mut WindowState, hwnd: HWND) {
 
 /// Last composited surface per window, kept only for the visual probe.
 #[cfg(test)]
-fn surfaces(
-) -> &'static std::sync::Mutex<std::collections::HashMap<String, (i32, i32, Vec<u8>)>> {
+fn surfaces() -> &'static std::sync::Mutex<std::collections::HashMap<String, (i32, i32, Vec<u8>)>> {
     static SURFACES: std::sync::OnceLock<
         std::sync::Mutex<std::collections::HashMap<String, (i32, i32, Vec<u8>)>>,
     > = std::sync::OnceLock::new();
@@ -810,7 +830,10 @@ unsafe fn render(state: &mut WindowState, hwnd: HWND, force: bool) {
         x: state.sprite_x - sprite_left,
         y: state.sprite_y - sprite_top,
     };
-    let size = SIZE { cx: width, cy: height };
+    let size = SIZE {
+        cx: width,
+        cy: height,
+    };
     UpdateLayeredWindow(
         hwnd,
         0,
@@ -827,7 +850,11 @@ unsafe fn render(state: &mut WindowState, hwnd: HWND, force: bool) {
 
 /// Ensure the cached DIB matches the requested size and return its DC plus the
 /// pixel base. Split out so `WindowState` is not borrowed while painting.
-unsafe fn ensure_surface(state: &mut WindowState, width: i32, height: i32) -> Option<(isize, *mut u8)> {
+unsafe fn ensure_surface(
+    state: &mut WindowState,
+    width: i32,
+    height: i32,
+) -> Option<(isize, *mut u8)> {
     let matches = state
         .surface
         .as_ref()
@@ -861,13 +888,7 @@ unsafe fn ensure_surface(state: &mut WindowState, width: i32, height: i32) -> Op
 }
 
 /// Rounded-rect bubble with the laid-out glyph coverage painted on top.
-fn paint_bubble(
-    buffer: &mut [u8],
-    window_width: i32,
-    layout: &BubbleLayout,
-    left: i32,
-    dpi: f64,
-) {
+fn paint_bubble(buffer: &mut [u8], window_width: i32, layout: &BubbleLayout, left: i32, dpi: f64) {
     let radius = (BUBBLE_RADIUS_LOGICAL as f64 * dpi).max(1.0) as f32;
     // Channels are written in BGRA order, so these triples are B, G, R.
     let (background, foreground): ([u8; 3], [u8; 3]) = match layout.wanted.1 {
@@ -901,7 +922,8 @@ fn paint_bubble(
 
 fn mix(background: [u8; 3], foreground: [u8; 3], coverage: u8) -> [u8; 3] {
     let weight = coverage as u32;
-    let blend = |base: u8, top: u8| ((base as u32 * (255 - weight) + top as u32 * weight) / 255) as u8;
+    let blend =
+        |base: u8, top: u8| ((base as u32 * (255 - weight) + top as u32 * weight) / 255) as u8;
     [
         blend(background[0], foreground[0]),
         blend(background[1], foreground[1]),
@@ -1022,7 +1044,13 @@ fn fold_key(
     motion: bool,
 ) -> u64 {
     let mut value = signature;
-    for part in [frame as i64, x as i64, y as i64, width as i64, height as i64] {
+    for part in [
+        frame as i64,
+        x as i64,
+        y as i64,
+        width as i64,
+        height as i64,
+    ] {
         value = value
             .wrapping_mul(31)
             .wrapping_add((part as u64) ^ ((part >> 32) as u64));
@@ -1057,11 +1085,7 @@ mod tests {
             1
         }
         unsafe {
-            EnumThreadWindows(
-                thread_id,
-                Some(visit),
-                &mut found as *mut _ as LPARAM,
-            );
+            EnumThreadWindows(thread_id, Some(visit), &mut found as *mut _ as LPARAM);
         }
         found
     }
@@ -1266,11 +1290,14 @@ mod tests {
         for (index, pixel) in flat.chunks_exact_mut(4).enumerate() {
             let band_y = index / width as usize / 16;
             let band_x = index % width as usize / 16;
-            let base = if (band_x + band_y) % 2 == 0 { 0xFF } else { 0x8A };
+            let base = if (band_x + band_y) % 2 == 0 {
+                0xFF
+            } else {
+                0x8A
+            };
             let alpha = pixel[3] as u32;
             for channel in &mut pixel[..3] {
-                *channel =
-                    ((alpha * *channel as u32 + (255 - alpha) * base as u32) / 255) as u8;
+                *channel = ((alpha * *channel as u32 + (255 - alpha) * base as u32) / 255) as u8;
             }
             pixel[3] = 255;
         }

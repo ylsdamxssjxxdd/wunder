@@ -31,7 +31,7 @@
   align-items: center;
   gap: 8px;
   box-sizing: border-box;
-  margin: 12px 0;
+  margin: 0 0 12px;
   padding: 0 10px;
   height: 34px;
   border: 1px solid var(--mz-border);
@@ -168,6 +168,20 @@
   flex-direction: column;
   gap: 16px;
   max-width: 880px;
+}
+
+.messenger-settings-frame-category--fill {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.messenger-settings-frame-category--fill > .messenger-settings-card {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.messenger-settings-frame-category--fill > .messenger-settings-card > .messenger-chat-settings-block {
+  min-height: 0;
 }
 
 /* ------------------------------------------------------- 工具管理选项卡 */
@@ -484,7 +498,8 @@
 
 .messenger-settings-page-manual {
   display: flex;
-  height: 420px;
+  flex: 1 1 auto;
+  min-height: 420px;
   margin-top: 10px;
   overflow: hidden;
   border: 1px solid var(--mz-border);
@@ -510,7 +525,13 @@
 
 .messenger-settings-card--manual {
   display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
   flex-direction: column;
+}
+
+.messenger-settings-card--manual .messenger-settings-group-head {
+  flex: 0 0 auto;
 }
 
 /* 分类内容里复用既有面板时，去掉外层额外边距，保持卡片统一。 */
@@ -593,5 +614,11 @@
 
   .messenger-settings-frame-content-body {
     padding: 12px 16px 24px;
+  }
+}
+
+@media (min-width: 1024px) {
+  .messenger-settings-frame-category--fill .messenger-settings-card > .messenger-chat-settings-block {
+    flex: 1 1 auto;
   }
 }

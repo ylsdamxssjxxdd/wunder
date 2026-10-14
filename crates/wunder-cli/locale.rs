@@ -55,10 +55,7 @@ pub fn ui_pair(key: &str) -> Option<(&'static str, &'static str)> {
         "patch_apply_failed" => Some(("✘ 补丁应用失败", "✘ Failed to apply patch")),
         "changed_files_one" => Some(("1 个文件", "1 file")),
         "changed_files_count" => Some(("{count} 个文件", "{count} files")),
-        "patch_edited" => Some((
-            "• 已修改 {files}{metrics}",
-            "• Edited {files}{metrics}",
-        )),
+        "patch_edited" => Some(("• 已修改 {files}{metrics}", "• Edited {files}{metrics}")),
         "tool_failed" => Some(("✘ {tool} 失败", "✘ {tool} failed")),
         "tool_completed" => Some(("• 已完成 {tool}", "• Completed {tool}")),
         "tool_only_summary" => Some((
@@ -68,10 +65,7 @@ pub fn ui_pair(key: &str) -> Option<(&'static str, &'static str)> {
         // The composer gap: one row between the transcript and the draft carrying the
         // return-to-latest control and the copy feedback. Every rung is one display row,
         // so the ladder sheds words before the band ever asks for a second row.
-        "gap_follow_full" => Some((
-            "↓ {count} 条新内容 (End)",
-            "↓ {count} new (End)",
-        )),
+        "gap_follow_full" => Some(("↓ {count} 条新内容 (End)", "↓ {count} new (End)")),
         "gap_follow_count" => Some(("↓ {count} 条新内容", "↓ {count} new")),
         "gap_follow_back" => Some(("↓ 回到最新 (End)", "↓ back to latest (End)")),
         "gap_follow_min" => Some(("↓ 回最新", "↓ latest")),
@@ -131,7 +125,10 @@ mod ui_text_table_tests {
         for key in UI_TEXT_KEYS {
             let (zh, en) = ui_pair(key).unwrap_or_else(|| panic!("unknown copy key: {key}"));
             assert!(has_han(zh), "{key} has no Chinese wording: {zh}");
-            assert!(!has_han(en), "{key} carries Chinese into the English form: {en}");
+            assert!(
+                !has_han(en),
+                "{key} carries Chinese into the English form: {en}"
+            );
             assert!(
                 en.chars().any(|ch| ch.is_ascii_alphabetic()),
                 "{key} English form is not wording: {en}"

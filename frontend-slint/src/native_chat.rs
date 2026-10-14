@@ -17,11 +17,11 @@ use std::{
     },
     time::{Duration, Instant},
 };
+use wunder_desktop::native::NativeChatCommand;
 use wunder_desktop::{
     NativeChatAttachment, NativeChatEvent, NativeChatInput, NativeDesktop, NativeQueueTurn,
     NativeStream, NativeTerminalSpec,
 };
-use wunder_desktop::native::NativeChatCommand;
 
 #[path = "native_chat_commands.rs"]
 mod commands;
@@ -84,8 +84,7 @@ impl TurnOutput {
     }
 
     fn failed(&self) -> bool {
-        matches!(self.state.as_str(), "执行失败" | "思考中断")
-            || self.state.contains("失败")
+        matches!(self.state.as_str(), "执行失败" | "思考中断") || self.state.contains("失败")
     }
 
     /// Upsert one tool entry and publish it to the timeline. The reducer calls
@@ -195,9 +194,10 @@ impl InquiryState {
 
     fn ready(&self) -> bool {
         !self.questions.is_empty()
-            && self.questions.iter().all(|question| {
-                Self::is_answered(question)
-            })
+            && self
+                .questions
+                .iter()
+                .all(|question| Self::is_answered(question))
     }
 
     fn toggle_option(&mut self, option: usize) {
@@ -289,7 +289,10 @@ fn inquiry_from_payload(data: &Value) -> Option<InquiryState> {
                     let label = option["label"].as_str()?;
                     Some(InquiryOptionState {
                         label: label.to_string(),
-                        description: option["description"].as_str().unwrap_or_default().to_string(),
+                        description: option["description"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .to_string(),
                         recommended: option["recommended"].as_bool().unwrap_or(false),
                         selected: false,
                     })
@@ -727,7 +730,8 @@ fn bind_inquiry(app: &MainWindow, state: Rc<RefCell<State>>) {
     });
 }
 
-fn bind_refresh(app: &MainWindow, state: Rc<RefCell<State>>) {    let weak = app.as_weak();
+fn bind_refresh(app: &MainWindow, state: Rc<RefCell<State>>) {
+    let weak = app.as_weak();
     app.on_refresh_chat(move || {
         if let Some(app) = weak.upgrade() {
             refresh_chat(&app, state.clone(), false);
@@ -774,10 +778,8 @@ fn refresh_chat(app: &MainWindow, state: Rc<RefCell<State>>, silent: bool) {
                             let goal_paused = goal.paused();
                             Conversation {
                                 id: item.id.into(),
-                                agent_id: crate::navigation_ui::agent_key(
-                                    item.agent_id.as_deref(),
-                                )
-                                .into(),
+                                agent_id: crate::navigation_ui::agent_key(item.agent_id.as_deref())
+                                    .into(),
                                 workspace_id: item.workspace_id.unwrap_or_default().into(),
                                 title: item.title.into(),
                                 time: format_time(item.updated_at).into(),
@@ -800,7 +802,9 @@ fn refresh_chat(app: &MainWindow, state: Rc<RefCell<State>>, silent: bool) {
                         .find(|row| row.id == app.get_active_session_id());
                     app.set_goal_active(active.is_some_and(|row| row.goal_active));
                     app.set_goal_objective(
-                        active.map(|row| row.goal_objective.clone()).unwrap_or_default(),
+                        active
+                            .map(|row| row.goal_objective.clone())
+                            .unwrap_or_default(),
                     );
                     set_goal_clock(&app, active.map(|row| row.goal_seconds).unwrap_or(0));
                     app.set_goal_paused(active.is_some_and(|row| row.goal_paused));
@@ -824,9 +828,7 @@ fn refresh_chat(app: &MainWindow, state: Rc<RefCell<State>>, silent: bool) {
                             crate::workspace_files::set_target(
                                 &app,
                                 desktop.clone(),
-                                crate::workspace_files::Target::Local(
-                                    card.root_path.to_string(),
-                                ),
+                                crate::workspace_files::Target::Local(card.root_path.to_string()),
                             );
                         }
                     }
@@ -844,7 +846,6 @@ fn refresh_chat(app: &MainWindow, state: Rc<RefCell<State>>, silent: bool) {
         });
     });
 }
-
 
 fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
     let weak = app.as_weak();
@@ -968,7 +969,6 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
         });
     });
 }
-
 
 // A thread counts as an untouched new one while it has seen no model work:
 // zero tokens, zero tool calls and no queued or running status. Scoped to the
@@ -1205,9 +1205,9 @@ fn paint_terminal(app: &MainWindow, host: &mut State) {
     if resized {
         host.grid.set_size(rows, cols);
     }
-    app.set_terminal_spans(ModelRc::from(Rc::new(VecModel::from(
-        terminal_spans(&mut host.grid),
-    ))));
+    app.set_terminal_spans(ModelRc::from(Rc::new(VecModel::from(terminal_spans(
+        &mut host.grid,
+    )))));
     let (rows, cols) = host.grid.size();
     app.set_terminal_rows(rows.into());
     app.set_terminal_cols(cols.into());
@@ -1587,15 +1587,12 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
             // A turn already owns the live slot, so this one waits on its own
             // subscriber: the pump promotes whichever parked stream starts, and
             // the strip shows the engine's queue until then.
-            state
-                .borrow_mut()
-                .parked
-                .push_back(ParkedTurn::new(
-                    stream,
-                    session.clone(),
-                    display_content.clone(),
-                    client_message_id,
-                ));
+            state.borrow_mut().parked.push_back(ParkedTurn::new(
+                stream,
+                session.clone(),
+                display_content.clone(),
+                client_message_id,
+            ));
             app.set_draft("".into());
             app.set_pending_attachments(ModelRc::default());
             state.borrow_mut().inquiries.remove(&session);
@@ -1870,6 +1867,13 @@ fn withdraw_queue_turn(
         .find(|row| row.queue_id == queue_id)
         .map(|row| row.client_message_id.clone())
         .unwrap_or_default();
+    let root_turn_id = state
+        .borrow()
+        .queue_cache
+        .iter()
+        .find(|row| row.queue_id == queue_id)
+        .map(|row| row.root_turn_id.clone())
+        .unwrap_or_default();
     let desktop = state.borrow().desktop.clone();
     let content = match desktop.withdraw_queue_turn(session, queue_id) {
         Ok(content) => Some(content),
@@ -1878,6 +1882,13 @@ fn withdraw_queue_turn(
             None
         }
     };
+    if content.is_some() && !root_turn_id.is_empty() {
+        let mut st = state.borrow_mut();
+        if st.observation.remove_turn(&root_turn_id) {
+            let timeline = st.timeline.clone();
+            st.observation.publish(app, &timeline);
+        }
+    }
     if !client_id.is_empty() {
         let mut st = state.borrow_mut();
         if let Some(index) = st
@@ -1985,8 +1996,15 @@ fn bind_queue(app: &MainWindow, state: Rc<RefCell<State>>) {
         let timeline = state.borrow().timeline.clone();
         let history = timeline.borrow().recent_user_texts(queue::RECALL_DEPTH);
         let mut st = state.borrow_mut();
-        queue::recall_step(&mut st.recall, &history, direction, cursor, anchor, draft.as_str())
-            .unwrap_or(untouched)
+        queue::recall_step(
+            &mut st.recall,
+            &history,
+            direction,
+            cursor,
+            anchor,
+            draft.as_str(),
+        )
+        .unwrap_or(untouched)
     });
 }
 
@@ -2355,9 +2373,7 @@ fn start_timer(app: &MainWindow, state: Rc<RefCell<State>>) {
                 // A parked subscriber of another thread can never be pumped
                 // from here, and its bounded channel would only back-pressure
                 // the engine, so it goes with the thread that was left behind.
-                state
-                    .parked
-                    .retain(|entry| entry.session == active_session);
+                state.parked.retain(|entry| entry.session == active_session);
                 if state.parked.is_empty() {
                     // Nothing left to pump: release the running state and stop
                     // the timer until the next submission.
@@ -2409,7 +2425,9 @@ fn start_timer(app: &MainWindow, state: Rc<RefCell<State>>) {
                             let position = data["position"].as_i64().unwrap_or(0);
                             let queue_session = data["session_id"].as_str().unwrap_or("");
                             if queue_session.is_empty() || queue_session == active.session {
-                                app.set_cloud_queue_position(position.clamp(0, i32::MAX as i64) as i32);
+                                app.set_cloud_queue_position(
+                                    position.clamp(0, i32::MAX as i64) as i32
+                                );
                                 active.state = format!("模型请求正在排队 · 前方 {position} 个任务");
                             }
                         } else if app.get_cloud_queue_position() >= 0 {
@@ -2560,16 +2578,21 @@ fn apply_event(
     if round < active.round && matches!(kind, "llm_output_delta" | "llm_output" | "delta") {
         return Ok(false);
     }
-    // A new model round ends the previous round's segments: the answer block
-    // freezes and the tool batch that produced it closes. The next text delta
-    // then opens a fresh block, which is what makes one entry per round.
-    let streamed = matches!(kind, "llm_output_delta" | "llm_output" | "delta");
-    if round > active.round && active.round > 0 && streamed {
+    // A new model round ends the previous round's segments. Some providers
+    // begin the next round with reasoning directly (without an intervening
+    // llm_request), so this boundary must apply to reasoning as well as text.
+    if round > active.round && active.round > 0 {
         timeline.close_segments();
     }
     if matches!(
         kind,
-        "llm_output_delta" | "llm_output" | "llm_request" | "delta" | "final"
+        "llm_output_delta"
+            | "llm_output"
+            | "llm_request"
+            | "delta"
+            | "final"
+            | "reasoning"
+            | "reasoning_delta"
     ) {
         active.round = active.round.max(round);
     }
@@ -2685,30 +2708,30 @@ fn apply_event(
             if running {
                 active.state = "上下文压缩中…".into();
             }
-            active.upsert_workflow(timeline, NativeWorkflowEntry::from_payload(
-                data["item_id"]
-                    .as_str()
-                    .or_else(|| data["compaction_id"].as_str())
-                    .unwrap_or("compaction"),
-                "上下文压缩",
-                summary.into(),
-                if matches!(kind, "compaction_start" | "compaction_progress") {
-                    "running"
-                } else {
-                    data["status"].as_str().unwrap_or("completed")
-                },
-                data,
-            ));
+            active.upsert_workflow(
+                timeline,
+                NativeWorkflowEntry::from_payload(
+                    data["item_id"]
+                        .as_str()
+                        .or_else(|| data["compaction_id"].as_str())
+                        .unwrap_or("compaction"),
+                    "上下文压缩",
+                    summary.into(),
+                    if matches!(kind, "compaction_start" | "compaction_progress") {
+                        "running"
+                    } else {
+                        data["status"].as_str().unwrap_or("completed")
+                    },
+                    data,
+                ),
+            );
         }
         "queue_finish" => active.state = "任务完成".into(),
         "plan_update" => {
             // The plan tool publishes the whole checklist each time, so a
             // wholesale replace is correct. Bounded: a runaway plan must not
             // grow the dock model without limit.
-            active.plan_explanation = data["explanation"]
-                .as_str()
-                .unwrap_or_default()
-                .to_string();
+            active.plan_explanation = data["explanation"].as_str().unwrap_or_default().to_string();
             active.plan_steps = data["plan"]
                 .as_array()
                 .map(|steps| {
@@ -2751,22 +2774,28 @@ fn apply_event(
                 || data["ok"] == false
                 || data["result"]["ok"] == false
                 || data["result"]["success"] == false;
-            active.upsert_workflow(timeline, NativeWorkflowEntry::from_payload(
-                id,
-                tool,
-                detail,
-                if pending {
-                    "running"
-                } else if failed {
-                    "failed"
-                } else {
-                    "completed"
-                },
-                data,
-            ));
+            active.upsert_workflow(
+                timeline,
+                NativeWorkflowEntry::from_payload(
+                    id,
+                    tool,
+                    detail,
+                    if pending {
+                        "running"
+                    } else if failed {
+                        "failed"
+                    } else {
+                        "completed"
+                    },
+                    data,
+                ),
+            );
         }
-        "command_session_start" | "command_session_delta"
-        | "command_session_status" | "command_session_exit" | "command_session_summary" => {
+        "command_session_start"
+        | "command_session_delta"
+        | "command_session_status"
+        | "command_session_exit"
+        | "command_session_summary" => {
             // The runtime streams a running shell command as command_session_*
             // frames (id in `command_session_id`, one per `command_index`). Fold
             // them into one live workflow row so the output grows while the
@@ -2780,8 +2809,7 @@ fn apply_event(
                     output = active.append_command_output(&key, delta);
                 }
                 let command = data["command"].as_str().unwrap_or("");
-                let terminal =
-                    matches!(kind, "command_session_exit" | "command_session_summary");
+                let terminal = matches!(kind, "command_session_exit" | "command_session_summary");
                 let exit_code = data["exit_code"].as_i64();
                 let failed = exit_code.map(|code| code != 0).unwrap_or(false)
                     || data["success"] == false
@@ -2807,21 +2835,24 @@ fn apply_event(
                 if let Some(code) = exit_code {
                     lines.push(format!("exit {code}"));
                 }
-                active.upsert_workflow(timeline, NativeWorkflowEntry::from_payload(
-                    key.as_str(),
-                    "execute_command",
-                    lines.join("\n"),
-                    if terminal {
-                        if failed {
-                            "failed"
+                active.upsert_workflow(
+                    timeline,
+                    NativeWorkflowEntry::from_payload(
+                        key.as_str(),
+                        "execute_command",
+                        lines.join("\n"),
+                        if terminal {
+                            if failed {
+                                "failed"
+                            } else {
+                                "completed"
+                            }
                         } else {
-                            "completed"
-                        }
-                    } else {
-                        "running"
-                    },
-                    data,
-                ));
+                            "running"
+                        },
+                        data,
+                    ),
+                );
                 active.state = "正在执行工具…".into();
             }
         }
@@ -2861,7 +2892,6 @@ fn bound_command_output(text: &str) -> String {
     output
 }
 
-
 fn event_data(event: &Value) -> &Value {
     let envelope = event.get("data").unwrap_or(event);
     envelope.get("data").unwrap_or(envelope)
@@ -2871,7 +2901,6 @@ fn stat_number(value: &Value, keys: &[&str]) -> Option<f64> {
     keys.iter()
         .find_map(|key| value.get(*key).and_then(Value::as_f64))
 }
-
 
 /// Interaction duration is the only per-turn number the timeline still shows;
 /// every other statistic moved to the settings pages and thread log.
@@ -2883,11 +2912,15 @@ fn update_active_stats(active: &mut TurnOutput, event: &Value) {
             sources.push(value);
         }
     }
-    if let Some(seconds) =
-        sources
-            .iter()
-            .find_map(|source| stat_number(source, &["interaction_duration_s", "duration_s", "elapsed_s"]))
-            .filter(|value| *value > 0.0)
+    if let Some(seconds) = sources
+        .iter()
+        .find_map(|source| {
+            stat_number(
+                source,
+                &["interaction_duration_s", "duration_s", "elapsed_s"],
+            )
+        })
+        .filter(|value| *value > 0.0)
     {
         active.stats_duration = format_duration_value(seconds);
     }
@@ -3183,7 +3216,10 @@ mod turn_tests {
         );
         for row in rows.iter().skip(2).take(6) {
             assert_eq!(row.process_idx, rows[1].process_idx, "step {row:?} escaped");
-            assert!(!row.process_open && !row.group_open, "the process ships folded");
+            assert!(
+                !row.process_open && !row.group_open,
+                "the process ships folded"
+            );
         }
         assert_eq!(rows[8].process_idx, crate::timeline::NO_PROCESS);
     }
@@ -3194,7 +3230,9 @@ mod turn_tests {
     fn stop_and_terminal_state_freeze_the_tail_without_new_rows() {
         let timeline = Rc::new(RefCell::new(crate::timeline::Timeline::new()));
         let mut output = TurnOutput::new("fixture-session".into(), timeline.clone());
-        timeline.borrow_mut().begin_turn("fixture-root", "Fixture input");
+        timeline
+            .borrow_mut()
+            .begin_turn("fixture-root", "Fixture input");
         let mut live = timeline.borrow_mut();
         apply_event(
             &mut output,
@@ -3338,7 +3376,10 @@ mod turn_tests {
         panel.toggle_no_preference();
         assert!(panel.questions[0].no_preference);
         assert!(
-            panel.questions[0].options.iter().all(|option| !option.selected),
+            panel.questions[0]
+                .options
+                .iter()
+                .all(|option| !option.selected),
             "无偏好 replaces the ticks of its own question"
         );
         assert!(panel.questions[0].other.is_empty());

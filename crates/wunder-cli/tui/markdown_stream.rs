@@ -297,7 +297,10 @@ mod boundary {
             return None;
         }
         let trimmed = line.trim_start();
-        let marker = trimmed.chars().next().filter(|ch| *ch == '`' || *ch == '~')?;
+        let marker = trimmed
+            .chars()
+            .next()
+            .filter(|ch| *ch == '`' || *ch == '~')?;
         let run = trimmed.chars().take_while(|ch| *ch == marker).count();
         if run < 3 {
             return None;
@@ -589,7 +592,9 @@ mod tests {
         let mut out = Vec::new();
         let mut offset = 0;
         while offset < source.len() {
-            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             let step = 1 + ((state >> 33) as usize % 11);
             let mut next = (offset + step).min(source.len());
             while next > offset && !source.is_char_boundary(next) {
@@ -628,10 +633,7 @@ mod tests {
                 "markdown-table-fence",
                 "```markdown\n| gate | value |\n| --- | --- |\n| flaky | false |\n```\n",
             ),
-            (
-                "setext-heading",
-                "Title line\n===\n\nbody line\n",
-            ),
+            ("setext-heading", "Title line\n===\n\nbody line\n"),
             (
                 "indented-code-with-blank-line",
                 "para line\n\n    value one\n\n    value two\n\nafter\n",
@@ -780,8 +782,14 @@ mod tests {
                     .collect::<String>()
             })
             .collect();
-        assert!(joined.iter().any(|line| line.starts_with("2. second")), "{joined:?}");
-        assert!(joined.iter().any(|line| line.starts_with("3. third")), "{joined:?}");
+        assert!(
+            joined.iter().any(|line| line.starts_with("2. second")),
+            "{joined:?}"
+        );
+        assert!(
+            joined.iter().any(|line| line.starts_with("3. third")),
+            "{joined:?}"
+        );
     }
 
     #[test]
@@ -793,7 +801,11 @@ mod tests {
             collector.push_delta(delta);
             emitted.extend(collector.commit_complete_lines());
         }
-        assert_eq!(emitted.len(), 2, "only the last line is held back: {emitted:?}");
+        assert_eq!(
+            emitted.len(),
+            2,
+            "only the last line is held back: {emitted:?}"
+        );
         emitted.extend(collector.finalize_and_drain());
         assert_eq!(emitted, one_shot(source));
     }
@@ -827,10 +839,11 @@ mod tests {
         assert_eq!(
             expected
                 .iter()
-                .filter(|line| line.spans.is_empty() || line.spans.iter().all(|span| span
-                    .content
-                    .chars()
-                    .all(|ch| ch == ' ')))
+                .filter(|line| line.spans.is_empty()
+                    || line
+                        .spans
+                        .iter()
+                        .all(|span| span.content.chars().all(|ch| ch == ' ')))
                 .count(),
             2
         );

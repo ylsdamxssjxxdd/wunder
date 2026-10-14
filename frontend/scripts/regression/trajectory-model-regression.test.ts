@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildTrajectoryLayout, flattenRecords } from '../../src/views/trajectory/trajectoryModel';
+import { buildTrajectoryLayout, extractUsage, flattenRecords } from '../../src/views/trajectory/trajectoryModel';
 
 const translate = (key: string, params?: Record<string, string | number>) =>
   params ? `${key}:${JSON.stringify(params)}` : key;
@@ -70,4 +70,13 @@ test('agent mailbox deliveries are readable context instead of tool rows', () =>
 
   assert.equal(context.kind, 'context');
   assert.equal(context.text, 'fixture completion report');
+});
+
+test('usage accepts DSH camelCase and nested persisted shapes', () => {
+  assert.deepEqual(extractUsage({
+    usage: { inputTokens: '12', outputTokens: 8, reasoningTokens: 3, cacheReadTokens: 2 },
+  }), { input: 12, output: 8, think: 3, cacheRead: 2 });
+  assert.deepEqual(extractUsage({
+    meta: { message_stats: { round_usage: { input_tokens: 20, output_tokens: 4 } } },
+  }), { input: 20, output: 4 });
 });

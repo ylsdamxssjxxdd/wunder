@@ -207,7 +207,9 @@ pub fn recall_step(
     let selection = cursor != anchor;
     let at_start = cursor == 0 && anchor == 0;
     let at_end = !selection && cursor as usize == draft.len();
-    if history.is_empty() || selection || (!draft.is_empty() && !(if up { at_start } else { at_end }))
+    if history.is_empty()
+        || selection
+        || (!draft.is_empty() && !(if up { at_start } else { at_end }))
     {
         return None;
     }
@@ -257,6 +259,7 @@ mod tests {
     fn row(id: &str, text: &str, priority: i64) -> NativeQueueTurn {
         NativeQueueTurn {
             queue_id: id.into(),
+            root_turn_id: String::new(),
             content: text.into(),
             attachment_count: if text.is_empty() { 1 } else { 0 },
             position: 0,

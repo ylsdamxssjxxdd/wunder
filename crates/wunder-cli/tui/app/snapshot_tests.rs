@@ -2084,12 +2084,7 @@ async fn a_mark_survives_scrolling_away_and_back_to_the_same_text() {
     );
 
     let _clipboard_turn = ClipboardSeam::arm();
-    mouse(
-        &mut app,
-        MouseEventKind::Down(MouseButton::Left),
-        a28.0,
-        2,
-    );
+    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), a28.0, 2);
     mouse(&mut app, MouseEventKind::Drag(MouseButton::Left), a30.0, 6);
     mouse(&mut app, MouseEventKind::Up(MouseButton::Left), a30.0, 6);
     let expected = format!("{}\n{}\n{}", &a28.1[2..], &a29.1, &a30.1[..6]);
@@ -2102,10 +2097,7 @@ async fn a_mark_survives_scrolling_away_and_back_to_the_same_text() {
     );
     let mark_before = marked_cards(&mut app, width, height);
     assert!(!mark_before.is_empty(), "the drag left a visible mark");
-    let anchor_before = app
-        .transcript_selection
-        .expect("a mark is open")
-        .anchor;
+    let anchor_before = app.transcript_selection.expect("a mark is open").anchor;
     assert_eq!(
         anchor_before.cell_id, app.logs[0].cell_id,
         "the anchor names the tall card"
@@ -2186,10 +2178,7 @@ async fn the_mark_still_names_its_own_text_while_the_transcript_grows() {
     mouse(&mut app, MouseEventKind::Drag(MouseButton::Left), row, 4);
     mouse(&mut app, MouseEventKind::Up(MouseButton::Left), row, 4);
     let first_copy = ClipboardSeam::copied().pop().expect("the release copied");
-    let anchor_before = app
-        .transcript_selection
-        .expect("a mark is open")
-        .anchor;
+    let anchor_before = app.transcript_selection.expect("a mark is open").anchor;
     let texts_before: Vec<String> = marked_cards(&mut app, 60, 24)
         .into_iter()
         .map(|(_, text)| text)
@@ -2251,7 +2240,12 @@ async fn trimming_the_selected_card_clears_the_mark_and_a_neighbour_keeps_its_ow
 
     let _clipboard_turn = ClipboardSeam::arm();
     mouse(&mut app, MouseEventKind::Down(MouseButton::Left), first, 0);
-    mouse(&mut app, MouseEventKind::Drag(MouseButton::Left), first + 1, 7);
+    mouse(
+        &mut app,
+        MouseEventKind::Drag(MouseButton::Left),
+        first + 1,
+        7,
+    );
     mouse(
         &mut app,
         MouseEventKind::Up(MouseButton::Left),
@@ -2346,10 +2340,7 @@ async fn a_shift_click_moves_the_free_end_and_leaves_the_anchor_put_down() {
     mouse(&mut app, MouseEventKind::Drag(MouseButton::Left), row, 3);
     mouse(&mut app, MouseEventKind::Up(MouseButton::Left), row, 3);
     let short = ClipboardSeam::copied().pop().expect("the drag copied");
-    let anchor_before = app
-        .transcript_selection
-        .expect("a mark is open")
-        .anchor;
+    let anchor_before = app.transcript_selection.expect("a mark is open").anchor;
     assert_eq!(short, "ite", "three columns of one line: {short:?}");
 
     mouse_held(
@@ -2556,13 +2547,11 @@ async fn a_marked_transcript_stays_inside_the_frame_at_every_sampled_width() {
         let before = draw_rows(&mut app, width, height);
         let band = banded_card_rows(&before, app.transcript_mouse_region);
         let row = band.last().expect("the band shows cards").0;
-        assert!(row >= 1, "the drag needs a row above it at {width}: {band:?}");
-        mouse(
-            &mut app,
-            MouseEventKind::Down(MouseButton::Left),
-            row,
-            1,
+        assert!(
+            row >= 1,
+            "the drag needs a row above it at {width}: {band:?}"
         );
+        mouse(&mut app, MouseEventKind::Down(MouseButton::Left), row, 1);
         mouse(
             &mut app,
             MouseEventKind::Drag(MouseButton::Left),
@@ -2886,7 +2875,12 @@ async fn a_drag_across_the_draft_marks_the_run_and_the_next_keystroke_replaces_i
     assert!(marks[0].1.contains("summarise"), "{marks:?}");
 
     // The release ends the gesture and copies what it picked, the way the transcript does.
-    mouse(&mut app, MouseEventKind::Up(MouseButton::Left), row, area.x + 16);
+    mouse(
+        &mut app,
+        MouseEventKind::Up(MouseButton::Left),
+        row,
+        area.x + 16,
+    );
     assert_eq!(
         ClipboardSeam::copied(),
         vec!["the fl".to_string()],
@@ -2901,7 +2895,10 @@ async fn a_drag_across_the_draft_marks_the_run_and_the_next_keystroke_replaces_i
         .await
         .expect("type over the mark");
     assert_eq!(app.input, "summarise xaky gate", "the run is replaced");
-    assert_eq!(app.input_cursor, 11, "the caret lands after the replacement");
+    assert_eq!(
+        app.input_cursor, 11,
+        "the caret lands after the replacement"
+    );
     assert!(!app.has_input_selection());
     assert!(
         marked_draft_rows(&mut app, 80, 24).is_empty(),
@@ -3065,7 +3062,10 @@ async fn a_double_click_in_the_draft_takes_the_word_and_a_triple_the_logical_lin
     // Padding past the last character is not text: three clicks there still just place the
     // caret, and nothing is marked.
     clicks(&mut app, 3, 30);
-    assert_eq!(app.input_cursor, 21, "the caret sits at the end of the draft");
+    assert_eq!(
+        app.input_cursor, 21,
+        "the caret sits at the end of the draft"
+    );
     assert!(
         !app.has_input_selection(),
         "and a click on trailing padding never selects"
@@ -3150,7 +3150,10 @@ async fn the_wheel_over_the_draft_scrolls_it_without_moving_the_caret() {
         lines.get(3.min(travelled)).map(String::as_str),
         "and it advanced to the row the offset names"
     );
-    assert_eq!(app.input_cursor, 0, "the caret never left the first character");
+    assert_eq!(
+        app.input_cursor, 0,
+        "the caret never left the first character"
+    );
     assert!(
         app.input.starts_with("item-1"),
         "so the text it points at is still the draft's opening"
@@ -3209,7 +3212,11 @@ async fn a_drag_past_the_draft_band_edge_extends_the_mark_one_row_at_a_time() {
         last + 1,
         area.x + 2,
     );
-    assert_eq!(app.input_scroll, Some(1), "the draft advanced exactly one row");
+    assert_eq!(
+        app.input_scroll,
+        Some(1),
+        "the draft advanced exactly one row"
+    );
     assert_eq!(
         app.input_selection_range(),
         Some((anchor, row_start(band))),
@@ -3251,7 +3258,11 @@ async fn a_drag_past_the_draft_band_edge_extends_the_mark_one_row_at_a_time() {
         area.x + 2,
     );
     let anchor = app.input_cursor;
-    assert_eq!(anchor, row_start(2), "the anchor is the row the band opens on");
+    assert_eq!(
+        anchor,
+        row_start(2),
+        "the anchor is the row the band opens on"
+    );
 
     mouse(
         &mut app,
@@ -3269,10 +3280,7 @@ async fn a_drag_past_the_draft_band_edge_extends_the_mark_one_row_at_a_time() {
         area.x + 2,
     );
     assert_eq!(app.input_scroll, Some(0), "to the top of the draft");
-    assert_eq!(
-        app.input_selection_range(),
-        Some((row_start(0), anchor))
-    );
+    assert_eq!(app.input_selection_range(), Some((row_start(0), anchor)));
 
     mouse(
         &mut app,
@@ -3433,7 +3441,10 @@ async fn a_rewritten_draft_retires_the_mark_instead_of_pointing_at_the_wrong_byt
         .expect("the fixture has a user card");
     app.transcript_selected = Some(user_card);
     assert!(app.prefill_selected_user_message());
-    assert!(!app.has_input_selection(), "a prefilled draft keeps no mark");
+    assert!(
+        !app.has_input_selection(),
+        "a prefilled draft keeps no mark"
+    );
 
     // Relabelling attachment placeholders rewrites the draft under the mark.
     app.pending_attachments = vec![
@@ -3691,10 +3702,7 @@ async fn a_mark_in_either_region_retires_the_gap_control() {
     app.on_key(ctrl(KeyCode::Char('t')))
         .await
         .expect("open the transcript view");
-    assert!(
-        app.transcript_view_open(),
-        "the full-transcript view is up"
-    );
+    assert!(app.transcript_view_open(), "the full-transcript view is up");
     assert!(
         app.composer_gap_line(80, false).is_none(),
         "the view owns the frame"
@@ -3726,7 +3734,10 @@ async fn a_click_on_the_gap_control_follows_the_tail_again() {
     let _ = draw_rows(&mut app, 80, 24);
 
     let area = app.gap_hit_area();
-    assert!(!area.is_empty() && area.height == 1, "the band owns one row");
+    assert!(
+        !area.is_empty() && area.height == 1,
+        "the band owns one row"
+    );
     let centre = area.x + area.width / 2;
     mouse(&mut app, MouseEventKind::Moved, usize::from(area.y), centre);
     let hovered = draw_rows(&mut app, 80, 24);
@@ -3975,9 +3986,7 @@ async fn the_gap_carries_its_state_without_color() {
     mouse(&mut app, MouseEventKind::Moved, row + 1, area.x + 1);
     let elsewhere = marked_rows(&mut app, 80, 24);
     assert!(
-        !elsewhere
-            .iter()
-            .any(|(marked_row, _)| *marked_row == row),
+        !elsewhere.iter().any(|(marked_row, _)| *marked_row == row),
         "a pointer off the band leaves it unmarked: {elsewhere:?}"
     );
 }
@@ -4034,7 +4043,10 @@ async fn slash_opens_the_search_and_escape_restores_the_reading_position() {
     assert!(origin > 0, "the reader is parked away from the tail");
 
     open_search(&mut app).await;
-    assert!(app.input.is_empty(), "the slash did not fall into the draft");
+    assert!(
+        app.input.is_empty(),
+        "the slash did not fall into the draft"
+    );
     assert_eq!(
         app.transcript_search.origin_offset, origin,
         "the origin is the scroll from the tail the reader left"
@@ -4066,7 +4078,9 @@ async fn slash_opens_the_search_and_escape_restores_the_reading_position() {
         "the jump really did move the window"
     );
 
-    app.on_key(key(KeyCode::Esc)).await.expect("leave the search");
+    app.on_key(key(KeyCode::Esc))
+        .await
+        .expect("leave the search");
     assert!(
         !app.transcript_search.editing,
         "the editor is closed and the keys are the composer's again"
@@ -4212,7 +4226,12 @@ async fn the_reading_control_gives_the_band_row_to_the_search_editor() {
     );
 
     let area = app.gap_hit_area();
-    mouse(&mut app, MouseEventKind::Moved, usize::from(area.y), area.x + 1);
+    mouse(
+        &mut app,
+        MouseEventKind::Moved,
+        usize::from(area.y),
+        area.x + 1,
+    );
     assert!(
         !app.gap_hovered(area),
         "a reporting row carries no hover state: {area:?}"
@@ -4367,7 +4386,10 @@ async fn a_moved_document_rescans_and_a_moved_window_does_not() {
     app.set_transcript_viewport(80, 24);
     open_search(&mut app).await;
     write_query(&mut app, "gate").await;
-    assert_eq!(app.advance_transcript_search(usize::MAX), SearchProgress::Done);
+    assert_eq!(
+        app.advance_transcript_search(usize::MAX),
+        SearchProgress::Done
+    );
     let hits = app.transcript_search.matches.len();
     assert_eq!(hits, 30);
 
@@ -4499,7 +4521,10 @@ async fn the_search_row_carries_the_query_and_the_counts_at_every_sampled_width(
         .await
         .expect("step to the hit");
     let text = gap_text(&mut app, 120, 24).expect("the row is up");
-    assert!(text.contains("1/2"), "the band shows the hit's place: {text}");
+    assert!(
+        text.contains("1/2"),
+        "the band shows the hit's place: {text}"
+    );
 
     write_query(&mut app, " a long query that runs past the frame").await;
     let rows = draw_rows(&mut app, 20, 24);
@@ -4652,7 +4677,12 @@ fn drag_over_run(app: &mut TuiApp, needle: &str, width: u16, height: u16) -> Str
         .runs(needle)
         .first()
         .map(|(row, start, _)| (*row, *start))
-        .unwrap_or_else(|| panic!("{needle} is not on a transcript row: {:?}", frame.rows_text()));
+        .unwrap_or_else(|| {
+            panic!(
+                "{needle} is not on a transcript row: {:?}",
+                frame.rows_text()
+            )
+        });
     let end = (start + needle.chars().count()) as u16;
     let region = app.transcript_mouse_region;
     ClipboardSeam::drain();
@@ -4662,8 +4692,18 @@ fn drag_over_run(app: &mut TuiApp, needle: &str, width: u16, height: u16) -> Str
         row,
         region.x + start as u16,
     );
-    mouse(app, MouseEventKind::Drag(MouseButton::Left), row, region.x + end);
-    mouse(app, MouseEventKind::Up(MouseButton::Left), row, region.x + end);
+    mouse(
+        app,
+        MouseEventKind::Drag(MouseButton::Left),
+        row,
+        region.x + end,
+    );
+    mouse(
+        app,
+        MouseEventKind::Up(MouseButton::Left),
+        row,
+        region.x + end,
+    );
     ClipboardSeam::copied()
         .pop()
         .unwrap_or_else(|| panic!("the release copied the drag"))
@@ -4737,12 +4777,18 @@ async fn the_frame_marks_every_hit_and_the_accepted_one_carries_more_weight() {
         .expect("step to the first hit");
     let runs = Frame::capture(&mut app, 80, 24).runs("gate");
     assert!(
-        runs[0].2.iter().all(|(cell_marked, heavy)| *cell_marked && *heavy),
+        runs[0]
+            .2
+            .iter()
+            .all(|(cell_marked, heavy)| *cell_marked && *heavy),
         "the accepted hit is the mark plus weight: {:?}",
         runs[0].2
     );
     assert!(
-        runs[1].2.iter().all(|(cell_marked, heavy)| *cell_marked && !heavy),
+        runs[1]
+            .2
+            .iter()
+            .all(|(cell_marked, heavy)| *cell_marked && !heavy),
         "and every other hit keeps the plain mark: {:?}",
         runs[1].2
     );
@@ -4758,7 +4804,10 @@ async fn the_frame_marks_every_hit_and_the_accepted_one_carries_more_weight() {
         runs[0].2
     );
     assert!(
-        runs[1].2.iter().all(|(cell_marked, heavy)| *cell_marked && *heavy),
+        runs[1]
+            .2
+            .iter()
+            .all(|(cell_marked, heavy)| *cell_marked && *heavy),
         "the weight is on the hit they are standing on now: {:?}",
         runs[1].2
     );
@@ -4767,7 +4816,9 @@ async fn the_frame_marks_every_hit_and_the_accepted_one_carries_more_weight() {
     // cannot be paid for by reading the whole document in a frame.
     assert_eq!(app.transcript_search.frame_budget, SEARCH_SCAN_BYTES);
 
-    app.on_key(key(KeyCode::Esc)).await.expect("leave the search");
+    app.on_key(key(KeyCode::Esc))
+        .await
+        .expect("leave the search");
     let after = Frame::capture(&mut app, 80, 24);
     assert!(after.is_clean(), "a finished search paints nothing");
     assert_eq!(after.card_rows(), plain_rows, "the frame reads as it did");
@@ -4798,7 +4849,10 @@ async fn an_open_selection_paints_over_a_hit_and_copies_the_same_text() {
         .expect("step to the first hit");
     let runs = Frame::capture(&mut app, 80, 24).runs("gate");
     assert!(
-        runs[0].2.iter().all(|(cell_marked, heavy)| *cell_marked && *heavy),
+        runs[0]
+            .2
+            .iter()
+            .all(|(cell_marked, heavy)| *cell_marked && *heavy),
         "the accepted hit carries its weight before anything is picked up: {:?}",
         runs[0].2
     );
@@ -4906,7 +4960,9 @@ async fn a_hit_behind_a_fold_opens_its_card_and_the_search_closes_it_again() {
         "the card is folded again under their hand: {closed:?}"
     );
 
-    app.on_key(key(KeyCode::Esc)).await.expect("leave the search");
+    app.on_key(key(KeyCode::Esc))
+        .await
+        .expect("leave the search");
     assert!(
         app.search_expanded_cards.is_empty(),
         "an opening the search borrowed is handed back"
@@ -5102,10 +5158,9 @@ async fn a_query_and_an_opened_card_stay_inside_every_sampled_width() {
         let frame = Frame::capture(&mut app, width, 24);
         let runs = frame.runs("Show");
         assert!(
-            runs.iter()
-                .all(|(row, start, cells)| *row < 24
-                    && start + cells.len() <= usize::from(width)
-                    && cells.iter().all(|(cell_marked, _)| *cell_marked)),
+            runs.iter().all(|(row, start, cells)| *row < 24
+                && start + cells.len() <= usize::from(width)
+                && cells.iter().all(|(cell_marked, _)| *cell_marked)),
             "a mark stays inside the frame and inside the text it marks at {width} columns: \
              {runs:?}"
         );

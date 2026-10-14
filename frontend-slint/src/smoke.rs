@@ -43,7 +43,11 @@ fn check(app: &MainWindow, directory: &std::path::Path) -> Result<(), Box<dyn st
         app.get_page() == crate::DesktopPage::Messages,
         "shell did not start on the chat page",
     )?;
-    click(app, app.get_settings_button_x(), app.get_settings_button_y())?;
+    click(
+        app,
+        app.get_settings_button_x(),
+        app.get_settings_button_y(),
+    )?;
     require(
         app.get_settings_open(),
         "settings window did not open on the sidebar click",
@@ -56,7 +60,10 @@ fn check(app: &MainWindow, directory: &std::path::Path) -> Result<(), Box<dyn st
     let count = app.invoke_timeline_counts().rows;
     app.set_draft("  \n ".into());
     app.invoke_send_message();
-    require(app.invoke_timeline_counts().rows == count, "blank input appended")?;
+    require(
+        app.invoke_timeline_counts().rows == count,
+        "blank input appended",
+    )?;
     app.set_draft("a".repeat(16_385).into());
     app.invoke_send_message();
     require(
@@ -88,7 +95,10 @@ fn check(app: &MainWindow, directory: &std::path::Path) -> Result<(), Box<dyn st
         app.set_draft("测试".into());
         app.invoke_send_message();
     }
-    require(app.invoke_timeline_counts().rows <= 100, "history exceeded limit")?;
+    require(
+        app.invoke_timeline_counts().rows <= 100,
+        "history exceeded limit",
+    )?;
     app.invoke_new_thread();
     require(
         app.invoke_timeline_counts().rows == 0 && app.get_draft().is_empty(),
@@ -160,9 +170,7 @@ pub fn measure_timeline(
             let handles: Vec<i32> = timeline
                 .model()
                 .iter()
-                .filter(|row| {
-                    row.kind == crate::timeline::KIND_GROUP && !row.group_open
-                })
+                .filter(|row| row.kind == crate::timeline::KIND_GROUP && !row.group_open)
                 .map(|row| row.payload)
                 .collect();
             for handle in &handles {
@@ -280,7 +288,10 @@ pub fn run_timeline_probe(
             });
         match &measured {
             Ok(report) => {
-                println!("PASS: timeline probe wrote {}", directory_probe.join("timeline-metrics.json").display());
+                println!(
+                    "PASS: timeline probe wrote {}",
+                    directory_probe.join("timeline-metrics.json").display()
+                );
                 for entry in report {
                     println!("{entry}");
                 }

@@ -130,7 +130,9 @@ fn hide_notice() {
 fn show_notice() {
     let notice = NOTICE.with(|slot| {
         if slot.borrow().is_none() {
-            let Ok(notice) = TrayNotice::new() else { return None };
+            let Ok(notice) = TrayNotice::new() else {
+                return None;
+            };
             let weak = notice.as_weak();
             notice.on_acknowledged(move || {
                 NOTICE_TIMER.with(slint::Timer::stop);
@@ -149,7 +151,9 @@ fn show_notice() {
     notice.window().with_winit_window(|native| {
         native.set_min_inner_size(Some(winit::dpi::LogicalSize::new(380.0, 168.0)));
     });
-    notice.window().set_size(slint::LogicalSize::new(420.0, 172.0));
+    notice
+        .window()
+        .set_size(slint::LogicalSize::new(420.0, 172.0));
     if notice.show().is_err() {
         return;
     }
@@ -165,8 +169,12 @@ fn show_notice() {
                     let monitor_origin = monitor.position();
                     let window_size = native.outer_size();
                     native.set_outer_position(winit::dpi::PhysicalPosition::new(
-                        monitor_origin.x + monitor_size.width as i32 - window_size.width as i32 - 24,
-                        monitor_origin.y + monitor_size.height as i32 - window_size.height as i32 - 64,
+                        monitor_origin.x + monitor_size.width as i32
+                            - window_size.width as i32
+                            - 24,
+                        monitor_origin.y + monitor_size.height as i32
+                            - window_size.height as i32
+                            - 64,
                     ));
                 }
             });

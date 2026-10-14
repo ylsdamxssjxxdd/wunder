@@ -35,7 +35,6 @@ pub(crate) fn project_tools(app: &MainWindow) {
         "技能",
         "知识库",
         "用户工具",
-        "共享工具",
     ] {
         let tools = app
             .get_tools()
@@ -52,7 +51,6 @@ pub(crate) fn project_tools(app: &MainWindow) {
                 "技能" => ("技能工具", "管理员开放工具"),
                 "知识库" => ("知识库工具", "管理员开放工具"),
                 "用户工具" => ("自定义工具", "用户自建工具"),
-                "共享工具" => ("可用工具", "用户自建工具"),
                 _ => (category, "管理员开放工具"),
             };
             groups.push(ExpertToolGroup {

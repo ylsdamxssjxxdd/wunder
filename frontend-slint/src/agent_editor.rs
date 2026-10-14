@@ -59,6 +59,7 @@ fn agent_form_snapshot(app: &MainWindow) -> String {
 pub fn refresh_agent_snapshot(app: &MainWindow) {
     app.set_agent_form_snapshot(agent_form_snapshot(app).into());
     app.set_agent_dirty(false);
+    app.set_agent_save_pending(false);
 }
 
 /// Recompute the dirty flag against the stored snapshot. Invoked from the
@@ -269,16 +270,18 @@ pub fn install_save_handler(app: &MainWindow, api: Arc<NativeDesktop>) {
                         refresh_agent_snapshot(&app);
                         app.set_status("智能体设置已保存".into());
                     }
-                    Err(error) => {
-                        crate::native_pages::show_error(&app, format!("无法保存智能体设置：{error}"))
-                    }
+                    Err(error) => crate::native_pages::show_error(
+                        &app,
+                        format!("无法保存智能体设置：{error}"),
+                    ),
                 }
             });
         });
     });
 }
 
-fn run_action(app: &MainWindow, action: LeaveAction) {    match action {
+fn run_action(app: &MainWindow, action: LeaveAction) {
+    match action {
         LeaveAction::SelectAgent(index) => app.invoke_select_agent(index),
         LeaveAction::RefreshAgents => app.invoke_refresh_agents(),
         LeaveAction::ReturnChat => {
@@ -321,6 +324,22 @@ pub fn install(app: &MainWindow) {
     });
     app.on_agent_leave_canceled(move || {
         PENDING_LEAVE.with(|slot| *slot.borrow_mut() = None);
+    });
+    // Keep the desktop editor's local/offline semantics while matching the
+    // web panel's live-save interaction. Slint owns the 500ms debounce timer;
+    // this callback only marks a dirty form as pending and never saves while a
+    // record is being projected from the backend.
+    let weak = app.as_weak();
+    app.on_queue_agent_save(move || {
+        let Some(app) = weak.upgrade() else { return };
+        if app.get_selected_agent() >= 0
+            && app.get_agent_dirty()
+            && !app.get_saving()
+            && !app.get_agents_loading()
+            && !app.get_settings_loading()
+        {
+            app.set_agent_save_pending(true);
+        }
     });
 }
 

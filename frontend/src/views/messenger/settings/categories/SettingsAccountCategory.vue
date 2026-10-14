@@ -25,13 +25,41 @@
       @update:profile-avatar-icon="updateCurrentUserAvatarIcon"
       @update:profile-avatar-color="updateCurrentUserAvatarColor"
     />
+
+    <section class="messenger-settings-card messenger-settings-card--danger">
+      <div class="messenger-settings-group-head">
+        <div class="messenger-settings-title">{{ t('messenger.settingsPage.general.sessionGroup') }}</div>
+        <div class="messenger-settings-subtitle">{{ t('messenger.settingsPage.general.sessionHint') }}</div>
+      </div>
+      <div class="messenger-settings-row">
+        <div class="messenger-settings-page-row-main">
+          <i class="fa-solid fa-right-from-bracket messenger-settings-page-row-icon" aria-hidden="true"></i>
+          <div>
+            <div class="messenger-settings-label">{{ t('messenger.site.logout') }}</div>
+            <div class="messenger-settings-hint">{{ t('messenger.settingsPage.general.logoutHint') }}</div>
+          </div>
+        </div>
+        <button
+          class="messenger-settings-action danger"
+          type="button"
+          data-testid="settings-logout"
+          :disabled="Boolean(settingsLogoutDisabled?.value)"
+          @click="handleLogout"
+        >
+          {{ t('messenger.site.logout') }}
+        </button>
+      </div>
+    </section>
   </div>
 </template>
 
 <script setup lang="ts">
+import { useI18n } from '@/i18n';
+import { confirmWithFallback } from '@/utils/confirm';
 import type { MessengerControllerContext } from '@/views/messenger/controller/messengerControllerContext';
 
 const props = defineProps<{ controller: MessengerControllerContext }>();
+const { t } = useI18n();
 
 const currentUsername = props.controller.currentUsername;
 const currentUserId = props.controller.currentUserId;
@@ -52,4 +80,19 @@ const updateCurrentUsername = props.controller.updateCurrentUsername;
 const updateCurrentUserAvatarIcon = props.controller.updateCurrentUserAvatarIcon;
 const updateCurrentUserAvatarColor = props.controller.updateCurrentUserAvatarColor;
 const MessengerSettingsPanel = props.controller.MessengerSettingsPanel;
+const settingsLogoutDisabled = props.controller.settingsLogoutDisabled;
+const handleSettingsLogout = props.controller.handleSettingsLogout;
+
+const handleLogout = async () => {
+  const confirmed = await confirmWithFallback(
+    t('messenger.settingsPage.general.logoutConfirm'),
+    t('common.confirm'),
+    {
+      confirmButtonText: t('common.confirm'),
+      cancelButtonText: t('common.cancel'),
+      type: 'warning'
+    }
+  );
+  if (confirmed) void handleSettingsLogout?.();
+};
 </script>

@@ -444,7 +444,7 @@
   color: var(--mz-danger);
 }
 
-/* 技能详情：工作区面板占满右栏（复用 chat-shell 全局样式）。 */
+/* 技能详情：使用外部工作目录同源的 workspace-files-scroll 树。 */
 .mst-pane--skill .skill-workspace-shell {
   flex: 1 1 auto;
   height: 100%;
@@ -456,6 +456,25 @@
 .mst-pane--skill .skill-workspace-panel {
   height: 100%;
   min-height: 0;
+}
+
+/* 技能页已有自己的工具栏，目录面板只保留同源的滚动文件树。 */
+.mst-pane--skill .skill-workspace-panel.workspace-panel--file-tree .workspace-header,
+.mst-pane--skill .skill-workspace-panel.workspace-panel--file-tree .workspace-upload-progress {
+  display: none;
+}
+
+.mst-pane--skill .skill-workspace-panel.workspace-panel--file-tree .workspace-files-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0;
+  border: 1px solid var(--mz-border);
+  border-radius: 0;
+  background: var(--mz-surface);
+}
+
+.mst-pane--skill .skill-workspace-panel.workspace-panel--file-tree {
+  gap: 0;
 }
 
 /* ------------------------------------------------------------ 知识库三级 */

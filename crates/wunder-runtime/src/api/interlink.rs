@@ -21,8 +21,8 @@ use wunder_core::interlink::{
     AUDIT_SECRET_ISSUE, AUDIT_SECRET_ROTATE, AUDIT_SHADOW_PURGE, COMMAND_STATUS_CANCELED,
     COMMAND_STATUS_FAILED, DIRECTION_C2L, DIRECTION_L2C, ERR_APPROVAL_EXPIRED,
     ERR_APPROVAL_REJECTED, ERR_CAP_DENIED, ERR_NODE_BUSY, ERR_NODE_OFFLINE, ERR_QUEUE_FULL,
-    NODE_STATUS_AWAY, NODE_STATUS_BUSY, NODE_STATUS_ONLINE, NODE_TYPE_CLI, NODE_TYPE_DESKTOP,
-    NODE_TYPE_SERVER,
+    NODE_STATUS_AWAY, NODE_STATUS_BUSY, NODE_STATUS_OFFLINE, NODE_STATUS_ONLINE, NODE_TYPE_CLI,
+    NODE_TYPE_DESKTOP, NODE_TYPE_SERVER, NODE_TYPE_WEB,
 };
 
 use crate::api::errors::error_response;
@@ -81,8 +81,121 @@ pub fn router() -> Router<Arc<AppState>> {
         )
 }
 
+/// Page ceiling of the node directory. The hive steps 20 rows at a time and
+/// never asks for more, local clients may page wider; the ceiling keeps one
+/// request bounded either way.
+const NODE_PAGE_LIMIT_DEFAULT: usize = 50;
+const NODE_PAGE_LIMIT_MAX: usize = 200;
+/// Device rows scanned behind one request. It caps the storage read, not the
+/// page: the directory also carries the cloud node and the web sessions.
+const NODE_DEVICE_SCAN_LIMIT: i64 = 500;
+
+/// `GET /wunder/interlink/nodes` query. All four keys are honoured on the
+/// server; a client that omits them gets the documented default page.
+#[derive(Debug, Deserialize)]
+struct NodeListQuery {
+    #[serde(default)]
+    limit: Option<usize>,
+    #[serde(default)]
+    offset: Option<usize>,
+    #[serde(default)]
+    node_type: Option<String>,
+    #[serde(default)]
+    status: Option<String>,
+}
+
+impl NodeListQuery {
+    fn limit(&self) -> usize {
+        self.limit
+            .unwrap_or(NODE_PAGE_LIMIT_DEFAULT)
+            .clamp(1, NODE_PAGE_LIMIT_MAX)
+    }
+
+    fn offset(&self) -> usize {
+        self.offset.unwrap_or(0)
+    }
+
+    /// Blank/whitespace filters mean "no filter", not "match the empty string".
+    fn filter(value: Option<&str>) -> Option<&str> {
+        value.map(str::trim).filter(|value| !value.is_empty())
+    }
+
+    fn node_type(&self) -> Option<&str> {
+        Self::filter(self.node_type.as_deref())
+    }
+
+    fn status(&self) -> Option<&str> {
+        Self::filter(self.status.as_deref())
+    }
+}
+
+/// A node is a *device* only when it is a persistent local form (蜂窝/舵机).
+/// Volatile web sessions and the synthetic cloud node are directory members.
+fn is_device_node(node: &InterlinkNodeView) -> bool {
+    matches!(node.node_type.as_str(), NODE_TYPE_DESKTOP | NODE_TYPE_CLI)
+}
+
+/// Same rule as [`crate::services::presence::nodes::online_count`], restricted
+/// to one node: `online`/`busy` both count as up.
+fn is_node_online(node: &InterlinkNodeView) -> bool {
+    matches!(node.status.as_str(), NODE_STATUS_ONLINE | NODE_STATUS_BUSY)
+}
+
+/// Keep one node when it satisfies every supplied filter. Type and status are
+/// compared case-insensitively; an unknown value simply matches nothing rather
+/// than silently widening the result.
+fn node_matches(node: &InterlinkNodeView, node_type: Option<&str>, status: Option<&str>) -> bool {
+    if let Some(want) = node_type {
+        if !node.node_type.eq_ignore_ascii_case(want) {
+            return false;
+        }
+    }
+    if let Some(want) = status {
+        if !node.status.eq_ignore_ascii_case(want) {
+            return false;
+        }
+    }
+    true
+}
+
+/// Filter step. Kept separate from paging so every count the endpoint reports
+/// (total, online, device) is taken on the same filtered universe.
+fn select_nodes(
+    nodes: Vec<InterlinkNodeView>,
+    node_type: Option<&str>,
+    status: Option<&str>,
+) -> Vec<InterlinkNodeView> {
+    nodes
+        .into_iter()
+        .filter(|node| node_matches(node, node_type, status))
+        .collect()
+}
+
+/// Slice one page out of the matched set. `total` is the matched size, not the
+/// page size, so callers can page with it.
+fn page_of(
+    mut matched: Vec<InterlinkNodeView>,
+    limit: usize,
+    offset: usize,
+) -> (Vec<InterlinkNodeView>, usize) {
+    let total = matched.len();
+    if offset >= total {
+        return (Vec::new(), total);
+    }
+    let page = matched.drain(offset..).take(limit).collect();
+    (page, total)
+}
+
 /// `GET /wunder/interlink/nodes` - unified presence for the caller's account.
-async fn list_nodes(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+///
+/// The directory mixes three sources (devices, the cloud node, live web
+/// sessions), so filtering and paging happen after the sources are composed;
+/// the storage read is skipped entirely when the filter cannot match a device.
+async fn list_nodes(
+    State(state): State<Arc<AppState>>,
+    AxumQuery(query): AxumQuery<NodeListQuery>,
+    headers: HeaderMap,
+) -> Response {
     let resolved = match resolve_user(&state, &headers, None).await {
         Ok(resolved) => resolved,
         Err(response) => return response,
@@ -98,17 +211,33 @@ async fn list_nodes(State(state): State<Arc<AppState>>, headers: HeaderMap) -> R
     }
     let ttl = config.interlink.presence_ttl_s as f64;
 
-    let storage = state.storage.clone();
-    let lookup = user_id.clone();
-    let devices = match blocking::run_db("api.interlink.list_devices", move || {
-        storage.list_cloud_devices(Some(&lookup), 0, 500)
-    })
-    .await
-    {
-        Ok((devices, _total)) => devices,
-        Err(err) => {
-            return error_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string());
+    let want_node_type = query.node_type();
+    let want_status = query.status();
+    // A filter that cannot match a device must not pay for the device read.
+    let want_device = want_node_type
+        .map(|kind| {
+            kind.eq_ignore_ascii_case(NODE_TYPE_DESKTOP) || kind.eq_ignore_ascii_case(NODE_TYPE_CLI)
+        })
+        .unwrap_or(true);
+    let want_server = want_node_type
+        .map(|kind| kind.eq_ignore_ascii_case(NODE_TYPE_SERVER))
+        .unwrap_or(true);
+
+    let devices = if want_device {
+        let storage = state.storage.clone();
+        let lookup = user_id.clone();
+        match blocking::run_db("api.interlink.list_devices", move || {
+            storage.list_cloud_devices(Some(&lookup), 0, NODE_DEVICE_SCAN_LIMIT)
+        })
+        .await
+        {
+            Ok((devices, _total)) => devices,
+            Err(err) => {
+                return error_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string());
+            }
         }
+    } else {
+        Vec::new()
     };
 
     let now = now_unix_seconds();
@@ -141,13 +270,25 @@ async fn list_nodes(State(state): State<Arc<AppState>>, headers: HeaderMap) -> R
             live_channels.get(&device.device_id),
         ));
     }
-    persistent.push(server_node(&user_id, now));
+    if want_server {
+        persistent.push(server_node(&user_id, now));
+    }
 
     let registry = state.control.presence.nodes();
-    let nodes = registry.compose_user_nodes(&user_id, now, ttl, persistent);
-    let aggregate = aggregate_status(nodes.iter());
-    let online = online_count(nodes.iter());
-    let total = nodes.len();
+    let composed = registry.compose_user_nodes(&user_id, now, ttl, persistent);
+    let matched = select_nodes(composed, want_node_type, want_status);
+
+    // Every count below is taken on the filtered universe, not on the page, so
+    // paging never changes what the account looks like. §5.3「我的设备」只呈现
+    // 持久设备；web 会话与 cloud 节点是目录成员但不是设备，两种口径都在下发。
+    let aggregate = aggregate_status(matched.iter());
+    let online = online_count(matched.iter());
+    let device_total = matched.iter().filter(|node| is_device_node(node)).count();
+    let device_online = matched
+        .iter()
+        .filter(|node| is_device_node(node) && is_node_online(node))
+        .count();
+    let (nodes, total) = page_of(matched, query.limit(), query.offset());
 
     Json(json!({
         "data": {
@@ -155,6 +296,10 @@ async fn list_nodes(State(state): State<Arc<AppState>>, headers: HeaderMap) -> R
             "aggregate_status": aggregate,
             "online_count": online,
             "total": total,
+            "device_total": device_total,
+            "device_online": device_online,
+            "limit": query.limit(),
+            "offset": query.offset(),
         }
     }))
     .into_response()
@@ -1540,5 +1685,147 @@ mod tests {
             workspace_order_meta_key("u1"),
             "interlink.workspace_order:u1"
         );
+    }
+
+    /// A directory sample mixed the way the endpoint composes it: one device,
+    /// the cloud node, two volatile web sessions.
+    fn sample_nodes() -> Vec<InterlinkNodeView> {
+        fn view(node_id: &str, node_type: &str, status: &str) -> InterlinkNodeView {
+            InterlinkNodeView {
+                node_id: node_id.to_string(),
+                node_type: node_type.to_string(),
+                user_id: "u1".to_string(),
+                label: node_id.to_string(),
+                status: status.to_string(),
+                last_seen_at: 0.0,
+                capabilities: Vec::new(),
+                shadow_revision: 0,
+                connected: false,
+                meta: Value::Null,
+            }
+        }
+        vec![
+            view("device:pc-01", NODE_TYPE_DESKTOP, NODE_STATUS_ONLINE),
+            view("cloud", NODE_TYPE_SERVER, NODE_STATUS_ONLINE),
+            view("web:conn-1", NODE_TYPE_WEB, NODE_STATUS_BUSY),
+            view("web:conn-2", NODE_TYPE_WEB, NODE_STATUS_OFFLINE),
+            view("device:cli-01", NODE_TYPE_CLI, NODE_STATUS_AWAY),
+        ]
+    }
+
+    #[test]
+    fn device_counts_exclude_the_cloud_and_web_sessions() {
+        let nodes = sample_nodes();
+        // Five directory rows, but only two of them are 设备 (§5.3).
+        assert_eq!(nodes.len(), 5);
+        assert_eq!(nodes.iter().filter(|node| is_device_node(node)).count(), 2);
+        assert_eq!(
+            nodes
+                .iter()
+                .filter(|node| is_device_node(node) && is_node_online(node))
+                .count(),
+            1
+        );
+        // The naive whole-directory count is exactly the off-by-three the hive
+        // used to render as "5 台".
+        assert_eq!(online_count(nodes.iter()), 3);
+    }
+
+    #[test]
+    fn type_and_status_filters_are_case_insensitive_and_composable() {
+        let nodes = sample_nodes();
+
+        let web = select_nodes(nodes.clone(), Some("web"), None);
+        assert_eq!(web.len(), 2);
+        assert!(web.iter().all(|node| node.node_type == NODE_TYPE_WEB));
+
+        let busy_web = select_nodes(nodes.clone(), Some("WEB"), Some("Busy"));
+        assert_eq!(busy_web.len(), 1);
+        assert_eq!(busy_web[0].node_id, "web:conn-1");
+
+        // An unknown value matches nothing instead of widening the result.
+        assert!(select_nodes(nodes.clone(), Some("pager"), None).is_empty());
+        assert!(select_nodes(nodes, None, Some("sleeping")).is_empty());
+    }
+
+    #[test]
+    fn blank_filters_are_absent_filters() {
+        assert!(NodeListQuery::filter(Some("  ")).is_none());
+        assert!(NodeListQuery::filter(Some("")).is_none());
+        assert_eq!(NodeListQuery::filter(Some(" web ")), Some("web"));
+        // A blank filter keeps the whole directory: no client sees a silently
+        // emptied list because it sent `?status=`.
+        assert_eq!(select_nodes(sample_nodes(), None, None).len(), 5);
+    }
+
+    #[test]
+    fn paging_reports_the_matched_size_not_the_page_size() {
+        let nodes = sample_nodes();
+
+        let (page, total) = page_of(nodes.clone(), 2, 0);
+        assert_eq!(page.len(), 2);
+        assert_eq!(total, 5);
+
+        let (page, total) = page_of(nodes.clone(), 2, 4);
+        assert_eq!(page.len(), 1);
+        assert_eq!(total, 5);
+        assert_eq!(page[0].node_id, "device:cli-01");
+
+        // Past the end is an empty page with the real total, not an error.
+        let (page, total) = page_of(nodes.clone(), 2, 99);
+        assert!(page.is_empty());
+        assert_eq!(total, 5);
+
+        // A limit larger than the set is not padded.
+        let (page, _) = page_of(nodes, NODE_PAGE_LIMIT_MAX, 0);
+        assert_eq!(page.len(), 5);
+    }
+
+    #[test]
+    fn query_page_bounds_are_clamped() {
+        let empty = NodeListQuery {
+            limit: None,
+            offset: None,
+            node_type: None,
+            status: None,
+        };
+        assert_eq!(empty.limit(), NODE_PAGE_LIMIT_DEFAULT);
+        assert_eq!(empty.offset(), 0);
+
+        let hostile = NodeListQuery {
+            limit: Some(usize::MAX),
+            offset: Some(usize::MAX),
+            node_type: Some("web".to_string()),
+            status: None,
+        };
+        assert_eq!(hostile.limit(), NODE_PAGE_LIMIT_MAX);
+        assert_eq!(hostile.offset(), usize::MAX);
+        assert_eq!(hostile.node_type(), Some("web"));
+
+        let zero = NodeListQuery {
+            limit: Some(0),
+            offset: None,
+            node_type: None,
+            status: None,
+        };
+        assert_eq!(zero.limit(), 1);
+    }
+
+    /// The device read is skipped whenever the type filter cannot match one;
+    /// pin the predicate so a future node type cannot silently re-enable it.
+    #[test]
+    fn device_read_is_skipped_for_non_device_filters() {
+        let wants_device = |kind: Option<&str>| {
+            kind.map(|kind| {
+                kind.eq_ignore_ascii_case(NODE_TYPE_DESKTOP)
+                    || kind.eq_ignore_ascii_case(NODE_TYPE_CLI)
+            })
+            .unwrap_or(true)
+        };
+        assert!(wants_device(None));
+        assert!(wants_device(Some("desktop")));
+        assert!(wants_device(Some("CLI")));
+        assert!(!wants_device(Some("web")));
+        assert!(!wants_device(Some("server")));
     }
 }

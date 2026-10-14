@@ -72,8 +72,13 @@ pub fn subagent_row(card: &NativeSubagentCard) -> TimelineRow {
     } else {
         card.latest_message.as_str()
     };
-    let mut summary: String =
-        message.lines().next().unwrap_or_default().chars().take(160).collect();
+    let mut summary: String = message
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .chars()
+        .take(160)
+        .collect();
     if summary.is_empty() {
         // A settled card without a message would repeat its status label, so
         // only the unfinished states carry a placeholder line.
@@ -417,7 +422,9 @@ impl Timeline {
                     blocks += 1;
                     steps += 1;
                     notes += 1;
-                    summary = crate::timeline_text::summary(row.text.as_str()).as_str().into();
+                    summary = crate::timeline_text::summary(row.text.as_str())
+                        .as_str()
+                        .into();
                 }
                 KIND_REASON | KIND_TOOL | KIND_SUBAGENT => {
                     if row.group_idx == NO_GROUP {
@@ -612,8 +619,10 @@ impl Timeline {
     /// Rewrite the bar label of the batch the last upsert landed in. The count
     /// is the batch's own entry count, not the open batch's.
     fn refresh_batch_label(&mut self) {
-        let Some((bar, entries, latest)) =
-            self.bars.last().map(|bar| (bar.index, bar.entries, bar.latest.clone()))
+        let Some((bar, entries, latest)) = self
+            .bars
+            .last()
+            .map(|bar| (bar.index, bar.entries, bar.latest.clone()))
         else {
             return;
         };
@@ -624,16 +633,12 @@ impl Timeline {
         });
     }
 
-
     /// Append one tool entry, or update the entry of an already seen id.
     pub fn upsert_tool(&mut self, entry: &NativeWorkflowEntry) {
         let label = crate::timeline_text::tool_label(&entry.title);
         let pending = status_kind(&entry.state) == STATUS_RUNNING;
-        let (target, patch) = crate::timeline_text::target_of(
-            &entry.title,
-            entry.detail.as_str(),
-            &entry.sections,
-        );
+        let (target, patch) =
+            crate::timeline_text::target_of(&entry.title, entry.detail.as_str(), &entry.sections);
         if pending {
             self.close_thinking(false);
         }
@@ -865,7 +870,8 @@ impl Timeline {
             self.sync_fold_ids();
             return;
         };
-        if anchor.is_empty() || rows.iter().any(|row| row.id == anchor)
+        if anchor.is_empty()
+            || rows.iter().any(|row| row.id == anchor)
             || (self.settled && self.snapshot_moved_past(rows.as_slice(), start))
         {
             // The snapshot carries this turn's own rows: the live builder is
@@ -1146,7 +1152,10 @@ mod tests {
         timeline.publish_history(durable_rows(4));
         let model = timeline.model();
         assert_eq!(
-            model.iter().filter(|row| row.id == "user-turn-live").count(),
+            model
+                .iter()
+                .filter(|row| row.id == "user-turn-live")
+                .count(),
             1,
             "the live turn keeps exactly one bubble"
         );
@@ -1185,7 +1194,10 @@ mod tests {
         timeline.publish_history(settled);
         let model = timeline.model();
         assert_eq!(
-            model.iter().filter(|row| row.id == "user-turn-live").count(),
+            model
+                .iter()
+                .filter(|row| row.id == "user-turn-live")
+                .count(),
             1,
             "the live copy is replaced, not appended"
         );
@@ -1218,7 +1230,10 @@ mod tests {
 
         let model = timeline.model();
         assert_eq!(
-            model.iter().filter(|row| row.id == "user-turn-session-x").count(),
+            model
+                .iter()
+                .filter(|row| row.id == "user-turn-session-x")
+                .count(),
             0,
             "the live copy is gone once storage owns the turn"
         );
@@ -1245,8 +1260,16 @@ mod tests {
         let entries = 4;
         let timeline = history(turns, entries);
         let total = timeline.row_count();
-        assert_eq!(total, turns * (entries + 3), "bubble + bar + entries + body");
-        assert_eq!(visible(&timeline), total, "every history row stays laid out");
+        assert_eq!(
+            total,
+            turns * (entries + 3),
+            "bubble + bar + entries + body"
+        );
+        assert_eq!(
+            visible(&timeline),
+            total,
+            "every history row stays laid out"
+        );
 
         // The newest batch bar of turn 0 is the fourth row (bubble, bar, tools,
         // body per turn). Toggle it and only its group follows.

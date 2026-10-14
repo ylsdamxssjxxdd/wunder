@@ -11,6 +11,7 @@
         class="mz-thread-row"
         :class="{
           'is-active': activeSessionId === item.id,
+          'is-menu-open': openMenuId === item.id,
           'is-dragging': dragId === item.id,
           'is-drop-before': dropTarget?.id === item.id && dropTarget.position === 'before',
           'is-drop-after': dropTarget?.id === item.id && dropTarget.position === 'after'
@@ -160,7 +161,10 @@ const shouldRenderMenu = (id: string): boolean =>
   openMenuId.value ? openMenuId.value === id : hoverId.value === id;
 const handleRowHover = (id: string) => {
   hoverId.value = id;
-  if (openMenuId.value && openMenuId.value !== id) openMenuId.value = '';
+  // 注意：菜单打开期间（openMenuId 非空）绝不在别的行 mouseenter 时清它——
+  // 弹层是 teleport 到 body 的，指针移向弹层途中扫过其他线程行会触发这里；
+  // 一旦清除，el-dropdown 会连同弹层一起被卸载，菜单在鼠标到达前就消失。
+  // 关闭只由 visible-change(false)（点外部/选中项）驱动。
 };
 const handleMenuVisible = (id: string, visible: boolean) => {
   if (visible) openMenuId.value = id;
@@ -258,6 +262,16 @@ onBeforeUnmount(() => {
 /* 拖拽排序的可视反馈：源行半透明，落点行上下缘高亮。 */
 .mz-thread-row.is-dragging {
   opacity: 0.45;
+}
+
+/* 菜单打开期间保持该行的悬停底色与三个点可见：指针已移入 teleport 的弹层，
+   行本身不再处于 :hover，不补这条会视觉上「行和菜单断了关联」。 */
+.mz-thread-row.is-menu-open {
+  background: var(--mz-hover);
+}
+
+.mz-thread-row.is-menu-open .mz-thread-menu {
+  opacity: 1;
 }
 
 .mz-thread-row.is-drop-before {

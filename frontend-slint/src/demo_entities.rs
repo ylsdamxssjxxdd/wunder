@@ -298,13 +298,14 @@ pub fn install(app: &MainWindow) {
     let weak = app.as_weak();
     app.on_move_model(move |from, delta| {
         let Some(app) = weak.upgrade() else { return };
-        let Ok(from) = usize::try_from(from) else { return };
+        let Ok(from) = usize::try_from(from) else {
+            return;
+        };
         let mut models: Vec<_> = app.get_models().iter().collect();
         if from >= models.len() || models.is_empty() {
             return;
         }
-        let to = (from as i64 + i64::from(delta))
-            .clamp(0, models.len() as i64 - 1) as usize;
+        let to = (from as i64 + i64::from(delta)).clamp(0, models.len() as i64 - 1) as usize;
         if to == from {
             return;
         }

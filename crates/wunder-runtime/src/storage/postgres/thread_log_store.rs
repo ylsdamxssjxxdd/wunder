@@ -1118,12 +1118,20 @@ impl PostgresThreadLogStorage for PostgresStorage {
         }
         let first = items.first().and_then(|v| v["item_index"].as_i64());
         let last = items.last().and_then(|v| v["item_index"].as_i64());
-        let has_older = if older.is_some() { has_more } else if let Some(first) = first {
+        let has_older = if older.is_some() {
+            has_more
+        } else if let Some(first) = first {
             conn.query_one("SELECT EXISTS(SELECT 1 FROM thread_items WHERE user_id=$1 AND session_id=$2 AND root_turn_id=$3 AND item_index<$4 AND ($5 OR visibility='user'))", &[&user_id,&session_id,&root_id,&first,&include_internal])?.get::<_, bool>(0)
-        } else { false };
-        let has_newer = if older.is_none() { has_more } else if let Some(last) = last {
+        } else {
+            false
+        };
+        let has_newer = if older.is_none() {
+            has_more
+        } else if let Some(last) = last {
             conn.query_one("SELECT EXISTS(SELECT 1 FROM thread_items WHERE user_id=$1 AND session_id=$2 AND root_turn_id=$3 AND item_index>$4 AND ($5 OR visibility='user'))", &[&user_id,&session_id,&root_id,&last,&include_internal])?.get::<_, bool>(0)
-        } else { false };
+        } else {
+            false
+        };
         if !include_internal {
             for item in &mut items {
                 if let Some(map) = item["payload"].as_object_mut() {

@@ -73,7 +73,7 @@ ORDER = [
     "tools-overview", "tools",
     "interface", "desktop-ui",
     "interlink", "settings", "models", "threads", "workspace", "multimodal",
-    "privacy", "troubleshooting", "shortcuts", "glossary",
+    "privacy", "troubleshooting", "glossary",
 ]
 
 IMG_RE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
@@ -283,6 +283,8 @@ def main():
             print("[缺失] %s" % local_path)
             sys.exit(1)
         for topic in json.loads(read(local_path))["topics"]:
+            if topic.get("id") == "shortcuts":
+                continue
             topics[lang][topic["id"]] = topic
 
     for lang in ("zh", "en"):

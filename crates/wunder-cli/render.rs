@@ -1606,8 +1606,14 @@ mod tests {
         let payload = serde_json::json!({ "result": { "ok": false } });
         let zh = format_apply_patch_result_lines("apply_patch", &payload, true);
         let en = format_apply_patch_result_lines("apply_patch", &payload, false);
-        assert_eq!(zh[0], crate::locale::ui_text(true, "patch_apply_failed", &[]));
-        assert_eq!(en[0], crate::locale::ui_text(false, "patch_apply_failed", &[]));
+        assert_eq!(
+            zh[0],
+            crate::locale::ui_text(true, "patch_apply_failed", &[])
+        );
+        assert_eq!(
+            en[0],
+            crate::locale::ui_text(false, "patch_apply_failed", &[])
+        );
         assert_ne!(zh[0], en[0], "one header must not serve both languages");
     }
 

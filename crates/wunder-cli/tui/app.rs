@@ -3473,10 +3473,7 @@ impl TuiApp {
                 .map(|(key, args)| crate::locale::ui_text(is_zh, key, args))
                 .find(|text| UnicodeWidthStr::width(text.as_str()) <= usize::from(width))
             {
-                return Some(Line::from(Span::styled(
-                    text,
-                    super::theme::accent_text(),
-                )));
+                return Some(Line::from(Span::styled(text, super::theme::accent_text())));
             }
             // Even the shortest result does not fit: the band yields to what comes next.
         }
@@ -3522,10 +3519,7 @@ impl TuiApp {
     /// the editor is up the band only reports, so a press there must not silently move the
     /// reader back to the tail.
     fn handle_gap_mouse(&mut self, mouse: &MouseEvent) -> bool {
-        if self.modal_surface_open()
-            || self.transcript_view_open()
-            || self.gap_search_editing()
-        {
+        if self.modal_surface_open() || self.transcript_view_open() || self.gap_search_editing() {
             self.gap_pressed = false;
             return false;
         }
@@ -6312,7 +6306,10 @@ impl TuiApp {
             }
             return;
         }
-        if self.input_selection.as_ref().is_some_and(|selection| selection.dragging)
+        if self
+            .input_selection
+            .as_ref()
+            .is_some_and(|selection| selection.dragging)
             && self.drag_input_to(mouse)
         {
             self.request_redraw();
@@ -6326,8 +6323,8 @@ impl TuiApp {
         if let Some(selection) = self.transcript_selection.as_mut() {
             if selection.dragging {
                 selection.dragging = false;
-                let stationary_character_click =
-                    selection.unit == SelectionUnit::Character && selection.anchor == selection.head;
+                let stationary_character_click = selection.unit == SelectionUnit::Character
+                    && selection.anchor == selection.head;
                 if !stationary_character_click {
                     self.copy_transcript_selection();
                 }

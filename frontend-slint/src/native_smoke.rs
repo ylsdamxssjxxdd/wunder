@@ -206,11 +206,12 @@ fn advance(
             // (`MainWindow.settings-*`), because the button sits against the
             // bottom edge and a hard-coded pixel would only hold for one window
             // size.
-            crate::smoke::click(app, app.get_settings_button_x(), app.get_settings_button_y())?;
-            ensure(
-                app.get_settings_open(),
-                "settings window did not open",
+            crate::smoke::click(
+                app,
+                app.get_settings_button_x(),
+                app.get_settings_button_y(),
             )?;
+            ensure(app.get_settings_open(), "settings window did not open")?;
             crate::smoke::click(app, app.get_settings_back_x(), app.get_settings_back_y())?;
             ensure(
                 !app.get_settings_open(),
@@ -344,7 +345,9 @@ fn advance(
                 .iter()
                 .position(|row| row.id == session.as_str());
             let Some(target) = target else {
-                return Err(format!("streamed session {session} left the conversation list").into());
+                return Err(
+                    format!("streamed session {session} left the conversation list").into(),
+                );
             };
             if app.get_active_session_id() != session.as_str() {
                 app.invoke_select_conversation(target as i32);
@@ -463,7 +466,10 @@ fn advance(
             app.set_agent_question_draft("冒烟检查预设问题".into());
             app.invoke_add_agent_question();
             app.invoke_refresh_agent_dirty();
-            ensure(app.get_agent_dirty(), "editing did not dirty the agent form")?;
+            ensure(
+                app.get_agent_dirty(),
+                "editing did not dirty the agent form",
+            )?;
             app.invoke_save_agent_form();
         }
         13 => {
@@ -523,7 +529,6 @@ fn advance(
     *step += 1;
     Ok(false)
 }
-
 
 /// The model the built-in agent's form may legitimately carry: the catalogue's
 /// global default, falling back to the first configured model.

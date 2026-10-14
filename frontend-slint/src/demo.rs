@@ -51,13 +51,18 @@ pub fn install(app: &MainWindow) {
             model.row_count(),
             text,
         ));
-        let reply = format!("已收到「{text}」。这是一条本地演示回复，可以继续检查条目展开与滚动效果。");
+        let reply =
+            format!("已收到「{text}」。这是一条本地演示回复，可以继续检查条目展开与滚动效果。");
         let mut body = fixture_row(crate::timeline::KIND_BODY, model.row_count(), &reply);
         body.foldable = true;
         body.stats = demo_stats("3.6s", "51.0/s", "6.1k", "812", "");
         model.push(body);
         let group = model.row_count() as i32;
-        let mut bar = fixture_row(crate::timeline::KIND_GROUP, model.row_count(), "执行工具 2 次");
+        let mut bar = fixture_row(
+            crate::timeline::KIND_GROUP,
+            model.row_count(),
+            "执行工具 2 次",
+        );
         bar.open = true;
         bar.group_idx = group;
         bar.payload = group;

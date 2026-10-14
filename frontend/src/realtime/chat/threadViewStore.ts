@@ -59,6 +59,12 @@ function materialize(row: ChatViewRow): ViewSlot {
     workflowItems: [], ...(role==='assistant'&&Array.isArray(row.subagents)&&row.subagents.length>0?{subagents:row.subagents}:{}), failed: role === 'assistant' && ['failed','rejected'].includes(row.status), stopped: row.status === 'cancelled' });
   return markRaw({ key: row.client_message_id ? `turn:client:${row.client_message_id}` : `turn:${row.root_turn_id}`, rootTurnId: row.root_turn_id, user: make('user', row.user), assistant: make('assistant', row.assistant) });
 }
+const isQueueOnlyCancelledRow = (row: ChatViewRow): boolean =>
+  row.status === 'cancelled' &&
+  !String(row.assistant?.item_id || '').trim() &&
+  !String(row.assistant?.content || '').trim() &&
+  !String(row.assistant?.reasoning || '').trim() &&
+  Number(row.workflow_count || 0) === 0;
 function utf16Units(text: string): number {
   return [...text].reduce((total, char) => total + char.length, 0);
 }
@@ -149,6 +155,7 @@ export function commitThreadView(key: string, page: ThreadViewPage, generation?:
   const e = entry(key);
   if (generation !== undefined && e.generation !== generation) return false;
   if(!page || page.session_id!==key || !Number.isSafeInteger(page.epoch) || !Number.isSafeInteger(page.view_seq) || !validRows(page.chat))return false;
+  page = { ...page, chat: page.chat.filter(row => !isQueueOnlyCancelledRow(row)) };
   if((historical || forward) && e.epoch!==page.epoch)return false;
   if (!historical && !forward && e.epoch === page.epoch && page.view_seq < e.seq) return false;
   if (page.degraded || page.projection_state === 'degraded') {
@@ -177,7 +184,7 @@ export function commitThreadView(key: string, page: ThreadViewPage, generation?:
 }
 export function applyThreadViewChanges(key: string, payload: { runtime_status?:string;active_turn_id?:string;epoch?:number; view_seq: number; reset_required?: boolean; rows: ChatViewRow[] }): boolean {
   const e=entry(key);if(!payload || payload.reset_required || !Number.isSafeInteger(payload.view_seq) || !validRows(payload.rows) || (payload.epoch!==undefined && e.epoch && e.epoch!==payload.epoch)) return false;
-  for(const row of payload.rows) {
+  for(const row of payload.rows.filter(row => !isQueueOnlyCancelledRow(row))) {
     if(row.user_round>=e.latestRound){e.latestRound=row.user_round;e.latestStatus=row.status;}
     if(e.atLatest||e.rows.has(row.root_turn_id)||e.rows.has(`pending:${row.client_message_id}`))merge(e,row);
   }

@@ -239,7 +239,12 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
             MENU_OPEN => {
                 if let Some(row) = row {
                     match row.kind {
-                        0 => open_file(&app, menu_api.clone(), row.path.to_string(), row.name.to_string()),
+                        0 => open_file(
+                            &app,
+                            menu_api.clone(),
+                            row.path.to_string(),
+                            row.name.to_string(),
+                        ),
                         1 => toggle_dir(&app, menu_api.clone(), row.path.to_string()),
                         _ => {}
                     }
@@ -247,17 +252,32 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
             }
             MENU_DOWNLOAD => {
                 if let Some(row) = row.filter(|row| row.kind == 0) {
-                    download_file(&app, menu_api.clone(), row.path.to_string(), row.name.to_string());
+                    download_file(
+                        &app,
+                        menu_api.clone(),
+                        row.path.to_string(),
+                        row.name.to_string(),
+                    );
                 }
             }
             MENU_RENAME => {
                 if let Some(row) = row {
-                    open_prompt(&app, PromptKind::Rename, row.path.to_string(), row.name.to_string());
+                    open_prompt(
+                        &app,
+                        PromptKind::Rename,
+                        row.path.to_string(),
+                        row.name.to_string(),
+                    );
                 }
             }
             MENU_DELETE => {
                 if let Some(row) = row {
-                    open_prompt(&app, PromptKind::Delete, row.path.to_string(), row.name.to_string());
+                    open_prompt(
+                        &app,
+                        PromptKind::Delete,
+                        row.path.to_string(),
+                        row.name.to_string(),
+                    );
                 }
             }
             MENU_REFERENCE => {
@@ -332,7 +352,9 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                         if copied {
                             app.set_status(format!("已复制 {name} 到目标位置").into());
                         } else {
-                            app.set_status(format!("已取消拖出 {name}（本地副本保留在工作区）").into());
+                            app.set_status(
+                                format!("已取消拖出 {name}（本地副本保留在工作区）").into(),
+                            );
                         }
                     }
                     Err(error) => app.set_status(format!("拖出失败：{error}").into()),
@@ -355,7 +377,10 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
             return;
         }
         let paths: Vec<PathBuf> = match event.data.file_paths() {
-            Ok(iter) => iter.map(std::path::Path::to_path_buf).take(MAX_DROP_FILES).collect(),
+            Ok(iter) => iter
+                .map(std::path::Path::to_path_buf)
+                .take(MAX_DROP_FILES)
+                .collect(),
             Err(_) => Vec::new(),
         };
         if paths.is_empty() {
@@ -419,8 +444,11 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                         Ok(CloudOpOutcome::NeedsApproval { command_id }) => {
                             // 确认路径不应停泊（等待终态）；保守恢复现场。
                             PROMPT.with(|slot| {
-                                *slot.borrow_mut() =
-                                    Some(PromptOp { kind: op.kind, path: op.path, command_id: Some(command_id) })
+                                *slot.borrow_mut() = Some(PromptOp {
+                                    kind: op.kind,
+                                    path: op.path,
+                                    command_id: Some(command_id),
+                                })
                             });
                             app.set_ws_prompt_body("云端命令仍在等待确认，请稍后重试。".into());
                         }
@@ -462,7 +490,11 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                 Ok(CloudOpOutcome::NeedsApproval { command_id }) => {
                     // 云端停泊了命令：切换为确认阶段，用户确认后才执行。
                     PROMPT.with(|slot| {
-                        *slot.borrow_mut() = Some(PromptOp { kind, path, command_id: Some(command_id) })
+                        *slot.borrow_mut() = Some(PromptOp {
+                            kind,
+                            path,
+                            command_id: Some(command_id),
+                        })
                     });
                     app.set_ws_prompt_busy(false);
                     app.set_ws_prompt_body("云端要求确认后才会执行此操作。".into());
@@ -479,14 +511,22 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                 Ok(CloudOpOutcome::Failed(reason)) => {
                     app.set_ws_prompt_busy(false);
                     PROMPT.with(|slot| {
-                        *slot.borrow_mut() = Some(PromptOp { kind, path, command_id: None })
+                        *slot.borrow_mut() = Some(PromptOp {
+                            kind,
+                            path,
+                            command_id: None,
+                        })
                     });
                     app.set_ws_prompt_body(reason.into());
                 }
                 Err(error) => {
                     app.set_ws_prompt_busy(false);
                     PROMPT.with(|slot| {
-                        *slot.borrow_mut() = Some(PromptOp { kind, path, command_id: None })
+                        *slot.borrow_mut() = Some(PromptOp {
+                            kind,
+                            path,
+                            command_id: None,
+                        })
                     });
                     app.set_ws_prompt_body(format!("操作失败：{error}").into());
                 }
@@ -548,7 +588,13 @@ fn open_prompt(app: &MainWindow, kind: PromptKind, path: String, name: String) {
             String::new(),
         ),
     };
-    PROMPT.with(|slot| *slot.borrow_mut() = Some(PromptOp { kind, path, command_id: None }));
+    PROMPT.with(|slot| {
+        *slot.borrow_mut() = Some(PromptOp {
+            kind,
+            path,
+            command_id: None,
+        })
+    });
     app.set_ws_prompt_open(true);
     app.set_ws_prompt_title(title.into());
     app.set_ws_prompt_body(body.into());
@@ -596,7 +642,8 @@ fn upload_one(api: &Arc<NativeDesktop>, path: &PathBuf) -> Result<(), String> {
     if meta.len() > MAX_DROP_BYTES {
         return Err(format!("超出单文件上限 {} KiB", MAX_DROP_BYTES / 1024));
     }
-    let content = std::fs::read_to_string(path).map_err(|_| "仅支持文本文件（UTF-8）".to_string())?;
+    let content =
+        std::fs::read_to_string(path).map_err(|_| "仅支持文本文件（UTF-8）".to_string())?;
     let name = path
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
@@ -701,9 +748,8 @@ fn open_file(app: &MainWindow, api: Arc<NativeDesktop>, path: String, name: Stri
         let result = api.interlink_cloud_open(&path);
         let _ = weak.upgrade_in_event_loop(move |app| {
             match result {
-                Ok(pulled) => {
-                    app.set_status(format!("已打开 {}（{}）", name, format_size(pulled.bytes)).into())
-                }
+                Ok(pulled) => app
+                    .set_status(format!("已打开 {}（{}）", name, format_size(pulled.bytes)).into()),
                 Err(error) => app.set_status(format!("打开失败：{error}").into()),
             };
         });
@@ -737,9 +783,8 @@ fn archive_dir(app: &MainWindow, api: Arc<NativeDesktop>, path: String, name: St
     std::thread::spawn(move || {
         let result = api.interlink_cloud_archive(&path, &name);
         let _ = weak.upgrade_in_event_loop(move |app| match result {
-            Ok(pulled) => app.set_status(
-                format!("已打包下载 {}（{}）", name, format_size(pulled.bytes)).into(),
-            ),
+            Ok(pulled) => app
+                .set_status(format!("已打包下载 {}（{}）", name, format_size(pulled.bytes)).into()),
             Err(error) => app.set_status(format!("打包失败：{error}").into()),
         });
     });
@@ -874,9 +919,7 @@ fn refresh(app: &MainWindow, api: Arc<NativeDesktop>) {
             }
             match root {
                 Ok(root) => apply_listing(&app, String::new(), 0, Ok(root)),
-                Err(error) => {
-                    app.set_ws_file_error(format!("{}：{error}", read_error()).into())
-                }
+                Err(error) => app.set_ws_file_error(format!("{}：{error}", read_error()).into()),
             }
             for (path, listing) in children {
                 if let Ok(listing) = listing {
@@ -889,7 +932,12 @@ fn refresh(app: &MainWindow, api: Arc<NativeDesktop>) {
 }
 
 /// Apply one directory page: replace or append, then reproject the tree.
-fn apply_listing(app: &MainWindow, path: String, offset: u64, result: Result<NativeInterlinkListing>) {
+fn apply_listing(
+    app: &MainWindow,
+    path: String,
+    offset: u64,
+    result: Result<NativeInterlinkListing>,
+) {
     let result = match result {
         Ok(listing) => listing,
         Err(error) => {
@@ -912,7 +960,6 @@ fn apply_listing(app: &MainWindow, path: String, offset: u64, result: Result<Nat
     };
     match listing_status(&result) {
         "succeeded" => {
-
             with_panel(|panel| {
                 let dir = panel.dirs.entry(path.clone()).or_default();
                 dir.loading = false;
@@ -943,7 +990,10 @@ fn apply_listing(app: &MainWindow, path: String, offset: u64, result: Result<Nat
             }
         }
         _ => {
-            let message = result.error.clone().unwrap_or_else(|| "云端未返回原因".to_string());
+            let message = result
+                .error
+                .clone()
+                .unwrap_or_else(|| "云端未返回原因".to_string());
             with_panel(|panel| {
                 if let Some(dir) = panel.dirs.get_mut(&path) {
                     dir.loading = false;
@@ -1012,7 +1062,9 @@ fn walk(panel: &Panel, rows: &mut Vec<WorkspaceFileRow>, key: &str, depth: usize
     if dir.total > loaded {
         rows.push(WorkspaceFileRow {
             path: key.to_string().as_str().into(),
-            name: format!("加载更多（剩余 {} 项）", dir.total - loaded).as_str().into(),
+            name: format!("加载更多（剩余 {} 项）", dir.total - loaded)
+                .as_str()
+                .into(),
             kind: 2,
             size_text: slint::SharedString::default(),
             icon: slint::Image::default(),
@@ -1033,7 +1085,11 @@ fn listing_status(listing: &NativeInterlinkListing) -> &str {
 
 /// Usage line of the sidebar head: used bytes and file count, the web pair.
 fn stats_line(stats: &wunder_desktop::native::NativeInterlinkStats) -> String {
-    let mut line = format!("已用 {} · {} 个文件", format_size(stats.used_bytes), stats.files);
+    let mut line = format!(
+        "已用 {} · {} 个文件",
+        format_size(stats.used_bytes),
+        stats.files
+    );
     if stats.truncated {
         line.push_str(" · 统计为大目录下界");
     }
@@ -1111,7 +1167,10 @@ mod tests {
         let mut rows = Vec::new();
         with_panel(|panel| walk(panel, &mut rows, "", 0));
         assert_eq!(rows.len(), 4);
-        assert_eq!((rows[0].kind, rows[0].name.as_str(), rows[0].expanded), (1, "notes", true));
+        assert_eq!(
+            (rows[0].kind, rows[0].name.as_str(), rows[0].expanded),
+            (1, "notes", true)
+        );
         assert_eq!((rows[1].kind, rows[1].depth), (0, 1));
         assert_eq!(rows[1].path.as_str(), "notes/b.md");
         assert_eq!((rows[2].kind, rows[2].size_text.as_str()), (0, "2 KB"));
@@ -1155,7 +1214,10 @@ mod tests {
     fn prompt_messages_name_the_finished_write() {
         assert_eq!(done_message(PromptKind::Rename, "b.md"), "已重命名为 b.md");
         assert_eq!(done_message(PromptKind::Delete, "x"), "已删除");
-        assert_eq!(done_message(PromptKind::NewDir, "notes"), "已新建目录 notes");
+        assert_eq!(
+            done_message(PromptKind::NewDir, "notes"),
+            "已新建目录 notes"
+        );
         assert_eq!(done_message(PromptKind::NewFile, "a.md"), "已新建文件 a.md");
     }
 }

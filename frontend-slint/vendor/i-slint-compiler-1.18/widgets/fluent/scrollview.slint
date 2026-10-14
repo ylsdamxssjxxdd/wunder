@@ -25,6 +25,7 @@ component ScrollBar inherits Rectangle {
     border-radius: 7px;
     visible: (self.policy == ScrollBarPolicy.always-on) || (self.policy == ScrollBarPolicy.as-needed && self.maximum > 0);
     clip: true;
+    opacity: touch-area.has-hover ? 0.9 : 0.12;
 
     states [
         hover when touch-area.has-hover : {
@@ -34,6 +35,7 @@ component ScrollBar inherits Rectangle {
     ]
 
     animate size { duration: 150ms; easing: ease-out; }
+    animate opacity { duration: 150ms; easing: ease-out; }
 
     thumb := Rectangle {
         width: !root.horizontal ? root.size : root.maximum <= 0phx ? 0phx : max(min(16px, root.width), root.track-size * root.page-size / (root.maximum + root.page-size));
@@ -133,7 +135,7 @@ export component ScrollView {
 
     vertical-bar := ScrollBar {
         enabled: root.enabled;
-        width: 14px;
+        width: 10px;
         x: flickable.width + flickable.x - self.width;
         y: flickable.y;
         height: horizontal-bar.visible ? parent.height - horizontal-bar.height : parent.height;
@@ -147,7 +149,7 @@ export component ScrollView {
     horizontal-bar := ScrollBar {
         enabled: root.enabled;
         width: vertical-bar.visible ? parent.width - vertical-bar.width : parent.width;
-        height: 14px;
+        height: 10px;
         y: flickable.height + flickable.y - self.height;
         x: flickable.x;
         horizontal: true;

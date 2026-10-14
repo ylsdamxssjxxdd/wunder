@@ -15410,198 +15410,6 @@
       ]
     },
     {
-      "id": "shortcuts",
-      "title": "快捷键",
-      "group": "参考",
-      "keywords": [
-        "快捷键",
-        "键盘",
-        "按键"
-      ],
-      "blocks": [
-        {
-          "kind": "h1",
-          "spans": [
-            {
-              "text": "快捷键"
-            }
-          ]
-        },
-        {
-          "kind": "paragraph",
-          "spans": [
-            {
-              "text": "帮助文档浏览器支持以下键盘快捷键："
-            }
-          ]
-        },
-        {
-          "kind": "table",
-          "rows": [
-            {
-              "header": true,
-              "cells": [
-                [
-                  {
-                    "text": "按键"
-                  }
-                ],
-                [
-                  {
-                    "text": "作用"
-                  }
-                ]
-              ]
-            },
-            {
-              "header": false,
-              "cells": [
-                [
-                  {
-                    "text": "F1",
-                    "kbd": true
-                  }
-                ],
-                [
-                  {
-                    "text": "回到帮助主页"
-                  }
-                ]
-              ]
-            },
-            {
-              "header": false,
-              "cells": [
-                [
-                  {
-                    "text": "Ctrl+F",
-                    "kbd": true
-                  }
-                ],
-                [
-                  {
-                    "text": "页内查找"
-                  }
-                ]
-              ]
-            },
-            {
-              "header": false,
-              "cells": [
-                [
-                  {
-                    "text": "Ctrl+C",
-                    "kbd": true
-                  }
-                ],
-                [
-                  {
-                    "text": "复制选中内容（未选中时复制整页文本）"
-                  }
-                ]
-              ]
-            },
-            {
-              "header": false,
-              "cells": [
-                [
-                  {
-                    "text": "Ctrl+A",
-                    "kbd": true
-                  }
-                ],
-                [
-                  {
-                    "text": "全选当前页文本"
-                  }
-                ]
-              ]
-            },
-            {
-              "header": false,
-              "cells": [
-                [
-                  {
-                    "text": "Alt+←",
-                    "kbd": true
-                  }
-                ],
-                [
-                  {
-                    "text": "后退到上一个主题"
-                  }
-                ]
-              ]
-            },
-            {
-              "header": false,
-              "cells": [
-                [
-                  {
-                    "text": "Alt+→",
-                    "kbd": true
-                  }
-                ],
-                [
-                  {
-                    "text": "前进到下一个主题"
-                  }
-                ]
-              ]
-            },
-            {
-              "header": false,
-              "cells": [
-                [
-                  {
-                    "text": "↑ / ↓",
-                    "kbd": true
-                  }
-                ],
-                [
-                  {
-                    "text": "上下滚动文档"
-                  }
-                ]
-              ]
-            },
-            {
-              "header": false,
-              "cells": [
-                [
-                  {
-                    "text": "Page Up / Page Down",
-                    "kbd": true
-                  }
-                ],
-                [
-                  {
-                    "text": "按页滚动"
-                  }
-                ]
-              ]
-            },
-            {
-              "header": false,
-              "cells": [
-                [
-                  {
-                    "text": "Home / End",
-                    "kbd": true
-                  }
-                ],
-                [
-                  {
-                    "text": "跳到页首 / 页尾"
-                  }
-                ]
-              ]
-            }
-          ]
-        }
-      ]
-    },
-    {
       "id": "glossary",
       "title": "术语表",
       "group": "参考",
@@ -16221,32 +16029,20 @@
       "topic": 24
     },
     {
-      "keyword": "快捷键",
-      "topic": 25
-    },
-    {
-      "keyword": "键盘",
-      "topic": 25
-    },
-    {
-      "keyword": "按键",
-      "topic": 25
-    },
-    {
       "keyword": "术语",
-      "topic": 26
+      "topic": 25
     },
     {
       "keyword": "名词",
-      "topic": 26
+      "topic": 25
     },
     {
       "keyword": "定义",
-      "topic": 26
+      "topic": 25
     },
     {
       "keyword": "概念",
-      "topic": 26
+      "topic": 25
     }
   ]
 }

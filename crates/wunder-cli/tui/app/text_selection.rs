@@ -135,7 +135,10 @@ pub(super) fn build_transcript_hit_map(
             entry_cursor += 1;
             line_within_cell = 0;
         }
-        let global_index = window.entries.get(entry_cursor).map(|entry| entry.global_index);
+        let global_index = window
+            .entries
+            .get(entry_cursor)
+            .map(|entry| entry.global_index);
         let cell_id = global_index.and_then(|index| logs.get(index).map(|entry| entry.cell_id));
         if let (Some(cell_id), Some(index)) = (cell_id, global_index) {
             let identity = LineIdentity {
@@ -149,9 +152,7 @@ pub(super) fn build_transcript_hit_map(
             line_within_cell += 1;
         }
         line_rows.push(paragraph_visual_rows(source, width));
-        line_widths.push(
-            u16::try_from(text_tabs::line_display_width(source)).unwrap_or(u16::MAX),
-        );
+        line_widths.push(u16::try_from(text_tabs::line_display_width(source)).unwrap_or(u16::MAX));
     }
 
     // Visual axis: a wrapped line contributes one entry per row it paints, and the card
@@ -660,7 +661,9 @@ pub(super) fn slice_line_by_display_columns(
         );
         push(
             &mut spans,
-            chars[marked_start..marked_start + marked].iter().collect::<String>(),
+            chars[marked_start..marked_start + marked]
+                .iter()
+                .collect::<String>(),
             true,
         );
         push(
@@ -867,7 +870,10 @@ mod tests {
             line_within_cell: 2,
             column: None,
         };
-        assert!(whole.order_key() > at_zero.order_key(), "one line reaches further");
+        assert!(
+            whole.order_key() > at_zero.order_key(),
+            "one line reaches further"
+        );
         assert!(
             whole.order_key() < next_line.order_key(),
             "but never past the next line of the card"

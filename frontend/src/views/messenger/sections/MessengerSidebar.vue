@@ -35,7 +35,11 @@
             @dragleave="handleRowDragLeave(entry)"
             @drop.prevent="handleRowDrop(entry)"
           >
-            <i class="fa-solid fa-cloud messenger-sidebar-workspace-icon" aria-hidden="true"></i>
+            <i
+              class="messenger-sidebar-workspace-icon"
+              :class="cloudRowSelected ? 'fa-solid fa-cloud' : 'fa-regular fa-cloud'"
+              aria-hidden="true"
+            ></i>
             <span class="messenger-sidebar-workspace-name" :title="workspaceName">{{ workspaceName }}</span>
             <span class="messenger-sidebar-workspace-meta">{{ workspaceMetaLabel }}</span>
             <!-- 唯一的「新建线程」入口（左栏顶部的「新任务」按钮已移除），所以常驻可见、不再悬停才出现。 -->
@@ -52,7 +56,10 @@
           </div>
 
           <!-- 云端线程树：云端工作区的子级。打开线程同时把目录目标切回云端。 -->
+          <!-- 线程是云端工作区的内容：只有云端工作区处于选中态才展开线程树；
+               选中别的工作区行时收起，回到参考端「选中最上个工作区才铺开线程」的形态。 -->
           <MessengerThreadTree
+            v-if="cloudRowSelected"
             :items="threads"
             :active-session-id="activeSessionId"
             :agent-id="agentIdForApi"
@@ -81,7 +88,11 @@
           @dragleave="handleRowDragLeave(entry)"
           @drop.prevent="handleRowDrop(entry)"
         >
-          <i class="fa-solid fa-folder messenger-sidebar-workspace-icon" aria-hidden="true"></i>
+          <i
+            class="messenger-sidebar-workspace-icon"
+            :class="isRowSelected(entry) ? 'fa-solid fa-folder' : 'fa-regular fa-folder'"
+            aria-hidden="true"
+          ></i>
           <span class="messenger-sidebar-workspace-name" :title="entry.label">
             {{ entry.label }}
           </span>
@@ -309,6 +320,9 @@ const isRowSelected = (row: InterlinkWorkspaceRow): boolean => {
   }
   return ws === row.workspaceId;
 };
+
+/** 云端工作区行的选中态：没有远程本地目标时云端行即选中，同时控制图标实心化与线程树展开。 */
+const cloudRowSelected = computed(() => !interlinkRemoteSelected.value);
 
 // 目标自愈（§6.3）：URL 里残留的本地目标若对应不到任何工作区行（设备从未同步
 // 投影、工作区已删除、设备被吊销等），一律回落云端——文件区绝不停留在一个

@@ -65,10 +65,7 @@ pub fn queue_turns_from_value(value: &Value) -> Vec<NativeQueueTurn> {
             }
             Some(NativeQueueTurn {
                 queue_id,
-                root_turn_id: clean(
-                    item.get("root_turn_id")
-                        .or_else(|| item.get("turn_id")),
-                ),
+                root_turn_id: clean(item.get("root_turn_id").or_else(|| item.get("turn_id"))),
                 content,
                 attachment_count,
                 position: item
@@ -184,6 +181,7 @@ mod tests {
             "items": [
                 {"queue_id":"task-b","content":"  第二条  ","position":1,"priority":0},
                 {"queue_id":"task-a","content":"第一条","position":0,"priority":1,
+                 "root_turn_id":"turn-a",
                  "attachments":[{"name":"a.png"}]},
                 {"queue_id":"","content":"无名"},
                 {"queue_id":"task-c","content":"   "}
@@ -196,6 +194,7 @@ mod tests {
             vec!["第一条", "第二条"]
         );
         assert_eq!(rows[0].attachment_count, 1);
+        assert_eq!(rows[0].root_turn_id, "turn-a");
         assert_eq!(rows[0].priority, 1);
         assert_eq!(
             rows.iter().map(|row| row.position).collect::<Vec<_>>(),

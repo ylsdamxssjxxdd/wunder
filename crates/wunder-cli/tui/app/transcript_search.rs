@@ -281,8 +281,7 @@ pub(super) fn line_matches(
         let end = start + folded_query.len();
         let first = owners.partition_point(|(folded_end, _, _)| *folded_end <= start);
         let last = owners.partition_point(|(folded_end, _, _)| *folded_end < end);
-        let (Some((_, low, _)), Some((_, _, high))) = (owners.get(first), owners.get(last))
-        else {
+        let (Some((_, low, _)), Some((_, _, high))) = (owners.get(first), owners.get(last)) else {
             break;
         };
         found.push((
@@ -348,7 +347,9 @@ impl TuiApp {
         search.identity = None;
         search.restart(self.history_archived_entries.min(self.logs.len()), false);
         let viewport = usize::from(self.transcript_viewport_height.max(1));
-        let origin = search.origin_offset.min(self.max_transcript_scroll(viewport));
+        let origin = search
+            .origin_offset
+            .min(self.max_transcript_scroll(viewport));
         self.transcript_offset_from_bottom = origin;
         self.request_redraw();
     }
@@ -685,12 +686,8 @@ impl TuiApp {
                 continue;
             }
             let style = search_mark_style(Some(ordinal) == search.current);
-            lines[index] = slice_line_by_display_columns(
-                line.clone(),
-                hit.display.0,
-                hit.display.1,
-                style,
-            );
+            lines[index] =
+                slice_line_by_display_columns(line.clone(), hit.display.0, hit.display.1, style);
         }
     }
 
@@ -716,7 +713,11 @@ impl TuiApp {
         let bare = ui_text(
             is_zh,
             "search_query",
-            &[("query", ""), ("index", current.as_str()), ("total", total.as_str())],
+            &[
+                ("query", ""),
+                ("index", current.as_str()),
+                ("total", total.as_str()),
+            ],
         );
         let fixed = UnicodeWidthStr::width(bare.as_str());
         if !search.query.is_empty() && fixed <= room {
@@ -858,7 +859,10 @@ mod tests {
         search.reconcile(base, "gat".to_string());
         assert!(search.matches.is_empty());
         assert!(!search.scan_done);
-        let moved = ScanIdentity { entries: 10, ..base };
+        let moved = ScanIdentity {
+            entries: 10,
+            ..base
+        };
         search.reconcile(moved, "gat".to_string());
         assert_eq!(search.scan_entry, moved.archived);
     }
@@ -891,7 +895,10 @@ mod tests {
         search.scan_done = true;
 
         // The same document, the same query, one more card open: the hits are stale.
-        let opened = ScanIdentity { expanded: 1, ..base };
+        let opened = ScanIdentity {
+            expanded: 1,
+            ..base
+        };
         search.reconcile(opened, "gate".to_string());
         assert!(search.matches.is_empty(), "the scan runs again");
         assert!(!search.scan_done);
@@ -972,7 +979,9 @@ mod tests {
             );
         }
         assert!(
-            search_mark_style(true).add_modifier.contains(Modifier::REVERSED),
+            search_mark_style(true)
+                .add_modifier
+                .contains(Modifier::REVERSED),
             "the accepted hit is the plain mark plus weight, never a replacement"
         );
     }

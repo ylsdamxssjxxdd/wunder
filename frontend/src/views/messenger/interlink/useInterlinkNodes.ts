@@ -42,6 +42,9 @@ export const useInterlinkNodes = (options: UseInterlinkNodesOptions = {}) => {
   const aggregateStatus = ref('offline');
   const onlineCount = ref(0);
   const total = ref(0);
+  /** 设备口径（§5.3）：不含 web 会话与 cloud 节点，「我的设备」页只用它。 */
+  const deviceCount = ref(0);
+  const deviceOnlineCount = ref(0);
   const loading = ref(false);
   const error = ref('');
   const lastLoadedAt = ref(0);
@@ -56,9 +59,10 @@ export const useInterlinkNodes = (options: UseInterlinkNodesOptions = {}) => {
   const deviceNodes = computed(() => nodes.value.filter(isDeviceNode));
   const onlineDeviceCount = computed(() => deviceNodes.value.filter(isNodeReachable).length);
 
-  // 上一次请求正好填满已渲染额度，说明服务端还有下一页。
+  // 服务端已支持真的 limit/offset，`total` 是过滤后的全集大小：拿它跟已渲染
+  // 额度比，比「上一页是否填满」准（填满可能是最后一页刚好填满）。
   const hasMore = computed(
-    () => renderedLimit.value < INTERLINK_NODE_MAX_RENDERED && nodes.value.length >= renderedLimit.value
+    () => renderedLimit.value < INTERLINK_NODE_MAX_RENDERED && total.value > renderedLimit.value
   );
 
   const isPageVisible = (): boolean =>
@@ -84,6 +88,8 @@ export const useInterlinkNodes = (options: UseInterlinkNodesOptions = {}) => {
       aggregateStatus.value = page.aggregate_status;
       onlineCount.value = page.online_count;
       total.value = page.total;
+      deviceCount.value = page.device_total;
+      deviceOnlineCount.value = page.device_online;
       error.value = '';
       lastLoadedAt.value = Date.now();
     } catch (caught) {
@@ -184,6 +190,8 @@ export const useInterlinkNodes = (options: UseInterlinkNodesOptions = {}) => {
   return {
     nodes,
     deviceNodes,
+    deviceCount,
+    deviceOnlineCount,
     onlineDeviceCount,
     aggregateStatus,
     onlineCount,

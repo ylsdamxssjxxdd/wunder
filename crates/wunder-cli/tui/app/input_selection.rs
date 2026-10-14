@@ -81,12 +81,18 @@ impl TuiApp {
     /// is the same number because `input_view` eats the offset before it records the map.
     pub(super) fn input_top_row(&self) -> usize {
         let requested = self.input_scroll.unwrap_or(self.input_hit_start);
-        requested.min(last_top_row(self.input_hit_lines.len(), self.input_band_rows()))
+        requested.min(last_top_row(
+            self.input_hit_lines.len(),
+            self.input_band_rows(),
+        ))
     }
 
     /// A manual top row for the wrap the composer last drew, clamped into the band.
     fn clamped_input_top(&self, requested: usize) -> usize {
-        requested.min(last_top_row(self.input_hit_lines.len(), self.input_band_rows()))
+        requested.min(last_top_row(
+            self.input_hit_lines.len(),
+            self.input_band_rows(),
+        ))
     }
 
     /// The wheel over the composer: the draft scrolls under the band while the caret keeps
@@ -159,7 +165,10 @@ impl TuiApp {
         if !self.mouse_in_region(mouse, self.input_mouse_region) {
             return false;
         }
-        let bottom = self.input_hit_area.y.saturating_add(self.input_hit_area.height);
+        let bottom = self
+            .input_hit_area
+            .y
+            .saturating_add(self.input_hit_area.height);
         mouse.row >= self.input_hit_area.y && mouse.row < bottom
     }
 
@@ -404,9 +413,10 @@ impl TuiApp {
     pub(super) fn draft_row_for_view(&self, line: WrappedInputLine) -> Line<'static> {
         let text = self.input.as_str();
         let row = text[line.start..line.end].to_string();
-        let Some((start, end)) = self.input_selection_range().filter(|(start, end)| {
-            *start < line.end && *end > line.start
-        }) else {
+        let Some((start, end)) = self
+            .input_selection_range()
+            .filter(|(start, end)| *start < line.end && *end > line.start)
+        else {
             return Line::from(row);
         };
         let from = start.max(line.start);

@@ -309,10 +309,7 @@ fn push_span_around_badges(
         };
 
         if match_start > cursor {
-            spans.push(Span::styled(
-                text[cursor..match_start].to_string(),
-                style,
-            ));
+            spans.push(Span::styled(text[cursor..match_start].to_string(), style));
         }
         spans.push(Span::styled(
             placeholder.to_string(),
@@ -525,10 +522,7 @@ mod tests {
         let projected = project_input_line(&line, &["[p-1]".to_string()]);
         let text = render_spans(projected.spans.clone());
         assert_eq!(text, "gate    [p-1]   end");
-        assert!(
-            !text.contains('\t'),
-            "the frame text carries no tab cell"
-        );
+        assert!(!text.contains('\t'), "the frame text carries no tab cell");
         let badge = projected
             .spans
             .iter()

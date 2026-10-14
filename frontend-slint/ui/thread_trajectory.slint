@@ -31,18 +31,20 @@ export global TrajTokens {
     out property <color> border-3: #00000029;
 
     public pure function kind-color(kind: int) -> color {
-        kind == 1 ? root.amber :
-        kind == 2 || kind == 3 ? root.violet :
-        kind == 4 ? root.brand :
-        kind == 5 ? root.green :
-        kind == 6 ? root.green-mix :
+        kind == 1 ? root.brand :
+        kind == 2 ? root.green-mix :
+        kind == 3 ? root.text-3 :
+        kind == 4 ? root.violet :
+        kind == 5 ? root.amber :
+        kind == 6 ? root.amber :
         root.text-3;
     }
     public pure function kind-soft(kind: int) -> color {
-        kind == 1 ? root.amber-soft :
-        kind == 2 || kind == 3 ? root.violet-soft :
-        kind == 4 ? root.brand-soft :
-        kind == 5 || kind == 6 ? root.green-soft :
+        kind == 1 ? root.brand-soft :
+        kind == 2 ? root.green-soft :
+        kind == 3 ? root.module :
+        kind == 4 ? root.violet-soft :
+        kind == 5 || kind == 6 ? root.amber-soft :
         root.module;
     }
     public pure function kind-label(kind: int) -> string {
@@ -244,19 +246,9 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                     width: max(2px, span.width * area);
                     height: 8px;
                     border-radius: 1px;
-                    background: span.selected || span.index == root.hover-index ? TrajTokens.kind-color(span.kind) : TrajTokens.kind-soft(span.kind);
+                    background: TrajTokens.kind-color(span.kind);
                     border-width: span.selected ? 1px : 0px;
                     border-color: TrajTokens.kind-color(span.kind);
-                    // first-token split: solid tail marks the decoding half
-                    if span.ttft >= 0.0 && span.width * area > 6px : Rectangle {
-                        x: span.ttft * parent.width;
-                        y: 0px;
-                        width: parent.width - span.ttft * parent.width;
-                        height: parent.height;
-                        border-radius: 1px;
-                        background: TrajTokens.kind-color(span.kind);
-                        opacity: 0.55;
-                    }
                     span-touch := TouchArea {
                         mouse-cursor: pointer;
                         clicked => { root.select-span(span.index); }
@@ -435,31 +427,34 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                                         overflow: elide;
                                         horizontal-stretch: 1;
                                     }
-                                    if row.kind != 7 && row.kind != 8 : VerticalLayout {
-                                        padding-top: 5px;
-                                        alignment: start;
+                                    if row.kind != 7 && row.kind != 8 : HorizontalLayout {
+                                        height: parent.height;
+                                        alignment: center;
+                                        spacing: 6px;
                                         Text {
-                                            height: 15px;
                                             text: row.text;
                                             color: TrajTokens.text;
                                             font-size: 12px;
+                                            vertical-alignment: center;
                                             overflow: elide;
                                             horizontal-stretch: 1;
                                         }
                                         if row.detail != "" : Text {
-                                            height: 14px;
+                                            width: 45%;
                                             text: row.detail;
                                             color: TrajTokens.text-3;
-                                            font-size: 11px;
+                                            font-size: 10px;
                                             font-family: Theme.font-mono;
+                                            vertical-alignment: center;
                                             overflow: elide;
-                                            horizontal-stretch: 1;
                                         }
                                         if row.error : Text {
-                                            height: 13px;
+                                            width: 28px;
                                             text: I18n.traj_state_failed;
                                             color: TrajTokens.red;
                                             font-size: 10px; font-weight: 700;
+                                            vertical-alignment: center;
+                                            overflow: elide;
                                         }
                                     }
                                     if row.error && (row.kind == 7 || row.kind == 8) : Text {

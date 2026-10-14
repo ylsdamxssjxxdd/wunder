@@ -233,7 +233,10 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
     let api = desktop.clone();
     state.on_reveal_folder(move || {
         let Some(app) = weak.upgrade() else { return };
-        let folder = app.global::<WorkspaceDialogState>().get_folder_path().to_string();
+        let folder = app
+            .global::<WorkspaceDialogState>()
+            .get_folder_path()
+            .to_string();
         if folder.is_empty() {
             return;
         }
@@ -270,14 +273,12 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
         let weak = weak.clone();
         std::thread::spawn(move || {
             let result = api.delete_workspace(&workspace_id, delete_threads);
-            let _ = weak.upgrade_in_event_loop(move |app| {
-                match result {
-                    Ok(_) => {
-                        crate::navigation_ui::project_sidebar(&app, Some(&api));
-                        app.invoke_refresh_chat();
-                    }
-                    Err(error) => app.set_status(format!("无法删除工作区：{error}").into()),
+            let _ = weak.upgrade_in_event_loop(move |app| match result {
+                Ok(_) => {
+                    crate::navigation_ui::project_sidebar(&app, Some(&api));
+                    app.invoke_refresh_chat();
                 }
+                Err(error) => app.set_status(format!("无法删除工作区：{error}").into()),
             });
         });
     });

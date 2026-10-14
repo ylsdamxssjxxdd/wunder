@@ -90,6 +90,10 @@ pub struct TrajectoryViewRow {
     pub overview_only: bool,
     pub tool_name: Option<String>,
     pub model_round: i64,
+    /// Bounded token usage projection from message_stats. Detail rows need this
+    /// on the page itself so trajectory rendering does not fetch whole bodies.
+    #[serde(default)]
+    pub stats: Option<Value>,
     pub started_at: f64,
     pub completed_at: Option<f64>,
     pub detail: Option<BodyRef>,

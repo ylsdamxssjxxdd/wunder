@@ -374,18 +374,21 @@ async fn devices(runtime: &CliRuntime, global: &GlobalArgs) -> Result<()> {
     let is_zh = zh(global);
     let _ = runtime;
     let session = session()?;
-    let body = get_json(&session, "/wunder/interlink/nodes").await?;
+    // Ask for the widest page the server allows: this command lists the fleet,
+    // it has no follow-up page.
+    let body = get_json(&session, "/wunder/interlink/nodes?limit=200").await?;
     let nodes = node_array(&body);
     let online = body
         .pointer("/data/online_count")
         .and_then(Value::as_i64)
         .unwrap_or(0);
+    let total = node_total(&body, nodes.len());
     println!(
         "{}",
         if is_zh {
-            format!("节点 {}/{} 在线", online, nodes.len())
+            format!("节点 {online}/{total} 在线")
         } else {
-            format!("nodes {online}/{} online", nodes.len())
+            format!("nodes {online}/{total} online")
         }
     );
     println!("{}", node_table(&nodes, is_zh));
@@ -397,6 +400,16 @@ fn node_array(body: &Value) -> Vec<Value> {
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default()
+}
+
+/// The endpoint pages now, so the row count is the page size and `total` is the
+/// filtered universe. A denominator that says "50" when the account owns more
+/// is worse than no count, so prefer `total` and fall back to the rows.
+fn node_total(body: &Value, rows: usize) -> i64 {
+    body.pointer("/data/total")
+        .and_then(Value::as_i64)
+        .filter(|total| *total >= 0)
+        .unwrap_or(rows as i64)
 }
 
 /// Fixed-width node table; the widths are the CLI's own, not a terminal probe.
@@ -576,10 +589,11 @@ fn account_nodes_line(nodes: &Value, is_zh: bool) -> String {
         .pointer("/data/online_count")
         .and_then(Value::as_i64)
         .unwrap_or(0);
+    let total = node_total(nodes, list.len());
     if is_zh {
-        format!("互通节点: 在线 {online}/{}", list.len())
+        format!("互通节点: 在线 {online}/{total}")
     } else {
-        format!("interlink nodes: {online}/{} online", list.len())
+        format!("interlink nodes: {online}/{total} online")
     }
 }
 

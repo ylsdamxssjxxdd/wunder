@@ -90,7 +90,7 @@ fn source_chat_rows(
     // bounded indicator, so count a small indexed prefix per root.  The
     // trajectory page remains the source of the complete workflow ledger.
     for row in batch_query(db, root_ids.iter().map(|root| (
-        format!("SELECT CAST(? AS TEXT),SUM(CASE WHEN kind IN ('tool_call','approval','plan','compaction','queue','subagent_run') THEN 1 ELSE 0 END),SUM(CASE WHEN kind IN ('tool_call','approval','plan','compaction','queue','subagent_run') AND status IN ('failed','rejected') THEN 1 ELSE 0 END),SUM(CASE WHEN kind='assistant_message' AND {reasoning} IS NOT NULL AND {reasoning}<>'' THEN 1 ELSE 0 END) FROM (SELECT status,kind,payload FROM thread_items WHERE user_id=? AND session_id=? AND root_turn_id=? AND visibility='user' ORDER BY item_index LIMIT 512) bounded"),
+        format!("SELECT CAST(? AS TEXT),SUM(CASE WHEN kind IN ('tool_call','approval','plan','compaction','subagent_run') THEN 1 ELSE 0 END),SUM(CASE WHEN kind IN ('tool_call','approval','plan','compaction','subagent_run') AND status IN ('failed','rejected') THEN 1 ELSE 0 END),SUM(CASE WHEN kind='assistant_message' AND {reasoning} IS NOT NULL AND {reasoning}<>'' THEN 1 ELSE 0 END) FROM (SELECT status,kind,payload FROM thread_items WHERE user_id=? AND session_id=? AND root_turn_id=? AND visibility='user' ORDER BY item_index LIMIT 512) bounded"),
         vec![json!(root), json!(user), json!(session), json!(root)],
     )).collect())? {
         counts.insert(text(&row[0]).to_owned(), (int(&row[1]), int(&row[2]), int(&row[3])));
@@ -320,18 +320,26 @@ pub(super) fn page(
             db.json_text("i.payload", "reasoning"),
             db.json_text("i.payload", "reasoning_content")
         );
+        let source_stats = format!(
+            "COALESCE({}, {}, {}, {})",
+            db.json_text("i.payload", "message_stats"),
+            db.json_text("i.payload", "messageStats"),
+            db.json_text(&db.json_text("i.payload", "meta"), "message_stats"),
+            db.json_text(&db.json_text("i.payload", "meta"), "messageStats")
+        );
         let source_meta = db.json_text("i.payload", "meta");
         let meta_type = db.json_text(&source_meta, "type");
         let meta_source = db.json_text(&source_meta, "source");
         let rows = {
             let sql = format!(
-                "SELECT i.item_id,i.turn_id,i.root_turn_id,i.item_index,i.created_seq,i.revision,i.kind,i.status,i.created_time,i.updated_time,t.user_turn_index,substr(COALESCE({source_content},''),1,256),substr({source_reasoning},1,256),substr(COALESCE({tool},''),1,96),COALESCE({model},'0'),{payload_bytes},{meta_type},{meta_source} FROM thread_items i JOIN thread_turns t ON t.user_id=i.user_id AND t.session_id=i.session_id AND t.turn_id=i.turn_id WHERE i.user_id=? AND i.session_id=?{root_filter} AND i.created_seq{comparison}? AND (i.visibility='user' OR (i.visibility='model_internal' AND (i.kind='system_message' OR (i.kind='user_message' AND {meta_type}='model_context_internal' AND {meta_source}='agent_inbox')))) ORDER BY i.created_seq {direction} LIMIT ?"
+                "SELECT i.item_id,i.turn_id,i.root_turn_id,i.item_index,i.created_seq,i.revision,i.kind,i.status,i.created_time,i.updated_time,t.user_turn_index,substr(COALESCE({source_content},''),1,256),substr({source_reasoning},1,256),substr(COALESCE({tool},''),1,96),COALESCE({model},'0'),{payload_bytes},{meta_type},{meta_source},substr(COALESCE({source_stats},'{{}}'),1,4096) FROM thread_items i JOIN thread_turns t ON t.user_id=i.user_id AND t.session_id=i.session_id AND t.turn_id=i.turn_id WHERE i.user_id=? AND i.session_id=?{root_filter} AND i.created_seq{comparison}? AND (i.visibility='user' OR (i.visibility='model_internal' AND (i.kind='system_message' OR (i.kind='user_message' AND {meta_type}='model_context_internal' AND {meta_source}='agent_inbox')))) ORDER BY i.created_seq {direction} LIMIT ?"
             );
             db.query(&sql, &params)?
         };
         page.has_more = rows.len() > cap;
         for row in rows.into_iter().take(cap) {
-            let payload = json!({"content":text(&row[11]),"reasoning":text(&row[12]),"tool":text(&row[13]),"model_round":row[14].as_i64().unwrap_or_else(||text(&row[14]).parse::<i64>().unwrap_or(0)),"meta":{"type":text(&row[16]),"source":text(&row[17])}});
+            let stats = serde_json::from_str::<Value>(text(&row[18])).unwrap_or(Value::Null);
+            let payload = json!({"content":text(&row[11]),"reasoning":text(&row[12]),"tool":text(&row[13]),"model_round":row[14].as_i64().unwrap_or_else(||text(&row[14]).parse::<i64>().unwrap_or(0)),"message_stats":stats,"meta":{"type":text(&row[16]),"source":text(&row[17])}});
             let mut projected = projection::trajectory(
                 &payload,
                 text(&row[0]),
@@ -360,9 +368,11 @@ pub(super) fn page(
             page.next_before = Some(int(&row[4]));
             page.trajectory.push(projected);
         }
-        if after.is_none() { page.trajectory.reverse(); }
+        if after.is_none() {
+            page.trajectory.reverse();
+        }
     } else {
-        let roots=db.query(&format!("SELECT turn_id,user_turn_index,client_message_id,status,created_time,updated_time FROM thread_turns WHERE user_id=? AND session_id=? AND trigger_kind='user' AND user_turn_index{comparison}? ORDER BY user_turn_index {direction} LIMIT ?"),&[json!(user),json!(session),json!(cursor),json!((cap+1) as i64)])?;
+        let roots=db.query(&format!("SELECT t.turn_id,t.user_turn_index,t.client_message_id,t.status,t.created_time,t.updated_time FROM thread_turns t WHERE t.user_id=? AND t.session_id=? AND t.trigger_kind='user' AND t.user_turn_index{comparison}? AND NOT (t.status='cancelled' AND NOT EXISTS (SELECT 1 FROM thread_items i WHERE i.user_id=t.user_id AND i.session_id=t.session_id AND i.root_turn_id=t.turn_id AND i.visibility='user' AND i.kind IN ('assistant_message','tool_call','approval','plan','compaction','subagent_run'))) ORDER BY t.user_turn_index {direction} LIMIT ?"),&[json!(user),json!(session),json!(cursor),json!((cap+1) as i64)])?;
         page.has_more = roots.len() > cap;
         source_chat_rows(
             db,
@@ -373,7 +383,9 @@ pub(super) fn page(
             &mut bytes,
             budget,
         )?;
-        if after.is_none() { page.chat.reverse(); }
+        if after.is_none() {
+            page.chat.reverse();
+        }
     }
     if kind == "trajectory"
         && page.view_seq > 0

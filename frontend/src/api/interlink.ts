@@ -108,6 +108,12 @@ export type InterlinkNodeListPage = {
   aggregate_status: InterlinkNodeStatus | string;
   online_count: number;
   total: number;
+  /**
+   * 设备口径计数（§5.3）：只统计持久设备（蜂窝/舵机），不含本页的 web 会话与
+   * cloud 节点。`total`/`online_count` 是「节点目录」口径，两者不可混用。
+   */
+  device_total: number;
+  device_online: number;
 };
 
 export type InterlinkShadowThread = {
@@ -277,10 +283,28 @@ const normalizeNode = (raw: Record<string, unknown>): InterlinkNode => {
   };
 };
 
+/** 持久设备节点判定：只有蜂窝/舵机是「设备」，web 会话与 cloud 节点不是。 */
+const isDeviceNodeType = (value: unknown): boolean => {
+  const type = String(value || '').trim().toLowerCase();
+  return type === 'desktop' || type === 'cli';
+};
+
+const countDeviceNodes = (nodes: InterlinkNode[]): number =>
+  nodes.filter((node) => isDeviceNodeType(node.node_type)).length;
+
+const countReachableDeviceNodes = (nodes: InterlinkNode[]): number =>
+  nodes.filter(
+    (node) =>
+      isDeviceNodeType(node.node_type) &&
+      ['online', 'busy'].includes(String(node.status || '').trim().toLowerCase())
+  ).length;
+
 export const fetchInterlinkNodes = async (
   params: InterlinkNodePageParams = {},
   options: RequestOptions = {}
 ): Promise<InterlinkNodeListPage> => {
+  // 服务端真的按这四个键过滤分页（`total` 是过滤后的全集大小，不是本页条数）；
+  // 上限 60 与本地渲染上限 INTERLINK_NODE_MAX_RENDERED 对齐，服务端上限更宽。
   const query: QueryParams = {
     limit: Math.max(1, Math.min(60, Number(params.limit) || 20)),
     offset: Math.max(0, Number(params.offset) || 0)
@@ -294,7 +318,9 @@ export const fetchInterlinkNodes = async (
     nodes,
     aggregate_status: asText(data.aggregate_status) || 'offline',
     online_count: asNumber(data.online_count),
-    total: asNumber(data.total, nodes.length)
+    total: asNumber(data.total, nodes.length),
+    device_total: asNumber(data.device_total, countDeviceNodes(nodes)),
+    device_online: asNumber(data.device_online, countReachableDeviceNodes(nodes))
   };
 };
 

@@ -218,8 +218,8 @@ unsafe fn blit_region(
     scaled: bool,
 ) -> Result<Vec<u8>, String> {
     use windows_sys::Win32::Graphics::Gdi::{
-        BitBlt, COLORONCOLOR, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject,
-        GetDIBits, SelectObject, SetStretchBltMode, StretchBlt, BITMAPINFO, BITMAPINFOHEADER,
+        BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDIBits,
+        SelectObject, SetStretchBltMode, StretchBlt, BITMAPINFO, BITMAPINFOHEADER, COLORONCOLOR,
         DIB_RGB_COLORS, SRCCOPY,
     };
     if !rect.is_usable() || width == 0 || height == 0 {
@@ -446,16 +446,46 @@ mod tests {
 
     #[test]
     fn degenerate_rects_are_rejected() {
-        assert!(!MonitorRect { left: 0, top: 0, right: 0, bottom: 0 }.is_usable());
-        assert!(!MonitorRect { left: 10, top: 0, right: 10, bottom: 900 }.is_usable());
-        assert!(!MonitorRect { left: 0, top: 10, right: 1440, bottom: 10 }.is_usable());
+        assert!(!MonitorRect {
+            left: 0,
+            top: 0,
+            right: 0,
+            bottom: 0
+        }
+        .is_usable());
+        assert!(!MonitorRect {
+            left: 10,
+            top: 0,
+            right: 10,
+            bottom: 900
+        }
+        .is_usable());
+        assert!(!MonitorRect {
+            left: 0,
+            top: 10,
+            right: 1440,
+            bottom: 10
+        }
+        .is_usable());
     }
 
     #[test]
     fn intersection_clips_to_the_shared_area() {
-        let monitor = MonitorRect { left: 0, top: 0, right: 2560, bottom: 1600 };
-        let window = MonitorRect { left: -20, top: 1580, right: 400, bottom: 2200 };
-        let clipped = monitor.intersection(&window).expect("windows overlap the monitor");
+        let monitor = MonitorRect {
+            left: 0,
+            top: 0,
+            right: 2560,
+            bottom: 1600,
+        };
+        let window = MonitorRect {
+            left: -20,
+            top: 1580,
+            right: 400,
+            bottom: 2200,
+        };
+        let clipped = monitor
+            .intersection(&window)
+            .expect("windows overlap the monitor");
         assert_eq!(
             (clipped.left, clipped.top, clipped.right, clipped.bottom),
             (0, 1580, 400, 1600)
@@ -464,10 +494,25 @@ mod tests {
 
     #[test]
     fn a_window_off_the_capture_monitor_has_nothing_to_verify() {
-        let monitor = MonitorRect { left: 0, top: 0, right: 2560, bottom: 1600 };
-        let window = MonitorRect { left: 3000, top: 0, right: 4900, bottom: 1200 };
+        let monitor = MonitorRect {
+            left: 0,
+            top: 0,
+            right: 2560,
+            bottom: 1600,
+        };
+        let window = MonitorRect {
+            left: 3000,
+            top: 0,
+            right: 4900,
+            bottom: 1200,
+        };
         assert!(monitor.intersection(&window).is_none());
-        let touching = MonitorRect { left: 2560, top: 0, right: 4900, bottom: 1200 };
+        let touching = MonitorRect {
+            left: 2560,
+            top: 0,
+            right: 4900,
+            bottom: 1200,
+        };
         assert!(monitor.intersection(&touching).is_none());
     }
 
@@ -476,16 +521,31 @@ mod tests {
     fn the_preview_grid_keeps_the_aspect_ratio_within_one_edge() {
         // A maximized window's region reads as 256 x 153 instead of 2560 x 1528:
         // whole-region coverage at a fraction of the GDI cost.
-        let rect = MonitorRect { left: 0, top: 0, right: 2560, bottom: 1528 };
+        let rect = MonitorRect {
+            left: 0,
+            top: 0,
+            right: 2560,
+            bottom: 1528,
+        };
         assert_eq!(preview_size(rect), (256, 153));
         // Below the cap the region is read at its own resolution, and a sliver
         // still gets a grid instead of an empty buffer.
         assert_eq!(
-            preview_size(MonitorRect { left: 0, top: 0, right: 120, bottom: 80 }),
+            preview_size(MonitorRect {
+                left: 0,
+                top: 0,
+                right: 120,
+                bottom: 80
+            }),
             (120, 80)
         );
         assert_eq!(
-            preview_size(MonitorRect { left: 0, top: 0, right: 2560, bottom: 1 }),
+            preview_size(MonitorRect {
+                left: 0,
+                top: 0,
+                right: 2560,
+                bottom: 1
+            }),
             (256, 1)
         );
     }

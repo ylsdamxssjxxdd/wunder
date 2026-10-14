@@ -10,21 +10,20 @@ import { test, expect } from '@playwright/test';
  * 覆盖点：
  * 1. 左栏底部「设置」进入全屏设置页（左导航 260px + 右内容卡片）
  * 2. 13 个分类导航项齐全，逐一点击后右侧内容区有可见内容且无 pageerror
- * 3. 搜索「模型」后导航只剩「模型设置」
- * 4. 「返回应用」回到聊天区（设置覆盖层消失）
+ * 3. 「返回应用」回到聊天区（设置覆盖层消失）
  *
  * 每个分类都是独立异步 chunk，因此逐项断言同时验证了「按需挂载」不会 404。
  */
 const CATEGORY_IDS = [
   'general',
   'account',
-  'models',
   'tools',
   'agent',
   'companion',
   'cron',
   'memory',
   'channels',
+  'devices',
   'runtime',
   'prompts',
   'archived',
@@ -32,13 +31,11 @@ const CATEGORY_IDS = [
 ] as const;
 
 /**
- * 语言固定为 zh-CN：i18n 的初始语言优先取 localStorage，其次取浏览器语言
- * （`resolveInitialLanguage()`）。Playwright 默认 en-US，会让「搜索『模型』」
- * 断言拿到英文标题，因此这里显式声明 locale，让断言与中文文案一致。
+ * 语言固定为 zh-CN，保证分类文案和断言稳定。
  */
 test.use({ locale: 'zh-CN' });
 
-test('设置页：13 分类可进入、可搜索、可返回', async ({ page, request }) => {
+test('设置页：13 分类可进入并可返回', async ({ page, request }) => {
   const username = `e2e_settings_${Date.now().toString(36)}`;
   const password = 'Passw0rd!23';
   const registered = await request.post('/wunder/auth/register', {
@@ -150,21 +147,10 @@ test('设置页：13 分类可进入、可搜索、可返回', async ({ page, re
   const mountedCategories = await page.locator('[data-testid^="settings-category-"]').count();
   expect(mountedCategories, 'only the most recent categories should stay mounted').toBeLessThanOrEqual(3);
 
-  // 回到「模型设置」并截图，便于人工走查内容区样式
-  await nav.locator('[data-settings-category="models"]').click();
-  await expect(page.locator('[data-testid="settings-category-models"]')).toBeVisible();
+  // 回到「帮助」并截图，便于人工走查内容区样式
+  await nav.locator('[data-settings-category="help"]').click();
+  await expect(page.locator('[data-testid="settings-category-help"]')).toBeVisible();
   await page.screenshot({ path: 'test-results/settings-page.png' });
-
-  // 搜索「模型」→ 只剩「模型设置」
-  await page.locator('[data-testid="settings-search"]').first().fill('模型');
-  await expect(nav.locator('[data-settings-category]')).toHaveCount(1);
-  await expect(nav.locator('[data-settings-category="models"]')).toHaveCount(1);
-  const remainingText = (await nav.locator('[data-settings-category="models"]').innerText()).trim();
-  expect(remainingText).toContain('模型设置');
-
-  // 清空搜索 → 13 项恢复
-  await page.locator('[data-testid="settings-search"]').first().fill('');
-  await expect(nav.locator('[data-settings-category]')).toHaveCount(CATEGORY_IDS.length);
 
   // 返回应用 → 覆盖层消失，聊天区与左栏重新可见
   await page.locator('[data-testid="settings-back"]').first().click();

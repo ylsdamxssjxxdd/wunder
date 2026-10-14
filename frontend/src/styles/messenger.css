@@ -3558,8 +3558,8 @@
 }
 
 .messenger-tool-section {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  display: flex;
+  flex-direction: column;
   gap: 12px;
   align-items: start;
   justify-content: start;
@@ -3577,6 +3577,9 @@
 }
 
 .messenger-tool-group {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
   border: 1px solid #e4e9ef;
   border-radius: 10px;
   background: #ffffff;

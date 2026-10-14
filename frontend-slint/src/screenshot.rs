@@ -224,38 +224,32 @@ pub fn run_hide_probe(app: &MainWindow) -> Result<(), Box<dyn std::error::Error>
     // A timer rather than a sleep inside an event-loop callback: the loop has to
     // keep rendering during the settle, or the window is never really painted and
     // raised and the probe measures a situation production never has.
-    slint::Timer::single_shot(
-        std::time::Duration::from_millis(2500),
-        {
-            let weak = weak.clone();
-            move || {
-                if let Some(window) = weak.upgrade() {
-                    // Pending re-render at hide time, mirroring the composer menu
-                    // closing right before the production callback runs.
-                    window.set_status("hide-probe".into());
-                    // A window launched from a terminal is not allowed to take
-                    // the foreground, and a covered window contributes no pixels
-                    // to the screen, so hiding it changes nothing and the wait
-                    // can only reach its deadline. Production always hides a
-                    // window the user is looking at, so pin ours on top and give
-                    // DWM a moment to composite the new z-order before the
-                    // reference sample reads the screen.
-                    raise_probe_window(&window);
-                    slint::Timer::single_shot(
-                        std::time::Duration::from_millis(300),
-                        move || {
-                            probe_occlusion(&window);
-                            println!("probe: invoking production capture");
-                            capture(window.as_weak(), true);
-                        },
-                    );
-                    return;
-                }
-                println!("probe: window is gone, nothing to measure");
-                let _ = slint::quit_event_loop();
+    slint::Timer::single_shot(std::time::Duration::from_millis(2500), {
+        let weak = weak.clone();
+        move || {
+            if let Some(window) = weak.upgrade() {
+                // Pending re-render at hide time, mirroring the composer menu
+                // closing right before the production callback runs.
+                window.set_status("hide-probe".into());
+                // A window launched from a terminal is not allowed to take
+                // the foreground, and a covered window contributes no pixels
+                // to the screen, so hiding it changes nothing and the wait
+                // can only reach its deadline. Production always hides a
+                // window the user is looking at, so pin ours on top and give
+                // DWM a moment to composite the new z-order before the
+                // reference sample reads the screen.
+                raise_probe_window(&window);
+                slint::Timer::single_shot(std::time::Duration::from_millis(300), move || {
+                    probe_occlusion(&window);
+                    println!("probe: invoking production capture");
+                    capture(window.as_weak(), true);
+                });
+                return;
             }
-        },
-    );
+            println!("probe: window is gone, nothing to measure");
+            let _ = slint::quit_event_loop();
+        }
+    });
     std::thread::spawn(move || {
         // Wait for the production chain to finish, then dump the frame the
         // selector shows. This thread starts before the event loop runs

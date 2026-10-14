@@ -61,10 +61,8 @@ pub(crate) fn trajectory(
     updated: f64,
 ) -> TrajectoryViewRow {
     let content = item.get("content").and_then(Value::as_str).unwrap_or("");
-    let model_context = item
-        .pointer("/meta/type")
-        .and_then(Value::as_str)
-        == Some("model_context_internal");
+    let model_context =
+        item.pointer("/meta/type").and_then(Value::as_str) == Some("model_context_internal");
     // 工具条目的事件负载里工具名字段是 `tool`（tool_name 从不存在）。
     let tool = item.get("tool").and_then(Value::as_str);
     let summary = if kind == "system_message" {
@@ -116,6 +114,7 @@ pub(crate) fn trajectory(
         overview_only: false,
         tool_name: tool.map(|v| preview(v, 96)),
         model_round: item.get("model_round").and_then(Value::as_i64).unwrap_or(0),
+        stats: finite_stats(item),
         started_at: item
             .get("started_at")
             .and_then(Value::as_f64)
@@ -163,7 +162,9 @@ pub(crate) fn new_chat(
 pub(crate) fn finite_stats(item: &Value) -> Option<Value> {
     let source = item
         .get("message_stats")
-        .or_else(|| item.pointer("/meta/message_stats"))?
+        .or_else(|| item.get("messageStats"))
+        .or_else(|| item.pointer("/meta/message_stats"))
+        .or_else(|| item.pointer("/meta/messageStats"))?
         .as_object()?;
     // Keep the small nested usage payloads intact.  The previous projection
     // admitted only top-level numbers/booleans, which silently removed
@@ -171,8 +172,16 @@ pub(crate) fn finite_stats(item: &Value) -> Option<Value> {
     // reload even though the server had persisted the counts.
     let mut fields = serde_json::Map::new();
     let mut scalar_count = 0usize;
+    let finite_scalar = |value: &Value| {
+        value.is_number()
+            || value.is_boolean()
+            || value
+                .as_str()
+                .and_then(|text| text.trim().parse::<f64>().ok())
+                .is_some_and(|number| number.is_finite() && number >= 0.0)
+    };
     for (key, value) in source.iter() {
-        let keep_scalar = value.is_number() || value.is_boolean();
+        let keep_scalar = finite_scalar(value);
         let keep_usage = matches!(key.as_str(), "usage" | "round_usage" | "roundUsage")
             && value.as_object().is_some();
         if !keep_scalar && !keep_usage {
@@ -194,7 +203,7 @@ pub(crate) fn finite_stats(item: &Value) -> Option<Value> {
                 .as_object()
                 .unwrap()
                 .iter()
-                .filter(|(_, v)| v.is_number() || v.is_boolean())
+                .filter(|(_, v)| finite_scalar(v))
                 .take(12)
                 .map(|(k, v)| (preview(k, 64), v.clone()))
                 .collect::<serde_json::Map<_, _>>();
@@ -215,7 +224,7 @@ pub(crate) fn finite_stats(item: &Value) -> Option<Value> {
         };
         let bounded = value
             .iter()
-            .filter(|(_, v)| v.is_number() || v.is_boolean())
+            .filter(|(_, v)| finite_scalar(v))
             .take(16)
             .map(|(k, v)| (preview(k, 64), v.clone()))
             .collect::<serde_json::Map<_, _>>();
@@ -376,6 +385,23 @@ mod tests {
         );
         assert!(row.summary.contains("内容已隐藏"));
         assert!(!row.summary.contains("强大的智能体"));
+    }
+
+    #[test]
+    fn finite_stats_preserves_bounded_camel_case_usage_values() {
+        let stats = finite_stats(&json!({
+            "messageStats": {
+                "usage": {
+                    "inputTokens": "1200",
+                    "outputTokens": 340,
+                    "reasoningTokens": "12"
+                }
+            }
+        }))
+        .expect("message stats should be available");
+        assert_eq!(stats["usage"]["inputTokens"], "1200");
+        assert_eq!(stats["usage"]["outputTokens"], 340);
+        assert_eq!(stats["usage"]["reasoningTokens"], "12");
     }
 
     #[test]

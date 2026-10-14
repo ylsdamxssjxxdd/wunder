@@ -47,7 +47,10 @@ pub fn hydrate_active_text(
         ("content", &["content"][..]),
         ("reasoning", &["reasoning", "reasoning_content"][..]),
     ] {
-        if message[field].as_str().is_some_and(|value| !value.is_empty()) {
+        if message[field]
+            .as_str()
+            .is_some_and(|value| !value.is_empty())
+        {
             continue;
         }
         if field == "reasoning"

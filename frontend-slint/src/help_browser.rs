@@ -19,7 +19,7 @@ const UI_FAMILY: &str = "Microsoft YaHei";
 /// 代码片段字体，与 markdown.slint 的代码块约定保持一致。
 const MONO_FAMILY: &str = "Consolas";
 /// 卡片双栏排版的最低文档宽度，低于该值退化为单栏。
-const SINGLE_COLUMN_WIDTH: f32 = 640.0;
+const SINGLE_COLUMN_WIDTH: f32 = 520.0;
 
 fn model<T: Clone + 'static>(rows: Vec<T>) -> ModelRc<T> {
     Rc::new(VecModel::from(rows)).into()
@@ -29,7 +29,15 @@ fn color(rgb: u32) -> Color {
     Color::from_rgb_u8((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8)
 }
 
-fn rect(x: f32, y: f32, width: f32, height: f32, fill: u32, border: Option<u32>, radius: f32) -> HelpRect {
+fn rect(
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    fill: u32,
+    border: Option<u32>,
+    radius: f32,
+) -> HelpRect {
     HelpRect {
         x,
         y,
@@ -208,7 +216,13 @@ impl Document {
                 };
                 distance(a).total_cmp(&distance(b))
             })
-            .map(|h| if x < h.x + h.width / 2.0 { h.range.start } else { h.range.end })
+            .map(|h| {
+                if x < h.x + h.width / 2.0 {
+                    h.range.start
+                } else {
+                    h.range.end
+                }
+            })
             .unwrap_or(0)
     }
 
@@ -229,7 +243,10 @@ impl Document {
     pub fn marks(&self, ranges: &[Range<usize>], fill: u32) -> Vec<HelpRect> {
         let mut marks: Vec<HelpRect> = Vec::new();
         for hit in &self.hits {
-            if !ranges.iter().any(|r| r.start < hit.range.end && hit.range.start < r.end) {
+            if !ranges
+                .iter()
+                .any(|r| r.start < hit.range.end && hit.range.start < r.end)
+            {
                 continue;
             }
             if let Some(last) = marks.last_mut() {
@@ -319,14 +336,19 @@ impl Typesetter {
         } else {
             400.0
         })));
-        builder.push_default(StyleProperty::LineHeight(LineHeight::FontSizeRelative(1.68)));
+        builder.push_default(StyleProperty::LineHeight(LineHeight::FontSizeRelative(
+            1.68,
+        )));
         builder.push_default(StyleProperty::OverflowWrap(parley::OverflowWrap::Anywhere));
         let mut offset = 0;
         for (i, span) in spans.iter().enumerate() {
             let range = offset..offset + span.text.len();
             builder.push(StyleProperty::Brush(i), range.clone());
             if span.bold {
-                builder.push(StyleProperty::FontWeight(FontWeight::new(700.0)), range.clone());
+                builder.push(
+                    StyleProperty::FontWeight(FontWeight::new(700.0)),
+                    range.clone(),
+                );
             }
             if span.code || span.kbd {
                 builder.push(StyleProperty::FontFamily(MONO_FAMILY.into()), range.clone());
@@ -337,7 +359,11 @@ impl Typesetter {
         let mut layout = builder.build(&text);
         layout.break_all_lines(Some(width.max(1.0)));
         layout.align(
-            if center { Alignment::Center } else { Alignment::Start },
+            if center {
+                Alignment::Center
+            } else {
+                Alignment::Start
+            },
             AlignmentOptions::default(),
         );
         for line in layout.lines() {
@@ -411,7 +437,13 @@ impl Typesetter {
         layout.height()
     }
 
-    pub fn layout(&mut self, topic: &Topic, width: f32, zoom: f32, single_column: bool) -> Document {
+    pub fn layout(
+        &mut self,
+        topic: &Topic,
+        width: f32,
+        zoom: f32,
+        single_column: bool,
+    ) -> Document {
         let mut doc = Document::default();
         let x = 30.0;
         let w = (width - 60.0).max(80.0);
@@ -419,13 +451,15 @@ impl Typesetter {
         for block in &topic.blocks {
             match block {
                 Block::H1 { spans } => {
-                    y += self.text(&mut doc, spans, x, y, w, 26.0 * zoom, 0x17a81a, true, false) + 8.0;
+                    y += self.text(&mut doc, spans, x, y, w, 26.0 * zoom, 0x17a81a, true, false)
+                        + 8.0;
                     doc.rects.push(rect(x, y, w, 1.0, 0xe5e7eb, None, 0.0));
                     y += 16.0;
                 }
                 Block::H2 { spans } => {
                     y += 10.0;
-                    y += self.text(&mut doc, spans, x, y, w, 19.0 * zoom, 0x17a81a, true, false) + 10.0;
+                    y += self.text(&mut doc, spans, x, y, w, 19.0 * zoom, 0x17a81a, true, false)
+                        + 10.0;
                 }
                 Block::Paragraph { spans } | Block::Lead { spans } => {
                     let lead = matches!(block, Block::Lead { .. });
@@ -454,7 +488,11 @@ impl Typesetter {
                         x + 13.0,
                         y + 10.0,
                         w - 26.0,
-                        if matches!(block, Block::Callout { .. }) { 13.0 } else { 15.0 } * zoom,
+                        if matches!(block, Block::Callout { .. }) {
+                            13.0
+                        } else {
+                            15.0
+                        } * zoom,
                         ink,
                         false,
                         false,
@@ -482,8 +520,28 @@ impl Typesetter {
                         text: marker.clone(),
                         ..Default::default()
                     }];
-                    self.text(&mut doc, &marker, x + 16.0, y, 24.0, 15.0 * zoom, 0x202020, false, false);
-                    y += self.text(&mut doc, spans, x + 40.0, y, w - 40.0, 15.0 * zoom, 0x202020, false, false) + 5.0;
+                    self.text(
+                        &mut doc,
+                        &marker,
+                        x + 16.0,
+                        y,
+                        24.0,
+                        15.0 * zoom,
+                        0x202020,
+                        false,
+                        false,
+                    );
+                    y += self.text(
+                        &mut doc,
+                        spans,
+                        x + 40.0,
+                        y,
+                        w - 40.0,
+                        15.0 * zoom,
+                        0x202020,
+                        false,
+                        false,
+                    ) + 5.0;
                 }
                 Block::Table { rows } => {
                     for row in rows {
@@ -534,13 +592,34 @@ impl Typesetter {
                         let mut height: f32 = 0.0;
                         for (i, card) in row.iter().enumerate() {
                             let cx = x + i as f32 * (cw + 10.0);
-                            let th = self.text(&mut doc, &card.title, cx + 12.0, y + 10.0, cw - 24.0, 13.0 * zoom, 0x17a81a, true, false);
-                            let sh = self.text(&mut doc, &card.summary, cx + 12.0, y + 14.0 + th, cw - 24.0, 13.0 * zoom, 0x5b6872, false, false);
+                            let th = self.text(
+                                &mut doc,
+                                &card.title,
+                                cx + 12.0,
+                                y + 10.0,
+                                cw - 24.0,
+                                13.0 * zoom,
+                                0x17a81a,
+                                true,
+                                false,
+                            );
+                            let sh = self.text(
+                                &mut doc,
+                                &card.summary,
+                                cx + 12.0,
+                                y + 14.0 + th,
+                                cw - 24.0,
+                                13.0 * zoom,
+                                0x5b6872,
+                                false,
+                                false,
+                            );
                             height = height.max(th + sh + 24.0);
                         }
                         for (i, card) in row.iter().enumerate() {
                             let cx = x + i as f32 * (cw + 10.0);
-                            doc.rects.push(rect(cx, y, cw, height, 0xfbfdfb, Some(0xd7e2d8), 4.0));
+                            doc.rects
+                                .push(rect(cx, y, cw, height, 0xfbfdfb, Some(0xd7e2d8), 4.0));
                             doc.hits.push(Hit {
                                 range: 0..0,
                                 x: cx,
@@ -561,12 +640,22 @@ impl Typesetter {
                     let mut cy = y + pad;
                     for row in rows {
                         cy += self.text(
-                            &mut doc, row, x + 12.0, cy, w - 24.0, 13.0 * zoom, 0x1f2933, false, false,
+                            &mut doc,
+                            row,
+                            x + 12.0,
+                            cy,
+                            w - 24.0,
+                            13.0 * zoom,
+                            0x1f2933,
+                            false,
+                            false,
                         );
                     }
                     let height = cy - y + pad;
-                    doc.rects
-                        .insert(background_index, rect(x, y, w, height, 0xf7f7f7, Some(0xe1e1e1), 4.0));
+                    doc.rects.insert(
+                        background_index,
+                        rect(x, y, w, height, 0xf7f7f7, Some(0xe1e1e1), 4.0),
+                    );
                     y += height + 16.0;
                 }
             }
@@ -711,6 +800,8 @@ impl Controller {
 
     fn render(&mut self, docs: &HelpDocs) {
         let width = docs.get_document_width().max(120.0).round();
+        // The help window has its own compact type scale so the sidebar and
+        // document can remain side-by-side on ordinary desktop widths.
         let zoom = docs.get_zoom_percent().clamp(80, 160);
         let key = (self.zh, self.history.current(), width as i32, zoom);
         if self.layout_key.as_ref() == Some(&key) {
@@ -721,7 +812,7 @@ impl Controller {
         self.document = self.typesetter.layout(
             topic,
             width,
-            zoom as f32 / 100.0,
+            zoom as f32 / 110.0,
             width < SINGLE_COLUMN_WIDTH,
         );
         self.layout_key = Some(key);
@@ -795,7 +886,10 @@ impl Controller {
                     if (px - x).abs() < 4.0 && (py - y).abs() < 4.0 {
                         let lang = self.lang();
                         let target = self.document.link_at(x, y).and_then(|link| {
-                            self.manuals[lang].topics.iter().position(|topic| topic.id == link)
+                            self.manuals[lang]
+                                .topics
+                                .iter()
+                                .position(|topic| topic.id == link)
                         });
                         if let Some(index) = target {
                             self.history.open(index);
@@ -939,7 +1033,9 @@ pub fn open(app: &crate::MainWindow) {
     sync_language(app);
     if window.show().is_ok() {
         use slint::winit_030::WinitWindowAccessor;
-        window.window().with_winit_window(|native| native.focus_window());
+        window
+            .window()
+            .with_winit_window(|native| native.focus_window());
     }
 }
 
@@ -949,8 +1045,7 @@ pub fn sync_language(app: &crate::MainWindow) {
     if ZH.with(Cell::get) == zh {
         return;
     }
-    let window =
-        WINDOW.with(|slot| slot.borrow().as_ref().map(|window| window.clone_strong()));
+    let window = WINDOW.with(|slot| slot.borrow().as_ref().map(|window| window.clone_strong()));
     if let Some(window) = window {
         window.global::<HelpDocs>().invoke_language_changed(zh);
     }

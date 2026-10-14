@@ -1,5 +1,5 @@
 <template>
-  <div class="messenger-settings-frame-category messenger-settings-devices" data-testid="settings-category-devices">
+  <div class="messenger-settings-frame-category messenger-settings-frame-category--fill messenger-settings-devices" data-testid="settings-category-devices">
     <section class="messenger-settings-card">
       <div class="messenger-settings-group-head messenger-settings-group-head--row">
         <div>
@@ -160,8 +160,10 @@ const deviceNodes = nodes.deviceNodes;
 const loading = nodes.loading;
 const error = nodes.error;
 const hasMore = nodes.hasMore;
-const onlineCount = nodes.onlineCount;
-const totalCount = nodes.total;
+// 「我的设备」是设备口径：web 会话与 cloud 节点属于互通节点目录，但不是设备，
+// 混用会让这里凭空多出好几「台」（每张蜂巢标签页都算一个 web 节点）。
+const onlineCount = nodes.deviceOnlineCount;
+const totalCount = nodes.deviceCount;
 
 const busyIds = reactive(new Set<string>());
 

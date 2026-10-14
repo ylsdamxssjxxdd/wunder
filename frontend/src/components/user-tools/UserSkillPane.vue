@@ -92,6 +92,7 @@
             :empty-text="workspaceEmptyText"
             :file-system="activeSkillFileSystem"
             :disable-workspace-editors="true"
+            compact-file-tree
             @quote-path="handleQuotePath"
             @open-workspace-binding="handleOpenWorkspaceBinding"
           />

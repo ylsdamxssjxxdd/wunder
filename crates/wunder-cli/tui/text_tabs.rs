@@ -149,8 +149,16 @@ mod tests {
     fn display_columns_map_back_to_the_character_that_owns_them() {
         // gate\tvalue: gate 0..4, the tab covers 4..8, value sits at 8..13.
         assert_eq!(logical_index_at("gate\tvalue", 3), 3);
-        assert_eq!(logical_index_at("gate\tvalue", 4), 4, "the tab's first column");
-        assert_eq!(logical_index_at("gate\tvalue", 6), 4, "tab padding is the tab");
+        assert_eq!(
+            logical_index_at("gate\tvalue", 4),
+            4,
+            "the tab's first column"
+        );
+        assert_eq!(
+            logical_index_at("gate\tvalue", 6),
+            4,
+            "tab padding is the tab"
+        );
         assert_eq!(logical_index_at("gate\tvalue", 7), 4);
         assert_eq!(logical_index_at("gate\tvalue", 8), 5);
         assert_eq!(logical_index_at("gate\tvalue", 12), 9);
@@ -187,7 +195,10 @@ mod tests {
         ]);
         let expanded = expand_line(&line);
         assert_eq!(expanded.spans.len(), 2);
-        assert_eq!(expanded.spans[1].style.fg, Some(ratatui::style::Color::Green));
+        assert_eq!(
+            expanded.spans[1].style.fg,
+            Some(ratatui::style::Color::Green)
+        );
         let text = expanded
             .spans
             .iter()

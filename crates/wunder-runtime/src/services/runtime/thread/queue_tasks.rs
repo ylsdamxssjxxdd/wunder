@@ -230,6 +230,36 @@ impl ThreadRuntime {
                 })
         })
         .await?;
+        // Queue admission creates the durable user turn before the task is
+        // parked.  Settling only the agent task leaves that turn in `queued`
+        // forever, so a thread snapshot can resurrect the withdrawn bubble
+        // after the queue response or a page reload.  Close the ThreadLog
+        // turn through the same committer used by the running path.
+        if let Some(turn_id) = task
+            .request_payload
+            .pointer("/config_overrides/__thread_log_turn_id")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+        {
+            let payload = json!({
+                "session_id": task.session_id,
+                "turn_id": turn_id,
+                "status": "cancelled",
+                "error": "user_withdrew_queued_turn"
+            });
+            let _ = self
+                .orchestrator
+                .committer
+                .update_turn(
+                    &task.user_id,
+                    &task.session_id,
+                    turn_id,
+                    "cancelled",
+                    "user_withdrew_queued_turn",
+                    &payload,
+                )
+                .await;
+        }
         self.emit_queue_event(
             &task.session_id,
             &task.user_id,

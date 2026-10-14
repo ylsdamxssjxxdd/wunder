@@ -110,6 +110,13 @@ export function resetChatQueue(): void {
   state.error = '';
 }
 
+/** Drop the local queue projection when a session-wide stop settles it. */
+export function clearChatQueueForSession(sessionId: unknown): void {
+  const targetId = cleanText(sessionId);
+  if (!targetId || state.sessionId !== targetId) return;
+  resetChatQueue();
+}
+
 export type QueueActionResult = { ok: boolean; message: string; item: QueuedTurn | null };
 
 const resolveActionError = (error: unknown): string => {

@@ -309,35 +309,62 @@ function summarizeToolResult(payload: RawRecord): string {
   return contentToText(fallback)
 }
 
-function extractUsage(payload: RawRecord): TrajUsage | undefined {
+export function extractUsage(payload: RawRecord): TrajUsage | undefined {
   const usage: TrajUsage = {}
   const sources: RawRecord[] = []
-  // 优先级：llm_output 顶层 usage → 会话统计 → meta.message_stats 内嵌的
-  // usage/round_usage（会话写入器整体覆盖 payload 后顶层 usage 只剩这里）。
-  if (isRecord(payload.usage)) sources.push(payload.usage)
-  const stats = payload.stats
-  if (isRecord(stats)) sources.push(stats)
-  const messageStats = metaOf(payload).message_stats
-  if (isRecord(messageStats)) {
-    if (isRecord(messageStats.usage)) sources.push(messageStats.usage)
-    if (isRecord(messageStats.round_usage)) sources.push(messageStats.round_usage)
-    sources.push(messageStats)
+  // Providers and persisted history use both camelCase (DSH wire shape) and
+  // snake_case (server storage shape).  History can also wrap these fields in
+  // data/message_stats/meta, so collect only bounded object candidates here.
+  const addSource = (value: unknown): void => {
+    if (!isRecord(value)) return
+    sources.push(value)
+    for (const key of ['usage', 'round_usage', 'roundUsage', 'message_stats', 'messageStats']) {
+      if (isRecord(value[key])) sources.push(value[key] as RawRecord)
+    }
   }
+  addSource(payload.usage)
+  addSource(payload.round_usage)
+  addSource(payload.roundUsage)
+  addSource(payload.stats)
+  addSource(payload.message_stats)
+  addSource(payload.messageStats)
+  addSource(payload.data)
+  addSource(metaOf(payload).message_stats)
+  addSource(metaOf(payload).messageStats)
+  addSource(payload)
   if (sources.length === 0) return undefined
+  const numeric = (value: unknown): number | undefined => {
+    if (typeof value === 'number' && Number.isFinite(value) && value >= 0) return value
+    if (typeof value === 'string' && value.trim()) {
+      const parsed = Number(value)
+      if (Number.isFinite(parsed) && parsed >= 0) return parsed
+    }
+    return undefined
+  }
   const pick = (keys: string[]): number | undefined => {
     for (const source of sources) {
       for (const key of keys) {
-        const value = source[key]
-        if (typeof value === 'number' && Number.isFinite(value)) return value
+        const value = numeric(source[key])
+        if (value !== undefined) return value
       }
     }
     return undefined
   }
-  usage.input = pick(['input_tokens', 'prompt_tokens'])
-  usage.cacheRead = pick(['cached_input_tokens', 'cache_read_input_tokens', 'cached_tokens'])
-  usage.cacheWrite = pick(['cache_creation_input_tokens'])
-  usage.output = pick(['output_tokens', 'completion_tokens'])
-  usage.think = pick(['reasoning_tokens'])
+  const input = pick(['input_tokens', 'prompt_tokens', 'inputTokens', 'promptTokens', 'input', 'prompt'])
+  const cacheRead = pick([
+    'cached_input_tokens', 'cache_read_input_tokens', 'cached_tokens',
+    'cacheReadTokens', 'cacheReadInputTokens', 'cache_read_tokens',
+  ])
+  const cacheWrite = pick([
+    'cache_creation_input_tokens', 'cacheWriteTokens', 'cacheCreationInputTokens',
+  ])
+  const output = pick(['output_tokens', 'completion_tokens', 'outputTokens', 'completionTokens', 'output', 'completion'])
+  const think = pick(['reasoning_tokens', 'reasoningTokens', 'reasoning'])
+  if (input !== undefined) usage.input = input
+  if (cacheRead !== undefined) usage.cacheRead = cacheRead
+  if (cacheWrite !== undefined) usage.cacheWrite = cacheWrite
+  if (output !== undefined) usage.output = output
+  if (think !== undefined) usage.think = think
   return Object.values(usage).some(value => value !== undefined) ? usage : undefined
 }
 

@@ -10,6 +10,7 @@ import { abortWatchStream } from './chatRuntimeControls';
 import { buildRuntimeDebugSnapshot, cacheSessionMessages, clearSessionEventsSnapshot, ensureRuntime, getSessionMessages, notifySessionSnapshot, resolveSessionKey, settleUserStoppedSessionRuntime, touchSessionUpdatedAt } from './chatRuntimeState';
 import { settleTerminalAssistantArtifacts as settleTerminalAssistantArtifactsBase } from './chatTerminalArtifacts';
 import { clearAssistantRetryState } from './chatStats';
+import { clearChatQueueForSession } from './chatQueueState';
 import type { ResumeStreamOptions } from './chatTypes';
 import { abortCompactRequest, abortResumeStream, abortSendStream, chatWsClient, finalizeManualCompactionAsCancelled, startSessionWatcher } from './chatWatcher';
 
@@ -52,6 +53,10 @@ export const chatStopResumeActions = {
         runtime.resumeAbortReason = 'user_stop';
       }
       sendWsCancelForSessionStop(targetSessionId);
+      // The server cancels parked tasks as part of the same stop transaction.
+      // Remove their composer projection immediately so an old queue snapshot
+      // cannot keep a stale user bubble visible while the cancel settles.
+      clearChatQueueForSession(targetSessionId);
       abortSendStream(targetSessionId);
       abortResumeStream(targetSessionId);
       abortCompactRequest(targetSessionId);

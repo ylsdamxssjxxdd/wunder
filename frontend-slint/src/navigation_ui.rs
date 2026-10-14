@@ -80,13 +80,23 @@ fn group_key(row: &RowSpec) -> (i32, &str) {
 }
 
 fn row_height(kind: i32, thread_px: f32, group_px: f32) -> f32 {
-    if kind == 1 { thread_px } else { group_px }
+    if kind == 1 {
+        thread_px
+    } else {
+        group_px
+    }
 }
 
 /// The row the pointer sits in, plus whether the drop lands after it. `dy` is
 /// measured from the top of the dragged row's cell and the tree stacks rows
 /// without gaps, so accumulating each row's own height is the whole geometry.
-fn row_slot(rows: &[RowSpec], from: usize, dy: f32, thread_px: f32, group_px: f32) -> (usize, bool) {
+fn row_slot(
+    rows: &[RowSpec],
+    from: usize,
+    dy: f32,
+    thread_px: f32,
+    group_px: f32,
+) -> (usize, bool) {
     let mut top = 0f32;
     if dy >= 0.0 {
         for (index, row) in rows.iter().enumerate().skip(from) {
@@ -329,7 +339,11 @@ fn cloud_row(app: &MainWindow) -> SidebarRow {
     SidebarRow {
         kind: 2,
         workspace_id: "".into(),
-        name: if zh { "云端工作区".into() } else { "Cloud workspace".into() },
+        name: if zh {
+            "云端工作区".into()
+        } else {
+            "Cloud workspace".into()
+        },
         icon: "cloud".into(),
         color: "".into(),
         thread_count: 0,
@@ -353,7 +367,9 @@ pub(crate) fn focus_workspace_of(
     api: Arc<NativeDesktop>,
     workspace_id: Option<&str>,
 ) {
-    let Some(workspace_id) = workspace_id else { return };
+    let Some(workspace_id) = workspace_id else {
+        return;
+    };
     for (index, card) in app.get_workspaces().iter().enumerate() {
         if card.workspace_id.as_str() == workspace_id {
             app.set_selected_workspace(index as i32);
@@ -435,10 +451,7 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
         let specs: Vec<RowSpec> = (0..count)
             .filter_map(|i| rows_model.row_data(i).map(row_spec))
             .collect();
-        if specs.len() != count
-            || !matches!(specs[from].kind, 0 | 1)
-            || specs[from].id.is_empty()
-        {
+        if specs.len() != count || !matches!(specs[from].kind, 0 | 1) || specs[from].id.is_empty() {
             return;
         }
         let metrics = app.global::<SidebarMetrics>();
@@ -591,11 +604,19 @@ mod tests {
     }
 
     fn header(id: &str) -> RowSpec {
-        RowSpec { kind: 0, bucket: String::new(), id: id.to_string() }
+        RowSpec {
+            kind: 0,
+            bucket: String::new(),
+            id: id.to_string(),
+        }
     }
 
     fn thread(id: &str, workspace: &str) -> RowSpec {
-        RowSpec { kind: 1, bucket: workspace.to_string(), id: id.to_string() }
+        RowSpec {
+            kind: 1,
+            bucket: workspace.to_string(),
+            id: id.to_string(),
+        }
     }
 
     /// The group's sequence after a drag that travelled `dy` px from the top of
@@ -679,14 +700,20 @@ mod tests {
             .iter()
             .map(|id| id.to_string())
             .collect::<Vec<String>>();
-        let next = ["c", "a", "b"].iter().map(|id| id.to_string()).collect::<Vec<String>>();
+        let next = ["c", "a", "b"]
+            .iter()
+            .map(|id| id.to_string())
+            .collect::<Vec<String>>();
         assert!(reorder_in_order(&mut order, &next));
         assert_eq!(order, vec!["c", "other", "a", "b"]);
 
         // An id the manual list has never seen joins the tail and still lands
         // where the drag put it.
         let mut order = vec!["a".to_string(), "b".to_string()];
-        let next = ["b", "a", "new"].iter().map(|id| id.to_string()).collect::<Vec<String>>();
+        let next = ["b", "a", "new"]
+            .iter()
+            .map(|id| id.to_string())
+            .collect::<Vec<String>>();
         assert!(reorder_in_order(&mut order, &next));
         assert_eq!(order, vec!["b", "a", "new"]);
 

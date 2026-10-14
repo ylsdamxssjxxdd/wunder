@@ -344,7 +344,9 @@ export component ToolsPage inherits Rectangle {
                                     if root.tab == 2 : ToolButton { icon: @image-url("../assets/icons/trash.svg"); label: I18n.common_delete; enabled: root.active && !root.readonly && !root.working; clicked => { root.deleting = true; } }
                                 }
                                 if root.tab == 2 : HorizontalLayout { height: 28px;
-                                    LineEdit { width: 192px; placeholder-text: I18n.tm_search_files; text <=> root.search; edited(value) => { root.search-files(value); } }
+                                    // The workspace tree is intentionally unfiltered;
+                                    // navigation and the shared directory view remain
+                                    // the single source of truth for skill files.
                                     Rectangle { horizontal-stretch: 1; }
                                     if root.directory != "" : ToolButton { icon: @image-url("../assets/icons/chevron-left.svg"); label: ".."; clicked => { root.open-file("..", true); } }
                                 }

@@ -129,18 +129,20 @@ export component HelpBrowser inherits Rectangle {
                 }
             }
             Rectangle {
-                private property <bool> stacked: root.width <= 760px;
+                // Keep the classic side-by-side manual layout for normal
+                // desktop windows. Only very narrow previews stack the panes.
+                private property <bool> stacked: root.width <= 560px;
                 HelpSidebar {
                     x: 0px;
                     y: 0px;
                     width: parent.stacked ? parent.width : 286px;
-                    height: parent.stacked ? 240px : parent.height;
+                    height: parent.stacked ? 220px : parent.height;
                 }
                 VerticalLayout {
                     x: parent.stacked ? 0px : 286px;
-                    y: parent.stacked ? 240px : 0px;
+                    y: parent.stacked ? 220px : 0px;
                     width: parent.stacked ? parent.width : parent.width - 286px;
-                    height: parent.stacked ? parent.height - 240px : parent.height;
+                    height: parent.stacked ? parent.height - 220px : parent.height;
                     spacing: 0px;
                     Rectangle {
                         height: 33px;

@@ -96,7 +96,7 @@ const categoryByPanelMode = (mode: string): SettingsCategoryId | null => {
   if (mode === 'prompts') return 'prompts';
   if (mode === 'help-manual') return 'help';
   if (mode === 'profile') return 'account';
-  if (mode === 'desktop-models') return 'models';
+  if (mode === 'desktop-models') return 'general';
   if (mode === 'general') return 'general';
   return null;
 };

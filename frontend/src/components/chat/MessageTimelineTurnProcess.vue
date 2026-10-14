@@ -701,16 +701,16 @@ const buildRows = (items: Array<Record<string, unknown>>): ProcessRow[] => {
   position: relative;
   flex: 0 0 auto;
   align-self: stretch;
-  width: 34px;
+  width: 26px;
 }
 
 .timeline-process-gutter::before {
   content: '';
   position: absolute;
-  top: 3px;
-  bottom: 3px;
-  left: -7px;
-  width: 32px;
+  top: 8px;
+  bottom: 8px;
+  left: 1px;
+  width: 24px;
   box-sizing: border-box;
   border: 1px solid var(--mz-border, #e8e6e3);
   border-radius: 10px;
@@ -728,7 +728,7 @@ const buildRows = (items: Array<Record<string, unknown>>): ProcessRow[] => {
   position: absolute;
   top: 40px;
   bottom: -12px;
-  left: 9.5px;
+  left: 12.5px;
   width: 1px;
   background: var(--mz-timeline-line, #e2dfda);
 }
@@ -737,12 +737,12 @@ const buildRows = (items: Array<Record<string, unknown>>): ProcessRow[] => {
   position: absolute;
   z-index: 1;
   top: 50%;
-  left: 4px;
-  width: 12px;
-  margin-top: -6px;
+  left: 5px;
+  width: 16px;
+  margin-top: -8px;
   color: var(--mz-text-muted, #8a8f99);
-  font-size: 11px;
-  line-height: 12px;
+  font-size: 14px;
+  line-height: 16px;
   text-align: center;
   transition: transform 0.16s ease;
 }

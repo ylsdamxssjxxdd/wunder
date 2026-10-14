@@ -133,6 +133,13 @@ impl SqliteStorage {
 
     fn open(&self) -> Result<Connection> {
         self.ensure_db_dir()?;
+        if std::env::var("WUNDER_SQLITE_TRACE_OPEN").is_ok() {
+            eprintln!(
+                "[sqlite-open] {} thread={:?}",
+                self.db_path.display(),
+                std::thread::current().id()
+            );
+        }
         let conn = Connection::open(&self.db_path)?;
         // Parallel child runs can briefly contend on SQLite writes.
         conn.busy_timeout(Duration::from_secs(5)).ok();

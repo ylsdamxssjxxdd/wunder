@@ -228,7 +228,8 @@ impl TerminalGrid {
             let screen = self.parser.screen();
             let default_bg = screen.bgcolor();
             for row in 0..departed as u16 {
-                self.history.push_back(line_at(&screen, row, self.cols, default_bg));
+                self.history
+                    .push_back(line_at(&screen, row, self.cols, default_bg));
             }
         }
         self.parser.set_scrollback(0);

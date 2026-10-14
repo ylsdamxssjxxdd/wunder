@@ -39,7 +39,7 @@
         type="button"
         :class="{ 'tt-toggle-active': showTurns }"
         :aria-pressed="showTurns"
-        @click="showTurns = !showTurns"
+        @click="toggleTurns"
       >
         <span class="tt-toggle-glyph">⊞</span>
         <span>{{ t('messenger.trajectory.turns') }}</span>
@@ -49,7 +49,7 @@
         type="button"
         :class="{ 'tt-toggle-active': showCalls }"
         :aria-pressed="showCalls"
-        @click="showCalls = !showCalls"
+        @click="toggleCalls"
       >
         <span class="tt-toggle-glyph">⊟</span>
         <span>{{ t('messenger.trajectory.calls') }}</span>
@@ -121,14 +121,16 @@
           @pointerleave="onTimelineLeave"
           @dblclick="clearSelection"
         >
-          <span
-            v-for="span in projectedOverviewSpans"
-            :key="span.key"
-            class="tt-span tt-span-overview"
-            :class="spanClasses(span)"
-            :style="spanStyle(span)"
-            :title="overviewSpanTitle(span)"
-          />
+          <template v-if="!detailRootTurn && overviewTimeline">
+            <span
+              v-for="span in projectedOverviewSpans"
+              :key="span.key"
+              class="tt-span tt-span-overview"
+              :class="spanClasses(span)"
+              :style="spanStyle(span)"
+              :title="overviewSpanTitle(span)"
+            />
+          </template>
           <span
             v-for="boundary in projectedBoundaries"
             :key="`b${boundary.turn}`"
@@ -136,17 +138,19 @@
             :style="{ left: `${boundary.x}px` }"
           />
           <span v-if="hoverX !== null" class="tt-hoverline" :style="{ left: `${hoverX}px` }" />
-          <span
-            v-for="span in projectedSpans"
-            :key="span.key"
-            class="tt-span"
-            :class="spanClasses(span)"
-            :style="spanStyle(span)"
-            @pointerdown.stop
-            @pointerenter="onSpanEnter(span, $event)"
-            @pointerleave="onSpanLeave"
-            @click.stop="selectIndex(span.model.index)"
-          />
+          <template v-if="detailRootTurn || !overviewTimeline">
+            <span
+              v-for="span in projectedSpans"
+              :key="span.key"
+              class="tt-span"
+              :class="spanClasses(span)"
+              :style="spanStyle(span)"
+              @pointerdown.stop
+              @pointerenter="onSpanEnter(span, $event)"
+              @pointerleave="onSpanLeave"
+              @click.stop="selectIndex(span.model.index)"
+            />
+          </template>
           <span
             v-if="selection"
             class="tt-selection"
@@ -326,11 +330,11 @@
                   <dt>{{ t('messenger.trajectory.kindTool') }}</dt>
                   <dd class="tt-mono">{{ selectedCell.toolName }}</dd>
                 </div>
-                <template v-if="selectedCell.usage">
-                  <div class="tt-overview-row">
-                    <dt>{{ t('messenger.trajectory.token') }}</dt>
-                    <dd>{{ formatTokens(selectedCell.usage.output) }}</dd>
-                  </div>
+              <template v-if="selectedCell.usage">
+                <div class="tt-overview-row">
+                  <dt>{{ t('messenger.trajectory.token') }}</dt>
+                  <dd>{{ formatTokens(selectedCell.usage.output) }}</dd>
+                </div>
                   <div class="tt-overview-row">
                     <dt>{{ t('messenger.trajectory.reasoning') }}</dt>
                     <dd>{{ formatTokens(selectedCell.usage.think) }}</dd>
@@ -451,6 +455,7 @@ import {
   buildTrajectoryLayout,
   collapseTurnRecords,
   deriveTimeline,
+  extractUsage,
   filterRecords,
   flattenRecords,
   formatClock,
@@ -575,6 +580,22 @@ const turns = computed(() => buildTrajectoryLayout(rawTurns.value, modelT))
 const requests = computed(() => buildRequestNumbers(turns.value))
 const allRecords = computed(() => flattenRecords(turns.value))
 const filteredRecords = computed(() => allRecords.value)
+const turnKeys = computed(() => new Set(allRecords.value.map(record => record.turn)))
+const assistantKeys = computed(() => new Set(
+  allRecords.value
+    .filter(record => record.group.length > 0)
+    .map(record => requestIdentity(record.turn, record.group)),
+))
+function toggleTurns(): void {
+  const next = !showTurns.value
+  showTurns.value = next
+  collapsedTurns.value = next ? new Set(turnKeys.value) : new Set()
+}
+function toggleCalls(): void {
+  const next = !showCalls.value
+  showCalls.value = next
+  collapsedAssistants.value = next ? new Set(assistantKeys.value) : new Set()
+}
 const records = computed(() => collapseTurnRecords(
   filteredRecords.value,
   collapsedTurns.value,
@@ -617,6 +638,10 @@ const timeline = computed(() => deriveTimeline(turns.value, timelineMode.value))
 type OverviewSpan = TimelineSpan & { count: number; aggregate: true }
 
 const overviewTimeline = computed(() => {
+  // A detail turn has its own time domain. Keeping the session-wide tile
+  // projection mounted here stretches the detail spans and paints a second,
+  // translucent lane underneath them.
+  if (detailRootTurn.value) return null
   const page = displayPage.value
   const tiles = Array.isArray(page?.tiles) ? page.tiles : []
   if (tiles.length === 0) return null
@@ -771,6 +796,7 @@ const projectedSpans = computed(() => {
 })
 
 const projectedBoundaries = computed(() => {
+  if (!detailRootTurn.value && overviewTimeline.value) return []
   const model = timeline.value
   if (!model || !showTurns.value) return []
   const width = trackWidth.value || 600
@@ -1129,9 +1155,17 @@ function onRowDoubleClick(record: TableRecord): void {
   }
 }
 
-watch([showTurns, showCalls], ([turnsOn, callsOn]) => {
-  if (!turnsOn) collapsedTurns.value = new Set()
-  if (!callsOn) collapsedAssistants.value = new Set()
+watch([allRecords, showTurns, showCalls], () => {
+  if (showTurns.value) {
+    collapsedTurns.value = new Set([...collapsedTurns.value].filter(turn => turnKeys.value.has(turn)))
+  } else {
+    collapsedTurns.value = new Set()
+  }
+  if (showCalls.value) {
+    collapsedAssistants.value = new Set([...collapsedAssistants.value].filter(key => assistantKeys.value.has(key)))
+  } else {
+    collapsedAssistants.value = new Set()
+  }
 })
 
 /* ---------------------------------------------------------------- */
@@ -1209,7 +1243,31 @@ const selectedCell = computed<TrajCell | null>(() => {
   const detail=details.value[base.recordId] as any
   if(!detail)return base
   const stringify=(v:unknown)=>typeof v==='string'?v:v===undefined?'':JSON.stringify(v,null,2)
-  return {...base,inputDetail:stringify(detail.args??detail.content??detail.raw),outputDetail:stringify(detail.content??detail.raw),thinkingDetail:stringify(detail.reasoning??detail.reasoning_content),result:stringify(detail.result??detail.data??detail.raw),schemaDetail:stringify(detail.schema)}
+  const usage = extractUsage(detail) ?? base.usage
+  const metrics = usage || base.metrics
+    ? {
+        ...(base.metrics ?? {
+          timingRecorded: false,
+          stepStartTime: base.startedAt,
+          firstTokenTime: null,
+          completedTime: null,
+          usageProvided: false,
+          outputTokens: null,
+        }),
+        usageProvided: usage !== undefined,
+        outputTokens: usage?.output ?? base.metrics?.outputTokens ?? null,
+      }
+    : base.metrics
+  return {
+    ...base,
+    inputDetail:stringify(detail.args??detail.content??detail.raw),
+    outputDetail:stringify(detail.content??detail.raw),
+    thinkingDetail:stringify(detail.reasoning??detail.reasoning_content),
+    result:stringify(detail.result??detail.data??detail.raw),
+    schemaDetail:stringify(detail.schema),
+    usage,
+    metrics,
+  }
 })
 const selectedRecord = computed<TableRecord | null>(() => {
   const cell = selectedCell.value
@@ -1726,12 +1784,8 @@ function spanStyle(span: { model: TimelineSpan; left: number; width: number }): 
     top: `${7 + span.model.lane * 14}px`,
   }
   if ((span.model as OverviewSpan).aggregate) {
-    style.opacity = '0.32'
-    style.pointerEvents = 'none'
-  }
-  if (span.model.kind === 'message' && span.model.ttftFraction !== null && span.width > 6) {
-    const split = Math.round(span.width * span.model.ttftFraction)
-    style.background = `linear-gradient(90deg, rgba(65,118,230,0.92) ${split}px, rgba(65,118,230,0.45) ${split}px)`
+    style.opacity = '0.86'
+    style.pointerEvents = 'auto'
   }
   return style
 }

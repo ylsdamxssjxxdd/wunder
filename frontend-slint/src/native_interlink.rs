@@ -5,7 +5,9 @@
 //! decision, cloud pull) always run on a background thread via
 //! `crate::native_pages::run_background`; only the in-process status /
 //! pending-approval reads happen on the UI thread.
-use crate::{native_pages, InterlinkApproval, InterlinkEntry, InterlinkNode, InterlinkStatus, MainWindow};
+use crate::{
+    native_pages, InterlinkApproval, InterlinkEntry, InterlinkNode, InterlinkStatus, MainWindow,
+};
 use slint::{ComponentHandle, ModelRc, VecModel};
 use std::{cell::RefCell, sync::Arc};
 use wunder_desktop::NativeDesktop;
@@ -58,7 +60,12 @@ fn poll(app: &MainWindow, api: &Arc<NativeDesktop>) {
     let status = api.interlink_status();
     app.set_interlink_status(InterlinkStatus {
         state: status.state.clone().into(),
-        note: status_note(&status.state, status.last_error.as_deref(), status.dropped_frames).into(),
+        note: status_note(
+            &status.state,
+            status.last_error.as_deref(),
+            status.dropped_frames,
+        )
+        .into(),
     });
     // The working-directory region rides the same tick: it derives its
     // offline state from the tunnel and boots the cloud tree on the first
@@ -133,10 +140,12 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
     let weak = app.as_weak();
     let poll_api = api.clone();
     POLL_TIMER.with(|timer| {
-        timer.borrow().start(slint::TimerMode::Repeated, POLL_INTERVAL, move || {
-            let Some(app) = weak.upgrade() else { return };
-            poll(&app, &poll_api);
-        });
+        timer
+            .borrow()
+            .start(slint::TimerMode::Repeated, POLL_INTERVAL, move || {
+                let Some(app) = weak.upgrade() else { return };
+                poll(&app, &poll_api);
+            });
     });
     // Devices: fetch on demand (the list needs the tunnel, so a poll would
     // only burn requests while signed out).
@@ -169,7 +178,9 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                             .collect();
                         app.set_interlink_nodes(ModelRc::new(VecModel::from(rows)));
                     }
-                    Err(error) => native_pages::show_error(&app, format!("无法读取设备列表：{error}")),
+                    Err(error) => {
+                        native_pages::show_error(&app, format!("无法读取设备列表：{error}"))
+                    }
                 }
             });
         });
@@ -197,7 +208,11 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         if app.get_interlink_cloud_busy() {
             return;
         }
-        let current = app.get_interlink_cloud_path().trim().trim_end_matches('/').to_string();
+        let current = app
+            .get_interlink_cloud_path()
+            .trim()
+            .trim_end_matches('/')
+            .to_string();
         let parent = match current.rsplit_once('/') {
             Some(("", _)) => "/".to_string(),
             Some((parent, _)) => parent.to_string(),

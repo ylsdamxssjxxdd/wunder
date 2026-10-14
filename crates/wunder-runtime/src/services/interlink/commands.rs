@@ -1850,6 +1850,45 @@ mod tests {
             .any(|kind| kind == CMD_THREAD_MESSAGE));
     }
 
+    /// A `command_result` frame must settle the ledger, not just feed the
+    /// in-memory result the polling endpoint merges into its response. When the
+    /// row stays `acked` the caller sees a finished result on a command that
+    /// never leaves the open states - exactly the shape the loopback test hit.
+    #[test]
+    fn a_result_frame_settles_the_ledger_row() {
+        use crate::storage::SqliteStorage;
+
+        let root = tempfile::tempdir().unwrap();
+        let storage: Arc<dyn StorageBackend> = Arc::new(SqliteStorage::new(
+            root.path().join("state.db").to_string_lossy().into_owned(),
+        ));
+        let target = "device:dev-result";
+        let mut row = record(CMD_WORKSPACE_READ, target);
+        row.command_id = "cmd_result".to_string();
+        row.status = COMMAND_STATUS_ACKED.to_string();
+        row.acked_at = Some(100.0);
+        storage.insert_interlink_command(&row).unwrap();
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let settled = runtime
+            .block_on(on_result(
+                Arc::clone(&storage),
+                "cmd_result",
+                &json!({"status": "succeeded", "result": {"ok": true}}),
+                &Limits::default(),
+                120.0,
+            ))
+            .expect("result handled");
+
+        assert!(settled, "a first terminal frame is accepted");
+        let stored = storage.get_interlink_command("cmd_result").unwrap().unwrap();
+        assert_eq!(stored.status, COMMAND_STATUS_SUCCEEDED);
+        assert_eq!(stored.finished_at, Some(120.0));
+    }
+
     /// Docs §13.2 7: the commands a vanished node was actually handed answer
     /// `NODE_OFFLINE` at once, while the parked backlog (which exists precisely
     /// to survive a disconnect) and an undecided approval stay untouched.

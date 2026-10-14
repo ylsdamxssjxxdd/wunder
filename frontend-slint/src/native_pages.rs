@@ -193,7 +193,10 @@ fn bind_preferences_and_prompts(app: &MainWindow, api: Arc<NativeDesktop>) {
                                 .collect::<Vec<_>>(),
                         )));
                         app.set_prompt_pack_names(ModelRc::new(VecModel::from(
-                            packs.iter().map(|pack| pack.id.clone().into()).collect::<Vec<_>>(),
+                            packs
+                                .iter()
+                                .map(|pack| pack.id.clone().into())
+                                .collect::<Vec<_>>(),
                         )));
                         let selected = app.get_prompt_selected_pack().to_string();
                         let selected = if selected.is_empty() {
@@ -505,27 +508,33 @@ thread_local! {
 /// once the page has closed.
 fn restart_cloud_status_poll(app_weak: slint::Weak<MainWindow>, api: Arc<NativeDesktop>) {
     CLOUD_POLL_TIMER.with(|timer| {
-        timer.start(slint::TimerMode::Repeated, std::time::Duration::from_secs(30), move || {
-            let Some(app) = app_weak.upgrade() else { return };
-            if !app.get_settings_open() || app.get_settings_active_panel() != 13 {
-                // Page closed or the cloud card's tab is hidden: stop polling.
-                CLOUD_POLL_TIMER.with(slint::Timer::stop);
-                return;
-            }
-            if app.get_cloud_busy() {
-                return;
-            }
-            let weak = app_weak.clone();
-            let api = api.clone();
-            run_background(move || {
-                let status = api.cloud_status();
-                let _ = weak.upgrade_in_event_loop(move |app| {
-                    if let Ok(status) = status {
-                        push_cloud_status(&app, status);
-                    }
+        timer.start(
+            slint::TimerMode::Repeated,
+            std::time::Duration::from_secs(30),
+            move || {
+                let Some(app) = app_weak.upgrade() else {
+                    return;
+                };
+                if !app.get_settings_open() || app.get_settings_active_panel() != 13 {
+                    // Page closed or the cloud card's tab is hidden: stop polling.
+                    CLOUD_POLL_TIMER.with(slint::Timer::stop);
+                    return;
+                }
+                if app.get_cloud_busy() {
+                    return;
+                }
+                let weak = app_weak.clone();
+                let api = api.clone();
+                run_background(move || {
+                    let status = api.cloud_status();
+                    let _ = weak.upgrade_in_event_loop(move |app| {
+                        if let Ok(status) = status {
+                            push_cloud_status(&app, status);
+                        }
+                    });
                 });
-            });
-        });
+            },
+        );
     });
 }
 
@@ -653,7 +662,11 @@ fn bind_cloud(app: &MainWindow, api: Arc<NativeDesktop>) {
                 match result {
                     Ok(status) => {
                         push_cloud_status(&app, status);
-                        app.set_status(if enabled { "已开启基础设置同步".into() } else { "已关闭基础设置同步".into() });
+                        app.set_status(if enabled {
+                            "已开启基础设置同步".into()
+                        } else {
+                            "已关闭基础设置同步".into()
+                        });
                     }
                     Err(error) => {
                         app.set_cloud_error(error.to_string().into());
@@ -756,11 +769,7 @@ fn profile_brush(color: &str) -> slint::Color {
     let hex = color.trim().strip_prefix('#').unwrap_or_default();
     if hex.len() == 6 && hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         if let Ok(value) = u32::from_str_radix(hex, 16) {
-            return slint::Color::from_rgb_u8(
-                (value >> 16) as u8,
-                (value >> 8) as u8,
-                value as u8,
-            );
+            return slint::Color::from_rgb_u8((value >> 16) as u8, (value >> 8) as u8, value as u8);
         }
     }
     slint::Color::from_rgb_u8(0x3b, 0x82, 0xf6)
@@ -796,6 +805,7 @@ fn bind_agents(app: &MainWindow, api: Arc<NativeDesktop>) {
         }
         app.set_selected_agent_tool_names(string_model(names));
         crate::entity_state::sync_tool_selection(&app);
+        app.invoke_queue_agent_save();
     });
     let weak = app.as_weak();
     app.on_add_agent_question(move || {
@@ -809,6 +819,7 @@ fn bind_agents(app: &MainWindow, api: Arc<NativeDesktop>) {
             questions.push(app.get_agent_question_draft().trim().to_string());
             app.set_selected_agent_preset_questions(string_model(questions));
             app.set_agent_question_draft("".into());
+            app.invoke_queue_agent_save();
         }
     });
     let weak = app.as_weak();
@@ -823,6 +834,7 @@ fn bind_agents(app: &MainWindow, api: Arc<NativeDesktop>) {
             if index < questions.len() {
                 questions.remove(index);
                 app.set_selected_agent_preset_questions(string_model(questions));
+                app.invoke_queue_agent_save();
             }
         }
     });
@@ -843,6 +855,7 @@ fn bind_agents(app: &MainWindow, api: Arc<NativeDesktop>) {
         // the card picker's enabled flags from it.
         app.invoke_toggle_agent_tool(name);
         app.invoke_refresh_agent_dirty();
+        app.invoke_queue_agent_save();
     });
     let weak = app.as_weak();
     app.on_refresh_agent_model_options(move || {
@@ -915,19 +928,23 @@ fn bind_settings(app: &MainWindow, api: Arc<NativeDesktop>) {
             let total = user_rounds;
             let progress_app = weak.clone();
             let mut last_report = std::time::Instant::now();
-            let result = api.generate_stress_thread(user_rounds, model_rounds, move |done, items| {
-                // 节流到约每 300ms 一次；批量写入在两次报告之间全速进行。
-                let now = std::time::Instant::now();
-                if done >= total || now.duration_since(last_report).as_millis() >= 300 {
-                    last_report = now;
-                    let weak = progress_app.clone();
-                    let _ = weak.upgrade_in_event_loop(move |app| {
-                        app.set_stress_status(
-                            format!("正在生成… 已完成 {done}/{total} 轮次，写入 {items} 条消息").into(),
-                        );
-                    });
-                }
-            });
+            let result =
+                api.generate_stress_thread(user_rounds, model_rounds, move |done, items| {
+                    // 节流到约每 300ms 一次；批量写入在两次报告之间全速进行。
+                    let now = std::time::Instant::now();
+                    if done >= total || now.duration_since(last_report).as_millis() >= 300 {
+                        last_report = now;
+                        let weak = progress_app.clone();
+                        let _ = weak.upgrade_in_event_loop(move |app| {
+                            app.set_stress_status(
+                                format!(
+                                    "正在生成… 已完成 {done}/{total} 轮次，写入 {items} 条消息"
+                                )
+                                .into(),
+                            );
+                        });
+                    }
+                });
             let _ = weak.upgrade_in_event_loop(move |app| {
                 app.set_stress_running(false);
                 match result {
@@ -938,7 +955,9 @@ fn bind_settings(app: &MainWindow, api: Arc<NativeDesktop>) {
                         );
                         app.set_stress_status(text.clone().into());
                         app.set_dialog_title("压测线程已生成".into());
-                        app.set_dialog_text(format!("{text}\n会话 ID：{}", stats.session_id).into());
+                        app.set_dialog_text(
+                            format!("{text}\n会话 ID：{}", stats.session_id).into(),
+                        );
                         app.set_dialog_open(true);
                         app.invoke_refresh_chat();
                     }
@@ -1147,13 +1166,14 @@ fn bind_settings(app: &MainWindow, api: Arc<NativeDesktop>) {
     let order_api = api.clone();
     app.on_move_model(move |from, delta| {
         let Some(app) = weak.upgrade() else { return };
-        let Ok(from) = usize::try_from(from) else { return };
+        let Ok(from) = usize::try_from(from) else {
+            return;
+        };
         let mut rows = app.get_models().iter().collect::<Vec<_>>();
         if from >= rows.len() || rows.is_empty() {
             return;
         }
-        let to = (from as i64 + i64::from(delta))
-            .clamp(0, rows.len() as i64 - 1) as usize;
+        let to = (from as i64 + i64::from(delta)).clamp(0, rows.len() as i64 - 1) as usize;
         if to == from {
             return;
         }
@@ -1446,7 +1466,6 @@ impl ModelCatalogue {
 fn model_from<T: Clone + 'static>(rows: Vec<T>) -> ModelRc<T> {
     ModelRc::from(Rc::new(VecModel::from(rows)))
 }
-
 
 fn string_model(rows: Vec<String>) -> ModelRc<slint::SharedString> {
     model_from(rows.into_iter().map(Into::into).collect())

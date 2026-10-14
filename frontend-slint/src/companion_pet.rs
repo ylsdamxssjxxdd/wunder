@@ -106,13 +106,7 @@ fn classify_runtime(status: &str) -> Runtime {
     }
     if matches!(
         value,
-        "error"
-            | "failed"
-            | "timeout"
-            | "aborted"
-            | "terminated"
-            | "cancelled"
-            | "canceled"
+        "error" | "failed" | "timeout" | "aborted" | "terminated" | "cancelled" | "canceled"
     ) || value.contains("失败")
         || value.contains("错误")
         || value.contains("超时")
@@ -144,8 +138,10 @@ fn classify_runtime(status: &str) -> Runtime {
     {
         return Runtime::Pending;
     }
-    if matches!(value, "running" | "streaming" | "executing" | "processing" | "cancelling")
-        || value.starts_with("正在")
+    if matches!(
+        value,
+        "running" | "streaming" | "executing" | "processing" | "cancelling"
+    ) || value.starts_with("正在")
         || value.starts_with("目标")
     {
         return Runtime::Running;
@@ -328,11 +324,8 @@ impl Pet {
             Some(seen) if seen != hint.signature.as_str() => {
                 self.hint_signature = Some(hint.signature.clone());
                 if self.spec.message_hints && self.bubble.is_none() {
-                    self.bubble = Some((
-                        hint.text.clone(),
-                        hint.tone,
-                        Instant::now() + MESSAGE_HINT,
-                    ));
+                    self.bubble =
+                        Some((hint.text.clone(), hint.tone, Instant::now() + MESSAGE_HINT));
                 }
             }
             _ => {}
@@ -529,11 +522,7 @@ fn active_hint(app: &MainWindow) -> Option<Hint> {
         Runtime::Done => BubbleTone::Success,
         _ => BubbleTone::Info,
     };
-    let signature = format!(
-        "{agent_id}::{}::{:?}",
-        text.chars().count(),
-        tone
-    );
+    let signature = format!("{agent_id}::{}::{:?}", text.chars().count(), tone);
     Some(Hint {
         agent_id,
         text: truncate_bubble(&text),
@@ -757,17 +746,19 @@ fn set_timer(overlay: &mut Overlay, running: bool, app: &MainWindow) {
         return;
     }
     let weak = app.as_weak();
-    overlay.timer.start(slint::TimerMode::Repeated, TICK, move || {
-        let Some(app) = weak.upgrade() else {
+    overlay
+        .timer
+        .start(slint::TimerMode::Repeated, TICK, move || {
+            let Some(app) = weak.upgrade() else {
+                if let Some(overlay) = current() {
+                    overlay.borrow_mut().timer.stop();
+                }
+                return;
+            };
             if let Some(overlay) = current() {
-                overlay.borrow_mut().timer.stop();
+                tick(&overlay, &app);
             }
-            return;
-        };
-        if let Some(overlay) = current() {
-            tick(&overlay, &app);
-        }
-    });
+        });
 }
 
 /// Drain native input events, then re-project: expiries, drags and menu picks
@@ -918,7 +909,11 @@ fn toggle(overlay: &mut Overlay, key: &str, agent_id: &str) {
         .get(agent_id)
         .and_then(|entry| entry.show)
         .unwrap_or(true);
-    let scale = overlay.pets.get(key).map(|pet| pet.spec.scale).unwrap_or(1.0);
+    let scale = overlay
+        .pets
+        .get(key)
+        .map(|pet| pet.spec.scale)
+        .unwrap_or(1.0);
     if let Ok(state) = overlay.api.save_companion_override(agent_id, !show, scale) {
         overlay.state = state;
     }
@@ -926,7 +921,9 @@ fn toggle(overlay: &mut Overlay, key: &str, agent_id: &str) {
         return;
     }
     overlay.pets.remove(key);
-    overlay.service.send(PetCommand::Dismiss { id: key.to_string() });
+    overlay.service.send(PetCommand::Dismiss {
+        id: key.to_string(),
+    });
 }
 
 /// Resize through the same local override, keeping the current visibility.

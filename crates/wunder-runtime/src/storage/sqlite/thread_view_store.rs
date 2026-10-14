@@ -216,58 +216,143 @@ mod tests {
 
     #[test]
     fn source_chat_batches_page_queries_and_preserves_block_fallbacks() {
-        struct Counted<'a> { db: Db<'a>, queries: usize, rows: usize }
+        struct Counted<'a> {
+            db: Db<'a>,
+            queries: usize,
+            rows: usize,
+        }
         impl ViewDb for Counted<'_> {
-            fn json_text(&self, expression: &str, field: &str) -> String { self.db.json_text(expression, field) }
-            fn text_bytes(&self, expression: &str) -> String { self.db.text_bytes(expression) }
+            fn json_text(&self, expression: &str, field: &str) -> String {
+                self.db.json_text(expression, field)
+            }
+            fn text_bytes(&self, expression: &str) -> String {
+                self.db.text_bytes(expression)
+            }
             fn query(&mut self, sql: &str, p: &[Value]) -> Result<Vec<Vec<Value>>> {
                 self.queries += 1;
                 let rows = self.db.query(sql, p)?;
                 self.rows += rows.len();
                 Ok(rows)
             }
-            fn execute(&mut self, _: &str, _: &[Value]) -> Result<u64> { panic!("page reads must not write") }
-            fn index_chunk(&mut self, _: &str, _: &str, _: &str, _: i64, _: i64, _: &str) -> Result<()> { unreachable!() }
-            fn search(&mut self, _: &str, _: &str, _: &str) -> Result<ThreadSearchPage> { unreachable!() }
+            fn execute(&mut self, _: &str, _: &[Value]) -> Result<u64> {
+                panic!("page reads must not write")
+            }
+            fn index_chunk(
+                &mut self,
+                _: &str,
+                _: &str,
+                _: &str,
+                _: i64,
+                _: i64,
+                _: &str,
+            ) -> Result<()> {
+                unreachable!()
+            }
+            fn search(&mut self, _: &str, _: &str, _: &str) -> Result<ThreadSearchPage> {
+                unreachable!()
+            }
         }
         let dir = tempfile::tempdir().unwrap();
         let storage = SqliteStorage::new(dir.path().join("fixture.db").to_string_lossy().into());
         for n in 1..=21 {
-            let turn = storage.accept_thread_turn("fixture-user", "fixture-thread", &json!({"content":format!("input {n}")})).unwrap();
+            let turn = storage
+                .accept_thread_turn(
+                    "fixture-user",
+                    "fixture-thread",
+                    &json!({"content":format!("input {n}")}),
+                )
+                .unwrap();
             let root = turn["turn_id"].as_str().unwrap();
             storage.append_thread_item("fixture-user", &json!({"session_id":"fixture-thread", "turn_id":root,"item_id":format!("{root}:tool"),"kind":"tool_call","status":"failed","tool":"fixture_tool"})).unwrap();
             let item = format!("{root}:text-1");
             storage.append_thread_item("fixture-user", &json!({"session_id":"fixture-thread", "turn_id":root,"item_id":item,"kind":"assistant_message","content":"","status":"completed"})).unwrap();
-            for (field, data) in [("content",json!({"content":format!("answer {n}")})), ("reasoning",json!({"reasoning":format!("reason {n}")}))] {
+            for (field, data) in [
+                ("content", json!({"content":format!("answer {n}")})),
+                ("reasoning", json!({"reasoning":format!("reason {n}")})),
+            ] {
                 storage.upsert_thread_text_block("fixture-user","fixture-thread",&json!({"item_id":item,"field":field,"block_index":0,"event_id":n,"data":data})).unwrap();
             }
         }
         let conn = storage.open().unwrap();
-        conn.execute("UPDATE thread_view_heads SET projection_state='source'", []).unwrap();
-        let mut db = Counted { db: Db(&conn), queries: 0, rows: 0 };
-        let small = view::page(&mut db,"fixture-user","fixture-thread","chat",None,None,None,1).unwrap();
+        conn.execute("UPDATE thread_view_heads SET projection_state='source'", [])
+            .unwrap();
+        let mut db = Counted {
+            db: Db(&conn),
+            queries: 0,
+            rows: 0,
+        };
+        let small = view::page(
+            &mut db,
+            "fixture-user",
+            "fixture-thread",
+            "chat",
+            None,
+            None,
+            None,
+            1,
+        )
+        .unwrap();
         let small_queries = db.queries;
         db.queries = 0;
         db.rows = 0;
-        let large = view::page(&mut db,"fixture-user","fixture-thread","chat",None,None,None,20).unwrap();
+        let large = view::page(
+            &mut db,
+            "fixture-user",
+            "fixture-thread",
+            "chat",
+            None,
+            None,
+            None,
+            20,
+        )
+        .unwrap();
         assert_eq!(large.chat.len(), 20);
-        assert_eq!(db.queries, small_queries, "round trips must not grow with page size");
+        assert_eq!(
+            db.queries, small_queries,
+            "round trips must not grow with page size"
+        );
         assert!(db.queries <= 10);
-        assert!(db.rows <= 150, "do not return every execution or workflow item");
+        assert!(
+            db.rows <= 150,
+            "do not return every execution or workflow item"
+        );
         assert!(large.has_more);
         assert_eq!(large.next_before, Some(2));
         assert_eq!(small.chat[0].assistant.content, "answer 21");
         for row in &large.chat {
             assert_eq!(row.user.content, format!("input {}", row.user_round));
             assert_eq!(row.assistant.content, format!("answer {}", row.user_round));
-            assert_eq!(row.assistant.reasoning, format!("reason {}", row.user_round));
+            assert_eq!(
+                row.assistant.reasoning,
+                format!("reason {}", row.user_round)
+            );
             assert_eq!((row.workflow_count, row.failed_count), (1, 1));
         }
-        let older = view::page(&mut db,"fixture-user","fixture-thread","chat",large.next_before,None,None,20).unwrap();
+        let older = view::page(
+            &mut db,
+            "fixture-user",
+            "fixture-thread",
+            "chat",
+            large.next_before,
+            None,
+            None,
+            20,
+        )
+        .unwrap();
         assert_eq!(older.chat.len(), 1);
         assert_eq!(older.chat[0].user_round, 1);
         assert!(!older.has_more);
-        let newer = view::page(&mut db,"fixture-user","fixture-thread","chat",None,Some(1),None,20).unwrap();
+        let newer = view::page(
+            &mut db,
+            "fixture-user",
+            "fixture-thread",
+            "chat",
+            None,
+            Some(1),
+            None,
+            20,
+        )
+        .unwrap();
         assert_eq!(newer.chat.first().map(|row| row.user_round), Some(2));
         assert_eq!(newer.chat.last().map(|row| row.user_round), Some(21));
         assert!(!newer.has_newer);
@@ -426,13 +511,7 @@ mod tests {
         }
 
         let first = db
-            .thread_view_trajectory_page(
-                "fixture-user",
-                "fixture-source-pages",
-                None,
-                None,
-                10,
-            )
+            .thread_view_trajectory_page("fixture-user", "fixture-source-pages", None, None, 10)
             .unwrap();
         assert_eq!(first.projection_state, "source");
         assert_eq!(first.trajectory.len(), 10);
@@ -453,10 +532,7 @@ mod tests {
         assert_eq!(second.trajectory.len(), 10);
         assert!(second.has_more);
         assert!(second.trajectory.iter().all(|row| !row.overview_only));
-        assert!(second
-            .trajectory
-            .iter()
-            .all(|row| row.created_seq < before));
+        assert!(second.trajectory.iter().all(|row| row.created_seq < before));
 
         let third = db
             .thread_view_trajectory_page(

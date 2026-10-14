@@ -61,7 +61,10 @@ async fn read(
     include_metadata: bool,
 ) -> Result<Json<Value>, Response> {
     if query.before.is_some() && query.after.is_some() {
-        return Err(error_response(StatusCode::BAD_REQUEST, "before and after are mutually exclusive".into()));
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "before and after are mutually exclusive".into(),
+        ));
     }
     let user = resolve_user(&state, &headers, None).await?.user.user_id;
     let storage = state.storage.clone();
@@ -91,9 +94,17 @@ async fn read(
     let view_session = query_session.clone();
     let page = match blocking::run_view("api.chat.view.bootstrap", move || {
         let result = view_storage.thread_view_window(
-            &view_user, &view_session, &kind, query.before, query.after,
+            &view_user,
+            &view_session,
+            &kind,
+            query.before,
+            query.after,
             query.root_turn_id.as_deref(),
-            query.limit.unwrap_or(if kind == "trajectory" { TRAJECTORY_PAGE_SIZE } else { CHAT_PAGE_SIZE }),
+            query.limit.unwrap_or(if kind == "trajectory" {
+                TRAJECTORY_PAGE_SIZE
+            } else {
+                CHAT_PAGE_SIZE
+            }),
         );
         result.or_else(|error| {
             if is_view_timeout(&error) {
@@ -123,7 +134,9 @@ async fn read(
     // cheap indexed page to the ordinary DB lane and made large legacy
     // threads appear to fail after their first paint.
     if !include_metadata {
-        return Ok(Json(json!({"data": {"session": {"id": record.session_id}, "page": page}})));
+        return Ok(Json(
+            json!({"data": {"session": {"id": record.session_id}, "page": page}}),
+        ));
     }
     let mut result=match blocking::run_db("api.chat.view.metadata",move || {
         let model_override=workspace.load_session_model_override(&user,&query_session);
@@ -481,5 +494,4 @@ mod tests {
             assert_eq!(denied.status(), StatusCode::NOT_FOUND);
         }
     }
-
 }

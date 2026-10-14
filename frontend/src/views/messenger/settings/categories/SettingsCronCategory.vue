@@ -1,6 +1,6 @@
 <template>
   <div
-    class="messenger-settings-frame-category"
+    class="messenger-settings-frame-category messenger-settings-frame-category--fill"
     data-testid="settings-category-cron"
   >
     <section class="messenger-settings-card">

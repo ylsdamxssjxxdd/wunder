@@ -45,6 +45,8 @@ const ASSISTANT_BUBBLE_ID_PREFIX = 'tturn:';
 // Backend thread item kinds that render as workflow cards inside the
 // assistant bubble of their user turn. Everything else (terminal,
 // model_call, system_message, ...) is lifecycle bookkeeping, not a card.
+// Queue entries remain available to the composer projection so queue metadata
+// (position/ahead) survives replay, but they are explicitly non-tool records.
 const WORKFLOW_ITEM_KINDS = new Set(['tool_call', 'approval', 'plan', 'compaction', 'queue']);
 
 // User-facing visibility. 'admin' is excluded per the v2 contract;
@@ -119,6 +121,20 @@ const computeChatThreadTurnSlots = (
     // Map insertion follows durable acceptance order, including after reload.
     const latest = group[group.length - 1];
     const active = group.find(entry => entry.status && !['completed', 'failed', 'cancelled', 'interrupted', 'rejected', 'stopped'].includes(entry.status));
+    const effectiveStatus = normalizeStatus((active ?? latest).status);
+    const hasVisibleExecution = items.some(item =>
+      item.kind !== 'queue' && item.kind !== 'user_message' && item.kind !== 'assistant_message'
+    );
+    const hasAssistantOutput = items.some(item =>
+      item.kind === 'assistant_message' &&
+      (composeItemText(state, item.itemId, 'content').trim() || composeItemText(state, item.itemId, 'reasoning').trim())
+    );
+    // A withdrawn queue root may reappear in a replayed durable frame. It has
+    // no execution/output of its own and must not become a ghost chat row.
+    if (!hasVisibleExecution && !hasAssistantOutput && effectiveStatus === 'cancelled') {
+      activeTurnIds.add(turn.turnId);
+      continue;
+    }
     // Only an accepted user input owns a page slot. Orphan execution data is
     // retained by the reducer until its root input arrives; never invent a row.
     if (turn.userContent === null) continue;

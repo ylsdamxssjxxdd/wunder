@@ -47,26 +47,11 @@
           </div>
         </div>
 
-        <div class="messenger-settings-page-toolbar">
-          <div class="messenger-settings-frame-search messenger-settings-frame-search--inline">
-            <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
-            <input
-              v-model="keyword"
-              type="search"
-              :placeholder="t('messenger.settingsPage.tools.searchPlaceholder')"
-              :aria-label="t('messenger.settingsPage.tools.searchPlaceholder')"
-            />
-          </div>
-        </div>
-
         <div v-if="toolsCatalogLoading && !openToolTotal" class="messenger-list-empty">
           {{ t('common.loading') }}
         </div>
         <div v-else-if="!openToolTotal" class="messenger-list-empty">
           {{ t('messenger.settingsPage.tools.empty') }}
-        </div>
-        <div v-else-if="!visibleGroups.length" class="messenger-list-empty">
-          {{ t('portal.agent.tools.searchEmpty') }}
         </div>
         <!-- 对齐桌面端「管理员开放工具」：四类工具分区列成条目，说明走悬停标题。 -->
         <div v-else class="messenger-settings-tools-groups">
@@ -99,15 +84,6 @@
         </div>
       </section>
 
-      <section class="messenger-settings-card">
-        <div class="messenger-settings-group-head">
-          <div class="messenger-settings-title">{{ t('messenger.tools.sharedTitle') }}</div>
-          <div class="messenger-settings-subtitle">{{ t('messenger.settingsPage.tools.sharedHint') }}</div>
-        </div>
-        <div class="messenger-chat-settings-block">
-          <UserSharedToolsPanel />
-        </div>
-      </section>
     </template>
 
     <section
@@ -151,11 +127,6 @@ import type { ToolEntry } from '@/views/messenger/model';
 import { useI18n } from '@/i18n';
 import { defineRecoverableAsyncComponent } from '@/utils/asyncComponentRecovery';
 
-/** 用户级工具开关沿用既有面板（真实接口 `/user_tools/shared_tools`）。 */
-const UserSharedToolsPanel = defineRecoverableAsyncComponent(
-  () => import('@/components/user-tools/UserSharedToolsPanel.vue')
-);
-
 /** 选项卡面板：MCP / 技能 / 知识库三面板已按设置页紧凑布局重排，样式见 styles/pages/messenger-tools-panes.css。 */
 const UserMcpPane = defineRecoverableAsyncComponent(
   () => import('@/components/user-tools/UserMcpPane.vue')
@@ -196,8 +167,6 @@ const selectTab = (id: ToolsTabId) => {
   visitedTabs.add(id);
 };
 
-const keyword = ref('');
-
 const toolsCatalogLoading = computed(() => Boolean(props.controller.toolsCatalogLoading?.value));
 
 const groupTools = (id: ToolsTabId): ToolEntry[] => {
@@ -215,20 +184,10 @@ const openToolTotal = computed(() =>
 );
 
 const visibleGroups = computed(() => {
-  const needle = keyword.value.trim().toLowerCase();
-  const groups = TOOL_GROUPS.map((group) => ({
+  return TOOL_GROUPS.map((group) => ({
     ...group,
-    tools: needle
-      ? groupTools(group.id).filter(
-          (tool) =>
-            String(tool.name || '').toLowerCase().includes(needle) ||
-            String(tool.displayName || '').toLowerCase().includes(needle) ||
-            String(tool.description || '').toLowerCase().includes(needle)
-        )
-      : groupTools(group.id)
+    tools: groupTools(group.id)
   }));
-  // 空搜索时四类分区常驻（0 项也说明管理员没开放这一类），带关键词时只留有命中的。
-  return needle ? groups.filter((group) => group.tools.length) : groups;
 });
 
 const reloadCatalog = () => {

@@ -5,13 +5,6 @@
     </div>
 
     <template v-else>
-      <el-alert
-        v-if="canEdit && hasUnsavedChanges"
-        :title="t('messenger.agentSettings.unsavedHint')"
-        type="warning"
-        show-icon
-        :closable="false"
-      />
       <el-form :model="form" label-position="top" class="messenger-agent-form messenger-form">
         <el-form-item :label="t('portal.agent.form.name')" class="messenger-agent-form-item">
           <div class="messenger-agent-name-row">
@@ -398,7 +391,6 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import type { PropType } from 'vue';
 import { ElLoading, ElMessage, ElMessageBox } from 'element-plus';
-import { onBeforeRouteLeave, onBeforeRouteUpdate } from 'vue-router';
 
 import { listAgentModels } from '@/api/agents';
 import AgentDependencyNotice from '@/components/agent/AgentDependencyNotice.vue';
@@ -450,7 +442,6 @@ import { showApiError } from '@/utils/apiError';
 import { invalidateUserToolsCatalogCache, loadUserToolsCatalogCache } from '@/utils/userToolsCache';
 import { onUserToolsUpdated } from '@/utils/userToolsEvents';
 import { DEFAULT_AVATAR_COLOR, normalizeAvatarColor, normalizeAvatarIcon } from '@/utils/userPreferences';
-import { registerUnsavedChangesGuard } from '@/utils/unsavedChangesGuard';
 import { STATIC_COMPANION_AVATAR_STATE } from '@/utils/companionRuntimeState';
 
 type ToolOption = {
@@ -639,7 +630,8 @@ let lastHandledFocusToken = 0;
 let focusAnimationFrame = 0;
 let toolSummaryLoadPromise: Promise<void> | null = null;
 let stopUserToolsUpdatedListener: (() => void) | null = null;
-let stopUnsavedGuard: (() => void) | null = null;
+let autoSaveTimer: number | null = null;
+let autoSavePending = false;
 let deleteLoading: ReturnType<typeof ElLoading.service> | null = null;
 
 const openDeleteLoading = () => {
@@ -1196,6 +1188,33 @@ const hasUnsavedChanges = computed(() => {
   return JSON.stringify(current) !== JSON.stringify(loadedSnapshot.value);
 });
 
+// 设置页字段直接生效：变更停止约半秒后提交一次，避免每个按键都发请求。
+watch(
+  () => buildFormSnapshot(),
+  () => {
+    if (
+      !panelMounted.value ||
+      panelDisposed ||
+      agentLoading.value ||
+      !canEdit.value ||
+      !hasUnsavedChanges.value ||
+      !String(form.name || '').trim()
+    ) {
+      return;
+    }
+    autoSavePending = true;
+    if (autoSaveTimer !== null) window.clearTimeout(autoSaveTimer);
+    autoSaveTimer = window.setTimeout(() => {
+      autoSaveTimer = null;
+      if (autoSavePending && !saving.value) {
+        autoSavePending = false;
+        void saveAgent({ silent: true });
+      }
+    }, 500);
+  },
+  { deep: true }
+);
+
 watch(
   () => avatarOptions.value,
   () => {
@@ -1211,38 +1230,7 @@ watch(avatarDialogIcon, (value) => {
   }
 });
 
-const confirmDiscardChanges = async (): Promise<boolean> => {
-  if (deleting.value) {
-    return false;
-  }
-  if (!hasUnsavedChanges.value) {
-    return true;
-  }
-  try {
-    await ElMessageBox.confirm(t('messenger.agentSettings.confirmDiscard'), t('common.notice'), {
-      type: 'warning',
-      confirmButtonText: t('common.confirm'),
-      cancelButtonText: t('common.cancel')
-    });
-    return true;
-  } catch {
-    return false;
-  }
-};
-
-const handleBeforeUnload = (event: BeforeUnloadEvent): void => {
-  if (!hasUnsavedChanges.value) return;
-  event.preventDefault();
-  event.returnValue = '';
-};
-
-const handleGlobalKeydown = (event: KeyboardEvent): void => {
-  if (!canEdit.value || !hasUnsavedChanges.value || saving.value) return;
-  if (!(event.ctrlKey || event.metaKey)) return;
-  if (String(event.key || '').toLowerCase() !== 's') return;
-  event.preventDefault();
-  void saveAgent();
-};
+const confirmDiscardChanges = async (): Promise<boolean> => !deleting.value;
 
 const resolveConfiguredModelName = (agent: Record<string, unknown>): string => {
   const configured = String(agent.configured_model_name || '').trim();
@@ -1598,8 +1586,12 @@ const handleAgentSettingsVisibilityChange = () => {
   refreshAgentFromExternalChange();
 };
 
-const saveAgent = async () => {
+const saveAgent = async (options: { silent?: boolean } = {}) => {
   if (!canEdit.value) return;
+  if (saving.value) {
+    autoSavePending = true;
+    return;
+  }
   const name = String(form.name || '').trim();
   if (!name) {
     ElMessage.warning(t('portal.agent.nameRequired'));
@@ -1644,12 +1636,23 @@ const saveAgent = async () => {
       companionStore.clearAgentOverride(normalizedAgentId.value);
     }
     markFormClean();
-    ElMessage.success(t('portal.agent.updateSuccess'));
+    if (options.silent !== true) {
+      ElMessage.success(t('portal.agent.updateSuccess'));
+    }
     emit('saved', normalizedAgentId.value);
   } catch (error) {
     showApiError(error, t('portal.agent.saveFailed'));
   } finally {
     saving.value = false;
+    if (autoSavePending && !panelDisposed) {
+      if (autoSaveTimer !== null) window.clearTimeout(autoSaveTimer);
+      autoSaveTimer = window.setTimeout(() => {
+        autoSaveTimer = null;
+        if (!autoSavePending || saving.value) return;
+        autoSavePending = false;
+        void saveAgent({ silent: true });
+      }, 500);
+    }
   }
 };
 
@@ -1685,22 +1688,6 @@ const exportWorkerCard = () => {
 // 删除智能体入口已随 A2/A3（用户侧多智能体下线）移除：DELETE /agents/{id} 已不在路由表，
 // 这里连同确认弹窗、loading 与 delete-start/deleted 事件一起去掉，避免留下 405 死路径。
 
-onBeforeRouteLeave(async () => {
-  const allowed = await confirmDiscardChanges();
-  if (!allowed) {
-    return false;
-  }
-  return true;
-});
-
-onBeforeRouteUpdate(async () => {
-  const allowed = await confirmDiscardChanges();
-  if (!allowed) {
-    return false;
-  }
-  return true;
-});
-
 defineExpose({
   triggerReload: reloadAgent,
   triggerSave: saveAgent,
@@ -1713,7 +1700,6 @@ onMounted(() => {
   emit('panel-mounted');
   panelMounted.value = true;
   void companionStore.hydrate().catch(() => undefined);
-  stopUnsavedGuard = registerUnsavedChangesGuard('messenger-agent-settings', confirmDiscardChanges);
   stopUserToolsUpdatedListener = onUserToolsUpdated((event) => {
     const detail = event?.detail || {};
     const scope = String((detail as Record<string, unknown>).scope || '').trim().toLowerCase();
@@ -1726,8 +1712,6 @@ onMounted(() => {
       reconcileToolNamesAfterCatalogLoad(wasClean);
     });
   });
-  window.addEventListener('beforeunload', handleBeforeUnload);
-  window.addEventListener('keydown', handleGlobalKeydown);
   window.addEventListener('focus', refreshAgentFromExternalChange);
   document.addEventListener('visibilitychange', handleAgentSettingsVisibilityChange);
   void reloadAgent();
@@ -1764,14 +1748,13 @@ watch(
 onBeforeUnmount(() => {
   panelDisposed = true;
   latestAgentLoadRequestId += 1;
-  window.removeEventListener('beforeunload', handleBeforeUnload);
-  window.removeEventListener('keydown', handleGlobalKeydown);
   window.removeEventListener('focus', refreshAgentFromExternalChange);
   document.removeEventListener('visibilitychange', handleAgentSettingsVisibilityChange);
-  if (stopUnsavedGuard) {
-    stopUnsavedGuard();
-    stopUnsavedGuard = null;
+  if (autoSaveTimer !== null) {
+    window.clearTimeout(autoSaveTimer);
+    autoSaveTimer = null;
   }
+  autoSavePending = false;
   if (stopUserToolsUpdatedListener) {
     stopUserToolsUpdatedListener();
     stopUserToolsUpdatedListener = null;

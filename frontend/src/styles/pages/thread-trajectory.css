@@ -15,6 +15,7 @@
   --tt-red: rgb(236, 19, 19);
   --tt-red-soft: rgb(242, 90, 90);
   --tt-violet: rgb(136, 107, 174);
+  --tt-violet-dim: rgba(136, 107, 174, 0.72);
   --tt-text: rgb(15, 17, 21);
   --tt-text-2: rgb(97, 102, 107);
   --tt-text-3: rgb(129, 133, 140);
@@ -294,7 +295,7 @@
 .tt-span-context { background: var(--tt-green-mix); }
 .tt-span-compacted { background: var(--tt-text-3); }
 .tt-span-system { background: var(--tt-text-3); }
-.tt-span-message { background: var(--tt-brand-dim); }
+.tt-span-message { background: var(--tt-violet); }
 .tt-span-tool,
 .tt-span-subtool { background: var(--tt-amber); }
 
@@ -525,16 +526,20 @@
 }
 
 .tt-content-cell {
-  display: table-cell;
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  align-items: center;
   vertical-align: middle;
   min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
   padding-left: 4px !important;
 }
 
 .tt-content-cell > .tt-kind-slot,
 .tt-content-cell > .tt-record-content {
-  display: inline-flex;
-  vertical-align: middle;
+  display: flex;
+  min-width: 0;
 }
 
 .tt-content-cell > .tt-kind-slot {
@@ -591,10 +596,11 @@
 .tt-record-content {
   flex: 1 1 auto;
   min-width: 0;
-  display: flex;
   align-items: baseline;
   gap: 7px;
+  flex-wrap: nowrap;
   overflow: hidden;
+  white-space: nowrap;
 }
 
 .tt-overview-open {

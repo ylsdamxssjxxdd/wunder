@@ -7,8 +7,8 @@
 //! per interaction instead of a per-frame copy.
 
 use crate::companion_sprite::Sheet;
-use std::sync::Arc;
 use std::sync::mpsc::Receiver;
+use std::sync::Arc;
 
 /// One animation cycle source: the decoded sheet, its row and its tempo.
 #[derive(Clone)]
@@ -67,7 +67,11 @@ pub enum PetCommand {
         visual: Box<PetVisual>,
     },
     /// Reposition without a new visual (clamping after a drag, resize on scale).
-    Move { id: String, x: f64, y: f64 },
+    Move {
+        id: String,
+        x: f64,
+        y: f64,
+    },
     ShowMenu {
         id: String,
         x: f64,
@@ -75,17 +79,32 @@ pub enum PetCommand {
         items: Vec<PetMenuItem>,
     },
     /// Hide the window but keep the thread alive for the next pet.
-    Dismiss { id: String },
+    Dismiss {
+        id: String,
+    },
     Shutdown,
 }
 
 pub enum PetEvent {
     /// Pressed and released without moving.
-    Clicked { id: String },
+    Clicked {
+        id: String,
+    },
     /// Drag finished; `x`/`y` is the new sprite origin in logical pixels.
-    Dragged { id: String, x: f64, y: f64 },
-    RightClicked { id: String, x: f64, y: f64 },
-    MenuSelected { id: String, code: u16 },
+    Dragged {
+        id: String,
+        x: f64,
+        y: f64,
+    },
+    RightClicked {
+        id: String,
+        x: f64,
+        y: f64,
+    },
+    MenuSelected {
+        id: String,
+        code: u16,
+    },
 }
 
 /// Whether this platform can show an overlay window at all.

@@ -1,7 +1,7 @@
 //! Native tools controller. Resource selection has a generation guard so slow
 //! filesystem reads never populate another tab; only one mutation runs at once.
 use crate::{
-    FileCard, MainWindow, McpServerDraft, KnowledgeInfo, ToolCard, ToolResource, ToolsDialog,
+    FileCard, KnowledgeInfo, MainWindow, McpServerDraft, ToolCard, ToolResource, ToolsDialog,
 };
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use std::{
@@ -12,8 +12,7 @@ use std::{
     },
 };
 use wunder_desktop::native::{
-    NativeKnowledgeConfig, NativeMcpConfig, NativeToolManager, NativeToolResource,
-    ToolResourceKind,
+    NativeKnowledgeConfig, NativeMcpConfig, NativeToolManager, NativeToolResource, ToolResourceKind,
 };
 use wunder_desktop::{NativeDesktop, ToolRecord};
 
@@ -126,7 +125,9 @@ fn apply(app: &MainWindow, catalog: Vec<ToolRecord>, manager: NativeToolManager)
     app.set_tools_skill_resources(model(manager.skills.into_iter().map(resource).collect()));
     app.set_tools_bases(model(manager.bases.into_iter().map(resource).collect()));
     let dialog = app.global::<ToolsDialog>();
-    dialog.set_server_configs(model(manager.server_configs.iter().map(mcp_config).collect()));
+    dialog.set_server_configs(model(
+        manager.server_configs.iter().map(mcp_config).collect(),
+    ));
     dialog.set_base_configs(model(manager.base_configs.iter().map(kb_config).collect()));
 }
 
@@ -459,25 +460,26 @@ fn install_dialog_actions(app: &MainWindow, api: &Arc<NativeDesktop>) {
     // Live struct preview and headers validation for the MCP form. Everything
     // stays on the UI thread: the draft is a few short strings.
     let weak = app.as_weak();
-    app.global::<ToolsDialog>().on_refresh_mcp_feedback(move || {
-        let Some(app) = weak.upgrade() else { return };
-        let dialog = app.global::<ToolsDialog>();
-        let headers = dialog.get_mcp_headers().to_string();
-        let headers_error = match validate_headers_text(&headers) {
-            Ok(()) => "",
-            Err(message) => message,
-        };
-        dialog.set_mcp_headers_error(headers_error.into());
-        let preview = build_mcp_struct_preview(
-            &dialog.get_mcp_name(),
-            &dialog.get_mcp_display_name(),
-            &dialog.get_mcp_endpoint(),
-            &dialog.get_mcp_transport(),
-            &dialog.get_mcp_description(),
-            &headers,
-        );
-        dialog.set_mcp_preview(preview.into());
-    });
+    app.global::<ToolsDialog>()
+        .on_refresh_mcp_feedback(move || {
+            let Some(app) = weak.upgrade() else { return };
+            let dialog = app.global::<ToolsDialog>();
+            let headers = dialog.get_mcp_headers().to_string();
+            let headers_error = match validate_headers_text(&headers) {
+                Ok(()) => "",
+                Err(message) => message,
+            };
+            dialog.set_mcp_headers_error(headers_error.into());
+            let preview = build_mcp_struct_preview(
+                &dialog.get_mcp_name(),
+                &dialog.get_mcp_display_name(),
+                &dialog.get_mcp_endpoint(),
+                &dialog.get_mcp_transport(),
+                &dialog.get_mcp_description(),
+                &headers,
+            );
+            dialog.set_mcp_preview(preview.into());
+        });
 
     let weak = app.as_weak();
     let import_api = api.clone();
@@ -549,11 +551,15 @@ fn build_mcp_struct_preview(
     let display_name = display_name.trim();
     config.insert(
         "name".into(),
-        if display_name.is_empty() { name } else { display_name }.into(),
+        if display_name.is_empty() {
+            name
+        } else {
+            display_name
+        }
+        .into(),
     );
     config.insert("baseUrl".into(), endpoint.into());
-    if let Ok(serde_json::Value::Object(map)) = serde_json::from_str::<serde_json::Value>(headers)
-    {
+    if let Ok(serde_json::Value::Object(map)) = serde_json::from_str::<serde_json::Value>(headers) {
         if !map.is_empty() {
             config.insert("headers".into(), map.into());
         }

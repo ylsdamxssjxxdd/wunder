@@ -113,14 +113,8 @@ fn trajectory_visibility(visibility: &str, kind: &str, payload: &Value) -> bool 
     // arbitrary hidden prompts and tool observations remain private.
     visibility == "model_internal"
         && kind == "user_message"
-        && payload
-            .pointer("/meta/type")
-            .and_then(Value::as_str)
-            == Some("model_context_internal")
-        && payload
-            .pointer("/meta/source")
-            .and_then(Value::as_str)
-            == Some("agent_inbox")
+        && payload.pointer("/meta/type").and_then(Value::as_str) == Some("model_context_internal")
+        && payload.pointer("/meta/source").and_then(Value::as_str) == Some("agent_inbox")
 }
 
 /// Historical sessions above this bound stay on the durable source-log path.
@@ -661,7 +655,7 @@ pub(crate) fn project_item(
     }
     if matches!(
         kind,
-        "tool_call" | "approval" | "plan" | "compaction" | "queue" | "subagent_run"
+        "tool_call" | "approval" | "plan" | "compaction" | "subagent_run"
     ) {
         row.workflow_count += i64::from(old.is_none());
         row.failed_count +=
@@ -878,7 +872,10 @@ pub(crate) fn page(
     root_turn_id: Option<&str>,
     limit: usize,
 ) -> Result<ThreadViewPage> {
-    anyhow::ensure!(before.is_none() || after.is_none(), "ambiguous page direction");
+    anyhow::ensure!(
+        before.is_none() || after.is_none(),
+        "ambiguous page direction"
+    );
     let mut page = ThreadViewPage {
         session_id: session.into(),
         epoch: 1,
@@ -947,7 +944,11 @@ pub(crate) fn page(
     }
     query_params.push(json!(cursor));
     query_params.push(json!((cap + 1) as i64));
-    let sql = if after.is_some() { sql.replace("<?", ">?").replace(" DESC", " ASC") } else { sql.to_owned() };
+    let sql = if after.is_some() {
+        sql.replace("<?", ">?").replace(" DESC", " ASC")
+    } else {
+        sql.to_owned()
+    };
     let rows = db.query(&sql, &query_params)?;
     page.has_more = rows.len() > cap;
     for r in rows.into_iter().take(cap) {
@@ -969,13 +970,17 @@ pub(crate) fn page(
             page.chat.push(serde_json::from_str(text(&r[0]))?);
         }
     }
-    if after.is_none() { page.chat.reverse(); }
+    if after.is_none() {
+        page.chat.reverse();
+    }
     if kind == "chat" {
         for row in &mut page.chat {
             hydrate_chat_reasoning(db, user, session, row)?;
         }
     }
-    if after.is_none() { page.trajectory.reverse(); }
+    if after.is_none() {
+        page.trajectory.reverse();
+    }
     if kind == "trajectory" && page.projection_state == "ready" && page.view_seq > 0 {
         for r in db.query("SELECT bucket,count,failed,running,start,finish,input_count,model_count,tool_count FROM thread_trajectory_tiles WHERE session_id=? AND level=? ORDER BY bucket LIMIT 1024", &[json!(session),json!(page.tile_level as i64)])? {
             let tile=TrajectoryTile {bucket:int(&r[0]),count:int(&r[1]),failed:int(&r[2]),running:int(&r[3]),start:float(&r[4]),end:float(&r[5]),input_count:int(&r[6]),model_count:int(&r[7]),tool_count:int(&r[8])};
@@ -988,7 +993,12 @@ pub(crate) fn page(
 
 // Responses are always chronological, regardless of seek direction. Only the
 // requested edge needs a LIMIT+1 probe; the supplied cursor proves the other edge.
-pub(super) fn finish_page_cursors(page: &mut ThreadViewPage, kind: &str, before: Option<i64>, after: Option<i64>) {
+pub(super) fn finish_page_cursors(
+    page: &mut ThreadViewPage,
+    kind: &str,
+    before: Option<i64>,
+    after: Option<i64>,
+) {
     if after.is_some() {
         page.has_newer = page.has_more;
         page.has_more = true;

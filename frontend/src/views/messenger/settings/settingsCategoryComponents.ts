@@ -22,9 +22,6 @@ export const SettingsGeneralCategory = lazy(
 export const SettingsAccountCategory = lazy(
   () => import('@/views/messenger/settings/categories/SettingsAccountCategory.vue')
 );
-export const SettingsModelsCategory = lazy(
-  () => import('@/views/messenger/settings/categories/SettingsModelsCategory.vue')
-);
 export const SettingsToolsCategory = lazy(
   () => import('@/views/messenger/settings/categories/SettingsToolsCategory.vue')
 );
@@ -62,7 +59,6 @@ export const SettingsHelpCategory = lazy(
 export const SETTINGS_CATEGORY_COMPONENTS: Record<SettingsCategoryId, Component> = {
   general: SettingsGeneralCategory,
   account: SettingsAccountCategory,
-  models: SettingsModelsCategory,
   tools: SettingsToolsCategory,
   agent: SettingsAgentCategory,
   companion: SettingsCompanionCategory,

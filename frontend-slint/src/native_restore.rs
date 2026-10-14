@@ -10,8 +10,8 @@
 //! The guard is deliberately *not* `native_smoke::check_runtime`: that one
 //! writes probe fixtures (`create_session`, a "native-cancel" message), and a
 //! check that mutates the store cannot prove anything about what survived it.
-use crate::MainWindow;
 use crate::native_smoke::ensure;
+use crate::MainWindow;
 use slint::{ComponentHandle, Model};
 use std::{
     cell::RefCell,

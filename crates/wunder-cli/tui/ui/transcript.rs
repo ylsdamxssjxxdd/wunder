@@ -12,11 +12,7 @@ pub(crate) fn draw(frame: &mut Frame, area: Rect, viewport: Rect, app: &mut TuiA
     // The cache keeps logical text; the frame renders tabs expanded to eight-column stops
     // so ratatui's own wrap measurement and the terminal's tab rendering agree. The
     // selection is marked in that same display-column space, on the projected lines.
-    let mut lines: Vec<Line<'static>> = rendered
-        .lines
-        .iter()
-        .map(text_tabs::expand_line)
-        .collect();
+    let mut lines: Vec<Line<'static>> = rendered.lines.iter().map(text_tabs::expand_line).collect();
     // Order matters and is the priority: a search mark is painted first and the pointer
     // selection after it, so where both reach the same text the reader copies what they see
     // marked as selected. A mark is paint only; the selection is the clipboard.

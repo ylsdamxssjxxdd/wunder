@@ -50,7 +50,9 @@ fn cached_image(cache: &RefCell<HashMap<&'static str, Image>>, key: &'static str
         .iter()
         .find(|(candidate, _)| *candidate == key)
         .map(|(_, bytes)| *bytes);
-    let image = bytes.and_then(crate::file_icons::decode_png_image).unwrap_or_default();
+    let image = bytes
+        .and_then(crate::file_icons::decode_png_image)
+        .unwrap_or_default();
     cache.insert(key, image.clone());
     image
 }

@@ -30,12 +30,6 @@
   --ui-accent-disabled: #e3ddd9;
   --ui-accent-link-hover: #b55637;
   --accent: var(--ui-accent);
-  /* Thin transparent tracks keep scrollable panes aligned with their content.
-     Do not reserve a gutter: native overlay-capable engines paint this track
-     over the edge instead of changing a pane's usable width. */
-  --scrollbar-size: 5px;
-  --scrollbar-thumb: rgba(128, 128, 128, 0.24);
-  --scrollbar-thumb-hover: rgba(128, 128, 128, 0.48);
 }
 
 :root[data-user-accent='eva-orange'] {
@@ -215,19 +209,19 @@ body {
   background: var(--user-edit-selection-bg);
 }
 
-/* All Honeycomb scroll containers share a low-profile overlay-like track.
-   Keeping the gutter automatic avoids reserving a blank column in panes that
-   do not overflow; browsers with overlay scrollbars keep it above content. */
+/* Hide native scrollbars globally so classic-scrollbar platforms cannot
+   reserve a gutter when content starts overflowing.  A pane still exposes
+   its normal scrolling interaction; only the native chrome is removed. */
 :root * {
-  scrollbar-width: thin;
-  scrollbar-color: var(--scrollbar-thumb) transparent;
-  scrollbar-gutter: auto;
+  scrollbar-width: none !important;
+  scrollbar-color: transparent transparent !important;
+  scrollbar-gutter: auto !important;
 }
 
-/* Keep component-specific scroll regions on the same compact track too. */
+/* Keep component-specific scroll regions on the same no-gutter treatment too. */
 :root *::-webkit-scrollbar {
-  width: var(--scrollbar-size) !important;
-  height: var(--scrollbar-size) !important;
+  width: 0 !important;
+  height: 0 !important;
 }
 
 :root *::-webkit-scrollbar-track {
@@ -235,15 +229,11 @@ body {
 }
 
 :root *::-webkit-scrollbar-thumb {
-  border: 1px solid transparent !important;
-  border-radius: 999px !important;
-  background: var(--scrollbar-thumb) !important;
-  background-clip: padding-box !important;
+  background: transparent !important;
 }
 
 :root *::-webkit-scrollbar-thumb:hover {
-  background: var(--scrollbar-thumb-hover) !important;
-  background-clip: padding-box !important;
+  background: transparent !important;
 }
 
 .el-overlay-dialog {

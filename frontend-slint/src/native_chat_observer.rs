@@ -27,9 +27,24 @@ impl Observation {
         self.ready
     }
 
+    /// Remove a withdrawn queue placeholder before the watcher catches up.
+    pub(super) fn remove_turn(&mut self, root_id: &str) -> bool {
+        let before = self.turns.len();
+        self.turns.retain(|turn| turn.root_id != root_id);
+        if self.turns.len() == before {
+            return false;
+        }
+        self.rows = project_history(&self.turns);
+        true
+    }
+
     /// Publish the durable history into the shared model without touching the
     /// live turn that is already appended to it.
-    fn publish(&self, app: &MainWindow, timeline: &Rc<RefCell<crate::timeline::Timeline>>) {
+    pub(super) fn publish(
+        &self,
+        app: &MainWindow,
+        timeline: &Rc<RefCell<crate::timeline::Timeline>>,
+    ) {
         let mut live = timeline.borrow_mut();
         live.publish_history(self.rows.clone());
         crate::native_chat::publish_timeline(app, &live);
@@ -177,6 +192,11 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
     let mut batch = 0i32;
     let mut process = 0i32;
     for (index, turn) in turns.iter().enumerate() {
+        // Queue rows are rendered by the composer. Their durable turn is only
+        // an admission placeholder and must not become a second user bubble.
+        if is_queue_only_turn(turn) {
+            continue;
+        }
         let turn_start = rows.len();
         let mut user = history_user(&turn.user);
         // The bubble carries the turn identity: it is the anchor the reducer's
@@ -232,8 +252,9 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
                     format!("history-{index}-reason-{}", round.round),
                 );
                 reason.tool_name = crate::timeline_text::thought_done().into();
-                reason.summary =
-                    crate::message_blocks::reasoning_preview(&round.reasoning).as_str().into();
+                reason.summary = crate::message_blocks::reasoning_preview(&round.reasoning)
+                    .as_str()
+                    .into();
                 latest = reason.summary.clone();
                 reason.detail = round.reasoning.as_str().into();
                 reason.payload = rows.len() as i32;
@@ -252,10 +273,7 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
                 rows.push(body);
             }
             for item in &round.items {
-                let mut row = blank_row(
-                    crate::timeline::KIND_TOOL,
-                    format!("tool-{}", item.id),
-                );
+                let mut row = blank_row(crate::timeline::KIND_TOOL, format!("tool-{}", item.id));
                 let label = crate::timeline_text::tool_label(&item.title);
                 let (target, patch) = crate::timeline_text::target_of(
                     &item.title,
@@ -265,7 +283,9 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
                 row.tool_name = label.as_str().into();
                 row.tool_icon = crate::tool_icons::workflow_icon(&item.title).into();
                 row.target = target.as_str().into();
-                row.summary = crate::timeline_text::summary(item.detail.as_str()).as_str().into();
+                row.summary = crate::timeline_text::summary(item.detail.as_str())
+                    .as_str()
+                    .into();
                 latest = row.summary.clone();
                 row.detail = crate::timeline_text::copy_text(&item.sections, item.detail.as_str());
                 row.status_kind = crate::timeline::status_kind(&item.state);
@@ -295,9 +315,10 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
         // The metrics belong to the turn and ride on the body row that ends it,
         // which is also the row that owns the copy and save actions: the same
         // owner the live reducer picks with its backward walk.
-        if let Some(body) = (turn_start..rows.len()).rev().find(|index| {
-            rows[*index].kind == crate::timeline::KIND_BODY
-        }) {
+        if let Some(body) = (turn_start..rows.len())
+            .rev()
+            .find(|index| rows[*index].kind == crate::timeline::KIND_BODY)
+        {
             rows[body].stats = turn_stats(&turn.assistant);
         }
         let end = rows.len();
@@ -306,14 +327,31 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
     rows
 }
 
+fn is_queue_only_turn(turn: &NativeChatTurn) -> bool {
+    let status = turn.assistant.stats_status.trim();
+    let queued = status == "正在排队"
+        || status == "任务已排队"
+        || status.starts_with("正在排队 ·")
+        || status.starts_with("任务已排队 ·");
+    queued
+        && turn.assistant.text.trim().is_empty()
+        && turn.rounds.iter().all(|round| {
+            round.reasoning.trim().is_empty()
+                && round.text.trim().is_empty()
+                && round.items.is_empty()
+        })
+        && turn.subagents.is_empty()
+}
+
 /// Close a durable turn over its own work-process bar: everything before the
 /// newest answer block joins the fold, and the bar reports the step count and
 /// what the turn last did. A turn whose process is just one batch keeps that
 /// batch folded as its own one-line handle instead of growing a second shell.
 fn fold_history_process(rows: &mut [TimelineRow], bar_at: usize, end: usize, process: i32) {
-    let Some(newest) = ((bar_at + 1)..end).rev().find(|index| {
-        rows[*index].kind == crate::timeline::KIND_BODY
-    }) else {
+    let Some(newest) = ((bar_at + 1)..end)
+        .rev()
+        .find(|index| rows[*index].kind == crate::timeline::KIND_BODY)
+    else {
         // No answer block at all: the working rows are the turn's content, so
         // there is nothing to fold them behind, and each batch keeps its own
         // folded handle.
@@ -330,8 +368,9 @@ fn fold_history_process(rows: &mut [TimelineRow], bar_at: usize, end: usize, pro
                 blocks += 1;
                 steps += 1;
                 notes += 1;
-                summary =
-                    crate::timeline_text::summary(rows[index].text.as_str()).as_str().into();
+                summary = crate::timeline_text::summary(rows[index].text.as_str())
+                    .as_str()
+                    .into();
             }
             crate::timeline::KIND_REASON
             | crate::timeline::KIND_TOOL
@@ -848,7 +887,9 @@ mod tests {
         let mut frames = 0usize;
         let started = Instant::now();
         for index in 0..40 {
-            timeline.append_body(&format!("第 {index} 帧增量\n")).unwrap();
+            timeline
+                .append_body(&format!("第 {index} 帧增量\n"))
+                .unwrap();
             timeline.flush();
             frames += 1;
         }
@@ -916,7 +957,10 @@ mod tests {
         assert!(!rows[4].visible);
         assert_eq!(rows[5].kind, crate::timeline::KIND_BODY);
         assert_eq!(rows[5].text, "Latest answer");
-        for row in rows.iter().filter(|row| row.kind != crate::timeline::KIND_PROCESS) {
+        for row in rows
+            .iter()
+            .filter(|row| row.kind != crate::timeline::KIND_PROCESS)
+        {
             assert!(row.visible, "no content row is hidden");
         }
         // The metrics ride on the newest answer.
@@ -926,15 +970,13 @@ mod tests {
     #[test]
     fn history_keeps_the_compaction_entry_of_a_failed_turn() {
         let mut turn = fixture("fixture-compact", "", "执行失败");
-        turn.rounds[0]
-            .items
-            .push(NativeWorkflowEntry::from_payload(
-                "fixture-compact-item",
-                "上下文压缩",
-                String::new(),
-                "failed",
-                &serde_json::json!({"status":"failed", "error_message":"fixture failure"}),
-            ));
+        turn.rounds[0].items.push(NativeWorkflowEntry::from_payload(
+            "fixture-compact-item",
+            "上下文压缩",
+            String::new(),
+            "failed",
+            &serde_json::json!({"status":"failed", "error_message":"fixture failure"}),
+        ));
         let rows = project_history(&[turn]);
         // No answer block in this turn: the working rows are its content, so
         // the process bar stays invisible and the failure stays on screen.

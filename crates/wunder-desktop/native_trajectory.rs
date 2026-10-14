@@ -25,10 +25,38 @@ impl NativeDesktop {
         before: Option<i64>,
         limit: usize,
     ) -> Result<Value> {
-        let page = self.state().storage.thread_view_trajectory_page(
+        self.thread_trajectory_page_window(session, before, None, limit)
+    }
+
+    /// Read the next newer window after a bounded trajectory page.  Keeping
+    /// this separate from the historical `thread_trajectory_page` signature
+    /// lets callers add reverse paging without breaking existing façade users.
+    pub fn thread_trajectory_page_after(
+        &self,
+        session: &str,
+        after: Option<i64>,
+        limit: usize,
+    ) -> Result<Value> {
+        self.thread_trajectory_page_window(session, None, after, limit)
+    }
+
+    fn thread_trajectory_page_window(
+        &self,
+        session: &str,
+        before: Option<i64>,
+        after: Option<i64>,
+        limit: usize,
+    ) -> Result<Value> {
+        anyhow::ensure!(
+            before.is_none() || after.is_none(),
+            "ambiguous trajectory cursor"
+        );
+        let page = self.state().storage.thread_view_window(
             self.user_id(),
             session,
+            "trajectory",
             before,
+            after,
             None,
             limit,
         )?;

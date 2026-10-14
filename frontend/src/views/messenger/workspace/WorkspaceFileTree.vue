@@ -293,19 +293,25 @@ const menuItems = computed<MenuItem[]>(() => {
   if (props.readOnly) {
     if (!row) return [{ command: 'refresh', label: t('common.refresh'), icon: 'fa-rotate-right' }];
     if (row.kind === 'more') return [];
-    return row.kind === 'dir'
-      ? [{ command: 'toggle', label: t('messenger.filesArea.menu.open'), icon: 'fa-folder-open' }]
-      : [{ command: 'preview', label: t('messenger.filesArea.menu.preview'), icon: 'fa-eye' }];
+    return [
+      { command: 'refresh', label: t('common.refresh'), icon: 'fa-rotate-right' },
+      ...(row.kind === 'dir'
+        ? [{ command: 'toggle', label: t('messenger.filesArea.menu.open'), icon: 'fa-folder-open' }]
+        : [{ command: 'preview', label: t('messenger.filesArea.menu.preview'), icon: 'fa-eye' }])
+    ];
   }
   // 空白区没有宿主行，菜单落在当前目录上，并承接已下线头部 ⋯ 的三个动作。
   if (!row) {
     return [
+      { command: 'refresh', label: t('common.refresh'), icon: 'fa-rotate-right' },
       ...createItems(),
       { command: 'archive-root', label: t('messenger.filesArea.archiveCurrent'), icon: 'fa-file-zipper' },
       { command: 'clear', label: t('messenger.filesArea.clear'), icon: 'fa-broom', danger: true }
     ];
   }
-  const items: MenuItem[] = [];
+  const items: MenuItem[] = [
+    { command: 'refresh', label: t('common.refresh'), icon: 'fa-rotate-right' }
+  ];
   if (row.kind === 'dir') {
     items.push({ command: 'toggle', label: t('messenger.filesArea.menu.open'), icon: 'fa-folder-open' });
     items.push({ command: 'archive', label: t('messenger.filesArea.menu.archive'), icon: 'fa-file-zipper' });

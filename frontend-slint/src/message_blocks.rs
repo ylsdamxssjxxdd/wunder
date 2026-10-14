@@ -274,10 +274,10 @@ fn markdown_blocks(source: &str) -> Vec<TextBlock> {
     let mut language = String::new();
     let mut document: Option<(String, String)> = None;
     let mut quote = false;
-        let mut list_depth = 0usize;
-        let mut ordered: Vec<Option<u64>> = Vec::new();
-        let mut links: Vec<String> = Vec::new();
-        let mut link_starts: Vec<usize> = Vec::new();
+    let mut list_depth = 0usize;
+    let mut ordered: Vec<Option<u64>> = Vec::new();
+    let mut links: Vec<String> = Vec::new();
+    let mut link_starts: Vec<usize> = Vec::new();
     let mut table = false;
     let mut table_cells: Vec<String> = Vec::new();
     let mut cell = String::new();
@@ -583,7 +583,9 @@ mod tests {
         assert_eq!(blocks[1].text, "示例文档");
         assert_eq!(blocks[1].image_source, "documents/example.pdf");
         assert!(blocks[2].text.contains("之后"));
-        assert!(blocks[2].text.contains("https://example.invalid/example.pdf"));
+        assert!(blocks[2]
+            .text
+            .contains("https://example.invalid/example.pdf"));
         let code = markdown_blocks("```python\n# 示例\nvalue = 42\n```");
         assert_eq!(code[0].language, "python");
         assert_eq!(code[0].text, "# 示例\nvalue = 42\n");

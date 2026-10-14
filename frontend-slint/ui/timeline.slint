@@ -421,7 +421,9 @@ component ProcessBar inherits Rectangle {
     // One step heavier than a batch bar: it owns a whole turn's process.
     height: 34px;
     border-radius: Theme.radius-tag;
-    background: bar-touch.has-hover ? Theme.hover : transparent;
+    // Keep the work-process row calm while the pointer moves across it. The
+    // affordance is the small left control, matching the compact web header.
+    background: transparent;
     bar-touch := TouchArea {
         x: Theme.timeline-padding; y: 0px;
         width: parent.width - Theme.timeline-padding * 2;
@@ -432,7 +434,31 @@ component ProcessBar inherits Rectangle {
     HorizontalLayout {
         padding-left: Theme.timeline-padding; padding-right: Theme.timeline-padding;
         spacing: 0px;
-        TimelineGutter { line: root.data.open; caret: true; caret-open: root.data.open; }
+        process-gutter := Rectangle {
+            width: 26px; height: parent.height;
+            Rectangle {
+                x: 1px; y: 4px; width: 24px; height: parent.height - 8px;
+                border-radius: Theme.radius-tag;
+                border-width: 1px; border-color: Theme.border;
+                background: process-hit.has-hover ? Theme.selected : Theme.surface;
+            }
+            Rectangle {
+                visible: root.data.open;
+                x: 12.5px; y: 24px; width: 1px; height: parent.height - 24px;
+                background: Theme.timeline-line;
+            }
+            Image {
+                x: 5px; y: (parent.height - 16px) / 2;
+                width: 16px; height: 16px;
+                source: @image-url("../assets/icons/disclosure.svg");
+                colorize: Theme.muted; image-fit: contain;
+                transform-rotation: root.data.open ? 90deg : 0deg;
+            }
+            process-hit := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.toggle(root.data.payload); }
+            }
+        }
         HorizontalLayout {
             height: parent.height; spacing: 8px;
             Text {

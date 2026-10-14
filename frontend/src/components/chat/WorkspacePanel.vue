@@ -1,5 +1,5 @@
 <template>
-  <div class="workspace-panel">
+  <div class="workspace-panel" :class="{ 'workspace-panel--file-tree': compactFileTree }">
     <div class="workspace-header">
       <div class="workspace-title-row">
         <div class="workspace-title-group">
@@ -80,7 +80,29 @@
   <div class="workspace-upload-text">{{ uploadProgressText }}</div>
 </div>
 
+<WorkspaceFileTree
+  v-if="compactFileTree"
+  :rows="workspaceFileTreeRows"
+  :active-path="workspaceFileTreeActivePath"
+  :highlighted-path="''"
+  :loading="loading"
+  :error="''"
+  :selection-mode="workspaceFileTreeSelectionMode"
+  :selected-paths="workspaceFileTreeSelectedPaths"
+  :read-only="isReadonlyFileSystem"
+  :empty-hint="emptyText"
+  @toggle-dir="handleCompactTreeToggle"
+  @load-more="handleCompactTreeLoadMore"
+  @activate="handleCompactTreeActivate"
+  @open="handleCompactTreeOpen"
+  @toggle-select="toggleWorkspaceSelection"
+  @exit-selection="resetWorkspaceSelection"
+  @retry="refreshWorkspace"
+  @command="handleCompactTreeCommand"
+/>
+
 <div
+  v-else
   ref="listRef"
   :class="[
     'workspace-list',
@@ -585,6 +607,8 @@ import WorkspaceNewFileDialog, {
   type WorkspaceNewFileTemplate
 } from '@/components/chat/WorkspaceNewFileDialog.vue';
 import ZoomableImagePreview from '@/components/common/ZoomableImagePreview.vue';
+import WorkspaceFileTree from '@/views/messenger/workspace/WorkspaceFileTree.vue';
+import type { WorkspaceVisibleRow } from '@/views/messenger/workspace/workspaceFileModel';
 import { buildWorkspaceHtmlPreviewDocument } from './workspaceHtmlPreview';
 import {
   collectWorkspaceRefreshTargets,
@@ -652,6 +676,11 @@ const props = defineProps({
   disableWorkspaceEditors: {
     type: Boolean,
     default: false
+  },
+  /** Use the shared workspace-files-scroll tree renderer for embedded directories. */
+  compactFileTree: {
+    type: Boolean,
+    default: false
   }
 });
 
@@ -663,6 +692,7 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 const panelTitle = computed(() => props.title || t('workspace.title'));
+const compactFileTree = computed(() => props.compactFileTree === true);
 const showContainerId = computed(() => props.showContainerId);
 const preserveDockLayout = computed(() => props.preserveDockLayout);
 const sidebarVisible = computed(() => props.sidebarVisible);
@@ -1334,6 +1364,117 @@ const displayEntries = computed(() => {
   }
   return result;
 });
+
+// Embedded panels (for example the skill file browser) share the same lazy
+// directory rows as the sidebar workspace area. Keeping the projection here
+// avoids maintaining a second tree renderer with different spacing and state.
+const workspaceFileTreeRows = computed<WorkspaceVisibleRow[]>(() =>
+  displayEntries.value.map(({ entry, depth }) => ({
+    key: entry.path,
+    path: entry.path,
+    name: String(entry.name || entry.path || '').trim(),
+    kind: entry.type === 'dir' ? 'dir' : 'file',
+    size: Number(entry.size) || 0,
+    updatedTime: String(entry.updated_time || entry.updatedTime || ''),
+    depth,
+    expanded: entry.type === 'dir' && state.expanded.has(entry.path),
+    loading: workspaceDirectoryLoadingPaths.has(entry.path),
+    expandable: entry.type === 'dir'
+  }))
+);
+const workspaceFileTreeActivePath = computed(() => String(state.selected?.path || ''));
+const workspaceFileTreeSelectedPaths = computed(() => getWorkspaceSelectionPaths());
+const workspaceFileTreeSelectionMode = computed(() => false);
+
+const compactTreeEntry = (path: string) => findWorkspaceEntryByPath(state.entries, path) as any;
+const handleCompactTreeToggle = (path: string) => {
+  const entry = compactTreeEntry(path);
+  if (entry) void toggleWorkspaceDirectory(entry);
+};
+const handleCompactTreeLoadMore = () => undefined;
+const handleCompactTreeActivate = (row: WorkspaceVisibleRow) => {
+  const entry = compactTreeEntry(row.path);
+  if (!entry) return;
+  setWorkspaceSelection([row.path], row.path);
+};
+const handleCompactTreeOpen = (row: WorkspaceVisibleRow) => {
+  const entry = compactTreeEntry(row.path);
+  if (!entry) return;
+  setWorkspaceSelection([row.path], row.path);
+  handleWorkspaceItemDoubleClick(entry);
+};
+const handleCompactTreeCommand = async (command: string, row: WorkspaceVisibleRow | null) => {
+  const entry = row ? compactTreeEntry(row.path) : null;
+  if (entry) setWorkspaceSelection([entry.path], entry.path);
+  switch (command) {
+    case 'toggle':
+      if (entry) await toggleWorkspaceDirectory(entry);
+      break;
+    case 'preview':
+      if (entry) handleWorkspaceItemDoubleClick(entry);
+      break;
+    case 'download':
+    case 'archive':
+      if (entry) await downloadEntry(entry);
+      break;
+    case 'archive-root':
+      await downloadArchive();
+      break;
+    case 'clear':
+      await handleHeaderDelete();
+      break;
+    case 'rename':
+      if (entry) await renameCompactTreeEntry(entry);
+      break;
+    case 'copy':
+      await copyWorkspaceSelectionInPlace();
+      break;
+    case 'properties':
+      if (entry) openPropertiesDialog(entry);
+      break;
+    case 'delete':
+      await deleteWorkspaceSelection();
+      break;
+    case 'new-file':
+      await createWorkspaceFile();
+      break;
+    case 'new-dir':
+      await createWorkspaceFolder();
+      break;
+    case 'quote':
+      if (entry) emit('quote-path', { paths: [entry.path] });
+      break;
+    case 'refresh':
+      await refreshWorkspace();
+      break;
+    default:
+      break;
+  }
+};
+const renameCompactTreeEntry = async (entry: any) => {
+  if (!entry || !ensureWritableFileSystem()) return;
+  try {
+    const { value } = await ElMessageBox.prompt(t('messenger.filesArea.renamePrompt'), t('common.edit'), {
+      confirmButtonText: t('common.confirm'),
+      cancelButtonText: t('common.cancel'),
+      inputValue: String(entry.name || ''),
+      inputValidator: (input: string) =>
+        isValidWorkspaceName(input) ? true : t('workspace.name.invalid')
+    });
+    const name = String(value || '').trim();
+    if (!name || name === entry.name) return;
+    const parent = getWorkspaceParentPath(entry.path);
+    await activeFileSystem.value.moveEntry(withFsParams({
+      source: entry.path,
+      destination: joinWorkspacePath(parent, name)
+    }));
+    await refreshWorkspacePathWithFallback(parent);
+    ElMessage.success(t('workspace.rename.success'));
+  } catch (error) {
+    if (error === 'cancel' || error === 'close') return;
+    showApiError(error, t('workspace.rename.failed'));
+  }
+};
 const WORKSPACE_ROW_HEIGHT = 28;
 const WORKSPACE_OVERSCAN = 8;
 const workspaceVirtual = computed(() => displayEntries.value.length > 120);

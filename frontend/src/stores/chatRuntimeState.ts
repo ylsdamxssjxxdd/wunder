@@ -1936,6 +1936,17 @@ export const applyCanonicalStreamSideEffects = (
     return;
   }
   applyCommandSessionCanonicalSideEffect(store, sessionId, normalizedEventType, payload, data);
+  // Workspace mutations are committed by tools, not by the chat turn
+  // terminal. Refresh once when the tool has finished so generated files
+  // become visible during a long run without refreshing on every token/delta.
+  if (normalizedEventType === 'tool_result' ||
+      normalizedEventType === 'tool_call_completed' ||
+      normalizedEventType === 'tool_call_failed') {
+    applyWorkspaceUpdateCanonicalSideEffect(
+      { ...payload, reason: payload.reason || 'tool_completed' },
+      data
+    );
+  }
   if (isSubagentCanonicalEvent(normalizedEventType) || isTeamCanonicalEvent(normalizedEventType) || normalizedEventType === 'tool_result') {
     applyCollaborationCanonicalSideEffect(sessionId, normalizedEventType, payload, data);
   }

@@ -51,7 +51,9 @@ export component ExpertToolPicker inherits Rectangle {
     in property <bool> enabled: true;
     callback toggle(string);
     callback toggle-group(string);
-    in property <int> columns: 2;
+    // Each type owns a full-width row. Two cards per row keep descriptions
+    // readable without squeezing different types beside one another.
+    in property <int> columns: 1;
     border-radius: 12px;
     height: group-layout.preferred-height;
     group-layout := VerticalLayout { spacing: 12px;

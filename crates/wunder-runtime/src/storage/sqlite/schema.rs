@@ -65,7 +65,8 @@ impl SqliteStorage {
     }
 
     fn ensure_thread_trajectory_tile_columns(&self, conn: &Connection) -> Result<()> {
-        let tx = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
+        let tx =
+            rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
         let columns = load_table_columns(&tx, "thread_trajectory_tiles")?;
         for (name, ddl) in [
             ("input_count", "ALTER TABLE thread_trajectory_tiles ADD COLUMN input_count INTEGER NOT NULL DEFAULT 0"),

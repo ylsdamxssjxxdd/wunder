@@ -3,7 +3,9 @@
 //! web trajectory model one rule at a time. All text is projected in Rust so
 //! Slint only lays out bounded rows, and every row and span is keyed by the
 //! global record index so hover and selection survive filtering.
-use crate::{I18n, MainWindow, TrajBoundary, TrajRow, TrajSpan, TrajTab, TrajTick, TrajTiming, TrajSection};
+use crate::{
+    I18n, MainWindow, TrajBoundary, TrajRow, TrajSection, TrajSpan, TrajTab, TrajTick, TrajTiming,
+};
 use chrono::{Local, TimeZone};
 use serde_json::{json, Value};
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
@@ -43,11 +45,30 @@ const USER_TURN_KEYS: [&str; 4] = ["user_turn_index", "user_round", "turn_index"
 const STARTED_KEYS: [&str; 3] = ["started_at", "start_time", "created_at"];
 const COMPLETED_KEYS: [&str; 3] = ["completed_at", "end_time", "finished_at"];
 const CONTEXT_RAW_KINDS: [&str; 8] = [
-    "queue", "plan", "approval", "terminal", "context", "note", "status", "context_message",
+    "queue",
+    "plan",
+    "approval",
+    "terminal",
+    "context",
+    "note",
+    "status",
+    "context_message",
 ];
 const TICK_STEPS_MS: [f64; 14] = [
-    100.0, 250.0, 500.0, 1_000.0, 2_000.0, 5_000.0, 10_000.0, 30_000.0, 60_000.0, 120_000.0,
-    300_000.0, 600_000.0, 1_800_000.0, 3_600_000.0,
+    100.0,
+    250.0,
+    500.0,
+    1_000.0,
+    2_000.0,
+    5_000.0,
+    10_000.0,
+    30_000.0,
+    60_000.0,
+    120_000.0,
+    300_000.0,
+    600_000.0,
+    1_800_000.0,
+    3_600_000.0,
 ];
 
 #[derive(Default, Clone, Copy)]
@@ -177,8 +198,11 @@ struct State {
     page: Option<Value>,
     next_before: Option<i64>,
     has_more: bool,
+    next_after: Option<i64>,
+    has_newer: bool,
     loading_page: bool,
     older_edge_latched: bool,
+    newer_edge_latched: bool,
     view_start: f64,
     view_width: f64,
     selected: i32,
@@ -201,7 +225,11 @@ impl State {
         };
     }
     fn identity_key(turn: Option<i64>, group: &str) -> String {
-        format!("{}\u{0}{}", turn.map(|t| t.to_string()).unwrap_or_else(|| "none".into()), group)
+        format!(
+            "{}\u{0}{}",
+            turn.map(|t| t.to_string()).unwrap_or_else(|| "none".into()),
+            group
+        )
     }
 }
 
@@ -212,13 +240,17 @@ fn to_model<T: Clone + 'static>(rows: Vec<T>) -> ModelRc<T> {
 // ------------------------------------------------------------------ */
 // Snapshot parsing (pure; runs on the worker thread)                  */
 // ------------------------------------------------------------------ */
-
 fn payload_of(item: &Value) -> &Value {
-    item.get("payload").filter(|v| v.is_object()).unwrap_or(&Value::Null)
+    item.get("payload")
+        .filter(|v| v.is_object())
+        .unwrap_or(&Value::Null)
 }
 
 fn meta_of<'a>(payload: &'a Value) -> &'a Value {
-    payload.get("meta").filter(|v| v.is_object()).unwrap_or(&Value::Null)
+    payload
+        .get("meta")
+        .filter(|v| v.is_object())
+        .unwrap_or(&Value::Null)
 }
 
 fn raw_kind_of<'a>(item: &'a Value, payload: &'a Value) -> &'a str {
@@ -232,14 +264,21 @@ fn raw_kind_of<'a>(item: &'a Value, payload: &'a Value) -> &'a str {
             return event;
         }
     }
-    meta_of(payload).get("type").and_then(Value::as_str).unwrap_or("")
+    meta_of(payload)
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or("")
 }
 
 /// 时间字段统一为毫秒；秒级数值按 1e11 阈值启发式放大。
 fn timestamp_ms(value: &Value) -> Option<f64> {
     if let Some(number) = value.as_f64() {
         if number.is_finite() {
-            return Some(if number.abs() < 1e11 { number * 1000.0 } else { number });
+            return Some(if number.abs() < 1e11 {
+                number * 1000.0
+            } else {
+                number
+            });
         }
     }
     if let Some(text) = value.as_str() {
@@ -310,46 +349,102 @@ fn summarize_tool_result(payload: &Value) -> String {
     fallback.map(content_to_text).unwrap_or_default()
 }
 
+fn add_usage_source<'a>(value: Option<&'a Value>, sources: &mut Vec<&'a Value>) {
+    let Some(source) = value.filter(|v| v.is_object()) else {
+        return;
+    };
+    sources.push(source);
+    for key in [
+        "usage",
+        "round_usage",
+        "roundUsage",
+        "message_stats",
+        "messageStats",
+    ] {
+        if let Some(nested) = source.get(key).filter(|v| v.is_object()) {
+            sources.push(nested);
+            // Some providers use data.messageStats.roundUsage (and older
+            // writers use the snake_case equivalent). Keep this bounded to
+            // known usage containers rather than recursively walking payloads.
+            for nested_key in ["usage", "round_usage", "roundUsage"] {
+                if let Some(deep) = nested.get(nested_key).filter(|v| v.is_object()) {
+                    sources.push(deep);
+                }
+            }
+        }
+    }
+}
+
 fn extract_usage(payload: &Value) -> Option<Usage> {
-    // 优先级：llm_output 顶层 usage → 会话统计 → meta.message_stats 内嵌的
-    // usage/round_usage（会话写入器整体覆盖 payload 后顶层 usage 只剩这里）。
+    // Providers and persisted history use both snake_case and camelCase. The
+    // writer may also wrap usage in stats/data/message_stats/round_usage, so
+    // inspect only this bounded set of known containers.
     let mut sources: Vec<&Value> = Vec::new();
-    if let Some(usage) = payload.get("usage").filter(|v| v.is_object()) {
-        sources.push(usage);
-    }
-    if let Some(stats) = payload.get("stats").filter(|v| v.is_object()) {
-        sources.push(stats);
-    }
-    if let Some(stats) = meta_of(payload).get("message_stats").filter(|v| v.is_object()) {
-        if let Some(nested) = stats.get("usage").filter(|v| v.is_object()) {
-            sources.push(nested);
-        }
-        if let Some(nested) = stats.get("round_usage").filter(|v| v.is_object()) {
-            sources.push(nested);
-        }
-        sources.push(stats);
-    }
+    add_usage_source(payload.get("usage"), &mut sources);
+    add_usage_source(payload.get("round_usage"), &mut sources);
+    add_usage_source(payload.get("roundUsage"), &mut sources);
+    add_usage_source(payload.get("stats"), &mut sources);
+    add_usage_source(payload.get("message_stats"), &mut sources);
+    add_usage_source(payload.get("messageStats"), &mut sources);
+    add_usage_source(payload.get("data"), &mut sources);
+    add_usage_source(meta_of(payload).get("message_stats"), &mut sources);
+    add_usage_source(meta_of(payload).get("messageStats"), &mut sources);
+    add_usage_source(Some(payload), &mut sources);
     if sources.is_empty() {
         return None;
     }
+    let numeric = |value: &Value| {
+        value
+            .as_f64()
+            .filter(|v| v.is_finite() && *v >= 0.0)
+            .or_else(|| {
+                value
+                    .as_str()
+                    .and_then(|text| text.trim().parse::<f64>().ok())
+                    .filter(|v| v.is_finite() && *v >= 0.0)
+            })
+    };
     let pick = |keys: &[&str]| {
         for source in &sources {
             for key in keys {
-                if let Some(value) = source.get(*key).and_then(Value::as_f64) {
-                    if value.is_finite() {
-                        return Some(value);
-                    }
+                if let Some(value) = source.get(*key).and_then(numeric) {
+                    return Some(value);
                 }
             }
         }
         None
     };
     let usage = Usage {
-        input: pick(&["input_tokens", "prompt_tokens"]),
-        cache_read: pick(&["cached_input_tokens", "cache_read_input_tokens", "cached_tokens"]),
-        cache_write: pick(&["cache_creation_input_tokens"]),
-        output: pick(&["output_tokens", "completion_tokens"]),
-        think: pick(&["reasoning_tokens"]),
+        input: pick(&[
+            "input_tokens",
+            "prompt_tokens",
+            "inputTokens",
+            "promptTokens",
+            "input",
+            "prompt",
+        ]),
+        cache_read: pick(&[
+            "cached_input_tokens",
+            "cache_read_input_tokens",
+            "cached_tokens",
+            "cacheReadTokens",
+            "cacheReadInputTokens",
+            "cache_read_tokens",
+        ]),
+        cache_write: pick(&[
+            "cache_creation_input_tokens",
+            "cacheWriteTokens",
+            "cacheCreationInputTokens",
+        ]),
+        output: pick(&[
+            "output_tokens",
+            "completion_tokens",
+            "outputTokens",
+            "completionTokens",
+            "output",
+            "completion",
+        ]),
+        think: pick(&["reasoning_tokens", "reasoningTokens", "reasoning"]),
     };
     usage.any().then_some(usage)
 }
@@ -376,21 +471,104 @@ fn is_skipped_raw_kind(raw_kind: &str) -> bool {
         || raw_kind.starts_with("hook/")
 }
 
-fn merge_page_json(current: &Value, older: &Value) -> Value {
+fn merge_page_json(current: &Value, incoming: &Value, older: bool) -> Value {
     let mut merged = current.clone();
-    let mut rows = older.get("trajectory").and_then(Value::as_array).cloned().unwrap_or_default();
-    rows.extend(current.get("trajectory").and_then(Value::as_array).cloned().unwrap_or_default());
+    let mut rows = if older {
+        incoming
+            .get("trajectory")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+    } else {
+        current
+            .get("trajectory")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+    };
+    if older {
+        rows.extend(
+            current
+                .get("trajectory")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default(),
+        );
+    } else {
+        rows.extend(
+            incoming
+                .get("trajectory")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default(),
+        );
+    }
+    let evicted_newer = older && rows.len() > MAX_VIEW_ROWS;
     if rows.len() > MAX_VIEW_ROWS {
-        rows.truncate(MAX_VIEW_ROWS);
+        if older {
+            rows.truncate(MAX_VIEW_ROWS);
+        } else {
+            rows = rows.split_off(rows.len() - MAX_VIEW_ROWS);
+        }
     }
     if let Some(map) = merged.as_object_mut() {
+        let first_seq = rows
+            .first()
+            .and_then(|row| row.get("created_seq"))
+            .cloned()
+            .unwrap_or(Value::Null);
+        let last_seq = rows
+            .last()
+            .and_then(|row| row.get("created_seq"))
+            .cloned()
+            .unwrap_or(Value::Null);
         map.insert("trajectory".into(), Value::Array(rows));
         // Tiles describe the whole thread and are repeated on every page. Keep
         // the newest response's bounded overview rather than duplicating spans.
-        map.insert("tiles".into(), current.get("tiles").cloned().unwrap_or(Value::Array(Vec::new())));
-        map.insert("tile_level".into(), current.get("tile_level").cloned().unwrap_or(Value::from(0)));
-        map.insert("next_before".into(), older.get("next_before").cloned().unwrap_or(Value::Null));
-        map.insert("has_more".into(), older.get("has_more").cloned().unwrap_or(Value::Bool(false)));
+        map.insert(
+            "tiles".into(),
+            current
+                .get("tiles")
+                .cloned()
+                .unwrap_or(Value::Array(Vec::new())),
+        );
+        map.insert(
+            "tile_level".into(),
+            current.get("tile_level").cloned().unwrap_or(Value::from(0)),
+        );
+        map.insert("next_before".into(), first_seq);
+        map.insert("next_after".into(), last_seq);
+        map.insert(
+            "has_more".into(),
+            if older {
+                incoming
+                    .get("has_more")
+                    .cloned()
+                    .unwrap_or(Value::Bool(false))
+            } else {
+                current
+                    .get("has_more")
+                    .cloned()
+                    .unwrap_or(Value::Bool(false))
+            },
+        );
+        map.insert(
+            "has_newer".into(),
+            if older {
+                Value::Bool(
+                    evicted_newer
+                        || current
+                            .get("has_newer")
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false),
+                )
+            } else {
+                incoming
+                    .get("has_newer")
+                    .cloned()
+                    .unwrap_or(Value::Bool(false))
+            },
+        );
     }
     merged
 }
@@ -415,7 +593,10 @@ fn parse_view_page(page: &Value) -> SnapshotModel {
         }
         let turn_no = row.get("user_round").and_then(Value::as_i64);
         let ti = *turn_index.entry(turn_id.to_string()).or_insert_with(|| {
-            turns.push(TurnModel { turn: turn_no, groups: Vec::new() });
+            turns.push(TurnModel {
+                turn: turn_no,
+                groups: Vec::new(),
+            });
             turns.len() - 1
         });
         let raw_kind = row.get("kind").and_then(Value::as_str).unwrap_or("context");
@@ -436,6 +617,9 @@ fn parse_view_page(page: &Value) -> SnapshotModel {
             "started_at": row.get("started_at").and_then(Value::as_f64),
             "completed_at": row.get("completed_at").and_then(Value::as_f64),
         });
+        if let Some(stats) = row.get("stats").filter(|value| value.is_object()) {
+            payload["message_stats"] = stats.clone();
+        }
         if kind == KIND_SYSTEM {
             payload["meta"] = json!({"type":"system_prompt"});
         }
@@ -459,13 +643,20 @@ fn parse_view_page(page: &Value) -> SnapshotModel {
     for (item, ti, _) in cells {
         let turn_id = item.get("turn_id").and_then(Value::as_str).unwrap_or("");
         let turn_no = turns.get(ti).and_then(|turn| turn.turn).unwrap_or(0);
-        if !snapshot_turns.iter().any(|turn: &Value| turn["turn_id"] == turn_id) {
+        if !snapshot_turns
+            .iter()
+            .any(|turn: &Value| turn["turn_id"] == turn_id)
+        {
             snapshot_turns.push(json!({"turn_id": turn_id, "user_turn_index": turn_no}));
         }
         snapshot_items.push(item);
     }
     let mut model = parse_snapshot(&json!({"turns": snapshot_turns, "items": snapshot_items}));
-    let tiles = page.get("tiles").and_then(Value::as_array).cloned().unwrap_or_default();
+    let tiles = page
+        .get("tiles")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
     let level = page.get("tile_level").and_then(Value::as_u64).unwrap_or(0) as f64;
     let bucket_width = 128.0 * 8.0_f64.powf(level);
     let mut overview = Vec::new();
@@ -473,8 +664,14 @@ fn parse_view_page(page: &Value) -> SnapshotModel {
     let mut end = f64::MIN;
     for tile in tiles {
         let bucket = tile.get("bucket").and_then(Value::as_i64).unwrap_or(0) as f64;
-        let count = tile.get("count").and_then(Value::as_i64).unwrap_or(0).max(0);
-        if count == 0 { continue; }
+        let count = tile
+            .get("count")
+            .and_then(Value::as_i64)
+            .unwrap_or(0)
+            .max(0);
+        if count == 0 {
+            continue;
+        }
         let lane_counts = [
             tile.get("input_count").and_then(Value::as_i64).unwrap_or(0),
             tile.get("model_count").and_then(Value::as_i64).unwrap_or(0),
@@ -490,17 +687,33 @@ fn parse_view_page(page: &Value) -> SnapshotModel {
         // seconds and milliseconds, so normalize here before joining spans.
         let ts = |key: &str| {
             let value = tile.get(key).and_then(Value::as_f64).unwrap_or(0.0);
-            if value.abs() < 1e11 { value * 1000.0 } else { value }
+            if value.abs() < 1e11 {
+                value * 1000.0
+            } else {
+                value
+            }
         };
         let tile_start = ts("start");
         let tile_end = ts("end").max(tile_start + 1.0);
-        start = start.min(tile_start); end = end.max(tile_end);
+        start = start.min(tile_start);
+        end = end.max(tile_end);
         for (lane, lane_count) in counts.into_iter().enumerate() {
-            if lane_count <= 0 { continue; }
+            if lane_count <= 0 {
+                continue;
+            }
             overview.push(SpanBase {
-                start: tile_start, end: tile_end, record: usize::MAX,
-                kind: if lane == 0 { KIND_CONTEXT } else if lane == 1 { KIND_MESSAGE } else { KIND_TOOL },
-                lane, ttft: None,
+                start: tile_start,
+                end: tile_end,
+                record: usize::MAX,
+                kind: if lane == 0 {
+                    KIND_CONTEXT
+                } else if lane == 1 {
+                    KIND_MESSAGE
+                } else {
+                    KIND_TOOL
+                },
+                lane,
+                ttft: None,
                 sequence_start: Some(bucket * bucket_width),
                 sequence_end: Some((bucket + 1.0) * bucket_width),
             });
@@ -533,7 +746,10 @@ fn resolve_kind(raw_kind: &str, payload: &Value) -> i32 {
 /// 有界纯文本预览：手写剥离 markdown 标记，避免为预览引入正则依赖。
 fn markdown_preview_text(text: &str) -> String {
     let bounded: String = if text.chars().count() > TEXT_PREVIEW_SOURCE_LIMIT {
-        text.chars().take(TEXT_PREVIEW_SOURCE_LIMIT).collect::<String>() + "…"
+        text.chars()
+            .take(TEXT_PREVIEW_SOURCE_LIMIT)
+            .collect::<String>()
+            + "…"
     } else {
         text.to_string()
     };
@@ -575,7 +791,11 @@ fn markdown_preview_text(text: &str) -> String {
         plain.push_str(&work);
         plain.push('\n');
     }
-    let plain = plain.replace("***", "").replace("**", "").replace("__", "").replace("~~", "");
+    let plain = plain
+        .replace("***", "")
+        .replace("**", "")
+        .replace("__", "")
+        .replace("~~", "");
     if plain.chars().count() > TEXT_PREVIEW_LIMIT {
         plain.chars().take(TEXT_PREVIEW_LIMIT).collect::<String>() + "…"
     } else {
@@ -628,7 +848,11 @@ fn strip_inline_markup(line: &str) -> String {
     out
 }
 
-fn parse_duration_cell(payload: &Value, started_at: Option<f64>, completed_at: Option<f64>) -> Option<f64> {
+fn parse_duration_cell(
+    payload: &Value,
+    started_at: Option<f64>,
+    completed_at: Option<f64>,
+) -> Option<f64> {
     if let (Some(start), Some(end)) = (started_at, completed_at) {
         return Some(((end - start) / 1000.0).max(0.0));
     }
@@ -649,7 +873,11 @@ fn non_empty(text: &str) -> Option<String> {
 
 fn build_cell(item: &Value, payload: &Value, kind: i32, index: usize) -> Cell {
     let status = item.get("status").and_then(Value::as_str).unwrap_or("");
-    let record_id = item.get("item_id").and_then(Value::as_str).unwrap_or_default().to_string();
+    let record_id = item
+        .get("item_id")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
     let created_ms =
         first_time(item, &["created_time"]).or_else(|| first_time(payload, &["created_time"]));
     let updated_ms = first_time(item, &["updated_time"]);
@@ -682,8 +910,7 @@ fn build_cell(item: &Value, payload: &Value, kind: i32, index: usize) -> Cell {
             let content_text = content_to_text(payload.get("content").unwrap_or(&Value::Null));
             // 流式壳写入 `reasoning`；会话写入器覆盖 payload 后字段名为
             // `reasoning_content`，两个来源都要读。
-            let reasoning_text =
-                content_to_text(payload.get("reasoning").unwrap_or(&Value::Null));
+            let reasoning_text = content_to_text(payload.get("reasoning").unwrap_or(&Value::Null));
             let thinking_text = if reasoning_text.trim().is_empty() {
                 content_to_text(payload.get("reasoning_content").unwrap_or(&Value::Null))
             } else {
@@ -698,7 +925,10 @@ fn build_cell(item: &Value, payload: &Value, kind: i32, index: usize) -> Cell {
             cell.input_detail = non_empty(&content_text);
             cell.output_detail = cell.input_detail.clone();
             cell.thinking_detail = non_empty(&thinking_text);
-            let ttft = payload.get("ttft_ms").and_then(Value::as_f64).filter(|v| v.is_finite());
+            let ttft = payload
+                .get("ttft_ms")
+                .and_then(Value::as_f64)
+                .filter(|v| v.is_finite());
             cell.metrics = Some(Metrics {
                 step_start: started_at,
                 first_token: ttft.zip(started_at).map(|(ttft, start)| start + ttft),
@@ -713,7 +943,10 @@ fn build_cell(item: &Value, payload: &Value, kind: i32, index: usize) -> Cell {
                 .and_then(Value::as_str)
                 .filter(|v| !v.trim().is_empty())
                 .or_else(|| {
-                    payload.get("name").and_then(Value::as_str).filter(|v| !v.trim().is_empty())
+                    payload
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .filter(|v| !v.trim().is_empty())
                 })
                 .unwrap_or_default();
             let args_raw = match payload.get("args") {
@@ -733,13 +966,15 @@ fn build_cell(item: &Value, payload: &Value, kind: i32, index: usize) -> Cell {
             let schema = payload.get("schema").or_else(|| payload.get("tool_schema"));
             cell.schema_detail = match schema {
                 Some(Value::String(text)) if !text.trim().is_empty() => Some(text.clone()),
-                Some(value @ Value::Object(_)) => {
-                    serde_json::to_string_pretty(value).unwrap_or_default().into()
-                }
+                Some(value @ Value::Object(_)) => serde_json::to_string_pretty(value)
+                    .unwrap_or_default()
+                    .into(),
                 _ => None,
             };
             cell.is_error = error_value == Some(&json!(true))
-                || error_value.map(|v| !v.is_null() && *v != json!(false)).unwrap_or(false)
+                || error_value
+                    .map(|v| !v.is_null() && *v != json!(false))
+                    .unwrap_or(false)
                 || status == "failed"
                 || status == "error";
             if let (Some(start), Some(end)) = (started_at, completed_at) {
@@ -748,7 +983,10 @@ fn build_cell(item: &Value, payload: &Value, kind: i32, index: usize) -> Cell {
         }
         KIND_COMPACTED => {
             let summary_text = content_to_text(
-                payload.get("summary").or_else(|| payload.get("content")).unwrap_or(&Value::Null),
+                payload
+                    .get("summary")
+                    .or_else(|| payload.get("content"))
+                    .unwrap_or(&Value::Null),
             );
             cell.text = summary_text.trim().to_string();
             cell.input_detail = non_empty(&summary_text);
@@ -765,8 +1003,14 @@ fn build_cell(item: &Value, payload: &Value, kind: i32, index: usize) -> Cell {
 /// 把快照折叠成 轮次 → 步骤组 → 记录；items 按 turn_id 归组进各自的轮次。
 fn parse_snapshot(snapshot: &Value) -> SnapshotModel {
     let empty = Vec::new();
-    let turns_raw = snapshot.get("turns").and_then(Value::as_array).unwrap_or(&empty);
-    let items_raw = snapshot.get("items").and_then(Value::as_array).unwrap_or(&empty);
+    let turns_raw = snapshot
+        .get("turns")
+        .and_then(Value::as_array)
+        .unwrap_or(&empty);
+    let items_raw = snapshot
+        .get("items")
+        .and_then(Value::as_array)
+        .unwrap_or(&empty);
 
     let mut buckets: HashMap<&str, Vec<&Value>> = HashMap::new();
     for item in items_raw {
@@ -782,9 +1026,16 @@ fn parse_snapshot(snapshot: &Value) -> SnapshotModel {
             continue;
         }
         let turn_no = USER_TURN_KEYS.iter().find_map(|key| {
-            raw_turn.get(*key).and_then(Value::as_f64).filter(|v| v.is_finite()).map(|v| v as i64)
+            raw_turn
+                .get(*key)
+                .and_then(Value::as_f64)
+                .filter(|v| v.is_finite())
+                .map(|v| v as i64)
         });
-        let turn_id = raw_turn.get("turn_id").and_then(Value::as_str).unwrap_or("");
+        let turn_id = raw_turn
+            .get("turn_id")
+            .and_then(Value::as_str)
+            .unwrap_or("");
         let mut groups: Vec<Group> = Vec::new();
         let mut compaction_seq = 0usize;
 
@@ -808,9 +1059,7 @@ fn parse_snapshot(snapshot: &Value) -> SnapshotModel {
                 .or_else(|| payload.get("status").and_then(Value::as_str));
             if matches!(raw_kind.as_str(), "terminal" | "turn_terminal")
                 && item_status == Some("completed")
-                && payload
-                    .get("error")
-                    .map_or(true, Value::is_null)
+                && payload.get("error").map_or(true, Value::is_null)
             {
                 continue;
             }
@@ -830,7 +1079,9 @@ fn parse_snapshot(snapshot: &Value) -> SnapshotModel {
                         continue;
                     }
                     if let Some(call_id) = call_id {
-                        if candidate_payload.get("tool_call_id").and_then(Value::as_str)
+                        if candidate_payload
+                            .get("tool_call_id")
+                            .and_then(Value::as_str)
                             != Some(call_id)
                         {
                             continue;
@@ -857,7 +1108,10 @@ fn parse_snapshot(snapshot: &Value) -> SnapshotModel {
             }
 
             if kind == KIND_MESSAGE {
-                let step = payload.get("model_round").and_then(Value::as_f64).filter(|v| v.is_finite());
+                let step = payload
+                    .get("model_round")
+                    .and_then(Value::as_f64)
+                    .filter(|v| v.is_finite());
                 let group = match step {
                     Some(step) => {
                         let step = step as i64;
@@ -900,7 +1154,10 @@ fn parse_snapshot(snapshot: &Value) -> SnapshotModel {
                     compaction: true,
                 });
             } else if kind == KIND_TOOL || kind == KIND_SUBTOOL {
-                let step = payload.get("model_round").and_then(Value::as_f64).filter(|v| v.is_finite());
+                let step = payload
+                    .get("model_round")
+                    .and_then(Value::as_f64)
+                    .filter(|v| v.is_finite());
                 let group = match step {
                     Some(step) => {
                         let step = step as i64;
@@ -952,7 +1209,10 @@ fn parse_snapshot(snapshot: &Value) -> SnapshotModel {
                 groups.last_mut().unwrap().cells.push(index);
             }
         }
-        turns.push(TurnModel { turn: turn_no, groups });
+        turns.push(TurnModel {
+            turn: turn_no,
+            groups,
+        });
     }
 
     // requests: numbered model-call groups with cumulative usage
@@ -963,8 +1223,11 @@ fn parse_snapshot(snapshot: &Value) -> SnapshotModel {
             if group.compaction || group.step.is_none() {
                 continue;
             }
-            let Some(message_cell) =
-                group.cells.iter().map(|&i| &cells[i]).find(|cell| cell.kind == KIND_MESSAGE)
+            let Some(message_cell) = group
+                .cells
+                .iter()
+                .map(|&i| &cells[i])
+                .find(|cell| cell.kind == KIND_MESSAGE)
             else {
                 continue;
             };
@@ -1022,7 +1285,9 @@ fn parse_snapshot(snapshot: &Value) -> SnapshotModel {
                 boundaries.push((turn, cell.started_at.unwrap_or(0.0), record_index));
             }
         }
-        let Some(start) = cell.started_at else { continue };
+        let Some(start) = cell.started_at else {
+            continue;
+        };
         let duration_ms = cell.time_seconds.unwrap_or(0.0).max(0.0) * 1000.0;
         let lane = match cell.kind {
             KIND_TOOL | KIND_SUBTOOL => 2,
@@ -1052,19 +1317,30 @@ fn parse_snapshot(snapshot: &Value) -> SnapshotModel {
             sequence_end: Some(record_index as f64 + 1.0),
         });
     }
-    let (lo, hi) = spans
-        .iter()
-        .fold((f64::MAX, f64::MIN), |(lo, hi), span| (lo.min(span.start), hi.max(span.end)));
-    let (tl_start, tl_end) =
-        if spans.is_empty() { (0.0, 1.0) } else { (lo, hi.max(lo + 1.0)) };
+    let (lo, hi) = spans.iter().fold((f64::MAX, f64::MIN), |(lo, hi), span| {
+        (lo.min(span.start), hi.max(span.end))
+    });
+    let (tl_start, tl_end) = if spans.is_empty() {
+        (0.0, 1.0)
+    } else {
+        (lo, hi.max(lo + 1.0))
+    };
 
-    SnapshotModel { cells, turns, records, requests, spans, boundaries, tl_start, tl_end }
+    SnapshotModel {
+        cells,
+        turns,
+        records,
+        requests,
+        spans,
+        boundaries,
+        tl_start,
+        tl_end,
+    }
 }
 
 // ------------------------------------------------------------------ */
 // Bilingual text                                                      */
 // ------------------------------------------------------------------ */
-
 struct Texts {
     zh: bool,
 }
@@ -1076,37 +1352,110 @@ impl Texts {
     fn kind(&self, kind: i32) -> &'static str {
         let zh = self.zh;
         match kind {
-            KIND_SYSTEM => if zh { "系统" } else { "System" },
-            KIND_USER => if zh { "用户" } else { "User" },
-            KIND_CONTEXT => if zh { "上下文" } else { "Context" },
-            KIND_COMPACTED => if zh { "已压缩" } else { "Compacted" },
-            KIND_MESSAGE => if zh { "消息" } else { "Message" },
-            KIND_TOOL => if zh { "工具" } else { "Tool" },
-            KIND_SUBTOOL => if zh { "子智能体" } else { "Subagent" },
+            KIND_SYSTEM => {
+                if zh {
+                    "系统"
+                } else {
+                    "System"
+                }
+            }
+            KIND_USER => {
+                if zh {
+                    "用户"
+                } else {
+                    "User"
+                }
+            }
+            KIND_CONTEXT => {
+                if zh {
+                    "上下文"
+                } else {
+                    "Context"
+                }
+            }
+            KIND_COMPACTED => {
+                if zh {
+                    "已压缩"
+                } else {
+                    "Compacted"
+                }
+            }
+            KIND_MESSAGE => {
+                if zh {
+                    "消息"
+                } else {
+                    "Message"
+                }
+            }
+            KIND_TOOL => {
+                if zh {
+                    "工具"
+                } else {
+                    "Tool"
+                }
+            }
+            KIND_SUBTOOL => {
+                if zh {
+                    "子智能体"
+                } else {
+                    "Subagent"
+                }
+            }
             _ => "—",
         }
     }
     fn state(&self, cell: &Cell) -> &'static str {
         let zh = self.zh;
         if cell.is_error {
-            if zh { "失败" } else { "Failed" }
-        } else if cell.metrics.as_ref().map(|m| m.completed.is_none()).unwrap_or(false) {
-            if zh { "运行中" } else { "Running" }
+            if zh {
+                "失败"
+            } else {
+                "Failed"
+            }
+        } else if cell
+            .metrics
+            .as_ref()
+            .map(|m| m.completed.is_none())
+            .unwrap_or(false)
+        {
+            if zh {
+                "运行中"
+            } else {
+                "Running"
+            }
         } else {
-            if zh { "已完成" } else { "Completed" }
+            if zh {
+                "已完成"
+            } else {
+                "Completed"
+            }
         }
     }
     fn not_recorded(&self) -> &'static str {
-        if self.zh { "未记录" } else { "Not recorded" }
+        if self.zh {
+            "未记录"
+        } else {
+            "Not recorded"
+        }
     }
     fn not_reported(&self) -> &'static str {
-        if self.zh { "未上报" } else { "Not reported" }
+        if self.zh {
+            "未上报"
+        } else {
+            "Not reported"
+        }
     }
     fn millis(&self, value: f64) -> String {
-        format!("{} {}", thousands(value), if self.zh { "毫秒" } else { "ms" })
+        format!(
+            "{} {}",
+            thousands(value),
+            if self.zh { "毫秒" } else { "ms" }
+        )
     }
     fn seconds(&self, value: Option<f64>) -> String {
-        value.map(|v| self.millis(v * 1000.0)).unwrap_or_else(|| self.not_recorded().to_string())
+        value
+            .map(|v| self.millis(v * 1000.0))
+            .unwrap_or_else(|| self.not_recorded().to_string())
     }
     fn header(&self, turn: i64, group: &str) -> String {
         format!("{} · {}", self.turn_label(turn), self.group_label(group))
@@ -1191,7 +1540,8 @@ fn thousands(value: f64) -> String {
 }
 
 fn format_started_at(ms: f64) -> String {
-    Local.timestamp_millis_opt(ms.round() as i64)
+    Local
+        .timestamp_millis_opt(ms.round() as i64)
         .single()
         .map(|time| time.format("%Y-%m-%d %H:%M:%S%.3f").to_string())
         .unwrap_or_default()
@@ -1226,7 +1576,6 @@ fn format_offset(ms: f64) -> String {
 // ------------------------------------------------------------------ */
 // Projection                                                          */
 // ------------------------------------------------------------------ */
-
 fn request_number_of(model: &SnapshotModel, record_index: usize) -> usize {
     let record = &model.records[record_index];
     let cell = &model.cells[record.cell];
@@ -1267,7 +1616,9 @@ fn project_rows(app: &MainWindow, state: &State, model: &SnapshotModel, texts: &
             turn_started = true;
             current_turn = record.turn;
             turn_collapsed = state.show_turns
-                && state.collapsed_turns.contains(&record.turn.unwrap_or(i64::MIN));
+                && state
+                    .collapsed_turns
+                    .contains(&record.turn.unwrap_or(i64::MIN));
         }
         if !needle.is_empty() && !record_needle(model, record_index).contains(&needle) {
             continue;
@@ -1319,12 +1670,10 @@ fn project_rows(app: &MainWindow, state: &State, model: &SnapshotModel, texts: &
                 .records
                 .iter()
                 .filter(|other| {
-                    other.turn == record.turn
-                        && other.group == record.group
-                        && {
-                            let kind = model.cells[other.cell].kind;
-                            kind == KIND_TOOL || kind == KIND_SUBTOOL
-                        }
+                    other.turn == record.turn && other.group == record.group && {
+                        let kind = model.cells[other.cell].kind;
+                        kind == KIND_TOOL || kind == KIND_SUBTOOL
+                    }
                 })
                 .count();
             rows.push(TrajRow {
@@ -1348,18 +1697,38 @@ fn project_rows(app: &MainWindow, state: &State, model: &SnapshotModel, texts: &
         if text.trim().is_empty() {
             let zh = texts.zh;
             text = if cell.tool_call_only {
-                if zh { "仅工具调用" } else { "Tool calls only" }
+                if zh {
+                    "仅工具调用"
+                } else {
+                    "Tool calls only"
+                }
             } else if cell.kind == KIND_TOOL || cell.kind == KIND_SUBTOOL {
-                if zh { "未命名工具" } else { "Unnamed tool" }
+                if zh {
+                    "未命名工具"
+                } else {
+                    "Unnamed tool"
+                }
             } else if cell.kind == KIND_COMPACTED {
-                if zh { "无摘要" } else { "No summary" }
+                if zh {
+                    "无摘要"
+                } else {
+                    "No summary"
+                }
             } else {
-                if zh { "无内容" } else { "No content" }
+                if zh {
+                    "无内容"
+                } else {
+                    "No content"
+                }
             }
             .to_string();
         }
         let detail = if cell.kind == KIND_TOOL || cell.kind == KIND_SUBTOOL {
-            let args = cell.input_detail.as_deref().unwrap_or("").replace('\n', " ");
+            let args = cell
+                .input_detail
+                .as_deref()
+                .unwrap_or("")
+                .replace('\n', " ");
             let result = cell.result.as_deref().unwrap_or("").replace('\n', " ");
             let mut detail = String::new();
             if !args.is_empty() {
@@ -1377,7 +1746,11 @@ fn project_rows(app: &MainWindow, state: &State, model: &SnapshotModel, texts: &
         };
         rows.push(TrajRow {
             kind: cell.kind,
-            badge: if number > 0 { format!("#{}", number).into() } else { "".into() },
+            badge: if number > 0 {
+                format!("#{}", number).into()
+            } else {
+                "".into()
+            },
             text: text.into(),
             detail: detail.into(),
             error: cell.is_error,
@@ -1437,9 +1810,15 @@ fn project_timeline(app: &MainWindow, state: &State, model: &SnapshotModel, text
             start: x0 as f32,
             width: ((x1 - x0).max(0.002)) as f32,
             kind: base.kind,
-            index: if base.record == usize::MAX { -1 } else { base.record as i32 },
+            index: if base.record == usize::MAX {
+                -1
+            } else {
+                base.record as i32
+            },
             ttft: base.ttft.unwrap_or(-1.0) as f32,
-            selected: base.record != usize::MAX && state.selected >= 0 && base.record == state.selected as usize,
+            selected: base.record != usize::MAX
+                && state.selected >= 0
+                && base.record == state.selected as usize,
         });
     }
 
@@ -1463,7 +1842,11 @@ fn project_timeline(app: &MainWindow, state: &State, model: &SnapshotModel, text
         .boundaries
         .iter()
         .map(|(turn, time, record_index)| TrajBoundary {
-            pos: if timed { clamp_pos(*time) } else { clamp_pos(*record_index as f64) },
+            pos: if timed {
+                clamp_pos(*time)
+            } else {
+                clamp_pos(*record_index as f64)
+            },
             label: texts.turn_label(*turn).into(),
         })
         .collect();
@@ -1486,12 +1869,42 @@ fn bounded_body(text: &str) -> String {
 fn tab_title(texts: &Texts, tab: i32) -> &'static str {
     let zh = texts.zh;
     match tab {
-        TAB_OVERVIEW => if zh { "概述" } else { "Overview" },
-        TAB_RAW => if zh { "原始数据" } else { "Raw" },
-        TAB_PARAMS => if zh { "参数" } else { "Params" },
-        TAB_RESULT => if zh { "结果" } else { "Result" },
+        TAB_OVERVIEW => {
+            if zh {
+                "概述"
+            } else {
+                "Overview"
+            }
+        }
+        TAB_RAW => {
+            if zh {
+                "原始数据"
+            } else {
+                "Raw"
+            }
+        }
+        TAB_PARAMS => {
+            if zh {
+                "参数"
+            } else {
+                "Params"
+            }
+        }
+        TAB_RESULT => {
+            if zh {
+                "结果"
+            } else {
+                "Result"
+            }
+        }
         TAB_SCHEMA => "Schema",
-        _ => if zh { "计时" } else { "Timing" },
+        _ => {
+            if zh {
+                "计时"
+            } else {
+                "Timing"
+            }
+        }
     }
 }
 
@@ -1518,7 +1931,11 @@ fn project_details(app: &MainWindow, state: &State, model: &SnapshotModel, texts
         app.set_traj_timing(to_model(vec![]));
         app.set_traj_raw("".into());
     };
-    let Some(record) = model.records.get(selected.max(0) as usize).filter(|_| selected >= 0) else {
+    let Some(record) = model
+        .records
+        .get(selected.max(0) as usize)
+        .filter(|_| selected >= 0)
+    else {
         clear(app);
         return;
     };
@@ -1527,19 +1944,36 @@ fn project_details(app: &MainWindow, state: &State, model: &SnapshotModel, texts
     let group_label = texts.group_label(&record.group);
     let header = texts.header(record.turn.unwrap_or(0), &record.group);
 
-    let mut tabs: Vec<TrajTab> =
-        vec![TrajTab { title: tab_title(texts, TAB_OVERVIEW).into(), kind: TAB_OVERVIEW }];
+    let mut tabs: Vec<TrajTab> = vec![TrajTab {
+        title: tab_title(texts, TAB_OVERVIEW).into(),
+        kind: TAB_OVERVIEW,
+    }];
     if cell.kind == KIND_TOOL || cell.kind == KIND_SUBTOOL {
-        tabs.push(TrajTab { title: tab_title(texts, TAB_PARAMS).into(), kind: TAB_PARAMS });
-        tabs.push(TrajTab { title: tab_title(texts, TAB_RESULT).into(), kind: TAB_RESULT });
+        tabs.push(TrajTab {
+            title: tab_title(texts, TAB_PARAMS).into(),
+            kind: TAB_PARAMS,
+        });
+        tabs.push(TrajTab {
+            title: tab_title(texts, TAB_RESULT).into(),
+            kind: TAB_RESULT,
+        });
         if cell.schema_detail.is_some() {
-            tabs.push(TrajTab { title: tab_title(texts, TAB_SCHEMA).into(), kind: TAB_SCHEMA });
+            tabs.push(TrajTab {
+                title: tab_title(texts, TAB_SCHEMA).into(),
+                kind: TAB_SCHEMA,
+            });
         }
     }
     if cell.metrics.is_some() {
-        tabs.push(TrajTab { title: tab_title(texts, TAB_TIMING).into(), kind: TAB_TIMING });
+        tabs.push(TrajTab {
+            title: tab_title(texts, TAB_TIMING).into(),
+            kind: TAB_TIMING,
+        });
     }
-    tabs.push(TrajTab { title: tab_title(texts, TAB_RAW).into(), kind: TAB_RAW });
+    tabs.push(TrajTab {
+        title: tab_title(texts, TAB_RAW).into(),
+        kind: TAB_RAW,
+    });
 
     let mut overview: Vec<TrajTiming> = Vec::new();
     let mut sections: Vec<TrajSection> = Vec::new();
@@ -1554,7 +1988,11 @@ fn project_details(app: &MainWindow, state: &State, model: &SnapshotModel, texts
             if let Some(metrics) = &cell.metrics {
                 timing.push(TrajTiming {
                     label: label(zh, "开始时间", "Started at").into(),
-                    value: metrics.step_start.map(format_started_at).unwrap_or_default().into(),
+                    value: metrics
+                        .step_start
+                        .map(format_started_at)
+                        .unwrap_or_default()
+                        .into(),
                 });
                 timing.push(TrajTiming {
                     label: label(zh, "总时长", "Total duration").into(),
@@ -1625,8 +2063,12 @@ fn project_details(app: &MainWindow, state: &State, model: &SnapshotModel, texts
             });
             overview.push(TrajTiming {
                 label: label(zh, "层级", "Hierarchy").into(),
-                value: format!("{} · {}", texts.turn_label(record.turn.unwrap_or(0)), group_label)
-                    .into(),
+                value: format!(
+                    "{} · {}",
+                    texts.turn_label(record.turn.unwrap_or(0)),
+                    group_label
+                )
+                .into(),
             });
             if number > 0 {
                 overview.push(TrajTiming {
@@ -1636,7 +2078,11 @@ fn project_details(app: &MainWindow, state: &State, model: &SnapshotModel, texts
             }
             overview.push(TrajTiming {
                 label: label(zh, "开始时间", "Started at").into(),
-                value: cell.started_at.map(format_started_at).unwrap_or_default().into(),
+                value: cell
+                    .started_at
+                    .map(format_started_at)
+                    .unwrap_or_default()
+                    .into(),
             });
             overview.push(TrajTiming {
                 label: label(zh, "总时长", "Total duration").into(),
@@ -1648,16 +2094,32 @@ fn project_details(app: &MainWindow, state: &State, model: &SnapshotModel, texts
                     parts.push(format!("{} {}", label(zh, "输入", "in"), thousands(input)));
                 }
                 if let Some(read) = usage.cache_read {
-                    parts.push(format!("{} {}", label(zh, "缓存读", "cache"), thousands(read)));
+                    parts.push(format!(
+                        "{} {}",
+                        label(zh, "缓存读", "cache"),
+                        thousands(read)
+                    ));
                 }
                 if let Some(write) = usage.cache_write {
-                    parts.push(format!("{} {}", label(zh, "缓存写", "cache+"), thousands(write)));
+                    parts.push(format!(
+                        "{} {}",
+                        label(zh, "缓存写", "cache+"),
+                        thousands(write)
+                    ));
                 }
                 if let Some(output) = usage.output {
-                    parts.push(format!("{} {}", label(zh, "输出", "out"), thousands(output)));
+                    parts.push(format!(
+                        "{} {}",
+                        label(zh, "输出", "out"),
+                        thousands(output)
+                    ));
                 }
                 if let Some(think) = usage.think {
-                    parts.push(format!("{} {}", label(zh, "推理", "think"), thousands(think)));
+                    parts.push(format!(
+                        "{} {}",
+                        label(zh, "推理", "think"),
+                        thousands(think)
+                    ));
                 }
                 overview.push(TrajTiming {
                     label: label(zh, "Token", "Tokens").into(),
@@ -1703,7 +2165,10 @@ fn project_details(app: &MainWindow, state: &State, model: &SnapshotModel, texts
 }
 
 fn tooltip_for(model: &SnapshotModel, texts: &Texts, record_index: i32) -> String {
-    let Some(record) = model.records.get(record_index.max(0) as usize).filter(|_| record_index >= 0)
+    let Some(record) = model
+        .records
+        .get(record_index.max(0) as usize)
+        .filter(|_| record_index >= 0)
     else {
         return String::new();
     };
@@ -1718,7 +2183,11 @@ fn tooltip_for(model: &SnapshotModel, texts: &Texts, record_index: i32) -> Strin
     lines.push(texts.seconds(cell.time_seconds));
     if let Some(usage) = cell.usage {
         if let Some(output) = usage.output {
-            lines.push(format!("{} {}", label(zh, "输出", "out"), thousands(output)));
+            lines.push(format!(
+                "{} {}",
+                label(zh, "输出", "out"),
+                thousands(output)
+            ));
         }
     }
     lines.join("\n")
@@ -1727,7 +2196,6 @@ fn tooltip_for(model: &SnapshotModel, texts: &Texts, record_index: i32) -> Strin
 // ------------------------------------------------------------------ */
 // Controller                                                          */
 // ------------------------------------------------------------------ */
-
 fn apply_model(app: &MainWindow, state: &State) {
     let Some(snapshot) = &state.model else { return };
     let texts = Texts::new(app.global::<I18n>().get_zh());
@@ -1744,12 +2212,80 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
     let (weak_edge, current_edge, backend_edge) = (app.as_weak(), state.clone(), api.clone());
     app.on_traj_edge(move |older| {
         if !older {
-            current_edge.borrow_mut().older_edge_latched = false;
+            let mut state = current_edge.borrow_mut();
+            state.older_edge_latched = false;
+            if state.loading_page || !state.has_newer || state.newer_edge_latched {
+                return;
+            }
+            state.newer_edge_latched = true;
+            state.loading_page = true;
+            let session = state.session.clone();
+            let after = state.next_after;
+            drop(state);
+            let (tx, rx) = sync_channel(1);
+            let backend = backend_edge.clone();
+            std::thread::spawn(move || {
+                let result = match after {
+                    Some(cursor) => {
+                        backend.thread_trajectory_page_after(&session, Some(cursor), 100)
+                    }
+                    None => Err(anyhow::anyhow!("missing newer trajectory cursor")),
+                };
+                let _ = tx.send((session, result));
+            });
+            let (weak_edge, current_edge) = (weak_edge.clone(), current_edge.clone());
+            poll(move || {
+                let Ok((session, result)) = rx.try_recv() else {
+                    return false;
+                };
+                let Some(app) = weak_edge.upgrade() else {
+                    return true;
+                };
+                let mut state = current_edge.borrow_mut();
+                if state.session != session {
+                    state.loading_page = false;
+                    state.newer_edge_latched = false;
+                    return true;
+                }
+                match result {
+                    Ok(page) => {
+                        let merged = state
+                            .page
+                            .as_ref()
+                            .map(|current| merge_page_json(current, &page, false))
+                            .unwrap_or(page);
+                        state.next_before = merged.get("next_before").and_then(Value::as_i64);
+                        state.next_after = merged.get("next_after").and_then(Value::as_i64);
+                        state.has_more = merged
+                            .get("has_more")
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false);
+                        state.has_newer = merged
+                            .get("has_newer")
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false);
+                        state.page = Some(merged);
+                        if let Some(page) = &state.page {
+                            state.model = Some(parse_view_page(page));
+                            apply_model(&app, &state);
+                        }
+                    }
+                    Err(error) => {
+                        app.set_status(format!("无法读取更新轨迹：{error}").into());
+                        state.newer_edge_latched = false;
+                    }
+                }
+                state.newer_edge_latched = false;
+                state.loading_page = false;
+                true
+            });
             return;
         }
         let (session, before) = {
             let mut state = current_edge.borrow_mut();
-            if state.loading_page || !state.has_more || state.older_edge_latched { return; }
+            if state.loading_page || !state.has_more || state.older_edge_latched {
+                return;
+            }
             state.older_edge_latched = true;
             state.loading_page = true;
             (state.session.clone(), state.next_before)
@@ -1765,23 +2301,47 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         });
         let (weak_edge, current_edge) = (weak_edge.clone(), current_edge.clone());
         poll(move || {
-            let Ok((session, result)) = rx.try_recv() else { return false };
-            let Some(app) = weak_edge.upgrade() else { return true };
+            let Ok((session, result)) = rx.try_recv() else {
+                return false;
+            };
+            let Some(app) = weak_edge.upgrade() else {
+                return true;
+            };
             let mut state = current_edge.borrow_mut();
-            if state.session != session { state.loading_page = false; return true; }
+            if state.session != session {
+                state.loading_page = false;
+                state.older_edge_latched = false;
+                return true;
+            }
             match result {
                 Ok(page) => {
-                    let merged = state.page.as_ref().map(|current| merge_page_json(current, &page)).unwrap_or(page);
+                    let merged = state
+                        .page
+                        .as_ref()
+                        .map(|current| merge_page_json(current, &page, true))
+                        .unwrap_or(page);
                     state.next_before = merged.get("next_before").and_then(Value::as_i64);
-                    state.has_more = merged.get("has_more").and_then(Value::as_bool).unwrap_or(false);
+                    state.next_after = merged.get("next_after").and_then(Value::as_i64);
+                    state.has_more = merged
+                        .get("has_more")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false);
+                    state.has_newer = merged
+                        .get("has_newer")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false);
                     state.page = Some(merged);
                     if let Some(page) = &state.page {
                         state.model = Some(parse_view_page(page));
                         apply_model(&app, &state);
                     }
                 }
-                Err(error) => app.set_status(format!("无法读取更早轨迹：{error}").into()),
+                Err(error) => {
+                    app.set_status(format!("无法读取更早轨迹：{error}").into());
+                    state.older_edge_latched = false;
+                }
             }
+            state.older_edge_latched = false;
             state.loading_page = false;
             true
         });
@@ -1822,8 +2382,12 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         });
         let (weak, current) = (weak.clone(), current.clone());
         poll(move || {
-            let Ok((session, result)) = rx.try_recv() else { return false };
-            let Some(app) = weak.upgrade() else { return true };
+            let Ok((session, result)) = rx.try_recv() else {
+                return false;
+            };
+            let Some(app) = weak.upgrade() else {
+                return true;
+            };
             if current.borrow().session != session {
                 return true;
             }
@@ -1831,7 +2395,15 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                 Ok((page, snapshot)) => {
                     let mut state = current.borrow_mut();
                     state.next_before = page.get("next_before").and_then(Value::as_i64);
-                    state.has_more = page.get("has_more").and_then(Value::as_bool).unwrap_or(false);
+                    state.next_after = page.get("next_after").and_then(Value::as_i64);
+                    state.has_more = page
+                        .get("has_more")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false);
+                    state.has_newer = page
+                        .get("has_newer")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false);
                     state.page = Some(page);
                     state.model = Some(snapshot);
                     apply_model(&app, &state);
@@ -1852,16 +2424,20 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         // summary rows expand their group instead of selecting; read the
         // group facts first so the state borrow can be dropped before writes
         let group_key = current.borrow().model.as_ref().and_then(|snapshot| {
-            snapshot.records.get(index as usize).filter(|_| index >= 0).map(|record| {
-                (
-                    record.turn,
-                    State::identity_key(record.turn, &record.group),
-                    snapshot
-                        .records
-                        .get(index.max(0) as usize)
-                        .map(|record| snapshot.cells[record.cell].kind),
-                )
-            })
+            snapshot
+                .records
+                .get(index as usize)
+                .filter(|_| index >= 0)
+                .map(|record| {
+                    (
+                        record.turn,
+                        State::identity_key(record.turn, &record.group),
+                        snapshot
+                            .records
+                            .get(index.max(0) as usize)
+                            .map(|record| snapshot.cells[record.cell].kind),
+                    )
+                })
         });
         let mut s = current.borrow_mut();
         let mut open_kind: Option<Option<i32>> = None;
@@ -1974,8 +2550,16 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                 let identities: Vec<String> = s
                     .model
                     .as_ref()
-                    .map(|snapshot| snapshot.requests.iter().map(|r| r.identity.clone()).collect())
-                    .unwrap_or_default();
+                    .map(|snapshot| {
+                        snapshot
+                            .records
+                            .iter()
+                            .map(|record| State::identity_key(record.turn, &record.group))
+                            .collect::<HashSet<_>>()
+                    })
+                    .unwrap_or_default()
+                    .into_iter()
+                    .collect();
                 s.collapsed_assistants.extend(identities);
             }
             app.set_traj_show_calls(s.show_calls);
@@ -2088,7 +2672,10 @@ mod tests {
         assert_eq!(texts.group_label("step:2"), "第 2 步");
         assert_eq!(texts.seconds(None), "未记录");
         assert_eq!(thousands(11049.0), "11,049");
-        assert_eq!(markdown_preview_text("# 标题\n- 甲 **粗** 乙"), "标题\n甲 粗 乙");
+        assert_eq!(
+            markdown_preview_text("# 标题\n- 甲 **粗** 乙"),
+            "标题\n甲 粗 乙"
+        );
     }
 
     #[test]
@@ -2101,7 +2688,8 @@ mod tests {
                  "model_round":1,"started_at":1000.0,"completed_at":1001.0},
                 {"item_id":"assistant-1","turn_id":"turn-1","root_turn_id":"turn-1",
                  "user_round":1,"item_index":1,"created_seq":2,"revision":1,
-                 "kind":"assistant_message","status":"completed","summary":"已完成",
+                "kind":"assistant_message","status":"completed","summary":"已完成",
+                 "stats":{"usage":{"inputTokens":"1234","outputTokens":56,"reasoningTokens":"7"}},
                  "model_round":1,"started_at":1001.0,"completed_at":1002.0}
             ],
             "tiles": [{"bucket":0,"count":4096,"failed":0,"running":0,
@@ -2110,10 +2698,46 @@ mod tests {
             "tile_level":0
         });
         let model = parse_view_page(&page);
-        assert!(model.records.iter().any(|record| model.cells[record.cell].kind == KIND_CONTEXT));
-        assert!(model.spans.iter().any(|span| span.record == usize::MAX && span.lane == 1));
+        assert!(model
+            .records
+            .iter()
+            .any(|record| model.cells[record.cell].kind == KIND_CONTEXT));
+        assert!(model
+            .spans
+            .iter()
+            .any(|span| span.record == usize::MAX && span.lane == 1));
+        let assistant = model
+            .cells
+            .iter()
+            .find(|cell| cell.kind == KIND_MESSAGE)
+            .expect("assistant row");
+        let usage = assistant
+            .usage
+            .expect("bounded page usage must be projected");
+        assert_eq!(usage.input, Some(1234.0));
+        assert_eq!(usage.output, Some(56.0));
+        assert_eq!(usage.think, Some(7.0));
         assert_eq!(model.tl_start, 1_000_000.0);
         assert_eq!(model.tl_end, 1_100_000.0);
+    }
+
+    #[test]
+    fn extracts_camel_case_and_nested_string_token_usage() {
+        let usage = extract_usage(&json!({
+            "data": {"messageStats": {"roundUsage": {
+                "inputTokens": "1200",
+                "cacheReadTokens": 300,
+                "cacheWriteTokens": "40",
+                "outputTokens": 80,
+                "reasoningTokens": "12"
+            }}}
+        }))
+        .expect("nested camelCase usage must surface");
+        assert_eq!(usage.input, Some(1200.0));
+        assert_eq!(usage.cache_read, Some(300.0));
+        assert_eq!(usage.cache_write, Some(40.0));
+        assert_eq!(usage.output, Some(80.0));
+        assert_eq!(usage.think, Some(12.0));
     }
 
     #[test]
@@ -2157,8 +2781,39 @@ mod tests {
         let message = &model.cells[0];
         assert_eq!(message.kind, KIND_MESSAGE);
         assert_eq!(message.thinking_detail.as_deref(), Some("思考中"));
-        let usage = message.usage.expect("nested message_stats.usage must surface");
+        let usage = message
+            .usage
+            .expect("nested message_stats.usage must surface");
         assert_eq!(usage.input, Some(5565.0));
         assert_eq!(usage.output, Some(491.0));
+    }
+
+    #[test]
+    fn merges_bounded_pages_in_both_directions() {
+        let current = json!({
+            "trajectory": (600..1200).map(|seq| json!({"created_seq": seq})).collect::<Vec<_>>(),
+            "has_more": true,
+            "has_newer": false
+        });
+        let older = json!({
+            "trajectory": (400..500).map(|seq| json!({"created_seq": seq})).collect::<Vec<_>>(),
+            "has_more": true
+        });
+        let merged = merge_page_json(&current, &older, true);
+        let rows = merged["trajectory"].as_array().unwrap();
+        assert_eq!(rows.len(), MAX_VIEW_ROWS);
+        assert_eq!(rows.first().unwrap()["created_seq"], 400);
+        assert_eq!(rows.last().unwrap()["created_seq"], 1099);
+        assert_eq!(merged["has_newer"], true);
+
+        let newer = json!({
+            "trajectory": (1000..1100).map(|seq| json!({"created_seq": seq})).collect::<Vec<_>>(),
+            "has_newer": false
+        });
+        let forward = merge_page_json(&merged, &newer, false);
+        let rows = forward["trajectory"].as_array().unwrap();
+        assert_eq!(rows.len(), MAX_VIEW_ROWS);
+        assert_eq!(rows.first().unwrap()["created_seq"], 600);
+        assert_eq!(rows.last().unwrap()["created_seq"], 1099);
     }
 }

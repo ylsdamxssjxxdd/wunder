@@ -28,15 +28,51 @@ impl Anim {
     }
 }
 
-pub const IDLE: Anim = Anim { row: 0, frames: 6, duration_ms: 1100 };
-pub const RUNNING_RIGHT: Anim = Anim { row: 1, frames: 8, duration_ms: 1060 };
-pub const RUNNING_LEFT: Anim = Anim { row: 2, frames: 8, duration_ms: 1060 };
-pub const WAVING: Anim = Anim { row: 3, frames: 4, duration_ms: 700 };
-pub const JUMPING: Anim = Anim { row: 4, frames: 5, duration_ms: 840 };
-pub const FAILED: Anim = Anim { row: 5, frames: 8, duration_ms: 1220 };
-pub const WAITING: Anim = Anim { row: 6, frames: 6, duration_ms: 1010 };
-pub const RUNNING: Anim = Anim { row: 7, frames: 6, duration_ms: 820 };
-pub const REVIEW: Anim = Anim { row: 8, frames: 6, duration_ms: 1030 };
+pub const IDLE: Anim = Anim {
+    row: 0,
+    frames: 6,
+    duration_ms: 1100,
+};
+pub const RUNNING_RIGHT: Anim = Anim {
+    row: 1,
+    frames: 8,
+    duration_ms: 1060,
+};
+pub const RUNNING_LEFT: Anim = Anim {
+    row: 2,
+    frames: 8,
+    duration_ms: 1060,
+};
+pub const WAVING: Anim = Anim {
+    row: 3,
+    frames: 4,
+    duration_ms: 700,
+};
+pub const JUMPING: Anim = Anim {
+    row: 4,
+    frames: 5,
+    duration_ms: 840,
+};
+pub const FAILED: Anim = Anim {
+    row: 5,
+    frames: 8,
+    duration_ms: 1220,
+};
+pub const WAITING: Anim = Anim {
+    row: 6,
+    frames: 6,
+    duration_ms: 1010,
+};
+pub const RUNNING: Anim = Anim {
+    row: 7,
+    frames: 6,
+    duration_ms: 820,
+};
+pub const REVIEW: Anim = Anim {
+    row: 8,
+    frames: 6,
+    duration_ms: 1030,
+};
 
 /// A decoded sheet: `columns` frames wide and `rows` animation rows tall.
 /// Pixels stay in one RGBA buffer; `frame` locates a frame inside it.
@@ -105,7 +141,8 @@ pub fn decode_idle_frames(bytes: &[u8]) -> Option<Vec<SharedPixelBuffer<slint::R
         let target = buffer.make_mut_bytes();
         for line in 0..height {
             let source = line * stride + offset;
-            target[line * pitch..(line + 1) * pitch].copy_from_slice(&sheet.data[source..source + pitch]);
+            target[line * pitch..(line + 1) * pitch]
+                .copy_from_slice(&sheet.data[source..source + pitch]);
         }
         frames.push(buffer);
     }
@@ -242,7 +279,12 @@ mod tests {
         });
         let mut bytes = Vec::new();
         PngEncoder::new(&mut bytes)
-            .write_image(image.as_raw(), image.width(), image.height(), ExtendedColorType::Rgba8)
+            .write_image(
+                image.as_raw(),
+                image.width(),
+                image.height(),
+                ExtendedColorType::Rgba8,
+            )
             .expect("encode test sheet");
         bytes
     }
@@ -255,7 +297,15 @@ mod tests {
 
     /// The full web animation table, in row order.
     const STATES: [Anim; 9] = [
-        IDLE, RUNNING_RIGHT, RUNNING_LEFT, WAVING, JUMPING, FAILED, WAITING, RUNNING, REVIEW,
+        IDLE,
+        RUNNING_RIGHT,
+        RUNNING_LEFT,
+        WAVING,
+        JUMPING,
+        FAILED,
+        WAITING,
+        RUNNING,
+        REVIEW,
     ];
 
     #[test]
@@ -301,7 +351,10 @@ mod tests {
         // The synthetic sheet encodes its coordinates in the pixels, so the
         // top-left of this frame must be that column.
         assert_eq!(sheet.data[offset], (3 * FRAME_WIDTH) as u8);
-        assert_eq!(sheet.data[offset + 1], (WAVING.row * FRAME_HEIGHT as usize) as u8);
+        assert_eq!(
+            sheet.data[offset + 1],
+            (WAVING.row * FRAME_HEIGHT as usize) as u8
+        );
     }
 
     #[test]

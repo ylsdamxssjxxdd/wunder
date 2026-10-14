@@ -260,7 +260,11 @@ mod tests {
         let named: Vec<i32> = grid.months.iter().map(|label| label.month).collect();
         assert_eq!(named.first(), Some(&10), "the window opens on October");
         let unique: std::collections::HashSet<i32> = named.iter().copied().collect();
-        assert_eq!(unique.len(), named.len(), "no month is named twice: {named:?}");
+        assert_eq!(
+            unique.len(),
+            named.len(),
+            "no month is named twice: {named:?}"
+        );
     }
 
     #[test]

@@ -103,13 +103,14 @@ mod imp {
         p_unk: *mut c_void,
     }
 
-    type QueryInterfaceFn = unsafe extern "system" fn(*mut c_void, *const Guid, *mut *mut c_void) -> i32;
+    type QueryInterfaceFn =
+        unsafe extern "system" fn(*mut c_void, *const Guid, *mut *mut c_void) -> i32;
     type AddRefFn = unsafe extern "system" fn(*mut c_void) -> u32;
     type ReleaseFn = unsafe extern "system" fn(*mut c_void) -> u32;
-    type GetDataFn = unsafe extern "system" fn(*mut c_void, *const FormatEtc, *mut StgMedium) -> i32;
+    type GetDataFn =
+        unsafe extern "system" fn(*mut c_void, *const FormatEtc, *mut StgMedium) -> i32;
     type QueryGetDataFn = unsafe extern "system" fn(*mut c_void, *const FormatEtc) -> i32;
-    type EnumFormatEtcFn =
-        unsafe extern "system" fn(*mut c_void, u32, *mut *mut c_void) -> i32;
+    type EnumFormatEtcFn = unsafe extern "system" fn(*mut c_void, u32, *mut *mut c_void) -> i32;
 
     /// `IDataObject` vtable in declaration order: `IUnknown` (3) then
     /// GetData, GetDataHere, QueryGetData, GetCanonicalFormatEtc, SetData,
@@ -122,10 +123,18 @@ mod imp {
         get_data: GetDataFn,
         get_data_here: GetDataFn,
         query_get_data: QueryGetDataFn,
-        get_canonical_format_etc: unsafe extern "system" fn(*mut c_void, *const FormatEtc, *mut FormatEtc) -> i32,
-        set_data: unsafe extern "system" fn(*mut c_void, *const FormatEtc, *mut StgMedium, i32) -> i32,
+        get_canonical_format_etc:
+            unsafe extern "system" fn(*mut c_void, *const FormatEtc, *mut FormatEtc) -> i32,
+        set_data:
+            unsafe extern "system" fn(*mut c_void, *const FormatEtc, *mut StgMedium, i32) -> i32,
         enum_format_etc: EnumFormatEtcFn,
-        d_advise: unsafe extern "system" fn(*mut c_void, *const FormatEtc, u32, *mut c_void, *mut u32) -> i32,
+        d_advise: unsafe extern "system" fn(
+            *mut c_void,
+            *const FormatEtc,
+            u32,
+            *mut c_void,
+            *mut u32,
+        ) -> i32,
         d_unadvise: unsafe extern "system" fn(*mut c_void, u32) -> i32,
         enum_d_advise: unsafe extern "system" fn(*mut c_void, *mut *mut c_void) -> i32,
     }
@@ -357,7 +366,11 @@ mod imp {
         GlobalUnlock(copy);
         std::ptr::write(
             medium,
-            StgMedium { tymed: TYMED_HGLOBAL, h_global: copy, p_unk: std::ptr::null_mut() },
+            StgMedium {
+                tymed: TYMED_HGLOBAL,
+                h_global: copy,
+                p_unk: std::ptr::null_mut(),
+            },
         );
         S_OK
     }

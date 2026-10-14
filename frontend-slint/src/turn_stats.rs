@@ -59,9 +59,11 @@ fn metric(key: &'static str, value: String) -> Metric {
 pub fn metrics(message_stats: &Value) -> Vec<Metric> {
     let mut out = Vec::new();
 
-    if let Some(seconds) =
-        number(message_stats, &["interaction_duration_s", "duration_s", "elapsed_s"])
-            .filter(|value| *value > 0.0)
+    if let Some(seconds) = number(
+        message_stats,
+        &["interaction_duration_s", "duration_s", "elapsed_s"],
+    )
+    .filter(|value| *value > 0.0)
     {
         out.push(metric("duration", duration(seconds)));
     }
@@ -71,7 +73,11 @@ pub fn metrics(message_stats: &Value) -> Vec<Metric> {
     // 上下文占用: how full the window is, not how much this turn spent.
     if let Some(context) = number(
         message_stats,
-        &["contextTokens", "context_occupancy_tokens", "context_tokens"],
+        &[
+            "contextTokens",
+            "context_occupancy_tokens",
+            "context_tokens",
+        ],
     )
     .filter(|value| *value > 0.0)
     {
@@ -129,7 +135,11 @@ pub fn duration(seconds: f64) -> String {
     if seconds < 60.0 {
         format!("{seconds:.1}s")
     } else {
-        format!("{}m {:02}s", (seconds / 60.0).floor(), (seconds % 60.0).round())
+        format!(
+            "{}m {:02}s",
+            (seconds / 60.0).floor(),
+            (seconds % 60.0).round()
+        )
     }
 }
 
@@ -137,12 +147,18 @@ pub fn duration(seconds: f64) -> String {
 /// several rounds streamed and a visible decode speed otherwise; prefer the
 /// average exactly as the thread log's overview does.
 fn speed(stats: &Value) -> Option<f64> {
-    let rounds = number(stats, &["avg_model_round_speed_rounds", "avgModelRoundSpeedRounds"])
-        .unwrap_or_default();
+    let rounds = number(
+        stats,
+        &["avg_model_round_speed_rounds", "avgModelRoundSpeedRounds"],
+    )
+    .unwrap_or_default();
     if rounds > 0.0 {
         number(
             stats,
-            &["avg_model_round_speed_tps", "avg_model_round_decode_speed_tps"],
+            &[
+                "avg_model_round_speed_tps",
+                "avg_model_round_decode_speed_tps",
+            ],
         )
         .filter(|speed| *speed > 0.0)
         .or_else(|| number(stats, &["visible_decode_speed_tps", "decode_speed_tps"]))
@@ -245,9 +261,11 @@ pub fn number(stats: &Value, keys: &[&str]) -> Option<f64> {
 /// Digs the `message_stats` object out of an event payload, whether it sits at
 /// the top level or under the payload's `meta`.
 pub fn message_stats(payload: &Value) -> Option<&Value> {
-    payload
-        .get("message_stats")
-        .or_else(|| payload.get("meta").and_then(|meta| meta.get("message_stats")))
+    payload.get("message_stats").or_else(|| {
+        payload
+            .get("meta")
+            .and_then(|meta| meta.get("message_stats"))
+    })
 }
 
 #[cfg(test)]
@@ -294,7 +312,13 @@ mod tests {
         // Icon keys must match what the web component uses for the same numbers.
         assert_eq!(
             metrics.iter().map(|m| m.icon).collect::<Vec<_>>(),
-            vec!["stopwatch", "gauge-high", "layer-group", "bolt", "screwdriver-wrench"],
+            vec![
+                "stopwatch",
+                "gauge-high",
+                "layer-group",
+                "bolt",
+                "screwdriver-wrench"
+            ],
         );
     }
 

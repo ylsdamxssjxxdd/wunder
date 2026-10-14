@@ -4,6 +4,7 @@ import 'element-plus/dist/index.css';
 import 'katex/dist/katex.min.css';
 import '@/vendor/fontawesome/css/fontawesome.min.css';
 import '@/vendor/fontawesome/css/solid.min.css';
+import '@/vendor/fontawesome/css/regular.min.css';
 import '@/vendor/hula-icon.js';
 import '@/styles/main.css';
 

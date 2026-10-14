@@ -1,13 +1,15 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 slint::include_modules!();
-mod agent_editor;
 mod activity_ui;
+mod agent_editor;
 mod audio_recording;
 pub(crate) mod avatar_assets;
 mod avatar_ui;
-mod companion_sprite;
 mod channel_ui;
+mod code_highlight;
+mod companion_pet;
+mod companion_sprite;
 mod cron_ui;
 mod demo;
 mod demo_entities;
@@ -18,21 +20,14 @@ mod file_icons;
 mod help_browser;
 mod hotkey;
 mod message_blocks;
-mod timeline;
-mod timeline_text;
-mod turn_stats;
-mod code_highlight;
 mod native_chat;
 mod native_interlink;
 mod native_pages;
-mod native_runtime;
 mod native_restore;
+mod native_runtime;
 mod native_smoke;
 mod navigation_ui;
 mod os_drag;
-mod workspace_files;
-mod workspace_ui;
-mod companion_pet;
 mod pet_window;
 mod runtime_settings;
 mod screen_capture;
@@ -43,9 +38,14 @@ mod smoke;
 mod subagent_detail;
 mod terminal_grid;
 mod thread_trajectory;
+mod timeline;
+mod timeline_text;
 mod tool_icons;
 mod tools_ui;
 mod tray;
+mod turn_stats;
+mod workspace_files;
+mod workspace_ui;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     install_slint_platform()?;
@@ -247,10 +247,9 @@ fn install_slint_platform() -> Result<(), Box<dyn std::error::Error>> {
                     // Only the first top-level is the workbench. Auxiliary
                     // windows (screenshot selector and tray notice) keep
                     // their authored sizes.
-                    .with_maximized(maximize_first_window.swap(
-                        false,
-                        std::sync::atomic::Ordering::AcqRel,
-                    ))
+                    .with_maximized(
+                        maximize_first_window.swap(false, std::sync::atomic::Ordering::AcqRel),
+                    )
             }
         })
         .build()?;

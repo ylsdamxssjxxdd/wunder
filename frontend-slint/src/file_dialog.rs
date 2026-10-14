@@ -65,8 +65,8 @@ fn pick_windows() -> Option<String> {
     use std::ffi::OsString;
     use std::os::windows::ffi::{OsStrExt, OsStringExt};
     use windows_sys::Win32::UI::Controls::Dialogs::{
-        GetOpenFileNameW, OFN_FILEMUSTEXIST, OFN_HIDEREADONLY, OFN_NOCHANGEDIR,
-        OFN_PATHMUSTEXIST, OPENFILENAMEW,
+        GetOpenFileNameW, OFN_FILEMUSTEXIST, OFN_HIDEREADONLY, OFN_NOCHANGEDIR, OFN_PATHMUSTEXIST,
+        OPENFILENAMEW,
     };
 
     let filter = OsString::from("补充包\0*.zip;*.tar.gz;*.tgz;*.tar\0所有文件\0*.*\0\0")
@@ -88,7 +88,9 @@ fn pick_windows() -> Option<String> {
         .iter()
         .position(|unit| *unit == 0)
         .unwrap_or(file_buffer.len());
-    let path = OsString::from_wide(&file_buffer[..end]).to_string_lossy().into_owned();
+    let path = OsString::from_wide(&file_buffer[..end])
+        .to_string_lossy()
+        .into_owned();
     if path.trim().is_empty() {
         None
     } else {
@@ -101,8 +103,8 @@ fn pick_windows_skill() -> Option<String> {
     use std::ffi::OsString;
     use std::os::windows::ffi::{OsStrExt, OsStringExt};
     use windows_sys::Win32::UI::Controls::Dialogs::{
-        GetOpenFileNameW, OFN_FILEMUSTEXIST, OFN_HIDEREADONLY, OFN_NOCHANGEDIR,
-        OFN_PATHMUSTEXIST, OPENFILENAMEW,
+        GetOpenFileNameW, OFN_FILEMUSTEXIST, OFN_HIDEREADONLY, OFN_NOCHANGEDIR, OFN_PATHMUSTEXIST,
+        OPENFILENAMEW,
     };
 
     let filter = OsString::from(concat!(
@@ -126,7 +128,9 @@ fn pick_windows_skill() -> Option<String> {
         .iter()
         .position(|unit| *unit == 0)
         .unwrap_or(file_buffer.len());
-    let path = OsString::from_wide(&file_buffer[..end]).to_string_lossy().into_owned();
+    let path = OsString::from_wide(&file_buffer[..end])
+        .to_string_lossy()
+        .into_owned();
     if path.trim().is_empty() {
         None
     } else {
@@ -139,8 +143,8 @@ fn pick_windows_companion() -> Option<String> {
     use std::ffi::OsString;
     use std::os::windows::ffi::{OsStrExt, OsStringExt};
     use windows_sys::Win32::UI::Controls::Dialogs::{
-        GetOpenFileNameW, OFN_FILEMUSTEXIST, OFN_HIDEREADONLY, OFN_NOCHANGEDIR,
-        OFN_PATHMUSTEXIST, OPENFILENAMEW,
+        GetOpenFileNameW, OFN_FILEMUSTEXIST, OFN_HIDEREADONLY, OFN_NOCHANGEDIR, OFN_PATHMUSTEXIST,
+        OPENFILENAMEW,
     };
 
     let filter = OsString::from("形象包\0*.zip\0所有文件\0*.*\0\0")
@@ -161,7 +165,9 @@ fn pick_windows_companion() -> Option<String> {
         .iter()
         .position(|unit| *unit == 0)
         .unwrap_or(file_buffer.len());
-    let path = OsString::from_wide(&file_buffer[..end]).to_string_lossy().into_owned();
+    let path = OsString::from_wide(&file_buffer[..end])
+        .to_string_lossy()
+        .into_owned();
     if path.trim().is_empty() {
         None
     } else {
@@ -174,8 +180,8 @@ fn pick_windows_executable(filter_label: &str) -> Option<String> {
     use std::ffi::OsString;
     use std::os::windows::ffi::{OsStrExt, OsStringExt};
     use windows_sys::Win32::UI::Controls::Dialogs::{
-        GetOpenFileNameW, OFN_FILEMUSTEXIST, OFN_HIDEREADONLY, OFN_NOCHANGEDIR,
-        OFN_PATHMUSTEXIST, OPENFILENAMEW,
+        GetOpenFileNameW, OFN_FILEMUSTEXIST, OFN_HIDEREADONLY, OFN_NOCHANGEDIR, OFN_PATHMUSTEXIST,
+        OPENFILENAMEW,
     };
 
     let executables = OsString::from("可执行文件\0*.exe;*.bat;*.cmd\0所有文件\0*.*\0\0")
@@ -202,7 +208,9 @@ fn pick_windows_executable(filter_label: &str) -> Option<String> {
         .iter()
         .position(|unit| *unit == 0)
         .unwrap_or(file_buffer.len());
-    let path = OsString::from_wide(&file_buffer[..end]).to_string_lossy().into_owned();
+    let path = OsString::from_wide(&file_buffer[..end])
+        .to_string_lossy()
+        .into_owned();
     if path.trim().is_empty() {
         None
     } else {
@@ -220,7 +228,10 @@ fn pick_linux() -> Option<String> {
                 "--file-filter=补充包 | *.zip *.tar.gz *.tgz *.tar".to_string(),
             ],
         ),
-        ("kdialog", vec!["--getopenfilename".to_string(), ". *.zip".to_string()]),
+        (
+            "kdialog",
+            vec!["--getopenfilename".to_string(), ". *.zip".to_string()],
+        ),
     ] {
         if let Ok(output) = std::process::Command::new(program).args(&args).output() {
             if output.status.success() {
@@ -276,10 +287,7 @@ fn pick_linux_companion() -> Option<String> {
         ),
         (
             "kdialog",
-            vec![
-                "--getopenfilename".to_string(),
-                ". *.zip".to_string(),
-            ],
+            vec!["--getopenfilename".to_string(), ". *.zip".to_string()],
         ),
     ] {
         if let Ok(output) = std::process::Command::new(program).args(&args).output() {
@@ -304,7 +312,10 @@ fn pick_linux_executable(tool: &str, filter_label: &str) -> Option<String> {
                 format!("--file-filter={filter_label} | *.{tool}"),
             ],
         ),
-        ("kdialog", vec!["--getopenfilename".to_string(), format!(". *.{tool}")]),
+        (
+            "kdialog",
+            vec!["--getopenfilename".to_string(), format!(". *.{tool}")],
+        ),
     ] {
         if let Ok(output) = std::process::Command::new(program).args(&args).output() {
             if output.status.success() {
@@ -383,8 +394,8 @@ fn pick_windows_attachments() -> Vec<String> {
     use std::ffi::OsString;
     use std::os::windows::ffi::{OsStrExt, OsStringExt};
     use windows_sys::Win32::UI::Controls::Dialogs::{
-        GetOpenFileNameW, OFN_ALLOWMULTISELECT, OFN_EXPLORER, OFN_FILEMUSTEXIST,
-        OFN_HIDEREADONLY, OFN_NOCHANGEDIR, OFN_PATHMUSTEXIST, OPENFILENAMEW,
+        GetOpenFileNameW, OFN_ALLOWMULTISELECT, OFN_EXPLORER, OFN_FILEMUSTEXIST, OFN_HIDEREADONLY,
+        OFN_NOCHANGEDIR, OFN_PATHMUSTEXIST, OPENFILENAMEW,
     };
 
     // An Explorer-style multi-select returns "directory\0name1\0name2\0\0";
@@ -521,7 +532,9 @@ fn save_windows_file_dialog(title: &str, default_name: &str) -> Option<String> {
         .iter()
         .position(|unit| *unit == 0)
         .unwrap_or(file_buffer.len());
-    let path = OsString::from_wide(&file_buffer[..end]).to_string_lossy().into_owned();
+    let path = OsString::from_wide(&file_buffer[..end])
+        .to_string_lossy()
+        .into_owned();
     if path.trim().is_empty() {
         None
     } else {
@@ -544,10 +557,7 @@ fn save_linux_file(title: &str, default_name: &str) -> Option<String> {
         ),
         (
             "kdialog",
-            vec![
-                "--getsavefilename".to_string(),
-                format!(". {default_name}"),
-            ],
+            vec!["--getsavefilename".to_string(), format!(". {default_name}")],
         ),
     ] {
         if let Ok(output) = std::process::Command::new(program).args(&args).output() {
@@ -603,8 +613,13 @@ fn pick_windows_directory(title: &str) -> Option<String> {
     if ok == 0 {
         return None;
     }
-    let end = path.iter().position(|unit| *unit == 0).unwrap_or(path.len());
-    let picked = OsString::from_wide(&path[..end]).to_string_lossy().into_owned();
+    let end = path
+        .iter()
+        .position(|unit| *unit == 0)
+        .unwrap_or(path.len());
+    let picked = OsString::from_wide(&path[..end])
+        .to_string_lossy()
+        .into_owned();
     if picked.trim().is_empty() {
         None
     } else {

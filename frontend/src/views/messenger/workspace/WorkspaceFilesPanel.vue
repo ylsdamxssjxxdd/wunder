@@ -1299,18 +1299,14 @@ const handleEditorSaved = async (payload?: { path?: string }) => {
 // ------------------------------------------------------------ clear workspace
 
 const handleClearWorkspace = async () => {
-  const phrase = t('messenger.filesArea.clearPhrase');
   try {
-    await ElMessageBox.prompt(
-      `${t('messenger.filesArea.clearWarning')} ${t('messenger.filesArea.clearPrompt', { phrase })}`,
+    await ElMessageBox.confirm(
+      t('messenger.filesArea.clearWarning'),
       t('messenger.filesArea.clear'),
       {
         confirmButtonText: t('common.confirm'),
         cancelButtonText: t('common.cancel'),
-        type: 'warning',
-        inputPlaceholder: phrase,
-        inputValidator: (input: string) =>
-          String(input || '').trim() === phrase ? true : t('messenger.filesArea.clearMismatch')
+        type: 'warning'
       }
     );
   } catch (error) {

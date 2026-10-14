@@ -10,7 +10,7 @@ use crate::{
     avatar_assets, companion_sprite, AvatarColorChip, AvatarDialogState, AvatarOption,
     CompanionCard, MainWindow,
 };
-use slint::{ComponentHandle, Color, Model, ModelRc, VecModel};
+use slint::{Color, ComponentHandle, Model, ModelRc, VecModel};
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
@@ -224,7 +224,10 @@ pub(crate) fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
             state.set_companion_show(true);
             state.set_companion_hints(true);
             state.set_companion_scale_index(scale_index(1.0));
-            set_color(&state, wunder_server::worker_card_settings::DEFAULT_AGENT_AVATAR_COLOR);
+            set_color(
+                &state,
+                wunder_server::worker_card_settings::DEFAULT_AGENT_AVATAR_COLOR,
+            );
             show_page(&state, page_for_key(avatar_assets::DEFAULT_AVATAR_KEY));
             state.set_preview_image(static_preview_image(avatar_assets::DEFAULT_AVATAR_KEY));
             state.set_preview_frame(slint::Image::default());
@@ -402,7 +405,10 @@ fn option_keys() -> Vec<String> {
 
 fn page_for_key(key: &str) -> i32 {
     let keys = option_keys();
-    let position = keys.iter().position(|candidate| candidate == key).unwrap_or(0);
+    let position = keys
+        .iter()
+        .position(|candidate| candidate == key)
+        .unwrap_or(0);
     (position / PAGE_SIZE + 1) as i32
 }
 
@@ -448,7 +454,12 @@ fn load_companions() {
                     if count > 0 {
                         // Warm the cache for the visible rows so the library and
                         // the agent list animate without a second round-trip.
-                        for id in state.get_companions().iter().take(4).map(|card| card.id.to_string()) {
+                        for id in state
+                            .get_companions()
+                            .iter()
+                            .take(4)
+                            .map(|card| card.id.to_string())
+                        {
                             companion_frame(id.as_str(), 0);
                         }
                     }
