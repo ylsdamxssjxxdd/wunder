@@ -187,7 +187,7 @@ jobs:
           gh release create nightly \
             --repo "${GITHUB_REPOSITORY}" \
             --title "Wunder Desktop（Win7 x86 / Ubuntu 18.04 x86_64 / Ubuntu 18.04 ARM64）" \
-            --notes "本次发布仅包含三个原生 Slint 桌面程序：Windows 7 32 位、Ubuntu 18.04 x86_64、Ubuntu 18.04 ARM64。" \
+            --notes "发布包含三个桌面程序：Windows 7 32 位、Ubuntu 18.04 x86_64、Ubuntu 18.04 ARM64。" \
             --prerelease --latest=false --target "${GITHUB_SHA}"
           find release-assets -type f -maxdepth 2 -print0 | while IFS= read -r -d '' asset; do
             gh release upload nightly "$asset" --repo "${GITHUB_REPOSITORY}" --clobber

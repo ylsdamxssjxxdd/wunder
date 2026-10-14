@@ -4515,3 +4515,599 @@ async fn the_search_row_carries_the_query_and_the_counts_at_every_sampled_width(
         "and the shed row stays inside twenty columns: {text:?}"
     );
 }
+
+// ------------------------------------------------ transcript search: presentation
+//
+// A collected hit has to be *readable*: the frame marks the columns the query covers, the hit
+// the reader stepped to carries more weight than the rest, a hit a fold is hiding opens that
+// card for the length of the search, and an open pointer selection owns the text it covers.
+// Every claim below is about cells a real `ui::draw` painted, and about modifiers rather than
+// colours, so the same reading holds when `NO_COLOR` is set.
+
+use super::transcript_search::SEARCH_SCAN_BYTES;
+
+/// One cell as the terminal received it: what is drawn there, and the two weights a mark can
+/// put on it. Reversed video is the mark itself, bold is the extra weight the accepted hit
+/// carries. No colour is read, because a colour is what `NO_COLOR` takes away.
+struct FrameCell {
+    symbol: String,
+    marked: bool,
+    heavy: bool,
+}
+
+/// A drawn frame, kept column by column, with the rows the transcript band occupies. A footer
+/// that echoes a card's text and the search row that echoes the query are outside that range,
+/// so a mark found inside it is a mark on the document.
+struct Frame {
+    band: std::ops::Range<usize>,
+    rows: Vec<Vec<FrameCell>>,
+}
+
+impl Frame {
+    fn capture(app: &mut TuiApp, width: u16, height: u16) -> Self {
+        use ratatui::style::Modifier;
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("terminal");
+        terminal
+            .draw(|f| crate::tui::ui::draw(f, app))
+            .expect("draw");
+        let buffer = terminal.backend().buffer().clone();
+        let rows = (0..height)
+            .map(|row| {
+                (0..width)
+                    .map(|column| {
+                        let cell = &buffer[(column, row)];
+                        FrameCell {
+                            symbol: cell.symbol().to_string(),
+                            marked: cell.modifier.contains(Modifier::REVERSED),
+                            heavy: cell.modifier.contains(Modifier::BOLD),
+                        }
+                    })
+                    .collect()
+            })
+            .collect::<Vec<_>>();
+        let area = app.transcript_mouse_region;
+        let top = usize::from(area.y).min(usize::from(height));
+        let bottom = (top + usize::from(area.height)).min(usize::from(height));
+        Self {
+            band: top..bottom,
+            rows,
+        }
+    }
+
+    /// The text of one frame row, trailing padding shed.
+    fn text(&self, row: usize) -> String {
+        self.rows[row]
+            .iter()
+            .map(|cell| cell.symbol.as_str())
+            .collect::<String>()
+            .trim_end()
+            .to_string()
+    }
+
+    fn rows_text(&self) -> Vec<String> {
+        (0..self.rows.len()).map(|row| self.text(row)).collect()
+    }
+
+    /// The document rows the band is showing, empty padding shed. Two captures of the same
+    /// document read the same whether or not anything is marked — and only the band is
+    /// compared, because a frame that gained a status row lays the transcript out taller or
+    /// shorter than the frame before it.
+    fn card_rows(&self) -> Vec<String> {
+        self.band
+            .clone()
+            .map(|row| self.text(row))
+            .filter(|text| !text.is_empty())
+            .collect()
+    }
+
+    /// Every run of `needle` inside the band: the row it is on, the column it starts at, and
+    /// the marks the cells that cover it carry. The needles a fixture writes are one-column
+    /// characters, so a column and a character index are the same number here.
+    fn runs(&self, needle: &str) -> Vec<(usize, usize, Vec<(bool, bool)>)> {
+        let mut found = Vec::new();
+        let needle_chars: Vec<char> = needle.chars().collect();
+        for row in self.band.clone() {
+            let cells = &self.rows[row];
+            let parts = cells
+                .iter()
+                .map(|cell| cell.symbol.as_str())
+                .collect::<Vec<_>>();
+            let mut start = 0usize;
+            while start + needle_chars.len() <= parts.len() {
+                if parts[start..start + needle_chars.len()]
+                    .iter()
+                    .map(|symbol| symbol.chars().next())
+                    .eq(needle_chars.iter().copied().map(Some))
+                {
+                    found.push((
+                        row,
+                        start,
+                        cells[start..start + needle_chars.len()]
+                            .iter()
+                            .map(|cell| (cell.marked, cell.heavy))
+                            .collect(),
+                    ));
+                }
+                start += 1;
+            }
+        }
+        found
+    }
+
+    /// Whether nothing in the band carries a mark at all.
+    fn is_clean(&self) -> bool {
+        self.band
+            .clone()
+            .all(|row| self.rows[row].iter().all(|cell| !cell.marked))
+    }
+}
+
+/// A one-line drag across the row that shows `needle`, from its first column to the last
+/// column of the word a search would be marking. Returns what the release put on the
+/// clipboard, so a test can compare the copy with and without a search painting behind it.
+fn drag_over_run(app: &mut TuiApp, needle: &str, width: u16, height: u16) -> String {
+    use crossterm::event::{MouseButton, MouseEventKind};
+    let frame = Frame::capture(app, width, height);
+    let (row, start) = frame
+        .runs(needle)
+        .first()
+        .map(|(row, start, _)| (*row, *start))
+        .unwrap_or_else(|| panic!("{needle} is not on a transcript row: {:?}", frame.rows_text()));
+    let end = (start + needle.chars().count()) as u16;
+    let region = app.transcript_mouse_region;
+    ClipboardSeam::drain();
+    mouse(
+        app,
+        MouseEventKind::Down(MouseButton::Left),
+        row,
+        region.x + start as u16,
+    );
+    mouse(app, MouseEventKind::Drag(MouseButton::Left), row, region.x + end);
+    mouse(app, MouseEventKind::Up(MouseButton::Left), row, region.x + end);
+    ClipboardSeam::copied()
+        .pop()
+        .unwrap_or_else(|| panic!("the release copied the drag"))
+}
+
+/// A document with one card that hides most of itself: a finished thinking block, whose folded
+/// rows are a head plus two hint rows, and a tail card with nothing to fold.
+fn folded_thinking_card(app: &mut TuiApp) {
+    app.logs.clear();
+    app.raw_output = false;
+    app.reset_scrollback_archive();
+    let body = (1..=12)
+        .map(|index| format!("reasoning line {index}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    app.push_log(LogKind::Reasoning, body);
+    app.push_log(LogKind::Assistant, "a tail card with no query".to_string());
+    app.transcript_offset_from_bottom = 0;
+    app.transcript_selected = None;
+    app.expanded_cards.clear();
+    app.search_expanded_cards.clear();
+}
+
+/// The frame marks every run the query covers, and the run the reader stepped to carries more
+/// weight: reversed video everywhere, bold on the accepted hit only, and the weight moves when
+/// Enter moves. A mark never moves a character, and leaving the search paints nothing.
+#[tokio::test]
+async fn the_frame_marks_every_hit_and_the_accepted_one_carries_more_weight() {
+    let root = TempRoot::new("search_mark_weight");
+    let mut app = fixture_app(root.path()).await;
+    raw_single_line_cards(
+        &mut app,
+        &[
+            "gate item-1 value",
+            "a card with nothing to find",
+            "gate item-2 value",
+        ],
+    );
+    let plain = Frame::capture(&mut app, 80, 24);
+    assert!(plain.is_clean(), "nothing is marked before a search");
+    let plain_rows = plain.card_rows();
+    open_search(&mut app).await;
+    type_query(&mut app, "gate", 80, 24).await;
+    assert_eq!(app.transcript_search.matches.len(), 2, "one hit per card");
+
+    let marked = Frame::capture(&mut app, 80, 24);
+    assert_eq!(
+        marked.card_rows(),
+        plain_rows,
+        "a mark is a style, never a rewrite"
+    );
+    let runs = marked.runs("gate");
+    assert_eq!(runs.len(), 2, "both hits are on screen: {runs:?}");
+    for (row, start, cells) in &runs {
+        assert!(
+            cells.iter().all(|(cell_marked, _)| *cell_marked),
+            "row {row} column {start} reads as a hit: {cells:?}"
+        );
+        assert!(
+            cells.iter().all(|(_, heavy)| !heavy),
+            "nothing is accepted yet, so nothing is heavier: {cells:?}"
+        );
+        assert!(
+            !marked.rows[*row][start + cells.len()].marked,
+            "the mark is the run the query covers, not the row it sits on: row {row}"
+        );
+    }
+
+    app.on_key(key(KeyCode::Enter))
+        .await
+        .expect("step to the first hit");
+    let runs = Frame::capture(&mut app, 80, 24).runs("gate");
+    assert!(
+        runs[0].2.iter().all(|(cell_marked, heavy)| *cell_marked && *heavy),
+        "the accepted hit is the mark plus weight: {:?}",
+        runs[0].2
+    );
+    assert!(
+        runs[1].2.iter().all(|(cell_marked, heavy)| *cell_marked && !heavy),
+        "and every other hit keeps the plain mark: {:?}",
+        runs[1].2
+    );
+
+    // Shift+Enter walks back, and the weight goes with it.
+    app.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT))
+        .await
+        .expect("step back");
+    let runs = Frame::capture(&mut app, 80, 24).runs("gate");
+    assert!(
+        runs[0].2.iter().all(|(_, heavy)| !heavy),
+        "the hit the reader left is plain again: {:?}",
+        runs[0].2
+    );
+    assert!(
+        runs[1].2.iter().all(|(cell_marked, heavy)| *cell_marked && *heavy),
+        "the weight is on the hit they are standing on now: {:?}",
+        runs[1].2
+    );
+
+    // The frame budget the scan is bounded by is still the one the scan runs on, so a mark
+    // cannot be paid for by reading the whole document in a frame.
+    assert_eq!(app.transcript_search.frame_budget, SEARCH_SCAN_BYTES);
+
+    app.on_key(key(KeyCode::Esc)).await.expect("leave the search");
+    let after = Frame::capture(&mut app, 80, 24);
+    assert!(after.is_clean(), "a finished search paints nothing");
+    assert_eq!(after.card_rows(), plain_rows, "the frame reads as it did");
+}
+
+/// An open pointer selection owns the text it covers: a hit inside it shows the selection's
+/// mark and none of the search's weight, because the selection is what the reader copies. The
+/// copy is the same text with a search up as with none, and a hit the selection never reaches
+/// still shows.
+#[tokio::test]
+async fn an_open_selection_paints_over_a_hit_and_copies_the_same_text() {
+    let root = TempRoot::new("search_mark_selection");
+    let _clipboard_turn = ClipboardSeam::arm();
+
+    // The same gesture on the same document, once with no search and once with a search
+    // painting behind it: the clipboard cannot tell the difference.
+    let mut plain = fixture_app(root.path()).await;
+    raw_single_line_cards(&mut plain, &["gate item-1 value", "gate item-2 value"]);
+    let copied_plain = drag_over_run(&mut plain, "gate", 80, 24);
+
+    let mut app = fixture_app(root.path()).await;
+    raw_single_line_cards(&mut app, &["gate item-1 value", "gate item-2 value"]);
+    let before_rows = Frame::capture(&mut app, 80, 24).card_rows();
+    open_search(&mut app).await;
+    type_query(&mut app, "gate", 80, 24).await;
+    app.on_key(key(KeyCode::Enter))
+        .await
+        .expect("step to the first hit");
+    let runs = Frame::capture(&mut app, 80, 24).runs("gate");
+    assert!(
+        runs[0].2.iter().all(|(cell_marked, heavy)| *cell_marked && *heavy),
+        "the accepted hit carries its weight before anything is picked up: {:?}",
+        runs[0].2
+    );
+
+    let copied_searched = drag_over_run(&mut app, "gate", 80, 24);
+    assert_eq!(
+        copied_searched, copied_plain,
+        "the copy is the selection's text; a search mark never adds to it"
+    );
+
+    let after = Frame::capture(&mut app, 80, 24);
+    let runs = after.runs("gate");
+    assert!(
+        runs[0].2.iter().all(|(cell_marked, _)| *cell_marked),
+        "the picked-up text is still marked: {:?}",
+        runs[0].2
+    );
+    assert!(
+        runs[0].2.iter().all(|(_, heavy)| !heavy),
+        "and the selection is the only weight on it — the mark that wins is the one the \
+         reader copies: {:?}",
+        runs[0].2
+    );
+    assert!(
+        runs[1].2.iter().all(|(cell_marked, _)| *cell_marked),
+        "the hit the selection never reaches keeps its mark"
+    );
+    assert_eq!(
+        after.card_rows(),
+        before_rows,
+        "and neither mark moved a character"
+    );
+}
+
+/// A hit the fold is hiding opens its card for as long as the search lasts, and the card is
+/// folded again on the way out. The reader's own disclosure ledger is never written.
+#[tokio::test]
+async fn a_hit_behind_a_fold_opens_its_card_and_the_search_closes_it_again() {
+    let root = TempRoot::new("search_reveal");
+    let mut app = fixture_app(root.path()).await;
+    folded_thinking_card(&mut app);
+    let folded = draw_rows(&mut app, 80, 24);
+    assert!(
+        !folded.iter().any(|row| row.contains("reasoning line 12")),
+        "the card starts folded: {folded:?}"
+    );
+    assert!(app.expanded_cards.is_empty(), "the reader opened nothing");
+
+    open_search(&mut app).await;
+    type_query(&mut app, "show", 80, 24).await;
+    assert_eq!(
+        app.transcript_search.matches.len(),
+        1,
+        "the hint row a fold leaves behind is the one hit in the document"
+    );
+    assert!(
+        app.search_expanded_cards.is_empty(),
+        "a hit is not opened until the reader walks to it"
+    );
+
+    app.on_key(key(KeyCode::Enter))
+        .await
+        .expect("step to the hit");
+    assert_eq!(
+        app.search_expanded_cards.len(),
+        1,
+        "the search opened the card it walked into"
+    );
+    assert!(
+        app.expanded_cards.is_empty(),
+        "and it never wrote the reader's own ledger"
+    );
+    let opened = draw_rows(&mut app, 80, 24);
+    assert!(
+        opened.iter().any(|row| row.contains("reasoning line 12")),
+        "the rest of the card is readable now: {opened:?}"
+    );
+
+    // A fold the reader closes by hand takes the borrowed opening back with it: two ledgers
+    // must not keep a card open behind their back. The disclosure row is the pointer's entry
+    // to the same control the arrow keys answer, and it stays live while the editor owns the
+    // keyboard.
+    let (row, _) = {
+        let frame = Frame::capture(&mut app, 80, 24);
+        let runs = frame.runs("Show");
+        (runs[0].0, runs[0].1)
+    };
+    use crossterm::event::{MouseButton, MouseEventKind};
+    for _ in 0..2 {
+        mouse(&mut app, MouseEventKind::Down(MouseButton::Left), row, 2);
+        mouse(&mut app, MouseEventKind::Up(MouseButton::Left), row, 2);
+        let _ = draw_rows(&mut app, 80, 24);
+    }
+    assert!(
+        app.expanded_cards.is_empty(),
+        "the reader's own ledger is back to nothing"
+    );
+    assert!(
+        app.search_expanded_cards.is_empty(),
+        "and the opening the search borrowed went with the hand that closed it"
+    );
+    let closed = draw_rows(&mut app, 80, 24);
+    assert!(
+        !closed.iter().any(|row| row.contains("reasoning line 12")),
+        "the card is folded again under their hand: {closed:?}"
+    );
+
+    app.on_key(key(KeyCode::Esc)).await.expect("leave the search");
+    assert!(
+        app.search_expanded_cards.is_empty(),
+        "an opening the search borrowed is handed back"
+    );
+    assert!(
+        app.expanded_cards.is_empty(),
+        "the reader's ledger is empty, as it always was"
+    );
+    let refolded = draw_rows(&mut app, 80, 24);
+    assert!(
+        !refolded.iter().any(|row| row.contains("reasoning line 12")),
+        "the card is folded again: {refolded:?}"
+    );
+}
+
+/// The card goes, the borrowed opening goes with it: a trimmed card leaves nothing in the
+/// search's ledger to point at whatever now sits where it was.
+#[tokio::test]
+async fn a_trimmed_card_takes_its_borrowed_opening_with_it() {
+    let root = TempRoot::new("search_reveal_trim");
+    let mut app = fixture_app(root.path()).await;
+    folded_thinking_card(&mut app);
+    open_search(&mut app).await;
+    type_query(&mut app, "show", 80, 24).await;
+    app.on_key(key(KeyCode::Enter))
+        .await
+        .expect("step to the hit");
+    let opened = *app
+        .search_expanded_cards
+        .iter()
+        .next()
+        .expect("the search opened the card");
+    assert_eq!(
+        Some(opened),
+        app.logs.first().map(|entry| entry.cell_id),
+        "and it is the card the hit is on"
+    );
+
+    app.pop_oldest_log_entry();
+    assert!(
+        app.search_expanded_cards.is_empty(),
+        "the card is gone, so the opening it held is gone: {:?}",
+        app.search_expanded_cards
+    );
+    assert!(
+        app.expanded_cards.is_empty(),
+        "and the reader's ledger never heard about either"
+    );
+    let frame = Frame::capture(&mut app, 80, 24);
+    assert!(
+        frame.is_clean(),
+        "nothing stale is left marked: {:?}",
+        frame.rows_text()
+    );
+    assert!(
+        !frame
+            .rows_text()
+            .iter()
+            .any(|row| row.contains("reasoning line")),
+        "and nothing of the trimmed card is left on screen: {:?}",
+        frame.rows_text()
+    );
+}
+
+/// Opening a card moves the lines under the hit it opened for, so the scan that found that hit
+/// is retired and run again — and the mark the reader walks to lands on the query's own text,
+/// not on whatever the old numbering put at the old line.
+#[tokio::test]
+async fn opening_a_card_for_a_hit_renumbers_the_hits_and_the_mark_follows_the_text() {
+    let root = TempRoot::new("search_refold");
+    let mut app = fixture_app(root.path()).await;
+    folded_thinking_card(&mut app);
+    open_search(&mut app).await;
+    type_query(&mut app, "show", 80, 24).await;
+    let folded = Frame::capture(&mut app, 80, 24);
+    let runs = folded.runs("Show");
+    assert_eq!(runs.len(), 1, "the hint row is the hit: {runs:?}");
+    assert!(
+        runs[0].2.iter().all(|(cell_marked, _)| *cell_marked),
+        "and it is marked where it stands: {:?}",
+        runs[0].2
+    );
+    let hint_before = folded.text(runs[0].0);
+    assert!(
+        hint_before.contains("Show thinking"),
+        "folded, the hint row offers to open: {hint_before}"
+    );
+
+    app.on_key(key(KeyCode::Enter))
+        .await
+        .expect("step to the hit, opening the card");
+    // The frame the step painted is the frame the fold retired: its hits are the old
+    // numbering's, and a hit the text no longer agrees with paints nothing rather than marking
+    // the wrong row. The rescan lands on the next frame, and the mark comes back on the text.
+    let _ = draw_rows(&mut app, 80, 24);
+    let opened = Frame::capture(&mut app, 80, 24);
+    let runs = opened.runs("Show");
+    assert_eq!(
+        runs.len(),
+        1,
+        "the query still names one row, now the one that closes the card: {runs:?}"
+    );
+    let hint_after = opened.text(runs[0].0);
+    assert!(
+        hint_after.contains("Show less"),
+        "the card is open, so the hint row reads the other way: {hint_after}"
+    );
+    assert!(
+        runs[0].2.iter().all(|(cell_marked, _)| *cell_marked),
+        "the mark is on that row, the one that carries the query: {:?}",
+        runs[0].2
+    );
+    assert!(
+        !opened
+            .runs("reasoning")
+            .into_iter()
+            .any(|(_, _, cells)| cells.iter().any(|(cell_marked, _)| *cell_marked)),
+        "and not on one body row the new numbering put at the old line index"
+    );
+
+    // The reader's place survives the rescan rather than resetting under their cursor.
+    assert_eq!(
+        app.transcript_search.current,
+        Some(0),
+        "the accepted hit came back with the rebuilt list"
+    );
+    assert!(
+        app.transcript_search.resume.is_none(),
+        "and the place it was handed back from is spent"
+    );
+
+    // A scan the fold retired is a scan that ran again on the frame budget, not on the whole
+    // document at once.
+    assert_eq!(app.transcript_search.frame_budget, SEARCH_SCAN_BYTES);
+    // And the numbering really did move, asserted by text because a line number means nothing
+    // across a fold: the row the folded hint occupied is a body row of the opened card now,
+    // and a body row carries no mark.
+    let body = opened.runs("reasoning line 5");
+    assert_eq!(
+        body.len(),
+        1,
+        "the opened card shows the row the hint used to be numbered against: {:?}",
+        opened.rows_text()
+    );
+    assert!(
+        body[0].2.iter().all(|(cell_marked, _)| !*cell_marked),
+        "and nothing marks it: {:?}",
+        body[0].2
+    );
+}
+
+/// A query and an opened card at every width the client lays out for: the transcript never
+/// spills past the columns the terminal gave it, the draft is never squeezed out, and the band
+/// keeps its row.
+#[tokio::test]
+async fn a_query_and_an_opened_card_stay_inside_every_sampled_width() {
+    let root = TempRoot::new("search_reveal_widths");
+    for width in [20u16, 24, 40, 80, 120] {
+        let mut app = fixture_app(root.path()).await;
+        folded_thinking_card(&mut app);
+        app.push_log(
+            LogKind::Assistant,
+            "value with a longer body that has to wrap at every one of these widths, and keeps \
+             going so even twenty columns has several rows of it to lay out"
+                .to_string(),
+        );
+        open_search(&mut app).await;
+        type_query(&mut app, "show", width, 24).await;
+        app.on_key(key(KeyCode::Enter))
+            .await
+            .expect("step to the hit, opening the card");
+        assert_eq!(
+            app.search_expanded_cards.len(),
+            1,
+            "the card is open at {width} columns"
+        );
+        let rows = draw_rows(&mut app, width, 24);
+        assert!(
+            rows.iter()
+                .all(|row| UnicodeWidthStr::width(row.as_str()) <= usize::from(width)),
+            "no row may exceed the frame at {width} columns: {rows:?}"
+        );
+        assert!(
+            app.input_hit_area.height >= 1,
+            "the draft keeps a row of its own at {width} columns: {:?}",
+            app.input_hit_area
+        );
+        let area = app.gap_hit_area();
+        assert!(
+            !area.is_empty() && area.x + area.width <= width,
+            "the search row is up and inside the frame at {width} columns: {area:?}"
+        );
+        let frame = Frame::capture(&mut app, width, 24);
+        let runs = frame.runs("Show");
+        assert!(
+            runs.iter()
+                .all(|(row, start, cells)| *row < 24
+                    && start + cells.len() <= usize::from(width)
+                    && cells.iter().all(|(cell_marked, _)| *cell_marked)),
+            "a mark stays inside the frame and inside the text it marks at {width} columns: \
+             {runs:?}"
+        );
+    }
+}

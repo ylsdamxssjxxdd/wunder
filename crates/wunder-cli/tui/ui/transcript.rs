@@ -17,6 +17,10 @@ pub(crate) fn draw(frame: &mut Frame, area: Rect, viewport: Rect, app: &mut TuiA
         .iter()
         .map(text_tabs::expand_line)
         .collect();
+    // Order matters and is the priority: a search mark is painted first and the pointer
+    // selection after it, so where both reach the same text the reader copies what they see
+    // marked as selected. A mark is paint only; the selection is the clipboard.
+    app.paint_transcript_search_marks(lines.as_mut_slice());
     app.paint_transcript_selection(lines.as_mut_slice());
     let transcript = Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false });
     frame.render_widget(transcript.scroll((rendered.local_scroll, 0)), area);

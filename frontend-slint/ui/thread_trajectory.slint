@@ -140,6 +140,10 @@ export component ThreadTrajectoryDialog inherits Rectangle {
     callback search-edited();
     callback zoom(float);
     callback pan(float);
+    // Fired when the ledger reaches either edge. The host keeps a keyset
+    // cursor and prepends/appends one bounded page without rebuilding the
+    // whole history in the Slint thread.
+    callback edge-reached(bool);
 
     in-out property <length> details-width: 400px;
     in-out property <bool> details-dragging: false;
@@ -345,6 +349,14 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                 }
                 if root.rows.length > 0 : ListView {
                     width: parent.width; height: parent.height;
+                    scrolled => {
+                        if self.content-y > -80px {
+                            root.edge-reached(true);
+                        }
+                        if -self.content-y > self.content-height - self.visible-height - 80px {
+                            root.edge-reached(false);
+                        }
+                    }
                     for row in root.rows : Rectangle {
                         height: row.row-height;
                         background: row.index == root.selected-index ? TrajTokens.active : row-touch.has-hover ? TrajTokens.hover : transparent;

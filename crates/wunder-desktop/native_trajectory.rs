@@ -13,4 +13,25 @@ impl NativeDesktop {
             .storage
             .thread_snapshot(self.user_id(), session)
     }
+
+    /// Bounded presentation trajectory used by the native shell.  The web
+    /// shell and the desktop shell now read the same durable projection: the
+    /// rows are keyset paged while `tiles` contains the full, bounded overview
+    /// pyramid.  This keeps a long thread from being reconstructed by replaying
+    /// its raw event log on the UI thread.
+    pub fn thread_trajectory_page(
+        &self,
+        session: &str,
+        before: Option<i64>,
+        limit: usize,
+    ) -> Result<Value> {
+        let page = self.state().storage.thread_view_trajectory_page(
+            self.user_id(),
+            session,
+            before,
+            None,
+            limit,
+        )?;
+        Ok(serde_json::to_value(page)?)
+    }
 }

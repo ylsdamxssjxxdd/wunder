@@ -528,6 +528,15 @@ pub struct TuiApp {
     /// Cards the reader opened with Enter, keyed by cell identity so trimming the
     /// transcript cannot re-point an opening at an unrelated card.
     expanded_cards: std::collections::BTreeSet<u64>,
+    /// Cards the transcript search opened so a hit inside them is readable. Kept apart from
+    /// `expanded_cards` on purpose: that one is the reader's own ledger and survives a
+    /// search, this one is borrowed for the length of the search and never written into the
+    /// reader's. Same key (cell identity), so a trim cannot re-point an opening either.
+    search_expanded_cards: std::collections::BTreeSet<u64>,
+    /// Bumped whenever `search_expanded_cards` changes. It is the exact, cheap form of "which
+    /// cards are open", which a scan's identity has to name: how many lines a card has, and
+    /// therefore which line a collected hit points at, is a function of its fold state.
+    search_expand_revision: u64,
     next_cell_id: u64,
     logs: Vec<LogEntry>,
     busy: bool,
@@ -729,6 +738,8 @@ impl TuiApp {
             banner_cells: 0,
             transcript_view: Default::default(),
             expanded_cards: Default::default(),
+            search_expanded_cards: Default::default(),
+            search_expand_revision: 0,
             next_cell_id: 1,
             logs: Vec::new(),
             busy: false,
@@ -2590,6 +2601,18 @@ impl TuiApp {
         self.transcript_render_cache = None;
     }
 
+    /// Drop the derived frame — the cached lines, the row map, the line budget — without
+    /// moving the document revision. This is what a fold needs: which lines a card paints is a
+    /// function of the disclosure state, and the disclosure state is its own ledger, so
+    /// opening a card is not a change to what the document says. Keeping the two apart is what
+    /// lets the transcript search open a card and still retire its own scan through the fold
+    /// part of the scan's identity, instead of by pretending the document moved.
+    fn invalidate_transcript_frame(&mut self) {
+        self.transcript_rendered_lines = 0;
+        self.transcript_hit = TranscriptHitMap::default();
+        self.transcript_render_cache = None;
+    }
+
     fn reset_scrollback_archive(&mut self) {
         self.history_archived_entries = 0;
         self.pending_scrollback_lines.clear();
@@ -3650,14 +3673,27 @@ impl TuiApp {
         total
     }
 
-    /// A card is fully open when the reader pressed Enter on it, and always open inside the
-    /// Ctrl+T view. Metrics and rendering must agree, so both ask this one question.
+    /// A card is fully open when the reader pressed Enter on it, when the transcript search
+    /// opened it to show a hit inside it, and always inside the Ctrl+T view. Metrics and
+    /// rendering must agree, so both ask this one question — and the search's share of the
+    /// answer stays in its own ledger, never in the reader's.
     fn card_is_expanded(&self, index: usize) -> bool {
         self.transcript_view_open()
             || self
                 .logs
                 .get(index)
-                .is_some_and(|entry| self.expanded_cards.contains(&entry.cell_id))
+                .is_some_and(|entry| self.card_id_is_expanded(entry.cell_id))
+    }
+
+    /// The union the rest of the transcript reads: opened by the reader, or opened by the
+    /// search for as long as the search lasts.
+    pub(super) fn card_id_is_expanded(&self, cell_id: u64) -> bool {
+        self.expanded_cards.contains(&cell_id) || self.search_expanded_cards.contains(&cell_id)
+    }
+
+    /// Whether the search's own ledger holds this card.
+    pub(super) fn card_is_expanded_by_search(&self, cell_id: u64) -> bool {
+        self.search_expanded_cards.contains(&cell_id)
     }
 
     /// How many lines an entry takes in the window, measured the way the frame renders it.
@@ -5520,6 +5556,7 @@ impl TuiApp {
     pub(super) fn clear_transcript(&mut self) {
         self.logs.clear();
         self.expanded_cards.clear();
+        self.search_expanded_cards.clear();
         self.command_log_indices.clear();
         self.tool_log_indices.clear();
         self.pending_temp_tool_cells.clear();
@@ -5677,6 +5714,7 @@ impl TuiApp {
         }
         self.logs.clear();
         self.expanded_cards.clear();
+        self.search_expanded_cards.clear();
         self.command_sessions = CommandSessionDisplayState::default();
         self.command_log_indices.clear();
         self.tool_log_indices.clear();
@@ -5945,6 +5983,7 @@ impl TuiApp {
         let history = snapshot_history_records(&snapshot);
         self.logs.clear();
         self.expanded_cards.clear();
+        self.search_expanded_cards.clear();
         self.active_assistant = None;
         self.active_reasoning = None;
         // The transcript is rebuilt from an atomic snapshot; drop the per-projection
@@ -7959,6 +7998,10 @@ impl TuiApp {
         // The card is gone, so is any mark on it: it must not be re-pointed at whatever
         // now sits in the slot it left behind.
         self.forget_transcript_selection_of(dropped.cell_id);
+        // And so is an opening the search borrowed: a stale id would leave the search's
+        // ledger holding a card that no longer exists, and the numbering of every card
+        // behind it has moved with the rows it took away.
+        self.retract_search_expansion(dropped.cell_id);
         if self.history_archived_entries > 0 {
             self.history_archived_entries = self.history_archived_entries.saturating_sub(1);
         }

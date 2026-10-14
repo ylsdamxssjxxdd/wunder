@@ -444,8 +444,36 @@ impl TuiApp {
             if to <= from {
                 continue;
             }
-            *line = slice_line_with_selection(line.clone(), from, to, style);
+            *line = slice_line_by_display_columns(line.clone(), from, to, style);
         }
+    }
+
+    /// Whether the live selection reaches into a display-column run of one window line — the
+    /// same projection, the same line numbering and the same half-open bounds
+    /// `paint_transcript_selection` paints with. A transcript search asks this before it marks
+    /// anything: inside the text the reader picked up, the selection's own mark is the only
+    /// mark, because that mark is the text the clipboard will carry. `false` when there is no
+    /// range the frame can project, which is also when the selection paints nothing.
+    pub(crate) fn transcript_selection_covers(&self, line: usize, from: usize, to: usize) -> bool {
+        let Some(range) = self.resolve_selection() else {
+            return false;
+        };
+        if line < range.start_line || line > range.end_line {
+            return false;
+        }
+        let low = if line == range.start_line {
+            range.start_column.unwrap_or(0)
+        } else {
+            0
+        };
+        let high = if line == range.end_line {
+            range.end_column.unwrap_or(LINE_END)
+        } else {
+            LINE_END
+        };
+        // Touching an edge is not being inside it: a run that starts where the selection ends
+        // is the search's own to mark.
+        from < high && to > low
     }
 
     /// Plain text of the selected cells, one line per logical line, trailing padding
@@ -580,10 +608,15 @@ fn slice_line_text(line: &Line<'_>, from: usize, to: usize) -> String {
     text.chars().skip(start).take(end - start).collect()
 }
 
-/// Rebuild a line as `[before][selected][after]`, keeping every span's own style and
-/// patching the highlight onto the middle run only. The display-column bounds become
-/// character indices first, through `text_tabs`, and the split itself is plain slicing.
-fn slice_line_with_selection(
+/// Rebuild a line as `[before][marked][after]`, keeping every span's own style and patching
+/// `style` onto the middle run only. The display-column bounds become character indices first,
+/// through `text_tabs`, and the split itself is plain slicing.
+///
+/// This is the one place a run of a rendered line takes on a style, so the pointer selection
+/// and a transcript search mark are painted by the same code and can never disagree about
+/// where a display column falls. Callers pass a projected line (`text_tabs::expand_line`)
+/// because the bounds are display columns.
+pub(super) fn slice_line_by_display_columns(
     line: Line<'static>,
     from: usize,
     to: usize,
@@ -744,7 +777,7 @@ mod tests {
             Span::raw(" tail"),
         ]);
         let mark = ratatui::style::Style::default().bg(ratatui::style::Color::Red);
-        let marked = slice_line_with_selection(line, 5, 11, mark);
+        let marked = slice_line_by_display_columns(line, 5, 11, mark);
         let text = marked
             .spans
             .iter()
@@ -779,7 +812,12 @@ mod tests {
     fn a_whole_line_bound_copies_every_character_and_marks_all_of_it() {
         let line = Line::from("gate\tvalue");
         assert_eq!(slice_line_text(&line, 0, usize::MAX), "gate\tvalue");
-        let marked = slice_line_with_selection(Line::from("gate    value"), 0, usize::MAX, ratatui::style::Style::default());
+        let marked = slice_line_by_display_columns(
+            Line::from("gate    value"),
+            0,
+            usize::MAX,
+            ratatui::style::Style::default(),
+        );
         assert_eq!(marked.spans.len(), 1, "one run, no empty spans");
         assert_eq!(marked.spans[0].content.as_ref(), "gate    value");
     }

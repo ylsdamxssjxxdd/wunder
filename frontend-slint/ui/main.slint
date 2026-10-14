@@ -299,6 +299,7 @@ export component MainWindow inherits Window {
     callback traj-search-changed();
     callback traj-zoom(float);
     callback traj-pan(float);
+    callback traj-edge(bool);
     // Subagent detail dialog: the child thread's rows come from the same
     // projection as the main timeline (src/subagent_detail.rs); Slint only
     // lays out the card and hands clicks back.
@@ -1390,6 +1391,7 @@ export component MainWindow inherits Window {
         search-edited => { root.traj-search-changed(); }
         zoom(factor) => { root.traj-zoom(factor); }
         pan(start) => { root.traj-pan(start); }
+        edge-reached(older) => { root.traj-edge(older); }
     }
     if root.subagent-open : SubagentDetailDialog {
         title: root.subagent-title;

@@ -74,6 +74,14 @@ fn queue_task_view(task: &AgentTaskRecord, position: usize) -> Value {
         "priority": queue_task_priority(task),
         "created_at": task.created_at,
     });
+    if let Some(root_turn_id) = payload
+        .get("config_overrides")
+        .and_then(|value| value.get("__thread_log_turn_id"))
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+    {
+        view["root_turn_id"] = json!(root_turn_id);
+    }
     if let Some(client_message_id) = payload.get("client_message_id").cloned() {
         view["client_message_id"] = client_message_id;
     }

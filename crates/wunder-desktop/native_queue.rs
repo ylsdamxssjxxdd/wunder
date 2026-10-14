@@ -16,6 +16,10 @@ pub const NATIVE_QUEUE_LIMIT: usize = 32;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NativeQueueTurn {
     pub queue_id: String,
+    /// Durable root turn created when the queued message was accepted. The
+    /// chat observer uses it to remove the queue-only placeholder immediately
+    /// when the user withdraws the row.
+    pub root_turn_id: String,
     pub content: String,
     pub attachment_count: usize,
     pub position: usize,
@@ -61,6 +65,10 @@ pub fn queue_turns_from_value(value: &Value) -> Vec<NativeQueueTurn> {
             }
             Some(NativeQueueTurn {
                 queue_id,
+                root_turn_id: clean(
+                    item.get("root_turn_id")
+                        .or_else(|| item.get("turn_id")),
+                ),
                 content,
                 attachment_count,
                 position: item

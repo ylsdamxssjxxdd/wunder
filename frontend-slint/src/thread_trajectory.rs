@@ -33,6 +33,10 @@ const GROUP_MESSAGES: &str = "messages";
 const TEXT_PREVIEW_SOURCE_LIMIT: usize = 2048;
 const TEXT_PREVIEW_LIMIT: usize = 512;
 const SECTION_BODY_LIMIT: usize = 16_384;
+/// Detail rows kept in the native ledger. Older pages replace the newest tail
+/// once this bound is reached; the overview tiles remain global, so scrolling
+/// upward never requires retaining the whole thread in the Slint model.
+const MAX_VIEW_ROWS: usize = 600;
 const ROW_PX: f32 = 30.0;
 const ROW_SUMMARY_PX: f32 = 20.0;
 const USER_TURN_KEYS: [&str; 4] = ["user_turn_index", "user_round", "turn_index", "turn"];
@@ -145,6 +149,11 @@ struct SpanBase {
     kind: i32,
     lane: usize,
     ttft: Option<f64>,
+    /// Sequence-domain coordinates for an overview tile. Detail rows use
+    /// their record index instead; keeping the two domains separate avoids
+    /// pretending that a 100-row page represents the whole thread.
+    sequence_start: Option<f64>,
+    sequence_end: Option<f64>,
 }
 
 /// Parsed snapshot plus derived projections, built as a unit on the worker
@@ -165,6 +174,11 @@ struct SnapshotModel {
 struct State {
     session: String,
     model: Option<SnapshotModel>,
+    page: Option<Value>,
+    next_before: Option<i64>,
+    has_more: bool,
+    loading_page: bool,
+    older_edge_latched: bool,
     view_start: f64,
     view_width: f64,
     selected: i32,
@@ -360,6 +374,144 @@ fn is_skipped_raw_kind(raw_kind: &str) -> bool {
     ) || raw_kind.starts_with("queue_")
         || raw_kind.starts_with("command_session")
         || raw_kind.starts_with("hook/")
+}
+
+fn merge_page_json(current: &Value, older: &Value) -> Value {
+    let mut merged = current.clone();
+    let mut rows = older.get("trajectory").and_then(Value::as_array).cloned().unwrap_or_default();
+    rows.extend(current.get("trajectory").and_then(Value::as_array).cloned().unwrap_or_default());
+    if rows.len() > MAX_VIEW_ROWS {
+        rows.truncate(MAX_VIEW_ROWS);
+    }
+    if let Some(map) = merged.as_object_mut() {
+        map.insert("trajectory".into(), Value::Array(rows));
+        // Tiles describe the whole thread and are repeated on every page. Keep
+        // the newest response's bounded overview rather than duplicating spans.
+        map.insert("tiles".into(), current.get("tiles").cloned().unwrap_or(Value::Array(Vec::new())));
+        map.insert("tile_level".into(), current.get("tile_level").cloned().unwrap_or(Value::from(0)));
+        map.insert("next_before".into(), older.get("next_before").cloned().unwrap_or(Value::Null));
+        map.insert("has_more".into(), older.get("has_more").cloned().unwrap_or(Value::Bool(false)));
+    }
+    merged
+}
+
+/// Convert the shared bounded presentation page into the same compact model
+/// used by the existing Slint projection. The page contains only a keyset
+/// window of detail rows; its tiles are retained separately so the overview
+/// timeline still covers the complete thread.
+fn parse_view_page(page: &Value) -> SnapshotModel {
+    let rows = page
+        .get("trajectory")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let mut turns = Vec::new();
+    let mut turn_index: HashMap<String, usize> = HashMap::new();
+    let mut cells = Vec::new();
+    for row in &rows {
+        let turn_id = row.get("turn_id").and_then(Value::as_str).unwrap_or("");
+        if turn_id.is_empty() {
+            continue;
+        }
+        let turn_no = row.get("user_round").and_then(Value::as_i64);
+        let ti = *turn_index.entry(turn_id.to_string()).or_insert_with(|| {
+            turns.push(TurnModel { turn: turn_no, groups: Vec::new() });
+            turns.len() - 1
+        });
+        let raw_kind = row.get("kind").and_then(Value::as_str).unwrap_or("context");
+        let kind = match raw_kind {
+            "system_message" | "system" => KIND_SYSTEM,
+            "user_message" | "user" => KIND_USER,
+            "assistant_message" | "assistant" => KIND_MESSAGE,
+            "tool_call" | "tool_result" | "tool" => KIND_TOOL,
+            "subagent" | "subagent_message" | "subagent_run" => KIND_SUBTOOL,
+            "compaction" | "compacted" => KIND_COMPACTED,
+            _ => KIND_CONTEXT,
+        };
+        let summary = row.get("summary").and_then(Value::as_str).unwrap_or("");
+        let mut payload = json!({
+            "content": summary,
+            "tool": row.get("tool_name").and_then(Value::as_str).unwrap_or(""),
+            "model_round": row.get("model_round").and_then(Value::as_i64).unwrap_or(0),
+            "started_at": row.get("started_at").and_then(Value::as_f64),
+            "completed_at": row.get("completed_at").and_then(Value::as_f64),
+        });
+        if kind == KIND_SYSTEM {
+            payload["meta"] = json!({"type":"system_prompt"});
+        }
+        let item = json!({
+            "item_id": row.get("item_id").and_then(Value::as_str).unwrap_or(""),
+            "turn_id": turn_id,
+            "kind": raw_kind,
+            "status": row.get("status").and_then(Value::as_str).unwrap_or("completed"),
+            "payload": payload,
+            "created_time": row.get("started_at").and_then(Value::as_f64).unwrap_or(0.0),
+            "updated_time": row.get("completed_at").and_then(Value::as_f64).unwrap_or(0.0),
+            "created_seq": row.get("created_seq").and_then(Value::as_i64).unwrap_or(0),
+            "item_index": row.get("item_index").and_then(Value::as_i64).unwrap_or(0),
+        });
+        // Constructing a small synthetic snapshot keeps all existing grouping,
+        // request numbering and detail formatting rules in one place.
+        cells.push((item, ti, kind));
+    }
+    let mut snapshot_turns = Vec::new();
+    let mut snapshot_items = Vec::new();
+    for (item, ti, _) in cells {
+        let turn_id = item.get("turn_id").and_then(Value::as_str).unwrap_or("");
+        let turn_no = turns.get(ti).and_then(|turn| turn.turn).unwrap_or(0);
+        if !snapshot_turns.iter().any(|turn: &Value| turn["turn_id"] == turn_id) {
+            snapshot_turns.push(json!({"turn_id": turn_id, "user_turn_index": turn_no}));
+        }
+        snapshot_items.push(item);
+    }
+    let mut model = parse_snapshot(&json!({"turns": snapshot_turns, "items": snapshot_items}));
+    let tiles = page.get("tiles").and_then(Value::as_array).cloned().unwrap_or_default();
+    let level = page.get("tile_level").and_then(Value::as_u64).unwrap_or(0) as f64;
+    let bucket_width = 128.0 * 8.0_f64.powf(level);
+    let mut overview = Vec::new();
+    let mut start = f64::MAX;
+    let mut end = f64::MIN;
+    for tile in tiles {
+        let bucket = tile.get("bucket").and_then(Value::as_i64).unwrap_or(0) as f64;
+        let count = tile.get("count").and_then(Value::as_i64).unwrap_or(0).max(0);
+        if count == 0 { continue; }
+        let lane_counts = [
+            tile.get("input_count").and_then(Value::as_i64).unwrap_or(0),
+            tile.get("model_count").and_then(Value::as_i64).unwrap_or(0),
+            tile.get("tool_count").and_then(Value::as_i64).unwrap_or(0),
+        ];
+        let total = lane_counts.iter().sum::<i64>();
+        let counts = if total > 0 {
+            lane_counts
+        } else {
+            [count / 5, count / 2, count - count / 5 - count / 2]
+        };
+        // Storage timestamps are unix seconds; the detail parser accepts both
+        // seconds and milliseconds, so normalize here before joining spans.
+        let ts = |key: &str| {
+            let value = tile.get(key).and_then(Value::as_f64).unwrap_or(0.0);
+            if value.abs() < 1e11 { value * 1000.0 } else { value }
+        };
+        let tile_start = ts("start");
+        let tile_end = ts("end").max(tile_start + 1.0);
+        start = start.min(tile_start); end = end.max(tile_end);
+        for (lane, lane_count) in counts.into_iter().enumerate() {
+            if lane_count <= 0 { continue; }
+            overview.push(SpanBase {
+                start: tile_start, end: tile_end, record: usize::MAX,
+                kind: if lane == 0 { KIND_CONTEXT } else if lane == 1 { KIND_MESSAGE } else { KIND_TOOL },
+                lane, ttft: None,
+                sequence_start: Some(bucket * bucket_width),
+                sequence_end: Some((bucket + 1.0) * bucket_width),
+            });
+        }
+    }
+    if !overview.is_empty() {
+        model.spans.extend(overview);
+        model.tl_start = start;
+        model.tl_end = end.max(start + 1.0);
+    }
+    model
 }
 
 fn resolve_kind(raw_kind: &str, payload: &Value) -> i32 {
@@ -896,6 +1048,8 @@ fn parse_snapshot(snapshot: &Value) -> SnapshotModel {
             kind: cell.kind,
             lane,
             ttft,
+            sequence_start: Some(record_index as f64),
+            sequence_end: Some(record_index as f64 + 1.0),
         });
     }
     let (lo, hi) = spans
@@ -1243,10 +1397,15 @@ fn project_timeline(app: &MainWindow, state: &State, model: &SnapshotModel, text
     let view_start = state.view_start.clamp(0.0, 1.0);
     let view_width = state.view_width.clamp(0.02, 1.0);
     let timed = state.show_duration;
+    let sequence_end = model
+        .spans
+        .iter()
+        .filter_map(|span| span.sequence_end)
+        .fold(model.records.len().max(1) as f64, f64::max);
     let (total_lo, total_hi) = if timed {
         (model.tl_start, model.tl_end)
     } else {
-        (0.0, model.records.len().max(1) as f64)
+        (0.0, sequence_end.max(1.0))
     };
     let total = (total_hi - total_lo).max(1.0);
     let window_lo = total_lo + view_start * total;
@@ -1254,9 +1413,15 @@ fn project_timeline(app: &MainWindow, state: &State, model: &SnapshotModel, text
     let clamp_pos = |value: f64| ((value - window_lo) / window_total).clamp(0.0, 1.0) as f32;
 
     let mut spans: Vec<TrajSpan> = Vec::new();
+    let has_overview = model.spans.iter().any(|span| span.record == usize::MAX);
     for base in &model.spans {
+        if has_overview && base.record != usize::MAX {
+            continue;
+        }
         let (start, end) = if timed {
             (base.start, base.end)
+        } else if let (Some(start), Some(end)) = (base.sequence_start, base.sequence_end) {
+            (start, end)
         } else {
             (base.record as f64, base.record as f64 + 1.0)
         };
@@ -1272,9 +1437,9 @@ fn project_timeline(app: &MainWindow, state: &State, model: &SnapshotModel, text
             start: x0 as f32,
             width: ((x1 - x0).max(0.002)) as f32,
             kind: base.kind,
-            index: base.record as i32,
+            index: if base.record == usize::MAX { -1 } else { base.record as i32 },
             ttft: base.ttft.unwrap_or(-1.0) as f32,
-            selected: state.selected >= 0 && base.record == state.selected as usize,
+            selected: base.record != usize::MAX && state.selected >= 0 && base.record == state.selected as usize,
         });
     }
 
@@ -1576,6 +1741,52 @@ fn apply_model(app: &MainWindow, state: &State) {
 pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
     let state = Rc::new(RefCell::new(State::default()));
     let (weak, current, backend) = (app.as_weak(), state.clone(), api.clone());
+    let (weak_edge, current_edge, backend_edge) = (app.as_weak(), state.clone(), api.clone());
+    app.on_traj_edge(move |older| {
+        if !older {
+            current_edge.borrow_mut().older_edge_latched = false;
+            return;
+        }
+        let (session, before) = {
+            let mut state = current_edge.borrow_mut();
+            if state.loading_page || !state.has_more || state.older_edge_latched { return; }
+            state.older_edge_latched = true;
+            state.loading_page = true;
+            (state.session.clone(), state.next_before)
+        };
+        let (tx, rx) = sync_channel(1);
+        let backend = backend_edge.clone();
+        std::thread::spawn(move || {
+            let result = match before {
+                Some(cursor) => backend.thread_trajectory_page(&session, Some(cursor), 100),
+                None => Err(anyhow::anyhow!("missing trajectory cursor")),
+            };
+            let _ = tx.send((session, result));
+        });
+        let (weak_edge, current_edge) = (weak_edge.clone(), current_edge.clone());
+        poll(move || {
+            let Ok((session, result)) = rx.try_recv() else { return false };
+            let Some(app) = weak_edge.upgrade() else { return true };
+            let mut state = current_edge.borrow_mut();
+            if state.session != session { state.loading_page = false; return true; }
+            match result {
+                Ok(page) => {
+                    let merged = state.page.as_ref().map(|current| merge_page_json(current, &page)).unwrap_or(page);
+                    state.next_before = merged.get("next_before").and_then(Value::as_i64);
+                    state.has_more = merged.get("has_more").and_then(Value::as_bool).unwrap_or(false);
+                    state.page = Some(merged);
+                    if let Some(page) = &state.page {
+                        state.model = Some(parse_view_page(page));
+                        apply_model(&app, &state);
+                    }
+                }
+                Err(error) => app.set_status(format!("无法读取更早轨迹：{error}").into()),
+            }
+            state.loading_page = false;
+            true
+        });
+    });
+
     app.on_open_trajectory(move |index| {
         let Some(app) = weak.upgrade() else { return };
         // index < 0 means "the active thread" (the settings-page entry point).
@@ -1601,7 +1812,12 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         let (tx, rx) = sync_channel(1);
         let backend = backend.clone();
         std::thread::spawn(move || {
-            let parsed = backend.thread_snapshot(&session).map(|snapshot| parse_snapshot(&snapshot));
+            // Read the shared bounded presentation projection.  It returns a
+            // small detail window plus the complete overview tile pyramid;
+            // unlike thread_snapshot this never materializes the raw history.
+            let parsed = backend
+                .thread_trajectory_page(&session, None, 100)
+                .map(|page| (page.clone(), parse_view_page(&page)));
             let _ = tx.send((session, parsed));
         });
         let (weak, current) = (weak.clone(), current.clone());
@@ -1612,9 +1828,13 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                 return true;
             }
             match result {
-                Ok(snapshot) => {
-                    current.borrow_mut().model = Some(snapshot);
-                    apply_model(&app, &current.borrow());
+                Ok((page, snapshot)) => {
+                    let mut state = current.borrow_mut();
+                    state.next_before = page.get("next_before").and_then(Value::as_i64);
+                    state.has_more = page.get("has_more").and_then(Value::as_bool).unwrap_or(false);
+                    state.page = Some(page);
+                    state.model = Some(snapshot);
+                    apply_model(&app, &state);
                 }
                 Err(error) => {
                     app.set_traj_loading(false);
@@ -1869,6 +2089,31 @@ mod tests {
         assert_eq!(texts.seconds(None), "未记录");
         assert_eq!(thousands(11049.0), "11,049");
         assert_eq!(markdown_preview_text("# 标题\n- 甲 **粗** 乙"), "标题\n甲 粗 乙");
+    }
+
+    #[test]
+    fn shared_view_page_keeps_context_rows_and_global_tile_spans() {
+        let page = json!({
+            "trajectory": [
+                {"item_id":"ctx-1","turn_id":"turn-1","root_turn_id":"turn-1",
+                 "user_round":1,"item_index":0,"created_seq":1,"revision":1,
+                 "kind":"context","status":"completed","summary":"代理结果已注入",
+                 "model_round":1,"started_at":1000.0,"completed_at":1001.0},
+                {"item_id":"assistant-1","turn_id":"turn-1","root_turn_id":"turn-1",
+                 "user_round":1,"item_index":1,"created_seq":2,"revision":1,
+                 "kind":"assistant_message","status":"completed","summary":"已完成",
+                 "model_round":1,"started_at":1001.0,"completed_at":1002.0}
+            ],
+            "tiles": [{"bucket":0,"count":4096,"failed":0,"running":0,
+                       "start":1000.0,"end":1100.0,"input_count":1024,
+                       "model_count":2048,"tool_count":1024}],
+            "tile_level":0
+        });
+        let model = parse_view_page(&page);
+        assert!(model.records.iter().any(|record| model.cells[record.cell].kind == KIND_CONTEXT));
+        assert!(model.spans.iter().any(|span| span.record == usize::MAX && span.lane == 1));
+        assert_eq!(model.tl_start, 1_000_000.0);
+        assert_eq!(model.tl_end, 1_100_000.0);
     }
 
     #[test]

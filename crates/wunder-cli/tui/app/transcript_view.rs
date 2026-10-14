@@ -144,6 +144,11 @@ impl TuiApp {
         };
         if !self.expanded_cards.remove(&cell_id) {
             self.expanded_cards.insert(cell_id);
+        } else {
+            // Closing the card by hand also takes back an opening the search borrowed: the
+            // reader asked for this card folded, and two ledgers must not keep it open behind
+            // their back.
+            self.retract_search_expansion(cell_id);
         }
         self.invalidate_transcript_metrics();
         true
@@ -166,6 +171,7 @@ impl TuiApp {
             self.expanded_cards.insert(cell_id);
         } else {
             self.expanded_cards.remove(&cell_id);
+            self.retract_search_expansion(cell_id);
         }
         self.invalidate_transcript_metrics();
         true
