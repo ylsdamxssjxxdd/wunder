@@ -59,30 +59,31 @@ export global TimelineMetrics {
     out property <length> gutter: 20px;
 }
 
+// Status icon, matching the web entry row: a 12px outlined circle with a check
+// (done) or cross (failed), and a plain grey spinner while running. The old
+// filled green/red dot read as a status light; the outline reads as a tick.
 component StatusDot inherits Rectangle {
     in property <int> status: 0;
     in property <int> phase: 0;
-    width: 16px; height: 16px;
+    width: 12px; height: 12px;
     Rectangle {
         visible: root.status != 1;
-        width: 16px; height: 16px; border-radius: 8px;
-        background: root.status == 2 ? Theme.danger : Theme.thought;
+        width: 12px; height: 12px; border-radius: 6px;
+        background: transparent;
+        border-width: 1px;
+        border-color: root.status == 2 ? Theme.danger : Theme.timeline-entry-soft;
         Image {
-            x: 2px; y: 2px; width: 12px; height: 12px;
+            x: 2px; y: 2px; width: 8px; height: 8px;
             source: root.status == 2 ? @image-url("../assets/icons/xmark.svg") : @image-url("../assets/icons/check.svg");
-            colorize: white; image-fit: contain;
+            colorize: root.status == 2 ? Theme.danger : Theme.muted; image-fit: contain;
         }
     }
-    Rectangle {
+    Image {
         visible: root.status == 1;
-        width: 16px; height: 16px; border-radius: 8px;
-        border-width: 2px; border-color: Theme.thought.transparentize(0.74);
-        Image {
-            width: 16px; height: 16px;
-            source: @image-url("../assets/icons/rotate-right.svg");
-            colorize: Theme.thought; image-fit: contain;
-            transform-rotation: (TimelineSpin.angle + root.phase * 30.0) * 1deg;
-        }
+        width: 12px; height: 12px;
+        source: @image-url("../assets/icons/rotate-right.svg");
+        colorize: Theme.muted; image-fit: contain;
+        transform-rotation: (TimelineSpin.angle + root.phase * 30.0) * 1deg;
     }
 }
 
@@ -301,7 +302,7 @@ component FoldEntry inherits Rectangle {
                     line: root.in-group; node: root.in-group;
                     status: root.data.status-kind;
                 }
-                StatusDot { y: 5px; status: root.data.status-kind; phase: root.data.payload; }
+                StatusDot { y: 7px; status: root.data.status-kind; phase: root.data.payload; }
                 Image {
                     y: 6.5px; width: 13px; height: 13px;
                     source: ToolIcons.image(root.data.tool-icon);

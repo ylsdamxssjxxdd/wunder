@@ -28,10 +28,10 @@ These decide the network address and port the wunder service listens on.
 
 This decides the form wunder runs in.
 
-- **Honeycomb local mode**: suited to individual local use, with all data stored locally
+- **Pupa local mode**: suited to individual local use, with all data stored locally
 - **Hull mode**: suited to teams and organizations, with multi-user support and centralized management
 
-Pick Honeycomb local mode for individual use; pick Hull mode when you need multi-user collaboration and centralized management.
+Pick Pupa local mode for individual use; pick Hull mode when you need multi-user collaboration and centralized management.
 
 ### Concurrency limit
 
@@ -69,7 +69,7 @@ When wunder is embedded in another system, this key verifies incoming external r
 
 This decides which database stores business data.
 
-- **SQLite**: a lightweight local database, the default for Honeycomb local mode
+- **SQLite**: a lightweight local database, the default for Pupa local mode
 - **PostgreSQL**: a full-scale database, suited to the Hull multi-user mode
 
 ### Workspace location
@@ -81,7 +81,7 @@ This decides where user files and agent artifacts are stored. A few points:
 
 ### Vector storage
 
-This is the storage backend used by knowledge-base retrieval, saved alongside the main storage backend: PostgreSQL in Hull mode and SQLite in Honeycomb local mode. Configure it when you need knowledge-base retrieval.
+This is the storage backend used by knowledge-base retrieval, saved alongside the main storage backend: PostgreSQL in Hull mode and SQLite in Pupa local mode. Configure it when you need knowledge-base retrieval.
 
 ## Tool settings
 
@@ -138,7 +138,7 @@ This lets an external platform push messages to wunder. Set up a publicly reacha
 
 ## Recommended configuration by scenario
 
-### Individual local use (Honeycomb desktop)
+### Individual local use (Pupa desktop)
 
 - Database: SQLite (default)
 - Workspace: a local directory

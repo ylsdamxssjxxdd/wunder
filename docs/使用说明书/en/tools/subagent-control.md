@@ -65,7 +65,7 @@ When dispatching, you can also specify:
 - A batch holds at most 64 tasks; beyond that the whole batch is rejected rather than truncated.
 - Each child thread's outbound messages and receipt cache are bounded, and a full one is treated as a rejection; a list holds at most 200 entries, 50 by default.
 - Result previews and status messages in an entry are truncated to 160 characters; the full content is available from the history or that child thread's trail.
-- In Honeycomb this tool is on by default as an extra; the other forms require an administrator to select it.
+- In Pupa this tool is on by default as an extra; the other forms require an administrator to select it.
 
 ## Related pages
 

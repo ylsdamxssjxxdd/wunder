@@ -13,8 +13,7 @@
       </span>
       <span class="tl-entry-status" :class="`is-${entry.status}`" aria-hidden="true">
         <i v-if="entry.status === 'loading'" class="fa-solid fa-circle-notch fa-spin"></i>
-        <i v-else-if="entry.status === 'failed'" class="fa-solid fa-xmark"></i>
-        <i v-else-if="entry.status === 'cancelled'" class="fa-solid fa-ban"></i>
+        <i v-else-if="entry.status === 'failed' || entry.status === 'cancelled'" class="fa-solid fa-xmark"></i>
         <i v-else class="fa-solid fa-check"></i>
       </span>
       <span v-if="entry.toolLabel" class="tl-entry-tool">
@@ -243,8 +242,8 @@ button.tl-entry-head:focus-visible {
   background: var(--mz-danger, #d04a43);
 }
 
-/* 状态点 12px（对齐截图里「小小的」打勾）：完成 = 实心 + 白勾，
-   运行 = 环形 + 旋转图标，失败/取消 = 红底白叉。 */
+/* 状态点 12px（简化形态）：完成 = 描边圆圈 + 勾，失败/取消 = 描边圆圈 + 叉，
+   运行中 = 灰色转圈（fa-circle-notch 自带圆环造型，去掉容器边框）。 */
 .tl-entry-status {
   flex: 0 0 auto;
   width: 12px;
@@ -253,22 +252,24 @@ button.tl-entry-head:focus-visible {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  border: 1px solid var(--mz-timeline-entry-soft, #9ba0a8);
   border-radius: 50%;
   font-size: 7px;
   line-height: 1;
-  color: #ffffff;
-  background: var(--mz-thought, #3e9c7e);
+  color: var(--mz-text-muted, #8a8f99);
+  background: transparent;
 }
 
 .tl-entry-status.is-loading {
-  background: transparent;
-  border: 1.5px solid rgba(62, 156, 126, 0.32);
-  color: var(--mz-thought, #3e9c7e);
+  border: 0;
+  font-size: 12px;
+  color: var(--mz-text-muted, #8a8f99);
 }
 
 .tl-entry-status.is-failed,
 .tl-entry-status.is-cancelled {
-  background: var(--mz-danger, #d04a43);
+  border-color: var(--mz-danger, #d04a43);
+  color: var(--mz-danger, #d04a43);
 }
 
 .tl-entry-tool {
@@ -296,10 +297,13 @@ button.tl-entry-head:focus-visible {
   text-overflow: ellipsis;
 }
 
-/* 行最右侧指标：上下文占用 + 耗时，等宽数字避免刷新时跳动。 */
+/* 行最右侧指标：上下文占用 + 耗时。固定列宽 + 左对齐，保证各行指标
+   起始位置一致（右端随容器对齐，左端不再因内容长度参差）。 */
 .tl-entry-metrics {
   flex: 0 0 auto;
   margin-left: auto;
+  min-width: 100px;
+  text-align: left;
   color: var(--mz-timeline-entry-soft, #9ba0a8);
   font-size: 11px;
   line-height: 1.5;

@@ -11,7 +11,7 @@ use axum::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use wunder_core::thread_view::{CHAT_PAGE_SIZE, TRAJECTORY_PAGE_SIZE};
+use wunder_core::thread_view::{ThreadViewPage, CHAT_PAGE_SIZE, TRAJECTORY_PAGE_SIZE};
 
 pub(super) fn router() -> Router<Arc<AppState>> {
     Router::new()
@@ -67,7 +67,19 @@ async fn read(
     let kind = kind.to_string();
     let result=blocking::run_view("api.chat.view.bootstrap",move || {
         let record=storage.get_chat_session(&user,&session)?.ok_or_else(||anyhow::anyhow!("SESSION_NOT_FOUND"))?;
-        let page=if kind=="trajectory" { storage.thread_view_trajectory_page(&user,&session,query.before,query.root_turn_id.as_deref(),query.limit.unwrap_or(TRAJECTORY_PAGE_SIZE))? } else { storage.thread_view_page(&user,&session,&kind,query.before,query.limit.unwrap_or(CHAT_PAGE_SIZE))? };
+        let page=if kind=="trajectory" {
+            match storage.thread_view_trajectory_page(&user,&session,query.before,query.root_turn_id.as_deref(),query.limit.unwrap_or(TRAJECTORY_PAGE_SIZE)) {
+                Ok(page) => page,
+                Err(error) if is_view_timeout(&error) => degraded_page(&session),
+                Err(error) => return Err(error),
+            }
+        } else {
+            match storage.thread_view_page(&user,&session,&kind,query.before,query.limit.unwrap_or(CHAT_PAGE_SIZE)) {
+                Ok(page) => page,
+                Err(error) if is_view_timeout(&error) => degraded_page(&session),
+                Err(error) => return Err(error),
+            }
+        };
         let model_override=workspace.load_session_model_override(&user,&session);
         let agent=record.agent_id.as_ref().map(|id|storage.get_user_agent(&user,id)).transpose()?.flatten();
         let mut metadata=super::sessions::session_model_view(&config,agent.as_ref(),model_override.as_deref());
@@ -86,6 +98,21 @@ async fn read(
         Ok::<_,anyhow::Error>(result)
     }).await.map_err(read_error)?;
     Ok(Json(json!({"data":result})))
+}
+fn is_view_timeout(error: &anyhow::Error) -> bool {
+    let text = error.to_string().to_ascii_lowercase();
+    text.contains("timeout") || text.contains("timed out") || text.contains("deadline")
+}
+
+fn degraded_page(session: &str) -> ThreadViewPage {
+    ThreadViewPage {
+        session_id: session.to_owned(),
+        projection_state: "degraded".into(),
+        thread_empty: None,
+        degraded: true,
+        diagnostic: Some("view_timeout".into()),
+        ..Default::default()
+    }
 }
 fn read_error(e: anyhow::Error) -> Response {
     error_response(

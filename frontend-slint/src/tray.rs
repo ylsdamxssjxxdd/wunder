@@ -7,8 +7,8 @@ use std::cell::RefCell;
 
 use crate::{AppTray, MainWindow, TrayNotice};
 
-const DEFAULT_TOOLTIP: &str = "蜂窝";
-const HIDDEN_TOOLTIP: &str = "蜂窝仍在后台运行；点击恢复，右键菜单可截图或退出";
+const DEFAULT_TOOLTIP: &str = "蛹";
+const HIDDEN_TOOLTIP: &str = "蛹仍在后台运行；点击恢复，右键菜单可截图或退出";
 
 thread_local! {
     static TRAY: RefCell<Option<AppTray>> = const { RefCell::new(None) };

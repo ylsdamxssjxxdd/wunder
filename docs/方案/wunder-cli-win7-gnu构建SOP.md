@@ -1,6 +1,6 @@
 # wunder-cli Win7 GNU 构建 SOP
 
-本文记录 Win7 兼容版 `wunder-cli.exe` 的固定构建流程。构建入口使用根目录统一脚本，舵机与 Slint 蜂窝复用 `Rust-builder/win7` 的离线 Rust、MinGW 和 Cargo vendor。
+本文记录 Win7 兼容版 `wunder-cli.exe` 的固定构建流程。构建入口使用根目录统一脚本，舵机与 Slint 蛹复用 `Rust-builder/win7` 的离线 Rust、MinGW 和 Cargo vendor。
 
 ## 目标
 
@@ -45,7 +45,7 @@
 
 ## 与 builders/ 的关系
 
-根目录仅保留 `build.sh` 和 `build.bat` 两个发布入口；具体实现位于 `builders/`。`builders/build-win7-cli.ps1` 是 Win7 舵机的底层构建器，`builders/build-win7-offline.ps1` 是 Slint 蜂窝的底层构建器。不要再使用旧的 Electron 构建脚本或 package.json 构建别名。
+根目录仅保留 `build.sh` 和 `build.bat` 两个发布入口；具体实现位于 `builders/`。`builders/build-win7-cli.ps1` 是 Win7 舵机的底层构建器，`builders/build-win7-offline.ps1` 是 Slint 蛹的底层构建器。不要再使用旧的 Electron 构建脚本或 package.json 构建别名。
 
 ## 常用参数
 
@@ -53,7 +53,7 @@
 # 从非标准 SDK 目录构建
 .\build.bat -Target cli -Arch win7-x86 -Win7BuilderRoot X:\Rust-builder\win7
 
-# 构建蜂窝与舵机的完整发布矩阵
+# 构建蛹与舵机的完整发布矩阵
 .\build.bat -All -AppImageRuntimeArm64 X:\runtime-arm64.AppImage -AppImageRuntimeAmd64 X:\runtime-amd64.AppImage
 ```
 

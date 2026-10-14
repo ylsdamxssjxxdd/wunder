@@ -10,7 +10,7 @@ All four forms share the same core and engine; real execution happens inside ses
 
 | Form | How it is delivered | Interface |
 | --- | --- | --- |
-| Honeycomb | A desktop app; the engine ships inside the local process and calls in-process by default without local HTTP | Native UI, compiled into the app |
+| Pupa | A desktop app; the engine ships inside the local process and calls in-process by default without local HTTP | Native UI, compiled into the app |
 | Beehive | A web app; its build artifacts are served read-only by a separate web service, not hosted by the Hull itself | Single-page app |
 | Helm | A command-line program; when terminal conditions are not met it degrades to one-shot execution instead of the full-screen interactive interface | Terminal UI |
 | Hull | A server process, mounting Bridge and a few static directories | Bridge (no build step) |
@@ -82,7 +82,7 @@ The mechanisms that go with it: a write also produces a projection table and a t
 
 - **"The Beehive page is hosted by the Hull."** No. The Hull mounts only Bridge and a few static directories; Beehive's build artifacts are served by a separate web service.
 - **"The front end needs several fetches to get the full history."** The front end was never meant to get the full history; it consumes a paginated view and fetches body chunks on demand.
-- **"Honeycomb calls its own backend over local HTTP."** By default it is a native in-process call; the standalone compatibility bridge is kept only for existing clients.
+- **"Pupa calls its own backend over local HTTP."** By default it is a native in-process call; the standalone compatibility bridge is kept only for existing clients.
 - **"Swarm orchestration is still part of the architecture."** The engine and scheduling surface no longer have this module; only an empty directory remains, and session write permission is always writable.
 
 ## Further reading

@@ -1530,7 +1530,7 @@
  },
  {
   "key": "cp_permission_note",
-  "zh": "与运行时 approval_mode 同名：full_auto 直接执行；auto_edit 仅放行编辑；suggest 在执行前确认。蜂窝本地链路尚未接审批往返，当前选择只记录偏好。",
+  "zh": "与运行时 approval_mode 同名：full_auto 直接执行；auto_edit 仅放行编辑；suggest 在执行前确认。蛹本地链路尚未接审批往返，当前选择只记录偏好。",
   "en": "Named after the runtime approval_mode: full_auto runs directly, auto_edit allows edits only, suggest confirms before executing. The local desktop path has no approval round-trip yet, so the choice is recorded as a preference only."
  },
  {
@@ -3461,13 +3461,13 @@
  },
  {
   "key": "tr_title",
-  "zh": "蜂窝",
-  "en": "Hive"
+  "zh": "蛹",
+  "en": "Pupa"
  },
  {
   "key": "tr_name",
-  "zh": "蜂窝",
-  "en": "Hive"
+  "zh": "蛹",
+  "en": "Pupa"
  },
  {
   "key": "tr_show_window",
@@ -3511,8 +3511,8 @@
  },
  {
   "key": "app_window_title",
-  "zh": "蜂窝",
-  "en": "Hive"
+  "zh": "蛹",
+  "en": "Pupa"
  },
  {
   "key": "err_cannot",

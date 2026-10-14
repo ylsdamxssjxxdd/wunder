@@ -74,7 +74,7 @@ export const isNodeReachable = (node: InterlinkNode | null | undefined): boolean
   return status === 'online' || status === 'busy' || status === 'away';
 };
 
-/** 「我的设备」只列持久设备节点（蜂窝/舵机）；web 会话与 cloud 节点不进卡片。 */
+/** 「我的设备」只列持久设备节点（蛹/舵机）；web 会话与 cloud 节点不进卡片。 */
 export const isDeviceNode = (node: InterlinkNode | null | undefined): boolean => {
   const type = String(node?.node_type || '').trim().toLowerCase();
   return type === 'desktop' || type === 'cli';

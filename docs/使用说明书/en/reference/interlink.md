@@ -1,17 +1,17 @@
 ---
 title: Interlink
-summary: The Beehive, the Honeycomb, and the Helm share one presence state, see each other's workspaces, and control each other in both directions.
+summary: The Beehive, the Pupa, and the Helm share one presence state, see each other's workspaces, and control each other in both directions.
 updated_at: 2026-10-13
 ---
 
-Interlink connects the Beehive (web), the Honeycomb (desktop), and the Helm (cli) into one system: **unified presence + cross-end workspace visibility + two-way remote control**. Local devices open no public inbound entry point; all traffic is relayed through the Hull.
+Interlink connects the Beehive (web), the Pupa (desktop), and the Helm (cli) into one system: **unified presence + cross-end workspace visibility + two-way remote control**. Local devices open no public inbound entry point; all traffic is relayed through the Hull.
 
 ## The three endpoints and prerequisites
 
 | Name | Form | Role |
 |------|------|------|
 | Beehive | web | The cloud AI workbench, provided with the Hull, opened in a browser |
-| Honeycomb | desktop | The local AI workbench, the desktop form, with direct access to files on this machine |
+| Pupa | desktop | The local AI workbench, the desktop form, with direct access to files on this machine |
 | Helm | cli | The manual local entry point, the command-line form |
 
 Prerequisites:
@@ -27,7 +27,7 @@ Prerequisites:
 | R1 | Unified presence | The Hull maintains a cross-end node directory, and the three endpoints share one state model — `online` / `away` / `busy` / `reconnecting` / `offline` — at second-level precision (local) and near-real-time precision (web) |
 | R2 | Workspace visibility | The local workspace appears in the Beehive as a **shadow projection**, projecting metadata summaries (thread directory, directory-tree summary, scheduled tasks, usage); **file contents are not mirrored**, and are pulled on demand over the interlink tunnel as the user acts |
 | R3 | Cloud controlling local | The Beehive can issue graded operations to online local nodes (query / session control / workspace write / tool execution); sensitive operations go through local **human-in-the-loop approval**, and everything is audited |
-| R4 | Local controlling cloud | The Honeycomb and the Helm treat the cloud as a symmetric node — browse the cloud workspace, send messages to cloud threads, read thread event streams; the Helm provides a scriptable command group |
+| R4 | Local controlling cloud | The Pupa and the Helm treat the cloud as a symmetric node — browse the cloud workspace, send messages to cloud threads, read thread event streams; the Helm provides a scriptable command group |
 
 The unified state model:
 
@@ -41,7 +41,7 @@ The unified state model:
 
 ## How to use it
 
-### Honeycomb (desktop)
+### Pupa (desktop)
 
 | Entry point | What it does |
 |------|------|
@@ -97,7 +97,7 @@ The two worth remembering most:
 - No full mirroring or two-way synchronization of workspace files — only metadata projection plus on-demand pull.
 - No graphical remote control; control granularity stops at the engine and file APIs.
 - No NAT hole-punching; all traffic is relayed through the Hull.
-- The Honeycomb and the Helm do not interlink directly; local-to-local access always goes through the Hull.
+- The Pupa and the Helm do not interlink directly; local-to-local access always goes through the Hull.
 
 ## Cost
 

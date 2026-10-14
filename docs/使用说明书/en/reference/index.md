@@ -30,7 +30,7 @@ The pages below cover where a feature lives, what a status means, and how to cha
 ### Three-endpoint interop
 
 <div class="docs-card-grid docs-card-grid-compact">
-  <a class="docs-card" href="/docs/en/reference/interlink/"><strong>Interlink</strong><span>Unified presence across the Beehive, the Honeycomb, and the Helm, cross-end workspace visibility, and two-way remote control.</span></a>
+  <a class="docs-card" href="/docs/en/reference/interlink/"><strong>Interlink</strong><span>Unified presence across the Beehive, the Pupa, and the Helm, cross-end workspace visibility, and two-way remote control.</span></a>
 </div>
 
 ### Troubleshooting and glossary

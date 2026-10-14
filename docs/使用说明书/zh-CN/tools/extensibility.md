@@ -46,7 +46,7 @@ updated_at: 2026-10-13
 
 ### 作为服务端：`/wunder/mcp`
 
-舰体 / 蜂窝会在 `/wunder/mcp` 上挂一个 MCP 服务，暴露两个工具：
+舰体 / 蛹会在 `/wunder/mcp` 上挂一个 MCP 服务，暴露两个工具：
 
 - `excute`：执行一个智能体任务并返回最终回复（工具名就是这个拼写，对接时以此为准）
 - `doc2md`：解析文档并返回 Markdown

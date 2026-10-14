@@ -10,15 +10,15 @@ updated_at: 2026-10-13
 |------|------|------|
 | wunder | wunder | The product itself, the umbrella term for the **agent orchestration platform**: hand a goal to the agent, and it breaks the task down, calls tools, and delivers results. |
 | Core | core | The foundation: configuration, authentication, storage, and execution policy. |
-| Engine | runtime | The execution layer: task orchestration, thread runtime, tools, channels, and gateway. The Honeycomb and the Helm depend on the Engine directly, not on the Hull. |
+| Engine | runtime | The execution layer: task orchestration, thread runtime, tools, channels, and gateway. The Pupa and the Helm depend on the Engine directly, not on the Hull. |
 | Hull | server | The **user and agent management platform**: the server form, aimed at teams and organizations, handling multi-user access, permissions, and channel access, and providing the Beehive. |
 | Bridge | bridge | The governance frontend: the system administrator's management interface for system configuration and for user and channel governance. |
 | Bridge node | bridge node | A channel bridging node: it carries channel account access and message routing and is managed uniformly by the backend, with no standalone frontend page today. Keep it distinct from the governance frontend "Bridge". |
 | Beehive | web | The **cloud AI workbench**: the web form provided with the Hull, which users open in a browser. |
-| Honeycomb | desktop | The **local AI workbench**: the desktop form, the default entry point for individual users, running locally with direct access to local files. |
+| Pupa | desktop | The **local AI workbench**: the desktop form, the default entry point for individual users, running locally with direct access to local files. Formerly Honeycomb. |
 | Helm | cli | The **manual local entry point**: the command-line form, aimed at hands-on operation, developers, and automation scripts. |
 
-Hull, Bridge, Beehive, Honeycomb, and Helm name concrete forms of wunder; Core and Engine name the underlying layers. Keep the two groups separate. The first mention in the body pairs a form's display name with its short id — for example Hull (server), Honeycomb (desktop), Helm (cli).
+Hull, Bridge, Beehive, Pupa, and Helm name concrete forms of wunder; Core and Engine name the underlying layers. Keep the two groups separate. The first mention in the body pairs a form's display name with its short id — for example Hull (server), Pupa (desktop), Helm (cli).
 
 ## User
 
@@ -42,7 +42,7 @@ A temporary work unit the main agent creates during a task and reclaims once the
 
 ## Workspace
 
-Your persistent file space. Every user has **exactly one** workspace, which tools use as their root: in the Honeycomb (desktop) it is a persistent directory on your own machine, with direct read and write access to local files; in a Hull (server) deployment it is the single per-user directory under the server data root, reached through the Beehive. A workspace cannot be added, deleted, or replaced.
+Your persistent file space. Every user has **exactly one** workspace, which tools use as their root: in the Pupa (desktop) it is a persistent directory on your own machine, with direct read and write access to local files; in a Hull (server) deployment it is the single per-user directory under the server data root, reached through the Beehive. A workspace cannot be added, deleted, or replaced.
 
 ## Working Directory
 

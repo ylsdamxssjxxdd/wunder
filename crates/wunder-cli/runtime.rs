@@ -682,7 +682,7 @@ fn apply_cli_defaults(
     config.agent_queue.enabled = false;
     config.cron.enabled = false;
 
-    // 舵机 is a local form like 蜂窝: the workspace folder is the boundary, so
+    // 舵机 is a local form like 蛹: the workspace folder is the boundary, so
     // commands are not filtered by a per-call whitelist and the approval gate
     // starts open. An explicit user choice lives in the approval sidecar
     // (config.toml takes over this role in the config-projection step).

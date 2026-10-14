@@ -71,7 +71,7 @@ The model side operates on a goal through three built-in tools.
 
 Authority does not come from anything the model writes: human entry points stamp `__source = "human"` onto the turn and the goal-round driver stamps `__goal_round`. Edit, pause, and resume are allowed only in a person's round; complete and report-blocked are additionally allowed in the goal's **own automatic continuation rounds**.
 
-The Honeycomb (desktop) **does not expose these three tools for users to pick** (they are hidden built-in capabilities); the runtime injects them per session, and the Beehive (web) and the Helm (cli) reuse the same injection.
+The Pupa (desktop) **does not expose these three tools for users to pick** (they are hidden built-in capabilities); the runtime injects them per session, and the Beehive (web) and the Helm (cli) reuse the same injection.
 
 ## Where it is available
 
@@ -80,7 +80,7 @@ The Honeycomb (desktop) **does not expose these three tools for users to pick** 
 | API | `GET`/`PUT`/`DELETE /wunder/chat/sessions/{id}/goal` (user side; requires an ownership check) |
 | Slash command | `/goal [<objective>\|clear\|edit <objective>\|pause\|resume]` |
 | Beehive | A goal bar in the message area |
-| Honeycomb | A goal banner above the input box, with inline editing |
+| Pupa | A goal banner above the input box, with inline editing |
 | Helm | The `/goal` command |
 | Bridge | **No goal UI** (the governance surface offers no goal operations) |
 
@@ -90,7 +90,7 @@ The Honeycomb (desktop) **does not expose these three tools for users to pick** 
 - After a service restart an active goal does not resume on its own; a resume action is needed to arm it again.
 - The model cannot mark a goal blocked at will: the same blocking condition must persist across at least 3 continuation rounds.
 - A goal is not "a tool named goal" but three tools — `get_goal`, `create_goal`, `update_goal`; the old single tool and the old injection marker no longer exist.
-- The Bridge has no goal panel; use the Beehive, the Honeycomb, or the Helm.
+- The Bridge has no goal panel; use the Beehive, the Pupa, or the Helm.
 - Clearing a goal does not undo work already done: messages, tool results, and file changes already stored are kept.
 
 ## Related pages

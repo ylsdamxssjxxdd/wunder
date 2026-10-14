@@ -287,10 +287,18 @@ pub(super) fn page(
     if kind == "trajectory" {
         if root_turn_id.is_none() && page.view_seq > super::thread_view_store::MAX_SOURCE_CHANGE_SEQ
         {
-            let roots = db.query("SELECT turn_id,user_turn_index FROM thread_turns WHERE user_id=? AND session_id=? AND trigger_kind='user' AND user_turn_index<? ORDER BY user_turn_index DESC LIMIT ?", &[json!(user), json!(session), json!(cursor), json!((cap + 1) as i64)])?;
-            page.has_more = roots.len() > cap;
-            let selected = roots.into_iter().take(cap).collect::<Vec<_>>();
-            page.next_before = selected.first().map(|root| int(&root[1]));
+            // Source mode is the bounded fallback for an unbuilt projection.
+            // Keep its overview page deliberately small: each selected root
+            // may contain thousands of legacy items, while root detail keeps
+            // the full seek-paginated view available after a click.
+            let overview_cap = cap.min(20);
+            let roots = db.query("SELECT turn_id,user_turn_index FROM thread_turns WHERE user_id=? AND session_id=? AND trigger_kind='user' AND user_turn_index<? ORDER BY user_turn_index DESC LIMIT ?", &[json!(user), json!(session), json!(cursor), json!((overview_cap + 1) as i64)])?;
+            page.has_more = roots.len() > overview_cap;
+            let selected = roots.into_iter().take(overview_cap).collect::<Vec<_>>();
+            // `roots` is newest-first.  The seek cursor must point at the
+            // oldest row returned by this page; using the first row repeats
+            // the newest turn on every "load older" request.
+            page.next_before = selected.last().map(|root| int(&root[1]));
             if !selected.is_empty() {
                 // A source-backed overview must still expose the shape of a
                 // turn.  Picking only the newest row made every large-thread
@@ -311,37 +319,47 @@ pub(super) fn page(
                 );
                 let row_tool = db.json_text("i.payload", "tool");
                 let row_model = db.json_text("i.payload", "model_round");
-                let seek_visibility = "x.visibility='user' OR (x.visibility='model_internal' AND x.kind='system_message')";
-                let representative_types = if root_turn_id.is_some() {
-                    vec![
-                        ("system_message", "ASC"),
-                        ("user_message", "ASC"),
-                        ("tool_call", "ASC"),
-                        ("tool_message", "ASC"),
-                        ("assistant_message", "DESC"),
-                    ]
-                } else {
-                    // A summary page stays small even when a single user turn
-                    // contains thousands of tool and model rows.
-                    vec![
-                        ("system_message", "ASC"),
-                        ("user_message", "ASC"),
-                        ("tool_call", "ASC"),
-                        ("assistant_message", "DESC"),
-                    ]
-                };
-                // Use one indexed keyset query per representative kind. The
-                // correlated subquery resolves the item id from
-                // (user,session,root,created_seq) before the payload is read;
-                // unlike a window over the whole set it never parses every
-                // legacy workflow payload in the selected turns.
-                for (kind, order) in representative_types {
-                    let sql = format!(
-                        "SELECT i.item_id,i.turn_id,i.root_turn_id,i.item_index,i.created_seq,i.revision,i.kind,i.status,i.created_time,i.updated_time,t.user_turn_index,substr(COALESCE(NULLIF({row_content},''),NULLIF({row_reasoning},''),''),1,256),substr(COALESCE({row_content},''),1,256),substr({row_reasoning},1,256),substr(COALESCE({row_tool},''),1,96),COALESCE({row_model},'0') FROM thread_turns t JOIN thread_items i ON i.session_id=t.session_id AND i.item_id=(SELECT x.item_id FROM thread_items x WHERE x.user_id=t.user_id AND x.session_id=t.session_id AND x.root_turn_id=t.turn_id AND x.kind=? AND ({seek_visibility}) ORDER BY x.created_seq {order} LIMIT 1) WHERE t.user_id=? AND t.session_id=? AND t.turn_id IN ({root_placeholders})"
+                let seek_visibility = "visibility='user' OR (visibility='model_internal' AND kind='system_message')";
+                // PostgreSQL's partitioned parent needs a root-bound lateral
+                // lookup. A DISTINCT ON over the parent can still merge-sort
+                // every matching item in the default partition. SQLite uses
+                // the portable equivalent below.
+                let representative_kinds = ["system_message", "user_message", "tool_call", "assistant_message"];
+                let (sql, params) = if db.is_postgres() {
+                    let root_values = placeholders(root_ids.len())
+                        .split(',')
+                        .map(|p| format!("({p})"))
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    let select = "i.item_id,i.turn_id,i.root_turn_id,i.item_index,i.created_seq,i.revision,i.kind,i.status,i.created_time,i.updated_time,i.payload,i.user_id,i.session_id";
+                    let branch = |kind: &str, order: &str| format!(
+                        "(SELECT {select} FROM thread_items i WHERE i.user_id=s.user_id AND i.session_id=s.session_id AND i.root_turn_id=r.root_turn_id AND i.kind='{kind}' AND (i.visibility='user' OR (i.visibility='model_internal' AND i.kind='system_message')) ORDER BY i.created_seq {order} LIMIT 1)"
                     );
-                    let mut params = vec![json!(kind), json!(user), json!(session)];
+                    let branches = [
+                        branch("system_message", "ASC"),
+                        branch("user_message", "ASC"),
+                        branch("tool_call", "ASC"),
+                        branch("assistant_message", "DESC"),
+                    ].join(" UNION ALL ");
+                    let sql = format!(
+                        "WITH scope AS (SELECT ?::text AS user_id, ?::text AS session_id), roots(root_turn_id) AS (VALUES {root_values}) SELECT i.item_id,i.turn_id,i.root_turn_id,i.item_index,i.created_seq,i.revision,i.kind,i.status,i.created_time,i.updated_time,t.user_turn_index,substr(COALESCE(NULLIF({row_content},''),NULLIF({row_reasoning},''),''),1,256),substr(COALESCE({row_content},''),1,256),substr({row_reasoning},1,256),substr(COALESCE({row_tool},''),1,96),COALESCE({row_model},'0') FROM roots r CROSS JOIN scope s CROSS JOIN LATERAL ({branches}) i JOIN thread_turns t ON t.user_id=i.user_id AND t.session_id=i.session_id AND t.turn_id=i.turn_id"
+                    );
+                    let mut params = vec![json!(user), json!(session)];
                     params.extend(root_ids.iter().cloned().map(Value::String));
-                    for row in db.query(&sql, &params)? {
+                    (sql, params)
+                } else {
+                    // SQLite has no DISTINCT ON; select one representative
+                    // per root/kind with a correlated indexed lookup.
+                    let kind_placeholders = placeholders(representative_kinds.len());
+                    let sql = format!(
+                        "SELECT i.item_id,i.turn_id,i.root_turn_id,i.item_index,i.created_seq,i.revision,i.kind,i.status,i.created_time,i.updated_time,t.user_turn_index,substr(COALESCE(NULLIF({row_content},''),NULLIF({row_reasoning},''),''),1,256),substr(COALESCE({row_content},''),1,256),substr({row_reasoning},1,256),substr(COALESCE({row_tool},''),1,96),COALESCE({row_model},'0') FROM (SELECT i.*,ROW_NUMBER() OVER (PARTITION BY root_turn_id,kind ORDER BY CASE WHEN kind='assistant_message' THEN created_seq END DESC NULLS LAST,CASE WHEN kind<>'assistant_message' THEN created_seq END ASC NULLS LAST) AS rn FROM thread_items i WHERE i.user_id=? AND i.session_id=? AND i.root_turn_id IN ({root_placeholders}) AND i.kind IN ({kind_placeholders}) AND ({seek_visibility})) i JOIN thread_turns t ON t.user_id=i.user_id AND t.session_id=i.session_id AND t.turn_id=i.turn_id WHERE i.rn=1"
+                    );
+                    let mut params = vec![json!(user), json!(session)];
+                    params.extend(root_ids.iter().cloned().map(Value::String));
+                    params.extend(representative_kinds.iter().map(|kind| json!(kind)));
+                    (sql, params)
+                };
+                for row in db.query(&sql, &params)? {
                         let detail = json!({
                             "content": text(&row[12]),
                             "reasoning": text(&row[13]),
@@ -371,7 +389,6 @@ pub(super) fn page(
                         page.trajectory.push(projected);
                     }
                 }
-            }
             page.trajectory.sort_by(|left, right| {
                 left.user_round
                     .cmp(&right.user_round)
@@ -519,6 +536,11 @@ pub(super) fn body(
         "source_detail" => "payload".into(),
         _ => anyhow::bail!("invalid source body field"),
     };
+    if field == "source_detail" || field == "source_content" {
+        if one(db, "SELECT item_id FROM thread_items WHERE user_id=? AND session_id=? AND item_id=? AND revision=? AND kind='system_message' AND visibility='model_internal' LIMIT 1", &[json!(user), json!(session), json!(item), json!(rev)])?.is_some() {
+            return Ok(ThreadBodyPage { body_id: id.into(), revision: rev, ..Default::default() });
+        }
+    }
     let sql = format!(
         "SELECT substr({expression},CAST(CAST(? AS BIGINT) AS INTEGER),2049) FROM thread_items WHERE user_id=? AND session_id=? AND item_id=? AND revision=? AND (visibility='user' OR (visibility='model_internal' AND kind='system_message')) LIMIT 1"
     );

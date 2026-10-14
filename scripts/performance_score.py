@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Calculate the 蜂巢/蜂窝/舵机 performance scorecard.
+"""Calculate the 蜂巢/蛹/舵机 performance scorecard.
 
 The collector is intentionally separate from product-specific profilers.  A
 profiler, Playwright run, desktop harness, or CLI harness writes the small JSON
@@ -8,10 +8,10 @@ contract accepted here; this script turns those observations into a comparable
 score and a reviewable report.
 
 Examples:
-  python scripts/performance_score.py --shape 蜂巢 --template --output target/honeycomb-template.json
-  python scripts/performance_score.py --input target/honeycomb-run.json \
-      --baseline target/honeycomb-previous/performance-score.json \
-      --out-dir target/honeycomb-score --require-complete
+  python scripts/performance_score.py --shape 蜂巢 --template --output target/beehive-template.json
+  python scripts/performance_score.py --input target/beehive-run.json \
+      --baseline target/beehive-previous/performance-score.json \
+      --out-dir target/beehive-score --require-complete
 """
 
 from __future__ import annotations
@@ -77,7 +77,7 @@ SCORECARDS: dict[str, tuple[ScenarioSpec, ...]] = {
         ScenarioSpec("S3", "历史重建预算", 20, (lower("maintenance_duty_ratio", "维护工作时间占比", "ratio", 0.01, 0.02),), (gate("discovery_page_bounded", "发现每批不超过 64 线程"), gate("pending_rotates", "待迁移线程轮转"), gate("durable_resume", "游标重启续跑"))),
         ScenarioSpec("S4", "未完成投影的大线程窗口", 15, (lower("chat_window_p95_ms", "聊天窗口 p95", "ms", 500, 1500), lower("trajectory_window_p95_ms", "轨迹窗口 p95", "ms", 500, 1500)), (gate("opens_without_projection", "不等待历史投影即可打开"), gate("seek_pages_disjoint", "游标分页不重复"), gate("response_bytes_bounded", "响应体有界"), gate("read_does_not_write", "展示读取不写投影"), gate("body_integrity", "原始正文分块完整"))),
     ),
-    "honeycomb": (
+    "beehive": (
         ScenarioSpec("H1", "冷启动到工作台可交互", 8, (lower("tti_p95_ms", "TTI p95", "ms", 1200, 2000),), (gate("no_uncaught_errors", "无未捕获错误"),)),
         ScenarioSpec("H2", "线程目录打开", 7, (lower("first_action_p95_ms", "首个可操作线程", "ms", 600, 1200), lower("duplicate_request_rate_ratio", "接口重复率", "ratio", 0.02, 0.05)), (gate("virtualized_list", "列表已虚拟化"),)),
         ScenarioSpec("H3", "长线程首个正文", 12, (lower("first_paint_p95_ms", "首个正文 paint", "ms", 800, 1500),), (gate("real_snapshot_ws_path", "使用真实快照/WS入口"),)),
@@ -122,25 +122,25 @@ SCORECARDS: dict[str, tuple[ScenarioSpec, ...]] = {
 SHAPE_ALIASES = {
     "server": "server",
     "舰体": "server",
-    "honeycomb": "honeycomb",
-    "web": "honeycomb",
-    "cloud": "honeycomb",
-    "蜂巢": "honeycomb",
+    "beehive": "beehive",
+    "web": "beehive",
+    "cloud": "beehive",
+    "蜂巢": "beehive",
     "desktop": "desktop",
     "local": "desktop",
-    "hive": "desktop",
-    "蜂窝": "desktop",
+    "pupa": "desktop",
+    "蛹": "desktop",
     "cli": "cli",
     "terminal": "cli",
     "舵机": "cli",
 }
-SHAPE_LABELS = {"honeycomb": "蜂巢", "desktop": "蜂窝", "cli": "舵机", "server": "舰体"}
+SHAPE_LABELS = {"beehive": "蜂巢", "desktop": "蛹", "cli": "舵机", "server": "舰体"}
 
 
 def shape_key(raw: str) -> str:
     key = SHAPE_ALIASES.get(str(raw).strip().lower())
     if key is None:
-        raise ValueError(f"未知形态 {raw!r}，可选：蜂巢、蜂窝、舵机、舰体")
+        raise ValueError(f"未知形态 {raw!r}，可选：蜂巢、蛹、舵机、舰体")
     return key
 
 
@@ -457,7 +457,7 @@ def markdown(report: Mapping[str, Any], status: str) -> str:
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="按性能评分体系计算工作台、舵机或舰体容量评分。")
-    parser.add_argument("--shape", choices=sorted(set(SHAPE_ALIASES)), help="形态：蜂巢、蜂窝、舵机、舰体，也可用 web/desktop/cli/server")
+    parser.add_argument("--shape", choices=sorted(set(SHAPE_ALIASES)), help="形态：蜂巢、蛹、舵机、舰体，也可用 web/desktop/cli/server")
     parser.add_argument("--input", type=Path, help="实测 JSON 输入")
     parser.add_argument("--baseline", type=Path, help="上一版本原始输入或 performance-score.json")
     parser.add_argument("--out-dir", type=Path, default=Path("target/performance-score"), help="报告输出目录")

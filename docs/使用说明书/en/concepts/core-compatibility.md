@@ -1,12 +1,12 @@
 ---
 title: Compatibility
-summary: The Compatibility core lets the Honeycomb (desktop) and the Helm (cli) run in older operating-system environments under explicit constraints: Windows 7 32-bit and Ubuntu 18.04 each have an offline build chain, and the interface uses software rendering that does not depend on a GPU.
+summary: The Compatibility core lets the Pupa (desktop) and the Helm (cli) run in older operating-system environments under explicit constraints: Windows 7 32-bit and Ubuntu 18.04 each have an offline build chain, and the interface uses software rendering that does not depend on a GPU.
 updated_at: 2026-10-13
 ---
 
 # Compatibility
 
-The Compatibility core lets the Honeycomb (desktop) and the Helm (cli) run in older operating-system environments, and states explicitly where that runtime environment is constrained.
+The Compatibility core lets the Pupa (desktop) and the Helm (cli) run in older operating-system environments, and states explicitly where that runtime environment is constrained.
 
 ## Which older systems are supported
 
@@ -24,7 +24,7 @@ The Compatibility core lets the Honeycomb (desktop) and the Helm (cli) run in ol
 
 ## What it means for users
 
-Windows 7 32-bit and Ubuntu 18.04 (x64 / arm64) are not excluded runtime environments; the Honeycomb and the Helm can be installed on old machines and run there. The interface renders on machines without a GPU. Command sessions are carried and decoded in old Windows terminals.
+Windows 7 32-bit and Ubuntu 18.04 (x64 / arm64) are not excluded runtime environments; the Pupa and the Helm can be installed on old machines and run there. The interface renders on machines without a GPU. Command sessions are carried and decoded in old Windows terminals.
 
 ## Boundaries and current limits
 

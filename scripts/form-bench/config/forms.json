@@ -88,9 +88,9 @@
       }
     },
     {
-      "id": "honeycomb",
-      "name": "蜂窝",
-      "nameEn": "Honeycomb",
+      "id": "pupa",
+      "name": "蛹",
+      "nameEn": "Pupa",
       "kind": "desktop",
       "summary": "原生桌面端 frontend-slint（Rust + Slint 单进程，内嵌后端）",
       "package": { "kind": "file", "target": "target/release/wunder-frontend-slint.exe" },

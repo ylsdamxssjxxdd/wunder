@@ -31,7 +31,7 @@ summary: 操作参考与配置说明：功能入口、状态含义、设置项�
 ### 三端互通
 
 <div class="docs-card-grid docs-card-grid-compact">
-  <a class="docs-card" href="/docs/zh-CN/reference/interlink/"><strong>三端互通</strong><span>蜂巢、蜂窝、舵机统一在线状态、跨端工作区互见与双向远程控制。</span></a>
+  <a class="docs-card" href="/docs/zh-CN/reference/interlink/"><strong>三端互通</strong><span>蜂巢、蛹、舵机统一在线状态、跨端工作区互见与双向远程控制。</span></a>
 </div>
 
 ### 排障与术语

@@ -9,7 +9,7 @@
     powershell -ExecutionPolicy Bypass -File scripts\form-bench\form-bench.ps1 -DryRun
     powershell -ExecutionPolicy Bypass -File scripts\form-bench\form-bench.ps1 -AutoStart
     powershell -ExecutionPolicy Bypass -File scripts\form-bench\form-bench.ps1 `
-      -Forms hull,honeycomb -Metrics package,startup,memory,cpu
+      -Forms hull,pupa -Metrics package,startup,memory,cpu
 #>
 param(
   [string]$Forms = "",

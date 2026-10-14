@@ -226,7 +226,15 @@ export class ChatMockService {
       meta: { message_stats: { interaction_duration_s: 1.2, visible_decode_speed_tps: 24,
         context_occupancy_tokens: 2048, toolCalls: compact ? 0 : 2 } } });
     this.state(turn, 'completed');
-    for (const sub of this.subscriptions) this.send(sub, 'final', { status: 'completed', turn_id: turn.turn_id });
+    this.endSendStream(turn, 'completed');
+  }
+  /** A send stream terminates with its own turn; the display watch keeps running. */
+  private endSendStream(turn: Row, status: string) {
+    const root = String(turn.root_turn_id ?? turn.turn_id);
+    for (const sub of this.subscriptions.filter(row => row.turnId === root)) {
+      this.send(sub, 'final', { status, turn_id: turn.turn_id });
+    }
+    this.subscriptions = this.subscriptions.filter(sub => sub.turnId !== root);
   }
   cancel() {
     const turn = this.active;
@@ -239,6 +247,7 @@ export class ChatMockService {
       }
     }
     this.state(turn, 'cancelled');
+    this.endSendStream(turn, 'cancelled');
     // Cancellation is not a successful task completion. Keep the runtime hot
     // until the worker exits so the next real completion still has a running →
     // idle edge, while no cancellation toast is generated.
@@ -292,7 +301,7 @@ export class ChatMockService {
       socket.onMessage(raw => {
         const message = JSON.parse(String(raw));
         this.record({ transport: 'ws', type: message.type, payload: message.payload });
-        const sub = { socket, request: message.request_id, display: message.payload?.view_seq!==undefined };
+        const sub: Subscription = { socket, request: message.request_id, display: message.payload?.view_seq!==undefined };
         if (message.type === 'cancel') { this.cancel(); return; }
         if (message.type === 'unwatch') {
           this.subscriptions = this.subscriptions.filter(prior => prior.socket !== socket || !prior.display);
@@ -308,8 +317,9 @@ export class ChatMockService {
           prior.socket !== socket || !(prior.display && sub.display) && prior.request !== sub.request);
         this.subscriptions.push(sub);
         if (message.type === 'start') {
-          const turn = this.accept(message.payload.content, message.payload.client_message_id);
-          this.send(sub, 'stream_started', turn);
+          const accepted = this.accept(message.payload.content, message.payload.client_message_id);
+          sub.turnId = String(accepted.turn_id);
+          this.send(sub, 'stream_started', accepted);
         }
         const after = Number(message.payload?.after_change_seq ?? 0);
         if(sub.display)this.send(sub,'thread_view_change',this.viewChanges());

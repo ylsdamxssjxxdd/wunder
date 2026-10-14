@@ -37,7 +37,7 @@ wunder's documentation falls into seven categories, each answering a different k
 | Page | Content |
 | --- | --- |
 | [Quick Start](/docs/en/start/quickstart/) | Get your first task running in 4 steps |
-| [Honeycomb intro](/docs/en/start/desktop/) | Individual users download and go |
+| [Pupa intro](/docs/en/start/desktop/) | Individual users download and go |
 | [Hull deployment](/docs/en/start/server/) | Multi-user sharing, unified management |
 | [Helm usage](/docs/en/start/cli/) | Terminal-driven, automation |
 | [First-run troubleshooting](/docs/en/start/troubleshooting-first-run/) | Locate install / launch / access failures by form |
@@ -49,7 +49,7 @@ wunder's documentation falls into seven categories, each answering a different k
 | Page | Content |
 | --- | --- |
 | [Surfaces overview](/docs/en/surfaces/index/) | The four forms' division and capability matrix |
-| [Honeycomb interface](/docs/en/surfaces/desktop-ui/) | The main window's two pages + settings' 12 categories |
+| [Pupa interface](/docs/en/surfaces/desktop-ui/) | The main window's two pages + settings' 12 categories |
 | [Beehive interface](/docs/en/surfaces/frontend/) | The single-page app in the browser |
 | [Bridge interface](/docs/en/surfaces/web-admin/) | The admin governance backend |
 
@@ -128,7 +128,7 @@ A single file, from the interface consumer's perspective. All HTTP endpoints use
 
 ## Suggested reading paths
 
-**New users**: user manual → Quick Start → Honeycomb intro; when something goes wrong, first-run troubleshooting.
+**New users**: user manual → Quick Start → Pupa intro; when something goes wrong, first-run troubleshooting.
 **Developers getting started**: technical manual 01–03 → 02 repository structure and modules → 03 runtime and execution path; then design docs 01–02 to fill in the "why."
 **Adding an interface**: technical manual 07 → API reference → design doc 07.
 **Performance issues**: performance standards → performance scoring → performance baselines; for specific paging constants, see technical manual 03–04.

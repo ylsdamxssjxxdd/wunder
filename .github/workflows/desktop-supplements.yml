@@ -73,7 +73,9 @@ jobs:
             -PythonProfile common `
             -BuildRoot (Join-Path (Get-Location) 'supplement-build') `
             -PythonPackageIndexUrl https://pypi.org/simple
-          if ($LASTEXITCODE -ne 0) { throw "Win7 supplement build failed: $LASTEXITCODE" }
+          # The build script reports failure by throwing, and the next step
+          # asserts the pack exists; $LASTEXITCODE is never populated here
+          # because the script runs python through Start-Process.
           Copy-Item -Path (Join-Path (Get-Location) 'supplement-build\dist\*.zip') -Destination supplement-dist -Force
       - name: Verify pack exists
         shell: pwsh

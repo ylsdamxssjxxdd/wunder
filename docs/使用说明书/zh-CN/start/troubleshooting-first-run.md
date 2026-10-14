@@ -1,6 +1,6 @@
 ---
 title: 首次运行排查
-summary: 各形态第一次启动或部署最常见的失败模式与验证点：蜂窝启动、舰体部署、蜂巢访问、舵机执行。
+summary: 各形态第一次启动或部署最常见的失败模式与验证点：蛹启动、舰体部署、蜂巢访问、舵机执行。
 updated_at: 2026-10-13
 ---
 
@@ -8,7 +8,7 @@ updated_at: 2026-10-13
 
 按形态分节：验证点、失败现象与回查路径。
 
-## 蜂窝（desktop）
+## 蛹（desktop）
 
 ### 验证点
 
@@ -21,13 +21,13 @@ updated_at: 2026-10-13
 
 | 现象 | 优先检查 | 文档 |
 | --- | --- | --- |
-| 启动页长时间不结束 | `~/.wunder` 权限；工作树扫描耗时（最多 4096 项） | [蜂窝入门](/docs/zh-CN/start/desktop/) |
-| 窗口出现但工作区空 | 工作目录区是否显示「离线」 | [蜂窝界面](/docs/zh-CN/surfaces/desktop-ui/) |
+| 启动页长时间不结束 | `~/.wunder` 权限；工作树扫描耗时（最多 4096 项） | [蛹入门](/docs/zh-CN/start/desktop/) |
+| 窗口出现但工作区空 | 工作目录区是否显示「离线」 | [蛹界面](/docs/zh-CN/surfaces/desktop-ui/) |
 | 模型请求 401/403 | 设置 → 模型 → API Key、接口地址；「测试连接」重跑 | [配置说明](/docs/zh-CN/reference/config/) |
 | 运行中再发消息被判「用户忙」 | 会话队列默认开着；关掉会破坏排队条 | [快速开始](/docs/zh-CN/start/quickstart/) |
-| 想要 TTS 播放但没有声音 | **蜂窝 TTS 未实现**，只能配模型；需要 TTS 请用蜂巢 | [蜂窝界面](/docs/zh-CN/surfaces/desktop-ui/) |
+| 想要 TTS 播放但没有声音 | **蛹 TTS 未实现**，只能配模型；需要 TTS 请用蜂巢 | [蛹界面](/docs/zh-CN/surfaces/desktop-ui/) |
 | 找不到「设备互通」设置类目 | 类目未接入界面；可用面只有侧栏云端工作区 + 远端命令审批弹窗 | [界面概览](/docs/zh-CN/surfaces/index/) |
-| 状态混乱 | 设置 → 通用 → 一键重置工作状态（保留技能、知识库、长期记忆、配置与工作区文件） | [蜂窝入门](/docs/zh-CN/start/desktop/) |
+| 状态混乱 | 设置 → 通用 → 一键重置工作状态（保留技能、知识库、长期记忆、配置与工作区文件） | [蛹入门](/docs/zh-CN/start/desktop/) |
 
 ## 舰体（server）
 
@@ -90,14 +90,14 @@ updated_at: 2026-10-13
 
 ## 通用提醒
 
-- **不要把「停止维护前端壳」理解成「停止维护蜂窝后端」**：Electron / Tauri 前端壳停止迭代，引擎与蜂窝后端继续开发。
+- **不要把「停止维护前端壳」理解成「停止维护蛹后端」**：Electron / Tauri 前端壳停止迭代，引擎与蛹后端继续开发。
 - 列表、日志、面板都有分页、筛选或限量；如果某个页面一次性渲染大量内容导致卡顿，属于已知的工程缺口，反馈即可。
 
 ## 延伸阅读
 
 - [快速开始](/docs/zh-CN/start/quickstart/)
 - [界面概览](/docs/zh-CN/surfaces/index/)
-- [蜂窝入门](/docs/zh-CN/start/desktop/)
+- [蛹入门](/docs/zh-CN/start/desktop/)
 - [舰体部署](/docs/zh-CN/start/server/)
 - [舵机使用](/docs/zh-CN/start/cli/)
 - [故障排查](/docs/zh-CN/help/troubleshooting/)

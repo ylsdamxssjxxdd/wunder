@@ -8,7 +8,7 @@ Capabilities are listed by category below, each with its entry point.
 
 ## Chat
 
-Location: the workbench (Honeycomb or Beehive) → the New task button in the left sidebar, or the thread list under the workspace.
+Location: the workbench (Pupa or Beehive) → the New task button in the left sidebar, or the thread list under the workspace.
 
 - Ask questions and get answers
 - Upload files for the agent to analyze

@@ -14,7 +14,7 @@ updated_at: 2026-10-13
 
 # Deploying the Hull (Server)
 
-The Hull (server) is wunder's **user-and-agent management platform** and an optional form: the Honeycomb (desktop) is enough for personal use. Deploy the Hull only when you need multi-tenancy, user and organization management, channel integration, building and publishing agent apps, and unified gateway scheduling.
+The Hull (server) is wunder's **user-and-agent management platform** and an optional form: the Pupa (desktop) is enough for personal use. Deploy the Hull only when you need multi-tenancy, user and organization management, channel integration, building and publishing agent apps, and unified gateway scheduling.
 
 ## The three pieces and their ports
 
@@ -39,7 +39,7 @@ Other related service ports: sandbox mode 9001, onlyoffice 18080, drawio 18081, 
 | Need to connect channels such as Feishu, WeCom, and QQ Bot | ✅ |
 | Need unified governance, auditing, and quotas | ✅ |
 | Need to build and publish agent apps | ✅ |
-| Just personal use | ❌ Choose the Honeycomb (desktop) |
+| Just personal use | ❌ Choose the Pupa (desktop) |
 
 ## Prerequisites
 
@@ -113,7 +113,7 @@ Passwords are stored with Argon2 encryption; login tokens are opaque random stri
 ### Multi-tenancy and governance
 
 - Users and organizations managed in layers; permissions assigned by role (admin / leader / user), with data isolated by user and agent
-- Online status shown in three columns: Beehive / Honeycomb / Helm
+- Online status shown in three columns: Beehive / Pupa / Helm
 - User levels and quotas (up to 200 levels)
 
 ### Channel integration

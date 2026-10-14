@@ -2,7 +2,7 @@
 
 ## Context
 
-输入区切换模型当前被实现为「修改智能体配置模型」：每轮执行时模型只从 agent 记录与全局默认解析（`resolve_chat_model_name`），线程没有自己的模型字段，因此临时换模型必须写 agent 记录（蜂巢写库+全量刷新，蜂窝写 config.yaml）。语义错位：临时切换被放大成改默认配置，还波及该智能体的其他线程。
+输入区切换模型当前被实现为「修改智能体配置模型」：每轮执行时模型只从 agent 记录与全局默认解析（`resolve_chat_model_name`），线程没有自己的模型字段，因此临时换模型必须写 agent 记录（蜂巢写库+全量刷新，蛹写 config.yaml）。语义错位：临时切换被放大成改默认配置，还波及该智能体的其他线程。
 
 方案：照搬 reasoning_effort 的现成模式——**线程级模型覆盖存 workspace meta**（`session_reasoning_effort:{user}:{session}` 同款机制，零 schema 迁移），解析链改为 `session 覆盖 → agent.model_name → config.llm.default`。切换只写一条 meta，天然秒切；乐观 UI 已在上一轮就位，本轮把持久化目标从 agent 改为 session 覆盖，并删除 agent 补丁链。
 
@@ -26,7 +26,7 @@
    - 新端点 `POST /wunder/chat/sessions/{session_id}/model`，body `{ "model_name": String }`（空=清除回退）；路由注册在 L78-80 旁；保存时校验模型存在于 config 且是 LLM（错误返回与 reasoning-effort 端点同风格）；返回 `{data:{id, model_name}}`。
    - 会话详情 payload（L521-529）与列表扩展（L328-336）追加 `session_model_name`（仅覆盖存在时携带）；`resolve_session_model_runtime`（L1744-1764）改为经 `resolve_thread_model_name` 解析，使详情里的 `model_name`/`model_key` 反映线程覆盖。
 
-## 蜂窝（wunder-desktop + frontend-slint）
+## 蛹（wunder-desktop + frontend-slint）
 
 5. **native facade**（`crates/wunder-desktop/native.rs`，仿 `save_session_reasoning_effort` L510-528）
    - `set_session_model(session_id, model_key: &str)`：校验线程存在后写 meta；空串清除。

@@ -1,6 +1,6 @@
 ---
 title: Workspaces and the Working Directory
-summary: Each user has exactly one workspace, and tools are rooted at it: a persistent local directory in the Honeycomb, or a single per-user directory on the server in a Hull deployment.
+summary: Each user has exactly one workspace, and tools are rooted at it: a persistent local directory in the Pupa, or a single per-user directory on the server in a Hull deployment.
 updated_at: 2026-10-13
 ---
 
@@ -26,8 +26,8 @@ User B's workspace (fully isolated, invisible to A and vice versa)
 
 | Form | Location | How to access |
 | --- | --- | --- |
-| Honeycomb (default) | A persistent directory on your machine | Browse with your system file manager; the agent reads and writes directly |
-| Hull | A single per-user directory under the server data root | Upload, download, and edit through the "Working directory" area in the Honeycomb's left sidebar |
+| Pupa (default) | A persistent directory on your machine | Browse with your system file manager; the agent reads and writes directly |
+| Hull | A single per-user directory under the server data root | Upload, download, and edit through the "Working directory" area in the Pupa's left sidebar |
 
 Three firm rules:
 
@@ -45,10 +45,10 @@ Three firm rules:
 
 ## How to use it
 
-- **Access**: in the Honeycomb, use the file manager directly, or the "Working directory" area in the app's left sidebar with its file tree and toolbar. In the Honeycomb's left sidebar, below the workspace, there is a "Working directory" area with a file tree and an upload / create / refresh / multi-select toolbar.
+- **Access**: in the Pupa, use the file manager directly, or the "Working directory" area in the app's left sidebar with its file tree and toolbar. In the Pupa's left sidebar, below the workspace, there is a "Working directory" area with a file tree and an upload / create / refresh / multi-select toolbar.
 - **In conversation**: hand files to the agent, or have it read and write files in the workspace directly.
 - **Reference into chat**: pick "Reference into chat" from a file row's menu to bring the file into the input area.
-- **Download (Honeycomb)**: select files in the tree to download; multi-select bundles them into an archive.
+- **Download (Pupa)**: select files in the tree to download; multi-select bundles them into an archive.
 
 Organizing tips: create subdirectories by project or topic, one directory per project and split source material from output inside it; put files the agent should analyze into the workspace first, then mention the path or filename in your message; the reports and scripts the agent generates also land in the same tree, to be tidied as needed. Delete files you no longer need and give files meaningful names.
 
@@ -58,9 +58,9 @@ Organizing tips: create subdirectories by project or topic, one directory per pr
 - Statistics use bounded traversal and are marked as a lower bound for very large directories.
 - In a Hull deployment with a quota configured, uploads are rejected with a prompt to clean up once the limit is hit; without a quota, only used capacity is shown, with no quota denominator.
 
-## The Honeycomb's local boundary
+## The Pupa's local boundary
 
-The Honeycomb runs locally, and its working directory is a persistent directory on your machine rather than a temporary sandbox:
+The Pupa runs locally, and its working directory is a persistent directory on your machine rather than a temporary sandbox:
 
 - Contents persist and are not periodically cleaned.
 - Whether the agent can access local paths depends on local security settings.

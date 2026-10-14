@@ -16,7 +16,7 @@ updated_at: 2026-10-13
 
 # Using the Helm (CLI)
 
-The Helm (CLI) is wunder's **manual local entry point**, an optional form: for daily use, install the Honeycomb (desktop); reach for the Helm when you work terminal-driven, scripted, or automated. It calls the engine in-process, reusing the same configuration, tools, and storage rather than standing up a separate execution path.
+The Helm (CLI) is wunder's **manual local entry point**, an optional form: for daily use, install the Pupa (desktop); reach for the Helm when you work terminal-driven, scripted, or automated. It calls the engine in-process, reusing the same configuration, tools, and storage rather than standing up a separate execution path.
 
 ## When to use the Helm
 
@@ -26,8 +26,8 @@ The Helm (CLI) is wunder's **manual local entry point**, an optional form: for d
 | Need scripting, automation, CI/CD | ✅ |
 | Need piped output (JSONL) | ✅ |
 | Need the `cloud` subcommands to operate device interlink | ✅ |
-| Don't want to install the Honeycomb | ✅ |
-| Need a graphical interface | ❌ Choose the Honeycomb |
+| Don't want to install the Pupa | ✅ |
+| Need a graphical interface | ❌ Choose the Pupa |
 | Need browser access | ❌ Choose the Beehive (ships with the Hull) |
 
 ## Install and launch
@@ -159,7 +159,7 @@ Seeing the model think → a batch of tools → results → a reply means it's w
 ## What the Helm lacks
 
 - **Scheduled tasks are explicitly off**: you can't add, modify, enable, or immediately run a scheduled task; viewing status, listing, deleting, and disabling still work — so you'll see old task lists, but the Helm won't schedule anything new.
-- **Engine queueing is explicitly off too**: sending another message during a run doesn't join a queue; it hits the session lock outright and is judged "this user already has a running session," returning only once the busy window elapses. This is the opposite of the Honeycomb, which forces the queue open. To interject, queue, or rewrite the next message during a run, use the Honeycomb or the Beehive.
+- **Engine queueing is explicitly off too**: sending another message during a run doesn't join a queue; it hits the session lock outright and is judged "this user already has a running session," returning only once the busy window elapses. This is the opposite of the Pupa, which forces the queue open. To interject, queue, or rewrite the next message during a run, use the Pupa or the Beehive.
 - **Channels, knowledge bases, long-term memory, and personas** have **no management interface** on the Helm
 - **No voice input**: the Helm has no ASR; paste images with `Ctrl+V` or drag-and-drop
 - **No interactive terminal UI**: the host is itself the terminal; shell access goes through the `!` prefix
@@ -182,11 +182,11 @@ When a script needs an isolated runtime directory, override it with `--temp-root
 - Batch tasks: an external scheduler looping over `exec`
 - Pipelines: `cat input.txt | wunder-cli` triggers the non-TTY degradation
 - Combining with `tool` / `mcp` / `skills` for pure tool runs
-- **Scheduled tasks don't belong on the Helm**: it turns cron off; put them on the Honeycomb or Beehive scheduled-tasks page
+- **Scheduled tasks don't belong on the Helm**: it turns cron off; put them on the Pupa or Beehive scheduled-tasks page
 
 ## Common questions
 
-**Graphical interface**: not supported; use the Honeycomb when you need a GUI.
+**Graphical interface**: not supported; use the Pupa when you need a GUI.
 
 **Scheduled tasks**: not supported; the Helm explicitly turns cron off.
 

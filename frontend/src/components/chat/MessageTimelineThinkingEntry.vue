@@ -106,6 +106,8 @@ const { t } = useI18n();
   background: var(--mz-thought, #3e9c7e);
 }
 
+/* 状态点 12px（简化形态，与工具条目一致）：完成 = 描边圆圈 + 勾，
+   运行中 = 灰色转圈（fa-circle-notch 自带圆环造型，去掉容器边框）。 */
 .tl-thinking-status {
   flex: 0 0 auto;
   width: 12px;
@@ -114,17 +116,18 @@ const { t } = useI18n();
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  border: 1px solid var(--mz-timeline-entry-soft, #9ba0a8);
   border-radius: 50%;
   font-size: 7px;
   line-height: 1;
-  color: #ffffff;
-  background: var(--mz-thought, #3e9c7e);
+  color: var(--mz-text-muted, #8a8f99);
+  background: transparent;
 }
 
 .tl-thinking-status.is-streaming {
-  background: transparent;
-  border: 1.5px solid rgba(62, 156, 126, 0.32);
-  color: var(--mz-thought, #3e9c7e);
+  border: 0;
+  font-size: 12px;
+  color: var(--mz-text-muted, #8a8f99);
 }
 
 .tl-thinking-label {

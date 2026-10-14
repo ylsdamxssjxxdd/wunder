@@ -28,9 +28,9 @@ The button is briefly disabled while a thread is being created or switched. Thre
 
 A subagent is a temporary work unit the agent creates during a task, used to split off work that can proceed in parallel and get it done; once the result is returned to the main thread, the subagent is reclaimed. It is not a separate agent — on the user side there is always exactly one agent instance.
 
-## Honeycomb and Hull Dependency
+## Pupa and Hull Dependency
 
-Deploying the Hull is not required. The Honeycomb can run locally on its own. Deploy the Hull when you need multi-person collaboration and unified management.
+Deploying the Hull is not required. The Pupa can run locally on its own. Deploy the Hull when you need multi-person collaboration and unified management.
 
 ## Changing Your Username and Password
 

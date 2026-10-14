@@ -19,18 +19,18 @@ wunder is an agent-scheduling platform: hand it a goal and it breaks the task do
 
 | Form | Role |
 | --- | --- |
-| **Honeycomb** (desktop) | A local AI workbench, the default entry for individuals; a local desktop process that calls the engine in-process, with a local SQLite |
+| **Pupa** (desktop) | A local AI workbench, the default entry for individuals; a local desktop process that calls the engine in-process, with a local SQLite |
 | **Beehive** (web) | A cloud AI workbench reached from a browser; no process of its own, using the Hull's storage |
 | **Helm** (cli) | A hands-on local entry driven from a terminal and easy to script; a local process with a local SQLite |
 | **Hull** (server) | The user- and agent-management platform: multi-tenancy, units, app build-and-release, and gateway access; a service process plus the engine, with the Bridge built in |
 
-The Honeycomb and the Helm do not depend on the Hull and can run and ship on their own. The Electron / Tauri front-end shells are no longer maintained day to day and are no longer described as a capability.
+The Pupa and the Helm do not depend on the Hull and can run and ship on their own. The Electron / Tauri front-end shells are no longer maintained day to day and are no longer described as a capability.
 
 ## The 9 cores
 
 <div class="docs-card-grid docs-card-grid-compact">
   <a class="docs-card" href="/docs/en/concepts/core-goal/"><strong>Goal</strong><span>Lets an agent enter goal mode and keep working on one task.</span></a>
-  <a class="docs-card" href="/docs/en/concepts/core-compatibility/"><strong>Compatibility</strong><span>Lets the Honeycomb and the Helm run in older operating-system environments under explicit constraints.</span></a>
+  <a class="docs-card" href="/docs/en/concepts/core-compatibility/"><strong>Compatibility</strong><span>Lets the Pupa and the Helm run in older operating-system environments under explicit constraints.</span></a>
   <a class="docs-card" href="/docs/en/concepts/core-context-compression/"><strong>Context compression</strong><span>Keeps context size under control in long conversations while retaining useful information.</span></a>
   <a class="docs-card" href="/docs/en/concepts/core-subagent/"><strong>Subagents</strong><span>Forks a subtask inside a single thread; an independent executor completes it and returns the result.</span></a>
   <a class="docs-card" href="/docs/en/concepts/core-scheduled-tasks/"><strong>Scheduled tasks</strong><span>Supports system-level periodic execution and background governance.</span></a>
@@ -74,7 +74,7 @@ One layer down, by topic (all under [Reference › In Depth](/docs/en/reference/
 
 ## Recommended reading by role
 
-- **First time on the Honeycomb**: [Quickstart](/docs/en/start/quickstart/) → Agent Loop → Tools → Memory → Context Compression.
+- **First time on the Pupa**: [Quickstart](/docs/en/start/quickstart/) → Agent Loop → Tools → Memory → Context Compression.
 - **Administrator / governance**: Multi-user Management → Stability → Observability → Channels → [Configuration Reference](/docs/en/reference/config/).
 - **Integration and development**: [Architecture](/docs/en/concepts/architecture/) → [Chat WebSocket](/docs/en/reference/chat-ws/) → Streaming Execution.
 
@@ -84,7 +84,7 @@ One layer down, by topic (all under [Reference › In Depth](/docs/en/reference/
 - **"Every listed tool is usable"** — it is not. The default usable set is a fixed tier, and `网页搜索` and `ptc` are currently **temporarily withdrawn** (code kept, invisible to model and user), not deleted.
 - **"Editing the prompt affects the current conversation at once"** — it does not. Once a thread first fixes its system prompt, it is frozen.
 - **"What the UI shows is the back-end truth"** — the UI consumes a bounded view (pagination plus a byte budget), not the full history. When the content looks wrong, trust the thread ledger.
-- **"Stopping maintenance of the front-end shell stops the Honeycomb back end"** — they are two different things. The Honeycomb runs the local native UI with in-process native calls by default, and its execution, tools, and storage semantics still reuse the engine.
+- **"Stopping maintenance of the front-end shell stops the Pupa back end"** — they are two different things. The Pupa runs the local native UI with in-process native calls by default, and its execution, tools, and storage semantics still reuse the engine.
 
 ## Further reading
 

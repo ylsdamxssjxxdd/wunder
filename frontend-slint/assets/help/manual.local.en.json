@@ -15,7 +15,7 @@
           "kind": "h1",
           "spans": [
             {
-              "text": "Honeycomb User Manual"
+              "text": "Pupa User Manual"
             }
           ]
         },
@@ -23,7 +23,7 @@
           "kind": "lead",
           "spans": [
             {
-              "text": "Honeycomb is a local AI workbench: hand a goal to the agent, and it breaks the task down, calls tools, and delivers results. Files and threads stay on this machine."
+              "text": "Pupa is a local AI workbench: hand a goal to the agent, and it breaks the task down, calls tools, and delivers results. Files and threads stay on this machine."
             }
           ]
         },
@@ -31,7 +31,7 @@
           "kind": "paragraph",
           "spans": [
             {
-              "text": "This manual introduces Honeycomb's core capabilities and day-to-day operations. On the left, the "
+              "text": "This manual introduces Pupa's core capabilities and day-to-day operations. On the left, the "
             },
             {
               "text": "Contents",
@@ -805,7 +805,7 @@
           "kind": "paragraph",
           "spans": [
             {
-              "text": "Honeycomb stores file assets in a local workspace directory. The "
+              "text": "Pupa stores file assets in a local workspace directory. The "
             },
             {
               "text": "Workspace directory",
@@ -1354,7 +1354,7 @@
           "marker": "·",
           "spans": [
             {
-              "text": "Model requests go directly to the service address you configured; Honeycomb does not handle or store them through any third-party relay."
+              "text": "Model requests go directly to the service address you configured; Pupa does not handle or store them through any third-party relay."
             }
           ]
         },
@@ -1751,7 +1751,7 @@
               "cells": [
                 [
                   {
-                    "text": "Honeycomb"
+                    "text": "Pupa"
                   }
                 ],
                 [

@@ -21,18 +21,18 @@ wunder（心舰）是智能体调度平台：把目标交给智能体，它拆�
 
 | 形态 | 定位 |
 | --- | --- |
-| **蜂窝**（desktop） | 本地 AI 工作台，个人默认入口；本地桌面进程，同进程直接调用引擎，本地 SQLite |
+| **蛹**（desktop） | 本地 AI 工作台，个人默认入口；本地桌面进程，同进程直接调用引擎，本地 SQLite |
 | **蜂巢**（web） | 云端 AI 工作台，浏览器访问；无独立进程，用舰体的存储 |
 | **舵机**（cli） | 手工本地操作入口，终端驱动、便于脚本化；本地进程，本地 SQLite |
 | **舰体**（server） | 用户与智能体管理平台：多租户、单位、应用构建发布、网关接入；服务进程 + 引擎，自带舰桥 |
 
-蜂窝与舵机不依赖舰体，可独立运行与分发。Electron / Tauri 前端壳已停止日常维护，不再作为能力描述。
+蛹与舵机不依赖舰体，可独立运行与分发。Electron / Tauri 前端壳已停止日常维护，不再作为能力描述。
 
 ## 9 个核心
 
 <div class="docs-card-grid docs-card-grid-compact">
   <a class="docs-card" href="/docs/zh-CN/concepts/core-goal/"><strong>目标</strong><span>让智能体进入目标态并持续完成一项任务。</span></a>
-  <a class="docs-card" href="/docs/zh-CN/concepts/core-compatibility/"><strong>兼容性</strong><span>让蜂窝与舵机在旧操作系统环境中可运行并被明确约束。</span></a>
+  <a class="docs-card" href="/docs/zh-CN/concepts/core-compatibility/"><strong>兼容性</strong><span>让蛹与舵机在旧操作系统环境中可运行并被明确约束。</span></a>
   <a class="docs-card" href="/docs/zh-CN/concepts/core-context-compression/"><strong>上下文压缩</strong><span>在长会话中控制上下文规模并保留有效信息。</span></a>
   <a class="docs-card" href="/docs/zh-CN/concepts/core-subagent/"><strong>子智能体</strong><span>在单一线程内派生子任务，由独立执行体完成并回传结果。</span></a>
   <a class="docs-card" href="/docs/zh-CN/concepts/core-scheduled-tasks/"><strong>定时任务</strong><span>支持系统级周期执行与后台治理。</span></a>
@@ -76,7 +76,7 @@ wunder（心舰）是智能体调度平台：把目标交给智能体，它拆�
 
 ## 按角色推荐阅读
 
-- **第一次用蜂窝**：[快速上手](/docs/zh-CN/start/quickstart/) → 智能体循环 → 工具 → 记忆 → 上下文压缩。
+- **第一次用蛹**：[快速上手](/docs/zh-CN/start/quickstart/) → 智能体循环 → 工具 → 记忆 → 上下文压缩。
 - **管理员 / 治理**：多用户管理 → 稳定性 → 可观测性 → 渠道 → [配置参考](/docs/zh-CN/reference/config/)。
 - **接入与开发**：[系统架构](/docs/zh-CN/concepts/architecture/) → [聊天 WebSocket](/docs/zh-CN/reference/chat-ws/) → 流式执行。
 
@@ -86,7 +86,7 @@ wunder（心舰）是智能体调度平台：把目标交给智能体，它拆�
 - **「列出来的工具都能用」** —— 不能。默认可用集是固定档位，且 `网页搜索` 与 `ptc` 当前属**临时下架**（代码保留、对模型与用户不可见），不是已删除。
 - **「改提示词会立刻影响当前对话」** —— 不会。线程首次确定系统提示词后即冻结。
 - **「界面显示的就是后端真相」** —— 界面消费的是有界视图（分页 + 字节预算），不是全量历史。看到的内容异常时以线程台账为准。
-- **「停了维护前端壳=停了蜂窝后端」** —— 两回事。蜂窝默认走本地原生界面 + 同进程原生调用，执行、工具与存储语义仍复用引擎。
+- **「停了维护前端壳=停了蛹后端」** —— 两回事。蛹默认走本地原生界面 + 同进程原生调用，执行、工具与存储语义仍复用引擎。
 
 ## 延伸阅读
 

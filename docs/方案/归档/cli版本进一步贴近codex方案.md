@@ -3,7 +3,7 @@
 > 注：本文为历史方案记录；蜂群编排（swarm / beeroom / 编排态 / hive pack / 工蜂卡）已于本次重构移除，文中相关章节不再对应当前系统能力。
 
 > 适用范围：`crates/wunder-cli/`（舵机）。
-> 承接文档：`docs/本地易用重构方案.md`（蜂窝单智能体重构，已完成并验收）、`docs/cli版本实现方案.md`（舵机 N0–N7 与 §10 已落地）。
+> 承接文档：`docs/本地易用重构方案.md`（蛹单智能体重构，已完成并验收）、`docs/cli版本实现方案.md`（舵机 N0–N7 与 §10 已落地）。
 > 参考形态：OpenAI Codex CLI 的 Rust 实现（`codex-rs`）。
 > 前提：原型阶段，**不考虑兼容性**，老旧/不合适的字段与架构直接移除，保持项目干净。
 
@@ -13,7 +13,7 @@
 
 ### 1.1 现状问题
 
-蜂窝（desktop）已按「本地易用」重构为**单智能体 + 工作区为中心**，个人用户负担大幅下降。舵机（cli）虽然呈现层（N7）已经像素级对齐 codex，但产品形态仍是旧的多智能体治理思路，与蜂窝新范式脱节：
+蛹（desktop）已按「本地易用」重构为**单智能体 + 工作区为中心**，个人用户负担大幅下降。舵机（cli）虽然呈现层（N7）已经像素级对齐 codex，但产品形态仍是旧的多智能体治理思路，与蛹新范式脱节：
 
 1. **多智能体残留**：`--agent` 参数、`/agent`、`/personality`、请求级 `agent_id` 覆盖、会话按智能体分组，个人用户不需要创建/切换/重复配置智能体。
 2. **工作目录是私有沙箱**：`config.workspace.root` 默认 `~/.wunder/workspace`，启动目录只进 `allow_paths`；模型读写的是沙箱副本，与用户真实项目脱节——与桌面重构前的旧形态是同一问题。
@@ -24,7 +24,7 @@
 
 ### 1.2 目标
 
-1. **单智能体**：整个 CLI 只有一个内置智能体 `__default__`，无创建/切换/覆盖入口（与蜂窝同一份固化逻辑）。
+1. **单智能体**：整个 CLI 只有一个内置智能体 `__default__`，无创建/切换/覆盖入口（与蛹同一份固化逻辑）。
 2. **cwd 即工作区**：启动目录就是工作区，工具直接读写真实项目文件夹；`-C/--cd` 切换；工作区在 `workspaces` 表自动建档，线程归属工作区。
 3. **入口形态对齐 codex**：无子命令 = TUI（在 cwd 开新线程）；`exec` = 非交互一次执行；`resume` = 按工作区恢复；斜杠命令收敛为个人核心集。
 4. **配置收敛为 codex 式 `~/.wunder/config.toml`**：精简投影，映射既有 ConfigStore，引擎 YAML 退为内部层。
@@ -33,7 +33,7 @@
 
 ### 1.3 设计原则
 
-- 与蜂窝共用同一产品范式（单智能体、工作区中心、配置集中），三形态同源同引擎。
+- 与蛹共用同一产品范式（单智能体、工作区中心、配置集中），三形态同源同引擎。
 - 复用引擎资产（workspaces 表、`register_workspace_root`、`build_native_chat_request`、`__default__` 智能体、ThreadCatalogService），不另起执行链路。
 - 对齐 codex 的「形态与交互心智」，不复制其 app-server daemon、OAuth 登录、guardian/auto-review 体系。
 - 性能默认：无界队列/缓存禁止、有界分页、按帧合并、启动首帧不被后台初始化阻塞。
@@ -61,7 +61,7 @@
 | 会话生命周期 | 全局「当前会话」文件自动续用 | **每次进入新线程**，`resume`/`Ctrl+R` 恢复 |
 | 配置 | 整份引擎 YAML | **`~/.wunder/config.toml` 精简投影** + profile |
 | 恢复 | `/resume` 数字列表 | **按 cwd 工作区过滤**的恢复选择器 + `--all` |
-| 命令中心（←） | 智能体 + 线程目录 | **工作区 + 线程树**（对齐蜂窝左栏） |
+| 命令中心（←） | 智能体 + 线程目录 | **工作区 + 线程树**（对齐蛹左栏） |
 | 斜杠命令 | 38 个（含治理） | **核心约 20 个** |
 | 审批语义 | suggest/auto_edit/full_auto | **on-request/never + 沙箱三档**（内部映射兼容） |
 | 退出 | 无摘要 | **退出摘要 + `wunder-cli resume <id>` 提示** |
@@ -117,7 +117,7 @@ codex 的 preflight 是**鉴权**预检（`startup_preflight.rs:22-74`）而非 
 | `F4` | activity 聚焦 | wunder 为鼠标模式切换 | 保留现状，帮助文案标注差异 |
 | `?` | 快捷键覆盖层 | ✅ 已实现 | 保持 |
 | `Tab` | 任务运行中「排队」下一条消息 | 现状为编辑器行为 | 保留现状（原型不强制对齐） |
-| `Alt+,` / `Alt+.` | 推理强度减/增 | ❌ 无 | **新增**（对齐蜂窝输入区模型/强度切换） |
+| `Alt+,` / `Alt+.` | 推理强度减/增 | ❌ 无 | **新增**（对齐蛹输入区模型/强度切换） |
 | `@` | 文件提及弹窗 | 有 `/mention` 命令 | **新增** `@` 触发文件提及（复用 `/mention` 索引） |
 | `!` | 前缀 = shell 命令直发 | ❌ 无 | **新增**（等价 `tool run execute_command`） |
 | `/` | 斜杠命令弹窗 | ✅ 已实现 | 保持（命令集按 §4.4 收敛） |
@@ -136,7 +136,7 @@ wunder 映射（不改引擎判定，只改 CLI 词表与默认值）：
 | codex 词表 | wunder 引擎落点 | 说明 |
 |---|---|---|
 | `sandbox_mode = workspace-write`（CLI 默认） | 工具根 = cwd + 允许根收敛到 cwd（丢弃继承自舰体模板的 `*`）+ 工作区外绝对路径直接拒绝 | 个人本地默认：工作区内自由读写执行，越界即拒 |
-| `sandbox_mode = read-only` | 新增只读执行策略：写/执行类工具需确认或拒绝（复用 `exec_policy` 判定，前端确认不替代后端鉴权） | 与蜂窝「权限模式」三档同语义 |
+| `sandbox_mode = read-only` | 新增只读执行策略：写/执行类工具需确认或拒绝（复用 `exec_policy` 判定，前端确认不替代后端鉴权） | 与蛹「权限模式」三档同语义 |
 | `sandbox_mode = danger-full-access` | `approval_mode = full_auto` + allow_paths 放开 | 高风险，需显式确认 |
 | `approval_policy = on-request` | 现有 `auto_edit`（写免批、执行需批）；`suggest` 保留为「全部需批」 | 见下方实现说明 |
 | `approval_policy = never`（CLI 默认） | 现有 `full_auto` | 失败直接回给模型 |
@@ -168,7 +168,7 @@ wunder 映射（不改引擎判定，只改 CLI 词表与默认值）：
 | `resume` | 恢复会话 | 保留；补 `--all`（关闭 cwd 过滤）、`--last`、`[SESSION_ID] [PROMPT]` 语义与 codex 同构（`codex-rs/exec/src/cli.rs:205-254`） |
 | `tool` | run/list | 保留 |
 | `mcp` | list/get/add/remove/enable/disable/login/logout/test | 保留（形态已近 `codex mcp`） |
-| `skills` | list/enable/disable/upload/remove/root | 保留（wunder 特有，蜂窝同源） |
+| `skills` | list/enable/disable/upload/remove/root | 保留（wunder 特有，蛹同源） |
 | `config` | show/set-tool-call-mode/set-approval-mode | **改为面向 config.toml**：`config show`（生效配置）、`config path`（文件路径）、`config edit`（打开编辑器，可选）、`config validate`（严格模式校验）；tool-call-mode/approval-mode 设置并入 toml 与 `/permissions` |
 | `doctor` | 诊断 | 保留 |
 | `completion` | 补全脚本 | 保留 |
@@ -237,7 +237,7 @@ wunder-cli exec [OPTIONS] [PROMPT]
 | `/init` | 生成 AGENTS.md 模板（codex 同名） |
 | `/attach` | 附件队列 |
 | `/edit` | 外部编辑器（绑定 Ctrl+G） |
-| `/goal` | 长期目标（蜂窝目标条同源） |
+| `/goal` | 长期目标（蛹目标条同源） |
 | `/plan` | 让模型先出计划 |
 | `/config` | 查看/编辑 config.toml |
 | `/quit`、`/exit` | 退出 |
@@ -248,7 +248,7 @@ wunder-cli exec [OPTIONS] [PROMPT]
 
 ## 五、数据与后端改造
 
-> 原则：工作区是已存在的一等实体（蜂窝重构落地），CLI 复用同一表与注入链路，不新建平行机制。
+> 原则：工作区是已存在的一等实体（蛹重构落地），CLI 复用同一表与注入链路，不新建平行机制。
 
 ### 5.1 工作区自动建档与线程归属
 
@@ -257,25 +257,25 @@ wunder-cli exec [OPTIONS] [PROMPT]
    - 未命中 → 自动建档：`name` = 文件夹名、`icon` = `folder`、`color` = `blue`、`root_path` = 启动目录（复用 `wunder-desktop/native_workspace.rs` 的建档/校验逻辑，下沉为 CLI 可用的共享 helper 或 CLI 侧小 façade；不复制实现）。
 2. `-C DIR` 切换启动目录，同样查表/建档。
 3. 新建线程（`ensure_cli_session_record`）写入 `workspace_id`（`ChatSessionRecord.workspace_id` 已存在）；`agent_id` 恒为 `None`→`__default__`。
-4. 归档/删除工作区不在 CLI 提供入口（蜂窝设置页职责），CLI 只读使用。
+4. 归档/删除工作区不在 CLI 提供入口（蛹设置页职责），CLI 只读使用。
 
 ### 5.2 工具根注入（cwd 直写）
 
 1. 发送线程消息时按 `session.workspace_id` 读取 `root_path`。
-2. 复用蜂窝同链路：`state.workspace.register_workspace_root(workspace_id, root_path)`（`wunder-runtime/src/services/workspace.rs:353`）+ 请求携带 `workspace_id`（`WunderRequest.workspace_id`，orchestrator `resolve_workspace_id` 消费，`wunder-runtime/src/orchestrator/request.rs:28-33`）。
+2. 复用蛹同链路：`state.workspace.register_workspace_root(workspace_id, root_path)`（`wunder-runtime/src/services/workspace.rs:353`）+ 请求携带 `workspace_id`（`WunderRequest.workspace_id`，orchestrator `resolve_workspace_id` 消费，`wunder-runtime/src/orchestrator/request.rs:28-33`）。
    - TUI/line-chat 的请求构造收敛为一个共享 builder（与 `api/chat.rs::build_native_chat_request` 同规则），不再散落两处。
 3. 路径安全：`is_within_root` 以 cwd 为界；`allow_paths` 收敛为 cwd（+ wunder home 技能等既有目录）；高风险操作仍以后端鉴权为准。
 4. 工具返回路径相对化：展示用工作区相对路径，不暴露主机绝对路径（复用现有 `path_display`）。
 
 ### 5.3 单智能体固化
 
-- 移除 `--agent` 参数、`/agent`、`/personality` 及其请求覆盖路径；`agent_id` 恒为 `None`，引擎侧按 `__default__` 解析（`default_agent_protocol`、`agent_management` 已由蜂窝落地，CLI 直接受益）。
+- 移除 `--agent` 参数、`/agent`、`/personality` 及其请求覆盖路径；`agent_id` 恒为 `None`，引擎侧按 `__default__` 解析（`default_agent_protocol`、`agent_management` 已由蛹落地，CLI 直接受益）。
 - 智能体级配置（system prompt、默认模型、推理强度、工具启用集）走 §六的 config.toml 与既有 `__default__` 记录，CLI 不提供多智能体表单。
 - 提示词冻结规则不变：线程首次确定后 system prompt 冻结；长期记忆仅线程初始化时注入一次。
 
 ### 5.4 会话迁移
 
-- 复用蜂窝 `migrate_local_workspaces` 模式（`wunder-desktop/runtime.rs:1687-1750`）：启动时幂等迁移——无 `workspace_id` 的旧 CLI 会话批量挂到「默认工作区」（优先 cwd 工作区，其次首个已有工作区，否则按旧根新建），分页处理（页 200），迁移后不再保留多智能体字段语义。
+- 复用蛹 `migrate_local_workspaces` 模式（`wunder-desktop/runtime.rs:1687-1750`）：启动时幂等迁移——无 `workspace_id` 的旧 CLI 会话批量挂到「默认工作区」（优先 cwd 工作区，其次首个已有工作区，否则按旧根新建），分页处理（页 200），迁移后不再保留多智能体字段语义。
 - 旧的「当前会话」文件（`sessions/current_session.json`）语义删除：不再自动续用（§3.2），文件可移除。
 
 ### 5.5 AGENTS.md 注入（codex 核心能力引入）
@@ -293,7 +293,7 @@ wunder 落点：
 
 - codex 的 agents command center 实际展示的是**线程（任务）**而非智能体（`codex-rs/tui/src/app/agents_overview_view.rs:1-3`，按 Needs input/Working/Ready/Inactive 分组）；wunder 现有命令中心数据与交互已对齐，只差产品形态收敛：
   - 删除 `ThreadGroupMode::Agent` 分组（`wunder-cli/tui/command_center.rs:20`），新增 `ThreadGroupMode::Workspace`；
-  - 行显示工作区名（短名 + 颜色点，可复用蜂窝工作区颜色），详情栏显示工作区路径；
+  - 行显示工作区名（短名 + 颜色点，可复用蛹工作区颜色），详情栏显示工作区路径；
   - 状态页签、搜索、分页、详情、只读监视全部保留（复用 ThreadCatalogService 资产）。
 - 命令中心标题/文案从「agent command center」改为「任务中心 / threads」（本地化）。
 
@@ -318,7 +318,7 @@ wunder 落点：
 | `skills`（enabled 集合） | `skills.enabled` | 与 `/skills` 同源 |
 | `notify` | turn 通知（bell/osc9/command） | 现有 `/notify` 迁移为配置项（命令移除） |
 | `language` | `i18n.default_language` | zh-CN / en-US |
-| `send_key` | 发送键偏好 | Enter / Ctrl+Enter（蜂窝设置同源） |
+| `send_key` | 发送键偏好 | Enter / Ctrl+Enter（蛹设置同源） |
 | `ui`（hide_reasoning 等） | 呈现偏好 | 思考折叠开关 |
 
 ### 6.2 profile
@@ -331,9 +331,9 @@ wunder 落点：
 - 优先级（低→高）：内置默认 < 用户 `~/.wunder/config.toml` < profile < 项目 `.wunder/config.toml` < CLI 参数（`-m`/`-s`/`--approval-mode` 等）。
 - `--strict-config`：未知键报错（codex 同名参数）。
 
-### 6.4 与蜂窝设置页的关系
+### 6.4 与蛹设置页的关系
 
-- 同一 ConfigStore 的两个视图：蜂窝 = 12 分类设置页，舵机 = config.toml + `/config`；互不另起执行链路，两边改动即时互通。
+- 同一 ConfigStore 的两个视图：蛹 = 12 分类设置页，舵机 = config.toml + `/config`；互不另起执行链路，两边改动即时互通。
 - `wunder-cli config show` 输出「生效配置」合并视图（toml 层叠结果），`config validate` 供脚本校验。
 
 ### 6.5 落地状态与后续（C3 实现记录）
@@ -386,7 +386,7 @@ wunder 落点：
 
 - 改动：`~/.wunder/config.toml` 生成/解析/合并层（§6.1-6.3）；profile（`-p`）；`config` 子命令 show/path/validate（+可选 edit）；`--strict-config`；旧 `config` 子命令的 set-* 移除。
 - 交付：toml 层叠生效；wunder.yaml 退为内部层。
-- 验收：优先级用例（默认<用户<profile<项目<CLI）；未知键 strict 报错；解析失败降级启动；与蜂窝设置页互写可见。
+- 验收：优先级用例（默认<用户<profile<项目<CLI）；未知键 strict 报错；解析失败降级启动；与蛹设置页互写可见。
 
 ### C4 — 会话生命周期与恢复
 
@@ -478,7 +478,7 @@ wunder 落点：
 
 ## 十一、风险与注意事项
 
-1. **cwd 直写风险**：同蜂窝重构 §14——必须保留根边界校验与权限模式；禁止任何「删除工作区磁盘内容」能力；`danger-full-access` 需显式确认。
+1. **cwd 直写风险**：同蛹重构 §14——必须保留根边界校验与权限模式；禁止任何「删除工作区磁盘内容」能力；`danger-full-access` 需显式确认。
 2. **exec 语义变更**：从「shell 直跑」改为「agent 执行」会破坏既有脚本习惯；原型阶段直接变更，在 help 与发布说明中明示，不提供两套语义并存。
 3. **配置双轨过渡**：config.toml 投影与引擎 wunder.yaml 并存期间，写回路径必须单一（toml → ConfigStore 单向投影），防止两处手改互相覆盖。
 4. **AGENTS.md 与提示词冻结**：注入只允许在线程初始化时发生，违反缓存规则的回退不可接受；注入超预算必须截断并提示，不得静默丢内容。
@@ -491,7 +491,7 @@ wunder 落点：
 ## 十二、与既有方案文档的关系
 
 - `docs/cli版本实现方案.md` 的 **N0–N7 与 §10 全部保留**：线程注册表与有界事件泵（N2）、TranscriptCell 与 ToolCallKey（N3/N4）、durable 游标与共享 feeder（§10）、呈现规范化（N7）是本方案不可动摇的底座；本方案仅改变其上的产品形态（单智能体、工作区、命令面、配置）。
-- `docs/本地易用重构方案.md` 是产品范式的来源：蜂窝的 workspaces 表、`__default__` 固化、工作目录直连链路被 CLI 直接复用，两形态从此同构。
+- `docs/本地易用重构方案.md` 是产品范式的来源：蛹的 workspaces 表、`__default__` 固化、工作目录直连链路被 CLI 直接复用，两形态从此同构。
 - 冲突处以本方案为准：命令中心标题/分组、斜杠命令集、`exec` 语义、审批词表按本方案执行；既有文档相应章节标注「已被《cli版本进一步贴近codex方案》取代」。
 
 ---

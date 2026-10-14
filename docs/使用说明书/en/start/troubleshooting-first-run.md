@@ -1,6 +1,6 @@
 ---
 title: First-Run Troubleshooting
-summary: The most common failure modes and verification points for the first launch or deployment of each form: Honeycomb startup, Hull deployment, Beehive access, Helm execution. When the first run doesn't work, locate the failure by form here.
+summary: The most common failure modes and verification points for the first launch or deployment of each form: Pupa startup, Hull deployment, Beehive access, Helm execution. When the first run doesn't work, locate the failure by form here.
 read_when:
   - A first install, launch, or deployment failed
   - You need verification points to confirm a form is healthy
@@ -17,7 +17,7 @@ updated_at: 2026-10-13
 
 Sections are organized by form: each section lists what a healthy run looks like (verification points) first, then failure symptoms and where to check.
 
-## Honeycomb (desktop)
+## Pupa (desktop)
 
 ### Verification points
 
@@ -30,13 +30,13 @@ Sections are organized by form: each section lists what a healthy run looks like
 
 | Symptom | Check first | Docs |
 | --- | --- | --- |
-| The startup screen never finishes | Permissions on `~/.wunder`; work-tree scan duration (up to 4096 items) | [Honeycomb intro](/docs/en/start/desktop/) |
-| The window appears but the workspace is empty | Whether the working-directory area shows "offline" | [Honeycomb interface](/docs/en/surfaces/desktop-ui/) |
+| The startup screen never finishes | Permissions on `~/.wunder`; work-tree scan duration (up to 4096 items) | [Pupa intro](/docs/en/start/desktop/) |
+| The window appears but the workspace is empty | Whether the working-directory area shows "offline" | [Pupa interface](/docs/en/surfaces/desktop-ui/) |
 | Model request 401/403 | Settings → Model → API key and endpoint URL; rerun "Test connection" | [Configuration reference](/docs/en/reference/config/) |
 | Sending a message during a run is rejected as "user busy" | The session queue is on by default; turning it off breaks the queue bar | [Quick Start](/docs/en/start/quickstart/) |
-| Expecting TTS playback but hearing nothing | **Honeycomb TTS is not implemented** — only the model can be configured; use the Beehive for TTS | [Honeycomb interface](/docs/en/surfaces/desktop-ui/) |
+| Expecting TTS playback but hearing nothing | **Pupa TTS is not implemented** — only the model can be configured; use the Beehive for TTS | [Pupa interface](/docs/en/surfaces/desktop-ui/) |
 | Can't find a "device interlink" settings category | The category isn't wired to the interface; the available surfaces are only the sidebar's cloud workspaces plus the remote command approval dialog | [Surfaces overview](/docs/en/surfaces/index/) |
-| State is a mess | Settings → General → one-click workspace state reset (keeps skills, knowledge bases, long-term memory, configuration, and workspace files) | [Honeycomb intro](/docs/en/start/desktop/) |
+| State is a mess | Settings → General → one-click workspace state reset (keeps skills, knowledge bases, long-term memory, configuration, and workspace files) | [Pupa intro](/docs/en/start/desktop/) |
 
 ## Hull (server)
 
@@ -96,18 +96,18 @@ Sections are organized by form: each section lists what a healthy run looks like
 | Can't find a `/cron` command | The Helm explicitly turns scheduled tasks off; there is no channel / knowledge / memory / persona management interface either | [Helm usage](/docs/en/start/cli/) |
 | JSONL events missing fields | Event names are `thread` / `turn` / `item.*`; parse against that contract | [Helm usage](/docs/en/start/cli/) |
 | Want to run a single tool in a script | Use `wunder-cli tool ...` directly; it doesn't go through the agent loop | [Helm usage](/docs/en/start/cli/) |
-| A second message during a run is rejected as "user busy" | Expected: the Helm sets `config.agent_queue.enabled = false` (`crates/wunder-cli/runtime.rs`) — messages don't queue, they hit the session lock; use Honeycomb or Beehive to queue | [Helm usage](/docs/en/start/cli/) |
+| A second message during a run is rejected as "user busy" | Expected: the Helm sets `config.agent_queue.enabled = false` (`crates/wunder-cli/runtime.rs`) — messages don't queue, they hit the session lock; use Pupa or Beehive to queue | [Helm usage](/docs/en/start/cli/) |
 
 ## General reminders
 
-- **Don't read "the frontend shells are no longer maintained" as "the Honeycomb backend stopped being maintained"**: the Electron / Tauri frontend shells stopped getting iterations; the engine and the Honeycomb backend continue to be developed.
+- **Don't read "the frontend shells are no longer maintained" as "the Pupa backend stopped being maintained"**: the Electron / Tauri frontend shells stopped getting iterations; the engine and the Pupa backend continue to be developed.
 - Lists, logs, and panels all have paging, filtering, or bounded limits. If a page renders a large amount of content at once and stutters, that is a known engineering gap — report it.
 
 ## Further reading
 
 - [Quick Start](/docs/en/start/quickstart/)
 - [Surfaces overview](/docs/en/surfaces/index/)
-- [Honeycomb intro](/docs/en/start/desktop/)
+- [Pupa intro](/docs/en/start/desktop/)
 - [Hull deployment](/docs/en/start/server/)
 - [Helm usage](/docs/en/start/cli/)
 - [Troubleshooting](/docs/en/help/troubleshooting/)

@@ -23,7 +23,7 @@ All three must hold:
 2. You are in desktop mode and have explicitly turned the desktop control switch on (it is off by default).
 3. The current model supports vision; otherwise desktop control, the desktop monitor, and the image-reading tool are all filtered out.
 
-Across the forms: the Honeycomb (desktop mode) lists these three tools in its extra-enabled set by default; under the Hull, Beehive, and Helm forms the desktop tools are unavailable.
+Across the forms: the Pupa (desktop mode) lists these three tools in its extra-enabled set by default; under the Hull, Beehive, and Helm forms the desktop tools are unavailable.
 
 ## How to use it
 

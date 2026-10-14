@@ -15,7 +15,7 @@
           "kind": "h1",
           "spans": [
             {
-              "text": "蜂窝使用手册"
+              "text": "蛹使用手册"
             }
           ]
         },
@@ -23,7 +23,7 @@
           "kind": "lead",
           "spans": [
             {
-              "text": "蜂窝是本地 AI 工作台：把目标交给智能体，它拆解任务、调用工具、交付结果。文件与线程保存在本机。"
+              "text": "蛹是本地 AI 工作台：把目标交给智能体，它拆解任务、调用工具、交付结果。文件与线程保存在本机。"
             }
           ]
         },
@@ -31,7 +31,7 @@
           "kind": "paragraph",
           "spans": [
             {
-              "text": "这份手册介绍蜂窝的核心能力与日常操作。左侧"
+              "text": "这份手册介绍蛹的核心能力与日常操作。左侧"
             },
             {
               "text": "目录",
@@ -304,7 +304,7 @@
       "group": "开始",
       "keywords": [
         "形态",
-        "蜂窝",
+        "蛹",
         "蜂巢",
         "舵机",
         "舰体"
@@ -643,7 +643,7 @@
                 ],
                 [
                   {
-                    "text": "蜂窝 desktop",
+                    "text": "蛹 desktop",
                     "bold": false,
                     "code": false,
                     "kbd": false,
@@ -767,7 +767,7 @@
           "kind": "paragraph",
           "spans": [
             {
-              "text": "各形态共享同一引擎（wunder-runtime）与核心（wunder-core）：线程、工具、存储抽象、实时事件和权限语义是同一份代码，差异只在接入层。蜂窝与舵机不依赖舰体，可独立运行与分发。",
+              "text": "各形态共享同一引擎（wunder-runtime）与核心（wunder-core）：线程、工具、存储抽象、实时事件和权限语义是同一份代码，差异只在接入层。蛹与舵机不依赖舰体，可独立运行与分发。",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -799,7 +799,7 @@
               "href": ""
             },
             {
-              "text": " → 蜂窝（desktop）。本地 AI 工作台，个人用户的默认入口，下载即用。",
+              "text": " → 蛹（desktop）。本地 AI 工作台，个人用户的默认入口，下载即用。",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -922,7 +922,7 @@
     },
     {
       "id": "install",
-      "title": "蜂窝（desktop）入门",
+      "title": "蛹（desktop）入门",
       "group": "开始",
       "keywords": [
         "安装",
@@ -935,7 +935,7 @@
           "kind": "h1",
           "spans": [
             {
-              "text": "蜂窝（desktop）入门",
+              "text": "蛹（desktop）入门",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -947,7 +947,7 @@
           "kind": "lead",
           "spans": [
             {
-              "text": "蜂窝（desktop）是 wunder 的桌面版，也是",
+              "text": "蛹（desktop）是 wunder 的桌面版，也是",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -987,7 +987,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "什么时候选蜂窝",
+              "text": "什么时候选蛹",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -1012,7 +1012,7 @@
                 ],
                 [
                   {
-                    "text": "选蜂窝",
+                    "text": "选蛹",
                     "bold": false,
                     "code": false,
                     "kbd": false,
@@ -1345,7 +1345,7 @@
               "href": ""
             },
             {
-              "text": "（不代表蜂窝后端停止维护）",
+              "text": "（不代表蛹后端停止维护）",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -2004,7 +2004,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "蜂窝独有能力（其他界面没有）",
+              "text": "蛹独有能力（其他界面没有）",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -2107,7 +2107,7 @@
           "kind": "paragraph",
           "spans": [
             {
-              "text": "蜂窝里能用的互通面",
+              "text": "蛹里能用的互通面",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -2466,7 +2466,7 @@
               "href": ""
             },
             {
-              "text": " 蜂窝专注本地单人场景；团队协作请部署舰体，成员用蜂巢。",
+              "text": " 蛹专注本地单人场景；团队协作请部署舰体，成员用蜂巢。",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -2504,7 +2504,7 @@
           "marker": "•",
           "spans": [
             {
-              "text": "蜂窝界面",
+              "text": "蛹界面",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -3082,7 +3082,7 @@
           "marker": "•",
           "spans": [
             {
-              "text": "舰桥没有 goal 界面，目标操作在蜂巢 / 蜂窝 / 舵机里做。",
+              "text": "舰桥没有 goal 界面，目标操作在蜂巢 / 蛹 / 舵机里做。",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -3119,7 +3119,7 @@
           "kind": "lead",
           "spans": [
             {
-              "text": "兼容性核心让蜂窝（desktop）与舵机（cli）在旧操作系统环境中可运行，并把这套运行环境被约束在哪里明确写出来。",
+              "text": "兼容性核心让蛹（desktop）与舵机（cli）在旧操作系统环境中可运行，并把这套运行环境被约束在哪里明确写出来。",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -3335,7 +3335,7 @@
           "kind": "paragraph",
           "spans": [
             {
-              "text": "Windows 7 32 位与 Ubuntu 18.04（x64 / arm64）不是被排除的运行环境，蜂窝与舵机可以装在老机器上跑；界面在没有 GPU 的机器上也能渲染；命令会话在旧 Windows 终端里能承载与解码。",
+              "text": "Windows 7 32 位与 Ubuntu 18.04（x64 / arm64）不是被排除的运行环境，蛹与舵机可以装在老机器上跑；界面在没有 GPU 的机器上也能渲染；命令会话在旧 Windows 终端里能承载与解码。",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -5133,7 +5133,7 @@
               "cells": [
                 [
                   {
-                    "text": "蜂窝",
+                    "text": "蛹",
                     "bold": false,
                     "code": false,
                     "kbd": false,
@@ -5210,7 +5210,7 @@
           "kind": "paragraph",
           "spans": [
             {
-              "text": "需要定时执行时，在蜂巢、蜂窝或舰体侧配置。",
+              "text": "需要定时执行时，在蜂巢、蛹或舰体侧配置。",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -5344,7 +5344,7 @@
           "kind": "paragraph",
           "spans": [
             {
-              "text": "所以同一个任务线程可以从蜂巢发消息、从飞书续聊、用蜂窝收尾，渠道不会创造第二套执行。",
+              "text": "所以同一个任务线程可以从蜂巢发消息、从飞书续聊、用蛹收尾，渠道不会创造第二套执行。",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -5356,7 +5356,7 @@
           "kind": "paragraph",
           "spans": [
             {
-              "text": "形态（蜂窝/蜂巢/舵机/舰体）是运行与接入的形状，渠道（飞书/QQ/微信……）是站外平台，两者不是一层。旧材料常把\"多入口共用一套引擎\"这句话说对，却把渠道清单写错，错在支持范围，不在理念。",
+              "text": "形态（蛹/蜂巢/舵机/舰体）是运行与接入的形状，渠道（飞书/QQ/微信……）是站外平台，两者不是一层。旧材料常把\"多入口共用一套引擎\"这句话说对，却把渠道清单写错，错在支持范围，不在理念。",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -6123,7 +6123,7 @@
           "marker": "•",
           "spans": [
             {
-              "text": "蜂窝、舵机不经过渠道层：蜂窝是同进程原生调用，舵机走自己的接入。",
+              "text": "蛹、舵机不经过渠道层：蛹是同进程原生调用，舵机走自己的接入。",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -7030,7 +7030,7 @@
           "kind": "lead",
           "spans": [
             {
-              "text": "多用户治理是舰体（server）形态的基础能力；蜂窝与舵机是本地单机形态，不涉及账号体系。面板上的具体操作见参考章。",
+              "text": "多用户治理是舰体（server）形态的基础能力；蛹与舵机是本地单机形态，不涉及账号体系。面板上的具体操作见参考章。",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -7355,7 +7355,7 @@
               "href": ""
             },
             {
-              "text": "：请求会标注会话来源，只有蜂窝、舵机这类本地客户端允许靠刷新续期，浏览器会话不走这条路。",
+              "text": "：请求会标注会话来源，只有蛹、舵机这类本地客户端允许靠刷新续期，浏览器会话不走这条路。",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -7412,7 +7412,7 @@
           "kind": "paragraph",
           "spans": [
             {
-              "text": "在线状态按客户端类型分别记录，蜂巢（web）、蜂窝（desktop）、舵机（cli）三路独立，约 90 秒没有心跳就算离线，清扫周期 30 秒（下限 10 秒）。因此用户列表里在线拆成了 web、desktop、cli 三列——\"在线\"不再是一个是非值，谁在哪种形态上在线，看对应的列。管理出口在 ",
+              "text": "在线状态按客户端类型分别记录，蜂巢（web）、蛹（desktop）、舵机（cli）三路独立，约 90 秒没有心跳就算离线，清扫周期 30 秒（下限 10 秒）。因此用户列表里在线拆成了 web、desktop、cli 三列——\"在线\"不再是一个是非值，谁在哪种形态上在线，看对应的列。管理出口在 ",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -10564,7 +10564,7 @@
     },
     {
       "id": "desktop-ui",
-      "title": "蜂窝界面",
+      "title": "蛹界面",
       "group": "界面",
       "keywords": [
         "界面",
@@ -10577,7 +10577,7 @@
           "kind": "h1",
           "spans": [
             {
-              "text": "蜂窝界面",
+              "text": "蛹界面",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -10589,7 +10589,7 @@
           "kind": "lead",
           "spans": [
             {
-              "text": "蜂窝是 wunder 的",
+              "text": "蛹是 wunder 的",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -11315,7 +11315,7 @@
           "kind": "paragraph",
           "spans": [
             {
-              "text": "下面这些是蜂窝里的独立区域，不是单独的页面：",
+              "text": "下面这些是蛹里的独立区域，不是单独的页面：",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -11593,7 +11593,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "蜂窝独有能力",
+              "text": "蛹独有能力",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -11803,7 +11803,7 @@
               "href": ""
             },
             {
-              "text": "：入口在代码里做了，但没有真正渲染出来，当前打不开。蜂窝能用的互通只有两处——侧栏「工作目录」里的云端工作区，和远端命令审批弹窗。",
+              "text": "：入口在代码里做了，但没有真正渲染出来，当前打不开。蛹能用的互通只有两处——侧栏「工作目录」里的云端工作区，和远端命令审批弹窗。",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -11843,7 +11843,7 @@
               "href": ""
             },
             {
-              "text": "：用 Electron / Tauri 做的那套前端壳不再维护，功能也不再更新。这不影响蜂窝底层的引擎，对话等能力照常运行。",
+              "text": "：用 Electron / Tauri 做的那套前端壳不再维护，功能也不再更新。这不影响蛹底层的引擎，对话等能力照常运行。",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -11929,7 +11929,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "蜂窝和蜂巢的差异",
+              "text": "蛹和蜂巢的差异",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -11954,7 +11954,7 @@
                 ],
                 [
                   {
-                    "text": "蜂窝",
+                    "text": "蛹",
                     "bold": false,
                     "code": false,
                     "kbd": false,
@@ -12386,7 +12386,7 @@
           "marker": "•",
           "spans": [
             {
-              "text": "蜂窝入门",
+              "text": "蛹入门",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -12462,7 +12462,7 @@
           "kind": "lead",
           "spans": [
             {
-              "text": "三端互通把蜂巢（web）、蜂窝（desktop）、舵机（cli）连成一套：",
+              "text": "三端互通把蜂巢（web）、蛹（desktop）、舵机（cli）连成一套：",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -12568,7 +12568,7 @@
               "cells": [
                 [
                   {
-                    "text": "蜂窝",
+                    "text": "蛹",
                     "bold": false,
                     "code": false,
                     "kbd": false,
@@ -13014,7 +13014,7 @@
                 ],
                 [
                   {
-                    "text": "蜂窝/舵机把云端当作对称节点——浏览云端工作区、向云端线程发消息、读取线程事件流；舵机提供脚本化命令组",
+                    "text": "蛹/舵机把云端当作对称节点——浏览云端工作区、向云端线程发消息、读取线程事件流；舵机提供脚本化命令组",
                     "bold": false,
                     "code": false,
                     "kbd": false,
@@ -13196,7 +13196,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "蜂窝（desktop）",
+              "text": "蛹（desktop）",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -14386,7 +14386,7 @@
           "marker": "•",
           "spans": [
             {
-              "text": "蜂窝与舵机之间不直接互通，本地互访一律经舰体中转。",
+              "text": "蛹与舵机之间不直接互通，本地互访一律经舰体中转。",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -15062,7 +15062,7 @@
           "kind": "paragraph",
           "spans": [
             {
-              "text": "蜂窝使用本地工作区目录存放文件资产。设置中的"
+              "text": "蛹使用本地工作区目录存放文件资产。设置中的"
             },
             {
               "text": "工作区目录",
@@ -15246,7 +15246,7 @@
           "marker": "·",
           "spans": [
             {
-              "text": "模型请求直连你所配置的服务地址，蜂窝不经手、不存储第三方中转。"
+              "text": "模型请求直连你所配置的服务地址，蛹不经手、不存储第三方中转。"
             }
           ]
         },
@@ -15643,7 +15643,7 @@
               "cells": [
                 [
                   {
-                    "text": "蜂窝"
+                    "text": "蛹"
                   }
                 ],
                 [
@@ -15865,7 +15865,7 @@
       "topic": 2
     },
     {
-      "keyword": "蜂窝",
+      "keyword": "蛹",
       "topic": 2
     },
     {

@@ -25,7 +25,7 @@ A companion package is a ZIP that holds exactly two things: a manifest and a spr
 - Size limits: the whole ZIP is at most 24 MB, and the single sprite-sheet file is at most 18 MB.
 - Import guards against path traversal inside the archive.
 
-Companion files live in one fixed companion directory (`config/data/companions/global`, overridable through `WUNDER_COMPANIONS_ROOT`); embedded forms such as the Honeycomb and the Helm pin this directory to their own data directory. The directory starts empty, so no companion package ships built in and an empty list is normal.
+Companion files live in one fixed companion directory (`config/data/companions/global`, overridable through `WUNDER_COMPANIONS_ROOT`); embedded forms such as the Pupa and the Helm pin this directory to their own data directory. The directory starts empty, so no companion package ships built in and an empty list is normal.
 
 ## Sprite-sheet specification
 
@@ -47,8 +47,8 @@ Companion files live in one fixed companion directory (`config/data/companions/g
 
 | Form | Presentation |
 | --- | --- |
-| Honeycomb (Windows) | Native floating window: a Win32 layered window per pet, with dragging and the frame clock on a separate message thread that does not occupy the UI thread |
-| Honeycomb (Linux) | **No equivalent floating window**; the desktop pet exists only on Windows |
+| Pupa (Windows) | Native floating window: a Win32 layered window per pet, with dragging and the frame clock on a separate message thread that does not occupy the UI thread |
+| Pupa (Linux) | **No equivalent floating window**; the desktop pet exists only on Windows |
 | Beehive | An in-page overlay that follows the chat state |
 | Bridge | A companion management panel: upload, edit, delete, and export global companions |
 | Helm | No companion UI; it only points the companion directory at the local data directory |
@@ -61,7 +61,7 @@ Companion files live in one fixed companion directory (`config/data/companions/g
 | Render scale | 0.5–1.8 |
 | Position | Clamped to the screen work area with margins kept; drag results are saved |
 
-The Honeycomb stores position, per-companion show / scale overrides, and the global message-hint switch in a local file; the Beehive stores them in the browser (clearing browser data resets position and preferences).
+The Pupa stores position, per-companion show / scale overrides, and the global message-hint switch in a local file; the Beehive stores them in the browser (clearing browser data resets position and preferences).
 
 ## Who can change companions
 
@@ -73,7 +73,7 @@ The Honeycomb stores position, per-companion show / scale overrides, and the glo
 
 - A companion is not "another kind of agent"; it is only the visual shell of an agent, and one agent binds one companion.
 - Users cannot upload a companion to the server from the Beehive; server-side companions are always managed by administrators through the Bridge, and private imports stay in the local browser.
-- The Honeycomb on Linux has no desktop floating window — the overlay is a Win32 implementation with no Linux equivalent.
+- The Pupa on Linux has no desktop floating window — the overlay is a Win32 implementation with no Linux equivalent.
 - Companion animation does not affect task execution: the runtime state drives the animation, not the other way around.
 - The system ships no companion package; an administrator uploads them.
 

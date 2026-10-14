@@ -25,7 +25,7 @@ So the text shown in the interface and the text read after a refresh come from t
 | `/wunder/interlink/remote_ws` | A browser watching a single session on a remote device; pure forwarding, not persisted |
 | `/wunder/user_world/ws`, `/wunder/desktop/lan/ws` | In-site sessions and LAN collaboration |
 
-The default Honeycomb form **does not go through the local HTTP / WebSocket**: an in-process native event channel (bounded at 128 items) delivers directly, and losing a subscription or closing a window does not cancel a round already accepted on the server.
+The default Pupa form **does not go through the local HTTP / WebSocket**: an in-process native event channel (bounded at 128 items) delivers directly, and losing a subscription or closing a window does not cancel a round already accepted on the server.
 
 ⚠️ **Chat has no SSE fallback.** The server does provide SSE, but only for the external integration surface and model-proxy calls, not as a degradation channel for chat.
 

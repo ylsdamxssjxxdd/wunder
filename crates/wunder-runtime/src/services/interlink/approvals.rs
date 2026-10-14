@@ -1,7 +1,7 @@
 //! Human-in-the-loop approval tickets (docs §7.3).
 //!
 //! The server only mints, persists and expires tickets: every decision is taken
-//! on the controlled device (蜂窝 modal / 舵机 TUI line) and arrives back as a
+//! on the controlled device (蛹 modal / 舵机 TUI line) and arrives back as a
 //! `command_ack`. Fail-closed: a missing decision is a rejection.
 
 use serde_json::Value;

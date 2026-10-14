@@ -1815,7 +1815,7 @@ pub struct KnowledgeBaseConfig {
     pub auto_keywords: Option<usize>,
     #[serde(default, deserialize_with = "deserialize_optional_usize_from_any")]
     pub auto_questions: Option<usize>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_optional_bool_from_any")]
     pub html4excel: Option<bool>,
     #[serde(default, deserialize_with = "deserialize_optional_usize_from_any")]
     pub chunk_size: Option<usize>,
@@ -3179,6 +3179,13 @@ storage:
 
         assert_eq!(config.cors.allow_credentials, Some(false));
         assert!(config.security.allow_user_registration);
+
+        let config: Config = serde_yaml::from_str(
+            "cloud:\n  enabled: \"false\"\nknowledge:\n  bases:\n    - name: fixture\n      root: ./fixture\n      html4excel: \"true\"\n",
+        )
+        .expect("all boolean config fields accept deployment strings");
+        assert!(!config.cloud.enabled);
+        assert_eq!(config.knowledge.bases[0].html4excel, Some(true));
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -3217,7 +3224,7 @@ storage:
         assert_eq!(config.security.api_key.as_deref(), Some("true"));
     }
 
-    /// The chat composer queue is a product behaviour in 蜂巢 and 蜂窝: a
+    /// The chat composer queue is a product behaviour in 蜂巢 and 蛹: a
     /// follow-up message sent during a run parks above the input box. Off, the
     /// same send comes back USER_BUSY, so neither the code default nor the
     /// shipped template may turn it off.

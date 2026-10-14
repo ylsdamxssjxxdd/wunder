@@ -98,7 +98,7 @@ Thread listing pagination caps at 100, and keyword search scans at most 10 pages
 
 ## Interlink: the other realtime path
 
-The realtime surface between local devices (Honeycomb, Helm) and the cloud is interlink, which differs from the client WebSocket above:
+The realtime surface between local devices (Pupa, Helm) and the cloud is interlink, which differs from the client WebSocket above:
 
 - **Local nodes are outbound-only**: they open no listening port. The local side initiates a single long connection, and the control, data, and command planes all share it.
 - **Shadow projection**: the cloud holds a projection of the local threads and workspace directories. Writes are gated on a live channel; once the channel expires, no new shadow is written.

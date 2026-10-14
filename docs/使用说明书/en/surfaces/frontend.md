@@ -3,7 +3,7 @@ title: Beehive Interface
 summary: The Beehive is the cloud AI workbench, provided with the Hull deployment and reached in a browser. Its settings include tools, memory, channels, scheduled tasks, devices, and archive; it supports two-way voice (TTS included) and has no interactive terminal.
 read_when:
   - You use the Beehive in a browser and want to know where each capability lives
-  - You are checking what the Beehive can do that the Honeycomb cannot (and vice versa)
+  - You are checking what the Beehive can do that the Pupa cannot (and vice versa)
 source_docs:
   - frontend/src/router/index.ts
   - frontend/src/api/chat.ts
@@ -52,9 +52,9 @@ The rendering optimization for extremely large threads is a rewritten plan whose
 
 ## Settings categories
 
-The Beehive's settings hang off the chat page as categories and share the same backend capabilities as the Honeycomb. They include:
+The Beehive's settings hang off the chat page as categories and share the same backend capabilities as the Pupa. They include:
 
-- **General / Account / Models / Agent / Companion / Prompt packs / Help** (the same as the Honeycomb)
+- **General / Account / Models / Agent / Companion / Prompt packs / Help** (the same as the Pupa)
 - **Tools**: four tabs — built-in / MCP / skills / knowledge bases
 - **Memory**: long-term memory management
 - **Channels**: channel binding and status
@@ -62,9 +62,9 @@ The Beehive's settings hang off the chat page as categories and share the same b
 - **Devices**: entry to device-interconnection management
 - **Archive**: archived threads
 
-## Differences from the Honeycomb
+## Differences from the Pupa
 
-| Item | Beehive | Honeycomb |
+| Item | Beehive | Pupa |
 | --- | --- | --- |
 | Running mode | Reached in a browser, in the cloud | A desktop app installed on your own computer |
 | Data storage | Hull storage | Local |
@@ -113,15 +113,15 @@ Type them into the message box:
 ## Common questions
 
 - **The Beehive and the Bridge are two separate interfaces**: the Beehive faces users, the Bridge faces admins, and the two are kept apart.
-- **The Beehive is built for sharing**: it is itself a team / multi-user setting, where members sign in with a Hull account. For a single machine, the Honeycomb is recommended.
-- **The Beehive has no terminal**: when you need a shell, use the Honeycomb or the Helm.
-- **Voice output (TTS) works here**: the Beehive supports two-way voice, TTS included; the Honeycomb is input-only, with no playback.
+- **The Beehive is built for sharing**: it is itself a team / multi-user setting, where members sign in with a Hull account. For a single machine, the Pupa is recommended.
+- **The Beehive has no terminal**: when you need a shell, use the Pupa or the Helm.
+- **Voice output (TTS) works here**: the Beehive supports two-way voice, TTS included; the Pupa is input-only, with no playback.
 - **How device interconnection is used**: the Beehive is the full entry; settings live under the "Devices" category, and command approvals pop up inline in the timeline.
 
 ## Further Reading
 
 - [Interface Overview](/docs/en/surfaces/index/)
-- [Honeycomb Interface](/docs/en/surfaces/desktop-ui/)
+- [Pupa Interface](/docs/en/surfaces/desktop-ui/)
 - [Bridge Interface](/docs/en/surfaces/web-admin/)
 - [Hull deployment](/docs/en/start/server/)
 - [Troubleshooting](/docs/en/help/troubleshooting/)

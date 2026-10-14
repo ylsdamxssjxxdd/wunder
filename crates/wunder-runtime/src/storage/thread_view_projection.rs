@@ -63,25 +63,32 @@ pub(crate) fn trajectory(
     let content = item.get("content").and_then(Value::as_str).unwrap_or("");
     // 工具条目的事件负载里工具名字段是 `tool`（tool_name 从不存在）。
     let tool = item.get("tool").and_then(Value::as_str);
-    let summary = if content.is_empty() {
+    let summary = if kind == "system_message" {
+        // The model receives the frozen prompt from the internal log, while
+        // the presentation projection must never disclose it (it can contain
+        // instructions, paths, or credentials). Keep only bounded metadata.
+        let language = item.pointer("/meta/language").and_then(Value::as_str).unwrap_or("");
+        if language.is_empty() { "系统提示词（内容已隐藏）".to_string() }
+        else { format!("系统提示词（内容已隐藏，语言：{language}）") }
+    } else if content.is_empty() {
         if kind == "tool_call" {
             // 工具行必须展示调用的是什么工具，而不是回退成裸 kind。
-            tool.unwrap_or(kind)
+            tool.unwrap_or(kind).to_owned()
         } else if kind == "assistant_message" {
             // 工具调用轮的助手条目没有正文；思考摘要是该条目的可视主体。
             item.get("reasoning")
                 .or_else(|| item.get("reasoning_content"))
                 .and_then(Value::as_str)
                 .filter(|v| !v.is_empty())
-                .unwrap_or(kind)
+                .unwrap_or(kind).to_owned()
         } else {
             item.get("summary")
                 .and_then(Value::as_str)
                 .filter(|v| !v.is_empty())
-                .unwrap_or(kind)
+                .unwrap_or(kind).to_owned()
         }
     } else {
-        content
+        content.to_owned()
     };
     TrajectoryViewRow {
         item_id: item_id.into(),
@@ -93,7 +100,7 @@ pub(crate) fn trajectory(
         revision,
         kind: preview(kind, 48),
         status: preview(status, 48),
-        summary: preview(summary, 256),
+        summary: preview(&summary, 256),
         tool_name: tool.map(|v| preview(v, 96)),
         model_round: item.get("model_round").and_then(Value::as_i64).unwrap_or(0),
         started_at: item
@@ -106,6 +113,15 @@ pub(crate) fn trajectory(
             revision,
             bytes: 0,
         }),
+    }
+}
+
+pub(crate) fn redact_internal_context(item: &mut Value) {
+    if let Some(map) = item.as_object_mut() {
+        map.remove("content");
+        map.remove("model_content");
+        map.insert("content_redacted".into(), Value::Bool(true));
+        map.insert("summary".into(), Value::String("系统提示词（内容已隐藏）".into()));
     }
 }
 
@@ -315,7 +331,8 @@ mod tests {
             "system_message",
             &json!({"content":"你是 WUNDER，一个强大的智能体。","meta":{"type":"system_prompt"}}),
         );
-        assert_eq!(row.summary, "你是 WUNDER，一个强大的智能体。");
+        assert!(row.summary.contains("内容已隐藏"));
+        assert!(!row.summary.contains("强大的智能体"));
     }
 
     #[test]

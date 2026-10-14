@@ -1592,6 +1592,10 @@ type WorldVoicePlaybackRuntime = {
   currentResourceKey: string;
 };
 
+const NON_SUCCESS_TERMINAL_STATUS = new Set([
+  'cancelled', 'canceled', 'stopped', 'interrupted', 'rejected', 'failed', 'error', 'system_error'
+]);
+
 const METAFILE_IMAGE_CONTENT_TYPES = new Set([
   'image/wmf',
   'image/emf',
@@ -11301,7 +11305,16 @@ function installMessengerControllerLifecycleReactiveEffects(ctx: MessengerContro
               const agentId = ctx.normalizeAgentId(completion?.agentId ||
                   ctx.buildSessionAgentMap().get(sessionId));
               const noticeKey = `${sessionId}:${turnId}`;
-              if (!sessionId || !turnId || !agentId || completedTurnNoticeKeys.has(noticeKey) ||
+              // "Task completed" only speaks for a completed turn; a stopped or
+              // failed turn must not announce success.
+              if (terminalStatus !== 'completed') {
+                  // The aggregate poll settles the same turn without knowing how
+                  // it ended, so silence its fallback toast for this round.
+                  if (agentId) ctx.completedAgentNoticeSuppression.set(agentId, Date.now() + 10_000);
+                  continue;
+              }
+              if (!sessionId || !turnId || !agentId ||
+                  completedTurnNoticeKeys.has(noticeKey) ||
                   !claimAgentRuntimeCompletion(sessionId, turnId)) {
                   continue;
               }
@@ -11665,6 +11678,11 @@ function installMessengerControllerLifecycleRuntimeMeta(ctx: MessengerController
       const agentId = resolveAgentIdForRuntimeSession(targetSessionId, sessionAgentMap);
       if (!agentId)
           return;
+      // The aggregate path has no turn identity, so a round that ended by being
+      // stopped or rejected must never be announced as finished by it either.
+      if (NON_SUCCESS_TERMINAL_STATUS.has(String(runtimeStatus ?? '').toLowerCase())) {
+          ctx.completedAgentNoticeSuppression.set(agentId, Date.now() + 10_000);
+      }
       const currentRuntimeSessionId = String(agentRuntimeSessionSnapshot.get(agentId) || '').trim();
       if (currentRuntimeSessionId && currentRuntimeSessionId !== targetSessionId) {
           return;

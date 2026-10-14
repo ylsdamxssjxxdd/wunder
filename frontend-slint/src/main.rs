@@ -237,7 +237,7 @@ fn install_slint_platform() -> Result<(), Box<dyn std::error::Error>> {
             move |attributes| {
                 attributes
                     .with_min_inner_size(winit::dpi::LogicalSize::new(1024.0, 700.0))
-                    .with_title("蜂窝")
+                    .with_title("蛹")
                     .with_decorations(true)
                     // Only the first top-level is the workbench. Auxiliary
                     // windows (screenshot selector and tray notice) keep

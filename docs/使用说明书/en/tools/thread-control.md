@@ -55,7 +55,7 @@ Each thread in the list shows which one it is, its status, and when its latest m
 
 ## Form differences
 
-Honeycomb lists this tool as a system-level hidden tool, in neither the default set nor the desktop selectable set; Beehive, Helm, and Hull expose it according to the administrator's selection.
+Pupa lists this tool as a system-level hidden tool, in neither the default set nor the desktop selectable set; Beehive, Helm, and Hull expose it according to the administrator's selection.
 
 ## Related pages
 

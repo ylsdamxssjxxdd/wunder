@@ -1,7 +1,7 @@
-"""从文档站 Markdown 生成蜂窝内嵌帮助手册（中英两份）。
+"""从文档站 Markdown 生成蛹内嵌帮助手册（中英两份）。
 
 文档站页面是单一事实来源：本脚本把指定页面解析成手册的 Block 模型，
-再与蜂窝专属主题（manual.local.{zh,en}.json）合并，按分组顺序输出
+再与蛹专属主题（manual.local.{zh,en}.json）合并，按分组顺序输出
 `assets/help/manual.zh.json` 与 `assets/help/manual.en.json`。
 
 用法：python scripts/build_help_manual.py
@@ -20,8 +20,8 @@ OUT_DIR = os.path.join(ROOT, "frontend-slint", "assets", "help")
 # 文档站来源主题：(id, 分组中, 分组英, 相对 zh-CN/ 与 en/ 的路径, 关键词中, 关键词英)
 DOCS_TOPICS = [
     ("forms", "开始", "Getting Started", "start/forms.md",
-     ["形态", "蜂窝", "蜂巢", "舵机", "舰体"],
-     ["form", "Honeycomb", "Beehive", "Helm", "Hull"]),
+     ["形态", "蛹", "蜂巢", "舵机", "舰体"],
+     ["form", "Pupa", "Beehive", "Helm", "Hull"]),
     ("install", "开始", "Getting Started", "start/desktop.md",
      ["安装", "启动", "下载", "桌面端"],
      ["install", "launch", "download", "desktop"]),
@@ -266,7 +266,7 @@ def main():
                     if line.startswith("title:"):
                         fm_title = line.split(":", 1)[1].strip().strip('"')
             name = fm_title or title or tid
-            # 与蜂窝专属主题保持一致：正文开头带一个 H1 标题块。
+            # 与蛹专属主题保持一致：正文开头带一个 H1 标题块。
             blocks.insert(0, {"kind": "h1", "spans": [span(name)]})
             topics[lang][tid] = {
                 "id": tid,

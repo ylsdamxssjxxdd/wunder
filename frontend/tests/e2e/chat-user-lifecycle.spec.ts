@@ -16,8 +16,6 @@ test('user operations drive the production chat through mocked HTTP and WebSocke
   const errors: string[] = [];
   const coverage: Record<string, boolean> = {};
   const completedNoticeRounds = new Set<number>();
-  // Rounds that must announce completion; 3 is stopped and 6 is a manual compaction.
-  const NOTICE_ROUNDS = [1, 2, 4, 5, 7, 8, 10, 11];
   let transientErrors = 0;
   page.on('pageerror', error => errors.push(error.message));
   page.on('console', message => {
@@ -58,7 +56,12 @@ test('user operations drive the production chat through mocked HTTP and WebSocke
     // 空线程首屏已是会话活动网格（浮动设置窗口之外唯一的欢迎态），不再渲染问候气泡。
     await expect(page.locator('.messenger-thread-activity')).toHaveCount(1);
     coverage.emptyState = true;
+    const noticeCount = () => page.evaluate(() => (window as any).__completionNotices.length as number);
+    // Each round is judged against the notices already recorded when it was sent,
+    // so a missing notice fails and an unrelated earlier one cannot stand in.
+    let noticesBeforeRound = 0;
     const send = async (content: string) => {
+      noticesBeforeRound = await noticeCount();
       await page.getByTestId('chat-composer-input').fill(content);
       await page.getByTestId('chat-composer-input').press('Control+Enter');
       await expect(page.getByTestId('chat-composer-input')).toHaveValue('');
@@ -71,8 +74,7 @@ test('user operations drive the production chat through mocked HTTP and WebSocke
       await expect(assistant.locator('.messenger-message-stats')).toContainText('token/s');
       await expect(assistant.locator('.messenger-message-stats')).not.toContainText('Queued');
       if (requireNotice) {
-        await expect.poll(() => page.evaluate(() => (window as any).__completionNotices.length))
-          .toBe(NOTICE_ROUNDS.indexOf(round) + 1);
+        await expect.poll(noticeCount).toBeGreaterThan(noticesBeforeRound);
         completedNoticeRounds.add(round);
       }
     };
@@ -97,6 +99,9 @@ test('user operations drive the production chat through mocked HTTP and WebSocke
     await expect.poll(() => service.items.get('fixture-turn-3:tool-2')?.status).toBe('completed');
     await page.getByTestId('chat-composer-send').click();
     await expect.poll(() => service.turns.at(-1)?.status).toBe('cancelled');
+    // A stopped turn is not a finished task: it must not announce success.
+    await page.waitForTimeout(1200);
+    expect(await noticeCount()).toBe(noticesBeforeRound);
     await send('Continue with a new request.'); await completed(4);
     await captureConversation(page, resolve(directory, 'after-stop'));
     coverage.stop = true;
@@ -202,7 +207,7 @@ test('user operations drive the production chat through mocked HTTP and WebSocke
     transientErrors = audit.duplicate + audit.structure;
     expect(audit.samples).toBeGreaterThan(0);
     expect(transientErrors).toBe(0);
-    expect([...completedNoticeRounds].sort((left, right) => left - right)).toEqual(NOTICE_ROUNDS);
+    expect([...completedNoticeRounds].sort((left, right) => left - right)).toEqual([1, 2, 4, 5, 7, 8, 10, 11]);
     coverage.completionNotice = completedNoticeRounds.size === 8;
     await page.reload();
     await expect(page.getByTestId('chat-composer-input')).toBeVisible();

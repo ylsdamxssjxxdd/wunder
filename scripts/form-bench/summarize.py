@@ -32,7 +32,7 @@ FORM_LABELS = {
     "hull": "舰体 Hull",
     "bridge": "舰桥 Bridge",
     "beehive": "蜂巢 Beehive",
-    "honeycomb": "蜂窝 Honeycomb",
+    "pupa": "蛹 Pupa",
     "helm": "舵机 Helm",
 }
 

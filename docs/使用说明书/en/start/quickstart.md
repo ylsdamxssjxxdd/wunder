@@ -1,6 +1,6 @@
 ---
 title: Quick Start
-summary: The shortest path to get the Honeycomb running: download, launch, configure a model, send your first message, verify the result. The default entry point for individual users, with no service to deploy.
+summary: The shortest path to get the Pupa running: download, launch, configure a model, send your first message, verify the result. The default entry point for individual users, with no service to deploy.
 read_when:
   - You are an individual user setting up wunder for the first time
   - You want the fastest path from install to a completed first task
@@ -13,13 +13,13 @@ updated_at: 2026-10-13
 
 # Quick Start
 
-Individual users default to the **Honeycomb (desktop)** — a local AI workbench with no server to stand up first. The four steps below go from download to a finished first task.
+Individual users default to the **Pupa (desktop)** — a local AI workbench with no server to stand up first. The four steps below go from download to a finished first task.
 
 ## Get running in 4 steps
 
 ### 1. Download and install
 
-Download the installer matching your system from Releases. The Honeycomb targets 32-bit Win7 and Ubuntu 18.04 and also covers modern Windows / Linux. Install or extract it, then launch.
+Download the installer matching your system from Releases. The Pupa targets 32-bit Win7 and Ubuntu 18.04 and also covers modern Windows / Linux. Install or extract it, then launch.
 
 In a development environment you can also run the launch script directly (on Windows that's `run.bat`, or run `wunder-frontend-slint` straight). It calls the engine natively in-process — it takes no local port and needs no local HTTP/WebSocket relay.
 
@@ -48,7 +48,7 @@ A run is shown by **user turn / model turn**:
 
 When the timeline shows tool batches, a "work process" entry for each turn, and a final reply, it's working.
 
-## What the Honeycomb gives you
+## What the Pupa gives you
 
 - Local first: data stays on your machine and can work offline; the network is used only to reach models and web pages
 - Desktop control: a desktop controller and desktop monitor (requires a vision model)
@@ -76,7 +76,7 @@ When the timeline shows tool batches, a "work process" entry for each turn, and 
 
 ## Other ways to use wunder
 
-The Honeycomb covers the vast majority of scenarios. Three optional forms:
+The Pupa covers the vast majority of scenarios. Three optional forms:
 
 - **The Hull (server)**: multi-user sharing, permission management, channel integration, and publishing and governing agent apps. See [Hull deployment](/docs/en/start/server/).
 - **The Beehive (web)**: the cloud AI workbench delivered with the Hull, accessed in a browser; its pages are delivered by a separate web-service container, on 18001 by default. See [Beehive interface](/docs/en/surfaces/frontend/).
@@ -84,7 +84,7 @@ The Honeycomb covers the vast majority of scenarios. Three optional forms:
 
 ## Next steps
 
-- Download and install details → [Honeycomb intro](/docs/en/start/desktop/)
+- Download and install details → [Pupa intro](/docs/en/start/desktop/)
 - Interface map → [Surfaces overview](/docs/en/surfaces/index/)
 - Core concepts → [Core overview](/docs/en/concepts/)
 - All tools → [Tools overview](/docs/en/tools/)

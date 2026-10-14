@@ -61,7 +61,7 @@ Throughput and performance sampling belong to the admin side (`/wunder/admin/thr
 
 ## How performance is scored
 
-The three forms — the Honeycomb, the Beehive, and the Hull — are each scored **independently** on a weighted 0–100 scale, and scores cannot be added across forms. Comparisons are always made in the same environment, through the same entry point, before and after a change; the matching baselines live in the documentation's performance-baseline section. Numbers obtained on a different machine or through a different entry point are not comparable.
+The three forms — the Pupa, the Beehive, and the Hull — are each scored **independently** on a weighted 0–100 scale, and scores cannot be added across forms. Comparisons are always made in the same environment, through the same entry point, before and after a change; the matching baselines live in the documentation's performance-baseline section. Numbers obtained on a different machine or through a different entry point are not comparable.
 
 ## Troubleshooting order
 

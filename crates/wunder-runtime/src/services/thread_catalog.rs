@@ -432,7 +432,7 @@ impl ThreadCatalogService {
 
     /// Whether this process may write to one thread, and why not. Every thread
     /// is writable now that no background orchestration run can own it; the
-    /// verdict stays per-thread so the 舵机 and 蜂窝 submit paths and the 舰体
+    /// verdict stays per-thread so the 舵机 and 蛹 submit paths and the 舰体
     /// HTTP layer keep one shared authority instead of open-coding the rule.
     pub async fn write_access(&self, user_id: &str, session_id: &str) -> Result<ThreadWriteAccess> {
         let _ = (user_id, session_id);
@@ -508,7 +508,7 @@ fn build_snapshot(
 
 /// The signals a status can be derived from, each with exactly one owner: the
 /// chat row, the monitor projection, the durable turn and the live runtime.
-/// Every client - 舵机 directory, 蜂窝 façade, 舰体 chat list - builds this once,
+/// Every client - 舵机 directory, 蛹 façade, 舰体 chat list - builds this once,
 /// so no two views answer "what is this thread doing" differently.
 #[derive(Debug, Clone, Copy)]
 pub struct StatusSignals<'a> {
@@ -746,7 +746,7 @@ mod tests {
     #[test]
     fn one_mapping_table_answers_both_clients() {
         // The five directory tabs and the remote wire vocabulary come from the same
-        // precedence, so 舵机, 蜂窝 and 舰体 cannot disagree about one row.
+        // precedence, so 舵机, 蛹 and 舰体 cannot disagree about one row.
         let cases = [
             (
                 "running",

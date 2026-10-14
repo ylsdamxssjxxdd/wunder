@@ -1,8 +1,8 @@
 ---
-title: Starting with the Honeycomb (Desktop)
+title: Starting with the Pupa (Desktop)
 summary: wunder's default way to work: a local AI workbench. Download, install, open, go — no Hull to deploy first; it calls the engine natively in-process, takes no port, and routes through no HTTP/WebSocket relay.
 read_when:
-  - You are installing or first launching the Honeycomb
+  - You are installing or first launching the Pupa
   - You need to know where its local data lives or how to migrate it
 source_docs:
   - frontend-slint/Cargo.toml
@@ -14,13 +14,13 @@ source_docs:
 updated_at: 2026-10-13
 ---
 
-# Starting with the Honeycomb (Desktop)
+# Starting with the Pupa (Desktop)
 
-The Honeycomb (desktop) is wunder's desktop edition and the **default way to work**: a **local AI workbench**. It needs no Hull (server) deployment. It calls the engine natively in-process, has no port of its own, and routes through no HTTP/WebSocket relay.
+The Pupa (desktop) is wunder's desktop edition and the **default way to work**: a **local AI workbench**. It needs no Hull (server) deployment. It calls the engine natively in-process, has no port of its own, and routes through no HTTP/WebSocket relay.
 
-## When to choose the Honeycomb
+## When to choose the Pupa
 
-| Scenario | Choose the Honeycomb |
+| Scenario | Choose the Pupa |
 | --- | --- |
 | Want to start right away, without deploying a service first | ✅ |
 | Need to work with local files, windows, and browsers | ✅ |
@@ -38,7 +38,7 @@ The Honeycomb (desktop) is wunder's desktop edition and the **default way to wor
 - **Platforms**: primarily targets 32-bit Win7 and Ubuntu 18.04; modern Windows / Linux also run
 - **No port, no required arguments**: it calls the engine in-process right after launch
 - There's also a compatibility bridge port (default 18123) that serves only legacy-compatible clients; day-to-day use doesn't go through it
-- The Electron / Tauri frontend shells are **no longer maintained day-to-day and get no new features** (this doesn't mean the Honeycomb backend stops being maintained)
+- The Electron / Tauri frontend shells are **no longer maintained day-to-day and get no new features** (this doesn't mean the Pupa backend stops being maintained)
 
 ## Local data
 
@@ -103,7 +103,7 @@ List the files in the current working directory
 
 When you see the model think → a batch of tools → the final reply landing in the chat area, you're up and running.
 
-## What only the Honeycomb can do
+## What only the Pupa can do
 
 - **Interactive terminal** (winpty on Windows, PTY on Linux)
 - **Screenshot capture** (X11 on Linux, Win32 APIs on Windows)
@@ -113,7 +113,7 @@ When you see the model think → a batch of tools → the final reply landing in
 
 ## About device interlink
 
-Only **two** interlink surfaces are available in the Honeycomb:
+Only **two** interlink surfaces are available in the Pupa:
 
 1. The **cloud workspaces** in the sidebar's working-directory area: when the network is unavailable they clearly show "offline" alongside a "connect" button
 2. The **remote command approval dialog**: high-risk commands (L3) in device interlink pop up for confirmation with a red border, showing the command level, risk, and source, plus a "don't remember" hint
@@ -146,12 +146,12 @@ Yes. Copy `~/.wunder` to the new machine.
 Yes. "Local first" only means data stays on your machine; it doesn't affect reaching remote models or web pages.
 
 **Sharing among several people**
-The Honeycomb focuses on single-user local scenarios; for team collaboration, deploy the Hull and have members use the Beehive.
+The Pupa focuses on single-user local scenarios; for team collaboration, deploy the Hull and have members use the Beehive.
 
 ## Further reading
 
 - [Quick Start](/docs/en/start/quickstart/)
-- [Honeycomb Interface](/docs/en/surfaces/desktop-ui/)
+- [Pupa Interface](/docs/en/surfaces/desktop-ui/)
 - [Surfaces Overview](/docs/en/surfaces/index/)
 - [First-Run Troubleshooting](/docs/en/start/troubleshooting-first-run/)
 - [Troubleshooting](/docs/en/help/troubleshooting/)

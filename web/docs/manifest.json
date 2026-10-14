@@ -1,9 +1,9 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-10-13T13:23:15.417299+00:00",
+  "generated_at": "2026-10-14T00:20:19.843559+00:00",
   "site": {
     "name": "使用说明书",
-    "description": "wunder is an agent orchestration platform: Honeycomb (desktop) is the local AI workbench, Beehive (web) is the cloud AI workbench, Helm (cli) is the manual local entry point, and the Hull (server) is the user and agent management platform. / wunder 是一个智能体调度平台：蜂窝（desktop）是本地 AI 工作台，蜂巢（web）是云端 AI 工作台，舵机（cli）是手工本地操作入口，舰体（server）是用户与智能体管理平台。",
+    "description": "wunder is an agent orchestration platform: Pupa (desktop) is the local AI workbench, Beehive (web) is the cloud AI workbench, Helm (cli) is the manual local entry point, and the Hull (server) is the user and agent management platform. / wunder 是一个智能体调度平台：蛹（desktop）是本地 AI 工作台，蜂巢（web）是云端 AI 工作台，舵机（cli）是手工本地操作入口，舰体（server）是用户与智能体管理平台。",
     "default_language": "zh-CN",
     "home_page": "zh-CN/index",
     "home_url": "/docs/",
@@ -31,7 +31,7 @@
                   {
                     "slug": "zh-CN/index",
                     "title": "wunder 心舰",
-                    "summary": "wunder 是智能体调度平台。蜂窝是电脑上的本地 AI 工作台，蜂巢是浏览器里的云端工作台，舵机是终端入口，舰体是多人共用的管理平台。",
+                    "summary": "wunder 是智能体调度平台。蛹是电脑上的本地 AI 工作台，蜂巢是浏览器里的云端工作台，舵机是终端入口，舰体是多人共用的管理平台。",
                     "url": "/docs/"
                   }
                 ]
@@ -42,12 +42,12 @@
                   {
                     "slug": "zh-CN/start/quickstart",
                     "title": "快速开始",
-                    "summary": "用最短路径把蜂窝跑起来：下载、启动、配模型、发第一条消息、验证结果。个人用户默认入口，无需部署服务。",
+                    "summary": "用最短路径把蛹跑起来：下载、启动、配模型、发第一条消息、验证结果。个人用户默认入口，无需部署服务。",
                     "url": "/docs/zh-CN/start/quickstart/"
                   },
                   {
                     "slug": "zh-CN/start/desktop",
-                    "title": "蜂窝（desktop）入门",
+                    "title": "蛹（desktop）入门",
                     "summary": "wunder 的默认使用方式：本地 AI 工作台。下载安装即可使用，不需要先部署舰体；同进程原生调用引擎，不占端口，不走 HTTP/WebSocket 中转。",
                     "url": "/docs/zh-CN/start/desktop/"
                   },
@@ -82,7 +82,7 @@
                   {
                     "slug": "zh-CN/start/hubs",
                     "title": "说明书总览",
-                    "summary": "说明书导航页：从蜂窝起步，按需进入界面地图、其它形态与参考。start 与 surfaces 两组的全部页面都在这里。",
+                    "summary": "说明书导航页：从蛹起步，按需进入界面地图、其它形态与参考。start 与 surfaces 两组的全部页面都在这里。",
                     "url": "/docs/zh-CN/start/hubs/"
                   },
                   {
@@ -94,7 +94,7 @@
                   {
                     "slug": "zh-CN/start/troubleshooting-first-run",
                     "title": "首次运行排查",
-                    "summary": "各形态第一次启动或部署最常见的失败模式与验证点：蜂窝启动、舰体部署、蜂巢访问、舵机执行。",
+                    "summary": "各形态第一次启动或部署最常见的失败模式与验证点：蛹启动、舰体部署、蜂巢访问、舵机执行。",
                     "url": "/docs/zh-CN/start/troubleshooting-first-run/"
                   }
                 ]
@@ -123,7 +123,7 @@
                   {
                     "slug": "zh-CN/concepts/core-compatibility",
                     "title": "兼容性",
-                    "summary": "兼容性核心让蜂窝与舵机在旧操作系统环境中可运行并被明确约束：Windows 7 32 位与 Ubuntu 18.04 各有离线构建链，界面走软件渲染不依赖 GPU。",
+                    "summary": "兼容性核心让蛹与舵机在旧操作系统环境中可运行并被明确约束：Windows 7 32 位与 Ubuntu 18.04 各有离线构建链，界面走软件渲染不依赖 GPU。",
                     "url": "/docs/zh-CN/concepts/core-compatibility/"
                   },
                   {
@@ -329,7 +329,7 @@
                   {
                     "slug": "zh-CN/surfaces/index",
                     "title": "界面概览",
-                    "summary": "四个形态对应四个界面：蜂窝（本地 AI 工作台）、蜂巢（云端 AI 工作台）、舵机（终端界面）、舰桥（治理后台）。按形态查界面能力。",
+                    "summary": "四个形态对应四个界面：蛹（本地 AI 工作台）、蜂巢（云端 AI 工作台）、舵机（终端界面）、舰桥（治理后台）。按形态查界面能力。",
                     "url": "/docs/zh-CN/surfaces/"
                   }
                 ]
@@ -351,8 +351,8 @@
                   },
                   {
                     "slug": "zh-CN/surfaces/desktop-ui",
-                    "title": "蜂窝界面",
-                    "summary": "蜂窝（desktop）是本地 AI 工作台，个人用户的默认入口。主窗只有对话、设置两页，设置内 12 个分类，其余能力以面板和对话框呈现。",
+                    "title": "蛹界面",
+                    "summary": "蛹（desktop）是本地 AI 工作台，个人用户的默认入口。主窗只有对话、设置两页，设置内 12 个分类，其余能力以面板和对话框呈现。",
                     "url": "/docs/zh-CN/surfaces/desktop-ui/"
                   }
                 ]
@@ -444,7 +444,7 @@
                   {
                     "slug": "zh-CN/reference/interlink",
                     "title": "三端互通",
-                    "summary": "蜂巢、蜂窝、舵机在同一账号下统一在线状态、跨端工作区互见并双向远程控制。",
+                    "summary": "蜂巢、蛹、舵机在同一账号下统一在线状态、跨端工作区互见并双向远程控制。",
                     "url": "/docs/zh-CN/reference/interlink/"
                   }
                 ]
@@ -526,7 +526,7 @@
                   {
                     "slug": "zh-CN/concepts/workspaces",
                     "title": "工作区与工作目录",
-                    "summary": "每个用户有且只有一个工作区，工具以它为根；蜂窝里是本机上的持久目录，舰体部署时是服务端按用户划分的唯一目录。",
+                    "summary": "每个用户有且只有一个工作区，工具以它为根；蛹里是本机上的持久目录，舰体部署时是服务端按用户划分的唯一目录。",
                     "url": "/docs/zh-CN/concepts/workspaces/"
                   },
                   {
@@ -603,7 +603,7 @@
                   {
                     "slug": "en/index",
                     "title": "wunder",
-                    "summary": "wunder is an agent orchestration platform. The Honeycomb is the local AI workbench on your computer, the Beehive is the cloud workbench in a browser, the Helm is the terminal entry point, and the Hull is the shared management platform for teams.",
+                    "summary": "wunder is an agent orchestration platform. The Pupa is the local AI workbench on your computer, the Beehive is the cloud workbench in a browser, the Helm is the terminal entry point, and the Hull is the shared management platform for teams.",
                     "url": "/docs/en/"
                   }
                 ]
@@ -614,12 +614,12 @@
                   {
                     "slug": "en/start/quickstart",
                     "title": "Quick Start",
-                    "summary": "The shortest path to get the Honeycomb running: download, launch, configure a model, send your first message, verify the result. The default entry point for individual users, with no service to deploy.",
+                    "summary": "The shortest path to get the Pupa running: download, launch, configure a model, send your first message, verify the result. The default entry point for individual users, with no service to deploy.",
                     "url": "/docs/en/start/quickstart/"
                   },
                   {
                     "slug": "en/start/desktop",
-                    "title": "Starting with the Honeycomb (Desktop)",
+                    "title": "Starting with the Pupa (Desktop)",
                     "summary": "wunder's default way to work: a local AI workbench. Download, install, open, go — no Hull to deploy first; it calls the engine natively in-process, takes no port, and routes through no HTTP/WebSocket relay.",
                     "url": "/docs/en/start/desktop/"
                   },
@@ -654,7 +654,7 @@
                   {
                     "slug": "en/start/hubs",
                     "title": "Manual Overview",
-                    "summary": "The manual's navigation page: start from the Honeycomb and move into the interface map, other forms, and reference as needed. Every page in the start and surfaces groups is here.",
+                    "summary": "The manual's navigation page: start from the Pupa and move into the interface map, other forms, and reference as needed. Every page in the start and surfaces groups is here.",
                     "url": "/docs/en/start/hubs/"
                   },
                   {
@@ -666,7 +666,7 @@
                   {
                     "slug": "en/start/troubleshooting-first-run",
                     "title": "First-Run Troubleshooting",
-                    "summary": "The most common failure modes and verification points for the first launch or deployment of each form: Honeycomb startup, Hull deployment, Beehive access, Helm execution. When the first run doesn't work, locate the failure by form here.",
+                    "summary": "The most common failure modes and verification points for the first launch or deployment of each form: Pupa startup, Hull deployment, Beehive access, Helm execution. When the first run doesn't work, locate the failure by form here.",
                     "url": "/docs/en/start/troubleshooting-first-run/"
                   }
                 ]
@@ -695,7 +695,7 @@
                   {
                     "slug": "en/concepts/core-compatibility",
                     "title": "Compatibility",
-                    "summary": "The Compatibility core lets the Honeycomb (desktop) and the Helm (cli) run in older operating-system environments under explicit constraints: Windows 7 32-bit and Ubuntu 18.04 each have an offline build chain, and the interface uses software rendering that does not depend on a GPU.",
+                    "summary": "The Compatibility core lets the Pupa (desktop) and the Helm (cli) run in older operating-system environments under explicit constraints: Windows 7 32-bit and Ubuntu 18.04 each have an offline build chain, and the interface uses software rendering that does not depend on a GPU.",
                     "url": "/docs/en/concepts/core-compatibility/"
                   },
                   {
@@ -884,7 +884,7 @@
                   {
                     "slug": "en/surfaces/index",
                     "title": "Interface Overview",
-                    "summary": "Four forms, four interfaces — the Honeycomb (local AI workbench), the Beehive (cloud AI workbench), the Helm (terminal interface), and the Bridge (admin governance console). Look up interface capabilities by form.",
+                    "summary": "Four forms, four interfaces — the Pupa (local AI workbench), the Beehive (cloud AI workbench), the Helm (terminal interface), and the Bridge (admin governance console). Look up interface capabilities by form.",
                     "url": "/docs/en/surfaces/"
                   }
                 ]
@@ -906,8 +906,8 @@
                   },
                   {
                     "slug": "en/surfaces/desktop-ui",
-                    "title": "Honeycomb Interface",
-                    "summary": "The Honeycomb (desktop) is the local AI workbench and the default entry for individual users. Its main window has only two pages, chat and settings, with 12 categories in settings; everything else appears as panels and dialogs.",
+                    "title": "Pupa Interface",
+                    "summary": "The Pupa (desktop) is the local AI workbench and the default entry for individual users. Its main window has only two pages, chat and settings, with 12 categories in settings; everything else appears as panels and dialogs.",
                     "url": "/docs/en/surfaces/desktop-ui/"
                   }
                 ]
@@ -999,7 +999,7 @@
                   {
                     "slug": "en/reference/interlink",
                     "title": "Interlink",
-                    "summary": "The Beehive, the Honeycomb, and the Helm share one presence state, see each other's workspaces, and control each other in both directions.",
+                    "summary": "The Beehive, the Pupa, and the Helm share one presence state, see each other's workspaces, and control each other in both directions.",
                     "url": "/docs/en/reference/interlink/"
                   }
                 ]
@@ -1081,7 +1081,7 @@
                   {
                     "slug": "en/concepts/workspaces",
                     "title": "Workspaces and the Working Directory",
-                    "summary": "Each user has exactly one workspace, and tools are rooted at it: a persistent local directory in the Honeycomb, or a single per-user directory on the server in a Hull deployment.",
+                    "summary": "Each user has exactly one workspace, and tools are rooted at it: a persistent local directory in the Pupa, or a single per-user directory on the server in a Hull deployment.",
                     "url": "/docs/en/concepts/workspaces/"
                   },
                   {
@@ -1303,7 +1303,7 @@
       "slug": "zh-CN/index",
       "language": "zh-CN",
       "title": "wunder 心舰",
-      "summary": "wunder 是智能体调度平台。蜂窝是电脑上的本地 AI 工作台，蜂巢是浏览器里的云端工作台，舵机是终端入口，舰体是多人共用的管理平台。",
+      "summary": "wunder 是智能体调度平台。蛹是电脑上的本地 AI 工作台，蜂巢是浏览器里的云端工作台，舵机是终端入口，舰体是多人共用的管理平台。",
       "updated_at": "2026-10-13",
       "read_when": [],
       "source_docs": [],
@@ -1327,7 +1327,7 @@
         {
           "id": "section-3",
           "level": 2,
-          "text": "从蜂窝开始"
+          "text": "从蛹开始"
         },
         {
           "id": "section-4",
@@ -1364,7 +1364,7 @@
       "slug": "zh-CN/start/quickstart",
       "language": "zh-CN",
       "title": "快速开始",
-      "summary": "用最短路径把蜂窝跑起来：下载、启动、配模型、发第一条消息、验证结果。个人用户默认入口，无需部署服务。",
+      "summary": "用最短路径把蛹跑起来：下载、启动、配模型、发第一条消息、验证结果。个人用户默认入口，无需部署服务。",
       "updated_at": "2026-10-13",
       "read_when": [],
       "source_docs": [],
@@ -1408,7 +1408,7 @@
         {
           "id": "section-7",
           "level": 2,
-          "text": "蜂窝开箱能力"
+          "text": "蛹开箱能力"
         },
         {
           "id": "section-8",
@@ -1439,7 +1439,7 @@
     "zh-CN/start/desktop": {
       "slug": "zh-CN/start/desktop",
       "language": "zh-CN",
-      "title": "蜂窝（desktop）入门",
+      "title": "蛹（desktop）入门",
       "summary": "wunder 的默认使用方式：本地 AI 工作台。下载安装即可使用，不需要先部署舰体；同进程原生调用引擎，不占端口，不走 HTTP/WebSocket 中转。",
       "updated_at": "2026-10-13",
       "read_when": [],
@@ -1454,12 +1454,12 @@
         {
           "id": "section-1",
           "level": 1,
-          "text": "蜂窝（desktop）入门"
+          "text": "蛹（desktop）入门"
         },
         {
           "id": "section-2",
           "level": 2,
-          "text": "什么时候选蜂窝"
+          "text": "什么时候选蛹"
         },
         {
           "id": "section-3",
@@ -1519,7 +1519,7 @@
         {
           "id": "section-14",
           "level": 2,
-          "text": "蜂窝独有能力（其他界面没有）"
+          "text": "蛹独有能力（其他界面没有）"
         },
         {
           "id": "section-15",
@@ -1789,7 +1789,7 @@
       "slug": "zh-CN/start/hubs",
       "language": "zh-CN",
       "title": "说明书总览",
-      "summary": "说明书导航页：从蜂窝起步，按需进入界面地图、其它形态与参考。start 与 surfaces 两组的全部页面都在这里。",
+      "summary": "说明书导航页：从蛹起步，按需进入界面地图、其它形态与参考。start 与 surfaces 两组的全部页面都在这里。",
       "updated_at": "2026-10-13",
       "read_when": [],
       "source_docs": [],
@@ -1941,7 +1941,7 @@
       "slug": "zh-CN/start/troubleshooting-first-run",
       "language": "zh-CN",
       "title": "首次运行排查",
-      "summary": "各形态第一次启动或部署最常见的失败模式与验证点：蜂窝启动、舰体部署、蜂巢访问、舵机执行。",
+      "summary": "各形态第一次启动或部署最常见的失败模式与验证点：蛹启动、舰体部署、蜂巢访问、舵机执行。",
       "updated_at": "2026-10-13",
       "read_when": [],
       "source_docs": [],
@@ -1960,7 +1960,7 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "蜂窝（desktop）"
+          "text": "蛹（desktop）"
         },
         {
           "id": "section-3",
@@ -2144,7 +2144,7 @@
       "slug": "zh-CN/concepts/core-compatibility",
       "language": "zh-CN",
       "title": "兼容性",
-      "summary": "兼容性核心让蜂窝与舵机在旧操作系统环境中可运行并被明确约束：Windows 7 32 位与 Ubuntu 18.04 各有离线构建链，界面走软件渲染不依赖 GPU。",
+      "summary": "兼容性核心让蛹与舵机在旧操作系统环境中可运行并被明确约束：Windows 7 32 位与 Ubuntu 18.04 各有离线构建链，界面走软件渲染不依赖 GPU。",
       "updated_at": "2026-10-13",
       "read_when": [],
       "source_docs": [],
@@ -3568,7 +3568,7 @@
       "slug": "zh-CN/surfaces/index",
       "language": "zh-CN",
       "title": "界面概览",
-      "summary": "四个形态对应四个界面：蜂窝（本地 AI 工作台）、蜂巢（云端 AI 工作台）、舵机（终端界面）、舰桥（治理后台）。按形态查界面能力。",
+      "summary": "四个形态对应四个界面：蛹（本地 AI 工作台）、蜂巢（云端 AI 工作台）、舵机（终端界面）、舰桥（治理后台）。按形态查界面能力。",
       "updated_at": "2026-10-13",
       "read_when": [],
       "source_docs": [],
@@ -3668,7 +3668,7 @@
         {
           "id": "section-7",
           "level": 2,
-          "text": "与蜂窝的差异"
+          "text": "与蛹的差异"
         },
         {
           "id": "section-8",
@@ -3765,8 +3765,8 @@
     "zh-CN/surfaces/desktop-ui": {
       "slug": "zh-CN/surfaces/desktop-ui",
       "language": "zh-CN",
-      "title": "蜂窝界面",
-      "summary": "蜂窝（desktop）是本地 AI 工作台，个人用户的默认入口。主窗只有对话、设置两页，设置内 12 个分类，其余能力以面板和对话框呈现。",
+      "title": "蛹界面",
+      "summary": "蛹（desktop）是本地 AI 工作台，个人用户的默认入口。主窗只有对话、设置两页，设置内 12 个分类，其余能力以面板和对话框呈现。",
       "updated_at": "2026-10-13",
       "read_when": [],
       "source_docs": [],
@@ -3780,7 +3780,7 @@
         {
           "id": "section-1",
           "level": 1,
-          "text": "蜂窝界面"
+          "text": "蛹界面"
         },
         {
           "id": "section-2",
@@ -3810,7 +3810,7 @@
         {
           "id": "section-7",
           "level": 2,
-          "text": "蜂窝独有能力"
+          "text": "蛹独有能力"
         },
         {
           "id": "section-8",
@@ -3825,7 +3825,7 @@
         {
           "id": "section-10",
           "level": 2,
-          "text": "蜂窝和蜂巢的差异"
+          "text": "蛹和蜂巢的差异"
         },
         {
           "id": "section-11",
@@ -3848,7 +3848,7 @@
       "language": "zh-CN",
       "title": "参考概览",
       "summary": "操作参考与配置说明：功能入口、状态含义、设置项含义。",
-      "updated_at": "2026-10-13",
+      "updated_at": "2026-10-14",
       "read_when": [],
       "source_docs": [],
       "tab": "参考",
@@ -3919,7 +3919,7 @@
       "language": "zh-CN",
       "title": "功能与能力速查",
       "summary": "wunder 的能力清单、入口位置与相关文档。",
-      "updated_at": "2026-10-13",
+      "updated_at": "2026-10-14",
       "read_when": [],
       "source_docs": [],
       "tab": "参考",
@@ -4153,7 +4153,7 @@
       "language": "zh-CN",
       "title": "系统设置参考",
       "summary": "常用设置项的含义、推荐值与生效规则。",
-      "updated_at": "2026-10-13",
+      "updated_at": "2026-10-14",
       "read_when": [],
       "source_docs": [],
       "tab": "参考",
@@ -4306,7 +4306,7 @@
         {
           "id": "section-29",
           "level": 3,
-          "text": "个人本地使用（蜂窝 desktop）"
+          "text": "个人本地使用（蛹 desktop）"
         },
         {
           "id": "section-30",
@@ -4662,7 +4662,7 @@
       "language": "zh-CN",
       "title": "舰桥面板指南",
       "summary": "舰桥各面板的职能、入口位置与常用操作流程。",
-      "updated_at": "2026-10-13",
+      "updated_at": "2026-10-14",
       "read_when": [],
       "source_docs": [],
       "tab": "参考",
@@ -4857,7 +4857,7 @@
       "slug": "zh-CN/reference/interlink",
       "language": "zh-CN",
       "title": "三端互通",
-      "summary": "蜂巢、蜂窝、舵机在同一账号下统一在线状态、跨端工作区互见并双向远程控制。",
+      "summary": "蜂巢、蛹、舵机在同一账号下统一在线状态、跨端工作区互见并双向远程控制。",
       "updated_at": "2026-10-13",
       "read_when": [],
       "source_docs": [],
@@ -4891,7 +4891,7 @@
         {
           "id": "section-5",
           "level": 3,
-          "text": "蜂窝（desktop）"
+          "text": "蛹（desktop）"
         },
         {
           "id": "section-6",
@@ -5154,7 +5154,7 @@
         {
           "id": "section-8",
           "level": 2,
-          "text": "蜂窝与舰体的依赖关系"
+          "text": "蛹与舰体的依赖关系"
         },
         {
           "id": "section-9",
@@ -5197,7 +5197,7 @@
       "language": "zh-CN",
       "title": "术语表",
       "summary": "wunder 文档里的核心术语与形态名称对照。",
-      "updated_at": "2026-10-13",
+      "updated_at": "2026-10-14",
       "read_when": [],
       "source_docs": [],
       "tab": "参考",
@@ -5744,8 +5744,8 @@
       "slug": "zh-CN/concepts/workspaces",
       "language": "zh-CN",
       "title": "工作区与工作目录",
-      "summary": "每个用户有且只有一个工作区，工具以它为根；蜂窝里是本机上的持久目录，舰体部署时是服务端按用户划分的唯一目录。",
-      "updated_at": "2026-10-13",
+      "summary": "每个用户有且只有一个工作区，工具以它为根；蛹里是本机上的持久目录，舰体部署时是服务端按用户划分的唯一目录。",
+      "updated_at": "2026-10-14",
       "read_when": [],
       "source_docs": [],
       "tab": "参考",
@@ -5788,7 +5788,7 @@
         {
           "id": "section-7",
           "level": 2,
-          "text": "蜂窝的本地边界"
+          "text": "蛹的本地边界"
         },
         {
           "id": "section-8",
@@ -6369,7 +6369,7 @@
       "slug": "en/index",
       "language": "en",
       "title": "wunder",
-      "summary": "wunder is an agent orchestration platform. The Honeycomb is the local AI workbench on your computer, the Beehive is the cloud workbench in a browser, the Helm is the terminal entry point, and the Hull is the shared management platform for teams.",
+      "summary": "wunder is an agent orchestration platform. The Pupa is the local AI workbench on your computer, the Beehive is the cloud workbench in a browser, the Helm is the terminal entry point, and the Hull is the shared management platform for teams.",
       "updated_at": "2026-10-13",
       "read_when": [
         "You are new to wunder and choosing which form to use",
@@ -6401,7 +6401,7 @@
         {
           "id": "section-3",
           "level": 2,
-          "text": "Start with the Honeycomb"
+          "text": "Start with the Pupa"
         },
         {
           "id": "section-4",
@@ -6438,7 +6438,7 @@
       "slug": "en/start/quickstart",
       "language": "en",
       "title": "Quick Start",
-      "summary": "The shortest path to get the Honeycomb running: download, launch, configure a model, send your first message, verify the result. The default entry point for individual users, with no service to deploy.",
+      "summary": "The shortest path to get the Pupa running: download, launch, configure a model, send your first message, verify the result. The default entry point for individual users, with no service to deploy.",
       "updated_at": "2026-10-13",
       "read_when": [
         "You are an individual user setting up wunder for the first time",
@@ -6489,7 +6489,7 @@
         {
           "id": "section-7",
           "level": 2,
-          "text": "What the Honeycomb gives you"
+          "text": "What the Pupa gives you"
         },
         {
           "id": "section-8",
@@ -6520,11 +6520,11 @@
     "en/start/desktop": {
       "slug": "en/start/desktop",
       "language": "en",
-      "title": "Starting with the Honeycomb (Desktop)",
+      "title": "Starting with the Pupa (Desktop)",
       "summary": "wunder's default way to work: a local AI workbench. Download, install, open, go — no Hull to deploy first; it calls the engine natively in-process, takes no port, and routes through no HTTP/WebSocket relay.",
       "updated_at": "2026-10-13",
       "read_when": [
-        "You are installing or first launching the Honeycomb",
+        "You are installing or first launching the Pupa",
         "You need to know where its local data lives or how to migrate it"
       ],
       "source_docs": [
@@ -6545,12 +6545,12 @@
         {
           "id": "section-1",
           "level": 1,
-          "text": "Starting with the Honeycomb (Desktop)"
+          "text": "Starting with the Pupa (Desktop)"
         },
         {
           "id": "section-2",
           "level": 2,
-          "text": "When to choose the Honeycomb"
+          "text": "When to choose the Pupa"
         },
         {
           "id": "section-3",
@@ -6610,7 +6610,7 @@
         {
           "id": "section-14",
           "level": 2,
-          "text": "What only the Honeycomb can do"
+          "text": "What only the Pupa can do"
         },
         {
           "id": "section-15",
@@ -6898,7 +6898,7 @@
       "slug": "en/start/hubs",
       "language": "en",
       "title": "Manual Overview",
-      "summary": "The manual's navigation page: start from the Honeycomb and move into the interface map, other forms, and reference as needed. Every page in the start and surfaces groups is here.",
+      "summary": "The manual's navigation page: start from the Pupa and move into the interface map, other forms, and reference as needed. Every page in the start and surfaces groups is here.",
       "updated_at": "2026-10-13",
       "read_when": [
         "You want the map of the whole manual and where to enter it",
@@ -7065,7 +7065,7 @@
       "slug": "en/start/troubleshooting-first-run",
       "language": "en",
       "title": "First-Run Troubleshooting",
-      "summary": "The most common failure modes and verification points for the first launch or deployment of each form: Honeycomb startup, Hull deployment, Beehive access, Helm execution. When the first run doesn't work, locate the failure by form here.",
+      "summary": "The most common failure modes and verification points for the first launch or deployment of each form: Pupa startup, Hull deployment, Beehive access, Helm execution. When the first run doesn't work, locate the failure by form here.",
       "updated_at": "2026-10-13",
       "read_when": [
         "A first install, launch, or deployment failed",
@@ -7093,7 +7093,7 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "Honeycomb (desktop)"
+          "text": "Pupa (desktop)"
         },
         {
           "id": "section-3",
@@ -7272,7 +7272,7 @@
       "slug": "en/concepts/core-compatibility",
       "language": "en",
       "title": "Compatibility",
-      "summary": "The Compatibility core lets the Honeycomb (desktop) and the Helm (cli) run in older operating-system environments under explicit constraints: Windows 7 32-bit and Ubuntu 18.04 each have an offline build chain, and the interface uses software rendering that does not depend on a GPU.",
+      "summary": "The Compatibility core lets the Pupa (desktop) and the Helm (cli) run in older operating-system environments under explicit constraints: Windows 7 32-bit and Ubuntu 18.04 each have an offline build chain, and the interface uses software rendering that does not depend on a GPU.",
       "updated_at": "2026-10-13",
       "read_when": [],
       "source_docs": [],
@@ -8474,7 +8474,7 @@
       "slug": "en/surfaces/index",
       "language": "en",
       "title": "Interface Overview",
-      "summary": "Four forms, four interfaces — the Honeycomb (local AI workbench), the Beehive (cloud AI workbench), the Helm (terminal interface), and the Bridge (admin governance console). Look up interface capabilities by form.",
+      "summary": "Four forms, four interfaces — the Pupa (local AI workbench), the Beehive (cloud AI workbench), the Helm (terminal interface), and the Bridge (admin governance console). Look up interface capabilities by form.",
       "updated_at": "2026-10-13",
       "read_when": [
         "You are choosing between the forms and need to know what each interface can do",
@@ -8543,7 +8543,7 @@
       "updated_at": "2026-10-13",
       "read_when": [
         "You use the Beehive in a browser and want to know where each capability lives",
-        "You are checking what the Beehive can do that the Honeycomb cannot (and vice versa)"
+        "You are checking what the Beehive can do that the Pupa cannot (and vice versa)"
       ],
       "source_docs": [
         "frontend/src/router/index.ts",
@@ -8592,7 +8592,7 @@
         {
           "id": "section-7",
           "level": 2,
-          "text": "Differences from the Honeycomb"
+          "text": "Differences from the Pupa"
         },
         {
           "id": "section-8",
@@ -8697,12 +8697,12 @@
     "en/surfaces/desktop-ui": {
       "slug": "en/surfaces/desktop-ui",
       "language": "en",
-      "title": "Honeycomb Interface",
-      "summary": "The Honeycomb (desktop) is the local AI workbench and the default entry for individual users. Its main window has only two pages, chat and settings, with 12 categories in settings; everything else appears as panels and dialogs.",
+      "title": "Pupa Interface",
+      "summary": "The Pupa (desktop) is the local AI workbench and the default entry for individual users. Its main window has only two pages, chat and settings, with 12 categories in settings; everything else appears as panels and dialogs.",
       "updated_at": "2026-10-13",
       "read_when": [
-        "You use the Honeycomb desktop app and want to know where a capability lives",
-        "You cannot find the device-interconnection panel or TTS playback in the Honeycomb"
+        "You use the Pupa desktop app and want to know where a capability lives",
+        "You cannot find the device-interconnection panel or TTS playback in the Pupa"
       ],
       "source_docs": [
         "frontend-slint/ui/theme.slint",
@@ -8721,7 +8721,7 @@
         {
           "id": "section-1",
           "level": 1,
-          "text": "Honeycomb Interface"
+          "text": "Pupa Interface"
         },
         {
           "id": "section-2",
@@ -8751,7 +8751,7 @@
         {
           "id": "section-7",
           "level": 2,
-          "text": "Capabilities unique to the Honeycomb"
+          "text": "Capabilities unique to the Pupa"
         },
         {
           "id": "section-8",
@@ -8766,7 +8766,7 @@
         {
           "id": "section-10",
           "level": 2,
-          "text": "Honeycomb vs. Beehive"
+          "text": "Pupa vs. Beehive"
         },
         {
           "id": "section-11",
@@ -9217,7 +9217,7 @@
         {
           "id": "section-28",
           "level": 3,
-          "text": "Individual local use (Honeycomb desktop)"
+          "text": "Individual local use (Pupa desktop)"
         },
         {
           "id": "section-29",
@@ -9748,7 +9748,7 @@
       "slug": "en/reference/interlink",
       "language": "en",
       "title": "Interlink",
-      "summary": "The Beehive, the Honeycomb, and the Helm share one presence state, see each other's workspaces, and control each other in both directions.",
+      "summary": "The Beehive, the Pupa, and the Helm share one presence state, see each other's workspaces, and control each other in both directions.",
       "updated_at": "2026-10-13",
       "read_when": [],
       "source_docs": [],
@@ -9777,7 +9777,7 @@
         {
           "id": "section-4",
           "level": 3,
-          "text": "Honeycomb (desktop)"
+          "text": "Pupa (desktop)"
         },
         {
           "id": "section-5",
@@ -10025,7 +10025,7 @@
         {
           "id": "section-7",
           "level": 2,
-          "text": "Honeycomb and Hull Dependency"
+          "text": "Pupa and Hull Dependency"
         },
         {
           "id": "section-8",
@@ -10613,7 +10613,7 @@
       "slug": "en/concepts/workspaces",
       "language": "en",
       "title": "Workspaces and the Working Directory",
-      "summary": "Each user has exactly one workspace, and tools are rooted at it: a persistent local directory in the Honeycomb, or a single per-user directory on the server in a Hull deployment.",
+      "summary": "Each user has exactly one workspace, and tools are rooted at it: a persistent local directory in the Pupa, or a single per-user directory on the server in a Hull deployment.",
       "updated_at": "2026-10-13",
       "read_when": [],
       "source_docs": [],
@@ -10652,7 +10652,7 @@
         {
           "id": "section-6",
           "level": 2,
-          "text": "The Honeycomb's local boundary"
+          "text": "The Pupa's local boundary"
         },
         {
           "id": "section-7",

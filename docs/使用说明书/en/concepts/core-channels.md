@@ -8,9 +8,9 @@ updated_at: 2026-10-13
 
 All execution happens in the engine. A channel does just two things: parse an external message into a unified inbound shape, and deliver the unified outbound shape back into an external protocol. Protocol adaptation stops at the entry; a channel does not copy business logic, does not keep its own storage, and does not change thread semantics.
 
-So the same task thread can take a message from Beehive, continue it from Feishu, and finish it from Honeycomb; a channel never creates a second execution path.
+So the same task thread can take a message from Beehive, continue it from Feishu, and finish it from Pupa; a channel never creates a second execution path.
 
-A form (Honeycomb / Beehive / Helm / Hull) is the shape of running and access; a channel (Feishu / QQ / WeChat …) is an off-site platform.
+A form (Pupa / Beehive / Helm / Hull) is the shape of running and access; a channel (Feishu / QQ / WeChat …) is an off-site platform.
 
 ## Which channels are supported today
 
@@ -76,7 +76,7 @@ Verification differs by platform: some loop back a verification token from confi
 - The core capabilities are the same across channels; the differences are only in protocol expression (rich text, attachments, cards) and whether a persistent connection is supported.
 - The inbound queue does not guarantee no loss by queuing forever; it is bounded at 512 with an 80 ms enqueue timeout, and anything beyond goes to backpressure and platform redelivery.
 - A failed outbound delivery is not dropped outright; it uses a persistent queue with exponential backoff and at most 5 retries.
-- Honeycomb and Helm do not go through the channel layer: Honeycomb is a native in-process call, and Helm uses its own access path.
+- Pupa and Helm do not go through the channel layer: Pupa is a native in-process call, and Helm uses its own access path.
 
 ## Related pages
 

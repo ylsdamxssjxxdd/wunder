@@ -109,6 +109,14 @@ pub struct ThreadViewPage {
     pub epoch: i64,
     pub view_seq: i64,
     pub projection_state: String,
+    /// The durable session exists, but the bounded presentation read could
+    /// not finish before its deadline. Consumers must keep any already
+    /// committed rows and surface this as a degraded view rather than a
+    /// session-open failure.
+    #[serde(default)]
+    pub degraded: bool,
+    #[serde(default)]
+    pub diagnostic: Option<String>,
     pub thread_empty: Option<bool>,
     pub latest_round: i64,
     pub chat: Vec<ChatViewRow>,

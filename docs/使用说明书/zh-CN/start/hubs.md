@@ -1,12 +1,12 @@
 ---
 title: 说明书总览
-summary: 说明书导航页：从蜂窝起步，按需进入界面地图、其它形态与参考。start 与 surfaces 两组的全部页面都在这里。
+summary: 说明书导航页：从蛹起步，按需进入界面地图、其它形态与参考。start 与 surfaces 两组的全部页面都在这里。
 updated_at: 2026-10-13
 ---
 
 # 说明书总览
 
-所有人都从[蜂窝（desktop）](/docs/zh-CN/start/desktop/)开始：下载安装，打开就是你的本地 AI 工作台。以下入口按使用频率排列。
+所有人都从[蛹（desktop）](/docs/zh-CN/start/desktop/)开始：下载安装，打开就是你的本地 AI 工作台。以下入口按使用频率排列。
 
 ## 开始使用
 
@@ -16,7 +16,7 @@ updated_at: 2026-10-13
     <span>4 步跑通第一个任务。</span>
   </a>
   <a class="docs-card" href="/docs/zh-CN/start/desktop/">
-    <strong>蜂窝入门</strong>
+    <strong>蛹入门</strong>
     <span>下载安装，打开即用；数据存在本机，不占端口。</span>
   </a>
   <a class="docs-card" href="/docs/zh-CN/start/troubleshooting-first-run/">
@@ -33,7 +33,7 @@ updated_at: 2026-10-13
     <span>四个形态的界面分工与能力矩阵。</span>
   </a>
   <a class="docs-card" href="/docs/zh-CN/surfaces/desktop-ui/">
-    <strong>蜂窝界面</strong>
+    <strong>蛹界面</strong>
     <span>主窗两页 + 12 个设置分类 + 面板与对话框。</span>
   </a>
   <a class="docs-card" href="/docs/zh-CN/surfaces/frontend/">
@@ -61,7 +61,7 @@ updated_at: 2026-10-13
 
 ## 其它形态（可选）
 
-个人用户默认用蜂窝；下列是团队协作或自动化场景才需要：
+个人用户默认用蛹；下列是团队协作或自动化场景才需要：
 
 <div class="docs-card-grid docs-card-grid-compact">
   <a class="docs-card" href="/docs/zh-CN/start/server/">

@@ -48,7 +48,7 @@ A few points worth noting:
 
 - A bad argument is returned with its error text unchanged, and the execution layer records it as a failure.
 - An unavailable monitor or a missing orchestrator is not an error; the corresponding fields are simply empty.
-- It works across Honeycomb, Beehive, Helm, and Hull; it is read-only, triggers no approval, and does not run in the sandbox.
+- It works across Pupa, Beehive, Helm, and Hull; it is read-only, triggers no approval, and does not run in the sandbox.
 
 ## Related pages
 

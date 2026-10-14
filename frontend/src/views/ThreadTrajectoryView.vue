@@ -747,6 +747,14 @@ async function load(before:number|null=null, appendOlder=false): Promise<boolean
         : await getThreadViewTrajectoryPage(sessionId,{before,limit:80},{signal:controller.signal})
     if(controller.signal.aborted||loadAbort!==controller)return false
     const page=response.data.data.page
+    if(page.degraded || page.projection_state === 'degraded') {
+      // A timeout describes the projection, not the session. Keep the current
+      // ledger and let the next refresh fill the page.
+      if (displayPage.value) return true
+      displayPage.value=markRaw(page)
+      loadError.value=false
+      return true
+    }
     if(!['ready','source'].includes(page.projection_state))throw new Error('display unavailable')
     if(before!==null && displayPage.value?.epoch!==page.epoch){return await load()}
     const previousHeight = ledgerEl.value?.scrollHeight ?? 0

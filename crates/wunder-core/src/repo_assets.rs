@@ -85,7 +85,7 @@ fn find_source_checkout_at_or_above(candidate: &Path) -> Option<PathBuf> {
     None
 }
 
-/// Asset root for the local forms (蜂窝 and 舵机), which ship the same layout.
+/// Asset root for the local forms (蛹 and 舵机), which ship the same layout.
 /// Bundled assets next to the executable win, so a clean install never depends
 /// on the folder it happens to be launched from. Source checkouts are only
 /// accepted through the strict marker, keeping developer convenience without

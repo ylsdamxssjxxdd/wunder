@@ -53,6 +53,9 @@ CREATE TABLE IF NOT EXISTS thread_trajectory_tiles (
 
 /// All SQL below uses positional `?` parameters; the PG adapter numbers them.
 pub(crate) trait ViewDb {
+    /// PostgreSQL can use a partition-pruned lateral lookup for source
+    /// representatives. SQLite keeps the portable fallback query.
+    fn is_postgres(&self) -> bool { false }
     fn json_text(&self, expression: &str, field: &str) -> String;
     fn text_bytes(&self, expression: &str) -> String;
     fn query(&mut self, sql: &str, params: &[Value]) -> Result<Vec<Vec<Value>>>;
@@ -426,6 +429,9 @@ pub(crate) fn project_item(
         float(&i[10]),
     );
     let mut detail_item = std::mem::take(&mut item);
+    if kind == "system_message" {
+        projection::redact_internal_context(&mut detail_item);
+    }
     let mut original_content = None;
     let mut content_revision = None;
     if let Some(map) = detail_item.as_object_mut() {

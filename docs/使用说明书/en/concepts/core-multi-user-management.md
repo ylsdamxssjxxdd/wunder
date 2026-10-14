@@ -15,7 +15,7 @@ source_docs:
 updated_at: 2026-10-13
 ---
 
-Multi-user governance is a foundational capability of the Hull (server) form; the Honeycomb (desktop) and the Helm (cli) are local, single-machine forms with no account system. Concrete panel operations are covered in the reference section.
+Multi-user governance is a foundational capability of the Hull (server) form; the Pupa (desktop) and the Helm (cli) are local, single-machine forms with no account system. Concrete panel operations are covered in the reference section.
 
 ## The three gates of identity
 
@@ -35,13 +35,13 @@ A few key semantics:
 
 - **These are not JWTs.** A token carries no claims and cannot be parsed offline; validation is a database lookup, so revocation takes effect immediately.
 - **Refresh is an OAuth-style family rotation**: one refresh issues a new access plus a new refresh, both in the same rotation family; presenting an already-revoked token to refresh again is judged to be a stolen token, and the whole family (including the access token in use) is revoked at once.
-- **The session scope decides who can renew**: login reads the `x-wunder-session-scope` header, and only local scopes such as the Honeycomb and the Helm get a refresh chain that can renew; browser sessions do not take this path.
+- **The session scope decides who can renew**: login reads the `x-wunder-session-scope` header, and only local scopes such as the Pupa and the Helm get a refresh chain that can renew; browser sessions do not take this path.
 - **Logging in again from the same scope evicts the old session**: when the same user logs in again from the same scope, the old session receives a notice that it has been superseded and is disconnected. When troubleshooting a connection that dropped on another client, first check whether it was the same scope logging in again.
 - Passwords are stored as Argon2 hashes; plaintext never reaches the database.
 
 ## Presence is split by form
 
-Presence is recorded separately by client type, with the Beehive (web), the Honeycomb (desktop), and the Helm (cli) as three independent lines; roughly 90 seconds without a touch counts as offline, with a sweep interval of 30 seconds (minimum 10 seconds). As a result, presence in the user list is split into web, desktop, and cli columns — "online" is no longer a yes-or-no value, and to see who is online on which form you look at the matching column. The management exit is at `/wunder/admin/gateway/presence`.
+Presence is recorded separately by client type, with the Beehive (web), the Pupa (desktop), and the Helm (cli) as three independent lines; roughly 90 seconds without a touch counts as offline, with a sweep interval of 30 seconds (minimum 10 seconds). As a result, presence in the user list is split into web, desktop, and cli columns — "online" is no longer a yes-or-no value, and to see who is online on which form you look at the matching column. The management exit is at `/wunder/admin/gateway/presence`.
 
 ## The unit tree and the unit-head scope
 

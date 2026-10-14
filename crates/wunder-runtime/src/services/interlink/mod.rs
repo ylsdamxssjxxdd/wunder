@@ -28,7 +28,7 @@ pub mod audit;
 /// Bounded tunnel data-plane buffer for large remote file reads (docs §6.4).
 pub mod blob;
 /// Outbound tunnel client for a local node (docs §2.2, §2.3): lifecycle,
-/// presence beat, remote forwarding; used by 蜂窝 and 舵机.
+/// presence beat, remote forwarding; used by 蛹 and 舵机.
 pub mod client;
 /// Remote command ledger: idempotency, state machine, inflight bound,
 /// offline queue, timeout sweep (docs §4.3).

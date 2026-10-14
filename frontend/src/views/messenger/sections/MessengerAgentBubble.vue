@@ -4,7 +4,7 @@
     :class="{ mine: isUser, 'messenger-message--timeline': true }"
     :data-virtual-key="item.key"
     :data-turn-id="String(item.message.__runtime_user_turn_id || item.message.user_turn_id || item.message.root_turn_id || '')"
-    :data-message-status="String(item.message.status || '')"
+    :data-message-status="uiMessageStatus(String(item.message.status || ''))"
   >
     <div class="messenger-message-main">
       <MessageTimelineAssistant
@@ -124,6 +124,7 @@ import { computed } from 'vue';
 import type { MessengerControllerContext } from '../controller/messengerControllerContext';
 import MessageMarkdownBody from '@/components/chat/MessageMarkdownBody.vue';
 import MessageTimelineAssistant from './MessageTimelineAssistant.vue';
+import { uiMessageStatus } from '@/realtime/chat/threadViewStore';
 
 /**
  * 聊天区消息行（§7 时间线形态）。

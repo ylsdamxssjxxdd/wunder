@@ -286,7 +286,7 @@ services/tools/dispatch.rs:27  真正分发到实现
 | 6 档位 | `services/default_tool_profile.rs` | 是否进 `DEFAULT_BUILTIN`；要临时下架写进 `TEMPORARILY_HIDDEN`，不要删代码 |
 | 7 并行 | `orchestrator/tool_parallel.rs:6-45` | 只读工具才加白名单；写类保持独占 |
 | 8 审批 | `ToolKind` 归档 | `Read` / `Write` / `Exec` / `Control` 选对档，决定缓存与提示语义 |
-| 9 文案 | 三端展示 | 蜂巢 i18n `frontend/src/i18n/messages/`；舰桥 `web/shared/tool-visuals.js` 与 `web/modules/`；蜂窝 `frontend-slint/src/tool_icons.rs`；Slint 文案由 `scripts/build_i18n.py` 生成 `ui/i18n.slint`，**勿手改生成物** |
+| 9 文案 | 三端展示 | 蜂巢 i18n `frontend/src/i18n/messages/`；舰桥 `web/shared/tool-visuals.js` 与 `web/modules/`；蛹 `frontend-slint/src/tool_icons.rs`；Slint 文案由 `scripts/build_i18n.py` 生成 `ui/i18n.slint`，**勿手改生成物** |
 | 10 测试 | `crates/wunder-runtime/tests/` | 至少一条 dispatch 与一条结果裁剪边界用例 |
 
 工具的系统描述（description）是模型唯一的选择依据，写模糊就会误调用或不被调用。返回要精简，长内容落文件路径而不是塞回上下文。

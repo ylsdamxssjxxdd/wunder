@@ -4,7 +4,7 @@ import { shallowRef, markRaw } from 'vue';
 export interface ThreadBodyRef { body_id: string; revision: number; bytes: number }
 export interface ViewMessage { item_id: string; content: string; reasoning?: string; durable_seq?: number; content_offset?: number; reasoning_offset?: number; tail_offset?: number; body?: ThreadBodyRef; feedback?: unknown; stats?: unknown; tail?: string; failure?: string; attachments?: unknown[] }
 export interface ChatViewRow { root_turn_id: string; execution_turn_id?:string; user_round: number; client_message_id?: string; revision: number; status: string; user: ViewMessage; assistant: ViewMessage; workflow_count: number; reasoning_count?: number; reasoning_item_id?: string; failed_count: number; subagents?: any[] }
-export interface ThreadViewPage { runtime_status?:string;active_turn_id?:string; session_id: string; epoch: number; view_seq: number; projection_state: string; thread_empty: boolean | null; latest_round: number; chat: ChatViewRow[]; trajectory: any[]; tiles: any[]; tile_level: number; next_before: number | null; has_more: boolean }
+export interface ThreadViewPage { runtime_status?:string;active_turn_id?:string; session_id: string; epoch: number; view_seq: number; projection_state: string; degraded?: boolean; diagnostic?: string | null; thread_empty: boolean | null; latest_round: number; chat: ChatViewRow[]; trajectory: any[]; tiles: any[]; tile_level: number; next_before: number | null; has_more: boolean }
 export type ViewPhase = 'opening' | 'ready' | 'verified_empty' | 'refreshing' | 'error';
 export interface ViewSlot { key: string; rootTurnId: string; user: Record<string, any>; assistant: Record<string, any> }
 interface Entry { phase: ViewPhase; epoch: number; seq: number; generation: number; rows: Map<string, ChatViewRow>; slots: Map<string, ViewSlot>; order: string[]; next: number | null; more: boolean; bytes: number; error: string; atLatest: boolean; latestRound: number; latestStatus: string }
@@ -27,15 +27,14 @@ export function threadViewPhase(key: string): ViewPhase | undefined { void threa
 export function threadViewCursor(key: string): number { const e=entries.get(key);return e?.epoch===-1 ? -((e.seq??0)+1) : e?.seq??0; }
 export function threadViewHistory(key: string) { const e = entry(key); return { before: e.next, hasMore: e.more }; }
 /** Row status is server vocabulary; message bubbles and audit hooks speak the UI one. */
-function uiMessageStatus(status: string) {
-  return status === 'completed' ? 'final' : status === 'rejected' ? 'failed' : status;
-}
+export const uiMessageStatus = (status: string) =>
+  status === 'completed' ? 'final' : status === 'rejected' ? 'failed' : status;
 function materialize(row: ChatViewRow): ViewSlot {
   const running = ['running','queued','waiting_input','waiting_approval'].includes(row.status);
   const make = (role: string, m: ViewMessage) => markRaw({ id: `tturn:${row.root_turn_id}:${role}`, role, content: m.content, item_id: m.item_id,
     turn_id: row.execution_turn_id??row.root_turn_id, root_turn_id: row.root_turn_id, user_round: row.user_round, client_message_id: row.client_message_id,
     __runtime_projected: true, __thread_view:true, final: !running, state:role==='assistant'?(running?'streaming':row.status==='completed'?'final':row.status):'final', __thread_body: m.body, __thread_preview: Boolean(m.body && m.body.bytes > new TextEncoder().encode(m.content).length),
-    streaming: role === 'assistant' && running, status: role === 'assistant' ? uiMessageStatus(row.status) : 'completed',
+    streaming: role === 'assistant' && running, status: role === 'assistant' ? row.status : 'completed',
     // The process badge counts every visible process entry.  The server keeps
     // tool counts separately, so include the aggregated reasoning entry here.
     workflow_count: row.workflow_count, reasoning_count: Number(row.reasoning_count || 0), reasoning_item_id: row.reasoning_item_id || '', process_count: row.workflow_count + Number(row.reasoning_count || 0) + (role === 'assistant' && String(m.reasoning || '').trim() && !Number(row.reasoning_count || 0) ? 1 : 0), workflow_failed_count: row.failed_count, feedback: m.feedback, stats: m.stats, reasoning: m.reasoning || '',
@@ -125,6 +124,12 @@ export function commitThreadView(key: string, page: ThreadViewPage, generation?:
   if(!page || page.session_id!==key || !Number.isSafeInteger(page.epoch) || !Number.isSafeInteger(page.view_seq) || !validRows(page.chat))return false;
   if(historical && e.epoch!==page.epoch)return false;
   if (!historical && e.epoch === page.epoch && page.view_seq < e.seq) return false;
+  if (page.degraded || page.projection_state === 'degraded') {
+    e.error = page.diagnostic === 'view_timeout' ? '线程内容正在整理，已保留当前可见记录' : '线程展示暂时降级';
+    e.phase = e.rows.size ? 'ready' : 'opening';
+    notify();
+    return true;
+  }
   if (!['ready','source'].includes(page.projection_state)) { e.error = '线程展示暂时不可用，请重试'; e.phase = e.rows.size ? 'ready' : 'error'; notify(); return false; }
   // Candidate validation precedes every mutation; failures retain committed rows.
   if (!historical && !(recovery && !e.atLatest && e.epoch===page.epoch)) {

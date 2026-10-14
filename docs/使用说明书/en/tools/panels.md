@@ -42,7 +42,7 @@ You can give one line of yield note to tell the user the current state; leaving 
 
 The result state is "yielded", the turn's answer is set to that note, and the stop reason is recorded as a yield. Waking on schedule is handled by [Schedule Task](/docs/en/tools/schedule-task/).
 
-In desktop mode (Honeycomb) `会话让出` is listed as a hidden tool and is not exposed to the agent.
+In desktop mode (Pupa) `会话让出` is listed as a hidden tool and is not exposed to the agent.
 
 ## Diagnosing problems
 

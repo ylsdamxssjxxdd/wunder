@@ -40,7 +40,7 @@ Inside a user's settings, the quota actions are:
 - **Deduct quota**: reduces the balance and records the cumulative amount consumed
 - Administrator accounts are not subject to balance limits
 
-The online status in the user list is split by client: Beehive (web), Honeycomb (desktop), and Helm (command line).
+The online status in the user list is split by client: Beehive (web), Pupa (desktop), and Helm (command line).
 
 ## Agent group
 

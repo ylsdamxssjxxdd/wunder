@@ -1,9 +1,9 @@
 ---
-title: Honeycomb Interface
-summary: The Honeycomb (desktop) is the local AI workbench and the default entry for individual users. Its main window has only two pages, chat and settings, with 12 categories in settings; everything else appears as panels and dialogs.
+title: Pupa Interface
+summary: The Pupa (desktop) is the local AI workbench and the default entry for individual users. Its main window has only two pages, chat and settings, with 12 categories in settings; everything else appears as panels and dialogs.
 read_when:
-  - You use the Honeycomb desktop app and want to know where a capability lives
-  - You cannot find the device-interconnection panel or TTS playback in the Honeycomb
+  - You use the Pupa desktop app and want to know where a capability lives
+  - You cannot find the device-interconnection panel or TTS playback in the Pupa
 source_docs:
   - frontend-slint/ui/theme.slint
   - frontend-slint/ui/main.slint
@@ -13,9 +13,9 @@ source_docs:
 updated_at: 2026-10-13
 ---
 
-# Honeycomb Interface
+# Pupa Interface
 
-The Honeycomb is wunder's **local AI workbench**, and the default entry for individual users. It runs entirely on your own computer: there is no separate backend port and no network relay, and the interface calls the local engine directly.
+The Pupa is wunder's **local AI workbench**, and the default entry for individual users. It runs entirely on your own computer: there is no separate backend port and no network relay, and the interface calls the local engine directly.
 
 ## Starting and running
 
@@ -65,7 +65,7 @@ The category bar supports search filtering; when nothing matches it shows an emp
 
 ## Panels and dialogs
 
-These are distinct areas inside the Honeycomb, not separate pages:
+These are distinct areas inside the Pupa, not separate pages:
 
 - **Sidebar / timeline / input area**: the three parts of the chat page
 - **Terminal view**: an interactive command session where you type just as in a terminal
@@ -82,7 +82,7 @@ These are distinct areas inside the Honeycomb, not separate pages:
 - **Tray and system notifications**: background running and completion reminders
 - **Remote command approval pop-up**: a high-risk confirmation for interconnection commands, with a prominent border, risk level, and source details, plus a "cannot be remembered" prompt
 
-## Capabilities unique to the Honeycomb
+## Capabilities unique to the Pupa
 
 These are not available in the other interfaces:
 
@@ -97,9 +97,9 @@ These are not available in the other interfaces:
 
 ## Capabilities that do not work yet
 
-- The **Device interconnection** category in settings is not wired up: the entry exists in code but never renders, so it cannot be opened today. Interconnection in the Honeycomb lives in only two places — the cloud workspace under "Working directory" in the sidebar, and the remote-command approval pop-up.
+- The **Device interconnection** category in settings is not wired up: the entry exists in code but never renders, so it cannot be opened today. Interconnection in the Pupa lives in only two places — the cloud workspace under "Working directory" in the sidebar, and the remote-command approval pop-up.
 - **Voice output (TTS) is not implemented**: TTS models can be configured in settings, but there is no playback; the voice side is input-only. For spoken output, use the Beehive.
-- **The early desktop shells are no longer maintained**: the Electron / Tauri frontend shells receive no feature updates. This does not affect the Honeycomb's underlying engine.
+- **The early desktop shells are no longer maintained**: the Electron / Tauri frontend shells receive no feature updates. This does not affect the Pupa's underlying engine.
 
 ## One-click reset of the working state
 
@@ -111,9 +111,9 @@ It keeps skills, knowledge bases, long-term memory, user configuration, workspac
 
 It cleans up the working state rather than performing a factory reset.
 
-## Honeycomb vs. Beehive
+## Pupa vs. Beehive
 
-| Item | Honeycomb | Beehive |
+| Item | Pupa | Beehive |
 | --- | --- | --- |
 | Running mode | A desktop app installed on your own computer | Reached in a browser, in the cloud |
 | Data storage | Local (`~/.wunder`) | Hull storage |
@@ -133,7 +133,7 @@ It cleans up the working state rather than performing a factory reset.
 ## Further Reading
 
 - [Quick Start](/docs/en/start/quickstart/)
-- [Honeycomb quick start](/docs/en/start/desktop/)
+- [Pupa quick start](/docs/en/start/desktop/)
 - [Interface overview and capability matrix](/docs/en/surfaces/index/)
 - [Beehive Interface](/docs/en/surfaces/frontend/)
 - [Troubleshooting](/docs/en/help/troubleshooting/)

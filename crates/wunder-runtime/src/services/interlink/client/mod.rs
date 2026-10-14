@@ -1,4 +1,4 @@
-//! Outbound interlink tunnel client for a local node (蜂窝 / 舵机).
+//! Outbound interlink tunnel client for a local node (蛹 / 舵机).
 //!
 //! The node never listens: it opens one long-lived WSS to the server and
 //! carries every plane of the interlink protocol over that single socket

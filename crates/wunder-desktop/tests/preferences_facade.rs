@@ -120,7 +120,7 @@ fn preferences_validate_and_persist() {
     assert_eq!(settings.theme, "hula-green");
     assert_eq!(settings.send_key, "none");
     assert_eq!(settings.font_size, 18);
-    // The 蜂窝 theme card writes these four ids; a rejected save leaves the
+    // The 蛹 theme card writes these four ids; a rejected save leaves the
     // accent applied live but lost on the next start.
     for theme in ["terracotta", "forest", "honey"] {
         let saved = runtime

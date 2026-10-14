@@ -73,11 +73,11 @@ With the master switch off (`cron.enabled=false`), **only four kinds of write op
 | API | `/wunder/cron/*`, 11 endpoints in all (status / list / runs / add / update / remove / enable / disable / get / run / action), on the **user side**, isolated by user ownership |
 | Tool | The built-in scheduled-tasks tool (canonical name `定时任务`, alias `schedule_task`), sharing the same handler as the API, so the model can create tasks on its own |
 | Beehive | A scheduled-tasks category page under settings |
-| Honeycomb | A scheduled-tasks page plus a native entry point, calling the same handler in-process |
+| Pupa | A scheduled-tasks page plus a native entry point, calling the same handler in-process |
 | Helm | **No scheduled tasks**: the local engine explicitly disables the scheduler at startup, and there is no related slash command |
 | Bridge | No user-level task management page; it exists only as a template configuration under preset agents |
 
-When you need something to run on a schedule, configure it on the Beehive, the Honeycomb, or the Hull side.
+When you need something to run on a schedule, configure it on the Beehive, the Pupa, or the Hull side.
 
 ## Related pages
 

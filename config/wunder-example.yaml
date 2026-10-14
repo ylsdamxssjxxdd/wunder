@@ -264,7 +264,7 @@ agent_queue:
   poll_interval_ms: 1500
   max_retries: 2
   task_ttl_s: 86400
-cloud: # 本地客户端（蜂窝/舵机）云端接入配置
+cloud: # 本地客户端（蛹/舵机）云端接入配置
   enabled: true # 是否开放 /wunder/cloud/* 用户面端点（关闭时统一返回 404 CLOUD_DISABLED；管理端点不受影响）
   max_concurrent_calls_per_user: 2 # 每用户云端模型调用并发上限
   queue: # 云端调用排队配置（并发满员时按用户 FIFO 排队）

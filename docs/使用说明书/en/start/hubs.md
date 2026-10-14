@@ -1,6 +1,6 @@
 ---
 title: Manual Overview
-summary: The manual's navigation page: start from the Honeycomb and move into the interface map, other forms, and reference as needed. Every page in the start and surfaces groups is here.
+summary: The manual's navigation page: start from the Pupa and move into the interface map, other forms, and reference as needed. Every page in the start and surfaces groups is here.
 read_when:
   - You want the map of the whole manual and where to enter it
   - You are troubleshooting and need to jump to the right form's page
@@ -13,7 +13,7 @@ updated_at: 2026-10-13
 
 # Manual Overview
 
-Everyone starts with the [Honeycomb (desktop)](/docs/en/start/desktop/): download and install it, and opening it gives you your local AI workbench. The entries below are ordered by how often you'll need them.
+Everyone starts with the [Pupa (desktop)](/docs/en/start/desktop/): download and install it, and opening it gives you your local AI workbench. The entries below are ordered by how often you'll need them.
 
 ## Getting started
 
@@ -23,7 +23,7 @@ Everyone starts with the [Honeycomb (desktop)](/docs/en/start/desktop/): downloa
     <span>Get your first task running in 4 steps.</span>
   </a>
   <a class="docs-card" href="/docs/en/start/desktop/">
-    <strong>Honeycomb intro</strong>
+    <strong>Pupa intro</strong>
     <span>Download, install, open, go; data stays on your machine, no port taken.</span>
   </a>
   <a class="docs-card" href="/docs/en/start/troubleshooting-first-run/">
@@ -40,7 +40,7 @@ Everyone starts with the [Honeycomb (desktop)](/docs/en/start/desktop/): downloa
     <span>The four forms' interface division and capability matrix.</span>
   </a>
   <a class="docs-card" href="/docs/en/surfaces/desktop-ui/">
-    <strong>Honeycomb interface</strong>
+    <strong>Pupa interface</strong>
     <span>The main window's two pages + 12 settings categories + panels and dialogs.</span>
   </a>
   <a class="docs-card" href="/docs/en/surfaces/frontend/">
@@ -68,7 +68,7 @@ Everyone starts with the [Honeycomb (desktop)](/docs/en/start/desktop/): downloa
 
 ## Other forms (optional)
 
-Individual users need only the Honeycomb by default; the following are needed only for team collaboration or automation:
+Individual users need only the Pupa by default; the following are needed only for team collaboration or automation:
 
 <div class="docs-card-grid docs-card-grid-compact">
   <a class="docs-card" href="/docs/en/start/server/">

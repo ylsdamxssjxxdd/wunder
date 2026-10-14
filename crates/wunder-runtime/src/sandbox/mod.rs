@@ -270,7 +270,7 @@ fn collect_allow_paths(config: &Config, bindings: Option<&UserToolBindings>) -> 
     vec!["*".to_string()]
 }
 
-/// The sandbox service exists for 舰体. The local forms (舵机 cli / 蜂窝
+/// The sandbox service exists for 舰体. The local forms (舵机 cli / 蛹
 /// desktop) read and write the user's real folder in-process, so tools must
 /// never be routed to a remote executor that may not even be running.
 pub fn sandbox_enabled(config: &Config) -> bool {

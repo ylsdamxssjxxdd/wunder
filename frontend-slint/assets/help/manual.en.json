@@ -15,7 +15,7 @@
           "kind": "h1",
           "spans": [
             {
-              "text": "Honeycomb User Manual"
+              "text": "Pupa User Manual"
             }
           ]
         },
@@ -23,7 +23,7 @@
           "kind": "lead",
           "spans": [
             {
-              "text": "Honeycomb is a local AI workbench: hand a goal to the agent, and it breaks the task down, calls tools, and delivers results. Files and threads stay on this machine."
+              "text": "Pupa is a local AI workbench: hand a goal to the agent, and it breaks the task down, calls tools, and delivers results. Files and threads stay on this machine."
             }
           ]
         },
@@ -31,7 +31,7 @@
           "kind": "paragraph",
           "spans": [
             {
-              "text": "This manual introduces Honeycomb's core capabilities and day-to-day operations. On the left, the "
+              "text": "This manual introduces Pupa's core capabilities and day-to-day operations. On the left, the "
             },
             {
               "text": "Contents",
@@ -304,7 +304,7 @@
       "group": "Getting Started",
       "keywords": [
         "form",
-        "Honeycomb",
+        "Pupa",
         "Beehive",
         "Helm",
         "Hull"
@@ -643,7 +643,7 @@
                 ],
                 [
                   {
-                    "text": "Honeycomb desktop",
+                    "text": "Pupa desktop",
                     "bold": false,
                     "code": false,
                     "kbd": false,
@@ -767,7 +767,7 @@
           "kind": "paragraph",
           "spans": [
             {
-              "text": "All forms share the same engine (wunder-runtime) and core (wunder-core): threads, tools, storage abstractions, realtime events and permission semantics are one body of code, and the difference is only in the access layer. Honeycomb and Helm do not depend on Hull and can be installed and run on their own.",
+              "text": "All forms share the same engine (wunder-runtime) and core (wunder-core): threads, tools, storage abstractions, realtime events and permission semantics are one body of code, and the difference is only in the access layer. Pupa and Helm do not depend on Hull and can be installed and run on their own.",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -799,7 +799,7 @@
               "href": ""
             },
             {
-              "text": " → Honeycomb (desktop). The local AI workbench, the default entry point for personal use, ready to run after install.",
+              "text": " → Pupa (desktop). The local AI workbench, the default entry point for personal use, ready to run after install.",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -922,7 +922,7 @@
     },
     {
       "id": "install",
-      "title": "Starting with the Honeycomb (Desktop)",
+      "title": "Starting with the Pupa (Desktop)",
       "group": "Getting Started",
       "keywords": [
         "install",
@@ -935,7 +935,7 @@
           "kind": "h1",
           "spans": [
             {
-              "text": "Starting with the Honeycomb (Desktop)",
+              "text": "Starting with the Pupa (Desktop)",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -947,7 +947,7 @@
           "kind": "lead",
           "spans": [
             {
-              "text": "The Honeycomb (desktop) is wunder's desktop edition and the ",
+              "text": "The Pupa (desktop) is wunder's desktop edition and the ",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -987,7 +987,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "When to choose the Honeycomb",
+              "text": "When to choose the Pupa",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -1012,7 +1012,7 @@
                 ],
                 [
                   {
-                    "text": "Choose the Honeycomb",
+                    "text": "Choose the Pupa",
                     "bold": false,
                     "code": false,
                     "kbd": false,
@@ -1345,7 +1345,7 @@
               "href": ""
             },
             {
-              "text": " (this doesn't mean the Honeycomb backend stops being maintained)",
+              "text": " (this doesn't mean the Pupa backend stops being maintained)",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -2011,7 +2011,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "What only the Honeycomb can do",
+              "text": "What only the Pupa can do",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -2128,7 +2128,7 @@
               "href": ""
             },
             {
-              "text": " interlink surfaces are available in the Honeycomb:",
+              "text": " interlink surfaces are available in the Pupa:",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -2480,7 +2480,7 @@
               "href": ""
             },
             {
-              "text": " The Honeycomb focuses on single-user local scenarios; for team collaboration, deploy the Hull and have members use the Beehive.",
+              "text": " The Pupa focuses on single-user local scenarios; for team collaboration, deploy the Hull and have members use the Beehive.",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -2518,7 +2518,7 @@
           "marker": "•",
           "spans": [
             {
-              "text": "Honeycomb Interface",
+              "text": "Pupa Interface",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -3110,7 +3110,7 @@
           "marker": "•",
           "spans": [
             {
-              "text": "The Bridge has no goal UI; goal operations happen in the Beehive, the Honeycomb, and the Helm.",
+              "text": "The Bridge has no goal UI; goal operations happen in the Beehive, the Pupa, and the Helm.",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -3147,7 +3147,7 @@
           "kind": "lead",
           "spans": [
             {
-              "text": "The Compatibility core lets the Honeycomb (desktop) and the Helm (cli) run in older operating-system environments, and states explicitly where that runtime environment is constrained.",
+              "text": "The Compatibility core lets the Pupa (desktop) and the Helm (cli) run in older operating-system environments, and states explicitly where that runtime environment is constrained.",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -3363,7 +3363,7 @@
           "kind": "paragraph",
           "spans": [
             {
-              "text": "Windows 7 32-bit and Ubuntu 18.04 (x64 / arm64) are not excluded runtime environments; the Honeycomb and the Helm can be installed on old machines and run there. The interface renders on machines without a GPU. Command sessions are carried and decoded in old Windows terminals.",
+              "text": "Windows 7 32-bit and Ubuntu 18.04 (x64 / arm64) are not excluded runtime environments; the Pupa and the Helm can be installed on old machines and run there. The interface renders on machines without a GPU. Command sessions are carried and decoded in old Windows terminals.",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -5266,7 +5266,7 @@
               "cells": [
                 [
                   {
-                    "text": "Honeycomb",
+                    "text": "Pupa",
                     "bold": false,
                     "code": false,
                     "kbd": false,
@@ -5343,7 +5343,7 @@
           "kind": "paragraph",
           "spans": [
             {
-              "text": "When you need something to run on a schedule, configure it on the Beehive, the Honeycomb, or the Hull side.",
+              "text": "When you need something to run on a schedule, configure it on the Beehive, the Pupa, or the Hull side.",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -5477,7 +5477,7 @@
           "kind": "paragraph",
           "spans": [
             {
-              "text": "So the same task thread can take a message from Beehive, continue it from Feishu, and finish it from Honeycomb; a channel never creates a second execution path.",
+              "text": "So the same task thread can take a message from Beehive, continue it from Feishu, and finish it from Pupa; a channel never creates a second execution path.",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -5489,7 +5489,7 @@
           "kind": "paragraph",
           "spans": [
             {
-              "text": "A form (Honeycomb / Beehive / Helm / Hull) is the shape of running and access; a channel (Feishu / QQ / WeChat …) is an off-site platform.",
+              "text": "A form (Pupa / Beehive / Helm / Hull) is the shape of running and access; a channel (Feishu / QQ / WeChat …) is an off-site platform.",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -6256,7 +6256,7 @@
           "marker": "•",
           "spans": [
             {
-              "text": "Honeycomb and Helm do not go through the channel layer: Honeycomb is a native in-process call, and Helm uses its own access path.",
+              "text": "Pupa and Helm do not go through the channel layer: Pupa is a native in-process call, and Helm uses its own access path.",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -7177,7 +7177,7 @@
           "kind": "lead",
           "spans": [
             {
-              "text": "Multi-user governance is a foundational capability of the Hull (server) form; the Honeycomb (desktop) and the Helm (cli) are local, single-machine forms with no account system. Concrete panel operations are covered in the reference section.",
+              "text": "Multi-user governance is a foundational capability of the Hull (server) form; the Pupa (desktop) and the Helm (cli) are local, single-machine forms with no account system. Concrete panel operations are covered in the reference section.",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -7529,7 +7529,7 @@
               "href": ""
             },
             {
-              "text": " header, and only local scopes such as the Honeycomb and the Helm get a refresh chain that can renew; browser sessions do not take this path.",
+              "text": " header, and only local scopes such as the Pupa and the Helm get a refresh chain that can renew; browser sessions do not take this path.",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -7586,7 +7586,7 @@
           "kind": "paragraph",
           "spans": [
             {
-              "text": "Presence is recorded separately by client type, with the Beehive (web), the Honeycomb (desktop), and the Helm (cli) as three independent lines; roughly 90 seconds without a touch counts as offline, with a sweep interval of 30 seconds (minimum 10 seconds). As a result, presence in the user list is split into web, desktop, and cli columns — \"online\" is no longer a yes-or-no value, and to see who is online on which form you look at the matching column. The management exit is at ",
+              "text": "Presence is recorded separately by client type, with the Beehive (web), the Pupa (desktop), and the Helm (cli) as three independent lines; roughly 90 seconds without a touch counts as offline, with a sweep interval of 30 seconds (minimum 10 seconds). As a result, presence in the user list is split into web, desktop, and cli columns — \"online\" is no longer a yes-or-no value, and to see who is online on which form you look at the matching column. The management exit is at ",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -10955,7 +10955,7 @@
     },
     {
       "id": "desktop-ui",
-      "title": "Honeycomb Interface",
+      "title": "Pupa Interface",
       "group": "Surfaces",
       "keywords": [
         "interface",
@@ -10968,7 +10968,7 @@
           "kind": "h1",
           "spans": [
             {
-              "text": "Honeycomb Interface",
+              "text": "Pupa Interface",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -10980,7 +10980,7 @@
           "kind": "lead",
           "spans": [
             {
-              "text": "The Honeycomb is wunder's ",
+              "text": "The Pupa is wunder's ",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -11699,7 +11699,7 @@
           "kind": "paragraph",
           "spans": [
             {
-              "text": "These are distinct areas inside the Honeycomb, not separate pages:",
+              "text": "These are distinct areas inside the Pupa, not separate pages:",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -11977,7 +11977,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "Capabilities unique to the Honeycomb",
+              "text": "Capabilities unique to the Pupa",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -12194,7 +12194,7 @@
               "href": ""
             },
             {
-              "text": " category in settings is not wired up: the entry exists in code but never renders, so it cannot be opened today. Interconnection in the Honeycomb lives in only two places — the cloud workspace under \"Working directory\" in the sidebar, and the remote-command approval pop-up.",
+              "text": " category in settings is not wired up: the entry exists in code but never renders, so it cannot be opened today. Interconnection in the Pupa lives in only two places — the cloud workspace under \"Working directory\" in the sidebar, and the remote-command approval pop-up.",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -12234,7 +12234,7 @@
               "href": ""
             },
             {
-              "text": ": the Electron / Tauri frontend shells receive no feature updates. This does not affect the Honeycomb's underlying engine.",
+              "text": ": the Electron / Tauri frontend shells receive no feature updates. This does not affect the Pupa's underlying engine.",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -12320,7 +12320,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "Honeycomb vs. Beehive",
+              "text": "Pupa vs. Beehive",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -12345,7 +12345,7 @@
                 ],
                 [
                   {
-                    "text": "Honeycomb",
+                    "text": "Pupa",
                     "bold": false,
                     "code": false,
                     "kbd": false,
@@ -12781,7 +12781,7 @@
           "marker": "•",
           "spans": [
             {
-              "text": "Honeycomb quick start",
+              "text": "Pupa quick start",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -12857,7 +12857,7 @@
           "kind": "lead",
           "spans": [
             {
-              "text": "Interlink connects the Beehive (web), the Honeycomb (desktop), and the Helm (cli) into one system: ",
+              "text": "Interlink connects the Beehive (web), the Pupa (desktop), and the Helm (cli) into one system: ",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -12963,7 +12963,7 @@
               "cells": [
                 [
                   {
-                    "text": "Honeycomb",
+                    "text": "Pupa",
                     "bold": false,
                     "code": false,
                     "kbd": false,
@@ -13409,7 +13409,7 @@
                 ],
                 [
                   {
-                    "text": "The Honeycomb and the Helm treat the cloud as a symmetric node — browse the cloud workspace, send messages to cloud threads, read thread event streams; the Helm provides a scriptable command group",
+                    "text": "The Pupa and the Helm treat the cloud as a symmetric node — browse the cloud workspace, send messages to cloud threads, read thread event streams; the Helm provides a scriptable command group",
                     "bold": false,
                     "code": false,
                     "kbd": false,
@@ -13591,7 +13591,7 @@
           "kind": "h2",
           "spans": [
             {
-              "text": "Honeycomb (desktop)",
+              "text": "Pupa (desktop)",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -14788,7 +14788,7 @@
           "marker": "•",
           "spans": [
             {
-              "text": "The Honeycomb and the Helm do not interlink directly; local-to-local access always goes through the Hull.",
+              "text": "The Pupa and the Helm do not interlink directly; local-to-local access always goes through the Hull.",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -15576,7 +15576,7 @@
           "kind": "paragraph",
           "spans": [
             {
-              "text": "Honeycomb stores file assets in a local workspace directory. The "
+              "text": "Pupa stores file assets in a local workspace directory. The "
             },
             {
               "text": "Workspace directory",
@@ -15760,7 +15760,7 @@
           "marker": "·",
           "spans": [
             {
-              "text": "Model requests go directly to the service address you configured; Honeycomb does not handle or store them through any third-party relay."
+              "text": "Model requests go directly to the service address you configured; Pupa does not handle or store them through any third-party relay."
             }
           ]
         },
@@ -16157,7 +16157,7 @@
               "cells": [
                 [
                   {
-                    "text": "Honeycomb"
+                    "text": "Pupa"
                   }
                 ],
                 [
@@ -16379,7 +16379,7 @@
       "topic": 2
     },
     {
-      "keyword": "Honeycomb",
+      "keyword": "Pupa",
       "topic": 2
     },
     {

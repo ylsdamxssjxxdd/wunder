@@ -1714,7 +1714,7 @@ fn now_ts() -> f64 {
 /// reports `queue_fail` - the family the realtime consumers treat as terminal -
 /// while the item itself has to read `cancelled`, not `failed`. Deriving the
 /// status purely from the event name used to overwrite the caller's own value,
-/// so every cancellation landed in the durable log, and in the 蜂巢/蜂窝/互通
+/// so every cancellation landed in the durable log, and in the 蜂巢/蛹/互通
 /// projections built from it, as a failure.
 fn durable_queue_status(event_type: &str, declared: Option<&str>) -> &'static str {
     // `cancelled` and `failed` are different outcomes and both must survive.

@@ -2,7 +2,7 @@
 
 wunder is an **agent orchestration platform**: hand a goal to an agent, and it decomposes the task, calls tools, and delivers results.
 
-The product ships in four forms, each with a fixed role: **Honeycomb** (desktop) is a local AI workbench — the default entry point for individual users and the flagship app; **Beehive** (web) is a cloud AI workbench provided alongside the **Hull** (server); **Helm** (cli) is the hands-on local entry point — terminal-driven, scriptable; the **Hull** is the user-and-agent management platform — multi-tenancy, users and org units, agent app building and publishing, unified gateway access and scheduling, with built-in tool chains, knowledge bases, and long-term memory. The **Bridge** (`web/`) is the governance console built into the Hull, for administrators.
+The product ships in four forms, each with a fixed role: **Pupa** (desktop) is a local AI workbench — the default entry point for individual users and the flagship app; **Beehive** (web) is a cloud AI workbench provided alongside the **Hull** (server); **Helm** (cli) is the hands-on local entry point — terminal-driven, scriptable; the **Hull** is the user-and-agent management platform — multi-tenancy, users and org units, agent app building and publishing, unified gateway access and scheduling, with built-in tool chains, knowledge bases, and long-term memory. The **Bridge** (`web/`) is the governance console built into the Hull, for administrators.
 
 ## Form Matrix
 
@@ -11,10 +11,10 @@ The product ships in four forms, each with a fixed role: **Honeycomb** (desktop)
 | 🚀 | Hull (server) | Rust + axum 0.8; PostgreSQL | User-and-agent management platform (multi-tenancy, org units, agent app build & publish, gateway access & scheduling) | Server daemon, Docker deployment, HTTP / WebSocket access | Linux / Docker |
 | 🐉 | Bridge (web) | Plain HTML + CSS + JavaScript (`web/`, no build) | Hull's governance console (four nav groups: system, agents, debugging, docs) | Browser access, statically mounted by the Hull at `/` | Cross-platform browsers |
 | 🐝 | Beehive (web) | Vue 3 + TypeScript (Vite build, `frontend/`) | Cloud AI workbench (the Hull's user frontend) | Browser access; the built `frontend/dist` is mounted read-only into an nginx container and served externally (default port 18001) — **not hosted by the Hull** | Cross-platform browsers |
-| 🍯 | Honeycomb (desktop) | Rust + Slint 1.18 (default frontend `frontend-slint/`, native UI, software rendering); SQLite | Local AI workbench (flagship form, install and go) | Local desktop process calling the engine in-process (no local HTTP); Electron / Tauri shells are no longer maintained | Windows 7 x86 and up; Linux (ubuntu18.04 baseline) x64 / arm64 AppImage |
+| 🍯 | Pupa (desktop) | Rust + Slint 1.18 (default frontend `frontend-slint/`, native UI, software rendering); SQLite | Local AI workbench (flagship form, install and go) | Local desktop process calling the engine in-process (no local HTTP); Electron / Tauri shells are no longer maintained | Windows 7 x86 and up; Linux (ubuntu18.04 baseline) x64 / arm64 AppImage |
 | ⚙️ | Helm (cli) | Rust terminal TUI (ratatui + crossterm); SQLite | Hands-on local entry point (terminal work, scripting, automation) | Local terminal process calling the engine in-process; JSONL output supported | Windows 7 and up (GNU toolchain); Linux amd64 / arm64 (ubuntu18.04 sysroot) |
 
-All forms share one engine (wunder-runtime) and one core (wunder-core): threads, tools, storage abstractions, realtime events, and permission semantics are a single codebase — only the access layer differs. Honeycomb and Helm run standalone without the Hull.
+All forms share one engine (wunder-runtime) and one core (wunder-core): threads, tools, storage abstractions, realtime events, and permission semantics are a single codebase — only the access layer differs. Pupa and Helm run standalone without the Hull.
 
 One agent can own multiple independent task threads at the same time; scheduling, locks, and live status are isolated per thread. Workspaces can coexist as a local directory, the cloud directory `/workspaces/<user>/workspace`, and remote-device workspaces.
 
@@ -27,7 +27,7 @@ Performance characteristics of the same engine across forms. Values are to be fi
 | 🚀 | Hull (server) | — | — | — | — | — | — |
 | 🐉 | Bridge (web) | — | — | — | — | — | — |
 | 🐝 | Beehive (web) | — | — | — | — | — | — |
-| 🍯 | Honeycomb (desktop) | — | — | — | — | — | — |
+| 🍯 | Pupa (desktop) | — | — | — | — | — | — |
 | ⚙️ | Helm (cli) | — | — | — | — | — | — |
 
 > Collection harness: [scripts/form-bench](scripts/form-bench/README.md) — one run produces every metric above.

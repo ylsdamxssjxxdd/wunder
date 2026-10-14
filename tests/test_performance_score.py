@@ -15,7 +15,7 @@ from scripts.performance_score import (
 
 class PerformanceScoreTests(unittest.TestCase):
     def test_each_scorecard_weights_sum_to_100(self) -> None:
-        self.assertEqual({key: sum(item.weight for item in specs) for key, specs in SCORECARDS.items()}, {"honeycomb": 100, "desktop": 100, "cli": 100, "server": 100})
+        self.assertEqual({key: sum(item.weight for item in specs) for key, specs in SCORECARDS.items()}, {"beehive": 100, "desktop": 100, "cli": 100, "server": 100})
 
     def test_capacity_report_cannot_hide_missing_idle_measurement(self) -> None:
         data = template("server")
@@ -36,11 +36,11 @@ class PerformanceScoreTests(unittest.TestCase):
     def test_template_has_all_scenarios_and_empty_values(self) -> None:
         data = template("蜂巢")
         self.assertEqual(data["shape"], "蜂巢")
-        self.assertEqual(set(data["scenarios"]), {item.key for item in SCORECARDS["honeycomb"]})
+        self.assertEqual(set(data["scenarios"]), {item.key for item in SCORECARDS["beehive"]})
         self.assertIsNone(data["scenarios"]["H1"]["metrics"]["tti_p95_ms"])
 
     def test_partial_report_has_coverage_and_no_fake_total(self) -> None:
-        report = evaluate({"shape": "蜂窝", "scenarios": {"C1": {"metrics": {"first_frame_p95_ms": 350}, "gates": {"no_heavy_work_before_frame": True}}}})
+        report = evaluate({"shape": "蛹", "scenarios": {"C1": {"metrics": {"first_frame_p95_ms": 350}, "gates": {"no_heavy_work_before_frame": True}}}})
         self.assertIsNone(report["score"])
         self.assertEqual(report["coverage_percent"], 8.0)
         self.assertIn("C2", report["missing_scenarios"])
@@ -52,14 +52,14 @@ class PerformanceScoreTests(unittest.TestCase):
     def test_baseline_detects_total_and_scenario_regression(self) -> None:
         current = evaluate({"shape": "蜂巢", "scenarios": {"H1": {"metrics": {"tti_p95_ms": 2000}, "gates": {"no_uncaught_errors": True}}}})
         baseline = evaluate({"shape": "蜂巢", "scenarios": {"H1": {"metrics": {"tti_p95_ms": 1200}, "gates": {"no_uncaught_errors": True}}}})
-        apply_baseline(current, baseline, "honeycomb")
+        apply_baseline(current, baseline, "beehive")
         self.assertTrue(any(item["key"] == "H1" for item in current["regressions"]))
 
     def test_csv_row_contract(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "sample.csv"
             path.write_text("scenario,metric,value,gate,passed\nC1,first_frame_p95_ms,350,,\nC1,,,no_heavy_work_before_frame,true\n", encoding="utf-8")
-            data = read_csv(path, "蜂窝")
+            data = read_csv(path, "蛹")
         self.assertEqual(data["scenarios"]["C1"]["metrics"]["first_frame_p95_ms"], 350.0)
         self.assertTrue(data["scenarios"]["C1"]["gates"]["no_heavy_work_before_frame"])
 

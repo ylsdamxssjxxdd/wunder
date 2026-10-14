@@ -130,7 +130,7 @@ flowchart LR
 
 ### 4.1 运行时统一线程目录
 
-在 `crates/wunder-runtime/` 增加可被本地舵机、蜂窝 façade 和舰体入口复用的线程目录服务。舵机不应自行拼接存储、监控器与运行队列的零散读取逻辑。
+在 `crates/wunder-runtime/` 增加可被本地舵机、蛹 façade 和舰体入口复用的线程目录服务。舵机不应自行拼接存储、监控器与运行队列的零散读取逻辑。
 
 建议接口：
 
@@ -152,7 +152,7 @@ ThreadCatalogService::changes(session_id, after_seq, limit) -> Vec<Value>
 
 > 落地状态（2026-10-07）：已具备 `session_id`、标题、智能体 ID、创建/最近活动时间、`parent_session_id`、派生标签与派生者、归一化 `ThreadStatus`、durable 轮次状态与运行轮次 `user_round`、`turn_status`、工具数、上下文用量与消耗 token、模型轮次、最后活动摘要（运行期取监控阶段行，落定后取该轮持久摘要）、`change_seq` 行级水位与页级 `watermark`，以及类型化 `pending_reason`（approval / user_input）。未具备的两项是**模型名**与**工作目录**：它们不在 durable 会话记录里，属于客户端进程自身的配置，目录服务不伪造来源；蜂巢侧的会话模型解析走智能体配置路径，舵机在 footer 显示自身模型与目录。未读事件计数由客户端用 `change_seq` 与本地 durable 游标相减得出，服务端不猜测客户端读取位置。
 
-状态推导顺序固定为：显式待确认/待回答 > 线程运行时活跃或排队 > 终态错误/取消 > 有可继续上下文的就绪 > 已结束。目录服务读取现有会话元数据、线程运行时、监控投影与持久化尾事件；它是唯一的状态归一化位置。蜂巢、蜂窝和舵机以后可共享相同定义。
+状态推导顺序固定为：显式待确认/待回答 > 线程运行时活跃或排队 > 终态错误/取消 > 有可继续上下文的就绪 > 已结束。目录服务读取现有会话元数据、线程运行时、监控投影与持久化尾事件；它是唯一的状态归一化位置。蜂巢、蛹和舵机以后可共享相同定义。
 
 ### 4.2 舵机 ThreadRegistry
 
@@ -268,7 +268,7 @@ struct ToolCallKey {
 - 根线程、子智能体线程和蜂群工作线程均能作为独立条目分页返回，并保留父线程关系。
 - `running`、`queued`、待确认、失败、取消、就绪和结束态不会因重启或目录刷新闪回错误状态。
 - 单页上限不超过 100，关键词和父线程筛选有明确游标语义。
-- 舵机、蜂窝/舰体使用同一状态映射测试集。
+- 舵机、蛹/舰体使用同一状态映射测试集。
 
 ### N2：线程注册表和有界实时链路
 
@@ -607,7 +607,7 @@ N7 呈现对齐（第 11 节）另需精读的参考文件（2026-10-02 盘点�
 - **单页读取从 4N 次查询降到 2 次批量**：存储层新增 `thread_turn_tails(user_id, session_ids)`（SQLite/PostgreSQL 双实现），一次取回整页的轮次、轮次状态、该轮持久摘要与 `latest_change_seq`；监控层 `session_usage_summaries` 从裸元组改为类型化 `SessionUsageSummary`，目录页不再克隆任何事件尾。蜂巢会话列表改用同一份批量尾部读取，替代逐行猜测。
 - **§10 目录分页游标迁移完成**：`ThreadCatalogService::changes(session_id, after_seq, limit)` 成为舵机回放的唯一入口（内部复用 runtime `try_load_thread_changes` 的 change_seq 分页与 snapshot 守卫），`tui/app.rs` 不再直接调 workspace 读取；`events(after_event_id)` 这一 v1 接口从未实现、已从契约中删除。新增 `ThreadRegistry::flag_durable_lag`：目录水位超过本地投影游标且该线程无活流时标记一次回放请求，切进后台线程即可立刻补齐，游标本身不在这里推进。
 - **批量读取的归属复核（缺陷由新用例抓到）**：水位那条 `thread_logs` 批量查询最初只按 `session_id IN (...)` 过滤，等于让一个归属者凭已知会话 ID 探到他人的 `change_seq`；两侧都补回 `user_id` 条件，用例断言跨归属批量读取返回空集。
-- **同一状态映射收成一张表（2026-10-07 收口）**：`StatusSignals` 改为公开契约（`record`/`monitor`/`turn`/`runtime`/`running` 五路信号，各有唯一来源），同时导出两种视图——`resolve()` 给目录 5 态，`runtime_status()` 给远端 wire 词汇（`queued`/`running`/`waiting_user_input`/`completed`/`cancelled`/`failed`/`idle`，比 5 态更细但仍按同一优先级推导）。蜂巢会话列表的旧 `resolve_catalog_runtime_status` 已删除并改为共用该表，两份状态机不再并存。表驱动用例 `one_mapping_table_answers_both_clients` 用 19 组信号同时断言两种视图，就是 N1 验收项要的“同一状态映射测试集”。蜂窝目前没有线程目录视图，不参与该映射；列表路径的 `runtime` 信号留空（沿用旧行为：该行只读监控投影，避免为整页做在线运行时探测），活跃单体线程仍由 `load_chat_session_activity` 给出。两处刻意的语义收紧：取消/中断不再算“就绪”而算“已结束”（wire 仍返回 `cancelled`），审批被拒的轮次算失败（旧 wire 落为 `idle`）。
+- **同一状态映射收成一张表（2026-10-07 收口）**：`StatusSignals` 改为公开契约（`record`/`monitor`/`turn`/`runtime`/`running` 五路信号，各有唯一来源），同时导出两种视图——`resolve()` 给目录 5 态，`runtime_status()` 给远端 wire 词汇（`queued`/`running`/`waiting_user_input`/`completed`/`cancelled`/`failed`/`idle`，比 5 态更细但仍按同一优先级推导）。蜂巢会话列表的旧 `resolve_catalog_runtime_status` 已删除并改为共用该表，两份状态机不再并存。表驱动用例 `one_mapping_table_answers_both_clients` 用 19 组信号同时断言两种视图，就是 N1 验收项要的“同一状态映射测试集”。蛹目前没有线程目录视图，不参与该映射；列表路径的 `runtime` 信号留空（沿用旧行为：该行只读监控投影，避免为整页做在线运行时探测），活跃单体线程仍由 `load_chat_session_activity` 给出。两处刻意的语义收紧：取消/中断不再算“就绪”而算“已结束”（wire 仍返回 `cancelled`），审批被拒的轮次算失败（旧 wire 落为 `idle`）。
 - **验证状态**：`cargo check --workspace --all-targets` 无新增错误；`cargo test -p wunder-cli` → **252 通过 0 失败** + 1 项集成用例通过；`cargo test -p wunder-runtime --lib` 中 thread_catalog（8）、sqlite thread_log_store（24）、chat_runtime_projection（6）、usage_accounting（4）全绿。整套仍有 17 项与本方案无关的既有失败（tools/prompting/worker_card 文案与路径、v1 队列恢复、monitor round floor、log stats），属并行开发区域。
 - **不属于本轮仍未完成**：模型名与工作目录这类客户端配置项不进目录契约（已在 §4.1 标注）；§10 剩余节点（feeder 直连与 start 基线 3.2、慢客户端 `stream_overflow` 3.4、子智能体同 commit API M4）——已于同日「§10 收口」完成；经 CI 的 Windows 7 x86 与 Ubuntu 18.04 目标构建；真实终端下的人工多线程验收。本记录不宣布 N1 或方案整体完成。
 
@@ -617,7 +617,7 @@ N7 呈现对齐（第 11 节）另需精读的参考文件（2026-10-02 盘点�
 
 - **占用判定只有一处**：`ThreadCatalogService::write_access(user_id, session_id) -> ThreadWriteAccess { writable, reason }` 复用舰体 HTTP 层已有的判定（会话编排上下文 → 蜂巢状态 → 成员绑定，命中即 `build_locked_thread_message` 给出说明），因此蜂巢拒绝与舵机只读看到的是同一个事实。判定刻意按线程读取而不是随目录页读取：它需要三次存储读，摊到每行等于给 100 行的目录页加 300 次查询。
 - **舵机行为**：`←`/`Enter` 切到被占线程时照常渲染完整转录与实时状态，composer 占位改为「⊘ 只读监视：该线程的写入权由蜂群运行持有」，`start_stream_request` 在校验链最前端拒收并把引擎给出的原因写成一条 Error 行（不产生用户回显、不置 busy、不启动流）；新建线程与读到可写时自动清除该状态。占用判定在每次发送前重新读取，因为线程可能在切换之后才被蜂群接管；读取失败按可写放行，避免本机一次 IO 故障把用户锁在自己的机器外。
-- **顺带关闭的真实缺口**：舵机与蜂窝直接走引擎提交路径，而 `reject_locked_orchestration_session` 只在 HTTP 层生效，此前本地壳可以向蜂群持有的线程写入。本地侧的尊重规则现在落在 `write_access` 上，HTTP 与本地共用判定。
+- **顺带关闭的真实缺口**：舵机与蛹直接走引擎提交路径，而 `reject_locked_orchestration_session` 只在 HTTP 层生效，此前本地壳可以向蜂群持有的线程写入。本地侧的尊重规则现在落在 `write_access` 上，HTTP 与本地共用判定。
 - **契约补充**：为让本地壳与夹具能读取/构造同一占用记录，`lib.rs` 导出 `orchestration_session_meta_key`、`orchestration_hive_state_meta_key`、`orchestration_member_binding_meta_key` 与 `ORCHESTRATION_MODE`（连同只读判定的读侧 `write_access`，不再需要任何客户端自行拼 key）。
 - **验证状态**：runtime `services::thread_catalog` 10 项通过，其中 `write_access_reports_the_orchestration_owner_and_allows_plain_threads` 用真实 meta 种子断言可写线程放行、被占线程给出非空原因、他人归属读不到该结论；舵机整屏快照 `a_thread_owned_by_a_run_opens_read_only_and_refuses_input` 走真实提交入口断言拒收、无用户回显、composer 出现 ⊘。`cargo test -p wunder-cli` → 253 通过 0 失败；`cargo check --workspace --all-targets` 无新增错误。
 - **仍未完成**：§10 剩余节点（feeder 直连、start 基线 3.2、慢客户端 `stream_overflow` 3.4、子智能体同 commit API M4）——已于同日「§10 收口」完成，见下一节；经 CI 的 Windows 7 x86 与 Ubuntu 18.04 目标构建；真实终端下的人工多线程验收。本记录不宣布方案整体完成。

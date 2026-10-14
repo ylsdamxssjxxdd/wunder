@@ -1,6 +1,6 @@
 ---
 title: wunder
-summary: wunder is an agent orchestration platform. The Honeycomb is the local AI workbench on your computer, the Beehive is the cloud workbench in a browser, the Helm is the terminal entry point, and the Hull is the shared management platform for teams.
+summary: wunder is an agent orchestration platform. The Pupa is the local AI workbench on your computer, the Beehive is the cloud workbench in a browser, the Helm is the terminal entry point, and the Hull is the shared management platform for teams.
 read_when:
   - You are new to wunder and choosing which form to use
   - You want the entry point to the whole manual
@@ -24,24 +24,24 @@ One engine, four shells:
 
 | Form | In one line | Who it's for |
 | --- | --- | --- |
-| **Honeycomb** | An AI workbench installed on your own computer | Individual users (the default entry point) |
+| **Pupa** | An AI workbench installed on your own computer | Individual users (the default entry point) |
 | **Beehive** | A cloud workbench you open in a browser | Team members after the Hull is deployed |
 | **Helm** | Command the agent from the terminal | Command-line users / automation scripts |
 | **Hull** | A shared management and governance platform | Administrators |
 
-The Honeycomb and the Helm don't depend on the Hull and can be installed and run on their own. The **Bridge** is the management interface that ships with the Hull, starts alongside it, and is aimed at administrators.
+The Pupa and the Helm don't depend on the Hull and can be installed and run on their own. The **Bridge** is the management interface that ships with the Hull, starts alongside it, and is aimed at administrators.
 
 See the [form matrix](/docs/en/start/forms/) for the full comparison of tech stack, run model and OS support.
 
-## Start with the Honeycomb
+## Start with the Pupa
 
-Individual users go with the Honeycomb by default: download and install, and it opens as a local AI workbench.
+Individual users go with the Pupa by default: download and install, and it opens as a local AI workbench.
 
 ```text
-Download the Honeycomb → Configure a model → Describe your goal → Get results
+Download the Pupa → Configure a model → Describe your goal → Get results
 ```
 
-See [Quick Start](/docs/en/start/quickstart/) and [Honeycomb quick start](/docs/en/start/desktop/) for the details.
+See [Quick Start](/docs/en/start/quickstart/) and [Pupa quick start](/docs/en/start/desktop/) for the details.
 
 ## What It Can Do
 
@@ -60,14 +60,14 @@ See [Quick Start](/docs/en/start/quickstart/) and [Honeycomb quick start](/docs/
 
 ## Interface at a Glance
 
-- [Honeycomb interface](/docs/en/surfaces/desktop-ui/): the main window has two pages, "Chat" and "Settings"; everything else appears as panels and dialogs
+- [Pupa interface](/docs/en/surfaces/desktop-ui/): the main window has two pages, "Chat" and "Settings"; everything else appears as panels and dialogs
 - [Beehive interface](/docs/en/surfaces/frontend/): a single-page app in the browser
 - [Bridge interface](/docs/en/surfaces/web-admin/): the administrator's governance and debugging backend
 - [Interface Overview](/docs/en/surfaces/index/): how the four forms compare
 
 ## Further Reading
 
-The Honeycomb covers most scenarios; add more as needed:
+The Pupa covers most scenarios; add more as needed:
 
 - **Hull (server)**: shared use, permission management, channel access, unified publishing. See [Hull deployment](/docs/en/start/server/).
 - **Beehive (web)**: after the Hull is deployed, members open the cloud workbench in a browser.
@@ -76,7 +76,7 @@ The Honeycomb covers most scenarios; add more as needed:
 ## Quick Navigation
 
 - **First time** → [Quick Start](/docs/en/start/quickstart/)
-- **Download and install** → [Honeycomb quick start](/docs/en/start/desktop/)
+- **Download and install** → [Pupa quick start](/docs/en/start/desktop/)
 - **Interface map** → [Interface Overview](/docs/en/surfaces/index/)
 - **Understand the system in depth** → [Core Concepts](/docs/en/concepts/)
 - **Documentation hub** → [Documentation Hub](/docs/en/start/hubs/)

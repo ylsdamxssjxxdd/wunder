@@ -10,7 +10,7 @@
 | `hull` | 舰体 Hull | 服务端进程 `wunder-server`（默认 member，共享引擎 `wunder-runtime`） | `crates/wunder-server` |
 | `bridge` | 舰桥 Bridge | Web 管理端，由服务端静态托管于 `/` | `web/` |
 | `beehive` | 蜂巢 Beehive | Web 用户端（Vue + Vite） | `frontend/` |
-| `honeycomb` | 蜂窝 Honeycomb | 原生桌面端（Rust + Slint，单进程内嵌后端） | `frontend-slint/` |
+| `pupa` | 蛹 Pupa | 原生桌面端（Rust + Slint，单进程内嵌后端） | `frontend-slint/` |
 | `helm` | 舵机 Helm | 命令行 TUI | `crates/wunder-cli` |
 
 矩阵的 6 个指标与本框架的 metric key 对应关系：
@@ -60,7 +60,7 @@ powershell -ExecutionPolicy Bypass -File scripts\form-bench\form-bench.ps1 -DryR
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\form-bench\form-bench.ps1 `
-  -Forms hull,honeycomb -Metrics package,startup,memory,cpu
+  -Forms hull,pupa -Metrics package,startup,memory,cpu
 ```
 
 完整跑（自动拉起 server / 蜂巢 dev server，结束后停止）：
@@ -79,14 +79,14 @@ powershell -ExecutionPolicy Bypass -File scripts\form-bench\form-bench.ps1 -Auto
 
 ### 启动速度 `startup`
 - `tcp`（舰体）：每次冷启动进程，轮询 TCP 端口可连接所需毫秒数；逐次重启，取中位数。
-- `window`（蜂窝）：委托 `scripts/desktop-bench/measure-startup.ps1` 测「进程启动 → 主窗口句柄就绪」。
+- `window`（蛹）：委托 `scripts/desktop-bench/measure-startup.ps1` 测「进程启动 → 主窗口句柄就绪」。
 - `cli`（舵机）：启动进程后，轮询 stdout 出现哨兵字符串（默认 `WUNDER_READY`）所需毫秒数。
   ⚠️ 需 `wunder-cli` 支持 `--bench-echo`：打印哨兵后立即退出（见「待办」）。
 - `web`（舰桥 / 蜂巢）：委托 `collect-web-metrics.mjs --mode startup`，取导航到
   `DOMContentLoaded` 的中位毫秒数。
 
 ### 内存 / CPU
-- 本机形态（舰体 / 蜂窝 / 舵机）：`collect-process.ps1` 在采样窗口内对同名进程求和工作集，
+- 本机形态（舰体 / 蛹 / 舵机）：`collect-process.ps1` 在采样窗口内对同名进程求和工作集，
   取平均值为内存（MB）；CPU = `cpu_time_ms / (wall_ms × 逻辑核心数) × 100`，即**占整机百分比**。
 - 网页形态（舰桥 / 蜂巢）：`collect-web-metrics.mjs`。内存取页面渲染进程 JS 堆
   （`JSHeapUsedSize`，不含浏览器进程本身）；CPU 取渲染主线程 `TaskDuration` 速率
@@ -110,7 +110,7 @@ powershell -ExecutionPolicy Bypass -File scripts\form-bench\form-bench.ps1 -Auto
 
 ### 聊天页面性能 `chat_page_perf`
 - 舰桥 / 蜂巢：跑对应 Playwright 性能用例（`frontend/tests/e2e/*.spec.ts`），取用例耗时（ms）。
-- 蜂窝：Slint 原生帧率需在 `frontend-slint` 内加埋点（见「待办」），当前记为 N/A + note。
+- 蛹：Slint 原生帧率需在 `frontend-slint` 内加埋点（见「待办」），当前记为 N/A + note。
 - 舰体 / 舵机：不适用，记为 N/A。
 
 ## 配置（config/forms.json）
@@ -144,7 +144,7 @@ chat       { supported, mode: playwright|slint|none, spec }
 
 - **T-cli-sentinel**：`wunder-cli` 需支持 `--bench-echo`（打印 `WUNDER_READY` 后退出），
   舵机启动速度才能取到有效值；否则记录 `details.error`。
-- **T-chat-native**：蜂窝聊天页面性能需在 `frontend-slint` 增加帧耗时埋点，
+- **T-chat-native**：蛹聊天页面性能需在 `frontend-slint` 增加帧耗时埋点，
   否则该格恒为 N/A。
 - **T-server-health**：舰体启动当前用 TCP 探活（未依赖 `/health` 路由，项目未见通用 health 路由）；
   若后续新增 `GET /health`，可在 `collect-startup.ps1` 的 tcp 模式加 HTTP 就绪校验。

@@ -140,8 +140,8 @@ ENTRIES = [
     ("so_fullscreen", "全屏", "Fullscreen"),
 
     # ---- tray ----
-    ("tr_title", "蜂窝", "Hive"),
-    ("tr_name", "蜂窝", "Hive"),
+    ("tr_title", "蛹", "Pupa"),
+    ("tr_name", "蛹", "Pupa"),
     ("tr_show_window", "显示主窗口", "Show main window"),
     ("tr_screenshot", "截图 (Ctrl+F1)", "Screenshot (Ctrl+F1)"),
     ("tr_fullscreen_shot", "全屏截图", "Fullscreen screenshot"),
@@ -152,5 +152,5 @@ ENTRIES = [
     ("tn_notice_quit", "退出程序", "Quit"),
 
     # ---- window ----
-    ("app_window_title", "蜂窝", "Hive"),
+    ("app_window_title", "蛹", "Pupa"),
 ]

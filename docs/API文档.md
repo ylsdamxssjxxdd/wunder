@@ -1,14 +1,14 @@
 # wunder API 文档
 
-wunder 是一个**智能体调度平台**：蜂窝（desktop）是本地 AI 工作台，蜂巢（web）是云端 AI 工作台，舵机（cli）是手工本地操作入口，舰体（server）是用户与智能体管理平台。本文档描述舰体（server）对外提供的 HTTP / WebSocket 接口，蜂窝与舵机在本地复用同一套引擎语义。
+wunder 是一个**智能体调度平台**：蛹（desktop）是本地 AI 工作台，蜂巢（web）是云端 AI 工作台，舵机（cli）是手工本地操作入口，舰体（server）是用户与智能体管理平台。本文档描述舰体（server）对外提供的 HTTP / WebSocket 接口，蛹与舵机在本地复用同一套引擎语义。
 
 ## 4. API 设计
 
 ### 4.0 实现说明
 
-- Slint 蜂窝复用本地 bridge 既有接口：`/wunder/chat/ws` 用于 start/watch 与事件恢复，HTTP 用于会话、专家、工具目录和蜂窝设置；目录浏览使用 `/wunder/workspace` 的 path/offset/limit/agent_id，文本预览使用 `/wunder/workspace/content` 的 max_bytes。专家更新提交配置键空字符串表示继承默认模型，不以有效模型名称覆盖继承关系。未增加蜂窝专属业务协议或存储。
+- Slint 蛹复用本地 bridge 既有接口：`/wunder/chat/ws` 用于 start/watch 与事件恢复，HTTP 用于会话、专家、工具目录和蛹设置；目录浏览使用 `/wunder/workspace` 的 path/offset/limit/agent_id，文本预览使用 `/wunder/workspace/content` 的 max_bytes。专家更新提交配置键空字符串表示继承默认模型，不以有效模型名称覆盖继承关系。未增加蛹专属业务协议或存储。
 
-- Slint 原生化迁移新增 `wunder-desktop` 库 façade：蜂窝进程可直接复用 `AppState`、`ThreadRuntime` 和 `Orchestrator`，通过有界内存通道接收聊天 `StreamEvent`，绕过本机 HTTP/WebSocket；Slint 默认启动覆盖聊天、子线程目录、智能体、工具、文件及系统/模型设置；已移除 Slint bridge 适配和启动路径。`NativeStream::try_recv` 区分暂时为空和订阅关闭，通道容量 128；生产端异步等待容量，消费者 33 ms 合并增量。显式 `cancel` 清理目标/线程活动并持久化停止标记；正常完成或丢弃订阅不会隐式取消会话。排队路径按任务 ID 回读有界持久化事件；即时执行持有线程 lease 直到流结束，原生窗口不开放本机监听端口。
+- Slint 原生化迁移新增 `wunder-desktop` 库 façade：蛹进程可直接复用 `AppState`、`ThreadRuntime` 和 `Orchestrator`，通过有界内存通道接收聊天 `StreamEvent`，绕过本机 HTTP/WebSocket；Slint 默认启动覆盖聊天、子线程目录、智能体、工具、文件及系统/模型设置；已移除 Slint bridge 适配和启动路径。`NativeStream::try_recv` 区分暂时为空和订阅关闭，通道容量 128；生产端异步等待容量，消费者 33 ms 合并增量。显式 `cancel` 清理目标/线程活动并持久化停止标记；正常完成或丢弃订阅不会隐式取消会话。排队路径按任务 ID 回读有界持久化事件；即时执行持有线程 lease 直到流结束，原生窗口不开放本机监听端口。
 
 - 接口实现基于 Rust Axum，路由拆分在 `src/api`（core/chat/user_world/user_tools/user_agents/user_channels/admin/a2a/desktop 等模块）。
 - 当前产品核心能力采用“五维能力框架”：**形态协同 / 租户治理 / 智能体协作 / 工具生态 / 接口开放**；用户体系聊天（用户↔智能体 + 用户↔用户）是默认主线。
@@ -61,14 +61,14 @@ wunder 是一个**智能体调度平台**：蜂窝（desktop）是本地 AI 工�
 - 工作区容器约定：用户私有容器固定为 `container_id=0`，智能体容器范围为 `1~10`；`/wunder/workspace*` 全部接口（含 upload）支持显式 `container_id`，且优先级高于 `agent_id` 推导。
 - OnlyOffice 在线编辑/查看：配置 `onlyoffice.enabled/document_server_url/public_base_url/jwt_secret` 后，用户侧工作区中的 Office、WPS 系列、PDF、纯文本/代码、XPS、DjVu、Visio 图等 OnlyOffice 支持格式可通过 `/wunder/workspace/onlyoffice/*` 生成编辑器配置；可编辑格式保存后回写，查看类格式只读打开。`public_base_url` 必须是 OnlyOffice Document Server 可访问的 Wunder 外部地址；容器部署中 Wunder 后端访问 Document Server 的地址不同于浏览器地址时，可配置 `onlyoffice.internal_document_server_url`。仓库 compose 默认提供 `wunder-onlyoffice` 服务，挂载 `config/fonts` 到 OnlyOffice custom-fonts 并在启动时刷新字体索引。
 - draw.io 在线图表编辑：配置 `drawio.enabled/editor_url` 后，用户侧工作区中的 `.drawio`、`.dio`、`.drawio.xml` 文件可通过 `/wunder/workspace/drawio/config` 获取 diagrams.net/draw.io 嵌入编辑器地址；前端通过现有 `/wunder/workspace/content` 读取 XML，并通过 `/wunder/workspace/file` 保存回写。仓库 compose 默认提供 `wunder-drawio` 服务，宿主机默认端口为 `18081`。
-- 蜂窝本地模式下，这些容器默认映射到本地持久目录，不执行“24 小时自动清理”策略；用户文件需显式删除。内置文件工具在本地模式下还支持直接访问本机绝对路径，不再强制限制在工作区内。
-- 蜂窝现仅保留本地模式，不再提供 desktop 内部的服务端连接切换与端云协同入口；需要服务端能力时请直接使用浏览器访问 server 形态。Desktop 本地模式固定优先使用安装包附带的 Python 运行时，不再通过 `/wunder/desktop/settings` 配置自定义解释器，也不再提供 `/wunder/desktop/python/interpreters` 本机探测接口；`GET /wunder/desktop/fs/list` 仍保留用于本地目录浏览等通用场景。
-- 蜂窝本地模式新增 `POST /wunder/desktop/reset_work_state`：统一中止当前 desktop 用户的运行中会话、队列任务与蜂群任务，为默认智能体和全部用户智能体切换到新的任务线程，并清空各自工作目录内容，供系统设置页执行“一键重置工作状态”。
-  - 智能体形象能力统一复用智能体 icon 字段；用户私有形象保存在浏览器 IndexedDB，管理员全局形象由 /wunder/admin/companions* 管理并通过 /wunder/companions/global* 供用户侧读取；当前蜂窝回退为界面内形象展示。
-- 蜂窝 GUI 使用 frontend-slint 与 NativeDesktop 同进程运行，不新增远程 API。
-- 蜂窝引导接口 `GET /config.json` 与 `GET /wunder/desktop/bootstrap` 现补充 `runtime_profile` 与 `runtime_capabilities`：前者用于标识 `desktop_embedded` / 其他运行形态，后者用于下发 `embedded_mode/thread_runtime_active/gateway_maintenance_active/cron_active/channels_enabled/channel_outbox_worker_enabled/lan_overlay_supported` 等能力位，供前端按实际运行能力启用订阅、恢复与降级策略。
+- 蛹本地模式下，这些容器默认映射到本地持久目录，不执行“24 小时自动清理”策略；用户文件需显式删除。内置文件工具在本地模式下还支持直接访问本机绝对路径，不再强制限制在工作区内。
+- 蛹现仅保留本地模式，不再提供 desktop 内部的服务端连接切换与端云协同入口；需要服务端能力时请直接使用浏览器访问 server 形态。Desktop 本地模式固定优先使用安装包附带的 Python 运行时，不再通过 `/wunder/desktop/settings` 配置自定义解释器，也不再提供 `/wunder/desktop/python/interpreters` 本机探测接口；`GET /wunder/desktop/fs/list` 仍保留用于本地目录浏览等通用场景。
+- 蛹本地模式新增 `POST /wunder/desktop/reset_work_state`：统一中止当前 desktop 用户的运行中会话、队列任务与蜂群任务，为默认智能体和全部用户智能体切换到新的任务线程，并清空各自工作目录内容，供系统设置页执行“一键重置工作状态”。
+  - 智能体形象能力统一复用智能体 icon 字段；用户私有形象保存在浏览器 IndexedDB，管理员全局形象由 /wunder/admin/companions* 管理并通过 /wunder/companions/global* 供用户侧读取；当前蛹回退为界面内形象展示。
+- 蛹 GUI 使用 frontend-slint 与 NativeDesktop 同进程运行，不新增远程 API。
+- 蛹引导接口 `GET /config.json` 与 `GET /wunder/desktop/bootstrap` 现补充 `runtime_profile` 与 `runtime_capabilities`：前者用于标识 `desktop_embedded` / 其他运行形态，后者用于下发 `embedded_mode/thread_runtime_active/gateway_maintenance_active/cron_active/channels_enabled/channel_outbox_worker_enabled/lan_overlay_supported` 等能力位，供前端按实际运行能力启用订阅、恢复与降级策略。
 - 控制平面实时状态已收敛到 `state.control.presence`：当前主要负责连接在线态与最近活跃时间，为在线列表与连接恢复提供基础数据。
-- 蜂窝本地模式默认开启 `channels.outbox.worker_enabled=true`，保障 `channel_tool.send_message` 入队后自动投递，无需管理员侧手工启用出站 worker。
+- 蛹本地模式默认开启 `channels.outbox.worker_enabled=true`，保障 `channel_tool.send_message` 入队后自动投递，无需管理员侧手工启用出站 worker。
 - 普通注册用户每天统一发放 1000 额度，与单位和用户等级无关；每天首次使用或调整账户时入账一次，可累计，不补发未使用日期。每次实际模型请求（含工具循环、压缩摘要和失败重试）开始前原子扣 1；流式分片、工具执行、回放和用量统计不重复扣。已发出的失败请求不退款。余额不足时请求不会发往模型，返回 429。管理员及未注册虚拟用户维持免额度限制。用户等级只积累经验，不再发放额外额度。
 - 管理员用户执行请求不受 额度余额、会话锁、历史裁剪、监控裁剪、模型/工具超时与历史清理限制，适合长期运行任务。
 - A2A 接口：`/a2a` 提供 JSON-RPC 2.0 绑定，`SendStreamingMessage` 以 SSE 形式返回流式事件，AgentCard 通过 `/.well-known/agent-card.json` 暴露。
@@ -256,8 +256,8 @@ wunder 是一个**智能体调度平台**：蜂窝（desktop）是本地 AI 工�
 - 审批闭环事件：新增 `approval_resolved`，表示待审批请求已进入终态；`approval_result` 保持兼容，但新接入方应优先消费 `approval_resolved`。
 - 工具工作流关联语义：`tool_call/tool_output_delta/tool_result/approval_request/approval_result` 现在会尽量附带稳定的 `tool_call_id`；当上游没有原生 call id 时，服务端会补发合成 id，便于前端将命令输出、审批等待与最终结果持续合并到同一张工作流卡片。
 - `execute_command` 实时协议已落地：每条命令拥有独立 `command_session_id/command_index`；生命周期事件与每条命令结果用于拆分子命令工作流条目，在线运行时通过 `command_session_delta` 向客户端推送 stdout/stderr/pty 增量，用于在聊天工具循环内展示小型终端输出区。
-- `execute_command` 默认只等待 750ms；仍在执行的命令会返回 `state=running` 与 `command_session_id`，模型可继续调用其他工具。模型通过 `command_session`（别名 `write_command_stdin`）以 `action=poll` 获取有界输出与终态，或以 `action=write_stdin` 写入 stdin 后轮询。会话按 `user_id + session_id` 隔离，默认每个运行时最多保留 16 个活动进程；线程取消会级联终止本线程及后代线程的活动命令。蜂窝由本地运行时托管，舰体由 sandbox 会话服务托管，两者使用相同的模型侧控制语义。
-- `execute_command` 在 Windows 本地/蜂窝运行时优先使用 `powershell.exe` 执行 shell 命令；仅当 PowerShell 不可用时回退 `cmd.exe`，命令会话事件中的 `shell` 字段会记录实际使用的 shell。
+- `execute_command` 默认只等待 750ms；仍在执行的命令会返回 `state=running` 与 `command_session_id`，模型可继续调用其他工具。模型通过 `command_session`（别名 `write_command_stdin`）以 `action=poll` 获取有界输出与终态，或以 `action=write_stdin` 写入 stdin 后轮询。会话按 `user_id + session_id` 隔离，默认每个运行时最多保留 16 个活动进程；线程取消会级联终止本线程及后代线程的活动命令。蛹由本地运行时托管，舰体由 sandbox 会话服务托管，两者使用相同的模型侧控制语义。
+- `execute_command` 在 Windows 本地/蛹运行时优先使用 `powershell.exe` 执行 shell 命令；仅当 PowerShell 不可用时回退 `cmd.exe`，命令会话事件中的 `shell` 字段会记录实际使用的 shell。
 - 命令会话生命周期事件：`command_session_start/command_session_status/command_session_exit/command_session_summary` 继续作为可持久化状态事件，其中 `command_session_summary` 只保留状态、退出码、耗时、输出字节数与 dropped 计数；`command_session_delta` 也会进入持久化流，供完整审计与按轮次回放使用，前端仍通过虚拟窗口和增量合并避免长命令输出进入热路径列表查询。
 - 线程运行态事件：新增 `thread_status`，用于同步 loaded runtime 状态机；`status` 取值包括 `running/waiting_approval/waiting_user_input/idle/not_loaded/system_error`，并附带 `session_id/thread_id/subscriber_count/loaded/active_turn_id`。
 - 会话事件摘要接口：`GET /wunder/chat/sessions/{session_id}/events` 现额外返回 `data.runtime` 快照（包含 `thread_status/loaded/active_turn_id/turn.pending_approval_count/turn.waiting_for_user_input` 等字段）；`data.running` 也会覆盖等待审批、等待用户输入等活跃态，便于刷新后继续保持实时等待视图。
@@ -3387,7 +3387,7 @@ wunder 是一个**智能体调度平台**：蜂窝（desktop）是本地 AI 工�
 
 ## 子智能体池与级联中断（2026-09-23）
 
-- `GET /wunder/chat/sessions` 未指定 `parent_session_id` 时，工作目录在数据库计数与分页之前排除 `spawned_by=model|subagent_control` 且有父会话的子智能体。显式父会话筛选保持原语义，普通 `thread_control` 派生线程与蜂群线程不受此过滤影响。SQLite、PostgreSQL 与原生蜂窝目录共用此规则。
+- `GET /wunder/chat/sessions` 未指定 `parent_session_id` 时，工作目录在数据库计数与分页之前排除 `spawned_by=model|subagent_control` 且有父会话的子智能体。显式父会话筛选保持原语义，普通 `thread_control` 派生线程与蜂群线程不受此过滤影响。SQLite、PostgreSQL 与原生蛹目录共用此规则。
 - `GET /wunder/chat/sessions/{session_id}/subagents` 默认跨用户轮次返回保留的子智能体，包含已完成、已中断及已关闭会话，沿用 `limit` 上限 500；`latestTurnOnly` 仅供单轮消息投影使用。子智能体目录不包含蜂群和普通线程派生项。
 - `POST /wunder/chat/sessions/{session_id}/cancel` 及 WS cancel 统一中断当前会话和后代执行，保留子会话、历史与提示词。REST 增加 `child_sessions_cancelled`；子运行终态为 `cancelled`，不会因中断自动关闭或删除。后台执行同样受父会话中断约束。
 - `subagent_control.list` 返回持久子智能体池及最新运行状态；`send(session_id,message)` 或 `resume(session_id,message)` 在原线程执行下一项任务，默认非阻塞。`resume` 不带消息仅重新开放线程。运行中 send 作为追加指导；启动/收尾窗口暂不接收，调用方应等待收敛后重试；不会自动恢复全部子智能体。
@@ -3401,7 +3401,7 @@ wunder 是一个**智能体调度平台**：蜂窝（desktop）是本地 AI 工�
 - 真实 Token 用量通过 `model_usage/token_usage/round_usage` 保留，供上下文、速度与消耗统计使用。
 
 
-### Slint 默认原生蜂窝接入
+### Slint 默认原生蛹接入
 
 Slint 程序默认链接 `wunder-desktop` library；不拉起 bridge，不通过本机 HTTP/WebSocket 转发。旧的 `--connect` 与 `--bridge-smoke` 参数移除，`--native` 兼容无参数启动。舰体现有 HTTP/WS 协议保持不变。
 
@@ -3501,7 +3501,7 @@ Slint 程序默认链接 `wunder-desktop` library；不拉起 bridge，不通过
 - `/wunder/workspace*` 全部接口（含 upload、download、archive、batch、content、search）在服务端统一按**当前用户根**解析，`container_id` 不再决定目录。
 - **过渡期保留该参数**以兼容旧客户端：传入任意值（含 `0`、`1~10`）结果一致，均落到该用户的唯一目录；服务端不因该参数切换根，也不报错。后续版本移除该参数。
 - `agent_id` 不再参与目录派生，只影响会话与配置绑定；子智能体与主智能体共用同一用户目录。
-- 端口径使用**扁平化智能体作用域**：`scoped_user_id(user, agent)` / `scoped_user_id_by_container` / `scoped_user_id_variants` 恒等于用户自身作用域，不再产生按智能体或容器派生的作用域目录。CLI / 蜂窝本地形态的 `WUNDER_WORKSPACE_SINGLE_ROOT` 与 `container_roots` 与服务端口径不同，**不随本次收敛移除**。
+- 端口径使用**扁平化智能体作用域**：`scoped_user_id(user, agent)` / `scoped_user_id_by_container` / `scoped_user_id_variants` 恒等于用户自身作用域，不再产生按智能体或容器派生的作用域目录。CLI / 蛹本地形态的 `WUNDER_WORKSPACE_SINGLE_ROOT` 与 `container_roots` 与服务端口径不同，**不随本次收敛移除**。
 - 路径安全：所有路径仍以用户根为界做 `is_within_root` 校验；对外只下发工作区相对路径，不暴露服务端绝对路径。
 - 存量目录迁移：历史按智能体或容器隔离的目录合并归入用户根（重名追加后缀并生成迁移清单），迁移完成后再移除兼容逻辑。
 

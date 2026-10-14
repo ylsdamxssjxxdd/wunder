@@ -38,6 +38,7 @@ fn params(p: &[Value]) -> Vec<Box<dyn ToSql + Sync + Send>> {
         .collect()
 }
 impl ViewDb for Db<'_, '_> {
+    fn is_postgres(&self) -> bool { true }
     fn json_text(&self, expression: &str, field: &str) -> String {
         format!("({expression})::jsonb->>'{field}'")
     }
