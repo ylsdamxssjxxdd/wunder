@@ -55,6 +55,6 @@ If the interface and the actual state do not match:
 
 ## Further reading
 
-- [Session states](/docs/en/reference/stream-events/) — what each state means in detail
+- [Session states](/docs/en/capabilities/stream-events/) — what each state means in detail
 - [The agent loop](/docs/en/concepts/core-agent-loop/) — how state changes
 - [Streaming execution](/docs/en/concepts/streaming/) — how state is pushed

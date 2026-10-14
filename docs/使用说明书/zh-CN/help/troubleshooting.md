@@ -120,7 +120,7 @@ updated_at: 2026-04-10
 
 继续查看：
 
-- [配置说明](/docs/zh-CN/reference/config/)
+- [配置说明](/docs/zh-CN/capabilities/config/)
 
 ## 提交问题时建议附带
 

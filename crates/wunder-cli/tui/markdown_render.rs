@@ -11,11 +11,129 @@ use pulldown_cmark::Options;
 use pulldown_cmark::Parser;
 use pulldown_cmark::Tag;
 use pulldown_cmark::TagEnd;
+use ratatui::style::Modifier;
 use ratatui::style::Style;
 use ratatui::text::Line;
 use ratatui::text::Span;
 use ratatui::text::Text;
+use std::borrow::Cow;
 use unicode_width::UnicodeWidthStr;
+
+struct FenceLine {
+    marker: char,
+    run: usize,
+    info: String,
+    source: String,
+}
+
+fn fence_parts(line: &str) -> Option<FenceLine> {
+    let without_indent = line.trim_start_matches(' ');
+    let indent = line.len() - without_indent.len();
+    if indent > 3 {
+        return None;
+    }
+    let marker = without_indent
+        .chars()
+        .next()
+        .filter(|ch| *ch == '`' || *ch == '~')?;
+    let run = without_indent
+        .chars()
+        .take_while(|ch| *ch == marker)
+        .count();
+    if run < 3 {
+        return None;
+    }
+    Some(FenceLine {
+        marker,
+        run,
+        info: without_indent[run..].trim().to_string(),
+        source: line.to_string(),
+    })
+}
+
+fn is_markdown_fence(fence: &FenceLine) -> bool {
+    let token = fence.info.split_whitespace().next().unwrap_or_default();
+    matches!(token.to_ascii_lowercase().as_str(), "md" | "markdown")
+}
+
+fn is_table_delimiter_line(line: &str) -> bool {
+    let trimmed = line.trim();
+    if !trimmed.contains('|') || !trimmed.contains('-') {
+        return false;
+    }
+    trimmed
+        .trim_start_matches('|')
+        .trim_end_matches('|')
+        .split('|')
+        .all(|cell| !cell.trim().is_empty() && cell.trim().chars().all(|ch| ch == '-' || ch == ':'))
+}
+
+fn is_table_header_line(line: &str) -> bool {
+    let trimmed = line.trim();
+    trimmed.contains('|') && !is_table_delimiter_line(trimmed)
+}
+
+fn body_contains_table(body: &str) -> bool {
+    let mut previous: Option<&str> = None;
+    for line in body.lines() {
+        if line.trim().is_empty() {
+            previous = None;
+            continue;
+        }
+        if let Some(candidate) = previous {
+            if is_table_header_line(candidate) && is_table_delimiter_line(line) {
+                return true;
+            }
+        }
+        previous = Some(line);
+    }
+    false
+}
+
+/// Re-emits a ` ```markdown `/`~~~markdown` fence as plain markdown when its body really
+/// is a table, and verbatim otherwise, so genuine code samples stay code.
+fn unwrap_markdown_table_fences(input: &str) -> Cow<'_, str> {
+    if !input.contains("```") && !input.contains("~~~") {
+        return Cow::Borrowed(input);
+    }
+    let mut out = String::with_capacity(input.len());
+    let mut open: Option<FenceLine> = None;
+    let mut body = String::new();
+    for line in input.split_inclusive('\n') {
+        match open.take() {
+            None => match fence_parts(line) {
+                Some(fence) if is_markdown_fence(&fence) => {
+                    open = Some(fence);
+                }
+                _ => out.push_str(line),
+            },
+            Some(fence) => {
+                let closes = fence_parts(line).is_some_and(|close| {
+                    close.marker == fence.marker && close.run >= fence.run && close.info.is_empty()
+                });
+                if !closes {
+                    open = Some(fence);
+                    body.push_str(line);
+                    continue;
+                }
+                if body_contains_table(body.as_str()) {
+                    out.push_str(body.as_str());
+                } else {
+                    out.push_str(fence.source.as_str());
+                    out.push_str(body.as_str());
+                    out.push_str(line);
+                }
+                body.clear();
+            }
+        }
+    }
+    if let Some(fence) = open {
+        // Never closed: leave the source as written so it degrades to a code block.
+        out.push_str(fence.source.as_str());
+        out.push_str(body.as_str());
+    }
+    Cow::Owned(out)
+}
 
 struct MarkdownStyles {
     h1: Style,
@@ -103,6 +221,9 @@ impl TableState {
     }
 
     fn end_head(&mut self) {
+        // pulldown-cmark puts the head cells straight under `TableHead` with no row
+        // wrapper of its own, so the head row ends here rather than at a `TableRow` end.
+        self.end_row();
         self.in_head = false;
     }
 
@@ -149,10 +270,14 @@ impl TableState {
 }
 
 pub(crate) fn render_markdown_text_with_width(input: &str, width: Option<usize>) -> Text<'static> {
+    // Models wrap tables in ```markdown fences; parsed as code they lose their shape,
+    // so a fence whose body is a table is handed to the parser as bare markdown.
+    let source = unwrap_markdown_table_fences(input);
     let mut options = Options::empty();
     options.insert(Options::ENABLE_STRIKETHROUGH);
     options.insert(Options::ENABLE_TABLES);
-    let parser = Parser::new_ext(input, options);
+    options.insert(Options::ENABLE_TASKLISTS);
+    let parser = Parser::new_ext(source.as_ref(), options);
     let mut w = Writer::new(parser, width);
     w.run();
     w.text
@@ -239,13 +364,13 @@ where
                 if !self.text.lines.is_empty() {
                     self.push_blank_line();
                 }
-                self.push_line(Line::from("---"));
+                self.push_line(Line::from("\u{2014}\u{2014}\u{2014}"));
                 self.needs_newline = true;
             }
             Event::Html(html) => self.html(html, false),
             Event::InlineHtml(html) => self.html(html, true),
             Event::FootnoteReference(_) => {}
-            Event::TaskListMarker(_) => {}
+            Event::TaskListMarker(checked) => self.apply_task_marker(checked),
         }
     }
 
@@ -504,7 +629,7 @@ where
         let marker = if let Some(last_index) = self.list_indices.last_mut() {
             match last_index {
                 None => Some(vec![Span::styled(
-                    " ".repeat(width - 1) + "- ",
+                    " ".repeat(width - 1) + "\u{2022} ",
                     self.styles.unordered_list_marker,
                 )]),
                 Some(index) => {
@@ -564,6 +689,44 @@ where
         self.needs_newline = true;
         self.in_code_block = false;
         self.indent_stack.pop();
+    }
+
+    /// A task item trades its bullet for a checkbox and keeps any numbering ahead of it,
+    /// the same shape codex marks up. The hanging indent follows the new marker width.
+    fn apply_task_marker(&mut self, checked: bool) {
+        let checkbox = if checked { "\u{2611} " } else { "\u{2610} " };
+        let Some(context) = self
+            .indent_stack
+            .iter_mut()
+            .rev()
+            .find(|context| context.marker.is_some())
+        else {
+            return;
+        };
+        let Some(marker) = context.marker.as_mut() else {
+            return;
+        };
+        let Some(span) = marker.last_mut() else {
+            return;
+        };
+        let content = span.content.as_ref();
+        let head = content
+            .strip_suffix("\u{2022} ")
+            .or_else(|| content.strip_suffix("- "))
+            .unwrap_or(content);
+        span.content = if head == content {
+            format!("{content}{checkbox}").into()
+        } else {
+            format!("{head}{checkbox}").into()
+        };
+        if checked {
+            span.style = span.style.add_modifier(Modifier::BOLD);
+        }
+        let marker_width: usize = marker
+            .iter()
+            .map(|span| UnicodeWidthStr::width(span.content.as_ref()))
+            .sum();
+        context.prefix = vec![Span::from(" ".repeat(marker_width))];
     }
 
     fn push_inline_style(&mut self, style: Style) {
@@ -770,7 +933,7 @@ where
     }
 
     fn flush_table(&mut self, state: TableState) {
-        let mut rows = Vec::new();
+        let mut rows: Vec<Vec<String>> = Vec::new();
         for row in &state.head_rows {
             rows.push(row.clone());
         }
@@ -789,43 +952,166 @@ where
             return;
         }
 
-        let mut widths = vec![3usize; col_count];
+        let mut widths = vec![TABLE_MIN_COLUMN_WIDTH; col_count];
         for row in &rows {
             for (idx, cell) in row.iter().enumerate() {
                 let width = UnicodeWidthStr::width(cell.as_str());
                 widths[idx] = widths[idx].max(width);
             }
         }
-        for width in &mut widths {
-            if *width < 3 {
-                *width = 3;
+
+        // A grid wider than the transcript would overrun the frame, so columns shrink
+        // toward their longest word and each cell wraps inside its own column. When even
+        // that cannot fit, the table stops pretending to be a grid and every row wraps
+        // as text.
+        let floors: Vec<usize> = (0..col_count)
+            .map(|idx| {
+                rows.iter()
+                    .filter_map(|row| row.get(idx))
+                    .flat_map(|cell| cell.split_whitespace())
+                    .map(|word| UnicodeWidthStr::width(word))
+                    .max()
+                    .unwrap_or(TABLE_MIN_COLUMN_WIDTH)
+                    .max(TABLE_MIN_COLUMN_WIDTH)
+            })
+            .collect();
+        let fits = match self.wrap_width {
+            Some(available) => {
+                fit_table_columns(widths.as_mut_slice(), floors.as_slice(), available)
             }
+            None => true,
+        };
+        if !fits {
+            for row in &state.head_rows {
+                self.push_line(Line::from(Span::styled(
+                    row.join(" | "),
+                    self.styles.strong,
+                )));
+                self.flush_current_line();
+            }
+            for row in &state.body_rows {
+                self.push_line(Line::from(row.join(" | ")));
+                self.flush_current_line();
+            }
+            return;
         }
 
         let alignments = state.alignments;
-        let mut rendered_rows: Vec<(String, Option<Style>)> = Vec::new();
         for row in &state.head_rows {
-            let line = format_table_row(row, &widths, &alignments);
-            rendered_rows.push((line, Some(self.styles.strong)));
+            self.emit_table_row(
+                row,
+                widths.as_slice(),
+                &alignments,
+                Some(self.styles.strong),
+            );
         }
         if !state.head_rows.is_empty() {
-            let separator = format_table_separator(&widths, &alignments);
-            rendered_rows.push((separator, None));
+            let separator = format_table_separator(widths.as_slice(), &alignments);
+            self.push_line_no_wrap(Line::from(separator));
+            self.flush_current_line();
         }
         for row in &state.body_rows {
-            let line = format_table_row(row, &widths, &alignments);
-            rendered_rows.push((line, None));
+            self.emit_table_row(row, widths.as_slice(), &alignments, None);
         }
+    }
 
-        for (line, style) in rendered_rows {
-            let span = if let Some(style) = style {
-                Span::styled(line, style)
-            } else {
-                Span::from(line)
+    /// One grid row: cells wrap within their column and the row grows to its tallest cell.
+    fn emit_table_row(
+        &mut self,
+        row: &[String],
+        widths: &[usize],
+        alignments: &[Alignment],
+        style: Option<Style>,
+    ) {
+        let cells: Vec<Vec<String>> = (0..widths.len())
+            .map(|idx| {
+                let text = row.get(idx).map(String::as_str).unwrap_or("");
+                wrap_table_cell(text, widths[idx])
+            })
+            .collect();
+        let height = cells.iter().map(|lines| lines.len()).max().unwrap_or(1);
+        for line_index in 0..height {
+            let mut line = String::from("|");
+            for (idx, cell_lines) in cells.iter().enumerate() {
+                let text = cell_lines.get(line_index).map(String::as_str).unwrap_or("");
+                let align = alignments.get(idx).copied().unwrap_or(Alignment::None);
+                line.push(' ');
+                line.push_str(pad_table_cell(text, widths[idx], align).as_str());
+                line.push_str(" |");
+            }
+            let span = match style {
+                Some(style) => Span::styled(line, style),
+                None => Span::from(line),
             };
             self.push_line_no_wrap(Line::from(span));
             self.flush_current_line();
         }
+    }
+}
+
+const TABLE_MIN_COLUMN_WIDTH: usize = 3;
+
+/// Shrinks columns, widest first, until the grid fits `available` columns. No column goes
+/// below its own longest word; when that cannot fit either, `false` asks the caller to
+/// fall back to text rows rather than carve words up.
+fn fit_table_columns(widths: &mut [usize], floors: &[usize], available: usize) -> bool {
+    let structure = 1usize + 3usize * widths.len();
+    let floor_total: usize = floors.iter().sum();
+    if available < structure + floor_total {
+        return false;
+    }
+    let budget = available - structure;
+    let mut total: usize = widths.iter().copied().sum();
+    while total > budget {
+        let widest = widths
+            .iter()
+            .enumerate()
+            .filter(|(idx, width)| **width > floors[*idx])
+            .map(|(idx, width)| (idx, *width))
+            .max_by_key(|(_, width)| *width)
+            .map(|(idx, _)| idx);
+        match widest {
+            Some(idx) => {
+                widths[idx] -= 1;
+                total -= 1;
+            }
+            None => return false,
+        }
+    }
+    true
+}
+
+fn wrap_table_cell(cell: &str, width: usize) -> Vec<String> {
+    let width = width.max(1);
+    if UnicodeWidthStr::width(cell) <= width {
+        return vec![cell.to_string()];
+    }
+    let source = Line::from(cell.to_string());
+    let lines = word_wrap_line(&source, RtOptions::new(width))
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>();
+    if lines.is_empty() {
+        vec![String::new()]
+    } else {
+        lines
+    }
+}
+
+fn pad_table_cell(text: &str, width: usize, align: Alignment) -> String {
+    let pad = width.saturating_sub(UnicodeWidthStr::width(text));
+    match align {
+        Alignment::Right => format!("{}{}", " ".repeat(pad), text),
+        Alignment::Center => {
+            let left = pad / 2;
+            format!("{}{}{}", " ".repeat(left), text, " ".repeat(pad - left))
+        }
+        _ => format!("{}{}", text, " ".repeat(pad)),
     }
 }
 
@@ -868,36 +1154,6 @@ fn normalize_table_cell(raw: &str) -> String {
     out
 }
 
-fn format_table_row(row: &[String], widths: &[usize], alignments: &[Alignment]) -> String {
-    let mut line = String::new();
-    line.push('|');
-    for (idx, width) in widths.iter().enumerate() {
-        let cell = row.get(idx).map(String::as_str).unwrap_or("");
-        let cell_width = UnicodeWidthStr::width(cell);
-        let pad = width.saturating_sub(cell_width);
-        let align = alignments.get(idx).copied().unwrap_or(Alignment::None);
-        let (left_pad, right_pad) = match align {
-            Alignment::Right => (pad, 0),
-            Alignment::Center => {
-                let left = pad / 2;
-                (left, pad - left)
-            }
-            _ => (0, pad),
-        };
-        line.push(' ');
-        if left_pad > 0 {
-            line.push_str(&" ".repeat(left_pad));
-        }
-        line.push_str(cell);
-        if right_pad > 0 {
-            line.push_str(&" ".repeat(right_pad));
-        }
-        line.push(' ');
-        line.push('|');
-    }
-    line
-}
-
 fn format_table_separator(widths: &[usize], alignments: &[Alignment]) -> String {
     let mut line = String::new();
     line.push('|');
@@ -933,4 +1189,137 @@ fn format_table_separator(widths: &[usize], alignments: &[Alignment]) -> String 
         line.push('|');
     }
     line
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rendered(input: &str, width: usize) -> Vec<String> {
+        render_markdown_text_with_width(input, Some(width))
+            .lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn task_items_trade_the_bullet_for_a_checkbox() {
+        let lines = rendered("- [ ] open\n- [x] done\n", 40);
+        assert!(
+            lines.iter().any(|line| line.starts_with("\u{2610} open")),
+            "{lines:?}"
+        );
+        assert!(
+            lines.iter().any(|line| line.starts_with("\u{2611} done")),
+            "{lines:?}"
+        );
+        assert!(!lines.iter().any(|line| line.contains("[ ]")), "{lines:?}");
+    }
+
+    #[test]
+    fn unordered_items_use_the_reference_bullet_and_nest_by_four() {
+        let lines = rendered("- top\n  - nested\n", 40);
+        assert!(lines.iter().any(|line| line == "\u{2022} top"), "{lines:?}");
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.starts_with("    \u{2022} nested")),
+            "{lines:?}"
+        );
+    }
+
+    #[test]
+    fn a_rule_renders_as_a_bar_not_source_punctuation() {
+        assert!(
+            rendered("before\n\n---\n\nafter\n", 40)
+                .iter()
+                .any(|line| line == "\u{2014}\u{2014}\u{2014}"),
+            "{:?}",
+            rendered("before\n\n---\n\nafter\n", 40)
+        );
+    }
+
+    #[test]
+    fn a_markdown_fence_holding_a_table_is_rendered_as_a_table() {
+        let source = "```markdown\n| gate | value |\n| --- | --- |\n| flaky | false |\n```\n";
+        let lines = rendered(source, 40);
+        let header = lines
+            .iter()
+            .find(|line| line.starts_with('|') && line.contains("gate") && line.contains("value"))
+            .unwrap_or_else(|| panic!("the fenced table became a grid: {lines:?}"));
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("flaky") && line.starts_with('|')),
+            "{lines:?}"
+        );
+        assert!(!header.contains("markdown"), "{lines:?}");
+        assert!(!lines.iter().any(|line| line.contains("```")), "{lines:?}");
+    }
+
+    #[test]
+    fn a_fence_that_is_not_a_table_stays_code() {
+        let source = "```markdown\nnot a table at all\n```\n";
+        let lines = rendered(source, 40);
+        assert!(
+            lines.iter().any(|line| line.contains("not a table at all")),
+            "{lines:?}"
+        );
+        // The fence markers are consumed by the code-block renderer, the body is kept.
+        assert_eq!(lines.len(), 1, "{lines:?}");
+    }
+
+    #[test]
+    fn a_wide_table_shrinks_and_wraps_inside_the_frame() {
+        let source = "| column one | column two | column three |\n| --- | --- | --- |\n\
+                      | a very long cell that will not fit | another long cell here | third |\n";
+        for width in [20usize, 24, 40, 80, 120] {
+            let lines = rendered(source, width);
+            assert!(
+                lines
+                    .iter()
+                    .all(|line| UnicodeWidthStr::width(line.as_str()) <= width),
+                "width {width}: a row escaped the frame: {lines:?}"
+            );
+            let joined = lines.join(" ");
+            let words = joined
+                .split_whitespace()
+                .map(|word| word.trim_matches('|'))
+                .collect::<Vec<_>>();
+            for word in [
+                "column", "one", "two", "three", "a", "very", "long", "cell", "that", "will",
+                "not", "fit", "another", "here", "third",
+            ] {
+                assert!(
+                    words.iter().any(|seen| *seen == word),
+                    "width {width}: lost {word}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_narrow_table_keeps_every_cell_of_every_row() {
+        let source = "| gate | value | note |\n| --- | --- | --- |\n| a | b | c |\n";
+        let lines = rendered(source, 24);
+        let joined = lines.join("\n");
+        for token in ["gate", "value", "note", "| a", "| b", "| c"] {
+            assert!(joined.contains(token), "lost {token}: {lines:?}");
+        }
+    }
+
+    #[test]
+    fn code_block_lines_keep_their_leading_whitespace() {
+        let lines = rendered("```rust\nfn main() {\n    let x = 1;\n}\n```\n", 40);
+        assert!(
+            lines.iter().any(|line| line.starts_with("    let x = 1;")),
+            "{lines:?}"
+        );
+    }
 }

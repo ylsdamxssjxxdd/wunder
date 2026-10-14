@@ -1003,10 +1003,7 @@ mod tests {
         // provider rejects it.
         let llm_config = LlmModelConfig::default();
 
-        assert_eq!(
-            HistoryManager::get_auto_compact_limit(&llm_config),
-            117_964
-        );
+        assert_eq!(HistoryManager::get_auto_compact_limit(&llm_config), 117_964);
     }
 
     #[test]
@@ -1017,10 +1014,7 @@ mod tests {
             ..Default::default()
         };
 
-        assert_eq!(
-            HistoryManager::get_auto_compact_limit(&llm_config),
-            140_400
-        );
+        assert_eq!(HistoryManager::get_auto_compact_limit(&llm_config), 140_400);
     }
 
     #[test]
@@ -1031,10 +1025,7 @@ mod tests {
             ..Default::default()
         };
 
-        assert_eq!(
-            HistoryManager::get_auto_compact_limit(&llm_config),
-            140_400
-        );
+        assert_eq!(HistoryManager::get_auto_compact_limit(&llm_config), 140_400);
     }
 
     #[test]

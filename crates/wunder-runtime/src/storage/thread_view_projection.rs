@@ -67,9 +67,15 @@ pub(crate) fn trajectory(
         // The model receives the frozen prompt from the internal log, while
         // the presentation projection must never disclose it (it can contain
         // instructions, paths, or credentials). Keep only bounded metadata.
-        let language = item.pointer("/meta/language").and_then(Value::as_str).unwrap_or("");
-        if language.is_empty() { "系统提示词（内容已隐藏）".to_string() }
-        else { format!("系统提示词（内容已隐藏，语言：{language}）") }
+        let language = item
+            .pointer("/meta/language")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        if language.is_empty() {
+            "系统提示词（内容已隐藏）".to_string()
+        } else {
+            format!("系统提示词（内容已隐藏，语言：{language}）")
+        }
     } else if content.is_empty() {
         if kind == "tool_call" {
             // 工具行必须展示调用的是什么工具，而不是回退成裸 kind。
@@ -80,12 +86,14 @@ pub(crate) fn trajectory(
                 .or_else(|| item.get("reasoning_content"))
                 .and_then(Value::as_str)
                 .filter(|v| !v.is_empty())
-                .unwrap_or(kind).to_owned()
+                .unwrap_or(kind)
+                .to_owned()
         } else {
             item.get("summary")
                 .and_then(Value::as_str)
                 .filter(|v| !v.is_empty())
-                .unwrap_or(kind).to_owned()
+                .unwrap_or(kind)
+                .to_owned()
         }
     } else {
         content.to_owned()
@@ -101,6 +109,7 @@ pub(crate) fn trajectory(
         kind: preview(kind, 48),
         status: preview(status, 48),
         summary: preview(&summary, 256),
+        overview_only: false,
         tool_name: tool.map(|v| preview(v, 96)),
         model_round: item.get("model_round").and_then(Value::as_i64).unwrap_or(0),
         started_at: item
@@ -121,7 +130,10 @@ pub(crate) fn redact_internal_context(item: &mut Value) {
         map.remove("content");
         map.remove("model_content");
         map.insert("content_redacted".into(), Value::Bool(true));
-        map.insert("summary".into(), Value::String("系统提示词（内容已隐藏）".into()));
+        map.insert(
+            "summary".into(),
+            Value::String("系统提示词（内容已隐藏）".into()),
+        );
     }
 }
 
@@ -159,15 +171,25 @@ pub(crate) fn finite_stats(item: &Value) -> Option<Value> {
         let keep_scalar = value.is_number() || value.is_boolean();
         let keep_usage = matches!(key.as_str(), "usage" | "round_usage" | "roundUsage")
             && value.as_object().is_some();
-        if !keep_scalar && !keep_usage { continue; }
+        if !keep_scalar && !keep_usage {
+            continue;
+        }
         if keep_scalar {
             scalar_count = scalar_count.saturating_add(1);
-            if scalar_count > 64 && !matches!(key.as_str(), "model_request_count" | "account_credits_consumed" | "tool_calls" | "toolCalls") {
+            if scalar_count > 64
+                && !matches!(
+                    key.as_str(),
+                    "model_request_count" | "account_credits_consumed" | "tool_calls" | "toolCalls"
+                )
+            {
                 continue;
             }
         }
         if keep_usage {
-            let bounded = value.as_object().unwrap().iter()
+            let bounded = value
+                .as_object()
+                .unwrap()
+                .iter()
                 .filter(|(_, v)| v.is_number() || v.is_boolean())
                 .take(12)
                 .map(|(k, v)| (preview(k, 64), v.clone()))
@@ -181,9 +203,14 @@ pub(crate) fn finite_stats(item: &Value) -> Option<Value> {
     // large set of optional metrics.  The explicit lookup above is therefore
     // intentionally independent of object iteration order.
     for key in ["usage", "round_usage", "roundUsage"] {
-        if fields.contains_key(key) { continue; }
-        let Some(value) = source.get(key).and_then(Value::as_object) else { continue };
-        let bounded = value.iter()
+        if fields.contains_key(key) {
+            continue;
+        }
+        let Some(value) = source.get(key).and_then(Value::as_object) else {
+            continue;
+        };
+        let bounded = value
+            .iter()
             .filter(|(_, v)| v.is_number() || v.is_boolean())
             .take(16)
             .map(|(k, v)| (preview(k, 64), v.clone()))
@@ -198,12 +225,16 @@ pub(crate) fn finite_stats(item: &Value) -> Option<Value> {
             let value = fields
                 .get(usage_key)
                 .and_then(Value::as_object)
-                .and_then(|usage| usage.get("request_consumed_tokens").or_else(|| usage.get("total_tokens")))
+                .and_then(|usage| {
+                    usage
+                        .get("request_consumed_tokens")
+                        .or_else(|| usage.get("total_tokens"))
+                })
                 .cloned();
             if let Some(value) = value {
-                    fields.insert("request_consumed_tokens".into(), value.clone());
-                    fields.insert("consumed_tokens".into(), value);
-                    break;
+                fields.insert("request_consumed_tokens".into(), value.clone());
+                fields.insert("consumed_tokens".into(), value);
+                break;
             }
         }
     }
@@ -220,7 +251,15 @@ pub(crate) fn subagent_card(item: &Value, id: &str, revision: i64) -> Option<Val
     let runtime = item.get("runtime")?.as_object()?;
     let mut card = serde_json::Map::new();
     card.insert("key".into(), json!(preview(id, 96)));
-    for field in ["run_id", "session_id", "dispatch_id", "run_kind", "title", "label", "status"] {
+    for field in [
+        "run_id",
+        "session_id",
+        "dispatch_id",
+        "run_kind",
+        "title",
+        "label",
+        "status",
+    ] {
         if let Some(v) = runtime
             .get(field)
             .and_then(Value::as_str)
@@ -372,8 +411,11 @@ mod tests {
         assert_eq!(cards[0]["updated_seq"], 9);
 
         for index in 0..(MAX_ROW_SUBAGENTS + 2) {
-            let item = json!({"runtime": {"run_id": format!("run-{index}"), "status": "completed"}});
-            if let Some(card) = subagent_card(&item, &format!("turn-1:subagent-run-{index}"), index as i64) {
+            let item =
+                json!({"runtime": {"run_id": format!("run-{index}"), "status": "completed"}});
+            if let Some(card) =
+                subagent_card(&item, &format!("turn-1:subagent-run-{index}"), index as i64)
+            {
                 upsert_subagent_card(&mut cards, card);
             }
         }

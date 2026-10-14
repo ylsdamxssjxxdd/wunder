@@ -2696,12 +2696,12 @@
     "zh-CN": "后端支持时，是否启用补帧。"
   },
   "tool.spec.skill_call.args.name": {
-    "en-US": "Skill name to load.",
-    "zh-CN": "要加载的技能名称。"
+    "en-US": "Exact name of the mounted skill to load. When the request names or matches a skill, call this tool first.",
+    "zh-CN": "要加载的已挂载技能准确名称。用户点名技能或请求命中技能时，必须先调用本工具。"
   },
   "tool.spec.skill_call.description": {
-    "en-US": "Load the SKILL.md and directory tree for a named skill. Call it with the skill name when the request matches a mounted skill.",
-    "zh-CN": "加载指定技能的 SKILL.md 与目录结构。请求命中已挂载技能时传入技能名调用。"
+    "en-US": "Load a mounted skill's complete SKILL.md and directory tree. If the user names a skill or the task matches its Frontmatter, this must be the first tool call; do not list/search files or run commands first. Follow the loaded workflow.",
+    "zh-CN": "加载已挂载技能完整 SKILL.md 与目录结构。用户点名技能或任务命中其 Frontmatter 时，本工具必须是第一条工具调用；不要先列目录、搜索文件或执行命令。加载后按技能流程执行。"
   },
   "tool.spec.search.args.file_pattern": {
     "en-US": "Optional. Glob pattern to filter files, e.g., *.cpp or src/**.ts.",

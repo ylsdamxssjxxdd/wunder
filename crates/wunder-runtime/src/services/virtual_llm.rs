@@ -11,6 +11,7 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 pub mod capabilities;
+pub mod faults;
 mod random_sim;
 mod replay_cache;
 mod replay_selection;
@@ -18,7 +19,6 @@ pub mod request;
 mod streaming;
 pub mod timing;
 mod tool_protocol;
-pub mod faults;
 pub use faults::{disconnect_delta_limit, is_simulated_turn, sample_fault, SimulatedFault};
 pub use streaming::emit_virtual_deltas;
 #[cfg(test)]
@@ -312,7 +312,9 @@ pub async fn load_turn_for_round(
     // goal_entry_allowed 限制（与目标入口相互独立）。当当前会话是子会话
     // （allow_subagent=false）时不提供入口，从而只允许“一层”子智能体。若用户
     // 消息含 `subagent`，强制位为真，本轮必定发出。
-    let force_subagent = user_message.map(random_sim::wants_subagent).unwrap_or(false);
+    let force_subagent = user_message
+        .map(random_sim::wants_subagent)
+        .unwrap_or(false);
     // 消息里的数字覆盖本次计划轮次（owned，避免借用逃逸进 'static 闭包）。
     let round_override = user_message.and_then(random_sim::parse_round_override);
     let subagent_entry = allow_subagent
@@ -342,8 +344,8 @@ pub async fn load_turn_for_round(
         // may additionally arm a long-running goal so the goal driver keeps
         // producing rounds until the operator stops it.
         // 用户在消息里给出的数字覆盖本次计划轮次，直接决定“本次模型轮数”。
-        let total_rounds = round_override
-            .unwrap_or_else(|| random_sim::plan_rounds(&session_seed, round));
+        let total_rounds =
+            round_override.unwrap_or_else(|| random_sim::plan_rounds(&session_seed, round));
         let subagent_arg = subagent_entry
             .as_ref()
             .map(|(entry, force)| (entry, *force));
@@ -795,9 +797,19 @@ mod tests {
             ..Default::default()
         };
 
-        let turn = load_turn_for_round(config, &model, "session-a", Some(2), Some(3), None, true, None, true)
-            .await
-            .expect("random virtual turn");
+        let turn = load_turn_for_round(
+            config,
+            &model,
+            "session-a",
+            Some(2),
+            Some(3),
+            None,
+            true,
+            None,
+            true,
+        )
+        .await
+        .expect("random virtual turn");
 
         assert!(!turn.content.trim().is_empty());
         assert_eq!(turn.source_log_id, RANDOM_REPLAY_LOG_ID);
@@ -819,9 +831,19 @@ mod tests {
             ..Default::default()
         };
 
-        let turn = load_turn_for_round(config, &model, "session-a", Some(1), Some(1), None, true, None, true)
-            .await
-            .expect("random fallback for missing log");
+        let turn = load_turn_for_round(
+            config,
+            &model,
+            "session-a",
+            Some(1),
+            Some(1),
+            None,
+            true,
+            None,
+            true,
+        )
+        .await
+        .expect("random fallback for missing log");
 
         assert_eq!(turn.source_log_id, RANDOM_REPLAY_LOG_ID);
         assert_eq!(turn.format, RANDOM_REPLAY_FORMAT);
@@ -854,47 +876,86 @@ mod tests {
         ];
         // 数字 5 -> 本次计划 5 轮：第 1 轮是工具轮，第 5 轮是最终轮。
         let round_one = load_turn_for_round(
-            config.clone(), &model, "session-a", Some(1), Some(1), Some(&tools), true,
-            Some("5"), true,
+            config.clone(),
+            &model,
+            "session-a",
+            Some(1),
+            Some(1),
+            Some(&tools),
+            true,
+            Some("5"),
+            true,
         )
         .await
         .expect("turn");
-        assert!(round_one.tool_calls.is_some(), "round 1 of 5 is a tool turn");
+        assert!(
+            round_one.tool_calls.is_some(),
+            "round 1 of 5 is a tool turn"
+        );
         let last = load_turn_for_round(
-            config.clone(), &model, "session-a", Some(1), Some(5), Some(&tools), true,
-            Some("5"), true,
+            config.clone(),
+            &model,
+            "session-a",
+            Some(1),
+            Some(5),
+            Some(&tools),
+            true,
+            Some("5"),
+            true,
         )
         .await
         .expect("turn");
         assert!(last.tool_calls.is_none(), "round 5 of 5 is the final turn");
         // 含 subagent -> 首轮必定出现子智能体调用（配合数字覆盖，确保存在工具轮）。
         let forced = load_turn_for_round(
-            config.clone(), &model, "session-a", Some(1), Some(1), Some(&tools), true,
-            Some("7 subagent"), true,
+            config.clone(),
+            &model,
+            "session-a",
+            Some(1),
+            Some(1),
+            Some(&tools),
+            true,
+            Some("7 subagent"),
+            true,
         )
         .await
         .expect("turn");
-        let forced_calls = forced.tool_calls.as_ref().and_then(Value::as_array).expect("calls");
+        let forced_calls = forced
+            .tool_calls
+            .as_ref()
+            .and_then(Value::as_array)
+            .expect("calls");
         assert!(
-            forced_calls
-                .iter()
-                .any(|call| call.pointer("/function/name").and_then(Value::as_str)
-                    == Some("子智能体控制")),
+            forced_calls.iter().any(
+                |call| call.pointer("/function/name").and_then(Value::as_str)
+                    == Some("子智能体控制")
+            ),
             "subagent keyword forces a subagent call"
         );
         // allow_subagent=false -> 子会话永不发出子智能体调用。
         let child = load_turn_for_round(
-            config.clone(), &model, "session-a", Some(1), Some(1), Some(&tools), true,
-            Some("7 subagent"), false,
+            config.clone(),
+            &model,
+            "session-a",
+            Some(1),
+            Some(1),
+            Some(&tools),
+            true,
+            Some("7 subagent"),
+            false,
         )
         .await
         .expect("turn");
-        let child_calls = child.tool_calls.as_ref().and_then(Value::as_array).expect("calls");
+        let child_calls = child
+            .tool_calls
+            .as_ref()
+            .and_then(Value::as_array)
+            .expect("calls");
         assert!(
-            child_calls
-                .iter()
-                .all(|call| call.pointer("/function/name").and_then(Value::as_str)
-                    != Some("子智能体控制")),
+            child_calls.iter().all(
+                |call| call.pointer("/function/name").and_then(Value::as_str)
+                    != Some("子智能体控制")
+            ),
             "child sessions must not spawn grandchildren"
         );
     }

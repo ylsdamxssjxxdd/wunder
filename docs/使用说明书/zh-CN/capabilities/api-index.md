@@ -16,7 +16,7 @@ summary: wunder 的能力清单、入口位置与相关文档。
 - 让智能体执行各种任务（写代码、处理文件、搜索信息等）
 - 查看对话历史和继续之前的会话
 
-相关：[会话状态说明](/docs/zh-CN/reference/stream-events/)、[提示词与个性化](/docs/zh-CN/reference/prompt-templates/)
+相关：[会话状态说明](/docs/zh-CN/capabilities/stream-events/)、[提示词与个性化](/docs/zh-CN/capabilities/prompt-templates/)
 
 ## 工作目录
 
@@ -27,7 +27,7 @@ summary: wunder 的能力清单、入口位置与相关文档。
 - 浏览和管理属于自己的唯一云端目录
 - 查看智能体工作过程中产生的文件
 
-相关：[工作区路由与文件管理](/docs/zh-CN/reference/workspace-routing/)
+相关：[工作区路由与文件管理](/docs/zh-CN/capabilities/workspace-routing/)
 
 ## 智能体设置
 
@@ -40,7 +40,7 @@ summary: wunder 的能力清单、入口位置与相关文档。
 - 设置智能体的回答风格（提示词模板）
 - 管理智能体的长期记忆
 
-相关：[提示词与个性化](/docs/zh-CN/reference/prompt-templates/)、[工具体系概念](/docs/zh-CN/concepts/tools/)
+相关：[提示词与个性化](/docs/zh-CN/capabilities/prompt-templates/)、[工具体系概念](/docs/zh-CN/concepts/tools/)
 
 ## 工具与技能
 
@@ -71,7 +71,7 @@ summary: wunder 的能力清单、入口位置与相关文档。
 
 渠道接入让飞书、微信等平台的用户在原有平台内使用智能体，不需要切换工具。
 
-相关：[舰桥面板指南](/docs/zh-CN/reference/admin-panels/)
+相关：[舰桥面板指南](/docs/zh-CN/capabilities/admin-panels/)
 
 ## 定时任务
 
@@ -92,7 +92,7 @@ summary: wunder 的能力清单、入口位置与相关文档。
 - 管理个人账户信息
 - 查看使用统计和额度余额
 
-相关：[系统设置参考](/docs/zh-CN/reference/config/)
+相关：[系统设置参考](/docs/zh-CN/capabilities/config/)
 
 ## 舰桥功能（管理员专用）
 
@@ -106,7 +106,7 @@ summary: wunder 的能力清单、入口位置与相关文档。
 - 渠道监控：外部渠道状态
 - 性能监控：系统运行状态
 
-相关：[舰桥面板指南](/docs/zh-CN/reference/admin-panels/)、[系统设置参考](/docs/zh-CN/reference/config/)
+相关：[舰桥面板指南](/docs/zh-CN/capabilities/admin-panels/)、[系统设置参考](/docs/zh-CN/capabilities/config/)
 
 ## 按需求快速定位
 

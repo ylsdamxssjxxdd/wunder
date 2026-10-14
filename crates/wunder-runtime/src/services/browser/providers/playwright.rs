@@ -290,11 +290,7 @@ fn playwright_tool_specs() -> Vec<ToolSpec> {
     ]
 }
 
-async fn dispatch(
-    context: &ToolContext<'_>,
-    tool: &str,
-    args: &Value,
-) -> Result<ProviderOutcome> {
+async fn dispatch(context: &ToolContext<'_>, tool: &str, args: &Value) -> Result<ProviderOutcome> {
     let service = browser_service(context.config);
     let scope = scope_from_context(context, args);
     let target = opt_str(args, "target_id");
@@ -372,8 +368,8 @@ async fn dispatch(
             let data = service
                 .execute(&scope, "snapshot", &Value::Object(call_args))
                 .await?;
-            let text = primary_text(&data)
-                .unwrap_or_else(|| summarize_data(&data, max_chars_arg(args)));
+            let text =
+                primary_text(&data).unwrap_or_else(|| summarize_data(&data, max_chars_arg(args)));
             Ok(ProviderOutcome::text(text))
         }
         TOOL_READ_PAGE => {
@@ -383,8 +379,8 @@ async fn dispatch(
             let data = service
                 .execute(&scope, "read_page", &Value::Object(call_args))
                 .await?;
-            let text = primary_text(&data)
-                .unwrap_or_else(|| summarize_data(&data, max_chars_arg(args)));
+            let text =
+                primary_text(&data).unwrap_or_else(|| summarize_data(&data, max_chars_arg(args)));
             Ok(ProviderOutcome::text(text))
         }
         TOOL_CLICK => {
@@ -393,19 +389,47 @@ async fn dispatch(
                 args,
                 &["ref", "selector", "element", "double_click"],
             );
-            act_outcome(service, &scope, request, target.as_deref(), "Clicked the element.").await
+            act_outcome(
+                service,
+                &scope,
+                request,
+                target.as_deref(),
+                "Clicked the element.",
+            )
+            .await
         }
         TOOL_TYPE => {
             let request = request_with("type", args, &["ref", "selector", "text", "submit"]);
-            act_outcome(service, &scope, request, target.as_deref(), "Typed into the element.").await
+            act_outcome(
+                service,
+                &scope,
+                request,
+                target.as_deref(),
+                "Typed into the element.",
+            )
+            .await
         }
         TOOL_HOVER => {
             let request = request_with("hover", args, &["ref", "selector"]);
-            act_outcome(service, &scope, request, target.as_deref(), "Hovered the element.").await
+            act_outcome(
+                service,
+                &scope,
+                request,
+                target.as_deref(),
+                "Hovered the element.",
+            )
+            .await
         }
         TOOL_SELECT_OPTION => {
             let request = request_with("select", args, &["ref", "selector", "value"]);
-            act_outcome(service, &scope, request, target.as_deref(), "Selected the option.").await
+            act_outcome(
+                service,
+                &scope,
+                request,
+                target.as_deref(),
+                "Selected the option.",
+            )
+            .await
         }
         TOOL_DRAG => {
             let request = request_with(
@@ -413,7 +437,14 @@ async fn dispatch(
                 args,
                 &["from_ref", "from_selector", "to_ref", "to_selector"],
             );
-            act_outcome(service, &scope, request, target.as_deref(), "Dragged the element.").await
+            act_outcome(
+                service,
+                &scope,
+                request,
+                target.as_deref(),
+                "Dragged the element.",
+            )
+            .await
         }
         TOOL_PRESS_KEY => {
             let key = required_str(args, "key")?;
@@ -433,8 +464,8 @@ async fn dispatch(
             let data = service
                 .execute(&scope, "act", &act_args(request, target.as_deref()))
                 .await?;
-            let text = primary_text(&data)
-                .unwrap_or_else(|| summarize_data(&data, DEFAULT_MAX_CHARS));
+            let text =
+                primary_text(&data).unwrap_or_else(|| summarize_data(&data, DEFAULT_MAX_CHARS));
             Ok(ProviderOutcome::text(text))
         }
         TOOL_WAIT_FOR => {
@@ -444,7 +475,14 @@ async fn dispatch(
                 copy_opt(args, &mut request, key);
             }
             let request = Value::Object(request);
-            act_outcome(service, &scope, request, target.as_deref(), "Wait finished.").await
+            act_outcome(
+                service,
+                &scope,
+                request,
+                target.as_deref(),
+                "Wait finished.",
+            )
+            .await
         }
         TOOL_BATCH => {
             let steps = args
@@ -453,7 +491,14 @@ async fn dispatch(
                 .filter(Value::is_array)
                 .ok_or_else(|| anyhow!("browser_batch requires an array 'steps'"))?;
             let request = json!({"kind": "batch", "steps": steps});
-            act_outcome(service, &scope, request, target.as_deref(), "Batch finished.").await
+            act_outcome(
+                service,
+                &scope,
+                request,
+                target.as_deref(),
+                "Batch finished.",
+            )
+            .await
         }
         TOOL_SCREENSHOT => {
             let mut call_args = Map::new();

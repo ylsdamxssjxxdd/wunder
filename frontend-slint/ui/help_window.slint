@@ -1,0 +1,13 @@
+import { HelpBrowser } from "help_browser.slint";
+
+// 独立帮助窗口：设置页「常规」里的按钮弹出。与主窗口不共享 globals，
+// 由 Rust 侧（src/help_browser.rs）首次打开时创建并绑定自己的控制器。
+// 工具栏文案与内嵌手册一样以中文为主，标题保持固定中文。
+export component HelpWindow inherits Window {
+    title: "帮助";
+    width: 1024px;
+    height: 700px;
+    background: #ffffff;
+
+    HelpBrowser {}
+}

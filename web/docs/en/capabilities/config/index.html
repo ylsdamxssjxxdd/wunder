@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>System Settings Reference | 使用说明书</title>
+  <meta name="description" content="What the common settings mean and what to set them to.">
+  <link rel="stylesheet" href="/docs/site.css?v=c9863d5d7815">
+  <script type="module" src="/docs/site.js?v=c9863d5d7815"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/capabilities/config","language":"en","title":"System Settings Reference","summary":"What the common settings mean and what to set them to.","updated_at":"2026-10-13","read_when":[],"source_docs":[],"tab":"Capabilities","group":"Configuration and Data","group_path":["Configuration and Data"],"url":"/docs/en/capabilities/config/","headings":[{"id":"section-1","level":2,"text":"Settings categories"},{"id":"section-2","level":2,"text":"Basic settings"},{"id":"section-3","level":3,"text":"Service address and port"},{"id":"section-4","level":3,"text":"Run mode"},{"id":"section-5","level":3,"text":"Concurrency limit"},{"id":"section-6","level":2,"text":"Security settings"},{"id":"section-7","level":3,"text":"API key"},{"id":"section-8","level":3,"text":"Path access control"},{"id":"section-9","level":3,"text":"External auth key"},{"id":"section-10","level":2,"text":"Storage settings"},{"id":"section-11","level":3,"text":"Database type"},{"id":"section-12","level":3,"text":"Workspace location"},{"id":"section-13","level":3,"text":"Vector storage"},{"id":"section-14","level":2,"text":"Tool settings"},{"id":"section-15","level":3,"text":"Built-in tool switches"},{"id":"section-16","level":3,"text":"Browser tools"},{"id":"section-17","level":3,"text":"MCP extension tools"},{"id":"section-18","level":2,"text":"Model settings"},{"id":"section-19","level":3,"text":"Available model list"},{"id":"section-20","level":3,"text":"Context limit"},{"id":"section-21","level":2,"text":"Channel settings"},{"id":"section-22","level":3,"text":"Channel account binding"},{"id":"section-23","level":3,"text":"Webhook configuration"},{"id":"section-24","level":2,"text":"When configuration takes effect"},{"id":"section-25","level":3,"text":"Timing of changes"},{"id":"section-26","level":3,"text":"Configuration layers"},{"id":"section-27","level":2,"text":"Recommended configuration by scenario"},{"id":"section-28","level":3,"text":"Individual local use (Pupa desktop)"},{"id":"section-29","level":3,"text":"Team collaboration (Hull server)"}],"prev_slug":"en/capabilities/weixin-channel","next_slug":"en/capabilities/workspace-routing","markdown":"## Settings categories\n\nwunder's settings fall into a few broad categories by responsibility:\n\n- **Basic settings**: service address, port, and run mode\n- **Security settings**: access control and permission boundaries\n- **Storage settings**: where and how data is stored\n- **Tool settings**: which tools are available\n- **Model settings**: AI model selection and parameters\n- **Channel settings**: external platform access\n\n## Basic settings\n\n### Service address and port\n\nThese decide the network address and port the wunder service listens on.\n\n- For local use, the defaults are fine\n- For a team deployment, set an address the team can reach\n\n### Run mode\n\nThis decides the form wunder runs in.\n\n- **Pupa local mode**: suited to individual local use, with all data stored locally\n- **Hull mode**: suited to teams and organizations, with multi-user support and centralized management\n\nPick Pupa local mode for individual use; pick Hull mode when you need multi-user collaboration and centralized management.\n\n### Concurrency limit\n\nThis caps how many sessions can be active at once, so the system does not get overloaded.\n\n- For individual use, the default is enough\n- For team use, adjust it to the number of users and the available hardware\n\n## Security settings\n\n### API key\n\nThis protects access to the Bridge and the Hull interfaces. A few points:\n\n- The key should be long enough — over 16 characters, mixing letters, digits, and symbols\n- Do not use a key that is easy to guess\n- Rotate the key regularly\n\n### Path access control\n\nThis limits the file paths the agent may touch and the commands it may run.\n\n- **Allowed paths**: the directories the agent may work in\n- **Denied patterns**: the file types or paths that are off limits\n\nAs a safety practice, do not open the whole filesystem: name the working directories the agent may use and block sensitive system directories.\n\n### External auth key\n\nWhen wunder is embedded in another system, this key verifies incoming external requests. It fits cases such as calling wunder from another system or an embedded integration.\n\n## Storage settings\n\n### Database type\n\nThis decides which database stores business data.\n\n- **SQLite**: a lightweight local database, the default for Pupa local mode\n- **PostgreSQL**: a full-scale database, suited to the Hull multi-user mode\n\n### Workspace location\n\nThis decides where user files and agent artifacts are stored. A few points:\n\n- In Hull mode, make sure the workspace directory is persistent (use NAS or network storage)\n- Do not put the workspace in a temporary directory\n\n### Vector storage\n\nThis is the storage backend used by knowledge-base retrieval, saved alongside the main storage backend: PostgreSQL in Hull mode and SQLite in Pupa local mode. Configure it when you need knowledge-base retrieval.\n\n## Tool settings\n\n### Built-in tool switches\n\nThese control which built-in tools the agent may use. In sensitive environments, consider turning off command-execution tools and opening only what is actually needed.\n\n### Browser tools\n\nThese let the agent browse pages and take screenshots. Enable them directly for local use; a Hull deployment may need Docker container support.\n\n### MCP extension tools\n\nThese connect external tool services over the MCP protocol. Use them when you need specialized database operations, particular API calls, or third-party services.\n\n## Model settings\n\n### Available model list\n\nThis decides which AI models the agent can choose from.\n\n- Adding a model means supplying its API key and endpoint\n- Different models have different billing and different strengths\n- Offering several options lets users pick what fits\n\n### Context limit\n\nThis caps the conversation context so it stays within what the model handles. Setting it to the model's maximum is fine; when the limit is reached, the system compresses older content automatically.\n\n## Channel settings\n\n### Channel account binding\n\nThis binds accounts on external platforms such as Feishu and WeCom. Create an app on the platform, obtain its credentials, and fill in the configuration for that channel type.\n\n### Webhook configuration\n\nThis lets an external platform push messages to wunder. Set up a publicly reachable receiving address and configure the webhook URL on the external platform.\n\n## When configuration takes effect\n\n### Timing of changes\n\n- **New settings**: take effect for new sessions immediately\n- **Existing sessions**: do not change; they keep the settings from when they were created\n\n### Configuration layers\n\n- **System defaults**: the bottom layer that any unset value falls back to\n- **Per-user settings**: override the system defaults and affect only that user\n- **Agent settings**: the top layer, affecting only that agent\n\n**Order of precedence**: agent settings > user settings > system defaults.\n\n## Recommended configuration by scenario\n\n### Individual local use (Pupa desktop)\n\n- Database: SQLite (default)\n- Workspace: a local directory\n- Security: limit sensitive paths reasonably\n- Tools: open them as needed\n\n### Team collaboration (Hull server)\n\n- Database: PostgreSQL\n- Workspace: network storage (persistent)\n- Security: configure keys and path limits strictly\n- Tools: assign permissions by role\n","source_path":"使用说明书/en/capabilities/config.md"}</script>
+</body>
+</html>

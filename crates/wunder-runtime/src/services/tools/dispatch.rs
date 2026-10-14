@@ -10,9 +10,7 @@ use super::schedule_task_tool;
 use super::search_content_tool::search_content;
 use super::sessions_yield_tool;
 use super::skill_call;
-use super::{
-    browser_tool, desktop_control, read_image_tool, web_fetch_tool, web_search_tool,
-};
+use super::{browser_tool, desktop_control, read_image_tool, web_fetch_tool, web_search_tool};
 use super::{
     execute_mcp_tool, execute_memory_manager_tool, execute_thread_control_tool, execute_user_tool,
     is_mcp_tool_name, self_status_tool, subagent_control,

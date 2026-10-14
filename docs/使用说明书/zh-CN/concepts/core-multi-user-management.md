@@ -67,6 +67,6 @@ updated_at: 2026-10-13
 
 ## 相关页面
 
-- [舰桥面板指南](/docs/zh-CN/reference/admin-panels/) —— 用户管理、单位管理操作
+- [舰桥面板指南](/docs/zh-CN/capabilities/admin-panels/) —— 用户管理、单位管理操作
 - [Token 与配额](/docs/zh-CN/concepts/quota-and-token-usage/) —— 计量口径细节
-- [三端互通](/docs/zh-CN/reference/interlink/) —— 本地设备接入舰体的治理面
+- [三端互通](/docs/zh-CN/capabilities/interlink/) —— 本地设备接入舰体的治理面

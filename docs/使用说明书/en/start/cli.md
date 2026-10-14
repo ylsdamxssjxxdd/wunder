@@ -134,7 +134,10 @@ There are **no** `cloud`, `cron`, `channel`, `memory`, or `knowledge` slash comm
 | `F3` | View output and select a card |
 | `Enter` (in the F3 panel) | Expand / collapse |
 | `F2` | Run reminders |
-| `F4` | Toggle mouse mode |
+| Mouse click | Select a card; click its Show details / Show less row to fold or unfold; click in the composer to place the caret |
+| Mouse drag / double click / triple click | Drag copies the marked rows, a double click takes the word under the pointer, a triple click the whole line; right click re-copies whatever is still marked |
+| `Ctrl` + click a link | Open that http/https/file href with the system's default program |
+| `F4` | Toggle mouse mode: capture (app handles clicks and the wheel) ↔ native (the terminal keeps selection, copy and its own wheel) |
 | `?` | Shortcut panel |
 | `←` | Task center |
 

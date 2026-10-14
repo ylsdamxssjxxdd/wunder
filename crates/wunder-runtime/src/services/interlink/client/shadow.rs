@@ -410,9 +410,15 @@ impl ShadowCollector {
     /// Start a fresh connection: the first `shadow_full` is revision 1 and the
     /// merge window forgets whatever it had queued (docs §6.2 1).
     pub fn reset(&self, minimal: bool) -> i64 {
-        *self.minimal.write().expect("shadow collector lock poisoned") = minimal;
+        *self
+            .minimal
+            .write()
+            .expect("shadow collector lock poisoned") = minimal;
         *self.dirty.write().expect("shadow collector lock poisoned") = Sections::empty();
-        *self.signals.write().expect("shadow collector lock poisoned") = Signals::default();
+        *self
+            .signals
+            .write()
+            .expect("shadow collector lock poisoned") = Signals::default();
         self.revision.store(1, Ordering::Release);
         1
     }
@@ -442,14 +448,21 @@ impl ShadowCollector {
     }
 
     pub fn has_dirty(&self) -> bool {
-        !self.dirty.read().expect("shadow collector lock poisoned").is_empty()
+        !self
+            .dirty
+            .read()
+            .expect("shadow collector lock poisoned")
+            .is_empty()
     }
 
     /// Compare the cheap signals against the last sample and flag what moved.
     pub fn refresh_signals(&self, tree_version: u64, active_threads: u64) -> Sections {
         let mut changed = Sections::empty();
         {
-            let mut signals = self.signals.write().expect("shadow collector lock poisoned");
+            let mut signals = self
+                .signals
+                .write()
+                .expect("shadow collector lock poisoned");
             if signals.tree_version != tree_version {
                 changed = changed.union(Sections::WORKSPACE);
                 signals.tree_version = tree_version;
@@ -587,7 +600,10 @@ fn live_durations(state: &Arc<AppState>) -> HashMap<String, i64> {
         let Some(id) = record.get("session_id").and_then(Value::as_str) else {
             continue;
         };
-        let elapsed = record.get("elapsed_s").and_then(Value::as_f64).unwrap_or(0.0);
+        let elapsed = record
+            .get("elapsed_s")
+            .and_then(Value::as_f64)
+            .unwrap_or(0.0);
         out.insert(id.to_string(), (elapsed * 1_000.0).max(0.0) as i64);
     }
     out
@@ -653,7 +669,10 @@ async fn workspace_records(
     only: Option<&str>,
 ) -> Vec<wunder_core::storage_records::WorkspaceRecord> {
     let owner = local_user_id.to_string();
-    let filter = only.map(str::trim).filter(|value| !value.is_empty()).map(str::to_string);
+    let filter = only
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
     let state = Arc::clone(state);
     let records = blocking::run_db("interlink.client.shadow_workspaces", move || {
         state.storage.list_workspaces(&owner)
@@ -732,7 +751,8 @@ pub async fn gather_workspace(
         return (json!({ "workspaces": [entry], "roots": 1 }), truncated);
     }
     let count = records.len();
-    let per_workspace = (limits.max_entries / count).clamp(WORKSPACE_MIN_ENTRIES, limits.max_entries);
+    let per_workspace =
+        (limits.max_entries / count).clamp(WORKSPACE_MIN_ENTRIES, limits.max_entries);
     let mut entries = Vec::with_capacity(count);
     let mut used = 0usize;
     for record in &records {
@@ -759,16 +779,26 @@ pub async fn gather_workspace(
         truncated |= entry_truncated;
         used += entry["tree"].as_array().map(Vec::len).unwrap_or(0);
         entry["workspace_id"] = json!(record.workspace_id);
-        entry["name"] = json!(record.name.chars().take(WORKSPACE_NAME_MAX_CHARS).collect::<String>());
+        entry["name"] = json!(record
+            .name
+            .chars()
+            .take(WORKSPACE_NAME_MAX_CHARS)
+            .collect::<String>());
         entries.push(entry);
     }
-    (json!({ "workspaces": entries, "roots": entries.len() }), truncated)
+    (
+        json!({ "workspaces": entries, "roots": entries.len() }),
+        truncated,
+    )
 }
 
 async fn usage_summary(state: &Arc<AppState>, scope: &str) -> Value {
     let workspace = state.workspace.clone();
     let owner = scope.to_string();
-    match workspace.workspace_usage_summary_async(&owner, ".", 1).await {
+    match workspace
+        .workspace_usage_summary_async(&owner, ".", 1)
+        .await
+    {
         Ok(summary) => json!({
             "files": summary.files,
             "dirs": summary.dirs,

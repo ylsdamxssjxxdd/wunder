@@ -598,6 +598,23 @@
   overflow: hidden;
 }
 
+.tt-overview-open {
+  flex: none;
+  padding: 1px 6px;
+  border: 0.5px solid var(--tt-brand-dim);
+  border-radius: var(--tt-radius-xs);
+  background: var(--tt-brand-faint);
+  color: var(--tt-brand);
+  font: inherit;
+  font-size: 10px;
+  line-height: 16px;
+  cursor: pointer;
+}
+
+.tt-overview-open:hover {
+  background: rgba(65, 118, 230, 0.16);
+}
+
 .tt-record-text {
   overflow: hidden;
   text-overflow: ellipsis;

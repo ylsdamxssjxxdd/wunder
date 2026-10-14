@@ -1,6 +1,6 @@
 ---
 title: Manual Overview
-summary: The manual's navigation page: start from the Pupa and move into the interface map, other forms, and reference as needed. Every page in the start and surfaces groups is here.
+summary: The manual's navigation page: start from the Pupa and move into the interface map, other forms, and capabilities as needed. Every page in the start and surfaces groups is here.
 read_when:
   - You want the map of the whole manual and where to enter it
   - You are troubleshooting and need to jump to the right form's page
@@ -87,12 +87,12 @@ Individual users need only the Pupa by default; the following are needed only fo
 - [Help center](/docs/en/help/)
 - [Troubleshooting](/docs/en/help/troubleshooting/)
 - [FAQ](/docs/en/help/faq/)
-- [Configuration reference](/docs/en/reference/config/)
+- [Configuration reference](/docs/en/capabilities/config/)
 
 ## Documentation ecosystem
 
 - [Documentation directory](/docs/en/start/docs-directory/): how the manual / design docs / technical manual / API reference / performance standards and scoring / changelog / lessons-learned divide the work and how to read them
-- [API index](/docs/en/reference/api-index/)
+- [API index](/docs/en/capabilities/api-index/)
 
 ## Home
 

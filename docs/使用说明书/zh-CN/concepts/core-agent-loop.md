@@ -76,4 +76,4 @@ updated_at: 2026-10-13
 - [上下文压缩](/docs/zh-CN/concepts/core-context-compression/) —— 循环里的第二步
 - [稳定性](/docs/zh-CN/concepts/core-stability/) —— 失败与恢复设计
 - [边界处理](/docs/zh-CN/concepts/boundary-handling/) —— 截断、超时与拒绝
-- [会话状态说明](/docs/zh-CN/reference/stream-events/) —— 状态与事件字段
+- [会话状态说明](/docs/zh-CN/capabilities/stream-events/) —— 状态与事件字段

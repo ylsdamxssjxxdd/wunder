@@ -1328,14 +1328,18 @@ mod tests {
 
     #[test]
     fn skills_protocol_requires_loading_matched_skill_first() {
-        let zh = std::fs::read_to_string("config/prompts/zh/system/skills_protocol.txt")
+        let prompt_root =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../config/prompts");
+        let zh = std::fs::read_to_string(prompt_root.join("zh/system/skills_protocol.txt"))
             .expect("zh skills protocol");
-        assert!(zh.contains("首个相关动作必须调用“技能调用”"));
-        assert!(zh.contains("Frontmatter 是触发依据"));
+        assert!(zh.contains("第一个工具调用必须是“技能调用”"));
+        assert!(zh.contains("不得先调用列出文件、搜索内容"));
+        assert!(zh.contains("任务意图命中技能 Frontmatter"));
 
-        let en = std::fs::read_to_string("config/prompts/en/system/skills_protocol.txt")
+        let en = std::fs::read_to_string(prompt_root.join("en/system/skills_protocol.txt"))
             .expect("en skills protocol");
-        assert!(en.contains("first relevant action must be to call the skill tool"));
-        assert!(en.contains("Skill Frontmatter is the trigger source of truth"));
+        assert!(en.contains("the first tool call must be the skill tool"));
+        assert!(en.contains("do not call file listing, search"));
+        assert!(en.contains("the task intent matches a skill's Frontmatter"));
     }
 }

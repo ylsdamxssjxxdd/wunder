@@ -16,7 +16,12 @@ pub const CLIENT_CLI: &str = "cli";
 /// Map a session scope (`user_web` / `admin_web` / `local_desktop` / `local_cli`
 /// / `default` / custom) to a presence client kind.
 pub fn client_kind_from_scope(scope: Option<&str>) -> &'static str {
-    match scope.map(str::trim).unwrap_or("").to_ascii_lowercase().as_str() {
+    match scope
+        .map(str::trim)
+        .unwrap_or("")
+        .to_ascii_lowercase()
+        .as_str()
+    {
         "local_desktop" => CLIENT_DESKTOP,
         "local_cli" => CLIENT_CLI,
         _ => CLIENT_WEB,
@@ -57,7 +62,10 @@ struct UserConnectionEntry {
 
 impl UserConnectionEntry {
     fn count_kind(&self, kind: &str) -> usize {
-        self.connections.values().filter(|value| **value == kind).count()
+        self.connections
+            .values()
+            .filter(|value| **value == kind)
+            .count()
     }
 }
 
@@ -175,9 +183,7 @@ impl ConnectionPresenceService {
         };
         self.gc_if_needed(&mut guard, now);
         guard.entries.remove(&cleaned);
-        guard
-            .connection_owners
-            .retain(|_, owner| owner != &cleaned);
+        guard.connection_owners.retain(|_, owner| owner != &cleaned);
     }
 
     pub fn snapshot(&self, user_id: &str, now: f64) -> Option<UserPresenceView> {
@@ -222,7 +228,8 @@ impl ConnectionPresenceService {
         let has_connections = !entry.connections.is_empty();
         let within_ttl = elapsed <= self.online_ttl_secs;
         let kind_online = |kind: &str| {
-            entry.count_kind(kind) > 0 || (!has_connections && within_ttl && entry.last_kind == kind)
+            entry.count_kind(kind) > 0
+                || (!has_connections && within_ttl && entry.last_kind == kind)
         };
         UserPresenceView {
             online: has_connections || within_ttl,

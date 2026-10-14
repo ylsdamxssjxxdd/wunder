@@ -1,20 +1,21 @@
 import { I18n } from "i18n.slint";
 import { Theme, ChatAttachment, ModelCard, PlanStep, InquiryQuestion, QueueTurn, DraftRecall } from "theme.slint";
-import { Action, TerminalAction } from "components.slint";
+import { Action } from "components.slint";
+import { ListView } from "std-widgets.slint";
 import { TextEditBase } from "textedit-base.slint";
 import { DragPreview } from "drag_row.slint";
 
 // Slint has neither top-level functions nor module-level constants, so the
-// reasoning ladder lives in a global. Model search deliberately does *not* live
-// here: Slint 1.18 strings offer only is-empty/to-lowercase/starts-with/
-// ends-with/replace-all, with no substring test, so filtering is projected from
-// Rust and the popover only renders what it is handed.
+// reasoning ladder lives in a global. The ladder is split in two rows because
+// the popover's pill row wraps on the web and Slint has no wrapping layout.
 export global EffortOptions {
-    out property <[{ value: string, label: string }]> all: [
+    out property <[{ value: string, label: string }]> pills-a: [
         { value: "default", label: I18n.cp_effort_default },
         { value: "none", label: I18n.cp_effort_none },
         { value: "minimal", label: I18n.cp_effort_minimal },
-        { value: "low", label: I18n.cp_effort_low },
+        { value: "low", label: I18n.cp_effort_low }
+    ];
+    out property <[{ value: string, label: string }]> pills-b: [
         { value: "medium", label: I18n.cp_effort_medium },
         { value: "high", label: I18n.cp_effort_high },
         { value: "xhigh", label: I18n.cp_effort_xhigh }
@@ -32,121 +33,165 @@ export global EffortOptions {
     }
 }
 
-// §8.3 model switcher: a trigger in the toolbar plus a popover that sits above
-// the input box. Selection applies to the active thread immediately through the
-// existing set-default-model / reasoning-effort callbacks.
+// Six-dot spinner shared by the status dock and the model trigger; the
+// software renderer has no transform-rotate, so the dot ring is rotated
+// mathematically with the web's 1.48s period (same approach as RuntimeBadge).
+component DockSpinner inherits Rectangle {
+    in property <color> tint: Theme.accent;
+    width: 12px; height: 12px;
+    private property <angle> phase: mod(animation-tick(), 1480ms) / 1480ms * 360deg;
+    for offset in [{x: 0.0, y: -4.1}, {x: 3.55, y: -2.05}, {x: 3.55, y: 2.05}, {x: 0.0, y: 4.1}, {x: -3.55, y: 2.05}, {x: -3.55, y: -2.05}] : Rectangle {
+        x: (parent.width - 3.4px) / 2 + (offset.x * cos(root.phase) - offset.y * sin(root.phase)) * 1px;
+        y: (parent.height - 3.4px) / 2 + (offset.x * sin(root.phase) + offset.y * cos(root.phase)) * 1px;
+        width: 3.4px; height: 3.4px; border-radius: 1.7px; background: root.tint;
+    }
+}
+
+// §8.3 model switcher, 对齐蜂巢 ChatComposer: the model button and the context
+// gauge are one control — the trigger's brain glyph fills with the used share
+// of the window — and the popover carries the numbers, the catalogue and the
+// reasoning-effort pills. Selection applies to the active thread immediately
+// through the existing select-model / reasoning-effort callbacks.
 component ModelPicker inherits Rectangle {
     in property <[ModelCard]> models: [];
-    // True while the catalogue itself is non-empty; `models` is the *filtered*
-    // view, so an empty result must not be mistaken for "no models configured".
+    // True while the catalogue itself is non-empty.
     in property <bool> has-catalogue: false;
     in property <string> current-name: "";
-    // Index of the model the thread currently uses, or -1. Computed by the
-    // settings projection: Slint functions cannot scan a model.
-    in property <int> active-index: -1;
+    // Key of the model the thread currently uses; the popover marks it.
     in property <string> current-key: "";
     // Cloud session is usable: signed in and not expired (§4.3.5). Cloud
     // entries grey out and refuse selection while this is false.
     in property <bool> cloud-ready: true;
+    // Context gauge of the active thread: the trigger's brain fills with it,
+    // the popover spells out the counts.
+    in property <float> context-usage: 0.0;
+    in property <bool> context-known: false;
+    in property <string> context-counts;
     in-out property <string> effort: "default";
     in property <bool> saving: false;
     callback select-model(int, string);
-    callback set-default-model(string);
     callback effort-changed(string);
     callback open-settings();
-    // Slint cannot test a substring, so the query is projected out and the
-    // filtered catalogue comes back in `models`.
-    callback search-models(string);
     in-out property <bool> open: false;
-    private property <string> query: "";
-    changed query => { root.search-models(root.query); }
     height: 30px;
+    // Explicit content width: 8px padding each side + 16px brain + 2×6px
+    // spacing + 10px chevron, plus the measured name (eliding past 180px like
+    // the web trigger's max-width). Hand-written on purpose: a plain Rectangle
+    // does not propagate a child layout's preferred width, and hidden
+    // measurement texts would otherwise become the width.
+    width: 54px + min(model-label.preferred-width, 180px);
+    // The hidden measurement text mirrors the visible fallback so the name
+    // elides past 180px like the web trigger's max-width.
+    model-label := Text {
+        text: root.has-catalogue && root.current-name != "" ? root.current-name : I18n.cp_model_none;
+        font-size: Theme.font-md; font-weight: 600; visible: false;
+    }
+
+    private property <float> fill: min(1.0, max(0.0, root.context-usage));
+    private property <color> usage-color: root.context-usage >= 0.9 ? Theme.danger
+        : root.context-usage >= 0.75 ? Theme.warning : Theme.accent;
 
     trigger := Rectangle {
         x: 0px; y: 0px; width: parent.width; height: parent.height;
         border-radius: Theme.radius-sm;
-        background: trigger-touch.has-hover || root.open ? Theme.hover : transparent;
+        background: root.open ? Theme.accent-soft : trigger-touch.has-hover ? Theme.hover : transparent;
         accessible-role: button;
         accessible-label: I18n.cp_model_pick;
         accessible-action-default => { root.open = !root.open; }
-        Image {
-            x: 8px; y: 7px; width: 16px; height: 16px;
-            source: @image-url("../assets/icons/robot.svg");
-            colorize: root.has-catalogue ? Theme.muted : Theme.border-strong;
-            image-fit: contain;
+        HorizontalLayout {
+            padding-left: 8px; padding-right: 8px; spacing: 6px;
+            // 液位大脑：占用越高填充越满，接近上限转警示色。布局行对固定高度
+            // 的子元素是顶部对齐，所以图标住自己的全高格子再垂直居中。
+            Rectangle {
+                width: 16px; height: parent.height;
+                property <length> glyph-y: (self.height - 16px) / 2;
+                Image {
+                    x: 0px; y: parent.glyph-y; width: 16px; height: 16px;
+                    source: @image-url("../assets/icons/brain.svg"); colorize: Theme.muted;
+                }
+                Rectangle {
+                    x: 0px; y: parent.glyph-y + 16px - 16px * root.fill;
+                    width: 16px; height: 16px * root.fill; clip: true;
+                    Image {
+                        x: 0px; y: -16px * (1.0 - root.fill);
+                        width: 16px; height: 16px;
+                        source: @image-url("../assets/icons/brain.svg"); colorize: root.usage-color;
+                    }
+                }
+            }
+            Text {
+                width: min(model-label.preferred-width, 180px);
+                height: parent.height;
+                text: root.has-catalogue && root.current-name != "" ? root.current-name : I18n.cp_model_none;
+                color: root.has-catalogue ? Theme.text : Theme.muted;
+                font-size: Theme.font-md; font-weight: 600;
+                vertical-alignment: center; overflow: elide;
+            }
+            // 切换中转圈，静止时是下拉箭头（对齐蜂巢 composer-model-spinner）。
+            if root.saving : Rectangle {
+                width: 12px; height: parent.height;
+                DockSpinner { y: (parent.height - self.height) / 2; }
+            }
+            if !root.saving : Rectangle {
+                width: 10px; height: parent.height;
+                Image {
+                    y: (parent.height - 10px) / 2;
+                    width: 10px; height: 10px;
+                    source: @image-url("../assets/icons/chevron-down.svg");
+                    colorize: Theme.muted; image-fit: contain;
+                }
+            }
         }
-        Text {
-            x: 30px; y: 0px; height: parent.height;
-            width: trigger-label.preferred-width;
-            text: root.has-catalogue ? (root.current-name != "" ? root.current-name : I18n.cp_model_none) : I18n.cp_model_none;
-            color: root.has-catalogue ? Theme.text : Theme.muted;
-            font-size: Theme.font-md; font-weight: 600;
-            vertical-alignment: center; overflow: elide;
+        trigger-touch := TouchArea {
+            x: 0px; y: 0px; width: parent.width; height: parent.height;
+            mouse-cursor: pointer;
+            clicked => { root.open = !root.open; }
         }
-        trigger-label := Text { text: root.current-name; font-size: Theme.font-md; font-weight: 600; visible: false; }
-        Text {
-            x: 36px + trigger-label.preferred-width; y: 0px; height: parent.height;
-            text: EffortOptions.short(root.effort);
-            color: Theme.muted; font-size: Theme.font-xs;
-            vertical-alignment: center;
-            visible: root.has-catalogue;
-        }
-        Image {
-            x: parent.width - 16px; y: 10px; width: 10px; height: 10px;
-            source: @image-url("../assets/icons/chevron-down.svg");
-            colorize: Theme.muted; image-fit: contain;
-        }
-    }
-    trigger-touch := TouchArea {
-        x: 0px; y: 0px; width: parent.width; height: parent.height;
-        mouse-cursor: pointer;
-        clicked => { root.open = !root.open; }
     }
 
-    // The popover is anchored to the trigger but drawn upward, which is why it
-    // carries a negative y: it must clear the input box above the toolbar.
+    // Popover anchored to the trigger's right edge and drawn upward so it
+    // clears the input card above the action row. 对齐蜂巢 ModelPickerPopover：
+    // 顶部上下文行 → 可滚动模型列表 → 底部推理力度 pills。
     if root.open : Rectangle {
-        x: parent.width - 300px; y: -352px; width: 300px; height: 342px;
-        z: 30; border-radius: Theme.radius-lg; background: Theme.surface;
+        x: parent.width - 300px;
+        y: -self.height - 8px;
+        width: 300px; height: 340px;
+        z: 30;
+        border-radius: Theme.radius-lg; background: Theme.surface;
         border-width: 1px; border-color: Theme.border;
         drop-shadow-color: #00000024; drop-shadow-blur: 16px; drop-shadow-offset-y: 3px;
         VerticalLayout {
-            padding: 10px; spacing: 8px;
-            // Search field.
-            Rectangle {
-                height: 30px; border-radius: Theme.radius-sm;
-                background: Theme.panel; border-width: 1px; border-color: Theme.border;
-                Image {
-                    x: 8px; y: 8px; width: 13px; height: 13px;
-                    source: @image-url("../assets/icons/magnifying-glass.svg");
-                    colorize: Theme.muted; image-fit: contain;
-                }
-                search := TextInput {
-                    x: 28px; y: 0px; width: parent.width - 36px; height: parent.height;
-                    text <=> root.query;
-                    single-line: true;
-                    font-size: Theme.font-md; color: Theme.text;
+            padding: 8px; spacing: 6px;
+            // 上下文占用：浮层顶部只给数字（进度条已下线，接近上限转警示色）。
+            HorizontalLayout {
+                height: 20px;
+                Text {
+                    text: I18n.cp_model_context;
+                    color: Theme.muted; font-size: Theme.font-xs; font-weight: 600;
                     vertical-alignment: center;
                 }
-                if root.query == "" : Text {
-                    x: 28px; y: 0px; width: parent.width - 36px; height: parent.height;
-                    text: I18n.cp_model_search; color: Theme.muted; font-size: Theme.font-md;
-                    vertical-alignment: center;
+                Text {
+                    horizontal-stretch: 1; min-width: 0px;
+                    text: root.context-known
+                        ? root.context-counts + " · " + round(root.fill * 100.0) + "%" : "—";
+                    color: !root.context-known ? Theme.text-secondary
+                        : root.context-usage >= 0.9 ? Theme.danger
+                        : root.context-usage >= 0.75 ? Theme.warning : Theme.text-secondary;
+                    font-size: Theme.font-xs;
+                    horizontal-alignment: right; vertical-alignment: center; overflow: elide;
                 }
             }
-            // An empty result under a live query is not "no models configured",
-            // which is why this tests the model count rather than the catalogue
-            // flag alone.
-            if !root.has-catalogue || root.models.length == 0 : Rectangle {
+            Rectangle { height: 1px; background: Theme.border; }
+            if !root.has-catalogue : Rectangle {
                 vertical-stretch: 1; border-radius: Theme.radius-sm; background: Theme.panel;
                 VerticalLayout {
                     alignment: center; padding: 16px; spacing: 10px;
                     Text {
-                        text: root.query != "" ? I18n.cp_model_no_match : I18n.cp_model_empty;
+                        text: I18n.cp_model_empty;
                         color: Theme.muted; font-size: Theme.font-sm;
                         horizontal-alignment: center; wrap: word-wrap;
                     }
-                    if !root.has-catalogue : Rectangle {
+                    Rectangle {
                         width: 132px; height: 28px; border-radius: Theme.radius-sm;
                         background: empty-touch.has-hover ? Theme.accent-soft : Theme.surface;
                         border-width: 1px; border-color: Theme.border;
@@ -155,138 +200,117 @@ component ModelPicker inherits Rectangle {
                     }
                 }
             }
-            if root.has-catalogue && root.models.length > 0 : Rectangle {
-                vertical-stretch: 1; clip: true;
-                VerticalLayout {
-                    alignment: start; spacing: 0px;
-                    for model[index] in root.models : Rectangle {
-                        height: 38px; border-radius: Theme.radius-sm;
-                        background: row-touch.has-hover ? Theme.hover : transparent;
-                        accessible-role: list-item;
-                        accessible-label: model.model;
-                        // Cloud entries (`cloud/<id>`) stay listed while signed
-                        // out or expired, but grey out and stay unselectable
-                        // until the session returns.
-                        property <bool> cloud-muted: model.is-cloud && !root.cloud-ready;
-                        accessible-action-default => { if !cloud-muted { root.select-model(index, model.key); root.open = false; } }
-                        Image {
-                            x: 10px; y: 11px; width: 16px; height: 16px;
-                            source: @image-url("../assets/icons/robot.svg");
-                            colorize: cloud-muted ? Theme.border : (model.key == root.current-key ? Theme.accent : Theme.muted);
-                            image-fit: contain;
-                        }
-                        Text {
-                            x: 34px; y: 4px; width: parent.width - 74px; height: 17px;
-                            text: model.model != "" ? model.model : model.key;
-                            color: cloud-muted ? Theme.muted : Theme.text; font-size: Theme.font-md; font-weight: 600;
-                            vertical-alignment: center; overflow: elide;
-                        }
-                        Text {
-                            x: 34px; y: 21px; width: parent.width - 74px; height: 15px;
-                            text: cloud-muted ? I18n.st_cl_login_needed : model.provider + (model.model-type != "" ? " · " + model.model-type : "");
-                            color: Theme.muted; font-size: Theme.font-xs;
-                            vertical-alignment: center; overflow: elide;
-                        }
-                        if model.is-default : Rectangle {
-                            x: parent.width - 74px; y: 11px; width: 34px; height: 16px;
-                            border-radius: 8px; background: Theme.accent-soft;
-                            Text { width: parent.width; height: parent.height; text: I18n.cp_model_default_tag; color: Theme.accent; font-size: Theme.font-2xs; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
-                        }
-                        // A cloud model is never the default (the engine keeps
-                        // the default pinned to a local entry), so the badge
-                        // reuses the default-tag slot.
-                        if model.is-cloud : Rectangle {
-                            x: parent.width - 74px; y: 11px; width: 24px; height: 16px;
-                            border-radius: 8px; background: Theme.accent-soft;
-                            Text { width: parent.width; height: parent.height; text: I18n.st_cl_badge; color: Theme.accent; font-size: Theme.font-2xs; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
-                        }
-                        if model.key == root.current-key : Image {
-                            x: parent.width - 30px; y: 11px; width: 16px; height: 16px;
-                            source: @image-url("../assets/icons/check.svg");
-                            colorize: Theme.accent; image-fit: contain;
-                        }
-                        row-touch := TouchArea {
-                            x: 0px; y: 0px; width: parent.width; height: parent.height;
-                            enabled: !cloud-muted;
-                            mouse-cursor: cloud-muted ? MouseCursor.default : MouseCursor.pointer;
-                            clicked => { root.select-model(index, model.key); root.open = false; }
-                        }
-                    }
-                }
-            }
-            Rectangle { height: 1px; background: Theme.border; }
-            Text { height: 16px; text: I18n.cp_model_effort; color: Theme.muted; font-size: Theme.font-xs; font-weight: 700; vertical-alignment: center; }
-            HorizontalLayout {
-                height: 30px; spacing: 4px;
-                for option in EffortOptions.all : Rectangle {
-                    horizontal-stretch: 1; min-width: 0px;
+            if root.has-catalogue : list := ListView {
+                vertical-stretch: 1;
+                for model[index] in root.models : Rectangle {
+                    height: 40px;
+                    width: list.visible-width;
                     border-radius: Theme.radius-sm;
-                    background: root.effort == option.value ? Theme.accent-soft : effort-touch.has-hover ? Theme.hover : Theme.panel;
-                    border-width: 1px;
-                    border-color: root.effort == option.value ? Theme.accent : Theme.border;
-                    accessible-role: button;
-                    accessible-label: option.label;
-                    accessible-action-default => { root.effort = option.value; root.effort-changed(option.value); }
-                    Text {
-                        width: parent.width; height: parent.height;
-                        text: EffortOptions.short(option.value);
-                        color: root.effort == option.value ? Theme.accent : Theme.text-secondary;
-                        font-size: Theme.font-sm; font-weight: root.effort == option.value ? 700 : 400;
-                        horizontal-alignment: center; vertical-alignment: center;
+                    background: row-touch.has-hover ? Theme.hover : transparent;
+                    accessible-role: list-item;
+                    accessible-label: model.model;
+                    // Cloud entries (`cloud/<id>`) stay listed while signed
+                    // out or expired, but grey out and stay unselectable
+                    // until the session returns.
+                    property <bool> cloud-muted: model.is-cloud && !root.cloud-ready;
+                    accessible-action-default => { if !cloud-muted { root.select-model(index, model.key); root.open = false; } }
+                    if model.key == root.current-key : Image {
+                        x: 8px; y: 14px; width: 12px; height: 12px;
+                        source: @image-url("../assets/icons/check.svg");
+                        colorize: Theme.accent; image-fit: contain;
                     }
-                    effort-touch := TouchArea { mouse-cursor: pointer; clicked => { root.effort = option.value; root.effort-changed(option.value); } }
+                    Image {
+                        x: 26px; y: 13px; width: 14px; height: 14px;
+                        source: @image-url("../assets/icons/robot.svg");
+                        colorize: cloud-muted ? Theme.border : (model.key == root.current-key ? Theme.accent : Theme.muted);
+                        image-fit: contain;
+                    }
+                    Text {
+                        x: 48px; y: 4px; width: parent.width - 122px; height: 17px;
+                        text: model.model != "" ? model.model : model.key;
+                        color: cloud-muted ? Theme.muted : (model.key == root.current-key ? Theme.accent : Theme.text);
+                        font-size: Theme.font-md; font-weight: 600;
+                        vertical-alignment: center; overflow: elide;
+                    }
+                    Text {
+                        x: 48px; y: 21px; width: parent.width - 122px; height: 15px;
+                        text: cloud-muted ? I18n.st_cl_login_needed : model.provider + (model.model-type != "" ? " · " + model.model-type : "");
+                        color: Theme.muted; font-size: Theme.font-xs;
+                        vertical-alignment: center; overflow: elide;
+                    }
+                    if model.is-default : Rectangle {
+                        x: parent.width - 74px; y: 12px; width: 34px; height: 16px;
+                        border-radius: 8px; background: Theme.accent-soft;
+                        Text { width: parent.width; height: parent.height; text: I18n.cp_model_default_tag; color: Theme.accent; font-size: Theme.font-2xs; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                    }
+                    // A cloud model is never the default (the engine keeps
+                    // the default pinned to a local entry), so the badge
+                    // reuses the default-tag slot.
+                    if model.is-cloud : Rectangle {
+                        x: parent.width - 74px; y: 12px; width: 24px; height: 16px;
+                        border-radius: 8px; background: Theme.accent-soft;
+                        Text { width: parent.width; height: parent.height; text: I18n.st_cl_badge; color: Theme.accent; font-size: Theme.font-2xs; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                    }
+                    row-touch := TouchArea {
+                        x: 0px; y: 0px; width: parent.width; height: parent.height;
+                        enabled: !cloud-muted;
+                        mouse-cursor: cloud-muted ? MouseCursor.default : MouseCursor.pointer;
+                        clicked => { root.select-model(index, model.key); root.open = false; }
+                    }
                 }
             }
-        }
-    }
-}
-
-// The brain glyph doubles as the context-usage gauge (§8.5): the filled part
-// rises with the used share of the window.
-export component ContextUsageIcon inherits Rectangle {
-    in property <float> usage: 0.0;
-    in property <bool> known: false;
-    in property <string> counts;
-    in-out property <bool> open: false;
-    width: 24px; height: 30px;
-    accessible-role: button;
-    accessible-label: I18n.cp_context_usage;
-    accessible-action-default => { root.open = !root.open; }
-    private property <color> usage-color: root.usage >= 0.9 ? Theme.danger : root.usage >= 0.75 ? Theme.warning : Theme.accent;
-    Image {
-        x: 3px; y: 6px; width: 18px; height: 18px;
-        source: @image-url("../assets/icons/brain.svg"); colorize: Theme.muted;
-    }
-    Rectangle {
-        x: 3px; y: 24px - 18px * root.usage;
-        width: 18px; height: 18px * root.usage; clip: true;
-        Image {
-            y: -18px * (1.0 - root.usage); width: 18px; height: 18px;
-            source: @image-url("../assets/icons/brain.svg"); colorize: root.usage-color;
-        }
-    }
-    touch := TouchArea { mouse-cursor: pointer; clicked => { root.open = !root.open; } }
-    // Activate the hover bridge only while visible; it must never eat editor input.
-    panel-hover := TouchArea {
-        x: -202px; y: -306px; width: 226px; height: 310px;
-        enabled: root.open || touch.has-hover || self.has-hover;
-    }
-    if root.open || touch.has-hover || panel-hover.has-hover : Rectangle {
-        x: -202px; y: -216px; width: 226px; height: 208px;
-        z: 20; border-radius: 10px; background: Theme.surface;
-        border-width: 1px; border-color: Theme.border;
-        drop-shadow-color: #00000024; drop-shadow-blur: 16px; drop-shadow-offset-y: 3px;
-        VerticalLayout {
-            padding: 8px; spacing: 0px;
-            HorizontalLayout {
-                height: 24px; padding-left: 8px; padding-right: 8px;
-                Text { text: I18n.cp_context_usage; color: Theme.muted; font-size: 11px; font-weight: 700; }
-                Text { text: root.known ? round(root.usage * 100.0) + "%" : "—"; color: root.usage-color; font-size: 12px; font-weight: 700; horizontal-alignment: right; }
-            }
-            Text { height: 24px; text: root.counts != "" ? root.counts : I18n.cp_usage_empty; color: Theme.muted; font-size: 11px; }
             Rectangle { height: 1px; background: Theme.border; }
-            Text { height: 32px; text: I18n.cp_thinking_level; color: Theme.muted; font-size: 11px; font-weight: 700; vertical-alignment: center; }
-            Text { height: 100px; text: I18n.cp_usage_effort_hint; color: Theme.text-secondary; font-size: 11px; wrap: word-wrap; vertical-alignment: top; }
+            // 推理力度 pills：两行圆角胶囊（对齐蜂巢 composer-model-effort-item）。
+            VerticalLayout {
+                spacing: 4px;
+                Text {
+                    height: 14px; text: I18n.cp_model_effort;
+                    color: Theme.muted; font-size: Theme.font-xs; font-weight: 600;
+                    vertical-alignment: center;
+                }
+                HorizontalLayout {
+                    height: 24px; spacing: 4px;
+                    for option in EffortOptions.pills-a : Rectangle {
+                        width: pill-a-text.preferred-width + 18px;
+                        border-radius: 12px;
+                        background: root.effort == option.value ? Theme.accent-soft : pill-a-touch.has-hover ? Theme.hover : transparent;
+                        border-width: 1px;
+                        border-color: root.effort == option.value ? Theme.accent-soft : Theme.border;
+                        accessible-role: button;
+                        accessible-label: option.label;
+                        accessible-action-default => { root.effort = option.value; root.effort-changed(option.value); }
+                        pill-a-text := Text {
+                            x: 9px; width: self.preferred-width; height: parent.height;
+                            text: EffortOptions.short(option.value);
+                            color: root.effort == option.value ? Theme.accent : Theme.text-secondary;
+                            font-size: Theme.font-xs; font-weight: root.effort == option.value ? 600 : 400;
+                            vertical-alignment: center;
+                        }
+                        pill-a-touch := TouchArea { mouse-cursor: pointer; clicked => { root.effort = option.value; root.effort-changed(option.value); } }
+                    }
+                }
+                HorizontalLayout {
+                    height: 24px; spacing: 4px;
+                    for option in EffortOptions.pills-b : Rectangle {
+                        width: pill-b-text.preferred-width + 18px;
+                        border-radius: 12px;
+                        background: root.effort == option.value ? Theme.accent-soft : pill-b-touch.has-hover ? Theme.hover : transparent;
+                        border-width: 1px;
+                        border-color: root.effort == option.value ? Theme.accent-soft : Theme.border;
+                        accessible-role: button;
+                        accessible-label: option.label;
+                        accessible-action-default => { root.effort = option.value; root.effort-changed(option.value); }
+                        pill-b-text := Text {
+                            x: 9px; width: self.preferred-width; height: parent.height;
+                            text: EffortOptions.short(option.value);
+                            color: root.effort == option.value ? Theme.accent : Theme.text-secondary;
+                            font-size: Theme.font-xs; font-weight: root.effort == option.value ? 600 : 400;
+                            vertical-alignment: center;
+                        }
+                        pill-b-touch := TouchArea { mouse-cursor: pointer; clicked => { root.effort = option.value; root.effort-changed(option.value); } }
+                    }
+                }
+            }
         }
     }
 }
@@ -309,20 +333,6 @@ component GoalTool inherits Rectangle {
     hit := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
     accessible-role: button;
     accessible-label: root.tip;
-}
-
-// Six-dot spinner for the status dock; the software renderer has no
-// transform-rotate, so the dot ring is rotated mathematically with the web's
-// 1.48s period (same approach as RuntimeBadge, tint parameterized).
-component DockSpinner inherits Rectangle {
-    in property <color> tint: Theme.accent;
-    width: 12px; height: 12px;
-    private property <angle> phase: mod(animation-tick(), 1480ms) / 1480ms * 360deg;
-    for offset in [{x: 0.0, y: -4.1}, {x: 3.55, y: -2.05}, {x: 3.55, y: 2.05}, {x: 0.0, y: 4.1}, {x: -3.55, y: 2.05}, {x: -3.55, y: -2.05}] : Rectangle {
-        x: (parent.width - 3.4px) / 2 + (offset.x * cos(root.phase) - offset.y * sin(root.phase)) * 1px;
-        y: (parent.height - 3.4px) / 2 + (offset.x * sin(root.phase) + offset.y * cos(root.phase)) * 1px;
-        width: 3.4px; height: 3.4px; border-radius: 1.7px; background: root.tint;
-    }
 }
 
 // §StatusDock: the plan capsule above the goal banner. It exists only while the
@@ -693,10 +703,16 @@ export component GoalBanner inherits Rectangle {
         init => { goal-input.focus(); }
         HorizontalLayout {
             padding-left: 16px; padding-right: 10px; spacing: 8px;
-            Image {
-                width: 14px; height: 14px;
-                source: @image-url("../assets/icons/fa-bullseye.svg");
-                colorize: Theme.danger; image-fit: contain;
+            Rectangle {
+                width: 14px; height: parent.height;
+                // Layout rows top-align fixed-height children, so the glyph
+                // rides its own full-height cell and centers itself.
+                Image {
+                    y: (parent.height - 14px) / 2;
+                    width: 14px; height: 14px;
+                    source: @image-url("../assets/icons/fa-bullseye.svg");
+                    colorize: Theme.danger; image-fit: contain;
+                }
             }
             goal-input := TextInput {
                 height: parent.height;
@@ -723,10 +739,16 @@ export component GoalBanner inherits Rectangle {
         width: 100%; height: 100%;
         HorizontalLayout {
             padding-left: 16px; padding-right: 8px; spacing: 8px;
-            Image {
-                width: 14px; height: 14px;
-                source: @image-url("../assets/icons/fa-bullseye.svg");
-                colorize: Theme.danger; image-fit: contain;
+            Rectangle {
+                width: 14px; height: parent.height;
+                // Layout rows top-align fixed-height children, so the glyph
+                // rides its own full-height cell and centers itself.
+                Image {
+                    y: (parent.height - 14px) / 2;
+                    width: 14px; height: 14px;
+                    source: @image-url("../assets/icons/fa-bullseye.svg");
+                    colorize: Theme.danger; image-fit: contain;
+                }
             }
             Text {
                 text: I18n.cp_goal_label; color: Theme.danger;
@@ -966,6 +988,105 @@ export component QueueStrip inherits Rectangle {
     }
 }
 
+// Cascading submenus of the plus menu, 对齐蜂巢 ChatComposer: a 268px card
+// pops out to the right of its menu row, and the height follows the body so
+// every submenu is exactly as tall as its rows.
+component CommandFlyout inherits Rectangle {
+    callback pick(string);
+    width: 268px;
+    height: body.preferred-height;
+    border-radius: Theme.radius-md; background: Theme.surface;
+    border-width: 1px; border-color: Theme.border;
+    drop-shadow-color: #00000024; drop-shadow-blur: 16px; drop-shadow-offset-y: 3px;
+    body := VerticalLayout {
+        padding: 8px; spacing: 4px;
+        for command in [
+            { value: "/help", label: I18n.cp_cmd_help },
+            { value: "/new", label: I18n.cp_cmd_new },
+            { value: "/stop", label: I18n.cp_cmd_stop },
+            { value: "/goal ", label: I18n.cp_cmd_goal },
+            { value: "/compact", label: I18n.cp_cmd_compact }
+        ] : Rectangle {
+            height: 28px; border-radius: 5px;
+            background: cmd-touch.has-hover ? Theme.accent-soft : transparent;
+            accessible-role: list-item; accessible-label: command.label;
+            Text { x: 8px; width: parent.width - 16px; height: parent.height; text: command.label; color: Theme.text; font-size: Theme.font-2xs; vertical-alignment: center; overflow: elide; }
+            cmd-touch := TouchArea { mouse-cursor: pointer; clicked => { root.pick(command.value); } }
+        }
+    }
+}
+
+component PresetFlyout inherits Rectangle {
+    callback pick(string);
+    width: 268px;
+    height: body.preferred-height;
+    border-radius: Theme.radius-md; background: Theme.surface;
+    border-width: 1px; border-color: Theme.border;
+    drop-shadow-color: #00000024; drop-shadow-blur: 16px; drop-shadow-offset-y: 3px;
+    body := VerticalLayout {
+        padding: 8px; spacing: 4px;
+        Text { text: I18n.ag_preset_questions; color: Theme.text; font-size: Theme.font-xs; font-weight: 600; }
+        for preset in [I18n.cp_preset_q1, I18n.cp_preset_q2] : Rectangle {
+            height: 28px; border-radius: 5px;
+            background: preset-touch.has-hover ? Theme.accent-soft : transparent;
+            accessible-role: list-item; accessible-label: preset;
+            Text { x: 8px; width: parent.width - 16px; height: parent.height; text: preset; color: Theme.text; font-size: Theme.font-2xs; vertical-alignment: center; overflow: elide; }
+            preset-touch := TouchArea { mouse-cursor: pointer; clicked => { root.pick(preset); } }
+        }
+    }
+}
+
+component PermissionFlyout inherits Rectangle {
+    in property <string> mode;
+    callback changed(string);
+    width: 268px;
+    height: body.preferred-height;
+    border-radius: Theme.radius-md; background: Theme.surface;
+    border-width: 1px; border-color: Theme.border;
+    drop-shadow-color: #00000024; drop-shadow-blur: 16px; drop-shadow-offset-y: 3px;
+    body := VerticalLayout {
+        padding: 8px; spacing: 4px;
+        Text { text: I18n.cp_permission; color: Theme.text; font-size: Theme.font-xs; font-weight: 600; }
+        for option in [
+            { value: "full_auto", label: I18n.cp_permission_full },
+            { value: "auto_edit", label: I18n.cp_permission_write },
+            { value: "suggest", label: I18n.cp_permission_command }
+        ] : Rectangle {
+            height: 28px; border-radius: 5px;
+            background: root.mode == option.value ? Theme.accent-soft : perm-touch.has-hover ? Theme.hover : transparent;
+            accessible-role: list-item; accessible-label: option.label;
+            Text { x: 10px; width: parent.width - 18px; height: parent.height; text: option.label; color: root.mode == option.value ? Theme.accent : Theme.text; font-size: Theme.font-2xs; vertical-alignment: center; }
+            perm-touch := TouchArea { mouse-cursor: pointer; clicked => { root.changed(option.value); } }
+        }
+        Text { height: 54px; text: I18n.cp_permission_note; color: Theme.muted; font-size: Theme.font-2xs; wrap: word-wrap; vertical-alignment: top; }
+    }
+}
+
+component ScreenshotFlyout inherits Rectangle {
+    callback pick(bool, bool);
+    width: 268px;
+    height: body.preferred-height;
+    border-radius: Theme.radius-md; background: Theme.surface;
+    border-width: 1px; border-color: Theme.border;
+    drop-shadow-color: #00000024; drop-shadow-blur: 16px; drop-shadow-offset-y: 3px;
+    body := VerticalLayout {
+        padding: 8px; spacing: 4px;
+        Text { text: I18n.cp_screenshot_mode; color: Theme.text; font-size: Theme.font-xs; font-weight: 600; }
+        for option in [
+            { label: I18n.cp_shot_fullscreen_hidden, hide: true, region: false },
+            { label: I18n.cp_shot_region_hidden, hide: true, region: true },
+            { label: I18n.cp_shot_fullscreen_kept, hide: false, region: false },
+            { label: I18n.cp_shot_region_kept, hide: false, region: true }
+        ] : Rectangle {
+            height: 24px; border-radius: 5px;
+            background: shot-touch.has-hover ? Theme.accent-soft : transparent;
+            accessible-role: list-item; accessible-label: option.label;
+            Text { x: 8px; width: parent.width - 16px; height: parent.height; text: option.label; color: Theme.text; font-size: Theme.font-2xs; vertical-alignment: center; }
+            shot-touch := TouchArea { mouse-cursor: pointer; clicked => { root.pick(option.hide, option.region); } }
+        }
+    }
+}
+
 export component Composer inherits Rectangle {
     in-out property <string> draft <=> editor.text;
     in property <bool> busy: false;
@@ -985,23 +1106,22 @@ export component Composer inherits Rectangle {
     in property <string> context-counts;
     in-out property <string> reasoning-effort: "default";
     callback reasoning-effort-changed(string);
-    // §8.3: the toolbar owns the model switcher. The catalogue comes straight
-    // from the settings projection, so the picker needs no separate fetch.
+    // §8.3: the action row owns the model switcher. The catalogue comes
+    // straight from the settings projection, so the picker needs no separate
+    // fetch.
     in property <[ModelCard]> models: [];
-    // Size of the unfiltered catalogue; distinguishes "search found nothing"
-    // from "no models configured".
+    // True size of the catalogue; the picker only distinguishes "empty list"
+    // from "nothing configured".
     in property <int> model-catalogue-count: 0;
     in property <string> model-name: "";
-    // Key of the model the active thread uses; the popover marks it, and the
-    // filtered list is matched by key because indices shift under search.
+    // Key of the model the active thread uses; the popover marks the matching
+    // row by key because indices shift as the catalogue changes.
     in property <string> model-key: "";
     in property <bool> model-saving: false;
     // Cloud session usable (signed in, not expired); forwarded to the picker.
     in property <bool> cloud-ready: true;
     callback select-model(int, string);
-    callback set-default-model(string);
     callback open-model-settings();
-    callback search-models(string);
     in property <[ChatAttachment]> attachments: [];
     in property <string> send-key: "enter";
     // §8.5 status line under the box.
@@ -1052,22 +1172,46 @@ export component Composer inherits Rectangle {
         ? 12px + 20px + root.queue-turns.length * 28px
             + (root.queue-overflow > 0 ? 16px : 0px) + (root.queue-items - 1) * 2px + 6px
         : 0px;
-    height: (root.attachments.length > 0 ? 240px : 204px) + root.queue-height;
+    // 对齐蜂巢的固定构图: 8px top padding + 100px input card + 6 + 30px action
+    // row + 10px bottom padding; the attachment row (+36) and the branch line
+    // (+22) only exist while they have content.
+    height: 154px + (root.attachments.length > 0 ? 36px : 0px)
+        + (root.branch-name != "" ? 22px : 0px) + root.queue-height;
+    private property <bool> plus-open: false;
     private property <bool> preset-open: false;
     private property <bool> command-open: false;
     private property <bool> screenshot-open: false;
     private property <bool> model-open: false;
     private property <bool> permission-open: false;
-    // Composer tool glyphs fill more of their 30px cell than the dense toolbar
-    // default so capture/record/preset read at a uniform weight.
-    private property <length> tool-icon-size: 17px;
+    // 蜂巢同款发送门禁: terminal mode only sends typed text; the chat modes
+    // also allow attachment-only and answered-inquiry sends.
+    private property <bool> send-enabled: root.terminal-mode
+        ? (root.draft != "" && !root.send-blocked)
+        : ((root.draft != "" || root.attachments.length > 0 || root.inquiry-ready) && !root.send-blocked);
     private property <string> permission-label: root.permission-mode == "auto_edit" ? I18n.cp_permission_write
         : root.permission-mode == "suggest" ? I18n.cp_permission_command
         : I18n.cp_permission_full;
+    // Popover bookkeeping: the plus menu and its cascading flyouts are mutually
+    // exclusive with the model popover, mirroring the web menu's single-open
+    // behaviour.
+    function toggle-plus-menu() {
+        root.plus-open = !root.plus-open;
+        root.command-open = false;
+        root.preset-open = false;
+        root.permission-open = false;
+        root.screenshot-open = false;
+        root.model-open = false;
+    }
+    function close-submenus() {
+        root.command-open = false;
+        root.preset-open = false;
+        root.permission-open = false;
+        root.screenshot-open = false;
+    }
     background: Theme.composer;
     Rectangle { y: 0px; height: 1px; background: Theme.border; }
     VerticalLayout {
-        padding: 14px; padding-top: 8px; spacing: 6px;
+        padding: 14px; padding-top: 8px; padding-bottom: 10px; spacing: 6px;
         if root.queue-open : QueueStrip {
             turns: root.queue-turns;
             overflow: root.queue-overflow;
@@ -1086,227 +1230,378 @@ export component Composer inherits Rectangle {
             }
             Rectangle { horizontal-stretch: 1; }
         }
-        editor := TextEditBase {
-            accessible-role: text-input;
-            accessible-value <=> self.text;
-            accessible-placeholder-text: self.placeholder-text;
-            accessible-action-set-value(value) => { self.text = value; }
-            min-height: 72px;
+        // 输入卡（对齐蜂巢 .input-box--world）: one 16px-rounded white card
+        // wraps the editor — the focus ring moves to the card border, the
+        // editor itself is transparent — and the recording/transcribing hint
+        // stacks into the card's lower edge.
+        Rectangle {
             vertical-stretch: 1;
-            scroll-view-padding: 10px;
-            background: Theme.surface.transparentize(0.18);
-            border-width: 1px; border-radius: Theme.radius-xl;
-            border-color: self.has-focus ? Theme.accent : Theme.border;
-            foreground: Theme.text;
-            placeholder-text: root.terminal-mode ? I18n.cp_terminal_placeholder
-                : (root.workspace-name != "" ? I18n.cp_input_placeholder_workspace(root.workspace-name) : I18n.cp_input_placeholder);
-            placeholder-color: Theme.muted;
-            selection-background-color: Theme.accent-soft;
-            selection-foreground-color: Theme.text;
-            font-size: 14px; font-family: "SimSun";
-            wrap: word-wrap;
-key-pressed(event) => {
-                // Terminal mode: Ctrl+C interrupts the running shell instead
-                // of copying the selection.
-                if event.text == "c" && event.modifiers.control && root.terminal-mode {
-                    root.interrupt();
-                    return accept;
-                }
-                // ArrowUp / ArrowDown recall the messages this thread already
-                // sent (Slint's key code points: U+F700 up, U+F701 down). The
-                // caret test needs byte offsets, so Rust owns the decision, the
-                // walk index and the stash; `handled` is what eats the key.
-                if event.text == "\u{F700}" || event.text == "\u{F701}" {
-                    let recalled = root.recall-history(
-                        event.text == "\u{F700}" ? 1 : -1,
-                        self.cursor-offset, self.anchor-offset, root.draft);
-                    if recalled.handled {
-                        root.draft = recalled.text;
-                        self.set-selection-offsets(recalled.caret, recalled.caret);
+            border-radius: 16px;
+            background: Theme.surface;
+            border-width: 1px;
+            border-color: editor.has-focus ? Theme.accent : Theme.border;
+            editor := TextEditBase {
+                x: 14px; y: 12px;
+                width: parent.width - 28px;
+                height: parent.height - 24px;
+                accessible-role: text-input;
+                accessible-value <=> self.text;
+                accessible-placeholder-text: self.placeholder-text;
+                accessible-action-set-value(value) => { self.text = value; }
+                scroll-view-padding: 0px;
+                background: transparent;
+                border-width: 0px;
+                foreground: Theme.text;
+                placeholder-text: root.terminal-mode ? I18n.cp_terminal_placeholder
+                    : (root.workspace-name != "" ? I18n.cp_input_placeholder_workspace(root.workspace-name) : I18n.cp_input_placeholder);
+                placeholder-color: Theme.muted;
+                selection-background-color: Theme.accent-soft;
+                selection-foreground-color: Theme.text;
+                font-size: 14px; font-family: "SimSun";
+                wrap: word-wrap;
+                key-pressed(event) => {
+                    // Terminal mode: Ctrl+C interrupts the running shell instead
+                    // of copying the selection.
+                    if event.text == "c" && event.modifiers.control && root.terminal-mode {
+                        root.interrupt();
                         return accept;
+                    }
+                    // ArrowUp / ArrowDown recall the messages this thread already
+                    // sent (Slint's key code points: U+F700 up, U+F701 down). The
+                    // caret test needs byte offsets, so Rust owns the decision, the
+                    // walk index and the stash; `handled` is what eats the key.
+                    if event.text == "\u{F700}" || event.text == "\u{F701}" {
+                        let recalled = root.recall-history(
+                            event.text == "\u{F700}" ? 1 : -1,
+                            self.cursor-offset, self.anchor-offset, root.draft);
+                        if recalled.handled {
+                            root.draft = recalled.text;
+                            self.set-selection-offsets(recalled.caret, recalled.caret);
+                            return accept;
+                        }
+                        return reject;
+                    }
+                    // The send key preference: "enter" sends on plain Enter;
+                    // "ctrl_enter" sends only with Ctrl+Enter; "none" leaves all
+                    // newlines to the editor and sends via the button only.
+                    if event.text == "\n" && !event.modifiers.shift && !event.modifiers.control {
+                        if root.send-key == "enter" && !root.send-blocked { root.send(); }
+                        return root.send-key == "enter" ? accept : reject;
+                    }
+                    if event.text == "\n" && event.modifiers.control {
+                        if root.send-key == "ctrl_enter" && !root.send-blocked { root.send(); return accept; }
+                        return reject;
                     }
                     return reject;
                 }
-                // The send key preference: "enter" sends on plain Enter;
-                // "ctrl_enter" sends only with Ctrl+Enter; "none" leaves all
-                // newlines to the editor and sends via the button only.
-                if event.text == "\n" && !event.modifiers.shift && !event.modifiers.control {
-                    if root.send-key == "enter" && !root.send-blocked { root.send(); }
-                    return root.send-key == "enter" ? accept : reject;
+            }
+            // 录音/识别指示叠在卡内底部: the mic row lives inside the plus menu,
+            // so a running capture would otherwise be invisible once it closes.
+            if (root.recording || root.transcribing) : Rectangle {
+                x: 14px; y: parent.height - 30px;
+                height: 18px; width: rec-text.preferred-width + 36px;
+                border-radius: 9px;
+                background: Theme.surface;
+                border-width: 1px; border-color: Theme.border;
+                Rectangle { x: 10px; y: 6px; width: 3px; height: 6px; border-radius: 1.5px; background: Theme.danger; }
+                Rectangle { x: 15px; y: 3px; width: 3px; height: 12px; border-radius: 1.5px; background: Theme.danger; }
+                Rectangle { x: 20px; y: 5px; width: 3px; height: 8px; border-radius: 1.5px; background: Theme.danger; }
+                rec-text := Text {
+                    x: 30px; width: self.preferred-width; height: parent.height;
+                    text: root.recording ? root.recording-elapsed : I18n.cp_transcribing;
+                    color: Theme.danger; font-size: Theme.font-xs; font-weight: 600;
+                    vertical-alignment: center;
                 }
-                if event.text == "\n" && event.modifiers.control {
-                    if root.send-key == "ctrl_enter" && !root.send-blocked { root.send(); return accept; }
-                    return reject;
-                }
-                return reject;
             }
         }
-        // ---- toolbar (§8.2) ----
+        // ---- action row (§8.2), 对齐蜂巢 composer-action-row: the bordered
+        // plus square opens the single merged menu, the workspace status bar
+        // sits beside it, and the right side carries the merged model trigger
+        // and the send square. ----
         HorizontalLayout {
             height: 30px; spacing: 6px;
-            // Left: workspace name, permission mode. The upload and plus
-            // entries were removed with the more-menu; capture/voice stay.
             Rectangle {
-                height: 30px; width: ws-name.preferred-width;
+                width: 28px; height: 30px;
+                plus-btn := Rectangle {
+                    y: 1px; width: 28px; height: 28px;
+                    border-radius: Theme.radius-sm;
+                    background: root.plus-open ? Theme.accent-soft : Theme.surface;
+                    border-width: 1px;
+                    border-color: root.plus-open ? Theme.accent-secondary : Theme.border-strong;
+                    drop-shadow-color: #1F23290F; drop-shadow-blur: 2px; drop-shadow-offset-y: 1px;
+                    Image {
+                        x: 8px; y: 8px; width: 12px; height: 12px;
+                        source: root.plus-open ? @image-url("../assets/icons/xmark.svg") : @image-url("../assets/icons/plus.svg");
+                        colorize: root.plus-open ? Theme.accent : Theme.text-secondary;
+                        image-fit: contain;
+                    }
+                    accessible-role: button; accessible-label: I18n.cp_more;
+                    accessible-action-default => { root.toggle-plus-menu(); }
+                    plus-touch := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.toggle-plus-menu(); }
+                    }
+                }
+                // Typed "/" still expands the command list in place whenever
+                // the menu itself is closed.
+                if !root.plus-open && !root.terminal-mode && root.draft == "/" : CommandFlyout {
+                    x: 0px; y: -self.height - 8px; z: 30;
+                    pick(value) => { root.draft = value; editor.focus(); }
+                }
+                if root.plus-open : Rectangle {
+                    x: 0px;
+                    y: -self.height - 8px;
+                    width: 220px;
+                    height: menu-body.preferred-height;
+                    z: 30;
+                    border-radius: Theme.radius-lg; background: Theme.surface;
+                    border-width: 1px; border-color: Theme.border;
+                    drop-shadow-color: #00000024; drop-shadow-blur: 16px; drop-shadow-offset-y: 3px;
+                    menu-body := VerticalLayout {
+                        padding: 6px; spacing: 2px;
+                        // 命令: the slash list cascades out of the row.
+                        Rectangle {
+                            height: 34px; border-radius: Theme.radius-sm;
+                            background: root.command-open || cmd-row-touch.has-hover ? Theme.hover : transparent;
+                            accessible-role: list-item; accessible-label: I18n.cp_commands;
+                            Image { x: 8px; y: 9px; width: 16px; height: 16px; source: @image-url("../assets/icons/terminal.svg"); colorize: Theme.text-secondary; image-fit: contain; }
+                            Text { x: 32px; width: parent.width - 44px; height: parent.height; text: I18n.cp_commands; color: Theme.text; font-size: Theme.font-md; vertical-alignment: center; overflow: elide; }
+                            Image { x: parent.width - 17px; y: 12px; width: 9px; height: 9px; source: @image-url("../assets/icons/chevron-right.svg"); colorize: Theme.muted; image-fit: contain; }
+                            cmd-row-touch := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => {
+                                    root.command-open = !root.command-open;
+                                    root.preset-open = false;
+                                    root.permission-open = false;
+                                    root.screenshot-open = false;
+                                }
+                            }
+                            if root.command-open : CommandFlyout {
+                                x: parent.width + 12px;
+                                y: parent.height + 7px - self.height;
+                                z: 2;
+                                pick(value) => { root.plus-open = false; root.command-open = false; root.draft = value; editor.focus(); }
+                            }
+                        }
+                        // 预设问题
+                        Rectangle {
+                            height: 34px; border-radius: Theme.radius-sm;
+                            background: root.preset-open || preset-row-touch.has-hover ? Theme.hover : transparent;
+                            accessible-role: list-item; accessible-label: I18n.ag_preset_questions;
+                            Image { x: 8px; y: 9px; width: 16px; height: 16px; source: @image-url("../assets/icons/wand-magic-sparkles.svg"); colorize: Theme.text-secondary; image-fit: contain; }
+                            Text { x: 32px; width: parent.width - 44px; height: parent.height; text: I18n.ag_preset_questions; color: Theme.text; font-size: Theme.font-md; vertical-alignment: center; overflow: elide; }
+                            Image { x: parent.width - 17px; y: 12px; width: 9px; height: 9px; source: @image-url("../assets/icons/chevron-right.svg"); colorize: Theme.muted; image-fit: contain; }
+                            preset-row-touch := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => {
+                                    root.preset-open = !root.preset-open;
+                                    root.command-open = false;
+                                    root.permission-open = false;
+                                    root.screenshot-open = false;
+                                }
+                            }
+                            if root.preset-open : PresetFlyout {
+                                x: parent.width + 12px;
+                                y: parent.height + 7px - self.height;
+                                z: 2;
+                                pick(value) => { root.plus-open = false; root.preset-open = false; root.draft = value; editor.focus(); }
+                            }
+                        }
+                        // 审批模式: the row carries the current mode, the flyout
+                        // switches it.
+                        Rectangle {
+                            height: 34px; border-radius: Theme.radius-sm;
+                            background: root.permission-open || perm-row-touch.has-hover ? Theme.hover : transparent;
+                            accessible-role: list-item; accessible-label: I18n.cp_permission;
+                            Image { x: 8px; y: 9px; width: 16px; height: 16px; source: @image-url("../assets/icons/shield.svg"); colorize: root.permission-mode == "full_auto" ? Theme.muted : Theme.accent; image-fit: contain; }
+                            Text { x: 32px; width: parent.width - 110px; height: parent.height; text: I18n.cp_permission; color: Theme.text; font-size: Theme.font-md; vertical-alignment: center; overflow: elide; }
+                            Text {
+                                x: parent.width - 78px; width: 56px; height: parent.height;
+                                text: root.permission-label;
+                                color: Theme.muted; font-size: Theme.font-xs;
+                                vertical-alignment: center; horizontal-alignment: right; overflow: elide;
+                            }
+                            Image { x: parent.width - 17px; y: 12px; width: 9px; height: 9px; source: @image-url("../assets/icons/chevron-right.svg"); colorize: Theme.muted; image-fit: contain; }
+                            perm-row-touch := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => {
+                                    root.permission-open = !root.permission-open;
+                                    root.command-open = false;
+                                    root.preset-open = false;
+                                    root.screenshot-open = false;
+                                }
+                            }
+                            if root.permission-open : PermissionFlyout {
+                                x: parent.width + 12px;
+                                y: parent.height + 7px - self.height;
+                                z: 2;
+                                mode: root.permission-mode;
+                                changed(value) => {
+                                    root.permission-mode = value;
+                                    root.permission-changed(value);
+                                    root.permission-open = false;
+                                }
+                            }
+                        }
+                        // 语音输入: direct action; the row flips to a stop glyph
+                        // and the elapsed timer while capturing.
+                        Rectangle {
+                            height: 34px; border-radius: Theme.radius-sm;
+                            background: voice-row-touch.has-hover ? Theme.hover : transparent;
+                            accessible-role: list-item; accessible-label: I18n.cp_voice_input;
+                            Image {
+                                x: 8px; y: 9px; width: 16px; height: 16px;
+                                source: root.recording ? @image-url("../assets/icons/stop.svg") : @image-url("../assets/icons/microphone.svg");
+                                colorize: root.recording ? Theme.danger : Theme.text-secondary;
+                                image-fit: contain;
+                            }
+                            Text { x: 32px; width: parent.width - 110px; height: parent.height; text: I18n.cp_voice_input; color: Theme.text; font-size: Theme.font-md; vertical-alignment: center; overflow: elide; }
+                            if root.transcribing : Text {
+                                x: parent.width - 78px; width: 62px; height: parent.height;
+                                text: I18n.cp_transcribing;
+                                color: Theme.muted; font-size: Theme.font-xs;
+                                vertical-alignment: center; horizontal-alignment: right; overflow: elide;
+                            }
+                            if root.recording : Text {
+                                x: parent.width - 78px; width: 62px; height: parent.height;
+                                text: root.recording-elapsed;
+                                color: Theme.danger; font-size: Theme.font-xs; font-weight: 600;
+                                vertical-alignment: center; horizontal-alignment: right; overflow: elide;
+                            }
+                            voice-row-touch := TouchArea {
+                                enabled: !root.transcribing;
+                                mouse-cursor: pointer;
+                                clicked => { root.record-voice(); }
+                            }
+                        }
+                        // 截图
+                        Rectangle {
+                            height: 34px; border-radius: Theme.radius-sm;
+                            background: root.screenshot-open || shot-row-touch.has-hover ? Theme.hover : transparent;
+                            accessible-role: list-item; accessible-label: I18n.cp_screenshot;
+                            Image { x: 8px; y: 9px; width: 16px; height: 16px; source: @image-url("../assets/icons/camera.svg"); colorize: Theme.text-secondary; image-fit: contain; }
+                            Text { x: 32px; width: parent.width - 44px; height: parent.height; text: I18n.cp_screenshot; color: Theme.text; font-size: Theme.font-md; vertical-alignment: center; overflow: elide; }
+                            Image { x: parent.width - 17px; y: 12px; width: 9px; height: 9px; source: @image-url("../assets/icons/chevron-right.svg"); colorize: Theme.muted; image-fit: contain; }
+                            shot-row-touch := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => {
+                                    root.screenshot-open = !root.screenshot-open;
+                                    root.command-open = false;
+                                    root.preset-open = false;
+                                    root.permission-open = false;
+                                }
+                            }
+                            if root.screenshot-open : ScreenshotFlyout {
+                                x: parent.width + 12px;
+                                y: parent.height + 7px - self.height;
+                                z: 2;
+                                pick(hide, region) => { root.plus-open = false; root.screenshot-open = false; root.screenshot(hide, region); }
+                            }
+                        }
+                        // 终端模式: direct toggle; the check marks the live mode.
+                        Rectangle {
+                            height: 34px; border-radius: Theme.radius-sm;
+                            background: term-row-touch.has-hover ? Theme.hover : transparent;
+                            accessible-role: list-item; accessible-label: I18n.cp_terminal_mode;
+                            Image { x: 8px; y: 9px; width: 16px; height: 16px; source: @image-url("../assets/icons/fa-display.svg"); colorize: root.terminal-mode ? Theme.accent : Theme.text-secondary; image-fit: contain; }
+                            Text { x: 32px; width: parent.width - 44px; height: parent.height; text: I18n.cp_terminal_mode; color: Theme.text; font-size: Theme.font-md; vertical-alignment: center; overflow: elide; }
+                            if root.terminal-mode : Image {
+                                x: parent.width - 21px; y: 9px; width: 16px; height: 16px;
+                                source: @image-url("../assets/icons/check.svg"); colorize: Theme.accent; image-fit: contain;
+                            }
+                            term-row-touch := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { root.plus-open = false; root.command(); }
+                            }
+                        }
+                    }
+                }
+            }
+            // 工作目录状态栏（对齐蜂巢 ComposerStatusBar）。
+            Rectangle {
+                height: 30px;
+                width: min(ws-text.preferred-width, 160px) + 22px;
                 visible: root.workspace-name != "";
-                ws-name := Text {
-                    height: parent.height; width: self.preferred-width;
+                Image { x: 5px; y: 9px; width: 12px; height: 12px; source: @image-url("../assets/icons/folder-open.svg"); colorize: Theme.accent; image-fit: contain; }
+                ws-text := Text {
+                    x: 22px; width: min(self.preferred-width, 160px); height: parent.height;
                     text: root.workspace-name; color: Theme.text-secondary; font-size: Theme.font-sm;
                     vertical-alignment: center; overflow: elide;
                 }
             }
-            // The permission chip sizes itself from its label. The visible
-            // chrome is a positioned overlay so it can round its own corners
-            // while the skeleton below keeps the layout honest.
-            Rectangle {
-                height: 30px; width: permission-label.preferred-width + 42px;
-                skeleton := Rectangle {
-                    width: parent.width; height: parent.height;
-                    background: root.permission-open ? Theme.accent-soft : permission-touch.has-hover ? Theme.hover : transparent;
-                    border-radius: Theme.radius-sm;
-                    Image { x: 8px; y: 8px; width: 14px; height: 14px; source: @image-url("../assets/icons/shield.svg"); colorize: root.permission-mode == "full_auto" ? Theme.muted : Theme.accent; image-fit: contain; }
-                    permission-label := Text { x: 27px; y: 0px; width: self.preferred-width; height: parent.height; text: root.permission-label; color: Theme.text-secondary; font-size: Theme.font-sm; vertical-alignment: center; }
-                    Image { x: parent.width - 15px; y: 11px; width: 9px; height: 9px; source: @image-url("../assets/icons/chevron-down.svg"); colorize: Theme.muted; image-fit: contain; }
-                    accessible-role: combobox; accessible-label: I18n.cp_permission;
-                    permission-touch := TouchArea {
-                        x: 0px; y: 0px; width: parent.width; height: parent.height;
-                        mouse-cursor: pointer;
-                        clicked => { root.permission-open = !root.permission-open; root.model-open = false; }
-                    }
-                }
-                if root.permission-open : Rectangle {
-                    x: 0px; y: -172px; width: 230px; height: 162px; z: 30;
-                    border-radius: Theme.radius-lg; background: Theme.surface; border-width: 1px; border-color: Theme.border;
-                    drop-shadow-color: #00000024; drop-shadow-blur: 16px; drop-shadow-offset-y: 3px;
-                    VerticalLayout { padding: 8px; spacing: 3px;
-                        for option in [
-                            { value: "full_auto", label: I18n.cp_permission_full },
-                            { value: "auto_edit", label: I18n.cp_permission_write },
-                            { value: "suggest", label: I18n.cp_permission_command }
-                        ] : Rectangle {
-                            height: 28px; border-radius: Theme.radius-sm;
-                            background: root.permission-mode == option.value ? Theme.accent-soft : perm-touch.has-hover ? Theme.hover : transparent;
-                            accessible-role: list-item; accessible-label: option.label;
-                            Text { x: 10px; y: 0px; width: parent.width - 18px; height: parent.height; text: option.label; color: root.permission-mode == option.value ? Theme.accent : Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                            perm-touch := TouchArea { x: 0px; y: 0px; width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => { root.permission-mode = option.value; root.permission-changed(option.value); root.permission-open = false; } }
-                        }
-                        Text { height: 42px; text: I18n.cp_permission_note; color: Theme.muted; font-size: Theme.font-2xs; wrap: word-wrap; vertical-alignment: top; }
-                    }
-                }
-            }
-            Rectangle {
-                width: 30px; height: 30px;
-                Action { width: parent.width; height: parent.height; icon: @image-url("../assets/icons/wand-magic-sparkles.svg"); icon-size: root.tool-icon-size; label: I18n.ag_preset_questions; selected: root.preset-open; clicked => { root.preset-open = !root.preset-open; root.command-open = false; root.screenshot-open = false; } }
-                if root.preset-open : Rectangle {
-                    x: 0px; y: -106px; width: 206px; height: 96px; z: 30;
-                    border-radius: Theme.radius-md; background: Theme.surface; border-width: 1px; border-color: Theme.border;
-                    drop-shadow-color: #00000024; drop-shadow-blur: 16px; drop-shadow-offset-y: 3px;
-                    VerticalLayout { padding: 8px; spacing: 4px;
-                        Text { text: I18n.ag_preset_questions; color: Theme.text; font-size: Theme.font-xs; font-weight: 600; }
-                        for preset in [I18n.cp_preset_q1, I18n.cp_preset_q2] : Rectangle {
-                            height: 28px; border-radius: 5px; background: preset-touch.has-hover ? Theme.accent-soft : transparent;
-                            Text { x: 8px; width: parent.width - 16px; height: parent.height; text: preset; color: Theme.text; font-size: Theme.font-2xs; vertical-alignment: center; overflow: elide; }
-                            preset-touch := TouchArea { mouse-cursor: pointer; clicked => { root.draft = preset; root.preset-open = false; editor.focus(); } }
-                        }
-                    }
-                }
-            }
-            Rectangle {
-                width: 30px; height: 30px;
-                TerminalAction { width: parent.width; height: parent.height; icon-size: root.tool-icon-size; label: root.terminal-mode ? I18n.cp_terminal_exit : I18n.cp_commands; selected: root.terminal-mode; clicked => { root.command-open = false; root.preset-open = false; root.screenshot-open = false; root.command(); } }
-                if !root.terminal-mode && (root.command-open || root.draft == "/") : Rectangle {
-                    x: 0px; y: -202px; width: 250px; height: 192px; z: 30;
-                    border-radius: Theme.radius-md; background: Theme.surface; border-width: 1px; border-color: Theme.border;
-                    drop-shadow-color: #00000024; drop-shadow-blur: 16px; drop-shadow-offset-y: 3px;
-                    VerticalLayout { padding: 8px; spacing: 4px;
-                        Text { text: I18n.cp_commands; color: Theme.text; font-size: Theme.font-xs; font-weight: 600; }
-                        for command in [{value: "/help", label: I18n.cp_cmd_help}, {value: "/new", label: I18n.cp_cmd_new}, {value: "/stop", label: I18n.cp_cmd_stop}, {value: "/goal ", label: I18n.cp_cmd_goal}, {value: "/compact", label: I18n.cp_cmd_compact}] : Rectangle {
-                            height: 28px; border-radius: 5px; background: command-touch.has-hover ? Theme.accent-soft : transparent;
-                            Text { x: 8px; width: parent.width - 16px; height: parent.height; text: command.label; color: Theme.text; font-size: Theme.font-2xs; vertical-alignment: center; overflow: elide; }
-                            command-touch := TouchArea { mouse-cursor: pointer; clicked => { root.draft = command.value; root.command-open = false; editor.focus(); } }
-                        }
-                    }
-                }
-            }
-            Action {
-                icon: @image-url("../assets/icons/microphone.svg");
-                icon-size: root.tool-icon-size;
-                label: root.recording ? I18n.cp_stop_recording : (root.transcribing ? I18n.cp_transcribing : I18n.cp_record);
-                enabled: !root.transcribing && !root.busy;
-                selected: root.recording;
-                icon-color: root.recording ? Theme.danger : Theme.muted;
-                pulse: root.recording;
-                pulse-phase: root.recording-pulse;
-                clicked => { root.record-voice(); }
-            }
-            // Live capture feedback: the elapsed timer renders beside the
-            // microphone so a running recording is visible at a glance.
-            if root.recording : Text {
-                height: 30px; vertical-alignment: center;
-                text: root.recording-elapsed;
-                color: Theme.danger;
-                font-size: Theme.font-xs;
-                font-weight: 600;
-            }
-            Rectangle {
-                width: 30px; height: 30px;
-                Action { width: parent.width; height: parent.height; icon: @image-url("../assets/icons/camera.svg"); icon-size: root.tool-icon-size; label: I18n.cp_screenshot; selected: root.screenshot-open; clicked => { root.screenshot-open = !root.screenshot-open; root.preset-open = false; root.command-open = false; } }
-                if root.screenshot-open : Rectangle {
-                    x: 0px; y: -130px; width: 220px; height: 120px; z: 30;
-                    border-radius: Theme.radius-md; background: Theme.surface; border-width: 1px; border-color: Theme.border;
-                    drop-shadow-color: #00000024; drop-shadow-blur: 16px; drop-shadow-offset-y: 3px;
-                    VerticalLayout { padding: 8px; spacing: 4px;
-                        Text { text: I18n.cp_screenshot_mode; color: Theme.text; font-size: Theme.font-xs; font-weight: 600; }
-                        for option in [{label: I18n.cp_shot_fullscreen_hidden, hide: true, region: false}, {label: I18n.cp_shot_region_hidden, hide: true, region: true}, {label: I18n.cp_shot_fullscreen_kept, hide: false, region: false}, {label: I18n.cp_shot_region_kept, hide: false, region: true}] : Rectangle {
-                            height: 22px; border-radius: 5px; background: option-touch.has-hover ? Theme.accent-soft : transparent;
-                            Text { x: 8px; width: parent.width - 16px; height: parent.height; text: option.label; color: Theme.text; font-size: Theme.font-2xs; vertical-alignment: center; }
-                            option-touch := TouchArea { mouse-cursor: pointer; clicked => { root.screenshot-open = false; root.screenshot(option.hide, option.region); } }
-                        }
-                    }
-                }
-            }
+            // Slack absorber, not decoration: without one stretchable item the
+            // row reports a fixed implicit width and the Window shrink-wraps
+            // to it.
             Rectangle { horizontal-stretch: 1; }
-            // Right: model switcher, context gauge, send.
+            // Right: the merged model trigger (liquid brain gauge + model name
+            // + effort), then the send square. Zero stretch keeps the picker at
+            // its content width — the row's leftover space belongs to the
+            // spacer, and a stretched picker would push the popover's right
+            // edge past the trigger's.
             ModelPicker {
-                width: model-label.preferred-width + 62px;
+                horizontal-stretch: 0;
                 models: root.models;
                 has-catalogue: root.model-catalogue-count > 0;
                 current-name: root.model-name;
                 current-key: root.model-key;
                 cloud-ready: root.cloud-ready;
+                context-usage: root.context-usage;
+                context-known: root.context-known;
+                context-counts: root.context-counts;
                 effort <=> root.reasoning-effort;
                 saving: root.model-saving;
                 open <=> root.model-open;
                 select-model(index, name) => { root.select-model(index, name); }
-                set-default-model(key) => { root.set-default-model(key); }
                 effort-changed(value) => { root.reasoning-effort-changed(value); }
                 open-settings => { root.open-model-settings(); }
-                search-models(query) => { root.search-models(query); }
             }
-            model-label := Text { text: root.model-name; font-size: Theme.font-md; font-weight: 600; visible: false; }
-            ContextUsageIcon { usage: root.context-usage; known: root.context-known; counts: root.context-counts; }
-            // Mirrors the web send control: the same accent button swaps between
-            // a filled send glyph and a filled stop square while a reply streams.
-            if root.generating : Action {
-                width: 40px; icon: @image-url("../assets/icons/stop.svg"); icon-size: 16px;
-                label: root.stopping ? I18n.cp_stopping : I18n.cp_stop_generation;
-                primary: true; enabled: !root.stopping;
-                clicked => { root.stop(); }
+            // Mirrors the web send control: a 28px accent square that swaps a
+            // white arrow-up for a stop glyph while a reply streams. Parking a
+            // follow-up still works from the keyboard (send-key).
+            Rectangle {
+                width: 28px; height: 30px;
+                send-btn := Rectangle {
+                    y: 1px; width: 28px; height: 28px;
+                    border-radius: Theme.radius-sm;
+                    background: root.generating
+                        ? (root.stopping ? Theme.border-strong : Theme.accent)
+                        : (root.send-enabled ? (send-touch.has-hover ? Theme.accent-deep : Theme.accent) : Theme.border-strong);
+                    Image {
+                        x: 8px; y: 8px; width: 12px; height: 12px;
+                        source: root.generating ? @image-url("../assets/icons/stop.svg") : @image-url("../assets/icons/arrow-up.svg");
+                        colorize: #ffffff;
+                        image-fit: contain;
+                    }
+                    accessible-role: button;
+                    accessible-label: root.generating ? I18n.cp_stop_generation : I18n.cp_send;
+                    accessible-action-default => {
+                        if root.generating {
+                            if !root.stopping { root.stop(); }
+                        } else {
+                            root.send();
+                        }
+                    }
+                    send-touch := TouchArea {
+                        enabled: root.generating ? !root.stopping : root.send-enabled;
+                        mouse-cursor: pointer;
+                        clicked => {
+                            if root.generating { root.stop(); } else { root.send(); }
+                        }
+                    }
+                }
             }
-            // Only one accent control occupies this slot: while a reply streams
-            // the stop square above takes it and the send control is hidden.
-            // Parking a follow-up still works from the keyboard (send-key).
-            if !root.generating : Action { width: 40px; icon: @image-url("../assets/icons/paper-plane.svg"); icon-size: 16px; label: root.send-blocked ? I18n.cp_sending : I18n.cp_send; primary: true; enabled: root.terminal-mode ? (root.draft != "" && !root.send-blocked) : ((root.draft != "" || root.attachments.length > 0 || root.inquiry-ready) && !root.send-blocked); clicked => { root.send(); } }
         }
-        // ---- status line (§8.5): branch only; the context gauge lives in
-        // the toolbar's brain glyph and the old labelled bar is gone. ----
-        HorizontalLayout {
+        // ---- status line (§8.5): branch only, and only while a branch is
+        // known — an empty row would sit between the action row and the shell
+        // edge as dead space. The context gauge lives in the model trigger's
+        // brain glyph. ----
+        if root.branch-name != "" : HorizontalLayout {
             height: 16px; spacing: 6px;
-            if root.branch-name != "" : Image {
+            Image {
                 y: 2px; width: 12px; height: 12px;
                 source: @image-url("../assets/icons/fa-code-branch.svg"); colorize: Theme.muted; image-fit: contain;
             }
-            if root.branch-name != "" : Text {
+            Text {
                 height: parent.height; width: self.preferred-width;
                 text: root.branch-name; color: Theme.muted; font-size: Theme.font-xs;
                 vertical-alignment: center; overflow: elide;

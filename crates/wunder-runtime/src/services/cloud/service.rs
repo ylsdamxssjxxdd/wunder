@@ -1011,7 +1011,10 @@ impl CloudService {
         let status = response.status();
         let body = read_json(response).await;
         if !status.is_success() {
-            return Err(anyhow!("cloud interlink {what} failed: {status} {}", error_message(&body)));
+            return Err(anyhow!(
+                "cloud interlink {what} failed: {status} {}",
+                error_message(&body)
+            ));
         }
         Ok(body.get("data").cloned().unwrap_or(Value::Null))
     }

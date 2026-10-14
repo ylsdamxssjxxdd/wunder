@@ -50,11 +50,10 @@ impl SqliteRetentionStorage for SqliteStorage {
         let mut conn = self.open()?;
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let now = Self::now_ts();
-        let chat_wm = super::log_stats_store::read_meta_f64_tx(&tx, USAGE_CHAT_WATERMARK_KEY)?
-            .unwrap_or(0.0);
-        let tool_wm =
-            super::log_stats_store::read_meta_f64_tx(&tx, USAGE_TOOL_WATERMARK_KEY)?
-                .unwrap_or(0.0) as i64;
+        let chat_wm =
+            super::log_stats_store::read_meta_f64_tx(&tx, USAGE_CHAT_WATERMARK_KEY)?.unwrap_or(0.0);
+        let tool_wm = super::log_stats_store::read_meta_f64_tx(&tx, USAGE_TOOL_WATERMARK_KEY)?
+            .unwrap_or(0.0) as i64;
         let orphan_predicate = "created_time < ?1 \
              AND NOT EXISTS (SELECT 1 FROM chat_sessions c WHERE c.session_id = {table}.session_id) \
              AND NOT EXISTS (SELECT 1 FROM deleted_session_log_grace g WHERE g.session_id = {table}.session_id)";
@@ -136,17 +135,9 @@ impl SqliteRetentionStorage for SqliteStorage {
         )? as i64;
         if counted_tools_deleted + rest_tools > 0 {
             removed_total += counted_tools_deleted + rest_tools;
-            deleted.insert(
-                "tool_logs".to_string(),
-                counted_tools_deleted + rest_tools,
-            );
+            deleted.insert("tool_logs".to_string(), counted_tools_deleted + rest_tools);
         }
-        super::log_stats_store::decrement_usage_summary_tx(
-            &tx,
-            &chat_deltas,
-            &tool_deltas,
-            now,
-        )?;
+        super::log_stats_store::decrement_usage_summary_tx(&tx, &chat_deltas, &tool_deltas, now)?;
         tx.commit()?;
         if removed_total > 0 {
             conn.execute_batch("PRAGMA incremental_vacuum;")?;

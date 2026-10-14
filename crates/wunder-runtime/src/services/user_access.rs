@@ -7,8 +7,8 @@ use crate::storage::{
     UserAccountRecord, UserAgentAccessRecord, UserAgentRecord, UserToolAccessRecord,
 };
 use crate::tools::{
-    collect_available_tool_names, collect_enabled_tool_names_for_catalog,
-    with_browser_group_members, resolve_tool_name,
+    collect_available_tool_names, collect_enabled_tool_names_for_catalog, resolve_tool_name,
+    with_browser_group_members,
 };
 use crate::user_tools::UserToolBindings;
 use std::collections::HashSet;

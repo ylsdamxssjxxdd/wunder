@@ -76,4 +76,4 @@ Open a new thread when the topic changes, the context is already very long, or y
 - [Context Compression](/docs/en/concepts/core-context-compression/) — the second step in the loop
 - [Stability](/docs/en/concepts/core-stability/) — failure and recovery design
 - [Boundary Handling](/docs/en/concepts/boundary-handling/) — truncation, timeouts, and rejection
-- [Session State Reference](/docs/en/reference/stream-events/) — states and event fields
+- [Session State Reference](/docs/en/capabilities/stream-events/) — states and event fields

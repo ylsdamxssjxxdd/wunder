@@ -63,8 +63,7 @@ pub const BROWSER_GROUP_NAME_ALIAS: &str = "browser";
 pub fn is_browser_group_name(name: &str) -> bool {
     let trimmed = name.trim();
     !trimmed.is_empty()
-        && (trimmed == BROWSER_GROUP_NAME
-            || trimmed.eq_ignore_ascii_case(BROWSER_GROUP_NAME_ALIAS))
+        && (trimmed == BROWSER_GROUP_NAME || trimmed.eq_ignore_ascii_case(BROWSER_GROUP_NAME_ALIAS))
 }
 
 /// The aggregate entry shown to users in place of the provider's tool surface.
@@ -149,11 +148,7 @@ fn persist_image_blocks(context: &ToolContext<'_>, args: &Value, value: &mut Val
         if map.get("type").and_then(Value::as_str) != Some("image") {
             continue;
         }
-        let Some(encoded) = map
-            .get("data")
-            .and_then(Value::as_str)
-            .map(str::to_string)
-        else {
+        let Some(encoded) = map.get("data").and_then(Value::as_str).map(str::to_string) else {
             continue;
         };
         let mime_type = map
@@ -246,7 +241,7 @@ fn ensure_png_extension(path: String) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_browser_group_name, is_browser_tool_name, browser_tool_names, ensure_png_extension,
+        browser_tool_names, ensure_png_extension, is_browser_group_name, is_browser_tool_name,
         sanitize_browser_status_for_model, BROWSER_GROUP_NAME,
     };
     use serde_json::json;

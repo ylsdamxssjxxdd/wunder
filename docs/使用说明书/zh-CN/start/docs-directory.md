@@ -47,9 +47,9 @@ wunder 的文档分七类，各解决一类问题。写文档时不串味：**�
 
 ### 其它分组（本页不列全部，只列站点主标签）
 
-- 核心概念 → `/docs/zh-CN/concepts/`
+- 核心 → `/docs/zh-CN/concepts/`
 - 工具 → `/docs/zh-CN/tools/`
-- 参考 → `/docs/zh-CN/reference/`
+- 能力 → `/docs/zh-CN/capabilities/`
 - 帮助 → `/docs/zh-CN/help/`
 
 ## 设计文档（`docs/设计文档/`）
@@ -130,5 +130,5 @@ wunder 的文档分七类，各解决一类问题。写文档时不串味：**�
 
 - [说明书总览](/docs/zh-CN/start/hubs/)
 - [wunder 心舰首页](/docs/zh-CN/index/)
-- [API 索引](/docs/zh-CN/reference/api-index/)
-- [配置说明](/docs/zh-CN/reference/config/)
+- [API 索引](/docs/zh-CN/capabilities/api-index/)
+- [配置说明](/docs/zh-CN/capabilities/config/)

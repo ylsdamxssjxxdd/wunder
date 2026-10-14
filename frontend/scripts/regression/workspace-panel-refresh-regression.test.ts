@@ -267,3 +267,10 @@ test('workspace refresh paths normalize public generated resource aliases', asyn
   ]);
   assert.equal(isWorkspacePathAffected('images/output.png', paths), true);
 });
+
+test('workspace tree context menu exposes a manual refresh action', () => {
+  const source = readSource('src/components/chat/WorkspacePanel.vue');
+  assert.ok(source.includes("t('workspace.menu.refresh')"));
+  assert.ok(source.includes('@click="handleContextRefresh"'));
+  assert.ok(source.includes('await refreshWorkspace();'));
+});

@@ -16,31 +16,29 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use wunder_core::interlink::{
-    AUDIT_APPROVAL_DECIDE, AUDIT_POLICY_UPDATE, AUDIT_SECRET_ISSUE, AUDIT_SECRET_ROTATE,
-    AUDIT_SHADOW_PURGE, default_device_capabilities, APPROVAL_APPROVED, APPROVAL_EXPIRED,
-    APPROVAL_PENDING,
-    APPROVAL_REJECTED, COMMAND_STATUS_CANCELED, COMMAND_STATUS_FAILED, DIRECTION_C2L,
-    DIRECTION_L2C, ERR_APPROVAL_EXPIRED, ERR_APPROVAL_REJECTED, ERR_CAP_DENIED,
-    ERR_NODE_BUSY, ERR_NODE_OFFLINE, ERR_QUEUE_FULL, InterlinkNodeView, NODE_STATUS_AWAY,
-    NODE_STATUS_BUSY, NODE_STATUS_ONLINE, NODE_TYPE_CLI, NODE_TYPE_DESKTOP, NODE_TYPE_SERVER,
+    default_device_capabilities, InterlinkNodeView, APPROVAL_APPROVED, APPROVAL_EXPIRED,
+    APPROVAL_PENDING, APPROVAL_REJECTED, AUDIT_APPROVAL_DECIDE, AUDIT_POLICY_UPDATE,
+    AUDIT_SECRET_ISSUE, AUDIT_SECRET_ROTATE, AUDIT_SHADOW_PURGE, COMMAND_STATUS_CANCELED,
+    COMMAND_STATUS_FAILED, DIRECTION_C2L, DIRECTION_L2C, ERR_APPROVAL_EXPIRED,
+    ERR_APPROVAL_REJECTED, ERR_CAP_DENIED, ERR_NODE_BUSY, ERR_NODE_OFFLINE, ERR_QUEUE_FULL,
+    NODE_STATUS_AWAY, NODE_STATUS_BUSY, NODE_STATUS_ONLINE, NODE_TYPE_CLI, NODE_TYPE_DESKTOP,
+    NODE_TYPE_SERVER,
 };
 
 use crate::api::errors::error_response;
+use crate::api::interlink_cloud_exec;
+use crate::api::interlink_ws;
 use crate::api::user_context::resolve_user;
 use crate::core::blocking;
-use crate::services::presence::{
-    aggregate_status, derive_device_status_with_tunnel, online_count,
-};
 use crate::services::interlink::{
     alerts, approvals, audit, blob, commands, digest, registry, secret,
 };
+use crate::services::presence::{aggregate_status, derive_device_status_with_tunnel, online_count};
 use crate::state::AppState;
 use crate::storage::{
     CloudDeviceInterlinkPatch, CloudDeviceRecord, InterlinkCommandRecord, InterlinkShadowOverview,
     ListInterlinkAuditQuery,
 };
-use crate::api::interlink_cloud_exec;
-use crate::api::interlink_ws;
 // The audit filter helpers are shared with the 舰桥 admin surface on purpose:
 // one query string must mean the same thing on both ends.
 use crate::api::admin_interlink;
@@ -50,17 +48,32 @@ pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/wunder/interlink/nodes", get(list_nodes))
         .route("/wunder/interlink/node_secret", post(rotate_node_secret))
-        .route("/wunder/interlink/nodes/{device_id}/shadow", get(get_shadow))
-        .route("/wunder/interlink/nodes/{device_id}/purge_shadow", post(purge_shadow))
-        .route("/wunder/interlink/nodes/{device_id}/enabled", patch(set_enabled))
+        .route(
+            "/wunder/interlink/nodes/{device_id}/shadow",
+            get(get_shadow),
+        )
+        .route(
+            "/wunder/interlink/nodes/{device_id}/purge_shadow",
+            post(purge_shadow),
+        )
+        .route(
+            "/wunder/interlink/nodes/{device_id}/enabled",
+            patch(set_enabled),
+        )
         .route("/wunder/interlink/commands", post(issue_command))
         .route("/wunder/interlink/commands/{command_id}", get(get_command))
-        .route("/wunder/interlink/commands/{command_id}/cancel", post(cancel_command))
+        .route(
+            "/wunder/interlink/commands/{command_id}/cancel",
+            post(cancel_command),
+        )
         .route(
             "/wunder/interlink/commands/{command_id}/approval",
             post(decide_command_approval),
         )
-        .route("/wunder/interlink/commands/{command_id}/blob", get(get_command_blob))
+        .route(
+            "/wunder/interlink/commands/{command_id}/blob",
+            get(get_command_blob),
+        )
         .route("/wunder/interlink/audit", get(list_my_audit))
         .route(
             "/wunder/interlink/workspace-order",
@@ -381,10 +394,12 @@ async fn shadow_overviews(
     let storage = state.storage.clone();
     blocking::run_db("api.interlink.shadow_overviews", move || {
         let overviews = storage.list_interlink_shadow_overviews(&device_ids)?;
-        Ok::<HashMap<String, InterlinkShadowOverview>, anyhow::Error>(overviews
-            .into_iter()
-            .map(|overview| (overview.device_id.clone(), overview))
-            .collect())
+        Ok::<HashMap<String, InterlinkShadowOverview>, anyhow::Error>(
+            overviews
+                .into_iter()
+                .map(|overview| (overview.device_id.clone(), overview))
+                .collect(),
+        )
     })
     .await
     .unwrap_or_default()
@@ -669,7 +684,10 @@ async fn issue_command(
     drop(config);
 
     let Some(request) = body.map(|Json(request)| request) else {
-        return error_response(StatusCode::BAD_REQUEST, "a json body is required".to_string());
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            "a json body is required".to_string(),
+        );
     };
     let Some(to) = request
         .to
@@ -764,22 +782,22 @@ async fn issue_command(
         timeout_s: request.timeout_s,
     };
     let now = now_unix_seconds();
-    let outcome = match commands::issue(state.storage.clone(), spec, &limits, node.clone(), now).await
-    {
-        Ok(outcome) => outcome,
-        Err(commands::IssueError::Replay(existing)) => {
-            return command_response(&existing, "replay", None, StatusCode::OK, &state).await;
-        }
-        Err(commands::IssueError::UnknownKind(kind)) => {
-            return error_response(
-                StatusCode::BAD_REQUEST,
-                format!("unknown command kind: {kind}"),
-            );
-        }
-        Err(commands::IssueError::Storage(err)) => {
-            return error_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string());
-        }
-    };
+    let outcome =
+        match commands::issue(state.storage.clone(), spec, &limits, node.clone(), now).await {
+            Ok(outcome) => outcome,
+            Err(commands::IssueError::Replay(existing)) => {
+                return command_response(&existing, "replay", None, StatusCode::OK, &state).await;
+            }
+            Err(commands::IssueError::UnknownKind(kind)) => {
+                return error_response(
+                    StatusCode::BAD_REQUEST,
+                    format!("unknown command kind: {kind}"),
+                );
+            }
+            Err(commands::IssueError::Storage(err)) => {
+                return error_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string());
+            }
+        };
 
     // L3 dispatch goes to the governance hook (docs §9.4): the ledger audit
     // entries of a tunnel command carry no kind, so this is the one place the
@@ -1224,9 +1242,10 @@ async fn purge_shadow(
 
     let storage = state.storage.clone();
     let lookup = device_id.clone();
-    if let Err(err) =
-        blocking::run_db("api.interlink.purge_shadow", move || storage.delete_interlink_shadow(&lookup))
-            .await
+    if let Err(err) = blocking::run_db("api.interlink.purge_shadow", move || {
+        storage.delete_interlink_shadow(&lookup)
+    })
+    .await
     {
         return error_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string());
     }
@@ -1271,11 +1290,10 @@ async fn set_enabled(
         interlink_enabled: Some(request.enabled),
         ..Default::default()
     };
-    if let Err(err) =
-        blocking::run_db("api.interlink.set_enabled", move || {
-            storage.update_cloud_device_interlink(&lookup, &patch)
-        })
-        .await
+    if let Err(err) = blocking::run_db("api.interlink.set_enabled", move || {
+        storage.update_cloud_device_interlink(&lookup, &patch)
+    })
+    .await
     {
         return error_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string());
     }
@@ -1309,7 +1327,10 @@ async fn load_device(
 ) -> anyhow::Result<Option<crate::storage::CloudDeviceRecord>> {
     let storage = state.storage.clone();
     let lookup = device_id.to_string();
-    blocking::run_db("api.interlink.get_device", move || storage.get_cloud_device(&lookup)).await
+    blocking::run_db("api.interlink.get_device", move || {
+        storage.get_cloud_device(&lookup)
+    })
+    .await
 }
 
 async fn load_command(
@@ -1318,7 +1339,10 @@ async fn load_command(
 ) -> anyhow::Result<Option<InterlinkCommandRecord>> {
     let storage = state.storage.clone();
     let lookup = command_id.to_string();
-    blocking::run_db("api.interlink.get_command", move || storage.get_interlink_command(&lookup)).await
+    blocking::run_db("api.interlink.get_command", move || {
+        storage.get_interlink_command(&lookup)
+    })
+    .await
 }
 
 /// `interlink_enabled == None` means "not yet configured" -> treat as on.
@@ -1343,7 +1367,10 @@ async fn audit_write(
         None,
         detail,
     );
-    let _ = blocking::run_db("api.interlink.audit", move || storage.insert_interlink_audit(&row)).await;
+    let _ = blocking::run_db("api.interlink.audit", move || {
+        storage.insert_interlink_audit(&row)
+    })
+    .await;
 }
 
 // ---------------------------------------------------------------------------
@@ -1367,7 +1394,11 @@ struct AuditQuery {
 /// Self-service audit view (docs §14 privacy line): a node owner can see every
 /// interlink action recorded for their account. Digests only - no command
 /// bodies exist in the ledger to leak.
-async fn list_my_audit(State(state): State<Arc<AppState>>, headers: HeaderMap, AxumQuery(query): AxumQuery<AuditQuery>) -> Response {
+async fn list_my_audit(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    AxumQuery(query): AxumQuery<AuditQuery>,
+) -> Response {
     let resolved = match resolve_user(&state, &headers, None).await {
         Ok(resolved) => resolved,
         Err(response) => return response,
@@ -1376,15 +1407,13 @@ async fn list_my_audit(State(state): State<Arc<AppState>>, headers: HeaderMap, A
     let limit = audit::page_limit(query.limit);
     let offset = audit::page_offset(query.offset);
     let action = admin_interlink::clean_filter(query.action.as_deref());
-    let device = admin_interlink::node_filter(admin_interlink::clean_filter(
-        query.device_id.as_deref(),
-    ));
+    let device =
+        admin_interlink::node_filter(admin_interlink::clean_filter(query.device_id.as_deref()));
     let since = admin_interlink::parse_time_filter(query.since.as_deref());
     let until = admin_interlink::parse_time_filter(query.until.as_deref());
     let storage = state.storage.clone();
-    let rows = match blocking::run_db(
-        "api.interlink.my_audit",
-        move || storage.list_interlink_audit(ListInterlinkAuditQuery {
+    let rows = match blocking::run_db("api.interlink.my_audit", move || {
+        storage.list_interlink_audit(ListInterlinkAuditQuery {
             user_id: Some(&user_id),
             device_id: device.as_deref(),
             action: action.as_deref(),
@@ -1392,8 +1421,8 @@ async fn list_my_audit(State(state): State<Arc<AppState>>, headers: HeaderMap, A
             until,
             offset,
             limit,
-        }),
-    )
+        })
+    })
     .await
     {
         Ok((rows, _total)) => rows,
@@ -1491,7 +1520,10 @@ mod tests {
         let flood: Vec<Value> = (0..WORKSPACE_ORDER_MAX_KEYS + 40)
             .map(|index| json!(format!("device:d{index}")))
             .collect();
-        assert_eq!(normalize_workspace_order_keys(&flood).len(), WORKSPACE_ORDER_MAX_KEYS);
+        assert_eq!(
+            normalize_workspace_order_keys(&flood).len(),
+            WORKSPACE_ORDER_MAX_KEYS
+        );
     }
 
     #[test]
@@ -1504,6 +1536,9 @@ mod tests {
             parse_workspace_order(Some(&stored)),
             vec!["device:a", "device:b"]
         );
-        assert_eq!(workspace_order_meta_key("u1"), "interlink.workspace_order:u1");
+        assert_eq!(
+            workspace_order_meta_key("u1"),
+            "interlink.workspace_order:u1"
+        );
     }
 }

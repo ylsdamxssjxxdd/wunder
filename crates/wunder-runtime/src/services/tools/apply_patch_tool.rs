@@ -245,7 +245,9 @@ fn build_patch_error_result(error: anyhow::Error) -> Value {
 }
 
 pub(super) async fn apply_patch(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
-    if let Some(result) = super::execute_in_sandbox(context, super::edit_tool::TOOL_EDIT, args).await {
+    if let Some(result) =
+        super::execute_in_sandbox(context, super::edit_tool::TOOL_EDIT, args).await
+    {
         if !parse_dry_run(args) {
             context.workspace.mark_tree_dirty(context.workspace_id);
         }

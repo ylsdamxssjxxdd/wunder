@@ -382,7 +382,9 @@ mod tests {
         assert_eq!(parsed.offset, 0);
         assert_eq!(body, b"hello ");
 
-        store.open(7, "cmd_a", Some(12), Some("text/markdown")).expect("open");
+        store
+            .open(7, "cmd_a", Some(12), Some("text/markdown"))
+            .expect("open");
         assert_eq!(
             store.push(&parsed, body).expect("chunk"),
             ChunkOutcome::Partial { total: 6 }
@@ -391,7 +393,13 @@ mod tests {
         let done = store
             .push(&header(7, DATA_FLAG_LAST, 6, tail), tail)
             .expect("final");
-        assert_eq!(done, ChunkOutcome::Complete { stream_id: 7, size: 12 });
+        assert_eq!(
+            done,
+            ChunkOutcome::Complete {
+                stream_id: 7,
+                size: 12
+            }
+        );
         assert_eq!(store.get("cmd_a").map(|bytes| bytes.len()), Some(12));
         let assembled = store.get("cmd_a").expect("blob");
         assert_eq!(&assembled[..6], b"hello ");
@@ -451,12 +459,17 @@ mod tests {
             .expect("complete");
         assert_eq!(store.cache_bytes(), 4096);
         assert!(store.get("cmd_g").is_some());
-        assert_eq!(store.cleanup_expired(now_unix_seconds() + BLOB_TTL_S + 1.0), 1);
+        assert_eq!(
+            store.cleanup_expired(now_unix_seconds() + BLOB_TTL_S + 1.0),
+            1
+        );
         assert!(store.get("cmd_g").is_none());
         assert_eq!(store.cache_bytes(), 0);
 
         store.open(6, "cmd_h", None, None).expect("open");
-        store.push(&header(6, 0, 0, b"partial"), b"partial").expect("partial");
+        store
+            .push(&header(6, 0, 0, b"partial"), b"partial")
+            .expect("partial");
         store.drop_command("cmd_h");
         assert_eq!(store.open_streams(), 0);
     }

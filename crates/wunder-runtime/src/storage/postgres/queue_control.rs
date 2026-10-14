@@ -27,11 +27,7 @@ impl PostgresStorage {
         )? == 1)
     }
 
-    pub(super) fn reorder_agent_tasks_impl(
-        &self,
-        task_ids: &[String],
-        now: f64,
-    ) -> Result<usize> {
+    pub(super) fn reorder_agent_tasks_impl(&self, task_ids: &[String], now: f64) -> Result<usize> {
         self.ensure_initialized()?;
         if task_ids.is_empty() {
             return Ok(0);

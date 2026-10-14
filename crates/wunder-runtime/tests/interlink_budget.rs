@@ -14,7 +14,7 @@ use tempfile::TempDir;
 use wunder_server::{
     config::Config,
     interlink::{
-        client::shadow::{NodeIdentity, ShadowSources, TreeLimits, gather_workspace},
+        client::shadow::{gather_workspace, NodeIdentity, ShadowSources, TreeLimits},
         remote,
     },
     stable_core::interlink::CAP_SHADOW_FULL,
@@ -42,11 +42,7 @@ fn app_state(dir: &TempDir, db_name: &str) -> Arc<AppState> {
     let mut config = Config::default();
     config.storage.backend = "sqlite".to_string();
     config.storage.db_path = dir.path().join(db_name).to_string_lossy().to_string();
-    config.workspace.root = dir
-        .path()
-        .join("workspaces")
-        .to_string_lossy()
-        .to_string();
+    config.workspace.root = dir.path().join("workspaces").to_string_lossy().to_string();
     Arc::new(
         AppState::new_with_options(
             wunder_server::config_store::ConfigStore::new(dir.path().join("wunder.yaml")),
@@ -147,14 +143,21 @@ async fn ledger_and_audit_listings_stay_inside_the_p95_budget_at_1000_rows() {
                 .to_string(),
                 args_digest: None,
                 approval_state: if listing { "none" } else { "approved" }.to_string(),
-                status: if index % 7 == 0 { "failed" } else { "succeeded" }.to_string(),
+                status: if index % 7 == 0 {
+                    "failed"
+                } else {
+                    "succeeded"
+                }
+                .to_string(),
                 created_at: BASE_TS + index as f64,
                 acked_at: Some(BASE_TS + index as f64),
                 finished_at: Some(BASE_TS + index as f64 + 0.5),
                 error_code: None,
                 error_summary: None,
             };
-            storage.insert_interlink_command(&record).expect("insert ledger row");
+            storage
+                .insert_interlink_command(&record)
+                .expect("insert ledger row");
             storage
                 .insert_interlink_audit(&InterlinkAuditRecord {
                     seq: 0,
@@ -254,7 +257,11 @@ async fn remote_subscriptions_are_capped_per_node_and_aggregated_into_one_upstre
             .subscribe(&device, &thread)
             .expect("subscription within the node cap");
         // §7.4: interest in a thread is announced upstream once, not per reader.
-        assert_eq!(subscription.first, slot == 0, "only the first watcher attaches");
+        assert_eq!(
+            subscription.first,
+            slot == 0,
+            "only the first watcher attaches"
+        );
         ids.push(subscription.id);
         receivers.push(receiver);
     }
@@ -268,7 +275,10 @@ async fn remote_subscriptions_are_capped_per_node_and_aggregated_into_one_upstre
     // One upstream frame fans out to all eight readers: the node never sees
     // eight sends for eight readers.
     let delivered = hub.publish(&device, &thread, "{\"kind\":\"delta\"}");
-    assert_eq!(delivered, MAX_SUBSCRIBERS, "one frame fans out to the node cap");
+    assert_eq!(
+        delivered, MAX_SUBSCRIBERS,
+        "one frame fans out to the node cap"
+    );
     for receiver in receivers.iter_mut() {
         let frame = tokio::time::timeout(Duration::from_secs(2), receiver.recv())
             .await
@@ -282,7 +292,10 @@ async fn remote_subscriptions_are_capped_per_node_and_aggregated_into_one_upstre
         .filter(|entry| entry.0 == device && entry.1 == thread)
         .collect();
     assert_eq!(pairs.len(), 1, "one (node, thread) pair stays aggregated");
-    assert_eq!(pairs[0].2, MAX_SUBSCRIBERS, "the pair reports its watcher count");
+    assert_eq!(
+        pairs[0].2, MAX_SUBSCRIBERS,
+        "the pair reports its watcher count"
+    );
 
     // `unsubscribe` answers whether the pair lost its last watcher: the
     // aggregated upstream interest must drop exactly there (docs §7.4).
@@ -300,7 +313,10 @@ async fn remote_subscriptions_are_capped_per_node_and_aggregated_into_one_upstre
     let (refilled, _receiver) = hub
         .subscribe(&device, &thread)
         .expect("a freed slot is reusable");
-    assert!(refilled.first, "a re-subscribe re-announces upstream interest");
+    assert!(
+        refilled.first,
+        "a re-subscribe re-announces upstream interest"
+    );
     assert!(hub.unsubscribe(&device, &thread, refilled.id));
 }
 

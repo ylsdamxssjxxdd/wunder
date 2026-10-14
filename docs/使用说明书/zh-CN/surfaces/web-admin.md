@@ -82,5 +82,5 @@ updated_at: 2026-10-13
 
 - [舰体部署](/docs/zh-CN/start/server/)
 - [界面概览](/docs/zh-CN/surfaces/index/)
-- [配置说明](/docs/zh-CN/reference/config/)
-- [舰桥面板索引](/docs/zh-CN/reference/admin-panels/)
+- [配置说明](/docs/zh-CN/capabilities/config/)
+- [舰桥面板索引](/docs/zh-CN/capabilities/admin-panels/)

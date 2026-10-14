@@ -78,4 +78,4 @@ summary: 聊天的实时通道，同时也是会话控制通道：启动执行�
 
 ## 延伸阅读
 
-- [流式事件参考](/docs/zh-CN/reference/stream-events/)
+- [流式事件参考](/docs/zh-CN/capabilities/stream-events/)

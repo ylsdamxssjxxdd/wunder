@@ -15,9 +15,9 @@ use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::Response;
 use axum::routing::get;
 use axum::Router;
+use futures::stream::SplitSink;
 use futures::SinkExt;
 use futures::StreamExt;
-use futures::stream::SplitSink;
 use serde::Deserialize;
 use serde_json::json;
 
@@ -117,7 +117,12 @@ async fn remote_ws(
     .await
     {
         Ok(device) => device,
-        Err(err) => return Err(error_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string())),
+        Err(err) => {
+            return Err(error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                err.to_string(),
+            ))
+        }
     };
     match device {
         Some(device) if !device.revoked && device.user_id == user_id => {}
@@ -153,7 +158,11 @@ async fn handle_remote(
             &json!({"type": REMOTE_FRAME_ERROR, "code": "NODE_OFFLINE", "thread_id": thread_id}),
         )
         .await;
-        let _ = send_json(&mut sender, &json!({"type": REMOTE_FRAME_CLOSE, "reason": "node_offline"})).await;
+        let _ = send_json(
+            &mut sender,
+            &json!({"type": REMOTE_FRAME_CLOSE, "reason": "node_offline"}),
+        )
+        .await;
         let _ = sender.send(Message::Close(None)).await;
         return;
     }
@@ -226,7 +235,11 @@ async fn handle_remote(
             );
         }
     }
-    let _ = send_json(&mut sender, &json!({"type": REMOTE_FRAME_CLOSE, "reason": "unsubscribed"})).await;
+    let _ = send_json(
+        &mut sender,
+        &json!({"type": REMOTE_FRAME_CLOSE, "reason": "unsubscribed"}),
+    )
+    .await;
     let _ = sender.send(Message::Close(None)).await;
 }
 
@@ -235,11 +248,17 @@ struct InterlinkEvent;
 
 impl InterlinkEvent {
     fn attach(device_id: &str, thread_id: &str) -> String {
-        event_text(device_id, json!({"kind": "thread_attach", "thread_id": thread_id}))
+        event_text(
+            device_id,
+            json!({"kind": "thread_attach", "thread_id": thread_id}),
+        )
     }
 
     fn detach(device_id: &str, thread_id: &str) -> String {
-        event_text(device_id, json!({"kind": "thread_detach", "thread_id": thread_id}))
+        event_text(
+            device_id,
+            json!({"kind": "thread_detach", "thread_id": thread_id}),
+        )
     }
 }
 
@@ -254,12 +273,18 @@ fn event_text(_device_id: &str, payload: serde_json::Value) -> String {
     serde_json::to_string(&frame).unwrap_or_else(|_| "{}".to_string())
 }
 
-async fn send_json(sender: &mut SplitSink<WebSocket, Message>, value: &serde_json::Value) -> Result<(), ()> {
+async fn send_json(
+    sender: &mut SplitSink<WebSocket, Message>,
+    value: &serde_json::Value,
+) -> Result<(), ()> {
     send_text(sender, &value.to_string()).await
 }
 
 async fn send_text(sender: &mut SplitSink<WebSocket, Message>, text: &str) -> Result<(), ()> {
-    sender.send(Message::Text(text.to_string().into())).await.map_err(|_| ())
+    sender
+        .send(Message::Text(text.to_string().into()))
+        .await
+        .map_err(|_| ())
 }
 
 fn now_unix_seconds() -> f64 {

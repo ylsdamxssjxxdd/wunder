@@ -80,7 +80,7 @@ updated_at: 2026-10-13
 
 ## 相关页面
 
-- [微信渠道接入](/docs/zh-CN/reference/weixin-channel/) —— weixin 长轮询细节
-- [工作区路由参考](/docs/zh-CN/reference/workspace-routing/) —— 绑定到工作区的映射规则
+- [微信渠道接入](/docs/zh-CN/capabilities/weixin-channel/) —— weixin 长轮询细节
+- [工作区路由参考](/docs/zh-CN/capabilities/workspace-routing/) —— 绑定到工作区的映射规则
 - [实时性](/docs/zh-CN/concepts/core-realtime/) —— 事件推送与补水
-- [舰桥面板指南](/docs/zh-CN/reference/admin-panels/) —— 渠道账号配置入口
+- [舰桥面板指南](/docs/zh-CN/capabilities/admin-panels/) —— 渠道账号配置入口

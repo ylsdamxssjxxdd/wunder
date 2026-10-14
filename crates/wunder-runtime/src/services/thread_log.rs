@@ -598,7 +598,10 @@ mod tests {
             "turn_terminal",
             &json!({"turn_id":"turn","model_round":1,"status":"completed","stop_reason":"model_response"}),
         );
-        assert!(success.is_none(), "successful terminals are lifecycle receipts");
+        assert!(
+            success.is_none(),
+            "successful terminals are lifecycle receipts"
+        );
 
         let failed = event_item(
             "s",
@@ -624,7 +627,10 @@ mod tests {
             "error",
             &json!({"turn_id":"turn","model_round":1,"code":"UPSTREAM_TIMEOUT","message":"upstream timeout"}),
         );
-        assert!(error_item.is_none(), "error is a stream notification, not a record");
+        assert!(
+            error_item.is_none(),
+            "error is a stream notification, not a record"
+        );
 
         // 白名单之外的一切未知事件（hook 通知、子会话生命周期等）一律不入账，
         // 避免 catch-all 制造「无内容」的上下文噪音。
@@ -649,7 +655,9 @@ mod tests {
                 &json!({"turn_id":"turn","model_round":1,"tool":"读取文件","tool_call_id":"call_1","ok":true}),
             )
             .expect("tool events enter the timeline");
-            let schema = item.get("schema").expect("durable tool items keep the call schema");
+            let schema = item
+                .get("schema")
+                .expect("durable tool items keep the call schema");
             assert_eq!(schema["name"], "读取文件");
             assert!(schema["parameters"].is_object());
         }

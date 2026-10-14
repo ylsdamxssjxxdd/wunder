@@ -14,7 +14,7 @@ updated_at: 2026-10-13
 
 1. Don't know how to use it → see the FAQ and the getting-started docs
 2. A feature misbehaves → see Troubleshooting
-3. Want to integrate or develop → see the interfaces and endpoints under the reference overview
+3. Want to integrate or develop → see the interfaces and endpoints under the capabilities overview
 
 ## Jump by Symptom
 
@@ -33,10 +33,10 @@ updated_at: 2026-10-13
 
 ### Configuration Problems
 
-- [Configuration Reference](/docs/en/reference/config/)
-- [Admin Panels Index](/docs/en/reference/admin-panels/)
+- [Configuration Reference](/docs/en/capabilities/config/)
+- [Admin Panels Index](/docs/en/capabilities/admin-panels/)
 
 ## Further Reading
 
 - [Documentation Hub](/docs/en/start/hubs/)
-- [Reference Overview](/docs/en/reference/)
+- [Capabilities Overview](/docs/en/capabilities/)

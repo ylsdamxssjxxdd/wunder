@@ -72,5 +72,5 @@ updated_at: 2026-10-13
 ## 相关
 
 - [目标态](/docs/zh-CN/concepts/goal-mode/) —— 形象"运行中"动画对应的目标延续轮次
-- [舰桥面板指南](/docs/zh-CN/reference/admin-panels/) —— 形象管理面板操作
+- [舰桥面板指南](/docs/zh-CN/capabilities/admin-panels/) —— 形象管理面板操作
 - [智能体循环](/docs/zh-CN/concepts/core-agent-loop/) —— 运行状态的真正来源

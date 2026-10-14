@@ -30,7 +30,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use wunder_core::interlink::{
-    AUDIT_POLICY_UPDATE, AUDIT_SECRET_ROTATE, default_device_capabilities, NODE_STATUS_AWAY,
+    default_device_capabilities, AUDIT_POLICY_UPDATE, AUDIT_SECRET_ROTATE, NODE_STATUS_AWAY,
     NODE_STATUS_BUSY, NODE_STATUS_OFFLINE, NODE_STATUS_ONLINE, NODE_STATUS_RECONNECTING,
 };
 
@@ -198,7 +198,10 @@ fn normalize_status_filter(value: Option<&str>) -> Option<Option<String>> {
     let lowered = value.unwrap_or("").trim().to_ascii_lowercase();
     match lowered.as_str() {
         "" => Some(None),
-        NODE_STATUS_ONLINE | NODE_STATUS_BUSY | NODE_STATUS_AWAY | NODE_STATUS_RECONNECTING
+        NODE_STATUS_ONLINE
+        | NODE_STATUS_BUSY
+        | NODE_STATUS_AWAY
+        | NODE_STATUS_RECONNECTING
         | NODE_STATUS_OFFLINE => Some(Some(lowered)),
         _ => None,
     }
@@ -224,7 +227,11 @@ pub(crate) fn parse_time_filter(value: Option<&str>) -> Option<f64> {
     let text = clean_filter(value)?;
     if let Ok(number) = text.parse::<f64>() {
         // Above 1e11 the value is milliseconds; seconds are still ~1.8e9.
-        return Some(if number > 1e11 { number / 1000.0 } else { number });
+        return Some(if number > 1e11 {
+            number / 1000.0
+        } else {
+            number
+        });
     }
     chrono::DateTime::parse_from_rfc3339(&text)
         .ok()
@@ -397,8 +404,8 @@ fn percentile(values: &[i64], quantile: f64) -> Option<i64> {
     }
     let mut sorted = values.to_vec();
     sorted.sort_unstable();
-    let rank = ((quantile.clamp(0.0, 1.0) * sorted.len() as f64).ceil() as usize)
-        .clamp(1, sorted.len());
+    let rank =
+        ((quantile.clamp(0.0, 1.0) * sorted.len() as f64).ceil() as usize).clamp(1, sorted.len());
     sorted.get(rank - 1).copied()
 }
 
@@ -474,7 +481,8 @@ async fn get_fleet(
     let Some(status_filter) = normalize_status_filter(query.status.as_deref()) else {
         return error_response(
             StatusCode::BAD_REQUEST,
-            "status filter must be one of online / busy / away / reconnecting / offline".to_string(),
+            "status filter must be one of online / busy / away / reconnecting / offline"
+                .to_string(),
         );
     };
     let user_filter = clean_filter(query.user_id.as_deref());
@@ -667,7 +675,9 @@ async fn get_channels(
                 .is_none_or(|device_id| channel.device_id == device_id)
         })
         .map(|channel| {
-            let is_live = live.iter().any(|item| item.channel_id == channel.channel_id);
+            let is_live = live
+                .iter()
+                .any(|item| item.channel_id == channel.channel_id);
             json!({
                 "channel_id": channel.channel_id,
                 "device_id": channel.device_id,
@@ -902,13 +912,12 @@ async fn patch_device_policy(
         .clone()
         .unwrap_or_else(|| stored_capabilities.clone());
 
-    let capabilities_json = serde_json::to_string(&next_capabilities)
-        .unwrap_or_else(|_| "[]".to_string());
+    let capabilities_json =
+        serde_json::to_string(&next_capabilities).unwrap_or_else(|_| "[]".to_string());
     let policy_json = next_policy.to_json();
     let capabilities_changed =
         normalized.capabilities.is_some() && next_capabilities != stored_capabilities;
-    let enabled_changed =
-        normalized.interlink_enabled.is_some() && stored_enabled != next_enabled;
+    let enabled_changed = normalized.interlink_enabled.is_some() && stored_enabled != next_enabled;
     let changed = next_policy != base_policy || capabilities_changed || enabled_changed;
 
     let patch = CloudDeviceInterlinkPatch {
@@ -1213,7 +1222,11 @@ async fn get_audit(
         return interlink_disabled_response();
     }
     let as_csv = wants_csv(query.format.as_deref());
-    let default_limit = if as_csv { CSV_PAGE_MAX } else { AUDIT_PAGE_DEFAULT };
+    let default_limit = if as_csv {
+        CSV_PAGE_MAX
+    } else {
+        AUDIT_PAGE_DEFAULT
+    };
     let max_limit = if as_csv { CSV_PAGE_MAX } else { AUDIT_PAGE_MAX };
     let offset = bounded_offset(query.offset);
     let limit = bounded_limit(query.limit, default_limit, max_limit);
@@ -1418,7 +1431,13 @@ fn now_unix_seconds() -> f64 {
 mod tests {
     use super::*;
 
-    fn row(device_id: &str, client: &str, status: &str, rtt: Option<i64>, resumed: i64) -> FleetRow {
+    fn row(
+        device_id: &str,
+        client: &str,
+        status: &str,
+        rtt: Option<i64>,
+        resumed: i64,
+    ) -> FleetRow {
         FleetRow {
             device_id: device_id.to_string(),
             user_id: "u_1".to_string(),
@@ -1462,14 +1481,35 @@ mod tests {
     #[test]
     fn paging_is_bounded_and_never_negative() {
         assert_eq!(bounded_limit(None, FLEET_PAGE_DEFAULT, FLEET_PAGE_MAX), 50);
-        assert_eq!(bounded_limit(Some(0), FLEET_PAGE_DEFAULT, FLEET_PAGE_MAX), 50);
-        assert_eq!(bounded_limit(Some(-3), CHANNEL_PAGE_DEFAULT, CHANNEL_PAGE_MAX), 50);
-        assert_eq!(bounded_limit(Some(9_999), FLEET_PAGE_DEFAULT, FLEET_PAGE_MAX), 200);
-        assert_eq!(bounded_limit(Some(9_999), LEDGER_PAGE_DEFAULT, LEDGER_PAGE_MAX), 200);
-        assert_eq!(bounded_limit(Some(9_999), AUDIT_PAGE_DEFAULT, AUDIT_PAGE_MAX), 500);
+        assert_eq!(
+            bounded_limit(Some(0), FLEET_PAGE_DEFAULT, FLEET_PAGE_MAX),
+            50
+        );
+        assert_eq!(
+            bounded_limit(Some(-3), CHANNEL_PAGE_DEFAULT, CHANNEL_PAGE_MAX),
+            50
+        );
+        assert_eq!(
+            bounded_limit(Some(9_999), FLEET_PAGE_DEFAULT, FLEET_PAGE_MAX),
+            200
+        );
+        assert_eq!(
+            bounded_limit(Some(9_999), LEDGER_PAGE_DEFAULT, LEDGER_PAGE_MAX),
+            200
+        );
+        assert_eq!(
+            bounded_limit(Some(9_999), AUDIT_PAGE_DEFAULT, AUDIT_PAGE_MAX),
+            500
+        );
         // CSV keeps its own larger - but still bounded - single page.
-        assert_eq!(bounded_limit(None, CSV_PAGE_MAX, CSV_PAGE_MAX), CSV_PAGE_MAX);
-        assert_eq!(bounded_limit(Some(999_999), CSV_PAGE_MAX, CSV_PAGE_MAX), CSV_PAGE_MAX);
+        assert_eq!(
+            bounded_limit(None, CSV_PAGE_MAX, CSV_PAGE_MAX),
+            CSV_PAGE_MAX
+        );
+        assert_eq!(
+            bounded_limit(Some(999_999), CSV_PAGE_MAX, CSV_PAGE_MAX),
+            CSV_PAGE_MAX
+        );
         assert_eq!(bounded_offset(None), 0);
         assert_eq!(bounded_offset(Some(-1)), 0);
         assert_eq!(bounded_offset(Some(120)), 120);
@@ -1525,7 +1565,10 @@ mod tests {
         assert_eq!(aggregates.away, 1);
         assert_eq!(aggregates.reconnecting, 1);
         assert_eq!(aggregates.offline, 1);
-        assert_eq!((aggregates.desktop, aggregates.cli, aggregates.web), (3, 1, 1));
+        assert_eq!(
+            (aggregates.desktop, aggregates.cli, aggregates.web),
+            (3, 1, 1)
+        );
         // RTT sample is {40, 60, 20} -> nearest rank p50 = 40, p95 = 60.
         assert_eq!(aggregates.rtt_p50_ms, Some(40));
         assert_eq!(aggregates.rtt_p95_ms, Some(60));
@@ -1541,7 +1584,10 @@ mod tests {
         let json = aggregates.to_json();
         assert_eq!(json["by_client"]["desktop"].as_i64(), Some(3));
         assert_eq!(json["total"].as_i64(), Some(1234));
-        assert_eq!(json["reconnecting_top"][0]["device_id"].as_str(), Some("d_4"));
+        assert_eq!(
+            json["reconnecting_top"][0]["device_id"].as_str(),
+            Some("d_4")
+        );
         assert_eq!(
             json["reconnecting_top"][0]["resumed_count"].as_i64(),
             Some(9)
@@ -1574,10 +1620,8 @@ mod tests {
 
     #[test]
     fn aggregates_without_samples_report_no_percentiles() {
-        let aggregates = compute_aggregates(
-            &[row("d_1", "desktop", NODE_STATUS_OFFLINE, None, 0)],
-            1,
-        );
+        let aggregates =
+            compute_aggregates(&[row("d_1", "desktop", NODE_STATUS_OFFLINE, None, 0)], 1);
         assert_eq!(aggregates.rtt_p50_ms, None);
         assert_eq!(aggregates.rtt_p95_ms, None);
         assert!(aggregates.reconnecting_top.is_empty());
@@ -1633,8 +1677,7 @@ mod tests {
             },
         ];
         assert_eq!(
-            online_rate_24h(&again, now)[ONLINE_RATE_BUCKETS - 1]["rate"]
-                .as_f64(),
+            online_rate_24h(&again, now)[ONLINE_RATE_BUCKETS - 1]["rate"].as_f64(),
             Some(1.0)
         );
     }
@@ -1658,7 +1701,10 @@ mod tests {
             normalized.disabled_kinds,
             Some(vec!["workspace.write".to_string()])
         );
-        assert_eq!(normalized.disabled_caps, Some(vec!["tool.exec".to_string()]));
+        assert_eq!(
+            normalized.disabled_caps,
+            Some(vec!["tool.exec".to_string()])
+        );
         assert_eq!(
             normalized.force_approval_kinds,
             Some(vec!["thread.message".to_string()])
@@ -1780,7 +1826,10 @@ mod tests {
             node_filter(Some("device:d_1".to_string())).as_deref(),
             Some("device:d_1")
         );
-        assert_eq!(node_filter(Some("cloud".to_string())).as_deref(), Some("cloud"));
+        assert_eq!(
+            node_filter(Some("cloud".to_string())).as_deref(),
+            Some("cloud")
+        );
         assert_eq!(node_filter(None), None);
     }
 
@@ -1894,7 +1943,10 @@ mod tests {
             "/wunder/admin/interlink/audit",
             "/wunder/admin/interlink/runtime",
         ] {
-            assert!(guard_auth::is_admin_path(path), "{path} must be admin-gated");
+            assert!(
+                guard_auth::is_admin_path(path),
+                "{path} must be admin-gated"
+            );
         }
         // The user plane is deliberately not admin-gated (same-account scope).
         assert!(!guard_auth::is_admin_path("/wunder/interlink/nodes"));

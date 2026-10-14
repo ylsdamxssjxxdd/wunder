@@ -1,4 +1,4 @@
-﻿//! `cloud` interlink subcommands (plan I10): drive the interlink ledger from
+//! `cloud` interlink subcommands (plan I10): drive the interlink ledger from
 //! the terminal. Every command is a thin REST client over the user-plane
 //! endpoints — the CLI adds no second execution chain; the server (for
 //! `cloud` targets) or the owning node (for `device:<id>` targets) runs the
@@ -6,8 +6,9 @@
 
 use crate::args::{
     CloudApproveCommand, CloudAuditCommand, CloudSendCommand, CloudThreadCommand,
-    CloudThreadsCommand, CloudThreadShowCommand, CloudWatchCommand, CloudWsAction, CloudWsCatCommand,
-    CloudWsCommand, CloudWsLsCommand, CloudWsPullCommand, CloudWsPushCommand, GlobalArgs,
+    CloudThreadShowCommand, CloudThreadsCommand, CloudWatchCommand, CloudWsAction,
+    CloudWsCatCommand, CloudWsCommand, CloudWsLsCommand, CloudWsPullCommand, CloudWsPushCommand,
+    GlobalArgs,
 };
 use crate::runtime::CliRuntime;
 use anyhow::{anyhow, Context, Result};
@@ -101,9 +102,9 @@ fn zh(global: &GlobalArgs) -> bool {
 /// The cloud session is the only credential source; a logged-out CLI has
 /// nothing to present to the interlink plane.
 fn session() -> Result<CloudSessionFile> {
-    cloud_shared()
-        .session()
-        .ok_or_else(|| anyhow!("未登录云端（先 cloud login）/ not logged in (run cloud login first)"))
+    cloud_shared().session().ok_or_else(|| {
+        anyhow!("未登录云端（先 cloud login）/ not logged in (run cloud login first)")
+    })
 }
 
 fn http() -> Result<reqwest::Client> {
@@ -191,7 +192,12 @@ fn summarize_error(body: &Value) -> String {
 /// Issue one interlink command and wait for its terminal state. A pending
 /// approval returns immediately so the caller can print the approve hint
 /// instead of spinning out the poll window.
-async fn issue_and_wait(session: &CloudSessionFile, to_node: &str, kind: &str, args: Value) -> Result<Value> {
+async fn issue_and_wait(
+    session: &CloudSessionFile,
+    to_node: &str,
+    kind: &str,
+    args: Value,
+) -> Result<Value> {
     let issue = post_json(
         session,
         "/wunder/interlink/commands",
@@ -205,11 +211,7 @@ async fn issue_and_wait(session: &CloudSessionFile, to_node: &str, kind: &str, a
         .to_string();
     let deadline = std::time::Instant::now() + Duration::from_secs(POLL_TIMEOUT_S);
     loop {
-        let record = get_json(
-            session,
-            &format!("/wunder/interlink/commands/{command_id}"),
-        )
-        .await?;
+        let record = get_json(session, &format!("/wunder/interlink/commands/{command_id}")).await?;
         let data = data_of(&record);
         let status = data.get("status").and_then(Value::as_str).unwrap_or("");
         if data.get("approval_state").and_then(Value::as_str) == Some("pending")
@@ -290,9 +292,15 @@ fn print_command_outcome(record: &Value, is_zh: bool) -> Result<()> {
 /// A terminal failure with its documented reason spelled out, so a script sees
 /// why the cloud refused instead of only the code.
 fn failure_error(data: &Value, is_zh: bool) -> anyhow::Error {
-    let command_id = data.get("command_id").and_then(Value::as_str).unwrap_or("-");
+    let command_id = data
+        .get("command_id")
+        .and_then(Value::as_str)
+        .unwrap_or("-");
     let status = command_status(data);
-    let code = data.get("error_code").and_then(Value::as_str).unwrap_or("-");
+    let code = data
+        .get("error_code")
+        .and_then(Value::as_str)
+        .unwrap_or("-");
     let summary = data
         .get("error_summary")
         .and_then(Value::as_str)
@@ -348,8 +356,14 @@ async fn fetch_command_bytes(session: &CloudSessionFile, data: &Value) -> Result
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| anyhow!("命令没有 id，无法取回文件 / command id is missing, cannot fetch the blob"))?;
-    get_bytes(session, &format!("/wunder/interlink/commands/{command_id}/blob")).await
+        .ok_or_else(|| {
+            anyhow!("命令没有 id，无法取回文件 / command id is missing, cannot fetch the blob")
+        })?;
+    get_bytes(
+        session,
+        &format!("/wunder/interlink/commands/{command_id}/blob"),
+    )
+    .await
 }
 
 // ---------------------------------------------------------------------------
@@ -390,7 +404,10 @@ fn node_table(nodes: &[Value], is_zh: bool) -> String {
     let header = if is_zh {
         format!("{:<24} {:<8} {:<12} {:<20}", "节点", "类型", "状态", "标签")
     } else {
-        format!("{:<24} {:<8} {:<12} {:<20}", "node", "type", "status", "label")
+        format!(
+            "{:<24} {:<8} {:<12} {:<20}",
+            "node", "type", "status", "label"
+        )
     };
     let mut out = vec![header];
     for node in nodes {
@@ -422,7 +439,10 @@ pub(crate) async fn status_interlink_lines(is_zh: bool) -> Vec<String> {
         // instead of leaving the tunnel slot empty.
         Err(_) => return vec![interlink_status_line(None, None, is_zh)],
     };
-    let self_status = node_status_of(node_array(&nodes).as_slice(), &format!("device:{}", session.device_id));
+    let self_status = node_status_of(
+        node_array(&nodes).as_slice(),
+        &format!("device:{}", session.device_id),
+    );
     let pending = match open_approval_count(&session).await {
         Ok(count) => Some(count),
         Err(_) => None,
@@ -609,20 +629,26 @@ async fn ws(runtime: &CliRuntime, global: &GlobalArgs, command: CloudWsCommand) 
         Some(CloudWsAction::Pull(command)) => ws_pull(runtime, global, command).await,
         Some(CloudWsAction::Push(command)) => ws_push(runtime, global, command).await,
         // Legacy `cloud ws <PATH>`: the path was the only argument it took.
-        None => ws_list(
-            runtime,
-            global,
-            CloudWsLsCommand {
-                path: command.path,
-                offset: None,
-                limit: None,
-            },
-        )
-        .await,
+        None => {
+            ws_list(
+                runtime,
+                global,
+                CloudWsLsCommand {
+                    path: command.path,
+                    offset: None,
+                    limit: None,
+                },
+            )
+            .await
+        }
     }
 }
 
-async fn ws_list(runtime: &CliRuntime, global: &GlobalArgs, command: CloudWsLsCommand) -> Result<()> {
+async fn ws_list(
+    runtime: &CliRuntime,
+    global: &GlobalArgs,
+    command: CloudWsLsCommand,
+) -> Result<()> {
     let is_zh = zh(global);
     let _ = runtime;
     let session = session()?;
@@ -645,13 +671,22 @@ async fn ws_list(runtime: &CliRuntime, global: &GlobalArgs, command: CloudWsLsCo
         .cloned()
         .unwrap_or_default();
     let shown = entries.len();
-    let total = payload.get("total").and_then(Value::as_u64).unwrap_or(shown as u64);
+    let total = payload
+        .get("total")
+        .and_then(Value::as_u64)
+        .unwrap_or(shown as u64);
     println!(
         "{}",
         if is_zh {
-            format!("云端工作区 {}（共 {total} 项，本次 {shown}）", workspace_path_of(payload))
+            format!(
+                "云端工作区 {}（共 {total} 项，本次 {shown}）",
+                workspace_path_of(payload)
+            )
         } else {
-            format!("cloud workspace {} ({total} entries, {shown} shown)", workspace_path_of(payload))
+            format!(
+                "cloud workspace {} ({total} entries, {shown} shown)",
+                workspace_path_of(payload)
+            )
         }
     );
     println!("{}", workspace_table(&entries, is_zh));
@@ -669,15 +704,24 @@ fn workspace_path_of(payload: &Value) -> String {
 /// `type size updated path`, the four fields `WorkspaceEntry` always carries.
 fn workspace_table(entries: &[Value], is_zh: bool) -> String {
     let header = if is_zh {
-        format!("{:<6} {:>10} {:<20} {:<}", "类型", "字节", "更新时间", "路径")
+        format!(
+            "{:<6} {:>10} {:<20} {:<}",
+            "类型", "字节", "更新时间", "路径"
+        )
     } else {
-        format!("{:<6} {:>10} {:<20} {:<}", "type", "bytes", "updated", "path")
+        format!(
+            "{:<6} {:>10} {:<20} {:<}",
+            "type", "bytes", "updated", "path"
+        )
     };
     let mut rows = vec![header];
     for entry in entries {
         rows.push(format!(
             "{:<6} {:>10} {:<20} {:<}",
-            entry.get("entry_type").and_then(Value::as_str).unwrap_or("-"),
+            entry
+                .get("entry_type")
+                .and_then(Value::as_str)
+                .unwrap_or("-"),
             entry.get("size").and_then(Value::as_u64).unwrap_or(0),
             entry
                 .get("updated_time")
@@ -690,7 +734,11 @@ fn workspace_table(entries: &[Value], is_zh: bool) -> String {
     rows.join("\n")
 }
 
-async fn ws_cat(_runtime: &CliRuntime, global: &GlobalArgs, command: CloudWsCatCommand) -> Result<()> {
+async fn ws_cat(
+    _runtime: &CliRuntime,
+    global: &GlobalArgs,
+    command: CloudWsCatCommand,
+) -> Result<()> {
     let is_zh = zh(global);
     let session = session()?;
     let record = issue_and_wait(
@@ -711,10 +759,7 @@ async fn ws_cat(_runtime: &CliRuntime, global: &GlobalArgs, command: CloudWsCatC
         println!();
     }
     if preview.truncated || preview.lossy {
-        eprintln!(
-            "{}",
-            build_preview_note(&preview, bytes.len(), is_zh)
-        );
+        eprintln!("{}", build_preview_note(&preview, bytes.len(), is_zh));
     }
     Ok(())
 }
@@ -791,7 +836,11 @@ fn build_preview_note(preview: &Preview, bytes_len: usize, is_zh: bool) -> Strin
     parts.join(" · ")
 }
 
-async fn ws_pull(runtime: &CliRuntime, global: &GlobalArgs, command: CloudWsPullCommand) -> Result<()> {
+async fn ws_pull(
+    runtime: &CliRuntime,
+    global: &GlobalArgs,
+    command: CloudWsPullCommand,
+) -> Result<()> {
     let is_zh = zh(global);
     // The landing path is validated before any request: a typo must fail fast
     // and never leave a half-written file behind.
@@ -831,18 +880,28 @@ async fn ws_pull(runtime: &CliRuntime, global: &GlobalArgs, command: CloudWsPull
     let bytes = fetch_command_bytes(&session, data).await?;
     if let Some(parent) = target.parent() {
         std::fs::create_dir_all(parent).with_context(|| {
-            format!("create local directory failed: {}", parent.to_string_lossy())
+            format!(
+                "create local directory failed: {}",
+                parent.to_string_lossy()
+            )
         })?;
     }
-    std::fs::write(&target, &bytes).with_context(|| {
-        format!("write local file failed: {}", target.to_string_lossy())
-    })?;
+    std::fs::write(&target, &bytes)
+        .with_context(|| format!("write local file failed: {}", target.to_string_lossy()))?;
     println!(
         "{}",
         if is_zh {
-            format!("已拉取 {} → {relative}（{} 字节）", command.remote, bytes.len())
+            format!(
+                "已拉取 {} → {relative}（{} 字节）",
+                command.remote,
+                bytes.len()
+            )
         } else {
-            format!("pulled {} -> {relative} ({} bytes)", command.remote, bytes.len())
+            format!(
+                "pulled {} -> {relative} ({} bytes)",
+                command.remote,
+                bytes.len()
+            )
         }
     );
     Ok(())
@@ -905,7 +964,10 @@ fn workspace_relative_path(root: &Path, raw: &Path) -> Result<String> {
 /// resolve outside the root even when the file does not exist yet.
 fn resolve_in_root(root: &Path, relative: &str) -> Result<PathBuf> {
     let mut path = normalize_lexical(root);
-    for part in relative.split('/').filter(|part| !part.is_empty() && *part != ".") {
+    for part in relative
+        .split('/')
+        .filter(|part| !part.is_empty() && *part != ".")
+    {
         if part == ".." {
             return Err(anyhow!(
                 "落点不得越出工作区 / the landing path must not leave the workspace: {relative}"
@@ -940,7 +1002,9 @@ fn normalize_lexical(path: &Path) -> PathBuf {
 /// `-o D:\WS\a.md` still belongs to a `D:\ws` workspace.
 #[cfg(windows)]
 fn path_key(path: &Path) -> String {
-    normalize_lexical(path).to_string_lossy().to_ascii_lowercase()
+    normalize_lexical(path)
+        .to_string_lossy()
+        .to_ascii_lowercase()
 }
 
 #[cfg(not(windows))]
@@ -961,7 +1025,11 @@ fn within_root(root: &Path, candidate: &Path) -> Option<String> {
     (!relative.is_empty()).then_some(relative)
 }
 
-async fn ws_push(_runtime: &CliRuntime, global: &GlobalArgs, command: CloudWsPushCommand) -> Result<()> {
+async fn ws_push(
+    _runtime: &CliRuntime,
+    global: &GlobalArgs,
+    command: CloudWsPushCommand,
+) -> Result<()> {
     let is_zh = zh(global);
     let session = session()?;
     let bytes = std::fs::read(&command.local)
@@ -1003,9 +1071,7 @@ async fn ws_push(_runtime: &CliRuntime, global: &GlobalArgs, command: CloudWsPus
         ),
     };
     if dest.is_empty() {
-        return Err(anyhow!(
-            "云端目标路径为空 / the destination path is empty"
-        ));
+        return Err(anyhow!("云端目标路径为空 / the destination path is empty"));
     }
     // The digest and byte count are the whole summary: the file body never goes
     // to stdout, only into the command args (docs §7.1 digest rules).
@@ -1054,7 +1120,11 @@ fn fnv1a_hex(bytes: &[u8]) -> String {
 // threads
 // ---------------------------------------------------------------------------
 
-async fn threads(runtime: &CliRuntime, global: &GlobalArgs, command: CloudThreadsCommand) -> Result<()> {
+async fn threads(
+    runtime: &CliRuntime,
+    global: &GlobalArgs,
+    command: CloudThreadsCommand,
+) -> Result<()> {
     let _ = runtime;
     let is_zh = zh(global);
     let session = session()?;
@@ -1077,7 +1147,10 @@ async fn threads(runtime: &CliRuntime, global: &GlobalArgs, command: CloudThread
         .cloned()
         .unwrap_or_default();
     if command.json {
-        println!("{}", serde_json::to_string_pretty(&rows).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&rows).unwrap_or_default()
+        );
         return Ok(());
     }
     println!(
@@ -1104,21 +1177,25 @@ async fn threads(runtime: &CliRuntime, global: &GlobalArgs, command: CloudThread
 
 fn thread_table(rows: &[Value], is_zh: bool) -> String {
     let header = if is_zh {
-        format!("{:<34} {:<10} {:<20} {:<}", "线程", "状态", "更新时间", "标题")
+        format!(
+            "{:<34} {:<10} {:<20} {:<}",
+            "线程", "状态", "更新时间", "标题"
+        )
     } else {
-        format!("{:<34} {:<10} {:<20} {:<}", "thread", "status", "updated", "title")
+        format!(
+            "{:<34} {:<10} {:<20} {:<}",
+            "thread", "status", "updated", "title"
+        )
     };
     let mut out = vec![header];
     for row in rows {
         out.push(format!(
             "{:<34} {:<10} {:<20} {:<}",
-            row
-                .get("local_thread_id")
+            row.get("local_thread_id")
                 .and_then(Value::as_str)
                 .unwrap_or("-"),
             row.get("status").and_then(Value::as_str).unwrap_or("-"),
-            row
-                .get("updated_at")
+            row.get("updated_at")
                 .and_then(Value::as_f64)
                 .map(fmt_time)
                 .unwrap_or_default(),
@@ -1128,7 +1205,11 @@ fn thread_table(rows: &[Value], is_zh: bool) -> String {
     out.join("\n")
 }
 
-async fn thread(runtime: &CliRuntime, global: &GlobalArgs, command: CloudThreadCommand) -> Result<()> {
+async fn thread(
+    runtime: &CliRuntime,
+    global: &GlobalArgs,
+    command: CloudThreadCommand,
+) -> Result<()> {
     let crate::args::CloudThreadAction::Show(command) = command.action;
     thread_show(runtime, global, command).await
 }
@@ -1225,10 +1306,20 @@ async fn send(runtime: &CliRuntime, global: &GlobalArgs, command: CloudSendComma
     let session = session()?;
     let to_node = normalize_target(&command.to)?;
     let mut args = json!({"message": command.message});
-    if let Some(thread) = command.thread.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+    if let Some(thread) = command
+        .thread
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
         args["local_thread_id"] = json!(thread);
     }
-    if let Some(title) = command.title.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+    if let Some(title) = command
+        .title
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
         args["title"] = json!(title);
     }
     let record = issue_and_wait(&session, &to_node, "thread.message", args).await?;
@@ -1245,13 +1336,23 @@ async fn send(runtime: &CliRuntime, global: &GlobalArgs, command: CloudSendComma
         .and_then(Value::as_str)
         .map(str::to_string)
         .or_else(|| command.thread.clone())
-        .ok_or_else(|| anyhow!("命令没有返回线程 id，无法接续事件流 / the command returned no thread id to stream"))?;
+        .ok_or_else(|| {
+            anyhow!(
+                "命令没有返回线程 id，无法接续事件流 / the command returned no thread id to stream"
+            )
+        })?;
     println!(
         "{}",
         if is_zh {
-            format!("已投递到线程 {thread_id}，流式回显 {}s（Ctrl+C 退出）", command.seconds)
+            format!(
+                "已投递到线程 {thread_id}，流式回显 {}s（Ctrl+C 退出）",
+                command.seconds
+            )
         } else {
-            format!("delivered to thread {thread_id}, streaming {}s (Ctrl+C to stop)", command.seconds)
+            format!(
+                "delivered to thread {thread_id}, streaming {}s (Ctrl+C to stop)",
+                command.seconds
+            )
         }
     );
     attach_stream(&session, &to_node, &thread_id, command.seconds, is_zh).await
@@ -1273,7 +1374,10 @@ async fn attach_stream(
     seconds: u64,
     is_zh: bool,
 ) -> Result<()> {
-    let color = attach_color(std::io::stdout().is_terminal(), std::env::var_os("NO_COLOR").is_some());
+    let color = attach_color(
+        std::io::stdout().is_terminal(),
+        std::env::var_os("NO_COLOR").is_some(),
+    );
     let window = Duration::from_secs(seconds.max(1));
     let deadline = std::time::Instant::now() + window;
     let mut run = AttachRun::default();
@@ -1496,7 +1600,8 @@ async fn attach_ws_stream(
         Ok(Ok((socket, _))) => socket,
     };
     let (mut sink, mut stream) = socket.split();
-    if let Err(reason) = attach_ws_subscribe(&mut sink, &mut stream, thread_id, cursor, is_zh).await {
+    if let Err(reason) = attach_ws_subscribe(&mut sink, &mut stream, thread_id, cursor, is_zh).await
+    {
         let _ = sink.close().await;
         return AttachWsStream::Degraded(reason);
     }
@@ -1732,15 +1837,9 @@ fn attach_reason(reason: AttachReason, is_zh: bool) -> String {
     let language = if is_zh { "zh" } else { "en" };
     let (zh, en) = match reason {
         AttachReason::HandshakeTimeout => ("chat_ws 握手超时", "chat_ws handshake timed out"),
-        AttachReason::Closed => (
-            "chat_ws 连接被服务端关闭",
-            "chat_ws closed by the server",
-        ),
+        AttachReason::Closed => ("chat_ws 连接被服务端关闭", "chat_ws closed by the server"),
         AttachReason::Keepalive => ("chat_ws 保活写入失败", "chat_ws keepalive failed"),
-        AttachReason::NoReady => (
-            "chat_ws 未返回 ready",
-            "chat_ws sent no ready frame",
-        ),
+        AttachReason::NoReady => ("chat_ws 未返回 ready", "chat_ws sent no ready frame"),
         AttachReason::NoCursor => (
             "舰体未提供线程变更游标（服务端过旧）",
             "the server exposes no thread change cursor (older server)",
@@ -1844,7 +1943,11 @@ impl AttachProjection {
         let Some(row) = data.get("payload") else {
             return AttachFrameEffect::Ignored;
         };
-        match data.get("change_type").and_then(Value::as_str).unwrap_or("") {
+        match data
+            .get("change_type")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+        {
             "item_upsert" => {
                 let item_id = attach_str(row, "item_id")
                     .or_else(|| attach_str(data, "item_id"))
@@ -2041,8 +2144,15 @@ fn attach_row_text(row: &Value) -> String {
 fn attach_status_settled(status: &str) -> bool {
     matches!(
         status,
-        "completed" | "succeeded" | "failed" | "cancelled" | "canceled" | "rejected" | "stopped"
-            | "interrupted" | "dead"
+        "completed"
+            | "succeeded"
+            | "failed"
+            | "cancelled"
+            | "canceled"
+            | "rejected"
+            | "stopped"
+            | "interrupted"
+            | "dead"
     )
 }
 
@@ -2059,7 +2169,13 @@ fn attach_color(stdout_tty: bool, no_color: bool) -> bool {
     stdout_tty && !no_color
 }
 
-fn attach_final_line(finished: bool, thread_id: &str, sections: usize, remaining: u64, is_zh: bool) -> String {
+fn attach_final_line(
+    finished: bool,
+    thread_id: &str,
+    sections: usize,
+    remaining: u64,
+    is_zh: bool,
+) -> String {
     if finished {
         if is_zh {
             format!("[完成] 线程 {thread_id} · 回显 {sections} 段")
@@ -2121,7 +2237,13 @@ fn attach_delta_lines(
             .get("kind")
             .and_then(Value::as_str)
             .map(|value| kind_word(value, is_zh))
-            .unwrap_or_else(|| if is_zh { "条目".to_string() } else { "item".to_string() });
+            .unwrap_or_else(|| {
+                if is_zh {
+                    "条目".to_string()
+                } else {
+                    "item".to_string()
+                }
+            });
         if color {
             lines.push(format!("\x1b[2m<{kind}>\x1b[0m{delta}"));
         } else {
@@ -2222,9 +2344,15 @@ async fn watch(
     println!(
         "{}",
         if is_zh {
-            format!("旁观 {} （{}s 后自动退出）", command.thread, command.seconds)
+            format!(
+                "旁观 {} （{}s 后自动退出）",
+                command.thread, command.seconds
+            )
         } else {
-            format!("watching {} (auto-exit after {}s)", command.thread, command.seconds)
+            format!(
+                "watching {} (auto-exit after {}s)",
+                command.thread, command.seconds
+            )
         }
     );
     loop {
@@ -2265,7 +2393,13 @@ fn print_watch_frame(frame: &Value, is_zh: bool) {
 /// `remote_frame.*`, which is not what the socket sends, so every frame fell
 /// through and `cloud watch` printed only its banner while looking connected.
 fn watch_frame_line(frame: &Value, is_zh: bool) -> Option<(bool, String)> {
-    let tag = |zh: &str, en: &str| -> String { if is_zh { zh.to_string() } else { en.to_string() } };
+    let tag = |zh: &str, en: &str| -> String {
+        if is_zh {
+            zh.to_string()
+        } else {
+            en.to_string()
+        }
+    };
     match frame.get("type").and_then(Value::as_str).unwrap_or("") {
         "snapshot" => {
             let items = frame
@@ -2273,10 +2407,7 @@ fn watch_frame_line(frame: &Value, is_zh: bool) -> Option<(bool, String)> {
                 .and_then(Value::as_array)
                 .map(|items| items.len())
                 .unwrap_or(0);
-            Some((
-                false,
-                format!("[{}] {}", tag("快照", "snapshot"), items),
-            ))
+            Some((false, format!("[{}] {}", tag("快照", "snapshot"), items)))
         }
         "delta" => {
             let event = frame
@@ -2313,7 +2444,10 @@ fn watch_frame_line(frame: &Value, is_zh: bool) -> Option<(bool, String)> {
             true,
             format!(
                 "error: {}",
-                frame.get("code").and_then(Value::as_str).unwrap_or("unknown")
+                frame
+                    .get("code")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
             ),
         )),
         "close" => Some((
@@ -2386,16 +2520,36 @@ fn audit_query_path(command: &CloudAuditCommand) -> String {
         command.limit.unwrap_or(50).max(1).min(500)
     )];
     parts.push(format!("offset={}", command.offset.unwrap_or(0).max(0)));
-    if let Some(action) = command.action.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+    if let Some(action) = command
+        .action
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
         parts.push(format!("action={}", urlencode(action)));
     }
-    if let Some(device) = command.device.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+    if let Some(device) = command
+        .device
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
         parts.push(format!("device_id={}", urlencode(device)));
     }
-    if let Some(since) = command.since.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+    if let Some(since) = command
+        .since
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
         parts.push(format!("since={}", urlencode(since)));
     }
-    if let Some(until) = command.until.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+    if let Some(until) = command
+        .until
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
         parts.push(format!("until={}", urlencode(until)));
     }
     if command.csv {
@@ -2404,7 +2558,11 @@ fn audit_query_path(command: &CloudAuditCommand) -> String {
     format!("/wunder/interlink/audit?{}", parts.join("&"))
 }
 
-async fn audit(runtime: &CliRuntime, global: &GlobalArgs, command: CloudAuditCommand) -> Result<()> {
+async fn audit(
+    runtime: &CliRuntime,
+    global: &GlobalArgs,
+    command: CloudAuditCommand,
+) -> Result<()> {
     let is_zh = zh(global);
     let _ = runtime;
     let session = session()?;
@@ -2445,16 +2603,21 @@ async fn audit(runtime: &CliRuntime, global: &GlobalArgs, command: CloudAuditCom
 
 fn audit_table(items: &[Value], is_zh: bool) -> String {
     let header = if is_zh {
-        format!("{:<16} {:<22} {:<20} {:<28}", "时间", "动作", "来源", "目标")
+        format!(
+            "{:<16} {:<22} {:<20} {:<28}",
+            "时间", "动作", "来源", "目标"
+        )
     } else {
-        format!("{:<16} {:<22} {:<20} {:<28}", "time", "action", "from", "to")
+        format!(
+            "{:<16} {:<22} {:<20} {:<28}",
+            "time", "action", "from", "to"
+        )
     };
     let mut rows = vec![header];
     for item in items {
         rows.push(format!(
             "{:<16} {:<22} {:<20} {:<28}",
-            item
-                .get("created_at")
+            item.get("created_at")
                 .and_then(Value::as_f64)
                 .map(fmt_time)
                 .unwrap_or_default(),
@@ -2488,7 +2651,10 @@ async fn approve(
     let decision = if command.yes { "approved" } else { "rejected" };
     let body = post_json(
         &session,
-        &format!("/wunder/interlink/commands/{}/approval", command.command_id.trim()),
+        &format!(
+            "/wunder/interlink/commands/{}/approval",
+            command.command_id.trim()
+        ),
         json!({"decision": decision}),
     )
     .await?;
@@ -2501,7 +2667,10 @@ async fn approve(
         if is_zh {
             format!("命令 {} 审批状态：{state}", command.command_id.trim())
         } else {
-            format!("command {} approval state: {state}", command.command_id.trim())
+            format!(
+                "command {} approval state: {state}",
+                command.command_id.trim()
+            )
         }
     );
     Ok(())
@@ -2588,7 +2757,8 @@ mod tests {
             watch_frame_line(&delta, false),
             Some((false, "[item_upsert] hello".to_string()))
         );
-        let notice = json!({"type":"command","kind":"thread.message","status":"acked","command_id":"cmd_1"});
+        let notice =
+            json!({"type":"command","kind":"thread.message","status":"acked","command_id":"cmd_1"});
         assert_eq!(
             watch_frame_line(&notice, false),
             Some((false, "[command] thread.message acked".to_string()))
@@ -2675,7 +2845,10 @@ mod tests {
         assert_eq!(normalized, PathBuf::from("a/b/c.md"));
         assert_eq!(path_key(Path::new("A/B")), path_key(Path::new("a/b")));
         // A sibling whose name merely starts with the root name is not inside it.
-        assert_eq!(within_root(Path::new("/ws/a"), Path::new("/ws/ab/x.md")), None);
+        assert_eq!(
+            within_root(Path::new("/ws/a"), Path::new("/ws/ab/x.md")),
+            None
+        );
         assert_eq!(
             within_root(Path::new("/ws/a"), Path::new("/ws/a/x.md")).as_deref(),
             Some("x.md")
@@ -2702,14 +2875,19 @@ mod tests {
         assert_eq!(CLOUD_FILE_CEILING, 1024 * 1024);
         let hint = failure_hint("PAYLOAD_TOO_LARGE").unwrap_or_default();
         assert!(hint.contains("1 MiB"), "{hint}");
-        assert!(failure_hint("CAP_DENIED").unwrap_or_default().contains("L3"));
+        assert!(failure_hint("CAP_DENIED")
+            .unwrap_or_default()
+            .contains("L3"));
         assert!(failure_hint("WHATEVER").is_none());
     }
 
     #[test]
     fn the_status_usage_line_reads_the_bare_stats_object() {
         assert_eq!(
-            workspace_usage_text(&json!({"used_bytes": 4096, "files": 7, "quota_bytes": 1048576}), true),
+            workspace_usage_text(
+                &json!({"used_bytes": 4096, "files": 7, "quota_bytes": 1048576}),
+                true
+            ),
             "云端工作区用量: 4096 / 1048576 字节，7 个文件"
         );
         assert_eq!(
@@ -2717,7 +2895,10 @@ mod tests {
             "cloud workspace usage: 4096 bytes, 7 files"
         );
         // A missing figure never leaves the status slot blank: it says unknown.
-        assert_eq!(workspace_usage_text(&Value::Null, true), "云端工作区用量: 未知");
+        assert_eq!(
+            workspace_usage_text(&Value::Null, true),
+            "云端工作区用量: 未知"
+        );
         assert_eq!(
             workspace_usage_text(&Value::Null, false),
             "cloud workspace usage: unknown"
@@ -2731,7 +2912,10 @@ mod tests {
             json!({"item_id": "t1:answer", "kind": "assistant_message", "content": "hel", "status": "running"}),
         ];
         let (lines, mark) = attach_delta_lines(items.as_slice(), &HashMap::new(), false, false);
-        assert_eq!(lines, vec!["<user>ask".to_string(), "<assistant>hel".to_string()]);
+        assert_eq!(
+            lines,
+            vec!["<user>ask".to_string(), "<assistant>hel".to_string()]
+        );
 
         // A grown assistant item contributes only its tail; finished items are silent.
         let grown = vec![
@@ -2896,10 +3080,14 @@ mod tests {
         let unknown = interlink_status_line(None, None, true);
         assert!(unknown.contains("未启用/未连接"), "{unknown}");
         assert!(unknown.contains("未知"), "{unknown}");
-        let nodes: Vec<Value> = serde_json::from_value(json!([{"node_id": "device:dev-1", "status": "busy"}]))
-            .unwrap();
-        assert_eq!(node_status_of(nodes.as_slice(), "device:dev-1").as_deref(), Some("busy"));
-        let bare: Vec<Value> = serde_json::from_value(json!([{"node_id": "device:dev-1"}])).unwrap();
+        let nodes: Vec<Value> =
+            serde_json::from_value(json!([{"node_id": "device:dev-1", "status": "busy"}])).unwrap();
+        assert_eq!(
+            node_status_of(nodes.as_slice(), "device:dev-1").as_deref(),
+            Some("busy")
+        );
+        let bare: Vec<Value> =
+            serde_json::from_value(json!([{"node_id": "device:dev-1"}])).unwrap();
         assert_eq!(node_status_of(bare.as_slice(), "device:dev-9"), None);
     }
 
@@ -2914,7 +3102,9 @@ mod tests {
         assert!(lines[1].contains("docs/a.md"), "{}", lines[1]);
         assert!(lines[1].contains("12"), "{}", lines[1]);
 
-        let nodes = vec![json!({"node_id": "cloud", "node_type": "server", "status": "online", "label": "cloud"})];
+        let nodes = vec![
+            json!({"node_id": "cloud", "node_type": "server", "status": "online", "label": "cloud"}),
+        ];
         assert!(node_table(nodes.as_slice(), false).contains("cloud"));
 
         let threads = vec![json!({
@@ -2922,7 +3112,9 @@ mod tests {
         })];
         assert!(thread_table(threads.as_slice(), true).contains("th_1"));
 
-        let items = vec![json!({"created_at": 1.0, "action": "command.issue", "from_node": "web", "to_node": "cloud"})];
+        let items = vec![
+            json!({"created_at": 1.0, "action": "command.issue", "from_node": "web", "to_node": "cloud"}),
+        ];
         assert!(audit_table(items.as_slice(), true).contains("command.issue"));
     }
     /// The exact outbound envelope of `ws_helpers::send_ws_event`: an event name,
@@ -2938,12 +3130,7 @@ mod tests {
     /// One durable `thread_change` row as `workspace::try_load_thread_changes`
     /// builds it: `payload` is the committed row (for `item_upsert` the whole
     /// item row with its embedded payload copy).
-    fn thread_change_frame(
-        change_type: &str,
-        item_id: &str,
-        row: Value,
-        cursor: i64,
-    ) -> Value {
+    fn thread_change_frame(change_type: &str, item_id: &str, row: Value, cursor: i64) -> Value {
         ws_event_frame(
             ATTACH_WATCH_REQUEST_ID,
             "thread_change",
@@ -3020,7 +3207,10 @@ mod tests {
         ];
         let seeded = attach_seed_watermark(page.as_slice());
         let (polled, _) = attach_delta_lines(page.as_slice(), &seeded, false, false);
-        assert_eq!(polled, vec!["<user>ask".to_string(), "<assistant>hel".to_string()]);
+        assert_eq!(
+            polled,
+            vec!["<user>ask".to_string(), "<assistant>hel".to_string()]
+        );
         assert!(attach_turn_finished(projection.items()));
     }
 
@@ -3094,12 +3284,21 @@ mod tests {
             projection.apply_frame(&reasoning, ATTACH_WATCH_REQUEST_ID),
             AttachFrameEffect::Ignored
         );
-        let turn = thread_change_frame("turn_upsert", "", json!({"turn_id": "turn_1", "status": "queued"}), 4);
+        let turn = thread_change_frame(
+            "turn_upsert",
+            "",
+            json!({"turn_id": "turn_1", "status": "queued"}),
+            4,
+        );
         assert_eq!(
             projection.apply_frame(&turn, ATTACH_WATCH_REQUEST_ID),
             AttachFrameEffect::Ignored
         );
-        let heartbeat = ws_event_frame(ATTACH_WATCH_REQUEST_ID, "heartbeat", json!({"running": true}));
+        let heartbeat = ws_event_frame(
+            ATTACH_WATCH_REQUEST_ID,
+            "heartbeat",
+            json!({"running": true}),
+        );
         assert_eq!(
             projection.apply_frame(&heartbeat, ATTACH_WATCH_REQUEST_ID),
             AttachFrameEffect::Ignored
@@ -3116,7 +3315,11 @@ mod tests {
     #[test]
     fn control_and_error_frames_decide_the_degrade_path() {
         let mut projection = AttachProjection::default();
-        let snapshot = ws_event_frame(ATTACH_WATCH_REQUEST_ID, "thread_snapshot_required", json!({}));
+        let snapshot = ws_event_frame(
+            ATTACH_WATCH_REQUEST_ID,
+            "thread_snapshot_required",
+            json!({}),
+        );
         assert_eq!(
             projection.apply_frame(&snapshot, ATTACH_WATCH_REQUEST_ID),
             AttachFrameEffect::ReplayRequired
@@ -3137,9 +3340,7 @@ mod tests {
         });
         assert_eq!(
             projection.apply_frame(&refused, ATTACH_WATCH_REQUEST_ID),
-            AttachFrameEffect::Failed(
-                "SESSION_NOT_FOUND session not found".to_string()
-            )
+            AttachFrameEffect::Failed("SESSION_NOT_FOUND session not found".to_string())
         );
         // Subscribe phase: the first ready has no request id, ours does.
         assert_eq!(
@@ -3165,7 +3366,10 @@ mod tests {
 
     #[test]
     fn attach_frames_use_the_handlers_envelope_and_bearer_auth() {
-        assert_eq!(ws_envelope("ping", None, Value::Null), "{\"type\":\"ping\"}");
+        assert_eq!(
+            ws_envelope("ping", None, Value::Null),
+            "{\"type\":\"ping\"}"
+        );
         let watch: Value = serde_json::from_str(
             ws_envelope(
                 "watch",
@@ -3212,14 +3416,20 @@ mod tests {
     #[test]
     fn a_degraded_attach_says_why_in_one_line() {
         let zh = attach_degraded_line("SESSION_NOT_FOUND session not found", true);
-        assert!(zh.contains("退回命令台账轮询") && zh.contains("SESSION_NOT_FOUND"), "{zh}");
+        assert!(
+            zh.contains("退回命令台账轮询") && zh.contains("SESSION_NOT_FOUND"),
+            "{zh}"
+        );
         assert!(!zh.contains('\n'), "{zh}");
         assert_eq!(
             attach_degraded_line("boom", false),
             "chat_ws unavailable (boom), falling back to ledger polling"
         );
         assert!(attach_reason(AttachReason::NoCursor, false).contains("cursor"));
-        assert_eq!(attach_reason(AttachReason::Snapshot, true), attach_reason(AttachReason::Snapshot, true));
+        assert_eq!(
+            attach_reason(AttachReason::Snapshot, true),
+            attach_reason(AttachReason::Snapshot, true)
+        );
     }
 
     #[test]

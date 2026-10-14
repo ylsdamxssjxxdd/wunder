@@ -738,19 +738,49 @@ fn exercise_interlink_channels_and_shadows(storage: Arc<dyn StorageBackend>) {
     );
     // Oldest first, and never more than the requested budget.
     assert_eq!(storage.cleanup_interlink_shadows(30, 2).unwrap(), 2);
-    assert!(storage.get_interlink_shadow("device-aged-40").unwrap().is_none());
-    assert!(storage.get_interlink_shadow("device-aged-35").unwrap().is_none());
-    assert!(storage.get_interlink_shadow("device-aged-31").unwrap().is_some());
-    assert!(storage.get_interlink_shadow("device-aged-edge").unwrap().is_some());
-    assert!(storage.get_interlink_shadow("device-fresh-29").unwrap().is_some());
-    assert!(storage.get_interlink_shadow("device-fresh-edge").unwrap().is_some());
+    assert!(storage
+        .get_interlink_shadow("device-aged-40")
+        .unwrap()
+        .is_none());
+    assert!(storage
+        .get_interlink_shadow("device-aged-35")
+        .unwrap()
+        .is_none());
+    assert!(storage
+        .get_interlink_shadow("device-aged-31")
+        .unwrap()
+        .is_some());
+    assert!(storage
+        .get_interlink_shadow("device-aged-edge")
+        .unwrap()
+        .is_some());
+    assert!(storage
+        .get_interlink_shadow("device-fresh-29")
+        .unwrap()
+        .is_some());
+    assert!(storage
+        .get_interlink_shadow("device-fresh-edge")
+        .unwrap()
+        .is_some());
 
     assert_eq!(storage.cleanup_interlink_shadows(30, 10).unwrap(), 2);
-    assert!(storage.get_interlink_shadow("device-aged-31").unwrap().is_none());
-    assert!(storage.get_interlink_shadow("device-aged-edge").unwrap().is_none());
+    assert!(storage
+        .get_interlink_shadow("device-aged-31")
+        .unwrap()
+        .is_none());
+    assert!(storage
+        .get_interlink_shadow("device-aged-edge")
+        .unwrap()
+        .is_none());
     // Inside the window, including a row one minute off the cutoff, stays.
-    assert!(storage.get_interlink_shadow("device-fresh-29").unwrap().is_some());
-    assert!(storage.get_interlink_shadow("device-fresh-edge").unwrap().is_some());
+    assert!(storage
+        .get_interlink_shadow("device-fresh-29")
+        .unwrap()
+        .is_some());
+    assert!(storage
+        .get_interlink_shadow("device-fresh-edge")
+        .unwrap()
+        .is_some());
     assert_eq!(storage.cleanup_interlink_shadows(30, 10).unwrap(), 0);
 }
 

@@ -216,7 +216,7 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
                     Ok(id) => {
                         state.set_open(false);
                         crate::navigation_ui::project_sidebar(&app, Some(&api_refresh));
-                        crate::navigation_ui::focus_workspace_of(&app, Some(&id));
+                        crate::navigation_ui::focus_workspace_of(&app, api_refresh, Some(&id));
                     }
                     Err(error) => state.set_validate_error(format!("{error}").into()),
                 }

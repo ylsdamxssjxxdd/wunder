@@ -95,4 +95,4 @@ updated_at: 2026-10-13
 
 - 内置工具与档位：[工具](/docs/zh-CN/tools/index/)
 - 技能正文读取：[技能调用](/docs/zh-CN/tools/skill-call/)
-- 对外 MCP 端点：[MCP 端点接入](/docs/zh-CN/reference/mcp-endpoint/)
+- 对外 MCP 端点：[MCP 端点接入](/docs/zh-CN/capabilities/mcp-endpoint/)

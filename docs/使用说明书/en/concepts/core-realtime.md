@@ -105,12 +105,12 @@ The realtime surface between local devices (Pupa, Helm) and the cloud is interli
 - **Command ledger and approvals**: commands, confirmations, events, and results are all recorded. Risk is tiered L0–L3; `tool.exec` and `agent.spawn` are L3, the default device capability set excludes L3, and L3 approvals cannot be remembered.
 - Interlink governance currently exposes only backend interfaces; **the Bridge has no interlink panel**.
 
-Details and protocol are in [Interlink](/docs/en/reference/interlink/).
+Details and protocol are in [Interlink](/docs/en/capabilities/interlink/).
 
 ## Further reading
 
 - [Streaming Execution](/docs/en/concepts/streaming/) — token increments and coalescing cadence
 - [Stability](/docs/en/concepts/core-stability/) — timeouts, circuit breaking, and resource governance
-- [Stream Events](/docs/en/reference/stream-events/) — detailed meanings of states and events
-- [Chat WebSocket](/docs/en/reference/chat-ws/) — handshake and message format
-- [Interlink](/docs/en/reference/interlink/) — tunnels, shadows, commands, and approvals
+- [Stream Events](/docs/en/capabilities/stream-events/) — detailed meanings of states and events
+- [Chat WebSocket](/docs/en/capabilities/chat-ws/) — handshake and message format
+- [Interlink](/docs/en/capabilities/interlink/) — tunnels, shadows, commands, and approvals

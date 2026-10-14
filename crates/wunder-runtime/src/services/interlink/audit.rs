@@ -204,14 +204,14 @@ mod tests {
 
     #[test]
     fn csv_escapes_delimiters_and_keeps_one_row_per_record() {
-        let rows = vec![
-            sample(1, "{\"path\":\"a,b\"}"),
-            sample(2, "say \"hi\""),
-        ];
+        let rows = vec![sample(1, "{\"path\":\"a,b\"}"), sample(2, "say \"hi\"")];
         let text = csv(&rows);
         let lines: Vec<&str> = text.trim().split('\n').collect();
         assert_eq!(lines.len(), 3);
-        assert_eq!(lines[0], "seq,created_at,actor,from_node,to_node,action,command_id,approval_id,detail_digest");
+        assert_eq!(
+            lines[0],
+            "seq,created_at,actor,from_node,to_node,action,command_id,approval_id,detail_digest"
+        );
         assert!(lines[1].contains("\"{\"\"path\"\":\"\"a,b\"\"}\""));
         assert!(lines[2].contains("\"say \"\"hi\"\"\""));
     }

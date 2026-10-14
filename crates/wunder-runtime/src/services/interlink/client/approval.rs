@@ -155,13 +155,7 @@ impl ApprovalGate {
     }
 
     /// Decide what to do with one command; consults the scope memory.
-    pub fn decide_plan(
-        &self,
-        kind: &str,
-        from_user: &str,
-        policy: &str,
-        now: f64,
-    ) -> ApprovalPlan {
+    pub fn decide_plan(&self, kind: &str, from_user: &str, policy: &str, now: f64) -> ApprovalPlan {
         plan(kind, policy, self.remembered(from_user, kind, now))
     }
 
@@ -189,13 +183,9 @@ impl ApprovalGate {
             return Err(GateError::QueueFull);
         }
         state.order.push_back(approval_id.clone());
-        state.pending.insert(
-            approval_id,
-            Pending {
-                approval,
-                respond,
-            },
-        );
+        state
+            .pending
+            .insert(approval_id, Pending { approval, respond });
         // A decided command never re-opens: forget the stale ticket.
         state.decided.remove(&command_id);
         Ok(receiver)
@@ -214,13 +204,7 @@ impl ApprovalGate {
 
     /// Apply the user's decision. `remember` only takes effect for L1 kinds.
     /// Returns `false` when the ticket is unknown or already decided.
-    pub fn decide(
-        &self,
-        approval_id: &str,
-        decision: Decision,
-        remember: bool,
-        now: f64,
-    ) -> bool {
+    pub fn decide(&self, approval_id: &str, decision: Decision, remember: bool, now: f64) -> bool {
         let mut state = self.state.write().expect("approval gate lock poisoned");
         let Some(entry) = state.pending.remove(approval_id) else {
             return false;
@@ -276,9 +260,7 @@ impl ApprovalGate {
             .memory
             .iter()
             .filter(|(_, expires_at)| **expires_at > now)
-            .map(|((from_user, level), expires_at)| {
-                (from_user.clone(), level.clone(), *expires_at)
-            })
+            .map(|((from_user, level), expires_at)| (from_user.clone(), level.clone(), *expires_at))
             .collect()
     }
 }
@@ -368,7 +350,10 @@ fn clip(text: &str) -> String {
     if cleaned.len() <= DETAIL_MAX_CHARS {
         return cleaned.to_string();
     }
-    format!("{}…", cleaned.chars().take(DETAIL_MAX_CHARS).collect::<String>())
+    format!(
+        "{}…",
+        cleaned.chars().take(DETAIL_MAX_CHARS).collect::<String>()
+    )
 }
 
 /// The local approver's view of one L3 request: the command line and its
@@ -425,9 +410,7 @@ pub fn local_detail(kind: &str, args: &serde_json::Value) -> Option<String> {
 mod tests {
     use super::*;
     use serde_json::json;
-    use wunder_core::interlink::{
-        CMD_THREAD_MESSAGE, CMD_WORKSPACE_DELETE, CMD_WORKSPACE_WRITE,
-    };
+    use wunder_core::interlink::{CMD_THREAD_MESSAGE, CMD_WORKSPACE_DELETE, CMD_WORKSPACE_WRITE};
 
     fn ticket(approval_id: &str, command_id: &str, kind: &str) -> PendingApproval {
         PendingApproval {
@@ -447,8 +430,12 @@ mod tests {
         // No policy value and no remembered grant may auto-allow L2/L3: the only
         // allowed outcomes are a live prompt or a refusal (docs §7.3, §9.5).
         for policy in ["prompt", "allow_readonly", "deny_all", "whatever"] {
-            for kind in [CMD_WORKSPACE_WRITE, CMD_WORKSPACE_DELETE, CMD_TOOL_EXEC, CMD_AGENT_SPAWN]
-            {
+            for kind in [
+                CMD_WORKSPACE_WRITE,
+                CMD_WORKSPACE_DELETE,
+                CMD_TOOL_EXEC,
+                CMD_AGENT_SPAWN,
+            ] {
                 assert_ne!(
                     plan(kind, policy, true),
                     ApprovalPlan::AutoAllow,
@@ -471,8 +458,14 @@ mod tests {
 
     #[test]
     fn only_l1_uses_the_scope_memory() {
-        assert_eq!(plan(CMD_THREAD_MESSAGE, "prompt", true), ApprovalPlan::AutoAllow);
-        assert_eq!(plan(CMD_THREAD_MESSAGE, "prompt", false), ApprovalPlan::RequirePrompt);
+        assert_eq!(
+            plan(CMD_THREAD_MESSAGE, "prompt", true),
+            ApprovalPlan::AutoAllow
+        );
+        assert_eq!(
+            plan(CMD_THREAD_MESSAGE, "prompt", false),
+            ApprovalPlan::RequirePrompt
+        );
         assert!(!approvals::is_memorizable(CMD_TOOL_EXEC));
         assert!(!approvals::is_memorizable(CMD_AGENT_SPAWN));
         assert!(!approvals::is_memorizable(CMD_WORKSPACE_DELETE));
@@ -505,11 +498,21 @@ mod tests {
     fn pending_prompts_are_bounded() {
         let gate = ApprovalGate::default();
         for index in 0..PENDING_MAX {
-            gate.open(ticket(&format!("apr_{index}"), &format!("cmd_{index}"), CMD_TOOL_EXEC), 1_000.0)
-                .expect("below the bound");
+            gate.open(
+                ticket(
+                    &format!("apr_{index}"),
+                    &format!("cmd_{index}"),
+                    CMD_TOOL_EXEC,
+                ),
+                1_000.0,
+            )
+            .expect("below the bound");
         }
         assert!(matches!(
-            gate.open(ticket("apr_overflow", "cmd_overflow", CMD_TOOL_EXEC), 1_000.0),
+            gate.open(
+                ticket("apr_overflow", "cmd_overflow", CMD_TOOL_EXEC),
+                1_000.0
+            ),
             Err(GateError::QueueFull)
         ));
         assert_eq!(gate.pending().len(), PENDING_MAX);
@@ -526,8 +529,15 @@ mod tests {
     fn expired_prompts_free_the_queue_instead_of_blocking_it() {
         let gate = ApprovalGate::default();
         for index in 0..PENDING_MAX {
-            gate.open(ticket(&format!("apr_{index}"), &format!("cmd_{index}"), CMD_TOOL_EXEC), 1_000.0)
-                .expect("below the bound");
+            gate.open(
+                ticket(
+                    &format!("apr_{index}"),
+                    &format!("cmd_{index}"),
+                    CMD_TOOL_EXEC,
+                ),
+                1_000.0,
+            )
+            .expect("below the bound");
         }
         // Every ticket above expires at 10_000; a later caller must not be
         // locked out by prompts nobody answered in time.
@@ -566,7 +576,10 @@ mod tests {
     fn window_is_always_bounded_by_the_documented_default() {
         assert_eq!(window_seconds(None, None, 1_000.0), APPROVAL_TIMEOUT_S);
         assert_eq!(window_seconds(Some(1_030.0), None, 1_000.0), 30.0);
-        assert_eq!(window_seconds(None, Some(3_600.0), 1_000.0), APPROVAL_TIMEOUT_S);
+        assert_eq!(
+            window_seconds(None, Some(3_600.0), 1_000.0),
+            APPROVAL_TIMEOUT_S
+        );
         assert_eq!(window_seconds(Some(900.0), Some(900.0), 1_000.0), 1.0);
     }
 }

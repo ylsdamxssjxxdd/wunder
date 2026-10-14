@@ -33,23 +33,22 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 
 use wunder_core::interlink::{
+    default_device_capabilities, InterlinkFrame, InterlinkHello, InterlinkHelloAck,
     AUDIT_CHANNEL_CLOSE, AUDIT_CHANNEL_OPEN, AUDIT_CHANNEL_REJECTED, AUDIT_FILE_READ,
     AUDIT_SHADOW_SYNC, CAP_AGENT_SPAWN, CAP_QUERY_BASIC, CAP_SHADOW_FULL, CAP_SHADOW_MINIMAL,
     CAP_THREAD_DRIVE, CAP_TOOL_EXEC, CAP_WORKSPACE_READ_BINARY, CAP_WORKSPACE_WRITE,
     EVENT_PRESENCE, EVENT_THREAD, FRAME_CLOSE, FRAME_COMMAND_ACK, FRAME_COMMAND_EVENT,
     FRAME_COMMAND_RESULT, FRAME_ERROR, FRAME_EVENT, FRAME_HELLO, FRAME_HELLO_ACK, FRAME_PING,
-    FRAME_PONG, FRAME_SHADOW_DELTA, FRAME_SHADOW_FULL, INTERLINK_PROTOCOL_VERSION, InterlinkFrame,
-    InterlinkHello, InterlinkHelloAck,
+    FRAME_PONG, FRAME_SHADOW_DELTA, FRAME_SHADOW_FULL, INTERLINK_PROTOCOL_VERSION,
     NODE_STATUS_AWAY, NODE_STATUS_BUSY, NODE_STATUS_ONLINE, REMOTE_FRAME_DELTA, TUNNEL_WS_PROTOCOL,
-    default_device_capabilities,
 };
 
 use crate::api::errors::error_response;
 use crate::api::user_context::resolve_user;
 use crate::core::blocking;
 use crate::services::interlink::{
-    LiveChannel, LiveChannelRegistry, OutboundFrame, alerts, audit, blob, commands, digest,
-    registry, remote, secret, shadow,
+    alerts, audit, blob, commands, digest, registry, remote, secret, shadow, LiveChannel,
+    LiveChannelRegistry, OutboundFrame,
 };
 use crate::services::presence::client_kind_from_device;
 use crate::state::AppState;
@@ -222,10 +221,7 @@ fn device_error() -> Response {
 
 /// `interlink_enabled == None` means "not yet configured" -> treat as on.
 fn interlink_allowed(patch: &Option<Box<CloudDeviceInterlinkPatch>>) -> bool {
-    patch
-        .as_deref()
-        .and_then(|patch| patch.interlink_enabled)
-        != Some(false)
+    patch.as_deref().and_then(|patch| patch.interlink_enabled) != Some(false)
 }
 
 // ---------------------------------------------------------------------------
@@ -538,7 +534,13 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>, ticket: TicketEntry)
     // 6) Tell the user's other live nodes a device joined (docs §5.3) and push
     //    anything that was parked for this node (docs §4.3 offline queue).
     broadcast_node_joined(&live).await;
-    let _ = commands::drain(state.storage.clone(), &live.user_id, &live.device_id, &limits).await;
+    let _ = commands::drain(
+        state.storage.clone(),
+        &live.user_id,
+        &live.device_id,
+        &limits,
+    )
+    .await;
 
     // 7) Steady-state loop.
     let mut ticker = tokio::time::interval(Duration::from_secs(heartbeat_s));
@@ -644,9 +646,15 @@ async fn handle_inbound(
                 return false;
             }
             if frame.kind == FRAME_PING
-                && send_frame(sender, FRAME_PONG, Some(channel_id), frame.corr.as_deref(), json!({}))
-                    .await
-                    .is_err()
+                && send_frame(
+                    sender,
+                    FRAME_PONG,
+                    Some(channel_id),
+                    frame.corr.as_deref(),
+                    json!({}),
+                )
+                .await
+                .is_err()
             {
                 return false;
             }
@@ -667,7 +675,15 @@ async fn handle_inbound(
             true
         }
         FRAME_COMMAND_ACK => {
-            match commands::on_ack(state.storage.clone(), corr, &frame.payload, limits, now_unix_seconds()).await {
+            match commands::on_ack(
+                state.storage.clone(),
+                corr,
+                &frame.payload,
+                limits,
+                now_unix_seconds(),
+            )
+            .await
+            {
                 Ok(commands::AckOutcome::Late(status)) => {
                     let _ = send_frame(
                         sender,
@@ -708,7 +724,13 @@ async fn handle_inbound(
                     return true;
                 }
             }
-            let _ = commands::on_event(state.storage.clone(), corr, &frame.payload, now_unix_seconds()).await;
+            let _ = commands::on_event(
+                state.storage.clone(),
+                corr,
+                &frame.payload,
+                now_unix_seconds(),
+            )
+            .await;
             true
         }
         FRAME_COMMAND_RESULT => {
@@ -768,7 +790,13 @@ async fn handle_event_frame(
                 _ if idle_s > AWAY_IDLE_S => NODE_STATUS_AWAY,
                 _ => NODE_STATUS_ONLINE,
             };
-            if !registry().set_presence(&live.device_id, &live.channel_id, status, active_threads, now) {
+            if !registry().set_presence(
+                &live.device_id,
+                &live.channel_id,
+                status,
+                active_threads,
+                now,
+            ) {
                 return false;
             }
             // The beat doubles as a liveness touch so presence stays correct
@@ -804,7 +832,7 @@ async fn handle_event_frame(
             remote::hub().publish(&live.device_id, thread_id, &text);
             true
         }
-        _ => true
+        _ => true,
     }
 }
 
@@ -827,7 +855,13 @@ async fn open_stream(command_id: &str, payload: &Value) -> Result<(), &'static s
 
 /// Persist an inline (<= 1 MiB) file result so the same blob endpoint serves
 /// both transfer shapes (docs §6.4).
-async fn store_inline(state: &Arc<AppState>, live: &LiveChannel, command_id: &str, inline: &str, payload: &Value) {
+async fn store_inline(
+    state: &Arc<AppState>,
+    live: &LiveChannel,
+    command_id: &str,
+    inline: &str,
+    payload: &Value,
+) {
     let decoded = {
         use base64::Engine;
         base64::engine::general_purpose::STANDARD.decode(inline.as_bytes())
@@ -933,7 +967,12 @@ pub async fn close_tunnel(device_id: &str, reason: &str) -> bool {
 // Frame helpers
 // ---------------------------------------------------------------------------
 
-fn build_frame(kind: &str, channel_id: Option<&str>, corr: Option<&str>, payload: Value) -> InterlinkFrame {
+fn build_frame(
+    kind: &str,
+    channel_id: Option<&str>,
+    corr: Option<&str>,
+    payload: Value,
+) -> InterlinkFrame {
     let mut frame = InterlinkFrame::new(
         kind,
         format!("frm_{}", Uuid::new_v4().simple()),
@@ -968,7 +1007,14 @@ async fn send_close(
     reason: &str,
     channel_id: Option<&str>,
 ) -> Result<(), ()> {
-    let _ = send_frame(sender, FRAME_CLOSE, channel_id, None, json!({ "reason": reason })).await;
+    let _ = send_frame(
+        sender,
+        FRAME_CLOSE,
+        channel_id,
+        None,
+        json!({ "reason": reason }),
+    )
+    .await;
     sender.send(Message::Close(None)).await.map_err(|_| ())
 }
 
@@ -1164,10 +1210,7 @@ async fn apply_shadow_frame(
                     Some("cloud"),
                     None,
                     None,
-                    vec![
-                        ("revision", json!(revision)),
-                        ("frame", json!(frame.kind)),
-                    ],
+                    vec![("revision", json!(revision)), ("frame", json!(frame.kind))],
                 ),
             )
             .await;
@@ -1275,7 +1318,12 @@ async fn teardown(state: &AppState, live: &LiveChannel, reason: &str) {
         set_tunnel_connected(state, &live.device_id, false, 0.0).await;
         // In-flight commands against a node that vanished answer immediately
         // (docs §13.2 7) and remote watchers are released.
-        let _ = commands::fail_device_commands(state.storage.clone(), &live.device_id, now_unix_seconds()).await;
+        let _ = commands::fail_device_commands(
+            state.storage.clone(),
+            &live.device_id,
+            now_unix_seconds(),
+        )
+        .await;
         remote::hub().close_node(&live.device_id);
     }
 }
@@ -1288,7 +1336,9 @@ async fn write_audit(state: &AppState, record: crate::storage::InterlinkAuditRec
     .await;
 }
 
-fn shadow_limit_config(config: &wunder_core::config::InterlinkShadowConfig) -> shadow::ShadowLimits {
+fn shadow_limit_config(
+    config: &wunder_core::config::InterlinkShadowConfig,
+) -> shadow::ShadowLimits {
     shadow::ShadowLimits {
         threads_max: config.threads_max.max(1),
         tree_max_entries: config.tree_max_entries.max(1),
@@ -1373,14 +1423,7 @@ mod tests {
         store.insert("itk_live".to_string(), ticket("d1", 10_000.0));
         assert!(store.consume("itk_live", 100.0).is_some());
         // Only the live entry survived the last write.
-        assert_eq!(
-            store
-                .tickets
-                .read()
-                .expect("lock")
-                .len(),
-            0
-        );
+        assert_eq!(store.tickets.read().expect("lock").len(), 0);
     }
 
     #[test]

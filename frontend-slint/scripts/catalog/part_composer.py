@@ -52,7 +52,7 @@ ENTRIES = [
     ("cp_more_new_thread", "新建线程", "New thread"),
     ("cp_more_upload", "上传文件", "Upload file"),
     ("cp_more_workspace", "打开工作区文件夹", "Open workspace folder"),
-    ("cp_permission", "权限模式", "Permission mode"),
+    ("cp_permission", "审批模式", "Approval mode"),
     ("cp_permission_full", "完全访问", "Full access"),
     ("cp_permission_write", "写入自动", "Auto-edit"),
     ("cp_permission_command", "执行前确认", "Confirm commands"),
@@ -61,6 +61,9 @@ ENTRIES = [
     # ---- model picker (§8.3) ----
     ("cp_model", "模型", "Model"),
     ("cp_model_pick", "切换模型", "Switch model"),
+    ("cp_model_context", "上下文 Token", "Context tokens"),
+    ("cp_voice_input", "语音输入", "Voice input"),
+    ("cp_terminal_mode", "终端模式", "Terminal mode"),
     ("cp_model_search", "搜索模型", "Search models"),
     ("cp_model_empty", "还没有可用模型。请到「设置 → 模型设置」添加。", "No models yet. Add one in Settings → Models."),
     ("cp_model_no_match", "没有匹配的模型", "No matching model"),

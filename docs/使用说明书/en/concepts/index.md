@@ -1,10 +1,10 @@
 ---
 title: Core Concepts
-summary: Why wunder behaves the way it does—9 core design constraints, along with the layers they form, the entries into them, and the reading paths.
+summary: Why wunder behaves the way it does—the four cores (fast, stable, general, lightweight), along with the four forms and the deep dives.
 updated_at: 2026-10-13
 ---
 
-wunder is an agent-scheduling platform: hand it a goal and it breaks the task down, calls tools, and delivers results. These 9 cores explain **why the system behaves the way it does**, not a list of what it can do. For the feature list, see [Tools](/docs/en/tools/) and the [API Index](/docs/en/reference/api-index/).
+wunder is an agent-scheduling platform: hand it a goal and it breaks the task down, calls tools, and delivers results. These four cores describe **what the system aims to be**, not a list of what it can do. For the feature list, see [Tools](/docs/en/tools/) and the [Capability Quick Reference](/docs/en/capabilities/api-index/).
 
 ## Four design principles
 
@@ -26,31 +26,20 @@ wunder is an agent-scheduling platform: hand it a goal and it breaks the task do
 
 The Pupa and the Helm do not depend on the Hull and can run and ship on their own. The Electron / Tauri front-end shells are no longer maintained day to day and are no longer described as a capability.
 
-## The 9 cores
+## The four cores
 
-<div class="docs-card-grid docs-card-grid-compact">
-  <a class="docs-card" href="/docs/en/concepts/core-goal/"><strong>Goal</strong><span>Lets an agent enter goal mode and keep working on one task.</span></a>
-  <a class="docs-card" href="/docs/en/concepts/core-compatibility/"><strong>Compatibility</strong><span>Lets the Pupa and the Helm run in older operating-system environments under explicit constraints.</span></a>
-  <a class="docs-card" href="/docs/en/concepts/core-context-compression/"><strong>Context compression</strong><span>Keeps context size under control in long conversations while retaining useful information.</span></a>
-  <a class="docs-card" href="/docs/en/concepts/core-subagent/"><strong>Subagents</strong><span>Forks a subtask inside a single thread; an independent executor completes it and returns the result.</span></a>
-  <a class="docs-card" href="/docs/en/concepts/core-scheduled-tasks/"><strong>Scheduled tasks</strong><span>Supports system-level periodic execution and background governance.</span></a>
-  <a class="docs-card" href="/docs/en/concepts/core-channels/"><strong>Channels</strong><span>Connects multiple entries to the same runtime capability.</span></a>
-  <a class="docs-card" href="/docs/en/concepts/core-memory/"><strong>Memory</strong><span>Supports long conversations and long-term material use without polluting the thread's core cognition.</span></a>
-  <a class="docs-card" href="/docs/en/concepts/core-multithreading/"><strong>Multi-threading</strong><span>Raises throughput and resource use through concurrency control inside a single process.</span></a>
-  <a class="docs-card" href="/docs/en/concepts/core-multi-user-management/"><strong>Multi-tenancy</strong><span>Supports the Hull's organization, user, tenant, and permission governance.</span></a>
-</div>
+| Core | Meaning |
+| --- | --- |
+| **Fast** | Starts up quickly and responds quickly |
+| **Stable** | The agent can work for long stretches without stalling or leaking memory, the program runs normally, and CPU usage stays low |
+| **General** | Deployable on any operating-system platform, connectable to any mainstream model, able to complete all kinds of complex tasks |
+| **Lightweight** | A small program body, light prompt and tool design, and low token consumption |
 
-The layers, from the inside out:
-
-| Layer | Cores | What they solve |
-| --- | --- | --- |
-| Execution engine | context compression, memory, subagents, multi-threading | How one thread runs to completion: it can control its length, use long-term material, fork subtasks, and advance concurrently with other threads |
-| Access and governance | channels, scheduled tasks, multi-tenancy, goal | Who wakes a thread and when, plus the governance surface of organizations, users, and permissions |
-| Platform foundation | compatibility | Which operating systems this engine and its access layer can run on |
+(The per-item detail pages from the old "9 cores" now live under [Capabilities › Core Capabilities](/docs/en/capabilities/).)
 
 ## Going deeper by topic
 
-One layer down, by topic (all under [Reference › In Depth](/docs/en/reference/)):
+One layer down, by topic (all under [Capabilities › In Depth](/docs/en/capabilities/)):
 
 | Topic | Page |
 | --- | --- |
@@ -75,8 +64,8 @@ One layer down, by topic (all under [Reference › In Depth](/docs/en/reference/
 ## Recommended reading by role
 
 - **First time on the Pupa**: [Quickstart](/docs/en/start/quickstart/) → Agent Loop → Tools → Memory → Context Compression.
-- **Administrator / governance**: Multi-user Management → Stability → Observability → Channels → [Configuration Reference](/docs/en/reference/config/).
-- **Integration and development**: [Architecture](/docs/en/concepts/architecture/) → [Chat WebSocket](/docs/en/reference/chat-ws/) → Streaming Execution.
+- **Administrator / governance**: Multi-user Management → Stability → Observability → Channels → [Configuration Reference](/docs/en/capabilities/config/).
+- **Integration and development**: [Architecture](/docs/en/concepts/architecture/) → [Chat WebSocket](/docs/en/capabilities/chat-ws/) → Streaming Execution.
 
 ## Common misconceptions
 

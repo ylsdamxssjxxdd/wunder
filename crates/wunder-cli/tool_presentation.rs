@@ -219,9 +219,7 @@ pub(crate) fn present(tool_name: &str) -> ToolPresentation {
         "write_command_stdin" => call(ToolAccess::Execute, "写入命令输入", "Write stdin"),
         "programmatic_tool_call" | "ptc" => call(ToolAccess::Execute, "脚本调用", "Scripted call"),
         "desktop_control" | "桌面控制" => call(ToolAccess::Execute, "桌面控制", "Desktop"),
-        other if other.starts_with("browser_") => {
-            call(ToolAccess::Execute, "浏览网页", "Browse")
-        }
+        other if other.starts_with("browser_") => call(ToolAccess::Execute, "浏览网页", "Browse"),
         "skill_call" | "skill_get" | "技能调用" => {
             call(ToolAccess::Delegate, "调用技能", "Run skill")
         }

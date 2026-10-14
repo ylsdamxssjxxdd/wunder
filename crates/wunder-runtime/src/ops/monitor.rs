@@ -1621,13 +1621,17 @@ impl MonitorState {
     /// presence frame, so it must not pay for per-session JSON and LLM speed
     /// recomputation just to read a count.
     pub fn count_active_sessions(&self) -> usize {
-        self.run_guarded("monitor.count_active_sessions", || 0usize, || {
-            let sessions = self.sessions.lock();
-            sessions
-                .values()
-                .filter(|record| Self::is_active_status(&record.status))
-                .count()
-        })
+        self.run_guarded(
+            "monitor.count_active_sessions",
+            || 0usize,
+            || {
+                let sessions = self.sessions.lock();
+                sessions
+                    .values()
+                    .filter(|record| Self::is_active_status(&record.status))
+                    .count()
+            },
+        )
     }
 
     fn is_active_status(status: &str) -> bool {

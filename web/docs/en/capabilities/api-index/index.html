@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Feature and Capability Quick Reference | 使用说明书</title>
+  <meta name="description" content="What wunder can do and where each capability lives, organized by feature area.">
+  <link rel="stylesheet" href="/docs/site.css?v=c9863d5d7815">
+  <script type="module" src="/docs/site.js?v=c9863d5d7815"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/capabilities/api-index","language":"en","title":"Feature and Capability Quick Reference","summary":"What wunder can do and where each capability lives, organized by feature area.","updated_at":"2026-10-13","read_when":[],"source_docs":[],"tab":"Capabilities","group":"Interfaces and Endpoints","group_path":["Interfaces and Endpoints"],"url":"/docs/en/capabilities/api-index/","headings":[{"id":"section-1","level":2,"text":"Chat"},{"id":"section-2","level":2,"text":"Working directory"},{"id":"section-3","level":2,"text":"Agent settings"},{"id":"section-4","level":2,"text":"Tools and skills"},{"id":"section-5","level":2,"text":"Channel access"},{"id":"section-6","level":2,"text":"Scheduled tasks"},{"id":"section-7","level":2,"text":"System settings"},{"id":"section-8","level":2,"text":"Bridge features (administrators only)"},{"id":"section-9","level":2,"text":"Locate by need"},{"id":"section-10","level":2,"text":"Further reading"}],"prev_slug":"en/capabilities/index","next_slug":"en/capabilities/chat-ws","markdown":"Capabilities are listed by category below, each with its entry point.\n\n## Chat\n\nLocation: the workbench (Pupa or Beehive) → the New task button in the left sidebar, or the thread list under the workspace.\n\n- Ask questions and get answers\n- Upload files for the agent to analyze\n- Have the agent carry out tasks such as writing code, processing files, or searching for information\n- Review chat history and pick up earlier conversations\n\nRelated: [Session Status Guide](/docs/en/capabilities/stream-events/), [Prompts and Personalization](/docs/en/capabilities/prompt-templates/)\n\n## Working directory\n\nLocation: the workbench → the Working directory area below the workspace in the left sidebar.\n\n- Upload documents, images, audio, and other files for the agent to use\n- Download files the agent generates\n- Browse and manage your single cloud directory\n- See the files produced while the agent works\n\nRelated: [Workspace Routing and File Management](/docs/en/capabilities/workspace-routing/)\n\n## Agent settings\n\nLocation: the workbench → Settings at the bottom of the left sidebar → Agent.\n\nEvery user has exactly one agent instance, generated from a one-to-one binding to an admin-side preset. There is no user-side entry point to create, delete, switch, or sort agents.\n\n- View the current agent instance and the preset it is bound to\n- Edit the fields the preset allows you to customize, such as the default model, approval mode, and tool set\n- Set the agent's answer style (prompt template)\n- Manage the agent's long-term memory\n\nRelated: [Prompts and Personalization](/docs/en/capabilities/prompt-templates/), [Tool System](/docs/en/concepts/tools/)\n\n## Tools and skills\n\nLocation: the workbench → Settings at the bottom of the left sidebar → Tools. The user side only views and toggles; the tool catalog is maintained by admins.\n\n- View the available tool list\n- Configure skills (preset capability packs)\n- Add knowledge bases so the agent can draw on your own material\n\nThe built-in tools cover:\n\n- File operations: read, write, and search files\n- Web operations: search and fetch page content\n- Code operations: run commands and write code\n- System operations: screenshots and system status\n- More capabilities are added through MCP\n\nRelated: [Tool System](/docs/en/concepts/tools/), [Prompts and Skills](/docs/en/concepts/prompt-and-skills/)\n\n## Channel access\n\nLocation: the Bridge → Channel management.\n\n- Bind accounts on Feishu, WeCom, WeChat, QQ, and other platforms\n- Let users on those external platforms reach the agent\n- View channel status and message logs\n- Troubleshoot channel-related problems\n\nWhen members of an organization already work in Feishu or WeChat, channel access lets them use the agent without switching tools.\n\nRelated: [Bridge Panel Guide](/docs/en/capabilities/admin-panels/)\n\n## Scheduled tasks\n\nLocation: the workbench → Settings at the bottom of the left sidebar → Scheduled tasks.\n\n- Create tasks that run on a schedule\n- View execution history\n- Manage, pause, and delete scheduled tasks\n\nThis suits recurring work such as a daily summary report or a periodic system check.\n\n## System settings\n\nLocation: the workbench → Settings at the bottom of the left sidebar.\n\n- Change the interface language\n- Configure the service address to connect to\n- Manage your personal account information\n- View usage statistics and quota balance\n\nRelated: [System Settings Reference](/docs/en/capabilities/config/)\n\n## Bridge features (administrators only)\n\nLocation: open the Bridge address in a browser. The main panels are:\n\n- System settings: global configuration\n- User management: user accounts and quota accounts\n- Organization management: organizational structure\n- Model configuration: the AI models you can choose\n- Tool management: the available tool list\n- Channel monitoring: external channel status\n- Performance monitoring: how the system is running\n\nRelated: [Bridge Panel Guide](/docs/en/capabilities/admin-panels/), [System Settings Reference](/docs/en/capabilities/config/)\n\n## Locate by need\n\n| I want to… | Where to go |\n|---------|--------|\n| Start a conversation | New task in the left sidebar → just type |\n| Upload a file for the agent to analyze | Use upload or drag files into the working directory area in the left sidebar, or add an attachment in the composer |\n| See the files the agent generates | The working directory area in the left sidebar |\n| Customize the agent's style | Settings at the bottom of the left sidebar → Agent → prompt template |\n| Create a scheduled task | Settings at the bottom of the left sidebar → Scheduled tasks → create task |\n| Manage users (administrator) | Bridge → User management |\n| Configure channels (administrator) | Bridge → Channel management |\n\n## Further reading\n\n- [Core Concepts](/docs/en/concepts/)\n- [Quick Start](/docs/en/start/quickstart/)\n- [Troubleshooting](/docs/en/help/troubleshooting/)\n","source_path":"使用说明书/en/capabilities/api-index.md"}</script>
+</body>
+</html>

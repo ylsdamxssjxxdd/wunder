@@ -36,4 +36,4 @@ Token 用量继续用来观察模型的输入、输出、思考以及上下文�
 
 会话里的"模型请求次数"和"额度消耗"是两个不同指标：普通用户一次可计费的模型请求通常各加 1；管理员等免额度场景仍会增加模型请求次数，但额度消耗为 0。账户快照只表示当时的余额，不代表本次扣了多少。旧的额度记录只用于读历史。
 
-[多用户管理](/docs/zh-CN/concepts/core-multi-user-management/) · [舰桥面板指南](/docs/zh-CN/reference/admin-panels/)
+[多用户管理](/docs/zh-CN/concepts/core-multi-user-management/) · [舰桥面板指南](/docs/zh-CN/capabilities/admin-panels/)

@@ -80,7 +80,7 @@ Verification differs by platform: some loop back a verification token from confi
 
 ## Related pages
 
-- [WeChat Channel Integration](/docs/en/reference/weixin-channel/) — the details of weixin long polling
-- [Workspace Routing Reference](/docs/en/reference/workspace-routing/) — the rules that map a binding to a workspace
+- [WeChat Channel Integration](/docs/en/capabilities/weixin-channel/) — the details of weixin long polling
+- [Workspace Routing Reference](/docs/en/capabilities/workspace-routing/) — the rules that map a binding to a workspace
 - [Realtime](/docs/en/concepts/core-realtime/) — event push and refill
-- [Bridge Panel Guide](/docs/en/reference/admin-panels/) — where channel accounts are configured
+- [Bridge Panel Guide](/docs/en/capabilities/admin-panels/) — where channel accounts are configured

@@ -56,13 +56,7 @@ impl PresenceService {
         self.connections.touch(user_id, kind, now);
     }
 
-    pub fn connect_client(
-        &self,
-        user_id: &str,
-        connection_id: &str,
-        kind: &'static str,
-        now: f64,
-    ) {
+    pub fn connect_client(&self, user_id: &str, connection_id: &str, kind: &'static str, now: f64) {
         self.connections.connect(user_id, connection_id, kind, now);
     }
 
@@ -111,10 +105,9 @@ impl PresenceService {
         let cancel = self.maintenance_cancel.clone();
         let weak = std::sync::Arc::downgrade(&self);
         tokio::spawn(async move {
-            let mut ticker =
-                tokio::time::interval(Duration::from_secs(PRESENCE_GC_INTERVAL_SECS.max(
-                    PRESENCE_GC_MIN_INTERVAL_SECS,
-                )));
+            let mut ticker = tokio::time::interval(Duration::from_secs(
+                PRESENCE_GC_INTERVAL_SECS.max(PRESENCE_GC_MIN_INTERVAL_SECS),
+            ));
             ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             ticker.tick().await;
             loop {
@@ -221,7 +214,10 @@ mod tests {
     fn client_kind_derives_from_session_scope() {
         assert_eq!(client_kind_from_scope(Some("user_web")), CLIENT_WEB);
         assert_eq!(client_kind_from_scope(Some("admin_web")), CLIENT_WEB);
-        assert_eq!(client_kind_from_scope(Some("local_desktop")), CLIENT_DESKTOP);
+        assert_eq!(
+            client_kind_from_scope(Some("local_desktop")),
+            CLIENT_DESKTOP
+        );
         assert_eq!(client_kind_from_scope(Some("local_cli")), CLIENT_CLI);
         assert_eq!(client_kind_from_scope(Some("default")), CLIENT_WEB);
         assert_eq!(client_kind_from_scope(None), CLIENT_WEB);

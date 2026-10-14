@@ -11,6 +11,7 @@
       :failed-count="Number(message.workflow_failed_count)||0"
       :reasoning="String(message.reasoning || '')"
       :reasoning-item-id="String(message.reasoning_item_id || '')"
+      :final-item-id="String(message.item_id || message.assistant_item_id || '')"
       @open-change="processOpen = $event"
     />
     <!-- 有工具的轮次：流式文本进过程区实时行，不外显为正文；过程区收起时外显保证输出可见；

@@ -128,8 +128,10 @@ impl InterlinkSessionConfig {
     /// Shadow period clamped into a sane band; a hand-edited file cannot make
     /// the node poll every millisecond or never at all.
     pub fn shadow_interval_s(&self) -> u64 {
-        self.shadow_interval_s
-            .clamp(INTERLINK_SHADOW_INTERVAL_MIN_S, INTERLINK_SHADOW_INTERVAL_MAX_S)
+        self.shadow_interval_s.clamp(
+            INTERLINK_SHADOW_INTERVAL_MIN_S,
+            INTERLINK_SHADOW_INTERVAL_MAX_S,
+        )
     }
 
     /// Remote pull ceiling in bytes, clamped to the documented band.
@@ -155,7 +157,9 @@ impl InterlinkSessionConfig {
             protocol: self.protocol.max(1),
             shadow_interval_s: self.shadow_interval_s(),
             approval_default: self.approval_policy().to_string(),
-            max_file_pull_mb: self.max_file_pull_mb.clamp(1, INTERLINK_MAX_FILE_PULL_MB_MAX),
+            max_file_pull_mb: self
+                .max_file_pull_mb
+                .clamp(1, INTERLINK_MAX_FILE_PULL_MB_MAX),
             node_secret: self
                 .node_secret
                 .as_deref()
@@ -436,13 +440,19 @@ mod tests {
         });
         session.save(dir.path()).expect("save");
         let loaded = CloudSessionFile::load_any(dir.path()).expect("load");
-        assert_eq!(loaded.interlink.shadow_interval_s, INTERLINK_SHADOW_INTERVAL_MIN_S);
+        assert_eq!(
+            loaded.interlink.shadow_interval_s,
+            INTERLINK_SHADOW_INTERVAL_MIN_S
+        );
         assert_eq!(
             loaded.interlink.max_file_pull_mb,
             INTERLINK_MAX_FILE_PULL_MB_MAX
         );
         assert_eq!(loaded.interlink.approval_policy(), "allow_readonly");
-        assert_eq!(loaded.interlink.node_secret.as_deref(), Some(&"a".repeat(64)[..]));
+        assert_eq!(
+            loaded.interlink.node_secret.as_deref(),
+            Some(&"a".repeat(64)[..])
+        );
         assert_eq!(loaded.interlink.secret_version, 3);
         assert_eq!(loaded.interlink.max_file_pull_bytes(), 1024 * 1024 * 1024);
     }

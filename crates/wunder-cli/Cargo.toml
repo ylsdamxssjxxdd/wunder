@@ -3,6 +3,7 @@ name = "wunder-cli"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+build = "build.rs"
 
 [features]
 default = ["sqlite-storage"]

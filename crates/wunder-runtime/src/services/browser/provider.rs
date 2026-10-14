@@ -156,9 +156,9 @@ impl BrowserUseRegistry {
     /// Register the one and only provider. A second registration is rejected.
     pub fn register(&self, provider: Arc<dyn BrowserProvider>) -> Result<()> {
         let id = provider.id();
-        self.provider.set(provider).map_err(|_| {
-            anyhow!("browser provider already registered; rejected duplicate '{id}'")
-        })
+        self.provider
+            .set(provider)
+            .map_err(|_| anyhow!("browser provider already registered; rejected duplicate '{id}'"))
     }
 
     pub fn provider(&self) -> Option<Arc<dyn BrowserProvider>> {
@@ -182,9 +182,7 @@ static BROWSER_REGISTRY: OnceLock<BrowserUseRegistry> = OnceLock::new();
 pub fn browser_registry() -> &'static BrowserUseRegistry {
     BROWSER_REGISTRY.get_or_init(|| {
         let registry = BrowserUseRegistry::new();
-        let provider = Arc::new(
-            crate::services::browser::providers::PlaywrightProvider::new(),
-        );
+        let provider = Arc::new(crate::services::browser::providers::PlaywrightProvider::new());
         if let Err(err) = registry.register(provider) {
             error!(error = %err, "failed to register builtin browser provider");
         }

@@ -109,4 +109,4 @@ The text protocol's lark syntax is currently reserved for the patch form of text
 - [Context compression](/docs/en/concepts/core-context-compression/) — micro-compaction and history compression
 - [Real-time behavior](/docs/en/concepts/core-realtime/) — how tool events are pushed to the client
 - [Stability](/docs/en/concepts/core-stability/) — timeouts, budgets, and circuit breaking
-- [Configuration reference](/docs/en/reference/config/) — MCP and tool toggle settings
+- [Configuration reference](/docs/en/capabilities/config/) — MCP and tool toggle settings

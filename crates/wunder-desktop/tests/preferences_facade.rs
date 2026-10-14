@@ -165,7 +165,9 @@ fn session_model_override_persists_through_the_native_facade() {
 
     assert_eq!(session.session_model_name, None, "no override at birth");
     assert!(
-        runtime.set_session_model(&session.id, "missing-model").is_err(),
+        runtime
+            .set_session_model(&session.id, "missing-model")
+            .is_err(),
         "unknown model keys are rejected at the façade"
     );
     runtime
@@ -190,7 +192,9 @@ fn session_model_override_persists_through_the_native_facade() {
         None,
         "clearing falls back to the agent chain"
     );
-    assert!(runtime.set_session_model("missing-session", "test-model").is_err());
+    assert!(runtime
+        .set_session_model("missing-session", "test-model")
+        .is_err());
 }
 
 #[test]

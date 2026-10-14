@@ -72,7 +72,9 @@ pub fn filter_tool_visibility(
             .find(|(name, _)| name == &canonical)
             .or_else(|| {
                 if crate::tools::is_browser_tool_name(&canonical) {
-                    rule_map.iter().find(|(name, _)| name == &browser_group_name)
+                    rule_map
+                        .iter()
+                        .find(|(name, _)| name == &browser_group_name)
                 } else {
                     None
                 }

@@ -4,7 +4,7 @@ pub mod server;
 use crate::config::Config;
 use crate::i18n;
 use crate::user_tools::UserToolBindings;
-use crate::workspace::{AGENT_WORKSPACE_DIR, WorkspaceManager};
+use crate::workspace::{WorkspaceManager, AGENT_WORKSPACE_DIR};
 use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::env;
@@ -775,7 +775,14 @@ fn rewrite_sandbox_paths(
     }
     if !matches!(
         tool,
-        "ptc" | "执行命令" | "列出文件" | "搜索内容" | "读取文件" | "写入文件" | "文本编辑" | "编辑"
+        "ptc"
+            | "执行命令"
+            | "列出文件"
+            | "搜索内容"
+            | "读取文件"
+            | "写入文件"
+            | "文本编辑"
+            | "编辑"
     ) {
         return data;
     }

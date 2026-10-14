@@ -293,7 +293,15 @@ fn the_cloud_interlink_commands_parse_and_refuse_without_a_session() {
     const CASES: &[&[&str]] = &[
         &["cloud", "ws", "ls", "docs", "--limit", "10"],
         &["cloud", "ws", "cat", "docs/a.md", "--lines", "5"],
-        &["cloud", "ws", "pull", "docs/a.md", "-o", "copies/a.md", "--force"],
+        &[
+            "cloud",
+            "ws",
+            "pull",
+            "docs/a.md",
+            "-o",
+            "copies/a.md",
+            "--force",
+        ],
         &["cloud", "ws", "push", "docs/a.md", "-d", "in/a.md"],
         &["cloud", "threads", "--limit", "5"],
         &["cloud", "thread", "show", "th_1", "--raw"],
@@ -309,7 +317,16 @@ fn the_cloud_interlink_commands_parse_and_refuse_without_a_session() {
             "1700000000",
             "--csv",
         ],
-        &["cloud", "watch", "--to", "dev-1", "--thread", "th_1", "--seconds", "1"],
+        &[
+            "cloud",
+            "watch",
+            "--to",
+            "dev-1",
+            "--thread",
+            "th_1",
+            "--seconds",
+            "1",
+        ],
     ];
     for lang in ["zh-CN", "en-US"] {
         let expected = if lang == "zh-CN" {

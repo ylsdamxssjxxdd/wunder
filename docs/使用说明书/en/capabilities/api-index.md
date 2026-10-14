@@ -15,7 +15,7 @@ Location: the workbench (Pupa or Beehive) → the New task button in the left si
 - Have the agent carry out tasks such as writing code, processing files, or searching for information
 - Review chat history and pick up earlier conversations
 
-Related: [Session Status Guide](/docs/en/reference/stream-events/), [Prompts and Personalization](/docs/en/reference/prompt-templates/)
+Related: [Session Status Guide](/docs/en/capabilities/stream-events/), [Prompts and Personalization](/docs/en/capabilities/prompt-templates/)
 
 ## Working directory
 
@@ -26,7 +26,7 @@ Location: the workbench → the Working directory area below the workspace in th
 - Browse and manage your single cloud directory
 - See the files produced while the agent works
 
-Related: [Workspace Routing and File Management](/docs/en/reference/workspace-routing/)
+Related: [Workspace Routing and File Management](/docs/en/capabilities/workspace-routing/)
 
 ## Agent settings
 
@@ -39,7 +39,7 @@ Every user has exactly one agent instance, generated from a one-to-one binding t
 - Set the agent's answer style (prompt template)
 - Manage the agent's long-term memory
 
-Related: [Prompts and Personalization](/docs/en/reference/prompt-templates/), [Tool System](/docs/en/concepts/tools/)
+Related: [Prompts and Personalization](/docs/en/capabilities/prompt-templates/), [Tool System](/docs/en/concepts/tools/)
 
 ## Tools and skills
 
@@ -70,7 +70,7 @@ Location: the Bridge → Channel management.
 
 When members of an organization already work in Feishu or WeChat, channel access lets them use the agent without switching tools.
 
-Related: [Bridge Panel Guide](/docs/en/reference/admin-panels/)
+Related: [Bridge Panel Guide](/docs/en/capabilities/admin-panels/)
 
 ## Scheduled tasks
 
@@ -91,7 +91,7 @@ Location: the workbench → Settings at the bottom of the left sidebar.
 - Manage your personal account information
 - View usage statistics and quota balance
 
-Related: [System Settings Reference](/docs/en/reference/config/)
+Related: [System Settings Reference](/docs/en/capabilities/config/)
 
 ## Bridge features (administrators only)
 
@@ -105,7 +105,7 @@ Location: open the Bridge address in a browser. The main panels are:
 - Channel monitoring: external channel status
 - Performance monitoring: how the system is running
 
-Related: [Bridge Panel Guide](/docs/en/reference/admin-panels/), [System Settings Reference](/docs/en/reference/config/)
+Related: [Bridge Panel Guide](/docs/en/capabilities/admin-panels/), [System Settings Reference](/docs/en/capabilities/config/)
 
 ## Locate by need
 

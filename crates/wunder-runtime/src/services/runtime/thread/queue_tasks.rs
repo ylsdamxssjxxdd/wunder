@@ -16,11 +16,7 @@ fn is_parked_queue_status(status: &str) -> bool {
 /// 走同一张队列表，但不能出现在用户可见的排队条里。
 fn is_user_visible_queue_task(task: &AgentTaskRecord) -> bool {
     let payload = &task.request_payload;
-    if payload
-        .get("hidden_internal_user")
-        .and_then(Value::as_bool)
-        == Some(true)
-    {
+    if payload.get("hidden_internal_user").and_then(Value::as_bool) == Some(true) {
         return false;
     }
     let overrides = payload.get("config_overrides");
@@ -97,7 +93,9 @@ fn load_parked_queue_tasks(
     let thread_id = format!("thread_{session_id}");
     let mut tasks = store.list_agent_tasks_by_thread(&thread_id, None, QUEUE_LIST_LIMIT)?;
     tasks.retain(|task| {
-        task.user_id == user_id && is_parked_queue_status(&task.status) && is_user_visible_queue_task(task)
+        task.user_id == user_id
+            && is_parked_queue_status(&task.status)
+            && is_user_visible_queue_task(task)
     });
     sort_queue_tasks_by_dispatch_order(&mut tasks);
     Ok(tasks)
@@ -166,11 +164,10 @@ impl ThreadRuntime {
         let store = self.user_store.clone();
         let task_id = task.task_id.clone();
         let now = now_ts();
-        let promoted =
-            blocking::run_db("queue.user_promote", move || {
-                store.storage_backend().promote_agent_task(&task_id, now)
-            })
-            .await?;
+        let promoted = blocking::run_db("queue.user_promote", move || {
+            store.storage_backend().promote_agent_task(&task_id, now)
+        })
+        .await?;
         if !promoted {
             return Err(anyhow!("task is no longer pending"));
         }
@@ -211,8 +208,9 @@ impl ThreadRuntime {
         let retries = task.retry_count;
         let now = now_ts();
         blocking::run_db("queue.user_cancel", move || {
-            store.storage_backend().update_agent_task_status(
-                UpdateAgentTaskStatusParams {
+            store
+                .storage_backend()
+                .update_agent_task_status(UpdateAgentTaskStatusParams {
                     task_id: &task_id,
                     status: TASK_STATUS_CANCELLED,
                     retry_count: retries,
@@ -221,8 +219,7 @@ impl ThreadRuntime {
                     finished_at: Some(now),
                     last_error: Some("user_withdrew_queued_turn"),
                     updated_at: now,
-                },
-            )
+                })
         })
         .await?;
         self.emit_queue_event(
@@ -283,9 +280,7 @@ impl ThreadRuntime {
         let store = self.user_store.clone();
         let now = now_ts();
         let reordered = blocking::run_db("queue.user_reorder", move || {
-            store
-                .storage_backend()
-                .reorder_agent_tasks(&ordered, now)
+            store.storage_backend().reorder_agent_tasks(&ordered, now)
         })
         .await?;
         self.emit_queue_event(
@@ -357,12 +352,12 @@ mod tests {
         let root = tempfile::tempdir().expect("tempdir");
         let mut config = crate::config::Config::default();
         config.storage.backend = "sqlite".into();
-        config.storage.db_path = root.path().join(format!("{tag}.db")).to_string_lossy().into();
-        config.workspace.root = root
+        config.storage.db_path = root
             .path()
-            .join("workspace")
+            .join(format!("{tag}.db"))
             .to_string_lossy()
             .into();
+        config.workspace.root = root.path().join("workspace").to_string_lossy().into();
         let store = ConfigStore::new(root.path().join("config.yaml"));
         store
             .update(|current| *current = config.clone())
@@ -405,8 +400,24 @@ mod tests {
     #[tokio::test]
     async fn user_queue_lists_own_parked_turns_in_dispatch_order() {
         let (_root, state) = build_state("queue-list").await;
-        park_task(&state, "task-a", "user-a", "session-a", "first", 100.0, json!({}));
-        park_task(&state, "task-b", "user-a", "session-a", "second", 200.0, json!({}));
+        park_task(
+            &state,
+            "task-a",
+            "user-a",
+            "session-a",
+            "first",
+            100.0,
+            json!({}),
+        );
+        park_task(
+            &state,
+            "task-b",
+            "user-a",
+            "session-a",
+            "second",
+            200.0,
+            json!({}),
+        );
         park_task(
             &state,
             "task-other",
@@ -436,8 +447,24 @@ mod tests {
     #[tokio::test]
     async fn interject_moves_one_turn_to_the_front_and_withdraw_drops_it() {
         let (_root, state) = build_state("queue-actions").await;
-        park_task(&state, "task-a", "user-a", "session-a", "first", 100.0, json!({}));
-        park_task(&state, "task-b", "user-a", "session-a", "second", 200.0, json!({}));
+        park_task(
+            &state,
+            "task-a",
+            "user-a",
+            "session-a",
+            "first",
+            100.0,
+            json!({}),
+        );
+        park_task(
+            &state,
+            "task-b",
+            "user-a",
+            "session-a",
+            "second",
+            200.0,
+            json!({}),
+        );
 
         state
             .kernel
@@ -462,7 +489,15 @@ mod tests {
     #[tokio::test]
     async fn queue_actions_reject_other_users_turns() {
         let (_root, state) = build_state("queue-ownership").await;
-        park_task(&state, "task-a", "user-b", "session-a", "mine", 100.0, json!({}));
+        park_task(
+            &state,
+            "task-a",
+            "user-b",
+            "session-a",
+            "mine",
+            100.0,
+            json!({}),
+        );
         assert!(state
             .kernel
             .thread_runtime
@@ -481,9 +516,33 @@ mod tests {
     #[tokio::test]
     async fn reorder_rewrites_dispatch_ranks_within_ones_queue() {
         let (_root, state) = build_state("queue-reorder").await;
-        park_task(&state, "task-a", "user-a", "session-a", "first", 100.0, json!({}));
-        park_task(&state, "task-b", "user-a", "session-a", "second", 200.0, json!({}));
-        park_task(&state, "task-c", "user-a", "session-a", "third", 300.0, json!({}));
+        park_task(
+            &state,
+            "task-a",
+            "user-a",
+            "session-a",
+            "first",
+            100.0,
+            json!({}),
+        );
+        park_task(
+            &state,
+            "task-b",
+            "user-a",
+            "session-a",
+            "second",
+            200.0,
+            json!({}),
+        );
+        park_task(
+            &state,
+            "task-c",
+            "user-a",
+            "session-a",
+            "third",
+            300.0,
+            json!({}),
+        );
 
         let reordered = state
             .kernel

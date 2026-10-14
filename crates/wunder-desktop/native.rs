@@ -39,10 +39,10 @@ pub use terminal::{
 mod chat_turns;
 #[path = "native_observer.rs"]
 mod observer;
-#[path = "native_stream.rs"]
-mod stream;
 #[path = "native_queue.rs"]
 mod queue;
+#[path = "native_stream.rs"]
+mod stream;
 pub use crate::runtime::RuntimeToolStatus;
 pub use chat_turns::{NativeChatRound, NativeChatTurn};
 pub use observer::{NativeThreadUpdate, NativeThreadWatch};
@@ -80,14 +80,14 @@ pub use tool_manager::{
 #[path = "native_expert.rs"]
 mod expert;
 pub use expert::ExpertMemory;
+#[path = "native_activity.rs"]
+mod activity;
 #[path = "native_channels.rs"]
 mod channels;
 #[path = "native_cron.rs"]
 mod cron;
 #[path = "native_profile.rs"]
 mod profile;
-#[path = "native_activity.rs"]
-mod activity;
 #[path = "native_prompts.rs"]
 mod prompts;
 #[path = "native_settings.rs"]
@@ -230,25 +230,16 @@ impl NativeSubagentCard {
         }
         let metrics = &runtime["metrics"];
         Some(Self {
-            item_id: payload["item_id"]
-                .as_str()
-                .unwrap_or_default()
-                .to_string(),
+            item_id: payload["item_id"].as_str().unwrap_or_default().to_string(),
             session_id,
-            run_id: runtime["run_id"]
-                .as_str()
-                .unwrap_or_default()
-                .to_string(),
+            run_id: runtime["run_id"].as_str().unwrap_or_default().to_string(),
             title: runtime["title"]
                 .as_str()
                 .filter(|title| !title.trim().is_empty())
                 .unwrap_or("子智能体")
                 .trim()
                 .to_string(),
-            status: runtime["status"]
-                .as_str()
-                .unwrap_or_default()
-                .to_string(),
+            status: runtime["status"].as_str().unwrap_or_default().to_string(),
             terminal: runtime["terminal"].as_bool().unwrap_or(false),
             failed: runtime["failed"].as_bool().unwrap_or(false),
             latest_message: runtime["latest_message"]

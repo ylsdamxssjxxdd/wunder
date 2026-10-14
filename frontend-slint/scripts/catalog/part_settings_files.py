@@ -16,7 +16,6 @@ ENTRIES = [
     ("st_tab_help", "帮助与关于", "Help & about"),
 
     # ---- twelve-category navigation (§9.2) ----
-    ("stc_back", "返回应用", "Back to app"),
     ("stc_search", "搜索设置", "Search settings"),
     ("stc_none_title", "没有匹配的设置分类", "No matching category"),
     ("stc_none_note", "换个关键词，或清空搜索查看全部分类。", "Try another keyword, or clear the search to see every category."),
@@ -260,6 +259,7 @@ ENTRIES = [
      "The desktop app runs a local native runtime: no local HTTP/WebSocket hop and no bridge subprocess."),
     ("st_diagnostics", "诊断", "Diagnostics"),
     ("st_export_diagnostics", "导出诊断信息", "Export diagnostics"),
+    ("st_help_open", "打开帮助手册", "Open help"),
     ("st_diagnostics_note", "导出密钥无关的本机设置与能力计数，便于问题排查。",
      "Exports secret-free local settings and capability counts for troubleshooting."),
     ("st_reset_title", "重置工作状态", "Reset work state"),

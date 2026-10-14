@@ -373,9 +373,15 @@ mod tests {
 
     #[test]
     fn view_reads_have_independent_capacity_and_short_deadlines() {
-        assert!(!Arc::ptr_eq(&BlockingKind::View.semaphore(), &BlockingKind::Db.semaphore()));
+        assert!(!Arc::ptr_eq(
+            &BlockingKind::View.semaphore(),
+            &BlockingKind::Db.semaphore()
+        ));
         assert_eq!(BlockingKind::View.concurrency(), 8);
-        assert_eq!(BlockingKind::View.queue_timeout(), Duration::from_millis(150));
+        assert_eq!(
+            BlockingKind::View.queue_timeout(),
+            Duration::from_millis(150)
+        );
         assert_eq!(BlockingKind::View.exec_timeout(), Duration::from_secs(2));
     }
 

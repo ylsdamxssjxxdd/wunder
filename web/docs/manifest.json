@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-10-14T00:20:19.843559+00:00",
+  "generated_at": "2026-10-14T03:24:03.885951+00:00",
   "site": {
     "name": "使用说明书",
     "description": "wunder is an agent orchestration platform: Pupa (desktop) is the local AI workbench, Beehive (web) is the cloud AI workbench, Helm (cli) is the manual local entry point, and the Hull (server) is the user and agent management platform. / wunder 是一个智能体调度平台：蛹（desktop）是本地 AI 工作台，蜂巢（web）是云端 AI 工作台，舵机（cli）是手工本地操作入口，舰体（server）是用户与智能体管理平台。",
@@ -82,7 +82,7 @@
                   {
                     "slug": "zh-CN/start/hubs",
                     "title": "说明书总览",
-                    "summary": "说明书导航页：从蛹起步，按需进入界面地图、其它形态与参考。start 与 surfaces 两组的全部页面都在这里。",
+                    "summary": "说明书导航页：从蛹起步，按需进入界面地图、其它形态与能力。start 与 surfaces 两组的全部页面都在这里。",
                     "url": "/docs/zh-CN/start/hubs/"
                   },
                   {
@@ -106,67 +106,13 @@
             "entry_url": "/docs/zh-CN/concepts/",
             "groups": [
               {
-                "group": "9 个核心",
+                "group": "四个核心",
                 "pages": [
                   {
                     "slug": "zh-CN/concepts/index",
                     "title": "核心概览",
-                    "summary": "wunder 为什么这样表现——9 个核心设计约束，以及它们的分层与入口。",
+                    "summary": "wunder 为什么这样表现——四个核心（快速、稳定、通用、轻量），以及四个形态与深入主题。",
                     "url": "/docs/zh-CN/concepts/"
-                  },
-                  {
-                    "slug": "zh-CN/concepts/core-goal",
-                    "title": "目标",
-                    "summary": "目标核心让智能体进入目标态并持续完成一项任务：三个工具驱动、四种相位、默认 256 轮上限，连续 3 轮无进展自动受阻。",
-                    "url": "/docs/zh-CN/concepts/core-goal/"
-                  },
-                  {
-                    "slug": "zh-CN/concepts/core-compatibility",
-                    "title": "兼容性",
-                    "summary": "兼容性核心让蛹与舵机在旧操作系统环境中可运行并被明确约束：Windows 7 32 位与 Ubuntu 18.04 各有离线构建链，界面走软件渲染不依赖 GPU。",
-                    "url": "/docs/zh-CN/concepts/core-compatibility/"
-                  },
-                  {
-                    "slug": "zh-CN/concepts/core-context-compression",
-                    "title": "上下文压缩",
-                    "summary": "长对话不会因为太长而中断：系统在必要时精简历史、保留最有效的信息，让对话继续。",
-                    "url": "/docs/zh-CN/concepts/core-context-compression/"
-                  },
-                  {
-                    "slug": "zh-CN/concepts/core-subagent",
-                    "title": "子智能体",
-                    "summary": "子智能体核心在单一线程内派生子任务，交给独立执行体完成并回传结果；协作形态只有子智能体一种，蜂群编排已从引擎与协议层移除。",
-                    "url": "/docs/zh-CN/concepts/core-subagent/"
-                  },
-                  {
-                    "slug": "zh-CN/concepts/core-scheduled-tasks",
-                    "title": "定时任务",
-                    "summary": "智能体在指定时间自动执行：at 定点、every 固定间隔、cron 表达式三种排程，配租约、退避与自动禁用，进程重启不丢任务。",
-                    "url": "/docs/zh-CN/concepts/core-scheduled-tasks/"
-                  },
-                  {
-                    "slug": "zh-CN/concepts/core-channels",
-                    "title": "渠道",
-                    "summary": "飞书、QQ、微信、XMPP 和通用 webhook 各自的支持范围，以及消息到智能体与工作区的绑定解析。",
-                    "url": "/docs/zh-CN/concepts/core-channels/"
-                  },
-                  {
-                    "slug": "zh-CN/concepts/core-memory",
-                    "title": "记忆",
-                    "summary": "长期资料在线程创建时注入一次，之后保持冻结。它的两层结构，以及使用上的注意点。",
-                    "url": "/docs/zh-CN/concepts/core-memory/"
-                  },
-                  {
-                    "slug": "zh-CN/concepts/core-multithreading",
-                    "title": "多线程",
-                    "summary": "多线程核心在单进程内通过并发控制提升吞吐与资源利用：单用户可并发多任务线程，配会话队列、会话锁、并行度上限与日配额。",
-                    "url": "/docs/zh-CN/concepts/core-multithreading/"
-                  },
-                  {
-                    "slug": "zh-CN/concepts/core-multi-user-management",
-                    "title": "多用户管理",
-                    "summary": "舰体形态下的用户、单位与权限边界：登录态、在线状态、单位树、等级与额度、智能体定义文档和数据隔离。",
-                    "url": "/docs/zh-CN/concepts/core-multi-user-management/"
                   }
                 ]
               }
@@ -360,17 +306,76 @@
             ]
           },
           {
-            "tab": "参考",
-            "entry_url": "/docs/zh-CN/reference/",
+            "tab": "能力",
+            "entry_url": "/docs/zh-CN/concepts/core-goal/",
             "groups": [
+              {
+                "group": "核心能力",
+                "pages": [
+                  {
+                    "slug": "zh-CN/concepts/core-goal",
+                    "title": "目标",
+                    "summary": "目标核心让智能体进入目标态并持续完成一项任务：三个工具驱动、四种相位、默认 256 轮上限，连续 3 轮无进展自动受阻。",
+                    "url": "/docs/zh-CN/concepts/core-goal/"
+                  },
+                  {
+                    "slug": "zh-CN/concepts/core-compatibility",
+                    "title": "兼容性",
+                    "summary": "兼容性核心让蛹与舵机在旧操作系统环境中可运行并被明确约束：Windows 7 32 位与 Ubuntu 18.04 各有离线构建链，界面走软件渲染不依赖 GPU。",
+                    "url": "/docs/zh-CN/concepts/core-compatibility/"
+                  },
+                  {
+                    "slug": "zh-CN/concepts/core-context-compression",
+                    "title": "上下文压缩",
+                    "summary": "长对话不会因为太长而中断：系统在必要时精简历史、保留最有效的信息，让对话继续。",
+                    "url": "/docs/zh-CN/concepts/core-context-compression/"
+                  },
+                  {
+                    "slug": "zh-CN/concepts/core-subagent",
+                    "title": "子智能体",
+                    "summary": "子智能体核心在单一线程内派生子任务，交给独立执行体完成并回传结果；协作形态只有子智能体一种，蜂群编排已从引擎与协议层移除。",
+                    "url": "/docs/zh-CN/concepts/core-subagent/"
+                  },
+                  {
+                    "slug": "zh-CN/concepts/core-scheduled-tasks",
+                    "title": "定时任务",
+                    "summary": "智能体在指定时间自动执行：at 定点、every 固定间隔、cron 表达式三种排程，配租约、退避与自动禁用，进程重启不丢任务。",
+                    "url": "/docs/zh-CN/concepts/core-scheduled-tasks/"
+                  },
+                  {
+                    "slug": "zh-CN/concepts/core-channels",
+                    "title": "渠道",
+                    "summary": "飞书、QQ、微信、XMPP 和通用 webhook 各自的支持范围，以及消息到智能体与工作区的绑定解析。",
+                    "url": "/docs/zh-CN/concepts/core-channels/"
+                  },
+                  {
+                    "slug": "zh-CN/concepts/core-memory",
+                    "title": "记忆",
+                    "summary": "长期资料在线程创建时注入一次，之后保持冻结。它的两层结构，以及使用上的注意点。",
+                    "url": "/docs/zh-CN/concepts/core-memory/"
+                  },
+                  {
+                    "slug": "zh-CN/concepts/core-multithreading",
+                    "title": "多线程",
+                    "summary": "多线程核心在单进程内通过并发控制提升吞吐与资源利用：单用户可并发多任务线程，配会话队列、会话锁、并行度上限与日配额。",
+                    "url": "/docs/zh-CN/concepts/core-multithreading/"
+                  },
+                  {
+                    "slug": "zh-CN/concepts/core-multi-user-management",
+                    "title": "多用户管理",
+                    "summary": "舰体形态下的用户、单位与权限边界：登录态、在线状态、单位树、等级与额度、智能体定义文档和数据隔离。",
+                    "url": "/docs/zh-CN/concepts/core-multi-user-management/"
+                  }
+                ]
+              },
               {
                 "group": "概览",
                 "pages": [
                   {
-                    "slug": "zh-CN/reference/index",
-                    "title": "参考概览",
-                    "summary": "操作参考与配置说明：功能入口、状态含义、设置项含义。",
-                    "url": "/docs/zh-CN/reference/"
+                    "slug": "zh-CN/capabilities/index",
+                    "title": "能力概览",
+                    "summary": "能力与操作参考概览：核心能力、功能入口、状态含义、设置项含义。",
+                    "url": "/docs/zh-CN/capabilities/"
                   }
                 ]
               },
@@ -378,28 +383,28 @@
                 "group": "接口与端点",
                 "pages": [
                   {
-                    "slug": "zh-CN/reference/api-index",
+                    "slug": "zh-CN/capabilities/api-index",
                     "title": "功能与能力速查",
                     "summary": "wunder 的能力清单、入口位置与相关文档。",
-                    "url": "/docs/zh-CN/reference/api-index/"
+                    "url": "/docs/zh-CN/capabilities/api-index/"
                   },
                   {
-                    "slug": "zh-CN/reference/chat-ws",
+                    "slug": "zh-CN/capabilities/chat-ws",
                     "title": "聊天 WebSocket",
                     "summary": "聊天的实时通道，同时也是会话控制通道：启动执行、断线续传、观察、取消、回传审批都在同一条连接上。",
-                    "url": "/docs/zh-CN/reference/chat-ws/"
+                    "url": "/docs/zh-CN/capabilities/chat-ws/"
                   },
                   {
-                    "slug": "zh-CN/reference/mcp-endpoint",
+                    "slug": "zh-CN/capabilities/mcp-endpoint",
                     "title": "MCP 入口",
                     "summary": "wunder 既能把自己作为 MCP 服务暴露出去，也能作为 MCP 客户端接入外部服务。",
-                    "url": "/docs/zh-CN/reference/mcp-endpoint/"
+                    "url": "/docs/zh-CN/capabilities/mcp-endpoint/"
                   },
                   {
-                    "slug": "zh-CN/reference/weixin-channel",
+                    "slug": "zh-CN/capabilities/weixin-channel",
                     "title": "微信 iLink 渠道",
                     "summary": "新微信渠道用 iLink 协议，跟旧的公众号、企业微信不是一套。",
-                    "url": "/docs/zh-CN/reference/weixin-channel/"
+                    "url": "/docs/zh-CN/capabilities/weixin-channel/"
                   }
                 ]
               },
@@ -407,34 +412,34 @@
                 "group": "配置与数据",
                 "pages": [
                   {
-                    "slug": "zh-CN/reference/config",
+                    "slug": "zh-CN/capabilities/config",
                     "title": "系统设置参考",
                     "summary": "常用设置项的含义、推荐值与生效规则。",
-                    "url": "/docs/zh-CN/reference/config/"
+                    "url": "/docs/zh-CN/capabilities/config/"
                   },
                   {
-                    "slug": "zh-CN/reference/workspace-routing",
+                    "slug": "zh-CN/capabilities/workspace-routing",
                     "title": "工作区路由与文件管理",
                     "summary": "每个用户的工作区只有一个云端目录，路径一律是工作区相对路径；容器参数已收敛，不再按智能体或容器派生根。",
-                    "url": "/docs/zh-CN/reference/workspace-routing/"
+                    "url": "/docs/zh-CN/capabilities/workspace-routing/"
                   },
                   {
-                    "slug": "zh-CN/reference/stream-events",
+                    "slug": "zh-CN/capabilities/stream-events",
                     "title": "会话状态说明",
                     "summary": "会话状态、审批状态、异常状态与连接状态的含义及处理方式。",
-                    "url": "/docs/zh-CN/reference/stream-events/"
+                    "url": "/docs/zh-CN/capabilities/stream-events/"
                   },
                   {
-                    "slug": "zh-CN/reference/prompt-templates",
+                    "slug": "zh-CN/capabilities/prompt-templates",
                     "title": "提示词与个性化",
                     "summary": "定制智能体的角色定位和回答风格：选内置模板，或自己写一套。",
-                    "url": "/docs/zh-CN/reference/prompt-templates/"
+                    "url": "/docs/zh-CN/capabilities/prompt-templates/"
                   },
                   {
-                    "slug": "zh-CN/reference/admin-panels",
+                    "slug": "zh-CN/capabilities/admin-panels",
                     "title": "舰桥面板指南",
                     "summary": "舰桥各面板的职能、入口位置与常用操作流程。",
-                    "url": "/docs/zh-CN/reference/admin-panels/"
+                    "url": "/docs/zh-CN/capabilities/admin-panels/"
                   }
                 ]
               },
@@ -442,10 +447,10 @@
                 "group": "三端互通",
                 "pages": [
                   {
-                    "slug": "zh-CN/reference/interlink",
+                    "slug": "zh-CN/capabilities/interlink",
                     "title": "三端互通",
                     "summary": "蜂巢、蛹、舵机在同一账号下统一在线状态、跨端工作区互见并双向远程控制。",
-                    "url": "/docs/zh-CN/reference/interlink/"
+                    "url": "/docs/zh-CN/capabilities/interlink/"
                   }
                 ]
               },
@@ -654,7 +659,7 @@
                   {
                     "slug": "en/start/hubs",
                     "title": "Manual Overview",
-                    "summary": "The manual's navigation page: start from the Pupa and move into the interface map, other forms, and reference as needed. Every page in the start and surfaces groups is here.",
+                    "summary": "The manual's navigation page: start from the Pupa and move into the interface map, other forms, and capabilities as needed. Every page in the start and surfaces groups is here.",
                     "url": "/docs/en/start/hubs/"
                   },
                   {
@@ -678,67 +683,13 @@
             "entry_url": "/docs/en/concepts/",
             "groups": [
               {
-                "group": "The 9 Cores",
+                "group": "The Four Cores",
                 "pages": [
                   {
                     "slug": "en/concepts/index",
                     "title": "Core Concepts",
-                    "summary": "Why wunder behaves the way it does—9 core design constraints, along with the layers they form, the entries into them, and the reading paths.",
+                    "summary": "Why wunder behaves the way it does—the four cores (fast, stable, general, lightweight), along with the four forms and the deep dives.",
                     "url": "/docs/en/concepts/"
-                  },
-                  {
-                    "slug": "en/concepts/core-goal",
-                    "title": "Goal",
-                    "summary": "The Goal core lets an agent enter goal mode and keep working on one task: three tools drive it, four phases, a default 256-round cap, and automatic blocking after 3 consecutive rounds without progress.",
-                    "url": "/docs/en/concepts/core-goal/"
-                  },
-                  {
-                    "slug": "en/concepts/core-compatibility",
-                    "title": "Compatibility",
-                    "summary": "The Compatibility core lets the Pupa (desktop) and the Helm (cli) run in older operating-system environments under explicit constraints: Windows 7 32-bit and Ubuntu 18.04 each have an offline build chain, and the interface uses software rendering that does not depend on a GPU.",
-                    "url": "/docs/en/concepts/core-compatibility/"
-                  },
-                  {
-                    "slug": "en/concepts/core-context-compression",
-                    "title": "Context Compression",
-                    "summary": "Long conversations are not cut short when they grow long. The system trims history in graded levels, keeps the most useful information, and lets the conversation continue.",
-                    "url": "/docs/en/concepts/core-context-compression/"
-                  },
-                  {
-                    "slug": "en/concepts/core-subagent",
-                    "title": "Subagents",
-                    "summary": "The Subagents core forks a subtask inside a single thread for an independent executor to complete and return to the parent; the only collaborative form is the subagent, and swarm orchestration has been removed from the engine and the protocol layer.",
-                    "url": "/docs/en/concepts/core-subagent/"
-                  },
-                  {
-                    "slug": "en/concepts/core-scheduled-tasks",
-                    "title": "Scheduled Tasks",
-                    "summary": "Scheduled tasks run the agent at a chosen time: three schedule kinds — at for a one-off point, every for a fixed interval, cron for a recurring pattern — with leases, backoff, and auto-disable, so tasks survive a process restart.",
-                    "url": "/docs/en/concepts/core-scheduled-tasks/"
-                  },
-                  {
-                    "slug": "en/concepts/core-channels",
-                    "title": "Channels",
-                    "summary": "Feishu, QQ, WeChat, XMPP, and generic webhooks differ in support level; an inbound message is routed to its agent and workspace by binding.",
-                    "url": "/docs/en/concepts/core-channels/"
-                  },
-                  {
-                    "slug": "en/concepts/core-memory",
-                    "title": "Memory",
-                    "summary": "Long-term data is injected once when a thread is created and stays frozen afterwards; it has two layers, initialization injection and runtime recall.",
-                    "url": "/docs/en/concepts/core-memory/"
-                  },
-                  {
-                    "slug": "en/concepts/core-multithreading",
-                    "title": "Multi-threading",
-                    "summary": "The Multi-threading core raises throughput and resource use through concurrency control inside a single process: one user can hold several concurrent task threads, backed by a session queue, session locks, a parallelism cap, and a daily quota.",
-                    "url": "/docs/en/concepts/core-multithreading/"
-                  },
-                  {
-                    "slug": "en/concepts/core-multi-user-management",
-                    "title": "Multi-user Management",
-                    "summary": "Users, units, and permission boundaries in the Hull (server) form — login state, presence, the unit tree, levels and credits, agent definition documents, and data isolation.",
-                    "url": "/docs/en/concepts/core-multi-user-management/"
                   }
                 ]
               }
@@ -915,17 +866,76 @@
             ]
           },
           {
-            "tab": "Reference",
-            "entry_url": "/docs/en/reference/",
+            "tab": "Capabilities",
+            "entry_url": "/docs/en/concepts/core-goal/",
             "groups": [
+              {
+                "group": "Core Capabilities",
+                "pages": [
+                  {
+                    "slug": "en/concepts/core-goal",
+                    "title": "Goal",
+                    "summary": "The Goal core lets an agent enter goal mode and keep working on one task: three tools drive it, four phases, a default 256-round cap, and automatic blocking after 3 consecutive rounds without progress.",
+                    "url": "/docs/en/concepts/core-goal/"
+                  },
+                  {
+                    "slug": "en/concepts/core-compatibility",
+                    "title": "Compatibility",
+                    "summary": "The Compatibility core lets the Pupa (desktop) and the Helm (cli) run in older operating-system environments under explicit constraints: Windows 7 32-bit and Ubuntu 18.04 each have an offline build chain, and the interface uses software rendering that does not depend on a GPU.",
+                    "url": "/docs/en/concepts/core-compatibility/"
+                  },
+                  {
+                    "slug": "en/concepts/core-context-compression",
+                    "title": "Context Compression",
+                    "summary": "Long conversations are not cut short when they grow long. The system trims history in graded levels, keeps the most useful information, and lets the conversation continue.",
+                    "url": "/docs/en/concepts/core-context-compression/"
+                  },
+                  {
+                    "slug": "en/concepts/core-subagent",
+                    "title": "Subagents",
+                    "summary": "The Subagents core forks a subtask inside a single thread for an independent executor to complete and return to the parent; the only collaborative form is the subagent, and swarm orchestration has been removed from the engine and the protocol layer.",
+                    "url": "/docs/en/concepts/core-subagent/"
+                  },
+                  {
+                    "slug": "en/concepts/core-scheduled-tasks",
+                    "title": "Scheduled Tasks",
+                    "summary": "Scheduled tasks run the agent at a chosen time: three schedule kinds — at for a one-off point, every for a fixed interval, cron for a recurring pattern — with leases, backoff, and auto-disable, so tasks survive a process restart.",
+                    "url": "/docs/en/concepts/core-scheduled-tasks/"
+                  },
+                  {
+                    "slug": "en/concepts/core-channels",
+                    "title": "Channels",
+                    "summary": "Feishu, QQ, WeChat, XMPP, and generic webhooks differ in support level; an inbound message is routed to its agent and workspace by binding.",
+                    "url": "/docs/en/concepts/core-channels/"
+                  },
+                  {
+                    "slug": "en/concepts/core-memory",
+                    "title": "Memory",
+                    "summary": "Long-term data is injected once when a thread is created and stays frozen afterwards; it has two layers, initialization injection and runtime recall.",
+                    "url": "/docs/en/concepts/core-memory/"
+                  },
+                  {
+                    "slug": "en/concepts/core-multithreading",
+                    "title": "Multi-threading",
+                    "summary": "The Multi-threading core raises throughput and resource use through concurrency control inside a single process: one user can hold several concurrent task threads, backed by a session queue, session locks, a parallelism cap, and a daily quota.",
+                    "url": "/docs/en/concepts/core-multithreading/"
+                  },
+                  {
+                    "slug": "en/concepts/core-multi-user-management",
+                    "title": "Multi-user Management",
+                    "summary": "Users, units, and permission boundaries in the Hull (server) form — login state, presence, the unit tree, levels and credits, agent definition documents, and data isolation.",
+                    "url": "/docs/en/concepts/core-multi-user-management/"
+                  }
+                ]
+              },
               {
                 "group": "Overview",
                 "pages": [
                   {
-                    "slug": "en/reference/index",
-                    "title": "Reference Overview",
-                    "summary": "The operating references and configuration notes you reach for most — where a feature lives, what a status means, and how to change a setting.",
-                    "url": "/docs/en/reference/"
+                    "slug": "en/capabilities/index",
+                    "title": "Capabilities Overview",
+                    "summary": "Capabilities and operating references: the core capabilities, where a feature lives, what a status means, and how to change a setting.",
+                    "url": "/docs/en/capabilities/"
                   }
                 ]
               },
@@ -933,28 +943,28 @@
                 "group": "Interfaces and Endpoints",
                 "pages": [
                   {
-                    "slug": "en/reference/api-index",
+                    "slug": "en/capabilities/api-index",
                     "title": "Feature and Capability Quick Reference",
                     "summary": "What wunder can do and where each capability lives, organized by feature area.",
-                    "url": "/docs/en/reference/api-index/"
+                    "url": "/docs/en/capabilities/api-index/"
                   },
                   {
-                    "slug": "en/reference/chat-ws",
+                    "slug": "en/capabilities/chat-ws",
                     "title": "Chat WebSocket",
                     "summary": "The real-time channel for chat and also the session control channel: starting an execution, resuming after a disconnect, watching, canceling, and returning approvals all happen on the same connection.",
-                    "url": "/docs/en/reference/chat-ws/"
+                    "url": "/docs/en/capabilities/chat-ws/"
                   },
                   {
-                    "slug": "en/reference/mcp-endpoint",
+                    "slug": "en/capabilities/mcp-endpoint",
                     "title": "MCP Endpoint",
                     "summary": "wunder can both expose itself as an MCP service and act as an MCP client to connect to external services.",
-                    "url": "/docs/en/reference/mcp-endpoint/"
+                    "url": "/docs/en/capabilities/mcp-endpoint/"
                   },
                   {
-                    "slug": "en/reference/weixin-channel",
+                    "slug": "en/capabilities/weixin-channel",
                     "title": "WeChat iLink Channel",
                     "summary": "The new WeChat channel uses the iLink protocol and is not the same thing as the legacy Official Account or WeCom channels.",
-                    "url": "/docs/en/reference/weixin-channel/"
+                    "url": "/docs/en/capabilities/weixin-channel/"
                   }
                 ]
               },
@@ -962,34 +972,34 @@
                 "group": "Configuration and Data",
                 "pages": [
                   {
-                    "slug": "en/reference/config",
+                    "slug": "en/capabilities/config",
                     "title": "System Settings Reference",
                     "summary": "What the common settings mean and what to set them to.",
-                    "url": "/docs/en/reference/config/"
+                    "url": "/docs/en/capabilities/config/"
                   },
                   {
-                    "slug": "en/reference/workspace-routing",
+                    "slug": "en/capabilities/workspace-routing",
                     "title": "Workspace Routing and File Management",
                     "summary": "Each user has a single cloud workspace directory. Paths are always workspace-relative, and the container parameter has been converged — directories are no longer derived per agent or container.",
-                    "url": "/docs/en/reference/workspace-routing/"
+                    "url": "/docs/en/capabilities/workspace-routing/"
                   },
                   {
-                    "slug": "en/reference/stream-events",
+                    "slug": "en/capabilities/stream-events",
                     "title": "Session Status Guide",
                     "summary": "What the various statuses in a chat mean, what the agent is doing, and what to do when something goes wrong.",
-                    "url": "/docs/en/reference/stream-events/"
+                    "url": "/docs/en/capabilities/stream-events/"
                   },
                   {
-                    "slug": "en/reference/prompt-templates",
+                    "slug": "en/capabilities/prompt-templates",
                     "title": "Prompts and Personalization",
                     "summary": "Customize the agent's role and answer style — pick a built-in template, or write your own.",
-                    "url": "/docs/en/reference/prompt-templates/"
+                    "url": "/docs/en/capabilities/prompt-templates/"
                   },
                   {
-                    "slug": "en/reference/admin-panels",
+                    "slug": "en/capabilities/admin-panels",
                     "title": "Bridge Panel Guide",
                     "summary": "What each panel in the Bridge manages and where its entry lives.",
-                    "url": "/docs/en/reference/admin-panels/"
+                    "url": "/docs/en/capabilities/admin-panels/"
                   }
                 ]
               },
@@ -997,10 +1007,10 @@
                 "group": "Three-endpoint Interop",
                 "pages": [
                   {
-                    "slug": "en/reference/interlink",
+                    "slug": "en/capabilities/interlink",
                     "title": "Interlink",
                     "summary": "The Beehive, the Pupa, and the Helm share one presence state, see each other's workspaces, and control each other in both directions.",
-                    "url": "/docs/en/reference/interlink/"
+                    "url": "/docs/en/capabilities/interlink/"
                   }
                 ]
               },
@@ -1157,15 +1167,6 @@
     "zh-CN/start/docs-directory",
     "zh-CN/start/troubleshooting-first-run",
     "zh-CN/concepts/index",
-    "zh-CN/concepts/core-goal",
-    "zh-CN/concepts/core-compatibility",
-    "zh-CN/concepts/core-context-compression",
-    "zh-CN/concepts/core-subagent",
-    "zh-CN/concepts/core-scheduled-tasks",
-    "zh-CN/concepts/core-channels",
-    "zh-CN/concepts/core-memory",
-    "zh-CN/concepts/core-multithreading",
-    "zh-CN/concepts/core-multi-user-management",
     "zh-CN/tools/index",
     "zh-CN/tools/panels",
     "zh-CN/tools/workspace-files",
@@ -1186,17 +1187,26 @@
     "zh-CN/surfaces/frontend",
     "zh-CN/surfaces/web-admin",
     "zh-CN/surfaces/desktop-ui",
-    "zh-CN/reference/index",
-    "zh-CN/reference/api-index",
-    "zh-CN/reference/chat-ws",
-    "zh-CN/reference/mcp-endpoint",
-    "zh-CN/reference/weixin-channel",
-    "zh-CN/reference/config",
-    "zh-CN/reference/workspace-routing",
-    "zh-CN/reference/stream-events",
-    "zh-CN/reference/prompt-templates",
-    "zh-CN/reference/admin-panels",
-    "zh-CN/reference/interlink",
+    "zh-CN/concepts/core-goal",
+    "zh-CN/concepts/core-compatibility",
+    "zh-CN/concepts/core-context-compression",
+    "zh-CN/concepts/core-subagent",
+    "zh-CN/concepts/core-scheduled-tasks",
+    "zh-CN/concepts/core-channels",
+    "zh-CN/concepts/core-memory",
+    "zh-CN/concepts/core-multithreading",
+    "zh-CN/concepts/core-multi-user-management",
+    "zh-CN/capabilities/index",
+    "zh-CN/capabilities/api-index",
+    "zh-CN/capabilities/chat-ws",
+    "zh-CN/capabilities/mcp-endpoint",
+    "zh-CN/capabilities/weixin-channel",
+    "zh-CN/capabilities/config",
+    "zh-CN/capabilities/workspace-routing",
+    "zh-CN/capabilities/stream-events",
+    "zh-CN/capabilities/prompt-templates",
+    "zh-CN/capabilities/admin-panels",
+    "zh-CN/capabilities/interlink",
     "zh-CN/help/index",
     "zh-CN/help/troubleshooting",
     "zh-CN/help/faq",
@@ -1228,15 +1238,6 @@
     "en/start/docs-directory",
     "en/start/troubleshooting-first-run",
     "en/concepts/index",
-    "en/concepts/core-goal",
-    "en/concepts/core-compatibility",
-    "en/concepts/core-context-compression",
-    "en/concepts/core-subagent",
-    "en/concepts/core-scheduled-tasks",
-    "en/concepts/core-channels",
-    "en/concepts/core-memory",
-    "en/concepts/core-multithreading",
-    "en/concepts/core-multi-user-management",
     "en/tools/index",
     "en/tools/panels",
     "en/tools/workspace-files",
@@ -1255,17 +1256,26 @@
     "en/surfaces/frontend",
     "en/surfaces/web-admin",
     "en/surfaces/desktop-ui",
-    "en/reference/index",
-    "en/reference/api-index",
-    "en/reference/chat-ws",
-    "en/reference/mcp-endpoint",
-    "en/reference/weixin-channel",
-    "en/reference/config",
-    "en/reference/workspace-routing",
-    "en/reference/stream-events",
-    "en/reference/prompt-templates",
-    "en/reference/admin-panels",
-    "en/reference/interlink",
+    "en/concepts/core-goal",
+    "en/concepts/core-compatibility",
+    "en/concepts/core-context-compression",
+    "en/concepts/core-subagent",
+    "en/concepts/core-scheduled-tasks",
+    "en/concepts/core-channels",
+    "en/concepts/core-memory",
+    "en/concepts/core-multithreading",
+    "en/concepts/core-multi-user-management",
+    "en/capabilities/index",
+    "en/capabilities/api-index",
+    "en/capabilities/chat-ws",
+    "en/capabilities/mcp-endpoint",
+    "en/capabilities/weixin-channel",
+    "en/capabilities/config",
+    "en/capabilities/workspace-routing",
+    "en/capabilities/stream-events",
+    "en/capabilities/prompt-templates",
+    "en/capabilities/admin-panels",
+    "en/capabilities/interlink",
     "en/help/index",
     "en/help/troubleshooting",
     "en/help/faq",
@@ -1789,7 +1799,7 @@
       "slug": "zh-CN/start/hubs",
       "language": "zh-CN",
       "title": "说明书总览",
-      "summary": "说明书导航页：从蛹起步，按需进入界面地图、其它形态与参考。start 与 surfaces 两组的全部页面都在这里。",
+      "summary": "说明书导航页：从蛹起步，按需进入界面地图、其它形态与能力。start 与 surfaces 两组的全部页面都在这里。",
       "updated_at": "2026-10-13",
       "read_when": [],
       "source_docs": [],
@@ -2037,14 +2047,14 @@
       "slug": "zh-CN/concepts/index",
       "language": "zh-CN",
       "title": "核心概览",
-      "summary": "wunder 为什么这样表现——9 个核心设计约束，以及它们的分层与入口。",
+      "summary": "wunder 为什么这样表现——四个核心（快速、稳定、通用、轻量），以及四个形态与深入主题。",
       "updated_at": "2026-10-13",
       "read_when": [],
       "source_docs": [],
       "tab": "核心",
-      "group": "9 个核心",
+      "group": "四个核心",
       "group_path": [
-        "9 个核心"
+        "四个核心"
       ],
       "url": "/docs/zh-CN/concepts/",
       "headings": [
@@ -2066,7 +2076,7 @@
         {
           "id": "section-4",
           "level": 2,
-          "text": "9 个核心"
+          "text": "四个核心"
         },
         {
           "id": "section-5",
@@ -2090,478 +2100,9 @@
         }
       ],
       "prev_slug": "zh-CN/start/troubleshooting-first-run",
-      "next_slug": "zh-CN/concepts/core-goal",
+      "next_slug": "zh-CN/tools/index",
       "source_path": "zh-CN/concepts/index.md",
       "output_path": "zh-CN/concepts/index.html"
-    },
-    "zh-CN/concepts/core-goal": {
-      "slug": "zh-CN/concepts/core-goal",
-      "language": "zh-CN",
-      "title": "目标",
-      "summary": "目标核心让智能体进入目标态并持续完成一项任务：三个工具驱动、四种相位、默认 256 轮上限，连续 3 轮无进展自动受阻。",
-      "updated_at": "2026-10-13",
-      "read_when": [],
-      "source_docs": [],
-      "tab": "核心",
-      "group": "9 个核心",
-      "group_path": [
-        "9 个核心"
-      ],
-      "url": "/docs/zh-CN/concepts/core-goal/",
-      "headings": [
-        {
-          "id": "section-1",
-          "level": 1,
-          "text": "目标"
-        },
-        {
-          "id": "section-2",
-          "level": 2,
-          "text": "怎么运作"
-        },
-        {
-          "id": "section-3",
-          "level": 2,
-          "text": "关键数字"
-        },
-        {
-          "id": "section-4",
-          "level": 2,
-          "text": "从哪里用"
-        },
-        {
-          "id": "section-5",
-          "level": 2,
-          "text": "边界与当前限制"
-        }
-      ],
-      "prev_slug": "zh-CN/concepts/index",
-      "next_slug": "zh-CN/concepts/core-compatibility",
-      "source_path": "zh-CN/concepts/core-goal.md",
-      "output_path": "zh-CN/concepts/core-goal/index.html"
-    },
-    "zh-CN/concepts/core-compatibility": {
-      "slug": "zh-CN/concepts/core-compatibility",
-      "language": "zh-CN",
-      "title": "兼容性",
-      "summary": "兼容性核心让蛹与舵机在旧操作系统环境中可运行并被明确约束：Windows 7 32 位与 Ubuntu 18.04 各有离线构建链，界面走软件渲染不依赖 GPU。",
-      "updated_at": "2026-10-13",
-      "read_when": [],
-      "source_docs": [],
-      "tab": "核心",
-      "group": "9 个核心",
-      "group_path": [
-        "9 个核心"
-      ],
-      "url": "/docs/zh-CN/concepts/core-compatibility/",
-      "headings": [
-        {
-          "id": "section-1",
-          "level": 1,
-          "text": "兼容性"
-        },
-        {
-          "id": "section-2",
-          "level": 2,
-          "text": "支持哪些老系统"
-        },
-        {
-          "id": "section-3",
-          "level": 2,
-          "text": "为什么能跑"
-        },
-        {
-          "id": "section-4",
-          "level": 2,
-          "text": "对用户意味着什么"
-        },
-        {
-          "id": "section-5",
-          "level": 2,
-          "text": "边界与当前限制"
-        }
-      ],
-      "prev_slug": "zh-CN/concepts/core-goal",
-      "next_slug": "zh-CN/concepts/core-context-compression",
-      "source_path": "zh-CN/concepts/core-compatibility.md",
-      "output_path": "zh-CN/concepts/core-compatibility/index.html"
-    },
-    "zh-CN/concepts/core-context-compression": {
-      "slug": "zh-CN/concepts/core-context-compression",
-      "language": "zh-CN",
-      "title": "上下文压缩",
-      "summary": "长对话不会因为太长而中断：系统在必要时精简历史、保留最有效的信息，让对话继续。",
-      "updated_at": "2026-10-13",
-      "read_when": [],
-      "source_docs": [],
-      "tab": "核心",
-      "group": "9 个核心",
-      "group_path": [
-        "9 个核心"
-      ],
-      "url": "/docs/zh-CN/concepts/core-context-compression/",
-      "headings": [
-        {
-          "id": "section-1",
-          "level": 2,
-          "text": "为什么需要压缩"
-        },
-        {
-          "id": "section-2",
-          "level": 2,
-          "text": "压缩怎么分级"
-        },
-        {
-          "id": "section-3",
-          "level": 2,
-          "text": "它保护什么、不动什么"
-        },
-        {
-          "id": "section-4",
-          "level": 2,
-          "text": "压缩是可查看的"
-        },
-        {
-          "id": "section-5",
-          "level": 2,
-          "text": "实际使用中的注意点"
-        },
-        {
-          "id": "section-6",
-          "level": 2,
-          "text": "先做本地精简"
-        },
-        {
-          "id": "section-7",
-          "level": 2,
-          "text": "相关页面"
-        }
-      ],
-      "prev_slug": "zh-CN/concepts/core-compatibility",
-      "next_slug": "zh-CN/concepts/core-subagent",
-      "source_path": "zh-CN/concepts/core-context-compression.md",
-      "output_path": "zh-CN/concepts/core-context-compression/index.html"
-    },
-    "zh-CN/concepts/core-subagent": {
-      "slug": "zh-CN/concepts/core-subagent",
-      "language": "zh-CN",
-      "title": "子智能体",
-      "summary": "子智能体核心在单一线程内派生子任务，交给独立执行体完成并回传结果；协作形态只有子智能体一种，蜂群编排已从引擎与协议层移除。",
-      "updated_at": "2026-10-13",
-      "read_when": [],
-      "source_docs": [],
-      "tab": "核心",
-      "group": "9 个核心",
-      "group_path": [
-        "9 个核心"
-      ],
-      "url": "/docs/zh-CN/concepts/core-subagent/",
-      "headings": [
-        {
-          "id": "section-1",
-          "level": 1,
-          "text": "子智能体"
-        },
-        {
-          "id": "section-2",
-          "level": 2,
-          "text": "怎么运作"
-        },
-        {
-          "id": "section-3",
-          "level": 2,
-          "text": "边界与当前限制"
-        }
-      ],
-      "prev_slug": "zh-CN/concepts/core-context-compression",
-      "next_slug": "zh-CN/concepts/core-scheduled-tasks",
-      "source_path": "zh-CN/concepts/core-subagent.md",
-      "output_path": "zh-CN/concepts/core-subagent/index.html"
-    },
-    "zh-CN/concepts/core-scheduled-tasks": {
-      "slug": "zh-CN/concepts/core-scheduled-tasks",
-      "language": "zh-CN",
-      "title": "定时任务",
-      "summary": "智能体在指定时间自动执行：at 定点、every 固定间隔、cron 表达式三种排程，配租约、退避与自动禁用，进程重启不丢任务。",
-      "updated_at": "2026-10-13",
-      "read_when": [],
-      "source_docs": [],
-      "tab": "核心",
-      "group": "9 个核心",
-      "group_path": [
-        "9 个核心"
-      ],
-      "url": "/docs/zh-CN/concepts/core-scheduled-tasks/",
-      "headings": [
-        {
-          "id": "section-1",
-          "level": 2,
-          "text": "三种排程"
-        },
-        {
-          "id": "section-2",
-          "level": 2,
-          "text": "结果投递到哪里"
-        },
-        {
-          "id": "section-3",
-          "level": 2,
-          "text": "执行保障"
-        },
-        {
-          "id": "section-4",
-          "level": 2,
-          "text": "总开关"
-        },
-        {
-          "id": "section-5",
-          "level": 2,
-          "text": "从哪里建、各形态支持情况"
-        },
-        {
-          "id": "section-6",
-          "level": 2,
-          "text": "相关页"
-        }
-      ],
-      "prev_slug": "zh-CN/concepts/core-subagent",
-      "next_slug": "zh-CN/concepts/core-channels",
-      "source_path": "zh-CN/concepts/core-scheduled-tasks.md",
-      "output_path": "zh-CN/concepts/core-scheduled-tasks/index.html"
-    },
-    "zh-CN/concepts/core-channels": {
-      "slug": "zh-CN/concepts/core-channels",
-      "language": "zh-CN",
-      "title": "渠道",
-      "summary": "飞书、QQ、微信、XMPP 和通用 webhook 各自的支持范围，以及消息到智能体与工作区的绑定解析。",
-      "updated_at": "2026-10-13",
-      "read_when": [],
-      "source_docs": [],
-      "tab": "核心",
-      "group": "9 个核心",
-      "group_path": [
-        "9 个核心"
-      ],
-      "url": "/docs/zh-CN/concepts/core-channels/",
-      "headings": [
-        {
-          "id": "section-1",
-          "level": 2,
-          "text": "渠道只是入口"
-        },
-        {
-          "id": "section-2",
-          "level": 2,
-          "text": "当前支持哪些渠道"
-        },
-        {
-          "id": "section-3",
-          "level": 2,
-          "text": "消息怎么找到智能体和工作区"
-        },
-        {
-          "id": "section-4",
-          "level": 2,
-          "text": "入站、出站与限流的边界"
-        },
-        {
-          "id": "section-5",
-          "level": 2,
-          "text": "附件与媒体"
-        },
-        {
-          "id": "section-6",
-          "level": 2,
-          "text": "Webhook 入口与校验"
-        },
-        {
-          "id": "section-7",
-          "level": 2,
-          "text": "排查消息问题"
-        },
-        {
-          "id": "section-8",
-          "level": 2,
-          "text": "别搞混的几点"
-        },
-        {
-          "id": "section-9",
-          "level": 2,
-          "text": "相关页面"
-        }
-      ],
-      "prev_slug": "zh-CN/concepts/core-scheduled-tasks",
-      "next_slug": "zh-CN/concepts/core-memory",
-      "source_path": "zh-CN/concepts/core-channels.md",
-      "output_path": "zh-CN/concepts/core-channels/index.html"
-    },
-    "zh-CN/concepts/core-memory": {
-      "slug": "zh-CN/concepts/core-memory",
-      "language": "zh-CN",
-      "title": "记忆",
-      "summary": "长期资料在线程创建时注入一次，之后保持冻结。它的两层结构，以及使用上的注意点。",
-      "updated_at": "2026-10-13",
-      "read_when": [],
-      "source_docs": [],
-      "tab": "核心",
-      "group": "9 个核心",
-      "group_path": [
-        "9 个核心"
-      ],
-      "url": "/docs/zh-CN/concepts/core-memory/",
-      "headings": [
-        {
-          "id": "section-1",
-          "level": 2,
-          "text": "记忆解决什么问题"
-        },
-        {
-          "id": "section-2",
-          "level": 2,
-          "text": "记忆的两层"
-        },
-        {
-          "id": "section-3",
-          "level": 2,
-          "text": "它对谁有什么用"
-        },
-        {
-          "id": "section-4",
-          "level": 2,
-          "text": "记忆长什么样"
-        },
-        {
-          "id": "section-5",
-          "level": 2,
-          "text": "和它相关的几条规则"
-        },
-        {
-          "id": "section-6",
-          "level": 2,
-          "text": "实际使用中的注意点"
-        },
-        {
-          "id": "section-7",
-          "level": 2,
-          "text": "几处需要澄清"
-        },
-        {
-          "id": "section-8",
-          "level": 2,
-          "text": "相关页面"
-        }
-      ],
-      "prev_slug": "zh-CN/concepts/core-channels",
-      "next_slug": "zh-CN/concepts/core-multithreading",
-      "source_path": "zh-CN/concepts/core-memory.md",
-      "output_path": "zh-CN/concepts/core-memory/index.html"
-    },
-    "zh-CN/concepts/core-multithreading": {
-      "slug": "zh-CN/concepts/core-multithreading",
-      "language": "zh-CN",
-      "title": "多线程",
-      "summary": "多线程核心在单进程内通过并发控制提升吞吐与资源利用：单用户可并发多任务线程，配会话队列、会话锁、并行度上限与日配额。",
-      "updated_at": "2026-10-13",
-      "read_when": [],
-      "source_docs": [],
-      "tab": "核心",
-      "group": "9 个核心",
-      "group_path": [
-        "9 个核心"
-      ],
-      "url": "/docs/zh-CN/concepts/core-multithreading/",
-      "headings": [
-        {
-          "id": "section-1",
-          "level": 1,
-          "text": "多线程"
-        },
-        {
-          "id": "section-2",
-          "level": 2,
-          "text": "怎么运作"
-        },
-        {
-          "id": "section-3",
-          "level": 2,
-          "text": "关键数字"
-        },
-        {
-          "id": "section-4",
-          "level": 2,
-          "text": "边界与当前限制"
-        }
-      ],
-      "prev_slug": "zh-CN/concepts/core-memory",
-      "next_slug": "zh-CN/concepts/core-multi-user-management",
-      "source_path": "zh-CN/concepts/core-multithreading.md",
-      "output_path": "zh-CN/concepts/core-multithreading/index.html"
-    },
-    "zh-CN/concepts/core-multi-user-management": {
-      "slug": "zh-CN/concepts/core-multi-user-management",
-      "language": "zh-CN",
-      "title": "多用户管理",
-      "summary": "舰体形态下的用户、单位与权限边界：登录态、在线状态、单位树、等级与额度、智能体定义文档和数据隔离。",
-      "updated_at": "2026-10-13",
-      "read_when": [],
-      "source_docs": [],
-      "tab": "核心",
-      "group": "9 个核心",
-      "group_path": [
-        "9 个核心"
-      ],
-      "url": "/docs/zh-CN/concepts/core-multi-user-management/",
-      "headings": [
-        {
-          "id": "section-1",
-          "level": 2,
-          "text": "身份的三层把关"
-        },
-        {
-          "id": "section-2",
-          "level": 2,
-          "text": "登录态用的是不透明令牌"
-        },
-        {
-          "id": "section-3",
-          "level": 2,
-          "text": "在线状态按形态分列"
-        },
-        {
-          "id": "section-4",
-          "level": 2,
-          "text": "单位树与负责人作用域"
-        },
-        {
-          "id": "section-5",
-          "level": 2,
-          "text": "等级和额度是两套东西"
-        },
-        {
-          "id": "section-6",
-          "level": 2,
-          "text": "智能体的定义文档与线程不是一回事"
-        },
-        {
-          "id": "section-7",
-          "level": 2,
-          "text": "数据隔离落在哪里"
-        },
-        {
-          "id": "section-8",
-          "level": 2,
-          "text": "几处需要澄清"
-        },
-        {
-          "id": "section-9",
-          "level": 2,
-          "text": "相关页面"
-        }
-      ],
-      "prev_slug": "zh-CN/concepts/core-multithreading",
-      "next_slug": "zh-CN/tools/index",
-      "source_path": "zh-CN/concepts/core-multi-user-management.md",
-      "output_path": "zh-CN/concepts/core-multi-user-management/index.html"
     },
     "zh-CN/tools/index": {
       "slug": "zh-CN/tools/index",
@@ -2679,7 +2220,7 @@
           "text": "延伸阅读"
         }
       ],
-      "prev_slug": "zh-CN/concepts/core-multi-user-management",
+      "prev_slug": "zh-CN/concepts/index",
       "next_slug": "zh-CN/tools/panels",
       "source_path": "zh-CN/tools/index.md",
       "output_path": "zh-CN/tools/index.html"
@@ -3839,95 +3380,569 @@
         }
       ],
       "prev_slug": "zh-CN/surfaces/web-admin",
-      "next_slug": "zh-CN/reference/index",
+      "next_slug": "zh-CN/concepts/core-goal",
       "source_path": "zh-CN/surfaces/desktop-ui.md",
       "output_path": "zh-CN/surfaces/desktop-ui/index.html"
     },
-    "zh-CN/reference/index": {
-      "slug": "zh-CN/reference/index",
+    "zh-CN/concepts/core-goal": {
+      "slug": "zh-CN/concepts/core-goal",
       "language": "zh-CN",
-      "title": "参考概览",
-      "summary": "操作参考与配置说明：功能入口、状态含义、设置项含义。",
-      "updated_at": "2026-10-14",
+      "title": "目标",
+      "summary": "目标核心让智能体进入目标态并持续完成一项任务：三个工具驱动、四种相位、默认 256 轮上限，连续 3 轮无进展自动受阻。",
+      "updated_at": "2026-10-13",
       "read_when": [],
       "source_docs": [],
-      "tab": "参考",
-      "group": "概览",
+      "tab": "能力",
+      "group": "核心能力",
       "group_path": [
-        "概览"
+        "核心能力"
       ],
-      "url": "/docs/zh-CN/reference/",
+      "url": "/docs/zh-CN/concepts/core-goal/",
       "headings": [
         {
           "id": "section-1",
           "level": 1,
-          "text": "参考概览"
+          "text": "目标"
         },
         {
           "id": "section-2",
           "level": 2,
-          "text": "全部页面"
+          "text": "怎么运作"
         },
         {
           "id": "section-3",
-          "level": 3,
-          "text": "接口与端点"
+          "level": 2,
+          "text": "关键数字"
         },
         {
           "id": "section-4",
-          "level": 3,
-          "text": "配置与数据"
+          "level": 2,
+          "text": "从哪里用"
         },
         {
           "id": "section-5",
-          "level": 3,
-          "text": "三端互通"
+          "level": 2,
+          "text": "边界与当前限制"
+        }
+      ],
+      "prev_slug": "zh-CN/surfaces/desktop-ui",
+      "next_slug": "zh-CN/concepts/core-compatibility",
+      "source_path": "zh-CN/concepts/core-goal.md",
+      "output_path": "zh-CN/concepts/core-goal/index.html"
+    },
+    "zh-CN/concepts/core-compatibility": {
+      "slug": "zh-CN/concepts/core-compatibility",
+      "language": "zh-CN",
+      "title": "兼容性",
+      "summary": "兼容性核心让蛹与舵机在旧操作系统环境中可运行并被明确约束：Windows 7 32 位与 Ubuntu 18.04 各有离线构建链，界面走软件渲染不依赖 GPU。",
+      "updated_at": "2026-10-13",
+      "read_when": [],
+      "source_docs": [],
+      "tab": "能力",
+      "group": "核心能力",
+      "group_path": [
+        "核心能力"
+      ],
+      "url": "/docs/zh-CN/concepts/core-compatibility/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "兼容性"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "支持哪些老系统"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "为什么能跑"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "对用户意味着什么"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "边界与当前限制"
+        }
+      ],
+      "prev_slug": "zh-CN/concepts/core-goal",
+      "next_slug": "zh-CN/concepts/core-context-compression",
+      "source_path": "zh-CN/concepts/core-compatibility.md",
+      "output_path": "zh-CN/concepts/core-compatibility/index.html"
+    },
+    "zh-CN/concepts/core-context-compression": {
+      "slug": "zh-CN/concepts/core-context-compression",
+      "language": "zh-CN",
+      "title": "上下文压缩",
+      "summary": "长对话不会因为太长而中断：系统在必要时精简历史、保留最有效的信息，让对话继续。",
+      "updated_at": "2026-10-13",
+      "read_when": [],
+      "source_docs": [],
+      "tab": "能力",
+      "group": "核心能力",
+      "group_path": [
+        "核心能力"
+      ],
+      "url": "/docs/zh-CN/concepts/core-context-compression/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 2,
+          "text": "为什么需要压缩"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "压缩怎么分级"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "它保护什么、不动什么"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "压缩是可查看的"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "实际使用中的注意点"
         },
         {
           "id": "section-6",
-          "level": 3,
-          "text": "排障与术语"
+          "level": 2,
+          "text": "先做本地精简"
         },
         {
           "id": "section-7",
           "level": 2,
-          "text": "按角色找"
+          "text": "相关页面"
+        }
+      ],
+      "prev_slug": "zh-CN/concepts/core-compatibility",
+      "next_slug": "zh-CN/concepts/core-subagent",
+      "source_path": "zh-CN/concepts/core-context-compression.md",
+      "output_path": "zh-CN/concepts/core-context-compression/index.html"
+    },
+    "zh-CN/concepts/core-subagent": {
+      "slug": "zh-CN/concepts/core-subagent",
+      "language": "zh-CN",
+      "title": "子智能体",
+      "summary": "子智能体核心在单一线程内派生子任务，交给独立执行体完成并回传结果；协作形态只有子智能体一种，蜂群编排已从引擎与协议层移除。",
+      "updated_at": "2026-10-13",
+      "read_when": [],
+      "source_docs": [],
+      "tab": "能力",
+      "group": "核心能力",
+      "group_path": [
+        "核心能力"
+      ],
+      "url": "/docs/zh-CN/concepts/core-subagent/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "子智能体"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "怎么运作"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "边界与当前限制"
+        }
+      ],
+      "prev_slug": "zh-CN/concepts/core-context-compression",
+      "next_slug": "zh-CN/concepts/core-scheduled-tasks",
+      "source_path": "zh-CN/concepts/core-subagent.md",
+      "output_path": "zh-CN/concepts/core-subagent/index.html"
+    },
+    "zh-CN/concepts/core-scheduled-tasks": {
+      "slug": "zh-CN/concepts/core-scheduled-tasks",
+      "language": "zh-CN",
+      "title": "定时任务",
+      "summary": "智能体在指定时间自动执行：at 定点、every 固定间隔、cron 表达式三种排程，配租约、退避与自动禁用，进程重启不丢任务。",
+      "updated_at": "2026-10-13",
+      "read_when": [],
+      "source_docs": [],
+      "tab": "能力",
+      "group": "核心能力",
+      "group_path": [
+        "核心能力"
+      ],
+      "url": "/docs/zh-CN/concepts/core-scheduled-tasks/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 2,
+          "text": "三种排程"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "结果投递到哪里"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "执行保障"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "总开关"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "从哪里建、各形态支持情况"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "相关页"
+        }
+      ],
+      "prev_slug": "zh-CN/concepts/core-subagent",
+      "next_slug": "zh-CN/concepts/core-channels",
+      "source_path": "zh-CN/concepts/core-scheduled-tasks.md",
+      "output_path": "zh-CN/concepts/core-scheduled-tasks/index.html"
+    },
+    "zh-CN/concepts/core-channels": {
+      "slug": "zh-CN/concepts/core-channels",
+      "language": "zh-CN",
+      "title": "渠道",
+      "summary": "飞书、QQ、微信、XMPP 和通用 webhook 各自的支持范围，以及消息到智能体与工作区的绑定解析。",
+      "updated_at": "2026-10-13",
+      "read_when": [],
+      "source_docs": [],
+      "tab": "能力",
+      "group": "核心能力",
+      "group_path": [
+        "核心能力"
+      ],
+      "url": "/docs/zh-CN/concepts/core-channels/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 2,
+          "text": "渠道只是入口"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "当前支持哪些渠道"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "消息怎么找到智能体和工作区"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "入站、出站与限流的边界"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "附件与媒体"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "Webhook 入口与校验"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "排查消息问题"
         },
         {
           "id": "section-8",
+          "level": 2,
+          "text": "别搞混的几点"
+        },
+        {
+          "id": "section-9",
+          "level": 2,
+          "text": "相关页面"
+        }
+      ],
+      "prev_slug": "zh-CN/concepts/core-scheduled-tasks",
+      "next_slug": "zh-CN/concepts/core-memory",
+      "source_path": "zh-CN/concepts/core-channels.md",
+      "output_path": "zh-CN/concepts/core-channels/index.html"
+    },
+    "zh-CN/concepts/core-memory": {
+      "slug": "zh-CN/concepts/core-memory",
+      "language": "zh-CN",
+      "title": "记忆",
+      "summary": "长期资料在线程创建时注入一次，之后保持冻结。它的两层结构，以及使用上的注意点。",
+      "updated_at": "2026-10-13",
+      "read_when": [],
+      "source_docs": [],
+      "tab": "能力",
+      "group": "核心能力",
+      "group_path": [
+        "核心能力"
+      ],
+      "url": "/docs/zh-CN/concepts/core-memory/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 2,
+          "text": "记忆解决什么问题"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "记忆的两层"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "它对谁有什么用"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "记忆长什么样"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "和它相关的几条规则"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "实际使用中的注意点"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "几处需要澄清"
+        },
+        {
+          "id": "section-8",
+          "level": 2,
+          "text": "相关页面"
+        }
+      ],
+      "prev_slug": "zh-CN/concepts/core-channels",
+      "next_slug": "zh-CN/concepts/core-multithreading",
+      "source_path": "zh-CN/concepts/core-memory.md",
+      "output_path": "zh-CN/concepts/core-memory/index.html"
+    },
+    "zh-CN/concepts/core-multithreading": {
+      "slug": "zh-CN/concepts/core-multithreading",
+      "language": "zh-CN",
+      "title": "多线程",
+      "summary": "多线程核心在单进程内通过并发控制提升吞吐与资源利用：单用户可并发多任务线程，配会话队列、会话锁、并行度上限与日配额。",
+      "updated_at": "2026-10-13",
+      "read_when": [],
+      "source_docs": [],
+      "tab": "能力",
+      "group": "核心能力",
+      "group_path": [
+        "核心能力"
+      ],
+      "url": "/docs/zh-CN/concepts/core-multithreading/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "多线程"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "怎么运作"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "关键数字"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "边界与当前限制"
+        }
+      ],
+      "prev_slug": "zh-CN/concepts/core-memory",
+      "next_slug": "zh-CN/concepts/core-multi-user-management",
+      "source_path": "zh-CN/concepts/core-multithreading.md",
+      "output_path": "zh-CN/concepts/core-multithreading/index.html"
+    },
+    "zh-CN/concepts/core-multi-user-management": {
+      "slug": "zh-CN/concepts/core-multi-user-management",
+      "language": "zh-CN",
+      "title": "多用户管理",
+      "summary": "舰体形态下的用户、单位与权限边界：登录态、在线状态、单位树、等级与额度、智能体定义文档和数据隔离。",
+      "updated_at": "2026-10-13",
+      "read_when": [],
+      "source_docs": [],
+      "tab": "能力",
+      "group": "核心能力",
+      "group_path": [
+        "核心能力"
+      ],
+      "url": "/docs/zh-CN/concepts/core-multi-user-management/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 2,
+          "text": "身份的三层把关"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "登录态用的是不透明令牌"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "在线状态按形态分列"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "单位树与负责人作用域"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "等级和额度是两套东西"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "智能体的定义文档与线程不是一回事"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "数据隔离落在哪里"
+        },
+        {
+          "id": "section-8",
+          "level": 2,
+          "text": "几处需要澄清"
+        },
+        {
+          "id": "section-9",
+          "level": 2,
+          "text": "相关页面"
+        }
+      ],
+      "prev_slug": "zh-CN/concepts/core-multithreading",
+      "next_slug": "zh-CN/capabilities/index",
+      "source_path": "zh-CN/concepts/core-multi-user-management.md",
+      "output_path": "zh-CN/concepts/core-multi-user-management/index.html"
+    },
+    "zh-CN/capabilities/index": {
+      "slug": "zh-CN/capabilities/index",
+      "language": "zh-CN",
+      "title": "能力概览",
+      "summary": "能力与操作参考概览：核心能力、功能入口、状态含义、设置项含义。",
+      "updated_at": "2026-10-14",
+      "read_when": [],
+      "source_docs": [],
+      "tab": "能力",
+      "group": "概览",
+      "group_path": [
+        "概览"
+      ],
+      "url": "/docs/zh-CN/capabilities/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "能力概览"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "核心能力"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "全部页面"
+        },
+        {
+          "id": "section-4",
           "level": 3,
-          "text": "普通用户"
+          "text": "接口与端点"
+        },
+        {
+          "id": "section-5",
+          "level": 3,
+          "text": "配置与数据"
+        },
+        {
+          "id": "section-6",
+          "level": 3,
+          "text": "三端互通"
+        },
+        {
+          "id": "section-7",
+          "level": 3,
+          "text": "排障与术语"
+        },
+        {
+          "id": "section-8",
+          "level": 2,
+          "text": "按角色找"
         },
         {
           "id": "section-9",
           "level": 3,
-          "text": "系统管理员"
+          "text": "普通用户"
         },
         {
           "id": "section-10",
+          "level": 3,
+          "text": "系统管理员"
+        },
+        {
+          "id": "section-11",
           "level": 2,
           "text": "延伸阅读"
         }
       ],
-      "prev_slug": "zh-CN/surfaces/desktop-ui",
-      "next_slug": "zh-CN/reference/api-index",
-      "source_path": "zh-CN/reference/index.md",
-      "output_path": "zh-CN/reference/index.html"
+      "prev_slug": "zh-CN/concepts/core-multi-user-management",
+      "next_slug": "zh-CN/capabilities/api-index",
+      "source_path": "zh-CN/capabilities/index.md",
+      "output_path": "zh-CN/capabilities/index.html"
     },
-    "zh-CN/reference/api-index": {
-      "slug": "zh-CN/reference/api-index",
+    "zh-CN/capabilities/api-index": {
+      "slug": "zh-CN/capabilities/api-index",
       "language": "zh-CN",
       "title": "功能与能力速查",
       "summary": "wunder 的能力清单、入口位置与相关文档。",
       "updated_at": "2026-10-14",
       "read_when": [],
       "source_docs": [],
-      "tab": "参考",
+      "tab": "能力",
       "group": "接口与端点",
       "group_path": [
         "接口与端点"
       ],
-      "url": "/docs/zh-CN/reference/api-index/",
+      "url": "/docs/zh-CN/capabilities/api-index/",
       "headings": [
         {
           "id": "section-1",
@@ -3985,25 +4000,25 @@
           "text": "延伸阅读"
         }
       ],
-      "prev_slug": "zh-CN/reference/index",
-      "next_slug": "zh-CN/reference/chat-ws",
-      "source_path": "zh-CN/reference/api-index.md",
-      "output_path": "zh-CN/reference/api-index/index.html"
+      "prev_slug": "zh-CN/capabilities/index",
+      "next_slug": "zh-CN/capabilities/chat-ws",
+      "source_path": "zh-CN/capabilities/api-index.md",
+      "output_path": "zh-CN/capabilities/api-index/index.html"
     },
-    "zh-CN/reference/chat-ws": {
-      "slug": "zh-CN/reference/chat-ws",
+    "zh-CN/capabilities/chat-ws": {
+      "slug": "zh-CN/capabilities/chat-ws",
       "language": "zh-CN",
       "title": "聊天 WebSocket",
       "summary": "聊天的实时通道，同时也是会话控制通道：启动执行、断线续传、观察、取消、回传审批都在同一条连接上。",
-      "updated_at": "2026-10-13",
+      "updated_at": "2026-10-14",
       "read_when": [],
       "source_docs": [],
-      "tab": "参考",
+      "tab": "能力",
       "group": "接口与端点",
       "group_path": [
         "接口与端点"
       ],
-      "url": "/docs/zh-CN/reference/chat-ws/",
+      "url": "/docs/zh-CN/capabilities/chat-ws/",
       "headings": [
         {
           "id": "section-1",
@@ -4041,25 +4056,25 @@
           "text": "延伸阅读"
         }
       ],
-      "prev_slug": "zh-CN/reference/api-index",
-      "next_slug": "zh-CN/reference/mcp-endpoint",
-      "source_path": "zh-CN/reference/chat-ws.md",
-      "output_path": "zh-CN/reference/chat-ws/index.html"
+      "prev_slug": "zh-CN/capabilities/api-index",
+      "next_slug": "zh-CN/capabilities/mcp-endpoint",
+      "source_path": "zh-CN/capabilities/chat-ws.md",
+      "output_path": "zh-CN/capabilities/chat-ws/index.html"
     },
-    "zh-CN/reference/mcp-endpoint": {
-      "slug": "zh-CN/reference/mcp-endpoint",
+    "zh-CN/capabilities/mcp-endpoint": {
+      "slug": "zh-CN/capabilities/mcp-endpoint",
       "language": "zh-CN",
       "title": "MCP 入口",
       "summary": "wunder 既能把自己作为 MCP 服务暴露出去，也能作为 MCP 客户端接入外部服务。",
-      "updated_at": "2026-10-13",
+      "updated_at": "2026-10-14",
       "read_when": [],
       "source_docs": [],
-      "tab": "参考",
+      "tab": "能力",
       "group": "接口与端点",
       "group_path": [
         "接口与端点"
       ],
-      "url": "/docs/zh-CN/reference/mcp-endpoint/",
+      "url": "/docs/zh-CN/capabilities/mcp-endpoint/",
       "headings": [
         {
           "id": "section-1",
@@ -4092,25 +4107,25 @@
           "text": "延伸阅读"
         }
       ],
-      "prev_slug": "zh-CN/reference/chat-ws",
-      "next_slug": "zh-CN/reference/weixin-channel",
-      "source_path": "zh-CN/reference/mcp-endpoint.md",
-      "output_path": "zh-CN/reference/mcp-endpoint/index.html"
+      "prev_slug": "zh-CN/capabilities/chat-ws",
+      "next_slug": "zh-CN/capabilities/weixin-channel",
+      "source_path": "zh-CN/capabilities/mcp-endpoint.md",
+      "output_path": "zh-CN/capabilities/mcp-endpoint/index.html"
     },
-    "zh-CN/reference/weixin-channel": {
-      "slug": "zh-CN/reference/weixin-channel",
+    "zh-CN/capabilities/weixin-channel": {
+      "slug": "zh-CN/capabilities/weixin-channel",
       "language": "zh-CN",
       "title": "微信 iLink 渠道",
       "summary": "新微信渠道用 iLink 协议，跟旧的公众号、企业微信不是一套。",
-      "updated_at": "2026-10-13",
+      "updated_at": "2026-10-14",
       "read_when": [],
       "source_docs": [],
-      "tab": "参考",
+      "tab": "能力",
       "group": "接口与端点",
       "group_path": [
         "接口与端点"
       ],
-      "url": "/docs/zh-CN/reference/weixin-channel/",
+      "url": "/docs/zh-CN/capabilities/weixin-channel/",
       "headings": [
         {
           "id": "section-1",
@@ -4143,25 +4158,25 @@
           "text": "延伸阅读"
         }
       ],
-      "prev_slug": "zh-CN/reference/mcp-endpoint",
-      "next_slug": "zh-CN/reference/config",
-      "source_path": "zh-CN/reference/weixin-channel.md",
-      "output_path": "zh-CN/reference/weixin-channel/index.html"
+      "prev_slug": "zh-CN/capabilities/mcp-endpoint",
+      "next_slug": "zh-CN/capabilities/config",
+      "source_path": "zh-CN/capabilities/weixin-channel.md",
+      "output_path": "zh-CN/capabilities/weixin-channel/index.html"
     },
-    "zh-CN/reference/config": {
-      "slug": "zh-CN/reference/config",
+    "zh-CN/capabilities/config": {
+      "slug": "zh-CN/capabilities/config",
       "language": "zh-CN",
       "title": "系统设置参考",
       "summary": "常用设置项的含义、推荐值与生效规则。",
       "updated_at": "2026-10-14",
       "read_when": [],
       "source_docs": [],
-      "tab": "参考",
+      "tab": "能力",
       "group": "配置与数据",
       "group_path": [
         "配置与数据"
       ],
-      "url": "/docs/zh-CN/reference/config/",
+      "url": "/docs/zh-CN/capabilities/config/",
       "headings": [
         {
           "id": "section-1",
@@ -4314,25 +4329,25 @@
           "text": "团队协作（舰体 server）"
         }
       ],
-      "prev_slug": "zh-CN/reference/weixin-channel",
-      "next_slug": "zh-CN/reference/workspace-routing",
-      "source_path": "zh-CN/reference/config.md",
-      "output_path": "zh-CN/reference/config/index.html"
+      "prev_slug": "zh-CN/capabilities/weixin-channel",
+      "next_slug": "zh-CN/capabilities/workspace-routing",
+      "source_path": "zh-CN/capabilities/config.md",
+      "output_path": "zh-CN/capabilities/config/index.html"
     },
-    "zh-CN/reference/workspace-routing": {
-      "slug": "zh-CN/reference/workspace-routing",
+    "zh-CN/capabilities/workspace-routing": {
+      "slug": "zh-CN/capabilities/workspace-routing",
       "language": "zh-CN",
       "title": "工作区路由与文件管理",
       "summary": "每个用户的工作区只有一个云端目录，路径一律是工作区相对路径；容器参数已收敛，不再按智能体或容器派生根。",
       "updated_at": "2026-10-13",
       "read_when": [],
       "source_docs": [],
-      "tab": "参考",
+      "tab": "能力",
       "group": "配置与数据",
       "group_path": [
         "配置与数据"
       ],
-      "url": "/docs/zh-CN/reference/workspace-routing/",
+      "url": "/docs/zh-CN/capabilities/workspace-routing/",
       "headings": [
         {
           "id": "section-1",
@@ -4380,25 +4395,25 @@
           "text": "延伸阅读"
         }
       ],
-      "prev_slug": "zh-CN/reference/config",
-      "next_slug": "zh-CN/reference/stream-events",
-      "source_path": "zh-CN/reference/workspace-routing.md",
-      "output_path": "zh-CN/reference/workspace-routing/index.html"
+      "prev_slug": "zh-CN/capabilities/config",
+      "next_slug": "zh-CN/capabilities/stream-events",
+      "source_path": "zh-CN/capabilities/workspace-routing.md",
+      "output_path": "zh-CN/capabilities/workspace-routing/index.html"
     },
-    "zh-CN/reference/stream-events": {
-      "slug": "zh-CN/reference/stream-events",
+    "zh-CN/capabilities/stream-events": {
+      "slug": "zh-CN/capabilities/stream-events",
       "language": "zh-CN",
       "title": "会话状态说明",
       "summary": "会话状态、审批状态、异常状态与连接状态的含义及处理方式。",
       "updated_at": "2026-10-13",
       "read_when": [],
       "source_docs": [],
-      "tab": "参考",
+      "tab": "能力",
       "group": "配置与数据",
       "group_path": [
         "配置与数据"
       ],
-      "url": "/docs/zh-CN/reference/stream-events/",
+      "url": "/docs/zh-CN/capabilities/stream-events/",
       "headings": [
         {
           "id": "section-1",
@@ -4521,25 +4536,25 @@
           "text": "延伸阅读"
         }
       ],
-      "prev_slug": "zh-CN/reference/workspace-routing",
-      "next_slug": "zh-CN/reference/prompt-templates",
-      "source_path": "zh-CN/reference/stream-events.md",
-      "output_path": "zh-CN/reference/stream-events/index.html"
+      "prev_slug": "zh-CN/capabilities/workspace-routing",
+      "next_slug": "zh-CN/capabilities/prompt-templates",
+      "source_path": "zh-CN/capabilities/stream-events.md",
+      "output_path": "zh-CN/capabilities/stream-events/index.html"
     },
-    "zh-CN/reference/prompt-templates": {
-      "slug": "zh-CN/reference/prompt-templates",
+    "zh-CN/capabilities/prompt-templates": {
+      "slug": "zh-CN/capabilities/prompt-templates",
       "language": "zh-CN",
       "title": "提示词与个性化",
       "summary": "定制智能体的角色定位和回答风格：选内置模板，或自己写一套。",
-      "updated_at": "2026-10-13",
+      "updated_at": "2026-10-14",
       "read_when": [],
       "source_docs": [],
-      "tab": "参考",
+      "tab": "能力",
       "group": "配置与数据",
       "group_path": [
         "配置与数据"
       ],
-      "url": "/docs/zh-CN/reference/prompt-templates/",
+      "url": "/docs/zh-CN/capabilities/prompt-templates/",
       "headings": [
         {
           "id": "section-1",
@@ -4652,25 +4667,25 @@
           "text": "延伸阅读"
         }
       ],
-      "prev_slug": "zh-CN/reference/stream-events",
-      "next_slug": "zh-CN/reference/admin-panels",
-      "source_path": "zh-CN/reference/prompt-templates.md",
-      "output_path": "zh-CN/reference/prompt-templates/index.html"
+      "prev_slug": "zh-CN/capabilities/stream-events",
+      "next_slug": "zh-CN/capabilities/admin-panels",
+      "source_path": "zh-CN/capabilities/prompt-templates.md",
+      "output_path": "zh-CN/capabilities/prompt-templates/index.html"
     },
-    "zh-CN/reference/admin-panels": {
-      "slug": "zh-CN/reference/admin-panels",
+    "zh-CN/capabilities/admin-panels": {
+      "slug": "zh-CN/capabilities/admin-panels",
       "language": "zh-CN",
       "title": "舰桥面板指南",
       "summary": "舰桥各面板的职能、入口位置与常用操作流程。",
       "updated_at": "2026-10-14",
       "read_when": [],
       "source_docs": [],
-      "tab": "参考",
+      "tab": "能力",
       "group": "配置与数据",
       "group_path": [
         "配置与数据"
       ],
-      "url": "/docs/zh-CN/reference/admin-panels/",
+      "url": "/docs/zh-CN/capabilities/admin-panels/",
       "headings": [
         {
           "id": "section-1",
@@ -4848,25 +4863,25 @@
           "text": "延伸阅读"
         }
       ],
-      "prev_slug": "zh-CN/reference/prompt-templates",
-      "next_slug": "zh-CN/reference/interlink",
-      "source_path": "zh-CN/reference/admin-panels.md",
-      "output_path": "zh-CN/reference/admin-panels/index.html"
+      "prev_slug": "zh-CN/capabilities/prompt-templates",
+      "next_slug": "zh-CN/capabilities/interlink",
+      "source_path": "zh-CN/capabilities/admin-panels.md",
+      "output_path": "zh-CN/capabilities/admin-panels/index.html"
     },
-    "zh-CN/reference/interlink": {
-      "slug": "zh-CN/reference/interlink",
+    "zh-CN/capabilities/interlink": {
+      "slug": "zh-CN/capabilities/interlink",
       "language": "zh-CN",
       "title": "三端互通",
       "summary": "蜂巢、蛹、舵机在同一账号下统一在线状态、跨端工作区互见并双向远程控制。",
       "updated_at": "2026-10-13",
       "read_when": [],
       "source_docs": [],
-      "tab": "参考",
+      "tab": "能力",
       "group": "三端互通",
       "group_path": [
         "三端互通"
       ],
-      "url": "/docs/zh-CN/reference/interlink/",
+      "url": "/docs/zh-CN/capabilities/interlink/",
       "headings": [
         {
           "id": "section-1",
@@ -4919,20 +4934,20 @@
           "text": "代价"
         }
       ],
-      "prev_slug": "zh-CN/reference/admin-panels",
+      "prev_slug": "zh-CN/capabilities/admin-panels",
       "next_slug": "zh-CN/help/index",
-      "source_path": "zh-CN/reference/interlink.md",
-      "output_path": "zh-CN/reference/interlink/index.html"
+      "source_path": "zh-CN/capabilities/interlink.md",
+      "output_path": "zh-CN/capabilities/interlink/index.html"
     },
     "zh-CN/help/index": {
       "slug": "zh-CN/help/index",
       "language": "zh-CN",
       "title": "帮助",
       "summary": "按症状分流的帮助入口：故障排查、FAQ、术语表。",
-      "updated_at": "2026-10-13",
+      "updated_at": "2026-10-14",
       "read_when": [],
       "source_docs": [],
-      "tab": "参考",
+      "tab": "能力",
       "group": "排障与术语",
       "group_path": [
         "排障与术语"
@@ -4985,7 +5000,7 @@
           "text": "延伸阅读"
         }
       ],
-      "prev_slug": "zh-CN/reference/interlink",
+      "prev_slug": "zh-CN/capabilities/interlink",
       "next_slug": "zh-CN/help/troubleshooting",
       "source_path": "zh-CN/help/index.md",
       "output_path": "zh-CN/help/index.html"
@@ -4998,7 +5013,7 @@
       "updated_at": "2026-04-10",
       "read_when": [],
       "source_docs": [],
-      "tab": "参考",
+      "tab": "能力",
       "group": "排障与术语",
       "group_path": [
         "排障与术语"
@@ -5109,7 +5124,7 @@
       "updated_at": "2026-04-10",
       "read_when": [],
       "source_docs": [],
-      "tab": "参考",
+      "tab": "能力",
       "group": "排障与术语",
       "group_path": [
         "排障与术语"
@@ -5200,7 +5215,7 @@
       "updated_at": "2026-10-14",
       "read_when": [],
       "source_docs": [],
-      "tab": "参考",
+      "tab": "能力",
       "group": "排障与术语",
       "group_path": [
         "排障与术语"
@@ -5316,7 +5331,7 @@
       "updated_at": "2026-10-13",
       "read_when": [],
       "source_docs": [],
-      "tab": "参考",
+      "tab": "能力",
       "group": "深入了解",
       "group_path": [
         "深入了解"
@@ -5382,7 +5397,7 @@
       "updated_at": "2026-10-13",
       "read_when": [],
       "source_docs": [],
-      "tab": "参考",
+      "tab": "能力",
       "group": "深入了解",
       "group_path": [
         "深入了解"
@@ -5438,7 +5453,7 @@
       "updated_at": "2026-10-13",
       "read_when": [],
       "source_docs": [],
-      "tab": "参考",
+      "tab": "能力",
       "group": "深入了解",
       "group_path": [
         "深入了解"
@@ -5494,7 +5509,7 @@
       "updated_at": "2026-10-13",
       "read_when": [],
       "source_docs": [],
-      "tab": "参考",
+      "tab": "能力",
       "group": "深入了解",
       "group_path": [
         "深入了解"
@@ -5570,7 +5585,7 @@
       "updated_at": "2026-10-13",
       "read_when": [],
       "source_docs": [],
-      "tab": "参考",
+      "tab": "能力",
       "group": "深入了解",
       "group_path": [
         "深入了解"
@@ -5631,7 +5646,7 @@
       "updated_at": "2026-10-13",
       "read_when": [],
       "source_docs": [],
-      "tab": "参考",
+      "tab": "能力",
       "group": "深入了解",
       "group_path": [
         "深入了解"
@@ -5687,7 +5702,7 @@
       "updated_at": "2026-10-13",
       "read_when": [],
       "source_docs": [],
-      "tab": "参考",
+      "tab": "能力",
       "group": "深入了解",
       "group_path": [
         "深入了解"
@@ -5748,7 +5763,7 @@
       "updated_at": "2026-10-14",
       "read_when": [],
       "source_docs": [],
-      "tab": "参考",
+      "tab": "能力",
       "group": "深入了解",
       "group_path": [
         "深入了解"
@@ -5814,7 +5829,7 @@
       "updated_at": "2026-10-13",
       "read_when": [],
       "source_docs": [],
-      "tab": "参考",
+      "tab": "能力",
       "group": "深入了解",
       "group_path": [
         "深入了解"
@@ -5880,7 +5895,7 @@
       "updated_at": "2026-10-13",
       "read_when": [],
       "source_docs": [],
-      "tab": "参考",
+      "tab": "能力",
       "group": "深入了解",
       "group_path": [
         "深入了解"
@@ -5943,10 +5958,10 @@
       "language": "zh-CN",
       "title": "运行时与在线状态",
       "summary": "会话不只是静态历史，还带着运行时状态：正在执行、等待审批、等一个输入……这些状态表示会话当前在做什么。",
-      "updated_at": "2026-10-13",
+      "updated_at": "2026-10-14",
       "read_when": [],
       "source_docs": [],
-      "tab": "参考",
+      "tab": "能力",
       "group": "深入了解",
       "group_path": [
         "深入了解"
@@ -5999,10 +6014,10 @@
       "language": "zh-CN",
       "title": "提示词与技能",
       "summary": "系统提示词决定智能体的\"人格\"，技能是它在某类任务里的具体做法。",
-      "updated_at": "2026-10-13",
+      "updated_at": "2026-10-14",
       "read_when": [],
       "source_docs": [],
-      "tab": "参考",
+      "tab": "能力",
       "group": "深入了解",
       "group_path": [
         "深入了解"
@@ -6068,7 +6083,7 @@
       "updated_at": "2026-10-13",
       "read_when": [],
       "source_docs": [],
-      "tab": "参考",
+      "tab": "能力",
       "group": "深入了解",
       "group_path": [
         "深入了解"
@@ -6131,10 +6146,10 @@
       "language": "zh-CN",
       "title": "额度与 Token 用量",
       "summary": "每次模型请求消耗 1 额度，每天发放 1000；Token 用量只用于观测，不参与扣减。",
-      "updated_at": "2026-10-13",
+      "updated_at": "2026-10-14",
       "read_when": [],
       "source_docs": [],
-      "tab": "参考",
+      "tab": "能力",
       "group": "深入了解",
       "group_path": [
         "深入了解"
@@ -6170,7 +6185,7 @@
       "updated_at": "2026-10-13",
       "read_when": [],
       "source_docs": [],
-      "tab": "参考",
+      "tab": "能力",
       "group": "深入了解",
       "group_path": [
         "深入了解"
@@ -6241,7 +6256,7 @@
       "updated_at": "2026-10-13",
       "read_when": [],
       "source_docs": [],
-      "tab": "参考",
+      "tab": "能力",
       "group": "深入了解",
       "group_path": [
         "深入了解"
@@ -6302,7 +6317,7 @@
       "updated_at": "2026-10-13",
       "read_when": [],
       "source_docs": [],
-      "tab": "参考",
+      "tab": "能力",
       "group": "深入了解",
       "group_path": [
         "深入了解"
@@ -6898,7 +6913,7 @@
       "slug": "en/start/hubs",
       "language": "en",
       "title": "Manual Overview",
-      "summary": "The manual's navigation page: start from the Pupa and move into the interface map, other forms, and reference as needed. Every page in the start and surfaces groups is here.",
+      "summary": "The manual's navigation page: start from the Pupa and move into the interface map, other forms, and capabilities as needed. Every page in the start and surfaces groups is here.",
       "updated_at": "2026-10-13",
       "read_when": [
         "You want the map of the whole manual and where to enter it",
@@ -7170,14 +7185,14 @@
       "slug": "en/concepts/index",
       "language": "en",
       "title": "Core Concepts",
-      "summary": "Why wunder behaves the way it does—9 core design constraints, along with the layers they form, the entries into them, and the reading paths.",
+      "summary": "Why wunder behaves the way it does—the four cores (fast, stable, general, lightweight), along with the four forms and the deep dives.",
       "updated_at": "2026-10-13",
       "read_when": [],
       "source_docs": [],
       "tab": "Core",
-      "group": "The 9 Cores",
+      "group": "The Four Cores",
       "group_path": [
-        "The 9 Cores"
+        "The Four Cores"
       ],
       "url": "/docs/en/concepts/",
       "headings": [
@@ -7194,7 +7209,7 @@
         {
           "id": "section-3",
           "level": 2,
-          "text": "The 9 cores"
+          "text": "The four cores"
         },
         {
           "id": "section-4",
@@ -7218,498 +7233,9 @@
         }
       ],
       "prev_slug": "en/start/troubleshooting-first-run",
-      "next_slug": "en/concepts/core-goal",
+      "next_slug": "en/tools/index",
       "source_path": "en/concepts/index.md",
       "output_path": "en/concepts/index.html"
-    },
-    "en/concepts/core-goal": {
-      "slug": "en/concepts/core-goal",
-      "language": "en",
-      "title": "Goal",
-      "summary": "The Goal core lets an agent enter goal mode and keep working on one task: three tools drive it, four phases, a default 256-round cap, and automatic blocking after 3 consecutive rounds without progress.",
-      "updated_at": "2026-10-13",
-      "read_when": [],
-      "source_docs": [],
-      "tab": "Core",
-      "group": "The 9 Cores",
-      "group_path": [
-        "The 9 Cores"
-      ],
-      "url": "/docs/en/concepts/core-goal/",
-      "headings": [
-        {
-          "id": "section-1",
-          "level": 1,
-          "text": "Goal"
-        },
-        {
-          "id": "section-2",
-          "level": 2,
-          "text": "How it works"
-        },
-        {
-          "id": "section-3",
-          "level": 2,
-          "text": "Key numbers"
-        },
-        {
-          "id": "section-4",
-          "level": 2,
-          "text": "Where it is used"
-        },
-        {
-          "id": "section-5",
-          "level": 2,
-          "text": "Boundaries and current limits"
-        }
-      ],
-      "prev_slug": "en/concepts/index",
-      "next_slug": "en/concepts/core-compatibility",
-      "source_path": "en/concepts/core-goal.md",
-      "output_path": "en/concepts/core-goal/index.html"
-    },
-    "en/concepts/core-compatibility": {
-      "slug": "en/concepts/core-compatibility",
-      "language": "en",
-      "title": "Compatibility",
-      "summary": "The Compatibility core lets the Pupa (desktop) and the Helm (cli) run in older operating-system environments under explicit constraints: Windows 7 32-bit and Ubuntu 18.04 each have an offline build chain, and the interface uses software rendering that does not depend on a GPU.",
-      "updated_at": "2026-10-13",
-      "read_when": [],
-      "source_docs": [],
-      "tab": "Core",
-      "group": "The 9 Cores",
-      "group_path": [
-        "The 9 Cores"
-      ],
-      "url": "/docs/en/concepts/core-compatibility/",
-      "headings": [
-        {
-          "id": "section-1",
-          "level": 1,
-          "text": "Compatibility"
-        },
-        {
-          "id": "section-2",
-          "level": 2,
-          "text": "Which older systems are supported"
-        },
-        {
-          "id": "section-3",
-          "level": 2,
-          "text": "Why it runs"
-        },
-        {
-          "id": "section-4",
-          "level": 2,
-          "text": "What it means for users"
-        },
-        {
-          "id": "section-5",
-          "level": 2,
-          "text": "Boundaries and current limits"
-        }
-      ],
-      "prev_slug": "en/concepts/core-goal",
-      "next_slug": "en/concepts/core-context-compression",
-      "source_path": "en/concepts/core-compatibility.md",
-      "output_path": "en/concepts/core-compatibility/index.html"
-    },
-    "en/concepts/core-context-compression": {
-      "slug": "en/concepts/core-context-compression",
-      "language": "en",
-      "title": "Context Compression",
-      "summary": "Long conversations are not cut short when they grow long. The system trims history in graded levels, keeps the most useful information, and lets the conversation continue.",
-      "updated_at": "2026-10-13",
-      "read_when": [],
-      "source_docs": [],
-      "tab": "Core",
-      "group": "The 9 Cores",
-      "group_path": [
-        "The 9 Cores"
-      ],
-      "url": "/docs/en/concepts/core-context-compression/",
-      "headings": [
-        {
-          "id": "section-1",
-          "level": 2,
-          "text": "Why compression is needed"
-        },
-        {
-          "id": "section-2",
-          "level": 2,
-          "text": "How compression is graded"
-        },
-        {
-          "id": "section-3",
-          "level": 2,
-          "text": "What it protects and what it leaves alone"
-        },
-        {
-          "id": "section-4",
-          "level": 2,
-          "text": "Compression is inspectable"
-        },
-        {
-          "id": "section-5",
-          "level": 2,
-          "text": "In practice"
-        },
-        {
-          "id": "section-6",
-          "level": 2,
-          "text": "Local reduction comes first"
-        },
-        {
-          "id": "section-7",
-          "level": 2,
-          "text": "Related pages"
-        }
-      ],
-      "prev_slug": "en/concepts/core-compatibility",
-      "next_slug": "en/concepts/core-subagent",
-      "source_path": "en/concepts/core-context-compression.md",
-      "output_path": "en/concepts/core-context-compression/index.html"
-    },
-    "en/concepts/core-subagent": {
-      "slug": "en/concepts/core-subagent",
-      "language": "en",
-      "title": "Subagents",
-      "summary": "The Subagents core forks a subtask inside a single thread for an independent executor to complete and return to the parent; the only collaborative form is the subagent, and swarm orchestration has been removed from the engine and the protocol layer.",
-      "updated_at": "2026-10-13",
-      "read_when": [],
-      "source_docs": [],
-      "tab": "Core",
-      "group": "The 9 Cores",
-      "group_path": [
-        "The 9 Cores"
-      ],
-      "url": "/docs/en/concepts/core-subagent/",
-      "headings": [
-        {
-          "id": "section-1",
-          "level": 1,
-          "text": "Subagents"
-        },
-        {
-          "id": "section-2",
-          "level": 2,
-          "text": "How it works"
-        },
-        {
-          "id": "section-3",
-          "level": 2,
-          "text": "Boundaries and current limits"
-        }
-      ],
-      "prev_slug": "en/concepts/core-context-compression",
-      "next_slug": "en/concepts/core-scheduled-tasks",
-      "source_path": "en/concepts/core-subagent.md",
-      "output_path": "en/concepts/core-subagent/index.html"
-    },
-    "en/concepts/core-scheduled-tasks": {
-      "slug": "en/concepts/core-scheduled-tasks",
-      "language": "en",
-      "title": "Scheduled Tasks",
-      "summary": "Scheduled tasks run the agent at a chosen time: three schedule kinds — at for a one-off point, every for a fixed interval, cron for a recurring pattern — with leases, backoff, and auto-disable, so tasks survive a process restart.",
-      "updated_at": "2026-10-13",
-      "read_when": [
-        "You want a report, inspection, or reminder to run on a schedule instead of by hand",
-        "A scheduled task did not run, ran twice, or was disabled on its own",
-        "You need to know which forms support scheduling and which do not"
-      ],
-      "source_docs": [
-        "crates/wunder-runtime/src/services/cron.rs",
-        "crates/wunder-runtime/src/services/cron_schedule.rs",
-        "crates/wunder-runtime/src/services/cron/policy.rs",
-        "crates/wunder-runtime/src/api/cron.rs"
-      ],
-      "tab": "Core",
-      "group": "The 9 Cores",
-      "group_path": [
-        "The 9 Cores"
-      ],
-      "url": "/docs/en/concepts/core-scheduled-tasks/",
-      "headings": [
-        {
-          "id": "section-1",
-          "level": 2,
-          "text": "Three kinds of schedule"
-        },
-        {
-          "id": "section-2",
-          "level": 2,
-          "text": "Where results are delivered"
-        },
-        {
-          "id": "section-3",
-          "level": 2,
-          "text": "Execution guarantees"
-        },
-        {
-          "id": "section-4",
-          "level": 2,
-          "text": "The master switch"
-        },
-        {
-          "id": "section-5",
-          "level": 2,
-          "text": "Where to create one, and support by form"
-        },
-        {
-          "id": "section-6",
-          "level": 2,
-          "text": "Related pages"
-        }
-      ],
-      "prev_slug": "en/concepts/core-subagent",
-      "next_slug": "en/concepts/core-channels",
-      "source_path": "en/concepts/core-scheduled-tasks.md",
-      "output_path": "en/concepts/core-scheduled-tasks/index.html"
-    },
-    "en/concepts/core-channels": {
-      "slug": "en/concepts/core-channels",
-      "language": "en",
-      "title": "Channels",
-      "summary": "Feishu, QQ, WeChat, XMPP, and generic webhooks differ in support level; an inbound message is routed to its agent and workspace by binding.",
-      "updated_at": "2026-10-13",
-      "read_when": [],
-      "source_docs": [],
-      "tab": "Core",
-      "group": "The 9 Cores",
-      "group_path": [
-        "The 9 Cores"
-      ],
-      "url": "/docs/en/concepts/core-channels/",
-      "headings": [
-        {
-          "id": "section-1",
-          "level": 2,
-          "text": "A channel is only an entry point"
-        },
-        {
-          "id": "section-2",
-          "level": 2,
-          "text": "Which channels are supported today"
-        },
-        {
-          "id": "section-3",
-          "level": 2,
-          "text": "How a message finds its agent and workspace"
-        },
-        {
-          "id": "section-4",
-          "level": 2,
-          "text": "The boundaries of inbound, outbound, and rate limiting"
-        },
-        {
-          "id": "section-5",
-          "level": 2,
-          "text": "Attachments and media"
-        },
-        {
-          "id": "section-6",
-          "level": 2,
-          "text": "Webhook entry points and verification"
-        },
-        {
-          "id": "section-7",
-          "level": 2,
-          "text": "Troubleshooting message problems"
-        },
-        {
-          "id": "section-8",
-          "level": 2,
-          "text": "Points not to mix up"
-        },
-        {
-          "id": "section-9",
-          "level": 2,
-          "text": "Related pages"
-        }
-      ],
-      "prev_slug": "en/concepts/core-scheduled-tasks",
-      "next_slug": "en/concepts/core-memory",
-      "source_path": "en/concepts/core-channels.md",
-      "output_path": "en/concepts/core-channels/index.html"
-    },
-    "en/concepts/core-memory": {
-      "slug": "en/concepts/core-memory",
-      "language": "en",
-      "title": "Memory",
-      "summary": "Long-term data is injected once when a thread is created and stays frozen afterwards; it has two layers, initialization injection and runtime recall.",
-      "updated_at": "2026-10-13",
-      "read_when": [],
-      "source_docs": [],
-      "tab": "Core",
-      "group": "The 9 Cores",
-      "group_path": [
-        "The 9 Cores"
-      ],
-      "url": "/docs/en/concepts/core-memory/",
-      "headings": [
-        {
-          "id": "section-1",
-          "level": 2,
-          "text": "What problem memory solves"
-        },
-        {
-          "id": "section-2",
-          "level": 2,
-          "text": "The two layers of memory"
-        },
-        {
-          "id": "section-3",
-          "level": 2,
-          "text": "Who it helps"
-        },
-        {
-          "id": "section-4",
-          "level": 2,
-          "text": "What memory looks like"
-        },
-        {
-          "id": "section-5",
-          "level": 2,
-          "text": "A few rules that go with it"
-        },
-        {
-          "id": "section-6",
-          "level": 2,
-          "text": "In practice"
-        },
-        {
-          "id": "section-7",
-          "level": 2,
-          "text": "A few clarifications"
-        },
-        {
-          "id": "section-8",
-          "level": 2,
-          "text": "Related pages"
-        }
-      ],
-      "prev_slug": "en/concepts/core-channels",
-      "next_slug": "en/concepts/core-multithreading",
-      "source_path": "en/concepts/core-memory.md",
-      "output_path": "en/concepts/core-memory/index.html"
-    },
-    "en/concepts/core-multithreading": {
-      "slug": "en/concepts/core-multithreading",
-      "language": "en",
-      "title": "Multi-threading",
-      "summary": "The Multi-threading core raises throughput and resource use through concurrency control inside a single process: one user can hold several concurrent task threads, backed by a session queue, session locks, a parallelism cap, and a daily quota.",
-      "updated_at": "2026-10-13",
-      "read_when": [],
-      "source_docs": [],
-      "tab": "Core",
-      "group": "The 9 Cores",
-      "group_path": [
-        "The 9 Cores"
-      ],
-      "url": "/docs/en/concepts/core-multithreading/",
-      "headings": [
-        {
-          "id": "section-1",
-          "level": 1,
-          "text": "Multi-threading"
-        },
-        {
-          "id": "section-2",
-          "level": 2,
-          "text": "How it works"
-        },
-        {
-          "id": "section-3",
-          "level": 2,
-          "text": "Key numbers"
-        },
-        {
-          "id": "section-4",
-          "level": 2,
-          "text": "Boundaries and current limits"
-        }
-      ],
-      "prev_slug": "en/concepts/core-memory",
-      "next_slug": "en/concepts/core-multi-user-management",
-      "source_path": "en/concepts/core-multithreading.md",
-      "output_path": "en/concepts/core-multithreading/index.html"
-    },
-    "en/concepts/core-multi-user-management": {
-      "slug": "en/concepts/core-multi-user-management",
-      "language": "en",
-      "title": "Multi-user Management",
-      "summary": "Users, units, and permission boundaries in the Hull (server) form — login state, presence, the unit tree, levels and credits, agent definition documents, and data isolation.",
-      "updated_at": "2026-10-13",
-      "read_when": [
-        "You are setting up accounts, units, or roles for a Hull deployment",
-        "A token, a refresh, or a session on another device behaves unexpectedly",
-        "You need to know what Credits measure, and how a worker card differs from a thread"
-      ],
-      "source_docs": [
-        "crates/wunder-runtime/src/services/user_store.rs",
-        "crates/wunder-runtime/src/api/auth.rs",
-        "crates/wunder-core/src/auth.rs",
-        "crates/wunder-runtime/src/services/presence/mod.rs",
-        "crates/wunder-runtime/src/services/user_leveling.rs",
-        "crates/wunder-runtime/src/services/worker_card_files.rs"
-      ],
-      "tab": "Core",
-      "group": "The 9 Cores",
-      "group_path": [
-        "The 9 Cores"
-      ],
-      "url": "/docs/en/concepts/core-multi-user-management/",
-      "headings": [
-        {
-          "id": "section-1",
-          "level": 2,
-          "text": "The three gates of identity"
-        },
-        {
-          "id": "section-2",
-          "level": 2,
-          "text": "Login state uses opaque tokens"
-        },
-        {
-          "id": "section-3",
-          "level": 2,
-          "text": "Presence is split by form"
-        },
-        {
-          "id": "section-4",
-          "level": 2,
-          "text": "The unit tree and the unit-head scope"
-        },
-        {
-          "id": "section-5",
-          "level": 2,
-          "text": "Levels and credits are two different things"
-        },
-        {
-          "id": "section-6",
-          "level": 2,
-          "text": "An agent's definition document is not the same thing as a thread"
-        },
-        {
-          "id": "section-7",
-          "level": 2,
-          "text": "Where data isolation lives"
-        },
-        {
-          "id": "section-8",
-          "level": 2,
-          "text": "A few clarifications"
-        },
-        {
-          "id": "section-9",
-          "level": 2,
-          "text": "Related pages"
-        }
-      ],
-      "prev_slug": "en/concepts/core-multithreading",
-      "next_slug": "en/tools/index",
-      "source_path": "en/concepts/core-multi-user-management.md",
-      "output_path": "en/concepts/core-multi-user-management/index.html"
     },
     "en/tools/index": {
       "slug": "en/tools/index",
@@ -7822,7 +7348,7 @@
           "text": "See also"
         }
       ],
-      "prev_slug": "en/concepts/core-multi-user-management",
+      "prev_slug": "en/concepts/index",
       "next_slug": "en/tools/panels",
       "source_path": "en/tools/index.md",
       "output_path": "en/tools/index.html"
@@ -8780,90 +8306,584 @@
         }
       ],
       "prev_slug": "en/surfaces/web-admin",
-      "next_slug": "en/reference/index",
+      "next_slug": "en/concepts/core-goal",
       "source_path": "en/surfaces/desktop-ui.md",
       "output_path": "en/surfaces/desktop-ui/index.html"
     },
-    "en/reference/index": {
-      "slug": "en/reference/index",
+    "en/concepts/core-goal": {
+      "slug": "en/concepts/core-goal",
       "language": "en",
-      "title": "Reference Overview",
-      "summary": "The operating references and configuration notes you reach for most — where a feature lives, what a status means, and how to change a setting.",
+      "title": "Goal",
+      "summary": "The Goal core lets an agent enter goal mode and keep working on one task: three tools drive it, four phases, a default 256-round cap, and automatic blocking after 3 consecutive rounds without progress.",
       "updated_at": "2026-10-13",
       "read_when": [],
       "source_docs": [],
-      "tab": "Reference",
-      "group": "Overview",
+      "tab": "Capabilities",
+      "group": "Core Capabilities",
       "group_path": [
-        "Overview"
+        "Core Capabilities"
       ],
-      "url": "/docs/en/reference/",
+      "url": "/docs/en/concepts/core-goal/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Goal"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "How it works"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Key numbers"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "Where it is used"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "Boundaries and current limits"
+        }
+      ],
+      "prev_slug": "en/surfaces/desktop-ui",
+      "next_slug": "en/concepts/core-compatibility",
+      "source_path": "en/concepts/core-goal.md",
+      "output_path": "en/concepts/core-goal/index.html"
+    },
+    "en/concepts/core-compatibility": {
+      "slug": "en/concepts/core-compatibility",
+      "language": "en",
+      "title": "Compatibility",
+      "summary": "The Compatibility core lets the Pupa (desktop) and the Helm (cli) run in older operating-system environments under explicit constraints: Windows 7 32-bit and Ubuntu 18.04 each have an offline build chain, and the interface uses software rendering that does not depend on a GPU.",
+      "updated_at": "2026-10-13",
+      "read_when": [],
+      "source_docs": [],
+      "tab": "Capabilities",
+      "group": "Core Capabilities",
+      "group_path": [
+        "Core Capabilities"
+      ],
+      "url": "/docs/en/concepts/core-compatibility/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Compatibility"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "Which older systems are supported"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Why it runs"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "What it means for users"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "Boundaries and current limits"
+        }
+      ],
+      "prev_slug": "en/concepts/core-goal",
+      "next_slug": "en/concepts/core-context-compression",
+      "source_path": "en/concepts/core-compatibility.md",
+      "output_path": "en/concepts/core-compatibility/index.html"
+    },
+    "en/concepts/core-context-compression": {
+      "slug": "en/concepts/core-context-compression",
+      "language": "en",
+      "title": "Context Compression",
+      "summary": "Long conversations are not cut short when they grow long. The system trims history in graded levels, keeps the most useful information, and lets the conversation continue.",
+      "updated_at": "2026-10-13",
+      "read_when": [],
+      "source_docs": [],
+      "tab": "Capabilities",
+      "group": "Core Capabilities",
+      "group_path": [
+        "Core Capabilities"
+      ],
+      "url": "/docs/en/concepts/core-context-compression/",
       "headings": [
         {
           "id": "section-1",
           "level": 2,
-          "text": "All pages"
+          "text": "Why compression is needed"
         },
         {
           "id": "section-2",
-          "level": 3,
-          "text": "Interfaces and endpoints"
+          "level": 2,
+          "text": "How compression is graded"
         },
         {
           "id": "section-3",
-          "level": 3,
-          "text": "Configuration and data"
+          "level": 2,
+          "text": "What it protects and what it leaves alone"
         },
         {
           "id": "section-4",
-          "level": 3,
-          "text": "Three-endpoint interop"
+          "level": 2,
+          "text": "Compression is inspectable"
         },
         {
           "id": "section-5",
-          "level": 3,
-          "text": "Troubleshooting and glossary"
+          "level": 2,
+          "text": "In practice"
         },
         {
           "id": "section-6",
           "level": 2,
-          "text": "By role"
+          "text": "Local reduction comes first"
         },
         {
           "id": "section-7",
-          "level": 3,
-          "text": "Regular users"
+          "level": 2,
+          "text": "Related pages"
+        }
+      ],
+      "prev_slug": "en/concepts/core-compatibility",
+      "next_slug": "en/concepts/core-subagent",
+      "source_path": "en/concepts/core-context-compression.md",
+      "output_path": "en/concepts/core-context-compression/index.html"
+    },
+    "en/concepts/core-subagent": {
+      "slug": "en/concepts/core-subagent",
+      "language": "en",
+      "title": "Subagents",
+      "summary": "The Subagents core forks a subtask inside a single thread for an independent executor to complete and return to the parent; the only collaborative form is the subagent, and swarm orchestration has been removed from the engine and the protocol layer.",
+      "updated_at": "2026-10-13",
+      "read_when": [],
+      "source_docs": [],
+      "tab": "Capabilities",
+      "group": "Core Capabilities",
+      "group_path": [
+        "Core Capabilities"
+      ],
+      "url": "/docs/en/concepts/core-subagent/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Subagents"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "How it works"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Boundaries and current limits"
+        }
+      ],
+      "prev_slug": "en/concepts/core-context-compression",
+      "next_slug": "en/concepts/core-scheduled-tasks",
+      "source_path": "en/concepts/core-subagent.md",
+      "output_path": "en/concepts/core-subagent/index.html"
+    },
+    "en/concepts/core-scheduled-tasks": {
+      "slug": "en/concepts/core-scheduled-tasks",
+      "language": "en",
+      "title": "Scheduled Tasks",
+      "summary": "Scheduled tasks run the agent at a chosen time: three schedule kinds — at for a one-off point, every for a fixed interval, cron for a recurring pattern — with leases, backoff, and auto-disable, so tasks survive a process restart.",
+      "updated_at": "2026-10-13",
+      "read_when": [
+        "You want a report, inspection, or reminder to run on a schedule instead of by hand",
+        "A scheduled task did not run, ran twice, or was disabled on its own",
+        "You need to know which forms support scheduling and which do not"
+      ],
+      "source_docs": [
+        "crates/wunder-runtime/src/services/cron.rs",
+        "crates/wunder-runtime/src/services/cron_schedule.rs",
+        "crates/wunder-runtime/src/services/cron/policy.rs",
+        "crates/wunder-runtime/src/api/cron.rs"
+      ],
+      "tab": "Capabilities",
+      "group": "Core Capabilities",
+      "group_path": [
+        "Core Capabilities"
+      ],
+      "url": "/docs/en/concepts/core-scheduled-tasks/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 2,
+          "text": "Three kinds of schedule"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "Where results are delivered"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Execution guarantees"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "The master switch"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "Where to create one, and support by form"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "Related pages"
+        }
+      ],
+      "prev_slug": "en/concepts/core-subagent",
+      "next_slug": "en/concepts/core-channels",
+      "source_path": "en/concepts/core-scheduled-tasks.md",
+      "output_path": "en/concepts/core-scheduled-tasks/index.html"
+    },
+    "en/concepts/core-channels": {
+      "slug": "en/concepts/core-channels",
+      "language": "en",
+      "title": "Channels",
+      "summary": "Feishu, QQ, WeChat, XMPP, and generic webhooks differ in support level; an inbound message is routed to its agent and workspace by binding.",
+      "updated_at": "2026-10-13",
+      "read_when": [],
+      "source_docs": [],
+      "tab": "Capabilities",
+      "group": "Core Capabilities",
+      "group_path": [
+        "Core Capabilities"
+      ],
+      "url": "/docs/en/concepts/core-channels/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 2,
+          "text": "A channel is only an entry point"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "Which channels are supported today"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "How a message finds its agent and workspace"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "The boundaries of inbound, outbound, and rate limiting"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "Attachments and media"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "Webhook entry points and verification"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "Troubleshooting message problems"
         },
         {
           "id": "section-8",
-          "level": 3,
-          "text": "System administrators"
+          "level": 2,
+          "text": "Points not to mix up"
         },
         {
           "id": "section-9",
           "level": 2,
+          "text": "Related pages"
+        }
+      ],
+      "prev_slug": "en/concepts/core-scheduled-tasks",
+      "next_slug": "en/concepts/core-memory",
+      "source_path": "en/concepts/core-channels.md",
+      "output_path": "en/concepts/core-channels/index.html"
+    },
+    "en/concepts/core-memory": {
+      "slug": "en/concepts/core-memory",
+      "language": "en",
+      "title": "Memory",
+      "summary": "Long-term data is injected once when a thread is created and stays frozen afterwards; it has two layers, initialization injection and runtime recall.",
+      "updated_at": "2026-10-13",
+      "read_when": [],
+      "source_docs": [],
+      "tab": "Capabilities",
+      "group": "Core Capabilities",
+      "group_path": [
+        "Core Capabilities"
+      ],
+      "url": "/docs/en/concepts/core-memory/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 2,
+          "text": "What problem memory solves"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "The two layers of memory"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Who it helps"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "What memory looks like"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "A few rules that go with it"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "In practice"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "A few clarifications"
+        },
+        {
+          "id": "section-8",
+          "level": 2,
+          "text": "Related pages"
+        }
+      ],
+      "prev_slug": "en/concepts/core-channels",
+      "next_slug": "en/concepts/core-multithreading",
+      "source_path": "en/concepts/core-memory.md",
+      "output_path": "en/concepts/core-memory/index.html"
+    },
+    "en/concepts/core-multithreading": {
+      "slug": "en/concepts/core-multithreading",
+      "language": "en",
+      "title": "Multi-threading",
+      "summary": "The Multi-threading core raises throughput and resource use through concurrency control inside a single process: one user can hold several concurrent task threads, backed by a session queue, session locks, a parallelism cap, and a daily quota.",
+      "updated_at": "2026-10-13",
+      "read_when": [],
+      "source_docs": [],
+      "tab": "Capabilities",
+      "group": "Core Capabilities",
+      "group_path": [
+        "Core Capabilities"
+      ],
+      "url": "/docs/en/concepts/core-multithreading/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Multi-threading"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "How it works"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Key numbers"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "Boundaries and current limits"
+        }
+      ],
+      "prev_slug": "en/concepts/core-memory",
+      "next_slug": "en/concepts/core-multi-user-management",
+      "source_path": "en/concepts/core-multithreading.md",
+      "output_path": "en/concepts/core-multithreading/index.html"
+    },
+    "en/concepts/core-multi-user-management": {
+      "slug": "en/concepts/core-multi-user-management",
+      "language": "en",
+      "title": "Multi-user Management",
+      "summary": "Users, units, and permission boundaries in the Hull (server) form — login state, presence, the unit tree, levels and credits, agent definition documents, and data isolation.",
+      "updated_at": "2026-10-13",
+      "read_when": [
+        "You are setting up accounts, units, or roles for a Hull deployment",
+        "A token, a refresh, or a session on another device behaves unexpectedly",
+        "You need to know what Credits measure, and how a worker card differs from a thread"
+      ],
+      "source_docs": [
+        "crates/wunder-runtime/src/services/user_store.rs",
+        "crates/wunder-runtime/src/api/auth.rs",
+        "crates/wunder-core/src/auth.rs",
+        "crates/wunder-runtime/src/services/presence/mod.rs",
+        "crates/wunder-runtime/src/services/user_leveling.rs",
+        "crates/wunder-runtime/src/services/worker_card_files.rs"
+      ],
+      "tab": "Capabilities",
+      "group": "Core Capabilities",
+      "group_path": [
+        "Core Capabilities"
+      ],
+      "url": "/docs/en/concepts/core-multi-user-management/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 2,
+          "text": "The three gates of identity"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "Login state uses opaque tokens"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Presence is split by form"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "The unit tree and the unit-head scope"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "Levels and credits are two different things"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "An agent's definition document is not the same thing as a thread"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "Where data isolation lives"
+        },
+        {
+          "id": "section-8",
+          "level": 2,
+          "text": "A few clarifications"
+        },
+        {
+          "id": "section-9",
+          "level": 2,
+          "text": "Related pages"
+        }
+      ],
+      "prev_slug": "en/concepts/core-multithreading",
+      "next_slug": "en/capabilities/index",
+      "source_path": "en/concepts/core-multi-user-management.md",
+      "output_path": "en/concepts/core-multi-user-management/index.html"
+    },
+    "en/capabilities/index": {
+      "slug": "en/capabilities/index",
+      "language": "en",
+      "title": "Capabilities Overview",
+      "summary": "Capabilities and operating references: the core capabilities, where a feature lives, what a status means, and how to change a setting.",
+      "updated_at": "2026-10-13",
+      "read_when": [],
+      "source_docs": [],
+      "tab": "Capabilities",
+      "group": "Overview",
+      "group_path": [
+        "Overview"
+      ],
+      "url": "/docs/en/capabilities/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 2,
+          "text": "Core capabilities"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "All pages"
+        },
+        {
+          "id": "section-3",
+          "level": 3,
+          "text": "Interfaces and endpoints"
+        },
+        {
+          "id": "section-4",
+          "level": 3,
+          "text": "Configuration and data"
+        },
+        {
+          "id": "section-5",
+          "level": 3,
+          "text": "Three-endpoint interop"
+        },
+        {
+          "id": "section-6",
+          "level": 3,
+          "text": "Troubleshooting and glossary"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "By role"
+        },
+        {
+          "id": "section-8",
+          "level": 3,
+          "text": "Regular users"
+        },
+        {
+          "id": "section-9",
+          "level": 3,
+          "text": "System administrators"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
           "text": "Further reading"
         }
       ],
-      "prev_slug": "en/surfaces/desktop-ui",
-      "next_slug": "en/reference/api-index",
-      "source_path": "en/reference/index.md",
-      "output_path": "en/reference/index.html"
+      "prev_slug": "en/concepts/core-multi-user-management",
+      "next_slug": "en/capabilities/api-index",
+      "source_path": "en/capabilities/index.md",
+      "output_path": "en/capabilities/index.html"
     },
-    "en/reference/api-index": {
-      "slug": "en/reference/api-index",
+    "en/capabilities/api-index": {
+      "slug": "en/capabilities/api-index",
       "language": "en",
       "title": "Feature and Capability Quick Reference",
       "summary": "What wunder can do and where each capability lives, organized by feature area.",
       "updated_at": "2026-10-13",
       "read_when": [],
       "source_docs": [],
-      "tab": "Reference",
+      "tab": "Capabilities",
       "group": "Interfaces and Endpoints",
       "group_path": [
         "Interfaces and Endpoints"
       ],
-      "url": "/docs/en/reference/api-index/",
+      "url": "/docs/en/capabilities/api-index/",
       "headings": [
         {
           "id": "section-1",
@@ -8916,25 +8936,25 @@
           "text": "Further reading"
         }
       ],
-      "prev_slug": "en/reference/index",
-      "next_slug": "en/reference/chat-ws",
-      "source_path": "en/reference/api-index.md",
-      "output_path": "en/reference/api-index/index.html"
+      "prev_slug": "en/capabilities/index",
+      "next_slug": "en/capabilities/chat-ws",
+      "source_path": "en/capabilities/api-index.md",
+      "output_path": "en/capabilities/api-index/index.html"
     },
-    "en/reference/chat-ws": {
-      "slug": "en/reference/chat-ws",
+    "en/capabilities/chat-ws": {
+      "slug": "en/capabilities/chat-ws",
       "language": "en",
       "title": "Chat WebSocket",
       "summary": "The real-time channel for chat and also the session control channel: starting an execution, resuming after a disconnect, watching, canceling, and returning approvals all happen on the same connection.",
       "updated_at": "2026-10-13",
       "read_when": [],
       "source_docs": [],
-      "tab": "Reference",
+      "tab": "Capabilities",
       "group": "Interfaces and Endpoints",
       "group_path": [
         "Interfaces and Endpoints"
       ],
-      "url": "/docs/en/reference/chat-ws/",
+      "url": "/docs/en/capabilities/chat-ws/",
       "headings": [
         {
           "id": "section-1",
@@ -8967,25 +8987,25 @@
           "text": "Further Reading"
         }
       ],
-      "prev_slug": "en/reference/api-index",
-      "next_slug": "en/reference/mcp-endpoint",
-      "source_path": "en/reference/chat-ws.md",
-      "output_path": "en/reference/chat-ws/index.html"
+      "prev_slug": "en/capabilities/api-index",
+      "next_slug": "en/capabilities/mcp-endpoint",
+      "source_path": "en/capabilities/chat-ws.md",
+      "output_path": "en/capabilities/chat-ws/index.html"
     },
-    "en/reference/mcp-endpoint": {
-      "slug": "en/reference/mcp-endpoint",
+    "en/capabilities/mcp-endpoint": {
+      "slug": "en/capabilities/mcp-endpoint",
       "language": "en",
       "title": "MCP Endpoint",
       "summary": "wunder can both expose itself as an MCP service and act as an MCP client to connect to external services.",
       "updated_at": "2026-10-13",
       "read_when": [],
       "source_docs": [],
-      "tab": "Reference",
+      "tab": "Capabilities",
       "group": "Interfaces and Endpoints",
       "group_path": [
         "Interfaces and Endpoints"
       ],
-      "url": "/docs/en/reference/mcp-endpoint/",
+      "url": "/docs/en/capabilities/mcp-endpoint/",
       "headings": [
         {
           "id": "section-1",
@@ -9013,25 +9033,25 @@
           "text": "Further Reading"
         }
       ],
-      "prev_slug": "en/reference/chat-ws",
-      "next_slug": "en/reference/weixin-channel",
-      "source_path": "en/reference/mcp-endpoint.md",
-      "output_path": "en/reference/mcp-endpoint/index.html"
+      "prev_slug": "en/capabilities/chat-ws",
+      "next_slug": "en/capabilities/weixin-channel",
+      "source_path": "en/capabilities/mcp-endpoint.md",
+      "output_path": "en/capabilities/mcp-endpoint/index.html"
     },
-    "en/reference/weixin-channel": {
-      "slug": "en/reference/weixin-channel",
+    "en/capabilities/weixin-channel": {
+      "slug": "en/capabilities/weixin-channel",
       "language": "en",
       "title": "WeChat iLink Channel",
       "summary": "The new WeChat channel uses the iLink protocol and is not the same thing as the legacy Official Account or WeCom channels.",
       "updated_at": "2026-10-13",
       "read_when": [],
       "source_docs": [],
-      "tab": "Reference",
+      "tab": "Capabilities",
       "group": "Interfaces and Endpoints",
       "group_path": [
         "Interfaces and Endpoints"
       ],
-      "url": "/docs/en/reference/weixin-channel/",
+      "url": "/docs/en/capabilities/weixin-channel/",
       "headings": [
         {
           "id": "section-1",
@@ -9059,25 +9079,25 @@
           "text": "Further Reading"
         }
       ],
-      "prev_slug": "en/reference/mcp-endpoint",
-      "next_slug": "en/reference/config",
-      "source_path": "en/reference/weixin-channel.md",
-      "output_path": "en/reference/weixin-channel/index.html"
+      "prev_slug": "en/capabilities/mcp-endpoint",
+      "next_slug": "en/capabilities/config",
+      "source_path": "en/capabilities/weixin-channel.md",
+      "output_path": "en/capabilities/weixin-channel/index.html"
     },
-    "en/reference/config": {
-      "slug": "en/reference/config",
+    "en/capabilities/config": {
+      "slug": "en/capabilities/config",
       "language": "en",
       "title": "System Settings Reference",
       "summary": "What the common settings mean and what to set them to.",
       "updated_at": "2026-10-13",
       "read_when": [],
       "source_docs": [],
-      "tab": "Reference",
+      "tab": "Capabilities",
       "group": "Configuration and Data",
       "group_path": [
         "Configuration and Data"
       ],
-      "url": "/docs/en/reference/config/",
+      "url": "/docs/en/capabilities/config/",
       "headings": [
         {
           "id": "section-1",
@@ -9225,25 +9245,25 @@
           "text": "Team collaboration (Hull server)"
         }
       ],
-      "prev_slug": "en/reference/weixin-channel",
-      "next_slug": "en/reference/workspace-routing",
-      "source_path": "en/reference/config.md",
-      "output_path": "en/reference/config/index.html"
+      "prev_slug": "en/capabilities/weixin-channel",
+      "next_slug": "en/capabilities/workspace-routing",
+      "source_path": "en/capabilities/config.md",
+      "output_path": "en/capabilities/config/index.html"
     },
-    "en/reference/workspace-routing": {
-      "slug": "en/reference/workspace-routing",
+    "en/capabilities/workspace-routing": {
+      "slug": "en/capabilities/workspace-routing",
       "language": "en",
       "title": "Workspace Routing and File Management",
       "summary": "Each user has a single cloud workspace directory. Paths are always workspace-relative, and the container parameter has been converged — directories are no longer derived per agent or container.",
       "updated_at": "2026-10-13",
       "read_when": [],
       "source_docs": [],
-      "tab": "Reference",
+      "tab": "Capabilities",
       "group": "Configuration and Data",
       "group_path": [
         "Configuration and Data"
       ],
-      "url": "/docs/en/reference/workspace-routing/",
+      "url": "/docs/en/capabilities/workspace-routing/",
       "headings": [
         {
           "id": "section-1",
@@ -9286,25 +9306,25 @@
           "text": "Further reading"
         }
       ],
-      "prev_slug": "en/reference/config",
-      "next_slug": "en/reference/stream-events",
-      "source_path": "en/reference/workspace-routing.md",
-      "output_path": "en/reference/workspace-routing/index.html"
+      "prev_slug": "en/capabilities/config",
+      "next_slug": "en/capabilities/stream-events",
+      "source_path": "en/capabilities/workspace-routing.md",
+      "output_path": "en/capabilities/workspace-routing/index.html"
     },
-    "en/reference/stream-events": {
-      "slug": "en/reference/stream-events",
+    "en/capabilities/stream-events": {
+      "slug": "en/capabilities/stream-events",
       "language": "en",
       "title": "Session Status Guide",
       "summary": "What the various statuses in a chat mean, what the agent is doing, and what to do when something goes wrong.",
       "updated_at": "2026-10-13",
       "read_when": [],
       "source_docs": [],
-      "tab": "Reference",
+      "tab": "Capabilities",
       "group": "Configuration and Data",
       "group_path": [
         "Configuration and Data"
       ],
-      "url": "/docs/en/reference/stream-events/",
+      "url": "/docs/en/capabilities/stream-events/",
       "headings": [
         {
           "id": "section-1",
@@ -9422,25 +9442,25 @@
           "text": "Further reading"
         }
       ],
-      "prev_slug": "en/reference/workspace-routing",
-      "next_slug": "en/reference/prompt-templates",
-      "source_path": "en/reference/stream-events.md",
-      "output_path": "en/reference/stream-events/index.html"
+      "prev_slug": "en/capabilities/workspace-routing",
+      "next_slug": "en/capabilities/prompt-templates",
+      "source_path": "en/capabilities/stream-events.md",
+      "output_path": "en/capabilities/stream-events/index.html"
     },
-    "en/reference/prompt-templates": {
-      "slug": "en/reference/prompt-templates",
+    "en/capabilities/prompt-templates": {
+      "slug": "en/capabilities/prompt-templates",
       "language": "en",
       "title": "Prompts and Personalization",
       "summary": "Customize the agent's role and answer style — pick a built-in template, or write your own.",
       "updated_at": "2026-10-13",
       "read_when": [],
       "source_docs": [],
-      "tab": "Reference",
+      "tab": "Capabilities",
       "group": "Configuration and Data",
       "group_path": [
         "Configuration and Data"
       ],
-      "url": "/docs/en/reference/prompt-templates/",
+      "url": "/docs/en/capabilities/prompt-templates/",
       "headings": [
         {
           "id": "section-1",
@@ -9548,25 +9568,25 @@
           "text": "Further reading"
         }
       ],
-      "prev_slug": "en/reference/stream-events",
-      "next_slug": "en/reference/admin-panels",
-      "source_path": "en/reference/prompt-templates.md",
-      "output_path": "en/reference/prompt-templates/index.html"
+      "prev_slug": "en/capabilities/stream-events",
+      "next_slug": "en/capabilities/admin-panels",
+      "source_path": "en/capabilities/prompt-templates.md",
+      "output_path": "en/capabilities/prompt-templates/index.html"
     },
-    "en/reference/admin-panels": {
-      "slug": "en/reference/admin-panels",
+    "en/capabilities/admin-panels": {
+      "slug": "en/capabilities/admin-panels",
       "language": "en",
       "title": "Bridge Panel Guide",
       "summary": "What each panel in the Bridge manages and where its entry lives.",
       "updated_at": "2026-10-13",
       "read_when": [],
       "source_docs": [],
-      "tab": "Reference",
+      "tab": "Capabilities",
       "group": "Configuration and Data",
       "group_path": [
         "Configuration and Data"
       ],
-      "url": "/docs/en/reference/admin-panels/",
+      "url": "/docs/en/capabilities/admin-panels/",
       "headings": [
         {
           "id": "section-1",
@@ -9739,25 +9759,25 @@
           "text": "Further reading"
         }
       ],
-      "prev_slug": "en/reference/prompt-templates",
-      "next_slug": "en/reference/interlink",
-      "source_path": "en/reference/admin-panels.md",
-      "output_path": "en/reference/admin-panels/index.html"
+      "prev_slug": "en/capabilities/prompt-templates",
+      "next_slug": "en/capabilities/interlink",
+      "source_path": "en/capabilities/admin-panels.md",
+      "output_path": "en/capabilities/admin-panels/index.html"
     },
-    "en/reference/interlink": {
-      "slug": "en/reference/interlink",
+    "en/capabilities/interlink": {
+      "slug": "en/capabilities/interlink",
       "language": "en",
       "title": "Interlink",
       "summary": "The Beehive, the Pupa, and the Helm share one presence state, see each other's workspaces, and control each other in both directions.",
       "updated_at": "2026-10-13",
       "read_when": [],
       "source_docs": [],
-      "tab": "Reference",
+      "tab": "Capabilities",
       "group": "Three-endpoint Interop",
       "group_path": [
         "Three-endpoint Interop"
       ],
-      "url": "/docs/en/reference/interlink/",
+      "url": "/docs/en/capabilities/interlink/",
       "headings": [
         {
           "id": "section-1",
@@ -9805,10 +9825,10 @@
           "text": "Cost"
         }
       ],
-      "prev_slug": "en/reference/admin-panels",
+      "prev_slug": "en/capabilities/admin-panels",
       "next_slug": "en/help/index",
-      "source_path": "en/reference/interlink.md",
-      "output_path": "en/reference/interlink/index.html"
+      "source_path": "en/capabilities/interlink.md",
+      "output_path": "en/capabilities/interlink/index.html"
     },
     "en/help/index": {
       "slug": "en/help/index",
@@ -9818,7 +9838,7 @@
       "updated_at": "2026-10-13",
       "read_when": [],
       "source_docs": [],
-      "tab": "Reference",
+      "tab": "Capabilities",
       "group": "Troubleshooting and Glossary",
       "group_path": [
         "Troubleshooting and Glossary"
@@ -9866,7 +9886,7 @@
           "text": "Further Reading"
         }
       ],
-      "prev_slug": "en/reference/interlink",
+      "prev_slug": "en/capabilities/interlink",
       "next_slug": "en/help/troubleshooting",
       "source_path": "en/help/index.md",
       "output_path": "en/help/index.html"
@@ -9879,7 +9899,7 @@
       "updated_at": "2026-10-13",
       "read_when": [],
       "source_docs": [],
-      "tab": "Reference",
+      "tab": "Capabilities",
       "group": "Troubleshooting and Glossary",
       "group_path": [
         "Troubleshooting and Glossary"
@@ -9985,7 +10005,7 @@
       "updated_at": "2026-10-13",
       "read_when": [],
       "source_docs": [],
-      "tab": "Reference",
+      "tab": "Capabilities",
       "group": "Troubleshooting and Glossary",
       "group_path": [
         "Troubleshooting and Glossary"
@@ -10071,7 +10091,7 @@
       "updated_at": "2026-10-13",
       "read_when": [],
       "source_docs": [],
-      "tab": "Reference",
+      "tab": "Capabilities",
       "group": "Troubleshooting and Glossary",
       "group_path": [
         "Troubleshooting and Glossary"
@@ -10182,7 +10202,7 @@
       "updated_at": "2026-10-13",
       "read_when": [],
       "source_docs": [],
-      "tab": "Reference",
+      "tab": "Capabilities",
       "group": "Deep Dives",
       "group_path": [
         "Deep Dives"
@@ -10243,7 +10263,7 @@
       "updated_at": "2026-10-13",
       "read_when": [],
       "source_docs": [],
-      "tab": "Reference",
+      "tab": "Capabilities",
       "group": "Deep Dives",
       "group_path": [
         "Deep Dives"
@@ -10299,7 +10319,7 @@
       "updated_at": "2026-10-13",
       "read_when": [],
       "source_docs": [],
-      "tab": "Reference",
+      "tab": "Capabilities",
       "group": "Deep Dives",
       "group_path": [
         "Deep Dives"
@@ -10355,7 +10375,7 @@
       "updated_at": "2026-10-13",
       "read_when": [],
       "source_docs": [],
-      "tab": "Reference",
+      "tab": "Capabilities",
       "group": "Deep Dives",
       "group_path": [
         "Deep Dives"
@@ -10426,7 +10446,7 @@
       "updated_at": "2026-10-13",
       "read_when": [],
       "source_docs": [],
-      "tab": "Reference",
+      "tab": "Capabilities",
       "group": "Deep Dives",
       "group_path": [
         "Deep Dives"
@@ -10487,7 +10507,7 @@
       "updated_at": "2026-10-13",
       "read_when": [],
       "source_docs": [],
-      "tab": "Reference",
+      "tab": "Capabilities",
       "group": "Deep Dives",
       "group_path": [
         "Deep Dives"
@@ -10556,7 +10576,7 @@
         "crates/wunder-runtime/src/ops/throughput.rs",
         "crates/wunder-runtime/src/services/stress_thread.rs"
       ],
-      "tab": "Reference",
+      "tab": "Capabilities",
       "group": "Deep Dives",
       "group_path": [
         "Deep Dives"
@@ -10617,7 +10637,7 @@
       "updated_at": "2026-10-13",
       "read_when": [],
       "source_docs": [],
-      "tab": "Reference",
+      "tab": "Capabilities",
       "group": "Deep Dives",
       "group_path": [
         "Deep Dives"
@@ -10678,7 +10698,7 @@
       "updated_at": "2026-10-13",
       "read_when": [],
       "source_docs": [],
-      "tab": "Reference",
+      "tab": "Capabilities",
       "group": "Deep Dives",
       "group_path": [
         "Deep Dives"
@@ -10739,7 +10759,7 @@
       "updated_at": "2026-10-13",
       "read_when": [],
       "source_docs": [],
-      "tab": "Reference",
+      "tab": "Capabilities",
       "group": "Deep Dives",
       "group_path": [
         "Deep Dives"
@@ -10800,7 +10820,7 @@
       "updated_at": "2026-10-13",
       "read_when": [],
       "source_docs": [],
-      "tab": "Reference",
+      "tab": "Capabilities",
       "group": "Deep Dives",
       "group_path": [
         "Deep Dives"
@@ -10851,7 +10871,7 @@
       "updated_at": "2026-10-13",
       "read_when": [],
       "source_docs": [],
-      "tab": "Reference",
+      "tab": "Capabilities",
       "group": "Deep Dives",
       "group_path": [
         "Deep Dives"
@@ -10912,7 +10932,7 @@
       "updated_at": "2026-10-13",
       "read_when": [],
       "source_docs": [],
-      "tab": "Reference",
+      "tab": "Capabilities",
       "group": "Deep Dives",
       "group_path": [
         "Deep Dives"
@@ -10973,7 +10993,7 @@
       "updated_at": "2026-10-13",
       "read_when": [],
       "source_docs": [],
-      "tab": "Reference",
+      "tab": "Capabilities",
       "group": "Deep Dives",
       "group_path": [
         "Deep Dives"
@@ -11014,7 +11034,7 @@
         "crates/wunder-runtime/src/services/goal/authority.rs",
         "crates/wunder-runtime/src/api/chat_goal.rs"
       ],
-      "tab": "Reference",
+      "tab": "Capabilities",
       "group": "Deep Dives",
       "group_path": [
         "Deep Dives"
@@ -11090,7 +11110,7 @@
         "frontend-slint/src/companion_sprite.rs",
         "crates/wunder-desktop/native_companion_overlay.rs"
       ],
-      "tab": "Reference",
+      "tab": "Capabilities",
       "group": "Deep Dives",
       "group_path": [
         "Deep Dives"
@@ -11146,7 +11166,7 @@
       "updated_at": "2026-10-13",
       "read_when": [],
       "source_docs": [],
-      "tab": "Reference",
+      "tab": "Capabilities",
       "group": "Deep Dives",
       "group_path": [
         "Deep Dives"

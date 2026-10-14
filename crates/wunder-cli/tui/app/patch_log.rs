@@ -68,7 +68,7 @@ impl SpecialLogEntry {
             Self::Art(entry) => entry.render_lines_for_width(width),
             Self::Patch(entry) => entry.render_lines_for_width(width, expanded),
             Self::Command(entry) => entry.render_lines_for_width(width, expanded),
-            Self::Tool(entry) => entry.render_lines_for_width(width),
+            Self::Tool(entry) => entry.render_lines_for_width(width, expanded),
             Self::Exploring(entry) => entry.render_lines_for_width(width, expanded),
             Self::Plan(entry) => entry.render_lines_for_width(width, expanded),
         }
@@ -79,6 +79,7 @@ impl SpecialLogEntry {
         match self {
             Self::Patch(entry) => entry.is_collapsible(width),
             Self::Command(entry) => entry.is_collapsible(),
+            Self::Tool(entry) => entry.is_collapsible(),
             Self::Exploring(entry) => entry.is_collapsible(),
             Self::Plan(entry) => entry.is_collapsible(),
             _ => false,
@@ -157,7 +158,7 @@ impl GenericToolLogEntry {
         }
     }
 
-    fn render_lines_for_width(&self, width: u16) -> Vec<Line<'static>> {
+    fn render_lines_for_width(&self, width: u16, expanded: bool) -> Vec<Line<'static>> {
         let promoted_summary = self.promoted_summary();
         let summary = self.summary.as_ref().filter(|value| !value.is_empty());
         let body_summary = if promoted_summary.is_some() {
@@ -176,7 +177,7 @@ impl GenericToolLogEntry {
         } else {
             self.header_line()
         }];
-        let mut remaining_items = self.details.len();
+        let mut remaining_items = if expanded { self.details.len() } else { 0 };
         if !used_inline_summary && body_summary.is_some() {
             remaining_items += 1;
         }
@@ -192,12 +193,22 @@ impl GenericToolLogEntry {
                 remaining_items = remaining_items.saturating_sub(1);
             }
         }
-        for detail in &self.details {
-            let is_last = remaining_items == 1;
-            lines.extend(detail.render_wrapped(width, is_last));
-            remaining_items = remaining_items.saturating_sub(1);
+        if expanded {
+            for detail in &self.details {
+                let is_last = remaining_items == 1;
+                lines.extend(detail.render_wrapped(width, is_last));
+                remaining_items = remaining_items.saturating_sub(1);
+            }
+        }
+        if let Some(line) = disclosure_line(expanded, self.is_collapsible()) {
+            lines.push(line);
         }
         lines
+    }
+
+    /// Detail rows are what Enter reveals on a tool card.
+    fn is_collapsible(&self) -> bool {
+        !self.details.is_empty()
     }
 
     /// The verb comes from the tool classifier and the language from the session, never
@@ -793,15 +804,19 @@ pub(super) fn fold_marker_line(text: String) -> Line<'static> {
     ])
 }
 
-/// The collapsed card names the key that opens it; an open card needs no second hint.
+/// The row that carries a card's fold state, same shape as codex's disclosure control: an
+/// open card offers to close it, a folded one names the key that opens it. Folded-away
+/// counts stay on the `⋮` markers, so this row never repeats them.
 pub(super) fn disclosure_line(expanded: bool, collapsible: bool) -> Option<Line<'static>> {
-    if expanded || !collapsible {
+    if !collapsible {
         return None;
     }
-    Some(Line::from(Span::styled(
-        "  + Show details (enter)".to_string(),
-        theme::accent_text(),
-    )))
+    let text = if expanded {
+        "  \u{2212} Show less".to_string()
+    } else {
+        "  + Show details (enter)".to_string()
+    };
+    Some(Line::from(Span::styled(text, theme::accent_text())))
 }
 
 fn render_patch_diff_block(
@@ -1440,9 +1455,10 @@ pub(super) fn build_completed_tool_log(
     } else if !(data.is_null()
         || data.is_object() && data.as_object().is_some_and(|map| map.is_empty()))
     {
-        Some(wunder_server::tool_result_display::tool_result_display(
-            tool_name, payload, false,
-        ))
+        // The runtime's display helper is written for the Chinese native clients; the TUI
+        // owns its wording in both languages, so an unknown tool shows its target or a
+        // short preview instead of borrowing another client's prose.
+        tool_target_preview(payload, data)
     } else if details.is_empty() {
         None
     } else {
@@ -1765,6 +1781,24 @@ fn format_repair_summary(repair: &Value) -> Option<String> {
         }
         _ => None,
     }
+}
+
+/// The one line an unknown tool can carry: its target argument, or a short preview of the
+/// result data. Both are language-neutral, which is what the transcript needs.
+fn tool_target_preview(payload: &Value, data: &Value) -> Option<String> {
+    let args = payload
+        .get("args")
+        .or_else(|| payload.get("arguments"))
+        .unwrap_or(&Value::Null);
+    ["path", "file_path", "command", "cmd", "query", "url"]
+        .iter()
+        .find_map(|key| args.get(*key).and_then(Value::as_str))
+        .map(|value| value.lines().next().unwrap_or(value).trim().to_string())
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            let compact = compact_json(data);
+            (!compact.is_empty() && compact != "{}" && compact != "null").then_some(compact)
+        })
 }
 
 fn compact_json(value: &Value) -> String {
@@ -2476,6 +2510,28 @@ mod tests {
     }
 
     #[test]
+    fn an_unknown_tools_summary_stays_in_the_sessions_language() {
+        let entry = build_completed_tool_log(
+            "vendor_lookup",
+            &serde_json::json!({
+                "args": { "path": "src/demo.rs" },
+                "result": { "ok": true, "data": { "hits": 3 } }
+            }),
+            false,
+            None,
+        );
+        let SpecialLogEntry::Tool(card) = entry else {
+            panic!("tool log");
+        };
+        let summary = card.summary.unwrap_or_default();
+        assert_eq!(summary, "src/demo.rs", "the target carries the card");
+        assert!(
+            !summary.chars().any(|ch| ('一'..='鿿').contains(&ch)),
+            "an English session never shows another client's wording: {summary}"
+        );
+    }
+
+    #[test]
     fn generic_tool_header_inlines_summary_when_width_allows() {
         let entry = build_pending_tool_log(
             "read_file",
@@ -2486,7 +2542,7 @@ mod tests {
             panic!("expected tool log");
         };
         let rendered = entry
-            .render_lines_for_width(80)
+            .render_lines_for_width(80, true)
             .iter()
             .map(|line| {
                 line.spans
@@ -2510,7 +2566,7 @@ mod tests {
             panic!("expected tool log");
         };
         let rendered = entry
-            .render_lines_for_width(24)
+            .render_lines_for_width(24, true)
             .iter()
             .map(|line| {
                 line.spans

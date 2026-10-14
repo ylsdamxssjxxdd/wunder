@@ -170,6 +170,12 @@ pub(crate) fn modal_selected() -> Style {
     )
 }
 
+/// The block a pointer drag leaves behind. Reversed video rather than a hue, because a
+/// colourless terminal must still see the selection it can copy.
+pub(crate) fn selection_mark() -> Style {
+    Style::default().add_modifier(Modifier::REVERSED)
+}
+
 pub(crate) fn transcript_selection(base: Style) -> Style {
     degrade(
         Style::default()

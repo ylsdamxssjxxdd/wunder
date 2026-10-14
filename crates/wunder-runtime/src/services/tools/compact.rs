@@ -60,7 +60,7 @@ fn compact_tool_description(name: &str, original: &str) -> String {
         "声转文" | "transcribe_speech" => Some("将语音转为文字；输入受大小和格式限制。"),
         "图像生成" | "generate_image" => Some("生成图像；prompt 必填，输出路径受限。"),
         "视频生成" | "generate_video" => Some("生成视频；prompt 必填，输出路径受限。"),
-        "技能调用" | "skill_call" => Some("加载已挂载技能；命中技能后先调用。"),
+        "技能调用" | "skill_call" => Some("加载指定已挂载技能的完整 SKILL.md 与目录结构；用户点名技能或请求命中技能 Frontmatter 时，此工具必须作为第一条工具调用，不要先列目录、搜索、读写文件或执行命令；成功加载后严格按 SKILL.md 流程执行。参数 name 填技能名称。"),
         "写入文件" | "write_file" => Some("写入文件；路径受允许范围限制，支持 dry_run。"),
         "文本编辑" | "编辑" | "edit" => Some(
             "编辑文件；默认按字面文本替换（old_string 须唯一，除非 replace_all=true），也可用 input 传入补丁做多 hunk/多文件修改。",
@@ -257,6 +257,19 @@ mod tests {
             json!(["csv", "xlsx"])
         );
         assert_eq!(compact.input_schema["additionalProperties"], json!(false));
+    }
+
+    #[test]
+    fn compact_skill_tool_requires_loading_the_named_skill_first() {
+        let compact = compact_tool_spec_for_model(&ToolSpec {
+            name: "技能调用".to_string(),
+            title: None,
+            description: "short description".to_string(),
+            input_schema: json!({"type":"object","properties":{"name":{"type":"string"}}}),
+        });
+        assert!(compact.description.contains("第一条工具调用"));
+        assert!(compact.description.contains("不要先列目录"));
+        assert_eq!(compact.input_schema["properties"]["name"]["type"], "string");
     }
 
     #[test]

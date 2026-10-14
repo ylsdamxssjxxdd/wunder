@@ -1823,13 +1823,7 @@ fn normalize_theme_palette(value: &str) -> String {
     let normalized = value.trim().to_lowercase();
     if matches!(
         normalized.as_str(),
-        "hula-green"
-            | "eva-orange"
-            | "claw-orange"
-            | "forest"
-            | "honey"
-            | "minimal"
-            | "tech-blue"
+        "hula-green" | "eva-orange" | "claw-orange" | "forest" | "honey" | "minimal" | "tech-blue"
     ) {
         normalized
     } else {

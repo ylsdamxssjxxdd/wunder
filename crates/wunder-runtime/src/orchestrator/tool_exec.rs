@@ -290,12 +290,14 @@ impl Orchestrator {
             "tool": tool_name,
             "session_id": session_id,
             "ok": result.ok,
-            "error": result.error,
             "args": safe_args,
             "data": result.data,
             "timestamp": timestamp,
             "event_type": "tool_result",
         });
+        if !result.error.trim().is_empty() {
+            payload["error"] = Value::String(result.error.clone());
+        }
         if let Some(tokens) = request_context_tokens {
             payload["request_context_tokens"] = json!(tokens);
         }

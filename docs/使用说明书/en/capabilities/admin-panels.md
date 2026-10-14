@@ -206,4 +206,4 @@ The Bridge holds the highest privileges in the system:
 
 ## Further reading
 
-- [System Settings Reference](/docs/en/reference/config/)
+- [System Settings Reference](/docs/en/capabilities/config/)

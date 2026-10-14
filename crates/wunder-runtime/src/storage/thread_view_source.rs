@@ -2,8 +2,8 @@
 //! These reads never enqueue migration or select an entire execution payload.
 use super::thread_view_projection as projection;
 use super::thread_view_store::ViewDb;
-use anyhow::{Result, ensure};
-use serde_json::{Value, json};
+use anyhow::{ensure, Result};
+use serde_json::{json, Value};
 use wunder_core::thread_view::*;
 
 fn text(value: &Value) -> &str {
@@ -217,7 +217,8 @@ fn source_chat_rows(
             row.status = text(&latest[2]).into();
             row.updated_time = float(&latest[3]);
         }
-        (row.workflow_count, row.failed_count, row.reasoning_count) = counts.get(id).copied().unwrap_or_default();
+        (row.workflow_count, row.failed_count, row.reasoning_count) =
+            counts.get(id).copied().unwrap_or_default();
         row.revision = page.view_seq;
         if let Some((user, assistant)) = messages.remove(id) {
             row.user = user.unwrap_or_default();
@@ -319,12 +320,18 @@ pub(super) fn page(
                 );
                 let row_tool = db.json_text("i.payload", "tool");
                 let row_model = db.json_text("i.payload", "model_round");
-                let seek_visibility = "visibility='user' OR (visibility='model_internal' AND kind='system_message')";
+                let seek_visibility =
+                    "visibility='user' OR (visibility='model_internal' AND kind='system_message')";
                 // PostgreSQL's partitioned parent needs a root-bound lateral
                 // lookup. A DISTINCT ON over the parent can still merge-sort
                 // every matching item in the default partition. SQLite uses
                 // the portable equivalent below.
-                let representative_kinds = ["system_message", "user_message", "tool_call", "assistant_message"];
+                let representative_kinds = [
+                    "system_message",
+                    "user_message",
+                    "tool_call",
+                    "assistant_message",
+                ];
                 let (sql, params) = if db.is_postgres() {
                     let root_values = placeholders(root_ids.len())
                         .split(',')
@@ -332,15 +339,18 @@ pub(super) fn page(
                         .collect::<Vec<_>>()
                         .join(",");
                     let select = "i.item_id,i.turn_id,i.root_turn_id,i.item_index,i.created_seq,i.revision,i.kind,i.status,i.created_time,i.updated_time,i.payload,i.user_id,i.session_id";
-                    let branch = |kind: &str, order: &str| format!(
+                    let branch = |kind: &str, order: &str| {
+                        format!(
                         "(SELECT {select} FROM thread_items i WHERE i.user_id=s.user_id AND i.session_id=s.session_id AND i.root_turn_id=r.root_turn_id AND i.kind='{kind}' AND (i.visibility='user' OR (i.visibility='model_internal' AND i.kind='system_message')) ORDER BY i.created_seq {order} LIMIT 1)"
-                    );
+                    )
+                    };
                     let branches = [
                         branch("system_message", "ASC"),
                         branch("user_message", "ASC"),
                         branch("tool_call", "ASC"),
                         branch("assistant_message", "DESC"),
-                    ].join(" UNION ALL ");
+                    ]
+                    .join(" UNION ALL ");
                     let sql = format!(
                         "WITH scope AS (SELECT ?::text AS user_id, ?::text AS session_id), roots(root_turn_id) AS (VALUES {root_values}) SELECT i.item_id,i.turn_id,i.root_turn_id,i.item_index,i.created_seq,i.revision,i.kind,i.status,i.created_time,i.updated_time,t.user_turn_index,substr(COALESCE(NULLIF({row_content},''),NULLIF({row_reasoning},''),''),1,256),substr(COALESCE({row_content},''),1,256),substr({row_reasoning},1,256),substr(COALESCE({row_tool},''),1,96),COALESCE({row_model},'0') FROM roots r CROSS JOIN scope s CROSS JOIN LATERAL ({branches}) i JOIN thread_turns t ON t.user_id=i.user_id AND t.session_id=i.session_id AND t.turn_id=i.turn_id"
                     );
@@ -360,35 +370,36 @@ pub(super) fn page(
                     (sql, params)
                 };
                 for row in db.query(&sql, &params)? {
-                        let detail = json!({
-                            "content": text(&row[12]),
-                            "reasoning": text(&row[13]),
-                            "tool": text(&row[14]),
-                            "model_round": text(&row[15]).parse::<i64>().unwrap_or(0)
-                        });
-                        let item_id = text(&row[0]);
-                        let mut projected = projection::trajectory(
-                            &detail,
-                            item_id,
-                            text(&row[1]),
-                            text(&row[2]),
-                            int(&row[10]),
-                            int(&row[3]),
-                            int(&row[4]),
-                            int(&row[5]),
-                            text(&row[6]),
-                            text(&row[7]),
-                            float(&row[8]),
-                            float(&row[9]),
-                        );
-                        projected.detail = Some(BodyRef {
-                            body_id: projection::body_id(item_id, "source_detail"),
-                            revision: int(&row[5]),
-                            bytes: 0,
-                        });
-                        page.trajectory.push(projected);
-                    }
+                    let detail = json!({
+                        "content": text(&row[12]),
+                        "reasoning": text(&row[13]),
+                        "tool": text(&row[14]),
+                        "model_round": text(&row[15]).parse::<i64>().unwrap_or(0)
+                    });
+                    let item_id = text(&row[0]);
+                    let mut projected = projection::trajectory(
+                        &detail,
+                        item_id,
+                        text(&row[1]),
+                        text(&row[2]),
+                        int(&row[10]),
+                        int(&row[3]),
+                        int(&row[4]),
+                        int(&row[5]),
+                        text(&row[6]),
+                        text(&row[7]),
+                        float(&row[8]),
+                        float(&row[9]),
+                    );
+                    projected.detail = Some(BodyRef {
+                        body_id: projection::body_id(item_id, "source_detail"),
+                        revision: int(&row[5]),
+                        bytes: 0,
+                    });
+                    projected.overview_only = true;
+                    page.trajectory.push(projected);
                 }
+            }
             page.trajectory.sort_by(|left, right| {
                 left.user_round
                     .cmp(&right.user_round)

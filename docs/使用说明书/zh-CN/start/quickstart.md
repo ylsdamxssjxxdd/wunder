@@ -63,7 +63,7 @@ updated_at: 2026-10-13
 | 现象 | 先看 |
 | --- | --- |
 | 启动页长时间不结束 | [首次运行排查](/docs/zh-CN/start/troubleshooting-first-run/) |
-| 模型请求 401/403 | 设置 → 模型 → 测试连接；[配置说明](/docs/zh-CN/reference/config/) |
+| 模型请求 401/403 | 设置 → 模型 → 测试连接；[配置说明](/docs/zh-CN/capabilities/config/) |
 | 运行中发消息被判「用户忙」 | 会话队列是否被关闭 |
 | 界面卡、消息不刷新 | [故障排查](/docs/zh-CN/help/troubleshooting/) |
 

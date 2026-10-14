@@ -1,3 +1,4 @@
+# AI生成
 """从文档站 Markdown 生成蛹内嵌帮助手册（中英两份）。
 
 文档站页面是单一事实来源：本脚本把指定页面解析成手册的 Block 模型，
@@ -58,7 +59,7 @@ DOCS_TOPICS = [
     ("desktop-ui", "界面", "Surfaces", "surfaces/desktop-ui.md",
      ["界面", "桌面端", "侧栏", "布局"],
      ["interface", "desktop", "sidebar", "layout"]),
-    ("interlink", "参考", "Reference", "reference/interlink.md",
+    ("interlink", "能力", "Capabilities", "capabilities/interlink.md",
      ["三端互通", "设备互通", "隧道", "远程"],
      ["interlink", "devices", "tunnel", "remote"]),
 ]

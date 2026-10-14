@@ -7,10 +7,10 @@
 use serde_json::Value;
 use uuid::Uuid;
 
-use wunder_core::interlink::{APPROVAL_PENDING, RISK_HIGH, command_level};
+use wunder_core::interlink::{command_level, APPROVAL_PENDING, RISK_HIGH};
 
-use crate::storage::{InterlinkApprovalRecord, StorageBackend};
 use super::digest::{risk_of, short_target};
+use crate::storage::{InterlinkApprovalRecord, StorageBackend};
 use std::sync::Arc;
 
 /// Approval timeout when the command carries none (docs §7.3 4).

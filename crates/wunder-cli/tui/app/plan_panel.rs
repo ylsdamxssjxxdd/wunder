@@ -192,7 +192,11 @@ impl PlanLogEntry {
         };
         if with_progress {
             return if self.is_zh {
-                format!("{title} · 完成 {}/{}", self.completed_count(), self.steps.len())
+                format!(
+                    "{title} · 完成 {}/{}",
+                    self.completed_count(),
+                    self.steps.len()
+                )
             } else {
                 format!(
                     "{title} · {}/{} complete",
@@ -239,7 +243,10 @@ impl PlanLogEntry {
         Line::from(vec![
             Span::styled(prefix, theme::secondary_text()),
             Span::styled(step.status.marker(), step.status.style()),
-            Span::styled(fit_to_width(step.text.as_str(), budget), step.status.style()),
+            Span::styled(
+                fit_to_width(step.text.as_str(), budget),
+                step.status.style(),
+            ),
         ])
     }
 }

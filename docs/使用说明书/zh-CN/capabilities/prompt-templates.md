@@ -136,6 +136,6 @@ wunder 提供两套内置模板包。
 
 ## 延伸阅读
 
-- [功能与能力速查](/docs/zh-CN/reference/api-index/) —— 智能体管理入口
+- [功能与能力速查](/docs/zh-CN/capabilities/api-index/) —— 智能体管理入口
 - [提示词与技能概念](/docs/zh-CN/concepts/prompt-and-skills/)
 - [长期记忆概念](/docs/zh-CN/concepts/memory/)

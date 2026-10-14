@@ -1394,9 +1394,14 @@ async fn inquiry_fixture_app(root: &Path) -> TuiApp {
     .global;
     let runtime = fixture_runtime(root);
     let (requester, _notifications) = spawn_frame_scheduler();
-    TuiApp::new(runtime, global, Some("inquiry-thread".to_string()), requester)
-        .await
-        .expect("app")
+    TuiApp::new(
+        runtime,
+        global,
+        Some("inquiry-thread".to_string()),
+        requester,
+    )
+    .await
+    .expect("app")
 }
 
 /// §问询面板: a multi-question payload numbers its routes globally, maps an
@@ -1418,7 +1423,11 @@ async fn inquiry_panel_numbers_routes_across_questions_and_answers_each_one() {
             ]
         }))
         .expect("panel");
-    assert_eq!(panel.route_count(), 4, "the numbering runs past one question");
+    assert_eq!(
+        panel.route_count(),
+        4,
+        "the numbering runs past one question"
+    );
     app.activate_inquiry_panel(panel, false);
 
     let lines = app.inquiry_modal_lines().expect("modal lines");
@@ -1490,5 +1499,389 @@ async fn inquiry_panel_keeps_single_select_honest_and_reads_legacy_payloads() {
     assert_eq!(
         app.try_convert_inquiry_input("2"),
         Some("[Inquiry Panel Selection]\nQuestion: Pick one\n- Beta".to_string())
+    );
+}
+
+/// Pointer parity with codex: a click on a card's disclosure row folds or unfolds that
+/// card, and the row that opened it is the row that closes it.
+#[tokio::test]
+async fn a_click_on_the_disclosure_row_toggles_the_card_it_belongs_to() {
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+
+    let root = TempRoot::new("disclosure_click");
+    let mut app = fixture_app(root.path()).await;
+    let width = 80u16;
+    let height = 30u16;
+
+    let folded = draw_rows(&mut app, width, height);
+    let disclosure_row = folded
+        .iter()
+        .position(|row| row.contains("+ Show thinking (enter)"))
+        .unwrap_or_else(|| panic!("a folded card should offer details:\n{folded:?}"));
+    assert!(
+        !folded.iter().any(|row| row.contains("reasoning line 12")),
+        "the folded frame must not already show the tail"
+    );
+
+    let mut press = |row: usize| {
+        app.on_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 4,
+            row: u16::try_from(row).expect("row fits"),
+            modifiers: KeyModifiers::NONE,
+        })
+    };
+    press(disclosure_row);
+
+    let opened = draw_rows(&mut app, width, height);
+    assert!(
+        opened.iter().any(|row| row.contains("reasoning line 12")),
+        "the click unfolded the card:\n{opened:?}"
+    );
+    let collapse_row = opened
+        .iter()
+        .position(|row| row.contains("\u{2212} Show less"))
+        .unwrap_or_else(|| panic!("an open card offers to close itself:\n{opened:?}"));
+
+    // And clicking that same row again folds it back.
+    app.on_mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: 4,
+        row: u16::try_from(collapse_row).expect("row fits"),
+        modifiers: KeyModifiers::NONE,
+    });
+    let refolded = draw_rows(&mut app, width, height);
+    assert!(
+        !refolded.iter().any(|row| row.contains("reasoning line 12")),
+        "the second click folded the card back:\n{refolded:?}"
+    );
+}
+
+/// The composer answers the pointer before the transcript does, the way codex routes the
+/// textarea first: a click inside the draft puts the caret under the pointer.
+#[tokio::test]
+async fn a_click_in_the_composer_places_the_caret_under_the_pointer() {
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+
+    let root = TempRoot::new("composer_click");
+    let mut app = fixture_app(root.path()).await;
+    app.input = "summarise the flaky gate".to_string();
+    app.input_cursor = 0;
+    let _ = draw_rows(&mut app, 80, 24);
+
+    let area = app.input_hit_area;
+    assert!(area.width > 10, "the composer drew a text area: {area:?}");
+    app.on_mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: area.x + 6,
+        row: area.y,
+        modifiers: KeyModifiers::NONE,
+    });
+    assert_eq!(app.input_cursor, 6, "six columns in is six chars in");
+    assert!(matches!(app.focus_area, FocusArea::Input));
+}
+
+/// A tool card is a disclosure subject like any other: its detail rows hold behind the
+/// same row, and Enter reads them.
+#[tokio::test]
+async fn a_tool_card_holds_its_detail_rows_behind_the_disclosure() {
+    let root = TempRoot::new("tool_fold");
+    let mut app = fixture_app(root.path()).await;
+    app.logs.clear();
+    let card = build_completed_tool_log(
+        "search_web",
+        &json!({ "result": { "ok": false, "error": "403 forbidden by the provider" } }),
+        false,
+        None,
+    );
+    let summary = card.summary_text();
+    app.push_special_log(LogKind::Tool, summary, card);
+
+    let folded = draw_rows(&mut app, 60, 12);
+    assert!(
+        folded
+            .iter()
+            .any(|row| row.contains("+ Show details (enter)")),
+        "a tool card with details offers them: {folded:?}"
+    );
+    assert!(
+        !folded.iter().any(|row| row.contains("Error:")),
+        "the detail row stays folded: {folded:?}"
+    );
+
+    app.transcript_selected = Some(app.logs.len() - 1);
+    assert!(
+        app.toggle_selected_card(),
+        "Enter has something to reveal on this card"
+    );
+    let opened = draw_rows(&mut app, 60, 12);
+    assert!(
+        opened.iter().any(|row| row.contains("Error:")),
+        "Enter revealed it: {opened:?}"
+    );
+    assert!(
+        opened.iter().any(|row| row.contains("\u{2212} Show less")),
+        "and the open card can close itself: {opened:?}"
+    );
+}
+
+/// Fold state is keyed to the card, not to its slot in the transcript: trimming older
+/// cards must not silently move an opening onto a different one.
+#[tokio::test]
+async fn an_opened_card_stays_open_when_older_cards_are_trimmed() {
+    let root = TempRoot::new("disclosure_identity");
+    let mut app = fixture_app(root.path()).await;
+
+    let index = app
+        .logs
+        .iter()
+        .position(|entry| entry.kind == LogKind::Reasoning)
+        .expect("the fixture has a thinking block");
+    app.transcript_selected = Some(index);
+    assert!(app.toggle_selected_card(), "the card opens");
+    let cell_id = app.logs[index].cell_id;
+
+    app.pop_oldest_log_entry();
+    let shifted = index.saturating_sub(1);
+    assert_eq!(
+        app.logs[shifted].cell_id, cell_id,
+        "same card, earlier slot"
+    );
+    assert!(
+        app.card_is_expanded(shifted),
+        "the fold state followed the card, not the slot"
+    );
+    assert_eq!(
+        app.expanded_cards.len(),
+        1,
+        "trimming does not wipe every opening, and leaves nothing orphaned"
+    );
+
+    // Clearing the transcript is a different event and does drop them.
+    app.clear_transcript();
+    assert!(app.expanded_cards.is_empty());
+}
+
+/// A modal surface owns the screen: the click belongs to it, never to the cards it hides.
+#[tokio::test]
+async fn a_click_while_a_modal_is_up_does_not_reach_the_cards_behind_it() {
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+
+    let root = TempRoot::new("modal_click");
+    let mut app = fixture_app(root.path()).await;
+    let folded = draw_rows(&mut app, 80, 30);
+    let disclosure_row = folded
+        .iter()
+        .position(|row| row.contains("+ Show thinking (enter)"))
+        .expect("the fixture shows a folded thinking card");
+
+    app.shortcuts_visible = true;
+    app.on_mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: 4,
+        row: u16::try_from(disclosure_row).expect("row fits"),
+        modifiers: KeyModifiers::NONE,
+    });
+
+    assert!(
+        app.expanded_cards.is_empty(),
+        "no card was unfolded behind the panel"
+    );
+    assert!(
+        app.transcript_selected.is_none(),
+        "no card was selected behind the panel"
+    );
+}
+
+/// Clipboard writes a test triggers are recorded here instead of hitting the machine's
+/// real clipboard.
+static COPIED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+fn record_clipboard_write(text: &str) -> anyhow::Result<()> {
+    COPIED
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .push(text.to_string());
+    Ok(())
+}
+
+struct ClipboardSeam;
+
+impl ClipboardSeam {
+    fn arm() {
+        *CLIPBOARD_WRITER
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(record_clipboard_write);
+        Self::drain();
+    }
+
+    fn drain() {
+        COPIED
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clear();
+    }
+
+    fn copied() -> Vec<String> {
+        COPIED
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+}
+
+fn mouse(app: &mut TuiApp, kind: crossterm::event::MouseEventKind, row: usize, column: u16) {
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+    let _ = (MouseButton::Left, MouseEventKind::Up(MouseButton::Left));
+    app.on_mouse(MouseEvent {
+        kind,
+        column,
+        row: u16::try_from(row).expect("row fits"),
+        modifiers: KeyModifiers::NONE,
+    });
+}
+
+#[tokio::test]
+async fn a_drag_across_the_transcript_marks_rows_and_the_release_copies_them() {
+    use crossterm::event::{MouseButton, MouseEventKind};
+    use ratatui::style::Modifier;
+
+    let root = TempRoot::new("drag_selection");
+    let mut app = fixture_app(root.path()).await;
+    let before = draw_rows(&mut app, 80, 24);
+    let start = before
+        .iter()
+        .position(|row| row.contains("Ran cargo test"))
+        .expect("the command card is on screen");
+    ClipboardSeam::arm();
+
+    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), start, 2);
+    mouse(
+        &mut app,
+        MouseEventKind::Drag(MouseButton::Left),
+        start + 1,
+        20,
+    );
+
+    // The mark is a style, never a rewrite: every column of every row still reads the same.
+    let marked = draw_rows(&mut app, 80, 24);
+    assert_eq!(marked, before, "highlighting may not move a character");
+
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("terminal");
+    terminal
+        .draw(|frame| crate::tui::ui::draw(frame, &mut app))
+        .expect("draw");
+    let buffer = terminal.backend().buffer().clone();
+    assert!(
+        (0..24u16).any(|row| (0..80u16)
+            .any(|column| buffer[(column, row)].modifier.contains(Modifier::REVERSED))),
+        "the drag left a visible mark"
+    );
+
+    mouse(
+        &mut app,
+        MouseEventKind::Up(MouseButton::Left),
+        start + 1,
+        20,
+    );
+    let copied = ClipboardSeam::copied();
+    assert_eq!(copied.len(), 1, "one release copies once: {copied:?}");
+    let lines = copied[0].lines().count();
+    assert!(lines >= 2, "the drag covered two rows: {:?}", copied[0]);
+    assert!(copied[0].contains("Ran cargo test"), "{:?}", copied[0]);
+}
+
+/// Two clicks take the word under the pointer, three take the line, and each release
+/// copies what it picked up, which is what copy-on-select means.
+#[tokio::test]
+async fn double_and_triple_clicks_take_the_word_and_the_line() {
+    use crossterm::event::{MouseButton, MouseEventKind};
+
+    let root = TempRoot::new("click_select");
+    let mut app = fixture_app(root.path()).await;
+    let before = draw_rows(&mut app, 80, 24);
+    let row = before
+        .iter()
+        .position(|line| line.contains("Ran cargo test"))
+        .expect("the command card is on screen");
+    let column = before[row].find("cargo").expect("the word is on that row") as u16 + 1;
+    ClipboardSeam::arm();
+
+    for _ in 0..2 {
+        mouse(
+            &mut app,
+            MouseEventKind::Down(MouseButton::Left),
+            row,
+            column,
+        );
+        mouse(&mut app, MouseEventKind::Up(MouseButton::Left), row, column);
+    }
+    let copied = ClipboardSeam::copied();
+    assert_eq!(
+        copied.last().map(String::as_str),
+        Some("cargo"),
+        "{copied:?}"
+    );
+
+    mouse(
+        &mut app,
+        MouseEventKind::Down(MouseButton::Left),
+        row,
+        column,
+    );
+    mouse(&mut app, MouseEventKind::Up(MouseButton::Left), row, column);
+    let copied = ClipboardSeam::copied();
+    assert!(
+        copied
+            .last()
+            .is_some_and(|text| text.contains("Ran cargo test")),
+        "the third click took the whole line: {copied:?}"
+    );
+}
+
+/// The horizontal arrows enforce a card's fold state the way codex's list keys do, and
+/// keep their scroll meaning on a card that has nothing to fold.
+#[tokio::test]
+async fn the_horizontal_arrows_open_and_close_the_selected_card() {
+    let root = TempRoot::new("arrow_fold");
+    let mut app = fixture_app(root.path()).await;
+    let index = app
+        .logs
+        .iter()
+        .position(|entry| entry.kind == LogKind::Reasoning)
+        .expect("the fixture has a thinking block");
+    app.focus_area = FocusArea::Transcript;
+    app.transcript_selected = Some(index);
+
+    let folded = draw_rows(&mut app, 80, 30);
+    assert!(
+        !folded.iter().any(|row| row.contains("reasoning line 12")),
+        "the block starts folded: {folded:?}"
+    );
+
+    app.on_key(key(KeyCode::Right))
+        .await
+        .expect("right opens the card");
+    let opened = draw_rows(&mut app, 80, 30);
+    assert!(
+        opened.iter().any(|row| row.contains("reasoning line 12")),
+        "right expanded it: {opened:?}"
+    );
+
+    app.on_key(key(KeyCode::Left))
+        .await
+        .expect("left closes the card");
+    let refolded = draw_rows(&mut app, 80, 30);
+    assert!(
+        !refolded.iter().any(|row| row.contains("reasoning line 12")),
+        "left folded it back: {refolded:?}"
+    );
+
+    // A plain answer has no fold, so the arrows stay scroll keys there.
+    let plain = app.logs.len() - 1;
+    app.transcript_selected = Some(plain);
+    assert!(
+        !app.set_selected_card_expanded(true),
+        "nothing to open on a card that hides nothing"
     );
 }

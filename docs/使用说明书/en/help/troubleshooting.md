@@ -118,7 +118,7 @@ When you submit, add what you did and when the stutter happened. Total model rep
 
 Continue with:
 
-- [Configuration Reference](/docs/en/reference/config/)
+- [Configuration Reference](/docs/en/capabilities/config/)
 
 ## What to Include When Reporting an Issue
 

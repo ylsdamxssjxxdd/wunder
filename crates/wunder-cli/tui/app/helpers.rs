@@ -1051,6 +1051,51 @@ pub(super) fn is_word_char(ch: char) -> bool {
     ch.is_alphanumeric() || ch == '_'
 }
 
+/// Characters a href may hold before it is safe to hand to the desktop. Shell
+/// metacharacters, quotes, spaces and backslashes are excluded because on Windows the
+/// same string travels through a shell.
+fn is_openable_href(url: &str) -> bool {
+    url.len() <= 2048
+        && ["http://", "https://", "file://"]
+            .iter()
+            .any(|scheme| url.starts_with(scheme))
+        && url
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || "-._~:/?#[]@!$*+,;=()".contains(ch))
+}
+
+/// Hand a validated href to the desktop's own opener.
+pub(super) fn open_url_in_browser(url: &str) -> Result<()> {
+    if !is_openable_href(url) {
+        return Err(anyhow!("refusing to open an unsafe href"));
+    }
+    #[cfg(windows)]
+    let mut command = {
+        let mut command = Command::new("cmd");
+        command.args(["/C", "start", "", url]);
+        command
+    };
+    #[cfg(target_os = "macos")]
+    let mut command = {
+        let mut command = Command::new("open");
+        command.arg(url);
+        command
+    };
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let mut command = {
+        let mut command = Command::new("xdg-open");
+        command.arg(url);
+        command
+    };
+    command
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    command
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| anyhow!("the desktop opener could not start: {error}"))
+}
+
 pub(super) fn payload_has_tool_calls(payload: &Value) -> bool {
     match payload.get("tool_calls") {
         Some(Value::Array(items)) => !items.is_empty(),
@@ -1940,9 +1985,6 @@ pub(super) fn localize_cli_notice(language: &str, text: &str) -> String {
     if let Some(value) = text.strip_prefix("available models: ") {
         return format!("可用模型: {value}");
     }
-    if let Some(value) = text.strip_prefix("invalid /mouse args: ") {
-        return format!("无效的 /mouse 参数: {value}");
-    }
     if let Some(value) = text.strip_prefix("invalid mode: ") {
         return format!("非法模式: {value}");
     }
@@ -2061,17 +2103,11 @@ pub(super) fn localize_cli_notice(language: &str, text: &str) -> String {
         "- max_context: auto probe unavailable (or keep existing)" => {
             "- max_context: 自动探测不可用（或保留现有值）".to_string()
         }
-        "mouse mode: auto (native selection and terminal wheel scrolling enabled; switch to scroll for app-captured transcript scrolling)" => {
-            "鼠标模式：auto（启用终端原生选择与滚轮滚动；切到 scroll 时由应用接管输出滚动）".to_string()
+        "mouse mode: capture (clicks select cards, open details and place the cursor; the wheel scrolls the transcript)" => {
+            "鼠标模式：capture（点击选中卡片、展开详情、定位输入光标，滚轮滚动转录）".to_string()
         }
-        "mouse mode: scroll (capture wheel events for transcript scrolling)" => {
-            "鼠标模式：scroll（由应用接管滚轮并滚动输出区）".to_string()
-        }
-        "mouse mode: select/copy (native terminal selection enabled)" => {
-            "鼠标模式：select/copy（启用终端原生选择复制）".to_string()
-        }
-        "usage: /mouse [auto|scroll|select]  (F4 optional)" => {
-            "用法: /mouse [auto|scroll|select]  （F4 可切换）".to_string()
+        "mouse mode: native (the terminal keeps its own selection, copy and wheel)" => {
+            "鼠标模式：native（选择、复制与滚轮交回终端）".to_string()
         }
         "resume picker opened (Up/Down to choose, Enter to resume, Esc to cancel)" => {
             "已打开会话恢复面板（上下选择，Enter 恢复，Esc 取消）".to_string()
@@ -2207,5 +2243,26 @@ mod snapshot_history_tests {
     fn empty_snapshot_yields_no_records() {
         assert!(snapshot_history_records(&json!({})).is_empty());
         assert!(snapshot_history_records(&json!({"items": []})).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod url_opener_tests {
+    use super::is_openable_href;
+
+    #[test]
+    fn only_plain_href_schemes_reach_the_desktop_opener() {
+        assert!(is_openable_href("https://example.com/a?b=1"));
+        assert!(is_openable_href("file:///tmp/notes.md"));
+        for refused in [
+            "https://example.com/a&b",
+            "https://example.com/a b",
+            "https://example.com/a|b",
+            "javascript:alert(1)",
+            "notepad.exe",
+            "",
+        ] {
+            assert!(!is_openable_href(refused), "must refuse: {refused}");
+        }
     }
 }

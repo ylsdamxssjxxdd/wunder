@@ -72,5 +72,5 @@ The three forms — the Pupa, the Beehive, and the Hull — are each scored **in
 
 ## Related pages
 
-- [Stream Events](/docs/en/reference/stream-events/) — WebSocket event fields
-- [Bridge Panel Guide](/docs/en/reference/admin-panels/) — entry points for the monitoring and debug panels
+- [Stream Events](/docs/en/capabilities/stream-events/) — WebSocket event fields
+- [Bridge Panel Guide](/docs/en/capabilities/admin-panels/) — entry points for the monitoring and debug panels

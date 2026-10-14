@@ -45,6 +45,7 @@ export interface TrajCell {
   toolName?: string
   isError?: boolean
   toolCallOnly?: boolean
+  overviewOnly?: boolean
   timeSeconds: number | null
   startedAt: number | null
   metrics?: TrajMetrics
@@ -355,6 +356,20 @@ function resolveKind(rawKind: string, payload: RawRecord): TrajKind {
   return 'context'
 }
 
+function hasExplicitToolError(value: unknown): boolean {
+  if (value === true) return true
+  if (typeof value === 'string') return value.trim().length > 0
+  return false
+}
+
+function isToolFailure(payload: RawRecord, status = ''): boolean {
+  return hasExplicitToolError(payload.error ?? payload.is_error)
+    || payload.ok === false
+    || payload.success === false
+    || status === 'failed'
+    || status === 'error'
+}
+
 /* ------------------------------------------------------------------ */
 /* 单元格构建                                                          */
 /* ------------------------------------------------------------------ */
@@ -375,6 +390,7 @@ function buildCell(item: RawRecord, payload: RawRecord, kind: TrajKind, index: n
     timeSeconds: null,
     startedAt,
   }
+  cell.overviewOnly = item.overview_only === true
   const usage = extractUsage(payload)
 
   if (kind === 'message') {
@@ -423,7 +439,6 @@ function buildCell(item: RawRecord, payload: RawRecord, kind: TrajKind, index: n
       ? JSON.stringify(args, null, 2)
       : ''
     const resultRaw = summarizeToolResult(payload)
-    const errorValue = payload.error ?? payload.is_error
     cell.text = name
     cell.toolName = name || undefined
     cell.callId = typeof payload.tool_call_id === 'string' ? payload.tool_call_id : undefined
@@ -435,9 +450,7 @@ function buildCell(item: RawRecord, payload: RawRecord, kind: TrajKind, index: n
     const schema = payload.schema ?? payload.tool_schema
     if (typeof schema === 'string' && schema.trim()) cell.schemaDetail = schema
     else if (isRecord(schema)) cell.schemaDetail = JSON.stringify(schema, null, 2)
-    cell.isError = errorValue === true
-      || (errorValue !== undefined && errorValue !== null && errorValue !== false)
-      || status === 'failed' || status === 'error'
+    cell.isError = isToolFailure(payload, status)
     cell.timeSeconds = startedAt !== null && completedAt !== null
       ? Math.max(0, (completedAt - startedAt) / 1000)
       : null
@@ -559,7 +572,8 @@ export function buildTrajectoryLayout(rawTurns: unknown, t: Translate): TrajTurn
             cell.outputDetail = resultRaw
             defineLazy(cell, 'resultPreviewMarkdown', () => markdownPreviewText(resultRaw))
           }
-          if (candidatePayload.error === true) cell.isError = true
+          const candidateStatus = typeof candidate.status === 'string' ? candidate.status : ''
+          if (isToolFailure(candidatePayload, candidateStatus)) cell.isError = true
           const candidateStart = firstTime(candidatePayload, STARTED_KEYS)
             ?? firstTime(candidate, ['created_time'])
           const candidateEnd = firstTime(candidatePayload, COMPLETED_KEYS)

@@ -14,9 +14,7 @@ use std::{
     path::{Component, Path, PathBuf},
     time::Duration,
 };
-use wunder_server::interlink::client::{
-    self as interlink_client, Decision, TunnelState,
-};
+use wunder_server::interlink::client::{self as interlink_client, Decision, TunnelState};
 
 /// Poll cadence while waiting for one cloud command to finish.
 const CLOUD_POLL_INTERVAL: Duration = Duration::from_millis(300);
@@ -168,7 +166,12 @@ impl NativeDesktop {
     }
 
     /// Answer one local prompt. `remember` extends the L1 scope memory only.
-    pub fn interlink_decide_approval(&self, approval_id: &str, approve: bool, remember: bool) -> bool {
+    pub fn interlink_decide_approval(
+        &self,
+        approval_id: &str,
+        approve: bool,
+        remember: bool,
+    ) -> bool {
         let decision = if approve {
             Decision::Approve
         } else {
@@ -179,7 +182,9 @@ impl NativeDesktop {
 
     /// Device fleet as the account sees it, cloud node included.
     pub fn interlink_devices(&self) -> Result<Vec<NativeInterlinkNode>> {
-        let data = self.runtime.block_on(self.state().cloud.interlink_nodes())?;
+        let data = self
+            .runtime
+            .block_on(self.state().cloud.interlink_nodes())?;
         let nodes = data
             .get("nodes")
             .and_then(Value::as_array)
@@ -217,13 +222,11 @@ impl NativeDesktop {
         let path = path.trim();
         let path = if path.is_empty() { "." } else { path };
         let cloud = self.state().cloud.clone();
-        let issue = self
-            .runtime
-            .block_on(cloud.interlink_issue_command(
-                "cloud",
-                "workspace.list",
-                serde_json::json!({ "path": path, "offset": offset, "limit": 200 }),
-            ))?;
+        let issue = self.runtime.block_on(cloud.interlink_issue_command(
+            "cloud",
+            "workspace.list",
+            serde_json::json!({ "path": path, "offset": offset, "limit": 200 }),
+        ))?;
         let command_id = clean(issue.get("command_id"));
         if command_id.is_empty() {
             return Err(anyhow!("cloud command issue returned no id"));
@@ -304,7 +307,8 @@ impl NativeDesktop {
         let local_rel = validate_local_rel(local_rel)?;
         let state = self.state();
         let root = state.workspace.ensure_user_root(self.user_id())?;
-        let target = resolve_local_target(state.workspace.as_ref(), self.user_id(), &root, &local_rel)?;
+        let target =
+            resolve_local_target(state.workspace.as_ref(), self.user_id(), &root, &local_rel)?;
         if target.exists() && !overwrite {
             bail!("本地工作区已有同名文件：{local_rel}");
         }
@@ -393,7 +397,10 @@ impl NativeDesktop {
         let source = cloud_path(source);
         let name = name.trim().trim_matches('/').to_string();
         anyhow::ensure!(!name.is_empty(), "名称不能为空");
-        anyhow::ensure!(!name.contains('/') && !name.contains('\\'), "名称不能包含路径分隔符");
+        anyhow::ensure!(
+            !name.contains('/') && !name.contains('\\'),
+            "名称不能包含路径分隔符"
+        );
         anyhow::ensure!(!name.contains(".."), "名称不能包含路径穿越");
         let destination = match source.rsplit_once('/') {
             Some((parent, _)) => format!("{parent}/{name}"),
@@ -434,9 +441,12 @@ impl NativeDesktop {
         let command_id = command_id.trim();
         anyhow::ensure!(!command_id.is_empty(), "缺少待确认的云端命令");
         let cloud = self.state().cloud.clone();
-        self.runtime.block_on(cloud.interlink_decide(command_id, true))?;
+        self.runtime
+            .block_on(cloud.interlink_decide(command_id, true))?;
         let deadline = std::time::Instant::now() + CLOUD_POLL_TIMEOUT;
-        Ok(cloud_op_outcome(&self.wait_cloud_command(&cloud, command_id, deadline)?))
+        Ok(cloud_op_outcome(
+            &self.wait_cloud_command(&cloud, command_id, deadline)?,
+        ))
     }
 
     /// Stage one cloud file for a drag-out: pull it into the local workspace
@@ -509,7 +519,11 @@ impl NativeDesktop {
             return Ok(CloudOpOutcome::NeedsApproval { command_id });
         }
         let deadline = std::time::Instant::now() + CLOUD_POLL_TIMEOUT;
-        Ok(cloud_op_outcome(&self.wait_cloud_command(&cloud, &command_id, deadline)?))
+        Ok(cloud_op_outcome(&self.wait_cloud_command(
+            &cloud,
+            &command_id,
+            deadline,
+        )?))
     }
 
     /// Poll one cloud command to its terminal state, bounded by `deadline`.
@@ -520,9 +534,7 @@ impl NativeDesktop {
         deadline: std::time::Instant,
     ) -> Result<Value> {
         loop {
-            let record = self
-                .runtime
-                .block_on(cloud.interlink_command(command_id))?;
+            let record = self.runtime.block_on(cloud.interlink_command(command_id))?;
             let status = clean(record.get("status"));
             if !OPEN_STATUSES.contains(&status.as_str()) {
                 return Ok(record);
@@ -562,11 +574,15 @@ fn read_payload(record: &Value) -> Result<String, PullFailure> {
 fn payload_with<'a>(record: &'a Value, key: &str) -> &'a Value {
     const NO_PAYLOAD: Value = Value::Null;
     let outer = record.get("result");
-    [outer, outer.and_then(|value| value.get("result")), Some(record)]
-        .into_iter()
-        .flatten()
-        .find(|candidate| candidate.get(key).is_some())
-        .unwrap_or(&NO_PAYLOAD)
+    [
+        outer,
+        outer.and_then(|value| value.get("result")),
+        Some(record),
+    ]
+    .into_iter()
+    .flatten()
+    .find(|candidate| candidate.get(key).is_some())
+    .unwrap_or(&NO_PAYLOAD)
 }
 
 /// Decide the local save target through the engine's workspace resolution and
@@ -719,7 +735,10 @@ fn stats_from_record(record: &Value) -> Result<NativeInterlinkStats> {
     Ok(NativeInterlinkStats {
         files: result.get("files").and_then(Value::as_u64).unwrap_or(0),
         dirs: result.get("dirs").and_then(Value::as_u64).unwrap_or(0),
-        used_bytes: result.get("used_bytes").and_then(Value::as_u64).unwrap_or(0),
+        used_bytes: result
+            .get("used_bytes")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
         truncated: result
             .get("truncated")
             .and_then(Value::as_bool)

@@ -42,7 +42,10 @@ pub fn random_secret() -> String {
 
 /// Deterministic derivation of the node secret for `(device_id, version)`.
 pub fn derive_secret(pepper: &str, device_id: &str, version: i64) -> String {
-    hmac_hex(pepper.as_bytes(), &format!("interlink-node|{device_id}|{version}"))
+    hmac_hex(
+        pepper.as_bytes(),
+        &format!("interlink-node|{device_id}|{version}"),
+    )
 }
 
 /// What the server persists for a node secret (never the secret itself).
@@ -101,14 +104,22 @@ pub fn verify_handshake(
     }
     let secret = derive_secret(pepper, device_id, stored_version);
     // The stored fingerprint must correspond to the derived key.
-    if !constant_time_eq(stored_hash.as_bytes(), secret_hash(pepper, &secret).as_bytes()) {
+    if !constant_time_eq(
+        stored_hash.as_bytes(),
+        secret_hash(pepper, &secret).as_bytes(),
+    ) {
         return HandshakeOutcome::Mismatch;
     }
     compare(&secret, ticket, presented_hmac)
 }
 
 /// True while an old secret version is still inside its dual-key window.
-pub fn version_in_grace(stored_version: i64, presented_version: i64, rotated_at: f64, now: f64) -> bool {
+pub fn version_in_grace(
+    stored_version: i64,
+    presented_version: i64,
+    rotated_at: f64,
+    now: f64,
+) -> bool {
     presented_version > 1
         && presented_version == stored_version - 1
         && now - rotated_at <= ROTATION_GRACE_S
@@ -195,27 +206,31 @@ mod tests {
         let mac = channel_hmac(&secret, ticket);
 
         let outcome = verify_handshake(
-            pepper,
-            "dev-1",
-            &stored,
-            version,
-            1_000.0,
-            version,
-            ticket,
-            &mac,
-            1_100.0,
+            pepper, "dev-1", &stored, version, 1_000.0, version, ticket, &mac, 1_100.0,
         );
         assert_eq!(outcome, HandshakeOutcome::Ok);
 
         // A replayed MAC for another ticket must fail.
         let other = channel_hmac(&secret, "itk_other");
         assert_eq!(
-            verify_handshake(pepper, "dev-1", &stored, version, 1_000.0, version, ticket, &other, 1_100.0),
+            verify_handshake(
+                pepper, "dev-1", &stored, version, 1_000.0, version, ticket, &other, 1_100.0
+            ),
             HandshakeOutcome::Mismatch
         );
         // Wrong version is never derived.
         assert_eq!(
-            verify_handshake(pepper, "dev-1", &stored, version, 1_000.0, version + 1, ticket, &mac, 1_100.0),
+            verify_handshake(
+                pepper,
+                "dev-1",
+                &stored,
+                version,
+                1_000.0,
+                version + 1,
+                ticket,
+                &mac,
+                1_100.0
+            ),
             HandshakeOutcome::UnknownVersion
         );
     }
@@ -231,18 +246,48 @@ mod tests {
 
         // 1h after rotation the old key still handshakes...
         assert_eq!(
-            verify_handshake(pepper, "dev-1", &current_hash, 2, rotated_at, 1, ticket, &mac, rotated_at + 3_600.0),
+            verify_handshake(
+                pepper,
+                "dev-1",
+                &current_hash,
+                2,
+                rotated_at,
+                1,
+                ticket,
+                &mac,
+                rotated_at + 3_600.0
+            ),
             HandshakeOutcome::Ok
         );
         // ...25h later it does not, and the attempt is a stale-key reject.
         assert_eq!(
-            verify_handshake(pepper, "dev-1", &current_hash, 2, rotated_at, 1, ticket, &mac, rotated_at + 90_000.0),
+            verify_handshake(
+                pepper,
+                "dev-1",
+                &current_hash,
+                2,
+                rotated_at,
+                1,
+                ticket,
+                &mac,
+                rotated_at + 90_000.0
+            ),
             HandshakeOutcome::StaleVersion
         );
         // A key retired before the last rotation is stale immediately, too.
         let older = channel_hmac(&derive_secret(pepper, "dev-1", 1), ticket);
         assert_eq!(
-            verify_handshake(pepper, "dev-1", &secret_hash(pepper, &derive_secret(pepper, "dev-1", 3)), 3, rotated_at, 1, ticket, &older, rotated_at + 60.0),
+            verify_handshake(
+                pepper,
+                "dev-1",
+                &secret_hash(pepper, &derive_secret(pepper, "dev-1", 3)),
+                3,
+                rotated_at,
+                1,
+                ticket,
+                &older,
+                rotated_at + 60.0
+            ),
             HandshakeOutcome::StaleVersion,
             "only the single previous version is ever dual-key valid"
         );

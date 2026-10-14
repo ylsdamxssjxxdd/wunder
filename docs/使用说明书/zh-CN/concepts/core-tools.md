@@ -99,4 +99,4 @@ updated_at: 2026-10-13
 - [上下文压缩](/docs/zh-CN/concepts/core-context-compression/) —— 模型输入通道怎么省 token
 - [提示词与技能](/docs/zh-CN/concepts/prompt-and-skills/) —— `SKILL.md` 与技能注入
 - [多用户与能力管理](/docs/zh-CN/concepts/core-multi-user-management/) —— 管理员怎么选能力
-- [配置参考](/docs/zh-CN/reference/config/) —— 工具与能力相关配置项
+- [配置参考](/docs/zh-CN/capabilities/config/) —— 工具与能力相关配置项

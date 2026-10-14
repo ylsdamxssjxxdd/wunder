@@ -439,10 +439,9 @@ fn resolve_repo_root(app_dir: &Path) -> PathBuf {
     if let Some(repo_root) = repo_assets::resolve_local_form_repo_root(app_dir, None) {
         return repo_root;
     }
-    if let Some(repo_root) = repo_assets::resolve_local_form_repo_root(
-        Path::new(env!("CARGO_MANIFEST_DIR")),
-        None,
-    ) {
+    if let Some(repo_root) =
+        repo_assets::resolve_local_form_repo_root(Path::new(env!("CARGO_MANIFEST_DIR")), None)
+    {
         return repo_root;
     }
     app_dir.to_path_buf()

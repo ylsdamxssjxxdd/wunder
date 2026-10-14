@@ -1,5 +1,6 @@
 import { ListView } from "std-widgets.slint";
 import { HelpDocs } from "help_models.slint";
+import { I18n } from "i18n.slint";
 import { HelpButton, HelpInput } from "help_controls.slint";
 
 // Contents / index / search sidebar of the help browser, bound to the
@@ -24,7 +25,7 @@ export component HelpSidebar inherits Rectangle {
             padding-right: 4px;
             padding-top: 2px;
             spacing: 0px;
-            for label[i] in ["目录", "索引", "搜索"] : HelpButton {
+            for label[i] in [I18n.hp_tab_contents, I18n.hp_tab_index, I18n.hp_tab_search] : HelpButton {
                 label: label;
                 tab: true;
                 active: root.active-tab == i;
@@ -41,7 +42,7 @@ export component HelpSidebar inherits Rectangle {
             x: 7px;
             width: parent.width - 14px;
             height: parent.height;
-            text: "使用手册";
+            text: I18n.hp_manual_title;
             color: #444444;
             font-weight: 700;
             vertical-alignment: center;
@@ -54,8 +55,8 @@ export component HelpSidebar inherits Rectangle {
         width: parent.width - 14px;
         height: 24px;
         text <=> root.query;
-        placeholder-text: "搜索帮助主题";
-        accessible-label: "搜索帮助主题";
+        placeholder-text: I18n.hp_search_placeholder;
+        accessible-label: I18n.hp_search_placeholder;
         edited(text) => { HelpDocs.search-changed(text); }
     }
     // 目录页分组标题：只在该组第一个条目上方显示一次，其余条目返回空。
@@ -151,7 +152,7 @@ export component HelpSidebar inherits Rectangle {
         y: 77px;
         width: parent.width - 28px;
         height: 30px;
-        text: "没有匹配的帮助主题";
+        text: I18n.hp_no_topics;
         color: #777777;
     }
     Rectangle { x: parent.width - 1px; width: 1px; height: parent.height; background: #9f9f9f; }

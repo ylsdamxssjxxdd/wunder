@@ -2414,7 +2414,11 @@ mod tests {
         assert_eq!(configured["configured_model_name"], "model-b");
         assert_eq!(configured["model_name"], "model-b");
 
-        let unset = default_agent_payload(&DefaultAgentConfig::default(), Some("model-a"), &HashSet::new());
+        let unset = default_agent_payload(
+            &DefaultAgentConfig::default(),
+            Some("model-a"),
+            &HashSet::new(),
+        );
         assert_eq!(unset["configured_model_name"], serde_json::Value::Null);
         assert_eq!(unset["model_name"], "model-a");
     }

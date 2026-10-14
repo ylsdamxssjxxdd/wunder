@@ -94,5 +94,5 @@ updated_at: 2026-10-13
 
 ## 相关页面
 
-- 模型档案与类型：[配置参考](/docs/zh-CN/reference/config/)
+- 模型档案与类型：[配置参考](/docs/zh-CN/capabilities/config/)
 - 读图（视觉输入）：[读图工具](/docs/zh-CN/tools/read-image/)

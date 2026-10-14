@@ -769,7 +769,11 @@ fn render_question_panel_lines(payload: &Value, to_stderr: bool) -> bool {
             question.clone()
         };
         if *multiple {
-            heading.push_str(if is_zh { "（可多选）" } else { " (multi-select)" });
+            heading.push_str(if is_zh {
+                "（可多选）"
+            } else {
+                " (multi-select)"
+            });
         }
         emit(format!("[question_panel] {heading}"));
         for option in options {

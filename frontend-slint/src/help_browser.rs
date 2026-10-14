@@ -2,13 +2,17 @@
 //! 排版成绝对定位的文本片段与装饰矩形，再绑定到 HelpDocs 全局状态。
 //! 视图层（help_*.slint）只做投影，不持有阅读状态，切页不丢进度。
 
-use crate::{HelpDocs, HelpEntry, HelpRect, HelpTextRun};
+use crate::{HelpDocs, HelpEntry, HelpRect, HelpTextRun, HelpWindow};
 use parley::{
     Alignment, AlignmentOptions, FontContext, FontWeight, LayoutContext, LineHeight, StyleProperty,
 };
 use serde::Deserialize;
-use slint::{Color, ComponentHandle, ModelRc, VecModel};
-use std::{cell::RefCell, ops::Range, rc::Rc};
+use slint::{Color, ComponentHandle, Global, ModelRc, VecModel};
+use std::{
+    cell::{Cell, RefCell},
+    ops::Range,
+    rc::Rc,
+};
 
 /// 主窗口默认字体，与 main.slint 的 default-font-family 保持一致。
 const UI_FAMILY: &str = "Microsoft YaHei";
@@ -806,26 +810,39 @@ impl Controller {
     }
 }
 
-/// 在主窗口创建后调用一次：填充目录/索引并把全部回调绑到 HelpDocs 全局。
-pub fn bind(app: &crate::MainWindow) {
-    let docs = app.global::<HelpDocs>();
-    // 界面语言取运行时的 runtime-language（"zh-CN" / "en-US"）。I18n.zh 目前
-    // 没有写入方，不能作为判断依据。
-    let zh = !app.get_runtime_language().starts_with("en");
+// ---------------------------------------------------------------------------
+// 独立帮助窗口
+// ---------------------------------------------------------------------------
+
+thread_local! {
+    /// 已创建的帮助窗口；帮助只开一份，重复点击仅聚焦。
+    static WINDOW: RefCell<Option<HelpWindow>> = const { RefCell::new(None) };
+    /// 帮助窗口当前的手册语言；语言切换时用于比对，避免重复重建目录。
+    static ZH: Cell<bool> = const { Cell::new(true) };
+}
+
+/// 把 HelpDocs 回调绑到任意承载 HelpBrowser 的窗口。顶层窗口不共享
+/// globals，每个窗口实例都要绑定自己的 HelpDocs 副本，因此参数化窗口类型。
+fn wire<T>(window: &T, zh: bool)
+where
+    T: ComponentHandle + 'static,
+    for<'a> HelpDocs<'a>: Global<'a, T>,
+{
+    let docs = window.global::<HelpDocs>();
     let controller = Rc::new(RefCell::new(Controller::new(zh)));
     {
         let mut controller = controller.borrow_mut();
         controller.apply_language(&docs, zh);
     }
-    let app_weak = app.as_weak();
-    let weak = app_weak.clone();
+    let weak = window.as_weak();
     let state = Rc::clone(&controller);
     docs.on_language_changed(move |zh| {
         let Some(app) = weak.upgrade() else { return };
         let docs = app.global::<HelpDocs>();
+        ZH.set(zh);
         state.borrow_mut().apply_language(&docs, zh);
     });
-    let weak = app_weak.clone();
+    let weak = window.as_weak();
     let state = Rc::clone(&controller);
     docs.on_topic_opened(move |index| {
         let Some(app) = weak.upgrade() else { return };
@@ -837,7 +854,7 @@ pub fn bind(app: &crate::MainWindow) {
             state.navigate(&docs);
         }
     });
-    let weak = app_weak.clone();
+    let weak = window.as_weak();
     let state = Rc::clone(&controller);
     docs.on_history_requested(move |delta| {
         let Some(app) = weak.upgrade() else { return };
@@ -847,21 +864,21 @@ pub fn bind(app: &crate::MainWindow) {
             state.navigate(&docs);
         }
     });
-    let weak = app_weak.clone();
+    let weak = window.as_weak();
     let state = Rc::clone(&controller);
     docs.on_search_changed(move |query: slint::SharedString| {
         let Some(app) = weak.upgrade() else { return };
         let docs = app.global::<HelpDocs>();
         state.borrow().search(&docs, &query);
     });
-    let weak = app_weak.clone();
+    let weak = window.as_weak();
     let state = Rc::clone(&controller);
     docs.on_find_changed(move |_: slint::SharedString| {
         let Some(app) = weak.upgrade() else { return };
         let docs = app.global::<HelpDocs>();
         state.borrow().find(&docs, true);
     });
-    let weak = app_weak.clone();
+    let weak = window.as_weak();
     let state = Rc::clone(&controller);
     docs.on_layout_changed(move || {
         let Some(app) = weak.upgrade() else { return };
@@ -870,14 +887,14 @@ pub fn bind(app: &crate::MainWindow) {
             state.render(&docs);
         }
     });
-    let weak = app_weak.clone();
+    let weak = window.as_weak();
     let state = Rc::clone(&controller);
     docs.on_pointer(move |x, y, kind| {
         let Some(app) = weak.upgrade() else { return };
         let docs = app.global::<HelpDocs>();
         state.borrow_mut().pointer(&docs, x, y, kind);
     });
-    let weak = app_weak.clone();
+    let weak = window.as_weak();
     let state = Rc::clone(&controller);
     docs.on_select_all(move || {
         let Some(app) = weak.upgrade() else { return };
@@ -886,13 +903,57 @@ pub fn bind(app: &crate::MainWindow) {
         state.selection = 0..state.document.text.len();
         state.update_selection(&docs);
     });
-    let weak = app_weak.clone();
+    let weak = window.as_weak();
     let state = Rc::clone(&controller);
     docs.on_copy_requested(move || {
         let Some(app) = weak.upgrade() else { return };
         let docs = app.global::<HelpDocs>();
         state.borrow().copy_selection(&docs);
     });
+}
+
+/// 打开（或聚焦）独立帮助窗口。首次调用创建窗口并绑定控制器，已在显示
+/// 时仅置前；手册语言在窗口存活期间由 sync_language 跟随主窗口。
+pub fn open(app: &crate::MainWindow) {
+    let zh = !app.get_runtime_language().starts_with("en");
+    let window = WINDOW.with(|slot| {
+        {
+            let mut slot = slot.borrow_mut();
+            if slot.is_none() {
+                match HelpWindow::new() {
+                    Ok(window) => {
+                        ZH.set(zh);
+                        wire(&window, zh);
+                        *slot = Some(window);
+                    }
+                    Err(error) => {
+                        app.set_status(format!("无法创建帮助窗口：{error}").into());
+                        return None;
+                    }
+                }
+            }
+        }
+        slot.borrow().as_ref().map(|window| window.clone_strong())
+    });
+    let Some(window) = window else { return };
+    sync_language(app);
+    if window.show().is_ok() {
+        use slint::winit_030::WinitWindowAccessor;
+        window.window().with_winit_window(|native| native.focus_window());
+    }
+}
+
+/// 主窗口语言变化后同步已打开的帮助窗口；窗口未创建时无事可做。
+pub fn sync_language(app: &crate::MainWindow) {
+    let zh = !app.get_runtime_language().starts_with("en");
+    if ZH.with(Cell::get) == zh {
+        return;
+    }
+    let window =
+        WINDOW.with(|slot| slot.borrow().as_ref().map(|window| window.clone_strong()));
+    if let Some(window) = window {
+        window.global::<HelpDocs>().invoke_language_changed(zh);
+    }
 }
 
 #[cfg(test)]

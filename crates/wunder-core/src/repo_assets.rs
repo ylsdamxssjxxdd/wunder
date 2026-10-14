@@ -166,8 +166,12 @@ mod tests {
     fn write_checkout(root: &Path) {
         fs::create_dir_all(root.join("crates")).expect("create crates dir");
         write_engine_template(root);
-        fs::write(root.join("Cargo.toml"), "[workspace]
-").expect("write manifest");
+        fs::write(
+            root.join("Cargo.toml"),
+            "[workspace]
+",
+        )
+        .expect("write manifest");
     }
 
     #[test]

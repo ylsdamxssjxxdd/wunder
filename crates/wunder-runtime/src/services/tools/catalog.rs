@@ -2403,7 +2403,9 @@ mod tests {
             .as_array()
             .expect("required array");
         assert!(required.iter().any(|item| item == "url"));
-        assert!(specs.iter().any(|spec| spec.name == "browser_take_screenshot"));
+        assert!(specs
+            .iter()
+            .any(|spec| spec.name == "browser_take_screenshot"));
         assert!(specs.iter().any(|spec| spec.name == "browser_status"));
     }
 

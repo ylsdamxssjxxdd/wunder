@@ -570,7 +570,7 @@ async fn register_device(
             last_seen_at: now,
             created_at: now,
             revoked: false,
-        interlink: None,
+            interlink: None,
         },
     };
     let storage = state.storage.clone();
@@ -1549,9 +1549,10 @@ async fn admin_revoke_device(
     crate::services::interlink::remote::hub().close_node(&device_id);
     let storage = state.storage.clone();
     let lookup = device_id.clone();
-    let _ =
-        blocking::run_db("api.cloud.purge_shadow", move || storage.delete_interlink_shadow(&lookup))
-            .await;
+    let _ = blocking::run_db("api.cloud.purge_shadow", move || {
+        storage.delete_interlink_shadow(&lookup)
+    })
+    .await;
     let _ = crate::services::interlink::commands::fail_device_commands(
         state.storage.clone(),
         &device_id,

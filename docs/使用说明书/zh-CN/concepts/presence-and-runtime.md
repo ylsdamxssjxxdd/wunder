@@ -56,6 +56,6 @@ summary: 会话不只是静态历史，还带着运行时状态：正在执行�
 
 ## 延伸阅读
 
-- [会话状态说明](/docs/zh-CN/reference/stream-events/) —— 状态详细含义
+- [会话状态说明](/docs/zh-CN/capabilities/stream-events/) —— 状态详细含义
 - [智能体循环](/docs/zh-CN/concepts/core-agent-loop/) —— 状态变化机制
 - [流式执行](/docs/zh-CN/concepts/streaming/) —— 状态推送方式

@@ -96,6 +96,48 @@ export class ChatMockService {
     trigger_kind: turn.trigger_kind ?? 'user', user_turn_index: turn.user_round, status: turn.status, payload: structuredClone(turn) })),
     items: [...this.items.values()].map(item => ({ item_id: item.item_id, turn_id: item.turn_id,
       kind: item.kind, status: item.status, revision: item.revision, visibility: item.visibility, payload: structuredClone(item) })), blocks: structuredClone([...this.blocks.values()]) }; }
+  trajectoryRows(rootTurnId?: string) {
+    const all = [...this.items.values()];
+    if (rootTurnId) {
+      const turnIds = new Set(this.turns
+        .filter(turn => String(turn.turn_id) === rootTurnId || String(turn.root_turn_id ?? turn.turn_id) === rootTurnId)
+        .map(turn => String(turn.turn_id)));
+      return all.filter(item => turnIds.has(String(item.turn_id))).map((item, index) => ({
+        item_id: item.item_id, root_turn_id: String(item.root_turn_id ?? item.turn_id),
+        turn_id: item.turn_id, user_round: item.user_round, item_index: index,
+        created_seq: index + 1, revision: item.revision, kind: item.kind, status: item.status,
+        summary: item.content ?? item.tool ?? item.kind, tool_name: item.tool, model_round: 1,
+        started_at: 1 + index, completed_at: 2 + index, overview_only: false,
+        detail: { body_id: `${item.item_id}|detail`, revision: item.revision, bytes: 128 },
+      }));
+    }
+    const groups = new Map<string, Row[]>();
+    for (const item of all) {
+      const root = String(item.root_turn_id ?? item.turn_id);
+      groups.set(root, [...(groups.get(root) ?? []), item]);
+    }
+    const output: Row[] = [];
+    for (const [root, items] of groups) {
+      const representatives = [
+        items.find(item => item.kind === 'user_message'),
+        items.find(item => ['tool_call', 'approval', 'plan', 'compaction', 'subagent_run'].includes(String(item.kind))),
+        [...items].reverse().find(item => item.kind === 'assistant_message'),
+      ].filter((item): item is Row => Boolean(item));
+      for (const item of representatives) {
+        const index = all.indexOf(item);
+        output.push({
+          item_id: item.item_id, root_turn_id: root, turn_id: item.turn_id,
+          user_round: item.user_round, item_index: index, created_seq: index + 1,
+          revision: item.revision, kind: item.kind, status: item.status,
+          summary: item.content ?? item.tool ?? item.kind, tool_name: item.tool,
+          model_round: 1, started_at: 1 + index, completed_at: 2 + index,
+          overview_only: true,
+          detail: { body_id: `${item.item_id}|detail`, revision: item.revision, bytes: 128 },
+        });
+      }
+    }
+    return output;
+  }
   export() { return [{ record_type: 'thread_meta', export_schema_version: 5, evidence_mode: 'mock-service', session_id: MOCK_SESSION },
     ...this.turns.flatMap(turn => [{ record_type: 'turn', turn }, ...[...this.items.values()]
       .filter(item => item.turn_id === turn.turn_id).map(item => ({ record_type: 'item', item }))]),
@@ -347,9 +389,10 @@ export class ChatMockService {
       };
       else if (path === `/agents/${MOCK_AGENT}`) data = agent;
       else if (path === '/chat/sessions') data = request.method() === 'POST' ? session : { items: [session], total: 1 };
-      else if(path.endsWith('/view/bootstrap')||path.endsWith('/view/chat')) {
+      else if(path.endsWith('/view/bootstrap')||path.endsWith('/view/chat')||path.endsWith('/view/trajectory')) {
         const before=Number(new URL(request.url()).searchParams.get('before')??Number.MAX_SAFE_INTEGER);const rows=this.viewRows().filter(r=>r.user_round<before);const chat=rows.slice(-12);
-        data={session,page:{session_id:MOCK_SESSION,epoch:1,view_seq:this.changes.length,...this.runtimeHead(),projection_state:'ready',thread_empty:this.turns.length===0,latest_round:this.round,chat,trajectory:new URL(request.url()).searchParams.get('kind')==='trajectory'?[...this.items.values()].slice(-80).map((item,i)=>({item_id:item.item_id,root_turn_id:item.turn_id,turn_id:item.turn_id,user_round:item.user_round,item_index:i,created_seq:i+1,revision:item.revision,kind:item.kind,status:item.status,summary:item.content??item.tool??item.kind,tool_name:item.tool,model_round:1,started_at:1+i,completed_at:2+i,detail:{body_id:`${item.item_id}|detail`,revision:item.revision,bytes:128}})):[],tiles:[],tile_level:0,next_before:chat[0]?.user_round??null,has_more:rows.length>chat.length}};
+        const query = new URL(request.url()).searchParams;
+        data={session,page:{session_id:MOCK_SESSION,epoch:1,view_seq:this.changes.length,...this.runtimeHead(),projection_state:'ready',thread_empty:this.turns.length===0,latest_round:this.round,chat,trajectory:(query.get('kind')==='trajectory'||path.endsWith('/view/trajectory'))?this.trajectoryRows(query.get('root_turn_id')??undefined):[],tiles:[],tile_level:0,next_before:chat[0]?.user_round??null,has_more:rows.length>chat.length}};
       }
       else if(path.includes('/bodies/')) {const id=decodeURIComponent(path.split('/bodies/')[1]).split('|')[0];data={body_id:id,revision:1,chunks:[JSON.stringify(this.items.get(id)??{})],next_cursor:1,has_more:false};}
       else if(/\/thread-log\/turns\/[^/]+$/.test(path)) {

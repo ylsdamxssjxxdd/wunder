@@ -214,6 +214,22 @@ function resolveKind(rawKind, payload) {
   return "context";
 }
 
+function hasExplicitToolError(value) {
+  if (value === true) return true;
+  if (typeof value === "string") return value.trim().length > 0;
+  return false;
+}
+
+function isToolFailure(payload, status = "") {
+  return (
+    hasExplicitToolError(payload.error ?? payload.is_error) ||
+    payload.ok === false ||
+    payload.success === false ||
+    status === "failed" ||
+    status === "error"
+  );
+}
+
 /* ------------------------------------------------------------------ */
 /* 单元格构建                                                          */
 /* ------------------------------------------------------------------ */
@@ -291,7 +307,6 @@ function buildCell(item, payload, kind, index) {
           ? JSON.stringify(args, null, 2)
           : "";
     const resultRaw = summarizeToolResult(payload);
-    const errorValue = payload.error ?? payload.is_error;
     cell.text = name;
     cell.toolName = name || undefined;
     cell.callId = typeof payload.tool_call_id === "string" ? payload.tool_call_id : undefined;
@@ -302,11 +317,7 @@ function buildCell(item, payload, kind, index) {
     const schema = payload.schema ?? payload.tool_schema;
     if (typeof schema === "string" && schema.trim()) cell.schemaDetail = schema;
     else if (isRecord(schema)) cell.schemaDetail = JSON.stringify(schema, null, 2);
-    cell.isError =
-      errorValue === true ||
-      (errorValue !== undefined && errorValue !== null && errorValue !== false) ||
-      status === "failed" ||
-      status === "error";
+    cell.isError = isToolFailure(payload, status);
     cell.timeSeconds =
       startedAt !== null && completedAt !== null
         ? Math.max(0, (completedAt - startedAt) / 1000)
@@ -413,7 +424,7 @@ export function buildTrajectoryLayout(rawTurns, t) {
             cell.outputDetail = resultRaw;
             cell.resultPreviewMarkdown = markdownPreviewText(resultRaw);
           }
-          if (candidatePayload.error === true) cell.isError = true;
+          if (isToolFailure(candidatePayload, candidate.status)) cell.isError = true;
           const candidateStart =
             firstTime(candidatePayload, STARTED_KEYS) ?? firstTime(candidate, ["created_time"]);
           const candidateEnd =

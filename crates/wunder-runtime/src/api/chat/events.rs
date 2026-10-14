@@ -747,7 +747,8 @@ fn thread_turn_to_workflow_round(
             .get("next_after")
             .and_then(Value::as_i64)
             .unwrap_or(after);
-        if !has_more || next_after <= after || loaded >= WORKFLOW_TURN_ITEMS_MAX || *remaining == 0 {
+        if !has_more || next_after <= after || loaded >= WORKFLOW_TURN_ITEMS_MAX || *remaining == 0
+        {
             break;
         }
         after = next_after;

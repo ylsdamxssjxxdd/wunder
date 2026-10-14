@@ -7,7 +7,8 @@ use crate::tui::app::TuiApp;
 use crate::tui::theme;
 
 pub(crate) fn draw(frame: &mut Frame, area: Rect, viewport: Rect, app: &mut TuiApp, is_zh: bool) {
-    let rendered = app.transcript_rendered_view(viewport.width, viewport.height, is_zh);
+    let mut rendered = app.transcript_rendered_view(viewport.width, viewport.height, is_zh);
+    app.paint_transcript_selection(rendered.lines.as_mut_slice());
     let transcript = Paragraph::new(Text::from(rendered.lines)).wrap(Wrap { trim: false });
     frame.render_widget(transcript.scroll((rendered.local_scroll, 0)), area);
 }

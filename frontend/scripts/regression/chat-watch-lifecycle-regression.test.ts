@@ -250,6 +250,8 @@ test('watcher keeps projection events flowing while send or resume controllers e
   assert.equal(watcherSource.includes('updateRuntimeLastEventId(runtime, normalizedEventId)'), false);
   assert.equal(watcherSource.includes('const shouldUseProjectionOnlyWatch ='), false);
   assert.equal(watcherSource.includes('shouldUseProjectionOnlyWatchStreamEvent('), false);
+  assert.ok(watcherSource.includes("normalizedEventType === 'workspace_update'"));
+  assert.ok(watcherSource.includes('applyCanonicalStreamSideEffects(store, key, normalizedEventType, payload)'));
   assert.equal(watcherSource.includes('shouldUseLegacyWatchStreamFallback'), false);
   assert.equal(watcherSource.includes('resolveWatchRoundNumber'), false);
   assert.equal(watcherSource.includes('ensureRoundState'), false);

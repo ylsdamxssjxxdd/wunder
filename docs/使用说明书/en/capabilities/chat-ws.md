@@ -77,4 +77,4 @@ Do not fall back to SSE. Reconnect to `/wunder/chat/ws`, then send as the situat
 
 ## Further Reading
 
-- [Stream Events Reference](/docs/en/reference/stream-events/)
+- [Stream Events Reference](/docs/en/capabilities/stream-events/)

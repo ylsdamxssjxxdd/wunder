@@ -9,6 +9,9 @@ pub(crate) const MAX_TRANSCRIPT_CHARS: usize = 320_000;
 
 #[derive(Debug, Clone)]
 pub(crate) struct TranscriptCell<Kind, Special, Cache> {
+    /// Identity for the life of this cell. Disclosure state keys on it instead of a
+    /// position in `logs`, so folding the transcript cannot re-point a card.
+    pub cell_id: u64,
     pub kind: Kind,
     pub text: String,
     pub special: Option<Special>,

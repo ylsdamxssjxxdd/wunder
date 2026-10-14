@@ -249,7 +249,7 @@ fn rasterize_svg(svg: &[u8]) -> Vec<u8> {
     encoded
 }
 
-/// Embed the app icon (`images/beeroom.ico`, multi-size BMP-style entries
+/// Embed the app icon (`images/pupa.ico`, multi-size BMP-style entries
 /// that old binutils windres handles) as the exe's icon resource plus a
 /// VERSIONINFO block built from the crate version so Explorer's file
 /// properties show the release number. Resource-only COFF objects from
@@ -268,7 +268,7 @@ fn embed_windows_exe_icon() {
     let ico = std::path::Path::new(&manifest_dir)
         .join("..")
         .join("images")
-        .join("beeroom.ico");
+        .join("pupa.ico");
     println!("cargo:rerun-if-changed={}", ico.display());
 
     // windres -F takes a BFD target name; the "pei-*" names are PE *image*

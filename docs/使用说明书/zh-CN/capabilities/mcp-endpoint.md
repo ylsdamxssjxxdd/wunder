@@ -42,4 +42,4 @@ MCP 有两个方向，先分清：
 ## 延伸阅读
 
 - [工具体系](/docs/zh-CN/concepts/tools/)
-- [配置说明](/docs/zh-CN/reference/config/)
+- [配置说明](/docs/zh-CN/capabilities/config/)

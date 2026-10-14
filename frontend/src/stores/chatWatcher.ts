@@ -22,14 +22,13 @@ import { useCommandSessionStore } from './commandSessions';
 import { buildWorkflowItem, safeJsonParse } from './chatDemoPanels';
 import { applyGoalStreamEvent } from './chatPersist';
 import { abortWatchStream, clearRuntimeResumeStreamState, clearRuntimeSendStreamState, clearSessionWatcher, clearSlowClientResume, clearWatchdog, recoverRuntimeInteractiveControllers, resolveWatchdogProfile, setSessionLoading } from './chatRuntimeControls';
-import { applySessionRuntimeEvent, cacheSessionMessages, clearRuntimeProjectionInvalidation, clearSessionEventsSnapshot, ensureRuntime, getRuntime, hasKnownSessionInStore, isSessionUnavailableStatus, purgeUnavailableSession, refreshRuntimeStreamLifecycle, resolveChatHttpStatus, resolveSessionKey, resolveSessionMessageArray, sessionDetailPrefetchInFlight, sessionDetailSnapshotCache, sessionDetailWarmState, sessionEventsSnapshotCache, sessionEventsSnapshotInFlight, sessionHistoryState, sessionHydratedMessageVersion, sessionListCache, sessionListCacheInFlight, sessionMessages, sessionProtectedRealtimeMessages, sessionRuntime, sessionRuntimeShadowState, sessionSubagentsCache, sessionSubagentsInFlight } from './chatRuntimeState';
+import { applyCanonicalStreamSideEffects, applySessionRuntimeEvent, cacheSessionMessages, clearRuntimeProjectionInvalidation, clearSessionEventsSnapshot, ensureRuntime, getRuntime, hasKnownSessionInStore, isSessionUnavailableStatus, purgeUnavailableSession, refreshRuntimeStreamLifecycle, resolveChatHttpStatus, resolveSessionKey, resolveSessionMessageArray, sessionDetailPrefetchInFlight, sessionDetailSnapshotCache, sessionDetailWarmState, sessionEventsSnapshotCache, sessionEventsSnapshotInFlight, sessionHistoryState, sessionHydratedMessageVersion, sessionListCache, sessionListCacheInFlight, sessionMessages, sessionProtectedRealtimeMessages, sessionRuntime, sessionRuntimeShadowState, sessionSubagentsCache, sessionSubagentsInFlight } from './chatRuntimeState';
 
 import { chatWatcherSharedState } from './chatSharedState';
 import { clearAllChatSnapshots, clearScheduledChatSnapshot } from './chatSnapshot';
 import { buildMessage } from './chatStats';
 import { normalizeFlag } from './chatStreamIds';
 import { buildDetail, handleApprovalEvent, resolveNormalizedStreamEventType, sessionWorkflowState } from './chatWorkflowHydration';
-
 const connectionFailures=new Map<string,number>();
 
 export const startSessionWatcher = (store, sessionId) => {
@@ -140,6 +139,14 @@ export const startSessionWatcher = (store, sessionId) => {
       clearSessionEventsSnapshot(key, { keepInFlight: true });
     }
     if (applyGoalStreamEvent(store, key, normalizedEventType, data ?? payload)) return;
+    // Workspace changes share the websocket cursor with the thread log, but
+    // are a shell side effect rather than a chat timeline item.  The v2
+    // reducer intentionally consumes unknown events once a view exists, so
+    // dispatch this side effect before handing the frame to that reducer.
+    if (normalizedEventType === 'workspace_update') {
+      applyCanonicalStreamSideEffects(store, key, normalizedEventType, payload);
+      return;
+    }
     if (applyChatThreadServerEvent(store, key, normalizedEventType || eventType, payload, {
       onChangesApplied: (changes) => applyChatThreadEffects(store, key, changes),
       onViewApplied: prior => applyThreadViewEffects(store,key,prior),

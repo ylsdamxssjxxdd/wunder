@@ -13,21 +13,21 @@ use serde_json::{Map, Value};
 use uuid::Uuid;
 
 use wunder_core::interlink::{
-    APPROVAL_EXPIRED, APPROVAL_NONE, APPROVAL_PENDING, APPROVAL_REJECTED, AUDIT_APPROVAL_DECIDE,
-    AUDIT_COMMAND_ACK, AUDIT_COMMAND_FINISH, AUDIT_COMMAND_ISSUE, CMD_COMMAND_CANCEL,
-    COMMAND_STATUS_ACKED, COMMAND_STATUS_CANCELED, COMMAND_STATUS_FAILED, COMMAND_STATUS_ISSUED,
-    COMMAND_STATUS_QUEUED, COMMAND_STATUS_RUNNING, COMMAND_STATUS_SUCCEEDED,
-    COMMAND_STATUS_TIMEOUT, DIRECTION_C2L, ERR_APPROVAL_EXPIRED, ERR_APPROVAL_REJECTED,
-    ERR_CAP_DENIED, ERR_NODE_BUSY, ERR_NODE_OFFLINE, ERR_QUEUE_FULL, ERR_TIMEOUT,
-    FRAME_COMMAND, InterlinkFrame, REMOTE_FRAME_COMMAND, command_level, command_policy,
-    is_queueable_when_offline, is_terminal_command_status, requires_hard_approval,
+    command_level, command_policy, is_queueable_when_offline, is_terminal_command_status,
+    requires_hard_approval, InterlinkFrame, APPROVAL_EXPIRED, APPROVAL_NONE, APPROVAL_PENDING,
+    APPROVAL_REJECTED, AUDIT_APPROVAL_DECIDE, AUDIT_COMMAND_ACK, AUDIT_COMMAND_FINISH,
+    AUDIT_COMMAND_ISSUE, CMD_COMMAND_CANCEL, COMMAND_STATUS_ACKED, COMMAND_STATUS_CANCELED,
+    COMMAND_STATUS_FAILED, COMMAND_STATUS_ISSUED, COMMAND_STATUS_QUEUED, COMMAND_STATUS_RUNNING,
+    COMMAND_STATUS_SUCCEEDED, COMMAND_STATUS_TIMEOUT, DIRECTION_C2L, ERR_APPROVAL_EXPIRED,
+    ERR_APPROVAL_REJECTED, ERR_CAP_DENIED, ERR_NODE_BUSY, ERR_NODE_OFFLINE, ERR_QUEUE_FULL,
+    ERR_TIMEOUT, FRAME_COMMAND, REMOTE_FRAME_COMMAND,
 };
 
+use super::{audit, blob, digest, registry, remote, DispatchError, OutboundFrame};
 use crate::core::blocking;
 use crate::storage::{
     InterlinkApprovalRecord, InterlinkCommandRecord, ListInterlinkCommandsQuery, StorageBackend,
 };
-use super::{DispatchError, OutboundFrame, audit, blob, digest, registry, remote};
 
 /// Longest time a frame body stays tracked for a server-driven retry.
 const MAX_TRACKED_FRAMES: usize = 1024;
@@ -162,7 +162,9 @@ impl CommandHub {
         if state.frames.contains_key(command_id) {
             return;
         }
-        state.frames.insert(command_id.to_string(), frame.to_string());
+        state
+            .frames
+            .insert(command_id.to_string(), frame.to_string());
         state.frame_order.push_back(command_id.to_string());
         while state.frame_order.len() > MAX_TRACKED_FRAMES {
             if let Some(old) = state.frame_order.pop_front() {
@@ -251,7 +253,12 @@ impl CommandHub {
             .iter()
             .position(|item| item.target == target)
             .unwrap_or(0);
-        if queue.iter().nth(index).map(|item| item.target != target).unwrap_or(true) {
+        if queue
+            .iter()
+            .nth(index)
+            .map(|item| item.target != target)
+            .unwrap_or(true)
+        {
             return None;
         }
         queue.remove(index)
@@ -347,7 +354,10 @@ pub async fn issue(
     // default list > kind default.
     let requires_approval = node.policy.forces_approval(kind)
         || requires_hard_approval(kind)
-        || limits.require_approval_defaults.iter().any(|item| item == kind)
+        || limits
+            .require_approval_defaults
+            .iter()
+            .any(|item| item == kind)
         || default_approval;
 
     let args_digest_base = digest::digest_args(kind, spec.args);
@@ -414,29 +424,28 @@ pub async fn issue(
     // Mint the ticket before the ledger row so the row can point at it.
     // Cloud targets decide through the user API (`commands/{id}/approval`),
     // device targets through the on-node prompt; both need a ticket.
-    let approval = if requires_approval
-        && (spec.direction == DIRECTION_C2L || spec.to_node == "cloud")
-    {
-        let device_id = node
-            .device_id
-            .clone()
-            .or_else(|| device_of(spec.to_node))
-            .unwrap_or_else(|| "cloud".to_string());
-        Some(super::approvals::build(
-            &super::approvals::ApprovalSpec {
-                command_id: &command_id,
-                device_id: &device_id,
-                user_id: spec.actor_user_id,
-                kind,
-                from_label: spec.from_node,
-                args: spec.args,
-                timeout_s: spec.timeout_s,
-            },
-            now,
-        ))
-    } else {
-        None
-    };
+    let approval =
+        if requires_approval && (spec.direction == DIRECTION_C2L || spec.to_node == "cloud") {
+            let device_id = node
+                .device_id
+                .clone()
+                .or_else(|| device_of(spec.to_node))
+                .unwrap_or_else(|| "cloud".to_string());
+            Some(super::approvals::build(
+                &super::approvals::ApprovalSpec {
+                    command_id: &command_id,
+                    device_id: &device_id,
+                    user_id: spec.actor_user_id,
+                    kind,
+                    from_label: spec.from_node,
+                    args: spec.args,
+                    timeout_s: spec.timeout_s,
+                },
+                now,
+            ))
+        } else {
+            None
+        };
 
     // The digest doubles as the ledger's copy of the two structural fields the
     // table has no column for: the ticket id and the negotiated timeout.
@@ -444,7 +453,10 @@ pub async fn issue(
     {
         if let Ok(mut map) = serde_json::from_str::<Map<String, Value>>(&args_digest) {
             if let Some(ticket) = approval.as_ref() {
-                map.insert("approval".to_string(), Value::String(ticket.approval_id.clone()));
+                map.insert(
+                    "approval".to_string(),
+                    Value::String(ticket.approval_id.clone()),
+                );
             }
             map.insert(
                 "timeout_s".to_string(),
@@ -518,15 +530,44 @@ pub async fn issue(
                 Dispatch::Sent
             }
             Err(DispatchError::QueueFull) => {
-                park(storage.clone(), &record, spec.actor_user_id, &target, &frame_text, limits, now, ERR_NODE_BUSY).await
+                park(
+                    storage.clone(),
+                    &record,
+                    spec.actor_user_id,
+                    &target,
+                    &frame_text,
+                    limits,
+                    now,
+                    ERR_NODE_BUSY,
+                )
+                .await
             }
             Err(DispatchError::Superseded | DispatchError::NoChannel) => {
-                park(storage.clone(), &record, spec.actor_user_id, &target, &frame_text, limits, now, ERR_NODE_OFFLINE).await
+                park(
+                    storage.clone(),
+                    &record,
+                    spec.actor_user_id,
+                    &target,
+                    &frame_text,
+                    limits,
+                    now,
+                    ERR_NODE_OFFLINE,
+                )
+                .await
             }
         },
         None => {
-            park(storage.clone(), &record, spec.actor_user_id, &target, &frame_text, limits, now, ERR_NODE_OFFLINE)
-                .await
+            park(
+                storage.clone(),
+                &record,
+                spec.actor_user_id,
+                &target,
+                &frame_text,
+                limits,
+                now,
+                ERR_NODE_OFFLINE,
+            )
+            .await
         }
     };
 
@@ -561,10 +602,16 @@ async fn park(
     now: f64,
     reason: &'static str,
 ) -> Dispatch {
-    let node_live = device_of(target).map(|id| registry().by_device(&id).is_some()).unwrap_or(false);
+    let node_live = device_of(target)
+        .map(|id| registry().by_device(&id).is_some())
+        .unwrap_or(false);
     let queueable = is_queueable_when_offline(&record.kind);
     if (!node_live && !queueable) || limits.offline_queue_per_user == 0 {
-        let code = if node_live { ERR_NODE_BUSY } else { ERR_NODE_OFFLINE };
+        let code = if node_live {
+            ERR_NODE_BUSY
+        } else {
+            ERR_NODE_OFFLINE
+        };
         let _ = mark_status(
             storage,
             &record.command_id,
@@ -644,7 +691,10 @@ pub fn command_frame_text(
     let payload = json_object(vec![
         ("kind", Value::String(record.kind.clone())),
         ("risk", Value::String(risk.to_string())),
-        ("level", Value::String(command_level(&record.kind).to_string())),
+        (
+            "level",
+            Value::String(command_level(&record.kind).to_string()),
+        ),
         (
             "requires_approval",
             Value::Bool(record.approval_state != APPROVAL_NONE),
@@ -661,11 +711,11 @@ pub fn command_frame_text(
                 .map(|ticket| Value::from(ticket.expires_at))
                 .unwrap_or(Value::Null),
         ),
+        ("timeout_s", Value::from(record_timeout_s(record, limits))),
         (
-            "timeout_s",
-            Value::from(record_timeout_s(record, limits)),
+            "capability",
+            Value::String(command_policy(&record.kind).1.to_string()),
         ),
-        ("capability", Value::String(command_policy(&record.kind).1.to_string())),
         ("from", Value::String(record.from_node.clone())),
         ("actor", Value::String(record.actor_user_id.clone())),
         ("args", args.clone()),
@@ -761,13 +811,13 @@ pub async fn on_ack(
             .and_then(Value::as_str)
             .filter(|code| *code != ERR_NODE_BUSY)
             .map(str::to_string);
-        let approval_refused =
-            matches!(approval_state.as_str(), APPROVAL_REJECTED | APPROVAL_EXPIRED);
+        let approval_refused = matches!(
+            approval_state.as_str(),
+            APPROVAL_REJECTED | APPROVAL_EXPIRED
+        );
         if approval_refused || refusal.is_some() {
             let code = match (approval_refused, refusal) {
-                (true, _) if approval_state == APPROVAL_EXPIRED => {
-                    ERR_APPROVAL_EXPIRED.to_string()
-                }
+                (true, _) if approval_state == APPROVAL_EXPIRED => ERR_APPROVAL_EXPIRED.to_string(),
                 (true, _) => ERR_APPROVAL_REJECTED.to_string(),
                 (false, Some(code)) => code,
                 (false, None) => ERR_APPROVAL_REJECTED.to_string(),
@@ -802,7 +852,11 @@ pub async fn on_ack(
                 target,
                 frame,
             };
-            if hub().enqueue(&record.actor_user_id, item, limits.offline_queue_per_user.max(1)) {
+            if hub().enqueue(
+                &record.actor_user_id,
+                item,
+                limits.offline_queue_per_user.max(1),
+            ) {
                 mark_status(
                     storage.clone(),
                     command_id,
@@ -832,7 +886,16 @@ pub async fn on_ack(
         set_approval(storage.clone(), command_id, &approval_state).await?;
         decide_ticket(storage.clone(), &record, &approval_state, "device", now).await?;
     }
-    update_status(storage.clone(), command_id, COMMAND_STATUS_ACKED, Some(now), None, None, None).await?;
+    update_status(
+        storage.clone(),
+        command_id,
+        COMMAND_STATUS_ACKED,
+        Some(now),
+        None,
+        None,
+        None,
+    )
+    .await?;
     write_audit(
         storage.clone(),
         AUDIT_COMMAND_ACK,
@@ -842,7 +905,10 @@ pub async fn on_ack(
     )
     .await;
     if let Some(device_id) = &device_id {
-        remote::hub().publish_control(device_id, &lifecycle_json(&record.kind, COMMAND_STATUS_ACKED, command_id));
+        remote::hub().publish_control(
+            device_id,
+            &lifecycle_json(&record.kind, COMMAND_STATUS_ACKED, command_id),
+        );
     }
     Ok(AckOutcome::Acked)
 }
@@ -861,12 +927,24 @@ pub async fn on_event(
         return Ok(());
     }
     if record.status != COMMAND_STATUS_RUNNING {
-        update_status(storage, command_id, COMMAND_STATUS_RUNNING, Some(now), None, None, None).await?;
+        update_status(
+            storage,
+            command_id,
+            COMMAND_STATUS_RUNNING,
+            Some(now),
+            None,
+            None,
+            None,
+        )
+        .await?;
     }
-    hub().track_result(command_id, json_object(vec![
-        ("progress", payload.clone()),
-        ("at", Value::from(now)),
-    ]));
+    hub().track_result(
+        command_id,
+        json_object(vec![
+            ("progress", payload.clone()),
+            ("at", Value::from(now)),
+        ]),
+    );
     Ok(())
 }
 
@@ -886,7 +964,10 @@ pub async fn on_result(
         .and_then(Value::as_str)
         .unwrap_or(COMMAND_STATUS_SUCCEEDED);
     let status = match requested {
-        COMMAND_STATUS_SUCCEEDED | COMMAND_STATUS_FAILED | COMMAND_STATUS_CANCELED | COMMAND_STATUS_TIMEOUT => requested,
+        COMMAND_STATUS_SUCCEEDED
+        | COMMAND_STATUS_FAILED
+        | COMMAND_STATUS_CANCELED
+        | COMMAND_STATUS_TIMEOUT => requested,
         _ => COMMAND_STATUS_FAILED,
     };
     let error_code = payload
@@ -916,7 +997,10 @@ pub async fn on_result(
 
     let mut summary = Map::new();
     summary.insert("status".to_string(), Value::String(status.to_string()));
-    summary.insert("result".to_string(), payload.get("result").cloned().unwrap_or(Value::Null));
+    summary.insert(
+        "result".to_string(),
+        payload.get("result").cloned().unwrap_or(Value::Null),
+    );
     for key in ["usage", "inline", "stream_id", "size"] {
         if let Some(value) = payload.get(key) {
             summary.insert(key.to_string(), value.clone());
@@ -925,7 +1009,15 @@ pub async fn on_result(
     hub().track_result(command_id, Value::Object(summary));
 
     let device_id = target_device(&record);
-    finalize(storage.clone(), command_id, status, Some(now), error_code, error_summary.as_deref()).await?;
+    finalize(
+        storage.clone(),
+        command_id,
+        status,
+        Some(now),
+        error_code,
+        error_summary.as_deref(),
+    )
+    .await?;
     if let Some(device_id) = &device_id {
         hub().release(device_id, command_id);
         remote::hub().publish_control(device_id, &lifecycle_json(&record.kind, status, command_id));
@@ -963,7 +1055,15 @@ pub async fn cancel(
             hub().release(&device_id, command_id);
         }
     }
-    finalize(storage.clone(), command_id, COMMAND_STATUS_CANCELED, Some(now), Some("CANCELED"), Some("user_cancel")).await?;
+    finalize(
+        storage.clone(),
+        command_id,
+        COMMAND_STATUS_CANCELED,
+        Some(now),
+        Some("CANCELED"),
+        Some("user_cancel"),
+    )
+    .await?;
     Ok(CancelOutcome::Canceled)
 }
 
@@ -992,7 +1092,11 @@ pub async fn drain(
         let Some(item) = hub().dequeue_for(user_id, &target) else {
             break;
         };
-        match registry().dispatch(device_id, &live.channel_id, OutboundFrame::Text(item.frame.clone())) {
+        match registry().dispatch(
+            device_id,
+            &live.channel_id,
+            OutboundFrame::Text(item.frame.clone()),
+        ) {
             Ok(()) => {
                 hub().reserve(device_id, &item.command_id);
                 hub().track_frame(&item.command_id, &item.frame);
@@ -1044,7 +1148,11 @@ pub async fn drain_backlogs(storage: Arc<dyn StorageBackend>, limits: &Limits) -
 }
 
 /// Timeout + approval-expiry sweep (docs §4.3, §7.3 4).
-pub async fn sweep(storage: Arc<dyn StorageBackend>, limits: &Limits, now: f64) -> anyhow::Result<usize> {
+pub async fn sweep(
+    storage: Arc<dyn StorageBackend>,
+    limits: &Limits,
+    now: f64,
+) -> anyhow::Result<usize> {
     let mut swept = 0usize;
     for status in [
         COMMAND_STATUS_ISSUED,
@@ -1085,7 +1193,11 @@ pub async fn sweep(storage: Arc<dyn StorageBackend>, limits: &Limits, now: f64) 
             }
             hub().drop_frame(&record.command_id);
             let approval_expired = record.approval_state == APPROVAL_PENDING;
-            let code = if approval_expired { ERR_APPROVAL_EXPIRED } else { ERR_TIMEOUT };
+            let code = if approval_expired {
+                ERR_APPROVAL_EXPIRED
+            } else {
+                ERR_TIMEOUT
+            };
             update_status(
                 storage.clone(),
                 &record.command_id,
@@ -1096,7 +1208,14 @@ pub async fn sweep(storage: Arc<dyn StorageBackend>, limits: &Limits, now: f64) 
                 Some(code),
             )
             .await?;
-            decide_ticket(storage.clone(), &record, APPROVAL_EXPIRED, "system:expiry", now).await?;
+            decide_ticket(
+                storage.clone(),
+                &record,
+                APPROVAL_EXPIRED,
+                "system:expiry",
+                now,
+            )
+            .await?;
             write_audit(
                 storage.clone(),
                 AUDIT_COMMAND_FINISH,
@@ -1211,7 +1330,12 @@ pub async fn finalize(
         approval_id_of(&record),
         vec![
             ("status", Value::String(status.to_string())),
-            ("code", error_code.map(|code| Value::String(code.to_string())).unwrap_or(Value::Null)),
+            (
+                "code",
+                error_code
+                    .map(|code| Value::String(code.to_string()))
+                    .unwrap_or(Value::Null),
+            ),
         ],
     )
     .await;
@@ -1226,7 +1350,10 @@ pub async fn finalize(
     )
     .await?;
     if let Some(device_id) = target_device(&record) {
-        remote::hub().publish_control(&device_id, &lifecycle_json(&record.kind, status, command_id));
+        remote::hub().publish_control(
+            &device_id,
+            &lifecycle_json(&record.kind, status, command_id),
+        );
     }
     Ok(())
 }
@@ -1310,10 +1437,23 @@ async fn mark_status(
     error_code: Option<&str>,
     error_summary: Option<&str>,
 ) -> anyhow::Result<()> {
-    update_status(storage, command_id, status, acked_at, finished_at, error_code, error_summary).await
+    update_status(
+        storage,
+        command_id,
+        status,
+        acked_at,
+        finished_at,
+        error_code,
+        error_summary,
+    )
+    .await
 }
 
-async fn set_approval(storage: Arc<dyn StorageBackend>, command_id: &str, state: &str) -> anyhow::Result<()> {
+async fn set_approval(
+    storage: Arc<dyn StorageBackend>,
+    command_id: &str,
+    state: &str,
+) -> anyhow::Result<()> {
     let lookup = command_id.to_string();
     let state = state.to_string();
     blocking::run_db("interlink.command.approval", move || {
@@ -1354,8 +1494,10 @@ async fn insert_ledger(
     let lookup = record.command_id.clone();
     let existing = {
         let storage = storage.clone();
-        blocking::run_db("interlink.command.replay", move || storage.get_interlink_command(&lookup))
-            .await?
+        blocking::run_db("interlink.command.replay", move || {
+            storage.get_interlink_command(&lookup)
+        })
+        .await?
     };
     match existing {
         Some(record) => Ok(InsertOutcome::Replay(record)),
@@ -1363,9 +1505,15 @@ async fn insert_ledger(
     }
 }
 
-async fn load(storage: Arc<dyn StorageBackend>, command_id: &str) -> anyhow::Result<Option<InterlinkCommandRecord>> {
+async fn load(
+    storage: Arc<dyn StorageBackend>,
+    command_id: &str,
+) -> anyhow::Result<Option<InterlinkCommandRecord>> {
     let lookup = command_id.to_string();
-    blocking::run_db("interlink.command.get", move || storage.get_interlink_command(&lookup)).await
+    blocking::run_db("interlink.command.get", move || {
+        storage.get_interlink_command(&lookup)
+    })
+    .await
 }
 
 async fn write_audit(
@@ -1384,7 +1532,10 @@ async fn write_audit(
         approval_id.as_deref(),
         detail,
     );
-    let _ = blocking::run_db("interlink.audit.write", move || storage.insert_interlink_audit(&row)).await;
+    let _ = blocking::run_db("interlink.audit.write", move || {
+        storage.insert_interlink_audit(&row)
+    })
+    .await;
 }
 
 /// `device:<id>` -> `Some(<id>)`; the cloud node has no tunnel target.
@@ -1401,8 +1552,7 @@ pub fn device_of(node: &str) -> Option<String> {
 /// The approval id travels inside the args digest JSON (docs §3.1 keeps no
 /// dedicated column; the ticket links back through its `command_id`).
 pub fn approval_id_of(record: &InterlinkCommandRecord) -> Option<String> {
-    digest_field(record, "approval")
-        .and_then(|value| value.as_str().map(str::to_string))
+    digest_field(record, "approval").and_then(|value| value.as_str().map(str::to_string))
 }
 
 fn lifecycle_json(kind: &str, status: &str, command_id: &str) -> String {
@@ -1481,7 +1631,10 @@ mod tests {
     fn frames_carry_approval_and_timeout_without_the_body() {
         let mut record = record(CMD_THREAD_MESSAGE, "device:dev-1");
         record.approval_state = APPROVAL_PENDING.to_string();
-        let limits = Limits { command_timeout_s: 45.0, ..Limits::default() };
+        let limits = Limits {
+            command_timeout_s: 45.0,
+            ..Limits::default()
+        };
         let ticket = InterlinkApprovalRecord {
             approval_id: "apr_1".to_string(),
             command_id: record.command_id.clone(),
@@ -1494,7 +1647,13 @@ mod tests {
             decided_at: None,
             expires_at: 145.0,
         };
-        let text = command_frame_text(&record, Some(&ticket), &json!({"message": "secret text"}), &limits, RISK_MEDIUM);
+        let text = command_frame_text(
+            &record,
+            Some(&ticket),
+            &json!({"message": "secret text"}),
+            &limits,
+            RISK_MEDIUM,
+        );
         let value: Value = serde_json::from_str(&text).expect("frame json");
         assert_eq!(value["type"], FRAME_COMMAND);
         assert_eq!(value["corr"], "cmd_test");
@@ -1505,7 +1664,11 @@ mod tests {
         assert_eq!(value["payload"]["args"]["message"], "secret text");
 
         // The durable row never holds the body.
-        assert!(!record.args_digest.as_deref().unwrap().contains("secret text"));
+        assert!(!record
+            .args_digest
+            .as_deref()
+            .unwrap()
+            .contains("secret text"));
     }
 
     #[test]
@@ -1521,9 +1684,7 @@ mod tests {
     #[test]
     fn approval_id_and_timeout_round_trip_through_the_digest() {
         let mut stamped = record(CMD_WORKSPACE_READ, "device:dev-1");
-        stamped.args_digest = Some(
-            json!({"approval": "apr_7", "timeout_s": 33.0}).to_string(),
-        );
+        stamped.args_digest = Some(json!({"approval": "apr_7", "timeout_s": 33.0}).to_string());
         assert_eq!(approval_id_of(&stamped).as_deref(), Some("apr_7"));
         assert_eq!(record_timeout_s(&stamped, &Limits::default()), 33.0);
         // Absent fields fall back to the configured default.
@@ -1592,7 +1753,10 @@ mod tests {
             target: target.to_string(),
             frame: format!("frame-{id}"),
         };
-        assert!(!hub.enqueue("u_1", item("cmd_1", "device:d1"), 0), "bound 0 parks nothing");
+        assert!(
+            !hub.enqueue("u_1", item("cmd_1", "device:d1"), 0),
+            "bound 0 parks nothing"
+        );
         assert!(hub.enqueue("u_1", item("cmd_1", "device:d1"), 2));
         assert!(hub.enqueue("u_1", item("cmd_2", "device:d2"), 2));
         assert!(!hub.enqueue("u_1", item("cmd_3", "device:d1"), 2));
@@ -1604,21 +1768,47 @@ mod tests {
         let taken = hub.dequeue_for("u_1", "device:d2").expect("item");
         assert_eq!(taken.command_id, "cmd_2");
         assert!(hub.dequeue_for("u_1", "device:unknown").is_none());
-        assert_eq!(hub.dequeue_for("u_1", "device:d1").expect("item").command_id, "cmd_1");
+        assert_eq!(
+            hub.dequeue_for("u_1", "device:d1")
+                .expect("item")
+                .command_id,
+            "cmd_1"
+        );
         assert_eq!(hub.queued_depth(Some("u_1")), 0);
 
         hub.enqueue("u_1", item("cmd_a", "device:d1"), 4);
         hub.enqueue("u_1", item("cmd_b", "device:d1"), 4);
         hub.requeue_front("u_1", item("cmd_c", "device:d1"));
-        assert_eq!(hub.dequeue_for("u_1", "device:d1").expect("head").command_id, "cmd_c");
+        assert_eq!(
+            hub.dequeue_for("u_1", "device:d1")
+                .expect("head")
+                .command_id,
+            "cmd_c"
+        );
     }
 
     #[test]
     fn forgetting_a_node_drops_its_slots_and_parked_frames() {
         let hub = CommandHub::default();
         hub.reserve("dev-1", "cmd_1");
-        hub.enqueue("u_1", Queued { command_id: "cmd_2".to_string(), target: "device:dev-1".to_string(), frame: "f".to_string() }, 4);
-        hub.enqueue("u_1", Queued { command_id: "cmd_3".to_string(), target: "device:dev-2".to_string(), frame: "f".to_string() }, 4);
+        hub.enqueue(
+            "u_1",
+            Queued {
+                command_id: "cmd_2".to_string(),
+                target: "device:dev-1".to_string(),
+                frame: "f".to_string(),
+            },
+            4,
+        );
+        hub.enqueue(
+            "u_1",
+            Queued {
+                command_id: "cmd_3".to_string(),
+                target: "device:dev-2".to_string(),
+                frame: "f".to_string(),
+            },
+            4,
+        );
         hub.forget_node("dev-1");
         assert_eq!(hub.inflight_count("dev-1"), 0);
         assert_eq!(hub.queued_depth_for_target("device:dev-1"), 0);
@@ -1631,7 +1821,15 @@ mod tests {
         hub.reserve("dev-1", "cmd_1");
         hub.track_frame("cmd_1", "f");
         hub.track_result("cmd_1", json!({}));
-        hub.enqueue("u_1", Queued { command_id: "cmd_2".to_string(), target: "device:dev-1".to_string(), frame: "f".to_string() }, 4);
+        hub.enqueue(
+            "u_1",
+            Queued {
+                command_id: "cmd_2".to_string(),
+                target: "device:dev-1".to_string(),
+                frame: "f".to_string(),
+            },
+            4,
+        );
         let stats = hub.stats();
         assert_eq!(stats["inflight_total"], 1);
         assert_eq!(stats["queued_total"], 1);
@@ -1646,7 +1844,10 @@ mod tests {
         assert_eq!(limits.command_timeout_s, 120.0);
         assert_eq!(limits.inflight_per_node, 8);
         assert_eq!(limits.offline_queue_per_user, 32);
-        assert!(limits.require_approval_defaults.iter().any(|kind| kind == CMD_THREAD_MESSAGE));
+        assert!(limits
+            .require_approval_defaults
+            .iter()
+            .any(|kind| kind == CMD_THREAD_MESSAGE));
     }
 
     /// Docs §13.2 7: the commands a vanished node was actually handed answer
@@ -1677,14 +1878,29 @@ mod tests {
             ("cmd_running", COMMAND_STATUS_RUNNING),
         ];
         for (id, status) in delivered {
-            storage.insert_interlink_command(&row(id, status, APPROVAL_NONE)).unwrap();
+            storage
+                .insert_interlink_command(&row(id, status, APPROVAL_NONE))
+                .unwrap();
             hub().reserve(device, id);
         }
-        storage.insert_interlink_command(&row("cmd_queued", COMMAND_STATUS_QUEUED, APPROVAL_NONE)).unwrap();
-        storage.insert_interlink_command(&row("cmd_pending", COMMAND_STATUS_ISSUED, APPROVAL_PENDING)).unwrap();
-        storage.insert_interlink_command(&row("cmd_done", COMMAND_STATUS_SUCCEEDED, APPROVAL_APPROVED)).unwrap();
+        storage
+            .insert_interlink_command(&row("cmd_queued", COMMAND_STATUS_QUEUED, APPROVAL_NONE))
+            .unwrap();
+        storage
+            .insert_interlink_command(&row("cmd_pending", COMMAND_STATUS_ISSUED, APPROVAL_PENDING))
+            .unwrap();
+        storage
+            .insert_interlink_command(&row(
+                "cmd_done",
+                COMMAND_STATUS_SUCCEEDED,
+                APPROVAL_APPROVED,
+            ))
+            .unwrap();
 
-        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
         let failed = runtime
             .block_on(fail_device_commands(Arc::clone(&storage), device, 200.0))
             .expect("settle");
@@ -1693,7 +1909,11 @@ mod tests {
         for (id, _) in delivered {
             let settled = storage.get_interlink_command(id).unwrap().unwrap();
             assert_eq!(settled.status, COMMAND_STATUS_FAILED, "{id}");
-            assert_eq!(settled.error_code.as_deref(), Some(ERR_NODE_OFFLINE), "{id}");
+            assert_eq!(
+                settled.error_code.as_deref(),
+                Some(ERR_NODE_OFFLINE),
+                "{id}"
+            );
             assert_eq!(settled.finished_at, Some(200.0), "{id}");
         }
         for (id, status, approval) in [
@@ -1729,6 +1949,9 @@ mod tests {
         for id in ["cmd_issued", "cmd_acked", "cmd_running"] {
             assert!(finished.contains(&id), "{id} has no command.finish row");
         }
-        assert!(!finished.contains(&"cmd_queued"), "the parked backlog was settled");
+        assert!(
+            !finished.contains(&"cmd_queued"),
+            "the parked backlog was settled"
+        );
     }
 }

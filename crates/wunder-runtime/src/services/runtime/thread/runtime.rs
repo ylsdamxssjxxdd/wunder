@@ -498,8 +498,10 @@ impl ThreadRuntime {
     async fn get_agent_task(&self, task_id: &str) -> Result<Option<AgentTaskRecord>> {
         let store = self.user_store.clone();
         let task_id = task_id.to_string();
-        blocking::run_db("runtime.thread.get_agent_task", move || store.get_agent_task(&task_id))
-            .await
+        blocking::run_db("runtime.thread.get_agent_task", move || {
+            store.get_agent_task(&task_id)
+        })
+        .await
     }
 
     pub async fn cancel_task(&self, task_id: &str) -> Result<()> {
@@ -858,7 +860,11 @@ impl ThreadRuntime {
         .unwrap_or(0)
     }
 
-    async fn compute_queue_stats(&self, task: &AgentTaskRecord, total_pending: usize) -> QueueStats {
+    async fn compute_queue_stats(
+        &self,
+        task: &AgentTaskRecord,
+        total_pending: usize,
+    ) -> QueueStats {
         let ahead = {
             let store = self.user_store.clone();
             let retry_at = task.retry_at;
@@ -1079,7 +1085,8 @@ impl ThreadRuntime {
         let Some(turn_id) = turn_id else {
             return 0;
         };
-        let status = durable_queue_status(event_type, payload.get("status").and_then(Value::as_str));
+        let status =
+            durable_queue_status(event_type, payload.get("status").and_then(Value::as_str));
         if let Some(map) = payload.as_object_mut() {
             map.insert("event_type".into(), json!(event_type));
             map.insert("turn_id".into(), json!(turn_id));
@@ -1331,11 +1338,10 @@ impl ThreadRuntime {
         }
         let store = self.user_store.clone();
         let owner_id = task.user_id.clone();
-        if let Ok(Some(user)) =
-            blocking::run_db("runtime.thread.load_task_user", move || {
-                store.get_user_by_id(&owner_id)
-            })
-            .await
+        if let Ok(Some(user)) = blocking::run_db("runtime.thread.load_task_user", move || {
+            store.get_user_by_id(&owner_id)
+        })
+        .await
         {
             request.is_admin = UserStore::is_admin(&user);
         }
@@ -1966,7 +1972,10 @@ mod tests {
         assert_eq!(durable_queue_status("queue_cancel", None), "cancelled");
         // An unrecognized declared value (or an empty one) falls back to the event
         // name instead of writing a status the projections do not know.
-        assert_eq!(durable_queue_status("queue_update", Some("pending")), "queued");
+        assert_eq!(
+            durable_queue_status("queue_update", Some("pending")),
+            "queued"
+        );
         assert_eq!(durable_queue_status("queue_fail", Some("")), "failed");
     }
 }

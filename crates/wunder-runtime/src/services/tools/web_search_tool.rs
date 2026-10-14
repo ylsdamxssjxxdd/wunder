@@ -402,7 +402,11 @@ fn build_firecrawl_search_body(
 /// Returns the merged items plus whether truncation dropped any result, so the
 /// caller can mark `truncated` exactly like the dsh web seam does.
 fn merge_search_items(payloads: &[SearchPayload], cap: usize) -> (Vec<SearchResultItem>, bool) {
-    let max_len = payloads.iter().map(|payload| payload.results.len()).max().unwrap_or(0);
+    let max_len = payloads
+        .iter()
+        .map(|payload| payload.results.len())
+        .max()
+        .unwrap_or(0);
     let mut items: Vec<SearchResultItem> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
     for rank in 0..max_len {
@@ -466,7 +470,11 @@ fn build_search_result(payloads: Vec<SearchPayload>, queries: &[String], cap: us
         .map(|payload| payload.provider.clone())
         .unwrap_or_else(|| "firecrawl".to_string());
     let cached = !payloads.is_empty() && payloads.iter().all(|payload| payload.cached);
-    let took_ms = payloads.iter().map(|payload| payload.took_ms).max().unwrap_or(0);
+    let took_ms = payloads
+        .iter()
+        .map(|payload| payload.took_ms)
+        .max()
+        .unwrap_or(0);
     let searched_at = payloads
         .iter()
         .map(|payload| payload.searched_at.clone())

@@ -67,6 +67,6 @@ wunder 支持多套提示词模板包：中文模板包（默认中文风格）�
 
 ## 延伸阅读
 
-- [提示词与个性化](/docs/zh-CN/reference/prompt-templates/) —— 模板操作指南
+- [提示词与个性化](/docs/zh-CN/capabilities/prompt-templates/) —— 模板操作指南
 - [记忆（核心）](/docs/zh-CN/concepts/core-memory/) —— 记忆的设计原则
 - [工具体系](/docs/zh-CN/concepts/tools/) —— 工具和技能的关系

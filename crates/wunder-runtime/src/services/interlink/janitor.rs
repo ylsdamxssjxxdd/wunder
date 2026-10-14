@@ -4,15 +4,15 @@
 //! abandoned data streams and ledger/audit retention. Everything it touches is
 //! a bounded query - no full-table scans beyond the retention deletes.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
+use super::{commands, registry};
 use crate::core::blocking;
 use crate::state::AppState;
 use crate::storage::StorageBackend;
 use serde_json::Value;
-use super::{commands, registry};
 
 /// Sweep cadence. Command timeouts default to 120s, so 30s is well inside the
 /// accuracy the doc asks for while staying cheap.
@@ -66,7 +66,8 @@ pub fn spawn(state: Arc<AppState>) {
             // 2) ...their unfinished commands fail structurally and their
             //    remote watchers lose the stream (docs §13.2 7, §10.3).
             for device_id in stale {
-                let _ = commands::fail_device_commands(state.storage.clone(), &device_id, now).await;
+                let _ =
+                    commands::fail_device_commands(state.storage.clone(), &device_id, now).await;
                 super::remote::hub().close_node(&device_id);
             }
             // 3) Command timeouts and approval expiry (docs §4.3, §7.3 4).
@@ -94,8 +95,8 @@ pub fn spawn(state: Arc<AppState>) {
                     if shadow_retention > 0 {
                         // A shadow of a node that never re-synced is stale
                         // evidence; drop it in bounded pages (docs §9.3 4).
-                        let _ =
-                            storage.cleanup_interlink_shadows(shadow_retention, SHADOW_CLEANUP_ROWS)?;
+                        let _ = storage
+                            .cleanup_interlink_shadows(shadow_retention, SHADOW_CLEANUP_ROWS)?;
                     }
                     Ok::<(), anyhow::Error>(())
                 })

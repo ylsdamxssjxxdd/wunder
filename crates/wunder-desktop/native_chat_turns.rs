@@ -125,8 +125,15 @@ fn recover_text(
     let mut from = 0;
     let mut text = String::new();
     for page in 0..64 {
-        let (blocks, next, more) =
-            storage.list_thread_item_blocks_page(user, session, item_id, Some(field), from, 100, false)?;
+        let (blocks, next, more) = storage.list_thread_item_blocks_page(
+            user,
+            session,
+            item_id,
+            Some(field),
+            from,
+            100,
+            false,
+        )?;
         for block in blocks {
             let data = block.get("data").unwrap_or(&block);
             if data["field"].as_str().unwrap_or(field) != field {
@@ -258,7 +265,10 @@ fn project_turn(root: &Value, items: &[Value]) -> Option<NativeChatTurn> {
         }
         entries += 1;
         let entry = if kind == "compaction" {
-            let detail = data["summary_text"].as_str().unwrap_or_default().to_string();
+            let detail = data["summary_text"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string();
             if latest.is_none() {
                 assistant.text = detail.clone();
             }

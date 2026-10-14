@@ -17,9 +17,7 @@ use std::time::Duration;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use wunder_core::interlink::{
-    FRAME_HELLO, INTERLINK_PROTOCOL_VERSION, TUNNEL_WS_PROTOCOL,
-};
+use wunder_core::interlink::{FRAME_HELLO, INTERLINK_PROTOCOL_VERSION, TUNNEL_WS_PROTOCOL};
 
 use crate::services::cloud;
 use crate::services::cloud::CloudSessionFile;
@@ -156,9 +154,9 @@ pub fn policy_for(reason: &CloseReason) -> RetryPolicy {
         // The server has no key for this device yet, or the key we hold is
         // stale: fetching a fresh one and retrying is the documented path.
         CloseReason::SecretRequired => RetryPolicy::Now,
-        CloseReason::HmacMismatch | CloseReason::SecretVersionUnknown | CloseReason::HmacRequired => {
-            RetryPolicy::Backoff
-        }
+        CloseReason::HmacMismatch
+        | CloseReason::SecretVersionUnknown
+        | CloseReason::HmacRequired => RetryPolicy::Backoff,
         // A newer process took the slot. Wait out a full window so the two
         // processes cannot fight over the channel (docs §4.1).
         CloseReason::Superseded => RetryPolicy::Backoff,
@@ -248,7 +246,11 @@ pub fn jittered(delay: Duration, sample: u64) -> Duration {
     }
     let band = micros.saturating_mul(BACKOFF_JITTER_BPS) / 10_000;
     // Map the sample onto [-band, +band].
-    let offset = if band == 0 { 0 } else { sample % (band * 2 + 1) };
+    let offset = if band == 0 {
+        0
+    } else {
+        sample % (band * 2 + 1)
+    };
     let signed = offset as i64 - band as i64;
     let adjusted = micros as i64 + signed;
     Duration::from_micros(adjusted.max(1) as u64)
@@ -385,7 +387,10 @@ impl HandshakeError {
         match self {
             Self::Expired => RetryPolicy::Cooldown,
             Self::Closed(reason) => policy_for(reason),
-            Self::Unavailable(_) | Self::Rejected(_) | Self::Network | Self::Transport
+            Self::Unavailable(_)
+            | Self::Rejected(_)
+            | Self::Network
+            | Self::Transport
             | Self::Timeout => RetryPolicy::Backoff,
             Self::Protocol(_) => RetryPolicy::Cooldown,
         }
@@ -455,9 +460,7 @@ pub async fn fetch_node_secret(session: &CloudSessionFile) -> Result<NodeSecret,
 }
 
 /// `POST {server}/wunder/interlink/channel_ticket` - one-time tunnel ticket.
-pub async fn fetch_channel_ticket(
-    session: &CloudSessionFile,
-) -> Result<String, HandshakeError> {
+pub async fn fetch_channel_ticket(session: &CloudSessionFile) -> Result<String, HandshakeError> {
     let body = authed_post(
         session,
         "/wunder/interlink/channel_ticket",
@@ -492,10 +495,7 @@ async fn authed_post(
             drop(response);
             match service.recover_auth(&stale_token).await {
                 Ok(true) => {
-                    let refreshed = service
-                        .session()
-                        .ok_or(HandshakeError::Expired)?
-                        .clone();
+                    let refreshed = service.session().ok_or(HandshakeError::Expired)?.clone();
                     send_post(&url, &refreshed.token, &refreshed.device_id, body)
                         .await
                         .map_err(|err| network_error(&err))?

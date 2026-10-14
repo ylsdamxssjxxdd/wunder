@@ -25,8 +25,8 @@ use serde_json::{json, Map, Value};
 use tokio::sync::mpsc;
 
 use wunder_core::interlink::{
-    AUDIT_ALERT_RAISED, AUDIT_APPROVAL_DECIDE, AUDIT_CHANNEL_REJECTED, AUDIT_COMMAND_ACK,
-    AUDIT_COMMAND_FINISH, AUDIT_COMMAND_ISSUE, APPROVAL_REJECTED, command_level,
+    command_level, APPROVAL_REJECTED, AUDIT_ALERT_RAISED, AUDIT_APPROVAL_DECIDE,
+    AUDIT_CHANNEL_REJECTED, AUDIT_COMMAND_ACK, AUDIT_COMMAND_FINISH, AUDIT_COMMAND_ISSUE,
 };
 
 use crate::core::blocking;
@@ -311,7 +311,11 @@ pub fn note_command(record: &InterlinkCommandRecord, result: Option<&str>) {
                 Ok(state) => state,
                 Err(_) => return,
             };
-            if state.claim(&format!("l3|{command_id}"), record.created_at, ALERT_COOLDOWN_S) {
+            if state.claim(
+                &format!("l3|{command_id}"),
+                record.created_at,
+                ALERT_COOLDOWN_S,
+            ) {
                 Some(execution_alert(
                     &record.actor_user_id,
                     Some(record.to_node.as_str()),
@@ -385,7 +389,11 @@ fn detect(state: &mut Detection, row: &InterlinkAuditRecord) -> Option<Alert> {
         AUDIT_COMMAND_ISSUE | AUDIT_COMMAND_ACK | AUDIT_COMMAND_FINISH => {
             let kind = token(parsed.get("kind")).filter(|kind| command_level(kind) == "L3")?;
             let command_id = token_of(row.command_id.as_deref())?;
-            if !state.claim(&format!("l3|{command_id}"), row.created_at, ALERT_COOLDOWN_S) {
+            if !state.claim(
+                &format!("l3|{command_id}"),
+                row.created_at,
+                ALERT_COOLDOWN_S,
+            ) {
                 return None;
             }
             let result = token(parsed.get("result"))
@@ -512,18 +520,31 @@ async fn webhook_target(state: &AppState) -> (String, String) {
 async fn write_audit(state: &AppState, alert: &Alert) {
     let payload = alert.payload();
     let mut detail: Vec<(&str, Value)> = vec![
-        ("trigger", payload.get("trigger").cloned().unwrap_or(Value::Null)),
-        ("count", payload.get("count").cloned().unwrap_or(Value::Null)),
+        (
+            "trigger",
+            payload.get("trigger").cloned().unwrap_or(Value::Null),
+        ),
+        (
+            "count",
+            payload.get("count").cloned().unwrap_or(Value::Null),
+        ),
     ];
     for key in ["kind", "level", "result"] {
         if let Some(value) = payload.get(key) {
             detail.push((key, value.clone()));
         }
     }
-    let device = alert.device_id.as_deref().map(|device| format!("device:{device}"));
+    let device = alert
+        .device_id
+        .as_deref()
+        .map(|device| format!("device:{device}"));
     let row = audit::record(
         AUDIT_ALERT_RAISED,
-        if alert.user_id.is_empty() { "system" } else { &alert.user_id },
+        if alert.user_id.is_empty() {
+            "system"
+        } else {
+            &alert.user_id
+        },
         None,
         device.as_deref(),
         alert.command_id.as_deref(),
@@ -531,8 +552,10 @@ async fn write_audit(state: &AppState, alert: &Alert) {
         detail,
     );
     let storage = state.storage.clone();
-    let _ = blocking::run_db("interlink.alert.write", move || storage.insert_interlink_audit(&row))
-        .await;
+    let _ = blocking::run_db("interlink.alert.write", move || {
+        storage.insert_interlink_audit(&row)
+    })
+    .await;
 }
 
 async fn deliver(url: &str, secret: &str, alert: &Alert) {
@@ -670,8 +693,11 @@ mod tests {
                 "{index} rejections must stay below the threshold"
             );
         }
-        let alert = detect(&mut state, &rejection("dev_a", base + REJECTION_THRESHOLD as f64))
-            .expect("the fifth rejection alerts");
+        let alert = detect(
+            &mut state,
+            &rejection("dev_a", base + REJECTION_THRESHOLD as f64),
+        )
+        .expect("the fifth rejection alerts");
         assert_eq!(alert.trigger, TRIGGER_REJECTION_STORM);
         assert_eq!(alert.count, REJECTION_THRESHOLD);
         assert_eq!(alert.device_id.as_deref(), Some("dev_a"));
@@ -706,7 +732,10 @@ mod tests {
             );
         }
         // One full window later nothing of that burst is counted any more.
-        assert_eq!(state.note_rejection("dev_s", base + 4.0 * REJECTION_WINDOW_S), 1);
+        assert_eq!(
+            state.note_rejection("dev_s", base + 4.0 * REJECTION_WINDOW_S),
+            1
+        );
     }
 
     #[test]
@@ -729,11 +758,18 @@ mod tests {
             "an L0 command must not alert"
         );
         assert!(
-            detect(&mut state, &command(r#"{"kind":"workspace.write"}"#, base + 1.0)).is_none(),
+            detect(
+                &mut state,
+                &command(r#"{"kind":"workspace.write"}"#, base + 1.0)
+            )
+            .is_none(),
             "an L2 command must not alert"
         );
-        let alert = detect(&mut state, &command(r#"{"kind":"tool.exec","status":"succeeded"}"#, base + 2.0))
-            .expect("L3 alerts");
+        let alert = detect(
+            &mut state,
+            &command(r#"{"kind":"tool.exec","status":"succeeded"}"#, base + 2.0),
+        )
+        .expect("L3 alerts");
         assert_eq!(alert.trigger, TRIGGER_L3_EXECUTION);
         assert_eq!(alert.kind.as_deref(), Some("tool.exec"));
         assert_eq!(alert.level.as_deref(), Some("L3"));
@@ -741,11 +777,21 @@ mod tests {
         assert_eq!(alert.command_id.as_deref(), Some("cmd_x"));
         assert_eq!(alert.device_id.as_deref(), Some("dev_cmd"));
         // Whichever trail entry reaches the hook next, one command alerts once.
-        let ack =
-            audit_row(AUDIT_COMMAND_ACK, "dev_cmd", "cmd_x", r#"{"kind":"agent.spawn"}"#, base + 3.0);
+        let ack = audit_row(
+            AUDIT_COMMAND_ACK,
+            "dev_cmd",
+            "cmd_x",
+            r#"{"kind":"agent.spawn"}"#,
+            base + 3.0,
+        );
         assert!(detect(&mut state, &ack).is_none());
-        let other =
-            audit_row(AUDIT_COMMAND_ISSUE, "dev_cmd", "cmd_y", r#"{"kind":"agent.spawn"}"#, base + 4.0);
+        let other = audit_row(
+            AUDIT_COMMAND_ISSUE,
+            "dev_cmd",
+            "cmd_y",
+            r#"{"kind":"agent.spawn"}"#,
+            base + 4.0,
+        );
         assert!(detect(&mut state, &other).is_some());
     }
 
@@ -817,12 +863,25 @@ mod tests {
             6_000_000.0,
         );
         let alert = detect(&mut state, &poisoned).expect("L3 alerts");
-        assert_eq!(alert.result, None, "path-like and prose results are dropped");
+        assert_eq!(
+            alert.result, None,
+            "path-like and prose results are dropped"
+        );
         let text = alert.payload_json();
         for forbidden in [
-            "Users", "notes", "txt", "forward", "report", "confidential", "\\", "C:",
+            "Users",
+            "notes",
+            "txt",
+            "forward",
+            "report",
+            "confidential",
+            "\\",
+            "C:",
         ] {
-            assert!(!text.contains(forbidden), "payload leaked {forbidden:?}: {text}");
+            assert!(
+                !text.contains(forbidden),
+                "payload leaked {forbidden:?}: {text}"
+            );
         }
     }
 
@@ -830,18 +889,28 @@ mod tests {
     fn storm_payload_keeps_only_the_state_code() {
         let mut state = Detection::default();
         let base = 7_000_000.0;
-        let leaked = r#"{"state":"rejected","prompt":"run /srv/data/export.sh now","args":"echo the key"}"#;
+        let leaked =
+            r#"{"state":"rejected","prompt":"run /srv/data/export.sh now","args":"echo the key"}"#;
         let mut alerts = 0usize;
         for index in 0..REJECTION_THRESHOLD {
             let alert = detect(
                 &mut state,
-                &audit_row(AUDIT_APPROVAL_DECIDE, "dev_p", "cmd_p", leaked, base + index as f64),
+                &audit_row(
+                    AUDIT_APPROVAL_DECIDE,
+                    "dev_p",
+                    "cmd_p",
+                    leaked,
+                    base + index as f64,
+                ),
             );
             if alert.is_some() {
                 alerts += 1;
                 let text = alert.expect("storm alert").payload_json();
                 for forbidden in ["srv", "export", "echo", "key", "run", "/"] {
-                    assert!(!text.contains(forbidden), "payload leaked {forbidden:?}: {text}");
+                    assert!(
+                        !text.contains(forbidden),
+                        "payload leaked {forbidden:?}: {text}"
+                    );
                 }
             }
         }
@@ -868,11 +937,21 @@ mod tests {
 
     #[test]
     fn token_filter_accepts_identifiers_and_rejects_prose() {
-        assert_eq!(token(Some(&json!("tool.exec"))).as_deref(), Some("tool.exec"));
-        assert_eq!(token(Some(&json!("shadow:full"))).as_deref(), Some("shadow:full"));
+        assert_eq!(
+            token(Some(&json!("tool.exec"))).as_deref(),
+            Some("tool.exec")
+        );
+        assert_eq!(
+            token(Some(&json!("shadow:full"))).as_deref(),
+            Some("shadow:full")
+        );
         assert_eq!(token(Some(&json!("apv-9_x1"))).as_deref(), Some("apv-9_x1"));
         assert_eq!(token(Some(&json!("notes/a.md"))), None, "paths are dropped");
-        assert_eq!(token(Some(&json!("C:\\a.txt"))), None, "windows paths are dropped");
+        assert_eq!(
+            token(Some(&json!("C:\\a.txt"))),
+            None,
+            "windows paths are dropped"
+        );
         assert_eq!(token(Some(&json!("say hello"))), None, "prose is dropped");
         assert_eq!(token(Some(&json!("x".repeat(TOKEN_MAX_CHARS + 1)))), None);
         assert_eq!(token(Some(&json!(42))).as_deref(), Some("42"));
@@ -903,7 +982,11 @@ mod tests {
         let mut state = Detection::default();
         assert!(state.claim("storm|dev_e", base, ALERT_COOLDOWN_S));
         assert!(!state.claim("storm|dev_e", base + 60.0, ALERT_COOLDOWN_S));
-        assert!(state.claim("storm|dev_e", base + ALERT_COOLDOWN_S + 1.0, ALERT_COOLDOWN_S));
+        assert!(state.claim(
+            "storm|dev_e",
+            base + ALERT_COOLDOWN_S + 1.0,
+            ALERT_COOLDOWN_S
+        ));
     }
 
     #[test]
@@ -915,14 +998,23 @@ mod tests {
         }
         let after = stats()["dropped"].as_i64().unwrap_or(0);
         assert!(after > before, "the alert was counted, not blocking");
-        assert_eq!(stats()["queue_capacity"].as_i64(), Some(QUEUE_CAPACITY as i64));
+        assert_eq!(
+            stats()["queue_capacity"].as_i64(),
+            Some(QUEUE_CAPACITY as i64)
+        );
         assert_eq!(stats()["pump_running"], Value::Bool(false));
     }
 
     #[test]
     fn stats_report_delivery_counters() {
         let value = stats();
-        for key in ["raised", "dropped", "delivered", "webhook_failures", "tracked"] {
+        for key in [
+            "raised",
+            "dropped",
+            "delivered",
+            "webhook_failures",
+            "tracked",
+        ] {
             assert!(value[key].is_number(), "{key} missing from {value}");
         }
     }

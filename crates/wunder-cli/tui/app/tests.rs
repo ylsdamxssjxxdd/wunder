@@ -13,8 +13,21 @@ fn thinking_fold_metrics_match_the_renderer() {
         fold_reasoning_lines(&mut lines);
         assert_eq!(
             lines.len(),
-            reasoning_folded_rows(rows),
+            reasoning_folded_rows(rows, false),
             "{rows} rendered rows must measure the same in both directions"
+        );
+
+        // The other direction is a row too: an open block carries the one control
+        // that closes it, and nothing else.
+        let mut opened: Vec<Line<'static>> =
+            (0..rows).map(|n| Line::from(format!("t{n}"))).collect();
+        if let Some(line) = patch_log::disclosure_line(true, opened.len() > REASONING_FOLD_LINES) {
+            opened.push(line);
+        }
+        assert_eq!(
+            opened.len(),
+            reasoning_folded_rows(rows, true),
+            "{rows} open rows must measure the same in both directions"
         );
     }
 }
@@ -272,9 +285,11 @@ fn plain_transcript_lines_use_hanging_indent_without_role_labels() {
 
 #[test]
 fn mouse_mode_capture_policy_matches_codex_like_behavior() {
-    assert!(!MouseMode::Auto.captures_mouse());
-    assert!(MouseMode::Scroll.captures_mouse());
-    assert!(!MouseMode::Select.captures_mouse());
+    // The app owns the pointer by default, the way codex owns its screen: clicks reach
+    // cards and the composer. Native mode is the escape hatch that hands native text
+    // selection and the terminal's own wheel back.
+    assert!(MouseMode::Capture.captures_mouse());
+    assert!(!MouseMode::Native.captures_mouse());
 }
 
 #[test]
@@ -428,6 +443,7 @@ fn compact_json_handles_multibyte_truncation() {
 #[test]
 fn backtrack_user_text_returns_trimmed_user_content() {
     let entry = LogEntry {
+        cell_id: 1,
         kind: LogKind::User,
         text: "  hello world  ".to_string(),
         special: None,
@@ -440,6 +456,7 @@ fn backtrack_user_text_returns_trimmed_user_content() {
 #[test]
 fn backtrack_user_text_ignores_non_user_or_empty() {
     let assistant_entry = LogEntry {
+        cell_id: 1,
         kind: LogKind::Assistant,
         text: "hello".to_string(),
         special: None,
@@ -449,6 +466,7 @@ fn backtrack_user_text_ignores_non_user_or_empty() {
     assert_eq!(backtrack_user_text(&assistant_entry), None);
 
     let empty_user_entry = LogEntry {
+        cell_id: 1,
         kind: LogKind::User,
         text: "   ".to_string(),
         special: None,

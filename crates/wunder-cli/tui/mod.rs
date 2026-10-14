@@ -235,7 +235,7 @@ fn looks_like_legacy_windows_bracketed_paste_error(message: &str) -> bool {
 
 fn sync_mouse_mode(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    app: &TuiApp,
+    app: &mut TuiApp,
     mouse_capture_enabled: &mut Option<bool>,
 ) -> Result<()> {
     let desired_mouse_capture = app.mouse_capture_enabled();
@@ -247,7 +247,13 @@ fn sync_mouse_mode(
         return Ok(());
     }
     if desired_mouse_capture {
-        execute!(terminal.backend_mut(), EnableMouseCapture)?;
+        if let Err(error) = execute!(terminal.backend_mut(), EnableMouseCapture) {
+            // A console that refuses capture must not cost the whole session: hand the
+            // pointer back to the terminal and say why the clicks are gone.
+            app.give_up_mouse_capture(error.to_string());
+            *mouse_capture_enabled = Some(false);
+            return Ok(());
+        }
     } else {
         execute!(terminal.backend_mut(), DisableMouseCapture)?;
     }

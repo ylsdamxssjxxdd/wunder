@@ -70,7 +70,7 @@ When the timeline shows tool batches, a "work process" entry for each turn, and 
 | Symptom | Check first |
 | --- | --- |
 | Launch screen never finishes | [First-run troubleshooting](/docs/en/start/troubleshooting-first-run/) |
-| Model request 401/403 | Settings → Model → Test connection; [Configuration reference](/docs/en/reference/config/) |
+| Model request 401/403 | Settings → Model → Test connection; [Configuration reference](/docs/en/capabilities/config/) |
 | Message during a run rejected as "user busy" | Whether the session queue was turned off |
 | Interface stutters, messages don't refresh | [Troubleshooting](/docs/en/help/troubleshooting/) |
 

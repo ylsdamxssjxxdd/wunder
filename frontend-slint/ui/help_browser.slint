@@ -1,4 +1,5 @@
 import { HelpDocs } from "help_models.slint";
+import { I18n } from "i18n.slint";
 import { HelpButton, HelpSeparator, HelpInput } from "help_controls.slint";
 import { HelpSidebar } from "help_sidebar.slint";
 import { HelpDocument } from "help_document.slint";
@@ -50,34 +51,34 @@ export component HelpBrowser inherits Rectangle {
                     spacing: 2px;
                     HelpButton {
                         width: 27px;
-                        label: "后退 (Alt+←)";
+                        label: I18n.hp_back;
                         icon: "M 12 19 L 5 12 L 12 5 M 5 12 L 19 12";
                         enabled: HelpDocs.can-back;
                         clicked => { HelpDocs.history-requested(-1); }
                     }
                     HelpButton {
                         width: 27px;
-                        label: "前进 (Alt+→)";
+                        label: I18n.hp_forward;
                         icon: "M 12 5 L 19 12 L 12 19 M 5 12 L 19 12";
                         enabled: HelpDocs.can-forward;
                         clicked => { HelpDocs.history-requested(1); }
                     }
                     HelpButton {
                         width: 27px;
-                        label: "主页 (F1)";
+                        label: I18n.hp_home;
                         icon: "M 3 10 L 12 3 L 21 10 L 21 21 L 14 21 L 14 14 L 10 14 L 10 21 L 3 21 Z";
                         clicked => { HelpDocs.topic-opened(0); }
                     }
                     Rectangle { width: 13px; HelpSeparator {} }
                     HelpButton {
                         width: 27px;
-                        label: "复制";
+                        label: I18n.hp_copy;
                         icon: "M 9 9 L 21 9 L 21 21 L 9 21 Z M 5 15 L 3 15 L 3 3 L 15 3 L 15 5";
                         clicked => { HelpDocs.copy-requested(); }
                     }
                     HelpButton {
                         width: 27px;
-                        label: "查找 (Ctrl+F)";
+                        label: I18n.hp_find;
                         icon: "M 21 21 L 16 16 M 18 10 A 8 8 0 1 1 2 10 A 8 8 0 1 1 18 10";
                         clicked => { find-input.focus(); find-input.select-all(); }
                     }
@@ -85,14 +86,14 @@ export component HelpBrowser inherits Rectangle {
                         width: 180px;
                         height: 24px;
                         text <=> HelpDocs.find-text;
-                        placeholder-text: "在当前页查找";
-                        accessible-label: "在当前页查找";
+                        placeholder-text: I18n.hp_find_placeholder;
+                        accessible-label: I18n.hp_find_placeholder;
                         edited(text) => { HelpDocs.find-changed(text); }
                     }
                     Rectangle { width: 13px; HelpSeparator {} }
                     HelpButton {
                         width: 27px;
-                        label: "放大";
+                        label: I18n.hp_zoom_in;
                         icon: "M 21 21 L 16 16 M 18 10 A 8 8 0 1 1 2 10 A 8 8 0 1 1 18 10 M 6 10 L 14 10 M 10 6 L 10 14";
                         enabled: HelpDocs.zoom-percent < 160;
                         clicked => {
@@ -102,7 +103,7 @@ export component HelpBrowser inherits Rectangle {
                     }
                     HelpButton {
                         width: 27px;
-                        label: "缩小";
+                        label: I18n.hp_zoom_out;
                         icon: "M 21 21 L 16 16 M 18 10 A 8 8 0 1 1 2 10 A 8 8 0 1 1 18 10 M 6 10 L 14 10";
                         enabled: HelpDocs.zoom-percent > 80;
                         clicked => {
@@ -112,7 +113,7 @@ export component HelpBrowser inherits Rectangle {
                     }
                     HelpButton {
                         width: 27px;
-                        label: "实际大小";
+                        label: I18n.hp_zoom_reset;
                         icon: "M 3 10 A 9 9 0 1 1 5 18 M 3 4 L 3 10 L 9 10";
                         clicked => {
                             HelpDocs.zoom-percent = 100;
@@ -121,7 +122,7 @@ export component HelpBrowser inherits Rectangle {
                     }
                     Rectangle { horizontal-stretch: 1; }
                     if HelpDocs.find-text != "" : Text {
-                        text: HelpDocs.match-count == 0 ? "没有匹配内容" : "\{HelpDocs.match-count} 处匹配";
+                        text: HelpDocs.match-count == 0 ? I18n.hp_no_match : I18n.hp_match_count(HelpDocs.match-count);
                         color: #666666;
                         vertical-alignment: center;
                     }

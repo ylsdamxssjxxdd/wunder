@@ -161,12 +161,7 @@ async fn handle_stress_thread(
         .title
         .clone()
         .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| {
-            format!(
-                "渲染压测 {}×{}",
-                command.user_rounds, command.model_rounds
-            )
-        });
+        .unwrap_or_else(|| format!("渲染压测 {}×{}", command.user_rounds, command.model_rounds));
     let spec = wunder_server::storage::StressThreadSpec {
         session_id: uuid::Uuid::new_v4().to_string(),
         title: title.clone(),

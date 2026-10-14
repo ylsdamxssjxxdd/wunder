@@ -221,6 +221,12 @@
                       </span>
                     </div>
                     <div class="tt-record-content">
+                      <button
+                        v-if="row.record.cell.overviewOnly && row.record.turnStart"
+                        class="tt-overview-open"
+                        type="button"
+                        @click.stop="openOverviewTurn(row.record.turn)"
+                      >{{ t('messenger.trajectory.openCompleteTurn') }}</button>
                       <template v-if="row.record.cell.kind === 'tool' || row.record.cell.kind === 'subtool'">
                         <span class="tt-tool-name">{{ row.record.cell.text }}</span>
                         <span v-if="argsPreview(row.record.cell)" class="tt-tool-args">{{ argsPreview(row.record.cell) }}</span>
@@ -800,6 +806,7 @@ function summaryTurns(rows:any[], resetMaps=true):unknown[] {
     let turn=turns.get(row.root_turn_id)
     if(!turn){turn={turn_id:row.root_turn_id,user_turn_index:row.user_round,items:[]};turns.set(row.root_turn_id,turn)}
     turn.items.push({item_id:row.item_id,item_index:row.item_index,kind:row.kind,status:row.status,created_time:row.started_at,updated_time:row.completed_at,
+      overview_only:row.overview_only===true,
       payload:{content:row.summary,tool:row.tool_name,model_round:row.model_round,started_at:row.started_at,completed_at:row.completed_at}})
   }
   return markRaw([...turns.values()])
@@ -823,6 +830,9 @@ async function loadTurnDetail(round:number):Promise<void> {
   const root=turnRootByRound.get(round); if(!root || loading.value) return
   detailRootTurn.value=root
   await load()
+}
+function openOverviewTurn(round:number|null):void {
+  if (round !== null) void loadTurnDetail(Number(round))
 }
 async function backToOverview(): Promise<void> {
   if (loading.value || !detailRootTurn.value) return

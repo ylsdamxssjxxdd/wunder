@@ -59,7 +59,14 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let user_rounds: i64 = args.get(1).and_then(|v| v.parse().ok()).unwrap_or(50);
     let model_rounds: i64 = args.get(2).and_then(|v| v.parse().ok()).unwrap_or(20);
-    println!("profile: sqlite-storage, {:?}", if cfg!(debug_assertions) { "DEBUG" } else { "RELEASE" });
+    println!(
+        "profile: sqlite-storage, {:?}",
+        if cfg!(debug_assertions) {
+            "DEBUG"
+        } else {
+            "RELEASE"
+        }
+    );
     run(user_rounds, model_rounds);
     // Second, larger run to amortise warm-up.
     if user_rounds >= 50 {

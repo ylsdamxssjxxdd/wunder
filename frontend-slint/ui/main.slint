@@ -37,6 +37,7 @@ export { ModelPresets }
 export { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, TextBlock, WorkflowLine, WorkflowSection, ToolWorkflowEntry, TimelineRow, TimelineCounts, TurnStatMetric, PatchCard, PatchLine, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, LanPeerCard, TrajRow, TrajSpan, TrajTick, TrajBoundary, TrajTiming, TrajSection, TrajTab, CronCard, CronRunCard, PromptPackCard, ChannelCatalogCard, ChannelBindingCard, ChannelLogCard, AvatarOption, AvatarColorChip, CompanionCard, PlanStep, InterlinkStatus, InterlinkNode, InterlinkEntry, InterlinkApproval, WorkspaceFileRow }
 export { AppTray } from "tray.slint";
 export { TrayNotice } from "tray-notice.slint";
+export { HelpWindow } from "help_window.slint";
 export { ScreenshotOverlay } from "screenshot_overlay.slint";
 
 export component MainWindow inherits Window {
@@ -120,7 +121,7 @@ export component MainWindow inherits Window {
     in-out property <bool> busy: false;
     in-out property <bool> command-pending: false;
     // Terminal mode routes the composer input to the local shell instead of
-    // the model; toggled from the TerminalAction button in the composer.
+    // the model; toggled from the plus menu in the composer.
     in-out property <bool> terminal-mode: false;
     callback terminal-toggled(bool);
     callback terminal-interrupt();
@@ -765,13 +766,10 @@ export component MainWindow inherits Window {
     callback timeline-counts() -> TimelineCounts;
     callback timeline-last-answer() -> string;
 
-    // §8.3 model switcher inside the composer. `models` is the *filtered* view
-    // the popover renders; the unfiltered catalogue stays natively and its size
-    // is mirrored here so the popover can tell "no match" from "none added".
+    // §8.3 model switcher inside the composer. `models` is the full catalogue
+    // projection; its size is mirrored here so the picker can tell "empty
+    // list" from "nothing configured".
     in-out property <int> model-catalogue-count: 0;
-    // Search text of the model popover; the filter runs natively because Slint
-    // 1.18 strings have no substring test.
-    callback search-models(string);
     // §8.5 branch of the workspace folder, when the backend can detect one.
     in-out property <string> active-workspace-branch: "";
     // Root folder of the active workspace, used by the composer's "open
@@ -793,8 +791,11 @@ export component MainWindow inherits Window {
     // query is filtered natively and the matching categories come back as one
     // flag per category, in §9.2 order.
     in-out property <string> settings-query: "";
-    in-out property <[bool]> settings-category-flags: [true, true, true, true, true, true, true, true, true, true, true, true, true];
+    in-out property <[bool]> settings-category-flags: [true, true, true, true, true, true, true, true, true, true, true];
     callback filter-settings-categories(string);
+    // Help is not a category anymore: the general page raises this to open the
+    // standalone help window.
+    callback open-help();
     // Actions the embedded category pages raise that had no shell entry point
     // while those pages were unmounted.
     // Sidebar thread-row hover action: open the trajectory page for that
@@ -1019,9 +1020,7 @@ export component MainWindow inherits Window {
                             model-key: root.selected-model-key;
                             model-saving: root.saving;
                             select-model(index, key) => { root.select-thread-model(key); }
-                            set-default-model(key) => { root.set-default-model(key); }
                             open-model-settings => { root.settings-open = true; root.settings-active-panel = 1; root.refresh-settings(); }
-                            search-models(query) => { root.search-models(query); }
                             workspace-name: root.active-workspace-name;
                             branch-name: root.active-workspace-branch;
                             permission-mode <=> root.permission-mode;
@@ -1327,7 +1326,7 @@ export component MainWindow inherits Window {
         settings-query <=> root.settings-query;
         settings-category-flags: root.settings-category-flags;
         settings-search(query) => { root.filter-settings-categories(query); }
-        leave-settings => { root.more-open = false; root.settings-open = false; }
+        open-help => { root.open-help(); }
         // §9.3 agent form. Every editable field is two-way bound so the settings
         // panel writes the drafts the native save handler reads back, and the
         // panel's own `changed` hooks keep the dirty flag honest.

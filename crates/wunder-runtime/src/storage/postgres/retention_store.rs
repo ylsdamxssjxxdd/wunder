@@ -1,9 +1,7 @@
 use super::agent_runtime_store::PostgresAgentRuntimeStorage;
 use super::log_stats_store::{decrement_usage_summary, read_meta_f64, write_meta_f64};
 use super::{PgTx, PostgresStorage};
-use crate::storage::{
-    StorageLifecycle, USAGE_CHAT_WATERMARK_KEY, USAGE_TOOL_WATERMARK_KEY,
-};
+use crate::storage::{StorageLifecycle, USAGE_CHAT_WATERMARK_KEY, USAGE_TOOL_WATERMARK_KEY};
 use anyhow::Result;
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
@@ -115,7 +113,9 @@ impl PostgresStorage {
         let watermark = read_meta_f64(&mut tx, ORPHAN_SWEEP_WM_KEY)?
             .unwrap_or_else(|| earliest_orphan_source_time(&mut tx, cutoff_epoch_s));
         if watermark >= cutoff_epoch_s {
-            return Ok(SliceOutcome { reached_cutoff: true });
+            return Ok(SliceOutcome {
+                reached_cutoff: true,
+            });
         }
         let slice_hi = (watermark + ORPHAN_SLICE_SECONDS).min(cutoff_epoch_s);
         let pairs = collect_orphan_session_pairs(&mut tx, watermark, slice_hi)?;
@@ -191,9 +191,7 @@ fn earliest_orphan_source_time(tx: &mut PgTx<'_>, fallback: f64) -> f64 {
         "thread_log_changes",
         "thread_turns",
     ] {
-        if let Ok(rows) =
-            tx.query(&format!("SELECT min(created_time) FROM {table}"), &[])
-        {
+        if let Ok(rows) = tx.query(&format!("SELECT min(created_time) FROM {table}"), &[]) {
             if let Some(value) = rows[0].try_get::<_, Option<f64>>(0).ok().flatten() {
                 if value < earliest {
                     earliest = value;

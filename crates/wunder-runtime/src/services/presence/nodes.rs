@@ -125,7 +125,13 @@ impl NodeRegistry {
     /// Register (or refresh) a web node owned by `user_id`.
     ///
     /// The returned lease must be held for the lifetime of the connection.
-    pub fn register_web(&self, user_id: &str, connection_id: &str, label: &str, now: f64) -> WebNodeLease {
+    pub fn register_web(
+        &self,
+        user_id: &str,
+        connection_id: &str,
+        label: &str,
+        now: f64,
+    ) -> WebNodeLease {
         let keep_alive = Arc::new(());
         let entry = WebNodeEntry {
             user_id: user_id.to_string(),
@@ -152,10 +158,7 @@ impl NodeRegistry {
     pub fn touch_web(&self, connection_id: &str, now: f64) {
         let node_id = Self::web_node_id(connection_id);
         let known = {
-            let mut web = self
-                .web_nodes
-                .write()
-                .expect("node registry lock poisoned");
+            let mut web = self.web_nodes.write().expect("node registry lock poisoned");
             match web.get_mut(connection_id) {
                 Some(entry) => {
                     entry.last_seen_at = now;
@@ -167,10 +170,7 @@ impl NodeRegistry {
         if !known {
             return;
         }
-        let mut activity = self
-            .activity
-            .write()
-            .expect("node registry lock poisoned");
+        let mut activity = self.activity.write().expect("node registry lock poisoned");
         if activity
             .get(&node_id)
             .is_some_and(|entry| entry.away && !entry.busy)
@@ -196,10 +196,7 @@ impl NodeRegistry {
     /// Report live activity for any node id. Passing `busy = false, away = false`
     /// clears the overlay.
     pub fn report_activity(&self, node_id: &str, busy: bool, away: bool, now: f64) {
-        let mut activity = self
-            .activity
-            .write()
-            .expect("node registry lock poisoned");
+        let mut activity = self.activity.write().expect("node registry lock poisoned");
         if !busy && !away {
             activity.remove(node_id);
             return;
@@ -257,10 +254,7 @@ impl NodeRegistry {
     pub fn gc(&self, now: f64, ttl: f64) -> usize {
         let mut removed = 0usize;
         {
-            let mut web = self
-                .web_nodes
-                .write()
-                .expect("node registry lock poisoned");
+            let mut web = self.web_nodes.write().expect("node registry lock poisoned");
             let before = web.len();
             web.retain(|_, entry| match &entry.lease {
                 Some(weak) => weak.strong_count() > 0,
@@ -269,10 +263,7 @@ impl NodeRegistry {
             removed += before - web.len();
         }
         {
-            let mut activity = self
-                .activity
-                .write()
-                .expect("node registry lock poisoned");
+            let mut activity = self.activity.write().expect("node registry lock poisoned");
             let before = activity.len();
             activity.retain(|_, entry| now - entry.updated_at <= ttl);
             removed += before - activity.len();
@@ -525,7 +516,10 @@ mod tests {
 
     #[test]
     fn aggregate_rule_matches_plan() {
-        let online = vec![view("a", NODE_STATUS_ONLINE), view("b", NODE_STATUS_OFFLINE)];
+        let online = vec![
+            view("a", NODE_STATUS_ONLINE),
+            view("b", NODE_STATUS_OFFLINE),
+        ];
         assert_eq!(aggregate_status(online.iter()), NODE_STATUS_ONLINE);
 
         // §5.1: any online/busy node makes the *user* online.
@@ -538,7 +532,10 @@ mod tests {
         let all_away = vec![view("a", NODE_STATUS_AWAY), view("b", NODE_STATUS_AWAY)];
         assert_eq!(aggregate_status(all_away.iter()), NODE_STATUS_AWAY);
 
-        let offline = vec![view("a", NODE_STATUS_OFFLINE), view("b", NODE_STATUS_RECONNECTING)];
+        let offline = vec![
+            view("a", NODE_STATUS_OFFLINE),
+            view("b", NODE_STATUS_RECONNECTING),
+        ];
         assert_eq!(aggregate_status(offline.iter()), NODE_STATUS_OFFLINE);
 
         let empty: Vec<InterlinkNodeView> = Vec::new();
@@ -639,20 +636,16 @@ mod tests {
     #[test]
     fn lease_less_web_node_follows_ttl_and_goes_offline() {
         let registry = NodeRegistry::new();
-        registry
-            .web_nodes
-            .write()
-            .expect("lock poisoned")
-            .insert(
-                "conn-9".to_string(),
-                WebNodeEntry {
-                    user_id: "u1".to_string(),
-                    connection_id: "conn-9".to_string(),
-                    label: "web".to_string(),
-                    last_seen_at: 100.0,
-                    lease: None,
-                },
-            );
+        registry.web_nodes.write().expect("lock poisoned").insert(
+            "conn-9".to_string(),
+            WebNodeEntry {
+                user_id: "u1".to_string(),
+                connection_id: "conn-9".to_string(),
+                label: "web".to_string(),
+                last_seen_at: 100.0,
+                lease: None,
+            },
+        );
 
         let nodes = registry.compose_user_nodes("u1", 300.0, TTL, vec![]);
         assert_eq!(nodes.len(), 1);
@@ -770,13 +763,11 @@ mod tests {
         assert!(registry
             .compose_user_nodes("u1", 101.0, TTL, vec![])
             .is_empty());
-        assert!(
-            !registry
-                .activity
-                .read()
-                .expect("lock poisoned")
-                .contains_key(lease.node_id())
-        );
+        assert!(!registry
+            .activity
+            .read()
+            .expect("lock poisoned")
+            .contains_key(lease.node_id()));
 
         let second = registry.register_web("u1", "conn-2", "web·chat", 100.0);
         registry.report_activity("device:x", true, false, 100.0);

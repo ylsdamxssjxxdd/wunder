@@ -501,10 +501,9 @@ async fn get_session(
     };
 
     let config = state.config_store.get().await;
-    let session_model_override =
-        state
-            .workspace
-            .load_session_model_override(&resolved.user.user_id, &session_id);
+    let session_model_override = state
+        .workspace
+        .load_session_model_override(&resolved.user.user_id, &session_id);
     let runtime = resolve_session_model_runtime_with_override(
         &config,
         agent_record.as_ref(),
@@ -1864,7 +1863,7 @@ pub(super) fn session_model_view(
     agent: Option<&crate::storage::UserAgentRecord>,
     model_override: Option<&str>,
 ) -> Value {
-    let runtime=resolve_session_model_runtime_with_override(config,agent,model_override);
+    let runtime = resolve_session_model_runtime_with_override(config, agent, model_override);
     json!({"model_name":runtime.as_ref().and_then(|r|r.display_name.as_ref()).map(|v|wunder_core::thread_view::preview(v,128)),
         "model_key":runtime.as_ref().and_then(|r|r.config_key.as_ref()).map(|v|wunder_core::thread_view::preview(v,128)),
         "context_max_tokens":runtime.as_ref().and_then(|r|r.max_context),"context_total_tokens":runtime.as_ref().and_then(|r|r.max_context)})
@@ -1875,8 +1874,7 @@ fn resolve_session_model_runtime_with_override(
     agent_record: Option<&crate::storage::UserAgentRecord>,
     session_override: Option<&str>,
 ) -> Option<SessionModelRuntime> {
-    let config_key =
-        resolve_thread_model_name(config, agent_record, session_override)?;
+    let config_key = resolve_thread_model_name(config, agent_record, session_override)?;
     let model_config = config.llm.models.get(&config_key)?;
     if !is_llm_model(model_config) {
         return None;

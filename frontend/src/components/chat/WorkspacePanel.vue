@@ -194,6 +194,9 @@
         <button class="workspace-menu-btn" :disabled="isReadonlyFileSystem" @click="handleNewFolder">
           {{ t('workspace.menu.newFolder') }}
         </button>
+        <button class="workspace-menu-btn" :disabled="loading" @click="handleContextRefresh">
+          {{ t('workspace.menu.refresh') }}
+        </button>
         <button class="workspace-menu-btn" :disabled="!contextMenuHasSelection" @click="handleQuotePath">
           {{ t('workspace.menu.quotePath') }}
         </button>
@@ -3054,6 +3057,11 @@ const handleEdit = () => {
     return;
   }
   openEditor(targetEntry);
+};
+
+const handleContextRefresh = async () => {
+  closeContextMenu();
+  await refreshWorkspace();
 };
 
 const handleRename = () => {

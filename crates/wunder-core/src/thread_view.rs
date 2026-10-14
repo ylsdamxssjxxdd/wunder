@@ -84,6 +84,10 @@ pub struct TrajectoryViewRow {
     pub kind: String,
     pub status: String,
     pub summary: String,
+    /// Overview pages contain one representative row per user turn. Selecting
+    /// one must load that turn's complete, keyset-paged trajectory.
+    #[serde(default)]
+    pub overview_only: bool,
     pub tool_name: Option<String>,
     pub model_round: i64,
     pub started_at: f64,
@@ -103,8 +107,8 @@ pub struct TrajectoryTile {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ThreadViewPage {
-    pub runtime_status:String,
-    pub active_turn_id:String,
+    pub runtime_status: String,
+    pub active_turn_id: String,
     pub session_id: String,
     pub epoch: i64,
     pub view_seq: i64,
@@ -138,8 +142,8 @@ pub struct ThreadBodyPage {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ThreadViewChanges {
-    pub runtime_status:String,
-    pub active_turn_id:String,
+    pub runtime_status: String,
+    pub active_turn_id: String,
     pub epoch: i64,
     pub view_seq: i64,
     pub reset_required: bool,

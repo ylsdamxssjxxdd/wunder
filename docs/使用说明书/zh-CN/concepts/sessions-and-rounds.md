@@ -95,4 +95,4 @@ updated_at: 2026-10-13
 - [流式执行](/docs/zh-CN/concepts/streaming/) —— 条目与增量的关系
 - [上下文压缩](/docs/zh-CN/concepts/core-context-compression/) —— 历史如何被精简
 - [长期记忆](/docs/zh-CN/concepts/memory/) —— 记忆按作用域隔离
-- [会话状态说明](/docs/zh-CN/reference/stream-events/) —— 事件与状态字段
+- [会话状态说明](/docs/zh-CN/capabilities/stream-events/) —— 事件与状态字段

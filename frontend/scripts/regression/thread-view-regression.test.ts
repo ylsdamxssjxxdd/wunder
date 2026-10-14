@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
-import {beginThreadView,commitThreadView,threadViewSlots,threadViewPhase,threadViewCursor,applyThreadViewChanges,submitThreadView,failThreadView,clearThreadView,applyThreadViewTail,threadViewAtLatest,threadViewStatus} from '../../src/realtime/chat/threadViewStore';
+import {beginThreadView,commitThreadView,threadViewSlots,threadViewPhase,threadViewCursor,applyThreadViewChanges,submitThreadView,failThreadView,clearThreadView,applyThreadViewTail,threadViewAtLatest,threadViewStatus,pauseThreadViewHistory,threadViewHistory} from '../../src/realtime/chat/threadViewStore';
 const row=(round:number,revision=1)=>({root_turn_id:`fixture-turn-${round}`,user_round:round,revision,status:'completed',user:{item_id:`fixture-user-${round}`,content:'fixture input'},assistant:{item_id:`fixture-answer-${round}`,content:'fixture answer'},workflow_count:0,failed_count:0});
 const page=(chat:any[],seq=1)=>({session_id:'fixture-thread',epoch:1,view_seq:seq,projection_state:'ready',thread_empty:chat.length===0,latest_round:chat.length,chat,trajectory:[],tiles:[],tile_level:0,next_before:1,has_more:false});
 const key='fixture-thread';
+assert.deepEqual(threadViewHistory(key), { before: null, hasMore: false });
 let generation=beginThreadView(key);assert.equal(threadViewPhase(key),'opening');
 assert.equal(commitThreadView(key,page([row(1)]),generation),true);
 const visible=threadViewSlots(key)![0];assert.equal(threadViewPhase(key),'ready');
@@ -16,6 +17,7 @@ applyThreadViewChanges(key,{view_seq:10,rows:[row(2,10)]});
 assert.equal(commitThreadView(key,page([row(3)],9),generation),false);
 commitThreadView(key,page([row(0,2)],900),undefined,true);assert.equal(threadViewCursor(key),10);
 assert.equal(threadViewSlots(key)!.find(s=>s.rootTurnId==='fixture-turn-1'),visible);
+pauseThreadViewHistory(key);assert.deepEqual(threadViewHistory(key),{before:1,hasMore:false});
 submitThreadView(key,'fixture-client','fixture pending');
 applyThreadViewChanges(key,{view_seq:11,rows:[{...row(4,11),client_message_id:'fixture-client'}]});
 assert.equal(threadViewSlots(key)!.filter(s=>s.user.client_message_id==='fixture-client').length,1);

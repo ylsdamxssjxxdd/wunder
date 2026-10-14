@@ -231,4 +231,4 @@ summary: 舰桥各面板的职能、入口位置与常用操作流程。
 
 ## 延伸阅读
 
-- [系统设置参考](/docs/zh-CN/reference/config/)
+- [系统设置参考](/docs/zh-CN/capabilities/config/)

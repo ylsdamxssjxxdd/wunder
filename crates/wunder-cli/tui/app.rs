@@ -76,8 +76,15 @@ mod commands;
 mod exploring_group;
 mod input_placeholders;
 mod plan_panel;
+mod text_selection;
 mod thread_ui_state;
 mod transcript_view;
+use text_selection::build_transcript_hit_map;
+use text_selection::SelectionPoint;
+use text_selection::TranscriptHitMap;
+use text_selection::TranscriptSelection;
+#[cfg(test)]
+use text_selection::CLIPBOARD_WRITER;
 use thread_ui_state::ThreadUiState;
 
 pub(super) mod helpers;
@@ -157,6 +164,9 @@ pub struct TranscriptRenderEntry {
 #[derive(Debug, Clone)]
 pub struct TranscriptRenderWindow {
     pub entries: Vec<TranscriptRenderEntry>,
+    /// Visual row counts of `entries`, in order. Click hit-testing maps a pointer row
+    /// onto a card with these, the same numbers the window was chosen with.
+    pub window_line_counts: Vec<usize>,
     pub local_scroll: u16,
     pub total_lines: usize,
 }
@@ -344,16 +354,18 @@ struct WrappedInputLine {
     end: usize,
 }
 
+/// Who owns the pointer. `Capture` is the working mode: the app reads clicks and the
+/// wheel, so cards, disclosure rows and the composer respond. `Native` releases mouse
+/// capture to the terminal, which is how a reader gets native selection and copy back.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MouseMode {
-    Auto,
-    Scroll,
-    Select,
+    Capture,
+    Native,
 }
 
 impl MouseMode {
     fn captures_mouse(self) -> bool {
-        matches!(self, Self::Scroll)
+        matches!(self, Self::Capture)
     }
 }
 
@@ -456,13 +468,33 @@ pub struct TuiApp {
     transcript_rendered_lines: usize,
     transcript_render_revision: u64,
     transcript_render_cache: Option<TranscriptRenderCache>,
+    /// What each addressable transcript row is made of: the card that owns it and the
+    /// logical line under it. Rebuilt with the rendered view.
+    transcript_hit: TranscriptHitMap,
+    /// The range a pointer drag picked up. Releasing a non-empty range copies it, and the
+    /// mark stays until the next click.
+    transcript_selection: Option<TranscriptSelection>,
+    /// Last press and how many of them landed within the double-click window, so the
+    /// second click selects a word and the third a line.
+    pointer_click_at: Option<Instant>,
+    pointer_click_row: usize,
+    pointer_click_column: usize,
+    pointer_click_count: u8,
+    /// Where the composer text actually got painted on the last frame, with the wrapped
+    /// line ranges and scroll that go with it: a click is answered against the same wrap
+    /// the reader saw, not against a re-wrap that could disagree with it.
+    input_hit_area: Rect,
+    input_hit_start: usize,
+    input_hit_lines: Vec<WrappedInputLine>,
     history_archived_entries: usize,
     pending_scrollback_lines: Vec<Line<'static>>,
-    banner: crate::empty_state_animation::EmptyStateAnimation,
+    banner: crate::empty_state_animation::WelcomeLogo,
     banner_cells: usize,
     transcript_view: transcript_view::TranscriptView,
-    /// Cards the reader opened with Enter. Transient: any shift of log indices clears it.
-    expanded_cards: std::collections::BTreeSet<usize>,
+    /// Cards the reader opened with Enter, keyed by cell identity so trimming the
+    /// transcript cannot re-point an opening at an unrelated card.
+    expanded_cards: std::collections::BTreeSet<u64>,
+    next_cell_id: u64,
     logs: Vec<LogEntry>,
     busy: bool,
     /// The thread on screen belongs to an orchestration run that holds its write
@@ -532,7 +564,6 @@ pub struct TuiApp {
     suppressed_clipboard_paste_last_at: Option<Instant>,
     workspace_project_name: Option<String>,
     workspace_git_branch: Option<String>,
-    mouse_passthrough_until: Option<Instant>,
     transcript_mouse_region: Rect,
     input_mouse_region: Rect,
     app_hints: Vec<String>,
@@ -610,12 +641,22 @@ impl TuiApp {
             transcript_rendered_lines: 0,
             transcript_render_revision: 0,
             transcript_render_cache: None,
+            transcript_hit: TranscriptHitMap::default(),
+            transcript_selection: None,
+            pointer_click_at: None,
+            pointer_click_row: 0,
+            pointer_click_column: 0,
+            pointer_click_count: 0,
+            input_hit_area: Rect::default(),
+            input_hit_start: 0,
+            input_hit_lines: Vec::new(),
             history_archived_entries: 0,
             pending_scrollback_lines: Vec::new(),
-            banner: crate::empty_state_animation::EmptyStateAnimation::default(),
+            banner: crate::empty_state_animation::WelcomeLogo::default(),
             banner_cells: 0,
             transcript_view: Default::default(),
             expanded_cards: Default::default(),
+            next_cell_id: 1,
             logs: Vec::new(),
             busy: false,
             watch_only_reason: None,
@@ -657,7 +698,7 @@ impl TuiApp {
             transcript_offset_from_bottom: 0,
             session_stats_dirty: false,
             shortcuts_visible: false,
-            mouse_mode: MouseMode::Auto,
+            mouse_mode: MouseMode::Capture,
             focus_area: FocusArea::Input,
             transcript_selected: None,
             resume_picker: None,
@@ -675,7 +716,6 @@ impl TuiApp {
             suppressed_clipboard_paste_last_at: None,
             workspace_project_name: None,
             workspace_git_branch: None,
-            mouse_passthrough_until: None,
             transcript_mouse_region: Rect::default(),
             input_mouse_region: Rect::default(),
             app_hints: Vec::new(),
@@ -850,11 +890,7 @@ impl TuiApp {
             self.banner.dismiss();
             return None;
         }
-        self.banner.paint(
-            screen,
-            crate::empty_state_animation::presentation(),
-            Instant::now(),
-        )
+        self.banner.paint(screen)
     }
 
     pub fn schedule_periodic_redraw_if_needed(&self) {
@@ -880,10 +916,6 @@ impl TuiApp {
         if self.active_approval.is_some() || ctrl_c_pending {
             self.frame_requester
                 .schedule_frame_in(Duration::from_millis(90));
-        }
-        if self.banner.is_eligible() && !self.banner_retired() {
-            self.frame_requester
-                .schedule_frame_in(crate::empty_state_animation::FRAME_INTERVAL);
         }
     }
 
@@ -1821,7 +1853,11 @@ impl TuiApp {
                     lines.push(String::new());
                 }
                 lines.push(if question_total > 1 {
-                    self.format_inquiry_question_label(question_index, question_total, &question.question)
+                    self.format_inquiry_question_label(
+                        question_index,
+                        question_total,
+                        &question.question,
+                    )
                 } else {
                     question.question.clone()
                 });
@@ -1857,7 +1893,12 @@ impl TuiApp {
         question: &str,
     ) -> String {
         if self.is_zh_language() {
-            format!("问题 {}/{}：{}", question_index + 1, question_total, question)
+            format!(
+                "问题 {}/{}：{}",
+                question_index + 1,
+                question_total,
+                question
+            )
         } else {
             format!(
                 "Question {}/{}: {}",
@@ -1872,8 +1913,10 @@ impl TuiApp {
         if left.questions.len() != right.questions.len() {
             return false;
         }
-        left.questions.iter().zip(right.questions.iter()).all(
-            |(a, b)| {
+        left.questions
+            .iter()
+            .zip(right.questions.iter())
+            .all(|(a, b)| {
                 a.question.trim() == b.question.trim()
                     && a.multiple == b.multiple
                     && a.routes.len() == b.routes.len()
@@ -1881,8 +1924,7 @@ impl TuiApp {
                         .iter()
                         .zip(b.routes.iter())
                         .all(|(x, y)| x.label == y.label && x.description == y.description)
-            },
-        )
+            })
     }
 
     fn activate_inquiry_panel(&mut self, panel: InquiryPanelState, emit_log: bool) {
@@ -2234,7 +2276,10 @@ impl TuiApp {
         } else {
             (current_question.saturating_add(delta as usize)).min(panel.questions.len() - 1)
         };
-        if let Some(index) = flat.iter().position(|(question, _)| *question == target_question) {
+        if let Some(index) = flat
+            .iter()
+            .position(|(question, _)| *question == target_question)
+        {
             self.inquiry_selected_index = index;
         }
     }
@@ -2364,7 +2409,8 @@ impl TuiApp {
         if self.is_zh_language() {
             return vec![
                 "/ 命令 · Enter 发送 · Tab 补全 · ! 直接执行 shell".to_string(),
-                "Shift + Enter / Ctrl + J 换行 · Ctrl + V 粘贴 · Ctrl + Y 取回删除的文本".to_string(),
+                "Shift + Enter / Ctrl + J 换行 · Ctrl + V 粘贴 · Ctrl + Y 取回删除的文本"
+                    .to_string(),
                 "@ 文件提及 · # 技能 · $ 工具 · 拖入图片或文件即可附加".to_string(),
                 "Alt + , / Alt + . 降低/提高推理强度".to_string(),
                 "Ctrl + R / Ctrl + S 搜索输入历史 · Ctrl + G 外部编辑器".to_string(),
@@ -2386,6 +2432,7 @@ impl TuiApp {
             "alt + , / alt + . to lower or raise reasoning effort".to_string(),
             "ctrl + r / ctrl + s to search the composer history                 ctrl + g editor".to_string(),
             "ctrl + o copies the last reply                ctrl + l clears into a new thread".to_string(),
+            "click selects · drag copies · double click takes the word · ctrl+click opens".to_string(),
             "ctrl + t for the full transcript              alt + r for raw, copy-friendly output".to_string(),
             "esc to interrupt a running round              ctrl + c to exit".to_string(),
             "f3 focuses activity and selects cards         f2 run notices     f4 mouse mode".to_string(),
@@ -2403,6 +2450,11 @@ impl TuiApp {
 
     pub fn set_input_viewport(&mut self, width: u16) {
         self.input_viewport_width = width.max(1);
+    }
+
+    /// The rect the composer text was painted into, prompt glyph excluded.
+    pub fn set_input_hit_area(&mut self, area: Rect) {
+        self.input_hit_area = area;
     }
 
     pub fn set_transcript_viewport(&mut self, width: u16, height: u16) {
@@ -2426,6 +2478,8 @@ impl TuiApp {
     fn invalidate_transcript_metrics(&mut self) {
         self.transcript_view.invalidate();
         self.transcript_rendered_lines = 0;
+        self.transcript_hit = TranscriptHitMap::default();
+        self.transcript_selection = None;
         self.transcript_render_revision = self.transcript_render_revision.wrapping_add(1);
         self.transcript_render_cache = None;
     }
@@ -2628,39 +2682,39 @@ impl TuiApp {
         if self.mouse_mode == mode {
             return;
         }
-        self.mouse_passthrough_until = None;
         self.mouse_mode = mode;
         let notice = match mode {
-            MouseMode::Auto => {
-                "mouse mode: auto (native selection and terminal wheel scrolling enabled; switch to scroll for app-captured transcript scrolling)"
+            MouseMode::Capture => {
+                "mouse mode: capture (clicks select cards, open details and place the cursor; the wheel scrolls the transcript)"
             }
-            MouseMode::Scroll => "mouse mode: scroll (capture wheel events for transcript scrolling)",
-            MouseMode::Select => {
-                "mouse mode: select/copy (native terminal selection enabled)"
+            MouseMode::Native => {
+                "mouse mode: native (the terminal keeps its own selection, copy and wheel)"
             }
         };
         self.push_log(LogKind::Info, notice.to_string());
     }
 
     fn toggle_mouse_mode(&mut self) {
-        let next = if self.mouse_mode == MouseMode::Scroll {
-            MouseMode::Select
-        } else if self.mouse_mode == MouseMode::Select {
-            MouseMode::Auto
-        } else {
-            MouseMode::Scroll
+        let next = match self.mouse_mode {
+            MouseMode::Capture => MouseMode::Native,
+            MouseMode::Native => MouseMode::Capture,
         };
         self.set_mouse_mode(next);
     }
 
-    fn mouse_passthrough_active(&self) -> bool {
-        self.mouse_passthrough_until
-            .map(|deadline| Instant::now() < deadline)
-            .unwrap_or(false)
-    }
-
-    fn clear_mouse_passthrough(&mut self) {
-        self.mouse_passthrough_until = None;
+    /// A console that refused the pointer: stay usable by handing it back for good and
+    /// say once why the clicks are gone.
+    pub fn give_up_mouse_capture(&mut self, reason: String) {
+        if self.mouse_mode == MouseMode::Native {
+            return;
+        }
+        self.mouse_mode = MouseMode::Native;
+        let hint = crate::locale::tr(
+            self.display_language.as_str(),
+            "终端不接受鼠标捕获，点击与滚轮交回终端",
+            "the terminal refused mouse capture; clicks and the wheel are its own again",
+        );
+        self.push_log(LogKind::Info, format!("{hint}: {reason}"));
     }
 
     fn set_focus_area(&mut self, focus: FocusArea) {
@@ -2878,7 +2932,9 @@ impl TuiApp {
             KeyCode::Char('b') if key.modifiers == KeyModifiers::CONTROL => {
                 center.move_selection(-8)
             }
-            KeyCode::Char('f') if key.modifiers == KeyModifiers::CONTROL => center.move_selection(8),
+            KeyCode::Char('f') if key.modifiers == KeyModifiers::CONTROL => {
+                center.move_selection(8)
+            }
             KeyCode::F(3) => center.searching = true,
             KeyCode::Char('/') => center.searching = true,
             KeyCode::Char('g') | KeyCode::Char('G') => {
@@ -2959,6 +3015,10 @@ impl TuiApp {
             }
         }
 
+        // The pointer answers against this exact wrap and scroll.
+        self.input_hit_start = start_line;
+        self.input_hit_lines = lines;
+
         let display = display_lines.join("\n");
         let cursor_y = cursor_row.saturating_sub(start_line) as u16;
         let cursor_x = cursor_col as u16;
@@ -2984,9 +3044,12 @@ impl TuiApp {
                 global_index: archived + index,
             })
             .collect::<Vec<_>>();
+        let window_line_counts =
+            line_counts[window.start_entry..window.end_entry_exclusive].to_vec();
 
         TranscriptRenderWindow {
             entries,
+            window_line_counts,
             local_scroll: window.local_scroll,
             total_lines: window.total_lines,
         }
@@ -3034,12 +3097,11 @@ impl TuiApp {
         } else {
             render_window
                 .entries
-                .into_iter()
+                .iter()
                 .flat_map(|entry| {
                     self.render_entry_lines(
                         entry.global_index,
-                        selected_transcript
-                            .is_some_and(|selected| selected == entry.global_index),
+                        selected_transcript.is_some_and(|selected| selected == entry.global_index),
                         width,
                     )
                 })
@@ -3058,6 +3120,24 @@ impl TuiApp {
             )));
         }
 
+        // Nothing below the last row the viewport can show is addressable, so the map
+        // stops there instead of mirroring a long card's every row.
+        let next_hit = build_transcript_hit_map(
+            &transcript_lines,
+            &render_window,
+            usize::from(transcript_scroll) + usize::from(height),
+            usize::from(transcript_scroll),
+            width,
+        );
+        // A mark lives in document rows, so it only survives a rebuild that moved nothing:
+        // scrolling, a resize or new content all drop it, while selecting does not.
+        let selection_survives = self.transcript_hit.scroll == next_hit.scroll
+            && self.transcript_hit.width == next_hit.width
+            && self.transcript_hit.rows.first() == next_hit.rows.first();
+        if !selection_survives {
+            self.transcript_selection = None;
+        }
+        self.transcript_hit = next_hit;
         self.set_transcript_rendered_lines(transcript_total_lines);
         self.transcript_render_cache = Some(TranscriptRenderCache {
             width,
@@ -3252,7 +3332,11 @@ impl TuiApp {
     /// A card is fully open when the reader pressed Enter on it, and always open inside the
     /// Ctrl+T view. Metrics and rendering must agree, so both ask this one question.
     fn card_is_expanded(&self, index: usize) -> bool {
-        self.transcript_view_open() || self.expanded_cards.contains(&index)
+        self.transcript_view_open()
+            || self
+                .logs
+                .get(index)
+                .is_some_and(|entry| self.expanded_cards.contains(&entry.cell_id))
     }
 
     fn entry_visual_line_count(&mut self, index: usize, width: usize) -> usize {
@@ -3285,8 +3369,8 @@ impl TuiApp {
                     .unwrap_or(1)
                     .max(1)
             };
-            let rows = if kind == LogKind::Reasoning && !streaming && !expanded {
-                reasoning_folded_rows(rows)
+            let rows = if kind == LogKind::Reasoning && !streaming {
+                reasoning_folded_rows(rows, expanded)
             } else {
                 rows
             };
@@ -3358,8 +3442,16 @@ impl TuiApp {
 
         // A finished thinking block is background noise in the transcript: keep its head,
         // let Enter open the rest, and never fold a block that is still arriving.
-        if entry.kind == LogKind::Reasoning && !streaming && !expanded {
-            fold_reasoning_lines(&mut lines);
+        if entry.kind == LogKind::Reasoning && !streaming {
+            if expanded {
+                if let Some(line) =
+                    patch_log::disclosure_line(true, lines.len() > REASONING_FOLD_LINES)
+                {
+                    lines.push(line);
+                }
+            } else {
+                fold_reasoning_lines(&mut lines);
+            }
         }
 
         if selected {
@@ -4218,9 +4310,6 @@ impl TuiApp {
         {
             self.ctrl_c_hint_deadline = None;
         }
-        if self.mouse_mode == MouseMode::Auto && self.mouse_passthrough_active() {
-            self.clear_mouse_passthrough();
-        }
         self.clamp_input_cursor_outside_attachment_placeholder();
         if self.try_consume_suppressed_clipboard_key(key) {
             return Ok(());
@@ -4800,9 +4889,7 @@ impl TuiApp {
             KeyCode::PageDown => self.move_resume_picker_selection(8),
             // Same list bindings as the command center: `k`/`j` move one row,
             // Ctrl+P/Ctrl+N, Ctrl+B/Ctrl+F and Ctrl+K/Ctrl+J page or move.
-            KeyCode::Char('k') if key.modifiers.is_empty() => {
-                self.move_resume_picker_selection(-1)
-            }
+            KeyCode::Char('k') if key.modifiers.is_empty() => self.move_resume_picker_selection(-1),
             KeyCode::Char('j') if key.modifiers.is_empty() => self.move_resume_picker_selection(1),
             KeyCode::Char('p') | KeyCode::Char('b') if key.modifiers == KeyModifiers::CONTROL => {
                 self.move_resume_picker_selection(-8)
@@ -4861,11 +4948,15 @@ impl TuiApp {
                 true
             }
             KeyCode::Left => {
-                self.scroll_transcript_up(1);
+                if !self.set_selected_card_expanded(false) {
+                    self.scroll_transcript_up(1);
+                }
                 true
             }
             KeyCode::Right => {
-                self.scroll_transcript_down(1);
+                if !self.set_selected_card_expanded(true) {
+                    self.scroll_transcript_down(1);
+                }
                 true
             }
             KeyCode::PageUp => {
@@ -5581,6 +5672,12 @@ impl TuiApp {
 
     pub fn on_mouse(&mut self, mouse: MouseEvent) {
         if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Right)) {
+            // The right button copies what is marked, the way codex does it, and only
+            // reaches for the clipboard when nothing is selected.
+            if self.transcript_selection.is_some() && self.mouse_in_transcript_region(&mouse) {
+                self.copy_transcript_selection();
+                return;
+            }
             self.focus_area = FocusArea::Input;
             self.paste_from_system_clipboard();
             return;
@@ -5597,32 +5694,309 @@ impl TuiApp {
             return;
         }
 
-        match self.mouse_mode {
-            MouseMode::Select => {}
-            MouseMode::Scroll => match mouse.kind {
-                MouseEventKind::ScrollUp if self.mouse_in_transcript_region(&mouse) => {
-                    self.scroll_transcript_up(3)
-                }
-                MouseEventKind::ScrollDown if self.mouse_in_transcript_region(&mouse) => {
-                    self.scroll_transcript_down(3)
-                }
-                _ => {}
-            },
-            MouseMode::Auto => match mouse.kind {
-                MouseEventKind::Drag(MouseButton::Left) => {
-                    if self.mouse_in_region(&mouse, self.input_mouse_region) {
-                        self.focus_area = FocusArea::Input;
-                    }
-                }
-                MouseEventKind::ScrollUp if self.mouse_in_transcript_region(&mouse) => {
-                    self.scroll_transcript_up(3)
-                }
-                MouseEventKind::ScrollDown if self.mouse_in_transcript_region(&mouse) => {
-                    self.scroll_transcript_down(3)
-                }
-                _ => {}
-            },
+        // Native mode leaves the pointer to the terminal; no capture means no events,
+        // and saying so here keeps a stale event from moving anything.
+        if !self.mouse_mode.captures_mouse() {
+            return;
         }
+
+        match mouse.kind {
+            MouseEventKind::ScrollUp if self.mouse_in_transcript_region(&mouse) => {
+                self.transcript_selection = None;
+                self.scroll_transcript_up(3)
+            }
+            MouseEventKind::ScrollDown if self.mouse_in_transcript_region(&mouse) => {
+                self.transcript_selection = None;
+                self.scroll_transcript_down(3)
+            }
+            MouseEventKind::Down(MouseButton::Left) => self.handle_pointer_press(&mouse),
+            MouseEventKind::Drag(MouseButton::Left) => self.handle_pointer_drag(&mouse),
+            MouseEventKind::Up(MouseButton::Left) => self.handle_pointer_release(),
+            _ => {}
+        }
+    }
+
+    /// A surface above the transcript owns the screen: a click there must not fall
+    /// through to the cards hidden underneath it.
+    fn modal_surface_open(&mut self) -> bool {
+        self.command_center.is_some()
+            || self.resume_picker.is_some()
+            || self.shortcuts_visible
+            || self.active_approval.is_some()
+            || self.active_remote_approval.is_some()
+            || self.active_inquiry_panel.is_some()
+            || !self.popup_view().lines.is_empty()
+    }
+
+    /// Where a press lands. The composer answers first, the way codex routes the textarea
+    /// ahead of the transcript: a click inside it puts the caret under the pointer.
+    /// Otherwise the transcript row owns a card, and the card's last row is its disclosure
+    /// control, so that click folds or unfolds; a second or third click on text picks up
+    /// the word or the line instead.
+    fn handle_pointer_press(&mut self, mouse: &MouseEvent) {
+        if self.modal_surface_open() {
+            return;
+        }
+        // Ctrl+click is the link gesture, the way codex routes it: it opens what is under
+        // the pointer and claims nothing else.
+        if mouse
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::SUPER)
+        {
+            if let Some(point) = self.transcript_point(mouse) {
+                let lines = self.transcript_window_lines();
+                if let Some(url) = self.url_at_point(lines.as_slice(), point) {
+                    self.open_transcript_url(url);
+                }
+            }
+            return;
+        }
+        if let Some(cursor) = self.input_cursor_at_pointer(mouse) {
+            self.focus_area = FocusArea::Input;
+            self.input_cursor = cursor;
+            self.transcript_selection = None;
+            self.reset_pointer_clicks();
+            self.request_redraw();
+            return;
+        }
+        if !self.mouse_in_transcript_region(mouse) {
+            return;
+        }
+        let Some(point) = self.transcript_point(mouse) else {
+            return;
+        };
+        self.focus_area = FocusArea::Transcript;
+        self.transcript_selection = None;
+        if let Some(index) = self.transcript_hit.rows.get(point.row).copied() {
+            self.transcript_selected = Some(index);
+            let is_card_last_row = self
+                .transcript_hit
+                .rows
+                .get(point.row + 1)
+                .is_none_or(|next| *next != index);
+            if is_card_last_row && self.toggle_selected_card() {
+                self.reset_pointer_clicks();
+                return;
+            }
+        }
+        let clicks = self.count_pointer_click(point);
+        if clicks >= 2 {
+            self.select_word_or_line(point, clicks);
+            return;
+        }
+        self.transcript_selection = Some(TranscriptSelection {
+            anchor: point,
+            head: point,
+            dragging: true,
+        });
+        self.request_redraw();
+    }
+
+    fn transcript_point(&self, mouse: &MouseEvent) -> Option<SelectionPoint> {
+        let row = self.transcript_row_at(self.transcript_mouse_region, mouse.row)?;
+        if row >= self.transcript_hit.rows.len() {
+            return None;
+        }
+        Some(SelectionPoint {
+            row,
+            column: usize::from(mouse.column.saturating_sub(self.transcript_mouse_region.x)),
+        })
+    }
+
+    fn reset_pointer_clicks(&mut self) {
+        self.pointer_click_at = None;
+        self.pointer_click_count = 0;
+    }
+
+    /// Presses within the double-click window and on the same cell count up; anything
+    /// else restarts the count.
+    fn count_pointer_click(&mut self, point: SelectionPoint) -> u8 {
+        let repeated = self.pointer_click_at.is_some_and(|at| {
+            Instant::now().saturating_duration_since(at).as_millis() < 400
+                && self.pointer_click_row == point.row
+                && self.pointer_click_column == point.column
+        });
+        self.pointer_click_count = if repeated {
+            (self.pointer_click_count + 1).min(3)
+        } else {
+            1
+        };
+        self.pointer_click_at = Some(Instant::now());
+        self.pointer_click_row = point.row;
+        self.pointer_click_column = point.column;
+        self.pointer_click_count
+    }
+
+    /// A double click takes the word under the pointer, a triple click the whole line.
+    /// Both copy straight away, which is what codex's copy-on-select does with them.
+    fn select_word_or_line(&mut self, point: SelectionPoint, clicks: u8) {
+        if clicks >= 3 {
+            let Some(origin) = self.transcript_hit.origins.get(point.row).copied() else {
+                return;
+            };
+            let first = self
+                .transcript_hit
+                .origins
+                .iter()
+                .position(|entry| entry.line == origin.line)
+                .unwrap_or(point.row);
+            let last = self
+                .transcript_hit
+                .origins
+                .iter()
+                .rposition(|entry| entry.line == origin.line)
+                .unwrap_or(point.row);
+            self.transcript_selection = Some(TranscriptSelection {
+                anchor: SelectionPoint {
+                    row: first,
+                    column: 0,
+                },
+                head: SelectionPoint {
+                    row: last,
+                    column: usize::MAX,
+                },
+                // Left dragging so the release that follows the click copies it, which is
+                // what a double or triple click means under copy-on-select.
+                dragging: true,
+            });
+            self.request_redraw();
+            return;
+        }
+        let lines = self.transcript_window_lines();
+        let Some((from, to)) = self.word_bounds_at(lines.as_slice(), point) else {
+            return;
+        };
+        self.transcript_selection = Some(TranscriptSelection {
+            anchor: SelectionPoint {
+                row: point.row,
+                column: from,
+            },
+            head: SelectionPoint {
+                row: point.row,
+                column: to,
+            },
+            dragging: true,
+        });
+        self.request_redraw();
+    }
+
+    /// Extend a drag over the transcript, or keep moving the caret when it started in the
+    /// composer.
+    fn handle_pointer_drag(&mut self, mouse: &MouseEvent) {
+        if self
+            .transcript_selection
+            .as_ref()
+            .is_some_and(|selection| selection.dragging)
+        {
+            let Some(point) = self.transcript_point(mouse) else {
+                return;
+            };
+            if let Some(selection) = self.transcript_selection.as_mut() {
+                selection.head = point;
+            }
+            self.request_redraw();
+            return;
+        }
+        if let Some(cursor) = self.input_cursor_at_pointer(mouse) {
+            self.input_cursor = cursor;
+            self.request_redraw();
+        }
+    }
+
+    /// A release ends the drag. Whatever the drag picked up goes to the clipboard; a
+    /// press that never moved stays a plain click.
+    fn handle_pointer_release(&mut self) {
+        let Some(selection) = self.transcript_selection.as_mut() else {
+            return;
+        };
+        if !selection.dragging {
+            return;
+        }
+        selection.dragging = false;
+        if selection.anchor == selection.head {
+            return;
+        }
+        self.copy_transcript_selection();
+    }
+
+    /// Open what a Ctrl+click landed on. A link that silently does nothing reads as a
+    /// broken client, so a refusal goes on the transcript.
+    fn open_transcript_url(&mut self, url: String) {
+        if let Err(error) = open_url_in_browser(url.as_str()) {
+            let hint = crate::locale::tr(
+                self.display_language.as_str(),
+                "打开链接失败",
+                "could not open the link",
+            );
+            self.push_log(LogKind::Error, format!("{hint}: {error}"));
+        }
+        self.request_redraw();
+    }
+
+    fn transcript_window_lines(&self) -> Vec<Line<'static>> {
+        self.transcript_render_cache
+            .as_ref()
+            .map(|cache| cache.lines.clone())
+            .unwrap_or_default()
+    }
+
+    /// Copy the marked range. A successful copy says nothing on the transcript: the mark
+    /// is the feedback, and a log line here would rebuild the window and erase it.
+    fn copy_transcript_selection(&mut self) {
+        let lines = self.transcript_window_lines();
+        let text = self.transcript_selection_text(lines.as_slice());
+        if text.is_empty() {
+            return;
+        }
+        #[cfg(test)]
+        let writer = *CLIPBOARD_WRITER
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        #[cfg(not(test))]
+        let writer: Option<fn(&str) -> anyhow::Result<()>> = Some(write_system_clipboard_text);
+        let outcome = match writer {
+            Some(write) => write(text.as_str()),
+            None => Ok(()),
+        };
+        if let Err(error) = outcome {
+            let hint = crate::locale::tr(
+                self.display_language.as_str(),
+                "复制到剪贴板失败",
+                "clipboard copy failed",
+            );
+            self.push_log(LogKind::Error, format!("{hint}: {error}"));
+        }
+        self.request_redraw();
+    }
+
+    /// Byte offset in the draft under the pointer, using the wrap the composer last drew
+    /// with. `None` when the pointer is not on the text the reader can edit.
+    fn input_cursor_at_pointer(&self, mouse: &MouseEvent) -> Option<usize> {
+        let area = self.input_hit_area;
+        if area.width == 0 || area.height == 0 || self.input_hit_lines.is_empty() {
+            return None;
+        }
+        if mouse.row < area.y || mouse.row >= area.y.saturating_add(area.height) {
+            return None;
+        }
+        if mouse.column < area.x {
+            // The prompt glyph and the row's left margin both mean "start of the draft".
+            return (mouse.column >= self.input_mouse_region.x
+                && mouse.row == self.input_mouse_region.y)
+                .then_some(0);
+        }
+        if mouse.column >= area.x.saturating_add(area.width) {
+            return None;
+        }
+        let row = self.input_hit_start + usize::from(mouse.row - area.y);
+        let column = usize::from(mouse.column - area.x);
+        let line = self.input_hit_lines.get(row)?;
+        Some(byte_index_for_display_column(
+            self.input.as_str(),
+            line.start,
+            line.end,
+            column,
+        ))
     }
 
     pub async fn submit_line(&mut self, line: String) -> Result<()> {
@@ -7127,8 +7501,8 @@ impl TuiApp {
         if self.logs.is_empty() {
             return;
         }
-        self.logs.remove(0);
-        self.expanded_cards.clear();
+        let dropped = self.logs.remove(0);
+        self.expanded_cards.remove(&dropped.cell_id);
         if self.history_archived_entries > 0 {
             self.history_archived_entries = self.history_archived_entries.saturating_sub(1);
         }
@@ -7464,12 +7838,14 @@ impl TuiApp {
             text
         };
         self.logs.push(LogEntry {
+            cell_id: self.next_cell_id,
             kind,
             text,
             special: None,
             markdown_cache: None,
             durable_id: durable_id.map(str::to_string),
         });
+        self.next_cell_id = self.next_cell_id.wrapping_add(1);
         self.invalidate_transcript_metrics();
         while self.logs.len() > MAX_LOG_ENTRIES {
             self.pop_oldest_log_entry();
@@ -7492,12 +7868,14 @@ impl TuiApp {
 
     fn push_special_log(&mut self, kind: LogKind, text: String, special: SpecialLogEntry) -> usize {
         self.logs.push(LogEntry {
+            cell_id: self.next_cell_id,
             kind,
             text,
             special: Some(special),
             markdown_cache: None,
             durable_id: None,
         });
+        self.next_cell_id = self.next_cell_id.wrapping_add(1);
         self.invalidate_transcript_metrics();
         while self.logs.len() > MAX_LOG_ENTRIES {
             self.pop_oldest_log_entry();
@@ -7754,8 +8132,7 @@ impl TuiApp {
             // The pending card already resolved its verb, and a settled sub-agent
             // call reads differently ("Waiting for" becomes "Finished waiting").
             let inherited = self.presentation_at(index);
-            let special =
-                build_completed_tool_log(tool, payload, self.is_zh_language(), inherited);
+            let special = build_completed_tool_log(tool, payload, self.is_zh_language(), inherited);
             self.write_completed_tool_cell(index, special);
             return;
         }
@@ -8202,12 +8579,17 @@ fn transcript_entry_spacing_before(index: usize) -> usize {
 /// Rows a collapsed thinking block keeps before its fold and disclosure rows.
 const REASONING_FOLD_LINES: usize = 3;
 
-/// The metrics side of `fold_reasoning_lines`: the same head, plus the two hint rows.
-fn reasoning_folded_rows(full_rows: usize) -> usize {
-    if full_rows > REASONING_FOLD_LINES {
-        REASONING_FOLD_LINES + 2
+/// The metrics side of the thinking fold: a collapsed block keeps its head plus the two
+/// hint rows, an open one carries a single row that closes it, and a short block carries
+/// neither.
+fn reasoning_folded_rows(full_rows: usize, expanded: bool) -> usize {
+    if full_rows <= REASONING_FOLD_LINES {
+        return full_rows;
+    }
+    if expanded {
+        full_rows.saturating_add(1)
     } else {
-        full_rows
+        REASONING_FOLD_LINES + 2
     }
 }
 

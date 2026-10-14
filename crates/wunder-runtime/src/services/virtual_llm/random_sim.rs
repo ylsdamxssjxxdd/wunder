@@ -23,9 +23,38 @@ const READ_ONLY_HINTS: &[&str] = &[
 /// 副作用关键词：命中它的工具按“有副作用工具”处理，参数必须无害化（路径改写进
 /// 工作区 `.temp/` 目录、命令改为无副作用回显等）。
 const MUTATION_HINTS: &[&str] = &[
-    "write", "edit", "delete", "remove", "exec", "command", "run", "apply", "patch", "create",
-    "update", "insert", "upload", "send", "post", "kill", "写入", "编辑", "删除", "执行", "运行",
-    "命令", "创建", "更新", "上传", "发送", "子智能体", "定时", "计划", "问询", "记忆管理", "技能",
+    "write",
+    "edit",
+    "delete",
+    "remove",
+    "exec",
+    "command",
+    "run",
+    "apply",
+    "patch",
+    "create",
+    "update",
+    "insert",
+    "upload",
+    "send",
+    "post",
+    "kill",
+    "写入",
+    "编辑",
+    "删除",
+    "执行",
+    "运行",
+    "命令",
+    "创建",
+    "更新",
+    "上传",
+    "发送",
+    "子智能体",
+    "定时",
+    "计划",
+    "问询",
+    "记忆管理",
+    "技能",
 ];
 /// 少数无法用通用启发式安全合成的工具：它们照常进入随机池，但调用时不按 schema 随机
 /// 取参，而是发出一条**固定的无害调用内容**（以规范名或原始名精确匹配，大小写不敏感）。
@@ -46,10 +75,19 @@ const FIXED_ARGS: &[(&str, &str)] = &[
         r#"{"questions":[{"question":"（模拟）是否继续下一步？","options":[{"label":"继续"},{"label":"暂停"}]}]}"#,
     ),
     // 真实机器控制：零位移、零等待，等价于空操作。
-    ("桌面控制器", r#"{"bbox":[0,0,0,0],"action":"delay","delay_ms":0}"#),
-    ("desktop_controller", r#"{"bbox":[0,0,0,0],"action":"delay","delay_ms":0}"#),
+    (
+        "桌面控制器",
+        r#"{"bbox":[0,0,0,0],"action":"delay","delay_ms":0}"#,
+    ),
+    (
+        "desktop_controller",
+        r#"{"bbox":[0,0,0,0],"action":"delay","delay_ms":0}"#,
+    ),
     ("桌面监视器", r#"{"wait_ms":0,"note":"__virtual_sim__"}"#),
-    ("desktop_monitor", r#"{"wait_ms":0,"note":"__virtual_sim__"}"#),
+    (
+        "desktop_monitor",
+        r#"{"wait_ms":0,"note":"__virtual_sim__"}"#,
+    ),
     // 付费生成：最小提示词，产物落工作区 .temp/。
     (
         "语音生成",
@@ -92,8 +130,8 @@ const FIXED_ARGS: &[(&str, &str)] = &[
 /// 单轮最多同时发出的工具调用数。
 const MAX_CALLS_PER_ROUND: usize = 2;
 const SAMPLE_WORDS: &[&str] = &[
-    "配置", "结构", "说明", "结果", "摘要", "示例", "入口", "依赖", "日志", "错误", "步骤",
-    "参数", "目录", "缓存", "接口", "状态",
+    "配置", "结构", "说明", "结果", "摘要", "示例", "入口", "依赖", "日志", "错误", "步骤", "参数",
+    "目录", "缓存", "接口", "状态",
 ];
 /// 人类发起的轮次中，平均每多少轮登记一次长程目标（1/N 概率）。
 const GOAL_ENTRY_ONE_IN: u64 = 3;
@@ -269,8 +307,24 @@ pub(super) fn parse_round_override(message: &str) -> Option<usize> {
         let token = token.trim_matches(|c: char| {
             matches!(
                 c,
-                ',' | '.' | ';' | ':' | '!' | '?' | '(' | ')' | '[' | ']'
-                    | '，' | '。' | '；' | '：' | '！' | '？' | '、' | '（' | '）'
+                ',' | '.'
+                    | ';'
+                    | ':'
+                    | '!'
+                    | '?'
+                    | '('
+                    | ')'
+                    | '['
+                    | ']'
+                    | '，'
+                    | '。'
+                    | '；'
+                    | '：'
+                    | '！'
+                    | '？'
+                    | '、'
+                    | '（'
+                    | '）'
             )
         });
         if token.is_empty() || !token.chars().all(|c| c.is_ascii_digit()) {
@@ -298,10 +352,7 @@ fn goal_create_arguments(schema: &Value, rng: &mut u64) -> Value {
         .and_then(|properties| properties.get("max_goal_rounds"))
         .is_some();
     if declares_limit {
-        arguments.insert(
-            "max_goal_rounds".to_string(),
-            json!(GOAL_MAX_ROUNDS),
-        );
+        arguments.insert("max_goal_rounds".to_string(), json!(GOAL_MAX_ROUNDS));
     }
     Value::Object(arguments)
 }
@@ -352,9 +403,8 @@ fn build_tool_turn(
     // 确定性抽样的部分轮次会登记一个长程目标，让目标驱动器持续排轮次，直到
     // 人工停止。目标管理需要直接的人类授权，因此只在人类发起的轮次触发
     // （驱动器派发的目标轮里 goal_entry 为 None）。
-    let opens_goal = model_round == 1
-        && goal_entry.is_some()
-        && next_u64(rng) % GOAL_ENTRY_ONE_IN == 0;
+    let opens_goal =
+        model_round == 1 && goal_entry.is_some() && next_u64(rng) % GOAL_ENTRY_ONE_IN == 0;
     let mut special_calls = 0usize;
     if opens_goal {
         if let Some((name, schema)) = goal_entry {
@@ -738,7 +788,10 @@ mod tests {
                     .and_then(Value::as_array)
                     .expect("tool turn has calls");
                 for call in calls {
-                    let name = call.pointer("/function/name").and_then(Value::as_str).unwrap();
+                    let name = call
+                        .pointer("/function/name")
+                        .and_then(Value::as_str)
+                        .unwrap();
                     assert_eq!(name, "读取文件");
                     assert!(call.pointer("/function/arguments").is_some());
                 }
@@ -780,16 +833,26 @@ mod tests {
         let args = sample_arguments(&schema, &mut rng, false);
         assert!(args.get("pattern").and_then(Value::as_str).is_some());
         assert!(args.get("limit").and_then(Value::as_i64).is_some());
-        assert!(args.get("recursive").is_none(), "optional fields stay unset");
+        assert!(
+            args.get("recursive").is_none(),
+            "optional fields stay unset"
+        );
     }
 
     #[test]
     fn mutation_paths_land_in_workspace_temp_dir() {
         let mut rng = 7_u64.max(1);
-        let schema = json!({"type":"object","required":["path"],"properties":{"path":{"type":"string"}}});
+        let schema =
+            json!({"type":"object","required":["path"],"properties":{"path":{"type":"string"}}});
         let args = sample_arguments(&schema, &mut rng, true);
-        let path = args.get("path").and_then(Value::as_str).expect("path is set");
-        assert_ne!(path, ".", "mutating tools must not target the working directory");
+        let path = args
+            .get("path")
+            .and_then(Value::as_str)
+            .expect("path is set");
+        assert_ne!(
+            path, ".",
+            "mutating tools must not target the working directory"
+        );
         assert!(
             path.starts_with(".temp/"),
             "mutating paths should live under the workspace .temp/ dir, got {path}"
@@ -799,7 +862,8 @@ mod tests {
     #[test]
     fn read_only_paths_still_target_current_directory() {
         let mut rng = 11_u64.max(1);
-        let schema = json!({"type":"object","required":["path"],"properties":{"path":{"type":"string"}}});
+        let schema =
+            json!({"type":"object","required":["path"],"properties":{"path":{"type":"string"}}});
         let args = sample_arguments(&schema, &mut rng, false);
         assert_eq!(args.get("path").and_then(Value::as_str), Some("."));
     }
@@ -882,23 +946,36 @@ mod tests {
         for round in 1..=24 {
             // Later model rounds never re-open a goal.
             let later = build_turn("session-a", round, 2, 40, &candidates, Some(&goal), None);
-            let later_calls = later.tool_calls.as_ref().and_then(Value::as_array).expect("calls");
-            assert!(later_calls
-                .iter()
-                .all(|call| call.pointer("/function/name").and_then(Value::as_str) != Some("create_goal")));
+            let later_calls = later
+                .tool_calls
+                .as_ref()
+                .and_then(Value::as_array)
+                .expect("calls");
+            assert!(later_calls.iter().all(|call| call
+                .pointer("/function/name")
+                .and_then(Value::as_str)
+                != Some("create_goal")));
             // The first model round may open a goal, and only deterministically.
             let first = build_turn("session-a", round, 1, 40, &candidates, Some(&goal), None);
             let again = build_turn("session-a", round, 1, 40, &candidates, Some(&goal), None);
-            assert_eq!(first.tool_calls, again.tool_calls, "goal entry must be reproducible");
-            let calls = first.tool_calls.as_ref().and_then(Value::as_array).expect("calls");
+            assert_eq!(
+                first.tool_calls, again.tool_calls,
+                "goal entry must be reproducible"
+            );
+            let calls = first
+                .tool_calls
+                .as_ref()
+                .and_then(Value::as_array)
+                .expect("calls");
             assert!(calls.len() <= MAX_CALLS_PER_ROUND);
-            if let Some(call) = calls
-                .iter()
-                .find(|call| call.pointer("/function/name").and_then(Value::as_str) == Some("create_goal"))
-            {
+            if let Some(call) = calls.iter().find(|call| {
+                call.pointer("/function/name").and_then(Value::as_str) == Some("create_goal")
+            }) {
                 opened += 1;
                 let args: Value = serde_json::from_str(
-                    call.pointer("/function/arguments").and_then(Value::as_str).expect("args"),
+                    call.pointer("/function/arguments")
+                        .and_then(Value::as_str)
+                        .expect("args"),
                 )
                 .expect("goal arguments are json");
                 assert!(args.get("objective").and_then(Value::as_str).is_some());
@@ -909,13 +986,21 @@ mod tests {
             }
         }
         assert!(opened > 0, "at least one human turn should arm a goal");
-        assert!(opened < 24, "goal entry stays a deterministic subset, not every turn");
+        assert!(
+            opened < 24,
+            "goal entry stays a deterministic subset, not every turn"
+        );
         // A driver-issued round never sees a goal candidate.
         let blocked = build_turn("session-a", 1, 1, 40, &candidates, None, None);
-        let blocked_calls = blocked.tool_calls.as_ref().and_then(Value::as_array).expect("calls");
-        assert!(blocked_calls
-            .iter()
-            .all(|call| call.pointer("/function/name").and_then(Value::as_str) != Some("create_goal")));
+        let blocked_calls = blocked
+            .tool_calls
+            .as_ref()
+            .and_then(Value::as_array)
+            .expect("calls");
+        assert!(blocked_calls.iter().all(|call| call
+            .pointer("/function/name")
+            .and_then(Value::as_str)
+            != Some("create_goal")));
     }
 
     #[test]
@@ -946,27 +1031,61 @@ mod tests {
         let mut emitted = 0;
         for round in 1..=40 {
             // 后续模型轮次永不发出子智能体调用。
-            let later =
-                build_turn("session-a", round, 2, 40, &candidates, None, Some((&subagent, false)));
-            let later_calls = later.tool_calls.as_ref().and_then(Value::as_array).expect("calls");
-            assert!(later_calls
-                .iter()
-                .all(|call| call.pointer("/function/name").and_then(Value::as_str)
-                    != Some("子智能体控制")));
+            let later = build_turn(
+                "session-a",
+                round,
+                2,
+                40,
+                &candidates,
+                None,
+                Some((&subagent, false)),
+            );
+            let later_calls = later
+                .tool_calls
+                .as_ref()
+                .and_then(Value::as_array)
+                .expect("calls");
+            assert!(later_calls.iter().all(|call| call
+                .pointer("/function/name")
+                .and_then(Value::as_str)
+                != Some("子智能体控制")));
             // 首轮可确定性触发，且可复现。
-            let first = build_turn("session-a", round, 1, 40, &candidates, None, Some((&subagent, false)));
-            let again = build_turn("session-a", round, 1, 40, &candidates, None, Some((&subagent, false)));
-            assert_eq!(first.tool_calls, again.tool_calls, "subagent entry reproducible");
-            let calls = first.tool_calls.as_ref().and_then(Value::as_array).expect("calls");
+            let first = build_turn(
+                "session-a",
+                round,
+                1,
+                40,
+                &candidates,
+                None,
+                Some((&subagent, false)),
+            );
+            let again = build_turn(
+                "session-a",
+                round,
+                1,
+                40,
+                &candidates,
+                None,
+                Some((&subagent, false)),
+            );
+            assert_eq!(
+                first.tool_calls, again.tool_calls,
+                "subagent entry reproducible"
+            );
+            let calls = first
+                .tool_calls
+                .as_ref()
+                .and_then(Value::as_array)
+                .expect("calls");
             assert!(calls.len() <= MAX_CALLS_PER_ROUND);
-            if let Some(call) = calls
-                .iter()
-                .find(|call| call.pointer("/function/name").and_then(Value::as_str)
-                    == Some("子智能体控制"))
-            {
+            if let Some(call) = calls.iter().find(|call| {
+                call.pointer("/function/name").and_then(Value::as_str) == Some("子智能体控制")
+            }) {
                 emitted += 1;
                 let args: Value = serde_json::from_str(
-                    call.pointer("/function/arguments").and_then(Value::as_str).expect("args"),
+                    call.pointer("/function/arguments")
+                        .and_then(Value::as_str)
+                        .expect("args"),
                 )
                 .expect("subagent arguments are json");
                 // 真实动作：spawn / batch_spawn / list 三者之一。
@@ -974,15 +1093,22 @@ mod tests {
                 assert!(matches!(action, "spawn" | "batch_spawn" | "list"));
             }
         }
-        assert!(emitted > 0, "at least one human turn should inspect subagents");
+        assert!(
+            emitted > 0,
+            "at least one human turn should inspect subagents"
+        );
         assert!(emitted < 40, "subagent entry stays a deterministic subset");
         // 未提供该工具时，永不发出。
         let absent = build_turn("session-a", 1, 1, 40, &candidates, None, None);
-        let absent_calls = absent.tool_calls.as_ref().and_then(Value::as_array).expect("calls");
-        assert!(absent_calls
-            .iter()
-            .all(|call| call.pointer("/function/name").and_then(Value::as_str)
-                != Some("子智能体控制")));
+        let absent_calls = absent
+            .tool_calls
+            .as_ref()
+            .and_then(Value::as_array)
+            .expect("calls");
+        assert!(absent_calls.iter().all(|call| call
+            .pointer("/function/name")
+            .and_then(Value::as_str)
+            != Some("子智能体控制")));
     }
 
     #[test]
@@ -993,7 +1119,10 @@ mod tests {
         assert_eq!(parse_round_override("no digits here"), None);
         assert_eq!(parse_round_override("abc100"), None);
         assert_eq!(parse_round_override("0"), Some(1));
-        assert_eq!(parse_round_override("999999"), Some(MAX_ROUND_OVERRIDE as usize));
+        assert_eq!(
+            parse_round_override("999999"),
+            Some(MAX_ROUND_OVERRIDE as usize)
+        );
     }
 
     #[test]
@@ -1017,14 +1146,21 @@ mod tests {
         for i in 0..8 {
             let seed = format!("session-forced-{i}");
             let turn = build_turn(&seed, 1, 1, 50, &candidates, None, Some((&subagent, true)));
-            let calls = turn.tool_calls.as_ref().and_then(Value::as_array).expect("calls");
+            let calls = turn
+                .tool_calls
+                .as_ref()
+                .and_then(Value::as_array)
+                .expect("calls");
             let call = calls
                 .iter()
-                .find(|call| call.pointer("/function/name").and_then(Value::as_str)
-                    == Some("子智能体控制"))
+                .find(|call| {
+                    call.pointer("/function/name").and_then(Value::as_str) == Some("子智能体控制")
+                })
                 .expect("forced subagent call present");
             let args: Value = serde_json::from_str(
-                call.pointer("/function/arguments").and_then(Value::as_str).expect("args"),
+                call.pointer("/function/arguments")
+                    .and_then(Value::as_str)
+                    .expect("args"),
             )
             .expect("subagent arguments are json");
             let action = args.get("action").and_then(Value::as_str).expect("action");
@@ -1034,11 +1170,15 @@ mod tests {
             }
             // 强制位只在首轮生效；后续轮次不再发出子智能体调用。
             let later = build_turn(&seed, 1, 2, 50, &candidates, None, Some((&subagent, true)));
-            let later_calls = later.tool_calls.as_ref().and_then(Value::as_array).expect("calls");
-            assert!(later_calls
-                .iter()
-                .all(|call| call.pointer("/function/name").and_then(Value::as_str)
-                    != Some("子智能体控制")));
+            let later_calls = later
+                .tool_calls
+                .as_ref()
+                .and_then(Value::as_array)
+                .expect("calls");
+            assert!(later_calls.iter().all(|call| call
+                .pointer("/function/name")
+                .and_then(Value::as_str)
+                != Some("子智能体控制")));
         }
         assert!(dispatched > 0, "forced subagent should really dispatch");
     }

@@ -80,5 +80,5 @@ The Pupa stores position, per-companion show / scale overrides, and the global m
 ## Related
 
 - [Goal Mode](/docs/en/concepts/goal-mode/) — the goal-continuation round that the companion's "running" animation corresponds to
-- [Bridge Panel Guide](/docs/en/reference/admin-panels/) — working with the companion management panel
+- [Bridge Panel Guide](/docs/en/capabilities/admin-panels/) — working with the companion management panel
 - [Agent Loop](/docs/en/concepts/core-agent-loop/) — where the runtime state really comes from

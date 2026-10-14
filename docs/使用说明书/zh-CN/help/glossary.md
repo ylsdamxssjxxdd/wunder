@@ -89,4 +89,4 @@ summary: wunder 文档里的核心术语与形态名称对照。
 
 - [会话与轮次](/docs/zh-CN/concepts/sessions-and-rounds/)
 - [工作区与工作目录](/docs/zh-CN/concepts/workspaces/)
-- [流式事件参考](/docs/zh-CN/reference/stream-events/)
+- [流式事件参考](/docs/zh-CN/capabilities/stream-events/)

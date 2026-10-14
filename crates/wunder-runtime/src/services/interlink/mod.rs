@@ -18,11 +18,11 @@ use std::sync::{OnceLock, RwLock};
 use serde::Serialize;
 use tokio::sync::mpsc;
 
-/// Human-in-the-loop approval tickets (docs §7.3).
-pub mod approvals;
 /// Governance alert hooks: L3 execution, rejection storms, secret replay
 /// (docs §9.4, §13.5 20).
 pub mod alerts;
+/// Human-in-the-loop approval tickets (docs §7.3).
+pub mod approvals;
 /// Append-only audit trail + argument digests (docs §9.4).
 pub mod audit;
 /// Bounded tunnel data-plane buffer for large remote file reads (docs §6.4).
@@ -42,11 +42,11 @@ pub mod janitor;
 /// Remote session view fan-out: local thread events -> N web subscribers with
 /// a single upstream per (device, thread) (docs §7.4).
 pub mod remote;
+/// Node secret issuance, hashing and handshake signing (docs §4.1, §9.1).
+pub mod secret;
 /// Workspace shadow pipeline (I5): frame -> `interlink_node_shadows`
 /// projection with revision monotonicity and delta merge.
 pub mod shadow;
-/// Node secret issuance, hashing and handshake signing (docs §4.1, §9.1).
-pub mod secret;
 
 /// A frame the server pushes down the tunnel towards one local node.
 #[derive(Debug, Clone)]

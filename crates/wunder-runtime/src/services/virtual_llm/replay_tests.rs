@@ -85,9 +85,19 @@ async fn missing_or_disabled_logs_fall_back_to_random_simulation() {
         ..Default::default()
     };
     let mut config = Config::default();
-    let turn = load_turn_for_round(config.clone(), &model, "session-a", Some(1), Some(1), None, true, None, true)
-        .await
-        .expect("missing log falls back to random simulation");
+    let turn = load_turn_for_round(
+        config.clone(),
+        &model,
+        "session-a",
+        Some(1),
+        Some(1),
+        None,
+        true,
+        None,
+        true,
+    )
+    .await
+    .expect("missing log falls back to random simulation");
     assert_eq!(turn.source_log_id, RANDOM_REPLAY_LOG_ID);
     config
         .llm
@@ -103,9 +113,19 @@ async fn missing_or_disabled_logs_fall_back_to_random_simulation() {
             size_bytes: 0,
             uploaded_at: String::new(),
         });
-    let turn = load_turn_for_round(config, &model, "session-a", Some(1), Some(1), None, true, None, true)
-        .await
-        .expect("disabled log falls back to random simulation");
+    let turn = load_turn_for_round(
+        config,
+        &model,
+        "session-a",
+        Some(1),
+        Some(1),
+        None,
+        true,
+        None,
+        true,
+    )
+    .await
+    .expect("disabled log falls back to random simulation");
     assert_eq!(turn.source_log_id, RANDOM_REPLAY_LOG_ID);
 }
 

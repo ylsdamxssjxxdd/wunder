@@ -11,7 +11,7 @@ pub(crate) struct MainLayout {
     pub(crate) input: Rect,
 }
 
-/// Split the frame. `banner_rows` is the band the welcome gear asks for, which sits
+/// Split the frame. `banner_rows` is the band the welcome logo asks for, which sits
 /// between the transcript and the working line so history never shifts under it.
 ///
 /// The band is clamped here: a caller that asks for more than the screen can spare must

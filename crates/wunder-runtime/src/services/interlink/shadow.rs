@@ -90,7 +90,11 @@ pub fn project_shadow_frame(
             delta_field(payload, "summary", previous.and_then(|r| r.summary.clone())),
             delta_field(payload, "threads", previous.and_then(|r| r.threads.clone())),
             delta_field(payload, "tasks", previous.and_then(|r| r.tasks.clone())),
-            delta_field(payload, "workspace", previous.and_then(|r| r.workspace.clone())),
+            delta_field(
+                payload,
+                "workspace",
+                previous.and_then(|r| r.workspace.clone()),
+            ),
         )
     };
     // The slim workspace list is always derived from the (merged) workspace
@@ -416,14 +420,7 @@ mod tests {
         // A summary string just over the cap must be refused.
         let big = "a".repeat(SHADOW_PAYLOAD_MAX_BYTES + 16);
         let payload = json!({ "revision": 2, "summary": big });
-        let outcome = project_shadow_frame(
-            FRAME_SHADOW_FULL,
-            &payload,
-            "d1",
-            "u1",
-            None,
-            1.0,
-        );
+        let outcome = project_shadow_frame(FRAME_SHADOW_FULL, &payload, "d1", "u1", None, 1.0);
         match outcome {
             ShadowOutcome::Reject(code) => assert_eq!(code, ERR_PAYLOAD_TOO_LARGE),
             other => panic!("expected Reject(payload_too_large), got {other:?}"),
@@ -474,7 +471,11 @@ mod tests {
     fn tree_entries(count: usize, depth: usize) -> Vec<Value> {
         (0..count)
             .map(|index| {
-                let path = (0..depth).map(|level| format!("l{level}")).collect::<Vec<_>>().join("/") + &format!("/f{index}");
+                let path = (0..depth)
+                    .map(|level| format!("l{level}"))
+                    .collect::<Vec<_>>()
+                    .join("/")
+                    + &format!("/f{index}");
                 json!({"path": path, "kind": "file", "size": 3, "mtime": 1.0})
             })
             .collect()
@@ -482,7 +483,11 @@ mod tests {
 
     #[test]
     fn limits_trim_the_thread_directory_and_tasks() {
-        let limits = ShadowLimits { threads_max: 200, tree_max_entries: 500, tree_depth: 3 };
+        let limits = ShadowLimits {
+            threads_max: 200,
+            tree_max_entries: 500,
+            tree_depth: 3,
+        };
         let mut record = projected(420, 160, Vec::new());
         enforce_limits(&mut record, &limits);
 
@@ -493,13 +498,18 @@ mod tests {
         // Nothing was dropped from a field that stays inside the budget.
         let mut untouched = projected(3, 1, Vec::new());
         enforce_limits(&mut untouched, &limits);
-        let threads: Vec<Value> = serde_json::from_str(untouched.threads.as_deref().unwrap()).unwrap();
+        let threads: Vec<Value> =
+            serde_json::from_str(untouched.threads.as_deref().unwrap()).unwrap();
         assert_eq!(threads.len(), 3);
     }
 
     #[test]
     fn limits_mark_the_tree_as_truncated_and_drop_deep_entries() {
-        let limits = ShadowLimits { threads_max: 200, tree_max_entries: 5, tree_depth: 2 };
+        let limits = ShadowLimits {
+            threads_max: 200,
+            tree_max_entries: 5,
+            tree_depth: 2,
+        };
         // 16 entries: 7 within the depth bound, 9 deeper than it.
         let mut tree = tree_entries(7, 1);
         tree.extend(tree_entries(9, 4));
@@ -527,7 +537,10 @@ mod tests {
         enforce_limits(&mut small, &limits);
         let workspace: Value = serde_json::from_str(small.workspace.as_deref().unwrap()).unwrap();
         assert_eq!(
-            workspace["workspaces"][0]["tree"].as_array().expect("tree").len(),
+            workspace["workspaces"][0]["tree"]
+                .as_array()
+                .expect("tree")
+                .len(),
             2
         );
         assert!(workspace.get("truncated").is_none());
@@ -535,7 +548,11 @@ mod tests {
 
     #[test]
     fn limits_share_the_entry_budget_across_workspaces() {
-        let limits = ShadowLimits { threads_max: 200, tree_max_entries: 8, tree_depth: 3 };
+        let limits = ShadowLimits {
+            threads_max: 200,
+            tree_max_entries: 8,
+            tree_depth: 3,
+        };
         let mut record = projected(1, 1, tree_entries(6, 1));
         let workspace: Value = serde_json::from_str(record.workspace.as_deref().unwrap()).unwrap();
         let mut second = workspace["workspaces"][0].clone();
@@ -563,9 +580,12 @@ mod tests {
     #[test]
     fn slim_workspace_list_is_derived_from_the_section() {
         let record = projected(1, 1, Vec::new());
-        let slim: Vec<Value> =
-            serde_json::from_str(slim_workspace_list(record.workspace.as_deref().unwrap()).unwrap().as_str())
-                .unwrap();
+        let slim: Vec<Value> = serde_json::from_str(
+            slim_workspace_list(record.workspace.as_deref().unwrap())
+                .unwrap()
+                .as_str(),
+        )
+        .unwrap();
         assert_eq!(slim.len(), 1);
         assert_eq!(slim[0]["workspace_id"], "ws_1");
         assert_eq!(slim[0]["name"], "ws");

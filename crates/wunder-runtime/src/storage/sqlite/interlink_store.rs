@@ -1,8 +1,8 @@
 use super::SqliteStorage;
 use crate::storage::{
     CloudDeviceInterlinkPatch, InterlinkApprovalRecord, InterlinkAuditRecord,
-    InterlinkChannelRecord, InterlinkCommandRecord, InterlinkShadowOverview,
-    InterlinkShadowRecord, ListInterlinkAuditQuery, ListInterlinkCommandsQuery, StorageLifecycle,
+    InterlinkChannelRecord, InterlinkCommandRecord, InterlinkShadowOverview, InterlinkShadowRecord,
+    ListInterlinkAuditQuery, ListInterlinkCommandsQuery, StorageLifecycle,
 };
 use anyhow::Result;
 use rusqlite::types::Value as SqlValue;
@@ -38,8 +38,7 @@ pub(super) trait SqliteInterlinkStorage {
         limit: i64,
     ) -> Result<(Vec<InterlinkChannelRecord>, i64)>;
     fn upsert_interlink_shadow_impl(&self, record: &InterlinkShadowRecord) -> Result<()>;
-    fn get_interlink_shadow_impl(&self, device_id: &str)
-        -> Result<Option<InterlinkShadowRecord>>;
+    fn get_interlink_shadow_impl(&self, device_id: &str) -> Result<Option<InterlinkShadowRecord>>;
     fn get_interlink_shadow_revision_impl(&self, device_id: &str) -> Result<i64>;
     fn list_interlink_shadow_overviews_impl(
         &self,
@@ -144,7 +143,8 @@ impl SqliteInterlinkStorage for SqliteStorage {
             sets.join(", ")
         );
         values.push(SqlValue::from(cleaned.to_string()));
-        self.open()?.execute(&sql, params_from_iter(values.iter()))?;
+        self.open()?
+            .execute(&sql, params_from_iter(values.iter()))?;
         Ok(())
     }
 
@@ -284,10 +284,7 @@ impl SqliteInterlinkStorage for SqliteStorage {
         Ok(())
     }
 
-    fn get_interlink_shadow_impl(
-        &self,
-        device_id: &str,
-    ) -> Result<Option<InterlinkShadowRecord>> {
+    fn get_interlink_shadow_impl(&self, device_id: &str) -> Result<Option<InterlinkShadowRecord>> {
         self.ensure_initialized()?;
         let cleaned = device_id.trim();
         if cleaned.is_empty() {
@@ -400,7 +397,8 @@ impl SqliteInterlinkStorage for SqliteStorage {
                 break;
             }
             let placeholders = ids.iter().map(|_| "?").collect::<Vec<&str>>().join(",");
-            let sql = format!("DELETE FROM interlink_node_shadows WHERE device_id IN ({placeholders})");
+            let sql =
+                format!("DELETE FROM interlink_node_shadows WHERE device_id IN ({placeholders})");
             let deleted = conn.execute(&sql, params_from_iter(ids.iter()))?;
             if deleted == 0 {
                 break;
@@ -789,7 +787,9 @@ impl SqliteStorage {
             device_id: row.get(1)?,
             user_id: row.get::<_, Option<String>>(2)?.unwrap_or_default(),
             client: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
-            instance_id: row.get::<_, Option<String>>(4)?.unwrap_or_else(|| "local".to_string()),
+            instance_id: row
+                .get::<_, Option<String>>(4)?
+                .unwrap_or_else(|| "local".to_string()),
             protocol_version: row.get::<_, Option<i64>>(5)?.unwrap_or(1),
             caps: row.get(6)?,
             connected_at: row.get::<_, Option<f64>>(7)?.unwrap_or(0.0),
@@ -823,8 +823,12 @@ impl SqliteStorage {
             to_node: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
             kind: row.get::<_, Option<String>>(5)?.unwrap_or_default(),
             args_digest: row.get(6)?,
-            approval_state: row.get::<_, Option<String>>(7)?.unwrap_or_else(|| "none".to_string()),
-            status: row.get::<_, Option<String>>(8)?.unwrap_or_else(|| "issued".to_string()),
+            approval_state: row
+                .get::<_, Option<String>>(7)?
+                .unwrap_or_else(|| "none".to_string()),
+            status: row
+                .get::<_, Option<String>>(8)?
+                .unwrap_or_else(|| "issued".to_string()),
             created_at: row.get::<_, Option<f64>>(9)?.unwrap_or(0.0),
             acked_at: row.get(10)?,
             finished_at: row.get(11)?,
@@ -833,7 +837,9 @@ impl SqliteStorage {
         })
     }
 
-    fn read_interlink_approval(row: &rusqlite::Row<'_>) -> rusqlite::Result<InterlinkApprovalRecord> {
+    fn read_interlink_approval(
+        row: &rusqlite::Row<'_>,
+    ) -> rusqlite::Result<InterlinkApprovalRecord> {
         Ok(InterlinkApprovalRecord {
             approval_id: row.get(0)?,
             command_id: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
@@ -841,7 +847,9 @@ impl SqliteStorage {
             user_id: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
             prompt: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
             risk_level: row.get::<_, Option<String>>(5)?.unwrap_or_default(),
-            state: row.get::<_, Option<String>>(6)?.unwrap_or_else(|| "pending".to_string()),
+            state: row
+                .get::<_, Option<String>>(6)?
+                .unwrap_or_else(|| "pending".to_string()),
             decided_by: row.get(7)?,
             decided_at: row.get(8)?,
             expires_at: row.get::<_, Option<f64>>(9)?.unwrap_or(0.0),

@@ -40,7 +40,14 @@ pub async fn run(
         "actor": actor_user_id,
     });
     let Some(spec) = CommandSpec::parse(Some(&command_id), &payload) else {
-        finish_failed(&state, &command_id, &kind, "BAD_COMMAND", "unparsable command").await;
+        finish_failed(
+            &state,
+            &command_id,
+            &kind,
+            "BAD_COMMAND",
+            "unparsable command",
+        )
+        .await;
         return;
     };
 
@@ -92,10 +99,7 @@ pub async fn run(
         None,
         vec![
             ("kind", Value::String(kind.clone())),
-            (
-                "status",
-                Value::String(status.clone()),
-            ),
+            ("status", Value::String(status.clone())),
         ],
     );
     let _ = crate::core::blocking::run_db("api.interlink_cloud_exec.finish", move || {
@@ -104,13 +108,7 @@ pub async fn run(
     .await;
 }
 
-async fn finish_failed(
-    state: &AppState,
-    command_id: &str,
-    kind: &str,
-    code: &str,
-    summary: &str,
-) {
+async fn finish_failed(state: &AppState, command_id: &str, kind: &str, code: &str, summary: &str) {
     let _ = crate::services::interlink::commands::finish_local(
         state.storage.clone(),
         command_id,

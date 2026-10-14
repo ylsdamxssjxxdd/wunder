@@ -518,9 +518,9 @@ fn compact_observation_payload(payload: &mut Value, tool_name: &str) {
     let canonical = crate::services::tools::resolve_tool_name(tool_name);
     let keep_path_in_data = matches!(canonical.as_str(), "写入文件" | "write_file");
     if matches!(
-            canonical.as_str(),
-            "apply_patch" | "应用补丁" | "编辑" | "文本编辑"
-        ) {
+        canonical.as_str(),
+        "apply_patch" | "应用补丁" | "编辑" | "文本编辑"
+    ) {
         let maybe_compacted = map
             .get("data")
             .and_then(Value::as_object)

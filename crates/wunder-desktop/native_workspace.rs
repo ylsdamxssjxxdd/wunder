@@ -13,8 +13,8 @@ use std::{
     io::Read,
     path::{Component, Path, PathBuf},
 };
-use wunder_server::storage::WorkspaceRecord;
 use wunder_server::interlink::client::shadow::Sections;
+use wunder_server::storage::WorkspaceRecord;
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::process::Command;
@@ -199,10 +199,9 @@ impl NativeDesktop {
     /// workspace section re-projects on the next merge window so the cloud
     /// workspace list stays current without waiting for the periodic full.
     fn publish_workspace_change(&self, record: &WorkspaceRecord) {
-        self.state().workspace.register_workspace_root(
-            &record.workspace_id,
-            &record.root_path,
-        );
+        self.state()
+            .workspace
+            .register_workspace_root(&record.workspace_id, &record.root_path);
         self.invalidate_workspace_projection();
     }
 

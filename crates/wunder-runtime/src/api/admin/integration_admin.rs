@@ -14,9 +14,9 @@ use crate::services::admin_skills::{
     resolve_admin_uploaded_skills_root, resolve_builtin_skills_root,
 };
 use crate::services::skill_archive::{import_skill_archive, is_supported_skill_archive_filename};
+use crate::services::tools::{browser_tool_names, is_browser_tool_name};
 use crate::skills::{load_skills, SkillSpec};
 use crate::state::AppState;
-use crate::services::tools::{browser_tool_names, is_browser_tool_name};
 use crate::tools::{builtin_aliases, builtin_tool_specs, resolve_tool_name};
 use anyhow::anyhow;
 use axum::body::Body;
@@ -1565,9 +1565,12 @@ mod tests {
             ],
         );
 
-        assert!(!config.tools.builtin.enabled.iter().any(|name| {
-            name == "get_goal" || name == "create_goal" || name == "update_goal"
-        }));
+        assert!(!config
+            .tools
+            .builtin
+            .enabled
+            .iter()
+            .any(|name| { name == "get_goal" || name == "create_goal" || name == "update_goal" }));
         assert_eq!(config.tools.builtin.enabled, vec![read_tool]);
     }
 }

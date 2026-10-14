@@ -345,12 +345,26 @@ fn cloud_row(app: &MainWindow) -> SidebarRow {
 }
 
 /// Highlight the workspace an opened thread belongs to, so a later new-task
-/// lands in the same workspace.
-pub(crate) fn focus_workspace_of(app: &MainWindow, workspace_id: Option<&str>) {
+/// lands in the same workspace, and point the working-directory panel at that
+/// workspace's folder: the panel mirrors the directory of whatever thread is
+/// focused, not a fixed default.
+pub(crate) fn focus_workspace_of(
+    app: &MainWindow,
+    api: Arc<NativeDesktop>,
+    workspace_id: Option<&str>,
+) {
     let Some(workspace_id) = workspace_id else { return };
     for (index, card) in app.get_workspaces().iter().enumerate() {
         if card.workspace_id.as_str() == workspace_id {
             app.set_selected_workspace(index as i32);
+            let root = card.root_path.to_string();
+            if !root.is_empty() {
+                crate::workspace_files::set_target(
+                    app,
+                    api,
+                    crate::workspace_files::Target::Local(root),
+                );
+            }
             return;
         }
     }

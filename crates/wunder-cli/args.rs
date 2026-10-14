@@ -959,11 +959,28 @@ mod tests {
         for (argv, expected) in [
             (vec!["wunder-cli", "cloud", "ws", "cat", "a.md"], "cat"),
             (
-                vec!["wunder-cli", "cloud", "ws", "pull", "a.md", "-o", "out/a.md", "--force"],
+                vec![
+                    "wunder-cli",
+                    "cloud",
+                    "ws",
+                    "pull",
+                    "a.md",
+                    "-o",
+                    "out/a.md",
+                    "--force",
+                ],
                 "pull",
             ),
             (
-                vec!["wunder-cli", "cloud", "ws", "push", "local.txt", "-d", "in/a.txt"],
+                vec![
+                    "wunder-cli",
+                    "cloud",
+                    "ws",
+                    "push",
+                    "local.txt",
+                    "-d",
+                    "in/a.txt",
+                ],
                 "push",
             ),
         ] {
@@ -983,7 +1000,10 @@ mod tests {
                 Some(CloudWsAction::Pull(pull)) => {
                     assert_eq!(expected, "pull");
                     assert_eq!(pull.remote, "a.md");
-                    assert_eq!(pull.output.as_deref(), Some(std::path::Path::new("out/a.md")));
+                    assert_eq!(
+                        pull.output.as_deref(),
+                        Some(std::path::Path::new("out/a.md"))
+                    );
                     assert!(pull.force);
                 }
                 Some(CloudWsAction::Push(push)) => {
@@ -1014,12 +1034,23 @@ mod tests {
         assert_eq!(send.to, "device:abc");
         assert_eq!(send.thread.as_deref(), Some("t1"));
         assert_eq!(send.message, "hello");
-        assert!(!send.attach, "the default stays the polled one-shot behaviour");
+        assert!(
+            !send.attach,
+            "the default stays the polled one-shot behaviour"
+        );
 
         // `--attach` on `cloud send` is this command's streaming flag; `exec`
         // keeps the attachment spelling for its own position, and the root form
         // still works for the default/TUI run.
-        let cli = parse(&["wunder-cli", "cloud", "send", "--attach", "--seconds", "60", "hello"]);
+        let cli = parse(&[
+            "wunder-cli",
+            "cloud",
+            "send",
+            "--attach",
+            "--seconds",
+            "60",
+            "hello",
+        ]);
         let Some(Command::Cloud(command)) = cli.command else {
             panic!("cloud subcommand expected");
         };

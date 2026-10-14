@@ -117,15 +117,12 @@ async fn handle_ws(
         );
     }
     let connected_at = Utc::now().timestamp_millis() as f64 / 1000.0;
-    state
-        .control
-        .presence
-        .connect_client(
-            &user_id,
-            &connection_id,
-            crate::services::presence::client_kind_from_scope(session_scope.as_deref()),
-            connected_at,
-        );
+    state.control.presence.connect_client(
+        &user_id,
+        &connection_id,
+        crate::services::presence::client_kind_from_scope(session_scope.as_deref()),
+        connected_at,
+    );
     // Unified presence: one volatile `web` node per browser session (docs §2.4).
     let _web_node = state.control.presence.nodes().register_web(
         &user_id,

@@ -23,7 +23,7 @@ updated_at: 2026-10-13
 | --- | --- | --- |
 | 启动页长时间不结束 | `~/.wunder` 权限；工作树扫描耗时（最多 4096 项） | [蛹入门](/docs/zh-CN/start/desktop/) |
 | 窗口出现但工作区空 | 工作目录区是否显示「离线」 | [蛹界面](/docs/zh-CN/surfaces/desktop-ui/) |
-| 模型请求 401/403 | 设置 → 模型 → API Key、接口地址；「测试连接」重跑 | [配置说明](/docs/zh-CN/reference/config/) |
+| 模型请求 401/403 | 设置 → 模型 → API Key、接口地址；「测试连接」重跑 | [配置说明](/docs/zh-CN/capabilities/config/) |
 | 运行中再发消息被判「用户忙」 | 会话队列默认开着；关掉会破坏排队条 | [快速开始](/docs/zh-CN/start/quickstart/) |
 | 想要 TTS 播放但没有声音 | **蛹 TTS 未实现**，只能配模型；需要 TTS 请用蜂巢 | [蛹界面](/docs/zh-CN/surfaces/desktop-ui/) |
 | 找不到「设备互通」设置类目 | 类目未接入界面；可用面只有侧栏云端工作区 + 远端命令审批弹窗 | [界面概览](/docs/zh-CN/surfaces/index/) |
@@ -45,10 +45,10 @@ updated_at: 2026-10-13
 | 18000 端口不通 | `WUNDER_HOST` / `WUNDER_PORT` 覆盖；`config/wunder.yaml` 服务器段 | [舰体部署](/docs/zh-CN/start/server/) |
 | 舰桥能进但蜂巢 18001 空白 | 蜂巢前端是否构建；网页服务容器是否起来；`docker compose logs wunder-nginx` | [舰体部署](/docs/zh-CN/start/server/) |
 | 打开 18000 却是蜂巢的样子 | 两个概念混了——舰体只挂舰桥页面，蜂巢由独立网页服务容器在 18001 下发，不由舰体托管 | [界面概览](/docs/zh-CN/surfaces/index/) |
-| 启动时加载 example 配置静默失败、回落默认 | 已知问题；显式指向 `config/wunder.yaml`，或用 `WUNDER_CONFIG_PATH` | [配置说明](/docs/zh-CN/reference/config/) |
+| 启动时加载 example 配置静默失败、回落默认 | 已知问题；显式指向 `config/wunder.yaml`，或用 `WUNDER_CONFIG_PATH` | [配置说明](/docs/zh-CN/capabilities/config/) |
 | 客户端 WS 频繁 `slow_client` | 慢客户端背压（队列上限 2）；先看是否长消息 | [故障排查](/docs/zh-CN/help/troubleshooting/) |
 | PostgreSQL 连接失败 | `WUNDER_POSTGRES_DSN` / `WUNDER_POSTGRES_POOL_SIZE`；`postgres` 服务是否 healthy | [舰体部署](/docs/zh-CN/start/server/) |
-| 想切回 SQLite | `WUNDER_STORAGE_BACKEND=sqlite` + `WUNDER_SQLITE_DB_PATH=/path/to/wunder.db` | [配置说明](/docs/zh-CN/reference/config/) |
+| 想切回 SQLite | `WUNDER_STORAGE_BACKEND=sqlite` + `WUNDER_SQLITE_DB_PATH=/path/to/wunder.db` | [配置说明](/docs/zh-CN/capabilities/config/) |
 | 沙箱模式启动但监听 9001 | 正常：沙箱模式走另一条链路 | [舰体部署](/docs/zh-CN/start/server/) |
 
 ## 蜂巢（web）

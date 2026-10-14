@@ -133,6 +133,6 @@ The template only sets a default tendency; ask for English in the conversation a
 
 ## Further reading
 
-- [Feature and Capability Quick Reference](/docs/en/reference/api-index/) — where agent management lives
+- [Feature and Capability Quick Reference](/docs/en/capabilities/api-index/) — where agent management lives
 - [Prompts and Skills](/docs/en/concepts/prompt-and-skills/)
 - [Long-term Memory](/docs/en/concepts/memory/)

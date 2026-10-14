@@ -14,7 +14,16 @@ test('production chat uses bounded bootstrap and retains conversation during rec
   service.disconnect();await expect(page.getByTestId('messenger-message-list')).toContainText('Completed reply 1.');
   await page.waitForTimeout(1800);await expect(page.locator('.messenger-turn')).toHaveCount(1);
   expect(service.requests.filter(r=>r.path?.includes('/thread-log/snapshot')||r.path?.endsWith('/events')||r.path?.endsWith('/history'))).toEqual([]);
-  await page.goto(`/app/trajectory?session=${MOCK_SESSION}`);await expect(page.locator('.tt-root')).toBeVisible();await expect(page.locator('.tt-ledger')).toContainText('Completed reply 1.');
+  await page.goto(`/app/trajectory?session=${MOCK_SESSION}`);await expect(page.locator('.tt-root')).toBeVisible();
+  const overviewButtons=page.locator('.tt-overview-open');
+  await expect(overviewButtons.first()).toBeVisible();
+  const rootTurn=String(service.turns[0]?.root_turn_id??service.turns[0]?.turn_id??'');
+  const turnIds=new Set(service.turns.filter(turn=>String(turn.root_turn_id??turn.turn_id)===rootTurn).map(turn=>String(turn.turn_id)));
+  const expectedTrajectoryRows=[...service.items.values()].filter(item=>turnIds.has(String(item.turn_id))).length;
+  await overviewButtons.first().click();
+  await expect(page.locator('.tt-row')).toHaveCount(expectedTrajectoryRows);
+  await expect(page.locator('.tt-overview-open')).toHaveCount(0);
+  await expect(page.locator('.tt-ledger')).toContainText('Completed reply 1.');
   await page.locator('.tt-row').last().click();await expect(page.locator('.tt-details')).toBeVisible();await expect.poll(()=>service.requests.filter(r=>r.path?.includes('/bodies/')).length).toBeGreaterThan(0);
   expect(errors).toEqual([]);
  }finally{await service.dispose();}

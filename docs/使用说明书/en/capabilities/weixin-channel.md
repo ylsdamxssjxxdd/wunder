@@ -52,5 +52,5 @@ Two notes: after the auto-fill, you **must save** for long polling to actually t
 
 ## Further Reading
 
-- [API Index](/docs/en/reference/api-index/)
+- [API Index](/docs/en/capabilities/api-index/)
 - [Admin Interface](/docs/en/surfaces/web-admin/)

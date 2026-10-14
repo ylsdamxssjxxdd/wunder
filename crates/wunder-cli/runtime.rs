@@ -525,10 +525,9 @@ fn resolve_repo_root(launch_dir: &Path) -> PathBuf {
         }
     }
 
-    if let Some(repo_root) = repo_assets::resolve_local_form_repo_root(
-        Path::new(env!("CARGO_MANIFEST_DIR")),
-        None,
-    ) {
+    if let Some(repo_root) =
+        repo_assets::resolve_local_form_repo_root(Path::new(env!("CARGO_MANIFEST_DIR")), None)
+    {
         return repo_root;
     }
 
@@ -1374,7 +1373,8 @@ mod workspace_tests {
         let body = serde_yaml::to_string(&Config::default()).expect("serialize template");
         fs::write(&path, format!("\u{feff}{body}")).expect("write template");
 
-        let config = load_engine_template(scratch.path()).expect("a BOM-saved template still parses");
+        let config =
+            load_engine_template(scratch.path()).expect("a BOM-saved template still parses");
         assert_eq!(config.server.mode, Config::default().server.mode);
     }
 

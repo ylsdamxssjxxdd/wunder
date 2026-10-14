@@ -1,5 +1,5 @@
 import { getThreadViewBootstrap, getThreadViewChatPage } from '@/api/chat';
-import { beginThreadView, commitThreadView, failThreadView, threadViewSlots, threadViewHistory, threadViewGeneration } from '@/realtime/chat/threadViewStore';
+import { beginThreadView, commitThreadView, failThreadView, threadViewSlots, threadViewHistory, threadViewGeneration, pauseThreadViewHistory } from '@/realtime/chat/threadViewStore';
 import { clearSessionWatcher, setSessionLoading } from './chatRuntimeControls';
 import { getHistoryState, cacheSessionMessages, ensureRuntime } from './chatRuntimeState';
 import { persistActiveSession, patchSessionRuntimeFields, syncGoalFromSessionRecord } from './chatPersist';
@@ -69,7 +69,13 @@ export async function olderThreadView(store:any,key:string) {
   const generation=threadViewGeneration(key);
   try {
     const response=await getThreadViewChatPage(key,{before:cursor.before,limit:20});
-    const page=response.data.data.page;if(!commitThreadView(key,page,generation,true)){
+    const page=response.data.data.page;
+    if (page.degraded || page.projection_state === 'degraded') {
+      history.hasMore = false;
+      pauseThreadViewHistory(key);
+      return [];
+    }
+    if(!commitThreadView(key,page,generation,true)){
       if(threadViewGeneration(key)===generation)await openThreadView(store,key);
       return [];
     }
@@ -77,5 +83,14 @@ export async function olderThreadView(store:any,key:string) {
     const messages=(threadViewSlots(key)??[]).flatMap(s=>[s.user,s.assistant]);
     cacheSessionMessages(key,messages);if(store.activeSessionId===key)store.messages=messages;
     return messages;
+  } catch (error) {
+    // Historical hydration is additive.  Keep the already committed chat
+    // usable when a legacy/large page times out instead of turning a scroll
+    // action into an unhandled 503 and a false "open failed" state.
+    console.warn('[thread-view] older history page unavailable', error);
+    history.hasMore = false;
+    history.beforeId = null;
+    pauseThreadViewHistory(key);
+    return [];
   } finally {history.loading=false;}
 }

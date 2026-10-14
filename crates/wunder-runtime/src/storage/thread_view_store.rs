@@ -1,7 +1,7 @@
 //! Small transactional display tables. Reads never decode execution payloads.
 use super::thread_view_projection as projection;
-use anyhow::{Result, ensure};
-use serde_json::{Value, json};
+use anyhow::{ensure, Result};
+use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use wunder_core::thread_view::*;
 
@@ -55,7 +55,9 @@ CREATE TABLE IF NOT EXISTS thread_trajectory_tiles (
 pub(crate) trait ViewDb {
     /// PostgreSQL can use a partition-pruned lateral lookup for source
     /// representatives. SQLite keeps the portable fallback query.
-    fn is_postgres(&self) -> bool { false }
+    fn is_postgres(&self) -> bool {
+        false
+    }
     fn json_text(&self, expression: &str, field: &str) -> String;
     fn text_bytes(&self, expression: &str) -> String;
     fn query(&mut self, sql: &str, params: &[Value]) -> Result<Vec<Vec<Value>>>;
@@ -689,13 +691,24 @@ pub(crate) fn project_block(
     }
     let data = block.get("data").unwrap_or(block);
     let content = data
-        .get(if field == "reasoning" { "reasoning" } else { "content" })
+        .get(if field == "reasoning" {
+            "reasoning"
+        } else {
+            "content"
+        })
         .and_then(Value::as_str)
         .unwrap_or("");
     if content.is_empty() {
         return Ok(());
     }
-    let body_id = projection::body_id(id, if field == "reasoning" { "reasoning" } else { "stream" });
+    let body_id = projection::body_id(
+        id,
+        if field == "reasoning" {
+            "reasoning"
+        } else {
+            "stream"
+        },
+    );
     let Some(r) = one(
         db,
         "SELECT payload FROM thread_chat_rows WHERE session_id=? AND root_turn_id=?",
@@ -707,7 +720,8 @@ pub(crate) fn project_block(
     let mut row: ChatViewRow = serde_json::from_str(text(&r[0]))?;
     // Old executions and delayed blocks cannot replace a newer sealed answer.
     if (field == "content" && int(&i[4]) < row.assistant.created_seq)
-        || (field == "content" && row.assistant.item_id == id
+        || (field == "content"
+            && row.assistant.item_id == id
             && row.assistant.body.as_ref().is_some_and(|b| {
                 b.bytes > 0 && (!b.body_id.ends_with("|stream") || b.revision > 0)
             }))
@@ -730,16 +744,21 @@ pub(crate) fn project_block(
         row.assistant = message_for_stream(id, &projection::body_id(id, "stream"));
     }
     let offset = data
-        .get(if field == "reasoning" { "reasoning_offset" } else { "content_offset" })
+        .get(if field == "reasoning" {
+            "reasoning_offset"
+        } else {
+            "content_offset"
+        })
         .and_then(Value::as_i64)
         .unwrap_or(0);
     // Durable offsets are UTF-16; the row keeps only a bounded UTF-8 preview.
     if field == "reasoning" {
-        if offset as usize == row.assistant.reasoning_offset
-            && row.assistant.reasoning.len() < 2048
+        if offset as usize == row.assistant.reasoning_offset && row.assistant.reasoning.len() < 2048
         {
             let remaining = 2048 - row.assistant.reasoning.len();
-            row.assistant.reasoning.push_str(&preview(content, remaining));
+            row.assistant
+                .reasoning
+                .push_str(&preview(content, remaining));
         }
         row.assistant.reasoning_offset = row
             .assistant
@@ -761,7 +780,11 @@ pub(crate) fn project_block(
         .saturating_sub(old_bytes)
         + content.len();
     row.assistant.body = if field == "content" {
-        Some(BodyRef { body_id, revision: 0, bytes })
+        Some(BodyRef {
+            body_id,
+            revision: 0,
+            bytes,
+        })
     } else {
         row.assistant.body.clone()
     };
@@ -868,29 +891,69 @@ pub(crate) fn page(
             let _ = root_turn_id;
             "SELECT payload,created_seq FROM thread_trajectory_rows WHERE user_id=? AND session_id=? AND root_turn_id=? AND created_seq<? ORDER BY created_seq DESC LIMIT ?"
         } else {
-            // The newest execution turn can contain thousands of items.  A first
-            // trajectory paint must still describe the whole conversation, so it
-            // returns one representative item per root user turn. Full records
-            // are fetched only after the user opens a specific turn.
+            // Overview pages stay bounded by user turns, not workflow items.
+            // Show input, first workflow action, and final answer per turn;
+            // opening any representative fetches that turn's full keyset pages.
             let round_cursor = before.unwrap_or(i64::MAX);
-            let overview = db.query(
-            "SELECT r.payload,t.user_turn_index FROM thread_turns t JOIN thread_trajectory_rows r ON r.item_id=(SELECT x.item_id FROM thread_trajectory_rows x WHERE x.user_id=t.user_id AND x.session_id=t.session_id AND x.root_turn_id=t.turn_id ORDER BY x.created_seq DESC LIMIT 1) WHERE t.user_id=? AND t.session_id=? AND t.trigger_kind='user' AND t.user_turn_index<? ORDER BY t.user_turn_index DESC LIMIT ?",
-            &[json!(user), json!(session), json!(round_cursor), json!((cap + 1) as i64)],
-        )?;
-            page.has_more = overview.len() > cap;
-            for row in overview.into_iter().take(cap) {
-                let mut projected: TrajectoryViewRow = serde_json::from_str(text(&row[0]))?;
-                projected.user_round = int(&row[1]);
-                let size = serde_json::to_vec(&projected)?.len() + 1;
-                if bytes + size > TRAJECTORY_RESPONSE_BYTES {
+            let overview_cap = cap.min(20);
+            let roots = db.query(
+                "SELECT turn_id,user_turn_index FROM thread_turns WHERE user_id=? AND session_id=? AND trigger_kind='user' AND user_turn_index<? ORDER BY user_turn_index DESC LIMIT ?",
+                &[json!(user), json!(session), json!(round_cursor), json!((overview_cap + 1) as i64)],
+            )?;
+            page.has_more = roots.len() > overview_cap;
+            let selected = roots.into_iter().take(overview_cap).collect::<Vec<_>>();
+            for root in &selected {
+                let root_id = text(&root[0]);
+                let round = int(&root[1]);
+                let kind_expr = db.json_text("payload", "kind");
+                let representative_queries = [
+                    ("user_message", "ASC", false),
+                    (
+                        "tool_call','approval','plan','compaction','subagent_run",
+                        "ASC",
+                        true,
+                    ),
+                    ("assistant_message", "DESC", false),
+                ];
+                let mut representatives = Vec::with_capacity(3);
+                for (kind, order, multiple) in representative_queries {
+                    let sql = if multiple {
+                        format!("SELECT payload FROM thread_trajectory_rows WHERE user_id=? AND session_id=? AND root_turn_id=? AND {kind_expr} IN ('{kind}') ORDER BY created_seq {order} LIMIT 1")
+                    } else {
+                        format!("SELECT payload FROM thread_trajectory_rows WHERE user_id=? AND session_id=? AND root_turn_id=? AND {kind_expr}=? ORDER BY created_seq {order} LIMIT 1")
+                    };
+                    let values = if multiple {
+                        vec![json!(user), json!(session), json!(root_id)]
+                    } else {
+                        vec![json!(user), json!(session), json!(root_id), json!(kind)]
+                    };
+                    if let Some(row) = one(db, &sql, &values)? {
+                        let mut projected: TrajectoryViewRow = serde_json::from_str(text(&row[0]))?;
+                        projected.user_round = round;
+                        projected.overview_only = true;
+                        representatives.push(projected);
+                    }
+                }
+                representatives.sort_by_key(|row| row.created_seq);
+                let group_bytes = representatives
+                    .iter()
+                    .map(|row| serde_json::to_vec(row).map(|bytes| bytes.len() + 1))
+                    .collect::<std::result::Result<Vec<_>, _>>()?
+                    .into_iter()
+                    .sum::<usize>();
+                if bytes + group_bytes > TRAJECTORY_RESPONSE_BYTES {
                     page.has_more = true;
                     break;
                 }
-                bytes += size;
-                page.next_before = Some(projected.user_round);
-                page.trajectory.push(projected);
+                bytes += group_bytes;
+                page.next_before = Some(round);
+                page.trajectory.extend(representatives);
             }
-            page.trajectory.reverse();
+            page.trajectory.sort_by(|left, right| {
+                left.user_round
+                    .cmp(&right.user_round)
+                    .then_with(|| left.created_seq.cmp(&right.created_seq))
+            });
             return Ok(page);
         }
     } else {

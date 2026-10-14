@@ -1510,8 +1510,8 @@
  },
  {
   "key": "cp_permission",
-  "zh": "权限模式",
-  "en": "Permission mode"
+  "zh": "审批模式",
+  "en": "Approval mode"
  },
  {
   "key": "cp_permission_full",
@@ -1542,6 +1542,21 @@
   "key": "cp_model_pick",
   "zh": "切换模型",
   "en": "Switch model"
+ },
+ {
+  "key": "cp_model_context",
+  "zh": "上下文 Token",
+  "en": "Context tokens"
+ },
+ {
+  "key": "cp_voice_input",
+  "zh": "语音输入",
+  "en": "Voice input"
+ },
+ {
+  "key": "cp_terminal_mode",
+  "zh": "终端模式",
+  "en": "Terminal mode"
  },
  {
   "key": "cp_model_search",
@@ -2818,6 +2833,99 @@
   "key": "tav_switched",
   "zh": "切换完成",
   "en": "Switched"
+ },
+ {
+  "key": "hp_back",
+  "zh": "后退 (Alt+←)",
+  "en": "Back (Alt+←)"
+ },
+ {
+  "key": "hp_forward",
+  "zh": "前进 (Alt+→)",
+  "en": "Forward (Alt+→)"
+ },
+ {
+  "key": "hp_home",
+  "zh": "主页 (F1)",
+  "en": "Home (F1)"
+ },
+ {
+  "key": "hp_copy",
+  "zh": "复制",
+  "en": "Copy"
+ },
+ {
+  "key": "hp_find",
+  "zh": "查找 (Ctrl+F)",
+  "en": "Find (Ctrl+F)"
+ },
+ {
+  "key": "hp_find_placeholder",
+  "zh": "在当前页查找",
+  "en": "Find on this page"
+ },
+ {
+  "key": "hp_zoom_in",
+  "zh": "放大",
+  "en": "Zoom in"
+ },
+ {
+  "key": "hp_zoom_out",
+  "zh": "缩小",
+  "en": "Zoom out"
+ },
+ {
+  "key": "hp_zoom_reset",
+  "zh": "实际大小",
+  "en": "Actual size"
+ },
+ {
+  "key": "hp_no_match",
+  "zh": "没有匹配内容",
+  "en": "No matches"
+ },
+ {
+  "key": "hp_match_count",
+  "zh": "{} 处匹配",
+  "en": "{} matches",
+  "params": [
+   "count"
+  ]
+ },
+ {
+  "key": "hp_tab_contents",
+  "zh": "目录",
+  "en": "Contents"
+ },
+ {
+  "key": "hp_tab_index",
+  "zh": "索引",
+  "en": "Index"
+ },
+ {
+  "key": "hp_tab_search",
+  "zh": "搜索",
+  "en": "Search"
+ },
+ {
+  "key": "hp_manual_title",
+  "zh": "使用手册",
+  "en": "Manual"
+ },
+ {
+  "key": "hp_search_placeholder",
+  "zh": "搜索帮助主题",
+  "en": "Search help topics"
+ },
+ {
+  "key": "hp_no_topics",
+  "zh": "没有匹配的帮助主题",
+  "en": "No matching help topics"
+ },
+ {
+  "key": "hp_default_topic",
+  "zh": "开始",
+  "en": "Start"
  },
  {
   "key": "ch_title",
@@ -4265,11 +4373,6 @@
   "en": "Help & about"
  },
  {
-  "key": "stc_back",
-  "zh": "返回应用",
-  "en": "Back to app"
- },
- {
   "key": "stc_search",
   "zh": "搜索设置",
   "en": "Search settings"
@@ -5373,6 +5476,11 @@
   "key": "st_export_diagnostics",
   "zh": "导出诊断信息",
   "en": "Export diagnostics"
+ },
+ {
+  "key": "st_help_open",
+  "zh": "打开帮助手册",
+  "en": "Open help"
  },
  {
   "key": "st_diagnostics_note",

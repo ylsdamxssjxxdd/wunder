@@ -55,5 +55,5 @@ WebSocket 的连接过程有结构化日志，覆盖建立、就绪、握手、�
 
 ## 相关页
 
-- [流式事件参考](/docs/zh-CN/reference/stream-events/) — WS 事件字段
-- [舰桥面板指南](/docs/zh-CN/reference/admin-panels/) — 监控/调试面板入口
+- [流式事件参考](/docs/zh-CN/capabilities/stream-events/) — WS 事件字段
+- [舰桥面板指南](/docs/zh-CN/capabilities/admin-panels/) — 监控/调试面板入口

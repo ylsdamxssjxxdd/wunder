@@ -812,9 +812,7 @@ impl TuiApp {
             } else {
                 ""
             };
-            let mode = crate::runtime::effective_tool_call_mode(
-                config.llm.models.get(&name),
-            );
+            let mode = crate::runtime::effective_tool_call_mode(config.llm.models.get(&name));
             self.push_log(
                 LogKind::Info,
                 format!("{marker} {cloud_marker}{name} ({mode})"),
@@ -2343,25 +2341,18 @@ impl TuiApp {
                     "- mouse_mode:"
                 },
                 match self.mouse_mode {
-                    MouseMode::Auto => {
+                    MouseMode::Capture => {
                         if is_zh {
-                            "auto(自动)"
+                            "capture(捕获点击)"
                         } else {
-                            "auto"
+                            "capture"
                         }
                     }
-                    MouseMode::Scroll => {
+                    MouseMode::Native => {
                         if is_zh {
-                            "scroll(滚轮)"
+                            "native(终端原生)"
                         } else {
-                            "scroll"
-                        }
-                    }
-                    MouseMode::Select => {
-                        if is_zh {
-                            "select(选择)"
-                        } else {
-                            "select"
+                            "native"
                         }
                     }
                 }

@@ -103,12 +103,12 @@ WebSocket 端点按用途分布：
 - **命令台账与审批**：命令、确认、事件、结果都记账。风险按 L0–L3 分层，`tool.exec`、`agent.spawn` 属 L3，默认设备能力集不含 L3，且 L3 审批不可记忆。
 - 互通治理目前只有后端接口，**舰桥没有互通的面板**。
 
-细节与协议见 [互通](/docs/zh-CN/reference/interlink/)。
+细节与协议见 [互通](/docs/zh-CN/capabilities/interlink/)。
 
 ## 延伸阅读
 
 - [流式执行](/docs/zh-CN/concepts/streaming/) —— token 增量与合并节奏
 - [稳定性](/docs/zh-CN/concepts/core-stability/) —— 超时、熔断与资源治理
-- [会话状态说明](/docs/zh-CN/reference/stream-events/) —— 状态与事件详细含义
-- [聊天 WebSocket 接入](/docs/zh-CN/reference/chat-ws/) —— 握手与消息格式
-- [互通](/docs/zh-CN/reference/interlink/) —— 隧道、影子、命令与审批
+- [会话状态说明](/docs/zh-CN/capabilities/stream-events/) —— 状态与事件详细含义
+- [聊天 WebSocket 接入](/docs/zh-CN/capabilities/chat-ws/) —— 握手与消息格式
+- [互通](/docs/zh-CN/capabilities/interlink/) —— 隧道、影子、命令与审批

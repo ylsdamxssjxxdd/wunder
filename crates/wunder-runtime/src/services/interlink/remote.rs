@@ -106,13 +106,7 @@ impl RemoteHub {
                 .upstream
                 .push((device_id.to_string(), thread_id.to_string()));
         }
-        Ok((
-            Subscription {
-                id,
-                first,
-            },
-            receiver,
-        ))
+        Ok((Subscription { id, first }, receiver))
     }
 
     /// Watch the command lifecycle of one device (no thread filter).
@@ -128,17 +122,8 @@ impl RemoteHub {
         let id = self.next();
         let first = watchers.is_empty();
         let (sender, receiver) = mpsc::channel(SUBSCRIBER_QUEUE);
-        watchers.push(Watcher {
-            id,
-            sender,
-        });
-        Ok((
-            Subscription {
-                id,
-                first,
-            },
-            receiver,
-        ))
+        watchers.push(Watcher { id, sender });
+        Ok((Subscription { id, first }, receiver))
     }
 
     /// Drop a watcher; returns whether the node can stop forwarding upstream.
@@ -175,7 +160,8 @@ impl RemoteHub {
     /// stalled browser tab can never slow the tunnel (docs §10.1).
     pub fn publish(&self, device_id: &str, thread_id: &str, frame: &str) -> usize {
         let state = self.lock();
-        let watchers = match state.threads
+        let watchers = match state
+            .threads
             .get(&(device_id.to_string(), thread_id.to_string()))
         {
             Some(watchers) => watchers,
@@ -335,10 +321,7 @@ mod tests {
         }
         assert_eq!(hub.publish("dev-1", "th_1", "overflow"), 0);
         // The queue slot stays registered; the frame was simply skipped.
-        assert_eq!(
-            hub.unsubscribe("dev-1", "th_1", sub.id),
-            true
-        );
+        assert_eq!(hub.unsubscribe("dev-1", "th_1", sub.id), true);
         assert!(!hub.is_upstream("dev-1", "th_1"));
         assert_eq!(key.0, "dev-1");
     }

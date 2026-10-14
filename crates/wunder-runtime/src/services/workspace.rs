@@ -917,8 +917,9 @@ impl WorkspaceManager {
         let retention_enabled = self.stream_event_retention_hours > 0;
         let now = now_ts();
         let orphan_due = {
-            let last =
-                self.orphan_sweep_last_ts.load(std::sync::atomic::Ordering::SeqCst) as f64;
+            let last = self
+                .orphan_sweep_last_ts
+                .load(std::sync::atomic::Ordering::SeqCst) as f64;
             last <= 0.0 || now - last >= self.orphan_sweep_interval_s
         };
         // Usage summary reconcile keeps per-user counters exact without any
@@ -956,7 +957,10 @@ impl WorkspaceManager {
         {
             let mut state = self.retention_state.lock();
             if state.running
-                || (!orphan_due && !usage_due && !partitions_due && !slow_query_due
+                || (!orphan_due
+                    && !usage_due
+                    && !partitions_due
+                    && !slow_query_due
                     && now - state.last_cleanup < self.retention_interval_s)
             {
                 return;
@@ -998,10 +1002,8 @@ impl WorkspaceManager {
                     if run_usage_reconcile {
                         match storage.reconcile_user_usage(false) {
                             Ok(()) => {
-                                usage_flag.store(
-                                    now_ts() as i64,
-                                    std::sync::atomic::Ordering::SeqCst,
-                                );
+                                usage_flag
+                                    .store(now_ts() as i64, std::sync::atomic::Ordering::SeqCst);
                             }
                             Err(error) => {
                                 warn!(%error, "usage summary reconcile failed");
@@ -1011,10 +1013,8 @@ impl WorkspaceManager {
                     if run_partitions_ensure {
                         match storage.ensure_time_partitions_current() {
                             Ok(()) => {
-                                partitions_flag.store(
-                                    now_ts() as i64,
-                                    std::sync::atomic::Ordering::SeqCst,
-                                );
+                                partitions_flag
+                                    .store(now_ts() as i64, std::sync::atomic::Ordering::SeqCst);
                             }
                             Err(error) => {
                                 warn!(%error, "time partition roll-forward failed");
@@ -1045,7 +1045,9 @@ impl WorkspaceManager {
             }
             if run_usage_reconcile {
                 match storage.reconcile_user_usage(false) {
-                    Ok(()) => usage_flag.store(now_ts() as i64, std::sync::atomic::Ordering::SeqCst),
+                    Ok(()) => {
+                        usage_flag.store(now_ts() as i64, std::sync::atomic::Ordering::SeqCst)
+                    }
                     Err(error) => {
                         warn!(%error, "usage summary reconcile failed");
                     }
@@ -2219,8 +2221,8 @@ impl WorkspaceManager {
         let now = now_ts();
         let (snapshot, stale) = {
             let cache = self.user_usage_cache.lock();
-            let stale = cache.updated_ts <= 0.0
-                || now - cache.updated_ts >= self.user_usage_cache_ttl_s;
+            let stale =
+                cache.updated_ts <= 0.0 || now - cache.updated_ts >= self.user_usage_cache_ttl_s;
             (cache.data.clone(), stale)
         };
         if stale {
@@ -2648,15 +2650,14 @@ impl WorkspaceManager {
                 workspace_root.display()
             ));
         }
-        let removed =
-            if extract_agent_workspace_user(&safe_id).is_some() {
-                // 云端形态智能体云端目录：整体清空。
-                clear_dir_contents(&workspace_root)
-            } else if extract_container_id_from_scoped_user(&safe_id) == USER_PRIVATE_CONTAINER_ID {
-                clear_dir_contents_except(&workspace_root, USER_PRIVATE_PERSISTENT_ROOTS)
-            } else {
-                clear_dir_contents(&workspace_root)
-            };
+        let removed = if extract_agent_workspace_user(&safe_id).is_some() {
+            // 云端形态智能体云端目录：整体清空。
+            clear_dir_contents(&workspace_root)
+        } else if extract_container_id_from_scoped_user(&safe_id) == USER_PRIVATE_CONTAINER_ID {
+            clear_dir_contents_except(&workspace_root, USER_PRIVATE_PERSISTENT_ROOTS)
+        } else {
+            clear_dir_contents(&workspace_root)
+        };
         self.clear_workspace_cache(&safe_id);
         self.mark_tree_dirty(&safe_id);
         Ok(removed)
@@ -3190,12 +3191,7 @@ fn purge_session_logs_with_storage(storage: &dyn StorageBackend, user_id: &str, 
 /// Sweep thread/tool log rows whose session no longer exists in the durable
 /// catalog. Only runs when due; the storage layer ignores rows younger than
 /// the cutoff so in-flight sessions are never touched.
-fn run_orphan_sweep_once(
-    storage: &dyn StorageBackend,
-    flag: &AtomicI64,
-    cutoff: f64,
-    now: f64,
-) {
+fn run_orphan_sweep_once(storage: &dyn StorageBackend, flag: &AtomicI64, cutoff: f64, now: f64) {
     match storage.cleanup_orphan_session_logs(cutoff) {
         Ok(deleted) => {
             let total: i64 = deleted.values().copied().sum();
@@ -3579,7 +3575,10 @@ mod tests {
         // display_path 与 map_public_path 互逆：展示名回读得到同一个文件。
         assert_eq!(
             workspace
-                .map_public_path("alice", &workspace.public_root("alice").join("workspace/a.txt"))
+                .map_public_path(
+                    "alice",
+                    &workspace.public_root("alice").join("workspace/a.txt")
+                )
                 .expect("map agent-dir public path"),
             agent_root.join("a.txt")
         );
@@ -3589,7 +3588,10 @@ mod tests {
         fs::write(user_dir.join("knowledge").join("note.md"), b"n").expect("write note");
         assert_eq!(
             workspace
-                .map_public_path("alice", &workspace.public_root("alice").join("knowledge/note.md"))
+                .map_public_path(
+                    "alice",
+                    &workspace.public_root("alice").join("knowledge/note.md")
+                )
                 .expect("map user-dir public path"),
             user_dir.join("knowledge").join("note.md")
         );

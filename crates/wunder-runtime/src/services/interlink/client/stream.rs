@@ -121,7 +121,8 @@ pub fn pace_delay(len: usize, rate_bps: u64) -> Duration {
 
 /// Outcome of one pump.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PumpOutcome {    /// Every byte, including the `DATA_FLAG_LAST` chunk, was handed over.
+pub enum PumpOutcome {
+    /// Every byte, including the `DATA_FLAG_LAST` chunk, was handed over.
     Completed,
     /// The queue or the socket went away: the stream is unfinished.
     Aborted,

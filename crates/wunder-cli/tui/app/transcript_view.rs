@@ -72,9 +72,7 @@ fn view_action(key: KeyEvent) -> Option<ViewAction> {
         KeyCode::Char('k') if key.modifiers.is_empty() => Some(ViewAction::Scroll(-1)),
         KeyCode::Char('j') if key.modifiers.is_empty() => Some(ViewAction::Scroll(1)),
         KeyCode::Char(' ') if key.modifiers.is_empty() => Some(ViewAction::Scroll(10)),
-        KeyCode::Char(' ') if key.modifiers == KeyModifiers::SHIFT => {
-            Some(ViewAction::Scroll(-10))
-        }
+        KeyCode::Char(' ') if key.modifiers == KeyModifiers::SHIFT => Some(ViewAction::Scroll(-10)),
         KeyCode::Char('f') if key.modifiers == KeyModifiers::CONTROL => {
             Some(ViewAction::Scroll(10))
         }
@@ -138,29 +136,58 @@ impl TuiApp {
         let Some(index) = self.transcript_selected else {
             return false;
         };
-        let width = self.transcript_viewport_width.max(1);
-        let Some(entry) = self.logs.get(index) else {
-            return false;
-        };
-        let kind = entry.kind;
-        let collapsible = if entry.special.is_some() {
-            entry
-                .special
-                .as_ref()
-                .is_some_and(|special| special.is_collapsible(width))
-        } else {
-            kind == super::LogKind::Reasoning
-                && !self.entry_is_streaming(kind, index)
-                && self.reasoning_full_rows(index, width) > super::REASONING_FOLD_LINES
-        };
-        if !collapsible {
+        if !self.card_is_collapsible(index) {
             return false;
         }
-        if !self.expanded_cards.insert(index) {
-            self.expanded_cards.remove(&index);
+        let Some(cell_id) = self.logs.get(index).map(|entry| entry.cell_id) else {
+            return false;
+        };
+        if !self.expanded_cards.remove(&cell_id) {
+            self.expanded_cards.insert(cell_id);
         }
         self.invalidate_transcript_metrics();
         true
+    }
+
+    /// Right opens the selected card and Left closes it, which is how codex's list keys
+    /// enforce the fold state. `false` means the card has no fold, so the caller keeps the
+    /// arrow's other meaning.
+    pub fn set_selected_card_expanded(&mut self, expanded: bool) -> bool {
+        let Some(index) = self.transcript_selected else {
+            return false;
+        };
+        if !self.card_is_collapsible(index) {
+            return false;
+        }
+        let Some(cell_id) = self.logs.get(index).map(|entry| entry.cell_id) else {
+            return false;
+        };
+        if expanded {
+            self.expanded_cards.insert(cell_id);
+        } else {
+            self.expanded_cards.remove(&cell_id);
+        }
+        self.invalidate_transcript_metrics();
+        true
+    }
+
+    /// Whether Enter has anything to reveal on this card: a folded special card, or a
+    /// finished thinking block longer than the fold budget.
+    pub fn card_is_collapsible(&mut self, index: usize) -> bool {
+        let Some(entry) = self.logs.get(index) else {
+            return false;
+        };
+        let width = self.transcript_viewport_width.max(1);
+        let kind = entry.kind;
+        if entry.special.is_some() {
+            return entry
+                .special
+                .as_ref()
+                .is_some_and(|special| special.is_collapsible(width));
+        }
+        kind == super::LogKind::Reasoning
+            && !self.entry_is_streaming(kind, index)
+            && self.reasoning_full_rows(index, width) > super::REASONING_FOLD_LINES
     }
 
     /// Rendered rows of a thinking block with nothing folded away.

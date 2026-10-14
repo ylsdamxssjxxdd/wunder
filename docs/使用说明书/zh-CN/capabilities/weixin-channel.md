@@ -53,5 +53,5 @@ summary: 新微信渠道用 iLink 协议，跟旧的公众号、企业微信不�
 
 ## 延伸阅读
 
-- [API 索引](/docs/zh-CN/reference/api-index/)
+- [API 索引](/docs/zh-CN/capabilities/api-index/)
 - [管理员界面](/docs/zh-CN/surfaces/web-admin/)

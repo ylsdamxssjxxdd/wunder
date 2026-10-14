@@ -38,18 +38,19 @@ use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 use tokio_util::sync::CancellationToken;
 
 use wunder_core::interlink::{
-    APPROVAL_APPROVED, APPROVAL_EXPIRED, APPROVAL_NONE, APPROVAL_REJECTED, CAP_AGENT_SPAWN,
-    CAP_QUERY_BASIC, CAP_SHADOW_FULL, CAP_SHADOW_MINIMAL, CAP_THREAD_DRIVE, CAP_TOOL_EXEC,
-    CAP_WORKSPACE_READ_BINARY, CAP_WORKSPACE_WRITE, CMD_COMMAND_CANCEL, EVENT_NODE_JOINED,
-    EVENT_PRESENCE, EVENT_THREAD, FRAME_COMMAND, FRAME_COMMAND_ACK, FRAME_COMMAND_RESULT,
-    FRAME_ERROR, FRAME_EVENT, FRAME_HELLO_ACK, FRAME_PONG, NODE_STATUS_AWAY, NODE_STATUS_BUSY,
-    NODE_STATUS_ONLINE, ERR_NODE_BUSY, InterlinkFrame, InterlinkHelloAck, TUNNEL_WS_PROTOCOL,
+    InterlinkFrame, InterlinkHelloAck, APPROVAL_APPROVED, APPROVAL_EXPIRED, APPROVAL_NONE,
+    APPROVAL_REJECTED, CAP_AGENT_SPAWN, CAP_QUERY_BASIC, CAP_SHADOW_FULL, CAP_SHADOW_MINIMAL,
+    CAP_THREAD_DRIVE, CAP_TOOL_EXEC, CAP_WORKSPACE_READ_BINARY, CAP_WORKSPACE_WRITE,
+    CMD_COMMAND_CANCEL, ERR_NODE_BUSY, EVENT_NODE_JOINED, EVENT_PRESENCE, EVENT_THREAD,
+    FRAME_COMMAND, FRAME_COMMAND_ACK, FRAME_COMMAND_RESULT, FRAME_ERROR, FRAME_EVENT,
+    FRAME_HELLO_ACK, FRAME_PONG, NODE_STATUS_AWAY, NODE_STATUS_BUSY, NODE_STATUS_ONLINE,
+    TUNNEL_WS_PROTOCOL,
 };
 
 use crate::core::long_task;
 use crate::services::cloud::{self, CloudSessionFile};
-pub use crate::services::interlink::client::approval::{Decision, PendingApproval};
 use crate::services::interlink::client::approval::{ApprovalGate, GateError};
+pub use crate::services::interlink::client::approval::{Decision, PendingApproval};
 use crate::services::interlink::client::execute::{
     CommandLedger, CommandReport, CommandSpec, ExecContext, InFlightTable, Preflight,
 };
@@ -300,11 +301,7 @@ impl TunnelWriter {
         let frame = self.frame(kind, corr, payload);
         match serde_json::to_string(&frame) {
             Ok(text) => {
-                if self
-                    .control
-                    .try_send(OutboundFrame::Text(text))
-                    .is_err()
-                {
+                if self.control.try_send(OutboundFrame::Text(text)).is_err() {
                     DROPPED_FRAMES.fetch_add(1, Ordering::Relaxed);
                     return false;
                 }
@@ -407,7 +404,10 @@ impl ClientInner {
     }
 
     fn set_next_retry(&self, at: Option<f64>) {
-        *self.next_retry_at.write().expect("tunnel state lock poisoned") = at;
+        *self
+            .next_retry_at
+            .write()
+            .expect("tunnel state lock poisoned") = at;
     }
 
     fn set_reconnect_degraded(&self, degraded: bool) {
@@ -477,7 +477,10 @@ impl ClientInner {
     }
 
     fn writer(&self) -> Option<Arc<TunnelWriter>> {
-        self.writer.read().expect("tunnel state lock poisoned").clone()
+        self.writer
+            .read()
+            .expect("tunnel state lock poisoned")
+            .clone()
     }
 
     fn clear_writer(&self, writer: &Arc<TunnelWriter>) {
@@ -532,7 +535,9 @@ impl ClientInner {
         let config = self.state.config_store.get().await;
         let shadow_config = &config.interlink.shadow;
         TreeLimits {
-            max_entries: shadow_config.tree_max_entries.clamp(1, shadow::TREE_MAX_ENTRIES),
+            max_entries: shadow_config
+                .tree_max_entries
+                .clamp(1, shadow::TREE_MAX_ENTRIES),
             depth: shadow_config.tree_depth.clamp(1, shadow::TREE_DEPTH),
             threads_max: shadow_config.threads_max.clamp(1, shadow::THREADS_MAX),
             tasks_max: shadow::TASKS_MAX,
@@ -551,7 +556,11 @@ impl ClientInner {
         format!("remote:cloud:{channel}")
     }
 
-    async fn exec_context(&self, writer: &Arc<TunnelWriter>, session: &CloudSessionFile) -> ExecContext {
+    async fn exec_context(
+        &self,
+        writer: &Arc<TunnelWriter>,
+        session: &CloudSessionFile,
+    ) -> ExecContext {
         ExecContext {
             state: self.state.clone(),
             local_user_id: self.options.local_user_id.clone(),
@@ -589,7 +598,10 @@ impl ClientInner {
     }
 
     fn set_capabilities(&self, caps: Vec<String>) {
-        *self.capabilities.write().expect("tunnel state lock poisoned") = caps;
+        *self
+            .capabilities
+            .write()
+            .expect("tunnel state lock poisoned") = caps;
     }
 
     fn status(&self) -> TunnelStatus {
@@ -613,7 +625,10 @@ impl ClientInner {
                 .read()
                 .expect("tunnel state lock poisoned")
                 .clone(),
-            next_retry_at: *self.next_retry_at.read().expect("tunnel state lock poisoned"),
+            next_retry_at: *self
+                .next_retry_at
+                .read()
+                .expect("tunnel state lock poisoned"),
             reconnect_degraded: self.reconnect_degraded.load(Ordering::Acquire),
         }
     }
@@ -695,11 +710,14 @@ impl InterlinkClient {
         // into the dispatcher that `stop()` just cancelled, so taking it from a
         // slot would leave a reconnected node with nobody to run commands.
         let (sender, receiver) = mpsc::channel(COMMAND_QUEUE_CAPACITY);
-        *inner.commands.write().expect("command sender lock poisoned") = sender;
-        long_task::spawn("interlink.client.commands", command_dispatcher(
-            inner.clone(),
-            receiver,
-        ));
+        *inner
+            .commands
+            .write()
+            .expect("command sender lock poisoned") = sender;
+        long_task::spawn(
+            "interlink.client.commands",
+            command_dispatcher(inner.clone(), receiver),
+        );
         long_task::spawn("interlink.client.run_loop", run_loop(inner.clone()));
     }
 
@@ -750,7 +768,10 @@ static SHARED: OnceLock<Arc<InterlinkClient>> = OnceLock::new();
 /// `interlink.enabled` switch is on. Idempotent; safe to call on every start
 /// of a local form, and a no-op on the server form.
 pub fn start(state: Arc<AppState>) {
-    start_with_options(state.clone(), InterlinkLocalOptions::for_state(state.as_ref()));
+    start_with_options(
+        state.clone(),
+        InterlinkLocalOptions::for_state(state.as_ref()),
+    );
 }
 
 /// Same as [`start`] with the form's own local identity.
@@ -791,7 +812,9 @@ pub fn status() -> TunnelStatus {
 }
 
 pub fn pending_approvals() -> Vec<PendingApproval> {
-    shared().map(|client| client.pending_approvals()).unwrap_or_default()
+    shared()
+        .map(|client| client.pending_approvals())
+        .unwrap_or_default()
 }
 
 pub fn decide_approval(approval_id: &str, decision: Decision, remember: bool) -> bool {
@@ -952,15 +975,15 @@ async fn run_loop(inner: Arc<ClientInner>) {
 
 impl ClientInner {
     fn secret_value(&self) -> Option<NodeSecret> {
-        self.secret.read().expect("tunnel state lock poisoned").clone()
+        self.secret
+            .read()
+            .expect("tunnel state lock poisoned")
+            .clone()
     }
 
     /// Cancellation token of the current generation.
     fn stop_token(&self) -> CancellationToken {
-        self.stop
-            .read()
-            .expect("tunnel stop lock poisoned")
-            .clone()
+        self.stop.read().expect("tunnel stop lock poisoned").clone()
     }
 
     /// Cancel the current generation. Both this and [`Self::begin_generation`]
@@ -1072,7 +1095,9 @@ async fn connect_once(
     let ack = await_hello_ack(&mut stream, &inner).await?;
     writer.set_channel_id(&ack.channel_id);
     inner.set_capabilities(ack.capabilities_granted.clone());
-    inner.shadow_revision.store(ack.shadow_revision.max(0), Ordering::Release);
+    inner
+        .shadow_revision
+        .store(ack.shadow_revision.max(0), Ordering::Release);
     inner.set_resume_channel(&ack.channel_id);
     // A working handshake is a real cloud exchange: refresh the badge.
     cloud::shared().mark_online();
@@ -1117,7 +1142,10 @@ async fn connect_once(
         .interlink
         .heartbeat_s
         .max(1);
-    let full_interval_s = session.interlink.shadow_interval_s().max(shadow::DELTA_MERGE_WINDOW.as_secs() * 2);
+    let full_interval_s = session
+        .interlink
+        .shadow_interval_s()
+        .max(shadow::DELTA_MERGE_WINDOW.as_secs() * 2);
 
     let mut watchdog = tokio::time::interval(Duration::from_secs(
         heartbeat_s * u64::from(HEARTBEAT_MISSED_BEATS.max(1)),
@@ -1211,7 +1239,9 @@ impl ClientInner {
 }
 
 async fn await_hello_ack(
-    stream: &mut futures::stream::SplitStream<WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>>,
+    stream: &mut futures::stream::SplitStream<
+        WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>,
+    >,
     inner: &Arc<ClientInner>,
 ) -> Result<InterlinkHelloAck, CloseReason> {
     let read = tokio::time::timeout(handshake::CONNECT_TIMEOUT, async {
@@ -1320,7 +1350,11 @@ fn handle_inbound(
                         "error": ERR_NODE_BUSY,
                         "retry_after_ms": 2_000,
                     });
-                    writer.try_send_frame(FRAME_COMMAND_ACK, Some(frame.corr.unwrap_or_default().as_str()), payload);
+                    writer.try_send_frame(
+                        FRAME_COMMAND_ACK,
+                        Some(frame.corr.unwrap_or_default().as_str()),
+                        payload,
+                    );
                     None
                 }
             }
@@ -1390,18 +1424,29 @@ impl ClientInner {
             return;
         }
         {
-            let table = self.forwarders.read().expect("forwarder table lock poisoned");
+            let table = self
+                .forwarders
+                .read()
+                .expect("forwarder table lock poisoned");
             if table.contains_key(&thread_id) || table.len() >= MAX_THREAD_FORWARDERS {
                 return;
             }
         }
         let cancel = CancellationToken::new();
         let already = {
-            let mut table = self.forwarders.write().expect("forwarder table lock poisoned");
+            let mut table = self
+                .forwarders
+                .write()
+                .expect("forwarder table lock poisoned");
             if table.len() >= MAX_THREAD_FORWARDERS || table.contains_key(&thread_id) {
                 false
             } else {
-                table.insert(thread_id.clone(), Forwarder { cancel: cancel.clone() });
+                table.insert(
+                    thread_id.clone(),
+                    Forwarder {
+                        cancel: cancel.clone(),
+                    },
+                );
                 true
             }
         };
@@ -1448,15 +1493,24 @@ impl ClientInner {
                     return;
                 }
             };
-            forward_changes(inner.clone(), writer.clone(), owned_thread.clone(), receiver, cancel)
-                .await;
+            forward_changes(
+                inner.clone(),
+                writer.clone(),
+                owned_thread.clone(),
+                receiver,
+                cancel,
+            )
+            .await;
             inner.forget_forwarder(&owned_thread);
         });
     }
 
     fn detach_thread(self: &Arc<Self>, thread_id: &str) {
         let entry = {
-            let mut table = self.forwarders.write().expect("forwarder table lock poisoned");
+            let mut table = self
+                .forwarders
+                .write()
+                .expect("forwarder table lock poisoned");
             table.remove(thread_id.trim())
         };
         if let Some(entry) = entry {
@@ -1465,7 +1519,10 @@ impl ClientInner {
     }
 
     fn forget_forwarder(&self, thread_id: &str) {
-        let mut table = self.forwarders.write().expect("forwarder table lock poisoned");
+        let mut table = self
+            .forwarders
+            .write()
+            .expect("forwarder table lock poisoned");
         table.remove(thread_id);
     }
 }
@@ -1588,7 +1645,11 @@ fn with_channel(writer: &Arc<TunnelWriter>, text: String) -> String {
     let Ok(mut value) = serde_json::from_str::<Value>(&text) else {
         return text;
     };
-    if value.get("channel_id").map(|v| v.is_null()).unwrap_or(false) {
+    if value
+        .get("channel_id")
+        .map(|v| v.is_null())
+        .unwrap_or(false)
+    {
         if let Some(map) = value.as_object_mut() {
             map.insert("channel_id".to_string(), json!(channel_id));
             return serde_json::to_string(&value).unwrap_or(text);
@@ -1617,8 +1678,15 @@ async fn send_full_shadow(
         .read()
         .expect("tunnel state lock poisoned")
         .clone();
-    let payload =
-        shadow::build_full(&inner.state, &sources, &inner.collector, revision, counters, last_error.as_deref()).await;
+    let payload = shadow::build_full(
+        &inner.state,
+        &sources,
+        &inner.collector,
+        revision,
+        counters,
+        last_error.as_deref(),
+    )
+    .await;
     inner.shadow_revision.store(revision, Ordering::Release);
     if writer
         .send_frame(wunder_core::interlink::FRAME_SHADOW_FULL, None, payload)
@@ -1634,7 +1702,11 @@ async fn send_full_shadow(
 
 /// Every merge-window tick: fold the cheap signals in, then upload whatever is
 /// dirty (docs §6.2 2).
-async fn pump_shadow_signals(inner: &Arc<ClientInner>, writer: &Arc<TunnelWriter>, session: &CloudSessionFile) {
+async fn pump_shadow_signals(
+    inner: &Arc<ClientInner>,
+    writer: &Arc<TunnelWriter>,
+    session: &CloudSessionFile,
+) {
     // Cheap signals only until something is actually dirty: this runs every
     // merge window on an idle node, so it must not clone the config or read the
     // workspace tree just to learn there is nothing to send (docs §10.2).
@@ -1728,8 +1800,14 @@ async fn run_command(inner: Arc<ClientInner>, spec: CommandSpec) {
     {
         return;
     }
-    if !inner.in_flight.try_add(&spec.command_id, execute::INFLIGHT_MAX) {
-        inner.ledger.finish(&spec.command_id, Value::Null, now_ts()).await;
+    if !inner
+        .in_flight
+        .try_add(&spec.command_id, execute::INFLIGHT_MAX)
+    {
+        inner
+            .ledger
+            .finish(&spec.command_id, Value::Null, now_ts())
+            .await;
         writer
             .send_frame(
                 FRAME_COMMAND_ACK,
@@ -1765,7 +1843,10 @@ async fn run_command(inner: Arc<ClientInner>, spec: CommandSpec) {
                 .await
                 .ok();
             inner.in_flight.remove(&spec.command_id);
-            inner.ledger.finish(&spec.command_id, refused, now_ts()).await;
+            inner
+                .ledger
+                .finish(&spec.command_id, refused, now_ts())
+                .await;
             return;
         }
         Preflight::NeedPrompt => match request_decision(&inner, &writer, &spec).await {
@@ -1793,16 +1874,33 @@ async fn run_command(inner: Arc<ClientInner>, spec: CommandSpec) {
         .cancel_token_for(&spec.command_id)
         .await
         .unwrap_or_default();
-    let report = execute::execute(&spec, &ctx, &writer, &inner.collector, &inner.shadow_wake, cancel).await;
+    let report = execute::execute(
+        &spec,
+        &ctx,
+        &writer,
+        &inner.collector,
+        &inner.shadow_wake,
+        cancel,
+    )
+    .await;
     let payload = report.payload();
     writer
-        .send_frame(FRAME_COMMAND_RESULT, Some(&spec.command_id), payload.clone())
+        .send_frame(
+            FRAME_COMMAND_RESULT,
+            Some(&spec.command_id),
+            payload.clone(),
+        )
         .await
         .ok();
     inner.in_flight.remove(&spec.command_id);
-    inner.ledger.finish(&spec.command_id, payload, now_ts()).await;
+    inner
+        .ledger
+        .finish(&spec.command_id, payload, now_ts())
+        .await;
     // Any command may have moved local state; the delta window picks it up.
-    inner.collector.mark_dirty(shadow::command_sections(&spec.kind));
+    inner
+        .collector
+        .mark_dirty(shadow::command_sections(&spec.kind));
 }
 
 /// Ask a human; returns the `approval_state` to ack with, or `None` when the
@@ -1814,9 +1912,7 @@ async fn request_decision(
 ) -> Option<String> {
     let now = now_ts();
     let window = approval::window_seconds(spec.approval_expires_at, spec.timeout_s, now);
-    let expires_at = spec
-        .approval_expires_at
-        .unwrap_or_else(|| now + window);
+    let expires_at = spec.approval_expires_at.unwrap_or_else(|| now + window);
     let approval_id = spec
         .approval_id
         .clone()

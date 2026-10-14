@@ -55,9 +55,9 @@ wunder's documentation falls into seven categories, each answering a different k
 
 ### Other groups (this page lists only the site's main tabs, not everything)
 
-- Core concepts → `/docs/en/concepts/`
+- Core → `/docs/en/concepts/`
 - Tools → `/docs/en/tools/`
-- Reference → `/docs/en/reference/`
+- Capabilities → `/docs/en/capabilities/`
 - Help → `/docs/en/help/`
 
 ## Design docs (`docs/设计文档/`)
@@ -138,5 +138,5 @@ A single file, from the interface consumer's perspective. All HTTP endpoints use
 
 - [Manual overview](/docs/en/start/hubs/)
 - [wunder home page](/docs/en/index/)
-- [API index](/docs/en/reference/api-index/)
-- [Configuration reference](/docs/en/reference/config/)
+- [API index](/docs/en/capabilities/api-index/)
+- [Configuration reference](/docs/en/capabilities/config/)

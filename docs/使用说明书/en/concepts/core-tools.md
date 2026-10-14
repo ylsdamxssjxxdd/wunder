@@ -101,4 +101,4 @@ Approvals are filed by the tool's risk category, and there are four categories: 
 - [Context Compression](/docs/en/concepts/core-context-compression/) — how the model-input track saves tokens
 - [Prompts and Skills](/docs/en/concepts/prompt-and-skills/) — `SKILL.md` and skill injection
 - [Multi-user and Capability Management](/docs/en/concepts/core-multi-user-management/) — how administrators choose capabilities
-- [Configuration Reference](/docs/en/reference/config/) — tool- and capability-related settings
+- [Configuration Reference](/docs/en/capabilities/config/) — tool- and capability-related settings

@@ -93,4 +93,4 @@ A session records only events with timeline value:
 - [Streaming execution](/docs/en/concepts/streaming/) — the relationship between entries and deltas
 - [Context compression](/docs/en/concepts/core-context-compression/) — how history is trimmed
 - [Long-term memory](/docs/en/concepts/memory/) — memory isolated by scope
-- [Session states](/docs/en/reference/stream-events/) — events and state fields
+- [Session states](/docs/en/capabilities/stream-events/) — events and state fields

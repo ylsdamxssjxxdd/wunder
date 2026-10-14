@@ -273,9 +273,15 @@ fn build_minimal_pptx() -> Result<Vec<u8>, String> {
         ("ppt/presentation.xml", presentation),
         ("ppt/_rels/presentation.xml.rels", presentation_rels),
         ("ppt/slideMasters/slideMaster1.xml", slide_master),
-        ("ppt/slideMasters/_rels/slideMaster1.xml.rels", slide_master_rels),
+        (
+            "ppt/slideMasters/_rels/slideMaster1.xml.rels",
+            slide_master_rels,
+        ),
         ("ppt/slideLayouts/slideLayout1.xml", slide_layout),
-        ("ppt/slideLayouts/_rels/slideLayout1.xml.rels", slide_layout_rels),
+        (
+            "ppt/slideLayouts/_rels/slideLayout1.xml.rels",
+            slide_layout_rels,
+        ),
         ("ppt/slides/slide1.xml", slide),
         ("ppt/slides/_rels/slide1.xml.rels", slide_rels),
         ("ppt/theme/theme1.xml", theme),

@@ -40,7 +40,11 @@ pub fn sample_fault(
     if error_rate <= 0.0 && disconnect_rate <= 0.0 {
         return None;
     }
-    let mut state = mix(session_seed, fault_nonce(user_round, model_round, attempt, 0x11)).max(1);
+    let mut state = mix(
+        session_seed,
+        fault_nonce(user_round, model_round, attempt, 0x11),
+    )
+    .max(1);
     if roll(&mut state) < error_rate {
         let code = ERROR_CODES[(next_u64(&mut state) as usize) % ERROR_CODES.len()];
         return Some(SimulatedFault::ApiError { code });
@@ -59,7 +63,11 @@ pub fn disconnect_delta_limit(
     model_round: usize,
     attempt: u32,
 ) -> usize {
-    let mut state = mix(session_seed, fault_nonce(user_round, model_round, attempt, 0x22)).max(1);
+    let mut state = mix(
+        session_seed,
+        fault_nonce(user_round, model_round, attempt, 0x22),
+    )
+    .max(1);
     1 + (next_u64(&mut state) % 3) as usize
 }
 
@@ -123,7 +131,10 @@ mod tests {
             }
         }
         // Expect roughly 1.5% of 2000 ~= 30; generous bounds, fully deterministic.
-        assert!(faults > 0 && faults < 150, "unexpected fault count: {faults}");
+        assert!(
+            faults > 0 && faults < 150,
+            "unexpected fault count: {faults}"
+        );
     }
 
     #[test]

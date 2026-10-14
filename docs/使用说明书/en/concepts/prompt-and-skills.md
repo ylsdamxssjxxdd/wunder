@@ -66,6 +66,6 @@ Combining prompt templates, skills, and models produces agents of different styl
 
 ## Further reading
 
-- [Prompts and personalization](/docs/en/reference/prompt-templates/) — how to work with templates
+- [Prompts and personalization](/docs/en/capabilities/prompt-templates/) — how to work with templates
 - [Memory (core)](/docs/en/concepts/core-memory/) — the design principles of memory
 - [Tool system](/docs/en/concepts/tools/) — how tools and skills relate

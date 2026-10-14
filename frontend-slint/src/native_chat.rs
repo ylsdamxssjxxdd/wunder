@@ -810,6 +810,26 @@ fn refresh_chat(app: &MainWindow, state: Rc<RefCell<State>>, silent: bool) {
                     }
                     crate::navigation_ui::project(&app);
                     crate::navigation_ui::project_sidebar(&app, Some(&desktop));
+                    // The working-directory panel opens on the selected
+                    // workspace's folder, never on the cloud hint; once a
+                    // thread is focused (auto-selected below) its own
+                    // workspace refines the target.
+                    if app.get_active_session_id().is_empty() {
+                        let cards = app.get_workspaces();
+                        let selected = usize::try_from(app.get_selected_workspace()).unwrap_or(0);
+                        if let Some(card) = cards
+                            .row_data(selected.min(cards.row_count().saturating_sub(1)))
+                            .filter(|card| !card.root_path.is_empty())
+                        {
+                            crate::workspace_files::set_target(
+                                &app,
+                                desktop.clone(),
+                                crate::workspace_files::Target::Local(
+                                    card.root_path.to_string(),
+                                ),
+                            );
+                        }
+                    }
                     if app.get_active_session_id().is_empty()
                         && app.get_conversations().row_count() > 0
                     {
@@ -921,8 +941,14 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
                             app.set_active_agent_id(agent.clone().into());
                         }
                         // The sidebar highlights the workspace the opened
-                        // thread lives in, so a later new-task lands there.
-                        crate::navigation_ui::focus_workspace_of(&app, session.workspace_id.as_deref());
+                        // thread lives in, so a later new-task lands there,
+                        // and the working-directory panel follows the thread's
+                        // folder.
+                        crate::navigation_ui::focus_workspace_of(
+                            &app,
+                            desktop.clone(),
+                            session.workspace_id.as_deref(),
+                        );
                         crate::entity_state::restore_agent(&app, &agent);
                         update_active_thread_filter_model(&app, &app.get_conversations());
                         crate::navigation_ui::project(&app);

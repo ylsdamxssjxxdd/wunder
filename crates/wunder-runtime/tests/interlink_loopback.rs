@@ -38,16 +38,8 @@ const DEVICE_ID: &str = "dev-loopback-1";
 fn base_config(dir: &TempDir, db_name: &str) -> Config {
     let mut config = Config::default();
     config.storage.backend = "sqlite".to_string();
-    config.storage.db_path = dir
-        .path()
-        .join(db_name)
-        .to_string_lossy()
-        .to_string();
-    config.workspace.root = dir
-        .path()
-        .join("workspaces")
-        .to_string_lossy()
-        .to_string();
+    config.storage.db_path = dir.path().join(db_name).to_string_lossy().to_string();
+    config.workspace.root = dir.path().join("workspaces").to_string_lossy().to_string();
     config
 }
 
@@ -143,7 +135,9 @@ async fn spawn_mock_llm() -> String {
         }))
     }
     let app = Router::new().route("/v1/chat/completions", axum::routing::post(completions));
-    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind mock llm");
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock llm");
     let addr = listener.local_addr().expect("mock llm addr");
     tokio::spawn(async move {
         let _ = axum::serve(listener, app).await;
@@ -240,8 +234,10 @@ async fn build_local_node(server: &Server) -> LocalNode {
     // that only lives in the in-memory `config` argument is invisible to a
     // remote-driven turn: it fails with "no model configured" before the mock
     // is ever called. The store must start from this same config.
-    let config_store =
-        wunder_server::config_store::ConfigStore::from_config(dir.path().join("wunder.yaml"), config.clone());
+    let config_store = wunder_server::config_store::ConfigStore::from_config(
+        dir.path().join("wunder.yaml"),
+        config.clone(),
+    );
     let state = Arc::new(
         AppState::new_with_options(
             config_store,
@@ -269,7 +265,9 @@ async fn build_local_node(server: &Server) -> LocalNode {
         "logged_in_at": 0.0,
     }))
     .expect("session file");
-    session.save(&dir.path().to_path_buf()).expect("save session");
+    session
+        .save(&dir.path().to_path_buf())
+        .expect("save session");
     cloud_shared().set_session_base_dir(dir.path().to_path_buf());
     assert!(
         cloud_shared().session().is_some(),
@@ -295,12 +293,7 @@ async fn build_local_node(server: &Server) -> LocalNode {
 // HTTP helpers against the served router
 // ---------------------------------------------------------------------------
 
-async fn http_json(
-    method: &str,
-    url: &str,
-    token: &str,
-    body: Option<Value>,
-) -> (u16, Value) {
+async fn http_json(method: &str, url: &str, token: &str, body: Option<Value>) -> (u16, Value) {
     let client = reqwest::Client::new();
     let mut builder = match method {
         "POST" => client.post(url),
@@ -422,10 +415,7 @@ impl RemoteView {
                             "the notice carries the command kind: {frame}"
                         );
                         assert!(
-                            matches!(
-                                frame["status"].as_str(),
-                                Some("acked") | Some("succeeded")
-                            ),
+                            matches!(frame["status"].as_str(), Some("acked") | Some("succeeded")),
                             "only a real lifecycle status: {frame}"
                         );
                         notices += 1;
@@ -491,7 +481,13 @@ fn data_of(body: &Value) -> Value {
     body.get("data").cloned().unwrap_or(Value::Null)
 }
 
-async fn issue(server: &Server, to: &str, kind: &str, args: Value, command_id: Option<&str>) -> Value {
+async fn issue(
+    server: &Server,
+    to: &str,
+    kind: &str,
+    args: Value,
+    command_id: Option<&str>,
+) -> Value {
     let mut payload = json!({"to": to, "kind": kind, "args": args});
     if let Some(command_id) = command_id {
         payload["command_id"] = json!(command_id);
@@ -515,10 +511,7 @@ async fn wait_terminal(server: &Server, command_id: &str, timeout: Duration) -> 
     let deadline = Instant::now() + timeout;
     loop {
         let (status, body) = get_json(
-            &format!(
-                "{}/wunder/interlink/commands/{command_id}",
-                server.base_url
-            ),
+            &format!("{}/wunder/interlink/commands/{command_id}", server.base_url),
             &server.token,
         )
         .await;
@@ -714,8 +707,7 @@ async fn loopback_run() {
     // -- shadow: seeded threads reach the server projection ----------------
     seed_session(&node.state, "影子甲");
     seed_session(&node.state, "影子乙");
-    node.client
-        .invalidate_shadow(Sections::ALL);
+    node.client.invalidate_shadow(Sections::ALL);
     let deadline = Instant::now() + Duration::from_secs(20);
     loop {
         let (status, body) = get_json(
@@ -756,7 +748,12 @@ async fn loopback_run() {
     )
     .await;
     assert_eq!(cloud["direction"], json!("l2c"), "{cloud}");
-    let cloud_record = wait_terminal(&server, cloud["command_id"].as_str().unwrap(), Duration::from_secs(20)).await;
+    let cloud_record = wait_terminal(
+        &server,
+        cloud["command_id"].as_str().unwrap(),
+        Duration::from_secs(20),
+    )
+    .await;
     assert_eq!(cloud_record["status"], json!("succeeded"), "{cloud_record}");
     let entries = &cloud_record["result"]["result"]["result"]["entries"];
     assert!(
@@ -802,7 +799,12 @@ async fn loopback_run() {
     )
     .await;
     assert_eq!(sent["dispatch"], json!("sent"), "{sent}");
-    let record = wait_terminal(&server, sent["command_id"].as_str().unwrap(), Duration::from_secs(20)).await;
+    let record = wait_terminal(
+        &server,
+        sent["command_id"].as_str().unwrap(),
+        Duration::from_secs(20),
+    )
+    .await;
     assert_eq!(record["status"], json!("succeeded"), "{record}");
     let entries = record["result"]["result"]["entries"]
         .as_array()
@@ -828,7 +830,10 @@ async fn loopback_run() {
         None,
     )
     .await;
-    let read_id = read["command_id"].as_str().expect("read command id").to_string();
+    let read_id = read["command_id"]
+        .as_str()
+        .expect("read command id")
+        .to_string();
     let record = wait_terminal(&server, &read_id, Duration::from_secs(60)).await;
     assert_eq!(record["status"], json!("succeeded"), "{record}");
     assert_eq!(
@@ -844,7 +849,10 @@ async fn loopback_run() {
         &server.token,
     )
     .await;
-    assert_eq!(blob_status, 200, "the blob endpoint refused the streamed file");
+    assert_eq!(
+        blob_status, 200,
+        "the blob endpoint refused the streamed file"
+    );
     assert_eq!(
         fetched.len(),
         blob.len(),
@@ -854,15 +862,10 @@ async fn loopback_run() {
     );
     assert_eq!(fetched, blob, "the streamed bytes must match exactly");
     // The trail records the read as size + short digest, never as content.
-    let file_rows = wait_action_rows(
-        &server,
-        "file.read",
-        Duration::from_secs(20),
-        |rows| {
-            rows.iter()
-                .any(|row| row["detail_digest"]["size"].as_i64() == Some(blob.len() as i64))
-        },
-    )
+    let file_rows = wait_action_rows(&server, "file.read", Duration::from_secs(20), |rows| {
+        rows.iter()
+            .any(|row| row["detail_digest"]["size"].as_i64() == Some(blob.len() as i64))
+    })
     .await;
     assert!(
         !serde_json::to_string(&file_rows)
@@ -894,11 +897,19 @@ async fn loopback_run() {
     .await;
     let approval_id = wait_prompt(&node.client, &rejected, Duration::from_secs(10)).await;
     assert!(
-        node.client
-            .decide_approval(&approval_id, wunder_server::interlink::client::Decision::Deny, false),
+        node.client.decide_approval(
+            &approval_id,
+            wunder_server::interlink::client::Decision::Deny,
+            false
+        ),
         "deny applied"
     );
-    let record = wait_terminal(&server, rejected["command_id"].as_str().unwrap(), Duration::from_secs(20)).await;
+    let record = wait_terminal(
+        &server,
+        rejected["command_id"].as_str().unwrap(),
+        Duration::from_secs(20),
+    )
+    .await;
     assert_eq!(record["status"], json!("failed"), "{record}");
     assert_eq!(record["error_code"], json!("APPROVAL_REJECTED"), "{record}");
     assert_eq!(
@@ -918,11 +929,19 @@ async fn loopback_run() {
     .await;
     let approval_id = wait_prompt(&node.client, &approved, Duration::from_secs(10)).await;
     assert!(
-        node.client
-            .decide_approval(&approval_id, wunder_server::interlink::client::Decision::Approve, false),
+        node.client.decide_approval(
+            &approval_id,
+            wunder_server::interlink::client::Decision::Approve,
+            false
+        ),
         "approve applied"
     );
-    let record = wait_terminal(&server, approved["command_id"].as_str().unwrap(), Duration::from_secs(30)).await;
+    let record = wait_terminal(
+        &server,
+        approved["command_id"].as_str().unwrap(),
+        Duration::from_secs(30),
+    )
+    .await;
     assert_eq!(record["status"], json!("succeeded"), "{record}");
     assert_eq!(
         session_count(&node.state),
@@ -990,7 +1009,11 @@ async fn loopback_run() {
         Duration::from_secs(30),
     )
     .await;
-    assert_eq!(follow_record["status"], json!("succeeded"), "{follow_record}");
+    assert_eq!(
+        follow_record["status"],
+        json!("succeeded"),
+        "{follow_record}"
+    );
     let delta = view
         .next_change(
             follow["command_id"].as_str().unwrap(),
@@ -1124,23 +1147,17 @@ async fn loopback_run() {
     // The alert belongs to the dispatch, not to the execution, so denying here
     // keeps the run off the host while still proving the hook fired.
     assert!(
-        node.client
-            .decide_approval(
-                &l3_approval,
-                wunder_server::interlink::client::Decision::Deny,
-                false,
-            ),
+        node.client.decide_approval(
+            &l3_approval,
+            wunder_server::interlink::client::Decision::Deny,
+            false,
+        ),
         "the L3 prompt is decided"
     );
-    let alert = wait_action_rows(
-        &server,
-        "alert.raised",
-        Duration::from_secs(20),
-        |rows| {
-            rows.iter()
-                .any(|row| row["command_id"].as_str() == Some(l3_command))
-        },
-    )
+    let alert = wait_action_rows(&server, "alert.raised", Duration::from_secs(20), |rows| {
+        rows.iter()
+            .any(|row| row["command_id"].as_str() == Some(l3_command))
+    })
     .await
     .into_iter()
     .find(|row| row["command_id"].as_str() == Some(l3_command))
@@ -1155,7 +1172,9 @@ async fn loopback_run() {
         "an alert must be listed under the account it concerns: {alert}"
     );
     assert!(
-        !serde_json::to_string(&alert).unwrap_or_default().contains("ready"),
+        !serde_json::to_string(&alert)
+            .unwrap_or_default()
+            .contains("ready"),
         "the alert never carries arguments: {alert}"
     );
     // ... and the counters behind that row are readable by the 舰桥 (§9.4).
@@ -1380,7 +1399,9 @@ async fn loopback_run() {
         "a device under the kill switch is refused, not queued: {body}"
     );
     assert!(
-        serde_json::to_string(&body).unwrap_or_default().contains("disabled"),
+        serde_json::to_string(&body)
+            .unwrap_or_default()
+            .contains("disabled"),
         "the refusal says why: {body}"
     );
 
@@ -1457,11 +1478,7 @@ async fn loopback_run() {
 }
 
 /// Wait for the node-side prompt of one issued L1 command.
-async fn wait_prompt(
-    client: &InterlinkClient,
-    issued: &Value,
-    timeout: Duration,
-) -> String {
+async fn wait_prompt(client: &InterlinkClient, issued: &Value, timeout: Duration) -> String {
     let command_id = issued["command_id"].as_str().expect("command id");
     let deadline = Instant::now() + timeout;
     loop {
@@ -1586,13 +1603,22 @@ async fn idle_tunnel_stays_open_without_growth() {
         "the tunnel must survive an idle window: {status:?}"
     );
     assert_eq!(status.pending_approvals, 0, "no approval queued while idle");
-    assert_eq!(status.inflight_commands, 0, "no command in flight while idle");
-    assert_eq!(status.watched_threads, 0, "no remote subscription while idle");
+    assert_eq!(
+        status.inflight_commands, 0,
+        "no command in flight while idle"
+    );
+    assert_eq!(
+        status.watched_threads, 0,
+        "no remote subscription while idle"
+    );
     assert_eq!(
         status.dropped_frames, drops_after_connect,
         "an idle tunnel must not saturate its own bounded queues: {status:?}"
     );
-    assert!(status.last_error.is_none(), "idle tunnel reported {status:?}");
+    assert!(
+        status.last_error.is_none(),
+        "idle tunnel reported {status:?}"
+    );
 
     node.client.stop();
 }

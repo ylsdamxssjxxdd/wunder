@@ -86,5 +86,5 @@ Operations in the Bridge are **high-risk** by default:
 
 - [Hull deployment](/docs/en/start/server/)
 - [Interface Overview](/docs/en/surfaces/index/)
-- [Configuration reference](/docs/en/reference/config/)
-- [Admin panels](/docs/en/reference/admin-panels/)
+- [Configuration reference](/docs/en/capabilities/config/)
+- [Admin panels](/docs/en/capabilities/admin-panels/)

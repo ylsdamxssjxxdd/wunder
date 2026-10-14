@@ -66,7 +66,10 @@ pub fn tool_result_display(tool: &str, payload: &Value, pending: bool) -> String
         "完成"
     };
     let mut lines = vec![format!("{} · {status}", preview(label))];
-    let target = string(args, &["path", "file_path", "command", "cmd", "query", "url"]);
+    let target = string(
+        args,
+        &["path", "file_path", "command", "cmd", "query", "url"],
+    );
     // `queries` is a batch (`string[]`) and dsh's search card title is the
     // joined batch, so fall back to it when no single-string target exists.
     let queries_target: String = args

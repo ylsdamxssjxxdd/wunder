@@ -32,7 +32,7 @@ Sections are organized by form: each section lists what a healthy run looks like
 | --- | --- | --- |
 | The startup screen never finishes | Permissions on `~/.wunder`; work-tree scan duration (up to 4096 items) | [Pupa intro](/docs/en/start/desktop/) |
 | The window appears but the workspace is empty | Whether the working-directory area shows "offline" | [Pupa interface](/docs/en/surfaces/desktop-ui/) |
-| Model request 401/403 | Settings → Model → API key and endpoint URL; rerun "Test connection" | [Configuration reference](/docs/en/reference/config/) |
+| Model request 401/403 | Settings → Model → API key and endpoint URL; rerun "Test connection" | [Configuration reference](/docs/en/capabilities/config/) |
 | Sending a message during a run is rejected as "user busy" | The session queue is on by default; turning it off breaks the queue bar | [Quick Start](/docs/en/start/quickstart/) |
 | Expecting TTS playback but hearing nothing | **Pupa TTS is not implemented** — only the model can be configured; use the Beehive for TTS | [Pupa interface](/docs/en/surfaces/desktop-ui/) |
 | Can't find a "device interlink" settings category | The category isn't wired to the interface; the available surfaces are only the sidebar's cloud workspaces plus the remote command approval dialog | [Surfaces overview](/docs/en/surfaces/index/) |
@@ -54,10 +54,10 @@ Sections are organized by form: each section lists what a healthy run looks like
 | Port 18000 unreachable | `WUNDER_HOST` / `WUNDER_PORT` overrides; the server section of `config/wunder.yaml` | [Hull deployment](/docs/en/start/server/) |
 | The Bridge loads but 18001 (Beehive) is blank | Whether the Beehive frontend was built (`frontend/dist`); whether the web-service container is up; `docker compose logs wunder-nginx` | [Hull deployment](/docs/en/start/server/) |
 | Opening 18000 shows the Beehive's look | The two concepts got mixed up — the Hull only mounts the Bridge static pages; the Beehive's `frontend/dist` is delivered by a standalone web-service container on 18001, not hosted by the Hull | [Surfaces overview](/docs/en/surfaces/index/) |
-| Loading the example config at startup silently fails and falls back to defaults | Known issue; point explicitly at `config/wunder.yaml`, or use `WUNDER_CONFIG_PATH` | [Configuration reference](/docs/en/reference/config/) |
+| Loading the example config at startup silently fails and falls back to defaults | Known issue; point explicitly at `config/wunder.yaml`, or use `WUNDER_CONFIG_PATH` | [Configuration reference](/docs/en/capabilities/config/) |
 | Client WebSocket keeps hitting `slow_client` | Slow-client backpressure (queue watermark 2); first check whether long messages are involved | [Troubleshooting](/docs/en/help/troubleshooting/) |
 | PostgreSQL connection failure | `WUNDER_POSTGRES_DSN` / `WUNDER_POSTGRES_POOL_SIZE`; whether the `postgres` service is healthy | [Hull deployment](/docs/en/start/server/) |
-| Want to switch back to SQLite | `WUNDER_STORAGE_BACKEND=sqlite` + `WUNDER_SQLITE_DB_PATH=/path/to/wunder.db` | [Configuration reference](/docs/en/reference/config/) |
+| Want to switch back to SQLite | `WUNDER_STORAGE_BACKEND=sqlite` + `WUNDER_SQLITE_DB_PATH=/path/to/wunder.db` | [Configuration reference](/docs/en/capabilities/config/) |
 | Started in sandbox mode and it listens on 9001 | Normal: sandbox mode takes a different path | [Hull deployment](/docs/en/start/server/) |
 
 ## Beehive (web)

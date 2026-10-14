@@ -41,4 +41,4 @@ A typical example is the external service often mentioned in the documentation, 
 ## Further Reading
 
 - [Tool System](/docs/en/concepts/tools/)
-- [Configuration Reference](/docs/en/reference/config/)
+- [Configuration Reference](/docs/en/capabilities/config/)

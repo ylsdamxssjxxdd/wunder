@@ -9,19 +9,8 @@ use super::secret::sha256_hex;
 
 /// Keys whose values must never be persisted verbatim (docs §9.3).
 const OPAQUE_KEYS: [&str; 14] = [
-    "message",
-    "content",
-    "text",
-    "body",
-    "prompt",
-    "args",
-    "data",
-    "answer",
-    "question",
-    "code",
-    "script",
-    "secret",
-    "token",
+    "message", "content", "text", "body", "prompt", "args", "data", "answer", "question", "code",
+    "script", "secret", "token",
     // `tool.exec` carries its command line here: a tool parameter, not a path.
     "command",
 ];
@@ -40,8 +29,14 @@ pub fn digest_args(kind: &str, args: &Value) -> String {
     let canonical = serde_json::to_string(args).unwrap_or_default();
     let mut root = Map::new();
     root.insert("kind".to_string(), Value::String(kind.to_string()));
-    root.insert("level".to_string(), Value::String(command_level(kind).to_string()));
-    root.insert("sha256".to_string(), Value::String(sha256_hex(canonical.as_bytes())));
+    root.insert(
+        "level".to_string(),
+        Value::String(command_level(kind).to_string()),
+    );
+    root.insert(
+        "sha256".to_string(),
+        Value::String(sha256_hex(canonical.as_bytes())),
+    );
     root.insert("fields".to_string(), digest_value(args, 0));
     serde_json::to_string(&Value::Object(root)).unwrap_or_else(|_| "{}".to_string())
 }
@@ -60,7 +55,9 @@ fn digest_value(value: &Value, depth: usize) -> Value {
             }
             Value::Object(out)
         }
-        Value::String(text) if text.len() <= PLAIN_STRING_MAX && !text.contains(char::is_whitespace) => {
+        Value::String(text)
+            if text.len() <= PLAIN_STRING_MAX && !text.contains(char::is_whitespace) =>
+        {
             value.clone()
         }
         // Arrays are always summarized (bounded), never recursed element-wise.
@@ -92,10 +89,7 @@ fn summarize(value: &Value) -> Value {
 }
 
 fn hash_prefix(text: &str) -> String {
-    sha256_hex(text.as_bytes())
-        .chars()
-        .take(16)
-        .collect()
+    sha256_hex(text.as_bytes()).chars().take(16).collect()
 }
 
 /// Risk level for one kind, as carried into approval tickets.
@@ -201,7 +195,9 @@ mod tests {
         };
         let json = policy.to_json();
         assert_eq!(DevicePolicy::parse(Some(&json)), policy);
-        assert!(DevicePolicy::parse(Some("not json")).disabled_kinds.is_empty());
+        assert!(DevicePolicy::parse(Some("not json"))
+            .disabled_kinds
+            .is_empty());
         assert_eq!(DevicePolicy::parse(None), DevicePolicy::default());
         assert!(policy.disables(CMD_WORKSPACE_READ));
         assert!(!policy.disables("workspace.list"));
@@ -230,7 +226,10 @@ mod tests {
             short_target(CMD_WORKSPACE_READ, &json!({"path": "a/b.md"})),
             "path=a/b.md"
         );
-        assert_eq!(short_target("node.summary", &json!({})), "kind=node.summary");
+        assert_eq!(
+            short_target("node.summary", &json!({})),
+            "kind=node.summary"
+        );
     }
 
     #[test]

@@ -11,8 +11,6 @@ import { ChannelsPage } from "channels_page.slint";
 import { ToolsPage, ToolResource } from "tools_page.slint";
 import { ExpertData, MemoryCard, ArchiveCard, RuntimePoint, HeatCard } from "expert_data.slint";
 import { AvatarDialogState } from "avatar_dialog.slint";
-import { HelpBrowser } from "help_browser.slint";
-import { HelpDocs } from "help_models.slint";
 
 // Web-style settings navigation entry: 36px circular icon badge, title and
 // subtitle rows, solid accent background with white text when selected.
@@ -322,19 +320,21 @@ export component SettingsPage inherits Rectangle {
     in property <string> status;
     // Tab ids are stable labels, not list positions: 0 general, 13 account,
     // 1 models, 2 tools, 3 agent, 4 companion, 5 scheduled tasks, 6 memories,
-    // 7 channels, 9 prompt packs, 10 archived threads, 11 help. The navigation
-    // lists them in the web messenger's category order: general, account, models,
-    // tools, agent, companion, cron, memory, channels, prompts, archived, help.
+    // 7 channels, 9 prompt packs, 10 archived threads. Help lives on a button
+    // in the general category and opens its own window, so it is not a
+    // category. The navigation lists them in the web messenger's category
+    // order: general, account, models, tools, agent, companion, cron, memory,
+    // channels, prompts, archived.
     in-out property <int> settings-tab: 0;
     // Category filter typed into the navigation search box. Slint 1.18 strings
     // have no substring test, so the filter runs natively and the matching
     // categories come back as a bit set (bit N = category N).
     in-out property <string> settings-query: "";
-    // One flag per category, in navigation order (12 categories). Slint 1.18 has
+    // One flag per category, in navigation order (11 categories). Slint 1.18 has
     // no bitwise operators, so the native search projection ships booleans rather
     // than a mask; an all-true list means "no query". Index = nav position, not
     // tab id.
-    in-out property <[bool]> settings-category-flags: [true, true, true, true, true, true, true, true, true, true, true, true];
+    in-out property <[bool]> settings-category-flags: [true, true, true, true, true, true, true, true, true, true, true];
     out property <bool> settings-has-matches: root.count-visible() > 0;
     out property <int> settings-visible-count: root.count-visible();    // How many categories the current query keeps; the empty state and the test
     // projections both read this instead of re-deriving the flags.
@@ -349,14 +349,15 @@ export component SettingsPage inherits Rectangle {
             + (root.settings-category-flags[7] ? 1 : 0)
             + (root.settings-category-flags[8] ? 1 : 0)
             + (root.settings-category-flags[9] ? 1 : 0)
-            + (root.settings-category-flags[10] ? 1 : 0)
-            + (root.settings-category-flags[11] ? 1 : 0);
+            + (root.settings-category-flags[10] ? 1 : 0);
     }
     // Slint cannot test a substring, so the query is projected out and the
     // matching categories come back as a bit set.
     changed settings-query => { root.settings-search(root.settings-query); }
     callback settings-search(string);
-    callback leave-settings();
+    // Help moved out of the category list: the general page's button opens a
+    // standalone help window owned by the native side.
+    callback open-help();
 
     // ---- embedded category state -------------------------------------------
     // The heavy surfaces own their own components; the shell only forwards
@@ -634,17 +635,6 @@ export component SettingsPage inherits Rectangle {
             Rectangle { x: parent.width - 1px; width: 1px; background: Theme.border; }
             VerticalLayout {
                 spacing: 0px;
-                // Back to the workbench.
-                Rectangle {
-                    height: 46px;
-                    background: settings-back.has-hover ? Theme.hover : transparent;
-                    accessible-role: button; accessible-label: I18n.stc_back;
-                    accessible-action-default => { root.leave-settings(); }
-                    Image { x: 14px; y: 16px; width: 14px; height: 14px; source: @image-url("../assets/icons/chevron-left.svg"); colorize: Theme.text-secondary; image-fit: contain; }
-                    Text { x: 34px; y: 0px; width: parent.width - 44px; height: parent.height; text: I18n.stc_back; color: Theme.text; font-size: Theme.font-md; font-weight: 600; vertical-alignment: center; }
-                    settings-back := TouchArea { x: 0px; y: 0px; width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => { root.leave-settings(); } }
-                }
-                Rectangle { height: 1px; background: Theme.border; }
                 Rectangle {
                     height: 46px; background: transparent;
                     Rectangle {
@@ -745,13 +735,6 @@ export component SettingsPage inherits Rectangle {
                             selected: root.settings-tab == 10;
                             clicked => { root.settings-tab = 10;  }
                         }
-                        SettingsNavItem {
-                            visible: root.settings-category-flags[11];
-                            icon: @image-url("../assets/icons/fa-book-open.svg");
-                            title: I18n.stc_help; subtitle: I18n.stc_help_note;
-                            selected: root.settings-tab == 11;
-                            clicked => { root.settings-tab = 11;  }
-                        }
                         // A live query that matches nothing says so instead of
                         // leaving an empty column with no explanation.
                         if !root.settings-has-matches : Rectangle {
@@ -777,28 +760,6 @@ export component SettingsPage inherits Rectangle {
             VerticalLayout {
                 width: parent.width;
                 spacing: 0px;
-                HorizontalLayout {
-                    height: 62px; padding-left: 24px; padding-right: 24px; padding-top: 16px; padding-bottom: 16px; spacing: 8px;
-                    VerticalLayout { spacing: 1px;
-                        Text { height: 25px; text: root.settings-tab == 0 ? I18n.stc_general : root.settings-tab == 13 ? I18n.stc_account : root.settings-tab == 1 ? I18n.stc_models : root.settings-tab == 2 ? I18n.stc_tools : root.settings-tab == 3 ? I18n.stc_agent : root.settings-tab == 4 ? I18n.stc_pet : root.settings-tab == 5 ? I18n.stc_cron : root.settings-tab == 6 ? I18n.stc_memory : root.settings-tab == 7 ? I18n.stc_channels : root.settings-tab == 9 ? I18n.stc_prompts : root.settings-tab == 10 ? I18n.stc_archives : root.settings-tab == 11 ? I18n.stc_help : I18n.stc_general; color: Theme.text; font-size: 22px; font-weight: 700; overflow: elide; }
-                        Text { height: 17px; text: root.settings-tab == 0 ? I18n.stc_general_note : root.settings-tab == 13 ? I18n.stc_account_note : root.settings-tab == 1 ? I18n.stc_models_note : root.settings-tab == 2 ? I18n.stc_tools_note : root.settings-tab == 3 ? I18n.stc_agent_note : root.settings-tab == 4 ? I18n.stc_pet_note : root.settings-tab == 5 ? I18n.stc_cron_note : root.settings-tab == 6 ? I18n.stc_memory_note : root.settings-tab == 7 ? I18n.stc_channels_note : root.settings-tab == 9 ? I18n.stc_prompts_note : root.settings-tab == 10 ? I18n.stc_archives_note : root.settings-tab == 11 ? I18n.stc_help_note : I18n.stc_general_note; color: Theme.muted; font-size: Theme.font-xs; overflow: elide; }
-                    }
-                    Rectangle { horizontal-stretch: 1; }
-                    if root.settings-tab == 1 : Action { icon: @image-url("../assets/icons/save.svg"); label: I18n.st_models_save; primary: true; enabled: !root.loading && !root.saving && !root.cloud-locked && root.model-key-draft != "" && root.model-name-draft != "" && root.model-provider-draft != "" && (root.model-creating || root.selected-key != ""); clicked => { root.save-model(); } }
-                    // The agent editor saves explicitly, so its actions live in the
-                    // page header rather than at the end of a long form.
-                    if root.settings-tab == 3 : HorizontalLayout { spacing: 8px;
-                        Action { width: 84px; height: 32px; icon: @image-url("../assets/icons/rotate-right.svg"); icon-size: 13px;
-                            label: I18n.common_refresh; show-label: true;
-                            enabled: !root.agents-loading && !root.saving;
-                            clicked => { root.refresh-agents(); } }
-                        Action { width: 88px; height: 32px; icon: @image-url("../assets/icons/save.svg"); icon-size: 13px;
-                            label: I18n.ag_save_settings; show-label: true; primary: true;
-                            enabled: !root.saving && !root.loading && !root.selected-agent-name.is-empty;
-                            clicked => { root.save-agent-form(); } }
-                    }
-                }
-                Rectangle { height: 1px; background: Theme.border; }
                     if root.settings-tab == 0 : ScrollView { vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
                         VerticalLayout { padding: 24px; spacing: 14px; alignment: start;
                             SettingsCard {
@@ -809,7 +770,7 @@ export component SettingsPage inherits Rectangle {
                                 }
                                 SettingRow { label: I18n.st_ui_language; note: I18n.st_language_hint;
                                     ComboBox { width: 132px; height: 38px; model: ["zh-CN", "en-US"]; current-index: root.language == "en-US" ? 1 : 0; enabled: !root.saving && !root.loading;
-                                        selected(value) => { root.language = value; HelpDocs.language-changed(value == "zh-CN"); root.save-runtime(root.workspace-root, root.language, root.python-path, root.git-path, root.rg-path); } }
+                                        selected(value) => { root.language = value; root.save-runtime(root.workspace-root, root.language, root.python-path, root.git-path, root.rg-path); } }
                                 }
                                 ThemeModeRow { label: I18n.st_palette; note: I18n.st_palette_note; theme: root.theme;
                                     picked(name) => { root.theme = name; Theme.palette = name; root.save-preferences(); } }
@@ -891,6 +852,18 @@ export component SettingsPage inherits Rectangle {
                                     Rectangle { horizontal-stretch: 1; }
                                 }
                                 Text { height: 18px; visible: root.stress-status != ""; text: root.stress-status; color: root.stress-status.starts-with("⚠") ? Theme.danger : Theme.muted; font-size: Theme.font-xs; overflow: elide; }
+                            }
+                            // 帮助与诊断：帮助手册在独立窗口打开（节省设置弹窗空间），
+                            // 诊断导出保持就地按钮。
+                            SettingsCard {
+                                SettingsCardHeader { title: I18n.stc_help; subtitle: I18n.stc_help_note; }
+                                Rectangle { height: 10px; }
+                                HorizontalLayout { height: 34px; spacing: 10px;
+                                    Action { width: 140px; label: I18n.st_help_open; show-label: true; primary: true; enabled: !root.loading; clicked => { root.open-help(); } }
+                                    Action { width: 140px; label: I18n.st_export_diagnostics; show-label: true; enabled: !root.loading; clicked => { root.export-diagnostics(); } }
+                                    Rectangle { horizontal-stretch: 1; }
+                                }
+                                Text { height: 18px; text: I18n.st_diagnostics_note; color: Theme.muted; font-size: Theme.font-xs; overflow: elide; }
                             }
                             SettingsCard {
                                 SettingsCardHeader { title: I18n.st_reset_title; subtitle: I18n.st_reset_note; title-color: Theme.danger; }
@@ -1100,6 +1073,9 @@ export component SettingsPage inherits Rectangle {
                                         Text { height: 26px; text: root.model-creating ? I18n.model_editor_add : root.selected-key; color: Theme.text; font-size: Theme.font-headline; font-weight: 700; overflow: elide; }
                                         Text { height: 17px; text: root.model-creating ? I18n.st_model_new_hint : ((root.selected-is-default ? I18n.st_models_default_badge + " · " : "") + I18n.st_model_colon + root.selected-model-name + " · " + root.selected-base-url); color: Theme.muted; font-size: Theme.font-xs; overflow: elide; }
                                     }
+                                    // The former page-header actions live with the
+                                    // form now that the title bar is gone.
+                                    Action { height: 32px; icon: @image-url("../assets/icons/save.svg"); label: I18n.st_models_save; show-label: true; primary: true; enabled: !root.loading && !root.saving && !root.cloud-locked && root.model-key-draft != "" && root.model-name-draft != "" && root.model-provider-draft != "" && (root.model-creating || root.selected-key != ""); clicked => { root.save-model(); } }
                                     Action { height: 32px; icon: @image-url("../assets/icons/fa-star.svg"); label: root.selected-is-default ? I18n.st_is_default : I18n.st_set_default; show-label: true; enabled: !root.loading && !root.saving && !root.model-creating && !root.cloud-locked && root.selected-key != "" && !root.selected-is-default; clicked => { root.set-default-model(root.selected-key); } }
                                     // Cloud entries keep the delete slot visible but inert:
                                     // they are engine-managed and cleared together on logout.
@@ -1240,28 +1216,6 @@ export component SettingsPage inherits Rectangle {
                             }
                         }
                     }
-                    if root.settings-tab == 11 : Rectangle { vertical-stretch: 1;
-                        VerticalLayout { padding: 24px; padding-top: 20px; spacing: 12px;
-                            // 帮助文档浏览器：目录/索引/搜索侧栏 + 工具栏 + 排版正文，
-                            // 状态全部保存在 HelpDocs 全局里，切页不丢阅读进度。
-                            Rectangle {
-                                vertical-stretch: 1;
-                                background: Theme.panel;
-                                border-width: 1px;
-                                border-color: Theme.border;
-                                border-radius: Theme.radius-sm;
-                                clip: true;
-                                HelpBrowser {}
-                            }
-                            VerticalLayout { spacing: 8px;
-                                Text { height: 22px; text: I18n.st_diagnostics; color: Theme.text; font-size: Theme.font-lg; font-weight: 600; }
-                                HorizontalLayout { height: 32px; spacing: 8px;
-                                    Action { width: 110px; label: I18n.st_export_diagnostics; show-label: true; enabled: !root.loading; clicked => { root.export-diagnostics(); } }
-                                    Text { height: 30px; text: I18n.st_diagnostics_note; color: Theme.muted; font-size: Theme.font-xs; vertical-alignment: center; overflow: elide; }
-                                }
-                            }
-                        }
-                    }
                     if root.settings-tab == 2 : ToolsPage {
                         loading: root.tools-loading; working: root.tools-working; status: root.tool-manager-status;
                         builtin-tools: root.tools-builtin; mcp-tools: root.tools-mcp;
@@ -1284,6 +1238,19 @@ export component SettingsPage inherits Rectangle {
 
                     if root.settings-tab == 3 : ScrollView { vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
                         VerticalLayout { padding: 24px; spacing: 14px; alignment: start;
+                            // Former page-header actions: the agent editor saves
+                            // explicitly, so refresh/save stay at the top of the form.
+                            HorizontalLayout { height: 32px; spacing: 8px;
+                                Rectangle { horizontal-stretch: 1; }
+                                Action { width: 84px; height: 32px; icon: @image-url("../assets/icons/rotate-right.svg"); icon-size: 13px;
+                                    label: I18n.common_refresh; show-label: true;
+                                    enabled: !root.agents-loading && !root.saving;
+                                    clicked => { root.refresh-agents(); } }
+                                Action { width: 88px; height: 32px; icon: @image-url("../assets/icons/save.svg"); icon-size: 13px;
+                                    label: I18n.ag_save_settings; show-label: true; primary: true;
+                                    enabled: !root.saving && !root.loading && !root.selected-agent-name.is-empty;
+                                    clicked => { root.save-agent-form(); } }
+                            }
                             // §9.3: the personal build ships one built-in agent, so
                             // this category is one stacked form. The name is
                             // preset-owned and stays read-only; the extra prompt

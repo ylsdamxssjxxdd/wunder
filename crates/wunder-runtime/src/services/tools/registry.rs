@@ -109,9 +109,15 @@ mod tests {
             descriptor("read_file").map(|d| d.canonical),
             Some("读取文件")
         );
-        assert_eq!(descriptor("文本编辑").map(|d| d.kind), Some(ToolKind::Write));
+        assert_eq!(
+            descriptor("文本编辑").map(|d| d.kind),
+            Some(ToolKind::Write)
+        );
         assert_eq!(descriptor("edit").map(|d| d.canonical), Some("文本编辑"));
-        assert_eq!(descriptor("str_replace_editor").map(|d| d.canonical), Some("文本编辑"));
+        assert_eq!(
+            descriptor("str_replace_editor").map(|d| d.canonical),
+            Some("文本编辑")
+        );
         assert!(descriptor("不存在的工具").is_none());
     }
 

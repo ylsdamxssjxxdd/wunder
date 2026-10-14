@@ -27,12 +27,11 @@ use tokio_util::sync::CancellationToken;
 
 use wunder_core::interlink::{
     command_level, command_policy, APPROVAL_EXPIRED, APPROVAL_REJECTED, CMD_AGENT_SPAWN,
-    CMD_COMMAND_CANCEL, CMD_NODE_SUMMARY, CMD_SHADOW_REFRESH, CMD_THREAD_ANSWER,
-    CMD_THREAD_CANCEL, CMD_THREAD_CREATE, CMD_THREAD_MESSAGE, CMD_THREADS_GET, CMD_THREADS_LIST,
-    CMD_TOOL_EXEC, CMD_WORKSPACE_COPY, CMD_WORKSPACE_DELETE, CMD_WORKSPACE_LIST,
-    CMD_WORKSPACE_MKDIR, CMD_WORKSPACE_MOVE, CMD_WORKSPACE_READ, CMD_WORKSPACE_SEARCH,
-    CMD_WORKSPACE_STAT, CMD_WORKSPACE_WRITE, ERR_APPROVAL_REJECTED, ERR_CAP_DENIED,
-    ERR_UNKNOWN_KIND,
+    CMD_COMMAND_CANCEL, CMD_NODE_SUMMARY, CMD_SHADOW_REFRESH, CMD_THREADS_GET, CMD_THREADS_LIST,
+    CMD_THREAD_ANSWER, CMD_THREAD_CANCEL, CMD_THREAD_CREATE, CMD_THREAD_MESSAGE, CMD_TOOL_EXEC,
+    CMD_WORKSPACE_COPY, CMD_WORKSPACE_DELETE, CMD_WORKSPACE_LIST, CMD_WORKSPACE_MKDIR,
+    CMD_WORKSPACE_MOVE, CMD_WORKSPACE_READ, CMD_WORKSPACE_SEARCH, CMD_WORKSPACE_STAT,
+    CMD_WORKSPACE_WRITE, ERR_APPROVAL_REJECTED, ERR_CAP_DENIED, ERR_UNKNOWN_KIND,
 };
 
 use crate::approval_registry::ApprovalSource;
@@ -44,9 +43,7 @@ use crate::services::interlink::client::shadow::{self, Sections};
 use crate::services::interlink::client::stream;
 use crate::services::interlink::client::{now_ts, TunnelWriter};
 use crate::services::interlink::secret::sha256_hex;
-use crate::services::tools::{
-    execute_builtin_tool, sessions_spawn, DetachedToolContext,
-};
+use crate::services::tools::{execute_builtin_tool, sessions_spawn, DetachedToolContext};
 use crate::state::AppState;
 
 /// Longest window a command id is remembered for (docs §4.3).
@@ -89,7 +86,11 @@ impl CommandSpec {
     /// Parse one inbound `command` payload. A frame without a correlation id or
     /// a kind is refused without side effects.
     pub fn parse(corr: Option<&str>, payload: &Value) -> Option<CommandSpec> {
-        let kind = payload.get("kind").and_then(Value::as_str)?.trim().to_string();
+        let kind = payload
+            .get("kind")
+            .and_then(Value::as_str)?
+            .trim()
+            .to_string();
         if kind.is_empty() {
             return None;
         }
@@ -195,9 +196,7 @@ pub fn preflight(
     if !is_supported_kind(&spec.kind) {
         return Preflight::Reject(ERR_UNKNOWN_KIND, "none");
     }
-    if !capability_allowed(&spec.kind, capabilities)
-        || !capability_allowed(&spec.kind, declared)
-    {
+    if !capability_allowed(&spec.kind, capabilities) || !capability_allowed(&spec.kind, declared) {
         return Preflight::Reject(ERR_CAP_DENIED, "none");
     }
     match gate.decide_plan(&spec.kind, &spec.actor, policy, now) {
@@ -516,7 +515,10 @@ impl ExecContext {
                 .workspace
                 .scoped_user_id_for_workspace(&self.local_user_id, &workspace_id),
             None if self.local_user_id.trim().is_empty() => String::new(),
-            None => self.state.workspace.scoped_user_id(&self.local_user_id, None),
+            None => self
+                .state
+                .workspace
+                .scoped_user_id(&self.local_user_id, None),
         }
     }
 }
@@ -676,7 +678,10 @@ async fn workspace_stat(spec: &CommandSpec, ctx: &ExecContext) -> CommandReport 
         .unwrap_or(".")
         .to_string();
     let workspace = ctx.state.workspace.clone();
-    match workspace.workspace_usage_summary_async(&scope, &path, 8).await {
+    match workspace
+        .workspace_usage_summary_async(&scope, &path, 8)
+        .await
+    {
         Ok(summary) => CommandReport::succeeded(json!({
             "path": path,
             "files": summary.files,
@@ -709,7 +714,10 @@ impl ExecContext {
     /// Shadow source set for read-only commands that reuse the collector.
     pub fn shadow_sources(&self) -> shadow::ShadowSources {
         shadow::ShadowSources {
-            identity: shadow::NodeIdentity::from_session(&self.source_client(), &self.local_user_id),
+            identity: shadow::NodeIdentity::from_session(
+                &self.source_client(),
+                &self.local_user_id,
+            ),
             local_user_id: self.local_user_id.clone(),
             workspace_id: self.workspace_id.clone(),
             os: std::env::consts::OS.to_string(),
@@ -736,7 +744,10 @@ impl ExecContext {
                 .workspace
                 .scoped_user_id_for_workspace(&self.local_user_id, &workspace_id),
             None if self.local_user_id.trim().is_empty() => String::new(),
-            None => self.state.workspace.scoped_user_id(&self.local_user_id, None),
+            None => self
+                .state
+                .workspace
+                .scoped_user_id(&self.local_user_id, None),
         }
     }
 }
@@ -754,11 +765,15 @@ async fn threads_get(spec: &CommandSpec, ctx: &ExecContext) -> CommandReport {
     let workspace = ctx.state.workspace.clone();
     // The projection the local UI consumes; the transcript crosses the tunnel
     // only while this one command runs (docs §9.3).
-    match workspace.load_history_async(&ctx.local_user_id, &thread_id, limit).await {
+    match workspace
+        .load_history_async(&ctx.local_user_id, &thread_id, limit)
+        .await
+    {
         Ok(items) => {
             let rows = items.len();
-            let report =
-                CommandReport::succeeded(json!({ "local_thread_id": thread_id, "items": items, "limit": limit }));
+            let report = CommandReport::succeeded(
+                json!({ "local_thread_id": thread_id, "items": items, "limit": limit }),
+            );
             CommandReport {
                 usage: json!({"rows": rows}),
                 ..report
@@ -804,16 +819,19 @@ async fn admit_turn(
 ) -> CommandReport {
     let user = match ctx.state.user_store.get_user_by_id(&ctx.local_user_id) {
         Ok(Some(user)) => user,
-        Ok(None) => return CommandReport::failed("USER_UNAVAILABLE", "local user is not registered"),
+        Ok(None) => {
+            return CommandReport::failed("USER_UNAVAILABLE", "local user is not registered")
+        }
         Err(err) => return CommandReport::failed("USER_UNAVAILABLE", sanitize(&err.to_string())),
     };
     let state = ctx.state.clone();
     let session_id = match thread.clone() {
         Some(id) => id,
-        None => match state.kernel.thread_runtime.create_task_session_id(
-            &ctx.local_user_id,
-            &agent,
-        ) {
+        None => match state
+            .kernel
+            .thread_runtime
+            .create_task_session_id(&ctx.local_user_id, &agent)
+        {
             Ok(id) => id,
             Err(err) => {
                 return CommandReport::failed("THREAD_CREATE_FAILED", sanitize(&err.to_string()))
@@ -875,7 +893,12 @@ async fn admit_turn(
         map.insert("__source".to_string(), json!(ctx.source_tag));
     }
 
-    match state.kernel.thread_runtime.submit_user_request(request).await {
+    match state
+        .kernel
+        .thread_runtime
+        .submit_user_request(request)
+        .await
+    {
         Ok(crate::ThreadSubmitOutcome::Queued(info)) => CommandReport::succeeded(json!({
             "local_thread_id": info.session_id,
             "queued": true,
@@ -957,10 +980,7 @@ async fn thread_answer(spec: &CommandSpec, ctx: &ExecContext) -> CommandReport {
     };
     if let Some(thread_id) = thread_id.as_deref() {
         if snapshot.session_id != thread_id {
-            return CommandReport::failed(
-                "APPROVAL_SESSION_MISMATCH",
-                "approval session mismatch",
-            );
+            return CommandReport::failed("APPROVAL_SESSION_MISMATCH", "approval session mismatch");
         }
     }
     // The registry owns the responder: taking the entry out first is what makes
@@ -1258,7 +1278,9 @@ pub fn rotate_backups(backup_root: &Path, keep: usize) -> BackupRotation {
     };
     let mut generations: Vec<(f64, String)> = Vec::new();
     for entry in read.flatten() {
-        let Ok(metadata) = entry.metadata() else { continue };
+        let Ok(metadata) = entry.metadata() else {
+            continue;
+        };
         if !metadata.is_dir() {
             continue;
         }
@@ -1378,9 +1400,9 @@ impl ToolExecRequest {
 /// are the same class of escape on one line.
 fn has_shell_control(text: &str) -> bool {
     text.contains("$(")
-        || text.chars().any(|c| {
-            matches!(c, '\n' | '\r' | ';' | '|' | '&' | '<' | '>' | '`')
-        })
+        || text
+            .chars()
+            .any(|c| matches!(c, '\n' | '\r' | ';' | '|' | '&' | '<' | '>' | '`'))
 }
 
 /// Parse and bound one `tool.exec` argument set. Every rejection is structured
@@ -1475,7 +1497,10 @@ pub fn tool_report_from_result(
         .and_then(Value::as_str)
         .unwrap_or_default();
     let timed_out = meta_code == "TOOL_EXEC_TIMEOUT"
-        || row.get("timed_out").and_then(Value::as_bool).unwrap_or(false);
+        || row
+            .get("timed_out")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
     let summary = json!({
         "cwd": request.workdir,
         "timeout_s": request.timeout_s,
@@ -1653,9 +1678,7 @@ async fn agent_spawn(
         .unwrap_or(0.0)
         .clamp(0.0, SPAWN_WAIT_MAX_S);
     let report = match arg_str(&spec.args, "parent_thread_id") {
-        Some(parent) => {
-            spawn_child_unit(ctx, &parent, task, label.clone(), agent, wait_s).await
-        }
+        Some(parent) => spawn_child_unit(ctx, &parent, task, label.clone(), agent, wait_s).await,
         None => {
             admit_turn(
                 spec,
@@ -1721,7 +1744,10 @@ impl InFlightTable {
     }
 
     pub fn len(&self) -> usize {
-        self.ids.read().expect("in-flight table lock poisoned").len()
+        self.ids
+            .read()
+            .expect("in-flight table lock poisoned")
+            .len()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -1743,9 +1769,9 @@ mod tests {
     use super::*;
     use serde_json::json;
     use wunder_core::interlink::{
-        CAP_AGENT_SPAWN, CAP_QUERY_BASIC, CAP_TOOL_EXEC, COMMAND_STATUS_FAILED,
-        COMMAND_STATUS_SUCCEEDED, COMMAND_STATUS_TIMEOUT, ERR_APPROVAL_REJECTED, RISK_HIGH,
-        is_queueable_when_offline,
+        is_queueable_when_offline, CAP_AGENT_SPAWN, CAP_QUERY_BASIC, CAP_TOOL_EXEC,
+        COMMAND_STATUS_FAILED, COMMAND_STATUS_SUCCEEDED, COMMAND_STATUS_TIMEOUT,
+        ERR_APPROVAL_REJECTED, RISK_HIGH,
     };
 
     fn spec(kind: &str, args: Value) -> CommandSpec {
@@ -1808,7 +1834,14 @@ mod tests {
             Preflight::Reject(ERR_APPROVAL_REJECTED, APPROVAL_REJECTED)
         );
         assert_eq!(
-            preflight(&spec("unknown.kind", json!({})), &both, &both, &gate, "prompt", 0.0),
+            preflight(
+                &spec("unknown.kind", json!({})),
+                &both,
+                &both,
+                &gate,
+                "prompt",
+                0.0
+            ),
             Preflight::Reject(ERR_UNKNOWN_KIND, "none")
         );
     }
@@ -1893,9 +1926,11 @@ mod tests {
 
     #[test]
     fn whitelist_miss_comes_back_as_a_structured_code_without_plaintext() {
-        let request =
-            parse_tool_exec(&json!({"command": "echo", "args": ["keep this local"]}), None)
-                .expect("parse");
+        let request = parse_tool_exec(
+            &json!({"command": "echo", "args": ["keep this local"]}),
+            None,
+        )
+        .expect("parse");
         let refused = json!({
             "ok": false,
             "error": "tool.exec.not_allowed",
@@ -1914,9 +1949,11 @@ mod tests {
 
     #[test]
     fn a_finished_run_reports_code_duration_and_digests() {
-        let request =
-            parse_tool_exec(&json!({"command": "echo", "args": ["ok"], "cwd": "notes"}), None)
-                .expect("parse");
+        let request = parse_tool_exec(
+            &json!({"command": "echo", "args": ["ok"], "cwd": "notes"}),
+            None,
+        )
+        .expect("parse");
         let result = json!({
             "ok": true,
             "state": "completed",
@@ -1991,8 +2028,7 @@ mod tests {
         std::fs::write(&empty, b"").expect("write empty");
         assert_eq!(digest_of(&empty), None);
         let big = dir.path().join("big.bin");
-        std::fs::write(&big, vec![0u8; (BACKUP_DIGEST_MAX_BYTES + 1) as usize])
-            .expect("write big");
+        std::fs::write(&big, vec![0u8; (BACKUP_DIGEST_MAX_BYTES + 1) as usize]).expect("write big");
         assert_eq!(digest_of(&big), None);
         assert_eq!(digest_of(&dir.path().join("missing.txt")), None);
     }

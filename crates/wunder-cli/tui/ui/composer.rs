@@ -98,6 +98,7 @@ pub(crate) fn draw_input(frame: &mut Frame, area: Rect, app: &mut TuiApp, is_zh:
         height: input_area.height,
     };
     app.set_input_viewport(text_area.width.max(1));
+    app.set_input_hit_area(text_area);
     let (input_text, cursor_x, cursor_y) =
         app.input_view(text_area.width.max(1), text_area.height.max(1));
 

@@ -949,14 +949,6 @@ fn bind_settings(app: &MainWindow, api: Arc<NativeDesktop>) {
             });
         });
     });
-    // §8.3 model search: the popover hands over its query and gets the filtered
-    // catalogue back in `models`.
-    let weak = app.as_weak();
-    let catalogue = model_catalogue();
-    app.on_search_models(move |query| {
-        let Some(app) = weak.upgrade() else { return };
-        catalogue.filter(&app, &query);
-    });
     // §9.1 settings search. Slint 1.18 has neither substring tests nor bitwise
     // operators, so the query is matched here and the result comes back as one
     // boolean per §9.2 category.
@@ -1288,6 +1280,8 @@ pub(crate) fn apply_settings(app: &MainWindow, settings: DesktopSettings) {
     let selected = app.get_selected_model_key();
     app.set_workspace_root(settings.workspace_root.into());
     app.set_runtime_language(settings.language.into());
+    // 帮助窗口独立持有一份手册语言，跟随这里的界面语言变化。
+    crate::help_browser::sync_language(&app);
     app.set_runtime_theme(settings.theme.clone().into());
     app.set_runtime_send_key(settings.send_key.into());
     app.set_runtime_font_size(settings.font_size as f32);
@@ -1325,8 +1319,8 @@ pub(crate) fn apply_settings(app: &MainWindow, settings: DesktopSettings) {
             .map(to_lan_peer_card)
             .collect(),
     ));
-    // The catalogue object is the search authority: it keeps the unfiltered
-    // list and re-projects the composer's filtered view from it.
+    // The catalogue object projects the composer's full model list and mirrors
+    // its size for the picker's "empty list" versus "nothing configured" split.
     model_catalogue().set(
         app,
         settings.models.into_iter().map(to_model_card).collect(),
@@ -1421,18 +1415,16 @@ pub(crate) fn select_model_key(app: &MainWindow, key: &str) {
     }
 }
 
-/// The unfiltered model catalogue, kept beside the filtered view the composer
-/// popover renders. Search runs here because Slint 1.18 strings have no
-/// substring test; keeping the catalogue natively also means a query never has
-/// to round-trip through storage.
+/// The model catalogue, kept natively so the settings projection and the
+/// composer's picker always render the same list from one source.
 pub(crate) struct ModelCatalogue(RefCell<Vec<crate::ModelCard>>);
 
 thread_local! {
     /// One catalogue per UI thread. The native shell owns exactly one
     /// `MainWindow` on this thread, and `apply_settings` is reached from three
     /// modules that all already share that window; a thread-local keeps the
-    /// unfiltered list beside it instead of threading a handle through every
-    /// settings callback.
+    /// list beside it instead of threading a handle through every settings
+    /// callback.
     static MODEL_CATALOGUE: Rc<ModelCatalogue> = Rc::new(ModelCatalogue(RefCell::new(Vec::new())));
 }
 
@@ -1442,32 +1434,11 @@ pub(crate) fn model_catalogue() -> Rc<ModelCatalogue> {
 }
 
 impl ModelCatalogue {
-    /// Replaces the catalogue and shows it unfiltered, so a fresh projection
-    /// never leaves a stale query applied.
+    /// Replaces the catalogue and projects the composer's full view.
     pub(crate) fn set(&self, app: &MainWindow, models: Vec<crate::ModelCard>) {
         *self.0.borrow_mut() = models;
         app.set_model_catalogue_count(self.0.borrow().len() as i32);
-        self.filter(app, "");
-    }
-
-    /// Case-insensitive containment over model, provider and type; an empty
-    /// query keeps the whole catalogue.
-    pub(crate) fn filter(&self, app: &MainWindow, query: &str) {
-        let models = self.0.borrow();
-        let needle = query.trim().to_lowercase();
-        let rows: Vec<crate::ModelCard> = if needle.is_empty() {
-            models.clone()
-        } else {
-            models
-                .iter()
-                .filter(|model| {
-                    [&model.model, &model.provider, &model.model_type, &model.key]
-                        .iter()
-                        .any(|field| field.to_lowercase().contains(&needle))
-                })
-                .cloned()
-                .collect()
-        };
+        let rows = self.0.borrow().clone();
         app.set_models(model_from(rows));
     }
 }

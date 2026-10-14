@@ -91,4 +91,4 @@ The mechanisms that go with it: a write also produces a projection table and a t
 - [Sessions and Rounds](/docs/en/concepts/sessions-and-rounds/) — the numbering conventions
 - [Streaming Execution](/docs/en/concepts/streaming/) — push, refill, and backpressure
 - [Workspaces and Working Directories](/docs/en/concepts/workspaces/) — paths and sandbox boundaries
-- [Configuration Reference](/docs/en/reference/config/) — every configuration option
+- [Configuration Reference](/docs/en/capabilities/config/) — every configuration option

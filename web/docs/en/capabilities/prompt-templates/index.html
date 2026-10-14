@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Prompts and Personalization | 使用说明书</title>
+  <meta name="description" content="Customize the agent&#x27;s role and answer style — pick a built-in template, or write your own.">
+  <link rel="stylesheet" href="/docs/site.css?v=c9863d5d7815">
+  <script type="module" src="/docs/site.js?v=c9863d5d7815"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/capabilities/prompt-templates","language":"en","title":"Prompts and Personalization","summary":"Customize the agent's role and answer style — pick a built-in template, or write your own.","updated_at":"2026-10-13","read_when":[],"source_docs":[],"tab":"Capabilities","group":"Configuration and Data","group_path":["Configuration and Data"],"url":"/docs/en/capabilities/prompt-templates/","headings":[{"id":"section-1","level":2,"text":"Prompt templates"},{"id":"section-2","level":2,"text":"Built-in template packs"},{"id":"section-3","level":3,"text":"Chinese pack (default-zh)"},{"id":"section-4","level":3,"text":"English pack (default-en)"},{"id":"section-5","level":2,"text":"What a pack is made of"},{"id":"section-6","level":2,"text":"Switching packs"},{"id":"section-7","level":3,"text":"Switching in the interface"},{"id":"section-8","level":3,"text":"When it takes effect"},{"id":"section-9","level":2,"text":"Creating a custom template"},{"id":"section-10","level":3,"text":"How to create one"},{"id":"section-11","level":3,"text":"Editing tips"},{"id":"section-12","level":3,"text":"Example: a coding assistant template"},{"id":"section-13","level":2,"text":"How templates layer"},{"id":"section-14","level":2,"text":"Common situations"},{"id":"section-15","level":3,"text":"Why an existing conversation keeps its template"},{"id":"section-16","level":3,"text":"Changing one conversation's prompt"},{"id":"section-17","level":3,"text":"Different agents can use different templates"},{"id":"section-18","level":3,"text":"Longer is not always better"},{"id":"section-19","level":3,"text":"A Chinese template can still answer in English"},{"id":"section-20","level":2,"text":"Usage notes"},{"id":"section-21","level":2,"text":"Further reading"}],"prev_slug":"en/capabilities/stream-events","next_slug":"en/capabilities/admin-panels","markdown":"A prompt template sets the agent's role and answer style. Pick a built-in one, or write your own, and the agent works to that agreement.\n\n## Prompt templates\n\nA prompt template is the agent's handbook. It defines:\n\n- The role\n- How to think and answer\n- The working principles and limits\n- How to use tools and skills\n\nSwitch to another template and the agent's style and emphasis change with it.\n\n## Built-in template packs\n\nwunder ships two built-in packs.\n\n### Chinese pack (default-zh)\n\n- Thinks and answers in Chinese\n- Fits Chinese-language conversations\n- The default Chinese assistant style\n\n### English pack (default-en)\n\n- Thinks and answers in English\n- Fits English-language conversations\n- The default English assistant style\n\nPick the pack that matches the language the user mostly works in.\n\n## What a pack is made of\n\nEach pack is assembled from several segments that together form the agent's complete handbook:\n\n| Segment | Purpose |\n|------|------|\n| Role | Defines who the agent is and what role it plays |\n| Engineering principles | Defines how it works and thinks |\n| Tool protocol | Defines how it uses tools |\n| Skill protocol | Defines how it invokes skills |\n| Memory | Defines how it uses long-term memory |\n| Extra notes | Additional instructions |\n\n## Switching packs\n\n### Switching in the interface\n\n1. Go to Settings at the bottom of the left sidebar → Agent\n2. Find the prompt template option\n3. Choose the pack you want\n4. Save\n\n### When it takes effect\n\n- **New conversations**: ones created after the switch use the new template\n- **Existing conversations**: unchanged, keeping the template from when they were created\n\n## Creating a custom template\n\n### How to create one\n\n1. In the template settings page, click New template pack\n2. Pick a template to copy as the base (starting from a built-in one is recommended)\n3. Edit the content of each segment\n4. Save, and it is ready to use\n\n### Editing tips\n\n- **Role segment**: state the role, such as \"coding assistant\" or \"data analysis expert\"\n- **Engineering principles**: set the answer style (concise or detailed, formal or casual)\n- **Tool protocol**: usually leave it alone\n- **Extra notes**: put your own specific requirements here\n\n### Example: a coding assistant template\n\nThe role segment might read:\n\n```\nYou are a professional coding assistant, skilled in several programming languages and software engineering practices.\nYour answers should:\n- show clear, complete code examples\n- explain in a concise, easy-to-follow way\n- follow best practices\n- pay attention to security\n```\n\n## How templates layer\n\nThe agent's final prompt is combined from several layers:\n\n1. **System template**: the global base set by an administrator\n2. **User template**: the pack the user picked\n3. **Agent settings**: extra configuration for that particular agent\n\nAn upper layer overrides a lower one, and anything missing falls back to the lower layer.\n\n## Common situations\n\n### Why an existing conversation keeps its template\n\nA conversation fixes its prompt when it is created and then keeps it frozen, so behavior stays consistent and does not shift partway through.\n\n### Changing one conversation's prompt\n\nAn existing conversation's prompt cannot be edited directly. Start a new conversation to use the new template, or copy the content you want to keep into a new conversation and continue there.\n\n### Different agents can use different templates\n\nEach agent configures its template independently.\n\n### Longer is not always better\n\nA template should state the key requirements clearly and avoid redundancy and contradiction; a long or self-contradictory one runs counter to that.\n\n### A Chinese template can still answer in English\n\nThe template only sets a default tendency; ask for English in the conversation and the agent will follow.\n\n## Usage notes\n\n- Start from a built-in template, then customize from there\n- Create a separate pack for each scenario if you like\n- State the key requirements clearly and keep it short\n- Do not put contradictory requirements in the same template\n- Review it occasionally and drop entries you no longer need\n\n## Further reading\n\n- [Feature and Capability Quick Reference](/docs/en/capabilities/api-index/) — where agent management lives\n- [Prompts and Skills](/docs/en/concepts/prompt-and-skills/)\n- [Long-term Memory](/docs/en/concepts/memory/)\n","source_path":"使用说明书/en/capabilities/prompt-templates.md"}</script>
+</body>
+</html>

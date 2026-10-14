@@ -3,6 +3,8 @@
 // Slint side only projects them. All browser state lives in the HelpDocs
 // global so the view can be created and destroyed with the settings tab
 // without losing the reading position.
+import { I18n } from "i18n.slint";
+
 export struct HelpEntry {
     topic: int,
     title: string,
@@ -47,7 +49,7 @@ export global HelpDocs {
     in property <bool> can-forward: false;
     in property <bool> over-link: false;
     in property <int> match-count: 0;
-    in property <string> topic-title: "开始";
+    in property <string> topic-title: I18n.hp_default_topic;
     in property <int> selected-topic: 0;
     in-out property <int> active-tab: 0;
     in-out property <int> zoom-percent: 100;

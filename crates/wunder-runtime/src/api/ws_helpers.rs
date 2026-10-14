@@ -457,7 +457,13 @@ pub(crate) async fn send_final_thread_view(
     .await
     {
         let mut data = json!({"runtime_status":page.runtime_status,"active_turn_id":page.active_turn_id,"epoch":page.epoch,"view_seq":page.view_seq,"rows":page.chat,"reset_required":page.projection_state!="ready"});
-        if serde_json::to_vec(&data).map(|v|v.len()>60*1024).unwrap_or(true){data["rows"]=json!([]);data["reset_required"]=json!(true);}
+        if serde_json::to_vec(&data)
+            .map(|v| v.len() > 60 * 1024)
+            .unwrap_or(true)
+        {
+            data["rows"] = json!([]);
+            data["reset_required"] = json!(true);
+        }
         let _ = send_ws_event(
             tx,
             request,

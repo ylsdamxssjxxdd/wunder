@@ -118,7 +118,13 @@ pub struct InterlinkFrame {
 }
 
 impl InterlinkFrame {
-    pub fn new(kind: &str, id: String, ts: f64, channel_id: Option<String>, payload: Value) -> Self {
+    pub fn new(
+        kind: &str,
+        id: String,
+        ts: f64,
+        channel_id: Option<String>,
+        payload: Value,
+    ) -> Self {
         Self {
             v: INTERLINK_PROTOCOL_VERSION,
             kind: kind.to_string(),
@@ -400,8 +406,12 @@ mod tests {
         assert_eq!(command_level("not.a.kind"), "L3");
         assert!(!is_queueable_when_offline(CMD_TOOL_EXEC));
         assert!(!is_queueable_when_offline(CMD_AGENT_SPAWN));
-        assert!(!default_device_capabilities().iter().any(|cap| cap == CAP_TOOL_EXEC));
-        assert!(!default_device_capabilities().iter().any(|cap| cap == CAP_AGENT_SPAWN));
+        assert!(!default_device_capabilities()
+            .iter()
+            .any(|cap| cap == CAP_TOOL_EXEC));
+        assert!(!default_device_capabilities()
+            .iter()
+            .any(|cap| cap == CAP_AGENT_SPAWN));
     }
 
     /// Audit action names are the stored format: the CSV export and the filter

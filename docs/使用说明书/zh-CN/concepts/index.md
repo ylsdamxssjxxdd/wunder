@@ -1,12 +1,12 @@
 ---
 title: 核心概览
-summary: wunder 为什么这样表现——9 个核心设计约束，以及它们的分层与入口。
+summary: wunder 为什么这样表现——四个核心（快速、稳定、通用、轻量），以及四个形态与深入主题。
 updated_at: 2026-10-13
 ---
 
 # 核心概览
 
-wunder（心舰）是智能体调度平台：把目标交给智能体，它拆解任务、调用工具、交付结果。这 9 个核心解释的是**系统为什么这样表现**，不是它能做什么的清单。功能清单看[工具](/docs/zh-CN/tools/)和[接口索引](/docs/zh-CN/reference/api-index/)。
+wunder（心舰）是智能体调度平台：把目标交给智能体，它拆解任务、调用工具、交付结果。这四个核心说的是**系统要成为什么样**，不是它能做什么的清单。功能清单看[工具](/docs/zh-CN/tools/)与[能力速查](/docs/zh-CN/capabilities/api-index/)。
 
 ## 四条设计原则
 
@@ -28,31 +28,20 @@ wunder（心舰）是智能体调度平台：把目标交给智能体，它拆�
 
 蛹与舵机不依赖舰体，可独立运行与分发。Electron / Tauri 前端壳已停止日常维护，不再作为能力描述。
 
-## 9 个核心
+## 四个核心
 
-<div class="docs-card-grid docs-card-grid-compact">
-  <a class="docs-card" href="/docs/zh-CN/concepts/core-goal/"><strong>目标</strong><span>让智能体进入目标态并持续完成一项任务。</span></a>
-  <a class="docs-card" href="/docs/zh-CN/concepts/core-compatibility/"><strong>兼容性</strong><span>让蛹与舵机在旧操作系统环境中可运行并被明确约束。</span></a>
-  <a class="docs-card" href="/docs/zh-CN/concepts/core-context-compression/"><strong>上下文压缩</strong><span>在长会话中控制上下文规模并保留有效信息。</span></a>
-  <a class="docs-card" href="/docs/zh-CN/concepts/core-subagent/"><strong>子智能体</strong><span>在单一线程内派生子任务，由独立执行体完成并回传结果。</span></a>
-  <a class="docs-card" href="/docs/zh-CN/concepts/core-scheduled-tasks/"><strong>定时任务</strong><span>支持系统级周期执行与后台治理。</span></a>
-  <a class="docs-card" href="/docs/zh-CN/concepts/core-channels/"><strong>渠道通信</strong><span>多入口接入同一运行时能力。</span></a>
-  <a class="docs-card" href="/docs/zh-CN/concepts/core-memory/"><strong>记忆</strong><span>支持长会话与长期资料利用，但不污染线程核心认知。</span></a>
-  <a class="docs-card" href="/docs/zh-CN/concepts/core-multithreading/"><strong>多线程</strong><span>在单进程内通过并发控制提升吞吐与资源利用。</span></a>
-  <a class="docs-card" href="/docs/zh-CN/concepts/core-multi-user-management/"><strong>多租户</strong><span>支持舰体的组织、用户、租户与权限治理。</span></a>
-</div>
+| 核心 | 含义 |
+| --- | --- |
+| **快速** | 启动速度快，响应速度快 |
+| **稳定** | 智能体可长时间工作，不卡顿、不内存泄漏，程序运行正常，CPU 占用低 |
+| **通用** | 可部署任意系统平台，可接入任意主流模型，完成各种复杂任务 |
+| **轻量** | 程序本体小，提示词设计、工具设计等负担轻，token 消耗低 |
 
-三层关系（从内到外）：
-
-| 层 | 核心 | 解决什么 |
-| --- | --- | --- |
-| 执行引擎 | 上下文压缩、记忆、子智能体、多线程 | 一个线程怎么跑完：能控长度、能用长期资料、能派生子任务、能与其它线程并发推进 |
-| 接入与治理 | 渠道通信、定时任务、多租户、目标 | 谁在什么时候唤起线程，以及组织、用户与权限的治理面 |
-| 平台底座 | 兼容性 | 这套引擎与接入能在哪些操作系统上跑起来 |
+（原「9 个核心」的逐项详情页见[能力 › 核心能力](/docs/zh-CN/capabilities/)。）
 
 ## 深入主题
 
-按主题的深入页面（都在[参考 › 深入了解](/docs/zh-CN/reference/)里）：
+按主题的深入页面（都在[能力 › 深入了解](/docs/zh-CN/capabilities/)里）：
 
 | 主题 | 页面 |
 | --- | --- |
@@ -77,8 +66,8 @@ wunder（心舰）是智能体调度平台：把目标交给智能体，它拆�
 ## 按角色推荐阅读
 
 - **第一次用蛹**：[快速上手](/docs/zh-CN/start/quickstart/) → 智能体循环 → 工具 → 记忆 → 上下文压缩。
-- **管理员 / 治理**：多用户管理 → 稳定性 → 可观测性 → 渠道 → [配置参考](/docs/zh-CN/reference/config/)。
-- **接入与开发**：[系统架构](/docs/zh-CN/concepts/architecture/) → [聊天 WebSocket](/docs/zh-CN/reference/chat-ws/) → 流式执行。
+- **管理员 / 治理**：多用户管理 → 稳定性 → 可观测性 → 渠道 → [配置参考](/docs/zh-CN/capabilities/config/)。
+- **接入与开发**：[系统架构](/docs/zh-CN/concepts/architecture/) → [聊天 WebSocket](/docs/zh-CN/capabilities/chat-ws/) → 流式执行。
 
 ## 常见误解
 

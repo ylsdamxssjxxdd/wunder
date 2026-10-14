@@ -35,4 +35,4 @@ The token metrics you can see include:
 
 In a session, "model request count" and "credit consumption" are two different metrics: for a regular user, one billable model request normally increases each by one; in an exempt case such as an administrator, the request count still increases but credit consumption stays at zero. The account snapshot only shows the balance at that moment and does not represent how much this request deducted. Old credit records are kept only for reading history.
 
-[Multi-user management](/docs/en/concepts/core-multi-user-management/) · [Admin panels guide](/docs/en/reference/admin-panels/)
+[Multi-user management](/docs/en/concepts/core-multi-user-management/) · [Admin panels guide](/docs/en/capabilities/admin-panels/)

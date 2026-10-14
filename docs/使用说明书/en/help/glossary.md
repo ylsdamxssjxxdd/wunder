@@ -88,4 +88,4 @@ Knowledge an agent remembers across conversations. You can add it manually, or l
 
 - [Sessions and Turns](/docs/en/concepts/sessions-and-rounds/)
 - [Workspaces and Working Directory](/docs/en/concepts/workspaces/)
-- [Stream Events Reference](/docs/en/reference/stream-events/)
+- [Stream Events Reference](/docs/en/capabilities/stream-events/)

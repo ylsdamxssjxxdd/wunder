@@ -139,12 +139,16 @@ async fn admin_monitor(
     // The tool-stats aggregate hits storage synchronously; route it through the
     // blocking pool so a slow window scan cannot stall the async runtime.
     let stats_state = state.clone();
-    let tool_usage_stats = crate::core::blocking::run_db(
-        "api.admin.monitor.tool_stats",
-        move || Ok::<_, anyhow::Error>(stats_state.workspace.get_tool_usage_stats(since_time, until_time)),
-    )
-    .await
-    .unwrap_or_default();
+    let tool_usage_stats =
+        crate::core::blocking::run_db("api.admin.monitor.tool_stats", move || {
+            Ok::<_, anyhow::Error>(
+                stats_state
+                    .workspace
+                    .get_tool_usage_stats(since_time, until_time),
+            )
+        })
+        .await
+        .unwrap_or_default();
     let tool_stats = normalize_tool_stats(tool_usage_stats, &config);
     let tool_stats_ms = stage_started_at.elapsed().as_millis();
     stage_started_at = Instant::now();

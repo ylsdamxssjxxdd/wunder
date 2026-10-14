@@ -111,4 +111,4 @@ updated_at: 2026-10-13
 - [上下文压缩](/docs/zh-CN/concepts/core-context-compression/) —— 微压缩与历史压缩
 - [实时性](/docs/zh-CN/concepts/core-realtime/) —— 工具事件怎么推给客户端
 - [稳定性](/docs/zh-CN/concepts/core-stability/) —— 超时、预算与熔断
-- [配置参考](/docs/zh-CN/reference/config/) —— MCP 与工具开关配置项
+- [配置参考](/docs/zh-CN/capabilities/config/) —— MCP 与工具开关配置项

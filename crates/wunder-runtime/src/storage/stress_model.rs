@@ -137,22 +137,86 @@ pub(crate) struct ToolProfile {
 }
 
 const TOOL_PROFILES: &[ToolProfile] = &[
-    ToolProfile { name: "执行命令", function_name: "execute_command", cost_ms: (600, 15_000) },
-    ToolProfile { name: "命令会话", function_name: "command_session", cost_ms: (80, 900) },
-    ToolProfile { name: "ptc", function_name: "execute_ptc", cost_ms: (200, 6_000) },
-    ToolProfile { name: "列出文件", function_name: "list_files", cost_ms: (10, 300) },
-    ToolProfile { name: "glob", function_name: "glob_files", cost_ms: (15, 400) },
-    ToolProfile { name: "搜索内容", function_name: "search_content", cost_ms: (40, 1_200) },
-    ToolProfile { name: "读取文件", function_name: "read_files", cost_ms: (10, 250) },
-    ToolProfile { name: "技能调用", function_name: "execute_skill_call", cost_ms: (300, 5_000) },
-    ToolProfile { name: "写入文件", function_name: "write_file", cost_ms: (5, 120) },
-    ToolProfile { name: "文本编辑", function_name: "text_edit", cost_ms: (5, 120) },
-    ToolProfile { name: "子智能体控制", function_name: "subagent_control", cost_ms: (400, 4_000) },
-    ToolProfile { name: "web_search", function_name: "tool_web_search", cost_ms: (1_200, 8_000) },
-    ToolProfile { name: "web_fetch", function_name: "tool_web_fetch", cost_ms: (800, 6_000) },
-    ToolProfile { name: "记忆管理", function_name: "execute_memory_manager_tool", cost_ms: (20, 400) },
-    ToolProfile { name: "计划面板", function_name: "execute_plan_tool", cost_ms: (2, 30) },
-    ToolProfile { name: "定时任务", function_name: "execute_schedule_task_tool", cost_ms: (10, 200) },
+    ToolProfile {
+        name: "执行命令",
+        function_name: "execute_command",
+        cost_ms: (600, 15_000),
+    },
+    ToolProfile {
+        name: "命令会话",
+        function_name: "command_session",
+        cost_ms: (80, 900),
+    },
+    ToolProfile {
+        name: "ptc",
+        function_name: "execute_ptc",
+        cost_ms: (200, 6_000),
+    },
+    ToolProfile {
+        name: "列出文件",
+        function_name: "list_files",
+        cost_ms: (10, 300),
+    },
+    ToolProfile {
+        name: "glob",
+        function_name: "glob_files",
+        cost_ms: (15, 400),
+    },
+    ToolProfile {
+        name: "搜索内容",
+        function_name: "search_content",
+        cost_ms: (40, 1_200),
+    },
+    ToolProfile {
+        name: "读取文件",
+        function_name: "read_files",
+        cost_ms: (10, 250),
+    },
+    ToolProfile {
+        name: "技能调用",
+        function_name: "execute_skill_call",
+        cost_ms: (300, 5_000),
+    },
+    ToolProfile {
+        name: "写入文件",
+        function_name: "write_file",
+        cost_ms: (5, 120),
+    },
+    ToolProfile {
+        name: "文本编辑",
+        function_name: "text_edit",
+        cost_ms: (5, 120),
+    },
+    ToolProfile {
+        name: "子智能体控制",
+        function_name: "subagent_control",
+        cost_ms: (400, 4_000),
+    },
+    ToolProfile {
+        name: "web_search",
+        function_name: "tool_web_search",
+        cost_ms: (1_200, 8_000),
+    },
+    ToolProfile {
+        name: "web_fetch",
+        function_name: "tool_web_fetch",
+        cost_ms: (800, 6_000),
+    },
+    ToolProfile {
+        name: "记忆管理",
+        function_name: "execute_memory_manager_tool",
+        cost_ms: (20, 400),
+    },
+    ToolProfile {
+        name: "计划面板",
+        function_name: "execute_plan_tool",
+        cost_ms: (2, 30),
+    },
+    ToolProfile {
+        name: "定时任务",
+        function_name: "execute_schedule_task_tool",
+        cost_ms: (10, 200),
+    },
 ];
 
 const USER_PROMPTS: &[&str] = &[
@@ -258,8 +322,7 @@ fn sample_round(rng: &mut Rng, is_final: bool, turn_index: i64, round_index: i64
     let mut tool_duration_s = Vec::with_capacity(tool_count);
     for _ in 0..tool_count {
         let profile = rng.pick(TOOL_PROFILES);
-        let ms = profile.cost_ms.0
-            + rng.below((profile.cost_ms.1 - profile.cost_ms.0).max(1));
+        let ms = profile.cost_ms.0 + rng.below((profile.cost_ms.1 - profile.cost_ms.0).max(1));
         tool_profiles.push(profile);
         tool_duration_s.push(ms as f64 / 1000.0);
     }
@@ -297,26 +360,42 @@ pub(crate) fn build_tool_args(rng: &mut Rng, profile: &ToolProfile, turn_index: 
             "command": pick_command(rng),
             "timeout_ms": rng.int(5_000, 30_000),
         }),
-        "命令会话" => json!({ "action": rng.pick_str(&["create", "exec", "close"]), "command": pick_command(rng) }),
+        "命令会话" => {
+            json!({ "action": rng.pick_str(&["create", "exec", "close"]), "command": pick_command(rng) })
+        }
         "ptc" => json!({ "code": "return items.filter(i => i.ok).length;" }),
         "列出文件" => json!({ "path": ".", "depth": rng.int(1, 3) }),
         "glob" => json!({ "pattern": "**/*.rs", "path": "src" }),
-        "搜索内容" => json!({ "query": rng.pick_str(&["latest_change_seq", "journal_mode", "user_round", "tool_call_id"]), "path": "src" }),
+        "搜索内容" => {
+            json!({ "query": rng.pick_str(&["latest_change_seq", "journal_mode", "user_round", "tool_call_id"]), "path": "src" })
+        }
         "读取文件" => json!({ "path": path, "start_line": 1 }),
         "技能调用" => json!({ "skill": "code-review", "args": { "scope": "storage" } }),
-        "写入文件" => json!({ "path": format!("docs/notes_{}.md", turn_index), "content": "# 笔记\n生成的批量写入说明。\n" }),
-        "文本编辑" => json!({ "path": path, "old_string": "fn legacy_path(", "new_string": "fn current_path(" }),
-        "子智能体控制" => json!({ "action": "spawn", "prompt": "梳理存储层并发写入点", "name": "investigator" }),
-        "web_search" => json!({ "query": rng.pick(&["sqlite wal checkpoint strategy", "tokio blocking pool sizing", "rust json serialization perf"]) }),
+        "写入文件" => {
+            json!({ "path": format!("docs/notes_{}.md", turn_index), "content": "# 笔记\n生成的批量写入说明。\n" })
+        }
+        "文本编辑" => {
+            json!({ "path": path, "old_string": "fn legacy_path(", "new_string": "fn current_path(" })
+        }
+        "子智能体控制" => {
+            json!({ "action": "spawn", "prompt": "梳理存储层并发写入点", "name": "investigator" })
+        }
+        "web_search" => {
+            json!({ "query": rng.pick(&["sqlite wal checkpoint strategy", "tokio blocking pool sizing", "rust json serialization perf"]) })
+        }
         "web_fetch" => json!({ "url": "https://example.com/docs/batch-insert" }),
-        "记忆管理" => json!({ "action": "remember", "content": "批量写入使用独立连接并关闭日志以提速。" }),
+        "记忆管理" => {
+            json!({ "action": "remember", "content": "批量写入使用独立连接并关闭日志以提速。" })
+        }
         "计划面板" => json!({
             "plan": [
                 { "step": "定位慢路径", "status": "completed" },
                 { "step": "给出修复方案", "status": rng.pick_str(&["in_progress", "pending"]) },
             ]
         }),
-        "定时任务" => json!({ "action": "add", "name": format!("daily-report-{}", turn_index), "schedule": { "kind": "every", "every_ms": 3_600_000 } }),
+        "定时任务" => {
+            json!({ "action": "add", "name": format!("daily-report-{}", turn_index), "schedule": { "kind": "every", "every_ms": 3_600_000 } })
+        }
         _ => json!({}),
     }
 }
@@ -395,9 +474,13 @@ pub(crate) fn build_tool_result(
                 "content": "// 读取到的源码片段（截断示意）\nfn run() { /* ... */ }\n",
                 "total_lines": rng.int(60, 2_400),
             }),
-            "写入文件" => json!({ "path": args.get("path").cloned().unwrap_or(json!("notes.md")), "bytes": rng.int(40, 9_000) }),
+            "写入文件" => {
+                json!({ "path": args.get("path").cloned().unwrap_or(json!("notes.md")), "bytes": rng.int(40, 9_000) })
+            }
             "文本编辑" => json!({ "replacements": 1 }),
-            "子智能体控制" => json!({ "session_id": rng.uuid().to_string(), "status": "spawned" }),
+            "子智能体控制" => {
+                json!({ "session_id": rng.uuid().to_string(), "status": "spawned" })
+            }
             "web_search" => {
                 let mut results = Vec::new();
                 for i in 0..rng.int(3, 6) {
@@ -409,7 +492,9 @@ pub(crate) fn build_tool_result(
                 }
                 json!({ "results": results, "query": args.get("query").cloned().unwrap_or(json!("")) })
             }
-            "web_fetch" => json!({ "title": "批量写入指南", "content": "相关章节的正文摘要……", "truncated": true }),
+            "web_fetch" => {
+                json!({ "title": "批量写入指南", "content": "相关章节的正文摘要……", "truncated": true })
+            }
             "记忆管理" => json!({ "action": "remember", "memory_id": rng.uuid().to_string() }),
             "计划面板" => json!({ "accepted": true }),
             "定时任务" => json!({ "job_id": rng.uuid().to_string(), "enabled": true }),
@@ -422,11 +507,8 @@ pub(crate) fn build_tool_result(
         "output_chars": data_text.chars().count(),
     });
     let error = if failed {
-        rng.pick_str(&[
-            "工具执行失败：目标不可达",
-            "工具执行失败：参数超出允许范围",
-        ])
-        .to_string()
+        rng.pick_str(&["工具执行失败：目标不可达", "工具执行失败：参数超出允许范围"])
+            .to_string()
     } else {
         String::new()
     };
@@ -443,17 +525,28 @@ pub(crate) fn build_answer_text(rng: &mut Rng, prompt: &str, turn_index: i64) ->
     let mut text = String::new();
     text.push_str(rng.pick_str(ANSWER_OPENINGS));
     text.push('\n');
-    text.push_str(&format!("### 关于「{}」\n\n", prompt.chars().take(24).collect::<String>()));
+    text.push_str(&format!(
+        "### 关于「{}」\n\n",
+        prompt.chars().take(24).collect::<String>()
+    ));
     let paragraph_count = rng.int(2, 5);
     for i in 0..paragraph_count {
         if i > 0 {
             text.push('\n');
         }
-        text.push_str(&fill_template(rng.pick_str(ANSWER_PARAGRAPHS), rng, turn_index));
+        text.push_str(&fill_template(
+            rng.pick_str(ANSWER_PARAGRAPHS),
+            rng,
+            turn_index,
+        ));
     }
     text.push_str("\n\n下一步：\n");
     for step in 0..rng.int(2, 4) {
-        text.push_str(&format!("{}. 继续跟踪第 {} 项改动\n", step + 1, rng.int(1, 40)));
+        text.push_str(&format!(
+            "{}. 继续跟踪第 {} 项改动\n",
+            step + 1,
+            rng.int(1, 40)
+        ));
     }
     text
 }
@@ -489,9 +582,7 @@ pub(crate) fn sample_turn_plans(
     turn_index: i64,
     model_rounds: i64,
 ) -> Vec<RoundPlan> {
-    let mut rng = Rng::new(
-        turn_seed ^ (turn_index as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15),
-    );
+    let mut rng = Rng::new(turn_seed ^ (turn_index as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15));
     (0..model_rounds)
         .map(|m| sample_round(&mut rng, m + 1 == model_rounds, turn_index, m))
         .collect()

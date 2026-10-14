@@ -38,7 +38,9 @@ fn params(p: &[Value]) -> Vec<Box<dyn ToSql + Sync + Send>> {
         .collect()
 }
 impl ViewDb for Db<'_, '_> {
-    fn is_postgres(&self) -> bool { true }
+    fn is_postgres(&self) -> bool {
+        true
+    }
     fn json_text(&self, expression: &str, field: &str) -> String {
         format!("({expression})::jsonb->>'{field}'")
     }
@@ -148,7 +150,13 @@ impl PostgresStorage {
         let mut c = self.conn()?;
         let mut tx = c.transaction()?;
         tx.batch_execute("SET LOCAL statement_timeout='1500ms'; SET LOCAL lock_timeout='100ms'")?;
-        if !tx.query_one("SELECT pg_try_advisory_xact_lock(1937202,hashtext(current_schema()))", &[])?.get::<_, bool>(0) {
+        if !tx
+            .query_one(
+                "SELECT pg_try_advisory_xact_lock(1937202,hashtext(current_schema()))",
+                &[],
+            )?
+            .get::<_, bool>(0)
+        {
             return Ok(Vec::new());
         }
         view::discover_rebuilds(&mut Db(&mut tx))?;

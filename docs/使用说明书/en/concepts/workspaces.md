@@ -75,5 +75,5 @@ The Pupa runs locally, and its working directory is a persistent directory on yo
 
 ## Further reading
 
-- [Workspace management reference](/docs/en/reference/workspace-routing/) — file management tips
+- [Workspace management reference](/docs/en/capabilities/workspace-routing/) — file management tips
 - [Workspace files tool](/docs/en/tools/workspace-files/) — how the agent reads and writes files

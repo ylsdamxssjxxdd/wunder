@@ -61,42 +61,104 @@ async fn read(
 ) -> Result<Json<Value>, Response> {
     let user = resolve_user(&state, &headers, None).await?.user.user_id;
     let storage = state.storage.clone();
-    let config=state.config_store.get().await;
-    let workspace=state.workspace.clone();
-    let goal_service=state.kernel.orchestrator.goal_handle();
+    let config = state.config_store.get().await;
+    let workspace = state.workspace.clone();
+    let goal_service = state.kernel.orchestrator.goal_handle();
     let kind = kind.to_string();
-    let result=blocking::run_view("api.chat.view.bootstrap",move || {
-        let record=storage.get_chat_session(&user,&session)?.ok_or_else(||anyhow::anyhow!("SESSION_NOT_FOUND"))?;
-        let page=if kind=="trajectory" {
-            match storage.thread_view_trajectory_page(&user,&session,query.before,query.root_turn_id.as_deref(),query.limit.unwrap_or(TRAJECTORY_PAGE_SIZE)) {
-                Ok(page) => page,
-                Err(error) if is_view_timeout(&error) => degraded_page(&session),
-                Err(error) => return Err(error),
-            }
+    let fallback_session = session.clone();
+    let query_session = session.clone();
+    // Resolve ownership and metadata in the ordinary DB lane. A slow display
+    // projection then degrades independently without discarding the session
+    // record needed by the client to finish navigation.
+    let record = blocking::run_db("api.chat.view.session", {
+        let storage = storage.clone();
+        let user = user.clone();
+        let session = query_session.clone();
+        move || {
+            storage
+                .get_chat_session(&user, &session)?
+                .ok_or_else(|| anyhow::anyhow!("SESSION_NOT_FOUND"))
+        }
+    })
+    .await
+    .map_err(read_error)?;
+    let view_storage = storage.clone();
+    let view_user = user.clone();
+    let view_session = query_session.clone();
+    let page = match blocking::run_view("api.chat.view.bootstrap", move || {
+        let result = if kind == "trajectory" {
+            view_storage.thread_view_trajectory_page(
+                &view_user,
+                &view_session,
+                query.before,
+                query.root_turn_id.as_deref(),
+                query.limit.unwrap_or(TRAJECTORY_PAGE_SIZE),
+            )
         } else {
-            match storage.thread_view_page(&user,&session,&kind,query.before,query.limit.unwrap_or(CHAT_PAGE_SIZE)) {
-                Ok(page) => page,
-                Err(error) if is_view_timeout(&error) => degraded_page(&session),
-                Err(error) => return Err(error),
-            }
+            view_storage.thread_view_page(
+                &view_user,
+                &view_session,
+                &kind,
+                query.before,
+                query.limit.unwrap_or(CHAT_PAGE_SIZE),
+            )
         };
-        let model_override=workspace.load_session_model_override(&user,&session);
+        result.or_else(|error| {
+            if is_view_timeout(&error) {
+                Ok(degraded_page(&view_session))
+            } else {
+                Err(error)
+            }
+        })
+    })
+    .await
+    {
+        Ok(page) => page,
+        Err(error) => {
+            tracing::warn!(session_id = %fallback_session, error = %error, "chat thread display read degraded");
+            degraded_page_with_diagnostic(
+                &fallback_session,
+                if is_view_timeout(&error) {
+                    "view_timeout"
+                } else {
+                    "view_unavailable"
+                },
+            )
+        }
+    };
+    let mut result=match blocking::run_db("api.chat.view.metadata",move || {
+        let model_override=workspace.load_session_model_override(&user,&query_session);
         let agent=record.agent_id.as_ref().map(|id|storage.get_user_agent(&user,id)).transpose()?.flatten();
         let mut metadata=super::sessions::session_model_view(&config,agent.as_ref(),model_override.as_deref());
-        let context=workspace.load_session_context_tokens(&user,&session).max(0);
+        let context=workspace.load_session_context_tokens(&user,&query_session).max(0);
         metadata["context_tokens"]=json!(context);metadata["context_occupancy_tokens"]=json!(context);
-        metadata["reasoning_effort"]=json!(workspace.load_session_reasoning_effort(&user,&session));
+        metadata["reasoning_effort"]=json!(workspace.load_session_reasoning_effort(&user,&query_session));
         metadata["session_model_name"]=json!(model_override);
-        metadata["goal"]=storage.get_session_goal(&user,&session)?.map(|record|{
-            let mut goal=crate::services::goal::goal_payload(&crate::services::goal::GoalView{record,activation:goal_service.activation(&session)});
+        metadata["goal"]=storage.get_session_goal(&user,&query_session)?.map(|record|{
+            let mut goal=crate::services::goal::goal_payload(&crate::services::goal::GoalView{record,activation:goal_service.activation(&query_session)});
             for (field,budget) in [("objective",2048),("blocked_message",256)]{if let Some(value)=goal[field].as_str(){goal[field]=json!(wunder_core::thread_view::preview(value,budget));}}goal
         }).unwrap_or(Value::Null);
-        let mut result=json!({"session":{"id":record.session_id,"title":wunder_core::thread_view::preview(&record.title,256),
+        let result=json!({"session":{"id":record.session_id,"title":wunder_core::thread_view::preview(&record.title,256),
             "agent_id":record.agent_id,"created_at":format_ts(record.created_at),"updated_at":format_ts(record.updated_at),
-            "last_message_at":format_ts(record.last_message_at),"tool_overrides":record.tool_overrides.into_iter().take(32).map(|v|wunder_core::thread_view::preview(&v,96)).collect::<Vec<_>>()},"page":page});
-        result["session"].as_object_mut().unwrap().extend(metadata.as_object().unwrap().clone());
-        Ok::<_,anyhow::Error>(result)
-    }).await.map_err(read_error)?;
+            "last_message_at":format_ts(record.last_message_at),"tool_overrides":record.tool_overrides.into_iter().take(32).map(|v|wunder_core::thread_view::preview(&v,96)).collect::<Vec<_>>()}});
+        let mut session=result["session"].as_object().cloned().unwrap_or_default();
+        session.extend(metadata.as_object().unwrap().clone());
+        Ok::<_,anyhow::Error>(Value::Object(session))
+    }).await {
+        Ok(session) => json!({"session":session}),
+        Err(error) if error.to_string() != "SESSION_NOT_FOUND" => {
+            tracing::warn!(
+                session_id = %fallback_session,
+                error = %error,
+                "chat session metadata hydration degraded"
+            );
+            json!({
+                "session": {"id": fallback_session}
+            })
+        }
+        Err(error) => return Err(read_error(error)),
+    };
+    result["page"] = json!(page);
     Ok(Json(json!({"data":result})))
 }
 fn is_view_timeout(error: &anyhow::Error) -> bool {
@@ -104,25 +166,60 @@ fn is_view_timeout(error: &anyhow::Error) -> bool {
     text.contains("timeout") || text.contains("timed out") || text.contains("deadline")
 }
 
+#[cfg(test)]
+mod error_mapping_tests {
+    use super::*;
+
+    #[test]
+    fn view_timeout_is_reported_as_gateway_timeout() {
+        assert_eq!(
+            read_error(anyhow::anyhow!("view deadline exceeded")).status(),
+            StatusCode::GATEWAY_TIMEOUT
+        );
+    }
+
+    #[test]
+    fn missing_session_is_reported_as_not_found() {
+        assert_eq!(
+            read_error(anyhow::anyhow!("SESSION_NOT_FOUND")).status(),
+            StatusCode::NOT_FOUND
+        );
+    }
+
+    #[test]
+    fn degraded_page_keeps_session_identity_without_rows() {
+        let page = degraded_page_with_diagnostic("fixture-session", "view_unavailable");
+        assert_eq!(page.session_id, "fixture-session");
+        assert!(page.degraded);
+        assert_eq!(page.projection_state, "degraded");
+        assert!(page.chat.is_empty());
+    }
+}
+
 fn degraded_page(session: &str) -> ThreadViewPage {
+    degraded_page_with_diagnostic(session, "view_timeout")
+}
+
+fn degraded_page_with_diagnostic(session: &str, diagnostic: &str) -> ThreadViewPage {
     ThreadViewPage {
         session_id: session.to_owned(),
         projection_state: "degraded".into(),
         thread_empty: None,
         degraded: true,
-        diagnostic: Some("view_timeout".into()),
+        diagnostic: Some(diagnostic.into()),
         ..Default::default()
     }
 }
 fn read_error(e: anyhow::Error) -> Response {
-    error_response(
-        if e.to_string() == "SESSION_NOT_FOUND" {
-            StatusCode::NOT_FOUND
-        } else {
-            StatusCode::SERVICE_UNAVAILABLE
-        },
-        e.to_string(),
-    )
+    let message = e.to_string();
+    let status = if message == "SESSION_NOT_FOUND" {
+        StatusCode::NOT_FOUND
+    } else if is_view_timeout(&e) {
+        StatusCode::GATEWAY_TIMEOUT
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    };
+    error_response(status, message)
 }
 async fn bootstrap(
     State(s): State<Arc<AppState>>,

@@ -1,8 +1,8 @@
 use super::PostgresStorage;
 use crate::storage::{
     CloudDeviceInterlinkPatch, InterlinkApprovalRecord, InterlinkAuditRecord,
-    InterlinkChannelRecord, InterlinkCommandRecord, InterlinkShadowOverview,
-    InterlinkShadowRecord, ListInterlinkAuditQuery, ListInterlinkCommandsQuery, StorageLifecycle,
+    InterlinkChannelRecord, InterlinkCommandRecord, InterlinkShadowOverview, InterlinkShadowRecord,
+    ListInterlinkAuditQuery, ListInterlinkCommandsQuery, StorageLifecycle,
 };
 use anyhow::Result;
 use tokio_postgres::types::ToSql;
@@ -35,8 +35,7 @@ pub(super) trait PostgresInterlinkStorage {
         limit: i64,
     ) -> Result<(Vec<InterlinkChannelRecord>, i64)>;
     fn upsert_interlink_shadow_impl(&self, record: &InterlinkShadowRecord) -> Result<()>;
-    fn get_interlink_shadow_impl(&self, device_id: &str)
-        -> Result<Option<InterlinkShadowRecord>>;
+    fn get_interlink_shadow_impl(&self, device_id: &str) -> Result<Option<InterlinkShadowRecord>>;
     fn get_interlink_shadow_revision_impl(&self, device_id: &str) -> Result<i64>;
     fn list_interlink_shadow_overviews_impl(
         &self,
@@ -230,8 +229,7 @@ impl PostgresInterlinkStorage for PostgresStorage {
         );
         values.push(Box::new(cleaned.to_string()));
         let mut conn = self.conn()?;
-        let refs: Vec<&(dyn ToSql + Sync)> =
-            values.iter().map(|value| value.as_ref()).collect();
+        let refs: Vec<&(dyn ToSql + Sync)> = values.iter().map(|value| value.as_ref()).collect();
         conn.execute(&sql, &refs)?;
         Ok(())
     }
@@ -314,8 +312,7 @@ impl PostgresInterlinkStorage for PostgresStorage {
             }
         }
         let mut conn = self.conn()?;
-        let refs: Vec<&(dyn ToSql + Sync)> =
-            values.iter().map(|value| value.as_ref()).collect();
+        let refs: Vec<&(dyn ToSql + Sync)> = values.iter().map(|value| value.as_ref()).collect();
         let total: i64 = conn
             .query_one(
                 &format!("SELECT COUNT(*) FROM interlink_channels{where_clause}"),
@@ -371,10 +368,7 @@ impl PostgresInterlinkStorage for PostgresStorage {
         Ok(())
     }
 
-    fn get_interlink_shadow_impl(
-        &self,
-        device_id: &str,
-    ) -> Result<Option<InterlinkShadowRecord>> {
+    fn get_interlink_shadow_impl(&self, device_id: &str) -> Result<Option<InterlinkShadowRecord>> {
         self.ensure_initialized()?;
         let cleaned = device_id.trim();
         if cleaned.is_empty() {
@@ -617,8 +611,7 @@ impl PostgresInterlinkStorage for PostgresStorage {
             format!(" WHERE {}", conditions.join(" AND "))
         };
         let mut conn = self.conn()?;
-        let refs: Vec<&(dyn ToSql + Sync)> =
-            values.iter().map(|value| value.as_ref()).collect();
+        let refs: Vec<&(dyn ToSql + Sync)> = values.iter().map(|value| value.as_ref()).collect();
         let total: i64 = conn
             .query_one(
                 &format!("SELECT COUNT(*) FROM interlink_commands{where_clause}"),
@@ -778,7 +771,10 @@ impl PostgresInterlinkStorage for PostgresStorage {
             let cleaned = device_id.trim();
             if !cleaned.is_empty() {
                 values.push(Box::new(cleaned.to_string()));
-                conditions.push(format!("(from_node = ${0} OR to_node = ${0})", values.len()));
+                conditions.push(format!(
+                    "(from_node = ${0} OR to_node = ${0})",
+                    values.len()
+                ));
             }
         }
         if let Some(since) = query.since {
@@ -795,8 +791,7 @@ impl PostgresInterlinkStorage for PostgresStorage {
             format!(" WHERE {}", conditions.join(" AND "))
         };
         let mut conn = self.conn()?;
-        let refs: Vec<&(dyn ToSql + Sync)> =
-            values.iter().map(|value| value.as_ref()).collect();
+        let refs: Vec<&(dyn ToSql + Sync)> = values.iter().map(|value| value.as_ref()).collect();
         let total: i64 = conn
             .query_one(
                 &format!("SELECT COUNT(*) FROM interlink_audit{where_clause}"),

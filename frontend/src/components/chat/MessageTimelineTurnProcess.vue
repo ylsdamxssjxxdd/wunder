@@ -30,7 +30,7 @@
 
     <div v-if="open" class="timeline-process-body">
       <MessageTimelineThinkingEntry
-        v-if="reasoningText"
+        v-if="reasoningText && (!loaded || !rows.some((row) => row.kind === 'reasoning' && row.key === `reasoning:${reasoningItemId}`))"
         :entry="reasoningEntry"
         :open="openKeys.has('reasoning:projected')"
         @toggle="toggleKey('reasoning:projected')"
@@ -41,9 +41,6 @@
         <button class="timeline-process-retry" type="button" @click="load">{{ t('chat.timeline.processRetry') }}</button>
       </template>
       <template v-else>
-        <div v-if="omittedRuns > 0" class="timeline-process-note">
-          {{ t('chat.timeline.omittedRuns', { count: omittedRuns }) }}
-        </div>
         <div class="timeline-group">
         <template v-for="row in rows" :key="row.key">
           <MessageTimelineThinkingEntry
@@ -70,6 +67,15 @@
           </div>
         </template>
         </div>
+        <button
+          v-if="hasMoreItems || omittedRuns > 0"
+          class="timeline-process-more"
+          type="button"
+          :disabled="loadingMore || !hasMoreItems"
+          @click="loadMore"
+        >
+          {{ loadingMore ? t('chat.timeline.processLoading') : hasMoreItems ? t('chat.timeline.processLoadEarlier') : t('chat.timeline.omittedRuns', { count: omittedRuns }) }}
+        </button>
         <!-- 有工具轮次的流式尾部：正文区在流式期间让位，活动文本在这里直播，
              轮次完成后由正文区接管（buildRows 会排除最后一条助手正文，不重复）。 -->
         <div v-if="liveTail" class="timeline-body-block timeline-live-print">{{ liveTail }}</div>
@@ -111,6 +117,10 @@ const props = defineProps<{
   liveTail?: string;
   reasoning?: string;
   reasoningItemId?: string;
+  /** Stable terminal assistant item from the chat view row. The lazy log can
+   * contain several assistant prints; only this item belongs in the answer
+   * block, all earlier prints stay in the work process. */
+  finalItemId?: string;
 }>();
 
 // 展开状态上报：父组件据此决定流式尾部是否外显（过程区收起时正文已让位，
@@ -124,6 +134,11 @@ const error = ref(false);
 const loaded = ref(false);
 const rows = shallowRef<ProcessRow[]>([]);
 const omittedRuns = ref(0);
+const hasMoreItems = ref(false);
+const loadingMore = ref(false);
+const nextAfter = ref(-1);
+const loadMoreItems = ref<Array<Record<string, unknown>>>([]);
+const visibleRunLimit = ref(TIMELINE_ENTRY_RENDER_LIMIT);
 const openKeys = ref(new Set<string>());
 const patchViews = new Map<string, ToolWorkflowPatchView | null>();
 const structuredViews = new Map<string, ToolWorkflowStructuredView | null>();
@@ -184,10 +199,12 @@ const load = async (): Promise<void> => {
   loading.value = true;
   error.value = false;
   try {
-    // 有界分页：5 页 × 100 条已覆盖单轮条目上限，超出部分由折叠提示表达。
+    // 展开时只读一个有界窗口；较大的轮次通过“加载更早过程”继续向前
+    // 拉取，避免一次把历史测试日志复制进 DOM。
     const items: Array<Record<string, unknown>> = [];
     let after = -1;
-    for (let page = 0; page < 5; page += 1) {
+    let more = false;
+    for (let page = 0; page < 4; page += 1) {
       const response = await getThreadLogTurn(
         sessionId,
         turnId,
@@ -198,13 +215,21 @@ const load = async (): Promise<void> => {
       const turn = response.data?.data?.turn;
       const batch = Array.isArray(turn?.items) ? turn.items : [];
       items.push(...batch);
-      if (!turn?.has_more || batch.length === 0) break;
+      more = Boolean(turn?.has_more);
+      if (!more || batch.length === 0) break;
       const next = Number(turn.next_after);
-      if (!Number.isSafeInteger(next) || next <= after) break;
+      if (!Number.isSafeInteger(next) || next <= after) {
+        more = false;
+        break;
+      }
       after = next;
     }
     if (controller.signal.aborted) return;
+    loadMoreItems.value = items;
+    visibleRunLimit.value = TIMELINE_ENTRY_RENDER_LIMIT;
     rows.value = buildRows(items);
+    nextAfter.value = after;
+    hasMoreItems.value = more;
     loaded.value = true;
   } catch {
     if (!controller.signal.aborted) error.value = true;
@@ -213,6 +238,42 @@ const load = async (): Promise<void> => {
       loadAbort = null;
       loading.value = false;
     }
+  }
+};
+
+const loadMore = async (): Promise<void> => {
+  if (!hasMoreItems.value || loadingMore.value || loadAbort || !props.sessionId || !props.turnId) return;
+  // Preserve chronological order: reveal the next bounded set already in
+  // memory before asking the server for a later item page.
+  if (omittedRuns.value > 0) {
+    visibleRunLimit.value += TIMELINE_ENTRY_RENDER_LIMIT;
+    rows.value = buildRows(loadMoreItems.value);
+    return;
+  }
+  const controller = new AbortController();
+  loadAbort = controller;
+  loadingMore.value = true;
+  try {
+    const response = await getThreadLogTurn(props.sessionId, props.turnId,
+      { item_after: nextAfter.value, limit: 100 }, { signal: controller.signal });
+    if (controller.signal.aborted) return;
+    const turn = response.data?.data?.turn;
+    const batch = Array.isArray(turn?.items) ? turn.items : [];
+    if (!batch.length) { hasMoreItems.value = false; return; }
+    // The API is forward-paged. Keep a bounded client window so repeatedly
+    // expanding a pathological turn cannot grow memory without limit.
+    const mergedItems = loadMoreItems.value.concat(batch).slice(-10000);
+    loadMoreItems.value = mergedItems;
+    visibleRunLimit.value += TIMELINE_ENTRY_RENDER_LIMIT;
+    rows.value = buildRows(mergedItems);
+    const next = Number(turn.next_after);
+    hasMoreItems.value = Boolean(turn.has_more && Number.isSafeInteger(next) && next > nextAfter.value);
+    if (Number.isSafeInteger(next) && next > nextAfter.value) nextAfter.value = next;
+  } catch {
+    // The already-rendered process remains usable; retrying the button is safe.
+  } finally {
+    if (loadAbort === controller) loadAbort = null;
+    loadingMore.value = false;
   }
 };
 
@@ -225,6 +286,10 @@ const resetState = (): void => {
   error.value = false;
   loaded.value = false;
   rows.value = [];
+  loadMoreItems.value = [];
+  visibleRunLimit.value = TIMELINE_ENTRY_RENDER_LIMIT;
+  hasMoreItems.value = false;
+  nextAfter.value = -1;
   omittedRuns.value = 0;
   openKeys.value = new Set();
   patchViews.clear();
@@ -365,10 +430,10 @@ const buildRows = (items: Array<Record<string, unknown>>): ProcessRow[] => {
   const rows: ProcessRow[] = [];
   if (!Array.isArray(items) || items.length === 0) return rows;
   // 最后一条助手消息的正文就是正式回复（由正文区渲染），不进过程区。
-  let lastAssistantId = '';
-  for (const item of items) {
-    if (String(item?.kind || '') === 'assistant_message') lastAssistantId = String(item?.item_id || '');
-  }
+  // The view row owns the terminal answer identity. Inferring it from the
+  // currently loaded page made an intermediate model print disappear whenever
+  // the page was truncated or a late item arrived.
+  const lastAssistantId = String(props.finalItemId || '');
   type Slot = { type: 'message'; item: Record<string, unknown> } | { type: 'tool'; item: Record<string, unknown> };
   const slots: Slot[] = [];
   const mappedItems: WorkflowItem[] = [];
@@ -387,8 +452,8 @@ const buildRows = (items: Array<Record<string, unknown>>): ProcessRow[] => {
   if (!slots.length) return rows;
   // run 折叠（call/output/result 配对）复用既有链路；有界窗口与折叠提示同投影语义。
   const runs = buildWorkflowToolRuns(mappedItems);
-  omittedRuns.value = Math.max(runs.length - TIMELINE_ENTRY_RENDER_LIMIT, 0);
-  const visibleRuns = omittedRuns.value > 0 ? runs.slice(runs.length - TIMELINE_ENTRY_RENDER_LIMIT) : runs;
+  omittedRuns.value = Math.max(runs.length - visibleRunLimit.value, 0);
+  const visibleRuns = runs.slice(0, visibleRunLimit.value);
   const entryByItemId = new Map<string, TimelineToolEntry>();
   for (const run of visibleRuns) {
     const entry = buildTimelineToolEntry(run, t);
@@ -401,13 +466,17 @@ const buildRows = (items: Array<Record<string, unknown>>): ProcessRow[] => {
       if (entry) rows.push({ kind: 'tool', key: `tool:${entry.key}`, entry });
       continue;
     }
-    const payload = asObject(slot.item?.payload);
+    const payload = flattenItemPayload(slot.item?.payload);
     const itemId = String(slot.item?.item_id || '');
-    const reasoning = typeof payload.reasoning === 'string' ? payload.reasoning.trim() : '';
-    // The lightweight thread view already renders the active reasoning entry
-    // above the lazy log. Do not add the same item a second time when the
-    // expanded request returns its durable assistant row.
-    if (reasoning && !(itemId === String(props.reasoningItemId || '') || reasoning === reasoningText.value)) {
+    const persistedReasoning = typeof payload.reasoning === 'string'
+      ? payload.reasoning.trim()
+      : typeof payload.reasoning_content === 'string' ? payload.reasoning_content.trim() : '';
+    // The bounded display row carries only the newest reasoning preview. Merge
+    // it into its durable assistant item so it stays at the right point in the
+    // timeline instead of being pinned above all process records.
+    const reasoning = persistedReasoning ||
+      (itemId === String(props.reasoningItemId || '') ? reasoningText.value : '');
+    if (reasoning) {
       rows.push({
         kind: 'reasoning',
         key: `reasoning:${itemId}`,
@@ -569,6 +638,29 @@ const buildRows = (items: Array<Record<string, unknown>>): ProcessRow[] => {
   background: transparent;
   font-size: 12px;
   cursor: pointer;
+}
+
+.timeline-process-more {
+  display: block;
+  max-width: calc(100% - 48px);
+  margin: 8px 24px 12px 52px;
+  padding: 5px 10px;
+  border: 1px solid rgba(100, 116, 139, 0.22);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--mz-text-secondary, #64748b);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.timeline-process-more:hover:not(:disabled) {
+  border-color: rgba(59, 130, 246, 0.38);
+  color: var(--mz-text, #1f2937);
+}
+
+.timeline-process-more:disabled {
+  cursor: wait;
+  opacity: 0.65;
 }
 
 /* 中间打印块度量与投影正文块一致：全宽、左右 24px、上下 6px。 */

@@ -26,6 +26,7 @@ export function threadViewGeneration(key: string): number { return entry(key).ge
 export function threadViewPhase(key: string): ViewPhase | undefined { void threadViewClock.value; return entries.get(key)?.phase; }
 export function threadViewCursor(key: string): number { const e=entries.get(key);return e?.epoch===-1 ? -((e.seq??0)+1) : e?.seq??0; }
 export function threadViewHistory(key: string) { const e = entry(key); return { before: e.next, hasMore: e.more }; }
+export function pauseThreadViewHistory(key: string) { const e = entry(key); e.more = false; notify(); }
 /** Row status is server vocabulary; message bubbles and audit hooks speak the UI one. */
 export const uiMessageStatus = (status: string) =>
   status === 'completed' ? 'final' : status === 'rejected' ? 'failed' : status;

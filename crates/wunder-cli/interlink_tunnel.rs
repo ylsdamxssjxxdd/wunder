@@ -165,7 +165,10 @@ pub fn start_allowed(has_session: bool, config_enabled: bool) -> bool {
     has_session && config_enabled
 }
 
-pub fn remote_approval_action(surface: ApprovalSurface, approval_default: &str) -> RemoteApprovalAction {
+pub fn remote_approval_action(
+    surface: ApprovalSurface,
+    approval_default: &str,
+) -> RemoteApprovalAction {
     if surface == ApprovalSurface::Interactive {
         return RemoteApprovalAction::Prompt;
     }
@@ -272,13 +275,22 @@ pub fn denied_notice(approval: &RemoteApproval, reason: &'static str, is_zh: boo
 /// instead of implying it.
 pub fn decision_notice(approval: &RemoteApproval, approved: bool, is_zh: bool) -> String {
     match (approved, is_zh) {
-        (true, true) => format!("已批准远程命令 {}（{}，仅本次）", approval.kind, approval.from_node),
+        (true, true) => format!(
+            "已批准远程命令 {}（{}，仅本次）",
+            approval.kind, approval.from_node
+        ),
         (true, false) => {
-            format!("approved remote command {} ({}, this one only)", approval.kind, approval.from_node)
+            format!(
+                "approved remote command {} ({}, this one only)",
+                approval.kind, approval.from_node
+            )
         }
         (false, true) => format!("已拒绝远程命令 {}（{}）", approval.kind, approval.from_node),
         (false, false) => {
-            format!("denied remote command {} ({})", approval.kind, approval.from_node)
+            format!(
+                "denied remote command {} ({})",
+                approval.kind, approval.from_node
+            )
         }
     }
 }
@@ -286,7 +298,11 @@ pub fn decision_notice(approval: &RemoteApproval, approved: bool, is_zh: bool) -
 /// The tunnel changed state: one line, in the operator's language.
 pub fn phase_notice(previous: TunnelPhase, current: TunnelPhase, is_zh: bool) -> String {
     if is_zh {
-        format!("互通隧道 {} → {}", previous.label(true), current.label(true))
+        format!(
+            "互通隧道 {} → {}",
+            previous.label(true),
+            current.label(true)
+        )
     } else {
         format!("interlink tunnel {} → {}", previous.word(), current.word())
     }
@@ -395,9 +411,18 @@ mod tests {
         let words: Vec<&str> = phases.iter().map(|phase| phase.word()).collect();
         let zh: Vec<&str> = phases.iter().map(|phase| phase.label(true)).collect();
         let en: Vec<&str> = phases.iter().map(|phase| phase.label(false)).collect();
-        assert_eq!(words, vec!["connecting", "connected", "reconnecting", "disabled"]);
-        assert_eq!(zh.len(), zh.iter().collect::<std::collections::HashSet<_>>().len());
-        assert_eq!(en.len(), en.iter().collect::<std::collections::HashSet<_>>().len());
+        assert_eq!(
+            words,
+            vec!["connecting", "connected", "reconnecting", "disabled"]
+        );
+        assert_eq!(
+            zh.len(),
+            zh.iter().collect::<std::collections::HashSet<_>>().len()
+        );
+        assert_eq!(
+            en.len(),
+            en.iter().collect::<std::collections::HashSet<_>>().len()
+        );
         for phase in phases {
             assert_eq!(
                 TunnelPhase::from_engine(match phase {
@@ -438,10 +463,22 @@ mod tests {
 
     #[test]
     fn only_y_and_n_answer_the_row() {
-        assert_eq!(remote_approval_choice(KeyCode::Char('y')), Some(Decision::Approve));
-        assert_eq!(remote_approval_choice(KeyCode::Char('Y')), Some(Decision::Approve));
-        assert_eq!(remote_approval_choice(KeyCode::Char('n')), Some(Decision::Deny));
-        assert_eq!(remote_approval_choice(KeyCode::Char('N')), Some(Decision::Deny));
+        assert_eq!(
+            remote_approval_choice(KeyCode::Char('y')),
+            Some(Decision::Approve)
+        );
+        assert_eq!(
+            remote_approval_choice(KeyCode::Char('Y')),
+            Some(Decision::Approve)
+        );
+        assert_eq!(
+            remote_approval_choice(KeyCode::Char('n')),
+            Some(Decision::Deny)
+        );
+        assert_eq!(
+            remote_approval_choice(KeyCode::Char('N')),
+            Some(Decision::Deny)
+        );
         assert_eq!(remote_approval_choice(KeyCode::Enter), None);
         assert_eq!(remote_approval_choice(KeyCode::Esc), None);
         assert_eq!(remote_approval_choice(KeyCode::Char('a')), None);
@@ -460,8 +497,18 @@ mod tests {
     fn the_row_carries_source_tier_risk_prompt_and_window() {
         let zh = remote_approval_lines(&approval(), 940.0, true);
         assert_eq!(zh.len(), 3);
-        for needle in ["workspace.write", "L2", "high", "node-b", "write notes.txt", "剩余 60s"] {
-            assert!(zh.iter().any(|line| line.contains(needle)), "{needle} missing");
+        for needle in [
+            "workspace.write",
+            "L2",
+            "high",
+            "node-b",
+            "write notes.txt",
+            "剩余 60s",
+        ] {
+            assert!(
+                zh.iter().any(|line| line.contains(needle)),
+                "{needle} missing"
+            );
         }
         let en = remote_approval_lines(&approval(), 940.0, false);
         assert!(en.iter().any(|line| line.contains("60s left")));
@@ -506,7 +553,10 @@ mod tests {
             "interlink tunnel connected → reconnecting"
         );
         let approved = decision_notice(&approval(), true, true);
-        assert!(approved.contains("workspace.write") && approved.contains("仅本次"), "{approved}");
+        assert!(
+            approved.contains("workspace.write") && approved.contains("仅本次"),
+            "{approved}"
+        );
         assert!(decision_notice(&approval(), false, false).starts_with("denied remote command"));
     }
 }

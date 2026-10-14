@@ -196,7 +196,9 @@ pub(super) fn project(tool: &str, payload: &Value, state: &str, fallback: &str) 
             .or_else(|| data.get("statusCode"))
             .and_then(Value::as_i64);
         let truncated = data["truncated"].as_bool().unwrap_or(false);
-        let mut meta = status.map(|value| format!("HTTP {value}")).unwrap_or_default();
+        let mut meta = status
+            .map(|value| format!("HTTP {value}"))
+            .unwrap_or_default();
         if truncated {
             if meta.is_empty() {
                 meta = "已截断".into();
@@ -205,7 +207,11 @@ pub(super) fn project(tool: &str, payload: &Value, state: &str, fallback: &str) 
             }
         }
         let mut section = Section {
-            title: if url.is_empty() { "网页抓取".into() } else { url },
+            title: if url.is_empty() {
+                "网页抓取".into()
+            } else {
+                url
+            },
             meta,
             kind: "text".into(),
             ..Default::default()

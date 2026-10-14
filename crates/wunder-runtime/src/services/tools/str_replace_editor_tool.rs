@@ -101,7 +101,9 @@ fn not_regular_file(path: &str) -> Value {
 
 pub(crate) async fn str_replace_editor(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let args = recover_tool_args_value(args);
-    if let Some(result) = super::execute_in_sandbox(context, super::edit_tool::TOOL_EDIT, &args).await {
+    if let Some(result) =
+        super::execute_in_sandbox(context, super::edit_tool::TOOL_EDIT, &args).await
+    {
         return Ok(result);
     }
 

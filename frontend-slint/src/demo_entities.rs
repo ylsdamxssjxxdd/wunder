@@ -4,9 +4,8 @@ use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use std::{cell::RefCell, rc::Rc};
 
 thread_local! {
-    /// The preview's unfiltered model catalogue, mirroring the native shell: the
-    /// composer popover renders the filtered view, so a query must not destroy
-    /// the list it filters.
+    /// The preview's model catalogue; the composer's picker renders exactly
+    /// this list, mirroring the native shell's single-source projection.
     static DEMO_MODELS: Rc<RefCell<Vec<ModelCard>>> = Rc::new(RefCell::new(Vec::new()));
 }
 
@@ -46,35 +45,21 @@ fn seed_models() -> Vec<ModelCard> {
     ]
 }
 
-/// Shows the catalogue unfiltered and mirrors its size for the popover's
-/// "no match" versus "none added" distinction.
-fn project_models(app: &MainWindow, query: &str) {
-    let needle = query.trim().to_lowercase();
+/// Projects the catalogue and mirrors its size for the picker's "empty list"
+/// versus "nothing configured" distinction.
+fn project_models(app: &MainWindow) {
     DEMO_MODELS.with(|models| {
         let models = models.borrow();
         app.set_model_catalogue_count(models.len() as i32);
-        let rows: Vec<ModelCard> = if needle.is_empty() {
-            models.clone()
-        } else {
-            models
-                .iter()
-                .filter(|model| {
-                    [&model.model, &model.provider, &model.model_type, &model.key]
-                        .iter()
-                        .any(|field| field.to_lowercase().contains(&needle))
-                })
-                .cloned()
-                .collect()
-        };
-        app.set_models(ModelRc::new(VecModel::from(rows)));
+        app.set_models(ModelRc::new(VecModel::from(models.clone())));
     });
 }
 
 /// Replaces the preview catalogue; the model editor and the delete action both
-/// go through here so search can never see a stale list.
+/// go through here so the picker never sees a stale list.
 fn store_models(app: &MainWindow, models: Vec<ModelCard>) {
     DEMO_MODELS.with(|slot| *slot.borrow_mut() = models);
-    project_models(app, "");
+    project_models(app);
 }
 
 /// The personal build ships exactly one built-in agent. The preview seeds the
@@ -105,14 +90,6 @@ pub fn install(app: &MainWindow) {
     app.on_refresh_profile(|| {});
     app.on_save_lan(|_, _| {});
     app.on_save_profile_avatar(|_, _| {});
-    // The preview mirrors the native shell's search behaviour, otherwise the
-    // composer's model popover and the settings navigation would look broken
-    // in the screenshots this path exists to produce.
-    let weak = app.as_weak();
-    app.on_search_models(move |query| {
-        let Some(app) = weak.upgrade() else { return };
-        project_models(&app, &query);
-    });
     let weak = app.as_weak();
     app.on_filter_settings_categories(move |query| {
         let Some(app) = weak.upgrade() else { return };
@@ -231,6 +208,7 @@ pub fn install(app: &MainWindow) {
         if let Some(app) = weak.upgrade() {
             app.set_workspace_root(workspace);
             app.set_runtime_language(language);
+            crate::help_browser::sync_language(&app);
             app.set_status("设置已保存 · 仅本次演示有效".into());
         }
     });

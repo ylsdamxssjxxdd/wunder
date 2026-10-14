@@ -419,7 +419,10 @@ pub struct CorsConfig {
     pub allow_origins: Option<Vec<String>>,
     pub allow_methods: Option<Vec<String>>,
     pub allow_headers: Option<Vec<String>>,
-    #[serde(default, deserialize_with = "crate::config::deserialize_optional_bool_from_any")]
+    #[serde(
+        default,
+        deserialize_with = "crate::config::deserialize_optional_bool_from_any"
+    )]
     pub allow_credentials: Option<bool>,
 }
 
@@ -1490,7 +1493,6 @@ impl Default for DesktopControllerConfig {
     }
 }
 
-
 fn default_browser_launch_mode() -> String {
     "launch".to_string()
 }
@@ -2504,7 +2506,8 @@ pub fn try_load_config_from_path(path: &Path) -> anyhow::Result<Config> {
     use anyhow::Context;
     let content = read_yaml_content_with_fallback(&path.display().to_string())
         .context("read configuration failed")?;
-    let mut value: Value = serde_yaml::from_str(&content).context("parse configuration YAML failed")?;
+    let mut value: Value =
+        serde_yaml::from_str(&content).context("parse configuration YAML failed")?;
     expand_yaml_env(&mut value);
     let mut config = serde_yaml::from_value::<Config>(value).context("invalid configuration")?;
     if let Some(example_path) = resolve_example_config_path(&resolve_config_path(path)) {
@@ -2839,16 +2842,23 @@ pub(crate) fn deserialize_bool_from_any<'de, D: Deserializer<'de>>(d: D) -> Resu
     deserialize_optional_bool_from_any(d)?.ok_or_else(|| de::Error::custom("expected a boolean"))
 }
 
-pub(crate) fn deserialize_optional_bool_from_any<'de, D: Deserializer<'de>>(d: D) -> Result<Option<bool>, D::Error> {
+pub(crate) fn deserialize_optional_bool_from_any<'de, D: Deserializer<'de>>(
+    d: D,
+) -> Result<Option<bool>, D::Error> {
     #[derive(Deserialize)]
     #[serde(untagged)]
-    enum Boolean { Native(bool), Text(String) }
-    Option::<Boolean>::deserialize(d)?.map(|value| match value {
-        Boolean::Native(b) => Ok(b),
-        Boolean::Text(s) if s.trim().eq_ignore_ascii_case("true") => Ok(true),
-        Boolean::Text(s) if s.trim().eq_ignore_ascii_case("false") => Ok(false),
-        _ => Err(de::Error::custom("expected true or false")),
-    }).transpose()
+    enum Boolean {
+        Native(bool),
+        Text(String),
+    }
+    Option::<Boolean>::deserialize(d)?
+        .map(|value| match value {
+            Boolean::Native(b) => Ok(b),
+            Boolean::Text(s) if s.trim().eq_ignore_ascii_case("true") => Ok(true),
+            Boolean::Text(s) if s.trim().eq_ignore_ascii_case("false") => Ok(false),
+            _ => Err(de::Error::custom("expected true or false")),
+        })
+        .transpose()
 }
 
 fn expand_env_placeholders(input: &str) -> String {
@@ -2907,7 +2917,10 @@ mod tests {
             max_context: Some(0),
             ..Default::default()
         };
-        assert_eq!(unusable.effective_max_context(), DEFAULT_MODEL_CONTEXT_TOKENS);
+        assert_eq!(
+            unusable.effective_max_context(),
+            DEFAULT_MODEL_CONTEXT_TOKENS
+        );
     }
 
     fn unique_test_suffix() -> String {
@@ -3256,7 +3269,12 @@ storage:
             .next()
             .unwrap_or_default()
             .trim();
-        assert_eq!(value, "true", "{} must keep the chat queue on", template.display());
+        assert_eq!(
+            value,
+            "true",
+            "{} must keep the chat queue on",
+            template.display()
+        );
     }
 
     #[test]
@@ -3362,10 +3380,7 @@ storage:
         assert_eq!(config.knowledge.bases.len(), 1);
         assert_eq!(config.storage.backend, "auto");
         assert_eq!(config.storage.db_path, "./config/data/wunder.db");
-        assert_eq!(
-            config.tools.builtin.enabled,
-            vec!["goal".to_string()]
-        );
+        assert_eq!(config.tools.builtin.enabled, vec!["goal".to_string()]);
         assert_eq!(config.workspace.root, "./config/data/workspaces");
         assert_eq!(config.security.allow_commands, vec!["*".to_string()]);
 

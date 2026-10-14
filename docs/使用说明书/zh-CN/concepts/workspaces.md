@@ -75,5 +75,5 @@ summary: 每个用户有且只有一个工作区，工具以它为根；蛹里�
 
 ## 延伸阅读
 
-- [工作区管理参考](/docs/zh-CN/reference/workspace-routing/) —— 文件管理技巧
+- [工作区管理参考](/docs/zh-CN/capabilities/workspace-routing/) —— 文件管理技巧
 - [文件工具说明](/docs/zh-CN/tools/workspace-files/) —— 智能体如何读写文件

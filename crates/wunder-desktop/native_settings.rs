@@ -331,7 +331,13 @@ impl NativeDesktop {
             .map_err(|message| anyhow!("{message}"))?;
         let user_id = self.user_id().to_string();
         let db_path = self.runtime.block_on(async {
-            self.state().config_store.get().await.storage.db_path.clone()
+            self.state()
+                .config_store
+                .get()
+                .await
+                .storage
+                .db_path
+                .clone()
         });
         let spec = wunder_server::storage::StressThreadSpec {
             session_id: uuid::Uuid::new_v4().to_string(),

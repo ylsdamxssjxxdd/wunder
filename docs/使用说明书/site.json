@@ -56,18 +56,9 @@
             "tab": "核心",
             "groups": [
               {
-                "group": "9 个核心",
+                "group": "四个核心",
                 "pages": [
-                  "zh-CN/concepts/index",
-                  "zh-CN/concepts/core-goal",
-                  "zh-CN/concepts/core-compatibility",
-                  "zh-CN/concepts/core-context-compression",
-                  "zh-CN/concepts/core-subagent",
-                  "zh-CN/concepts/core-scheduled-tasks",
-                  "zh-CN/concepts/core-channels",
-                  "zh-CN/concepts/core-memory",
-                  "zh-CN/concepts/core-multithreading",
-                  "zh-CN/concepts/core-multi-user-management"
+                  "zh-CN/concepts/index"
                 ]
               }
             ]
@@ -158,37 +149,51 @@
             ]
           },
           {
-            "tab": "参考",
+            "tab": "能力",
             "groups": [
+              {
+                "group": "核心能力",
+                "pages": [
+                  "zh-CN/concepts/core-goal",
+                  "zh-CN/concepts/core-compatibility",
+                  "zh-CN/concepts/core-context-compression",
+                  "zh-CN/concepts/core-subagent",
+                  "zh-CN/concepts/core-scheduled-tasks",
+                  "zh-CN/concepts/core-channels",
+                  "zh-CN/concepts/core-memory",
+                  "zh-CN/concepts/core-multithreading",
+                  "zh-CN/concepts/core-multi-user-management"
+                ]
+              },
               {
                 "group": "概览",
                 "pages": [
-                  "zh-CN/reference/index"
+                  "zh-CN/capabilities/index"
                 ]
               },
               {
                 "group": "接口与端点",
                 "pages": [
-                  "zh-CN/reference/api-index",
-                  "zh-CN/reference/chat-ws",
-                  "zh-CN/reference/mcp-endpoint",
-                  "zh-CN/reference/weixin-channel"
+                  "zh-CN/capabilities/api-index",
+                  "zh-CN/capabilities/chat-ws",
+                  "zh-CN/capabilities/mcp-endpoint",
+                  "zh-CN/capabilities/weixin-channel"
                 ]
               },
               {
                 "group": "配置与数据",
                 "pages": [
-                  "zh-CN/reference/config",
-                  "zh-CN/reference/workspace-routing",
-                  "zh-CN/reference/stream-events",
-                  "zh-CN/reference/prompt-templates",
-                  "zh-CN/reference/admin-panels"
+                  "zh-CN/capabilities/config",
+                  "zh-CN/capabilities/workspace-routing",
+                  "zh-CN/capabilities/stream-events",
+                  "zh-CN/capabilities/prompt-templates",
+                  "zh-CN/capabilities/admin-panels"
                 ]
               },
               {
                 "group": "三端互通",
                 "pages": [
-                  "zh-CN/reference/interlink"
+                  "zh-CN/capabilities/interlink"
                 ]
               },
               {
@@ -268,18 +273,9 @@
             "tab": "Core",
             "groups": [
               {
-                "group": "The 9 Cores",
+                "group": "The Four Cores",
                 "pages": [
-                  "en/concepts/index",
-                  "en/concepts/core-goal",
-                  "en/concepts/core-compatibility",
-                  "en/concepts/core-context-compression",
-                  "en/concepts/core-subagent",
-                  "en/concepts/core-scheduled-tasks",
-                  "en/concepts/core-channels",
-                  "en/concepts/core-memory",
-                  "en/concepts/core-multithreading",
-                  "en/concepts/core-multi-user-management"
+                  "en/concepts/index"
                 ]
               }
             ]
@@ -363,37 +359,51 @@
             ]
           },
           {
-            "tab": "Reference",
+            "tab": "Capabilities",
             "groups": [
+              {
+                "group": "Core Capabilities",
+                "pages": [
+                  "en/concepts/core-goal",
+                  "en/concepts/core-compatibility",
+                  "en/concepts/core-context-compression",
+                  "en/concepts/core-subagent",
+                  "en/concepts/core-scheduled-tasks",
+                  "en/concepts/core-channels",
+                  "en/concepts/core-memory",
+                  "en/concepts/core-multithreading",
+                  "en/concepts/core-multi-user-management"
+                ]
+              },
               {
                 "group": "Overview",
                 "pages": [
-                  "en/reference/index"
+                  "en/capabilities/index"
                 ]
               },
               {
                 "group": "Interfaces and Endpoints",
                 "pages": [
-                  "en/reference/api-index",
-                  "en/reference/chat-ws",
-                  "en/reference/mcp-endpoint",
-                  "en/reference/weixin-channel"
+                  "en/capabilities/api-index",
+                  "en/capabilities/chat-ws",
+                  "en/capabilities/mcp-endpoint",
+                  "en/capabilities/weixin-channel"
                 ]
               },
               {
                 "group": "Configuration and Data",
                 "pages": [
-                  "en/reference/config",
-                  "en/reference/workspace-routing",
-                  "en/reference/stream-events",
-                  "en/reference/prompt-templates",
-                  "en/reference/admin-panels"
+                  "en/capabilities/config",
+                  "en/capabilities/workspace-routing",
+                  "en/capabilities/stream-events",
+                  "en/capabilities/prompt-templates",
+                  "en/capabilities/admin-panels"
                 ]
               },
               {
                 "group": "Three-endpoint Interop",
                 "pages": [
-                  "en/reference/interlink"
+                  "en/capabilities/interlink"
                 ]
               },
               {

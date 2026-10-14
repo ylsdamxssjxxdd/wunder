@@ -55,7 +55,10 @@ async fn resolve_owned_session(
         .get_chat_session(&resolved.user.user_id, &cleaned)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
         .ok_or_else(|| {
-            error_response(StatusCode::NOT_FOUND, crate::i18n::t("error.session_not_found"))
+            error_response(
+                StatusCode::NOT_FOUND,
+                crate::i18n::t("error.session_not_found"),
+            )
         })?;
     Ok((resolved.user.user_id, cleaned))
 }
