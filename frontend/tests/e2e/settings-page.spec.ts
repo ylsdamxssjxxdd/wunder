@@ -2,14 +2,14 @@
 import { test, expect } from '@playwright/test';
 
 /**
- * 设置页 13 分类（方案 §九）真实渲染自检。
+ * 设置页 11 分类（方案 §九）真实渲染自检。
  *
  * 与 `shell-layout.spec.ts` 同样的思路：不看 class 是否存在，而是走真实登录、
  * 真实后端，断言**几何与可见内容**，并留一张截图供人工走查。
  *
  * 覆盖点：
  * 1. 左栏底部「设置」进入全屏设置页（左导航 260px + 右内容卡片）
- * 2. 13 个分类导航项齐全，逐一点击后右侧内容区有可见内容且无 pageerror
+ * 2. 11 个分类导航项齐全，逐一点击后右侧内容区有可见内容且无 pageerror
  * 3. 「返回应用」回到聊天区（设置覆盖层消失）
  *
  * 每个分类都是独立异步 chunk，因此逐项断言同时验证了「按需挂载」不会 404。
@@ -24,10 +24,8 @@ const CATEGORY_IDS = [
   'memory',
   'channels',
   'devices',
-  'runtime',
   'prompts',
-  'archived',
-  'help'
+  'archived'
 ] as const;
 
 /**
@@ -35,7 +33,7 @@ const CATEGORY_IDS = [
  */
 test.use({ locale: 'zh-CN' });
 
-test('设置页：13 分类可进入并可返回', async ({ page, request }) => {
+test('设置页：11 分类可进入并可返回', async ({ page, request }) => {
   const username = `e2e_settings_${Date.now().toString(36)}`;
   const password = 'Passw0rd!23';
   const registered = await request.post('/wunder/auth/register', {
@@ -91,7 +89,7 @@ test('设置页：13 分类可进入并可返回', async ({ page, request }) => 
   expect(navBox!.width).toBeGreaterThanOrEqual(200);
   expect(navBox!.width).toBeLessThanOrEqual(300);
 
-  // 13 个分类导航项齐全（顺序即方案 §9.2 的编号）
+  // 11 个分类导航项齐全（顺序即方案 §9.2 的编号）
   const navItems = nav.locator('[data-settings-category]');
   await expect(navItems).toHaveCount(CATEGORY_IDS.length);
   for (const id of CATEGORY_IDS) {
@@ -111,19 +109,21 @@ test('设置页：13 分类可进入并可返回', async ({ page, request }) => 
   const content = page.locator('[data-testid="settings-content"]').first();
   await expect(content).toBeVisible();
 
-  // 按需挂载：刚打开时只有一个分类实例，其余 12 个分类没有被初始化。
+  // 按需挂载：刚打开时只有一个分类实例，其余 10 个分类没有被初始化。
   await expect(page.locator('[data-testid^="settings-category-"]')).toHaveCount(1);
   // 默认分类（常规）留一张截图供人工走查
   await page.screenshot({ path: 'test-results/settings-page-general.png' });
 
-  // 逐一点击 13 个分类：内容区必须有可见内容，且全程无 pageerror
+  // 逐一点击 11 个分类：内容区必须有可见内容，且全程无 pageerror
   for (const id of CATEGORY_IDS) {
     await nav.locator(`[data-settings-category="${id}"]`).click();
     const panel = page.locator(`[data-testid="settings-category-${id}"]`).first();
     await expect(panel, `category ${id} should mount`).toBeVisible({ timeout: 20_000 });
 
-    const text = (await panel.innerText()).trim();
-    expect(text.length, `category ${id} should render visible content`).toBeGreaterThan(0);
+    // 部分分类（如智能体）的内容依赖异步数据，挂载瞬间可能为空，轮询等待首帧内容。
+    await expect
+      .poll(async () => (await panel.innerText()).trim().length, { timeout: 20_000 })
+      .toBeGreaterThan(0);
 
     const box = await panel.boundingBox();
     expect(box, `category ${id} bounding box`).not.toBeNull();
@@ -143,22 +143,22 @@ test('设置页：13 分类可进入并可返回', async ({ page, request }) => 
   ).toHaveCount(0);
   expect(await agentPanel.locator('.messenger-settings-action.danger').count()).toBe(0);
 
-  // 访问过 13 个分类后，KeepAlive 只保留最近 3 个实例，不会堆成 13 份 DOM。
+  // 访问过 11 个分类后，KeepAlive 只保留最近 3 个实例，不会堆成 11 份 DOM。
   const mountedCategories = await page.locator('[data-testid^="settings-category-"]').count();
   expect(mountedCategories, 'only the most recent categories should stay mounted').toBeLessThanOrEqual(3);
 
-  // 回到「帮助」并截图，便于人工走查内容区样式
-  await nav.locator('[data-settings-category="help"]').click();
-  await expect(page.locator('[data-testid="settings-category-help"]')).toBeVisible();
+  // 回到最后一个分类并截图，便于人工走查内容区样式
+  await nav.locator('[data-settings-category="archived"]').click();
+  await expect(page.locator('[data-testid="settings-category-archived"]')).toBeVisible();
   await page.screenshot({ path: 'test-results/settings-page.png' });
 
-  // 返回应用 → 覆盖层消失，聊天区与左栏重新可见
-  await page.locator('[data-testid="settings-back"]').first().click();
+  // 关闭设置窗口 → 覆盖层消失，聊天区与左栏重新可见
+  await page.locator('[data-testid="settings-close"]').first().click();
   await expect(page.locator('[data-testid="messenger-settings"]')).toHaveCount(0);
   await expect(page.locator('.messenger-sidebar').first()).toBeVisible();
   await expect(page.locator('[data-testid="messenger-message-list"]').first()).toBeVisible();
 
-  // 壳体不再有顶栏入口：帮助与资料都只在上面遍历过的 13 个分类里，左栏「设置」是唯一入口。
+  // 壳体不再有顶栏入口：帮助与资料都只在上面遍历过的 11 个分类里，左栏「设置」是唯一入口。
   await expect(page.locator('.messenger-site-header')).toHaveCount(0);
   await expect(page.locator('.messenger-sidebar-settings')).toHaveCount(1);
 

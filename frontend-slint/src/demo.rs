@@ -266,6 +266,7 @@ fn fixture_row(kind: i32, index: usize, text: &str) -> TimelineRow {
         tool_icon: Default::default(),
         target: Default::default(),
         tool_metrics: Default::default(),
+        tool_metrics_visible: false,
         detail: Default::default(),
         status_kind: crate::timeline::STATUS_DONE,
         foldable: false,

@@ -31,7 +31,7 @@ pub(crate) use observer::project_history;
 #[path = "native_chat_queue.rs"]
 mod queue;
 
-use queue::{drain_entry, recall_step, EntrySignal, ParkedTurn, Recall};
+use queue::{drain_entry, EntrySignal, ParkedTurn, Recall};
 
 struct Active {
     stream: NativeStream,
@@ -331,30 +331,15 @@ struct State {
     drafts: std::collections::HashMap<String, String>,
     recording: Option<Recording>,
     list_inflight: Arc<AtomicBool>,
-    /// Live local-shell session owned by the composer's terminal mode. The
-    /// process keeps running while the terminal panel stays open; leaving the
-    /// mode merely hides it, so buffered output survives re-entry.
-    terminal: Option<TerminalSession>,
-    terminal_window: Option<TerminalWindow>,
+    /// Each local workspace owns an independent shell, screen and transcript.
+    terminals: std::collections::HashMap<String, WorkspaceTerminal>,
+    terminal_window: Option<Rc<TerminalWindow>>,
     /// Poll timer for the terminal output; runs for the whole desktop session
     /// and is a no-op while no terminal is alive (kept separate from the
     /// stream pump so chat generation never steals the tick).
     terminal_timer: Timer,
-    /// The shell's screen: output bytes go in as they arrive and the panel shows
-    /// one viewport projected out of it, so redraws, wrapping and colours behave
-    /// like a terminal instead of an appending text box.
-    grid: terminal_grid::TerminalGrid,
-    /// Human-readable status line shown above the terminal output.
-    terminal_status: String,
-    /// Whether the "[较早输出已截断]" marker has been inserted for this
-    /// session; reset on clear and on session restart.
-    terminal_loss_marked: bool,
-    /// Whether the last observed shell state was a failure/error exit; drives
-    /// the status dot color in `TerminalView`.
-    terminal_error: bool,
-    /// Whether the durable transcript of earlier runs was replayed into the
-    /// body. Restored once per app session so clearing the panel stays clear.
-    terminal_restored: bool,
+    /// Workspace currently projected in the auxiliary window.
+    terminal_workspace: Option<String>,
     /// Session-scoped plan state (explanation + steps) so the plan card
     /// survives turn boundaries within a thread.
     plans: std::collections::HashMap<String, (String, Vec<(String, String)>)>,
@@ -386,6 +371,18 @@ struct TerminalSession {
     workspace_id: String,
     workspace_root: String,
     last_seq: u64,
+    input: std::sync::mpsc::SyncSender<Vec<u8>>,
+}
+
+struct WorkspaceTerminal {
+    session: Option<TerminalSession>,
+    workspace_name: String,
+    workspace_root: String,
+    grid: terminal_grid::TerminalGrid,
+    status: String,
+    error: bool,
+    loss_marked: bool,
+    restored: bool,
 }
 
 struct Recording {
@@ -416,6 +413,10 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
     app.set_tools(ModelRc::default());
     app.set_models(ModelRc::default());
     let desktop_preview = desktop.clone();
+    let terminal_window = TerminalWindow::new().ok().map(Rc::new);
+    if let Some(window) = terminal_window.as_ref() {
+        let _ = window.hide();
+    }
     let state = Rc::new(RefCell::new(State {
         timer: Timer::default(),
         observation: observer::Observation::default(),
@@ -426,16 +427,12 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
         drafts: std::collections::HashMap::new(),
         recording: None,
         list_inflight: Arc::new(AtomicBool::new(false)),
-        terminal: None,
-        terminal_window: TerminalWindow::new().ok(),
+        terminals: std::collections::HashMap::new(),
+        terminal_window,
         terminal_timer: Timer::default(),
         // Starts at the size the panel declares before it knows its own
         // geometry; the first layout reports the real one.
-        grid: terminal_grid::TerminalGrid::new(24, 80),
-        terminal_status: String::new(),
-        terminal_loss_marked: false,
-        terminal_error: false,
-        terminal_restored: false,
+        terminal_workspace: None,
         plans: std::collections::HashMap::new(),
         plan_sig: String::new(),
         inquiries: std::collections::HashMap::new(),
@@ -468,6 +465,14 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
     crate::workspace_ui::install(app, desktop_preview.clone());
     let timeline = state.borrow().timeline.clone();
     bind_timeline(app, timeline);
+    {
+        let timeline = state.borrow().timeline.clone();
+        let live = timeline.borrow();
+        if live.needs_publish() {
+            app.set_timeline(live.model());
+            app.set_turn_marks(live.marks_model());
+        }
+    }
     let weak = app.as_weak();
     app.on_open_prompt_preview(move || {
         let Some(app) = weak.upgrade() else { return };
@@ -934,7 +939,8 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
         reset_context_usage(&app);
         app.set_active_session_id(id.clone().into());
         app.set_session_loading(true);
-        state.borrow().timeline.borrow_mut().clear();
+        let timeline = state.borrow().timeline.clone();
+        timeline.borrow_mut().clear();
         // Keep MainWindow attached to the one stable VecModel owned by the
         // reducer. Replacing it with a detached empty model makes later stream
         // deltas look stale until a full page reload.
@@ -945,6 +951,7 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
                 app.set_timeline(live.model());
                 app.set_turn_marks(live.marks_model());
             }
+            live.sync_turn_marks();
         }
         std::thread::spawn(move || {
             let result = desktop.get_session_info(&id);
@@ -1145,14 +1152,11 @@ fn bind_reasoning_effort(app: &MainWindow, state: Rc<RefCell<State>>) {
     });
 }
 
-/// Fixed scope under which the composer's local shell lives. Kept separate
-/// from chat sessions so the terminal mode never collides with thread data.
-const TERMINAL_SESSION_ID: &str = "terminal_main";
-
-/// Start (or reuse) the live shell for terminal mode. The process stays alive
-/// across mode switches; buffered output is capped by the runtime service.
+/// Resolve only the selected local workspace. A cloud-only selection or a
+/// stale folder cannot silently fall back to the application process cwd.
 fn selected_terminal_workspace(app: &MainWindow) -> Result<(String, String, String), String> {
-    let index = usize::try_from(app.get_selected_workspace()).map_err(|_| "没有选中的工作区".to_string())?;
+    let index = usize::try_from(app.get_selected_workspace())
+        .map_err(|_| "没有选中的工作区".to_string())?;
     let card = app
         .get_workspaces()
         .row_data(index)
@@ -1164,24 +1168,66 @@ fn selected_terminal_workspace(app: &MainWindow) -> Result<(String, String, Stri
     if !root.is_dir() {
         return Err("当前工作区目录不存在或不可用".to_string());
     }
-    Ok((card.workspace_id.to_string(), card.name.to_string(), card.root_path.to_string()))
+    Ok((
+        card.workspace_id.to_string(),
+        card.name.to_string(),
+        card.root_path.to_string(),
+    ))
 }
 
 fn ensure_terminal(state: &mut State, app: &MainWindow) -> Result<String, String> {
     let (workspace_id, workspace_name, cwd) = selected_terminal_workspace(app)?;
-    if let Some(session) = &state.terminal {
-        if session.workspace_id == workspace_id && session.workspace_root == cwd {
-            return Ok(session.terminal_id.clone());
+    let cwd = std::path::Path::new(&cwd)
+        .canonicalize()
+        .map_err(|error| format!("无法解析工作区目录：{error}"))?
+        .to_string_lossy()
+        .into_owned();
+    let existing = state
+        .terminals
+        .get(&workspace_id)
+        .and_then(|workspace| workspace.session.as_ref())
+        .map(|session| {
+            (
+                session.terminal_id.clone(),
+                session.session_id.clone(),
+                session.workspace_root.clone(),
+            )
+        });
+    if let Some((terminal_id, session_id, workspace_root)) = existing {
+        if workspace_root == cwd {
+            if let Some(workspace) = state.terminals.get_mut(&workspace_id) {
+                workspace.workspace_name = workspace_name;
+                workspace.workspace_root = cwd.clone();
+            }
+            state.terminal_workspace = Some(workspace_id);
+            return Ok(terminal_id);
         }
-        let _ = state.desktop.terminal_close(&session.session_id, &session.terminal_id);
-        state.terminal = None;
-        state.grid.reset();
-        state.terminal_restored = false;
+        let _ = state.desktop.terminal_close(&session_id, &terminal_id);
+        if let Some(workspace) = state.terminals.get_mut(&workspace_id) {
+            workspace.session = None;
+            workspace.grid.reset();
+            workspace.restored = false;
+        }
+    }
+    if state
+        .terminals
+        .get(&workspace_id)
+        .and_then(|workspace| workspace.session.as_ref())
+        .is_some()
+    {
+        return Err("工作区终端目录已变化，请重新打开终端".into());
+    }
+    const MAX_WORKSPACE_TERMINALS: usize = 8;
+    if state.terminals.len() >= MAX_WORKSPACE_TERMINALS
+        && !state.terminals.contains_key(&workspace_id)
+    {
+        return Err("同时保留的工作区终端已达上限，请退出一个终端".into());
     }
     let session_id = format!("terminal:{workspace_id}");
     let spec = NativeTerminalSpec {
         terminal_id: String::new(),
         session_id: session_id.clone(),
+        workspace_id: workspace_id.clone(),
         command: String::new(),
         cwd: cwd.clone(),
         shell: String::new(),
@@ -1191,14 +1237,71 @@ fn ensure_terminal(state: &mut State, app: &MainWindow) -> Result<String, String
         .terminal_start(&spec)
         .map_err(|error| error.to_string())?;
     let terminal_id = snapshot.terminal_id.clone();
-    state.terminal = Some(TerminalSession {
+    let (input, receiver) = std::sync::mpsc::sync_channel(128);
+    let desktop = state.desktop.clone();
+    let worker_session = session_id.clone();
+    let worker_terminal = terminal_id.clone();
+    std::thread::spawn(move || {
+        terminal_input_worker(desktop, worker_session, worker_terminal, receiver)
+    });
+    let session = TerminalSession {
         terminal_id: terminal_id.clone(),
         session_id,
-        workspace_id,
-        workspace_root: cwd,
+        workspace_id: workspace_id.clone(),
+        workspace_root: cwd.clone(),
         last_seq: 0,
-    });
+        input,
+    };
+    let workspace = state
+        .terminals
+        .entry(session.workspace_id.clone())
+        .or_insert_with(|| WorkspaceTerminal {
+            session: None,
+            workspace_name: workspace_name.clone(),
+            workspace_root: cwd.clone(),
+            grid: terminal_grid::TerminalGrid::new(24, 80),
+            status: String::new(),
+            error: false,
+            loss_marked: false,
+            restored: false,
+        });
+    workspace.workspace_name = workspace_name;
+    workspace.workspace_root = cwd.clone();
+    workspace.session = Some(session);
+    workspace.status = "启动中…".into();
+    workspace.error = false;
+    if !workspace.restored {
+        workspace.restored = true;
+        let raw = state
+            .desktop
+            .terminal_transcript(&format!("terminal:{}", workspace_id));
+        if !raw.is_empty() {
+            let mut from = raw.len().saturating_sub(MAX_TERMINAL_REPLAY_BYTES);
+            while from < raw.len() && !raw.is_char_boundary(from) {
+                from += 1;
+            }
+            from += raw[from..].find('\n').map_or(0, |offset| offset + 1);
+            workspace.grid.feed(&raw.as_bytes()[from..]);
+        }
+    }
+    state.terminal_workspace = Some(workspace_id);
     Ok(terminal_id)
+}
+
+fn terminal_input_worker(
+    desktop: Arc<NativeDesktop>,
+    session_id: String,
+    terminal_id: String,
+    receiver: std::sync::mpsc::Receiver<Vec<u8>>,
+) {
+    while let Ok(bytes) = receiver.recv() {
+        if desktop
+            .terminal_send(&session_id, &terminal_id, &bytes)
+            .is_err()
+        {
+            break;
+        }
+    }
 }
 
 /// Shown once per session when the runtime dropped buffered head before the
@@ -1242,30 +1345,43 @@ fn terminal_spans(grid: &mut terminal_grid::TerminalGrid) -> Vec<TermSpan> {
 /// A geometry change is also reported to the shell: a console backend reflows
 /// its lines to it, so the panel and the program agree on one width.
 fn paint_terminal(app: &MainWindow, host: &mut State) {
-    let rows = app.get_terminal_measured_rows() as u16;
-    let cols = app.get_terminal_measured_cols() as u16;
-    let resized = rows > 0 && cols > 0 && host.grid.size() != (rows, cols);
+    let Some(workspace_id) = host.terminal_workspace.clone() else {
+        return;
+    };
+    let Some(window) = host.terminal_window.as_ref() else {
+        return;
+    };
+    let rows = window.get_measured_rows().clamp(3, u16::MAX as i32) as u16;
+    let cols = window.get_measured_cols().clamp(20, u16::MAX as i32) as u16;
+    let Some(workspace) = host.terminals.get_mut(&workspace_id) else {
+        return;
+    };
+    let resized = rows > 0 && cols > 0 && workspace.grid.size() != (rows, cols);
     if resized {
-        host.grid.set_size(rows, cols);
+        workspace.grid.set_size(rows, cols);
     }
-    app.set_terminal_spans(ModelRc::from(Rc::new(VecModel::from(terminal_spans(
-        &mut host.grid,
+    window.set_spans(ModelRc::from(Rc::new(VecModel::from(terminal_spans(
+        &mut workspace.grid,
     )))));
-    let (rows, cols) = host.grid.size();
-    app.set_terminal_rows(rows.into());
-    app.set_terminal_cols(cols.into());
-    app.set_terminal_view_offset(host.grid.view_offset() as i32);
-    app.set_terminal_history_depth(host.grid.history_depth() as i32);
-    match host.grid.caret() {
+    let (rows, cols) = workspace.grid.size();
+    window.set_rows(rows.into());
+    window.set_cols(cols.into());
+    window.set_view_offset(workspace.grid.view_offset() as i32);
+    window.set_history_depth(workspace.grid.history_depth() as i32);
+    window.set_status(workspace.status.as_str().into());
+    window.set_error(workspace.error);
+    window.set_workspace_name(workspace.workspace_name.as_str().into());
+    window.set_workspace_root(workspace.workspace_root.as_str().into());
+    match workspace.grid.caret() {
         Some((row, col)) => {
-            app.set_terminal_caret_visible(true);
-            app.set_terminal_caret_row(row);
-            app.set_terminal_caret_col(col);
+            window.set_caret_visible(true);
+            window.set_caret_row(row);
+            window.set_caret_col(col);
         }
-        None => app.set_terminal_caret_visible(false),
+        None => window.set_caret_visible(false),
     }
     if resized {
-        if let Some(session) = host.terminal.as_ref() {
+        if let Some(session) = workspace.session.as_ref() {
             let _ = host.desktop.terminal_resize(
                 &session.session_id,
                 &session.terminal_id,
@@ -1281,29 +1397,6 @@ fn paint_terminal(app: &MainWindow, host: &mut State) {
 /// seconds producing lines that can never be seen.
 const MAX_TERMINAL_REPLAY_BYTES: usize = 128 * 1024;
 
-/// Replay the durable transcript of earlier shell runs into the screen model.
-/// Raw bytes go back through the parser, so the restored viewport carries the
-/// same cursor addressing and colours as the session that wrote them.
-fn restore_terminal_transcript(state: &Rc<RefCell<State>>, app: &MainWindow) {
-    let mut host = state.borrow_mut();
-    if host.terminal_restored {
-        return;
-    }
-    host.terminal_restored = true;
-    let raw = host.desktop.terminal_transcript(TERMINAL_SESSION_ID);
-    if raw.is_empty() {
-        return;
-    }
-    // Start on a line boundary: a cut mid-sequence would feed half an escape.
-    let mut from = raw.len().saturating_sub(MAX_TERMINAL_REPLAY_BYTES);
-    while from < raw.len() && !raw.is_char_boundary(from) {
-        from += 1;
-    }
-    from += raw[from..].find('\n').map_or(0, |offset| offset + 1);
-    host.grid.feed(&raw.as_bytes()[from..]);
-    paint_terminal(app, &mut host);
-}
-
 fn bind_terminal(app: &MainWindow, state: Rc<RefCell<State>>) {
     let callback_state = Rc::downgrade(&state);
     let weak = app.as_weak();
@@ -1312,34 +1405,70 @@ fn bind_terminal(app: &MainWindow, state: Rc<RefCell<State>>) {
             return;
         };
         if !active {
-            // Leaving terminal mode only hides the panel; the shell stays warm
-            // so re-entry is instant and buffered output is not lost.
+            if let Some(window) = state.borrow().terminal_window.as_ref() {
+                let _ = window.hide();
+            }
             return;
         }
-        restore_terminal_transcript(&state, &app);
-        let started = ensure_terminal(&mut state.borrow_mut());
+        let started = ensure_terminal(&mut state.borrow_mut(), &app);
         match started {
             Ok(_) => {
-                state.borrow_mut().terminal_loss_marked = false;
-                app.set_terminal_error(false);
-                app.set_terminal_status("启动中…".into());
+                let mut host = state.borrow_mut();
+                if let Some(window) = host.terminal_window.clone() {
+                    paint_terminal(&app, &mut host);
+                    let _ = window.show();
+                }
             }
             Err(error) => app.set_status(format!("无法启动终端：{error}").into()),
         }
-        paint_terminal(&app, &mut state.borrow_mut());
     });
-    // Interrupt is a Ctrl-C when the shell owns a console, so the session
-    // survives and keeps its handle. A piped shell has no signal path and is
-    // killed; the poll then observes the exit and drops the handle, so the next
-    // command lazily starts a fresh shell either way.
+    let window = state.borrow().terminal_window.clone();
+    let Some(window) = window else {
+        bind_terminal_poll(app, state);
+        return;
+    };
+    let callback_state = Rc::downgrade(&state);
+    let weak_app = app.as_weak();
+    window.window().on_close_requested(move || {
+        if let (Some(app), Some(state)) = (weak_app.upgrade(), callback_state.upgrade()) {
+            app.set_terminal_mode(false);
+            if let Some(window) = state.borrow().terminal_window.as_ref() {
+                let _ = window.hide();
+            }
+        }
+        slint::CloseRequestResponse::HideWindow
+    });
     let callback_state = Rc::downgrade(&state);
     let weak = app.as_weak();
-    app.on_terminal_interrupt(move || {
+    window.on_key_input(move |text| {
+        let (Some(app), Some(state)) = (weak.upgrade(), callback_state.upgrade()) else {
+            return;
+        };
+        enqueue_terminal_input(&app, &state, text.as_bytes());
+    });
+    let callback_state = Rc::downgrade(&state);
+    let weak = app.as_weak();
+    window.on_pasted(move |text| {
+        let (Some(app), Some(state)) = (weak.upgrade(), callback_state.upgrade()) else {
+            return;
+        };
+        enqueue_terminal_input(&app, &state, text.as_bytes());
+    });
+    let callback_state = Rc::downgrade(&state);
+    let weak = app.as_weak();
+    window.on_interrupt(move || {
         let (Some(app), Some(state)) = (weak.upgrade(), callback_state.upgrade()) else {
             return;
         };
         let mut host = state.borrow_mut();
-        let Some(session) = host.terminal.as_ref() else {
+        let Some(workspace_id) = host.terminal_workspace.clone() else {
+            return;
+        };
+        let Some(session) = host
+            .terminals
+            .get(&workspace_id)
+            .and_then(|item| item.session.as_ref())
+        else {
             return;
         };
         if let Err(error) = host
@@ -1349,58 +1478,119 @@ fn bind_terminal(app: &MainWindow, state: Rc<RefCell<State>>) {
             app.set_status(format!("终端中断失败：{error}").into());
             return;
         }
-        host.terminal_status = "已中断".into();
-        app.set_terminal_error(false);
-        app.set_terminal_status("已中断".into());
-    });
-    // Clearing only resets the screen model, never the shell.
-    let callback_state = Rc::downgrade(&state);
-    let weak = app.as_weak();
-    app.on_terminal_clear(move || {
-        let (Some(app), Some(state)) = (weak.upgrade(), callback_state.upgrade()) else {
-            return;
-        };
-        let mut host = state.borrow_mut();
-        host.grid.reset();
-        host.terminal_loss_marked = false;
-        paint_terminal(&app, &mut host);
-    });
-    // The viewport belongs to the screen model, so the panel only reports what
-    // the user asked for and never keeps a scroll position of its own.
-    let callback_state = Rc::downgrade(&state);
-    let weak = app.as_weak();
-    app.on_terminal_scrolled(move |delta| {
-        let (Some(app), Some(state)) = (weak.upgrade(), callback_state.upgrade()) else {
-            return;
-        };
-        let mut host = state.borrow_mut();
-        host.grid.scroll_by(delta);
-        paint_terminal(&app, &mut host);
-    });
-    let callback_state = Rc::downgrade(&state);
-    let weak = app.as_weak();
-    app.on_terminal_scroll_to(move |row| {
-        let (Some(app), Some(state)) = (weak.upgrade(), callback_state.upgrade()) else {
-            return;
-        };
-        let mut host = state.borrow_mut();
-        host.grid.scroll_to_row(row.max(0) as usize);
-        paint_terminal(&app, &mut host);
-    });
-    // A resize changes the cell box, so the screen model is re-laid out and the
-    // shell told, even when nothing is printing.
-    let callback_state = Rc::downgrade(&state);
-    let weak = app.as_weak();
-    app.on_terminal_geometry_changed(move || {
-        let (Some(app), Some(state)) = (weak.upgrade(), callback_state.upgrade()) else {
-            return;
-        };
-        if !app.get_terminal_mode() {
-            return;
+        if let Some(workspace) = host.terminals.get_mut(&workspace_id) {
+            workspace.status = "已中断".into();
+            workspace.error = false;
         }
+        paint_terminal(&app, &mut host);
+    });
+    let callback_state = Rc::downgrade(&state);
+    let weak = app.as_weak();
+    window.on_clear(move || {
+        let (Some(app), Some(state)) = (weak.upgrade(), callback_state.upgrade()) else {
+            return;
+        };
+        let mut host = state.borrow_mut();
+        let Some(workspace_id) = host.terminal_workspace.clone() else {
+            return;
+        };
+        let Some(workspace) = host.terminals.get_mut(&workspace_id) else {
+            return;
+        };
+        workspace.grid.reset();
+        workspace.loss_marked = false;
+        paint_terminal(&app, &mut host);
+    });
+    let callback_state = Rc::downgrade(&state);
+    let weak = app.as_weak();
+    window.on_scrolled(move |delta| {
+        let (Some(app), Some(state)) = (weak.upgrade(), callback_state.upgrade()) else {
+            return;
+        };
+        let mut host = state.borrow_mut();
+        let Some(workspace_id) = host.terminal_workspace.clone() else {
+            return;
+        };
+        let Some(workspace) = host.terminals.get_mut(&workspace_id) else {
+            return;
+        };
+        workspace.grid.scroll_by(delta);
+        paint_terminal(&app, &mut host);
+    });
+    let callback_state = Rc::downgrade(&state);
+    let weak = app.as_weak();
+    window.on_scroll_to(move |row| {
+        let (Some(app), Some(state)) = (weak.upgrade(), callback_state.upgrade()) else {
+            return;
+        };
+        let mut host = state.borrow_mut();
+        let Some(workspace_id) = host.terminal_workspace.clone() else {
+            return;
+        };
+        let Some(workspace) = host.terminals.get_mut(&workspace_id) else {
+            return;
+        };
+        workspace.grid.scroll_to_row(row.max(0) as usize);
+        paint_terminal(&app, &mut host);
+    });
+    let callback_state = Rc::downgrade(&state);
+    let weak = app.as_weak();
+    window.on_geometry_changed(move || {
+        let (Some(app), Some(state)) = (weak.upgrade(), callback_state.upgrade()) else {
+            return;
+        };
         paint_terminal(&app, &mut state.borrow_mut());
     });
+    let callback_state = Rc::downgrade(&state);
+    let weak = app.as_weak();
+    let weak_terminal = window.as_weak();
+    window.on_exit_requested(move || {
+        let (Some(app), Some(state)) = (weak.upgrade(), callback_state.upgrade()) else {
+            return;
+        };
+        let mut host = state.borrow_mut();
+        if let Some(workspace_id) = host.terminal_workspace.clone() {
+            let session = host
+                .terminals
+                .get_mut(&workspace_id)
+                .and_then(|workspace| workspace.session.take());
+            if let Some(session) = session {
+                let _ = host
+                    .desktop
+                    .terminal_close(&session.session_id, &session.terminal_id);
+            }
+        }
+        if let Some(window) = weak_terminal.upgrade() {
+            let _ = window.hide();
+        }
+        app.set_terminal_mode(false);
+    });
     bind_terminal_poll(app, state);
+}
+
+fn enqueue_terminal_input(app: &MainWindow, state: &Rc<RefCell<State>>, input: &[u8]) {
+    if input.is_empty() {
+        return;
+    }
+    const MAX_INPUT_BYTES: usize = 64 * 1024;
+    if input.len() > MAX_INPUT_BYTES {
+        app.set_status("终端粘贴内容过大，请分段输入".into());
+        return;
+    }
+    let host = state.borrow();
+    let Some(workspace_id) = host.terminal_workspace.as_ref() else {
+        return;
+    };
+    let Some(session) = host
+        .terminals
+        .get(workspace_id)
+        .and_then(|item| item.session.as_ref())
+    else {
+        return;
+    };
+    if session.input.try_send(input.to_vec()).is_err() {
+        app.set_status("终端输入队列已满，请稍候".into());
+    }
 }
 
 fn describe_terminal_status(frame: &wunder_desktop::NativeTerminalFrame) -> String {
@@ -1410,6 +1600,7 @@ fn describe_terminal_status(frame: &wunder_desktop::NativeTerminalFrame) -> Stri
         // screen, so colours, reflow and Ctrl-C work. Piped output is the
         // fallback and needs no announcement.
         "running" if frame.backend == "console" => "运行中 · 控制台".to_string(),
+        "running" if frame.backend == "pty" => "运行中 · PTY".to_string(),
         "running" => "运行中".to_string(),
         "failed" => {
             let error = frame.error.as_deref().unwrap_or("未知原因");
@@ -1438,7 +1629,14 @@ fn bind_terminal_poll(app: &MainWindow, state: Rc<RefCell<State>>) {
                 return;
             };
             let mut state = state.borrow_mut();
-            let Some(session) = state.terminal.as_ref() else {
+            let Some(workspace_id) = state.terminal_workspace.clone() else {
+                return;
+            };
+            let Some(session) = state
+                .terminals
+                .get(&workspace_id)
+                .and_then(|item| item.session.as_ref())
+            else {
                 return;
             };
             let session_id = session.session_id.clone();
@@ -1450,40 +1648,52 @@ fn bind_terminal_poll(app: &MainWindow, state: Rc<RefCell<State>>) {
             {
                 Ok(frame) => {
                     if !frame.text.is_empty() {
-                        if frame.truncated && !state.terminal_loss_marked {
+                        let loss_marked = state
+                            .terminals
+                            .get(&workspace_id)
+                            .map(|item| item.loss_marked)
+                            .unwrap_or(false);
+                        if frame.truncated && !loss_marked {
                             // The runtime dropped buffered head before we
                             // consumed; mark the loss once per session.
-                            state.terminal_loss_marked = true;
-                            state.grid.feed(TRUNCATION_MARK.as_bytes());
+                            if let Some(workspace) = state.terminals.get_mut(&workspace_id) {
+                                workspace.loss_marked = true;
+                                workspace.grid.feed(TRUNCATION_MARK.as_bytes());
+                            }
                         }
-                        state.grid.feed(frame.text.as_bytes());
+                        if let Some(workspace) = state.terminals.get_mut(&workspace_id) {
+                            workspace.grid.feed(frame.text.as_bytes());
+                        }
                         paint_terminal(&app, &mut state);
                     }
                     let status = describe_terminal_status(&frame);
-                    if state.terminal_status != status {
-                        state.terminal_status = status.clone();
-                        app.set_terminal_status(status.into());
+                    if let Some(workspace) = state.terminals.get_mut(&workspace_id) {
+                        workspace.status = status;
+                        workspace.error = frame.status == "failed"
+                            || (frame.status == "exited"
+                                && frame.exit_code.map(|code| code != 0).unwrap_or(false));
                     }
-                    let is_terminal_error = frame.status == "failed"
-                        || (frame.status == "exited"
-                            && frame.exit_code.map(|code| code != 0).unwrap_or(false));
-                    if state.terminal_error != is_terminal_error {
-                        state.terminal_error = is_terminal_error;
-                        app.set_terminal_error(is_terminal_error);
-                    }
-                    if let Some(session) = state.terminal.as_mut() {
+                    if let Some(session) = state
+                        .terminals
+                        .get_mut(&workspace_id)
+                        .and_then(|item| item.session.as_mut())
+                    {
                         session.last_seq = frame.seq;
                     }
                     if frame.status == "exited" || frame.status == "failed" {
                         // Drop the handle so the next command or re-entry
                         // starts a fresh shell automatically.
-                        state.terminal = None;
+                        if let Some(workspace) = state.terminals.get_mut(&workspace_id) {
+                            workspace.session = None;
+                        }
                     }
                 }
                 Err(_) => {
                     // The session vanished underneath us (closed or pruned);
                     // drop the local handle so a fresh shell can be started.
-                    state.terminal = None;
+                    if let Some(workspace) = state.terminals.get_mut(&workspace_id) {
+                        workspace.session = None;
+                    }
                 }
             }
         },
@@ -1505,28 +1715,7 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
             if content.is_empty() {
                 return;
             }
-            let command = content.strip_prefix("//").unwrap_or(&content);
-            let mut input = command.as_bytes().to_vec();
-            input.extend_from_slice(if cfg!(windows) { b"\r\n" } else { b"\n" });
-            let terminal_id = match ensure_terminal(&mut state.borrow_mut()) {
-                Ok(id) => id,
-                Err(error) => {
-                    app.set_status(format!("无法启动终端：{error}").into());
-                    return;
-                }
-            };
-            let result =
-                state
-                    .borrow()
-                    .desktop
-                    .terminal_send(TERMINAL_SESSION_ID, &terminal_id, &input);
-            if let Err(error) = result {
-                app.set_status(format!("终端发送失败：{error}").into());
-                return;
-            }
-            // A new command belongs at the bottom of the screen, whatever the
-            // user was reading before pressing send.
-            state.borrow_mut().grid.scroll_to_bottom();
+            app.set_status("终端输入请在独立终端窗口中进行".into());
             app.set_draft("".into());
             return;
         }
@@ -1537,12 +1726,16 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
         // button is how a broken runtime used to hide from the user. A running
         // turn is no longer one of them — the engine parks this submission in
         // the thread's queue and the strip above the input shows it.
-        if !state.borrow().observation.is_ready()
+        let waiting_for_history = {
+            let state = state.borrow();
+            !state.observation.is_ready() && state.active.is_none()
+        };
+        if waiting_for_history
             || app.get_session_loading()
             || app.get_chat_loading()
             || app.get_creating_session()
         {
-            if !state.borrow().observation.is_ready() {
+            if waiting_for_history {
                 app.set_status("运行时尚未就绪，请稍候再试".into());
             } else {
                 app.set_status("正在加载会话，请稍候再试".into());
@@ -1654,7 +1847,7 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
         {
             let mut live = timeline.borrow_mut();
             live.set_highlight(true);
-            live.begin_turn(&session, &display_content);
+            live.begin_turn(&client_message_id, &display_content);
             publish_timeline(&app, &live);
         }
         app.set_draft("".into());
@@ -1936,7 +2129,7 @@ fn withdraw_queue_turn(
             st.observation.publish(app, &timeline);
         }
     }
-    if !client_id.is_empty() {
+    if content.is_some() && !client_id.is_empty() {
         let mut st = state.borrow_mut();
         if let Some(index) = st
             .parked
@@ -2370,18 +2563,6 @@ fn start_timer(app: &MainWindow, state: Rc<RefCell<State>>) {
                     }
                 }
             }
-            // An entry that already buffered events waited for exactly this:
-            // the live slot is free now, so the oldest one takes it.
-            if promote.is_none() && state.active.is_none() {
-                if state
-                    .parked
-                    .front()
-                    .is_some_and(|entry| !entry.prelude.is_empty())
-                {
-                    promote = state.parked.pop_front();
-                    parked_moved = true;
-                }
-            }
             let mut pending: VecDeque<NativeChatEvent> = VecDeque::new();
             if let Some(entry) = promote {
                 let session = entry.session.clone();
@@ -2390,7 +2571,7 @@ fn start_timer(app: &MainWindow, state: Rc<RefCell<State>>) {
                 {
                     let mut live = timeline.borrow_mut();
                     live.set_highlight(true);
-                    live.begin_turn(&session, &content);
+                    live.begin_turn(&entry.client_message_id, &content);
                     publish_timeline(&app, &live);
                 }
                 let mut output = TurnOutput::new(session.clone(), timeline.clone());
@@ -2415,11 +2596,12 @@ fn start_timer(app: &MainWindow, state: Rc<RefCell<State>>) {
                 // Promotion is the point at which the request owns the live
                 // slot. Hide its queue card immediately; the next refresh will
                 // still use the engine snapshot for every other row.
-                if let Some(active) = state.active.as_ref() {
-                    queue::without_client_id(
-                        &mut state.queue_cache,
-                        active.client_message_id.as_str(),
-                    );
+                let promoted_client_id = state
+                    .active
+                    .as_ref()
+                    .map(|active| active.client_message_id.clone());
+                if let Some(client_message_id) = promoted_client_id {
+                    queue::without_client_id(&mut state.queue_cache, client_message_id.as_str());
                     queue::publish_rows(&app, &state.queue_cache);
                 }
             }
@@ -2633,7 +2815,9 @@ fn apply_event(
         return Ok(false);
     }
     let round = data["model_round"].as_i64().unwrap_or(active.round);
-    if round < active.round && matches!(kind, "llm_output_delta" | "llm_output" | "delta") {
+    if round < active.round
+        && matches!(kind, "llm_output_delta" | "llm_output" | "delta" | "reasoning" | "reasoning_delta")
+    {
         return Ok(false);
     }
     // A new model round ends the previous round's segments. Some providers
@@ -3050,6 +3234,25 @@ mod turn_tests {
     use super::*;
     use serde_json::json;
 
+    #[test]
+    fn a_late_reasoning_frame_cannot_reopen_an_older_round() {
+        let timeline = Rc::new(RefCell::new(crate::timeline::Timeline::new()));
+        let mut output = TurnOutput::new("fixture-session".into(), timeline.clone());
+        let mut live = timeline.borrow_mut();
+        live.begin_turn("fixture-root", "Fixture input");
+        for (round, text) in [(1, "First thought"), (2, "Second thought"), (1, " stale") ] {
+            apply_event(&mut output, &mut live, &json!({
+                "event":"reasoning_delta","data":{"model_round":round,"delta":text}
+            })).unwrap();
+        }
+        live.flush();
+        let reasons: Vec<_> = live.model().iter()
+            .filter(|row| row.kind == crate::timeline::KIND_REASON).collect();
+        assert_eq!(reasons.len(), 2);
+        assert_eq!(reasons[0].detail, "First thought");
+        assert_eq!(reasons[1].detail, "Second thought");
+    }
+
     /// The statistics footer must land on the body block that ends the turn,
     /// both when the runtime rides it on the final answer and when it only
     /// arrives with the terminal event.
@@ -3216,8 +3419,8 @@ mod turn_tests {
         let group = &rows[2];
         assert_eq!(group.text, "执行工具 1 次");
         assert!(
-            !group.open && group.group_idx == 0,
-            "a lone batch reads as one folded handle"
+            !group.visible && group.group_open && group.group_idx == 0,
+            "ownership batches have no second visible fold"
         );
         assert_eq!(rows[3].tool_name, "已思考");
         assert_eq!(rows[3].status_kind, crate::timeline::STATUS_DONE);
@@ -3227,14 +3430,13 @@ mod turn_tests {
         assert_eq!(rows[4].status_kind, crate::timeline::STATUS_DONE);
         assert_eq!(rows[4].payload, 4);
         assert_eq!(rows[5].text, "Fixture answer");
-        // One batch is not yet a process worth a second shell: the bar stays
-        // invisible while the turn has only its bubble and one batch.
+        // The process is the sole handle from the first thought onward.
         assert_eq!(
             rows[1].text,
             crate::timeline_text::process_label(2),
             "the bar counts the steps it already holds",
         );
-        assert!(!rows[1].visible, "one batch needs no process bar");
+        assert!(rows[1].visible, "one batch uses the process bar");
         assert_eq!(rows[5].process_idx, crate::timeline::NO_PROCESS);
         // A second round freezes the first block and opens a new batch.
         drop(live);
@@ -3275,8 +3477,9 @@ mod turn_tests {
         for row in rows.iter().skip(2).take(6) {
             assert_eq!(row.process_idx, rows[1].process_idx, "step {row:?} escaped");
             assert!(
-                !row.process_open && !row.group_open,
-                "the process ships folded"
+                !row.process_open
+                    && (row.group_idx == crate::timeline::NO_GROUP || row.group_open),
+                "the process ships folded without a second batch gate"
             );
         }
         assert_eq!(rows[8].process_idx, crate::timeline::NO_PROCESS);

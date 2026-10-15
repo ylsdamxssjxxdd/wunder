@@ -39,9 +39,10 @@
         type="button"
         :class="{ 'tt-toggle-active': showTurns }"
         :aria-pressed="showTurns"
+        :title="t(showTurns ? 'messenger.trajectory.expandTurns' : 'messenger.trajectory.collapseTurns')"
         @click="toggleTurns"
       >
-        <span class="tt-toggle-glyph">⊞</span>
+        <span class="tt-toggle-glyph">{{ showTurns ? '⊞' : '⊟' }}</span>
         <span>{{ t('messenger.trajectory.turns') }}</span>
       </button>
       <button
@@ -49,9 +50,10 @@
         type="button"
         :class="{ 'tt-toggle-active': showCalls }"
         :aria-pressed="showCalls"
+        :title="t(showCalls ? 'messenger.trajectory.expandCalls' : 'messenger.trajectory.collapseCalls')"
         @click="toggleCalls"
       >
-        <span class="tt-toggle-glyph">⊟</span>
+        <span class="tt-toggle-glyph">{{ showCalls ? '⊞' : '⊟' }}</span>
         <span>{{ t('messenger.trajectory.calls') }}</span>
       </button>
       <div class="tt-toolbar-spacer" />
@@ -195,10 +197,15 @@
                 :key="row.key"
                 class="tt-row"
                 :class="rowClasses(row.record)"
-                :data-timeline-focus="focusAttr(row.record)"
-                :data-record-index="row.record.cell.index"
-                :data-record-id="row.record.cell.recordId"
-                @click="selectIndex(row.record.cell.index, { fromLedger: true })"
+                :data-timeline-focus="row.record.collapsedSummary ? undefined : focusAttr(row.record)"
+                :data-record-index="row.record.collapsedSummary ? undefined : row.record.cell.index"
+                :data-record-id="row.record.collapsedSummary ? undefined : row.record.cell.recordId"
+                :tabindex="0"
+                :role="row.record.collapsedSummary ? 'button' : undefined"
+                :aria-label="row.record.collapsedSummary ? row.record.collapsedSummary + ' · ' + t('messenger.trajectory.expand') : undefined"
+                @keydown.enter.self.prevent="onRowClick(row.record)"
+                @keydown.space.self.prevent="onRowClick(row.record)"
+                @click="onRowClick(row.record)"
                 @dblclick.stop="onRowDoubleClick(row.record)"
               >
                 <td class="tt-event-cell">
@@ -209,18 +216,24 @@
                     :style="{ left: `${requestDotFor(row.record)!.left}px` }"
                     :title="t('messenger.trajectory.requestLabel', { request: requestDotFor(row.record)!.request.number })"
                     @click.stop="selectIndex(requestDotFor(row.record)!.request.assistantIndex)"
+                    @dblclick.stop
                   >
                     <span class="tt-request-dot-label">
                       {{ t('messenger.trajectory.requestLabel', { request: requestDotFor(row.record)!.request.number }) }}
                     </span>
                   </button>
-                  <span v-if="row.record.turnStart && row.record.turn !== null" class="tt-turn-label">
+                  <button v-if="row.record.turnStart && row.record.turn !== null" class="tt-turn-label tt-turn-control"
+                    type="button" :disabled="!collapsibleTurnKeys.has(row.record.turn)"
+                    :aria-expanded="!collapsedTurns.has(row.record.turn)"
+                    :title="t(collapsedTurns.has(row.record.turn) ? 'messenger.trajectory.expandTurn' : 'messenger.trajectory.collapseTurn')"
+                    @click.stop="toggleTurn(row.record.turn)" @dblclick.stop>
+                    <span aria-hidden="true">{{ collapsedTurns.has(row.record.turn) ? '▸' : '▾' }}</span>
                     {{ t('messenger.trajectory.turnLabel', { turn: row.record.turn }) }}
-                  </span>
+                  </button>
                 </td>
                 <td class="tt-content-cell">
                   <template v-if="row.record.collapsedSummary">
-                    <div class="tt-collapsed-summary" :class="`tt-collapsed-${row.record.collapsedSummaryKind}`">
+                    <div class="tt-collapsed-summary" :class="`tt-collapsed-${row.record.collapsedSummaryKind}`" :title="row.record.collapsedSummary + ' · ' + t('messenger.trajectory.expand')">
                       {{ row.record.collapsedSummary }}
                     </div>
                   </template>
@@ -448,6 +461,8 @@ import {
   buildRequestNumbers,
   buildTrajectoryLayout,
   collapseTurnRecords,
+  buildFoldGroups,
+  trajectoryRecordId,
   deriveTimeline,
   extractUsage,
   filterRecords,
@@ -512,8 +527,6 @@ let loadAbort: AbortController | null = null
 
 const showDuration = ref(true)
 const showTime = ref(false)
-const showTurns = ref(false)
-const showCalls = ref(false)
 const searchQuery = ref('')
 
 const searchHits=shallowRef<any[]>([]),searchLoading=ref(false),searchError=ref(false),searchMore=ref(false),searchText=ref('')
@@ -573,28 +586,30 @@ const timelineMode = computed(() => {
 const turns = computed(() => buildTrajectoryLayout(rawTurns.value, modelT))
 const requests = computed(() => buildRequestNumbers(turns.value))
 const allRecords = computed(() => flattenRecords(turns.value))
-const filteredRecords = computed(() => allRecords.value)
-const turnKeys = computed(() => new Set(allRecords.value.map(record => record.turn)))
-const assistantKeys = computed(() => new Set(
-  allRecords.value
-    .filter(record => record.group.length > 0)
-    .map(record => requestIdentity(record.turn, record.group)),
-))
+const filteredRecords = computed(() => filterRecords(allRecords.value, searchQuery.value))
+const foldGroups = computed(() => buildFoldGroups(allRecords.value))
+const collapsibleTurnKeys = computed(() => new Set([...foldGroups.value.turns]
+  .filter(([, turn]) => turn.hidden > 0).map(([turn]) => turn)))
+const collapsibleAssistantKeys = computed(() => new Set(foldGroups.value.assistants.keys()))
+const showTurns = computed(() => collapsibleTurnKeys.value.size > 0
+  && [...collapsibleTurnKeys.value].every(turn => collapsedTurns.value.has(turn)))
+const showCalls = computed(() => collapsibleAssistantKeys.value.size > 0
+  && [...collapsibleAssistantKeys.value].every(key => collapsedAssistants.value.has(key)))
 function toggleTurns(): void {
-  const next = !showTurns.value
-  showTurns.value = next
-  collapsedTurns.value = next ? new Set(turnKeys.value) : new Set()
+  collapsedTurns.value = showTurns.value ? new Set() : new Set(collapsibleTurnKeys.value)
 }
 function toggleCalls(): void {
-  const next = !showCalls.value
-  showCalls.value = next
-  collapsedAssistants.value = next ? new Set(assistantKeys.value) : new Set()
+  collapsedAssistants.value = showCalls.value ? new Set() : new Set(collapsibleAssistantKeys.value)
 }
-const records = computed(() => collapseTurnRecords(
-  filteredRecords.value,
-  collapsedTurns.value,
-  collapsedAssistants.value,
-  modelT,
+function toggleTurn(turn: number | null): void {
+  if (turn === null || !collapsibleTurnKeys.value.has(turn)) return
+  const next = new Set(collapsedTurns.value)
+  if (next.has(turn)) next.delete(turn)
+  else next.add(turn)
+  collapsedTurns.value = next
+}
+const records = computed(() => searchQuery.value.trim() ? filteredRecords.value : collapseTurnRecords(
+  filteredRecords.value, collapsedTurns.value, collapsedAssistants.value, modelT,
 ))
 const layout = computed(() => groupVirtualRows(records.value))
 const rows = computed(() => layout.value.rows)
@@ -608,10 +623,29 @@ const rowPrefix = computed<number[]>(() => {
   return prefix
 })
 
+watch(rows, (nextRows, previousRows) => {
+  const ledger = ledgerEl.value
+  if (!ledger || loading.value || olderLoading.value || previousRows.length === 0) return
+  const top = ledger.scrollTop
+  let offset = 0
+  let anchor = previousRows[0]!.record
+  for (const row of previousRows) {
+    anchor = row.record
+    if (offset + row.height > top) break
+    offset += row.height
+  }
+  let target = nextRows.findIndex(row => !row.record.collapsedSummary && row.record.cell.recordId === anchor.cell.recordId)
+  if (target < 0) target = nextRows.findIndex(row => row.record.turn === anchor.turn)
+  const nextTop = target < 0 ? 0 : rowPrefix.value[target]! + top - offset
+  scrollTop.value = Math.max(0, Math.min(nextTop, ledgerHeight.value - ledgerViewport.value))
+  void nextTick(() => { if (ledgerEl.value) ledgerEl.value.scrollTop = scrollTop.value })
+})
+
 const windowRange = computed(() => {
   if (!virtual.value) return { start: 0, end: rows.value.length }
-  const top = Math.max(0, scrollTop.value - OVERSCAN_PX)
-  const bottom = scrollTop.value + ledgerViewport.value + OVERSCAN_PX
+  const viewportTop = Math.min(scrollTop.value, Math.max(0, ledgerHeight.value - ledgerViewport.value))
+  const top = Math.max(0, viewportTop - OVERSCAN_PX)
+  const bottom = viewportTop + ledgerViewport.value + OVERSCAN_PX
   let start = 0
   while (start < rows.value.length && rowPrefix.value[start + 1]! <= top) start += 1
   let end = start
@@ -969,7 +1003,7 @@ async function load(cursor: number | null = null, direction: 'older' | 'newer' |
     // Auxiliary state must have the same lifetime as the bounded ledger.
     const rounds = new Set(summaryRows.value.map(row => row.user_round))
     collapsedTurns.value = new Set([...collapsedTurns.value].filter(round => rounds.has(round)))
-    const groups = new Set(allRecords.value.filter(record => record.group).map(record => requestIdentity(record.turn, record.group!)))
+    const groups = collapsibleAssistantKeys.value
     collapsedAssistants.value = new Set([...collapsedAssistants.value].filter(key => groups.has(key)))
     selectedIndex.value = direction && selectedId
       ? allRecords.value.find(record => record.cell.recordId === selectedId)?.cell.index ?? null : null
@@ -1096,7 +1130,7 @@ watch(trackEl, (el) => {
   trackResizeObserver.observe(el)
 })
 
-watch(()=>route.query.session,()=>{detailRootTurn.value=null;summaryRows.value=[];rawTurns.value=[];displayPage.value=null;details.value={};searchQuery.value='';searchAbort?.abort();void load()})
+watch(()=>route.query.session,()=>{detailRootTurn.value=null;summaryRows.value=[];rawTurns.value=[];displayPage.value=null;details.value={};searchQuery.value='';searchAbort?.abort();collapsedTurns.value = new Set();collapsedAssistants.value = new Set();void load()})
 
 onMounted(() => {
   void load()
@@ -1136,12 +1170,12 @@ function onLedgerScroll(): void {
 
 function rowClasses(record: TableRecord): Record<string, boolean> {
   return {
-    'tt-row-selected': selectedCell.value?.index === record.cell.index,
+    'tt-row-selected': !record.collapsedSummary && selectedCell.value?.index === record.cell.index,
     'tt-row-turn-start': record.turnStart,
     'tt-row-turn-end': record.turnEnd,
     'tt-row-summary': Boolean(record.collapsedSummary),
     [`tt-row-${record.cell.kind}`]: true,
-    'tt-row-error': record.cell.isError === true,
+    'tt-row-error': !record.collapsedSummary && record.cell.isError === true,
   }
 }
 
@@ -1182,39 +1216,24 @@ const dotsByAssistantIndex = computed(() => {
 })
 
 function requestDotFor(record: TableRecord): RequestDot | null {
-  return dotsByAssistantIndex.value.get(record.cell.index) ?? null
+  return record.collapsedSummary ? null : dotsByAssistantIndex.value.get(record.cell.index) ?? null
 }
 
 function onRowDoubleClick(record: TableRecord): void {
   if (record.collapsedSummary) return
-  if (record.turnStart) {
-    if (record.turn !== null && turnRootByRound.has(Number(record.turn))) { void loadTurnDetail(Number(record.turn)); return }
-    const next = new Set(collapsedTurns.value)
-    if (next.has(record.turn)) next.delete(record.turn)
-    else next.add(record.turn)
-    collapsedTurns.value = next
-    return
-  }
-  if (record.groupStart && record.group) {
-    const key = requestIdentity(record.turn, record.group)
+  if (collapsedTurns.value.has(record.turn)) { toggleTurn(record.turn); return }
+  const key = trajectoryRecordId(record.cell)
+  if (collapsibleAssistantKeys.value.has(key)) {
     const next = new Set(collapsedAssistants.value)
     if (next.has(key)) next.delete(key)
     else next.add(key)
     collapsedAssistants.value = next
-  }
+  } else if (record.turnStart) toggleTurn(record.turn)
 }
 
-watch([allRecords, showTurns, showCalls], () => {
-  if (showTurns.value) {
-    collapsedTurns.value = new Set([...collapsedTurns.value].filter(turn => turnKeys.value.has(turn)))
-  } else {
-    collapsedTurns.value = new Set()
-  }
-  if (showCalls.value) {
-    collapsedAssistants.value = new Set([...collapsedAssistants.value].filter(key => assistantKeys.value.has(key)))
-  } else {
-    collapsedAssistants.value = new Set()
-  }
+watch(allRecords, () => {
+  collapsedTurns.value = new Set([...collapsedTurns.value].filter(turn => turn !== null && collapsibleTurnKeys.value.has(turn)))
+  collapsedAssistants.value = new Set([...collapsedAssistants.value].filter(key => collapsibleAssistantKeys.value.has(key)))
 })
 
 /* ---------------------------------------------------------------- */
@@ -1235,23 +1254,19 @@ function selectIndex(index: number, options: { fromLedger?: boolean } = {}): voi
 function revealRecord(index: number): void {
   const record = allRecords.value.find(entry => entry.cell.index === index)
   if (!record) return
-  const assistantKey = requestIdentity(record.turn, record.group)
+  const assistantKey = foldGroups.value.toolOwners.get(index)
   let changed = false
-  if (collapsedTurns.value.has(record.turn) && !record.turnStart) {
+  if (collapsedTurns.value.has(record.turn)) {
     const next = new Set(collapsedTurns.value)
     next.delete(record.turn)
     collapsedTurns.value = next
     changed = true
   }
-  if (collapsedAssistants.value.has(assistantKey)) {
-    const firstOfGroup = allRecords.value.find(entry =>
-      entry.turn === record.turn && entry.group === record.group)
-    if (firstOfGroup?.cell.index !== index) {
-      const next = new Set(collapsedAssistants.value)
-      next.delete(assistantKey)
-      collapsedAssistants.value = next
-      changed = true
-    }
+  if (assistantKey && collapsedAssistants.value.has(assistantKey)) {
+    const next = new Set(collapsedAssistants.value)
+    next.delete(assistantKey)
+    collapsedAssistants.value = next
+    changed = true
   }
   if (changed) {
     void nextTick(() => scrollLedgerToIndex(index))
@@ -1836,6 +1851,22 @@ function spanStyle(span: { model: TimelineSpan; left: number; width: number }): 
     style.pointerEvents = 'auto'
   }
   return style
+}
+
+function onRowClick(record: TableRecord): void {
+  if (record.collapsedSummary) {
+    if (record.collapsedSummaryKind === 'turn' && record.turn !== null) {
+      const next = new Set(collapsedTurns.value)
+      next.delete(record.turn)
+      collapsedTurns.value = next
+    } else {
+      const next = new Set(collapsedAssistants.value)
+      next.delete(trajectoryRecordId(record.cell))
+      collapsedAssistants.value = next
+    }
+    return
+  }
+  selectIndex(record.cell.index, { fromLedger: true })
 }
 
 function overviewSpanTitle(span: { model: TimelineSpan }): string {

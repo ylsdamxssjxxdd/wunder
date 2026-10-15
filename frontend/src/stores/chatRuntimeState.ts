@@ -1876,6 +1876,12 @@ const collectCanonicalWorkspacePathHints = (
   data: Record<string, unknown>,
   payload: Record<string, unknown>
 ): string[] => {
+  const nested = (...keys: string[]) => keys.flatMap((key) => {
+    const value = data[key] ?? payload[key];
+    return value && typeof value === 'object' && !Array.isArray(value)
+      ? [value as Record<string, unknown>]
+      : [];
+  });
   const values = [
     data.path,
     data.file_path,
@@ -1886,9 +1892,34 @@ const collectCanonicalWorkspacePathHints = (
     payload.file_path,
     payload.filePath,
     payload.workspace_path,
-    payload.workspacePath
+    payload.workspacePath,
+    ...nested('args', 'meta').flatMap((source) => [
+      source.path,
+      source.file_path,
+      source.filePath,
+      source.workspace_path,
+      source.workspacePath,
+      source.relative_path,
+      source.relativePath,
+      source.target_path,
+      source.targetPath,
+      source.output_path,
+      source.outputPath
+    ])
   ];
-  for (const source of [data.paths, data.changed_paths, data.changedPaths, payload.paths, payload.changed_paths, payload.changedPaths]) {
+  for (const source of [
+    data.paths,
+    data.changed_paths,
+    data.changedPaths,
+    payload.paths,
+    payload.changed_paths,
+    payload.changedPaths,
+    ...nested('args', 'meta').flatMap((record) => [
+      record.paths,
+      record.changed_paths,
+      record.changedPaths
+    ])
+  ]) {
     if (Array.isArray(source)) {
       source.forEach((value) => values.push(value));
     }
@@ -1900,17 +1931,40 @@ const collectCanonicalWorkspacePathHints = (
   ));
 };
 
+const hasCanonicalWorkspaceMutation = (
+  payload: Record<string, unknown>,
+  data: Record<string, unknown>
+): boolean => {
+  const sources: Record<string, unknown>[] = [payload, data];
+  for (const source of [payload.meta, data.meta]) {
+    if (source && typeof source === 'object' && !Array.isArray(source)) {
+      sources.push(source as Record<string, unknown>);
+    }
+  }
+  return sources.some((source) => {
+    const changed = source.workspace_changed ?? source.workspaceChanged;
+    if (changed === true || String(changed ?? '').trim().toLowerCase() === 'true') return true;
+    const version = Number(source.workspace_version ?? source.workspaceVersion);
+    return Number.isFinite(version) && version > 0;
+  });
+};
+
 const applyWorkspaceUpdateCanonicalSideEffect = (
   payload: Record<string, unknown>,
   data: Record<string, unknown>
 ) => {
+  const metadata = [payload.meta, data.meta].find((value) =>
+    value && typeof value === 'object' && !Array.isArray(value)
+  ) as Record<string, unknown> | undefined;
   const changedPaths = collectCanonicalWorkspacePathHints(data, payload);
   emitWorkspaceRefresh({
     sessionId: payload.session_id ?? payload.sessionId ?? data.session_id ?? data.sessionId ?? null,
-    workspaceId: data.workspace_id ?? data.workspaceId ?? payload.workspace_id ?? payload.workspaceId ?? null,
+    workspaceId: data.workspace_id ?? data.workspaceId ?? payload.workspace_id ?? payload.workspaceId ??
+      metadata?.workspace_id ?? metadata?.workspaceId ?? null,
     agentId: data.agent_id ?? data.agentId ?? payload.agent_id ?? payload.agentId ?? '',
     containerId: data.container_id ?? data.containerId ?? payload.container_id ?? payload.containerId ?? null,
-    treeVersion: data.tree_version ?? data.treeVersion ?? payload.tree_version ?? payload.treeVersion ?? null,
+    treeVersion: data.tree_version ?? data.treeVersion ?? payload.tree_version ?? payload.treeVersion ??
+      metadata?.workspace_version ?? metadata?.workspaceVersion ?? metadata?.tree_version ?? metadata?.treeVersion ?? null,
     reason: data.reason || payload.reason || 'workspace_update',
     ...(changedPaths.length ? { path: changedPaths[0], paths: changedPaths } : {})
   });
@@ -1945,9 +1999,10 @@ export const applyCanonicalStreamSideEffects = (
   // Workspace mutations are committed by tools, not by the chat turn
   // terminal. Refresh once when the tool has finished so generated files
   // become visible during a long run without refreshing on every token/delta.
-  if (normalizedEventType === 'tool_result' ||
+  if ((normalizedEventType === 'tool_result' ||
       normalizedEventType === 'tool_call_completed' ||
-      normalizedEventType === 'tool_call_failed') {
+      normalizedEventType === 'tool_call_failed') &&
+      hasCanonicalWorkspaceMutation(payload, data)) {
     applyWorkspaceUpdateCanonicalSideEffect(
       { ...payload, reason: payload.reason || 'tool_completed' },
       data

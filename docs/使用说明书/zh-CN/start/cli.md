@@ -80,7 +80,7 @@ wunder-cli exec --json "整理当前目录的文件" | jq -c 'select(.type=="ite
 | `/resume` | `/r` | 恢复历史会话 |
 | `/new` | — | 新建线程 |
 | `/clear` | `/cls` | 清屏 |
-| `/model` | — | 切换模型 |
+| `/model` | — | 切换模型；`/model add` 登记新端点 |
 | `/permissions` | `/perm` / `/approvals` / `/approval` | 权限与审批 |
 | `/plan` | — | 计划面板 |
 | `/goal` | — | 目标态管理 |
@@ -93,7 +93,7 @@ wunder-cli exec --json "整理当前目录的文件" | jq -c 'select(.type=="ite
 | `/rename` | — | 重命名 |
 | `/compact` | — | 压缩对话 |
 | `/mcp` | — | MCP 管理 |
-| `/config` | `/config show` 是子形式 | 配置查看与修改 |
+| `/config` | `/config show` 是子形式 | 查看生效配置；`/config edit` 编辑 config.toml |
 | `/exit` | — | 退出 |
 | `/quit` | `/q` | 退出 |
 
@@ -163,7 +163,7 @@ wunder-cli
 舵机默认把运行时文件放在 `~/.wunder` 下：
 
 - 运行时配置与 SQLite 状态：`~/.wunder/cli/WUNDER_TEMP/`
-- 引擎配置 YAML：生成在 `<temp>/config/wunder.yaml`
+- 引擎配置 YAML：`~/.wunder/config/wunder.yaml`，与蛹共用同一份；舵机读回它、按层叠投影后回写，模型清单因此两边可见
 - 用户工具与技能：`~/.wunder/user_tools/` 与 `~/.wunder/skills/`
 - 临时文件 API：`WUNDER_TEMP_DIR_ROOT` 指向同一个 `~/.wunder/cli/WUNDER_TEMP/`
 

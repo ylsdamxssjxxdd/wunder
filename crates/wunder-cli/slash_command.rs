@@ -69,13 +69,13 @@ const SLASH_COMMAND_DOCS: [SlashCommandDoc; 21] = [
     },
     SlashCommandDoc {
         command: SlashCommand::Config,
-        usage: "/config [show|edit|<base_url> <api_key> <model> [max_context|auto]]",
-        description: "show or edit config.toml, or set up a model endpoint",
+        usage: "/config [show|edit]",
+        description: "show the effective config or edit config.toml",
     },
     SlashCommandDoc {
         command: SlashCommand::Model,
-        usage: "/model [name] [effort]",
-        description: "show or switch the model and its reasoning effort",
+        usage: "/model [<name> [effort]|add <base_url> <api_key> <name> [max_context]]",
+        description: "show or switch the model; /model add registers an endpoint",
     },
     SlashCommandDoc {
         command: SlashCommand::Permissions,
@@ -340,7 +340,6 @@ fn popup_usage(entry: &SlashCommandDoc) -> &'static str {
         SlashCommand::Permissions => {
             "/permissions [never|on-request|suggest|read-only|workspace-write|danger-full-access]"
         }
-        SlashCommand::Config => "/config [show|edit|<base_url> <api_key> <model>]",
         _ => entry.usage,
     }
 }
@@ -362,8 +361,8 @@ fn localized_description(entry: &SlashCommandDoc, language: &str) -> String {
         SlashCommand::Resume => "列出并恢复历史会话（默认限当前工作区，--all 放开）",
         SlashCommand::New => "在当前工作区新建线程",
         SlashCommand::Clear => "清屏并新建线程（Ctrl+L）",
-        SlashCommand::Config => "查看或编辑 config.toml，或配置模型服务",
-        SlashCommand::Model => "查看或切换模型与推理强度",
+        SlashCommand::Config => "查看生效配置或编辑 config.toml",
+        SlashCommand::Model => "查看或切换模型与推理强度；用 /model add 登记端点",
         SlashCommand::Permissions => "查看或切换沙箱与审批策略（别名：/approvals）",
         SlashCommand::Plan => "先让模型输出步骤化执行计划",
         SlashCommand::Goal => "进入或管理持续目标态",
@@ -399,17 +398,6 @@ fn split_head(input: &str) -> (&str, &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn parse_config_with_inline_args_keeps_arguments() {
-        let parsed = parse_slash_command("/config https://example.com/v1 sk-test demo-model 32000")
-            .expect("command should parse");
-        assert_eq!(parsed.command, SlashCommand::Config);
-        assert_eq!(
-            parsed.args,
-            "https://example.com/v1 sk-test demo-model 32000"
-        );
-    }
 
     #[test]
     fn config_show_is_an_argument_not_a_separate_command() {
@@ -519,8 +507,7 @@ mod tests {
     }
 
     #[test]
-    fn busy_task_availability_matrix_smoke() {
-        assert!(SlashCommand::Edit.available_during_task());
+    fn busy_task_availability_matrix_smoke() {        assert!(SlashCommand::Edit.available_during_task());
         assert!(SlashCommand::Attach.available_during_task());
         assert!(SlashCommand::Status.available_during_task());
         assert!(SlashCommand::Permissions.available_during_task());
@@ -531,5 +518,37 @@ mod tests {
         assert!(!SlashCommand::Review.available_during_task());
         assert!(!SlashCommand::Plan.available_during_task());
         assert!(!SlashCommand::Init.available_during_task());
+    }
+
+    #[test]
+    fn the_endpoint_form_lives_on_model_not_config() {
+        for language in ["en-US", "zh-CN"] {
+            let lines = help_lines_with_language(language);
+            let config_line = lines
+                .iter()
+                .find(|line| line.starts_with("/config"))
+                .expect("config is listed");
+            assert!(
+                !config_line.contains("<base_url>"),
+                "{language}: /config must not advertise an endpoint form: {config_line}"
+            );
+
+            let model_line = lines
+                .iter()
+                .find(|line| line.starts_with("/model"))
+                .expect("model is listed");
+            assert!(
+                model_line.contains("add <base_url>"),
+                "{language}: /model must offer the endpoint form: {model_line}"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_model_add_keeps_the_endpoint_arguments() {
+        let parsed = parse_slash_command("/model add https://example.test/v1 sk-x demo-model")
+            .expect("command should parse");
+        assert_eq!(parsed.command, SlashCommand::Model);
+        assert_eq!(parsed.args, "add https://example.test/v1 sk-x demo-model");
     }
 }

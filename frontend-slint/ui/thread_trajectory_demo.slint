@@ -12,13 +12,13 @@ export component TrajDemo inherits Window {
 
     ThreadTrajectoryDialog {
         rows: [
-            { kind: 1, badge: "", text: "Check the deploy log for the failed job", detail: "", error: false, request: 0, turn: 1, turn-start: true, turn-end: false, row-height: 30px, index: 0 },
-            { kind: 7, badge: "", text: "2 steps · 1 tool calls", detail: "", error: false, request: 0, turn: 1, turn-start: true, turn-end: false, row-height: 20px, index: 1 },
-            { kind: 4, badge: "#1", text: "Plan looks fine. Running the reproduction now.", detail: "", error: false, request: 1, turn: 2, turn-start: true, turn-end: false, row-height: 30px, index: 2 },
+            { kind: 1, badge: "", text: "Check the deploy log for the failed job", detail: "", error: false, request: 0, turn: 1, turn-start: true, turn-end: false, foldable: true, collapsed: true, row-height: 30px, index: 0 },
+            { kind: 7, badge: "", text: "... 2 steps · 1 tool call", detail: "", error: false, request: 0, turn: 1, turn-start: false, turn-end: true, row-height: 20px, index: 0 },
+            { kind: 4, badge: "#1", text: "Plan looks fine. Running the reproduction now.", detail: "", error: false, request: 1, turn: 2, turn-start: true, turn-end: false, foldable: true, collapsed: false, row-height: 30px, index: 2 },
             { kind: 5, badge: "", text: "demo_tool", detail: "{\"path\": \"logs/app.log\"} → exit 0, 12 lines matched", error: false, request: 0, turn: 2, turn-start: false, turn-end: false, row-height: 30px, index: 3 },
             { kind: 4, badge: "#2", text: "The failure is a missing config key; applying the fix.", detail: "", error: false, request: 1, turn: 2, turn-start: false, turn-end: false, row-height: 30px, index: 4 },
             { kind: 5, badge: "", text: "demo_tool", detail: "{\"path\": \"config.yaml\"} → patched 1 line", error: false, request: 0, turn: 2, turn-start: false, turn-end: false, row-height: 30px, index: 5 },
-            { kind: 3, badge: "", text: "Compacted summary of the earlier turns", detail: "", error: false, request: 0, turn: 3, turn-start: true, turn-end: false, row-height: 30px, index: 6 },
+            { kind: 3, badge: "", text: "Compacted summary of the earlier turns", detail: "", error: false, request: 0, turn: 3, turn-start: true, turn-end: false, foldable: true, collapsed: false, row-height: 30px, index: 6 },
             { kind: 2, badge: "", text: "context note kept for the next step", detail: "", error: false, request: 0, turn: 3, turn-start: false, turn-end: false, row-height: 30px, index: 7 },
             { kind: 4, badge: "#3", text: "Done. The pipeline is green again.", detail: "", error: true, request: 1, turn: 3, turn-start: false, turn-end: true, row-height: 30px, index: 8 }
         ];

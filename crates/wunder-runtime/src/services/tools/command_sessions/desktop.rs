@@ -140,11 +140,24 @@ enum InputSink {
     Pty(Arc<UnixPtyHandle>),
 }
 
+enum BlockingTerminalIo {
+    Console(Arc<File>),
+    #[cfg(unix)]
+    Pty(Arc<UnixPtyHandle>),
+}
+
 #[cfg(unix)]
 struct UnixPtyHandle {
     master: Mutex<Box<dyn MasterPty + Send>>,
     input: Mutex<Box<dyn std::io::Write + Send>>,
-    killer: Box<dyn ChildKiller + Send + Sync>,
+    killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
+}
+
+#[cfg(unix)]
+struct UnixPtySession {
+    handle: Arc<UnixPtyHandle>,
+    reader: Box<dyn std::io::Read + Send>,
+    child: Box<dyn portable_pty::Child + Send + Sync>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -572,10 +585,6 @@ impl DesktopTerminalService {
 
     pub fn start(&self, spec: DesktopTerminalStartSpec) -> Result<DesktopTerminalSnapshot, String> {
         self.prune_expired();
-        if self.active.load(Ordering::Acquire) >= MAX_ACTIVE_TERMINALS {
-            return Err("too many active terminals; close one first".to_string());
-        }
-
         let terminal_id = spec
             .terminal_id
             .clone()
@@ -585,9 +594,11 @@ impl DesktopTerminalService {
             let record = Arc::clone(existing.value());
             let snapshot = record.lock().snapshot();
             if snapshot.user_id == spec.user_id && snapshot.session_id == spec.session_id {
-                self.active.fetch_add(1, Ordering::AcqRel);
                 return Ok(snapshot);
             }
+        }
+        if self.active.load(Ordering::Acquire) >= MAX_ACTIVE_TERMINALS {
+            return Err("too many active terminals; close one first".to_string());
         }
 
         let command = spec.command.clone().unwrap_or_default().trim().to_string();
@@ -679,7 +690,7 @@ impl DesktopTerminalService {
         if status != DesktopTerminalStatus::Running && status != DesktopTerminalStatus::Starting {
             return Err("terminal has exited".to_string());
         }
-        let console_input = {
+        let terminal_io = {
             let record_guard = record.lock();
             let mut input_guard = record_guard.input.lock();
             match input_guard.as_mut() {
@@ -690,18 +701,28 @@ impl DesktopTerminalService {
                         .map_err(|error| format!("failed to write terminal stdin: {error}"))?;
                     None
                 }
-                Some(InputSink::Console(file)) => Some((Arc::clone(file), input.to_vec())),
+                Some(InputSink::Console(file)) => {
+                    Some((BlockingTerminalIo::Console(Arc::clone(file)), input.to_vec()))
+                }
                 #[cfg(unix)]
-                Some(InputSink::Pty(pty)) => Some((Arc::clone(pty), input.to_vec())),
+                Some(InputSink::Pty(pty)) => {
+                    Some((BlockingTerminalIo::Pty(Arc::clone(pty)), input.to_vec()))
+                }
                 None => return Err("terminal stdin is unavailable".to_string()),
             }
         };
         // A console write blocks once its pipe buffer fills, so it goes off the
         // task rather than stalling whatever else shares it.
-        if let Some((file, bytes)) = console_input {
+        if let Some((target, bytes)) = terminal_io {
             tokio::task::spawn_blocking(move || {
-                std::io::Write::write_all(&mut &*file, &bytes)
-                    .map_err(|error| format!("failed to write terminal input: {error}"))
+                let result = match target {
+                    BlockingTerminalIo::Console(file) => {
+                        std::io::Write::write_all(&mut &*file, &bytes)
+                    }
+                    #[cfg(unix)]
+                    BlockingTerminalIo::Pty(pty) => pty.input.lock().write_all(&bytes),
+                };
+                result.map_err(|error| format!("failed to write terminal input: {error}"))
             })
             .await
             .map_err(|error| format!("terminal input task failed: {error}"))??;
@@ -723,25 +744,23 @@ impl DesktopTerminalService {
             let guard = record.lock();
             let input_guard = guard.input.lock();
             match input_guard.as_ref() {
-                Some(InputSink::Console(file)) => Some(InterruptTarget::Console(Arc::clone(file))),
+                Some(InputSink::Console(file)) => Some(BlockingTerminalIo::Console(Arc::clone(file))),
                 #[cfg(unix)]
-                Some(InputSink::Pty(pty)) => Some(InterruptTarget::Pty(Arc::clone(pty))),
+                Some(InputSink::Pty(pty)) => Some(BlockingTerminalIo::Pty(Arc::clone(pty))),
                 _ => None,
             }
         };
-        if let Some(InterruptTarget::Console(file)) = input {
-            // 0x03 is Ctrl-C: the shell turns it into the signal its foreground
-            // program expects, and stays up for the next command.
-            return std::io::Write::write_all(&mut &*file, &[3u8])
-                .map_err(|error| format!("failed to send Ctrl-C: {error}"));
-        }
-        #[cfg(unix)]
-        if let Some(InterruptTarget::Pty(pty)) = input {
-            return pty
-                .input
-                .lock()
-                .write_all(&[3u8])
-                .map_err(|error| format!("failed to send Ctrl-C: {error}"));
+        if let Some(input) = input {
+            // In canonical terminal mode Ctrl-C is interpreted by the PTY as
+            // SIGINT for the foreground process group, while the shell stays.
+            let result = match input {
+                BlockingTerminalIo::Console(file) => {
+                    std::io::Write::write_all(&mut &*file, &[3u8])
+                }
+                #[cfg(unix)]
+                BlockingTerminalIo::Pty(pty) => pty.input.lock().write_all(&[3u8]),
+            };
+            return result.map_err(|error| format!("failed to send Ctrl-C: {error}"));
         }
         self.terminate(user_id, session_id, terminal_id)
     }
@@ -808,7 +827,6 @@ impl DesktopTerminalService {
             guard.cancel.cancel();
         }
         self.terminals.remove(terminal_id);
-        self.active.fetch_sub(1, Ordering::AcqRel);
         self.changed.notify_waiters();
         Ok(())
     }
@@ -889,7 +907,6 @@ impl DesktopTerminalService {
             .collect::<Vec<_>>();
         for id in expired {
             self.terminals.remove(&id);
-            self.active.fetch_sub(1, Ordering::AcqRel);
         }
     }
 
@@ -961,6 +978,25 @@ impl DesktopTerminalService {
         winpty: Option<PathBuf>,
         record: Arc<Mutex<TerminalRecord>>,
     ) {
+        #[cfg(unix)]
+        {
+            let size = record.lock().size;
+            match open_unix_pty(&spec, size) {
+                Ok(session) => {
+                    Self::pump_unix_pty(active, changed, session, record).await;
+                    return;
+                }
+                Err(error) => {
+                    let mut guard = record.lock();
+                    guard.snapshot.status = DesktopTerminalStatus::FailedToStart;
+                    guard.snapshot.ended_at = Some(Utc::now());
+                    guard.snapshot.error = Some(format!("failed to open local PTY: {error}"));
+                    active.fetch_sub(1, Ordering::AcqRel);
+                    changed.notify_waiters();
+                    return;
+                }
+            }
+        }
         #[cfg(all(windows, feature = "terminal-pty"))]
         if let Some(dll) = winpty.as_deref() {
             let size = record.lock().size;
@@ -1074,6 +1110,109 @@ impl DesktopTerminalService {
         active.fetch_sub(1, Ordering::AcqRel);
         changed.notify_waiters();
     }
+
+    #[cfg(unix)]
+    async fn pump_unix_pty(
+        active: Arc<AtomicUsize>,
+        changed: Arc<Notify>,
+        session: UnixPtySession,
+        record: Arc<Mutex<TerminalRecord>>,
+    ) {
+        let UnixPtySession { handle, reader, mut child } = session;
+        let cancel = record.lock().cancel.clone();
+        {
+            let mut guard = record.lock();
+            guard.snapshot.status = DesktopTerminalStatus::Running;
+            guard.snapshot.backend = DesktopTerminalBackend::Pty;
+            *guard.input.lock() = Some(InputSink::Pty(Arc::clone(&handle)));
+            guard.unix_pty = Some(Arc::clone(&handle));
+        }
+
+        let reader_record = Arc::clone(&record);
+        let reader_changed = Arc::clone(&changed);
+        let reader = tokio::task::spawn_blocking(move || {
+            pump_pty_output(reader, reader_record, reader_changed)
+        });
+        let wait = tokio::task::spawn_blocking(move || {
+            let mut child = child;
+            child.wait()
+        });
+        let exit = tokio::select! {
+            result = wait => result.ok().and_then(Result::ok).map(|status| status.exit_code() as i32),
+            _ = cancel.cancelled() => {
+                let _ = handle.killer.lock().kill();
+                None
+            }
+        };
+        // The PTY reader reaches EOF/EIO when the foreground shell exits.
+        // Cancellation can kill a process that leaves grandchildren behind;
+        // don't keep the UI lock waiting on a blocked reader in that case.
+        if exit.is_some() {
+            let _ = reader.await;
+        } else {
+            reader.abort();
+        }
+        {
+            let mut guard = record.lock();
+            guard.snapshot.status = DesktopTerminalStatus::Exited;
+            guard.snapshot.ended_at = Some(Utc::now());
+            guard.snapshot.exit_code = exit;
+            guard.unix_pty = None;
+            guard.spill_transcript();
+        }
+        active.fetch_sub(1, Ordering::AcqRel);
+        changed.notify_waiters();
+    }
+}
+
+#[cfg(unix)]
+fn open_unix_pty(
+    spec: &DesktopTerminalStartSpec,
+    size: (u16, u16),
+) -> Result<UnixPtySession, String> {
+    use portable_pty::{native_pty_system, CommandBuilder, PtySize, SlavePty};
+    let pair = native_pty_system()
+        .openpty(PtySize { rows: size.1.max(1), cols: size.0.max(1), pixel_width: 0, pixel_height: 0 })
+        .map_err(|error| error.to_string())?;
+    let launch = resolve_terminal_shell(spec.shell.as_deref().unwrap_or_default());
+    let program = launch.bash_bin.unwrap_or_else(|| PathBuf::from("bash"));
+    let mut command = CommandBuilder::new(program);
+    command.arg("--norc");
+    command.cwd(&spec.cwd);
+    let child = pair.slave.spawn_command(command).map_err(|error| error.to_string())?;
+    let reader = pair.master.try_clone_reader().map_err(|error| error.to_string())?;
+    let writer = pair.master.take_writer().map_err(|error| error.to_string())?;
+    let killer = child.clone_killer();
+    let handle = Arc::new(UnixPtyHandle {
+        master: Mutex::new(pair.master),
+        input: Mutex::new(writer),
+        killer: Mutex::new(killer),
+    });
+    Ok(UnixPtySession { handle, reader, child })
+}
+
+#[cfg(unix)]
+fn pump_pty_output(
+    mut reader: Box<dyn std::io::Read + Send>,
+    record: Arc<Mutex<TerminalRecord>>,
+    changed: Arc<Notify>,
+) {
+    use std::io::Read;
+    let mut decoder = IncrementalDecoder::new(false);
+    let mut buf = vec![0u8; PIPE_CHUNK_BYTES];
+    loop {
+        match reader.read(&mut buf) {
+            Ok(0) | Err(_) => break,
+            Ok(read) => {
+                let text = decoder.push(&buf[..read]);
+                if !text.is_empty() {
+                    record.lock().push_output(&text, false);
+                    changed.notify_waiters();
+                }
+            }
+        }
+    }
+    record.lock().spill_transcript();
 }
 
 /// Resolve the shell launcher for a terminal based on the requested shell

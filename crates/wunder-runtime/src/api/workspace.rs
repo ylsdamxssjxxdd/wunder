@@ -55,6 +55,15 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/wunder/workspace/file", post(workspace_file_update))
         .route("/wunder/workspace/archive", get(workspace_archive))
         .route("/wunder/workspace/download", get(workspace_download))
+        .layer(axum::middleware::map_response(no_store_workspace_response))
+}
+
+async fn no_store_workspace_response(mut response: Response) -> Response {
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("no-store, no-cache, max-age=0, must-revalidate"),
+    );
+    response
 }
 
 async fn workspace_list(
@@ -101,6 +110,7 @@ async fn workspace_list(
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     Ok(Json(WorkspaceListResponse {
         user_id,
+        workspace_id,
         path: current_path,
         parent,
         entries,
@@ -190,6 +200,7 @@ async fn workspace_content(
         if params.allow_missing {
             return Ok(Json(WorkspaceContentResponse {
                 user_id,
+                workspace_id,
                 path: normalized,
                 entry_type: "file".to_string(),
                 size: 0,
@@ -262,6 +273,7 @@ async fn workspace_content(
         };
         return Ok(Json(WorkspaceContentResponse {
             user_id,
+            workspace_id,
             path: current_path,
             entry_type: "dir".to_string(),
             size: 0,
@@ -304,6 +316,7 @@ async fn workspace_content(
     }
     Ok(Json(WorkspaceContentResponse {
         user_id,
+        workspace_id,
         path: normalized,
         entry_type: "file".to_string(),
         size: metadata.len(),
@@ -1800,6 +1813,7 @@ struct WorkspaceFileUpdateRequest {
 #[derive(Debug, Serialize)]
 struct WorkspaceListResponse {
     user_id: String,
+    workspace_id: String,
     path: String,
     parent: Option<String>,
     entries: Vec<WorkspaceEntry>,
@@ -1821,6 +1835,7 @@ struct WorkspaceActionResponse {
 #[derive(Debug, Serialize)]
 struct WorkspaceContentResponse {
     user_id: String,
+    workspace_id: String,
     path: String,
     #[serde(rename = "type")]
     entry_type: String,

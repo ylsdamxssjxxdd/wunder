@@ -10,7 +10,7 @@ export component TerminalWindow inherits Window {
     width: 980px;
     height: 640px;
     background: #16181d;
-
+    init => { terminal-focus.focus(); }
     in property <string> workspace-name;
     in property <string> workspace-root;
     in property <[TermSpan]> spans;
@@ -36,7 +36,6 @@ export component TerminalWindow inherits Window {
     callback pasted(string);
     callback paste-requested();
     callback exit-requested();
-
     changed measured-cols => { root.geometry-changed(); }
     changed measured-rows => { root.geometry-changed(); }
     changed paste-request => {
@@ -58,9 +57,9 @@ export component TerminalWindow inherits Window {
         }
     }
 
-    VerticalLayout {
-        spacing: 0px;
-        terminal-focus := FocusScope {
+    terminal-focus := FocusScope {
+        width: parent.width;
+        height: parent.height;
         capture-key-pressed(event) => {
             if event.text == Key.Return { root.key-input("\u{d}"); return accept; }
             if event.text == Key.Backspace { root.key-input("\u{7f}"); return accept; }
@@ -105,6 +104,10 @@ export component TerminalWindow inherits Window {
             if event.text != "" { root.key-input(event.text); return accept; }
             reject
         }
+        VerticalLayout {
+            width: parent.width;
+            height: parent.height;
+            spacing: 0px;
         Rectangle {
             height: 42px;
             background: #1f252e;

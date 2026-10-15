@@ -1163,7 +1163,7 @@ export component Composer inherits Rectangle {
     // A running turn no longer swallows the send: the engine parks the turn and
     // the strip above the input shows it. What still blocks is a slash command
     // in flight or a thread that is still loading.
-    private property <bool> send-blocked: root.busy && !root.generating;
+    private property <bool> send-blocked: root.busy;
     // Exact card height: 6+6 padding, a 20px header, 28px rows, the optional
     // overflow line and 2px between every item.
     private property <int> queue-items: root.queue-open
@@ -1188,6 +1188,11 @@ export component Composer inherits Rectangle {
     private property <bool> send-enabled: root.terminal-mode
         ? (root.draft != "" && !root.send-blocked)
         : ((root.draft != "" || root.attachments.length > 0 || root.inquiry-ready) && !root.send-blocked);
+    // Keep Stop only when there is no user payload to submit. While a reply is
+    // streaming, a draft, attachment, or answered inquiry must keep Send
+    // visible so the next turn can enter the queue.
+    private property <bool> stop-action: root.generating && root.draft == ""
+        && root.attachments.length == 0 && !root.inquiry-ready;
     private property <string> permission-label: root.permission-mode == "auto_edit" ? I18n.cp_permission_write
         : root.permission-mode == "suggest" ? I18n.cp_permission_command
         : I18n.cp_permission_full;
@@ -1230,27 +1235,23 @@ export component Composer inherits Rectangle {
             }
             Rectangle { horizontal-stretch: 1; }
         }
-        // 输入卡（对齐蜂巢 .input-box--world）: one 16px-rounded white card
-        // wraps the editor — the focus ring moves to the card border, the
-        // editor itself is transparent — and the recording/transcribing hint
-        // stacks into the card's lower edge.
+        // The editor owns the input card's background, border and focus ring,
+        // so there is one rounded surface and no rectangular frame around it.
         Rectangle {
             vertical-stretch: 1;
-            border-radius: 16px;
-            background: Theme.surface;
-            border-width: 1px;
-            border-color: editor.has-focus ? Theme.accent : Theme.border;
+            background: transparent;
+            border-width: 0px;
             editor := TextEditBase {
-                x: 14px; y: 12px;
-                width: parent.width - 28px;
-                height: parent.height - 24px;
+                x: 0px; y: 0px; width: parent.width; height: parent.height;
+                border-radius: 16px;
+                background: Theme.surface;
+                border-width: 1px;
+                border-color: self.has-focus ? Theme.accent : Theme.border;
+                scroll-view-padding: 14px;
                 accessible-role: text-input;
                 accessible-value <=> self.text;
                 accessible-placeholder-text: self.placeholder-text;
                 accessible-action-set-value(value) => { self.text = value; }
-                scroll-view-padding: 0px;
-                background: transparent;
-                border-width: 0px;
                 foreground: Theme.text;
                 placeholder-text: root.terminal-mode ? I18n.cp_terminal_placeholder
                     : (root.workspace-name != "" ? I18n.cp_input_placeholder_workspace(root.workspace-name) : I18n.cp_input_placeholder);
@@ -1260,57 +1261,65 @@ export component Composer inherits Rectangle {
                 font-size: 14px; font-family: "SimSun";
                 wrap: word-wrap;
                 key-pressed(event) => {
-                    // Terminal mode: Ctrl+C interrupts the running shell instead
-                    // of copying the selection.
-                    if event.text == "c" && event.modifiers.control && root.terminal-mode {
-                        root.interrupt();
+                // Terminal mode: Ctrl+C interrupts the running shell instead
+                // of copying the selection.
+                if event.text == "c" && event.modifiers.control && root.terminal-mode {
+                    root.interrupt();
+                    return accept;
+                }
+                // ArrowUp / ArrowDown recall the messages this thread already
+                // sent (Slint's key code points: U+F700 up, U+F701 down). The
+                // caret test needs byte offsets, so Rust owns the decision, the
+                // walk index and the stash; `handled` is what eats the key.
+                if event.text == "\u{F700}" || event.text == "\u{F701}" {
+                    let recalled = root.recall-history(
+                        event.text == "\u{F700}" ? 1 : -1,
+                        self.cursor-offset, self.anchor-offset, root.draft);
+                    if recalled.handled {
+                        root.draft = recalled.text;
+                        self.set-selection-offsets(recalled.caret, recalled.caret);
                         return accept;
-                    }
-                    // ArrowUp / ArrowDown recall the messages this thread already
-                    // sent (Slint's key code points: U+F700 up, U+F701 down). The
-                    // caret test needs byte offsets, so Rust owns the decision, the
-                    // walk index and the stash; `handled` is what eats the key.
-                    if event.text == "\u{F700}" || event.text == "\u{F701}" {
-                        let recalled = root.recall-history(
-                            event.text == "\u{F700}" ? 1 : -1,
-                            self.cursor-offset, self.anchor-offset, root.draft);
-                        if recalled.handled {
-                            root.draft = recalled.text;
-                            self.set-selection-offsets(recalled.caret, recalled.caret);
-                            return accept;
-                        }
-                        return reject;
-                    }
-                    // The send key preference: "enter" sends on plain Enter;
-                    // "ctrl_enter" sends only with Ctrl+Enter; "none" leaves all
-                    // newlines to the editor and sends via the button only.
-                    if event.text == "\n" && !event.modifiers.shift && !event.modifiers.control {
-                        if root.send-key == "enter" && root.send-enabled { root.send(); }
-                        return root.send-key == "enter" ? accept : reject;
-                    }
-                    if event.text == "\n" && event.modifiers.control {
-                        if root.send-key == "ctrl_enter" && root.send-enabled { root.send(); return accept; }
-                        return reject;
                     }
                     return reject;
                 }
+                // The send key preference: "enter" sends on plain Enter;
+                // "ctrl_enter" sends only with Ctrl+Enter; "none" leaves all
+                // newlines to the editor and sends via the button only.
+                if event.text == "\n" && !event.modifiers.shift && !event.modifiers.control {
+                    if root.send-key == "enter" && root.send-enabled { root.send(); }
+                    return root.send-key == "enter" ? accept : reject;
+                }
+                if event.text == "\n" && event.modifiers.control {
+                    if root.send-key == "ctrl_enter" && root.send-enabled { root.send(); return accept; }
+                    return reject;
+                }
+                return reject;
+                }
             }
-            // 录音/识别指示叠在卡内底部: the mic row lives inside the plus menu,
-            // so a running capture would otherwise be invisible once it closes.
-            if (root.recording || root.transcribing) : Rectangle {
-                x: 14px; y: parent.height - 30px;
-                height: 18px; width: rec-text.preferred-width + 36px;
-                border-radius: 9px;
-                background: Theme.surface;
+            // A small in-editor state cue makes recording/transcription visible
+            // without changing the composer's height or covering the typing
+            // area. The status stays in the corner while the editor remains
+            // available for normal selection and input.
+            if root.recording || root.transcribing : Rectangle {
+                x: parent.width - self.width - 12px; y: 8px;
+                width: recording-state.preferred-width + 20px; height: 22px;
+                border-radius: 11px;
+                background: Theme.panel;
                 border-width: 1px; border-color: Theme.border;
-                Rectangle { x: 10px; y: 6px; width: 3px; height: 6px; border-radius: 1.5px; background: Theme.danger; }
-                Rectangle { x: 15px; y: 3px; width: 3px; height: 12px; border-radius: 1.5px; background: Theme.danger; }
-                Rectangle { x: 20px; y: 5px; width: 3px; height: 8px; border-radius: 1.5px; background: Theme.danger; }
-                rec-text := Text {
-                    x: 30px; width: self.preferred-width; height: parent.height;
-                    text: root.recording ? root.recording-elapsed : I18n.cp_transcribing;
-                    color: Theme.danger; font-size: Theme.font-xs; font-weight: 600;
-                    vertical-alignment: center;
+                HorizontalLayout {
+                    x: 8px; y: 0px; width: parent.width - 16px; height: parent.height;
+                    spacing: 5px;
+                    Rectangle {
+                        width: 6px; height: 6px; border-radius: 3px;
+                        background: root.recording ? Theme.danger : Theme.muted;
+                    }
+                    recording-state := Text {
+                        width: self.preferred-width; height: parent.height;
+                        text: root.transcribing ? I18n.st_transcribing
+                            : I18n.st_recording_hint + " · " + root.recording-elapsed;
+                        color: root.recording ? Theme.danger : Theme.muted;
+                        font-size: Theme.font-xs; vertical-alignment: center;
+                    }
                 }
             }
         }
@@ -1321,17 +1330,17 @@ export component Composer inherits Rectangle {
         HorizontalLayout {
             height: 30px; spacing: 6px;
             Rectangle {
-                width: 26px; height: 30px;
+                width: 24px; height: 30px;
                 plus-btn := Rectangle {
-                    y: 2px; width: 26px; height: 26px;
+                    y: 3px; width: 24px; height: 24px;
                     border-radius: Theme.radius-sm;
                     background: root.plus-open ? Theme.accent-soft : Theme.surface;
                     border-width: 1px;
                     border-color: root.plus-open ? Theme.accent-secondary : Theme.border-strong;
                     drop-shadow-color: #1F23290F; drop-shadow-blur: 2px; drop-shadow-offset-y: 1px;
                     Image {
-                        x: 5px; y: 5px; width: 16px; height: 16px;
-                        source: root.plus-open ? @image-url("../assets/icons/xmark.svg") : @image-url("../assets/icons/plus.svg");
+                        x: 4px; y: 4px; width: 16px; height: 16px;
+                        source: root.plus-open ? @image-url("../assets/icons/xmark.svg") : @image-url("../assets/icons/plus-plain.svg");
                         colorize: root.plus-open ? Theme.accent : Theme.text-secondary;
                         image-fit: contain;
                     }
@@ -1562,29 +1571,29 @@ export component Composer inherits Rectangle {
                 send-btn := Rectangle {
                     y: 1px; width: 28px; height: 28px;
                     border-radius: Theme.radius-sm;
-                    background: root.generating && root.draft == ""
+                    background: root.stop-action
                         ? (root.stopping ? Theme.border-strong : Theme.accent)
                         : (root.send-enabled ? (send-touch.has-hover ? Theme.accent-deep : Theme.accent) : Theme.border-strong);
                     Image {
                         x: 6px; y: 6px; width: 16px; height: 16px;
-                        source: root.generating && root.draft == "" ? @image-url("../assets/icons/stop.svg") : @image-url("../assets/icons/arrow-up.svg");
+                        source: root.stop-action ? @image-url("../assets/icons/stop.svg") : @image-url("../assets/icons/arrow-up.svg");
                         colorize: #ffffff;
                         image-fit: contain;
                     }
                     accessible-role: button;
-                    accessible-label: root.generating && root.draft == "" ? I18n.cp_stop_generation : I18n.cp_send;
+                    accessible-label: root.stop-action ? I18n.cp_stop_generation : I18n.cp_send;
                     accessible-action-default => {
-                        if root.generating && root.draft == "" {
+                        if root.stop-action {
                             if !root.stopping { root.stop(); }
-                        } else {
+                        } else if root.send-enabled {
                             root.send();
                         }
                     }
                     send-touch := TouchArea {
-                        enabled: root.generating && root.draft == "" ? !root.stopping : root.send-enabled;
+                        enabled: root.stop-action ? !root.stopping : root.send-enabled;
                         mouse-cursor: pointer;
                         clicked => {
-                            if root.generating && root.draft == "" { root.stop(); } else { root.send(); }
+                            if root.stop-action { root.stop(); } else { root.send(); }
                         }
                     }
                 }

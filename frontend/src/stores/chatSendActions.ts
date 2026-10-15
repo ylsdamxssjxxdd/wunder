@@ -63,6 +63,7 @@ import {
 import { applyChatThreadServerEvent, submitChatThreadTurn, getChatThreadState } from '@/realtime/chat/chatThreadRuntime';
 import { markRuntimeProjectionChanged } from '@/realtime/chat/chatRuntimeProjectionInvalidation';
 import { selectParkedTurnMessageIds } from '@/stores/chatQueueProjection';
+import { noteChatQueueRuntimeEvent } from '@/stores/chatQueueState';
 import { createWsMultiplexer } from '@/utils/ws';
 import { isDemoMode, loadDemoChatState, saveDemoChatState } from '@/utils/demo';
 import { emitAgentRuntimeRefresh, emitWorkspaceRefresh } from '@/utils/workspaceEvents';
@@ -649,6 +650,7 @@ export const chatSendActions = {
           const approvalPayload = payload?.data ?? payload;
           const normalizedEventType = resolveNormalizedStreamEventType(eventType, payload);
           const effectiveEventType = normalizedEventType || eventType;
+          noteChatQueueRuntimeEvent(sessionId, effectiveEventType, payload);
           // Durable frames are the only source of timeline projection.
           if (
             applyChatThreadServerEvent(this, sessionId, effectiveEventType, payload, {

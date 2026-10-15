@@ -4,6 +4,27 @@ import type { AgentRuntimeState } from './model';
 
 type RuntimeMessage = Record<string, unknown>;
 
+export type TaskIndicatorState = AgentRuntimeState | 'inquiry' | 'approval';
+
+export const resolveTaskIndicatorState = (
+  state: AgentRuntimeState,
+  projectionStatus: unknown,
+  persistedStatus: unknown,
+  runtimeStatus?: unknown
+): TaskIndicatorState => {
+  if (state === 'done' || state === 'error' || state === 'idle') return state;
+  const runtime = normalizeThreadRuntimeStatus(runtimeStatus);
+  const projected = normalizeThreadRuntimeStatus(projectionStatus);
+  const status = runtime === 'waiting_user_input' || runtime === 'waiting_approval' ? runtime
+    : projected !== 'not_loaded' && projected !== 'idle' ? projected
+    : runtime !== 'not_loaded' && runtime !== 'idle' ? runtime
+    : normalizeThreadRuntimeStatus(persistedStatus);
+  if (status === 'waiting_user_input') return 'inquiry';
+  if (status === 'waiting_approval') return 'approval';
+  if (status === 'queued') return 'pending';
+  return state;
+};
+
 const resolveExplicitTerminalTaskState = (value: unknown): AgentRuntimeState | null => {
   const status = normalizeThreadRuntimeStatus(value);
   // `idle` is emitted after a terminal turn as a transport state. It does not

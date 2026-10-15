@@ -90,7 +90,7 @@ wunder-cli exec --json "tidy up the files in the current directory" | jq -c 'sel
 | `/resume` | `/r` | Resume a previous session |
 | `/new` | — | New thread |
 | `/clear` | `/cls` | Clear the screen |
-| `/model` | — | Switch model |
+| `/model` | — | Switch model; `/model add` registers an endpoint |
 | `/permissions` | `/perm` / `/approvals` / `/approval` | Permissions and approvals |
 | `/plan` | — | Plan panel |
 | `/goal` | — | Goal-state management |
@@ -103,7 +103,7 @@ wunder-cli exec --json "tidy up the files in the current directory" | jq -c 'sel
 | `/rename` | — | Rename |
 | `/compact` | — | Compress the conversation |
 | `/mcp` | — | MCP management |
-| `/config` | `/config show` is a sub-form | View and change configuration |
+| `/config` | `/config show` is a sub-form | Show the effective config; `/config edit` opens config.toml |
 | `/exit` | — | Exit |
 | `/quit` | `/q` | Exit |
 
@@ -173,7 +173,7 @@ Seeing the model think → a batch of tools → results → a reply means it's w
 By default the Helm keeps runtime files under `~/.wunder`:
 
 - Runtime configuration and SQLite state: `~/.wunder/cli/WUNDER_TEMP/`
-- Engine configuration YAML: generated at `<temp>/config/wunder.yaml`
+- Engine configuration YAML: `~/.wunder/config/wunder.yaml`, the same file 蛹 uses; the Helm reads it back, projects its own layers onto it and writes it out, so the model list is visible to both
 - User tools and skills: `~/.wunder/user_tools/` and `~/.wunder/skills/`
 - Temporary-file API: `WUNDER_TEMP_DIR_ROOT` points to the same `~/.wunder/cli/WUNDER_TEMP/`
 

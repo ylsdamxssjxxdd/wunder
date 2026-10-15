@@ -1,7 +1,8 @@
 // AI生成
 /**
- * 设置页 12 分类注册表（方案 §九.2 + 账号分类拆分 + 互通「我的设备」§5.3；
- * 帮助入口已并入常规分类，点击在独立窗口打开文档站）。
+ * 设置页 11 分类注册表（方案 §九.2 + 账号分类拆分 + 互通「我的设备」§5.3；
+ * 帮助入口已并入常规分类，点击在独立窗口打开文档站；运行记录页已移除，
+ * 日运行趋势并入账号分类）。
  *
  * 只描述「导航结构 + 搜索关键词」，不承载业务逻辑：每个分类的内容组件
  * 在 `settingsCategoryComponents.ts` 里按需异步加载。
@@ -20,7 +21,6 @@ export type SettingsCategoryId =
   | 'memory'
   | 'channels'
   | 'devices'
-  | 'runtime'
   | 'prompts'
   | 'archived';
 
@@ -47,7 +47,6 @@ export const SETTINGS_CATEGORY_IDS: SettingsCategoryId[] = [
   'memory',
   'channels',
   'devices',
-  'runtime',
   'prompts',
   'archived'
 ];
@@ -91,10 +90,16 @@ const META: Record<SettingsCategoryId, Omit<SettingsCategoryMeta, 'id'>> = {
       '密码',
       '资料',
       '个人信息',
+      '运行记录',
+      '日运行趋势',
+      '统计',
+      '消耗',
       'account',
       'profile',
       'avatar',
-      'password'
+      'password',
+      'usage',
+      'trend'
     ]
   },
   tools: {
@@ -149,12 +154,6 @@ const META: Record<SettingsCategoryId, Omit<SettingsCategoryMeta, 'id'>> = {
       'sync',
       'remote'
     ]
-  },
-  runtime: {
-    icon: 'fa-solid fa-chart-line',
-    titleKey: 'messenger.settingsPage.cat.runtime.title',
-    descKey: 'messenger.settingsPage.cat.runtime.desc',
-    keywords: ['运行记录', '统计', '消耗', '时长', '热力', 'runtime', 'usage', 'stats']
   },
   prompts: {
     icon: 'fa-solid fa-file-lines',

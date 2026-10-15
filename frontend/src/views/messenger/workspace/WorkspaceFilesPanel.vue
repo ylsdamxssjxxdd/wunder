@@ -187,6 +187,7 @@ import {
   downloadWorkspaceDirectoryArchive,
   downloadWorkspacePath,
   fetchWorkspaceDirectory,
+  fetchWorkspaceContentDirectory,
   fetchWorkspacePathBlob,
   fetchWorkspaceStatsSnapshot,
   isWorkspaceEndpointMissing,
@@ -212,6 +213,8 @@ import {
 } from './workspaceFileModel';
 import { useWorkspaceFileTree } from './workspaceFileTree';
 import { createWorkspaceUploadQueue, type WorkspaceUploadTask } from './workspaceUploadQueue';
+import { extractWorkspaceRefreshPaths } from '@/utils/workspaceRefresh';
+import { onWorkspaceRefresh } from '@/utils/workspaceEvents';
 
 // The heavy editors are loaded only when the user actually opens such a file.
 const OnlyOfficeEditorDialog = defineAsyncComponent(
@@ -345,7 +348,11 @@ const tree = useWorkspaceFileTree({
     if (message) ElMessage.error(message);
   },
   loadPage: async (path, pageOptions) => {
-    if (!remoteInterlinkActive.value) return fetchWorkspaceDirectory(path, pageOptions);
+    if (!remoteInterlinkActive.value) {
+      return pageOptions.refreshTree
+        ? fetchWorkspaceContentDirectory(path, { ...pageOptions, refreshTree: true })
+        : fetchWorkspaceDirectory(path, pageOptions);
+    }
     const outcome = await listRemoteDirectory({
       to: interlinkTarget.value,
       workspaceId: interlinkWorkspaceId.value || undefined,
@@ -375,6 +382,8 @@ const {
   highlightedPath,
   selectedList,
   selectionMode,
+  workspaceId,
+  treeVersion,
   loadMore,
   refreshDirectory,
   loadDirectory,
@@ -390,6 +399,7 @@ const busy = ref(false);
 const refreshing = ref(false);
 const dragActive = ref(false);
 const newFileDialog = reactive({ visible: false, directory: '' });
+let workspaceRefreshStop: (() => void) | null = null;
 
 const rootLoading = computed(() => Boolean(tree.directories.get('')?.loading));
 const rootError = computed(() => String(tree.directories.get('')?.error || ''));
@@ -719,7 +729,7 @@ const handleLoadMore = (path: string) => {
   void loadMore(path);
 };
 
-const handleRefresh = async () => {
+const handleRefresh = async (options: { forceTree?: boolean } = {}) => {
   if (refreshing.value) return;
   if (remoteInterlinkActive.value) {
     refreshing.value = true;
@@ -732,13 +742,64 @@ const handleRefresh = async () => {
   }
   refreshing.value = true;
   try {
-    await Promise.all([refreshDirectory(''), loadStats()]);
+    await Promise.all([
+      refreshDirectory('', { refreshTree: options.forceTree !== false }),
+      loadStats()
+    ]);
     tree.expandedPaths.forEach((path) => {
       void refreshDirectory(path);
     });
   } finally {
     refreshing.value = false;
   }
+};
+
+const refreshFromWorkspaceEvent = (event: Event) => {
+  if (remoteInterlinkActive.value) return;
+  const detail = (event as CustomEvent<Record<string, unknown>>).detail || {};
+  const eventWorkspaceId = String(detail.workspaceId ?? detail.workspace_id ?? '').trim();
+  if (eventWorkspaceId && workspaceId.value && eventWorkspaceId !== workspaceId.value) return;
+  const eventVersion = Number(detail.treeVersion ?? detail.tree_version ?? 0);
+  if (
+    Number.isFinite(eventVersion) &&
+    eventVersion > 0 &&
+    treeVersion.value !== null &&
+    eventVersion <= treeVersion.value
+  ) return;
+
+  const changedPaths = extractWorkspaceRefreshPaths(detail);
+  if (!changedPaths.length) {
+    void refreshDirectory('', { refreshTree: true });
+    scheduleStatsRefresh();
+    return;
+  }
+  const targets = new Set<string>();
+  changedPaths.forEach((rawPath) => {
+    let path = normalizeWorkspaceRelativePath(rawPath);
+    // The public path contains the physical cloud subfolder while this panel
+    // presents that folder itself as its root.
+    if (path === 'workspace') path = '';
+    else if (path.startsWith('workspace/')) path = path.slice('workspace/'.length);
+    if (!path) {
+      targets.add('');
+      return;
+    }
+    const parent = workspaceParentPath(path);
+    if (tree.directories.has(path)) targets.add(path);
+    else if (tree.directories.has(parent)) targets.add(parent);
+    else targets.add('');
+  });
+  const boundedTargets = Array.from(targets).slice(0, 6);
+  if (boundedTargets.length) {
+    // Rebuild the filesystem snapshot once per event; the remaining targeted
+    // directory reads can reuse that version instead of scanning the workspace
+    // concurrently for every changed path.
+    void (async () => {
+      await refreshDirectory(boundedTargets[0], { refreshTree: true });
+      await Promise.all(boundedTargets.slice(1).map((path) => refreshDirectory(path)));
+    })();
+  }
+  scheduleStatsRefresh();
 };
 
 /** Menu target: a directory row creates inside it, anything else uses the current folder. */
@@ -813,7 +874,7 @@ const handleRowCommand = async (command: string, row: WorkspaceVisibleRow | null
   // 远程是只读投影：菜单只有「打开目录 / 预览 / 刷新」，写类动作不存在。
   if (remoteInterlinkActive.value) {
     if (command === 'refresh') {
-      await handleRefresh();
+      await handleRefresh({ forceTree: true });
       return;
     }
     if (!row) return;
@@ -828,6 +889,16 @@ const handleRowCommand = async (command: string, row: WorkspaceVisibleRow | null
   }
   // 空白区菜单没有宿主行：创建落在当前目录，其余三项承接自已下线的头部 ⋯。
   switch (command) {
+    case 'refresh':
+      if (!row) {
+        await handleRefresh({ forceTree: true });
+      } else {
+        await refreshDirectory(
+          row.kind === 'dir' ? row.path : workspaceParentPath(row.path),
+          { refreshTree: true }
+        );
+      }
+      return;
     case 'new-dir':
       await handleCreateEntry('dir', row);
       return;
@@ -1355,6 +1426,7 @@ watch(
 
 onMounted(() => {
   window.addEventListener('keydown', handleWindowKeydown);
+  workspaceRefreshStop = onWorkspaceRefresh(refreshFromWorkspaceEvent);
   if (remoteInterlinkActive.value) {
     void enterRemoteWorkspace();
     return;
@@ -1383,6 +1455,8 @@ watch(remoteInterlinkActive, (remote) => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', handleWindowKeydown);
+  workspaceRefreshStop?.();
+  workspaceRefreshStop = null;
   if (statsTimer) window.clearTimeout(statsTimer);
   statsTimer = null;
   uploadQueue.dispose();

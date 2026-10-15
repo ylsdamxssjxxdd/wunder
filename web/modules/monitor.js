@@ -15,7 +15,7 @@ import { getWunderBase } from "./api.js";
 import { notify } from "./notify.js";
 import { appendQueuePriorityAction } from "./monitor-queue.js";
 import { getCurrentLanguage, t } from "./i18n.js?v=20261011-01";
-import { openTrajectoryPage } from "./trajectory-view.js?v=20261015-02";
+import { openTrajectoryPage } from "./trajectory-view.js?v=20261015-03";
 import { filterRemovedSwarmTools } from "../shared/deprecated-tools.js";
 
 const ONE_HOUR_MS = 60 * 60 * 1000;

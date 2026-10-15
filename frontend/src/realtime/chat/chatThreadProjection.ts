@@ -361,11 +361,18 @@ const buildAssistantBubble = (
     ? composeItemText(state, latestTextItem.itemId, 'content')
     : '';
   const reasoning = composeTurnText(state, orderedTextItems, 'reasoning');
-  const records = workflows
+  // A tool lifecycle frame can arrive before it has a tool name.  Keep that
+  // incomplete row out of both the compact process timeline and the shared
+  // workflow renderer; either a companion assistant `tool_calls` entry or a
+  // later revision will make it renderable without a fabricated label.
+  const renderableWorkflows = workflows.filter((item) =>
+    hasRenderableWorkflowIdentity(item, textItems)
+  );
+  const records = renderableWorkflows
     .slice()
     .sort((a, b) => compareExecutions(a, b) || compareWorkflowItems(a, b))
-    .map((item) => buildWorkflowRecord(item, modelTurnId));
-  const timeline = buildTurnTimeline(state, orderedTextItems, workflows);
+    .map((item) => buildWorkflowRecord(item, modelTurnId, textItems));
+  const timeline = buildTurnTimeline(state, orderedTextItems, renderableWorkflows);
   const createdSeq = orderedTextItems[0]?.order ?? (workflows.length > 0 ? minItemOrder(workflows) : 0);
   const updatedSeq = Math.max(
     latestTextItem?.order ?? 0,
@@ -634,19 +641,78 @@ const resolveBubbleStatus = (
 
 const workflowRecordCache = new WeakMap<ThreadItemState, { revision: number; modelTurnId: string; record: WorkflowItemRecord }>();
 
+/**
+ * A durable tool result is sometimes committed before the companion tool row
+ * has been fully decorated.  The preceding assistant model message already
+ * contains the OpenAI-compatible `tool_calls` array, so use the matching call
+ * id to retain its real function identity instead of projecting a fabricated
+ * “unknown tool” card during that short (or replayed) interval.
+ */
+const resolveToolCallIdentity = (
+  item: ThreadItemState,
+  assistantItems: ThreadItemState[]
+): { name: string; arguments: unknown; functionName: string } => {
+  const rawPayload = item.raw ?? {};
+  const nestedPayload = isPlainRecord(rawPayload.data) ? rawPayload.data : null;
+  // Some durable tool rows keep the event body under `payload.data` (the
+  // shape used by the stream envelope). Flatten that one bounded layer before
+  // resolving identity so replay does not degrade into an unnamed tool card.
+  const payload = nestedPayload ? { ...rawPayload, ...nestedPayload } : rawPayload;
+  const directName = firstText(payload.tool, payload.tool_name, payload.name, payload.toolName);
+  const directFunctionName = firstText(
+    payload.tool_function_name,
+    payload.toolFunctionName,
+    payload.function_name,
+    payload.functionName,
+    isPlainRecord(payload.function) ? payload.function.name : ''
+  );
+  const directArgs = payload.args ?? payload.arguments ?? payload.input ??
+    (isPlainRecord(payload.function) ? payload.function.arguments : undefined);
+  if (directName || directFunctionName) {
+    return { name: directName || directFunctionName, arguments: directArgs, functionName: directFunctionName };
+  }
+  const callId = firstText(payload.tool_call_id, payload.toolCallId, payload.call_id, payload.callId);
+  if (!callId) return { name: '', arguments: directArgs, functionName: '' };
+  for (let index = assistantItems.length - 1; index >= 0; index -= 1) {
+    const calls = assistantItems[index].raw?.tool_calls;
+    if (!Array.isArray(calls)) continue;
+    const matchingCall = calls.find((entry) =>
+      isPlainRecord(entry) && firstText(entry.id, entry.tool_call_id, entry.toolCallId, entry.call_id, entry.callId) === callId
+    );
+    if (!isPlainRecord(matchingCall)) continue;
+    const functionPayload = isPlainRecord(matchingCall.function) ? matchingCall.function : matchingCall;
+    const functionName = firstText(functionPayload.name, matchingCall.name, matchingCall.tool_name, matchingCall.toolName);
+    if (functionName) {
+      return {
+        name: functionName,
+        arguments: directArgs ?? functionPayload.arguments ?? matchingCall.arguments,
+        functionName
+      };
+    }
+  }
+  return { name: '', arguments: directArgs, functionName: '' };
+};
+
 export const buildWorkflowRecord = (
   item: ThreadItemState,
-  modelTurnId: string
+  modelTurnId: string,
+  assistantItems: ThreadItemState[] = []
 ): WorkflowItemRecord => {
   const cached = workflowRecordCache.get(item);
-  if (cached?.revision === item.revision && cached.modelTurnId === modelTurnId) return cached.record;
+  if (cached?.revision === item.revision && cached.modelTurnId === modelTurnId &&
+      (firstText(cached.record.toolName, cached.record.tool, cached.record.toolFunctionName) || item.kind !== 'tool_call')) {
+    return cached.record;
+  }
   const payload = item.raw ?? {};
   const eventType = resolveWorkflowEventType(item);
   // Compaction is a workflow activity, not a model tool call. Its payload
   // need not contain a tool name; never infer its identity from a generic title.
+  const toolCallIdentity = item.kind === 'tool_call'
+    ? resolveToolCallIdentity(item, assistantItems)
+    : { name: '', arguments: undefined, functionName: '' };
   const toolName = item.kind === 'compaction'
     ? 'context_compaction'
-    : firstText(payload.tool, payload.tool_name, payload.name, payload.toolName);
+    : toolCallIdentity.name || firstText(payload.tool, payload.tool_name, payload.name, payload.toolName);
   const record: WorkflowItemRecord = {
     ...payload,
     ...(payload.request_usage ? { usage: payload.request_usage } : {}),
@@ -660,7 +726,7 @@ export const buildWorkflowRecord = (
     model_turn_id: modelTurnId,
     updatedSeq: item.revision
   };
-  const args = payload.args ?? payload.arguments ?? payload.input;
+  const args = toolCallIdentity.arguments ?? payload.args ?? payload.arguments ?? payload.input;
   if (args !== undefined) {
     record.toolCallRawDetail = stringifyWorkflowDetail({ tool: toolName, arguments: args });
   }
@@ -674,6 +740,10 @@ export const buildWorkflowRecord = (
   copyWorkflowAliases(record, payload, 'tool_display_name', 'toolDisplayName', 'display_name', 'displayName', 'toolDisplayName', 'tool_display_name', 'displayName', 'display_name');
   copyWorkflowAliases(record, payload, 'tool_runtime_name', 'toolRuntimeName', 'runtime_name', 'runtimeName', 'toolRuntimeName', 'tool_runtime_name', 'runtimeName', 'runtime_name');
   copyWorkflowAliases(record, payload, 'tool_function_name', 'toolFunctionName', 'function_name', 'functionName', 'toolFunctionName', 'tool_function_name', 'functionName', 'function_name');
+  if (toolCallIdentity.functionName && !firstText(record.toolFunctionName, record.tool_function_name)) {
+    record.toolFunctionName = toolCallIdentity.functionName;
+    record.tool_function_name = toolCallIdentity.functionName;
+  }
   copyWorkflowAliases(record, payload, 'command_session_id', 'commandSessionId', 'command_session_id', 'commandSessionId');
   workflowRecordCache.set(item, { revision: item.revision, modelTurnId, record });
   return record;
@@ -787,6 +857,30 @@ const composeTurnText = (
 
 const hasToolCalls = (item: ThreadItemState): boolean =>
   Array.isArray(item.raw.tool_calls) && item.raw.tool_calls.length > 0;
+
+/** Do not render a lifecycle-only tool row until its function identity is
+ * available.  Rendering that transient row creates the misleading “unknown
+ * tool” entry; the same item is projected again as soon as its name arrives. */
+const hasRenderableWorkflowIdentity = (
+  item: ThreadItemState,
+  assistantItems: ThreadItemState[]
+): boolean => {
+  if (item.kind !== 'tool_call' || !isActiveItemStatus(item.status)) return true;
+  const payload = item.raw ?? {};
+  return Boolean(
+    firstText(
+      payload.tool,
+      payload.tool_name,
+      payload.name,
+      payload.toolName,
+      payload.tool_function_name,
+      payload.toolFunctionName,
+      payload.function_name,
+      payload.functionName,
+      isPlainRecord(payload.function) ? payload.function.name : ''
+    ) || resolveToolCallIdentity(item, assistantItems).name
+  );
+};
 
 const minItemOrder = (items: ThreadItemState[]): number =>
   items.reduce((min, item) => (item.order < min ? item.order : min), items[0]?.order ?? 0);

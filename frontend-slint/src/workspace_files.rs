@@ -408,23 +408,19 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
             Err(_) => Vec::new(),
         };
         if paths.is_empty() {
-            app.set_status(
-                if local {
-                    "落点没有可复制的文件".into()
-                } else {
-                    "落点没有可上传的文件（仅支持文本文件）".into()
-                },
-            );
+            app.set_status(if local {
+                "落点没有可复制的文件".into()
+            } else {
+                "落点没有可上传的文件（仅支持文本文件）".into()
+            });
             return;
         }
         let count = paths.len();
-        app.set_status(
-            if local {
-                format!("正在复制 {count} 个文件…")
-            } else {
-                format!("正在上传 {count} 个文件…")
-            },
-        );
+        app.set_status(if local {
+            format!("正在复制 {count} 个文件…").into()
+        } else {
+            format!("正在上传 {count} 个文件…").into()
+        });
         begin_busy(&app.as_weak());
         let weak = app.as_weak();
         let worker_api = drop_api.clone();
@@ -650,7 +646,11 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
 /// styling.
 fn open_prompt(app: &MainWindow, kind: PromptKind, path: String, name: String) {
     let local = !is_cloud_target();
-    let root_word = if local { "工作目录" } else { "云端工作目录" };
+    let root_word = if local {
+        "工作目录"
+    } else {
+        "云端工作目录"
+    };
     let (title, body, confirm, danger, input, seed) = match kind {
         PromptKind::Rename => (
             "重命名",

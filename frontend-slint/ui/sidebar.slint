@@ -10,6 +10,7 @@ import { I18n } from "i18n.slint";
 import { ListView } from "std-widgets.slint";
 import { DragRow, DragPreview, SidebarMetrics } from "drag_row.slint";
 import { WorkspaceFilesPanel } from "workspace_files.slint";
+import { RuntimeStatus } from "runtime_status.slint";
 
 // Resolve a workspace icon name to a bundled icon; unknown names fall back
 // to the generic folder so a stale icon string can never blank a row. Slint
@@ -67,14 +68,39 @@ export global WorkspaceVisual {
     }
 }
 
-// Thread status dot: running is primary, waiting amber, failed red, rest gray.
+// Compact thread glyphs keep the 28px tree rhythm while distinguishing phases.
 component StatusDot inherits Rectangle {
     in property <string> status;
-    width: 6px; height: 6px; border-radius: 3px;
-    background: status == "running" ? Theme.accent
-        : status == "queued" || status == "waiting" ? Theme.warning
-        : status == "error" || status == "failed" ? Theme.danger
-        : #C4C7CD;
+    width: 11px; height: 11px;
+    private property <bool> inquiry: status == "waiting_input" || status == "waiting_user_input"
+        || status.starts-with("等待用户输入") || status.starts-with("等待回答");
+    private property <bool> approval: status == "waiting_approval"
+        || status.starts-with("等待确认") || status.starts-with("等待审批");
+    private property <string> state: RuntimeStatus.normalize(status);
+    private property <color> tint: root.inquiry ? Theme.accent : root.approval || root.state == "pending" ? Theme.warning
+        : root.state == "error" ? Theme.danger : root.state == "done" ? Theme.success
+        : root.state == "running" ? Theme.accent : Theme.muted;
+    if root.state != "running" : Image {
+        width: 10px; height: 10px; image-fit: contain; colorize: root.tint;
+        source: root.inquiry ? @image-url("../assets/icons/fa-circle-question.svg")
+            : root.approval ? @image-url("../assets/icons/shield.svg")
+            : root.state == "pending" ? @image-url("../assets/icons/status-clock.svg")
+            : root.state == "done" ? @image-url("../assets/icons/status-check.svg")
+            : root.state == "error" ? @image-url("../assets/icons/status-error.svg")
+            : @image-url("../assets/icons/status-pause.svg");
+    }
+    if root.state == "running" : spinner := Rectangle {
+        width: 10px; height: 10px;
+        private property <angle> phase: mod(animation-tick(), 1200ms) / 1200ms * 360deg;
+        for offset in [{x: 0, y: -3.8}, {x: 3.3, y: -1.9}, {x: 3.3, y: 1.9}, {x: 0, y: 3.8}, {x: -3.3, y: 1.9}, {x: -3.3, y: -1.9}] : Rectangle {
+            x: 3.9px + (offset.x * cos(spinner.phase) - offset.y * sin(spinner.phase)) * 1px;
+            y: 3.9px + (offset.x * sin(spinner.phase) + offset.y * cos(spinner.phase)) * 1px;
+            width: 2.2px; height: 2.2px; border-radius: 1.1px; background: root.tint;
+        }
+    }
+    Tooltip { text: root.inquiry ? @markdown("等待回答") : root.approval ? @markdown("等待确认")
+        : root.state == "pending" ? @markdown("排队中") : root.state == "done" ? @markdown("已完成")
+        : root.state == "error" ? @markdown("错误") : root.state == "running" ? @markdown("运行中") : @markdown("空闲"); }
 }
 
 component ThreadRow inherits Rectangle {
@@ -90,7 +116,7 @@ component ThreadRow inherits Rectangle {
     HorizontalLayout {
         padding-left: 34px; padding-right: 8px; spacing: 8px;
         StatusDot {
-            y: (parent.height - 6px) / 2;
+            y: (parent.height - self.height) / 2;
             status: data.status;
         }
         Text {

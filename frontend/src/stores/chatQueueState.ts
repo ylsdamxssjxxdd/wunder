@@ -11,6 +11,7 @@ import {
   isChatQueueRuntimeEvent,
   projectQueueItems,
   queueItemIdentities,
+  resolveEmbeddedChatQueueRuntimeEvent,
   resolveConsumedQueueEventIdentities,
   type QueuedTurn
 } from './chatQueueProjection';
@@ -136,12 +137,15 @@ export function scheduleChatQueueRefresh(
 }
 
 export function noteChatQueueRuntimeEvent(sessionId: unknown, eventType: unknown, payload?: unknown): void {
-  if (!isChatQueueRuntimeEvent(eventType)) return;
   const targetId = cleanText(sessionId);
-  const normalized = cleanText(eventType).toLowerCase();
-  if (targetId && (normalized === 'queue_start' || normalized === 'queue_finish' || normalized === 'queue_cancel' || normalized === 'queue_fail')) {
-    consumeQueueItem(targetId, payload, normalized);
-  }
+  const embedded = resolveEmbeddedChatQueueRuntimeEvent(eventType, payload);
+  const direct = isChatQueueRuntimeEvent(eventType);
+  if (!direct && !embedded) return;
+  // The resolver normalizes both direct lifecycle frames and durable
+  // thread_change payloads. Consume a terminal row once at this boundary so
+  // the composer cannot retain it while the eventual queue refresh is in
+  // flight.
+  if (targetId && embedded) consumeQueueItem(targetId, embedded.payload, embedded.eventType);
   scheduleChatQueueRefresh(sessionId);
 }
 

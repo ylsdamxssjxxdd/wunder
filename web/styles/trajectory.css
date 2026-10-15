@@ -478,6 +478,14 @@
   height: 20px;
 }
 
+.tt-row-summary {
+  cursor: pointer;
+}
+
+.tt-row-summary:hover td {
+  background: var(--tt-hover);
+}
+
 .tt-row-error .tt-content-cell {
   color: var(--tt-red);
 }
@@ -1036,4 +1044,27 @@
 
 .tt-json-number {
   color: #1c00cf;
+}
+
+/* Fold controls share the ledger's compact row geometry. */
+.tt-turn-control {
+  border: 0;
+  background: transparent;
+  font: inherit;
+  padding: 0 3px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.tt-turn-control:hover { color: var(--tt-brand); }
+.tt-turn-control:disabled { cursor: default; opacity: .6; }
+.tt-turn-control:focus-visible, .tt-row:focus-visible {
+  outline: 1px solid var(--tt-brand);
+  outline-offset: -1px;
+}
+.tt-row-summary .tt-collapsed-summary {
+  grid-column: 1 / -1;
+  flex: 1;
+  min-width: 0;
+  padding-left: 4px;
+  font-style: normal;
 }

@@ -46,7 +46,7 @@ export type WorkspaceDirectoryState = {
  */
 export type WorkspaceDirectoryPageLoader = (
   path: string,
-  options: { offset: number; limit: number }
+  options: { offset: number; limit: number; refreshTree?: boolean }
 ) => Promise<WorkspaceDirectoryPage>;
 
 export type UseWorkspaceFileTreeOptions = {
@@ -77,6 +77,8 @@ export const useWorkspaceFileTree = (options: UseWorkspaceFileTreeOptions = {}) 
   const inflight = new Map<string, Promise<void>>();
 
   const loadingPaths = ref<string[]>([]);
+  const workspaceId = ref('');
+  const treeVersion = ref<number | null>(null);
   const activePath = ref('');
   const selectedPaths = reactive(new Set<string>());
   const selectionMode = ref(false);
@@ -104,7 +106,7 @@ export const useWorkspaceFileTree = (options: UseWorkspaceFileTreeOptions = {}) 
 
   const loadDirectory = (
     path: string,
-    loadOptions: { force?: boolean; append?: boolean } = {}
+    loadOptions: { force?: boolean; append?: boolean; refreshTree?: boolean } = {}
   ): Promise<void> => {
     const key = normalizeWorkspaceRelativePath(path);
     const state = ensureDirectory(key);
@@ -131,7 +133,15 @@ export const useWorkspaceFileTree = (options: UseWorkspaceFileTreeOptions = {}) 
 
     const task = (async () => {
       try {
-        const page = await loadPage(key, { offset, limit: pageSize });
+        const page = await loadPage(key, {
+          offset,
+          limit: pageSize,
+          ...(loadOptions.refreshTree === true ? { refreshTree: true } : {})
+        });
+        if (key === '') {
+          if (page.workspaceId) workspaceId.value = page.workspaceId;
+          if (Number.isFinite(page.treeVersion)) treeVersion.value = Number(page.treeVersion);
+        }
         // Patch this directory node only; other directories are untouched.
         state.entries = append
           ? appendWorkspacePage(state.entries, page.entries)
@@ -165,8 +175,8 @@ export const useWorkspaceFileTree = (options: UseWorkspaceFileTreeOptions = {}) 
     return task;
   };
 
-  const refreshDirectory = (path: string): Promise<void> =>
-    loadDirectory(path, { force: true });
+  const refreshDirectory = (path: string, refreshOptions: { refreshTree?: boolean } = {}): Promise<void> =>
+    loadDirectory(path, { force: true, ...refreshOptions });
 
   const expandDirectory = async (path: string): Promise<void> => {
     const key = normalizeWorkspaceRelativePath(path);
@@ -391,6 +401,8 @@ export const useWorkspaceFileTree = (options: UseWorkspaceFileTreeOptions = {}) 
     rootState,
     expandedPaths,
     loadingPaths,
+    workspaceId,
+    treeVersion,
     activePath,
     selectedPaths,
     selectedList,

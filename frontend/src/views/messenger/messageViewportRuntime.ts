@@ -51,7 +51,6 @@ export type MessageViewportRuntime = {
   jumpToMessageBottom: () => Promise<void>;
   jumpToMessageTop: () => Promise<void>;
   scrollVirtualMessageToIndex: (keys: string[], index: number, align?: 'center' | 'start') => void;
-  scrollLatestAssistantToCenter: () => Promise<void>;
   restoreConversationScroll: (options?: { deferMeasure?: boolean }) => Promise<boolean>;
   rememberCurrentScroll: () => void;
   rememberScrollForKey: (key: string) => void;
@@ -946,46 +945,6 @@ export const createMessageViewportRuntime = (
     scheduleMessageVirtualMeasure();
   };
 
-  const scrollLatestAssistantToCenter = async () => {
-    if (!options.isAgentConversationActive.value) return;
-    if (options.shouldVirtualizeMessages.value) {
-      const latestIndex = (() => {
-        for (let cursor = options.agentRenderableMessages.value.length - 1; cursor >= 0; cursor -= 1) {
-          const item = options.agentRenderableMessages.value[cursor];
-          if (String(item.message?.role || '').toLowerCase() !== 'assistant') continue;
-          return cursor;
-        }
-        return -1;
-      })();
-      if (latestIndex >= 0) {
-        scrollVirtualMessageToIndex(
-          options.agentRenderableMessages.value.map((item) => item.key),
-          latestIndex,
-          'center'
-        );
-        await nextTick();
-      }
-    }
-    await nextTick();
-    const container = options.messageListRef.value;
-    if (!container) return;
-    const items = container.querySelectorAll('.messenger-message:not(.mine)');
-    if (!items.length) return;
-    const target = items[items.length - 1] as HTMLElement;
-    requestAnimationFrame(() => {
-      const containerRect = container.getBoundingClientRect();
-      const targetRect = target.getBoundingClientRect();
-      const targetCenter = targetRect.top - containerRect.top + targetRect.height / 2;
-      const nextTop = container.scrollTop + targetCenter - container.clientHeight / 2;
-      const maxTop = Math.max(0, container.scrollHeight - container.clientHeight);
-      container.scrollTop = clamp(nextTop, 0, maxTop);
-      syncMessageVirtualMetrics();
-      updateMessageScrollState();
-      rememberCurrentScroll();
-      scheduleMessageVirtualMeasure();
-    });
-  };
-
   const dispose = () => {
     disposed = true;
     if (typeof window !== 'undefined' && messageScrollFrame !== null) {
@@ -1048,7 +1007,6 @@ export const createMessageViewportRuntime = (
     jumpToMessageBottom,
     jumpToMessageTop,
     scrollVirtualMessageToIndex,
-    scrollLatestAssistantToCenter,
     restoreConversationScroll,
     rememberCurrentScroll,
     rememberScrollForKey,

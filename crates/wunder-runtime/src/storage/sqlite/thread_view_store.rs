@@ -215,6 +215,51 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn live_process_phase_and_reasoning_tail_advance_past_preview_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = SqliteStorage::new(dir.path().join("fixture.db").to_string_lossy().into());
+        let turn = storage
+            .accept_thread_turn(
+                "fixture-user",
+                "fixture-live",
+                &json!({"content":"fixture input"}),
+            )
+            .unwrap();
+        let root = turn["turn_id"].as_str().unwrap();
+        let id = format!("{root}:text-1");
+        storage.append_thread_item("fixture-user", &json!({"session_id":"fixture-live","turn_id":root,"item_id":id,"kind":"assistant_message","content":"","status":"running"})).unwrap();
+        let first = "思考".repeat(1000);
+        for (index, offset, text) in [(0, 0, first.as_str()), (1, 2000, " fixture newest thought")]
+        {
+            storage.upsert_thread_text_block("fixture-user", "fixture-live", &json!({"item_id":id,"field":"reasoning","block_index":index,"event_id":index+1,"data":{"reasoning":text,"reasoning_offset":offset}})).unwrap();
+        }
+        let page = storage
+            .thread_view_page("fixture-user", "fixture-live", "chat", None, 12)
+            .unwrap();
+        let row = &page.chat[0];
+        assert!(row.assistant.reasoning.len() <= 2048);
+        assert!(row.assistant.reasoning.ends_with("fixture newest thought"));
+        assert_eq!(row.process_activity.kind, "thinking");
+        assert_eq!(row.assistant.reasoning_offset, 2023);
+        let cumulative = " fixture newest thought rewritten tail";
+        storage.upsert_thread_text_block("fixture-user", "fixture-live", &json!({"item_id":id,"field":"reasoning","block_index":1,"event_id":3,"data":{"reasoning":cumulative,"reasoning_offset":2000}})).unwrap();
+        let page = storage
+            .thread_view_page("fixture-user", "fixture-live", "chat", None, 12)
+            .unwrap();
+        assert!(page.chat[0].assistant.reasoning.ends_with(cumulative));
+        assert_eq!(
+            page.chat[0].assistant.reasoning_offset,
+            2000 + cumulative.len()
+        );
+        storage.append_thread_item("fixture-user", &json!({"session_id":"fixture-live","turn_id":root,"item_id":"fixture-tool","kind":"tool_call","tool":"fixture_tool","status":"running"})).unwrap();
+        let page = storage
+            .thread_view_page("fixture-user", "fixture-live", "chat", None, 12)
+            .unwrap();
+        assert_eq!(page.chat[0].process_activity.kind, "tool");
+        assert_eq!(page.chat[0].process_activity.tool, "fixture_tool");
+    }
+
+    #[test]
     fn source_chat_batches_page_queries_and_preserves_block_fallbacks() {
         struct Counted<'a> {
             db: Db<'a>,

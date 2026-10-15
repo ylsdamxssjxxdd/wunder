@@ -65,6 +65,9 @@ pub struct ChatViewRow {
     pub reasoning_count: i64,
     #[serde(default)]
     pub reasoning_item_id: String,
+    /// Latest bounded execution phase; never includes tool output or reasoning.
+    #[serde(default)]
+    pub process_activity: ProcessActivity,
     pub failed_count: i64,
     #[serde(default)]
     pub subagents: Vec<Value>,
@@ -115,6 +118,14 @@ pub struct TrajectoryTile {
     pub model_count: i64,
     #[serde(default)]
     pub tool_count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ProcessActivity {
+    pub kind: String,
+    pub item_id: String,
+    pub tool: String,
+    pub created_seq: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

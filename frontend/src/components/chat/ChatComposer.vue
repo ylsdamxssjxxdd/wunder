@@ -229,7 +229,6 @@
                   class="composer-plus-item"
                   type="button"
                   :class="{ 'is-active': presetMenuVisible }"
-                  :disabled="stopButtonActive"
                   :aria-expanded="presetMenuVisible"
                   @click.stop="togglePresetMenu"
                 >
@@ -246,7 +245,6 @@
                   v-if="presetMenuVisible"
                   class="composer-plus-flyout"
                   :items="presetQuestionItems"
-                  :disabled="stopButtonActive"
                   @pick="applyPresetQuestion"
                 />
               </div>
@@ -300,7 +298,7 @@
                 class="composer-plus-item"
                 type="button"
                 :class="{ 'is-recording': voiceRecording }"
-                :disabled="composerBusy > 0 || stopButtonActive || voiceTranscribing"
+                :disabled="composerBusy > 0 || voiceTranscribing"
                 :title="voiceButtonTitle"
                 @click.stop="handleToggleVoiceRecord"
               >
@@ -2262,7 +2260,6 @@ const toggleCommandMenu = () => {
 
 // 预设问题：只开合列表，选中项由 applyPresetQuestion 填入草稿。
 const togglePresetMenu = () => {
-  if (stopButtonActive.value) return;
   const next = !presetMenuVisible.value;
   closeOtherPanels('preset');
   presetMenuVisible.value = next;
@@ -2282,7 +2279,6 @@ const hoverPlusSubmenu = (target: 'command' | 'preset' | 'approval' | 'none') =>
     return;
   }
   if (target === 'preset') {
-    if (stopButtonActive.value) return;
     commandMenuOpen.value = false;
     approvalMenuVisible.value = false;
     presetMenuVisible.value = true;
@@ -2476,7 +2472,6 @@ const handleSendButtonKeydown = (event: KeyboardEvent) => {
 };
 
 const handleToggleVoiceRecord = () => {
-  if (stopButtonActive.value) return;
   closeComposerPanels();
   emit('toggle-voice-record');
 };

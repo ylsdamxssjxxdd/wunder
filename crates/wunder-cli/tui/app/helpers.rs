@@ -2112,7 +2112,8 @@ pub(super) fn localize_cli_notice(language: &str, text: &str) -> String {
             "输入 /help 查看可用 slash 命令".to_string()
         }
         "available models:" => "可用模型：".to_string(),
-        "no models configured. run /config first." => "尚未配置模型，请先运行 /config".to_string(),
+        "no models configured. add one with /model add." =>
+            "尚未配置模型，请用 /model add 添加".to_string(),
         "no saved session found" => "未找到保存的会话".to_string(),
         "no llm model configured" => "尚未配置 LLM 模型".to_string(),
         "session id is empty" => "会话 ID 不能为空".to_string(),

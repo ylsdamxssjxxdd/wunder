@@ -17,11 +17,10 @@
       <i
         :class="['fa-solid', 'fa-caret-right', 'timeline-process-arrow', { 'is-open': processOpen }]"
       ></i>
-      <span v-if="processOpen" class="timeline-process-gutter-line"></span>
     </span>
     <span class="timeline-process-title">{{ t('chat.timeline.workProcess') }}</span>
     <span class="timeline-process-count">{{ t('chat.timeline.workProcessSteps', { count: fold.steps }) }}</span>
-    <span v-if="!processOpen && fold.summary" class="timeline-process-latest">{{ fold.summary }}</span>
+    <span v-if="fold.activity" class="timeline-process-latest">{{ fold.activity }}</span>
   </button>
 
   <template v-for="block in visibleBlocks" :key="block.id">
@@ -125,6 +124,7 @@ import type { ToolWorkflowPatchView, ToolWorkflowStructuredView } from './toolWo
 import type { WorkflowItem } from './toolWorkflowRunModel';
 import type { ChatRuntimeTimelineBlock } from '@/realtime/chat/chatRuntimeTypes';
 import { t } from '@/i18n';
+import { reasoningPreview } from './timelineActivity';
 
 /**
  * 蜂巢时间线的块渲染单元（§7.3 / §7.4，形态对齐桌面端
@@ -218,7 +218,7 @@ type TimelineFold = {
   enabled: boolean;
   finalIndex: number;
   steps: number;
-  summary: string;
+  activity: string;
 };
 
 // ------------------------------------------------------- 工具/思考条目
@@ -253,11 +253,6 @@ const toolEntryByItemId = computed(() => {
   return map;
 });
 
-const foldSummaryOf = (text: string): string => {
-  const normalized = text.replace(/\s+/g, ' ').trim();
-  return normalized.length > 160 ? `${normalized.slice(0, 160)}…` : normalized;
-};
-
 // ------------------------------------------------------------ 展开状态
 
 /** 整轮默认展开时，过程区与其中的批次一起铺开（子智能体详情）。 */
@@ -277,7 +272,7 @@ const activityTitle = (block: RenderActivityBlock): string =>
 
 // ------------------------------------------------- 时间线块（正文/批次交错）
 
-const EMPTY_FOLD: TimelineFold = { enabled: false, finalIndex: 0, steps: 0, summary: '' };
+const EMPTY_FOLD: TimelineFold = { enabled: false, finalIndex: 0, steps: 0, activity: '' };
 
 /**
  * 块装配与过程区折叠计划一次算完：`finalIndex` 之前的块属于工作过程，
@@ -329,7 +324,7 @@ const timeline = computed<{ blocks: RenderBlock[]; fold: TimelineFold }>(() => {
             streaming: row.streaming === undefined
               ? index === lastActivityIndex && props.streaming
               : Boolean(row.streaming),
-            summary: foldSummaryOf(text),
+            summary: reasoningPreview(text),
             text
           }
         });
@@ -369,14 +364,20 @@ const timeline = computed<{ blocks: RenderBlock[]; fold: TimelineFold }>(() => {
   });
 
   if (!foldEnabled) return { blocks: rendered, fold: EMPTY_FOLD };
-  let summary = '';
-  for (let index = lastBodyIndex - 1; index >= 0 && !summary; index -= 1) {
-    const block = rendered[index];
-    summary = block.kind === 'activity' ? block.latestSummary : foldSummaryOf(block.text);
+  let activity = '';
+  for (const block of rendered) {
+    if (block.kind !== 'activity') continue;
+    for (const row of block.rows) {
+      if (row.kind === 'reasoning' && row.entry.streaming) activity = t('chat.timeline.thinkingRunning');
+      if (row.kind === 'tool' && row.entry.status === 'loading') {
+        activity = t('chat.timeline.executingTool', { tool: row.entry.toolLabel });
+      }
+    }
   }
+  if (!activity) activity = t(props.streaming ? 'chat.timeline.generatingReply' : 'chat.timeline.processCompleted');
   return {
     blocks: rendered,
-    fold: { enabled: true, finalIndex: lastBodyIndex, steps, summary }
+    fold: { enabled: true, finalIndex: lastBodyIndex, steps, activity }
   };
 });
 
@@ -546,15 +547,6 @@ watch(
 .timeline-process-gutter:hover::before {
   border-color: var(--mz-border-strong, #d8d5d0);
   box-shadow: 0 2px 5px rgba(31, 35, 41, 0.08);
-}
-
-.timeline-process-gutter-line {
-  position: absolute;
-  top: 40px;
-  bottom: -12px;
-  left: 12.5px;
-  width: 1px;
-  background: var(--mz-timeline-line, #e2dfda);
 }
 
 .timeline-process-arrow {

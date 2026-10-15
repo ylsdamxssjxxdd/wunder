@@ -23,6 +23,9 @@ pub struct NativeTerminalSpec {
     /// Optional caller-chosen id; empty generates `term_<uuid>`.
     pub terminal_id: String,
     pub session_id: String,
+    /// Stable local workspace identity used to keep terminal records and
+    /// transcripts isolated when the user switches workspaces.
+    pub workspace_id: String,
     pub command: String,
     pub cwd: String,
     /// Empty chooses the platform default: cmd.exe (Windows) / bash (Unix).
@@ -65,6 +68,7 @@ impl NativeTerminalFrame {
             backend: match frame.backend {
                 DesktopTerminalBackend::Console => "console",
                 DesktopTerminalBackend::Pipes => "pipes",
+                DesktopTerminalBackend::Pty => "pty",
             }
             .to_string(),
             exit_code: frame.exit_code,
@@ -112,6 +116,7 @@ mod tests {
         let spec = NativeTerminalSpec {
             terminal_id: String::new(),
             session_id: session_id.to_string(),
+            workspace_id: String::new(),
             command: String::new(),
             cwd: std::env::temp_dir().to_string_lossy().to_string(),
             shell: String::new(),
@@ -196,6 +201,7 @@ mod tests {
         NativeTerminalSpec {
             terminal_id: String::new(),
             session_id: session_id.to_string(),
+            workspace_id: String::new(),
             command: String::new(),
             cwd: std::env::temp_dir().to_string_lossy().to_string(),
             shell: String::new(),
@@ -403,7 +409,7 @@ impl NativeTerminal {
                 .then(|| spec.terminal_id.trim().to_string()),
             user_id: user_id.to_string(),
             session_id: spec.session_id.trim().to_string(),
-            workspace_id: String::new(),
+            workspace_id: spec.workspace_id.trim().to_string(),
             command: (!spec.command.trim().is_empty()).then(|| spec.command.trim().to_string()),
             cwd: spec.cwd.clone(),
             shell: (!spec.shell.trim().is_empty()).then(|| spec.shell.trim().to_string()),

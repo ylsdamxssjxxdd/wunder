@@ -26,6 +26,14 @@
       @update:profile-avatar-color="updateCurrentUserAvatarColor"
     />
 
+    <section class="messenger-settings-card">
+      <div class="messenger-settings-group-head">
+        <div class="messenger-settings-title">{{ t('messenger.agent.runtime.trendTitle') }}</div>
+        <div class="messenger-settings-subtitle">{{ t('messenger.agent.runtime.trendMeta') }}</div>
+      </div>
+      <AgentDailyTrendChart :agent-id="settingsRuntimeAgentIdForApi" :active="isActive" />
+    </section>
+
     <section class="messenger-settings-card messenger-settings-card--danger">
       <div class="messenger-settings-group-head">
         <div class="messenger-settings-title">{{ t('messenger.settingsPage.general.sessionGroup') }}</div>
@@ -54,6 +62,9 @@
 </template>
 
 <script setup lang="ts">
+import { onActivated, onDeactivated, ref } from 'vue';
+
+import AgentDailyTrendChart from '@/components/messenger/AgentDailyTrendChart.vue';
 import { useI18n } from '@/i18n';
 import { confirmWithFallback } from '@/utils/confirm';
 import type { MessengerControllerContext } from '@/views/messenger/controller/messengerControllerContext';
@@ -61,6 +72,15 @@ import type { MessengerControllerContext } from '@/views/messenger/controller/me
 const props = defineProps<{ controller: MessengerControllerContext }>();
 const { t } = useI18n();
 
+const isActive = ref(true);
+onActivated(() => {
+  isActive.value = true;
+});
+onDeactivated(() => {
+  isActive.value = false;
+});
+
+const settingsRuntimeAgentIdForApi = props.controller.settingsRuntimeAgentIdForApi;
 const currentUsername = props.controller.currentUsername;
 const currentUserId = props.controller.currentUserId;
 const currentLanguageLabel = props.controller.currentLanguageLabel;

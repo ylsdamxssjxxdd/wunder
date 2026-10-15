@@ -24,6 +24,8 @@ export struct TrajRow {
     turn: int,            // user turn number, -1 = none
     turn-start: bool,
     turn-end: bool,
+    foldable: bool,
+    collapsed: bool,
     row-height: length,   // 30px ledger row / 20px summary row
     index: int,           // logical record index for timeline focus
 }
@@ -77,6 +79,7 @@ export struct TimelineRow {
     // string so the hot path only patches the active row and never rebuilds a
     // second metrics model for every streamed result frame.
     tool-metrics: string,
+    tool-metrics-visible: bool,
     detail: string,
     status-kind: int,
     foldable: bool,

@@ -35,13 +35,13 @@ import {
   loadSystemPrompt,
 } from "./modules/prompt.js?v=20260215-01";
 
-import { initDebugPanel, toggleDebugPolling } from "./modules/debug.js?v=20261015-02";
+import { initDebugPanel, toggleDebugPolling } from "./modules/debug.js?v=20261015-03";
 import {
   initMonitorPanel,
   loadMonitorData,
   refreshMonitorPanelLayout,
   toggleMonitorPolling,
-} from "./modules/monitor.js?v=20261015-02";
+} from "./modules/monitor.js?v=20261015-03";
 import { initUserManagementPanel, loadUserStats } from "./modules/users.js?v=20260215-01";
 import { initUserAccountsPanel, loadUserAccounts } from "./modules/user-accounts.js?v=20260518-01";
 import { initPresetAgentsPanel, loadPresetAgents } from "./modules/preset-agents.js?v=20261012-01";

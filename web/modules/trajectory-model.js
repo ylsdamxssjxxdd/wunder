@@ -728,6 +728,9 @@ export function flattenRecords(turns) {
       }
       if (records.length > groupStart) records[groupStart].groupStart = true;
     }
+    // Group identities annotate rows; they must not reorder durable events.
+    const ordered = records.slice(turnStart).sort((left, right) => left.cell.index - right.cell.index);
+    for (let index = 0; index < ordered.length; index += 1) records[turnStart + index] = ordered[index];
     if (records.length > turnStart) {
       records[turnStart].turnStart = true;
       records[records.length - 1].turnEnd = true;
@@ -755,57 +758,98 @@ export function filterRecords(records, query) {
   return records.filter((record) => recordNeedle(record).includes(needle));
 }
 
-function countTools(records) {
-  return records.filter((record) => record.cell.kind === "tool" || record.cell.kind === "subtool")
-    .length;
+/** Bounded, linear fold facts, keyed by user turn and stable assistant record ID. */
+export function buildFoldGroups(records) {
+    const turns = new Map();
+    const assistants = new Map();
+    const toolOwners = new Map();
+    const requestGroups = new Set();
+    let assistant = null;
+    for (let index = 0; index < records.length; index += 1) {
+        const record = records[index];
+        const tool = record.cell.kind === 'tool' || record.cell.kind === 'subtool';
+        if (record.cell.kind === 'message')
+            requestGroups.add(requestIdentity(record.turn, record.group));
+        if (record.turn !== null) {
+            let turn = turns.get(record.turn);
+            if (record.cell.kind !== 'system') {
+                if (!turn) {
+                    turn = { first: index, hidden: 0, steps: new Set(), tools: 0, turnEnd: record.turnEnd };
+                    turns.set(record.turn, turn);
+                }
+                else {
+                    turn.hidden += 1;
+                    if (record.group)
+                        turn.steps.add(record.group);
+                    if (tool)
+                        turn.tools += 1;
+                }
+            }
+            if (turn)
+                turn.turnEnd = record.turnEnd;
+        }
+        if (tool && assistant && assistant.turn === record.turn) {
+            let group = assistants.get(assistant.key);
+            if (!group) {
+                group = { end: index + 1, count: 0, names: [] };
+                assistants.set(assistant.key, group);
+            }
+            group.end = index + 1;
+            group.count += 1;
+            const name = record.cell.toolName || record.cell.text.split(' · ')[0] || '';
+            if (name && group.names.length < 8 && !group.names.includes(name))
+                group.names.push(name);
+            toolOwners.set(record.cell.index, assistant.key);
+        }
+        else {
+            assistant = record.cell.kind === 'message'
+                ? { key: trajectoryRecordId(record.cell), turn: record.turn } : null;
+        }
+    }
+    for (const [turn, group] of turns) {
+        for (const step of group.steps) {
+            if (!requestGroups.has(requestIdentity(turn, step)))
+                group.steps.delete(step);
+        }
+    }
+    return { turns, assistants, toolOwners };
 }
-
-/** 轮次折叠：每轮只留首条记录并附摘要行。 */
+/** Preserve headers and first content; calls fold only the following tool rows. */
 export function collapseTurnRecords(records, collapsedTurns, collapsedAssistants, t) {
-  const turnRecords = new Map();
-  for (const record of records) {
-    const bucket = turnRecords.get(record.turn);
-    if (bucket) bucket.push(record);
-    else turnRecords.set(record.turn, [record]);
-  }
-
-  const output = [];
-  let currentTurn;
-  let turnCollapsed = false;
-  for (const record of records) {
-    if (record.turn !== currentTurn) {
-      currentTurn = record.turn;
-      turnCollapsed = collapsedTurns.has(record.turn);
+    if (collapsedTurns.size === 0 && collapsedAssistants.size === 0)
+        return records;
+    const groups = buildFoldGroups(records);
+    const output = [];
+    for (let index = 0; index < records.length; index += 1) {
+        const record = records[index];
+        const turn = record.turn === null ? undefined : groups.turns.get(record.turn);
+        if (record.turn !== null && collapsedTurns.has(record.turn) && turn && turn.hidden > 0) {
+            if (record.cell.kind === 'system')
+                output.push(record);
+            else if (turn.first === index) {
+                output.push({ ...record, turnEnd: false });
+                output.push({ ...record, groupStart: false, turnStart: false, turnEnd: turn.turnEnd,
+                    collapsedSummary: t('summaryTurn', { steps: turn.steps.size, tools: turn.tools }),
+                    collapsedSummaryKind: 'turn' });
+            }
+            continue;
+        }
+        const key = trajectoryRecordId(record.cell);
+        const calls = record.cell.kind === 'message' && collapsedAssistants.has(key)
+            ? groups.assistants.get(key) : undefined;
+        if (calls) {
+            output.push({ ...record, turnEnd: false });
+            const names = calls.names.length ? ` · ${calls.names.join(', ')}` : '';
+            output.push({ ...record, groupStart: false, turnStart: false,
+                turnEnd: records[calls.end - 1].turnEnd,
+                collapsedSummary: t('summaryAssistantTools', { count: calls.count }) + names,
+                collapsedSummaryKind: 'assistant' });
+            index = calls.end - 1;
+        }
+        else
+            output.push(record);
     }
-    if (turnCollapsed) {
-      if (!record.turnStart) continue;
-      const bucket = turnRecords.get(record.turn) ?? [];
-      const steps = new Set(
-        bucket.map((candidate) => candidate.group).filter((title) => title.length > 0)
-      ).size;
-      output.push({
-        ...record,
-        collapsedSummary: t("summaryTurn", { steps, tools: countTools(bucket) }),
-        collapsedSummaryKind: "turn",
-      });
-      continue;
-    }
-    const assistantKey = requestIdentity(record.turn, record.group);
-    if (collapsedAssistants.has(assistantKey)) {
-      const bucket = (turnRecords.get(record.turn) ?? []).filter(
-        (candidate) => candidate.group === record.group
-      );
-      if (bucket[0]?.cell.index !== record.cell.index) continue;
-      output.push({
-        ...record,
-        collapsedSummary: t("summaryAssistantTools", { count: countTools(bucket) }),
-        collapsedSummaryKind: "assistant",
-      });
-      continue;
-    }
-    output.push(record);
-  }
-  return output;
+    return output;
 }
 
 export const ROW_PX = 30;

@@ -62,7 +62,11 @@ pub(super) fn install(app: &MainWindow, state: Rc<RefCell<State>>) {
                 return;
             };
             let mut current = state.borrow_mut();
-            if current.active.is_some() || app.get_session_loading() || app.get_creating_session() {
+            if current.active.is_some()
+                || !current.parked.is_empty()
+                || app.get_session_loading()
+                || app.get_creating_session()
+            {
                 return;
             }
             let desktop = current.desktop.clone();
@@ -178,13 +182,8 @@ pub(super) fn install(app: &MainWindow, state: Rc<RefCell<State>>) {
     );
 }
 
-/// Durable history as timeline rows, in the web messenger's form: every turn
-/// stays laid out — its bubble, per model round a batch (bar, thinking, tool
-/// entries) and that round's answer block. Everything the turn did before its
-/// newest answer block folds into one work-process bar, which ships closed, so
-/// a reloaded thread reads as process line plus answer instead of its whole
-/// working history. Batch bars inside it are stamped open: unfolding the
-/// process is the request to see the work.
+/// Durable history uses the same single work-process fold as streaming. Batch
+/// identities are retained for call ownership but never add a visible header.
 pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
     let mut rows = Vec::new();
     // Fold identity is model-wide: `toggle` folds by id, so no two batches or
@@ -244,6 +243,9 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
             bar.text = crate::timeline_text::tool_calls(tools).into();
             bar.payload = bar_at as i32;
             bar.group_idx = group;
+            bar.visible = false;
+            bar.group_open = true;
+            bar.open = true;
             bar.foldable = true;
             rows.push(bar);
             if !round.reasoning.is_empty() {
@@ -259,6 +261,7 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
                 reason.detail = round.reasoning.as_str().into();
                 reason.payload = rows.len() as i32;
                 reason.group_idx = group;
+                reason.group_open = true;
                 reason.foldable = true;
                 rows.push(reason);
             }
@@ -284,9 +287,8 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
                 row.tool_icon = crate::tool_icons::workflow_icon(&item.title).into();
                 row.target = target.as_str().into();
                 row.tool_metrics = crate::timeline_text::tool_metrics(item).into();
-                row.summary = crate::timeline_text::summary(item.detail.as_str())
-                    .as_str()
-                    .into();
+                row.tool_metrics_visible = !row.tool_metrics.is_empty();
+                row.summary = crate::timeline_text::tool_summary(item).as_str().into();
                 latest = row.summary.clone();
                 row.detail = crate::timeline_text::copy_text(&item.sections, item.detail.as_str());
                 row.status_kind = crate::timeline::status_kind(&item.state);
@@ -297,6 +299,7 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
                 };
                 row.payload = rows.len() as i32;
                 row.group_idx = group;
+                row.group_open = true;
                 row.foldable = true;
                 rows.push(row);
             }
@@ -323,7 +326,13 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
             rows[body].stats = turn_stats(&turn.assistant);
         }
         let end = rows.len();
-        fold_history_process(rows.as_mut_slice(), bar_at, end, process);
+        fold_history_process(
+            rows.as_mut_slice(),
+            bar_at,
+            end,
+            process,
+            &turn.assistant.state,
+        );
     }
     rows
 }
@@ -344,61 +353,57 @@ fn is_queue_only_turn(turn: &NativeChatTurn) -> bool {
         && turn.subagents.is_empty()
 }
 
-/// Close a durable turn over its own work-process bar: everything before the
-/// newest answer block joins the fold, and the bar reports the step count and
-/// what the turn last did. A turn whose process is just one batch keeps that
-/// batch folded as its own one-line handle instead of growing a second shell.
-fn fold_history_process(rows: &mut [TimelineRow], bar_at: usize, end: usize, process: i32) {
-    let Some(newest) = ((bar_at + 1)..end)
+/// Apply the same single process fold as the live reducer, including actions
+/// after the newest answer. A stopped turn need not have an answer at all.
+fn fold_history_process(
+    rows: &mut [TimelineRow],
+    bar_at: usize,
+    end: usize,
+    process: i32,
+    state: &str,
+) {
+    let newest = ((bar_at + 1)..end)
         .rev()
         .find(|index| rows[*index].kind == crate::timeline::KIND_BODY)
-    else {
-        // No answer block at all: the working rows are the turn's content, so
-        // there is nothing to fold them behind, and each batch keeps its own
-        // folded handle.
-        return;
-    };
+        .unwrap_or(usize::MAX);
     let mut steps = 0i32;
-    let mut blocks = 0i32;
-    let mut notes = 0i32;
-    let mut summary = slint::SharedString::default();
-    for index in (bar_at + 1)..newest {
-        match rows[index].kind {
-            crate::timeline::KIND_GROUP => blocks += 1,
-            crate::timeline::KIND_BODY => {
-                blocks += 1;
-                steps += 1;
-                notes += 1;
-                summary = crate::timeline_text::summary(rows[index].text.as_str())
-                    .as_str()
-                    .into();
-            }
-            crate::timeline::KIND_REASON
-            | crate::timeline::KIND_TOOL
-            | crate::timeline::KIND_SUBAGENT => {
-                if rows[index].group_idx == crate::timeline::NO_GROUP {
-                    blocks += 1;
-                }
-                steps += 1;
-                if !rows[index].summary.is_empty() {
-                    summary = rows[index].summary.clone();
-                }
-            }
-            _ => {}
+    for index in (bar_at + 1)..end {
+        if rows[index].kind == crate::timeline::KIND_GROUP
+            || crate::timeline::is_process_step(rows[index].kind, index, newest)
+        {
+            rows[index].process_idx = process;
+            steps += i32::from(rows[index].kind != crate::timeline::KIND_GROUP);
         }
     }
-    if blocks < 2 && notes == 0 {
-        // One batch and no intermediate note: the batch bar is itself the
-        // one-line handle, so no second shell appears.
+    if steps == 0 {
         return;
     }
-    for index in (bar_at + 1)..newest {
-        rows[index].process_idx = process;
-    }
     let label = crate::timeline_text::process_label(steps);
+    let phase = match state {
+        "completed" | "done" | "任务完成" => "已完成",
+        "failed" | "error" | "rejected" | "system_error" | "执行失败" => "错误",
+        "cancelled" | "stopped" | "interrupted" | "已停止" => "已停止",
+        "queued" | "pending" | "正在排队" => "排队中",
+        "waiting_input" | "waiting_user_input" => "等待回答",
+        "waiting_approval" => "等待确认",
+        _ => "正在处理…",
+    };
+    let mut activity = phase.to_string();
+    if phase == "正在处理…" {
+        for row in &rows[(bar_at + 1)..end] {
+            if row.status_kind != crate::timeline::STATUS_RUNNING {
+                continue;
+            }
+            if row.kind == crate::timeline::KIND_TOOL {
+                activity = format!("执行工具：{}", row.tool_name);
+            } else if row.kind == crate::timeline::KIND_REASON {
+                activity = crate::timeline_text::thought_running().into();
+            }
+        }
+    }
     let bar = &mut rows[bar_at];
     bar.text = label.as_str().into();
-    bar.summary = summary;
+    bar.summary = activity.into();
     bar.visible = true;
 }
 
@@ -436,6 +441,7 @@ fn blank_row(kind: i32, id: String) -> TimelineRow {
         tool_icon: Default::default(),
         target: Default::default(),
         tool_metrics: Default::default(),
+        tool_metrics_visible: false,
         detail: Default::default(),
         status_kind: crate::timeline::STATUS_DONE,
         foldable: false,
@@ -682,12 +688,14 @@ mod tests {
         let process = rows[1].process_idx;
         assert_ne!(process, crate::timeline::NO_PROCESS);
         assert_eq!(rows[1].text, crate::timeline_text::process_label(4));
+        assert_eq!(rows[1].summary, "已完成");
         assert!(rows[1].visible, "a real process earns its bar");
         assert!(!rows[1].open && !rows[1].process_open, "it ships folded");
         for row in &rows[2..8] {
             assert_eq!(row.process_idx, process, "step {row:?} escaped the fold");
-            // Nothing is unfolded yet, so no batch carries an open handle.
-            assert!(!row.group_open);
+            if row.group_idx != crate::timeline::NO_GROUP {
+                assert!(row.group_open, "the process is the only fold gate");
+            }
         }
         assert_eq!(
             rows[8].process_idx,
@@ -745,7 +753,7 @@ mod tests {
         let started = Instant::now();
         let mut opened = 0usize;
         for row in rows.iter() {
-            if row.kind == crate::timeline::KIND_GROUP && !row.group_open {
+            if row.kind == crate::timeline::KIND_PROCESS && row.visible && !row.open {
                 timeline.toggle(row.payload);
                 opened += 1;
             }
@@ -754,10 +762,10 @@ mod tests {
 
         let rows = timeline.model();
         let exposed = laid_out(&rows);
-        assert_eq!(opened, 50, "every turn's lone batch ships folded");
+        assert_eq!(opened, 50, "every turn's process ships folded");
         assert_eq!(
             exposed, 1350,
-            "every batch lays out, while a turn's unused process row never does",
+            "each process exposes its tools without an extra batch row",
         );
         let mut kinds = [0usize; 7];
         for row in rows.iter() {
@@ -980,16 +988,17 @@ mod tests {
             &serde_json::json!({"status":"failed", "error_message":"fixture failure"}),
         ));
         let rows = project_history(&[turn]);
-        // No answer block in this turn: the working rows are its content, so
-        // the process bar stays invisible and the failure stays on screen.
+        // A failed turn without an answer still uses the same process handle.
         assert_eq!(rows.len(), 4);
         assert_eq!(rows[0].kind, crate::timeline::KIND_USER);
         assert_eq!(rows[1].kind, crate::timeline::KIND_PROCESS);
-        assert!(!rows[1].visible, "nothing to fold behind the bar");
+        assert!(rows[1].visible);
         assert_eq!(rows[2].kind, crate::timeline::KIND_GROUP);
         assert_eq!(rows[2].text, "执行工具 1 次");
+        assert!(!rows[2].visible, "ownership batch stays internal");
         assert_eq!(rows[3].kind, crate::timeline::KIND_TOOL);
         assert_eq!(rows[3].status_kind, crate::timeline::STATUS_FAILED);
+        assert_eq!(rows[3].process_idx, rows[1].process_idx);
         assert!(rows[3].detail.contains("fixture failure"));
     }
 }

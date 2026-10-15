@@ -35,7 +35,7 @@ const KNOWN_KEYS: &[&str] = &[
 ];
 
 pub const USER_CONFIG_TEMPLATE: &str = r#"# wunder 舵机用户配置（codex 形态）
-# 本文件是用户层；引擎自身的 YAML 由程序生成，不需要手工编辑。
+# 本文件是用户层；引擎自身的 YAML 由程序读写、与蛹共用同一份，不需要手工编辑。
 # 优先级（低 → 高）：内置默认 < 本文件 < profiles/<name>.toml < 工作区 .wunder/config.toml < 命令行参数。
 
 # 默认模型名；留空则使用引擎配置里的默认模型。
@@ -68,7 +68,8 @@ pub const USER_CONFIG_TEMPLATE: &str = r#"# wunder 舵机用户配置（codex �
 # 通知时机：always | unfocused（默认 always，仅在终端失焦时提醒）。
 # notify_when = "unfocused"
 
-# 模型服务（等价于 /config <base_url> <api_key> <model> 的一次性配置）。
+# 模型服务（等价于 /model add <base_url> <api_key> <模型名> [max_context]）。
+# 这里只描述默认模型所用的端点；模型清单本身存在与蛹共用的引擎配置里。
 # [provider]
 # base_url = "https://api.example.com/v1"
 # api_key = ""

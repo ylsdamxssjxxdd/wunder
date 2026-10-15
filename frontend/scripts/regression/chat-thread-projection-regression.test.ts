@@ -102,6 +102,35 @@ test('tool commentary stays out of the final body through streaming and snapshot
   assert.equal(reply().content, '');
 });
 
+test('durable tool result inherits its function identity from the assistant tool call', () => {
+  const state = emptyChatThreadState('tool-name-recovery');
+  const turn = { turn_id: 'turn-tool-name', user_round: 1, status: 'running', content: 'Fixture request' };
+  const commentary = textItemData(turn.turn_id, 1, {
+    tool_calls: [{ id: 'call-name-1', type: 'function', function: { name: 'read_file', arguments: '{}' } }]
+  });
+  const result = toolItemData(turn.turn_id, 'call-name-1', {
+    status: 'completed', detail: 'done'
+  });
+  applyFrames(state, [turnUpsert(1, turn), itemUpsert(2, commentary), itemUpsert(3, result)]);
+  const workflow = buildChatThreadRenderableMessages(state)
+    .find((message) => message.role === 'assistant')?.workflowItems || [];
+  assert.equal(workflow[0]?.toolName, 'read_file');
+  assert.equal(workflow[0]?.tool, 'read_file');
+  assert.equal(workflow[0]?.toolFunctionName, 'read_file');
+});
+
+test('unnamed tool lifecycle rows stay out of the workflow projection', () => {
+  const state = emptyChatThreadState('unnamed-tool-lifecycle');
+  const turn = { turn_id: 'turn-unnamed-tool', user_round: 1, status: 'running', content: 'Fixture request' };
+  const lifecycle = toolItemData(turn.turn_id, 'call-without-name', {
+    event_type: 'tool_call', status: 'running'
+  });
+  applyFrames(state, [turnUpsert(1, turn), itemUpsert(2, lifecycle)]);
+  const assistant = buildChatThreadRenderableMessages(state).find((message) => message.role === 'assistant');
+  assert.deepEqual(assistant?.workflowItems, []);
+  assert.deepEqual(assistant?.timeline, []);
+});
+
 test('assistant timeline keeps each round body as its own block between activity batches', () => {
   const state = emptyChatThreadState('session-projection-timeline');
   const roundOne = textItemData('turn-1', 1, { content: 'step one', reasoning: 'plan one' });

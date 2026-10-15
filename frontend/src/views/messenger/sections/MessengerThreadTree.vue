@@ -34,11 +34,12 @@
           @click="emit('open', item.id)"
         >
           <span
-            class="mz-thread-dot"
-            :class="`is-${item.state}`"
-            :title="stateLabel(item.state)"
-            aria-hidden="true"
-          ></span>
+            class="mz-thread-status"
+            :class="`is-${item.indicator}`"
+            :title="stateLabel(item.indicator)"
+            role="img"
+            :aria-label="stateLabel(item.indicator)"
+          ><i :class="['fa-solid', stateIcons[item.indicator]]" aria-hidden="true"></i></span>
           <span class="mz-thread-title">{{ item.title }}</span>
         </button>
         <el-dropdown
@@ -83,7 +84,7 @@ import { useAuthStore } from '@/stores/auth';
 import { selectSessionRuntimeStatus } from '@/realtime/chat/chatRuntimeSelectors';
 import { getChatThreadStatus } from '@/realtime/chat/chatThreadRuntime';
 import { resolveVisibleTaskRows, taskWindow, type TaskListItem } from '@/views/messenger/taskList';
-import { hasCompletedTaskTurn, resolveTaskRuntimeState } from '@/views/messenger/taskRuntimeState';
+import { hasCompletedTaskTurn, resolveTaskIndicatorState, resolveTaskRuntimeState, type TaskIndicatorState } from '@/views/messenger/taskRuntimeState';
 import { getRuntime, getSessionMessages, hasRuntimeControllers } from '@/stores/chatRuntimeState';
 import { useTaskListPages } from '@/views/messenger/useTaskListPages';
 import { usePersistentStableListOrder } from '@/views/messenger/stableListOrder';
@@ -150,7 +151,11 @@ const range = computed(() => taskWindow(displayItems.value.length, scrollTop.val
 // a session's projection/loading clock for every row turns one session bump
 // into a full-list recompute (dep magnet); keeping it windowed bounds the work
 // to the visible rows even when the backing list is large.
-const visibleItems = computed(() => resolveVisibleTaskRows(displayItems.value, range.value, resolveItemState));
+const visibleItems = computed(() => resolveVisibleTaskRows(displayItems.value, range.value, resolveItemState).map(item => ({
+  ...item,
+  indicator: resolveTaskIndicatorState(item.state, selectSessionRuntimeStatus(store.runtimeProjection, item.id),
+    item.runtimeStatus, getChatThreadStatus(item.id) || getRuntime(item.id)?.threadStatus)
+})));
 const emptyLabel = computed(() => t('messenger.tasks.empty'));
 
 // Row menus mount on demand: render the dropdown only for the hovered row or
@@ -171,7 +176,11 @@ const handleMenuVisible = (id: string, visible: boolean) => {
   else if (openMenuId.value === id) openMenuId.value = '';
 };
 
-const stateLabel = (state: AgentRuntimeState): string => t(`messenger.thread.state.${state}`);
+const stateIcons: Record<TaskIndicatorState, string> = {
+  idle: 'fa-pause', running: 'fa-circle-notch fa-spin', pending: 'fa-clock', done: 'fa-check',
+  error: 'fa-triangle-exclamation', inquiry: 'fa-circle-question', approval: 'fa-shield-halved'
+};
+const stateLabel = (state: TaskIndicatorState): string => t(`messenger.thread.state.${state}`);
 
 const syncViewport = () => {
   scrollTop.value = viewport.value?.scrollTop || 0;

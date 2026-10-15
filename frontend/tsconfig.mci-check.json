@@ -1,4 +1,0 @@
-{
-  "extends": "./tsconfig.json",
-  "include": ["src/views/messenger/controller/__mci_check.ts"]
-}

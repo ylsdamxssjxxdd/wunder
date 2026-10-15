@@ -8,10 +8,11 @@
       :session-id="activeSessionId"
       :turn-id="processTurnId"
       :count="Number(message.process_count ?? message.workflow_count)||0"
-      :failed-count="Number(message.workflow_failed_count)||0"
+      :activity="message.process_activity"
+      :status="String(message.status || '')"
       :reasoning="String(message.reasoning || '')"
       :reasoning-item-id="String(message.reasoning_item_id || '')"
-      :reasoning-streaming="Boolean(message.streaming)"
+      :reasoning-streaming="Boolean(message.streaming) && (!message.process_activity || message.process_activity.kind === 'thinking')"
       :final-item-id="String(message.item_id || message.assistant_item_id || '')"
       @open-change="processOpen = $event"
     />

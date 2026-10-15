@@ -13,6 +13,8 @@ import {
   buildRequestNumbers,
   buildTrajectoryLayout,
   collapseTurnRecords,
+  buildFoldGroups,
+  trajectoryRecordId,
   createModelTranslate,
   deriveTimeline,
   flattenRecords,
@@ -23,7 +25,7 @@ import {
   groupVirtualRows,
   requestIdentity,
   timelineFocusIndexes,
-} from "./trajectory-model.js?v=20261015-02";
+} from "./trajectory-model.js?v=20261015-03";
 
 const OVERSCAN_PX = 360;
 const VIRTUAL_THRESHOLD = 100;
@@ -272,6 +274,9 @@ export function createTrajectoryView(host, options = {}) {
   let destroyed = false;
   let turnsMemo = null;
   let turnsMemoKey = -1;
+  let previousRows = [];
+  let previousFoldSignature = "";
+  let ledgerRenderKey = "";
 
   /* ---------- 骨架 ---------- */
   const root = h("div", "tt-root");
@@ -482,6 +487,12 @@ export function createTrajectoryView(host, options = {}) {
     const turns = computeTurns();
     const requests = buildRequestNumbers(turns);
     const allRecords = flattenRecords(turns);
+    const groups = buildFoldGroups(allRecords);
+    const turnKeys = new Set([...groups.turns].filter(([, turn]) => turn.hidden > 0).map(([turn]) => turn));
+    st.collapsedTurns = new Set([...st.collapsedTurns].filter(turn => turnKeys.has(turn)));
+    st.collapsedAssistants = new Set([...st.collapsedAssistants].filter(key => groups.assistants.has(key)));
+    st.showTurns = turnKeys.size > 0 && [...turnKeys].every(turn => st.collapsedTurns.has(turn));
+    st.showCalls = groups.assistants.size > 0 && [...groups.assistants.keys()].every(key => st.collapsedAssistants.has(key));
     const needle = st.searchQuery.trim().toLowerCase();
     const matched = new Set();
     if (needle) {
@@ -492,7 +503,7 @@ export function createTrajectoryView(host, options = {}) {
     const filteredRecords = needle
       ? allRecords.filter((record) => needleOfRecord(record).includes(needle))
       : allRecords;
-    const records = collapseTurnRecords(
+    const records = needle ? filteredRecords : collapseTurnRecords(
       filteredRecords,
       st.collapsedTurns,
       st.collapsedAssistants,
@@ -502,6 +513,22 @@ export function createTrajectoryView(host, options = {}) {
     const prefix = [0];
     for (const row of rows) prefix.push(prefix[prefix.length - 1] + row.height);
     const ledgerHeight = prefix[prefix.length - 1];
+    const signature = JSON.stringify([[...st.collapsedTurns], [...st.collapsedAssistants]]);
+    if (signature !== previousFoldSignature && previousRows.length) {
+      let offset = 0;
+      let anchor = previousRows[0].record;
+      for (const row of previousRows) {
+        anchor = row.record;
+        if (offset + row.height > st.scrollTop) break;
+        offset += row.height;
+      }
+      let at = rows.findIndex(row => !row.record.collapsedSummary && row.record.cell.recordId === anchor.cell.recordId);
+      if (at < 0) at = rows.findIndex(row => row.record.turn === anchor.turn);
+      st.scrollTop = at < 0 ? 0 : Math.max(0, prefix[at] + st.scrollTop - offset);
+    }
+    st.scrollTop = Math.min(st.scrollTop, Math.max(0, ledgerHeight - st.ledgerViewport));
+    previousRows = rows;
+    previousFoldSignature = signature;
     const virtual = ledgerHeight > VIRTUAL_THRESHOLD;
     let winStart = 0;
     let winEnd = rows.length;
@@ -561,6 +588,11 @@ export function createTrajectoryView(host, options = {}) {
     turnsToggle.setAttribute("aria-pressed", st.showTurns ? "true" : "false");
     callsToggle.classList.toggle("tt-toggle-active", st.showCalls);
     callsToggle.setAttribute("aria-pressed", st.showCalls ? "true" : "false");
+    const zh = getCurrentLanguage().startsWith("zh");
+    turnsToggle.title = zh ? (st.showTurns ? "展开全部用户轮次" : "收起全部用户轮次") : (st.showTurns ? "Expand all turns" : "Collapse all turns");
+    callsToggle.title = zh ? (st.showCalls ? "展开全部工具调用" : "收起全部工具调用") : (st.showCalls ? "Expand all calls" : "Collapse all calls");
+    turnsToggle.querySelector(".tt-toggle-glyph").textContent = st.showTurns ? "⊞" : "⊟";
+    callsToggle.querySelector(".tt-toggle-glyph").textContent = st.showCalls ? "⊞" : "⊟";
     exportButton.disabled = !sessionId || st.exporting;
     exportButton.classList.toggle("tt-toggle-active", st.exporting);
     exportButton.title = st.exporting ? adminExportLabel("exporting") : modelT("export");
@@ -677,17 +709,29 @@ export function createTrajectoryView(host, options = {}) {
   const renderLedger = ({ rows, winStart, winEnd, topPx, ledgerHeight, records, requests, focusSet }) => {
     ledgerCanvas.style.height = `${ledgerHeight}px`;
     table.style.transform = `translateY(${topPx}px)`;
+    ledgerEl.scrollTop = st.scrollTop;
+    const renderKey = JSON.stringify([st.turnsKey, st.searchQuery, st.timestampMode,
+      getCurrentLanguage(), winStart, winEnd, previousFoldSignature,
+      focusSet ? [...focusSet] : null]);
+    if (renderKey === ledgerRenderKey) {
+      // Selection must retain row nodes: rebuilding on the first click prevents
+      // a human-paced second click from producing a native double-click event.
+      for (const tr of tbody.querySelectorAll(".tt-row")) {
+        tr.classList.toggle("tt-row-selected", tr.dataset.recordIndex !== undefined
+          && Number(tr.dataset.recordIndex) === st.selectedIndex);
+      }
+      return;
+    }
+    ledgerRenderKey = renderKey;
     tbody.textContent = "";
+    const foldGroups = buildFoldGroups(flattenRecords(computeTurns()));
 
-    // 请求编号圆点挂在助手消息行上；同轮多个请求按序横向错开。
+    // 请求编号圆点挂在助手消息行上，并与蜂巢保持同一条纵线。
     const dotsByAssistantIndex = new Map();
-    const perTurn = new Map();
     for (const request of requests) {
-      const count = perTurn.get(request.turn) ?? 0;
-      perTurn.set(request.turn, count + 1);
       dotsByAssistantIndex.set(request.assistantIndex, {
         request,
-        left: 12 + (count % 4) * 8,
+        left: 12,
       });
     }
 
@@ -697,25 +741,43 @@ export function createTrajectoryView(host, options = {}) {
       const record = row.record;
       const tr = h("tr", "tt-row");
       tr.classList.add(`tt-row-${record.cell.kind}`);
-      if (st.selectedIndex !== null && st.selectedIndex === record.cell.index) {
+      if (!record.collapsedSummary && st.selectedIndex !== null && st.selectedIndex === record.cell.index) {
         tr.classList.add("tt-row-selected");
       }
       if (record.turnStart) tr.classList.add("tt-row-turn-start");
       if (record.turnEnd) tr.classList.add("tt-row-turn-end");
       if (record.collapsedSummary) tr.classList.add("tt-row-summary");
-      if (record.cell.isError === true) tr.classList.add("tt-row-error");
-      if (focusSet) {
+      if (!record.collapsedSummary && record.cell.isError === true) tr.classList.add("tt-row-error");
+      if (focusSet && !record.collapsedSummary) {
         tr.dataset.timelineFocus = focusSet.has(record.cell.index) ? "inside" : "outside";
       }
-      tr.dataset.recordIndex = String(record.cell.index);
-      tr.addEventListener("click", () => selectIndex(record.cell.index));
+      if (!record.collapsedSummary) tr.dataset.recordIndex = String(record.cell.index);
+      tr.tabIndex = 0;
+      const activate = () => {
+        if (record.collapsedSummary) {
+          if (record.collapsedSummaryKind === "turn") st.collapsedTurns.delete(record.turn);
+          else st.collapsedAssistants.delete(trajectoryRecordId(record.cell));
+          scheduleRender();
+        } else selectIndex(record.cell.index, true);
+      };
+      if (record.collapsedSummary) {
+        tr.setAttribute("role", "button");
+        tr.setAttribute("aria-label", `${record.collapsedSummary} · ${getCurrentLanguage().startsWith("zh") ? "展开" : "Expand"}`);
+        tr.title = tr.getAttribute("aria-label");
+      }
+      tr.addEventListener("click", activate);
+      tr.addEventListener("keydown", event => {
+        if (event.target !== tr || (event.key !== "Enter" && event.key !== " ")) return;
+        event.preventDefault();
+        activate();
+      });
       tr.addEventListener("dblclick", (event) => {
         event.stopPropagation();
         onRowDoubleClick(record);
       });
 
       const eventCell = h("td", "tt-event-cell");
-      const dot = dotsByAssistantIndex.get(record.cell.index);
+      const dot = record.collapsedSummary ? null : dotsByAssistantIndex.get(record.cell.index);
       if (dot) {
         const dotBtn = h("button", "tt-request-dot");
         dotBtn.type = "button";
@@ -728,10 +790,20 @@ export function createTrajectoryView(host, options = {}) {
           event.stopPropagation();
           selectIndex(dot.request.assistantIndex);
         });
+        dotBtn.addEventListener("dblclick", event => event.stopPropagation());
         eventCell.appendChild(dotBtn);
       }
       if (record.turnStart && record.turn !== null) {
-        eventCell.appendChild(h("span", "tt-turn-label", modelT("turnLabel", { turn: record.turn })));
+        const button = h("button", "tt-turn-label tt-turn-control");
+        button.type = "button";
+        const collapsed = st.collapsedTurns.has(record.turn);
+        button.textContent = `${collapsed ? "▸" : "▾"} ${modelT("turnLabel", { turn: record.turn })}`;
+        button.setAttribute("aria-expanded", String(!collapsed));
+        button.title = getCurrentLanguage().startsWith("zh") ? (collapsed ? "展开用户轮次" : "收起用户轮次") : (collapsed ? "Expand turn" : "Collapse turn");
+        button.disabled = !(foldGroups.turns.get(record.turn)?.hidden > 0);
+        button.addEventListener("click", event => { event.stopPropagation(); toggleTurn(record.turn); });
+        button.addEventListener("dblclick", event => event.stopPropagation());
+        eventCell.appendChild(button);
       }
       tr.appendChild(eventCell);
 
@@ -1206,7 +1278,25 @@ export function createTrajectoryView(host, options = {}) {
 
   /* ---------- 交互 ---------- */
 
-  const selectIndex = (index) => {
+  const selectIndex = (index, fromLedger = false) => {
+    if (!fromLedger) {
+      const records = flattenRecords(computeTurns());
+      const record = records.find(record => record.cell.index === index);
+      if (record) st.collapsedTurns.delete(record.turn);
+      const owner = buildFoldGroups(records).toolOwners.get(index);
+      if (owner) st.collapsedAssistants.delete(owner);
+      requestAnimationFrame(() => {
+        const rows = groupVirtualRows(collapseTurnRecords(records, st.collapsedTurns, st.collapsedAssistants, modelT)).rows;
+        let top = 0;
+        for (const row of rows) {
+          if (!row.record.collapsedSummary && row.record.cell.index === index) break;
+          top += row.height;
+        }
+        ledgerEl.scrollTop = Math.max(0, top - st.ledgerViewport / 2);
+        st.scrollTop = ledgerEl.scrollTop;
+        scheduleRender();
+      });
+    }
     st.selectedIndex = index;
     st.activeTab = defaultTabFor(findCell(computeTurns(), index));
     st.openSections.input = true;
@@ -1221,24 +1311,24 @@ export function createTrajectoryView(host, options = {}) {
     scheduleRender();
   };
 
-  const onRowDoubleClick = (record) => {
+  const toggleTurn = turn => {
+    if (turn === null) return;
+    const groups = buildFoldGroups(flattenRecords(computeTurns()));
+    if (!(groups.turns.get(turn)?.hidden > 0)) return;
+    if (st.collapsedTurns.has(turn)) st.collapsedTurns.delete(turn);
+    else st.collapsedTurns.add(turn);
+    scheduleRender();
+  };
+  const onRowDoubleClick = record => {
     if (record.collapsedSummary) return;
-    if (record.turnStart) {
-      const next = new Set(st.collapsedTurns);
-      if (next.has(record.turn)) next.delete(record.turn);
-      else next.add(record.turn);
-      st.collapsedTurns = next;
+    if (st.collapsedTurns.has(record.turn)) { toggleTurn(record.turn); return; }
+    const key = trajectoryRecordId(record.cell);
+    const groups = buildFoldGroups(flattenRecords(computeTurns()));
+    if (groups.assistants.has(key)) {
+      if (st.collapsedAssistants.has(key)) st.collapsedAssistants.delete(key);
+      else st.collapsedAssistants.add(key);
       scheduleRender();
-      return;
-    }
-    if (record.groupStart && record.group) {
-      const key = requestIdentity(record.turn, record.group);
-      const next = new Set(st.collapsedAssistants);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      st.collapsedAssistants = next;
-      scheduleRender();
-    }
+    } else if (record.turnStart) toggleTurn(record.turn);
   };
 
   const valueAt = (clientX) => {
@@ -1474,13 +1564,16 @@ export function createTrajectoryView(host, options = {}) {
     scheduleRender();
   });
   turnsToggle.addEventListener("click", () => {
-    st.showTurns = !st.showTurns;
-    if (!st.showTurns) st.collapsedTurns = new Set();
+    const groups = buildFoldGroups(flattenRecords(computeTurns()));
+    const keys = [...groups.turns].filter(([, turn]) => turn.hidden > 0).map(([turn]) => turn);
+    const all = keys.length > 0 && keys.every(turn => st.collapsedTurns.has(turn));
+    st.collapsedTurns = all ? new Set() : new Set(keys);
     scheduleRender();
   });
   callsToggle.addEventListener("click", () => {
-    st.showCalls = !st.showCalls;
-    if (!st.showCalls) st.collapsedAssistants = new Set();
+    const keys = [...buildFoldGroups(flattenRecords(computeTurns())).assistants.keys()];
+    const all = keys.length > 0 && keys.every(key => st.collapsedAssistants.has(key));
+    st.collapsedAssistants = all ? new Set() : new Set(keys);
     scheduleRender();
   });
   searchInput.addEventListener("input", () => {
@@ -1590,7 +1683,17 @@ export function createTrajectoryView(host, options = {}) {
 
   return {
     setSessionId(value) {
-      sessionId = String(value || "").trim();
+      const next = String(value || "").trim();
+      if (next !== sessionId) {
+        st.collapsedTurns.clear();
+        st.collapsedAssistants.clear();
+        previousRows = [];
+        previousFoldSignature = "";
+        st.selectedIndex = null;
+        st.scrollTop = 0;
+        st.viewSpan = 0;
+      }
+      sessionId = next;
       scheduleRender();
     },
     setRawTurns(turns) {
@@ -1601,11 +1704,12 @@ export function createTrajectoryView(host, options = {}) {
       st.selectedIndex = null;
       st.activeTab = "";
       st.selection = null;
-      st.collapsedTurns = new Set();
-      st.collapsedAssistants = new Set();
-      ledgerEl.scrollTop = 0;
-      st.scrollTop = 0;
-      st.viewSpan = 0;
+      // Live debug refresh must preserve user folds; render prunes evicted IDs.
+      if (previousRows.length === 0) {
+        ledgerEl.scrollTop = 0;
+        st.scrollTop = 0;
+        st.viewSpan = 0;
+      }
       scheduleRender();
     },
     setLoading(loading) {

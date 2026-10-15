@@ -5166,3 +5166,275 @@ async fn a_query_and_an_opened_card_stay_inside_every_sampled_width() {
         );
     }
 }
+
+#[tokio::test]
+async fn model_add_registers_the_endpoint_in_the_shared_store() {
+    let root = TempRoot::new("model_add_line");
+    let mut app = fixture_app(root.path()).await;
+    let before = app
+        .runtime
+        .state
+        .config_store
+        .get()
+        .await
+        .llm
+        .default
+        .clone();
+
+    app.handle_slash_command(
+        "/model add https://api.example.test/v1 sk-fixture-model demo-chat-model 32000".to_string(),
+    )
+    .await
+    .expect("model add");
+
+    let config = app.runtime.state.config_store.get().await;
+    let entry = config
+        .llm
+        .models
+        .get("demo-chat-model")
+        .expect("the registered entry");
+    assert_eq!(entry.base_url.as_deref(), Some("https://api.example.test/v1"));
+    assert_eq!(entry.api_key.as_deref(), Some("sk-fixture-model"));
+    assert_eq!(entry.model.as_deref(), Some("demo-chat-model"));
+    assert_eq!(entry.model_type.as_deref(), Some("llm"));
+    assert_eq!(entry.enable, Some(true));
+    assert_eq!(entry.max_context, Some(32000));
+    assert_eq!(config.llm.default, "demo-chat-model");
+    assert_ne!(before, config.llm.default, "a new model becomes the default");
+
+    // The user layer has to state the same endpoint, otherwise the next start
+    // projects a config without it and the entry reads as unreachable.
+    let user_toml = fs::read_to_string(root.path().join("config.toml")).unwrap_or_default();
+    assert!(user_toml.contains("demo-chat-model"), "{user_toml}");
+    assert!(
+        user_toml.contains("https://api.example.test/v1"),
+        "the endpoint must land in the user layer: {user_toml}"
+    );
+}
+
+#[tokio::test]
+async fn model_add_collects_the_missing_fields_one_answer_at_a_time() {
+    fn asked(app: &TuiApp, step: &str) -> bool {
+        app.logs
+            .iter()
+            .any(|entry| entry.text.contains(&format!("step {step}/4")))
+    }
+
+    let root = TempRoot::new("model_add_wizard");
+    let mut app = fixture_app(root.path()).await;
+
+    app.handle_slash_command("/model add".to_string())
+        .await
+        .expect("open the wizard");
+    assert!(app.model_wizard.is_some(), "/model add must open the wizard");
+    assert!(asked(&app, "1"), "the first question is base_url");
+
+    app.handle_model_wizard_input("https://api.example.test/v1")
+        .await
+        .expect("base_url");
+    assert!(asked(&app, "2"), "the second question is api_key");
+    app.handle_model_wizard_input("sk-fixture-model")
+        .await
+        .expect("api_key");
+    assert!(asked(&app, "3"), "the third question is the model name");
+    app.handle_model_wizard_input("wizard-chat-model")
+        .await
+        .expect("model name");
+    assert!(asked(&app, "4"), "the last question is optional");
+    app.handle_model_wizard_input("16000")
+        .await
+        .expect("max_context");
+
+    assert!(app.model_wizard.is_none(), "a finished wizard closes");
+    let config = app.runtime.state.config_store.get().await;
+    assert_eq!(config.llm.default, "wizard-chat-model");
+    assert_eq!(
+        config
+            .llm
+            .models
+            .get("wizard-chat-model")
+            .and_then(|entry| entry.max_context),
+        Some(16000)
+    );
+}
+
+#[tokio::test]
+async fn model_add_seeds_the_wizard_with_what_the_caller_already_typed() {
+    let root = TempRoot::new("model_add_seed");
+    let mut app = fixture_app(root.path()).await;
+
+    app.handle_slash_command("/model add https://api.example.test/v1 sk-fixture-model".to_string())
+        .await
+        .expect("partial endpoint");
+
+    let wizard = app.model_wizard.as_ref().expect("seeded wizard");
+    assert_eq!(wizard.base_url.as_deref(), Some("https://api.example.test/v1"));
+    assert_eq!(wizard.api_key.as_deref(), Some("sk-fixture-model"));
+    assert!(wizard.model_name.is_none());
+    let texts: Vec<String> = app.logs.iter().map(|entry| entry.text.clone()).collect();
+    let asked = |step: &str| texts.iter().any(|text| text.contains(&format!("step {step}/4")));
+    assert!(asked("3"), "the wizard must ask for the model name: {texts:?}");
+    assert!(
+        texts
+            .iter()
+            .any(|text| text.contains("input model name (empty line to cancel)")),
+        "the question must name the field: {texts:?}"
+    );
+    assert!(
+        !asked("1"),
+        "a seeded base_url must not be asked again: {texts:?}"
+    );
+    assert!(
+        !asked("2"),
+        "a seeded api_key must not be asked again: {texts:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_model_registered_for_another_job_is_not_switchable() {
+    let root = TempRoot::new("model_switch_guard");
+    let mut app = fixture_app(root.path()).await;
+    // 蛹 writes embedding and speech entries into the same engine file.
+    app.runtime
+        .state
+        .config_store
+        .update(|config| {
+            config.llm.models.insert(
+                "fixture-embedder".to_string(),
+                wunder_server::config::LlmModelConfig {
+                    model_type: Some("embedding".to_string()),
+                    ..Default::default()
+                },
+            );
+        })
+        .await
+        .expect("seed a non-chat entry");
+    let before = app
+        .runtime
+        .state
+        .config_store
+        .get()
+        .await
+        .llm
+        .default
+        .clone();
+
+    app.handle_slash_command("/model fixture-embedder".to_string())
+        .await
+        .expect("switch attempt");
+
+    assert_eq!(
+        app.runtime.state.config_store.get().await.llm.default,
+        before,
+        "a non-chat entry must not become the session model"
+    );
+    assert!(
+        !crate::sorted_model_names(
+            &app.runtime.state.config_store.get().await
+        )
+        .contains(&"fixture-embedder".to_string()),
+        "the model list must not offer an embedding entry"
+    );
+}
+
+#[tokio::test]
+async fn config_no_longer_registers_an_endpoint() {
+    let root = TempRoot::new("config_endpoint_retired");
+    let mut app = fixture_app(root.path()).await;
+
+    app.handle_slash_command(
+        "/config https://api.example.test/v1 sk-fixture-model retired-model 32000".to_string(),
+    )
+    .await
+    .expect("retired form");
+
+    let config = app.runtime.state.config_store.get().await;
+    assert!(
+        !config.llm.models.contains_key("retired-model"),
+        "/config must not write model entries any more"
+    );
+    assert!(
+        app.logs
+            .iter()
+            .any(|entry| entry.text.contains("/model add")),
+        "the refusal must name the command that replaced it"
+    );
+}
+
+#[tokio::test]
+async fn model_add_refuses_an_endpoint_that_breaks_the_shared_bounds() {
+    let root = TempRoot::new("model_add_bounds");
+    let mut app = fixture_app(root.path()).await;
+    let long_key = format!("sk-{}", "x".repeat(8_192));
+
+    let outcome = app
+        .handle_slash_command(format!(
+            "/model add https://api.example.test/v1 {long_key} demo-chat-model 32000"
+        ))
+        .await;
+
+    assert!(outcome.is_err(), "an over-long key must be refused");
+    let config = app.runtime.state.config_store.get().await;
+    assert!(
+        !config.llm.models.contains_key("demo-chat-model"),
+        "a refused endpoint must not reach the shared engine file"
+    );
+    assert!(
+        !config.llm.default.contains("demo-chat-model"),
+        "a refused endpoint must not become the default"
+    );
+    let user_toml = fs::read_to_string(root.path().join("config.toml")).unwrap_or_default();
+    assert!(
+        !user_toml.contains(&long_key),
+        "a refused endpoint must not reach the user layer either"
+    );
+}
+
+#[tokio::test]
+async fn model_add_registers_without_hijacking_a_working_default() {
+    let root = TempRoot::new("model_add_keep_default");
+    let mut app = fixture_app(root.path()).await;
+    app.runtime
+        .state
+        .config_store
+        .update(|config| {
+            config.llm.default = "standing-chat-model".to_string();
+            config.llm.models.insert(
+                "standing-chat-model".to_string(),
+                wunder_server::config::LlmModelConfig {
+                    model_type: Some("llm".to_string()),
+                    base_url: Some("https://standing.example.test/v1".to_string()),
+                    ..Default::default()
+                },
+            );
+        })
+        .await
+        .expect("seed a working model");
+
+    app.handle_slash_command(
+        "/model add https://other.example.test/v1 sk-other second-chat-model 32000".to_string(),
+    )
+    .await
+    .expect("model add");
+
+    let config = app.runtime.state.config_store.get().await;
+    assert!(
+        config.llm.models.contains_key("second-chat-model"),
+        "the new model is registered"
+    );
+    assert_eq!(
+        config.llm.default, "standing-chat-model",
+        "a usable default must not be replaced by a registration"
+    );
+    assert!(
+        app.logs
+            .iter()
+            .any(|entry| entry.text.contains("switch with /model second-chat-model")),
+        "the reply must name the way to switch"
+    );
+    let user_toml = fs::read_to_string(root.path().join("config.toml")).unwrap_or_default();
+    assert!(
+        !user_toml.contains("second-chat-model"),
+        "config.toml describes the default model's endpoint only: {user_toml}"
+    );
+}

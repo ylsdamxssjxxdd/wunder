@@ -4,8 +4,8 @@ export global RuntimeStatus {
     public pure function normalize(value: string) -> string {
         // "模型请求正在排队" is the status dock's queued phrase (it embeds the
         // waiting position, hence the prefix match rather than equality).
-        if value == "pending" || value == "queued" || value == "waiting_input" || value == "waiting_user_input" || value.starts-with("正在排队") || value.starts-with("任务已排队") || value.starts-with("模型请求正在排队") || value.starts-with("等待") { return "pending"; }
-        if value == "error" || value == "failed" || value == "rejected" || value.starts-with("执行失败") { return "error"; }
+        if value == "pending" || value == "queued" || value == "waiting" || value == "waiting_approval" || value == "waiting_input" || value == "waiting_user_input" || value.starts-with("正在排队") || value.starts-with("任务已排队") || value.starts-with("模型请求正在排队") || value.starts-with("等待") { return "pending"; }
+        if value == "error" || value == "failed" || value == "system_error" || value == "rejected" || value.starts-with("执行失败") { return "error"; }
         if value == "done" || value == "finished" || value == "completed" || value == "success" || value.starts-with("任务完成") || value.starts-with("输出已结束") { return "done"; }
         if value == "running" || value == "streaming" || value == "executing" || value.starts-with("正在") || value.starts-with("模型响应中") || value.starts-with("目标") { return "running"; }
         return "idle";

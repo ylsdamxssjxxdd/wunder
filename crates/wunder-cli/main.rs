@@ -59,6 +59,8 @@ use wunder_server::user_tools::UserMcpServer;
 use zip::ZipArchive;
 
 const CLI_MIN_MAX_ROUNDS: u32 = 8;
+/// Same ceiling 蛹 puts on the shared model list.
+const CLI_MODEL_ENTRY_CAP: usize = 200;
 const CLI_CONTEXT_PROBE_TIMEOUT_S: u64 = 15;
 const CLI_DEFAULT_SESSION_TITLE: &str = "\u{65B0}\u{4F1A}\u{8BDD}";
 const CLI_DEFAULT_SESSION_STATUS: &str = "active";
@@ -1782,9 +1784,33 @@ pub(crate) fn parse_approval_mode(raw: &str) -> Option<ApprovalModeArg> {
 }
 
 fn sorted_model_names(config: &Config) -> Vec<String> {
-    let mut names: Vec<String> = config.llm.models.keys().cloned().collect();
+    let mut names: Vec<String> = config
+        .llm
+        .models
+        .iter()
+        .filter(|(_, entry)| model_is_switchable(entry))
+        .map(|(name, _)| name.clone())
+        .collect();
     names.sort();
     names
+}
+
+/// The engine config file is shared with 蛹, so it also holds embedding, speech
+/// and image entries. Only chat entries are selectable as the session model.
+fn model_is_switchable(entry: &LlmModelConfig) -> bool {
+    matches!(
+        entry.model_type.as_deref().map(str::trim).unwrap_or("llm"),
+        "" | "llm"
+    )
+}
+
+pub(crate) fn is_switchable_model(config: &Config, name: &str) -> bool {
+    config
+        .llm
+        .models
+        .get(name)
+        .map(model_is_switchable)
+        .unwrap_or(false)
 }
 
 fn resolve_effective_approval_mode(
@@ -3083,7 +3109,7 @@ pub(crate) async fn apply_cli_model_config(
     model_name: &str,
     manual_max_context: Option<u32>,
     language: &str,
-) -> Result<(String, Option<u32>)> {
+) -> Result<(String, Option<u32>, bool)> {
     let base_url = base_url.trim().to_string();
     let api_key = api_key.trim().to_string();
     let model_name = model_name.trim().to_string();
@@ -3094,8 +3120,36 @@ pub(crate) async fn apply_cli_model_config(
             "base_url, api_key and model are required",
         )));
     }
+    // The same bounds 蛹 enforces on this shared entry: an over-long or
+    // control-character endpoint must not reach the config file or the shell.
+    if model_name.len() > 96
+        || base_url.len() > 4096
+        || base_url.chars().any(char::is_control)
+        || api_key.len() > 8192
+        || api_key.chars().any(char::is_control)
+    {
+        return Err(anyhow!(locale::tr(
+            language,
+            "模型名、服务地址或访问密钥超出长度限制或含控制字符",
+            "model name, endpoint or key exceeds its limit or carries control characters",
+        )));
+    }
+    let existing = runtime.state.config_store.get().await;
+    if !existing.llm.models.contains_key(model_name.as_str())
+        && existing.llm.models.len() >= CLI_MODEL_ENTRY_CAP
+    {
+        return Err(anyhow!(locale::tr(
+            language,
+            &format!("模型配置已达到 {CLI_MODEL_ENTRY_CAP} 项上限"),
+            &format!("the model list is at its {CLI_MODEL_ENTRY_CAP} entry cap"),
+        )));
+    }
 
     let provider = infer_provider_from_base_url(&base_url);
+    // Registering an endpoint must not hijack a working setup: the shared file
+    // already carries models 蛹 chose, so the new one only becomes the session
+    // default when nothing usable was configured before.
+    let had_usable_default = is_switchable_model(&existing, existing.llm.default.as_str());
     let resolved_max_context = resolve_model_max_context_value(
         &provider,
         &base_url,
@@ -3149,28 +3203,32 @@ pub(crate) async fn apply_cli_model_config(
             {
                 entry.model_type = Some("llm".to_string());
             }
-            config.llm.default = model_for_update.clone();
+            if !had_usable_default {
+                config.llm.default = model_for_update.clone();
+            }
         })
         .await?;
 
-    // config.toml is the user-owned source of truth: the engine YAML above is
-    // regenerated on every start, so the endpoint must also land in the file
-    // the next start projects from.
-    crate::user_config::save_user_value(
-        runtime.wunder_home.as_path(),
-        "model",
-        model_name.as_str(),
-    )
-    .context("save model into config.toml failed")?;
-    crate::user_config::save_user_provider(
-        runtime.wunder_home.as_path(),
-        base_url.as_str(),
-        api_key.as_str(),
-        resolved_max_context,
-    )
-    .context("save [provider] into config.toml failed")?;
+    // config.toml states the endpoint of the *default* model, so it only takes
+    // the new entry when the new entry became the default. A model that is
+    // merely registered lives in the shared engine file.
+    if !had_usable_default {
+        crate::user_config::save_user_value(
+            runtime.wunder_home.as_path(),
+            "model",
+            model_name.as_str(),
+        )
+        .context("save model into config.toml failed")?;
+        crate::user_config::save_user_provider(
+            runtime.wunder_home.as_path(),
+            base_url.as_str(),
+            api_key.as_str(),
+            resolved_max_context,
+        )
+        .context("save [provider] into config.toml failed")?;
+    }
 
-    Ok((provider, resolved_max_context))
+    Ok((provider, resolved_max_context, !had_usable_default))
 }
 
 async fn config_show(runtime: &CliRuntime, global: &GlobalArgs) -> Result<()> {
@@ -4742,5 +4800,38 @@ mod tests {
     fn parse_diff_slash_action_reports_usage_for_missing_target() {
         let err = parse_diff_slash_action("stage").expect_err("stage should require target");
         assert!(err.to_string().contains("usage: /diff stage <index|path>"));
+    }
+
+    #[test]
+    fn only_chat_entries_are_offered_as_the_session_model() {
+        let mut config = Config::default();
+        config.llm.models.insert(
+            "chat-model".to_string(),
+            LlmModelConfig {
+                model_type: Some("llm".to_string()),
+                ..Default::default()
+            },
+        );
+        config.llm.models.insert(
+            "embedder".to_string(),
+            LlmModelConfig {
+                model_type: Some("embedding".to_string()),
+                ..Default::default()
+            },
+        );
+        // Entries written before the type field existed carry no type at all.
+        config
+            .llm
+            .models
+            .insert("legacy-model".to_string(), LlmModelConfig::default());
+
+        assert_eq!(
+            sorted_model_names(&config),
+            vec!["chat-model".to_string(), "legacy-model".to_string()],
+            "a non-chat entry belongs to 蛹's picker, not to the session model list"
+        );
+        assert!(is_switchable_model(&config, "legacy-model"));
+        assert!(!is_switchable_model(&config, "embedder"));
+        assert!(!is_switchable_model(&config, "absent-model"));
     }
 }

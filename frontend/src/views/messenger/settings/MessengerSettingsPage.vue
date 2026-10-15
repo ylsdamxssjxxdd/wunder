@@ -66,7 +66,7 @@ import {
 } from './settingsCategories';
 import { SETTINGS_CATEGORY_COMPONENTS } from './settingsCategoryComponents';
 
-/** 保留最近访问的 3 个分类实例；其它分类释放，避免 12 个面板同时常驻。 */
+/** 保留最近访问的 3 个分类实例；其它分类释放，避免所有面板同时常驻。 */
 const SETTINGS_KEEP_ALIVE_MAX = 3;
 
 const props = defineProps<{ controller: MessengerControllerContext }>();
@@ -79,7 +79,6 @@ const AGENT_MODE_BY_CATEGORY: Partial<Record<SettingsCategoryId, string>> = {
   cron: 'cron',
   memory: 'memory',
   channels: 'channel',
-  runtime: 'runtime',
   archived: 'archived'
 };
 
@@ -88,7 +87,6 @@ const CATEGORY_BY_AGENT_MODE: Record<string, SettingsCategoryId> = {
   cron: 'cron',
   memory: 'memory',
   channel: 'channels',
-  runtime: 'runtime',
   archived: 'archived'
 };
 

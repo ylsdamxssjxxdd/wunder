@@ -47,7 +47,6 @@ import {
 import {
   AgentCronPanel,
   AgentMemoryPanel,
-  AgentRuntimeRecordsPanel,
   AgentSettingsPanel,
   ArchivedThreadManager,
   MessengerSettingsPanel,
@@ -202,7 +201,6 @@ export function useMessengerViewController(): Record<string, any> {
     AgentAvatar,
     AgentCronPanel,
     AgentMemoryPanel,
-    AgentRuntimeRecordsPanel,
     AgentSettingsPanel,
     ArchivedThreadManager,
     buildAgentApprovalOptions,

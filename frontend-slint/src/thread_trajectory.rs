@@ -4,7 +4,8 @@
 //! Slint only lays out bounded rows, and every row and span is keyed by the
 //! global record index so hover and selection survive filtering.
 use crate::{
-    I18n, MainWindow, TrajBoundary, TrajRow, TrajSearchHit, TrajSection, TrajSpan, TrajTab, TrajTick, TrajTiming,
+    I18n, MainWindow, TrajBoundary, TrajRow, TrajSearchHit, TrajSection, TrajSpan, TrajTab,
+    TrajTick, TrajTiming,
 };
 use chrono::{Local, TimeZone};
 use serde_json::{json, Value};
@@ -226,8 +227,6 @@ struct State {
     selected: i32,
     tab: i32,
     show_duration: bool,
-    show_turns: bool,
-    show_calls: bool,
     query: String,
     search_generation: u64,
     search_hits: Vec<SearchHit>,
@@ -262,13 +261,17 @@ fn to_model<T: Clone + 'static>(rows: Vec<T>) -> ModelRc<T> {
 }
 
 fn project_search(app: &MainWindow, state: &State) {
-    let hits = state.search_hits.iter().map(|hit| TrajSearchHit {
-        item_id: hit.item_id.clone().into(),
-        body_id: hit.body_id.clone().into(),
-        revision: hit.revision.to_string().into(),
-        cursor: hit.cursor.to_string().into(),
-        snippet: hit.snippet.clone().into(),
-    }).collect();
+    let hits = state
+        .search_hits
+        .iter()
+        .map(|hit| TrajSearchHit {
+            item_id: hit.item_id.clone().into(),
+            body_id: hit.body_id.clone().into(),
+            revision: hit.revision.to_string().into(),
+            cursor: hit.cursor.to_string().into(),
+            snippet: hit.snippet.clone().into(),
+        })
+        .collect();
     app.set_traj_search_hits(to_model(hits));
     app.set_traj_search_body(state.search_text.clone().into());
 }
@@ -704,8 +707,8 @@ fn parse_view_page(page: &Value) -> SnapshotModel {
         if let Some(record) = model.records.get(span.record) {
             if let Some(cell) = model.cells.get(record.cell) {
                 if let Some(sequence) = sequence_by_item.get(cell.record_id.as_str()) {
-                span.sequence_start = Some(*sequence);
-                span.sequence_end = Some(*sequence + 1.0);
+                    span.sequence_start = Some(*sequence);
+                    span.sequence_end = Some(*sequence + 1.0);
                 }
             }
         }
@@ -719,17 +722,28 @@ fn parse_view_page(page: &Value) -> SnapshotModel {
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
+    let has_tiles = !tiles.is_empty();
     let level = page.get("tile_level").and_then(Value::as_u64).unwrap_or(0) as f64;
     let bucket_width = 128.0 * 8.0_f64.powf(level);
     let detailed_ranges: Vec<(f64, f64)> = rows
         .iter()
         .filter_map(|row| {
             let raw_start = row.get("started_at").and_then(Value::as_f64)?;
-            let start = if raw_start.abs() < 1e11 { raw_start * 1000.0 } else { raw_start };
+            let start = if raw_start.abs() < 1e11 {
+                raw_start * 1000.0
+            } else {
+                raw_start
+            };
             let end = row
                 .get("completed_at")
                 .and_then(Value::as_f64)
-                .map(|value| if value.abs() < 1e11 { value * 1000.0 } else { value })
+                .map(|value| {
+                    if value.abs() < 1e11 {
+                        value * 1000.0
+                    } else {
+                        value
+                    }
+                })
                 .unwrap_or(start);
             Some((start, end.max(start + 0.001)))
         })
@@ -738,7 +752,8 @@ fn parse_view_page(page: &Value) -> SnapshotModel {
     let mut start = f64::MAX;
     let mut end = f64::MIN;
     let per_tile_limit = (4096 / tiles.len().max(1)).clamp(1, 16);
-    for tile in tiles {
+    let overview_span_cap = 4096usize.saturating_sub(model.spans.len());
+    'tiles: for tile in tiles {
         let bucket_index = tile.get("bucket").and_then(Value::as_i64).unwrap_or(0);
         let bucket = bucket_index as f64;
         let count = tile
@@ -785,7 +800,11 @@ fn parse_view_page(page: &Value) -> SnapshotModel {
         let segment_count = (total_count as usize).clamp(1, per_tile_limit);
         let segment_start = bucket * bucket_width;
         let segment_span = bucket_width / segment_count as f64;
-        let total_lane_count = counts.iter().map(|value| (*value).max(0)).sum::<i64>().max(1);
+        let total_lane_count = counts
+            .iter()
+            .map(|value| (*value).max(0))
+            .sum::<i64>()
+            .max(1);
         for segment in 0..segment_count {
             let quantile = (segment as f64 + 0.5) / segment_count as f64 * total_lane_count as f64;
             let mut accumulated = 0i64;
@@ -804,47 +823,90 @@ fn parse_view_page(page: &Value) -> SnapshotModel {
             let raw_sequence_start = segment_start + segment_span * segment as f64;
             let raw_sequence_end = segment_start + segment_span * (segment + 1) as f64;
             let kind = if lane == 0 {
-                    KIND_CONTEXT
-                } else if lane == 1 {
-                    KIND_MESSAGE
-                } else {
-                    KIND_TOOL
-                };
-            let mut fragments = vec![(raw_time_start, raw_time_end, raw_sequence_start, raw_sequence_end)];
+                KIND_CONTEXT
+            } else if lane == 1 {
+                KIND_MESSAGE
+            } else {
+                KIND_TOOL
+            };
+            let mut fragments = vec![(
+                raw_time_start,
+                raw_time_end,
+                raw_sequence_start,
+                raw_sequence_end,
+            )];
+            let timed = true;
             for &(detail_time_start, detail_time_end) in &detailed_ranges {
-                if timed && detail_time_start <= raw_time_end && detail_time_end >= raw_time_start {
+                if detail_time_start <= raw_time_end && detail_time_end >= raw_time_start {
                     let cut_start = detail_time_start.max(raw_time_start);
                     let cut_end = detail_time_end.min(raw_time_end);
                     let mut next = Vec::new();
-                    for (a,b,sa,sb) in fragments {
-                        if cut_end <= a || cut_start >= b { next.push((a,b,sa,sb)); continue; }
-                        let to_sequence = |time: f64| sa + (time-a) / (b-a).max(0.001) * (sb-sa);
-                        if cut_start > a { next.push((a,cut_start,sa,to_sequence(cut_start))); }
-                        if cut_end < b { next.push((cut_end,b,to_sequence(cut_end),sb)); }
+                    for (a, b, sa, sb) in fragments {
+                        if cut_end <= a || cut_start >= b {
+                            next.push((a, b, sa, sb));
+                            continue;
+                        }
+                        let to_sequence =
+                            |time: f64| sa + (time - a) / (b - a).max(0.001) * (sb - sa);
+                        if cut_start > a {
+                            next.push((a, cut_start, sa, to_sequence(cut_start)));
+                        }
+                        if cut_end < b {
+                            next.push((cut_end, b, to_sequence(cut_end), sb));
+                        }
                     }
                     fragments = next;
-                    if fragments.is_empty() { break; }
-                }
-            }
-            if !timed {
-                for row in &rows {
-                    let Some(sequence) = row.get("created_seq").and_then(Value::as_i64).map(|value| value as f64) else { continue; };
-                    if sequence < raw_sequence_start || sequence >= raw_sequence_end { continue; }
-                    let mut next = Vec::new();
-                    for (a,b,sa,sb) in fragments {
-                        if sequence < sa || sequence >= sb { next.push((a,b,sa,sb)); continue; }
-                        if sequence > sa { next.push((a,b,sa,sequence)); }
-                        if sequence + 1.0 < sb { next.push((a,b,sequence+1.0,sb)); }
+                    if fragments.is_empty() {
+                        break;
                     }
-                    fragments = next;
                 }
             }
-            for (time_start,time_end,sequence_start,sequence_end) in fragments {
-                if time_end <= time_start || sequence_end <= sequence_start { continue; }
+            for row in &rows {
+                let Some(sequence) = row
+                    .get("created_seq")
+                    .and_then(Value::as_i64)
+                    .map(|value| value as f64)
+                else {
+                    continue;
+                };
+                if sequence < raw_sequence_start || sequence >= raw_sequence_end {
+                    continue;
+                }
+                let mut next = Vec::new();
+                for (a, b, sa, sb) in fragments {
+                    if sequence < sa || sequence >= sb {
+                        next.push((a, b, sa, sb));
+                        continue;
+                    }
+                    if sequence > sa {
+                        next.push((a, b, sa, sequence));
+                    }
+                    if sequence + 1.0 < sb {
+                        next.push((a, b, sequence + 1.0, sb));
+                    }
+                }
+                fragments = next;
+            }
+            for (time_start, time_end, sequence_start, sequence_end) in fragments {
+                if time_end <= time_start || sequence_end <= sequence_start {
+                    continue;
+                }
+                if overview.len() >= overview_span_cap {
+                    break 'tiles;
+                }
                 overview.push(SpanBase {
-                    start: time_start, end: time_end, record: usize::MAX,
-                    kind: if overview_error_buckets.contains(&bucket_index) { KIND_TOOL } else { kind }, lane,
-                    ttft: None, sequence_start: Some(sequence_start), sequence_end: Some(sequence_end),
+                    start: time_start,
+                    end: time_end,
+                    record: usize::MAX,
+                    kind: if overview_error_buckets.contains(&bucket_index) {
+                        KIND_TOOL
+                    } else {
+                        kind
+                    },
+                    lane,
+                    ttft: None,
+                    sequence_start: Some(sequence_start),
+                    sequence_end: Some(sequence_end),
                 });
             }
         }
@@ -852,18 +914,35 @@ fn parse_view_page(page: &Value) -> SnapshotModel {
     // Even when aggregate marks are fully subtracted by current detail,
     // retain the complete wall-clock domain for correct axis/zoom bounds.
     for row in &rows {
-        let Some(raw_start) = row.get("started_at").and_then(Value::as_f64) else { continue; };
-        let raw_end = row.get("completed_at").and_then(Value::as_f64).unwrap_or(raw_start);
-        let start = if raw_start.abs() < 1e11 { raw_start * 1000.0 } else { raw_start };
-        let finish = if raw_end.abs() < 1e11 { raw_end * 1000.0 } else { raw_end };
+        let Some(raw_start) = row.get("started_at").and_then(Value::as_f64) else {
+            continue;
+        };
+        let raw_end = row
+            .get("completed_at")
+            .and_then(Value::as_f64)
+            .unwrap_or(raw_start);
+        let start = if raw_start.abs() < 1e11 {
+            raw_start * 1000.0
+        } else {
+            raw_start
+        };
+        let finish = if raw_end.abs() < 1e11 {
+            raw_end * 1000.0
+        } else {
+            raw_end
+        };
         overview_start = overview_start.min(start);
         overview_end = overview_end.max(finish.max(start + 1.0));
     }
     if start.is_finite() && end.is_finite() {
-        overview_start = start;
-        overview_end = end.max(start + 1.0);
+        overview_start = overview_start.min(start);
+        overview_end = overview_end.max(end.max(start + 1.0));
     }
-    let has_overview = !tiles.is_empty() && start.is_finite() && end.is_finite();
+    if !overview_start.is_finite() || !overview_end.is_finite() {
+        overview_start = 0.0;
+        overview_end = 1.0;
+    }
+    let has_overview = has_tiles && start.is_finite() && end.is_finite();
     let overview_spans = overview;
     model.overview_spans = overview_spans;
     model.overview_start = overview_start;
@@ -1408,6 +1487,8 @@ fn parse_snapshot(snapshot: &Value) -> SnapshotModel {
                 });
             }
         }
+        // Reused request groups must not move later tools ahead of context rows.
+        records[turn_start..].sort_by_key(|record| record.cell);
         if records.len() > turn_start {
             records[turn_start].turn_start = true;
         }
@@ -1661,16 +1742,16 @@ impl Texts {
     }
     fn summary_turn(&self, steps: usize, tools: usize) -> String {
         if self.zh {
-            format!("{} 步 · {} 次工具调用", steps, tools)
+            format!("… {} 个步骤 · {} 个工具调用", steps, tools)
         } else {
-            format!("{} steps · {} tool calls", steps, tools)
+            format!("… {} steps · {} tool calls", steps, tools)
         }
     }
     fn summary_tools(&self, count: usize) -> String {
         if self.zh {
-            format!("{} 次工具调用", count)
+            format!("… {} 个工具调用", count)
         } else {
-            format!("{} tool calls", count)
+            format!("… {} tool calls", count)
         }
     }
 }
@@ -1756,96 +1837,174 @@ fn record_needle(model: &SnapshotModel, record_index: usize) -> String {
     .to_lowercase()
 }
 
-/// 台账行投影：搜索过滤 + 轮次/助手折叠；行携带全局记录索引。
+#[derive(Default)]
+struct FoldTurn {
+    first: usize,
+    hidden: usize,
+    steps: HashSet<String>,
+    tools: usize,
+}
+#[derive(Default)]
+struct FoldCall {
+    end: usize,
+    count: usize,
+    names: Vec<String>,
+}
+#[derive(Default)]
+struct FoldGroups {
+    turns: HashMap<i64, FoldTurn>,
+    calls: HashMap<String, FoldCall>,
+    owners: HashMap<usize, String>,
+}
+fn assistant_key(model: &SnapshotModel, index: usize) -> String {
+    let cell = &model.cells[model.records[index].cell];
+    if cell.record_id.is_empty() {
+        cell.index.to_string()
+    } else {
+        cell.record_id.clone()
+    }
+}
+/// One linear pass over the bounded ledger; labels never serve as fold keys.
+fn fold_groups(model: &SnapshotModel) -> FoldGroups {
+    let mut groups = FoldGroups::default();
+    let request_groups: HashSet<String> = model
+        .requests
+        .iter()
+        .map(|request| request.identity.clone())
+        .collect();
+    let mut assistant: Option<(String, Option<i64>)> = None;
+    for (index, record) in model.records.iter().enumerate() {
+        let kind = model.cells[record.cell].kind;
+        let tool = matches!(kind, KIND_TOOL | KIND_SUBTOOL);
+        if let Some(turn) = record.turn.filter(|_| kind != KIND_SYSTEM) {
+            if let Some(group) = groups.turns.get_mut(&turn) {
+                group.hidden += 1;
+                if !record.group.is_empty() {
+                    group.steps.insert(record.group.clone());
+                }
+                if tool {
+                    group.tools += 1;
+                }
+            } else {
+                groups.turns.insert(
+                    turn,
+                    FoldTurn {
+                        first: index,
+                        ..Default::default()
+                    },
+                );
+            }
+        }
+        if let Some((key, _)) = assistant
+            .as_ref()
+            .filter(|(_, turn)| tool && *turn == record.turn)
+        {
+            let group = groups.calls.entry(key.clone()).or_default();
+            group.end = index + 1;
+            group.count += 1;
+            let cell = &model.cells[record.cell];
+            let name = cell
+                .tool_name
+                .as_deref()
+                .filter(|name| !name.is_empty())
+                .unwrap_or_else(|| cell.text.split(" · ").next().unwrap_or(""));
+            if !name.is_empty()
+                && group.names.len() < 8
+                && !group.names.iter().any(|entry| entry == name)
+            {
+                group.names.push(name.to_owned());
+            }
+            groups.owners.insert(index, key.clone());
+        } else {
+            assistant = (kind == KIND_MESSAGE).then(|| (assistant_key(model, index), record.turn));
+        }
+    }
+    for (turn, group) in &mut groups.turns {
+        group
+            .steps
+            .retain(|step| request_groups.contains(&State::identity_key(Some(*turn), step)));
+    }
+    groups
+}
+fn prune_folds(state: &mut State) {
+    let groups = state.model.as_ref().map(fold_groups).unwrap_or_default();
+    state
+        .collapsed_turns
+        .retain(|turn| groups.turns.get(turn).is_some_and(|group| group.hidden > 0));
+    state
+        .collapsed_assistants
+        .retain(|key| groups.calls.contains_key(key));
+}
+fn all_turns_folded(groups: &FoldGroups, state: &State) -> bool {
+    let mut eligible = groups
+        .turns
+        .iter()
+        .filter(|(_, turn)| turn.hidden > 0)
+        .peekable();
+    eligible.peek().is_some() && eligible.all(|(turn, _)| state.collapsed_turns.contains(turn))
+}
+fn all_calls_folded(groups: &FoldGroups, state: &State) -> bool {
+    !groups.calls.is_empty()
+        && groups
+            .calls
+            .keys()
+            .all(|key| state.collapsed_assistants.contains(key))
+}
+
+/// Search bypasses folds. Summary actions carry explicit kinds and normal indices.
 fn project_rows(app: &MainWindow, state: &State, model: &SnapshotModel, texts: &Texts) {
+    let groups = fold_groups(model);
+    app.set_traj_show_turns(all_turns_folded(&groups, state));
+    app.set_traj_show_calls(all_calls_folded(&groups, state));
+    app.set_traj_rows(to_model(build_rows(state, model, texts)));
+}
+fn build_rows(state: &State, model: &SnapshotModel, texts: &Texts) -> Vec<TrajRow> {
     let needle = state.query.trim().to_lowercase();
+    let groups = fold_groups(model);
+    let request_numbers: HashMap<usize, usize> = model
+        .requests
+        .iter()
+        .map(|request| (request.assistant_index, request.number))
+        .collect();
     let mut rows: Vec<TrajRow> = Vec::new();
-    let mut current_turn: Option<i64> = None;
-    let mut turn_started = false;
-    let mut turn_collapsed = false;
-    let mut emitted_group: HashSet<String> = HashSet::new();
+    let mut skip_until = 0;
     for (record_index, record) in model.records.iter().enumerate() {
-        if !turn_started || record.turn != current_turn {
-            turn_started = true;
-            current_turn = record.turn;
-            turn_collapsed = state.show_turns
-                && state
-                    .collapsed_turns
-                    .contains(&record.turn.unwrap_or(i64::MIN));
+        if record_index < skip_until {
+            continue;
         }
         if !needle.is_empty() && !record_needle(model, record_index).contains(&needle) {
             continue;
         }
-        if turn_collapsed {
-            if !record.turn_start {
+        let turn = record.turn.and_then(|turn| groups.turns.get(&turn));
+        let turn_folded = needle.is_empty()
+            && record
+                .turn
+                .is_some_and(|turn| state.collapsed_turns.contains(&turn))
+            && turn.is_some_and(|group| group.hidden > 0);
+        let mut summary: Option<(i32, String)> = None;
+        if turn_folded && model.cells[record.cell].kind != KIND_SYSTEM {
+            let group = turn.unwrap();
+            if group.first != record_index {
                 continue;
             }
-            let bucket: Vec<usize> = model
-                .records
-                .iter()
-                .enumerate()
-                .filter(|(_, other)| other.turn == record.turn)
-                .map(|(index, _)| index)
-                .collect();
-            let steps = bucket
-                .iter()
-                .map(|&index| model.records[index].group.clone())
-                .collect::<HashSet<_>>()
-                .len();
-            let tools = bucket
-                .iter()
-                .filter(|&&index| {
-                    let kind = model.cells[model.records[index].cell].kind;
-                    kind == KIND_TOOL || kind == KIND_SUBTOOL
-                })
-                .count();
-            rows.push(TrajRow {
-                kind: 7,
-                badge: "".into(),
-                text: texts.summary_turn(steps, tools).into(),
-                detail: "".into(),
-                error: false,
-                request: 0,
-                turn: record.turn.unwrap_or(0) as i32,
-                turn_start: true,
-                turn_end: false,
-                row_height: ROW_SUMMARY_PX,
-                index: record_index as i32,
-            });
-            continue;
-        }
-        let group_key = State::identity_key(record.turn, &record.group);
-        if state.show_calls && state.collapsed_assistants.contains(&group_key) {
-            if !emitted_group.insert(group_key) {
-                continue;
+            summary = Some((7, texts.summary_turn(group.steps.len(), group.tools)));
+        } else if needle.is_empty() && model.cells[record.cell].kind == KIND_MESSAGE {
+            let key = assistant_key(model, record_index);
+            if let Some(group) = groups
+                .calls
+                .get(&key)
+                .filter(|_| state.collapsed_assistants.contains(&key))
+            {
+                skip_until = group.end;
+                let mut text = texts.summary_tools(group.count);
+                if !group.names.is_empty() {
+                    text.push_str(&format!(" · {}", group.names.join(", ")));
+                }
+                summary = Some((8, text));
             }
-            let tools = model
-                .records
-                .iter()
-                .filter(|other| {
-                    other.turn == record.turn && other.group == record.group && {
-                        let kind = model.cells[other.cell].kind;
-                        kind == KIND_TOOL || kind == KIND_SUBTOOL
-                    }
-                })
-                .count();
-            rows.push(TrajRow {
-                kind: 8,
-                badge: "".into(),
-                text: texts.summary_tools(tools).into(),
-                detail: "".into(),
-                error: false,
-                request: 0,
-                turn: record.turn.unwrap_or(0) as i32,
-                turn_start: record.turn_start,
-                turn_end: false,
-                row_height: ROW_SUMMARY_PX,
-                index: record_index as i32,
-            });
-            continue;
         }
         let cell = &model.cells[record.cell];
-        let number = request_number_of(model, record_index);
+        let number = request_numbers.get(&cell.index).copied().unwrap_or(0);
         let mut text = cell.text.clone();
         if text.trim().is_empty() {
             let zh = texts.zh;
@@ -1913,9 +2072,28 @@ fn project_rows(app: &MainWindow, state: &State, model: &SnapshotModel, texts: &
             turn_end: false,
             row_height: ROW_PX,
             index: record_index as i32,
+            foldable: turn.is_some_and(|group| group.hidden > 0),
+            collapsed: turn_folded,
         });
+        if let Some((kind, text)) = summary {
+            rows.push(TrajRow {
+                kind,
+                badge: "".into(),
+                text: text.into(),
+                detail: "".into(),
+                error: false,
+                request: 0,
+                turn: record.turn.unwrap_or(0) as i32,
+                turn_start: false,
+                turn_end: kind == 7,
+                row_height: ROW_SUMMARY_PX,
+                index: record_index as i32,
+                foldable: false,
+                collapsed: true,
+            });
+        }
     }
-    app.set_traj_rows(to_model(rows));
+    rows
 }
 
 /// 时间线投影：时长模式压缩空闲，序列模式等宽；span/边界按当前视口裁剪归一。
@@ -1934,7 +2112,11 @@ fn project_timeline(app: &MainWindow, state: &State, model: &SnapshotModel, text
         .iter()
         .filter_map(|span| span.sequence_end)
         .fold(model.overview_sequence_end.max(1.0), f64::max);
-    let sequence_end = if use_overview { overview_sequence_end.max(detail_sequence_end) } else { detail_sequence_end };
+    let sequence_end = if use_overview {
+        overview_sequence_end.max(detail_sequence_end)
+    } else {
+        detail_sequence_end
+    };
     let (total_lo, total_hi) = if timed {
         if use_overview {
             (model.overview_start, model.overview_end)
@@ -1948,20 +2130,41 @@ fn project_timeline(app: &MainWindow, state: &State, model: &SnapshotModel, text
     let window_lo = total_lo + view_start * total;
     let window_total = view_width * total;
     let clamp_pos = |value: f64| ((value - window_lo) / window_total).clamp(0.0, 1.0) as f32;
-    let selected_range = model.spans.get(state.selected.max(0) as usize).filter(|_| state.selected >= 0).map(|span| {
-        if timed {
-            (span.start, span.end.max(span.start + 0.001))
-        } else {
-            (span.sequence_start.unwrap_or(state.selected as f64), span.sequence_end.unwrap_or(state.selected as f64 + 1.0))
-        }
-    });
+    let selected_range = model
+        .spans
+        .get(state.selected.max(0) as usize)
+        .filter(|_| state.selected >= 0)
+        .map(|span| {
+            if timed {
+                (span.start, span.end.max(span.start + 0.001))
+            } else {
+                (
+                    span.sequence_start.unwrap_or(state.selected as f64),
+                    span.sequence_end.unwrap_or(state.selected as f64 + 1.0),
+                )
+            }
+        });
 
     let mut spans: Vec<TrajSpan> = Vec::new();
-    let visible_detail_ranges: Vec<(f64, f64, Option<f64>, Option<f64>)> = model.spans.iter().map(|span| {
-        (span.start, span.end.max(span.start + 0.001), span.sequence_start, span.sequence_end)
-    }).collect();
+    let visible_detail_ranges: Vec<(f64, f64, Option<f64>, Option<f64>)> = model
+        .spans
+        .iter()
+        .map(|span| {
+            (
+                span.start,
+                span.end.max(span.start + 0.001),
+                span.sequence_start,
+                span.sequence_end,
+            )
+        })
+        .collect();
     let sources: Vec<(&SpanBase, bool)> = if use_overview {
-        model.overview_spans.iter().map(|span| (span, true)).chain(model.spans.iter().map(|span| (span, false))).collect()
+        model
+            .overview_spans
+            .iter()
+            .map(|span| (span, true))
+            .chain(model.spans.iter().map(|span| (span, false)))
+            .collect()
     } else {
         model.spans.iter().map(|span| (span, false)).collect()
     };
@@ -1973,18 +2176,24 @@ fn project_timeline(app: &MainWindow, state: &State, model: &SnapshotModel, text
         } else {
             (base.record as f64, base.record as f64 + 1.0)
         };
-        let outside = selected_range.is_some_and(|(focus_start, focus_end)| end < focus_start || start > focus_end);
+        let outside = selected_range
+            .is_some_and(|(focus_start, focus_end)| end < focus_start || start > focus_end);
         if aggregate {
-            let overlaps = visible_detail_ranges.iter().any(|(detail_start, detail_end, sequence_start, sequence_end)| {
-                if timed {
-                    *detail_start <= end && *detail_end >= start
-                } else {
-                    sequence_start.zip(*sequence_end).is_some_and(|(lo, hi)| {
-                        lo <= base.sequence_end.unwrap_or(start) && hi >= base.sequence_start.unwrap_or(end)
-                    })
-                }
-            });
-            if overlaps { continue; }
+            let overlaps = visible_detail_ranges.iter().any(
+                |(detail_start, detail_end, sequence_start, sequence_end)| {
+                    if timed {
+                        *detail_start <= end && *detail_end >= start
+                    } else {
+                        sequence_start.zip(*sequence_end).is_some_and(|(lo, hi)| {
+                            lo <= base.sequence_end.unwrap_or(start)
+                                && hi >= base.sequence_start.unwrap_or(end)
+                        })
+                    }
+                },
+            );
+            if overlaps {
+                continue;
+            }
         }
         let pos = (start - window_lo) / window_total;
         let width = (end - start) / window_total;
@@ -2464,6 +2673,7 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                         state.page = Some(merged);
                         if let Some(page) = &state.page {
                             state.model = Some(parse_view_page(page));
+                            prune_folds(&mut state);
                             apply_model(&app, &state);
                         }
                     }
@@ -2530,6 +2740,7 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                     state.page = Some(merged);
                     if let Some(page) = &state.page {
                         state.model = Some(parse_view_page(page));
+                        prune_folds(&mut state);
                         apply_model(&app, &state);
                     }
                 }
@@ -2603,6 +2814,7 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                         .unwrap_or(false);
                     state.page = Some(page);
                     state.model = Some(snapshot);
+                    prune_folds(&mut state);
                     apply_model(&app, &state);
                 }
                 Err(error) => {
@@ -2618,56 +2830,97 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
     let (weak, current) = (app.as_weak(), state.clone());
     app.on_traj_select_row(move |index| {
         let Some(app) = weak.upgrade() else { return };
-        // summary rows expand their group instead of selecting; read the
-        // group facts first so the state borrow can be dropped before writes
-        let group_key = current.borrow().model.as_ref().and_then(|snapshot| {
-            snapshot
-                .records
-                .get(index as usize)
-                .filter(|_| index >= 0)
-                .map(|record| {
-                    (
-                        record.turn,
-                        State::identity_key(record.turn, &record.group),
-                        snapshot
-                            .records
-                            .get(index.max(0) as usize)
-                            .map(|record| snapshot.cells[record.cell].kind),
-                    )
-                })
-        });
         let mut s = current.borrow_mut();
-        let mut open_kind: Option<Option<i32>> = None;
-        if let Some((turn, key, kind)) = group_key {
-            open_kind = Some(kind);
-            let turn_key = turn.unwrap_or(i64::MIN);
-            if s.show_turns && s.collapsed_turns.contains(&turn_key) {
-                s.collapsed_turns.remove(&turn_key);
-                drop(s);
-                apply_model(&app, &current.borrow());
-                return;
-            }
-            if s.show_calls && s.collapsed_assistants.contains(&key) {
-                s.collapsed_assistants.remove(&key);
-                drop(s);
-                apply_model(&app, &current.borrow());
-                return;
+        let mut kind = None;
+        if let Some(model) = &s.model {
+            if let Some(record) = model
+                .records
+                .get(index.max(0) as usize)
+                .filter(|_| index >= 0)
+            {
+                kind = Some(model.cells[record.cell].kind);
             }
         }
         s.selected = index;
-        // tool/subtool records open on the params tab, the rest on overview
-        s.tab = match open_kind.flatten() {
-            Some(kind) if kind == KIND_TOOL || kind == KIND_SUBTOOL => TAB_PARAMS,
-            _ => TAB_OVERVIEW,
+        s.tab = if matches!(kind, Some(KIND_TOOL | KIND_SUBTOOL)) {
+            TAB_PARAMS
+        } else {
+            TAB_OVERVIEW
         };
+        drop(s);
+        // Keep row instances alive so the second click can become a double click.
+        let s = current.borrow();
+        if let Some(model) = &s.model {
+            let texts = Texts::new(app.global::<I18n>().get_zh());
+            project_details(&app, &s, model, &texts);
+            project_timeline(&app, &s, model, &texts);
+        }
+    });
+
+    let (weak, current) = (app.as_weak(), state.clone());
+    app.on_traj_fold_row(move |index, action| {
+        let Some(app) = weak.upgrade() else { return };
+        let mut s = current.borrow_mut();
+        let Some(model) = s.model.as_ref() else {
+            return;
+        };
+        let Some(record) = model
+            .records
+            .get(index.max(0) as usize)
+            .filter(|_| index >= 0)
+        else {
+            return;
+        };
+        let groups = fold_groups(model);
+        let turn = record.turn;
+        let key = assistant_key(model, index as usize);
+        let turn_eligible = turn.is_some_and(|turn| {
+            groups
+                .turns
+                .get(&turn)
+                .is_some_and(|group| group.hidden > 0)
+        });
+        let turn_action = action == 1
+            || (action == 0
+                && (turn.is_some_and(|turn| s.collapsed_turns.contains(&turn))
+                    || (record.turn_start && !groups.calls.contains_key(&key))));
+        if turn_action && turn_eligible {
+            let turn = turn.unwrap();
+            if !s.collapsed_turns.remove(&turn) {
+                s.collapsed_turns.insert(turn);
+            }
+        } else if groups.calls.contains_key(&key) {
+            if !s.collapsed_assistants.remove(&key) {
+                s.collapsed_assistants.insert(key);
+            }
+        }
         drop(s);
         apply_model(&app, &current.borrow());
     });
 
-    let weak = app.as_weak();
+    let (weak, current) = (app.as_weak(), state.clone());
     app.on_traj_select_span(move |index| {
         if let Some(app) = weak.upgrade() {
+            let mut s = current.borrow_mut();
+            if let Some(model) = &s.model {
+                if let Some(record) = model
+                    .records
+                    .get(index.max(0) as usize)
+                    .filter(|_| index >= 0)
+                {
+                    let turn = record.turn;
+                    let owner = fold_groups(model).owners.get(&(index as usize)).cloned();
+                    if let Some(turn) = turn {
+                        s.collapsed_turns.remove(&turn);
+                    }
+                    if let Some(owner) = owner {
+                        s.collapsed_assistants.remove(&owner);
+                    }
+                }
+            }
+            drop(s);
             app.invoke_traj_select_row(index);
+            apply_model(&app, &current.borrow());
         }
     });
 
@@ -2717,50 +2970,33 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
     let (weak, current) = (app.as_weak(), state.clone());
     app.on_traj_toggle_turns(move || {
         let Some(app) = weak.upgrade() else { return };
-        {
-            let mut s = current.borrow_mut();
-            s.show_turns = !s.show_turns;
+        let mut s = current.borrow_mut();
+        let groups = s.model.as_ref().map(fold_groups).unwrap_or_default();
+        if all_turns_folded(&groups, &s) {
             s.collapsed_turns.clear();
-            if s.show_turns {
-                let turns: Vec<Option<i64>> = s
-                    .model
-                    .as_ref()
-                    .map(|snapshot| snapshot.turns.iter().map(|turn| turn.turn).collect())
-                    .unwrap_or_default();
-                for turn in turns {
-                    s.collapsed_turns.insert(turn.unwrap_or(i64::MIN));
-                }
-            }
-            app.set_traj_show_turns(s.show_turns);
+        } else {
+            s.collapsed_turns = groups
+                .turns
+                .into_iter()
+                .filter(|(_, turn)| turn.hidden > 0)
+                .map(|(turn, _)| turn)
+                .collect();
         }
+        drop(s);
         apply_model(&app, &current.borrow());
     });
 
     let (weak, current) = (app.as_weak(), state.clone());
     app.on_traj_toggle_calls(move || {
         let Some(app) = weak.upgrade() else { return };
-        {
-            let mut s = current.borrow_mut();
-            s.show_calls = !s.show_calls;
+        let mut s = current.borrow_mut();
+        let groups = s.model.as_ref().map(fold_groups).unwrap_or_default();
+        if all_calls_folded(&groups, &s) {
             s.collapsed_assistants.clear();
-            if s.show_calls {
-                let identities: Vec<String> = s
-                    .model
-                    .as_ref()
-                    .map(|snapshot| {
-                        snapshot
-                            .records
-                            .iter()
-                            .map(|record| State::identity_key(record.turn, &record.group))
-                            .collect::<HashSet<_>>()
-                    })
-                    .unwrap_or_default()
-                    .into_iter()
-                    .collect();
-                s.collapsed_assistants.extend(identities);
-            }
-            app.set_traj_show_calls(s.show_calls);
+        } else {
+            s.collapsed_assistants = groups.calls.into_keys().collect();
         }
+        drop(s);
         apply_model(&app, &current.borrow());
     });
 
@@ -2779,59 +3015,119 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         };
         app.set_traj_search_hint("".into());
         apply_model(&app, &current.borrow());
-        if query.trim().is_empty() { return; }
+        if query.trim().is_empty() {
+            return;
+        }
         let (tx, rx) = sync_channel(1);
         let backend = backend.clone();
         let needle = query.trim().chars().take(128).collect::<String>();
         let weak_done = app.as_weak();
         let current_done = current.clone();
         let mut timer = slint::Timer::default();
-        timer.start(slint::TimerMode::SingleShot, std::time::Duration::from_millis(250), move || {
-            let backend = backend.clone();
-            let session = session.clone();
-            let needle = needle.clone();
-            let tx = tx.clone();
-            std::thread::spawn(move || {
-                let result = backend.thread_trajectory_search(&session, &needle);
-                let _ = tx.send((session, generation, result));
-            });
-        });
+        timer.start(
+            slint::TimerMode::SingleShot,
+            std::time::Duration::from_millis(250),
+            move || {
+                let backend = backend.clone();
+                let session = session.clone();
+                let needle = needle.clone();
+                let tx = tx.clone();
+                std::thread::spawn(move || {
+                    let result = backend.thread_trajectory_search(&session, &needle);
+                    let _ = tx.send((session, generation, result));
+                });
+            },
+        );
         current.borrow_mut().search_timer = Some(timer);
         let receiver_current = current.clone();
         poll(move || {
-            let Ok((session, generation, result)) = rx.try_recv() else { return false; };
+            let Ok((session, generation, result)) = rx.try_recv() else {
+                return false;
+            };
             receiver_current.borrow_mut().search_timer = None;
-            let Some(app) = weak_done.upgrade() else { return true; };
+            let Some(app) = weak_done.upgrade() else {
+                return true;
+            };
             let state = current_done.borrow();
-            if state.session != session || state.search_generation != generation { return true; }
+            if state.session != session || state.search_generation != generation {
+                return true;
+            }
             match result {
                 Ok(value) => {
-                    let hits = value.get("hits").and_then(Value::as_array).into_iter().flatten().map(|hit| SearchHit {
-                        item_id: hit.get("item_id").and_then(Value::as_str).unwrap_or_default().to_string(),
-                        body_id: hit.pointer("/body/body_id").and_then(Value::as_str).unwrap_or_default().to_string(),
-                        revision: hit.pointer("/body/revision").and_then(Value::as_i64).unwrap_or(0),
-                        cursor: hit.get("cursor").and_then(Value::as_i64).unwrap_or(0),
-                        snippet: hit.get("snippet").and_then(Value::as_str).unwrap_or_default().to_string(),
-                    }).collect::<Vec<_>>();
-                    let more = value.get("has_more").and_then(Value::as_bool).unwrap_or(false);
+                    let hits = value
+                        .get("hits")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .map(|hit| SearchHit {
+                            item_id: hit
+                                .get("item_id")
+                                .and_then(Value::as_str)
+                                .unwrap_or_default()
+                                .to_string(),
+                            body_id: hit
+                                .pointer("/body/body_id")
+                                .and_then(Value::as_str)
+                                .unwrap_or_default()
+                                .to_string(),
+                            revision: hit
+                                .pointer("/body/revision")
+                                .and_then(Value::as_i64)
+                                .unwrap_or(0),
+                            cursor: hit.get("cursor").and_then(Value::as_i64).unwrap_or(0),
+                            snippet: hit
+                                .get("snippet")
+                                .and_then(Value::as_str)
+                                .unwrap_or_default()
+                                .to_string(),
+                        })
+                        .collect::<Vec<_>>();
+                    let more = value
+                        .get("has_more")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false);
                     drop(state);
                     let mut state = current_done.borrow_mut();
-                    if state.session != session || state.search_generation != generation { return true; }
+                    if state.session != session || state.search_generation != generation {
+                        return true;
+                    }
                     state.search_hits = hits;
                     project_search(&app, &state);
-                    app.set_traj_search_hint(if app.global::<I18n>().get_zh() {
-                        format!("搜索命中 {} 条{}", state.search_hits.len(), if more { "（缩小关键词可查看更多）" } else { "" })
-                    } else {
-                        format!("{} search matches{}", state.search_hits.len(), if more { " (narrow the query for more)" } else { "" })
-                    }.into());
+                    app.set_traj_search_hint(
+                        if app.global::<I18n>().get_zh() {
+                            format!(
+                                "搜索命中 {} 条{}",
+                                state.search_hits.len(),
+                                if more {
+                                    "（缩小关键词可查看更多）"
+                                } else {
+                                    ""
+                                }
+                            )
+                        } else {
+                            format!(
+                                "{} search matches{}",
+                                state.search_hits.len(),
+                                if more {
+                                    " (narrow the query for more)"
+                                } else {
+                                    ""
+                                }
+                            )
+                        }
+                        .into(),
+                    );
                 }
                 Err(error) => {
                     drop(state);
-                    app.set_traj_search_hint(if app.global::<I18n>().get_zh() {
-                        format!("搜索失败：{error}")
-                    } else {
-                        format!("Search failed: {error}")
-                    }.into());
+                    app.set_traj_search_hint(
+                        if app.global::<I18n>().get_zh() {
+                            format!("搜索失败：{error}")
+                        } else {
+                            format!("Search failed: {error}")
+                        }
+                        .into(),
+                    );
                 }
             }
             true
@@ -2843,30 +3139,60 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         let Some(app) = weak.upgrade() else { return };
         let (session, generation, hit) = {
             let mut state = current.borrow_mut();
-            if index < 0 || index as usize >= state.search_hits.len() { return; }
+            if index < 0 || index as usize >= state.search_hits.len() {
+                return;
+            }
             let hit = state.search_hits[index as usize].clone();
             state.selected_search = Some(index as usize);
+            if let Some(snapshot) = &state.model {
+                if let Some(record) = snapshot
+                    .records
+                    .iter()
+                    .position(|record| snapshot.cells[record.cell].record_id == hit.item_id)
+                {
+                    state.selected = record as i32;
+                }
+            }
             (state.session.clone(), state.search_generation, hit)
         };
         let (tx, rx) = sync_channel(1);
         let backend = backend.clone();
         std::thread::spawn(move || {
-            let result = backend.thread_trajectory_body(&session, &hit.body_id, hit.revision, hit.cursor);
+            let result =
+                backend.thread_trajectory_body(&session, &hit.body_id, hit.revision, hit.cursor);
             let _ = tx.send((session, generation, result));
         });
         let weak_done = app.as_weak();
         let current_done = current.clone();
         poll(move || {
-            let Ok((session, generation, result)) = rx.try_recv() else { return false; };
-            let Some(app) = weak_done.upgrade() else { return true; };
+            let Ok((session, generation, result)) = rx.try_recv() else {
+                return false;
+            };
+            let Some(app) = weak_done.upgrade() else {
+                return true;
+            };
             let Ok(page) = result else {
-                app.set_traj_search_hint(if app.global::<I18n>().get_zh() { "读取命中正文失败" } else { "Failed to read matching text" }.into());
+                app.set_traj_search_hint(
+                    if app.global::<I18n>().get_zh() {
+                        "读取命中正文失败"
+                    } else {
+                        "Failed to read matching text"
+                    }
+                    .into(),
+                );
                 return true;
             };
             let mut state = current_done.borrow_mut();
-            if state.session != session || state.search_generation != generation { return true; }
-            state.search_text = page.get("chunks").and_then(Value::as_array).into_iter().flatten()
-                .filter_map(Value::as_str).collect::<String>();
+            if state.session != session || state.search_generation != generation {
+                return true;
+            }
+            state.search_text = page
+                .get("chunks")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .collect::<String>();
             project_search(&app, &state);
             true
         });
@@ -2876,8 +3202,11 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
     app.on_traj_export(move || {
         let Some(app) = weak.upgrade() else { return };
         let session = current.borrow().session.clone();
-        if session.is_empty() { return; }
-        let Some(path) = crate::file_dialog::save_file("导出线程日志", "thread-log.jsonl") else {
+        if session.is_empty() {
+            return;
+        }
+        let Some(path) = crate::file_dialog::save_file("导出线程日志", "thread-log.jsonl")
+        else {
             return;
         };
         let (tx, rx) = sync_channel(1);
@@ -2888,7 +3217,9 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         });
         let weak_done = app.as_weak();
         poll(move || {
-            let Ok((path, result)) = rx.try_recv() else { return false; };
+            let Ok((path, result)) = rx.try_recv() else {
+                return false;
+            };
             if let Some(app) = weak_done.upgrade() {
                 match result {
                     Ok(()) => app.set_status(format!("线程日志已导出：{path}").into()),
@@ -2904,7 +3235,8 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         let Some(app) = weak.upgrade() else { return };
         {
             let mut s = current.borrow_mut();
-            let anchor = (s.view_start + (anchor as f64).clamp(0.0, 1.0) * s.view_width).clamp(0.0, 1.0);
+            let anchor =
+                (s.view_start + (anchor as f64).clamp(0.0, 1.0) * s.view_width).clamp(0.0, 1.0);
             let fraction = (anchor - s.view_start) / s.view_width.max(0.02);
             s.view_width = (s.view_width * factor as f64).clamp(0.02, 1.0);
             s.view_start = (anchor - fraction * s.view_width).clamp(0.0, 1.0 - s.view_width);
@@ -2938,18 +3270,43 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         let end = (end as f64).clamp(0.0, 1.0);
         state.selection = Some((start.min(end), start.max(end)));
         if let Some(snapshot) = &state.model {
-            let (domain_start, domain_end) = if state.show_duration && !snapshot.overview_spans.is_empty() && (state.has_more || state.has_newer) {
+            let (domain_start, domain_end) = if state.show_duration
+                && snapshot.has_overview
+                && (state.has_more || state.has_newer)
+            {
                 (snapshot.overview_start, snapshot.overview_end)
-            } else if state.show_duration { (snapshot.tl_start, snapshot.tl_end) }
-            else { (0.0, snapshot.records.len().max(1) as f64) };
+            } else if state.show_duration {
+                (snapshot.tl_start, snapshot.tl_end)
+            } else {
+                (0.0, snapshot.records.len().max(1) as f64)
+            };
             let lo = domain_start + state.selection.unwrap().0 * (domain_end - domain_start);
             let hi = domain_start + state.selection.unwrap().1 * (domain_end - domain_start);
-            let selected_record = snapshot.spans.iter().min_by(|a,b| {
-                let da = if a.end < lo { lo - a.end } else if a.start > hi { a.start - hi } else { 0.0 };
-                let db = if b.end < lo { lo - b.end } else if b.start > hi { b.start - hi } else { 0.0 };
-                da.total_cmp(&db)
-            }).map(|span| span.record).filter(|record| *record < snapshot.records.len());
-            if let Some(record) = selected_record { state.selected = record as i32; }
+            let selected_record = snapshot
+                .spans
+                .iter()
+                .min_by(|a, b| {
+                    let da = if a.end < lo {
+                        lo - a.end
+                    } else if a.start > hi {
+                        a.start - hi
+                    } else {
+                        0.0
+                    };
+                    let db = if b.end < lo {
+                        lo - b.end
+                    } else if b.start > hi {
+                        b.start - hi
+                    } else {
+                        0.0
+                    };
+                    da.total_cmp(&db)
+                })
+                .map(|span| span.record)
+                .filter(|record| *record < snapshot.records.len());
+            if let Some(record) = selected_record {
+                state.selected = record as i32;
+            }
         }
         drop(state);
         apply_model(&app, &current.borrow());
@@ -2969,17 +3326,35 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         let Some(snapshot) = &state.model else { return };
         let position = position as f64;
         let timed = state.show_duration;
-        let (lo, hi) = if timed && !snapshot.overview_spans.is_empty() && (state.has_more || state.has_newer) {
+        let (lo, hi) = if timed && snapshot.has_overview && (state.has_more || state.has_newer) {
             (snapshot.overview_start, snapshot.overview_end)
-        } else if timed { (snapshot.tl_start, snapshot.tl_end) }
-        else { (0.0, snapshot.records.len().max(1) as f64) };
+        } else if timed {
+            (snapshot.tl_start, snapshot.tl_end)
+        } else {
+            (0.0, snapshot.records.len().max(1) as f64)
+        };
         let absolute = lo + position.clamp(0.0, 1.0) * (hi - lo);
-        let selected_record = snapshot.spans.iter().min_by(|a,b| {
-            let at = if timed { (a.start + a.end) / 2.0 } else { a.sequence_start.unwrap_or(a.record as f64) };
-            let bt = if timed { (b.start + b.end) / 2.0 } else { b.sequence_start.unwrap_or(b.record as f64) };
-            (at - absolute).abs().total_cmp(&(bt - absolute).abs())
-        }).map(|span| span.record).filter(|record| *record < snapshot.records.len());
-        if let Some(record) = selected_record { state.selected = record as i32; }
+        let selected_record = snapshot
+            .spans
+            .iter()
+            .min_by(|a, b| {
+                let at = if timed {
+                    (a.start + a.end) / 2.0
+                } else {
+                    a.sequence_start.unwrap_or(a.record as f64)
+                };
+                let bt = if timed {
+                    (b.start + b.end) / 2.0
+                } else {
+                    b.sequence_start.unwrap_or(b.record as f64)
+                };
+                (at - absolute).abs().total_cmp(&(bt - absolute).abs())
+            })
+            .map(|span| span.record)
+            .filter(|record| *record < snapshot.records.len());
+        if let Some(record) = selected_record {
+            state.selected = record as i32;
+        }
         state.selection = None;
         drop(state);
         apply_model(&app, &current.borrow());
@@ -2993,12 +3368,23 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         let timed = state.show_duration;
         let (lo, hi) = if timed && snapshot.has_overview && (state.has_more || state.has_newer) {
             (snapshot.overview_start, snapshot.overview_end)
-        } else if timed { (snapshot.tl_start, snapshot.tl_end) }
-        else { (0.0, snapshot.overview_sequence_end.max(1.0)) };
+        } else if timed {
+            (snapshot.tl_start, snapshot.tl_end)
+        } else {
+            (0.0, snapshot.overview_sequence_end.max(1.0))
+        };
         let absolute = lo + (position as f64).clamp(0.0, 1.0) * (hi - lo);
         let span = snapshot.spans.iter().min_by(|a, b| {
-            let value = |item: &SpanBase| if timed { (item.start + item.end) / 2.0 } else { item.sequence_start.unwrap_or(item.record as f64) };
-            (value(a) - absolute).abs().total_cmp(&(value(b) - absolute).abs())
+            let value = |item: &SpanBase| {
+                if timed {
+                    (item.start + item.end) / 2.0
+                } else {
+                    item.sequence_start.unwrap_or(item.record as f64)
+                }
+            };
+            (value(a) - absolute)
+                .abs()
+                .total_cmp(&(value(b) - absolute).abs())
         });
         let Some(span) = span else { return };
         app.set_traj_hover(span.record as i32);
@@ -3019,6 +3405,61 @@ fn poll(mut receive: impl FnMut() -> bool + 'static) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fold_groups_keep_assistants_separate_and_ignore_orphan_tools() {
+        let model = parse_view_page(&json!({ "trajectory": [
+            {"item_id":"s", "user_round":1, "root_turn_id":"r", "turn_id":"r", "created_seq":1, "kind":"system_message", "summary":"instructions"},
+            {"item_id":"u", "user_round":1, "root_turn_id":"r", "turn_id":"r", "created_seq":2, "kind":"user_message", "summary":"question"},
+            {"item_id":"a1", "user_round":1, "root_turn_id":"r", "turn_id":"r", "created_seq":3, "kind":"assistant_message", "model_round":1, "summary":"working"},
+            {"item_id":"t1", "user_round":1, "root_turn_id":"r", "turn_id":"r", "created_seq":4, "kind":"tool_call", "model_round":1, "tool_name":"read_file"},
+            {"item_id":"a2", "user_round":1, "root_turn_id":"r", "turn_id":"r", "created_seq":5, "kind":"assistant_message", "model_round":1, "summary":"again"},
+            {"item_id":"t2", "user_round":1, "root_turn_id":"r", "turn_id":"r", "created_seq":6, "kind":"tool_call", "model_round":1, "tool_name":"write_file"},
+            {"item_id":"c", "user_round":1, "root_turn_id":"r", "turn_id":"r", "created_seq":7, "kind":"context", "summary":"context"},
+            {"item_id":"orphan", "user_round":1, "root_turn_id":"r", "turn_id":"r", "created_seq":8, "kind":"tool_call", "model_round":1, "tool_name":"read_file"},
+            {"item_id":"single", "user_round":2, "root_turn_id":"r2", "turn_id":"r2", "created_seq":9, "kind":"user_message", "summary":"question"}
+        ]}));
+        let groups = fold_groups(&model);
+        assert_eq!(groups.calls.len(), 2);
+        assert_eq!(groups.calls["a1"].count, 1);
+        assert_eq!(groups.calls["a2"].count, 1);
+        assert_eq!(groups.owners.len(), 2);
+        assert_eq!(groups.turns[&1].hidden, 6);
+        assert_eq!(groups.turns[&2].hidden, 0);
+        let mut state = State::default();
+        assert!(!all_turns_folded(&groups, &state));
+        state.collapsed_turns.insert(1);
+        assert!(all_turns_folded(&groups, &state));
+        state.collapsed_assistants.insert("a1".into());
+        assert!(!all_calls_folded(&groups, &state));
+        state.collapsed_assistants.insert("a2".into());
+        assert!(all_calls_folded(&groups, &state));
+        state.collapsed_assistants.remove("a1");
+        assert!(!all_calls_folded(&groups, &state));
+        let texts = Texts::new(true);
+        let rows = build_rows(&state, &model, &texts);
+        assert_eq!(rows.iter().filter(|row| row.kind == 7).count(), 1);
+        assert_eq!(rows.iter().filter(|row| row.kind == KIND_USER).count(), 2);
+        assert!(rows.iter().all(|row| row.index >= 0));
+        state.collapsed_turns.clear();
+        state.collapsed_assistants.insert("a1".into());
+        let rows = build_rows(&state, &model, &texts);
+        assert_eq!(rows.iter().filter(|row| row.kind == 8).count(), 2);
+        assert_eq!(
+            rows.iter().filter(|row| row.kind == KIND_MESSAGE).count(),
+            2
+        );
+        assert_eq!(rows.iter().filter(|row| row.kind == KIND_TOOL).count(), 1);
+        assert_eq!(
+            rows.iter().filter(|row| row.kind == KIND_CONTEXT).count(),
+            1
+        );
+        state.collapsed_turns.insert(1);
+        state.query = "context".into();
+        let rows = build_rows(&state, &model, &texts);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].kind, KIND_CONTEXT);
+    }
 
     #[test]
     fn snapshot_folds_turns_groups_and_requests() {
@@ -3105,7 +3546,7 @@ mod tests {
             .iter()
             .any(|record| model.cells[record.cell].kind == KIND_CONTEXT));
         assert!(model
-            .spans
+            .overview_spans
             .iter()
             .any(|span| span.record == usize::MAX && span.lane == 1));
         let assistant = model
@@ -3120,7 +3561,9 @@ mod tests {
         assert_eq!(usage.output, Some(56.0));
         assert_eq!(usage.think, Some(7.0));
         assert_eq!(model.tl_start, 1_000_000.0);
-        assert_eq!(model.tl_end, 1_100_000.0);
+        assert_eq!(model.tl_end, 1_002_000.0);
+        assert_eq!(model.overview_start, 1_000_000.0);
+        assert_eq!(model.overview_end, 1_100_000.0);
     }
 
     #[test]
@@ -3144,7 +3587,10 @@ mod tests {
         assert_eq!(model.spans[0].sequence_start, Some(900.0));
         assert_eq!(model.spans[0].sequence_end, Some(901.0));
         assert_eq!(model.overview_spans.len(), 16);
-        assert!(model.overview_spans.windows(2).all(|pair| pair[0].end <= pair[1].start));
+        assert!(model
+            .overview_spans
+            .windows(2)
+            .all(|pair| pair[0].end <= pair[1].start));
         assert!(model.has_overview);
         assert_eq!(model.overview_sequence_end, 128.0);
     }

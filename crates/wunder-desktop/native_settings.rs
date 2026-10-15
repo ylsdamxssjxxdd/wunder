@@ -605,7 +605,6 @@ impl NativeDesktop {
         let mut config = old_config.clone();
         edit(&mut config, &mut old_settings)?;
         let mut settings = old_settings;
-        settings.llm = Some(config.llm.clone());
         settings.workspace_root = config.workspace.root.clone();
         settings.container_roots = config.workspace.container_roots.clone();
         settings.language = config.i18n.default_language.clone();

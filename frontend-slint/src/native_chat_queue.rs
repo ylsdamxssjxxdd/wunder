@@ -91,24 +91,44 @@ pub enum EntrySignal {
 
 /// Drain one parked stream without promoting it.
 pub fn drain_entry(entry: &mut ParkedTurn, session: &str) -> EntrySignal {
-    if entry.session != session || !entry.prelude.is_empty() {
-        // A non-empty prelude means the entry already waits for the live slot;
-        // the pump owns it from here, not this scan.
+    if entry.session != session {
         return EntrySignal::Quiet;
+    }
+    poll_entry(&mut entry.prelude, || entry.stream.try_recv())
+}
+
+fn poll_entry(
+    prelude: &mut Vec<NativeChatEvent>,
+    mut next: impl FnMut() -> Result<Option<NativeChatEvent>, &'static str>,
+) -> EntrySignal {
+    // Ready remains observable until promotion, even if queue reordering put
+    // this entry behind a quiet subscriber. Never consume its buffered event.
+    if !prelude.is_empty() {
+        return EntrySignal::Ready;
     }
     let mut announced = false;
     for _ in 0..PARKED_POLL_BUDGET {
-        let event = match entry.stream.try_recv() {
+        let event = match next() {
             Ok(Some(event)) => event,
             Ok(None) => break,
             Err(_) => return EntrySignal::Settled,
         };
         match event {
             NativeChatEvent::Queued => announced = true,
+            NativeChatEvent::Event(ref value) if is_admission_event(value) => announced = true,
+            NativeChatEvent::Event(ref value)
+                if value["event"] == "native_execution_status"
+                    && matches!(
+                        value["data"]["status"].as_str(),
+                        Some("cancelled" | "interrupted")
+                    ) =>
+            {
+                return EntrySignal::Settled;
+            }
             NativeChatEvent::Failed(message) => return EntrySignal::Failed(message),
             NativeChatEvent::Finished => return EntrySignal::Settled,
             other => {
-                entry.prelude.push(other);
+                prelude.push(other);
                 return EntrySignal::Ready;
             }
         }
@@ -117,6 +137,18 @@ pub fn drain_entry(entry: &mut ParkedTurn, session: &str) -> EntrySignal {
         return EntrySignal::Announced;
     }
     EntrySignal::Quiet
+}
+
+/// Durable followers report the admitted execution before it has a lease.
+/// Those frames update queue state and must not allocate a chat bubble.
+fn is_admission_event(value: &serde_json::Value) -> bool {
+    match value["event"].as_str() {
+        Some("native_execution_started" | "queue_update") => true,
+        Some("native_execution_status") => {
+            matches!(value["data"]["status"].as_str(), Some("queued" | "pending"))
+        }
+        _ => false,
+    }
 }
 
 /// Engine rows → strip rows, plus how many rows were left out.
@@ -265,6 +297,85 @@ pub fn reset_recall(state: &mut Recall) {
 mod tests {
     use super::*;
 
+    #[test]
+    fn buffered_output_remains_ready_until_promotion_without_losing_events() {
+        let mut events = VecDeque::from([
+            NativeChatEvent::Queued,
+            NativeChatEvent::Event(
+                serde_json::json!({"event":"llm_output_delta","data":{"delta":"first"}}),
+            ),
+            NativeChatEvent::Event(
+                serde_json::json!({"event":"llm_output_delta","data":{"delta":"second"}}),
+            ),
+        ]);
+        let mut prelude = Vec::new();
+        assert_eq!(
+            poll_entry(&mut prelude, || Ok(events.pop_front())),
+            EntrySignal::Ready
+        );
+        assert_eq!(prelude.len(), 1);
+        assert_eq!(events.len(), 1);
+        for _ in 0..3 {
+            assert_eq!(
+                poll_entry(&mut prelude, || panic!(
+                    "buffered entries must not be polled"
+                )),
+                EntrySignal::Ready
+            );
+        }
+        let NativeChatEvent::Event(first) = &prelude[0] else {
+            panic!("output buffered")
+        };
+        assert_eq!(first["data"]["delta"], "first");
+        let NativeChatEvent::Event(second) = events.pop_front().unwrap() else {
+            panic!("next output intact")
+        };
+        assert_eq!(second["data"]["delta"], "second");
+    }
+
+    #[test]
+    fn withdrawn_queue_settles_without_creating_output() {
+        let mut prelude = Vec::new();
+        let mut events = VecDeque::from([NativeChatEvent::Queued, NativeChatEvent::Finished]);
+        assert_eq!(
+            poll_entry(&mut prelude, || Ok(events.pop_front())),
+            EntrySignal::Settled
+        );
+        assert!(prelude.is_empty());
+    }
+
+    #[test]
+    fn queue_admission_is_not_execution_and_withdrawal_has_no_bubble() {
+        let event = |kind: &str, status: &str| {
+            NativeChatEvent::Event(serde_json::json!({"event":kind,"data":{"status":status}}))
+        };
+        let mut events = VecDeque::from([
+            NativeChatEvent::Queued,
+            event("native_execution_started", ""),
+            event("native_execution_status", "queued"),
+            event("queue_update", "queued"),
+        ]);
+        let mut prelude = Vec::new();
+        assert_eq!(
+            poll_entry(&mut prelude, || Ok(events.pop_front())),
+            EntrySignal::Announced
+        );
+        assert!(prelude.is_empty());
+        events.push_back(event("native_execution_status", "cancelled"));
+        assert_eq!(
+            poll_entry(&mut prelude, || Ok(events.pop_front())),
+            EntrySignal::Settled
+        );
+        assert!(prelude.is_empty());
+
+        events.push_back(event("native_execution_status", "running"));
+        assert_eq!(
+            poll_entry(&mut prelude, || Ok(events.pop_front())),
+            EntrySignal::Ready
+        );
+        assert_eq!(prelude.len(), 1);
+    }
+
     fn row(id: &str, text: &str, priority: i64) -> NativeQueueTurn {
         NativeQueueTurn {
             queue_id: id.into(),
@@ -319,7 +430,6 @@ mod tests {
         assert!(!projected[1].interjected);
     }
 
-
     #[test]
     fn recall_walks_only_from_the_caret_edges() {
         let history = vec!["最新".to_string(), "更早".to_string()];
@@ -334,9 +444,11 @@ mod tests {
         let second = recall_step(&mut state, &history, 1, 0, 0, "最新").expect("older");
         assert_eq!(second.text.as_str(), "更早");
         assert!(recall_step(&mut state, &history, 1, 0, 0, "更早").is_none());
-        let back = recall_step(&mut state, &history, -1, 0, 0, "更早").expect("forward");
+        let back = recall_step(&mut state, &history, -1, second.caret, second.caret, "更早")
+            .expect("forward");
         assert_eq!(back.text.as_str(), "最新");
-        let bottom = recall_step(&mut state, &history, -1, 0, 0, "最新").expect("back to empty");
+        let bottom = recall_step(&mut state, &history, -1, back.caret, back.caret, "最新")
+            .expect("back to empty");
         assert_eq!(bottom.text.as_str(), "");
         assert!(recall_step(&mut state, &history, -1, 0, 0, "").is_none());
     }

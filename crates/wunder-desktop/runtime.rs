@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tracing::{info, warn};
 use wunder_server::admin_skills;
-use wunder_server::config::{merge_config_value, Config, LlmConfig};
+use wunder_server::config::{merge_config_value, Config};
 use wunder_server::config_store::ConfigStore;
 use wunder_server::desktop_lan::{self, DesktopLanMeshSettings};
 use wunder_server::desktop_runtime_recovery::recover_desktop_runtime_state;
@@ -81,8 +81,6 @@ pub struct DesktopSettings {
     #[serde(default = "default_font_size")]
     pub font_size: i32,
     #[serde(default)]
-    pub llm: Option<LlmConfig>,
-    #[serde(default)]
     pub lan_mesh: DesktopLanMeshSettings,
     pub updated_at: f64,
 }
@@ -104,7 +102,6 @@ impl Default for DesktopSettings {
             theme: default_theme(),
             send_key: default_send_key(),
             font_size: default_font_size(),
-            llm: None,
             lan_mesh: DesktopLanMeshSettings::default(),
             updated_at: now_ts(),
         }
@@ -278,7 +275,6 @@ impl DesktopRuntime {
         let token_for_update = desktop_token.clone();
         let container_roots_for_update = settings.container_roots.clone();
         let language_for_update = settings.language.clone();
-        let llm_for_update = settings.llm.clone();
         let native_runtime = args.native_runtime;
         let _config = config_store
             .update(move |config| {
@@ -291,7 +287,6 @@ impl DesktopRuntime {
                         desktop_token: &token_for_update,
                         container_roots: &container_roots_for_update,
                         language: &language_for_update,
-                        llm: llm_for_update.as_ref(),
                     },
                 );
                 // The native facade owns a dispatcher and must retain the
@@ -1361,7 +1356,6 @@ struct DesktopDefaultsInput<'a> {
     desktop_token: &'a str,
     container_roots: &'a HashMap<i32, String>,
     language: &'a str,
-    llm: Option<&'a LlmConfig>,
 }
 
 fn apply_desktop_defaults(
@@ -1385,9 +1379,9 @@ fn apply_desktop_defaults(
         config.i18n.default_language = defaults.language.trim().to_string();
     }
 
-    if let Some(llm) = defaults.llm {
-        config.llm = llm.clone();
-    }
+    // The model list is not restored from `desktop.settings.json`: this config
+    // file is shared with 舵机, which writes new entries into it, so the file
+    // itself is the source of truth for `llm`.
 
     // Keep per-agent channel settings available in desktop local mode.
     config.channels.enabled = true;
@@ -1927,7 +1921,6 @@ mod tests {
             desktop_token: "desktop-token",
             container_roots: &container_roots,
             language: "",
-            llm: None,
         };
 
         apply_desktop_defaults(
@@ -1990,7 +1983,6 @@ mod tests {
             desktop_token: "desktop-token",
             container_roots: &container_roots,
             language: "",
-            llm: None,
         };
 
         apply_desktop_defaults(
@@ -2100,7 +2092,6 @@ mod tests {
             desktop_token: "desktop-token",
             container_roots: &container_roots,
             language: "",
-            llm: None,
         };
 
         apply_desktop_defaults(
@@ -2149,7 +2140,6 @@ mod tests {
             desktop_token: "desktop-token",
             container_roots: &container_roots,
             language: "",
-            llm: None,
         };
 
         apply_desktop_defaults(

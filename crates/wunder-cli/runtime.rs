@@ -102,8 +102,8 @@ impl CliRuntime {
         std::env::set_var("WUNDER_WORKSPACE_SINGLE_ROOT", "1");
 
         // Users configure the CLI through `~/.wunder/config.toml`; the engine
-        // YAML below is generated. The template is created once so the file is
-        // discoverable, then every layer is projected onto the engine config.
+        // YAML is the runtime store shared with 蛹. The template is created once
+        // so the file is discoverable, then every layer is projected onto it.
         crate::user_config::ensure_user_config_template(&wunder_home)
             .context("write user config template failed")?;
         let user_config = match crate::user_config::load_report(
@@ -128,25 +128,17 @@ impl CliRuntime {
             }
         };
 
-        // §6.5 leftover: the engine YAML is generated, never hand-edited, so it is
-        // rebuilt from the shipped template on every start. A key the user removed
-        // from config.toml (or a [provider] they deleted) therefore cannot keep
-        // living in the generated file.
-        let engine_template = load_engine_template(&repo_root);
+        // The engine YAML is the same file 蛹 writes, so it is read back on every
+        // start instead of being rebuilt from the shipped template. The template
+        // now only supplies the floor for keys this CLI owns alone: a setting the
+        // user deleted from config.toml still reverts to it, while model entries
+        // created by another client survive.
+        let engine_template = load_engine_template(&repo_root).ok();
         let template_model_for_update = engine_template
             .as_ref()
-            .ok()
             .map(|config| config.llm.default.trim().to_string())
             .filter(|value| !value.is_empty());
-        let config_store = match engine_template {
-            Ok(template) => ConfigStore::from_config(config_path.clone(), template),
-            Err(err) => {
-                // A missing or broken template must not make the CLI unusable;
-                // the previous generated file is the next best base.
-                eprintln!("[warn] rebuilding the engine config from the template failed: {err}");
-                ConfigStore::new(config_path.clone())
-            }
-        };
+        let config_store = ConfigStore::new(config_path.clone());
         let launch_dir_for_update = launch_dir.clone();
         let temp_root_for_update = temp_root.clone();
         let repo_root_for_update = repo_root.clone();
@@ -154,8 +146,12 @@ impl CliRuntime {
         let user_values_for_update = user_config.values.clone();
         let sandbox_for_update = global.sandbox;
         let approval_for_update = global.approval_mode;
+        let template_for_update = engine_template.clone();
         let _config = config_store
             .update(move |config| {
+                if let Some(template) = template_for_update.as_ref() {
+                    apply_template_defaults(config, template);
+                }
                 apply_cli_defaults(
                     config,
                     &launch_dir_for_update,
@@ -868,6 +864,16 @@ fn load_engine_template(repo_root: &Path) -> Result<Config> {
         .with_context(|| format!("parse engine config template failed: {}", path.display()))
 }
 
+/// Reset the configuration this CLI owns alone back to the shipped template.
+/// It runs before the user layers, so a key the user deleted from config.toml
+/// cannot keep living in the shared engine file. Model entries are deliberately
+/// left out: 蛹 writes them into the same file and they are not this CLI's to
+/// discard.
+fn apply_template_defaults(config: &mut Config, template: &Config) {
+    config.project_doc.enabled = template.project_doc.enabled;
+    config.project_doc.max_bytes = template.project_doc.max_bytes.max(1);
+}
+
 /// The tool protocol the engine will use for this model entry. It mirrors the
 /// engine's own resolution so `config show`, the model list and the status line
 /// report the effective word rather than assuming one.
@@ -890,11 +896,11 @@ pub(crate) fn effective_max_context(entry: Option<&LlmModelConfig>) -> u32 {
         .unwrap_or(wunder_server::config::DEFAULT_MODEL_CONTEXT_TOKENS)
 }
 
-/// Project the merged user configuration onto the engine config. The engine YAML
-/// is generated, so this runs on every start and is the single write direction.
-/// `template_default_model` is the model the shipped template configures; it is
-/// restored when the user layer stops naming one, otherwise a removed setting
-/// would keep living in the generated file.
+/// Project the merged user configuration onto the engine config. This runs on
+/// every start and is the single write direction for the keys the user layer
+/// owns. `template_default_model` is the model the shipped template configures;
+/// it is restored when the user layer stops naming one, otherwise a removed
+/// setting would keep living in the shared file.
 pub(crate) fn apply_user_config(
     config: &mut Config,
     values: &crate::user_config::UserConfigValues,
@@ -1628,6 +1634,71 @@ mod workspace_tests {
             })
             .is_err(),
             "an unknown timing word must be reported, not ignored"
+        );
+    }
+
+    #[test]
+    fn the_template_floor_reverts_a_setting_the_user_removed() {
+        let mut template = Config::default();
+        template.project_doc.enabled = false;
+        template.project_doc.max_bytes = 4096;
+
+        // What a previous run left behind after the user deleted the key.
+        let mut config = Config::default();
+        config.project_doc.enabled = true;
+        config.project_doc.max_bytes = 999_999;
+
+        apply_template_defaults(&mut config, &template);
+
+        assert!(
+            !config.project_doc.enabled,
+            "a removed switch must fall back to the template, not stay on"
+        );
+        assert_eq!(config.project_doc.max_bytes, 4096);
+    }
+
+    #[test]
+    fn startup_projection_keeps_the_models_another_client_registered() {
+        let scratch = TempRoot::new("shared_models");
+        let mut template = Config::default();
+        template.llm.default = "template-model".to_string();
+
+        let mut config = Config::default();
+        config.llm.default = "template-model".to_string();
+        config.llm.models.insert(
+            "desktop-chat-model".to_string(),
+            LlmModelConfig {
+                enable: Some(true),
+                base_url: Some("https://api.example.test/v1".to_string()),
+                model: Some("desktop-chat-model".to_string()),
+                model_type: Some("llm".to_string()),
+                ..Default::default()
+            },
+        );
+
+        apply_template_defaults(&mut config, &template);
+        apply_cli_defaults(
+            &mut config,
+            &scratch.path().join("work"),
+            &scratch.path().join("temp"),
+            &scratch.path().join("repo"),
+            &scratch.path().join("home"),
+        );
+        apply_user_config(
+            &mut config,
+            &crate::user_config::UserConfigValues::default(),
+            Some("template-model"),
+        );
+
+        let entry = config
+            .llm
+            .models
+            .get("desktop-chat-model")
+            .expect("another client's model must survive the CLI start");
+        assert_eq!(entry.base_url.as_deref(), Some("https://api.example.test/v1"));
+        assert_eq!(
+            config.llm.default, "template-model",
+            "the floor still replaces a default the user stopped naming"
         );
     }
 }

@@ -25,7 +25,13 @@ impl NativeWorkflowEntry {
                 _ => "上下文已压缩",
             }
         } else {
-            target.unwrap_or_else(|| detail.lines().nth(1).unwrap_or(""))
+            target
+                .or_else(|| {
+                    ["command", "cmd", "query", "url", "uri"]
+                        .iter()
+                        .find_map(|key| data.get(*key).and_then(Value::as_str))
+                })
+                .unwrap_or_else(|| detail.lines().nth(1).unwrap_or(""))
         };
         let preview = brief
             .chars()
@@ -36,7 +42,13 @@ impl NativeWorkflowEntry {
             .map(|n| format!("{} token", compact(n)))
             .unwrap_or_default();
         let duration = number(data, &["duration_ms"], 0)
-            .or_else(|| number(data.get("meta").unwrap_or(&Value::Null), &["duration_ms"], 0))
+            .or_else(|| {
+                number(
+                    data.get("meta").unwrap_or(&Value::Null),
+                    &["duration_ms"],
+                    0,
+                )
+            })
             .map(|ms| {
                 if ms < 1000.0 {
                     format!("{:.0}ms", ms.round())
@@ -46,7 +58,7 @@ impl NativeWorkflowEntry {
                     format!("{:.0}s", (ms / 1000.0).round())
                 }
             })
-        .unwrap_or_default();
+            .unwrap_or_default();
         let sections = sections::project(title, data, state, &detail);
         let patch_files = patch::project(title, data, args.unwrap_or(&Value::Null));
         Self {

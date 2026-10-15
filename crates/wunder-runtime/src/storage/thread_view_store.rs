@@ -160,7 +160,7 @@ fn hydrate_chat_reasoning(
     session: &str,
     row: &mut ChatViewRow,
 ) -> Result<()> {
-    if row.assistant.item_id.is_empty() {
+    if row.assistant.item_id.is_empty() || !row.assistant.reasoning.is_empty() {
         return Ok(());
     }
     let reasoning = format!(
@@ -653,6 +653,35 @@ pub(crate) fn project_item(
             256,
         );
     }
+    if kind == "tool_call" {
+        projection::set_activity(
+            &mut row,
+            if projection::is_running(status) != 0 {
+                "tool"
+            } else {
+                "processing"
+            },
+            id,
+            int(&i[3]),
+            item.get("tool").and_then(Value::as_str).unwrap_or(""),
+        );
+    } else if kind == "assistant_message" {
+        let calls_tools = item
+            .get("tool_calls")
+            .and_then(Value::as_array)
+            .is_some_and(|calls| !calls.is_empty());
+        projection::set_activity(
+            &mut row,
+            if calls_tools {
+                "processing"
+            } else {
+                "responding"
+            },
+            id,
+            int(&i[3]),
+            "",
+        );
+    }
     if matches!(
         kind,
         "tool_call" | "approval" | "plan" | "compaction" | "subagent_run"
@@ -790,12 +819,29 @@ pub(crate) fn project_block(
         .unwrap_or(0);
     // Durable offsets are UTF-16; the row keeps only a bounded UTF-8 preview.
     if field == "reasoning" {
-        if offset as usize == row.assistant.reasoning_offset && row.assistant.reasoning.len() < 2048
-        {
-            let remaining = 2048 - row.assistant.reasoning.len();
-            row.assistant
-                .reasoning
-                .push_str(&preview(content, remaining));
+        let start = offset.max(0) as usize;
+        let end = start.saturating_add(content.encode_utf16().count());
+        if start <= row.assistant.reasoning_offset && end > row.assistant.reasoning_offset {
+            // Blocks can be rewritten with an increasingly complete payload.
+            // Append only the unseen UTF-16 suffix, including when the block
+            // begins before the current cursor, rather than freezing at its
+            // first durable preview or duplicating its existing prefix.
+            let overlap = row.assistant.reasoning_offset - start;
+            let mut units = 0;
+            let unseen = content
+                .char_indices()
+                .find_map(|(index, ch)| {
+                    let at = units;
+                    units += ch.len_utf16();
+                    (at >= overlap).then_some(index)
+                })
+                .unwrap_or(content.len());
+            row.assistant.reasoning.push_str(&content[unseen..]);
+            row.assistant.reasoning = projection::preview_tail(&row.assistant.reasoning, 2048);
+        } else if start > row.assistant.reasoning_offset {
+            // A missed block is healed by this durable tail, without joining
+            // text across a gap or retaining the first capped preview forever.
+            row.assistant.reasoning = projection::preview_tail(content, 2048);
         }
         row.assistant.reasoning_offset = row
             .assistant
@@ -847,6 +893,17 @@ pub(crate) fn project_block(
         row.reasoning_count += 1;
         row.reasoning_item_id = id.to_owned();
     }
+    projection::set_activity(
+        &mut row,
+        if field == "reasoning" {
+            "thinking"
+        } else {
+            "responding"
+        },
+        id,
+        int(&i[4]),
+        "",
+    );
     let seq = head(db, user, session)?;
     save_chat(db, user, session, &mut row, seq)
 }

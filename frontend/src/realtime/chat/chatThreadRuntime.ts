@@ -35,7 +35,6 @@ import {
 } from './chatRuntimeRenderAdapter';
 import { chatPerf } from '@/utils/chatPerf';
 import { threadViewSlots, threadViewCommitted, submitThreadView, clearThreadView, applyThreadViewChanges, applyThreadViewTail,threadViewStatus } from './threadViewStore';
-import { noteChatQueueRuntimeEvent } from '@/stores/chatQueueState';
 import { threadViewStoreMessages } from '@/stores/chatGreeting';
 
 interface ChatThreadRuntimeEntry {
@@ -499,9 +498,9 @@ export const applyChatThreadServerEvent = (
   // Queue controls are handled before the durable pipeline classifies them as
   // control frames. This makes queue_start immediately consume the composer
   // item instead of waiting for an eventually consistent queue refresh.
-  if (isQueueRuntimeEventType(eventType)) {
-    noteChatQueueRuntimeEvent(key, eventType, payload);
-  }
+  const normalizedThreadChange = eventType === 'thread_change'
+    ? toChatThreadFrame(eventType, payload)
+    : null;
   // The display window only owns the live tail once it has committed a page.
   // While an open is still in flight (or failed) `applyThreadViewTail` finds no
   // row and would swallow the delta, so fall through to the durable state.
@@ -531,7 +530,7 @@ export const applyChatThreadServerEvent = (
     dispatchSnapshotRequired(store, key, payload, hooks);
     return true;
   }
-  const frame = toChatThreadFrame(eventType, payload);
+  const frame = normalizedThreadChange ?? toChatThreadFrame(eventType, payload);
   if (!frame) return true;
   if (frame.event === 'stream_started') {
     bindStreamStarted(entry.state, frame);
@@ -551,13 +550,6 @@ export const applyChatThreadServerEvent = (
   }
   bumpInvalidation(store, key, frame, result.changed, result.structural);
   return true;
-};
-
-const isQueueRuntimeEventType = (value: unknown): boolean => {
-  const normalized = String(value ?? '').trim().toLowerCase();
-  return normalized === 'queued' || normalized === 'queue_enter' || normalized === 'queue_update' ||
-    normalized === 'queue_start' || normalized === 'queue_status' || normalized === 'queue_finish' ||
-    normalized === 'queue_cancel' || normalized === 'queue_fail';
 };
 
 /**

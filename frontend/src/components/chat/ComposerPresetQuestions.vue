@@ -11,7 +11,6 @@
       class="composer-preset-panel-item"
       type="button"
       :title="item"
-      :disabled="disabled"
       @click="emit('pick', item)"
     >
       {{ item }}
@@ -33,10 +32,6 @@ defineProps({
   items: {
     type: Array as PropType<string[]>,
     default: () => []
-  },
-  disabled: {
-    type: Boolean,
-    default: false
   }
 });
 
@@ -68,14 +63,9 @@ const { t } = useI18n();
   cursor: pointer;
 }
 
-.composer-preset-panel-item:hover:not(:disabled) {
+.composer-preset-panel-item:hover {
   background: var(--mz-hover, #f1efec);
   color: var(--mz-primary, #c96443);
-}
-
-.composer-preset-panel-item:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
 }
 
 .composer-preset-panel-item:focus-visible {

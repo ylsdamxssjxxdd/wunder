@@ -330,16 +330,11 @@ impl TuiApp {
         self.push_log(LogKind::Tool, text.into());
     }
 
+    /// `/config` reads and edits `config.toml`; model endpoints are configured
+    /// through `/model add`.
     async fn apply_config_from_slash(&mut self, command: ParsedSlashCommand<'_>) -> Result<()> {
         let args = command.args.trim();
-        if args.is_empty() {
-            self.start_config_wizard();
-            return Ok(());
-        }
-
-        // `show` / `edit` are the sub-verbs of `/config`; a bare `/config`
-        // stays the model wizard. Anything else is the one-line endpoint form.
-        if args.eq_ignore_ascii_case("show") {
+        if args.is_empty() || args.eq_ignore_ascii_case("show") {
             self.show_config_snapshot().await?;
             return Ok(());
         }
@@ -347,68 +342,61 @@ impl TuiApp {
             self.edit_user_config_file().await?;
             return Ok(());
         }
+        self.push_log(
+            LogKind::Error,
+            crate::locale::tr(
+                self.display_language.as_str(),
+                "/config 只接受 show 或 edit；配置模型端点请用 /model add",
+                "/config takes show or edit; add an endpoint with /model add",
+            ),
+        );
+        Ok(())
+    }
 
-        let values =
-            shell_words::split(args).map_err(|err| anyhow!("parse /config args failed: {err}"))?;
-        if values.len() < 3 || values.len() > 4 {
-            self.push_log(
-                LogKind::Error,
-                crate::locale::tr(
-                    self.display_language.as_str(),
-                    "/config 参数不正确，应为：/config <base_url> <api_key> <model> [max_context]",
-                    "invalid /config args, expected: /config <base_url> <api_key> <model> [max_context]",
-                ),
-            );
-            return Ok(());
-        }
-
-        let base_url = values[0].trim().to_string();
-        let api_key = values[1].trim().to_string();
-        let model_name = values[2].trim().to_string();
-        if base_url.is_empty() || api_key.is_empty() || model_name.is_empty() {
-            self.push_log(
-                LogKind::Error,
-                crate::locale::tr(
-                    self.display_language.as_str(),
-                    "配置项不能为空",
-                    "config values cannot be empty",
-                ),
-            );
-            return Ok(());
-        }
-
-        let manual_max_context = if values.len() == 4 {
-            match crate::parse_optional_max_context_value(values[3].as_str()) {
-                Ok(value) => value,
-                Err(err) => {
-                    self.push_log(LogKind::Error, err.to_string());
-                    return Ok(());
-                }
-            }
-        } else {
-            None
+    /// `/model add` collects one answer at a time, starting at the first field
+    /// the caller did not already supply.
+    fn start_model_wizard(&mut self, seed: &[String]) {
+        let mut values = seed.iter().map(|value| value.trim().to_string());
+        let wizard = ModelWizardState {
+            base_url: values.next().filter(|value| !value.is_empty()),
+            api_key: values.next().filter(|value| !value.is_empty()),
+            model_name: values.next().filter(|value| !value.is_empty()),
         };
-
-        self.apply_model_config(base_url, api_key, model_name, manual_max_context)
-            .await
+        self.model_wizard = Some(wizard);
+        self.push_model_wizard_prompt();
     }
 
-    fn start_config_wizard(&mut self) {
-        self.config_wizard = Some(ConfigWizardState::default());
+    fn push_model_wizard_prompt(&mut self) {
+        let Some(wizard) = self.model_wizard.as_ref() else {
+            return;
+        };
+        let (step, field_zh, field_en) = if wizard.base_url.is_none() {
+            (1, "base_url（留空可取消）", "base_url (empty line to cancel)")
+        } else if wizard.api_key.is_none() {
+            (2, "api_key（留空可取消）", "api_key (empty line to cancel)")
+        } else if wizard.model_name.is_none() {
+            (3, "模型名（留空可取消）", "model name (empty line to cancel)")
+        } else {
+            (
+                4,
+                "max_context（可选，直接回车自动探测）",
+                "max_context (optional; Enter for auto probe)",
+            )
+        };
         self.push_config_log(crate::locale::tr(
             self.display_language.as_str(),
-            "配置模型（第 1/4 步）",
-            "configure llm model (step 1/4)",
+            &format!("配置模型（第 {step}/4 步）"),
+            &format!("configure llm model (step {step}/4)"),
         ));
         self.push_config_log(crate::locale::tr(
             self.display_language.as_str(),
-            "请输入 base_url（留空可取消）",
-            "input base_url (empty line to cancel)",
+            &format!("请输入 {field_zh}"),
+            &format!("input {field_en}"),
         ));
     }
 
-    pub(super) fn cancel_config_wizard(&mut self) -> bool {
-        if self.config_wizard.take().is_none() {
+    pub(super) fn cancel_model_wizard(&mut self) -> bool {
+        if self.model_wizard.take().is_none() {
             return false;
         }
         self.input.clear();
@@ -424,72 +412,42 @@ impl TuiApp {
         true
     }
 
-    pub(super) async fn handle_config_wizard_input(&mut self, input: &str) -> Result<()> {
+    pub(super) async fn handle_model_wizard_input(&mut self, input: &str) -> Result<()> {
         let cleaned = input.trim();
         if cleaned.eq_ignore_ascii_case("/cancel") || cleaned.eq_ignore_ascii_case("/exit") {
-            self.cancel_config_wizard();
+            self.cancel_model_wizard();
             return Ok(());
         }
 
-        let Some(mut wizard) = self.config_wizard.take() else {
+        let Some(mut wizard) = self.model_wizard.take() else {
             return Ok(());
         };
 
-        if wizard.base_url.is_none() {
+        if wizard.base_url.is_none() || wizard.api_key.is_none() || wizard.model_name.is_none() {
             if cleaned.is_empty() {
-                self.cancel_config_wizard();
+                self.cancel_model_wizard();
                 return Ok(());
             }
-            wizard.base_url = Some(cleaned.to_string());
-            self.config_wizard = Some(wizard);
-            self.push_config_log(crate::locale::tr(
-                self.display_language.as_str(),
-                "请输入 api_key（第 2/4 步）",
-                "input api_key (step 2/4)",
-            ));
+            if wizard.base_url.is_none() {
+                wizard.base_url = Some(cleaned.to_string());
+            } else if wizard.api_key.is_none() {
+                wizard.api_key = Some(cleaned.to_string());
+            } else {
+                wizard.model_name = Some(cleaned.to_string());
+            }
+            self.model_wizard = Some(wizard);
+            self.push_model_wizard_prompt();
             return Ok(());
         }
 
-        if wizard.api_key.is_none() {
-            if cleaned.is_empty() {
-                self.cancel_config_wizard();
-                return Ok(());
-            }
-            wizard.api_key = Some(cleaned.to_string());
-            self.config_wizard = Some(wizard);
-            self.push_config_log(crate::locale::tr(
-                self.display_language.as_str(),
-                "请输入模型名（第 3/4 步）",
-                "input model name (step 3/4)",
-            ));
-            return Ok(());
-        }
-
-        if wizard.model_name.is_none() {
-            if cleaned.is_empty() {
-                self.cancel_config_wizard();
-                return Ok(());
-            }
-            wizard.model_name = Some(cleaned.to_string());
-            self.config_wizard = Some(wizard);
-            self.push_config_log(crate::locale::tr(
-                self.display_language.as_str(),
-                "请输入 max_context（第 4/4 步，可选；直接回车自动探测）",
-                "input max_context (step 4/4, optional; Enter for auto probe)",
-            ));
-            return Ok(());
-        }
-
+        // The last step is optional: an empty answer keeps the auto probe, a bad
+        // number is reported and the step repeats.
         let manual_max_context = match crate::parse_optional_max_context_value(cleaned) {
             Ok(value) => value,
             Err(err) => {
                 self.push_log(LogKind::Error, err.to_string());
-                self.config_wizard = Some(wizard);
-                self.push_config_log(crate::locale::tr(
-                    self.display_language.as_str(),
-                    "请输入 max_context（第 4/4 步，可选；直接回车自动探测）",
-                    "input max_context (step 4/4, optional; Enter for auto probe)",
-                ));
+                self.model_wizard = Some(wizard);
+                self.push_model_wizard_prompt();
                 return Ok(());
             }
         };
@@ -508,8 +466,8 @@ impl TuiApp {
         model_name: String,
         manual_max_context: Option<u32>,
     ) -> Result<()> {
-        self.config_wizard = None;
-        let (provider, resolved_max_context) = crate::apply_cli_model_config(
+        self.model_wizard = None;
+        let (provider, resolved_max_context, became_default) = crate::apply_cli_model_config(
             &self.runtime,
             &base_url,
             &api_key,
@@ -556,6 +514,13 @@ impl TuiApp {
             self.push_config_log(format!("- 工具调用模式: {configured_mode}"));
         } else {
             self.push_config_log(format!("- tool_call_mode: {configured_mode}"));
+        }
+        if !became_default {
+            self.push_config_log(crate::locale::tr(
+                self.display_language.as_str(),
+                &format!("已登记为可用模型，切换请用 /model {model_name}"),
+                &format!("registered as an available model; switch with /model {model_name}"),
+            ));
         }
         Ok(())
     }
@@ -629,18 +594,34 @@ impl TuiApp {
             return Ok(());
         }
 
-        // `/model <name> [effort]` and `/model <effort>`: a token that names a
-        // configured model is a model switch, an effort word sets the strength.
         let tokens =
             shell_words::split(target).map_err(|err| anyhow!("parse /model args failed: {err}"))?;
+
+        // `/model add [base_url api_key name [max_context]]` registers an endpoint.
+        // Whatever the caller already typed seeds the step wizard rather than
+        // being thrown away.
+        if tokens
+            .first()
+            .is_some_and(|head| head.eq_ignore_ascii_case("add"))
+        {
+            let fields = &tokens[1..];
+            if fields.len() >= 3 {
+                return self.add_model_endpoint(fields).await;
+            }
+            self.start_model_wizard(fields);
+            return Ok(());
+        }
+
+        // `/model <name> [effort]` and `/model <effort>`: a token that names a
+        // configured chat model is a model switch, an effort word sets the strength.
         let config = self.runtime.state.config_store.get().await;
-        let first_is_model = config.llm.models.contains_key(target);
+        let first_is_model = crate::is_switchable_model(&config, target);
         if !first_is_model && tokens.len() <= 1 && is_reasoning_effort_word(target) {
             self.set_reasoning_effort(target).await;
             return Ok(());
         }
         if !first_is_model {
-            if tokens.len() >= 2 && config.llm.models.contains_key(tokens[0].as_str()) {
+            if tokens.len() >= 2 && crate::is_switchable_model(&config, tokens[0].as_str()) {
                 let effort = tokens[1].clone();
                 self.switch_model(tokens[0].clone()).await?;
                 self.set_reasoning_effort(effort.as_str()).await;
@@ -657,8 +638,8 @@ impl TuiApp {
                     LogKind::Info,
                     crate::locale::tr(
                         self.display_language.as_str(),
-                        "尚未配置模型，请先运行 /config",
-                        "no models configured. run /config first.",
+                        "尚未配置模型，请用 /model add 添加",
+                        "no models configured. add one with /model add.",
                     ),
                 );
             } else if self.is_zh_language() {
@@ -680,6 +661,51 @@ impl TuiApp {
         Ok(())
     }
 
+    /// `/model add <base_url> <api_key> <name> [max_context]`: one line, no wizard.
+    async fn add_model_endpoint(&mut self, fields: &[String]) -> Result<()> {
+        if fields.len() > 4 {
+            self.push_log(
+                LogKind::Error,
+                crate::locale::tr(
+                    self.display_language.as_str(),
+                    "/model add 参数过多，应为：/model add <base_url> <api_key> <模型名> [max_context]",
+                    "too many /model add args, expected: /model add <base_url> <api_key> <model> [max_context]",
+                ),
+            );
+            return Ok(());
+        }
+
+        let base_url = fields[0].trim().to_string();
+        let api_key = fields[1].trim().to_string();
+        let model_name = fields[2].trim().to_string();
+        if base_url.is_empty() || api_key.is_empty() || model_name.is_empty() {
+            self.push_log(
+                LogKind::Error,
+                crate::locale::tr(
+                    self.display_language.as_str(),
+                    "端点、密钥与模型名都不能为空",
+                    "endpoint, key and model name are required",
+                ),
+            );
+            return Ok(());
+        }
+
+        let manual_max_context = if fields.len() == 4 {
+            match crate::parse_optional_max_context_value(fields[3].as_str()) {
+                Ok(value) => value,
+                Err(err) => {
+                    self.push_log(LogKind::Error, err.to_string());
+                    return Ok(());
+                }
+            }
+        } else {
+            None
+        };
+
+        self.apply_model_config(base_url, api_key, model_name, manual_max_context)
+            .await
+    }
+
     async fn switch_model(&mut self, target: String) -> Result<()> {
         let target_name = target.clone();
         self.runtime
@@ -699,8 +725,8 @@ impl TuiApp {
         Ok(())
     }
 
-    /// Set the reasoning effort for the active model. The engine config is
-    /// regenerated on every start, so the durable copy is `config.toml`.
+    /// Set the reasoning effort for the active model. The shared engine entry
+    /// carries it for this runtime, `config.toml` keeps it as the user's choice.
     async fn set_reasoning_effort(&mut self, effort: &str) {
         let cleaned = effort.trim().to_ascii_lowercase();
         if !is_reasoning_effort_word(cleaned.as_str()) {
@@ -784,8 +810,8 @@ impl TuiApp {
                 LogKind::Info,
                 crate::locale::tr(
                     self.display_language.as_str(),
-                    "尚未配置模型，请先运行 /config",
-                    "no models configured. run /config first.",
+                    "尚未配置模型，请用 /model add 添加",
+                    "no models configured. add one with /model add.",
                 ),
             );
             return;
@@ -2170,7 +2196,7 @@ impl TuiApp {
         self.input_cursor = 0;
         self.history_cursor = None;
         self.history_search = None;
-        self.config_wizard = None;
+        self.model_wizard = None;
         self.last_usage = None;
         self.reset_turn_metrics_snapshot();
         self.active_assistant = None;

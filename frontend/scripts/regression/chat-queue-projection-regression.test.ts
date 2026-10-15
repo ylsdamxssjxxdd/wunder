@@ -10,6 +10,7 @@ import {
   isParkedQueueTurn,
   projectQueueItems,
   queueItemIdentities,
+  resolveEmbeddedChatQueueRuntimeEvent,
   resolveConsumedQueueEventIdentities,
   selectParkedTurnMessageIds,
   type QueuedTurn
@@ -79,6 +80,54 @@ test('queue_start 消费身份可挡住旧队列快照复活', () => {
     ['queue:task-running', 'client:cm-running', 'root:root-running'],
     'an unidentified start consumes only the queue head'
   );
+});
+
+test('持久 thread_change 内的 queue_finish 也能解析出被消费的队列身份', () => {
+  const items = projectQueueItems([
+    { queue_id: 'task-durable', client_message_id: 'cm-durable', root_turn_id: 'root-durable', position: 0 },
+    { queue_id: 'task-next', client_message_id: 'cm-next', root_turn_id: 'root-next', position: 1 }
+  ]);
+  const embedded = resolveEmbeddedChatQueueRuntimeEvent('thread_change', {
+    data: {
+      change_type: 'item_upsert',
+      item: {
+        kind: 'queue',
+        payload: {
+          event_type: 'queue_finish',
+          queue_id: 'task-durable',
+          client_message_id: 'cm-durable',
+          root_turn_id: 'root-durable'
+        }
+      }
+    }
+  });
+  assert.equal(embedded?.eventType, 'queue_finish');
+  const identities = resolveConsumedQueueEventIdentities(items, embedded?.eventType, embedded?.payload);
+  assert.ok(identities.includes('queue:task-durable'));
+  assert.deepEqual(
+    filterConsumedQueueItems(items, new Set(identities)).map((item) => item.queueId),
+    ['task-next']
+  );
+});
+
+test('目标 thread_change.payload 形状同样能解析 queue 终态', () => {
+  const embedded = resolveEmbeddedChatQueueRuntimeEvent('thread_change', {
+    data: {
+      change_type: 'item_upsert',
+      payload: {
+        item_id: 'turn:queue-item',
+        kind: 'queue',
+        payload: {
+          event_type: 'queue_finish',
+          queue_id: 'task-target',
+          client_message_id: 'cm-target'
+        }
+      }
+    }
+  });
+  assert.equal(embedded?.eventType, 'queue_finish');
+  assert.equal(embedded?.payload.queue_id, 'task-target');
+  assert.equal(embedded?.payload.client_message_id, 'cm-target');
 });
 
 const parkedItem = (overrides: Partial<QueuedTurn> = {}): QueuedTurn => ({
@@ -180,6 +229,6 @@ test('排队让位与剪枝真的接在渲染与撤下路径上', () => {
     'store 上的剪枝动作缺失'
   );
   const queueState = readSource('stores/chatQueueState.ts');
-  assert.ok(/queue_start/.test(queueState) && /consumedQueueIds/.test(queueState), 'queue_start 没有消费并屏蔽旧快照');
+  assert.ok(/resolveEmbeddedChatQueueRuntimeEvent/.test(queueState) && /consumedQueueIds/.test(queueState), '队列终态没有消费并屏蔽旧快照');
   assert.ok(/noteChatQueueRuntimeEvent\(targetId, eventType, payload\)/.test(readSource('stores/chatRuntimeState.ts')), '队列事件没有透传 payload 身份');
 });

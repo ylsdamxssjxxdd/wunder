@@ -37,7 +37,6 @@
         :class="{ 'is-mono': entry.summaryMono }"
         :title="entry.summary"
       >{{ entry.summary }}</span>
-      <span v-if="metricsText" class="tl-entry-metrics">{{ metricsText }}</span>
     </component>
 
     <div v-if="interactive && open" class="tl-entry-body">
@@ -112,31 +111,6 @@ const emit = defineEmits<{ (event: 'toggle'): void }>();
 const { t } = useI18n();
 
 const interactive = computed(() => Boolean(props.entry.expandable));
-
-/** 右侧指标文案：`24k token 19ms`；缺一项只显示另一项。 */
-const metricsText = computed(() => {
-  const metrics = props.entry.metrics;
-  if (!metrics) return '';
-  const parts: string[] = [];
-  if (metrics.tokens !== null) parts.push(formatTokenCount(metrics.tokens));
-  if (metrics.durationMs !== null) parts.push(formatDurationMs(metrics.durationMs));
-  return parts.join(' ');
-});
-
-const formatTokenCount = (tokens: number): string => {
-  if (tokens >= 1000) {
-    const thousands = tokens / 1000;
-    const label = thousands >= 10 ? `${Math.round(thousands)}k` : `${thousands.toFixed(1).replace(/\.0$/, '')}k`;
-    return `${label} token`;
-  }
-  return `${Math.round(tokens)} token`;
-};
-
-const formatDurationMs = (ms: number): string => {
-  if (ms < 1000) return `${Math.round(ms)}ms`;
-  const seconds = ms / 1000;
-  return `${seconds.toFixed(seconds >= 10 ? 0 : 1).replace(/\.0$/, '')}s`;
-};
 
 /**
  * 工具输出在 DOM 里必须有界（方案 §7.3 C「长输出限高折叠」+ 性能要求）。
@@ -276,20 +250,6 @@ button.tl-entry-head:focus-visible {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-/* 行最右侧指标：上下文占用 + 耗时。固定列宽 + 左对齐，保证各行指标
-   起始位置一致（右端随容器对齐，左端不再因内容长度参差）。 */
-.tl-entry-metrics {
-  flex: 0 0 auto;
-  margin-left: auto;
-  min-width: 100px;
-  text-align: left;
-  color: var(--mz-timeline-entry-soft, #9ba0a8);
-  font-size: 11px;
-  line-height: 1.5;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
 }
 
 /* 命令形态的摘要用等宽字体：与输出面板同一族，读起来是「一条命令」。 */

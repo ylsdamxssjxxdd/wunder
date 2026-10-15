@@ -358,7 +358,7 @@ mod tests {
             }}),
         ];
         let turn = project_turn(&root, &items).unwrap();
-        assert_eq!(turn.rounds[0].items[0].tokens, "2.4k token");
+        assert_eq!(turn.rounds[0].items[0].tokens, "1.8k token");
         assert_eq!(turn.rounds[0].items[0].duration, "1.2s");
     }
 

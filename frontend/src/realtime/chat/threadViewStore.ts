@@ -1,10 +1,11 @@
 // AI生成
 // The display window is independent of connection and execution-log state.
 import { shallowRef, markRaw } from 'vue';
+import type { ProcessActivity } from '@/components/chat/timelineActivity';
 
 export interface ThreadBodyRef { body_id: string; revision: number; bytes: number }
-export interface ViewMessage { item_id: string; content: string; reasoning?: string; durable_seq?: number; content_offset?: number; reasoning_offset?: number; tail_offset?: number; body?: ThreadBodyRef; feedback?: unknown; stats?: unknown; tail?: string; failure?: string; attachments?: unknown[] }
-export interface ChatViewRow { root_turn_id: string; execution_turn_id?:string; user_round: number; client_message_id?: string; revision: number; status: string; user: ViewMessage; assistant: ViewMessage; workflow_count: number; reasoning_count?: number; reasoning_item_id?: string; failed_count: number; subagents?: any[] }
+export interface ViewMessage { item_id: string; content: string; reasoning?: string; created_seq?: number; durable_seq?: number; content_offset?: number; reasoning_offset?: number; tail_offset?: number; body?: ThreadBodyRef; feedback?: unknown; stats?: unknown; tail?: string; failure?: string; attachments?: unknown[] }
+export interface ChatViewRow { root_turn_id: string; execution_turn_id?:string; user_round: number; client_message_id?: string; revision: number; status: string; user: ViewMessage; assistant: ViewMessage; workflow_count: number; reasoning_count?: number; reasoning_item_id?: string; process_activity?: ProcessActivity; failed_count: number; subagents?: any[] }
 export interface ThreadViewPage { runtime_status?:string;active_turn_id?:string; session_id: string; epoch: number; view_seq: number; projection_state: string; degraded?: boolean; diagnostic?: string | null; thread_empty: boolean | null; latest_round: number; chat: ChatViewRow[]; trajectory: any[]; tiles: any[]; tile_level: number; next_before: number | null; has_more: boolean; next_after?: number | null; has_newer?: boolean }
 export type ViewPhase = 'opening' | 'ready' | 'verified_empty' | 'refreshing' | 'error';
 export interface ViewSlot { key: string; rootTurnId: string; user: Record<string, any>; assistant: Record<string, any> }
@@ -54,6 +55,7 @@ function materialize(row: ChatViewRow): ViewSlot {
     // The process badge counts every visible process entry.  The server keeps
     // tool counts separately, so include the aggregated reasoning entry here.
     workflow_count: row.workflow_count, reasoning_count: Number(row.reasoning_count || 0), reasoning_item_id: row.reasoning_item_id || '', process_count: row.workflow_count + Number(row.reasoning_count || 0) + (role === 'assistant' && String(m.reasoning || '').trim() && !Number(row.reasoning_count || 0) ? 1 : 0), workflow_failed_count: row.failed_count, feedback: m.feedback, stats: m.stats, reasoning: m.reasoning || '',
+    process_activity: row.process_activity?.kind ? row.process_activity : undefined,
     __thread_tail: m.tail, failureDetail:m.failure, attachments:m.attachments,
     __thread_tail_offset: m.tail_offset,
     workflowItems: [], ...(role==='assistant'&&Array.isArray(row.subagents)&&row.subagents.length>0?{subagents:row.subagents}:{}), failed: role === 'assistant' && ['failed','rejected'].includes(row.status), stopped: row.status === 'cancelled' });
@@ -248,6 +250,15 @@ export function removeThreadViewTurnByClientMessageId(key:string,client:string) 
   }, 0);
   notify();
 }
+function advanceTailActivity(row: ChatViewRow, kind: 'thinking' | 'responding'): void {
+  const current = row.process_activity;
+  const createdSeq = Number(row.assistant.created_seq || 0);
+  // A delayed tail may still extend its model item after a newer tool starts.
+  // It must not switch the process header back to that older model phase.
+  if (Number(current?.created_seq || 0) > createdSeq ||
+    (!createdSeq && current?.item_id && current.item_id !== row.assistant.item_id)) return;
+  row.process_activity = { kind, item_id: row.assistant.item_id, created_seq: createdSeq };
+}
 export function applyThreadViewTail(key:string,payload:any):boolean {
   const e=entries.get(key);if(!e)return false;
   const p=payload?.data??payload;const id=String(p?.item_id??'');const delta=String(p?.text??p?.delta??p?.content??'');
@@ -266,6 +277,7 @@ export function applyThreadViewTail(key:string,payload:any):boolean {
       if (!Number.isSafeInteger(expected) || expected < 0 || expected !== cursor) return true;
       const next = current + delta;
       const bounded = next.length > 32768 ? next.slice(-32768) : next;
+      advanceTailActivity(row, 'thinking');
       row.assistant = { ...row.assistant, reasoning: bounded,
         reasoning_offset: expected + [...delta].reduce((n, ch) => n + ch.length, 0) };
       e.slots.set(row.root_turn_id, materialize(row));
@@ -287,6 +299,7 @@ export function applyThreadViewTail(key:string,payload:any):boolean {
       row.assistant={...row.assistant,tail:out};
     }
     const deltaUnits = [...delta].reduce((n, ch) => n + ch.length, 0);
+    advanceTailActivity(row, 'responding');
     row.assistant={...row.assistant,content_offset:expected+deltaUnits,
       tail_offset: expected + deltaUnits,
       body:row.assistant.body?{...row.assistant.body,bytes:row.assistant.body.bytes+encoder.encode(delta).length}:undefined};

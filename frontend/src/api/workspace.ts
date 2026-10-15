@@ -17,7 +17,8 @@ const uploadWorkspaceFiles = (formData: FormData, config: RequestConfig = {}) =>
 };
 
 export const listWorkspaceEntries = (params: QueryParams) => api.get('/workspace', { params });
-export const fetchWorkspaceContent = (params: QueryParams) => api.get('/workspace/content', { params });
+export const fetchWorkspaceContent = (params: QueryParams, config: RequestConfig = {}) =>
+  api.get('/workspace/content', { ...config, params });
 export const searchWorkspace = (params: QueryParams) => api.get('/workspace/search', { params });
 // Returns a bare payload: { user_id, path, files, dirs, used_bytes, truncated, quota_bytes, recent[] }.
 // It is NOT wrapped in { data: ... }; quota_bytes is null while no quota is configured.

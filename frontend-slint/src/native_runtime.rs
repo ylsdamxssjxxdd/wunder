@@ -5,7 +5,6 @@ use wunder_desktop::NativeDesktop;
 
 pub fn install(app: &crate::MainWindow) {
     app.set_conversations(slint::ModelRc::default());
-    app.set_timeline(slint::ModelRc::default());
     app.set_agents(slint::ModelRc::default());
     app.set_tools(slint::ModelRc::default());
     app.set_models(slint::ModelRc::default());

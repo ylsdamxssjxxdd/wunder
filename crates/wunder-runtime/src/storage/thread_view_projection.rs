@@ -26,9 +26,30 @@ pub(crate) fn set_reasoning(message: &mut ViewMessage, payload: &Value) {
         .and_then(Value::as_str)
         .unwrap_or("");
     if !reasoning.is_empty() {
-        message.reasoning = preview(reasoning, 2048);
+        message.reasoning = preview_tail(reasoning, 2048);
         message.reasoning_offset = reasoning.encode_utf16().count();
     }
+}
+
+/// UTF-8-safe bounded tail, so capped live previews continue to move.
+pub(crate) fn preview_tail(text: &str, budget: usize) -> String {
+    let mut start = text.len().saturating_sub(budget);
+    while !text.is_char_boundary(start) {
+        start += 1;
+    }
+    text[start..].to_owned()
+}
+
+pub(crate) fn set_activity(row: &mut ChatViewRow, kind: &str, id: &str, seq: i64, tool: &str) {
+    if seq < row.process_activity.created_seq {
+        return;
+    }
+    row.process_activity = wunder_core::thread_view::ProcessActivity {
+        kind: kind.into(),
+        item_id: id.into(),
+        tool: preview(tool, 96),
+        created_seq: seq,
+    };
 }
 
 pub(crate) fn stable_answer(item_id: &str, turn_id: &str, kind: &str) -> bool {

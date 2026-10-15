@@ -77,8 +77,8 @@
             <div class="messenger-settings-label">{{ toolCallCount }}</div>
           </div>
           <div class="messenger-profile-stat-item">
-            <div class="messenger-settings-hint">{{ t('profile.stats.agents') }}</div>
-            <div class="messenger-settings-label">{{ agentCount }}</div>
+            <div class="messenger-settings-hint">{{ t('profile.stats.quotaConsumed') }}</div>
+            <div class="messenger-settings-label">{{ quotaUsedTotalCompactText }}</div>
           </div>
           <div class="messenger-profile-stat-item">
             <div class="messenger-settings-hint">{{ t('profile.stats.totalTokens') }}</div>
@@ -787,11 +787,6 @@ const sessionSummary = computed(() => {
   const user = (authStore.user || {}) as Record<string, unknown>;
   return (user.session_summary || user.sessionSummary || null) as Record<string, unknown> | null;
 });
-const agentCount = computed(() => {
-  const owned = Array.isArray(agentStore.agents) ? agentStore.agents.length : 0;
-  return 1 + owned;
-});
-
 const fallbackRecentSessionCount = (): number => {
   const now = Date.now();
   const cutoff = now - 7 * 24 * 60 * 60 * 1000;
@@ -908,15 +903,18 @@ const quotaSnapshot = computed(() => {
   const user = (authStore.user || {}) as Record<string, unknown>;
   const remaining = parseQuotaNumber(user.quota_balance);
   const dailyGrant = parseQuotaNumber(user.daily_quota_grant);
-  if (remaining === null && dailyGrant === null) return null;
+  const usedTotal = parseQuotaNumber(user.quota_used_total ?? user.quotaUsedTotal);
+  if (remaining === null && dailyGrant === null && usedTotal === null) return null;
   return {
     remaining,
-    dailyGrant
+    dailyGrant,
+    usedTotal
   };
 });
 
 const quotaRemaining = computed(() => quotaSnapshot.value?.remaining ?? null);
 const dailyQuotaGrant = computed(() => quotaSnapshot.value?.dailyGrant ?? null);
+const quotaUsedTotal = computed(() => quotaSnapshot.value?.usedTotal ?? null);
 
 const levelSnapshot = computed(() => {
   const user = (authStore.user || {}) as Record<string, unknown>;
@@ -970,6 +968,7 @@ const levelProgressHint = computed(() => {
 
 const quotaRemainingCompactText = computed(() => formatNumber(quotaRemaining.value));
 const dailyQuotaGrantCompactText = computed(() => formatNumber(dailyQuotaGrant.value));
+const quotaUsedTotalCompactText = computed(() => formatNumber(quotaUsedTotal.value));
 const tokenUsageTotalCompactText = computed(() =>
   formatCompactTokenUnit(tokenUsageTotal.value, { zeroAsDash: true })
 );

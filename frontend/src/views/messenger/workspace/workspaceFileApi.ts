@@ -39,6 +39,8 @@ import {
 export type WorkspaceDirectoryPage = {
   path: string;
   entries: WorkspaceEntry[];
+  workspaceId?: string;
+  treeVersion?: number;
   total: number;
   offset: number;
   limit: number;
@@ -75,7 +77,7 @@ const asRecord = (value: unknown): Record<string, unknown> =>
 
 export const fetchWorkspaceDirectory = async (
   path: string,
-  options: { offset?: number; limit?: number; signal?: AbortSignal } = {}
+  options: { offset?: number; limit?: number; signal?: AbortSignal; refreshTree?: boolean } = {}
 ): Promise<WorkspaceDirectoryPage> => {
   const params: QueryParams = {
     path: normalizeWorkspaceRelativePath(path),
@@ -90,6 +92,41 @@ export const fetchWorkspaceDirectory = async (
   return {
     path: normalizeWorkspaceRelativePath(payload.path ?? params.path),
     entries,
+    workspaceId: String(payload.workspace_id || payload.workspaceId || ''),
+    treeVersion: Number.isFinite(Number(payload.tree_version ?? payload.treeVersion))
+      ? Number(payload.tree_version ?? payload.treeVersion)
+      : undefined,
+    total: Number(payload.total) || entries.length,
+    offset: Number(payload.offset) || 0,
+    limit: Number(payload.limit) || Number(params.limit) || 0
+  };
+};
+
+/** Force the filesystem-backed content endpoint to rebuild its tree snapshot. */
+export const fetchWorkspaceContentDirectory = async (
+  path: string,
+  options: { offset?: number; limit?: number; signal?: AbortSignal; refreshTree?: boolean } = {}
+): Promise<WorkspaceDirectoryPage> => {
+  const params: QueryParams = {
+    path: normalizeWorkspaceRelativePath(path),
+    include_content: true,
+    depth: 1,
+    offset: Math.max(0, Number(options.offset) || 0),
+    limit: Math.max(0, Number(options.limit) || 0),
+    sort_by: 'name',
+    order: 'asc'
+  };
+  if (options.refreshTree) params.refresh_tree = true;
+  const response = await fetchWorkspaceContent(params, { signal: options.signal });
+  const payload = asRecord(response?.data);
+  const entries = sortWorkspaceEntries(normalizeWorkspaceEntries(payload.entries));
+  return {
+    path: normalizeWorkspaceRelativePath(payload.path ?? params.path),
+    entries,
+    workspaceId: String(payload.workspace_id || payload.workspaceId || ''),
+    treeVersion: Number.isFinite(Number(payload.tree_version ?? payload.treeVersion))
+      ? Number(payload.tree_version ?? payload.treeVersion)
+      : undefined,
     total: Number(payload.total) || entries.length,
     offset: Number(payload.offset) || 0,
     limit: Number(payload.limit) || Number(params.limit) || 0

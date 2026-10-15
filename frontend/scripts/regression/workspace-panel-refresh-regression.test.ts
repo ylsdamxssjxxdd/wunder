@@ -274,3 +274,18 @@ test('workspace tree context menu exposes a manual refresh action', () => {
   assert.ok(source.includes('@click="handleContextRefresh"'));
   assert.ok(source.includes('await refreshWorkspace();'));
 });
+
+test('workspace file panel refreshes on runtime events and forces a tree rebuild', () => {
+  const source = readSource('src/views/messenger/workspace/WorkspaceFilesPanel.vue');
+  assert.ok(source.includes('workspaceRefreshStop = onWorkspaceRefresh(refreshFromWorkspaceEvent);'));
+  assert.ok(source.includes("refreshDirectory('', { refreshTree: true })"));
+  assert.ok(source.includes('await handleRefresh({ forceTree: true });'));
+  assert.ok(source.includes('fetchWorkspaceContentDirectory'));
+});
+
+test('tool result workspace metadata is required before emitting a refresh fallback', () => {
+  const source = readSource('src/stores/chatRuntimeState.ts');
+  assert.ok(source.includes('hasCanonicalWorkspaceMutation(payload, data)'));
+  assert.ok(source.includes('workspace_changed'));
+  assert.ok(source.includes('workspace_version'));
+});

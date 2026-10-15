@@ -68,7 +68,10 @@ pub fn target_of(title: &str, detail: &str, sections: &[NativeWorkflowSection]) 
             return (short(&section.title, 64), true);
         }
     }
-    if matches!(title.trim(), "execute_command" | "运行命令" | "command_session") {
+    if matches!(
+        title.trim(),
+        "execute_command" | "运行命令" | "command_session"
+    ) {
         return (String::new(), patch);
     }
     let mut lines = detail.lines();
@@ -173,13 +176,16 @@ pub fn tool_summary(entry: &NativeWorkflowEntry) -> String {
     if !preview.is_empty() {
         return short(preview, 160);
     }
-    if matches!(entry.title.trim(), "execute_command" | "运行命令" | "command_session") {
-        return entry
-            .detail
-            .lines()
-            .next()
-            .map(|line| short(line, 160))
-            .unwrap_or_default();
+    if matches!(
+        entry.title.trim(),
+        "execute_command" | "运行命令" | "command_session"
+    ) {
+        let detail = entry.detail.trim();
+        let Some((_, command)) = detail.split_once('\n') else {
+            return short(detail, 160);
+        };
+        let command = command.lines().next().unwrap_or_default();
+        return short(command, 160);
     }
     summary(entry.detail.as_str())
 }
@@ -193,4 +199,25 @@ pub fn tool_metrics(entry: &NativeWorkflowEntry) -> String {
         .filter(|value| !value.trim().is_empty())
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn command_summary_uses_the_command_line_not_the_status_line() {
+        let entry = NativeWorkflowEntry {
+            id: "fixture-command".into(),
+            title: "execute_command".into(),
+            preview: String::new(),
+            detail: "执行 · 运行中\nlist files\noutput".into(),
+            state: "running".into(),
+            tokens: String::new(),
+            duration: String::new(),
+            sections: Vec::new(),
+            patch_files: Vec::new(),
+        };
+        assert_eq!(tool_summary(&entry), "list files");
+    }
 }

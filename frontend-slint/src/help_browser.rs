@@ -461,15 +461,33 @@ impl Typesetter {
         for block in &topic.blocks {
             match block {
                 Block::H1 { spans } => {
-                    y += self.text(&mut doc, spans, x, y, w, SIZE_H1 * zoom, 0x17a81a, true, false)
-                        + 6.0;
+                    y += self.text(
+                        &mut doc,
+                        spans,
+                        x,
+                        y,
+                        w,
+                        SIZE_H1 * zoom,
+                        0x17a81a,
+                        true,
+                        false,
+                    ) + 6.0;
                     doc.rects.push(rect(x, y, w, 1.0, 0xe5e7eb, None, 0.0));
                     y += 12.0;
                 }
                 Block::H2 { spans } => {
                     y += 8.0;
-                    y += self.text(&mut doc, spans, x, y, w, SIZE_H2 * zoom, 0x17a81a, true, false)
-                        + 8.0;
+                    y += self.text(
+                        &mut doc,
+                        spans,
+                        x,
+                        y,
+                        w,
+                        SIZE_H2 * zoom,
+                        0x17a81a,
+                        true,
+                        false,
+                    ) + 8.0;
                 }
                 Block::Paragraph { spans } | Block::Lead { spans } => {
                     let lead = matches!(block, Block::Lead { .. });

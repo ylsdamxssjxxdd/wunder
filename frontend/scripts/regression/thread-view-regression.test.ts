@@ -103,3 +103,22 @@ commitThreadView(key,page([{...row(1,1),status:'queued',client_message_id:'fixtu
 removeThreadViewTurnByClientMessageId(key,'fixture-queued');
 assert.equal(threadViewSlots(key)!.length,0);
 console.log('thread view: queued durable row is removable by client message id pass');
+
+clearThreadView(key);generation=beginThreadView(key);
+commitThreadView(key,page([{...row(1,1),status:'running',process_activity:{kind:'thinking'},assistant:{item_id:'fixture-answer-1',content:'',reasoning:'fixture thought',reasoning_offset:15}}]),generation);
+applyThreadViewTail(key,{item_id:'fixture-answer-1',field:'reasoning',offset:15,text:' latest'});
+assert.equal(threadViewSlots(key)![0].assistant.process_activity.kind,'thinking');
+applyThreadViewTail(key,{item_id:'fixture-answer-1',field:'content',content_offset:0,text:'fixture reply',base_seq:0});
+assert.equal(threadViewSlots(key)![0].assistant.process_activity.kind,'responding');
+applyThreadViewChanges(key,{view_seq:2,rows:[{...row(1,2),status:'running',process_activity:{kind:'tool',tool:'fixture_tool'}}]});
+assert.equal(threadViewSlots(key)![0].assistant.process_activity.tool,'fixture_tool');
+console.log('thread view: current process phase follows reasoning, content and tool changes pass');
+
+clearThreadView(key);generation=beginThreadView(key);
+commitThreadView(key,page([{...row(1,1),status:'running',process_activity:{kind:'tool',tool:'fixture_tool',item_id:'fixture-call',created_seq:20},assistant:{item_id:'fixture-answer-1',created_seq:10,content:'',reasoning:'fixture thought',reasoning_offset:15}}]),generation);
+applyThreadViewTail(key,{item_id:'fixture-answer-1',field:'reasoning',offset:15,text:' late'});
+assert.equal(threadViewSlots(key)![0].assistant.reasoning,'fixture thought late');
+assert.equal(threadViewSlots(key)![0].assistant.process_activity.kind,'tool');
+applyThreadViewTail(key,{item_id:'fixture-answer-1',field:'content',content_offset:0,text:'fixture late reply',base_seq:0});
+assert.equal(threadViewSlots(key)![0].assistant.process_activity.kind,'tool');
+console.log('thread view: late model tails cannot replace a newer tool phase pass');

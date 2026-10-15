@@ -16,16 +16,10 @@
     >
       <span class="timeline-process-gutter" aria-hidden="true">
         <i :class="['fa-solid', 'fa-caret-right', 'timeline-process-arrow', { 'is-open': open }]"></i>
-        <span v-if="open" class="timeline-process-gutter-line"></span>
       </span>
       <span class="timeline-process-title">{{ t('chat.timeline.workProcess') }}</span>
       <span class="timeline-process-count">{{ t('chat.timeline.workProcessSteps', { count }) }}</span>
-      <span v-if="!open && reasoningSummary" class="timeline-process-latest" :title="reasoningSummary">
-        {{ reasoningSummary }}
-      </span>
-      <span v-if="!open && failedCount > 0" class="timeline-process-latest">
-        {{ t('chat.timeline.workProcessFailed', { count: failedCount }) }}
-      </span>
+      <span class="timeline-process-latest">{{ currentActivity }}</span>
     </button>
 
     <div v-if="open" ref="processBodyRef" class="timeline-process-body" @scroll.passive="handleProcessScroll" @wheel.passive="handleProcessWheel" @pointerdown="pageAnchor = null" @keydown="pageAnchor = null">
@@ -102,6 +96,7 @@ import { buildWorkflowToolRuns, type WorkflowItem } from './toolWorkflowRunModel
 import { buildTimelinePatchView } from './toolTimelinePatch';
 import { buildTimelineStructuredView } from './toolTimelineStructured';
 import type { ToolWorkflowPatchView, ToolWorkflowStructuredView } from './toolWorkflowTypes';
+import { entryActivity, processActivityLabel, reasoningPreview, type ProcessActivity } from './timelineActivity';
 
 type ProcessRow =
   | { kind: 'reasoning'; key: string; entry: TimelineReasoningEntry }
@@ -112,7 +107,8 @@ const props = defineProps<{
   sessionId: string;
   turnId: string;
   count: number;
-  failedCount?: number;
+  activity?: ProcessActivity | null;
+  status?: string;
   /** 流式期间的活动文本尾部：正文区让位时由过程区实时行承接展示。 */
   liveTail?: string;
   reasoning?: string;
@@ -155,7 +151,21 @@ let reloadTimer: number | null = null;
 
 const cacheKeyPrefix = computed(() => `turn-process:${props.sessionId}:${props.turnId}:`);
 const reasoningText = computed(() => String(props.reasoning || '').trim());
-const reasoningSummary = computed(() => firstLine(reasoningText.value));
+const currentActivity = computed(() => {
+  let activity = props.activity;
+  if (!activity) {
+    if (props.reasoningStreaming) activity = { kind: 'thinking' };
+    else if (!hasNewerItems.value) {
+      for (let index = rows.value.length - 1; index >= 0; index--) {
+        const row = rows.value[index];
+        if (row.kind === 'print') continue;
+        activity = entryActivity(row.entry);
+        if (activity) break;
+      }
+    }
+  }
+  return processActivityLabel(activity, props.status || (props.reasoningStreaming ? 'running' : 'completed'), t);
+});
 /** The server gives the current reasoning item's durable identity.  Keep a
  * local fallback only for an older source that does not expose it yet. */
 const currentReasoningItemId = computed(() => String(props.reasoningItemId || '').trim());
@@ -164,13 +174,9 @@ const currentReasoningRowKey = computed(() => `reasoning:${currentReasoningItemI
 const hasCurrentReasoningRow = computed(() =>
   rows.value.some((row) => row.kind === 'reasoning' && row.key === currentReasoningRowKey.value)
 );
-const firstLine = (text: string): string => {
-  const normalized = text.replace(/\s+/g, ' ').trim();
-  return normalized.length > 160 ? `${normalized.slice(0, 160)}…` : normalized;
-};
 const reasoningEntry = computed<TimelineReasoningEntry>(() => ({
   kind: 'reasoning', key: currentReasoningRowKey.value, streaming: Boolean(props.reasoningStreaming),
-  summary: firstLine(reasoningText.value), text: reasoningText.value
+  summary: reasoningPreview(reasoningText.value), text: reasoningText.value
 }));
 
 const clearReloadTimer = (): void => {
@@ -229,6 +235,19 @@ let fillBudget = 4;
 let pageAnchor: { key?: string; offset: number; follow: boolean } | null = null;
 let anchorFrame: number | null = null;
 let restoredScrollTop = 0;
+let followLatest = true;
+let liveFrame: number | null = null;
+const followLiveTail = (): void => {
+  if (!open.value || hasNewerItems.value || !followLatest || liveFrame !== null) return;
+  liveFrame = window.requestAnimationFrame(() => {
+    liveFrame = null;
+    const body = processBodyRef.value;
+    if (!body || !followLatest) return;
+    body.scrollTop = body.scrollHeight;
+    restoredScrollTop = body.scrollTop;
+  });
+};
+watch(() => [reasoningText.value, props.reasoningStreaming, props.liveTail], followLiveTail, { flush: 'post' });
 // Markdown renders asynchronously. Keep the same anchor through those height
 // changes too, until the reader scrolls again, instead of anchoring empty blocks.
 const restorePageAnchor = (): void => {
@@ -296,6 +315,7 @@ const loadPage = async (direction: ProcessPageDirection): Promise<void> => {
     const anchorOffset = anchor ? anchor.getBoundingClientRect().top - top : 0;
     const follow = initial || (refresh && body && body.scrollHeight - body.clientHeight - body.scrollTop <= 72);
     pageAnchor = { key: anchorKey, offset: anchorOffset, follow: Boolean(follow) };
+    followLatest = Boolean(follow);
     if (initial) {
       processItems.value = batch;
       hasOlderItems.value = Boolean(turn.has_older ?? turn.has_more);
@@ -346,6 +366,7 @@ const loadPage = async (direction: ProcessPageDirection): Promise<void> => {
 const load = (): Promise<void> => loadPage('initial');
 const handleProcessScroll = (): void => {
   const body = processBodyRef.value;
+  if (body) followLatest = body.scrollHeight - body.clientHeight - body.scrollTop <= 72;
   if (!body || loadingMore.value || Date.now() < pageRetryAfter) return;
   if (Math.abs(body.scrollTop - restoredScrollTop) > 2) pageAnchor = null;
   fillBudget = 4;
@@ -356,6 +377,7 @@ const handleProcessScroll = (): void => {
 // gesture must still be able to continue reading it without a load button.
 const handleProcessWheel = (event: WheelEvent): void => {
   pageAnchor = null;
+  if (event.deltaY < 0) followLatest = false;
   const body = processBodyRef.value;
   if (!body || body.scrollHeight > body.clientHeight + 2 || Date.now() < pageRetryAfter) return;
   fillBudget = 4;
@@ -378,6 +400,9 @@ const resetState = (): void => {
   fillFrame = null;
   if (anchorFrame !== null) window.cancelAnimationFrame(anchorFrame);
   anchorFrame = null;
+  if (liveFrame !== null) window.cancelAnimationFrame(liveFrame);
+  liveFrame = null;
+  followLatest = true;
   pageAnchor = null;
   processItems.value = [];
   hasOlderItems.value = false;
@@ -431,7 +456,11 @@ const syncCurrentReasoningRow = (): void => {
     const index = rows.value.findIndex((row) => row.kind === 'reasoning' && row.key === currentReasoningRowKey.value);
     const current = index >= 0 ? rows.value[index] : null;
     if (current?.kind === 'reasoning') {
-      const next = reasoningEntry.value;
+      const next = { ...reasoningEntry.value };
+      if (!next.streaming && current.entry.text.length > next.text.length) {
+        next.text = current.entry.text;
+        next.summary = reasoningPreview(next.text);
+      }
       if (current.entry.text !== next.text || current.entry.streaming !== next.streaming) {
         rows.value[index] = { kind: 'reasoning', key: current.key, entry: next };
         changed = true;
@@ -445,9 +474,10 @@ watch(
   syncCurrentReasoningRow
 );
 
-// 流式期间步数高频增长：防抖跟随刷新（尾部触发），避免每次步数变化都整段重拉造成抖动。
+// Debounce structural/phase changes; individual text deltas patch only their
+// live row. A phase ending also reloads the complete durable reasoning text.
 watch(
-  () => [props.count, props.finalItemId],
+  () => [props.count, props.finalItemId, props.status, Boolean(props.reasoningStreaming)],
   () => {
     if (!open.value || !loaded.value) return;
     clearReloadTimer();
@@ -458,6 +488,7 @@ watch(
   }
 );
 onBeforeUnmount(() => {
+  if (liveFrame !== null) window.cancelAnimationFrame(liveFrame);
   if (anchorFrame !== null) window.cancelAnimationFrame(anchorFrame);
   if (fillFrame !== null) window.cancelAnimationFrame(fillFrame);
   clearReloadTimer();
@@ -484,10 +515,11 @@ const safeJsonParse = (text: string): unknown => {
 const flattenItemPayload = (payload: unknown): Record<string, unknown> => {
   const outer = asObject(payload);
   const inner = asObject(outer.payload);
-  if (Object.keys(inner).length === 0) return outer;
-  const merged: Record<string, unknown> = { ...outer };
+  const nestedData = { ...asObject(outer.data), ...asObject(inner.data) };
+  if (Object.keys(inner).length === 0 && Object.keys(nestedData).length === 0) return outer;
+  const merged: Record<string, unknown> = { ...outer, ...inner, ...nestedData };
   delete merged.payload;
-  return { ...merged, ...inner };
+  return merged;
 };
 
 const pickText = (source: Record<string, unknown>, keys: string[]): string => {
@@ -507,12 +539,46 @@ const stringifyDetail = (value: unknown): string => {
   }
 };
 
+type PersistedToolCallIdentity = { name: string; functionName: string; arguments?: unknown };
+
+const collectAssistantToolCalls = (
+  items: Array<Record<string, unknown>>
+): Map<string, PersistedToolCallIdentity> => {
+  const identities = new Map<string, PersistedToolCallIdentity>();
+  for (const item of items) {
+    if (String(item?.kind || '') !== 'assistant_message') continue;
+    const data = flattenItemPayload(item?.payload);
+    const calls = data.tool_calls ?? data.toolCalls;
+    if (!Array.isArray(calls)) continue;
+    for (const rawCall of calls) {
+      const call = asObject(rawCall);
+      if (!call) continue;
+      const functionPayload = Object.keys(asObject(call.function)).length > 0
+        ? asObject(call.function)
+        : call;
+      const callId = pickText(call, ['id', 'tool_call_id', 'toolCallId', 'call_id', 'callId']);
+      const name = pickText(functionPayload, ['name', 'tool', 'tool_name', 'toolName']) ||
+        pickText(call, ['name', 'tool', 'tool_name', 'toolName']);
+      if (!callId || !name) continue;
+      identities.set(callId, {
+        name,
+        functionName: pickText(functionPayload, ['name', 'function_name', 'functionName']) || name,
+        arguments: functionPayload.arguments ?? call.arguments
+      });
+    }
+  }
+  return identities;
+};
+
 /**
  * 持久条目 → WorkflowItem：字段口径与运行时 reducer 的投影条目一致
  * （eventType / tool 身份 / call 引用 / detail），让 run 折叠与条目渲染
  * 直接复用 toolTimelineModel 的既有链路。
  */
-const mapWorkflowItem = (item: Record<string, unknown>): WorkflowItem | null => {
+const mapWorkflowItem = (
+  item: Record<string, unknown>,
+  persistedToolCalls: ReadonlyMap<string, PersistedToolCallIdentity>
+): WorkflowItem | null => {
   const kind = String(item?.kind || '');
   if (!kind || kind === 'assistant_message' || SKIP_KINDS.has(kind)) return null;
   const data = flattenItemPayload(item?.payload);
@@ -531,7 +597,9 @@ const mapWorkflowItem = (item: Record<string, unknown>): WorkflowItem | null => 
     detail: stringifyDetail(data),
     updatedSeq: Number(item?.revision) || undefined
   };
-  const toolName = pickText(data, ['tool', 'name', 'tool_name', 'toolName']);
+  const callId = pickText(data, ['tool_call_id', 'toolCallId', 'call_id', 'callId']);
+  const persisted = callId ? persistedToolCalls.get(callId) : undefined;
+  const toolName = pickText(data, ['tool', 'name', 'tool_name', 'toolName']) || persisted?.name || '';
   if (toolName) {
     mapped.toolName = toolName;
     mapped.tool = toolName;
@@ -546,12 +614,11 @@ const mapWorkflowItem = (item: Record<string, unknown>): WorkflowItem | null => 
     mapped.toolRuntimeName = runtimeName;
     mapped.tool_runtime_name = runtimeName;
   }
-  const functionName = pickText(data, ['tool_function_name', 'toolFunctionName', 'function_name', 'functionName']);
+  const functionName = pickText(data, ['tool_function_name', 'toolFunctionName', 'function_name', 'functionName']) || persisted?.functionName || '';
   if (functionName) {
     mapped.toolFunctionName = functionName;
     mapped.tool_function_name = functionName;
   }
-  const callId = pickText(data, ['tool_call_id', 'toolCallId', 'call_id', 'callId']);
   if (callId) {
     mapped.toolCallId = callId;
     mapped.tool_call_id = callId;
@@ -563,7 +630,7 @@ const mapWorkflowItem = (item: Record<string, unknown>): WorkflowItem | null => 
   }
   // 补丁/编辑类条目需要原始调用参数（与 reducer 的 buildProjectedToolCallRawDetail 同口径）。
   const nestedFunction = asObject(data.function);
-  const args = data.args ?? data.arguments ?? data.input ?? nestedFunction.arguments;
+  const args = data.args ?? data.arguments ?? data.input ?? nestedFunction.arguments ?? persisted?.arguments;
   if (args !== undefined && (eventType === 'tool_call' || eventType === 'tool_result')) {
     const parsed = typeof args === 'string' ? safeJsonParse(args) : args;
     const rawCall = stringifyDetail({ tool: toolName || functionName || runtimeName, arguments: parsed });
@@ -586,6 +653,7 @@ const buildRows = (items: Array<Record<string, unknown>>): ProcessRow[] => {
   type Slot = { type: 'message'; item: Record<string, unknown> } | { type: 'tool'; item: Record<string, unknown> };
   const slots: Slot[] = [];
   const mappedItems: WorkflowItem[] = [];
+  const persistedToolCalls = collectAssistantToolCalls(items);
   for (const item of items) {
     const kind = String(item?.kind || '');
     if (SKIP_KINDS.has(kind)) continue;
@@ -593,8 +661,12 @@ const buildRows = (items: Array<Record<string, unknown>>): ProcessRow[] => {
       slots.push({ type: 'message', item });
       continue;
     }
-    const mapped = mapWorkflowItem(item);
+    const mapped = mapWorkflowItem(item, persistedToolCalls);
     if (!mapped) continue;
+    // A lifecycle row can precede the decorated tool result during replay.
+    // Keep the process timeline quiet until its identity is known; otherwise
+    // the renderer turns the incomplete row into a misleading “unknown tool”.
+    if (!String(mapped.toolName || mapped.tool || mapped.tool_name || '').trim()) continue;
     slots.push({ type: 'tool', item });
     mappedItems.push(mapped);
   }
@@ -630,7 +702,8 @@ const buildRows = (items: Array<Record<string, unknown>>): ProcessRow[] => {
     const isCurrentReasoning = itemId === currentReasoningItemId.value;
     // The thread-view row contains the newest bounded preview. Prefer it for
     // its matching durable item so the active entry updates without a reload.
-    const reasoning = (isCurrentReasoning ? reasoningText.value : '') || persistedReasoning;
+    const reasoning = (isCurrentReasoning && props.reasoningStreaming ? reasoningText.value : '') || persistedReasoning ||
+      (isCurrentReasoning ? reasoningText.value : '');
     if (reasoning) {
       const key = `reasoning:${itemId}`;
       rows.push({
@@ -639,7 +712,7 @@ const buildRows = (items: Array<Record<string, unknown>>): ProcessRow[] => {
         entry: {
           kind: 'reasoning', key,
           streaming: isCurrentReasoning && Boolean(props.reasoningStreaming),
-          summary: firstLine(reasoning), text: reasoning
+          summary: reasoningPreview(reasoning), text: reasoning
         }
       });
     }
@@ -722,15 +795,6 @@ const buildRows = (items: Array<Record<string, unknown>>): ProcessRow[] => {
 .timeline-process-gutter:hover::before {
   border-color: var(--mz-border-strong, #d8d5d0);
   box-shadow: 0 2px 5px rgba(31, 35, 41, 0.08);
-}
-
-.timeline-process-gutter-line {
-  position: absolute;
-  top: 40px;
-  bottom: -12px;
-  left: 12.5px;
-  width: 1px;
-  background: var(--mz-timeline-line, #e2dfda);
 }
 
 .timeline-process-arrow {

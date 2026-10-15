@@ -870,6 +870,9 @@ export function flattenRecords(turns: readonly TrajTurnModel[]): TableRecord[] {
       }
       if (records.length > groupStart) records[groupStart].groupStart = true
     }
+    // Group identities annotate rows; they must not reorder durable events.
+    const ordered = records.slice(turnStart).sort((left, right) => left.cell.index - right.cell.index)
+    for (let index = 0; index < ordered.length; index += 1) records[turnStart + index] = ordered[index]!
     if (records.length > turnStart) {
       records[turnStart].turnStart = true
       records[records.length - 1].turnEnd = true
@@ -898,70 +901,90 @@ export function filterRecords(
   return records.filter(record => recordNeedle(record).includes(needle))
 }
 
-/** 轮次折叠：每轮只留首条记录并附摘要行。 */
+/** Bounded, linear fold facts, keyed by user turn and stable assistant record ID. */
+export function buildFoldGroups(records: readonly TableRecord[]) {
+  const turns = new Map<number, { first: number; hidden: number; steps: Set<string>; tools: number; turnEnd: boolean }>()
+  const assistants = new Map<string, { end: number; count: number; names: string[] }>()
+  const toolOwners = new Map<number, string>()
+  const requestGroups = new Set<string>()
+  let assistant: { key: string; turn: number | null } | null = null
+  for (let index = 0; index < records.length; index += 1) {
+    const record = records[index]!
+    const tool = record.cell.kind === 'tool' || record.cell.kind === 'subtool'
+    if (record.cell.kind === 'message') requestGroups.add(requestIdentity(record.turn, record.group))
+    if (record.turn !== null) {
+      let turn = turns.get(record.turn)
+      if (record.cell.kind !== 'system') {
+        if (!turn) {
+          turn = { first: index, hidden: 0, steps: new Set(), tools: 0, turnEnd: record.turnEnd }
+          turns.set(record.turn, turn)
+        } else {
+          turn.hidden += 1
+          if (record.group) turn.steps.add(record.group)
+          if (tool) turn.tools += 1
+        }
+      }
+      if (turn) turn.turnEnd = record.turnEnd
+    }
+    if (tool && assistant && assistant.turn === record.turn) {
+      let group = assistants.get(assistant.key)
+      if (!group) {
+        group = { end: index + 1, count: 0, names: [] }
+        assistants.set(assistant.key, group)
+      }
+      group.end = index + 1
+      group.count += 1
+      const name = record.cell.toolName || record.cell.text.split(' · ')[0] || ''
+      if (name && group.names.length < 8 && !group.names.includes(name)) group.names.push(name)
+      toolOwners.set(record.cell.index, assistant.key)
+    } else {
+      assistant = record.cell.kind === 'message'
+        ? { key: trajectoryRecordId(record.cell), turn: record.turn } : null
+    }
+  }
+  for (const [turn, group] of turns) {
+    for (const step of group.steps) {
+      if (!requestGroups.has(requestIdentity(turn, step))) group.steps.delete(step)
+    }
+  }
+  return { turns, assistants, toolOwners }
+}
+
+/** Preserve headers and first content; calls fold only the following tool rows. */
 export function collapseTurnRecords(
   records: readonly TableRecord[],
   collapsedTurns: ReadonlySet<number | null>,
   collapsedAssistants: ReadonlySet<string>,
   t: Translate,
 ): readonly TableRecord[] {
-  // 单趟分桶：一次遍历同时建立「轮次分组标题集合」「轮次工具数」以及
-  // 「轮次 + 分组」桶与分组工具数，随后再遍历一次生成结果。
-  // 原实现在过滤阶段对每条记录重扫整轮桶（含按分组 filter），复杂度 O(k²)。
-  const turnSteps = new Map<number | null, Set<string>>()
-  const turnTools = new Map<number | null, number>()
-  const groupBuckets = new Map<string, TableRecord[]>()
-  const groupTools = new Map<string, number>()
-
-  for (const record of records) {
-    const turn = record.turn
-    if (record.group.length > 0) {
-      const steps = turnSteps.get(turn)
-      if (steps) steps.add(record.group)
-      else turnSteps.set(turn, new Set([record.group]))
-    }
-    const isTool = record.cell.kind === 'tool' || record.cell.kind === 'subtool'
-    if (isTool) turnTools.set(turn, (turnTools.get(turn) ?? 0) + 1)
-    const identity = requestIdentity(turn, record.group)
-    const bucket = groupBuckets.get(identity)
-    if (bucket) bucket.push(record)
-    else groupBuckets.set(identity, [record])
-    if (isTool) groupTools.set(identity, (groupTools.get(identity) ?? 0) + 1)
-  }
-
+  if (collapsedTurns.size === 0 && collapsedAssistants.size === 0) return records
+  const groups = buildFoldGroups(records)
   const output: TableRecord[] = []
-  let currentTurn: number | null | undefined
-  let turnCollapsed = false
-  for (const record of records) {
-    if (record.turn !== currentTurn) {
-      currentTurn = record.turn
-      turnCollapsed = collapsedTurns.has(record.turn)
-    }
-    if (turnCollapsed) {
-      if (!record.turnStart) continue
-      const steps = turnSteps.get(record.turn)?.size ?? 0
-      const tools = turnTools.get(record.turn) ?? 0
-      output.push({
-        ...record,
-        collapsedSummary: t('trajectory.summaryTurn', { steps, tools }),
-        collapsedSummaryKind: 'turn',
-      })
+  for (let index = 0; index < records.length; index += 1) {
+    const record = records[index]!
+    const turn = record.turn === null ? undefined : groups.turns.get(record.turn)
+    if (record.turn !== null && collapsedTurns.has(record.turn) && turn && turn.hidden > 0) {
+      if (record.cell.kind === 'system') output.push(record)
+      else if (turn.first === index) {
+        output.push({ ...record, turnEnd: false })
+        output.push({ ...record, groupStart: false, turnStart: false, turnEnd: turn.turnEnd,
+          collapsedSummary: t('trajectory.summaryTurn', { steps: turn.steps.size, tools: turn.tools }),
+          collapsedSummaryKind: 'turn' })
+      }
       continue
     }
-    const assistantKey = requestIdentity(record.turn, record.group)
-    if (collapsedAssistants.has(assistantKey)) {
-      const bucket = groupBuckets.get(assistantKey)
-      if (bucket?.[0]?.cell.index !== record.cell.index) continue
-      output.push({
-        ...record,
-        collapsedSummary: t('trajectory.summaryAssistantTools', {
-          count: groupTools.get(assistantKey) ?? 0,
-        }),
-        collapsedSummaryKind: 'assistant',
-      })
-      continue
-    }
-    output.push(record)
+    const key = trajectoryRecordId(record.cell)
+    const calls = record.cell.kind === 'message' && collapsedAssistants.has(key)
+      ? groups.assistants.get(key) : undefined
+    if (calls) {
+      output.push({ ...record, turnEnd: false })
+      const names = calls.names.length ? ` · ${calls.names.join(', ')}` : ''
+      output.push({ ...record, groupStart: false, turnStart: false,
+        turnEnd: records[calls.end - 1]!.turnEnd,
+        collapsedSummary: t('trajectory.summaryAssistantTools', { count: calls.count }) + names,
+        collapsedSummaryKind: 'assistant' })
+      index = calls.end - 1
+    } else output.push(record)
   }
   return output
 }

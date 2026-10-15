@@ -31,6 +31,7 @@ import { clearAllChatSnapshots, clearScheduledChatSnapshot } from './chatSnapsho
 import { buildMessage } from './chatStats';
 import { normalizeFlag } from './chatStreamIds';
 import { buildDetail, handleApprovalEvent, resolveNormalizedStreamEventType, sessionWorkflowState } from './chatWorkflowHydration';
+import { noteChatQueueRuntimeEvent } from './chatQueueState';
 const connectionFailures=new Map<string,number>();
 
 export const startSessionWatcher = (store, sessionId) => {
@@ -136,6 +137,7 @@ export const startSessionWatcher = (store, sessionId) => {
     const payload = safeJsonParse(dataText);
     const data = payload?.data ?? payload;
     const normalizedEventType = resolveNormalizedStreamEventType(eventType, payload);
+    noteChatQueueRuntimeEvent(key, normalizedEventType || eventType, payload);
     if(normalizedEventType==='thread_view_required') {void recoverView();return;}
     if (normalizedEventType !== 'heartbeat' && normalizedEventType !== 'ping') {
       clearSessionEventsSnapshot(key, { keepInFlight: true });

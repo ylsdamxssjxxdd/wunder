@@ -293,6 +293,7 @@ export component MainWindow inherits Window {
     in-out property <bool> traj-loading;
     in-out property <bool> traj-failed;
     callback traj-select-row(int);
+    callback traj-fold-row(int, int);
     callback traj-select-tab(int);
     callback traj-select-span(int);
     callback traj-hover-span(int);
@@ -976,7 +977,6 @@ export component MainWindow inherits Window {
                             }
                             Composer {
                                 draft <=> root.draft; busy: root.command-pending || root.session-loading || root.creating-session || (root.chat-loading && !root.busy);
-                            inquiry-ready: root.inquiry-ready;
                             terminal-mode: false;
                             command => { root.terminal-mode = !root.terminal-mode; root.terminal-toggled(root.terminal-mode); }
                             send-key: root.runtime-send-key;
@@ -995,6 +995,7 @@ export component MainWindow inherits Window {
                             permission-mode <=> root.permission-mode;
                             permission-changed(value) => { root.save-permission-mode(value); }
                             attachments: root.pending-attachments;
+                            inquiry-ready: root.inquiry-ready;
                             queue-turns: root.queue-turns;
                             queue-overflow: root.queue-overflow;
                             queue-interject(queue-id) => { root.queue-interject(queue-id); }
@@ -1329,6 +1330,7 @@ export component MainWindow inherits Window {
          toggle-calls => { root.traj-toggle-calls(); }
          export => { root.traj-export(); }
         select-row(index) => { root.traj-select-row(index); }
+        fold-row(index, action) => { root.traj-fold-row(index, action); }
         select-tab(tab) => { root.traj-select-tab(tab); }
         select-span(index) => { root.traj-select-span(index); }
         hover-span(index) => { root.traj-hover-span(index); }

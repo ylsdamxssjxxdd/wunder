@@ -907,10 +907,6 @@ function installMessengerControllerStateRefs(ctx: MessengerControllerContext): v
 
   ctx.stopUserToolsUpdatedListener = null;
 
-  ctx.pendingAssistantCenter = false;
-
-  ctx.pendingAssistantCenterCount = 0;
-
   ctx.agentSendForegroundLock = ref(false);
 
   ctx.agentSendForegroundLockSessionId = ref('');
@@ -10437,10 +10433,6 @@ function installMessengerControllerLifecycleMessageViewport(ctx: MessengerContro
       ctx.messageViewportRuntime?.scrollVirtualMessageToIndex(keys, index, align);
   };
 
-  ctx.scrollLatestAssistantToCenter = async () => {
-      return ctx.messageViewportRuntime?.scrollLatestAssistantToCenter() ?? Promise.resolve();
-  };
-
   ctx.refreshLatestAssistantMessageLayout = (reason: string) => {
       if (!ctx.isAgentConversationActive.value) {
           return;
@@ -10937,8 +10929,6 @@ function installMessengerControllerLifecycleReactiveEffects(ctx: MessengerContro
           ctx.rememberMessageScrollForKey?.(String(oldValue));
       }
       ctx.clearWorkspaceResourceCache();
-      ctx.pendingAssistantCenter = false;
-      ctx.pendingAssistantCenterCount = 0;
       ctx.dismissedPlanMessages.value = new WeakSet<Record<string, unknown>>();
       ctx.dismissedPlanVersion.value += 1;
       ctx.agentInquirySelection.value = [];
@@ -11031,20 +11021,6 @@ function installMessengerControllerLifecycleReactiveEffects(ctx: MessengerContro
       ctx.scheduleWorkspaceResourceHydration('message-structure-change');
       if (isChatDebugVerboseEnabled()) {
           chatDebugLog('messenger.virtual', 'message-structure-change', ctx.buildMessageVirtualDebugSnapshot?.());
-      }
-      if (ctx.pendingAssistantCenter &&
-          ctx.isAgentConversationActive.value &&
-          ctx.agentRenderableMessages.value.length > ctx.pendingAssistantCenterCount) {
-          const lastMessage = ctx.agentRenderableMessages.value[ctx.agentRenderableMessages.value.length - 1]?.message as Record<string, unknown> | undefined;
-          if (String(lastMessage?.role || '') === 'assistant') {
-              ctx.pendingAssistantCenter = false;
-              ctx.pendingAssistantCenterCount = ctx.agentRenderableMessages.value.length;
-              ctx.agentSendForegroundLock.value = false;
-              ctx.agentSendForegroundLockSessionId.value = '';
-              ctx.autoStickToBottom.value = false;
-              void ctx.scrollLatestAssistantToCenter();
-              return;
-          }
       }
       if (
           ctx.sessionHub.activeSection === 'messages' &&
@@ -13603,8 +13579,6 @@ function installMessengerControllerAgentMessageCommands(ctx: MessengerController
       const localRuntimeState = new Map(ctx.agentRuntimeStateMap.value);
       localRuntimeState.set(targetAgentId, 'running');
       ctx.handleAgentRuntimeStateUpdate(localRuntimeState);
-      ctx.pendingAssistantCenter = true;
-      ctx.pendingAssistantCenterCount = ctx.resolveActiveAgentRenderableMessageRecords().length;
       try {
           await ctx.chatStore.sendMessage(finalContent, {
               attachments,
@@ -13623,8 +13597,6 @@ function installMessengerControllerAgentMessageCommands(ctx: MessengerController
           void ctx.loadRunningAgents({ force: true });
       }
       catch (error) {
-          ctx.pendingAssistantCenter = false;
-          ctx.pendingAssistantCenterCount = 0;
           ctx.setRuntimeStateOverride(targetAgentId, 'error', 8000);
           const failedRuntimeState = new Map(ctx.agentRuntimeStateMap.value);
           failedRuntimeState.set(targetAgentId, 'error');
@@ -13684,8 +13656,6 @@ function installMessengerControllerAgentMessageCommands(ctx: MessengerController
       }
       const targetAgentId = ctx.normalizeAgentId(ctx.activeAgentId.value || ctx.selectedAgentId.value);
       ctx.setRuntimeStateOverride(targetAgentId, 'done', 20000);
-      ctx.pendingAssistantCenter = false;
-      ctx.pendingAssistantCenterCount = 0;
       try {
           const stopped = await ctx.chatStore.stopSessionActivity(targetSessionId, { terminateSubagents: true });
           chatDebugLog('messenger.send', 'manual-stop-finish', {

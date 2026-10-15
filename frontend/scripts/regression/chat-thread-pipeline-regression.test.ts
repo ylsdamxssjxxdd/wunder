@@ -180,6 +180,50 @@ test('v2 pipeline renders a full streaming turn from change frames', () => {
   assert.equal(apply('thread_status', { data: { thread_status: 'running' } }), false);
 });
 
+test('durable tool row inherits the function name from assistant tool_calls', () => {
+  resetChatThreadRuntime(SESSION);
+  ensureChatThreadRuntime(SESSION);
+  const store = new FakeStore();
+  const apply = (payload: Record<string, unknown>) => applyChatThreadServerEvent(
+    store, SESSION, 'thread_change', wireChange(payload)
+  );
+  apply({
+    change_type: 'turn_upsert', turn_id: 'turn-tool-name', cursor: 1,
+    payload: { turn_id: 'turn-tool-name', user_round: 1, status: 'running' }
+  });
+  apply({
+    change_type: 'item_upsert', turn_id: 'turn-tool-name', cursor: 2, revision: 1,
+    item: {
+      item_id: 'turn-tool-name:user', turn_id: 'turn-tool-name', kind: 'user_message',
+      status: 'completed', revision: 1, visibility: 'user',
+      payload: { role: 'user', content: 'run the tool' }
+    }
+  });
+  apply({
+    change_type: 'item_upsert', turn_id: 'turn-tool-name', cursor: 3, revision: 1,
+    item: {
+      item_id: 'turn-tool-name:text-1', turn_id: 'turn-tool-name', kind: 'assistant_message',
+      status: 'running', revision: 1, visibility: 'user',
+      payload: {
+        model_round: 1, role: 'assistant', content: '', reasoning: '',
+        tool_calls: [{ id: 'call-name-1', type: 'function', function: { name: 'read_file', arguments: '{}' } }]
+      }
+    }
+  });
+  apply({
+    change_type: 'item_upsert', turn_id: 'turn-tool-name', cursor: 4, revision: 1,
+    item: {
+      item_id: 'turn-tool-name:tool-1', turn_id: 'turn-tool-name', kind: 'tool_call',
+      status: 'completed', revision: 1, visibility: 'user',
+      payload: { model_round: 1, tool_call_id: 'call-name-1', detail: 'done' }
+    }
+  });
+  const assistant = buildChatThreadMaterializedMessages(SESSION)?.find((item) => item.role === 'assistant');
+  const workflow = (assistant?.workflowItems as Array<Record<string, unknown>> | undefined) || [];
+  assert.equal(workflow[0]?.toolName, 'read_file');
+  assert.equal(workflow[0]?.tool, 'read_file');
+});
+
 test('cancelled turn keeps partial content while accepting terminal usage settlement', () => {
   resetChatThreadRuntime(SESSION);
   ensureChatThreadRuntime(SESSION);

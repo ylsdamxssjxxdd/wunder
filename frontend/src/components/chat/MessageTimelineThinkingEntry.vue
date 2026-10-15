@@ -16,23 +16,61 @@
       <span class="tl-thinking-label">
         {{ entry.streaming ? t('chat.timeline.thinkingRunning') : t('chat.timeline.thinkingDone') }}
       </span>
-      <span v-if="entry.summary" class="tl-thinking-summary" :title="entry.summary">{{ entry.summary }}</span>
+      <span v-if="entry.summary" ref="summaryRef" class="tl-thinking-summary" :title="entry.summary">{{ entry.summary }}</span>
     </button>
 
     <div v-if="open" class="tl-thinking-body">
-      <pre class="tl-thinking-text">{{ entry.text || t('chat.timeline.thinkingEmpty') }}</pre>
+      <pre ref="textRef" class="tl-thinking-text" @scroll="handleTextScroll">{{ entry.text || t('chat.timeline.thinkingEmpty') }}</pre>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
+import { nextTick, onMounted, ref, watch } from 'vue';
 import { useI18n } from '@/i18n';
 import type { TimelineReasoningEntry } from './toolTimelineModel';
 
-defineProps<{
+const props = defineProps<{
   entry: TimelineReasoningEntry;
   open?: boolean;
 }>();
+
+const textRef = ref<HTMLElement | null>(null);
+const summaryRef = ref<HTMLElement | null>(null);
+const followTail = ref(true);
+
+const handleTextScroll = (): void => {
+  const element = textRef.value;
+  if (!element) return;
+  followTail.value = element.scrollHeight - element.clientHeight - element.scrollTop <= 24;
+};
+
+const scrollToLatest = async (): Promise<void> => {
+  await nextTick();
+  const element = textRef.value;
+  if (!element || !props.open || !followTail.value) return;
+  element.scrollTop = element.scrollHeight;
+};
+
+const scrollSummaryToLatest = (): void => {
+  const summary = summaryRef.value;
+  if (summary && props.entry.streaming) summary.scrollLeft = summary.scrollWidth;
+};
+
+onMounted(() => {
+  void scrollToLatest();
+  scrollSummaryToLatest();
+});
+
+watch(
+  () => [props.open, props.entry.text, props.entry.streaming] as const,
+  ([open], [wasOpen]) => {
+    if (open && !wasOpen) followTail.value = true;
+    if (open) void scrollToLatest();
+    scrollSummaryToLatest();
+  },
+  { flush: 'post' }
+);
 
 const emit = defineEmits<{ (event: 'toggle'): void }>();
 
@@ -131,6 +169,10 @@ const { t } = useI18n();
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.is-streaming .tl-thinking-summary {
+  text-overflow: clip;
 }
 
 /* 展开内容左内边距保持 24px（沟槽 20px + 24px = 44px）。 */

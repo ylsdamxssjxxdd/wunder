@@ -361,8 +361,9 @@ pub(crate) enum StreamMessage {
     },
 }
 
+/// Collected fields of `/model add`, filled one answer at a time.
 #[derive(Debug, Clone, Default)]
-struct ConfigWizardState {
+struct ModelWizardState {
     base_url: Option<String>,
     api_key: Option<String>,
     model_name: Option<String>,
@@ -579,7 +580,7 @@ pub struct TuiApp {
     model_max_context: Option<u32>,
     session_stats: crate::SessionStatsSnapshot,
     last_usage: Option<String>,
-    config_wizard: Option<ConfigWizardState>,
+    model_wizard: Option<ModelWizardState>,
     stream_saw_output: bool,
     stream_saw_final: bool,
     stream_received_content_delta: bool,
@@ -770,7 +771,7 @@ impl TuiApp {
             model_max_context: None,
             session_stats: crate::SessionStatsSnapshot::default(),
             last_usage: None,
-            config_wizard: None,
+            model_wizard: None,
             kill_buffer: String::new(),
             raw_output: false,
             stream_saw_output: false,
@@ -1669,8 +1670,8 @@ impl TuiApp {
                         LogKind::Info,
                         crate::locale::tr(
                             self.display_language.as_str(),
-                            "尚未配置模型：运行 /config 或 `wunder-cli config` 完成配置；现在也可以继续输入",
-                            "no model configured yet: run /config or `wunder-cli config`; you can keep typing meanwhile",
+                            "尚未配置模型：用 /model add 添加端点，或 /config edit 编辑 config.toml；现在也可以继续输入",
+                            "no model configured yet: add an endpoint with /model add, or edit config.toml with /config edit; you can keep typing meanwhile",
                         ),
                     );
                     self.request_redraw();
@@ -4813,7 +4814,7 @@ impl TuiApp {
                     return Ok(());
                 }
                 KeyCode::Char('j') => {
-                    if !self.shortcuts_visible && self.config_wizard.is_none() {
+                    if !self.shortcuts_visible && self.model_wizard.is_none() {
                         self.insert_char_at_cursor('\n');
                         return Ok(());
                     }
@@ -4987,7 +4988,7 @@ impl TuiApp {
                     self.key_paste_burst_last_at = Some(Instant::now());
                     return Ok(());
                 }
-                if self.config_wizard.is_none()
+                if self.model_wizard.is_none()
                     && key
                         .modifiers
                         .intersects(KeyModifiers::SHIFT | KeyModifiers::ALT)
@@ -4995,7 +4996,7 @@ impl TuiApp {
                     self.insert_char_at_cursor('\n');
                     return Ok(());
                 }
-                if self.config_wizard.is_none()
+                if self.model_wizard.is_none()
                     && !self.input.trim_start().starts_with('/')
                     && self.should_treat_enter_as_paste_newline()
                 {
@@ -5005,7 +5006,7 @@ impl TuiApp {
                 // An empty draft while the reader is away from the tail is not a send, it
                 // is the same request the gap control answers with a click (codex's empty
                 // Enter returns to latest). A draft with text in it still submits.
-                if self.config_wizard.is_none()
+                if self.model_wizard.is_none()
                     && self.input.trim().is_empty()
                     && !self.is_at_transcript_tail()
                 {
@@ -5022,7 +5023,7 @@ impl TuiApp {
                 // it rather than left to mark the next draft's bytes.
                 self.forget_input_gesture();
                 self.history_cursor = None;
-                if self.config_wizard.is_some() || !raw_line.trim().is_empty() {
+                if self.model_wizard.is_some() || !raw_line.trim().is_empty() {
                     self.submit_line(raw_line).await?;
                 }
             }
@@ -5128,8 +5129,8 @@ impl TuiApp {
     }
 
     fn handle_ctrl_c(&mut self) {
-        if self.config_wizard.is_some() {
-            self.cancel_config_wizard();
+        if self.model_wizard.is_some() {
+            self.cancel_model_wizard();
             return;
         }
         if self.clear_input_draft() {
@@ -5679,7 +5680,7 @@ impl TuiApp {
         self.pending_large_pastes.clear();
         self.history_cursor = None;
         self.history_search = None;
-        self.config_wizard = None;
+        self.model_wizard = None;
         self.last_usage = None;
         self.reset_turn_metrics_snapshot();
         self.active_assistant = None;
@@ -6407,8 +6408,8 @@ impl TuiApp {
         let expanded_line =
             expand_large_paste_placeholders(visible_line.as_str(), &self.pending_large_pastes);
         self.pending_large_pastes.clear();
-        if self.config_wizard.is_some() {
-            return self.handle_config_wizard_input(expanded_line.trim()).await;
+        if self.model_wizard.is_some() {
+            return self.handle_model_wizard_input(expanded_line.trim()).await;
         }
         self.shortcuts_visible = false;
         self.resume_picker = None;
@@ -6696,7 +6697,7 @@ impl TuiApp {
     }
 
     fn should_use_multiline_navigation(&self) -> bool {
-        if self.config_wizard.is_some() {
+        if self.model_wizard.is_some() {
             return false;
         }
         let lines =

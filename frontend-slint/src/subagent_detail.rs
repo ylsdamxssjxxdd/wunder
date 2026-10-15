@@ -131,6 +131,23 @@ pub fn install(app: &crate::MainWindow, api: Arc<NativeDesktop>) {
         let Some(row) = model.row_data(payload) else {
             return;
         };
+        if row.kind == crate::timeline::KIND_PROCESS {
+            let open = !row.open;
+            for index in 0..model.row_count() {
+                let Some(mut target) = model.row_data(index) else {
+                    continue;
+                };
+                if target.process_idx != row.process_idx {
+                    continue;
+                }
+                if target.kind == crate::timeline::KIND_PROCESS {
+                    target.open = open;
+                }
+                target.process_open = open;
+                model.set_row_data(index, target);
+            }
+            return;
+        }
         if row.kind == crate::timeline::KIND_GROUP {
             let open = !row.open;
             let group = row.group_idx;

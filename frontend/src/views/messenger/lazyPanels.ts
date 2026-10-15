@@ -4,9 +4,6 @@ const lazy = <T extends object>(loader: () => Promise<T>) =>
   defineRecoverableAsyncComponent(loader);
 
 export const AgentCronPanel = lazy(() => import('@/components/messenger/AgentCronPanel.vue'));
-export const AgentRuntimeRecordsPanel = lazy(
-  () => import('@/components/messenger/AgentRuntimeRecordsPanel.vue')
-);
 export const ArchivedThreadManager = lazy(
   () => import('@/components/messenger/ArchivedThreadManager.vue')
 );
@@ -50,7 +47,6 @@ const scheduleSecondaryAgentSettingsPanelsPreload = (): void => {
     void Promise.allSettled([
       import('@/components/messenger/AgentCronPanel.vue'),
       import('@/components/channels/UserChannelSettingsPanel.vue'),
-      import('@/components/messenger/AgentRuntimeRecordsPanel.vue'),
       import('@/components/messenger/memory/AgentMemoryPanel.vue'),
       import('@/components/messenger/ArchivedThreadManager.vue')
     ]);

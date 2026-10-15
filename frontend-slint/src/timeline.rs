@@ -7,10 +7,8 @@
 //! token never rebuilds the history. Fold state lives in the model and is
 //! patched in place, which keeps the reducer out of every user fold.
 //!
-//! The work-process bar is the turn's handle on everything it did before its
-//! newest answer block: earlier rounds' notes, thinking segments and tool
-//! batches. It ships folded, so a turn reads as one process line plus the
-//! answer, and unfolding it brings its batches along.
+//! The work-process bar owns thinking, tools and earlier answer blocks. It
+//! ships folded; batch rows retain identity for late results but stay hidden.
 use crate::{TextBlock, TimelineRow};
 #[allow(unused_imports)]
 use slint::{Model, ModelRc, VecModel};
@@ -34,6 +32,12 @@ pub const STATUS_FAILED: i32 = 2;
 pub const NO_GROUP: i32 = -1;
 /// A row outside the work-process fold: the turn's newest answer block.
 pub const NO_PROCESS: i32 = -1;
+
+/// Shared by live and durable projections: child runs keep their own cards,
+/// and only the newest answer remains outside the turn's work process.
+pub(crate) fn is_process_step(kind: i32, index: usize, newest_body: usize) -> bool {
+    matches!(kind, KIND_REASON | KIND_TOOL) || (kind == KIND_BODY && index != newest_body)
+}
 /// Entries and bounded fields kept per turn.
 const MAX_GROUP_ENTRIES: usize = 24;
 
@@ -113,6 +117,7 @@ fn blank(kind: i32, id: String) -> TimelineRow {
         tool_icon: slint::SharedString::default(),
         target: slint::SharedString::default(),
         tool_metrics: slint::SharedString::default(),
+        tool_metrics_visible: false,
         detail: slint::SharedString::default(),
         status_kind: STATUS_DONE,
         foldable: false,
@@ -145,6 +150,7 @@ struct Thinking {
     index: usize,
     /// The segment so far, kept out of the borrow taken for patching.
     summary: slint::SharedString,
+    pending: bool,
 }
 
 /// One tool invocation of the current batch.
@@ -171,6 +177,7 @@ struct BatchBar {
 pub struct Timeline {
     model: Rc<VecModel<TimelineRow>>,
     marks: Rc<VecModel<f32>>,
+    marks_dirty: Cell<bool>,
     body: Option<Body>,
     thinking: Option<Thinking>,
     tools: Vec<ToolItem>,
@@ -179,15 +186,12 @@ pub struct Timeline {
     group: i32,
     next_group: i32,
     reasons: usize,
-    group_open: bool,
     /// Work-process fold of the live turn: its id, its bar row, and the newest
     /// answer block, which is the one row the fold leaves open.
     process: i32,
     next_process: i32,
     process_bar: usize,
     last_body: usize,
-    /// Whether the live turn's fold is currently applied to its batch bars.
-    process_enabled: bool,
     turn: Option<String>,
     /// The live turn ran to its end but its rows are still the only copy: the
     /// durable snapshot has not caught up with it yet.
@@ -211,6 +215,7 @@ impl Timeline {
         Self {
             model: Rc::new(VecModel::default()),
             marks: Rc::new(VecModel::default()),
+            marks_dirty: Cell::new(true),
 
             body: None,
             thinking: None,
@@ -219,12 +224,10 @@ impl Timeline {
             group: NO_GROUP,
             next_group: 0,
             reasons: 0,
-            group_open: false,
             process: NO_PROCESS,
             next_process: 0,
             process_bar: 0,
             last_body: usize::MAX,
-            process_enabled: false,
             turn: None,
             settled: false,
             highlight: false,
@@ -244,6 +247,9 @@ impl Timeline {
     /// transcript model is frame-stable; replacing the marks handle on each
     /// stream tick made the overlay do needless work alongside it.
     pub fn sync_turn_marks(&self) {
+        if !self.marks_dirty.replace(false) {
+            return;
+        }
         let next = self.turn_marks();
         if self.marks.iter().ne(next.iter().copied()) {
             self.marks.set_vec(next);
@@ -282,8 +288,8 @@ impl Timeline {
     }
 
     /// Row-index fractions of each user turn for the chat view's turn ruler.
-    /// The ruler jumps proportionally, so one bounded pass per publish keeps
-    /// it in sync without reporting per-row heights. Capped to the newest 100
+    /// The ruler jumps proportionally, so one bounded pass per structural change
+    /// keeps it in sync without reporting per-row heights. Capped to the newest 100
     /// turns so the strip stays readable on marathon threads.
     pub fn turn_marks(&self) -> Vec<f32> {
         let total = self.model.row_count();
@@ -326,7 +332,7 @@ impl Timeline {
     #[allow(dead_code)]
     pub fn clear(&mut self) {
         self.model.set_vec(Vec::new());
-        self.marks.set_vec(Vec::new());
+        self.marks_dirty.set(true);
 
         self.body = None;
         self.thinking = None;
@@ -335,11 +341,9 @@ impl Timeline {
         self.group = NO_GROUP;
         self.next_group = 0;
         self.reasons = 0;
-        self.group_open = false;
         self.process = NO_PROCESS;
         self.process_bar = 0;
         self.last_body = usize::MAX;
-        self.process_enabled = false;
         self.turn = None;
         self.settled = false;
         self.highlight = false;
@@ -352,6 +356,7 @@ impl Timeline {
 
     fn push(&mut self, row: TimelineRow) -> usize {
         let index = self.model.row_count();
+        self.marks_dirty.set(true);
         self.model.push(row);
         index
     }
@@ -391,9 +396,6 @@ impl Timeline {
         self.tools.clear();
         self.bars.clear();
         self.group = NO_GROUP;
-        // A lone batch reads as a folded handle; the process fold opens it once
-        // the turn has a process, and the user owns it after that.
-        self.group_open = false;
         self.reasons = 0;
         self.turn = Some(root.to_string());
         self.settled = false;
@@ -412,7 +414,6 @@ impl Timeline {
         self.next_process += 1;
         self.process = self.next_process;
         self.last_body = usize::MAX;
-        self.process_enabled = false;
         let mut bar = blank(KIND_PROCESS, format!("process-{root}"));
         bar.text = crate::timeline_text::process_label(0).into();
         bar.visible = false;
@@ -424,10 +425,10 @@ impl Timeline {
         });
     }
 
-    /// Whether the batch a row is about to join should publish open: the
-    /// reducer default, or the process fold the user just opened.
+    /// Batches retain invocation ownership only. The process bar is the sole
+    /// visible fold, so its entries never wait on a second batch toggle.
     fn batch_open_state(&self) -> bool {
-        self.group_open || (self.process_enabled && self.process_is_open())
+        true
     }
 
     /// Current open state of the live turn's process bar. Read off the model so
@@ -438,79 +439,58 @@ impl Timeline {
             .is_some_and(|row| row.open)
     }
 
-    /// Re-project the live turn's process bar: which rows belong to the fold,
-    /// the step count, what the turn last did, and whether the turn has a
-    /// process at all. A lone batch is already a one-line fold, so the bar stays
-    /// out of the way until a second block or an intermediate note joins it.
+    /// Keep one process fold from the first action onward. Tool ownership
+    /// batches are internal; the newest answer alone stays outside the fold.
     fn refresh_process_bar(&mut self) {
         if self.process == NO_PROCESS {
             return;
         }
         let process = self.process;
-        // The fold covers everything between the bar and the turn's newest
-        // answer block; with no answer yet there is nothing to fold behind.
-        let end = if self.last_body == usize::MAX {
-            0
-        } else {
-            self.last_body
-        };
         let mut steps = 0i32;
-        let mut blocks = 0i32;
-        let mut notes = 0i32;
-        let mut summary = slint::SharedString::default();
         let mut region = Vec::new();
-        for index in (self.process_bar + 1)..end {
+        for index in (self.process_bar + 1)..self.model.row_count() {
             let Some(row) = self.model.row_data(index) else {
                 continue;
             };
-            region.push((index, row.kind));
-            match row.kind {
-                KIND_GROUP => blocks += 1,
-                KIND_BODY => {
-                    blocks += 1;
-                    steps += 1;
-                    notes += 1;
-                    summary = crate::timeline_text::summary(row.text.as_str())
-                        .as_str()
-                        .into();
-                }
-                KIND_REASON | KIND_TOOL | KIND_SUBAGENT => {
-                    if row.group_idx == NO_GROUP {
-                        blocks += 1;
-                    }
-                    steps += 1;
-                    if !row.summary.is_empty() {
-                        summary = row.summary.clone();
-                    }
-                }
-                _ => {}
+            if row.kind == KIND_GROUP || is_process_step(row.kind, index, self.last_body) {
+                region.push(index);
+                steps += i32::from(row.kind != KIND_GROUP);
             }
         }
-        let enabled = !region.is_empty() && (blocks >= 2 || notes > 0);
-        if enabled != self.process_enabled {
-            // Batches follow the fold: inside a process every step is on screen
-            // once the bar is opened, while a turn without a fold keeps its lone
-            // batch folded as its own handle. Only the transition restamps, so a
-            // batch the user folded by hand keeps its state through later frames.
-            self.process_enabled = enabled;
-            let open = enabled && self.process_is_open();
-            for (index, _) in region.iter() {
-                self.patch(*index, |row| {
-                    if row.kind == KIND_GROUP {
-                        row.open = open;
-                    }
-                    if row.group_idx != NO_GROUP {
-                        row.group_open = open;
-                    }
-                });
-            }
-        }
+        let enabled = steps > 0;
         let open = self.process_is_open();
-        for (index, _) in region.iter() {
-            self.patch_process_state(*index, if enabled { process } else { NO_PROCESS }, open);
+        for index in region {
+            self.patch_process_state(index, process, open);
         }
         let bar = self.process_bar;
         let label = crate::timeline_text::process_label(steps);
+        // Only publish execution phase here. The entry owns its preview and
+        // output; copying that into this header hides the live state.
+        let mut activity = if self.settled {
+            "已完成"
+        } else {
+            "正在处理…"
+        }
+        .to_string();
+        if !self.settled {
+            if self.body.is_some() {
+                activity = "正在生成回复…".into();
+            }
+            for index in (self.process_bar + 1)..self.model.row_count() {
+                let Some(row) = self.model.row_data(index) else {
+                    continue;
+                };
+                if row.status_kind != STATUS_RUNNING {
+                    continue;
+                }
+                if row.kind == KIND_REASON {
+                    activity = crate::timeline_text::thought_running().into();
+                } else if row.kind == KIND_TOOL {
+                    activity = format!("执行工具：{}", row.tool_name);
+                }
+            }
+        }
+        let summary: slint::SharedString = activity.into();
         if self.model.row_data(bar).is_some_and(|row| {
             row.text == label.as_str() && row.summary == summary && row.visible == enabled
         }) {
@@ -600,6 +580,7 @@ impl Timeline {
                 text: String::new(),
                 index,
                 summary: slint::SharedString::default(),
+                pending: false,
             });
         }
         let Some(thinking) = self.thinking.as_mut() else {
@@ -609,16 +590,7 @@ impl Timeline {
             return Err("思考内容超过显示容量".into());
         }
         thinking.text.push_str(delta);
-        thinking.summary = crate::message_blocks::reasoning_preview(&thinking.text);
-        let index = thinking.index;
-        let summary = thinking.summary.clone();
-        let changed = self
-            .model
-            .row_data(index)
-            .is_some_and(|row| row.summary != summary);
-        if changed {
-            self.patch(index, |row| row.summary = summary.clone());
-        }
+        thinking.pending = true;
         Ok(())
     }
 
@@ -653,6 +625,7 @@ impl Timeline {
         let bar = self.push(blank(KIND_GROUP, format!("group-{group}")));
         let open = self.batch_open_state();
         self.patch(bar, |row| {
+            row.visible = false;
             row.open = open;
             row.payload = bar as i32;
             row.group_idx = group;
@@ -705,6 +678,7 @@ impl Timeline {
             let group = tool.group;
             let summary = crate::timeline_text::tool_summary(entry);
             let metrics = crate::timeline_text::tool_metrics(entry);
+            let metrics_visible = !metrics.is_empty();
             let copy = crate::timeline_text::copy_text(&entry.sections, entry.detail.as_str());
             let cards = if patch {
                 crate::timeline_text::patch_cards(&entry.patch_files)
@@ -719,6 +693,7 @@ impl Timeline {
                 row.target = target.as_str().into();
                 row.summary = summary.as_str().into();
                 row.tool_metrics = metrics.as_str().into();
+                row.tool_metrics_visible = metrics_visible;
                 row.detail = copy.clone();
                 row.status_kind = status;
                 row.patch = cards.clone();
@@ -749,6 +724,7 @@ impl Timeline {
         let icon = crate::tool_icons::workflow_icon(&entry.title).to_string();
         let summary = crate::timeline_text::tool_summary(entry);
         let metrics = crate::timeline_text::tool_metrics(entry);
+        let metrics_visible = !metrics.is_empty();
         let copy = crate::timeline_text::copy_text(&entry.sections, entry.detail.as_str());
         let cards = if patch {
             crate::timeline_text::patch_cards(&entry.patch_files)
@@ -763,6 +739,7 @@ impl Timeline {
             row.target = target.as_str().into();
             row.summary = summary.as_str().into();
             row.tool_metrics = metrics.as_str().into();
+            row.tool_metrics_visible = metrics_visible;
             row.detail = copy;
             row.status_kind = status;
             row.patch = cards;
@@ -841,6 +818,10 @@ impl Timeline {
             self.fail_running();
         }
         self.settled = true;
+        self.refresh_process_bar();
+        if failed {
+            self.patch(self.process_bar, |row| row.summary = "错误".into());
+        }
     }
 
     /// A cancelled or failed turn must never leave an entry spinning: every row
@@ -886,6 +867,31 @@ impl Timeline {
     /// One framed flush: only the active tail block is re-projected.
     pub fn flush(&mut self) {
         self.flush_body();
+        self.flush_thinking();
+    }
+
+    /// Publish reasoning once per UI frame, including the expanded body. A
+    /// capped preview cannot be used as the change clock for the full text.
+    fn flush_thinking(&mut self) {
+        let Some(thinking) = self.thinking.as_mut() else {
+            return;
+        };
+        if !thinking.pending {
+            return;
+        }
+        thinking.pending = false;
+        thinking.summary = crate::message_blocks::reasoning_preview(&thinking.text);
+        let index = thinking.index;
+        let summary = thinking.summary.clone();
+        let mut start = thinking.text.len().saturating_sub(32768);
+        while !thinking.text.is_char_boundary(start) {
+            start += 1;
+        }
+        let detail: slint::SharedString = thinking.text[start..].into();
+        self.patch(index, |row| {
+            row.summary = summary;
+            row.detail = detail;
+        });
     }
 
     /// Publish the bounded live view of the streaming block. Only the active
@@ -911,8 +917,10 @@ impl Timeline {
     /// Replace the whole model with durable history rows. Only for a timeline
     /// that holds no live turn: tests, probes and the thread-log column.
     pub fn set_history(&mut self, rows: Vec<TimelineRow>) {
+        self.marks_dirty.set(true);
         self.model.set_vec(rows);
         self.sync_fold_ids();
+        self.sync_turn_marks();
     }
 
     /// Publish the durable history in front of the live turn. The two share one
@@ -977,7 +985,9 @@ impl Timeline {
     /// backing vector in place emits one model notification while keeping the
     /// UI subscription stable across history refreshes and streaming updates.
     fn replace_rows(&self, rows: Vec<TimelineRow>) {
+        self.marks_dirty.set(true);
         self.model.set_vec(rows);
+        self.sync_turn_marks();
     }
 
     /// Whether the snapshot's tail is no longer the durable tail the model
@@ -1017,7 +1027,6 @@ impl Timeline {
         self.group = NO_GROUP;
         self.process = NO_PROCESS;
         self.last_body = usize::MAX;
-        self.process_enabled = false;
     }
 
     /// Keep the reducer's fold ids ahead of whatever the snapshot published:
@@ -1052,6 +1061,10 @@ impl Timeline {
         }
         for bar in self.bars.iter_mut() {
             bar.index = shift(bar.index);
+        }
+        self.process_bar = shift(self.process_bar);
+        if self.last_body != usize::MAX {
+            self.last_body = shift(self.last_body);
         }
     }
 
@@ -1160,6 +1173,64 @@ fn highlight_code(blocks: &mut crate::message_blocks::Blocks) -> ModelRc<TextBlo
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reasoning_frames_publish_live_body_and_phase_without_output_in_header() {
+        let mut timeline = Timeline::new();
+        timeline.begin_turn("fixture-live", "Fixture input");
+        timeline.start_body(1);
+        timeline.append_body("Fixture note").unwrap();
+        timeline.append_reasoning("Fixture thought").unwrap();
+        timeline.flush();
+        let reason = timeline
+            .model()
+            .iter()
+            .find(|row| row.kind == KIND_REASON)
+            .unwrap();
+        assert_eq!(reason.detail, "Fixture thought");
+        assert_eq!(reason.status_kind, STATUS_RUNNING);
+        timeline.start_body(2);
+        timeline.append_reasoning(" next").unwrap();
+        timeline.flush();
+        let process = timeline
+            .model()
+            .iter()
+            .find(|row| row.kind == KIND_PROCESS)
+            .unwrap();
+        assert!(process.visible);
+        assert_eq!(process.summary, crate::timeline_text::thought_running());
+        timeline.finish(false);
+        let process = timeline
+            .model()
+            .iter()
+            .find(|row| row.kind == KIND_PROCESS)
+            .unwrap();
+        assert_eq!(process.summary, "已完成");
+    }
+
+    #[test]
+    fn live_reasoning_body_is_bounded_but_final_text_is_complete() {
+        let mut timeline = Timeline::new();
+        timeline.begin_turn("fixture-bound", "Fixture input");
+        let text = "思考".repeat(8000);
+        timeline.append_reasoning(&text).unwrap();
+        timeline.append_reasoning(" fixture tail").unwrap();
+        timeline.flush();
+        let row = timeline
+            .model()
+            .iter()
+            .find(|row| row.kind == KIND_REASON)
+            .unwrap();
+        assert!(row.detail.len() <= 32768);
+        assert!(row.detail.ends_with("fixture tail"));
+        timeline.finish(false);
+        let row = timeline
+            .model()
+            .iter()
+            .find(|row| row.kind == KIND_REASON)
+            .unwrap();
+        assert_eq!(row.detail, format!("{text} fixture tail"));
+    }
 
     /// One turn the way `project_history` lays it out: a user bubble, a batch
     /// bar, `entries` tool rows and an answer body. Every row of every turn
@@ -1292,7 +1363,10 @@ mod tests {
         let mut timeline = Timeline::new();
         let bound = timeline.model.clone();
         assert!(timeline.needs_publish(), "the owner binds the model once");
-        assert!(!timeline.needs_publish(), "later frames mutate the bound model");
+        assert!(
+            !timeline.needs_publish(),
+            "later frames mutate the bound model"
+        );
 
         timeline.begin_turn("live", "Fixture input");
         timeline.append_reasoning("Fixture reasoning").unwrap();
@@ -1300,7 +1374,111 @@ mod tests {
 
         assert!(Rc::ptr_eq(&bound, &timeline.model));
         assert_eq!(bound.row_count(), 0);
-        assert!(!timeline.needs_publish(), "clear does not replace the binding");
+        assert!(
+            !timeline.needs_publish(),
+            "clear does not replace the binding"
+        );
+    }
+
+    #[test]
+    fn turn_marks_are_dirty_on_structure_changes_not_stream_patches() {
+        let mut timeline = Timeline::new();
+        timeline.begin_turn("session", "Fixture input");
+        timeline.append_reasoning("Fixture thought").unwrap();
+        timeline.sync_turn_marks();
+        assert!(!timeline.marks_dirty.get());
+
+        timeline.append_reasoning(" continued").unwrap();
+        assert!(
+            !timeline.marks_dirty.get(),
+            "reasoning deltas patch a stable row and do not change turn positions"
+        );
+
+        timeline.close_thinking(false);
+        timeline.start_body(1);
+        timeline.sync_turn_marks();
+        timeline.append_body("Fixture answer").unwrap();
+        timeline.flush();
+        assert_eq!(timeline.last_answer(), "Fixture answer");
+        assert!(
+            !timeline.marks_dirty.get(),
+            "streaming answer text patches an existing row"
+        );
+
+        timeline.begin_turn("session-2", "Another user turn");
+        assert!(timeline.marks_dirty.get(), "a new user row moves the marks");
+        timeline.sync_turn_marks();
+        assert!(!timeline.marks_dirty.get());
+    }
+
+    #[test]
+    fn first_action_uses_one_stable_process_fold_and_later_thought_keeps_its_row() {
+        let mut timeline = Timeline::new();
+        timeline.begin_turn("fixture-root", "Fixture input");
+        timeline.append_reasoning("First thought").unwrap();
+        timeline.flush();
+        let process = timeline.process_bar;
+        let first = timeline.thinking.as_ref().unwrap().index;
+        assert!(timeline.model.row_data(process).unwrap().visible);
+        assert!(timeline
+            .model
+            .iter()
+            .filter(|row| row.kind == KIND_GROUP)
+            .all(|row| !row.visible));
+        timeline.toggle(process as i32);
+        assert!(timeline.model.row_data(first).unwrap().process_open);
+
+        timeline.close_segments();
+        timeline.start_body(1);
+        timeline.append_body("Intermediate note").unwrap();
+        timeline.close_segments();
+        timeline.append_reasoning("Second thought").unwrap();
+        timeline.flush();
+        let second = timeline.thinking.as_ref().unwrap().index;
+        assert_ne!(first, second);
+        assert_eq!(
+            timeline.model.row_data(first).unwrap().detail,
+            "First thought"
+        );
+        assert_eq!(
+            timeline.model.row_data(second).unwrap().detail,
+            "Second thought"
+        );
+        assert!(timeline.model.row_data(second).unwrap().process_open);
+        assert_eq!(
+            timeline.model.row_data(process).unwrap().text,
+            crate::timeline_text::process_label(2)
+        );
+    }
+
+    #[test]
+    fn history_prefix_move_rebases_process_handle_and_latest_body() {
+        let mut timeline = Timeline::new();
+        timeline.set_history(durable_rows(1));
+        timeline.begin_turn("fixture-live", "Fixture input");
+        timeline.append_reasoning("First thought").unwrap();
+        timeline.start_body(1);
+        timeline.append_body("First answer").unwrap();
+        timeline.publish_history(durable_rows(3));
+        let bar = timeline.process_bar;
+        assert_eq!(timeline.model.row_data(bar).unwrap().kind, KIND_PROCESS);
+        timeline.toggle(bar as i32);
+        timeline.close_segments();
+        timeline.start_body(2);
+        timeline.append_body("Final answer").unwrap();
+        timeline.append_reasoning("Later thought").unwrap();
+        timeline.flush();
+        let rows: Vec<_> = timeline.model.iter().collect();
+        assert_eq!(rows[bar].text, crate::timeline_text::process_label(3));
+        assert_eq!(rows[timeline.last_body].process_idx, NO_PROCESS);
+        assert_eq!(rows[timeline.last_body].text, "Final answer");
+        let note = rows.iter().find(|row| row.text == "First answer").unwrap();
+        assert_eq!(note.process_idx, rows[bar].process_idx);
+        let reason = rows
+            .iter()
+            .find(|row| row.detail == "Later thought")
+            .unwrap();
+        assert!(reason.process_open);
     }
 
     #[test]
@@ -1325,8 +1503,14 @@ mod tests {
         timeline.upsert_tool(&entry("tool-a", "completed", "first result"));
 
         let rows: Vec<_> = timeline.model().iter().collect();
-        let tool_a = rows.iter().find(|row| row.id == "tool-tool-a").expect("tool A");
-        let tool_b = rows.iter().find(|row| row.id == "tool-tool-b").expect("tool B");
+        let tool_a = rows
+            .iter()
+            .find(|row| row.id == "tool-tool-a")
+            .expect("tool A");
+        let tool_b = rows
+            .iter()
+            .find(|row| row.id == "tool-tool-b")
+            .expect("tool B");
         let groups: Vec<_> = rows.iter().filter(|row| row.kind == KIND_GROUP).collect();
 
         assert_eq!(groups.len(), 2, "the late result cannot open a third batch");

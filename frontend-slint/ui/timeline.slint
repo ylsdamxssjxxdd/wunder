@@ -319,19 +319,24 @@ component FoldEntry inherits Rectangle {
                 // The target chip belongs to the name; the summary then reads as
                 // the outcome of the call.
                 TargetChip { y: 4px; label: root.data.target; visible: root.data.target != ""; }
-                Text {
+                Rectangle {
                     horizontal-stretch: 1; min-width: 0px; height: parent.height;
-                    text: root.data.summary; color: Theme.timeline-entry-soft; font-size: Theme.font-sm;
-                    overflow: elide; vertical-alignment: center;
+                    clip: true;
+                    summary-text := Text {
+                        x: root.data.kind == EntryKind.reason && root.data.status-kind == 1
+                            ? min(0px, parent.width - self.preferred-width) : 0px;
+                        width: root.data.kind == EntryKind.reason && root.data.status-kind == 1
+                            ? max(parent.width, self.preferred-width) : parent.width;
+                        height: parent.height;
+                        text: root.data.summary; color: Theme.timeline-entry-soft; font-size: Theme.font-sm;
+                        overflow: elide; vertical-alignment: center;
+                    }
                 }
-                // Invocation usage stays at the trailing edge, matching the
-                // web timeline. There is deliberately no trailing disclosure
-                // arrow: the whole row is the compact interaction target.
-                Text {
+                if root.data.kind == EntryKind.tool && root.data.tool-metrics != "" : Text {
                     width: self.preferred-width; height: parent.height;
-                    text: root.data.tool-metrics; color: Theme.timeline-entry-soft;
-                    font-size: Theme.font-xs; vertical-alignment: center;
-                    visible: root.data.tool-metrics != "";
+                    text: root.data.tool-metrics;
+                    color: Theme.muted; font-size: Theme.font-xs;
+                    vertical-alignment: center;
                 }
             }
         }
@@ -350,12 +355,30 @@ component FoldEntry inherits Rectangle {
                 height: min(240px, thinking-box.preferred-height + 16px);
                 border-radius: Theme.radius-sm; background: Theme.panel;
                 border-width: 1px; border-color: Theme.border;
-                ScrollView {
+                private property <bool> follow-tail: true;
+                private property <bool> scroll-pending: true;
+                private property <string> live-text: root.data.detail;
+                changed live-text => { self.scroll-pending = true; }
+                Timer {
+                    interval: 33ms;
+                    running: parent.scroll-pending;
+                    triggered => {
+                        parent.scroll-pending = false;
+                        if parent.follow-tail {
+                            thinking-scroll.content-y = min(0px, thinking-scroll.visible-height - thinking-scroll.content-height);
+                        }
+                    }
+                }
+                thinking-scroll := ScrollView {
+                    horizontal-scrollbar-policy: always-off; vertical-scrollbar-policy: always-off;
                     x: 10px; y: 8px; width: parent.width - 20px; height: parent.height - 16px;
-                    horizontal-scrollbar-policy: always-off;
+
                     thinking-box := TextInput {
                         text: root.data.detail; read-only: true; wrap: word-wrap;
                         color: Theme.muted; font-size: Theme.font-sm;
+                    }
+                    scrolled => {
+                        parent.follow-tail = self.visible-height - self.content-height - self.content-y >= -24px;
                     }
                 }
             }
@@ -364,8 +387,9 @@ component FoldEntry inherits Rectangle {
                 border-radius: Theme.radius-sm; background: Theme.panel;
                 border-width: 1px; border-color: Theme.border;
                 ScrollView {
+                    horizontal-scrollbar-policy: always-off; vertical-scrollbar-policy: always-off;
                     x: 10px; y: 8px; width: parent.width - 20px; height: parent.height - 16px;
-                    horizontal-scrollbar-policy: always-off;
+
                     tool-body := WorkflowDetail {
                         fallback: root.data.detail;
                         copy(text) => { root.copy-text(text); }
@@ -443,19 +467,14 @@ component ProcessBar inherits Rectangle {
         process-gutter := Rectangle {
             width: 22px; height: parent.height;
             Rectangle {
-                x: 1px; y: 6px; width: 20px; height: parent.height - 12px;
-                border-radius: Theme.radius-tag;
-                border-width: 1px; border-color: Theme.border;
-                background: process-hit.has-hover ? Theme.selected : Theme.surface;
-            }
-            Rectangle {
-                visible: root.data.open;
-                x: 10.5px; y: 22px; width: 1px; height: parent.height - 22px;
-                background: Theme.timeline-line;
+                x: 1px; y: 8px; width: 16px; height: 16px;
+                border-radius: 8px;
+                border-width: 1px; border-color: process-hit.has-hover ? Theme.border-strong : Theme.border;
+                background: process-hit.has-hover ? Theme.hover : Theme.surface;
             }
             Image {
-                x: 2px; y: (parent.height - 18px) / 2;
-                width: 18px; height: 18px;
+                x: 4px; y: (parent.height - 12px) / 2;
+                width: 12px; height: 12px;
                 source: @image-url("../assets/icons/disclosure.svg");
                 colorize: Theme.muted; image-fit: contain;
                 transform-rotation: root.data.open ? 90deg : 0deg;
@@ -472,12 +491,13 @@ component ProcessBar inherits Rectangle {
                 text: root.data.text; color: Theme.text-secondary;
                 font-size: Theme.font-md; vertical-alignment: center;
             }
-            // The last thing the turn did, read out while the fold is closed.
+            // Phase stays visible with either fold state; entry outputs remain
+            // in their own rows.
             Text {
                 horizontal-stretch: 1; min-width: 0px; height: parent.height;
                 text: root.data.summary; color: Theme.muted; font-size: Theme.font-sm;
                 overflow: elide; vertical-alignment: center;
-                visible: !root.data.open && root.data.summary != "";
+                visible: root.data.summary != "";
             }
         }
     }
@@ -687,10 +707,10 @@ export component TimelineView inherits Rectangle {
         }
     }
     rows-scroll := ScrollView {
+        horizontal-scrollbar-policy: always-off; vertical-scrollbar-policy: always-off;
         x: 0px; y: 0px; width: 100%; height: 100%;
         // Wheel/touchpad scrolling stays available without reserving a track:
         // streaming row widths remain stable as the viewport scrolls.
-        horizontal-scrollbar-policy: always-off; vertical-scrollbar-policy: always-off;
         content-width: self.visible-width;
         rows-column := VerticalLayout {
             width: root.column-width;
@@ -716,11 +736,17 @@ export component TimelineView inherits Rectangle {
     marks-strip := Rectangle {
         x: parent.width - 24px; y: 10px; width: 24px; height: parent.height - 20px;
         visible: root.turn-marks.length > 1;
+        // Keep the locator tightly grouped at the centre. Long threads compress
+        // the rhythm evenly so every tick remains inside the strip instead of
+        // clamping into a stack at its top and bottom edges.
+        private property <length> tick-spacing: min(12px,
+            max(1px, (self.height - 12px) / max(1, root.turn-marks.length - 1)));
         for mark[i] in root.turn-marks : tick-hit := Rectangle {
             width: parent.width;
             height: 12px;
-            y: clamp(parent.height / 2 + (i - (root.turn-marks.length - 1) / 2) * 12px - self.height / 2,
-                0px, parent.height - self.height);
+            y: parent.height / 2 + i * marks-strip.tick-spacing
+                - (root.turn-marks.length - 1) * marks-strip.tick-spacing / 2
+                - self.height / 2;
             tick-line := Rectangle {
                 x: parent.width - self.width - 4px;
                 y: (parent.height - self.height) / 2;

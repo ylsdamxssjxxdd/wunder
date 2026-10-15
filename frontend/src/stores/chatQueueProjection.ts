@@ -42,6 +42,51 @@ const readNumber = (...values: unknown[]): number | null => {
 export const isChatQueueRuntimeEvent = (eventType: unknown): boolean =>
   QUEUE_EVENT_TYPES.has(cleanText(eventType).toLowerCase());
 
+export type EmbeddedChatQueueRuntimeEvent = {
+  eventType: 'queue_start' | 'queue_finish' | 'queue_cancel' | 'queue_fail';
+  payload: Record<string, unknown>;
+};
+
+/** Extract a queue lifecycle event nested in a durable thread_change row. */
+export const resolveEmbeddedChatQueueRuntimeEvent = (
+  eventType: unknown,
+  payload: unknown
+): EmbeddedChatQueueRuntimeEvent | null => {
+  const normalized = cleanText(eventType).toLowerCase();
+  const terminal = new Set(['queue_start', 'queue_finish', 'queue_cancel', 'queue_fail']);
+  if (terminal.has(normalized)) {
+    return {
+      eventType: normalized as EmbeddedChatQueueRuntimeEvent['eventType'],
+      payload: payload && typeof payload === 'object' && !Array.isArray(payload)
+        ? payload as Record<string, unknown>
+        : {}
+    };
+  }
+  if (normalized !== 'thread_change' || !payload || typeof payload !== 'object' || Array.isArray(payload)) return null;
+  const source = payload as Record<string, unknown>;
+  const nested = source.data && typeof source.data === 'object' && !Array.isArray(source.data)
+    ? source.data as Record<string, unknown>
+    : {};
+  // Durable thread-change frames use either `item` (transition shape) or
+  // `payload` (target shape) for the immutable item row.  Both are valid and
+  // must feed the same queue tombstone path before the eventual queue refresh.
+  const itemValue = source.item ?? nested.item ?? source.payload ?? nested.payload;
+  const item = itemValue && typeof itemValue === 'object' && !Array.isArray(itemValue)
+    ? itemValue as Record<string, unknown>
+    : {};
+  const itemPayload = item.payload && typeof item.payload === 'object' && !Array.isArray(item.payload)
+    ? item.payload as Record<string, unknown>
+    : {};
+  const eventData = { ...source, ...nested, ...item, ...itemPayload };
+  const kind = cleanText(eventData.kind).toLowerCase();
+  const embeddedType = cleanText(eventData.event_type ?? eventData.eventType).toLowerCase();
+  if (kind !== 'queue' || !terminal.has(embeddedType)) return null;
+  return {
+    eventType: embeddedType as EmbeddedChatQueueRuntimeEvent['eventType'],
+    payload: eventData
+  };
+};
+
 export const normalizeQueuedTurn = (value: unknown): QueuedTurn | null => {
   if (!value || typeof value !== 'object') return null;
   const source = value as Record<string, unknown>;
