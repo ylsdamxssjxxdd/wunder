@@ -69,6 +69,7 @@ import {
 import { createWsMultiplexer } from '@/utils/ws';
 import { isDemoMode, loadDemoChatState, saveDemoChatState } from '@/utils/demo';
 import { emitAgentRuntimeRefresh, emitWorkspaceRefresh } from '@/utils/workspaceEvents';
+import { refreshWorkspaceForThreadStatus, shouldRefreshWorkspaceForThreadStatus } from './chatWorkspaceEffects';
 import { chatPerf } from '@/utils/chatPerf';
 import { chatDebugLog, isChatDebugEnabled, isChatDebugVerboseEnabled } from '@/utils/chatDebug';
 import {
@@ -1210,6 +1211,7 @@ export function applySessionRuntimeEvent(store, sessionId, payload, eventType = 
   noteChatQueueRuntimeEvent(targetId, eventType, payload);
   const runtime = ensureRuntime(targetId);
   if (!runtime) return null;
+  const previousStatus = runtime.threadStatus;
   // Durable turns own liveness; a delayed monitor control cannot reopen them.
   const durableStatus = getChatThreadStatus(targetId);
   if (durableStatus) {
@@ -1244,6 +1246,9 @@ export function applySessionRuntimeEvent(store, sessionId, payload, eventType = 
   // second unsequenced status event that can bypass replay/deduplication.
   const canonicalStatus = store.runtimeProjection?.sessions?.[targetId]?.runtimeStatus;
   if (canonicalStatus) runtime.threadStatus = normalizeThreadRuntimeStatus(canonicalStatus);
+  if (shouldRefreshWorkspaceForThreadStatus(previousStatus, runtime.threadStatus)) {
+    refreshWorkspaceForThreadStatus(store, targetId, runtime.threadStatus);
+  }
   if (
     isTerminalRuntimeStatus(runtime.threadStatus) &&
     !shouldDeferTerminalRuntimeSettlement(store, targetId, runtime, eventType)
@@ -1358,6 +1363,9 @@ export function settleUserStoppedSessionRuntime(store, sessionId) {
     ? store?.messages
     : getSessionMessages(targetId);
   settleStoppedRuntimeLocalState(runtime, { abortReason: 'user_stop' });
+  if (shouldRefreshWorkspaceForThreadStatus(beforeRuntime.threadStatus, 'cancelled')) {
+    refreshWorkspaceForThreadStatus(store, targetId, 'cancelled');
+  }
   if (chatWatcherSharedState.sessionWatchSessionId === targetId) {
     chatWatcherSharedState.sessionWatchSessionId = '';
   }
@@ -1996,9 +2004,8 @@ export const applyCanonicalStreamSideEffects = (
     return;
   }
   applyCommandSessionCanonicalSideEffect(store, sessionId, normalizedEventType, payload, data);
-  // Workspace mutations are committed by tools, not by the chat turn
-  // terminal. Refresh once when the tool has finished so generated files
-  // become visible during a long run without refreshing on every token/delta.
+  // Refresh declared tool writes during long runs. Lifecycle boundaries also
+  // force a snapshot for external writes that carry no mutation metadata.
   if ((normalizedEventType === 'tool_result' ||
       normalizedEventType === 'tool_call_completed' ||
       normalizedEventType === 'tool_call_failed') &&

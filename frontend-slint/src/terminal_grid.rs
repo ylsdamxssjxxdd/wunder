@@ -21,7 +21,8 @@
 //! both newlines and bytes, so no slice moves more rows than the view can name.
 
 use std::collections::VecDeque;
-use vt100::{Color, Parser};
+use std::fmt::Write as _;
+use vt100::{Color, MouseProtocolEncoding, MouseProtocolMode, Parser};
 
 /// Rows of output kept above the prompt, bounded so a long-lived shell cannot
 /// grow memory without limit. Older output stays readable through the persisted
@@ -115,6 +116,18 @@ pub struct TerminalGrid {
     scrolled_seen: usize,
 }
 
+/// Mouse event inside the cell viewport. Button numbers follow xterm's
+/// conventional order: left, middle, right. A missing button represents
+/// pointer motion with no button held.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MouseAction {
+    Press,
+    Release,
+    Move,
+    WheelUp,
+    WheelDown,
+}
+
 impl TerminalGrid {
     pub fn new(rows: u16, cols: u16) -> Self {
         let rows = rows.max(1);
@@ -171,6 +184,38 @@ impl TerminalGrid {
         self.history.clear();
         self.view_offset = 0;
         self.scrolled_seen = 0;
+    }
+
+    /// Clear the visible model while retaining modes negotiated by the running
+    /// application. The toolbar's clear action must not silently disable mouse
+    /// reporting, bracketed paste, or application cursor input.
+    pub fn clear(&mut self) {
+        let screen = self.parser.screen();
+        let application_cursor = screen.application_cursor();
+        let mouse_mode = screen.mouse_protocol_mode();
+        let mouse_encoding = screen.mouse_protocol_encoding();
+        let bracketed_paste = screen.bracketed_paste();
+        self.reset();
+        let mut modes = Vec::new();
+        if application_cursor {
+            modes.extend_from_slice(b"\x1b[?1h");
+        }
+        match mouse_mode {
+            MouseProtocolMode::None => {}
+            MouseProtocolMode::Press => modes.extend_from_slice(b"\x1b[?9h"),
+            MouseProtocolMode::PressRelease => modes.extend_from_slice(b"\x1b[?1000h"),
+            MouseProtocolMode::ButtonMotion => modes.extend_from_slice(b"\x1b[?1002h"),
+            MouseProtocolMode::AnyMotion => modes.extend_from_slice(b"\x1b[?1003h"),
+        }
+        match mouse_encoding {
+            MouseProtocolEncoding::Default => {}
+            MouseProtocolEncoding::Utf8 => modes.extend_from_slice(b"\x1b[?1005h"),
+            MouseProtocolEncoding::Sgr => modes.extend_from_slice(b"\x1b[?1006h"),
+        }
+        if bracketed_paste {
+            modes.extend_from_slice(b"\x1b[?2004h");
+        }
+        self.parser.process(&modes);
     }
 
     /// Lines one feed slice may scroll. The scroll view reaches one screenful
@@ -325,6 +370,117 @@ impl TerminalGrid {
         let (row, col) = screen.cursor_position();
         (row < self.rows).then_some((row as i32, col as i32))
     }
+
+    /// Whether the active application requested mouse reporting. When true,
+    /// wheel input belongs to the application rather than local scrollback.
+    pub fn mouse_reporting(&self) -> bool {
+        self.parser.screen().mouse_protocol_mode() != MouseProtocolMode::None
+    }
+
+    /// DEC application cursor mode changes the four arrow keys from CSI to
+    /// SS3 sequences, which interactive full-screen programs expect.
+    pub fn application_cursor(&self) -> bool {
+        self.parser.screen().application_cursor()
+    }
+
+    /// Encode one pointer event according to the VT mouse modes requested by
+    /// the running application. Coordinates are zero-based grid cells here and
+    /// become one-based in the wire protocol.
+    pub fn mouse_input(
+        &self,
+        action: MouseAction,
+        button: Option<u8>,
+        col: u16,
+        row: u16,
+    ) -> Option<Vec<u8>> {
+        let screen = self.parser.screen();
+        let mode = screen.mouse_protocol_mode();
+        if mode == MouseProtocolMode::None {
+            return None;
+        }
+
+        let wheel = matches!(action, MouseAction::WheelUp | MouseAction::WheelDown);
+        let allowed = match action {
+            MouseAction::Press | MouseAction::WheelUp | MouseAction::WheelDown => true,
+            MouseAction::Release => mode != MouseProtocolMode::Press,
+            MouseAction::Move => match mode {
+                MouseProtocolMode::None | MouseProtocolMode::Press | MouseProtocolMode::PressRelease => false,
+                MouseProtocolMode::ButtonMotion => button.is_some(),
+                MouseProtocolMode::AnyMotion => true,
+            },
+        };
+        if !allowed {
+            return None;
+        }
+
+        let mut code = match action {
+            MouseAction::WheelUp => 64,
+            MouseAction::WheelDown => 65,
+            // Button 3 is the xterm sentinel for motion with no button held.
+            MouseAction::Move => 32 + button.map(|value| value.min(2)).unwrap_or(3),
+            MouseAction::Press => button?.min(2),
+            MouseAction::Release => button.unwrap_or(3).min(2),
+        };
+        if wheel {
+            // Wheel events are button codes 64/65 and have no release form.
+            code = if action == MouseAction::WheelUp { 64 } else { 65 };
+        }
+        let x = col.min(self.cols.saturating_sub(1)) as u32 + 1;
+        let y = row.min(self.rows.saturating_sub(1)) as u32 + 1;
+        let release = action == MouseAction::Release;
+        let mut bytes = Vec::with_capacity(24);
+        match screen.mouse_protocol_encoding() {
+            MouseProtocolEncoding::Sgr => {
+                bytes.extend_from_slice(b"\x1b[<");
+                push_decimal(&mut bytes, code as u32);
+                bytes.push(b';');
+                push_decimal(&mut bytes, x);
+                bytes.push(b';');
+                push_decimal(&mut bytes, y);
+                bytes.push(if release { b'm' } else { b'M' });
+            }
+            MouseProtocolEncoding::Default | MouseProtocolEncoding::Utf8 => {
+                // Classic X10 reports have one-byte coordinates. UTF-8 mode
+                // removes the old 223-cell limit by encoding the values as
+                // Unicode code points per the xterm 1005 extension.
+                let legacy_code = if release { 3 } else { code };
+                bytes.extend_from_slice(b"\x1b[M");
+                for value in [legacy_code as u32 + 32, x + 32, y + 32] {
+                    if screen.mouse_protocol_encoding() == MouseProtocolEncoding::Utf8 {
+                        if let Some(character) = char::from_u32(value) {
+                            let mut buffer = [0; 4];
+                            bytes.extend_from_slice(character.encode_utf8(&mut buffer).as_bytes());
+                        }
+                    } else {
+                        bytes.push(value.min(255) as u8);
+                    }
+                }
+            }
+        }
+        Some(bytes)
+    }
+
+    /// The application may request bracketed paste so pasted newlines are
+    /// treated as data rather than commands by readline-style shells.
+    pub fn bracketed_paste(&self, text: &str) -> Vec<u8> {
+        if self.parser.screen().bracketed_paste() {
+            let mut bytes = Vec::with_capacity(text.len() + 12);
+            bytes.extend_from_slice(b"\x1b[200~");
+            bytes.extend_from_slice(text.as_bytes());
+            bytes.extend_from_slice(b"\x1b[201~");
+            bytes
+        } else {
+            text.as_bytes().to_vec()
+        }
+    }
+}
+
+fn push_decimal(target: &mut Vec<u8>, value: u32) {
+    // Formatting at most three coordinates is cheaper and clearer than adding
+    // a formatter dependency to the UI crate.
+    let mut text = String::new();
+    let _ = write!(&mut text, "{value}");
+    target.extend_from_slice(text.as_bytes());
 }
 
 /// One row of the screen as styled runs. The spans come back with `row: 0`,
@@ -743,6 +899,72 @@ mod tests {
     }
 
     #[test]
+    fn application_cursor_mode_is_reflected_in_key_state() {
+        let mut g = grid(4, 20);
+        assert!(!g.application_cursor());
+        g.feed(b"\x1b[?1h");
+        assert!(g.application_cursor());
+        g.feed(b"\x1b[?1l");
+        assert!(!g.application_cursor());
+    }
+
+    #[test]
+    fn mouse_reports_follow_sgr_mode_and_cell_coordinates() {
+        let mut g = grid(12, 40);
+        assert!(!g.mouse_reporting());
+        assert!(g
+            .mouse_input(MouseAction::Press, Some(0), 4, 2)
+            .is_none());
+        g.feed(b"\x1b[?1000h\x1b[?1006h");
+        assert!(g.mouse_reporting());
+        assert_eq!(
+            g.mouse_input(MouseAction::Press, Some(0), 4, 2),
+            Some(b"\x1b[<0;5;3M".to_vec())
+        );
+        assert_eq!(
+            g.mouse_input(MouseAction::Release, Some(0), 4, 2),
+            Some(b"\x1b[<0;5;3m".to_vec())
+        );
+        assert_eq!(
+            g.mouse_input(MouseAction::WheelDown, None, 4, 2),
+            Some(b"\x1b[<65;5;3M".to_vec())
+        );
+        g.feed(b"\x1b[?1006l\x1b[?1000l");
+        assert!(!g.mouse_reporting());
+    }
+
+    #[test]
+    fn mouse_motion_is_only_reported_when_the_mode_requests_it() {
+        let mut g = grid(4, 20);
+        g.feed(b"\x1b[?1002h\x1b[?1006h");
+        assert!(g
+            .mouse_input(MouseAction::Move, None, 0, 0)
+            .is_none());
+        assert_eq!(
+            g.mouse_input(MouseAction::Move, Some(2), 1, 1),
+            Some(b"\x1b[<34;2;2M".to_vec())
+        );
+        g.feed(b"\x1b[?1002l\x1b[?1003h");
+        assert_eq!(
+            g.mouse_input(MouseAction::Move, None, 1, 1),
+            Some(b"\x1b[<35;2;2M".to_vec())
+        );
+    }
+
+    #[test]
+    fn paste_uses_bracketed_mode_only_when_requested() {
+        let mut g = grid(4, 20);
+        assert_eq!(g.bracketed_paste("line one\nline two"), b"line one\nline two");
+        g.feed(b"\x1b[?2004h");
+        assert_eq!(
+            g.bracketed_paste("line one\nline two"),
+            b"\x1b[200~line one\nline two\x1b[201~"
+        );
+        g.feed(b"\x1b[?2004l");
+        assert_eq!(g.bracketed_paste("plain"), b"plain");
+    }
+
+    #[test]
     fn resize_reprojects_without_losing_the_viewport() {
         let mut g = grid(3, 20);
         g.feed(b"some output");
@@ -761,6 +983,22 @@ mod tests {
         assert_eq!(g.history_depth(), 0);
         assert_eq!(viewport(&g), "");
         assert_eq!(g.view_offset(), 0);
+    }
+
+    #[test]
+    fn clear_preserves_modes_requested_by_the_running_application() {
+        let mut g = grid(4, 20);
+        g.feed(b"\x1b[?1h\x1b[?1002h\x1b[?1006h\x1b[?2004htext");
+        assert!(!viewport(&g).is_empty());
+        g.clear();
+        assert!(viewport(&g).is_empty());
+        assert!(g.application_cursor());
+        assert!(g.mouse_reporting());
+        assert_eq!(
+            g.mouse_input(MouseAction::Press, Some(0), 1, 1),
+            Some(b"\x1b[<0;2;2M".to_vec())
+        );
+        assert_eq!(g.bracketed_paste("a"), b"\x1b[200~a\x1b[201~");
     }
 
     #[test]

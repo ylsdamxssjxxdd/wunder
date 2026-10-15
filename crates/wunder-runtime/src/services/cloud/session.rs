@@ -10,8 +10,9 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-pub const SESSION_FILE_DESKTOP: &str = "config/cloud.session.json";
-pub const SESSION_FILE_CLI: &str = "cloud.json";
+pub const SESSION_FILE: &str = "config/cloud.session.json";
+pub const SESSION_FILE_DESKTOP: &str = SESSION_FILE;
+pub const SESSION_FILE_CLI: &str = SESSION_FILE;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CloudQuotaSnapshot {
@@ -238,40 +239,30 @@ impl CloudSessionFile {
         copy
     }
 
-    /// Session file path for a client form. Desktop and CLI share the same
-    /// wunder home but use different file names/locations per §3.1.
-    pub fn path_for(base_dir: &Path, client: &str) -> PathBuf {
-        if client.eq_ignore_ascii_case("cli") {
-            base_dir.join(SESSION_FILE_CLI)
-        } else {
-            base_dir.join(SESSION_FILE_DESKTOP)
-        }
+    /// Desktop and CLI use one canonical session file under the shared home.
+    pub fn path_for(base_dir: &Path, _client: &str) -> PathBuf {
+        base_dir.join(SESSION_FILE)
     }
 
-    /// Load whichever session file exists (desktop or cli layout). Returns
-    /// `Ok(None)` when neither exists; a corrupt file is treated as logged
-    /// out and removed.
+    /// Load the canonical shared session file. A corrupt file is treated as
+    /// logged out and removed.
     pub fn load_any(base_dir: &Path) -> Option<Self> {
-        for client in ["desktop", "cli"] {
-            let path = Self::path_for(base_dir, client);
-            match std::fs::read_to_string(&path) {
-                Ok(text) => match serde_json::from_str::<Self>(&text) {
-                    Ok(session) => return Some(session),
-                    Err(err) => {
-                        tracing::warn!("cloud session file is corrupt, ignoring: {err}");
-                        let _ = std::fs::remove_file(&path);
-                        return None;
-                    }
-                },
-                Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
-                Err(_) => continue,
-            }
+        let path = Self::path_for(base_dir, "shared");
+        match std::fs::read_to_string(&path) {
+            Ok(text) => match serde_json::from_str::<Self>(&text) {
+                Ok(session) => Some(session),
+                Err(err) => {
+                    tracing::warn!("cloud session file is corrupt, ignoring: {err}");
+                    let _ = std::fs::remove_file(&path);
+                    None
+                }
+            },
+            Err(_) => None,
         }
-        None
     }
 
     pub fn save(&self, base_dir: &Path) -> Result<PathBuf> {
-        let path = Self::path_for(base_dir, &self.client);
+        let path = Self::path_for(base_dir, "shared");
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).with_context(|| {
                 format!("create cloud session dir failed: {}", parent.display())
@@ -332,7 +323,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn session_path_uses_client_specific_layout() {
+    fn session_path_is_shared_between_clients() {
         let base = Path::new("/tmp/wunder-home");
         assert_eq!(
             CloudSessionFile::path_for(base, "desktop"),
@@ -340,7 +331,7 @@ mod tests {
         );
         assert_eq!(
             CloudSessionFile::path_for(base, "cli"),
-            base.join("cloud.json")
+            base.join("config/cloud.session.json")
         );
     }
 

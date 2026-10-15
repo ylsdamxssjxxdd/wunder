@@ -1368,6 +1368,8 @@ fn paint_terminal(app: &MainWindow, host: &mut State) {
     window.set_cols(cols.into());
     window.set_view_offset(workspace.grid.view_offset() as i32);
     window.set_history_depth(workspace.grid.history_depth() as i32);
+    window.set_mouse_reporting(workspace.grid.mouse_reporting());
+    window.set_application_cursor(workspace.grid.application_cursor());
     window.set_status(workspace.status.as_str().into());
     window.set_error(workspace.error);
     window.set_workspace_name(workspace.workspace_name.as_str().into());
@@ -1452,7 +1454,21 @@ fn bind_terminal(app: &MainWindow, state: Rc<RefCell<State>>) {
         let (Some(app), Some(state)) = (weak.upgrade(), callback_state.upgrade()) else {
             return;
         };
-        enqueue_terminal_input(&app, &state, text.as_bytes());
+        enqueue_terminal_paste(&app, &state, &text);
+    });
+    let weak_window = window.as_weak();
+    window.on_paste_requested(move || {
+        if let Some(window) = weak_window.upgrade() {
+            window.set_paste_request(window.get_paste_request().saturating_add(1));
+        }
+    });
+    let callback_state = Rc::downgrade(&state);
+    let weak = app.as_weak();
+    window.on_mouse_event(move |action, button, col, row| {
+        let (Some(app), Some(state)) = (weak.upgrade(), callback_state.upgrade()) else {
+            return;
+        };
+        enqueue_terminal_mouse(&app, &state, action, button, col, row);
     });
     let callback_state = Rc::downgrade(&state);
     let weak = app.as_weak();
@@ -1497,7 +1513,7 @@ fn bind_terminal(app: &MainWindow, state: Rc<RefCell<State>>) {
         let Some(workspace) = host.terminals.get_mut(&workspace_id) else {
             return;
         };
-        workspace.grid.reset();
+        workspace.grid.clear();
         workspace.loss_marked = false;
         paint_terminal(&app, &mut host);
     });
@@ -1589,6 +1605,77 @@ fn enqueue_terminal_input(app: &MainWindow, state: &Rc<RefCell<State>>, input: &
         return;
     };
     if session.input.try_send(input.to_vec()).is_err() {
+        app.set_status("终端输入队列已满，请稍候".into());
+    }
+}
+
+fn enqueue_terminal_paste(app: &MainWindow, state: &Rc<RefCell<State>>, text: &str) {
+    if text.is_empty() {
+        return;
+    }
+    const MAX_INPUT_BYTES: usize = 64 * 1024;
+    if text.len() > MAX_INPUT_BYTES {
+        app.set_status("终端粘贴内容过大，请分段输入".into());
+        return;
+    }
+    let sender = {
+        let host = state.borrow();
+        let Some(workspace_id) = host.terminal_workspace.as_ref() else {
+            return;
+        };
+        let Some(workspace) = host.terminals.get(workspace_id) else {
+            return;
+        };
+        let Some(session) = workspace.session.as_ref() else {
+            return;
+        };
+        let bytes = workspace.grid.bracketed_paste(text);
+        (session.input.clone(), bytes)
+    };
+    if sender.0.try_send(sender.1).is_err() {
+        app.set_status("终端输入队列已满，请稍候".into());
+    }
+}
+
+fn enqueue_terminal_mouse(
+    app: &MainWindow,
+    state: &Rc<RefCell<State>>,
+    action: i32,
+    button: i32,
+    col: i32,
+    row: i32,
+) {
+    let action = match action {
+        0 => terminal_grid::MouseAction::Press,
+        1 => terminal_grid::MouseAction::Release,
+        2 => terminal_grid::MouseAction::Move,
+        3 => terminal_grid::MouseAction::WheelUp,
+        4 => terminal_grid::MouseAction::WheelDown,
+        _ => return,
+    };
+    let sender = {
+        let host = state.borrow();
+        let Some(workspace_id) = host.terminal_workspace.as_ref() else {
+            return;
+        };
+        let Some(workspace) = host.terminals.get(workspace_id) else {
+            return;
+        };
+        let Some(session) = workspace.session.as_ref() else {
+            return;
+        };
+        let bytes = workspace.grid.mouse_input(
+            action,
+            (button >= 0).then_some(button as u8),
+            col.max(0) as u16,
+            row.max(0) as u16,
+        );
+        bytes.map(|bytes| (session.input.clone(), bytes))
+    };
+    let Some((sender, bytes)) = sender else {
+        return;
+    };
+    if sender.try_send(bytes).is_err() {
         app.set_status("终端输入队列已满，请稍候".into());
     }
 }

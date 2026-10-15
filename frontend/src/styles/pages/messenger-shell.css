@@ -977,16 +977,6 @@ button.messenger-sidebar-workspace-row {
   color: var(--mz-danger, #d04a43);
 }
 
-/* Quote chips reuse the composer attachment surface (B2 -> B4 hand-off). */
-.workspace-quote-preview {
-  border-bottom: 1px dashed var(--mz-border);
-}
-
-.workspace-quote-item .upload-preview-meta {
-  font-family: Consolas, "SFMono-Regular", Menlo, monospace;
-}
-
-
 .messenger-sidebar-footer {
   flex-shrink: 0;
   padding: 8px var(--mz-sidebar-padding) 12px;

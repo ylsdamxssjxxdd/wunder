@@ -608,6 +608,22 @@ pub struct SessionLockRecord {
 }
 
 #[derive(Debug, Clone)]
+pub struct ThreadOpenLeaseRecord {
+    pub session_id: String,
+    pub user_id: String,
+    pub owner_instance_id: String,
+    pub client_kind: String,
+    pub updated_time: f64,
+    pub expires_at: f64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThreadOpenLeaseStatus {
+    Acquired,
+    Busy,
+}
+
+#[derive(Debug, Clone)]
 pub struct SessionRunRecord {
     pub run_id: String,
     pub session_id: String,

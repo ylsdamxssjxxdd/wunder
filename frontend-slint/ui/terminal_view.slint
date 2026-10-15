@@ -37,6 +37,10 @@ export component TerminalView inherits Rectangle {
     in property <int> view-offset: 0;
     in property <int> history-depth: 0;
     in property <bool> caret-visible: false;
+    in property <bool> mouse-reporting: false;
+    in property <bool> application-cursor: false;
+    private property <int> last-mouse-col: -1;
+    private property <int> last-mouse-row: -1;
     in property <int> caret-row: 0;
     in property <int> caret-col: 0;
     // What the model should be sized to, and the geometry it was sized from.
@@ -46,6 +50,9 @@ export component TerminalView inherits Rectangle {
     callback clear();
     callback interrupt();
     callback activated();
+    // action: 0 press, 1 release, 2 motion, 3 wheel-up, 4 wheel-down;
+    // button: 0 left, 1 middle, 2 right, -1 when the action has no button.
+    callback mouse-event(int, int, int, int);
     /// Rows to move, positive going up into history.
     callback scrolled(int);
     /// Absolute row to put at the top of the viewport.
@@ -146,16 +153,54 @@ export component TerminalView inherits Rectangle {
 
                 TouchArea {
                     width: parent.width; height: parent.height;
-                    clicked => { root.activated(); }
+                    in-out property <int> pressed-button: -1;
+                    pointer-event(event) => {
+                        let col = Math.floor(self.mouse-x / root.cell-width);
+                        let row = Math.floor(self.mouse-y / root.cell-height);
+                        if event.kind == PointerEventKind.down {
+                            let button = event.button == PointerEventButton.left ? 0 : event.button == PointerEventButton.middle ? 1 : event.button == PointerEventButton.right ? 2 : -1;
+                            self.pressed-button = button;
+                            root.last-mouse-col = col;
+                            root.last-mouse-row = row;
+                            root.mouse-event(0, button, col, row);
+                            root.activated();
+                        }
+                        if event.kind == PointerEventKind.up {
+                            root.mouse-event(1, event.button == PointerEventButton.left ? 0 : event.button == PointerEventButton.middle ? 1 : event.button == PointerEventButton.right ? 2 : -1, col, row);
+                            self.pressed-button = -1;
+                            root.last-mouse-col = col;
+                            root.last-mouse-row = row;
+                        }
+                    }
+                    moved => {
+                        if self.pressed || root.mouse-reporting {
+                            let col = Math.floor(self.mouse-x / root.cell-width);
+                            let row = Math.floor(self.mouse-y / root.cell-height);
+                            if col != root.last-mouse-col || row != root.last-mouse-row {
+                                root.last-mouse-col = col;
+                                root.last-mouse-row = row;
+                                root.mouse-event(2, self.pressed-button, col, row);
+                            }
+                        }
+                    }
                     scroll-event(event) => {
                         if (event.delta-y == 0px) {
                             return reject;
                         }
-                        grid-area.wheel-remain += event.delta-y;
-                        let lines = Math.round(grid-area.wheel-remain / root.cell-height);
-                        if (lines != 0) {
-                            root.scrolled(lines);
-                            grid-area.wheel-remain -= lines * root.cell-height;
+                        // The host decides whether the application owns mouse
+                        // reporting. It can route this to the shell or keep it
+                        // as local scrollback navigation.
+                        let action = event.delta-y > 0px ? 3 : 4;
+                        let col = Math.floor(self.mouse-x / root.cell-width);
+                        let row = Math.floor(self.mouse-y / root.cell-height);
+                        root.mouse-event(action, -1, col, row);
+                        if !root.mouse-reporting {
+                            grid-area.wheel-remain += event.delta-y;
+                            let lines = Math.round(grid-area.wheel-remain / root.cell-height);
+                            if (lines != 0) {
+                                root.scrolled(lines);
+                                grid-area.wheel-remain -= lines * root.cell-height;
+                            }
                         }
                         return accept;
                     }

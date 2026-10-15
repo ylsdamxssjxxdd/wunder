@@ -1,9 +1,22 @@
+import { shallowRef } from 'vue';
+
 type ChatDebugEntry = {
   time: string;
   scope: string;
   event: string;
   payload?: unknown;
 };
+
+export type ChatDebugSnapshot = {
+  enabled: boolean;
+  verbose: boolean;
+  events: ChatDebugEntry[];
+};
+
+const debugListeners = new Set<() => void>();
+// An explicit UI/console choice wins over a URL flag, including when storage is blocked.
+const debugOverride = shallowRef<boolean>();
+const verboseOverride = shallowRef<boolean>();
 
 const DEBUG_STORAGE_KEYS = ['wunder:chat-debug', 'wunder_chat_debug', '__wunder_chat_debug__'];
 const DEBUG_VERBOSE_STORAGE_KEYS = ['wunder:chat-debug-verbose', 'wunder_chat_debug_verbose'];
@@ -124,8 +137,8 @@ const readSearchFlag = (): boolean => {
   }
 };
 
-export const isChatDebugEnabled = (): boolean => readStorageFlag() || readSearchFlag();
-export const isChatDebugVerboseEnabled = (): boolean => readVerboseStorageFlag();
+export const isChatDebugEnabled = (): boolean => debugOverride.value ?? (readStorageFlag() || readSearchFlag());
+export const isChatDebugVerboseEnabled = (): boolean => verboseOverride.value ?? readVerboseStorageFlag();
 
 const setDebugStorageFlag = (enabled: boolean) => {
   if (typeof window === 'undefined') return;
@@ -165,7 +178,57 @@ const readDebugHistory = (): ChatDebugEntry[] => {
     : [];
 };
 
-const buildDebugStatus = () => ({
+export const setChatDebugEnabled = (enabled: boolean): boolean => {
+  debugOverride.value = enabled;
+  setDebugStorageFlag(enabled);
+  if (!enabled) {
+    verboseOverride.value = false;
+    setDebugVerboseStorageFlag(false);
+    // Persist the explicit off choice across refresh of a debug URL.
+    if (typeof window !== 'undefined' && readSearchFlag()) {
+      try {
+        const url = new URL(window.location.href);
+        url.searchParams.delete('chat_debug');
+        url.searchParams.delete('chatDebug');
+        window.history.replaceState(window.history.state, '', url);
+      } catch { /* The in-memory override still stops recording. */ }
+    }
+  }
+  ensureDebugAccessors();
+  debugListeners.forEach(listener => listener());
+  return isChatDebugEnabled();
+};
+
+export const setChatDebugVerboseEnabled = (enabled: boolean): boolean => {
+  verboseOverride.value = enabled;
+  setDebugVerboseStorageFlag(enabled);
+  if (enabled) setChatDebugEnabled(true);
+  ensureDebugAccessors();
+  debugListeners.forEach(listener => listener());
+  return isChatDebugVerboseEnabled();
+};
+
+export const subscribeChatDebug = (listener: () => void): (() => void) => {
+  debugListeners.add(listener);
+  return () => { debugListeners.delete(listener); };
+};
+
+export const clearChatDebugHistory = (): number => {
+  if (typeof window === 'undefined') return 0;
+  const target = window as unknown as Record<string, unknown>;
+  const entries = readDebugHistory();
+  target[DEBUG_HISTORY_KEY] = [];
+  debugListeners.forEach(listener => listener());
+  return entries.length;
+};
+
+export const getChatDebugSnapshot = (): ChatDebugSnapshot => ({
+  enabled: isChatDebugEnabled(),
+  verbose: isChatDebugVerboseEnabled(),
+  events: readDebugHistory().map((entry) => ({ ...entry }))
+});
+
+export const getChatDebugStatus = () => ({
   enabled: isChatDebugEnabled(),
   verbose: isChatDebugVerboseEnabled(),
   historyCount: readDebugHistory().length,
@@ -178,7 +241,7 @@ const buildDebugStatus = () => ({
 
 const announceDebugStatus = (event: string) => {
   if (typeof console === 'undefined') return;
-  console.info(`[wunder-chat-debug] ${event}`, buildDebugStatus());
+  console.info(`[wunder-chat-debug] ${event}`, getChatDebugStatus());
 };
 
 const shouldLogScopeEvent = (scope: string, event: string): boolean => {
@@ -206,34 +269,28 @@ const ensureDebugAccessors = () => {
   target[DEBUG_DUMP_FN_KEY] = () => {
     return JSON.stringify(readDebugHistory(), null, 2);
   };
-  target[DEBUG_CLEAR_FN_KEY] = () => {
-    const entries = readDebugHistory();
-    const cleared = entries.length;
-    target[DEBUG_HISTORY_KEY] = [];
-    return cleared;
-  };
+  target[DEBUG_CLEAR_FN_KEY] = clearChatDebugHistory;
   target[DEBUG_ENABLE_FN_KEY] = () => {
-    setDebugStorageFlag(true);
+    setChatDebugEnabled(true);
     announceDebugStatus('enabled');
     return true;
   };
   target[DEBUG_DISABLE_FN_KEY] = () => {
-    setDebugStorageFlag(false);
+    setChatDebugEnabled(false);
     announceDebugStatus('disabled');
     return false;
   };
   target[DEBUG_ENABLE_VERBOSE_FN_KEY] = () => {
-    setDebugStorageFlag(true);
-    setDebugVerboseStorageFlag(true);
+    setChatDebugVerboseEnabled(true);
     announceDebugStatus('verbose enabled');
     return true;
   };
   target[DEBUG_DISABLE_VERBOSE_FN_KEY] = () => {
-    setDebugVerboseStorageFlag(false);
+    setChatDebugVerboseEnabled(false);
     announceDebugStatus('verbose disabled');
     return false;
   };
-  target[DEBUG_STATUS_FN_KEY] = () => buildDebugStatus();
+  target[DEBUG_STATUS_FN_KEY] = getChatDebugStatus;
 };
 
 const pushDebugEntry = (entry: ChatDebugEntry) => {

@@ -407,6 +407,12 @@
             </div>
             <!-- 参数 -->
             <div v-else-if="activeTab === paramsTab" class="tt-payload-stack">
+              <div v-if="detailLoading" class="tt-no-payload">{{ t('common.loading') }}</div>
+              <div v-else-if="detailError" class="tt-no-payload">
+                {{ t('messenger.trajectory.detailLoadFailed') }}
+                <button class="tt-link" type="button" @click="retrySelectedDetail">{{ t('messenger.trajectory.retryDetail') }}</button>
+              </div>
+              <template v-else>
               <TrajectoryJsonTree
                 v-if="selectedArgs"
                 :data="selectedArgs"
@@ -414,9 +420,16 @@
               />
               <pre v-else-if="selectedCell.inputDetail" class="tt-payload-pre"><code>{{ selectedCell.inputDetail }}</code></pre>
               <div v-else class="tt-no-payload">{{ t('messenger.trajectory.paramUnavailable') }}</div>
+              </template>
             </div>
             <!-- 结果 -->
             <div v-else-if="activeTab === resultTab" class="tt-payload-stack">
+              <div v-if="detailLoading" class="tt-no-payload">{{ t('common.loading') }}</div>
+              <div v-else-if="detailError" class="tt-no-payload">
+                {{ t('messenger.trajectory.detailLoadFailed') }}
+                <button class="tt-link" type="button" @click="retrySelectedDetail">{{ t('messenger.trajectory.retryDetail') }}</button>
+              </div>
+              <template v-else>
               <TrajectoryJsonTree
                 v-if="selectedResult"
                 :data="selectedResult"
@@ -424,11 +437,19 @@
               />
               <pre v-else-if="selectedCell.result" class="tt-payload-pre"><code>{{ selectedCell.result }}</code></pre>
               <div v-else class="tt-no-payload">{{ t('messenger.trajectory.noOutput') }}</div>
+              </template>
             </div>
             <!-- Schema -->
             <div v-else-if="activeTab === schemaTab" class="tt-payload-stack">
+              <div v-if="detailLoading" class="tt-no-payload">{{ t('common.loading') }}</div>
+              <div v-else-if="detailError" class="tt-no-payload">
+                {{ t('messenger.trajectory.detailLoadFailed') }}
+                <button class="tt-link" type="button" @click="retrySelectedDetail">{{ t('messenger.trajectory.retryDetail') }}</button>
+              </div>
+              <template v-else>
               <pre v-if="selectedCell.schemaDetail" class="tt-payload-pre"><code>{{ selectedCell.schemaDetail }}</code></pre>
               <div v-else class="tt-no-payload">{{ t('messenger.trajectory.schemaUnavailable') }}</div>
+              </template>
             </div>
             <!-- 计时 -->
             <div v-else class="tt-detail-body-summary">
@@ -517,12 +538,22 @@ let retryHistoryAt = 0
 const detailRootTurn=ref<string|null>(null)
 const details=shallowRef<Record<string,unknown>>({})
 const detailRefById=new Map<string,any>()
+// Detail payloads are intentionally hydrated only for the selected row.  The
+// trajectory page contains bounded summaries, while args/schema/result live in
+// the immutable per-item body referenced by `row.detail`.
+const detailLoading = ref(false)
+const detailError = ref(false)
+const detailCache = new Map<string, { revision: number; value: unknown }>()
+let detailAbort: AbortController | null = null
+let detailRequestSerial = 0
 const turnRootByRound=new Map<number,string>()
 
 // 大线程日志的快照可能非常庞大（压测会话可达百万级条目），单次全量拉取
 // 会长时间占用主线程并可能触发默认 30s 超时。这里给一个显式上界并在
 // 卸载时中止在途请求，避免视图长时间空转或卸载后回调写入已销毁的状态。
 const TRAJECTORY_REQUEST_TIMEOUT_MS = 3000
+const DETAIL_REQUEST_TIMEOUT_MS = 5000
+const DETAIL_MAX_BYTES = 2 * 1024 * 1024
 let loadAbort: AbortController | null = null
 
 const showDuration = ref(true)
@@ -1130,7 +1161,7 @@ watch(trackEl, (el) => {
   trackResizeObserver.observe(el)
 })
 
-watch(()=>route.query.session,()=>{detailRootTurn.value=null;summaryRows.value=[];rawTurns.value=[];displayPage.value=null;details.value={};searchQuery.value='';searchAbort?.abort();collapsedTurns.value = new Set();collapsedAssistants.value = new Set();void load()})
+watch(()=>route.query.session,()=>{detailAbort?.abort();detailAbort=null;detailLoading.value=false;detailError.value=false;detailCache.clear();detailRequestSerial++;detailRootTurn.value=null;summaryRows.value=[];rawTurns.value=[];displayPage.value=null;details.value={};searchQuery.value='';searchAbort?.abort();collapsedTurns.value = new Set();collapsedAssistants.value = new Set();void load()})
 
 onMounted(() => {
   void load()
@@ -1143,8 +1174,10 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   loadAbort?.abort()
+  detailAbort?.abort()
   searchAbort?.abort();if(searchTimer)clearTimeout(searchTimer)
   loadAbort = null
+  detailAbort = null
   window.removeEventListener('keydown', onKeyDown)
   window.removeEventListener('pointermove', onWindowPointerMove)
   window.removeEventListener('pointerup', onWindowPointerUp)
@@ -1246,8 +1279,103 @@ function selectIndex(index: number, options: { fromLedger?: boolean } = {}): voi
   activeTab.value = defaultTabFor(cell)
   openSections.input = true
   openSections.output = true
+  void hydrateDetail(cell)
   // 台账内点击不需要滚动；时间线与跳转链接的选中要把目标行带到可视区并高亮。
   if (!options.fromLedger) revealRecord(index)
+}
+
+function detailBodyRef(cell: TrajCell | null): { body_id: string; revision: number } | null {
+  if (!cell) return null
+  const value = detailRefById.get(cell.recordId)
+  if (!value || typeof value !== 'object') return null
+  const bodyId = typeof value.body_id === 'string' ? value.body_id : ''
+  const revision = Number(value.revision)
+  if (!bodyId || !Number.isSafeInteger(revision) || revision < 0) return null
+  return { body_id: bodyId, revision }
+}
+
+function boundedDetailCacheSet(key: string, revision: number, value: unknown): void {
+  detailCache.delete(key)
+  detailCache.set(key, { revision, value })
+  // A user can click through thousands of rows in a long trajectory. Keep a
+  // small LRU so detail hydration never becomes another unbounded history
+  // cache.
+  while (detailCache.size > 128) detailCache.delete(detailCache.keys().next().value as string)
+}
+
+async function hydrateDetail(cell: TrajCell | null): Promise<void> {
+  detailAbort?.abort()
+  detailAbort = null
+  detailLoading.value = false
+  detailError.value = false
+  details.value = {}
+  const serial = ++detailRequestSerial
+  if (!cell) return
+  const direct = detailRefById.get(cell.recordId)
+  if (direct && typeof direct === 'object' && !('body_id' in direct) && !('bodyId' in direct)) {
+    details.value = { ...details.value, [cell.recordId]: direct }
+    detailError.value = false
+    return
+  }
+  const body = detailBodyRef(cell)
+  if (!body) return
+  const sessionId = String(route.query.session ?? '').trim()
+  const key = `${sessionId}:${cell.recordId}:${body.revision}`
+  const cached = detailCache.get(key)
+  if (cached && cached.revision === body.revision) {
+    details.value = { ...details.value, [cell.recordId]: cached.value }
+    detailError.value = false
+    return
+  }
+
+  const controller = new AbortController()
+  detailAbort = controller
+  detailLoading.value = true
+  try {
+    const chunks: string[] = []
+    let cursor = 0
+    let totalBytes = 0
+    for (;;) {
+      const response = await getThreadViewBody(
+        sessionId,
+        body.body_id,
+        { revision: body.revision, cursor },
+        { signal: controller.signal, timeout: DETAIL_REQUEST_TIMEOUT_MS },
+      )
+      if (controller.signal.aborted || detailAbort !== controller || serial !== detailRequestSerial) return
+      const page = response.data.data
+      const pageChunks = Array.isArray(page?.chunks) ? page.chunks : []
+      for (const chunk of pageChunks) {
+        if (typeof chunk !== 'string') continue
+        totalBytes += chunk.length
+        if (totalBytes > DETAIL_MAX_BYTES) throw new Error('detail body too large')
+        chunks.push(chunk)
+      }
+      if (!page?.has_more) break
+      const next = Number(page?.next_cursor)
+      if (!Number.isSafeInteger(next) || next <= cursor) throw new Error('invalid detail cursor')
+      cursor = next
+    }
+    const text = chunks.join('')
+    let value: unknown
+    try { value = JSON.parse(text) } catch { throw new Error('invalid detail payload') }
+    if (controller.signal.aborted || detailAbort !== controller || serial !== detailRequestSerial) return
+    boundedDetailCacheSet(key, body.revision, value)
+    details.value = { ...details.value, [cell.recordId]: value }
+  } catch {
+    if (!controller.signal.aborted && detailAbort === controller && serial === detailRequestSerial) {
+      detailError.value = true
+    }
+  } finally {
+    if (detailAbort === controller) {
+      detailAbort = null
+      detailLoading.value = false
+    }
+  }
+}
+
+function retrySelectedDetail(): void {
+  void hydrateDetail(selectedIndex.value === null ? null : findCell(selectedIndex.value))
 }
 
 /** 把选中的记录滚动到台账可视区中部（对齐参考实现的滚动定位）。 */
@@ -1305,8 +1433,11 @@ const selectedCell = computed<TrajCell | null>(() => {
   if(!base)return null
   const detail=details.value[base.recordId] as any
   if(!detail)return base
-  const stringify=(v:unknown)=>typeof v==='string'?v:v===undefined?'':JSON.stringify(v,null,2)
-  const usage = extractUsage(detail) ?? base.usage
+  const payload = detail && typeof detail === 'object' && detail.payload && typeof detail.payload === 'object'
+    ? { ...(detail as Record<string, unknown>), ...(detail.payload as Record<string, unknown>) }
+    : detail
+  const source = payload as any
+  const usage = extractUsage(source) ?? base.usage
   const metrics = usage || base.metrics
     ? {
         ...(base.metrics ?? {
@@ -1321,13 +1452,19 @@ const selectedCell = computed<TrajCell | null>(() => {
         outputTokens: usage?.output ?? base.metrics?.outputTokens ?? null,
       }
     : base.metrics
+  const args = source?.args ?? source?.arguments
+  const content = source?.content ?? source?.message
+  const resultValue = source?.result ?? source?.data ?? source?.output ?? source?.raw
+  const schema = source?.schema ?? source?.tool_schema ?? source?.input_schema ?? source?.inputSchema
+  const stringify=(v:unknown)=>typeof v==='string'?v:v===undefined||v===null?'':JSON.stringify(v,null,2)
   return {
     ...base,
-    inputDetail:stringify(detail.args??detail.content??detail.raw),
-    outputDetail:stringify(detail.content??detail.raw),
-    thinkingDetail:stringify(detail.reasoning??detail.reasoning_content),
-    result:stringify(detail.result??detail.data??detail.raw),
-    schemaDetail:stringify(detail.schema),
+    inputDetail:stringify(args ?? base.inputDetail ?? content),
+    outputDetail:stringify(content ?? base.outputDetail),
+    thinkingDetail:stringify(source?.reasoning ?? source?.reasoning_content ?? base.thinkingDetail),
+    result:stringify(resultValue ?? base.result),
+    schemaDetail:stringify(schema ?? base.schemaDetail),
+    toolName: typeof source?.tool === 'string' ? source.tool : (typeof source?.name === 'string' ? source.name : base.toolName),
     usage,
     metrics,
   }
@@ -1829,6 +1966,7 @@ function clearSelection(): void {
   selection.value = null
   selectedIndex.value = null
   activeTab.value = ''
+  void hydrateDetail(null)
 }
 
 function spanClasses(span: { model: TimelineSpan; dimmed: boolean; outside: boolean }): Record<string, boolean> {

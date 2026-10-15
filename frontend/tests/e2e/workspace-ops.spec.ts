@@ -24,7 +24,7 @@ import { test, expect, type APIRequestContext, type Locator, type Page } from '@
  * - 预览弹层：`.workspace-dialog.workspace-dialog--file-preview`（append-to-body，挂在 body 下），
  *   正文渲染在 CodeMirror 的 `.cm-content`；关闭按钮 `.messenger-dialog-close`；
  *   仅当 `editable`（文本类）时头部才有「保存」按钮（`.workspace-btn--primary`）。
- * - 引用到聊天 → `ChatComposer` 把它变成 `.workspace-quote-item` chip（名称 + `@相对路径`）。
+ * - 引用到聊天 → `ChatComposer` 在输入框插入可编辑的相对路径。
  * - 用量读数 `.workspace-files-usage`：「已用 {size} · {N} 个文件」，N 是**递归**统计（服务端 walkdir）。
  * - 走查用 `registerAndSeed` 先用 API 铺好「根文件 + 一个含文件的子目录」：新用户根目录里有没有
  *   服务端预置内容取决于智能体内视层的落地时机，不能当前提（基线文件数仍从用量读数实时取）。
@@ -637,13 +637,11 @@ test('云端工作目录：§6.2 文件操作清单逐项真机走查', async ({
   );
   await closePreview(page);
 
-  // 引用到聊天：行菜单 → 输入区出现引用 chip。
+  // 引用到聊天：行菜单 → 相对路径直接进入输入框。
   await runRowCommand(page, editFile, '引用到聊天');
   await expect(toast(page, '已引用到聊天输入区'), '引用成功应有提示').toBeVisible({ timeout: 10_000 });
-  const quoteChip = page.locator('.workspace-quote-item');
-  await expect(quoteChip, '聊天输入区应出现引用 chip').toHaveCount(1, { timeout: 20_000 });
-  await expect(quoteChip).toContainText(editFile);
-  await expect(quoteChip.locator('.upload-preview-meta')).toContainText(`@${editFile}`);
+  await expect(page.getByTestId('chat-composer-input')).toHaveValue(editFile);
+  await expect(page.locator('.workspace-quote-item')).toHaveCount(0);
 
   // ============================================================ §6.2-11 清空工作目录（放最后，它会清空整根）
   await runBlankCommand(page, '清空工作目录');
@@ -744,4 +742,3 @@ test('回归门：无需手动刷新即可渲染文件树与首次展开的目�
     timeout: 20_000
   });
 });
-

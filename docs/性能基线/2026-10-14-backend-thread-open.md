@@ -49,4 +49,4 @@ npm run test:agent-runtime-state --workspace frontend
 
 这是大历史读取回归和小规模并发验收，不是多租户容量认证。元数据仍使用普通数据库通道；高并发排队、冷缓存、分区长期增长以及不同单轮数据分布仍需容量测试。数据增长不再让本次聊天页读取全部历史，但不能据此承诺任意用户量下无延迟。
 
-全量 Vue 类型检查仍被已有 `__mci_check.ts` 临时文件错误阻塞；旧 `test:chat-consistency` 中六项仍使用此前详情/events/workflow mock 协议，与当前展示 bootstrap 不一致，尚未迁移。新行为回归和生产页面验收不替代这些全量检查。
+记录时，全量 Vue 类型检查被临时检查副本中的错误阻塞；该副本及其专用配置现已移除，类型检查已恢复通过。旧 `test:chat-consistency` 中六项仍使用此前详情/events/workflow mock 协议，与当前展示 bootstrap 不一致，尚未迁移。新行为回归和生产页面验收不替代这些全量检查。

@@ -506,6 +506,46 @@ impl SessionLockStore for SqliteStorage {
     }
 }
 
+impl ThreadOpenLeaseStore for SqliteStorage {
+    fn try_acquire_thread_open_lease(
+        &self,
+        session_id: &str,
+        user_id: &str,
+        owner_instance_id: &str,
+        client_kind: &str,
+        ttl_s: f64,
+    ) -> Result<ThreadOpenLeaseStatus> {
+        self.try_acquire_thread_open_lease_impl(
+            session_id,
+            user_id,
+            owner_instance_id,
+            client_kind,
+            ttl_s,
+        )
+    }
+
+    fn touch_thread_open_lease(
+        &self,
+        session_id: &str,
+        owner_instance_id: &str,
+        ttl_s: f64,
+    ) -> Result<bool> {
+        self.touch_thread_open_lease_impl(session_id, owner_instance_id, ttl_s)
+    }
+
+    fn release_thread_open_lease(&self, session_id: &str, owner_instance_id: &str) -> Result<bool> {
+        self.release_thread_open_lease_impl(session_id, owner_instance_id)
+    }
+
+    fn get_thread_open_lease(
+        &self,
+        session_id: &str,
+        user_id: &str,
+    ) -> Result<Option<ThreadOpenLeaseRecord>> {
+        self.get_thread_open_lease_impl(session_id, user_id)
+    }
+}
+
 impl AgentRuntimeStore for SqliteStorage {
     fn insert_agent_message_task(
         &self,

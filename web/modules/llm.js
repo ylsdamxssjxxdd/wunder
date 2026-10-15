@@ -1,3 +1,4 @@
+// AI生成
 import { elements } from "./elements.js?v=20261011-01";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
@@ -857,6 +858,9 @@ const applyLlmConfigToForm = (name, config) => {
     return;
   }
   const llm = normalizeLlmConfig(config || {});
+  if (elements.llmEnableToggle) {
+    elements.llmEnableToggle.checked = llm.enable !== false;
+  }
   renderSimulationConfig(llm.simulation_speed, llm.simulation);
   if (elements.llmConfigName) {
     elements.llmConfigName.value = getDisplayName(name);
@@ -975,6 +979,10 @@ const updateDetailHeader = () => {
       elements.llmSetDefaultBtn.disabled = true;
       elements.llmSetDefaultBtn.classList.remove("llm-default-btn");
     }
+    if (elements.llmEnableToggle) {
+      elements.llmEnableToggle.disabled = true;
+      elements.llmEnableToggle.checked = false;
+    }
     if (elements.llmDeleteBtn) {
       elements.llmDeleteBtn.disabled = true;
     }
@@ -1020,6 +1028,10 @@ const updateDetailHeader = () => {
       (modelType === "video" && activeName === state.llm.defaultVideoName);
     elements.llmSetDefaultBtn.disabled = isDefault;
     elements.llmSetDefaultBtn.classList.toggle("llm-default-btn", isDefault);
+  }
+  if (elements.llmEnableToggle) {
+    elements.llmEnableToggle.disabled = false;
+    elements.llmEnableToggle.checked = config.enable !== false;
   }
   if (elements.llmDeleteBtn) {
     elements.llmDeleteBtn.disabled = state.llm.order.length <= 1;
@@ -1080,6 +1092,12 @@ const renderLlmList = () => {
       badge.innerHTML = `<i class="fa-solid fa-star"></i>${t("llm.defaultBadge")}`;
       title.appendChild(badge);
     }
+    if (config?.enable === false) {
+      const disabledTag = document.createElement("span");
+      disabledTag.className = "llm-disabled-tag";
+      disabledTag.textContent = t("llm.disabled");
+      title.appendChild(disabledTag);
+    }
 
     const meta = document.createElement("small");
     const metaParts = [];
@@ -1123,7 +1141,7 @@ const buildLlmConfigFromForm = (baseConfig) => {
     elements.llmReasoningEffort?.value || base.reasoning_effort
   );
   const commonConfig = {
-    enable: base.enable,
+    enable: elements.llmEnableToggle ? elements.llmEnableToggle.checked : base.enable,
     model_type: modelType,
     provider,
     base_url: baseUrl,
@@ -2040,6 +2058,16 @@ const handleSetDefault = () => {
   notify(t("llm.setDefault", { name: activeName }), "info");
 };
 
+const handleEnableToggle = () => {
+  const activeName = state.llm.activeName;
+  if (!activeName || !state.llm.configs[activeName]) {
+    return;
+  }
+  state.llm.configs[activeName].enable = elements.llmEnableToggle?.checked === true;
+  renderLlmList();
+  updateDetailHeader();
+};
+
 const handleNameEdit = () => {
   const activeName = state.llm.activeName;
   if (!activeName) {
@@ -2150,6 +2178,7 @@ export const initLlmPanel = () => {
   elements.llmAddBtn?.addEventListener("click", handleAddConfig);
   elements.llmDeleteBtn?.addEventListener("click", handleDeleteConfig);
   elements.llmSetDefaultBtn?.addEventListener("click", handleSetDefault);
+  elements.llmEnableToggle?.addEventListener("change", handleEnableToggle);
   elements.llmConfigName?.addEventListener("input", handleNameEdit);
   elements.llmModelType?.addEventListener("change", () => {
     handleModelTypeChange();

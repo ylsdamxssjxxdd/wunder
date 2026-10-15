@@ -5,7 +5,7 @@ import { test, expect } from '@playwright/test';
  *
  * 用例断言的是**计算后的几何/可见性/事件回传**，不看 class 是否存在：
  * 悬浮卡片几何（§8.1）、控件（§8.2）、模型切换浮层链路（§8.3）、
- * 审批模式三档（§8.4）、状态栏（§8.5）、引用 chip 与发送注入（§八交接点）。
+ * 审批模式三档（§8.4）、状态栏（§8.5）、相对路径插入与发送（§八交接点）。
  */
 test('B4 输入区：悬浮卡片 + 模型浮层 + 审批模式 + 引用注入 + 状态栏', async ({ page, request }) => {
   const pageErrors: string[] = [];
@@ -245,16 +245,15 @@ test('B4 输入区：悬浮卡片 + 模型浮层 + 审批模式 + 引用注入 +
   await expect(textarea).toHaveValue(/总结当前线程/);
   await expect(page.locator('.composer-panel--plus')).toHaveCount(0);
 
-  // 引用 chip（B2 通道）可移除 + 发送时以明确形式注入
-  await page.locator('[data-testid="composer-b4-queue-reference"]').click();
-  const referenceChip = page.locator('.workspace-quote-item').first();
-  await expect(referenceChip).toContainText('harness-notes.md');
+  // B2 引用路径直接插入草稿，发送内容与输入框一致。
   await textarea.fill('看看这个文件');
-  await sendButton.click();
-  await expect(page.locator('[data-testid="composer-b4-log"]')).toContainText('@docs/harness-notes.md');
-  await expect(page.locator('[data-testid="composer-b4-log"]')).toContainText('send:');
-  // 发送后引用 chip 清空
+  await page.locator('[data-testid="composer-b4-queue-reference"]').click();
+  await expect(textarea).toHaveValue('看看这个文件\ndocs/harness-notes.md');
   await expect(page.locator('.workspace-quote-item')).toHaveCount(0);
+  await sendButton.click();
+  await expect(page.locator('[data-testid="composer-b4-log"]')).toContainText('docs/harness-notes.md');
+  await expect(page.locator('[data-testid="composer-b4-log"]')).toContainText('send:');
+  await expect(textarea).toHaveValue('');
 
   // 执行中发送按钮变「停止」
   await page.locator('[data-testid="composer-b4-loading-toggle"]').click();

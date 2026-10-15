@@ -536,6 +536,44 @@ pub trait SessionLockStore {
     fn list_session_locks_by_user(&self, user_id: &str) -> Result<Vec<SessionLockRecord>>;
 }
 
+/// Cross-process ownership for a locally opened thread. This is separate from
+/// `session_locks`, which protects a running model turn.
+pub trait ThreadOpenLeaseStore {
+    fn try_acquire_thread_open_lease(
+        &self,
+        session_id: &str,
+        user_id: &str,
+        owner_instance_id: &str,
+        client_kind: &str,
+        ttl_s: f64,
+    ) -> Result<ThreadOpenLeaseStatus> {
+        let _ = (self, session_id, user_id, owner_instance_id, client_kind, ttl_s);
+        Ok(ThreadOpenLeaseStatus::Busy)
+    }
+    fn touch_thread_open_lease(
+        &self,
+        session_id: &str,
+        owner_instance_id: &str,
+        ttl_s: f64,
+    ) -> Result<bool> {
+        let _ = (self, session_id, owner_instance_id, ttl_s);
+        Ok(false)
+    }
+    fn release_thread_open_lease(&self, session_id: &str, owner_instance_id: &str)
+        -> Result<bool> {
+        let _ = (self, session_id, owner_instance_id);
+        Ok(false)
+    }
+    fn get_thread_open_lease(
+        &self,
+        session_id: &str,
+        user_id: &str,
+    ) -> Result<Option<ThreadOpenLeaseRecord>> {
+        let _ = (self, session_id, user_id);
+        Ok(None)
+    }
+}
+
 /// Agent thread, task queue, and stream event storage.
 pub trait AgentRuntimeStore {
     fn claim_agent_task(&self, task_id: &str, now: f64) -> Result<bool>;
@@ -1582,6 +1620,7 @@ pub trait StorageBackend:
     + LogStatsStore
     + MonitorStore
     + SessionLockStore
+    + ThreadOpenLeaseStore
     + AgentRuntimeStore
     + VectorDocumentStore
     + MemoryRecordStore
@@ -1619,6 +1658,7 @@ impl<T> StorageBackend for T where
         + LogStatsStore
         + MonitorStore
         + SessionLockStore
+        + ThreadOpenLeaseStore
         + AgentRuntimeStore
         + VectorDocumentStore
         + MemoryRecordStore

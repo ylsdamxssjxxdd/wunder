@@ -5861,6 +5861,7 @@ function installMessengerControllerWorkspaceResourceHydration(ctx: MessengerCont
   };
 
   ctx.shouldHandleWorkspaceResourceRefresh = (detail: Record<string, unknown>) => {
+      if (detail.scope === 'directory') return false;
       const eventAgentId = ctx.normalizeAgentId(detail.agentId ?? detail.agent_id);
       const eventContainerId = ctx.parseWorkspaceRefreshContainerId(detail.containerId ?? detail.container_id);
       if (ctx.isWorldConversationActive.value) {

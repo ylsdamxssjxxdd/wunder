@@ -202,6 +202,9 @@ const normalizeUserStats = (item) => {
     agent_id: binding.agent_id,
     customized_fields: binding.customized_fields,
     binding_available: binding.available,
+    level: Number(item?.level) || 0,
+    quota_used_total: Number(item?.quota_used_total) || 0,
+    quota_balance: Number(item?.quota_balance) || 0,
   };
 };
 
@@ -330,37 +333,11 @@ const renderUserStats = () => {
     const userCell = document.createElement("td");
     userCell.textContent = isAll ? t("users.all") : user.user_id || "-";
 
-    const presetCell = document.createElement("td");
-    presetCell.textContent = isAll ? "-" : user.preset_id || "-";
-    if (!isAll) {
-      presetCell.title = hasBindingData
-        ? user.preset_id || ""
-        : notReadyHint;
-    }
+    const levelCell = document.createElement("td");
+    levelCell.textContent = isAll ? "-" : `${user.level}`;
 
-    const agentCell = document.createElement("td");
-    if (isAll) {
-      agentCell.textContent = `${user.agent_count}`;
-    } else {
-      agentCell.textContent = user.agent_id || `${user.agent_count}`;
-      agentCell.title = hasBindingData
-        ? user.agent_id || ""
-        : notReadyHint;
-    }
-
-    const customizedCell = document.createElement("td");
-    if (isAll) {
-      customizedCell.textContent = "-";
-    } else if (user.customized_fields.length) {
-      customizedCell.textContent = user.customized_fields.map(customizableFieldLabel).join(" / ");
-    } else {
-      customizedCell.textContent = hasBindingData
-        ? t("userAccounts.bindings.customizedNone")
-        : "-";
-      if (!hasBindingData) {
-        customizedCell.title = notReadyHint;
-      }
-    }
+    const quotaCell = document.createElement("td");
+    quotaCell.textContent = isAll ? "-" : `${user.quota_used_total}`;
 
     const totalCell = document.createElement("td");
     totalCell.textContent = `${user.total_sessions}`;
@@ -395,9 +372,8 @@ const renderUserStats = () => {
     }
 
     row.appendChild(userCell);
-    row.appendChild(presetCell);
-    row.appendChild(agentCell);
-    row.appendChild(customizedCell);
+    row.appendChild(levelCell);
+    row.appendChild(quotaCell);
     row.appendChild(totalCell);
     row.appendChild(activeCell);
     row.appendChild(tokenCell);

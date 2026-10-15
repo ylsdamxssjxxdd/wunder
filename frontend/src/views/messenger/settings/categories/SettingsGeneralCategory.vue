@@ -35,8 +35,8 @@
 
     <section class="messenger-settings-card">
       <div class="messenger-settings-group-head">
-        <div class="messenger-settings-title">{{ t('messenger.settingsPage.general.stressGroup') }}</div>
-        <div class="messenger-settings-subtitle">{{ t('messenger.settingsPage.general.stressHint') }}</div>
+        <div class="messenger-settings-title">{{ t('messenger.settingsPage.general.testGroup') }}</div>
+        <div class="messenger-settings-subtitle">{{ t('messenger.settingsPage.general.testHint') }}</div>
       </div>
       <div class="messenger-settings-row messenger-settings-stress-row">
         <div class="messenger-settings-label">
@@ -88,6 +88,7 @@
           </button>
         </div>
       </div>
+      <MessengerTestTools />
     </section>
 
     <section class="messenger-settings-card">
@@ -122,6 +123,7 @@ import { onBeforeUnmount, onMounted, ref } from 'vue';
 import { ElMessage } from 'element-plus';
 
 import type { MessengerControllerContext } from '@/views/messenger/controller/messengerControllerContext';
+import MessengerTestTools from '@/components/messenger/MessengerTestTools.vue';
 import { useI18n } from '@/i18n';
 import { resolveApiBase } from '@/config/runtime';
 import {

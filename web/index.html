@@ -392,9 +392,8 @@
                     <table class="monitor-table user-table">
                       <colgroup>
                         <col class="col-user-id" />
-                        <col class="col-user-preset" />
-                        <col class="col-agent" />
-                        <col class="col-user-customized" />
+                        <col class="col-user-level" />
+                        <col class="col-user-quota" />
                         <col class="col-total" />
                         <col class="col-active" />
                         <col class="col-context" />
@@ -403,9 +402,8 @@
                       <thead>
                         <tr>
                           <th data-i18n="users.table.user">用户</th>
-                          <th data-i18n="users.table.preset">绑定预设</th>
-                          <th data-i18n="users.table.agents">智能体</th>
-                          <th data-i18n="users.table.customized">自定义状态</th>
+                          <th data-i18n="users.table.level">等级</th>
+                          <th data-i18n="users.table.quota">额度消耗</th>
                           <th data-i18n="users.table.totalThreads">总线程数</th>
                           <th data-i18n="users.table.active">活动线程数</th>
                           <th data-i18n="users.table.context">上下文</th>
@@ -2969,6 +2967,10 @@
                   <div id="llmDetailMeta" class="muted"></div>
                 </div>
                 <div class="detail-actions">
+                  <label class="llm-enable-toggle" for="llmEnableToggle">
+                    <input type="checkbox" id="llmEnableToggle" />
+                    <span data-i18n="llm.action.enable">启用</span>
+                  </label>
                   <button id="llmSetDefaultBtn" class="secondary btn-with-icon" type="button">
                     <i class="fa-solid fa-star"></i><span data-i18n="llm.action.setDefault">设为默认</span>
                   </button>

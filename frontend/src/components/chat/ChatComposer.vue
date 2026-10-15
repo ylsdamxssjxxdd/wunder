@@ -108,40 +108,6 @@
       </div>
     </div>
 
-    <div v-if="references.length" class="upload-preview workspace-quote-preview">
-      <div class="upload-preview-list">
-        <div
-          v-for="reference in references"
-          :key="reference.id"
-          class="upload-preview-item workspace-quote-item"
-        >
-          <div class="upload-preview-main">
-            <i
-              :class="[
-                'fa-solid',
-                reference.isDir ? 'fa-folder' : 'fa-file-lines',
-                'upload-preview-icon'
-              ]"
-              aria-hidden="true"
-            ></i>
-            <div class="upload-preview-copy">
-              <span class="upload-preview-name" :title="reference.path">{{ reference.name }}</span>
-              <span class="upload-preview-meta">@{{ reference.path }}</span>
-            </div>
-          </div>
-          <button
-            class="upload-preview-remove"
-            type="button"
-            :title="t('chat.composer.referenceRemove')"
-            :aria-label="t('chat.composer.referenceRemove')"
-            @click.stop="removeReference(reference.id)"
-          >
-            <i class="fa-solid fa-xmark upload-preview-remove-icon" aria-hidden="true"></i>
-          </button>
-        </div>
-      </div>
-    </div>
-
     <!-- 排队条：当前轮还在跑时发出的消息先停在引擎队列里，可插话 / 编辑 / 删除 / 拖动排序。 -->
     <ComposerQueueStrip
       :session-id="activeQueueSessionId"
@@ -403,14 +369,6 @@ import {
   ensureComposerModelCatalog,
   type ComposerModelOption
 } from '@/components/chat/composerModelCatalog';
-import {
-  COMPOSER_REFERENCE_MAX,
-  buildComposerSendContent,
-  mergeComposerReferences,
-  normalizeComposerReferences,
-  removeComposerReference,
-  type ComposerReference
-} from '@/components/chat/composerReferences';
 import { useI18n } from '@/i18n';
 import ComposerQueueStrip from '@/components/chat/ComposerQueueStrip.vue';
 import { scheduleChatQueueRefresh } from '@/stores/chatQueueState';
@@ -2376,10 +2334,7 @@ const selectReasoningEffort = async (value: ReasoningEffort) => {
   }
 };
 
-// ------------------------------------------- attachment pipeline (no UI entry)
-// 附件（图片/视频/文档 → 媒体处理器/转换器 → 发送 payload 的 attachments）随
-// 「+ 更多 / 回形针」入口一并下线：云端语义下文件走左栏工作目录区（上传 + 引用到聊天）。
-// 这里保留整条管线与 chip 渲染，等待主智能体决定是重新挂载入口还是整体移除。
+// ---------------------------------------------------------- preset questions
 const applyPresetQuestion = (question: string) => {
   closeComposerPanels();
   const preset = String(question || '');
@@ -2415,12 +2370,7 @@ const handleSend = async () => {
     ElMessage.warning(chatBusyMessage.value);
     return;
   }
-  // References travel as a trailing `@<relative path>` block in the user turn.
-  const content = buildComposerSendContent(
-    inputText.value,
-    references.value,
-    t('chat.composer.referenceBlockTitle')
-  );
+  const content = String(inputText.value || '').trim();
   const payloadAttachments = buildAttachmentPayload();
   if (!content && payloadAttachments.length === 0 && !hasInquirySelection.value) return;
   chatDebugLog('messenger.send', 'composer-send-emit', {
@@ -2428,7 +2378,6 @@ const handleSend = async () => {
     messageCount: Array.isArray(props.contextMessages) ? props.contextMessages.length : 0,
     contentLength: content.length,
     attachmentCount: payloadAttachments.length,
-    referenceCount: references.value.length,
     approvalMode: approvalModeValue.value,
     hasInquirySelection: hasInquirySelection.value
   });
@@ -2436,8 +2385,7 @@ const handleSend = async () => {
     content,
     attachments: payloadAttachments,
     reasoningEffort: reasoningEffort.value,
-    approvalMode: approvalModeValue.value,
-    referenceCount: references.value.length
+    approvalMode: approvalModeValue.value
   });
   inputText.value = '';
   commandMenuDismissed.value = false;
@@ -2445,7 +2393,6 @@ const handleSend = async () => {
   resetHistoryRecall();
   resetInputHeight();
   clearAttachments();
-  references.value = [];
   flushPersistDraftState();
   focusComposerInputAtEnd();
   // 排队补水：这一轮若被挂进队列，排队条要立刻跟上（防抖内合并多次发送）。
@@ -2583,29 +2530,15 @@ watch(
 );
 
 // ------------------------------------------------- workspace references (B2 -> B4)
-// Formal reference model: the file area pushes bounded items into a module-level
-// queue; this single shallow watch drains them into removable chips. The `@path`
-// block is appended to the outgoing message text on send and cleared afterwards.
-const references = ref<ComposerReference[]>([]);
-
-const removeReference = (id: string) => {
-  references.value = removeComposerReference(references.value, String(id || ''));
-};
-
+// Workspace references are ordinary editable text, shared with draft persistence
+// and the normal send path. Append without replacing the user's existing draft.
 const applyWorkspaceQuoteReferences = () => {
   const incoming = takeWorkspaceChatReferences();
   if (!incoming.length) return;
-  const result = mergeComposerReferences(references.value, incoming);
-  references.value = result.items;
-  if (result.added > 0) {
-    ElMessage.success(t('chat.workspaceQuote.added', { count: result.added }));
-  }
-  if (result.items.length >= COMPOSER_REFERENCE_MAX) {
-    ElMessage.info(t('chat.composer.referenceLimit', { count: COMPOSER_REFERENCE_MAX }));
-  }
+  appendTextToComposer(incoming.map(item => item.path).join('\n'));
 };
 
-watch(() => pendingWorkspaceChatReferences.value.length, applyWorkspaceQuoteReferences);
+watch(pendingWorkspaceChatReferences, applyWorkspaceQuoteReferences, { immediate: true });
 
 watch(
   () => inputText.value,

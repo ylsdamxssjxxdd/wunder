@@ -5,6 +5,7 @@ import { ensureRuntime, applyCanonicalStreamSideEffects, getSessionMessages } fr
 import { settleTerminalAssistantArtifacts } from './chatTerminalArtifacts';
 import { emitAgentRuntimeRefresh, type AgentRuntimeCompletion } from '@/utils/workspaceEvents';
 import {threadViewSlots,threadViewStatus} from '@/realtime/chat/threadViewStore';
+import { refreshWorkspaceForThreadStatus, shouldRefreshWorkspaceForThreadStatus } from './chatWorkspaceEffects';
 
 // Completion is a durable state transition, but the feeder may publish it as
 // both turn_upsert and turn_status (and a reconnect can replay either shape).
@@ -12,10 +13,22 @@ import {threadViewSlots,threadViewStatus} from '@/realtime/chat/threadViewStore'
 // the guard disappear when a session runtime is reset, so a later execution
 // with the same identifiers is not accidentally suppressed.
 const completedTurnClaims = new WeakMap<object, Set<string>>();
+const workspaceTurnStatuses = new WeakMap<object, Map<string, string>>();
 
 const viewCompletions=new Map<string,Set<string>>();
 export const applyThreadViewEffects=(store,key:string,prior:Map<string,string>)=>{
-  syncChatThreadShell(store,key);const agentId=store.sessions?.find(s=>s.id===key)?.agent_id;
+  const previousStatus = ensureRuntime(key).threadStatus;
+  const status = syncChatThreadShell(store,key, { refreshWorkspace: false });
+  const agentId=store.sessions?.find(s=>s.id===key)?.agent_id;
+  const workspaceStatus = (threadViewSlots(key) ?? []).find(slot =>
+    shouldRefreshWorkspaceForThreadStatus(
+      prior.get(slot.rootTurnId) ?? prior.get(`pending:${slot.assistant.client_message_id}`),
+      slot.assistant.status
+    )
+  )?.assistant.status;
+  if (workspaceStatus || shouldRefreshWorkspaceForThreadStatus(previousStatus, status)) {
+    refreshWorkspaceForThreadStatus(store, key, workspaceStatus || status);
+  }
   const claims=viewCompletions.get(key)??new Set<string>();viewCompletions.delete(key);viewCompletions.set(key,claims);
   while(viewCompletions.size>32)viewCompletions.delete(viewCompletions.keys().next().value!);
   const completedTurns:AgentRuntimeCompletion[]=[];
@@ -30,7 +43,14 @@ export const applyThreadViewEffects=(store,key:string,prior:Map<string,string>)=
 const terminal = (status: unknown) => ['completed', 'failed', 'cancelled', 'interrupted', 'rejected', 'stopped'].includes(String(status));
 
 /** Bridge committed state to shell controls. Never feed timeline data into another reducer. */
-export const syncChatThreadShell = (store, key: string): string | null => {
+export const syncChatThreadShell = (store, key: string, options: { refreshWorkspace?: boolean } = {}): string | null => {
+  const previousStatus = ensureRuntime(key).threadStatus;
+  const refreshWorkspace = (status: string) => {
+    if (options.refreshWorkspace !== false && previousStatus !== 'not_loaded' &&
+        shouldRefreshWorkspaceForThreadStatus(previousStatus, status)) {
+      refreshWorkspaceForThreadStatus(store, key, status);
+    }
+  };
   const slots=threadViewSlots(key);
   if(slots) {
     const active=slots.find(s=>!terminal(s.assistant.status));
@@ -39,6 +59,7 @@ export const syncChatThreadShell = (store, key: string): string | null => {
     const runtime=ensureRuntime(key);runtime.threadStatus=status;runtime.loaded=true;runtime.activeTurnId=active?.rootTurnId??'';
     const session=store.sessions?.find(s=>s.id===key);if(session){session.runtime_status=status;session.runtimeStatus=status;}
     if(['running','queued','waiting_input','waiting_approval'].includes(status))store.loadingBySession[key]=true;else delete store.loadingBySession[key];
+    refreshWorkspace(status);
     return status;
   }
   const state = getChatThreadState(key);
@@ -77,12 +98,29 @@ export const syncChatThreadShell = (store, key: string): string | null => {
     settleTerminalAssistantArtifacts(messages, { failed: status === 'failed', cancelled: status === 'cancelled' });
   }
   markRuntimeProjectionChanged(store, { sessionId: key, reason: 'thread_shell', immediate: true });
+  refreshWorkspace(status);
   return status;
 };
 
 export const applyChatThreadEffects = (store, key: string, changes: ThreadChangeFrame[]): void => {
   // The reducer invokes this only for accepted changes, including drained gap frames.
   // Replayed seq/revisions therefore cannot repeat side effects.
+  const state = getChatThreadState(key);
+  if (state) {
+    const statuses = workspaceTurnStatuses.get(state) ?? new Map<string, string>();
+    workspaceTurnStatuses.set(state, statuses);
+    let refreshStatus = '';
+    for (const change of changes) {
+      if (!['turn_upsert', 'turn_status'].includes(change.change_type)) continue;
+      const turnId = String(change.data.turn_id ?? change.turn_id ?? '');
+      const status = String(change.data.status ?? '');
+      if (!turnId || !status) continue;
+      if (shouldRefreshWorkspaceForThreadStatus(statuses.get(turnId), status)) refreshStatus = status;
+      statuses.set(turnId, status);
+      if (statuses.size > 2048) statuses.delete(statuses.keys().next().value!);
+    }
+    if (refreshStatus) refreshWorkspaceForThreadStatus(store, key, refreshStatus);
+  }
   for (const change of changes) {
     if (change.change_type !== 'item_upsert') continue;
     const data = change.data;
@@ -90,7 +128,7 @@ export const applyChatThreadEffects = (store, key: string, changes: ThreadChange
     applyCanonicalStreamSideEffects(store, key, eventType, { session_id: key, data });
   }
   if (changes.some((change) => change.change_type === 'turn_upsert' || change.change_type === 'turn_status' || ['terminal', 'user_message'].includes(String(change.data.kind)))) {
-    syncChatThreadShell(store, key);
+    syncChatThreadShell(store, key, { refreshWorkspace: false });
     if (changes.some((change) => change.change_type === 'turn_status' || (change.change_type === 'turn_upsert' && terminal(change.data.status)) || change.data.kind === 'terminal')) {
       const agentId = store.sessions?.find((session) => session.id === key)?.agent_id;
       // Only a durable normal completion can acknowledge a finished task.

@@ -2132,7 +2132,16 @@ fn default_agent_payload(
 fn resolve_default_model_name(config: &crate::config::Config) -> Option<String> {
     let default_key = config.llm.default.trim();
     if !default_key.is_empty() {
-        return Some(default_key.to_string());
+        // 默认模型被显式停用时不再对外返回，避免客户端选中一个不可见模型。
+        let still_enabled = config
+            .llm
+            .models
+            .get(default_key)
+            .map(|cfg| is_llm_model(cfg) && cfg.enable != Some(false))
+            .unwrap_or(true);
+        if still_enabled {
+            return Some(default_key.to_string());
+        }
     }
     resolve_available_model_names(config).into_iter().next()
 }
@@ -2141,6 +2150,10 @@ fn resolve_available_model_names(config: &crate::config::Config) -> Vec<String> 
     let mut names = Vec::new();
     for (key, cfg) in config.llm.models.iter() {
         if !is_llm_model(cfg) {
+            continue;
+        }
+        // 仅返回已启用的模型：舰桥中未勾选“启用”的模型对蜂巢不可见。
+        if cfg.enable == Some(false) {
             continue;
         }
         let trimmed = key.trim();

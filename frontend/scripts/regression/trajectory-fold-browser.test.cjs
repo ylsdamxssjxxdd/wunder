@@ -46,7 +46,7 @@ window.mountTrajectory = (kind) => {
         build.onLoad({ filter: /.*/, namespace: 'stub' }, args => ({ contents:
           args.path === 'vue-router' ? `export const useRoute = () => ({query:{session:'fixture'}}); export const useRouter = () => ({back(){}});` :
           args.path === '@/i18n' ? `import messages from '${path.join(root, 'frontend/src/i18n/messages/zh-CN.ts').replaceAll('\\', '/')}'; export const useI18n=()=>({t:(k,p={})=>String(messages[k]||k).replace(/\\{(\\w+)\\}/g,(_,n)=>p[n]??'')});` :
-          args.path === '@/api/chat' ? `const page=()=>{ window.fixtureRequests=(window.fixtureRequests||0)+1; return Promise.resolve({data:{data:{page:window.fixturePage}}}); }; export const getThreadViewBootstrap=page, getThreadViewTrajectoryPage=page; export const searchThreadView=()=>Promise.resolve({data:{data:{hits:[],has_more:false}}}); export const getThreadViewBody=()=>Promise.resolve({data:{data:{chunks:[]}}});` :
+          args.path === '@/api/chat' ? `const page=()=>{ window.fixtureRequests=(window.fixtureRequests||0)+1; return Promise.resolve({data:{data:{page:window.fixturePage}}}); }; export const getThreadViewBootstrap=page, getThreadViewTrajectoryPage=page; export const searchThreadView=()=>Promise.resolve({data:{data:{hits:[],has_more:false}}}); export const getThreadViewBody=(_s,id)=>{ window.fixtureDetailRequests=(window.fixtureDetailRequests||0)+1; return Promise.resolve({data:{data:{body_id:id,revision:1,chunks:[JSON.stringify({tool:'read_file',args:{path:'fixture.txt',limit:3},result:{ok:true,content:'fixture result'},schema:{type:'object',properties:{path:{type:'string'}}}})],has_more:false}}}); };` :
           args.path === 'element-plus' ? `export const ElMessage = {success(){},error(){}};` :
           args.path.includes('markdown') ? `export const renderMarkdown=(s)=>String(s||'');` : `export const exportSingleSessionLog=async()=>{};`, loader: 'js' }));
         build.onResolve({ filter: /\.js\?v=/ }, args => ({ path: path.resolve(args.resolveDir, args.path.split('?')[0]) }));
@@ -78,7 +78,11 @@ for (const kind of ['hive', 'bridge']) for (const count of [3, 70]) {
           item_id:item.item_id, item_index:i, kind:item.kind, status:item.status, user_round:turn.user_turn_index,
           root_turn_id:`root-${ti}`, model_round:1, summary:item.payload.content, tool_name:item.payload.tool,
           created_seq:ti*10+i, started_at:item.created_time, completed_at:item.updated_time,
+          detail: item.kind === 'tool_call' ? {body_id:`${item.item_id}|detail`,revision:1,bytes:128} : undefined,
         })))};
+        window.fixtureDetails = Object.fromEntries(turns.flatMap(turn => turn.items.filter(item => item.kind === 'tool_call').map(item => [
+          `${item.item_id}|detail`, {tool:item.payload.tool,args:{path:'fixture.txt',limit:3},result:{ok:true,content:'fixture result'},schema:{type:'object',properties:{path:{type:'string'}}}}
+        ])));
       }, fixture(count));
       await page.addScriptTag({ content: code });
       await page.evaluate(k => window.mountTrajectory(k), kind);
@@ -90,6 +94,17 @@ for (const kind of ['hive', 'bridge']) for (const count of [3, 70]) {
         await page.waitForFunction(({selector, count}) => document.querySelectorAll(selector).length === count, {selector:locator, count});
       };
       await page.locator('.tt-turn-control').first().waitFor();
+      if (count === 3 && kind === 'hive') {
+        await page.locator('.tt-row-tool .tt-content-cell').first().click();
+        await page.waitForFunction(() => window.fixtureDetailRequests === 1);
+        await page.waitForTimeout(30);
+        await page.locator('.tt-json-tree').first().waitFor();
+        assert.equal(await page.locator('.tt-json-tree').count(), 1);
+        console.log('DETAIL DEBUG', await page.locator('.tt-details').textContent());
+        await page.getByText('Schema', {exact:true}).click();
+        assert.match(await page.locator('.tt-payload-pre').textContent(), /properties/);
+        assert.equal(await page.evaluate(() => window.fixtureDetailRequests), 1, 'tool details should hydrate once');
+      }
       if (count > 3) {
         await page.locator('.tt-ledger').evaluate(el => { el.scrollTop = 5000; el.dispatchEvent(new Event('scroll')); });
         await page.waitForTimeout(50);

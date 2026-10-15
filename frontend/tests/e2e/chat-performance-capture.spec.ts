@@ -10,6 +10,7 @@ test('performance capture starts in settings, downloads sanitized JSON, survives
   await page.goto('/__e2e/messenger-view-performance?session_id=perf-session-a');
   await page.waitForFunction(() => Boolean((window as any).__messengerViewPerformanceE2E));
   await page.evaluate(() => (window as any).__messengerViewPerformanceE2E.setSection('more'));
+  await expect(page.getByTestId('settings-category-general').getByText(/^(测试|Testing)$/)).toBeVisible();
   await expect(page.getByTestId('perf-start')).toBeVisible();
   await expect(page.getByTestId('perf-download')).toBeDisabled();
   await page.getByTestId('perf-start').click();
@@ -48,4 +49,70 @@ test('performance capture starts in settings, downloads sanitized JSON, survives
   await page.getByTestId('perf-start').click();
   expect(await page.evaluate(() => (window as any).wunderPerf.snapshot().counters.chat_watch_event || 0)).toBe(0);
   await page.getByTestId('perf-stop').click();
+});
+
+test('frontend debug switch records across settings navigation and exports fresh reports after stopping', async ({ page }, testInfo) => {
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(String(error)));
+  page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+  await page.routeWebSocket(/\/wunder\//, socket => socket.close());
+  await page.route('**/*', async route => {
+    if (!new URL(route.request().url()).pathname.startsWith('/wunder/')) return route.continue();
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ data: { items: [] } }) });
+  });
+  await page.goto('/__e2e/messenger-view-performance?session_id=perf-session-a');
+  await page.waitForFunction(() => Boolean((window as any).__messengerViewPerformanceE2E));
+  await page.evaluate(() => (window as any).__messengerViewPerformanceE2E.setSection('more'));
+  const toggle = page.getByTestId('settings-debug-enabled');
+  await expect(toggle).not.toBeChecked();
+  await toggle.locator('..').click();
+  await expect(toggle).toBeChecked();
+  await expect(page.getByTestId('perf-start')).toBeDisabled();
+
+  const log = async (event: string) => page.evaluate(async name => {
+    const modulePath = '/src/utils/chatDebug.ts';
+    const { chatDebugLog } = await import(modulePath);
+    chatDebugLog('messenger.viewport', name, {
+      status: 'running', messageCount: 4, contentLength: 128,
+      content: 'fixture-private-value', session_id: 'fixture-private-value',
+      tool: { args: { text: 'fixture-private-value' } }
+    });
+  }, event);
+  await page.evaluate(() => (window as any).__messengerViewPerformanceE2E.setSection('messages'));
+  await log('fixture-first');
+  await page.evaluate(() => (window as any).__messengerViewPerformanceE2E.setSection('more'));
+  await expect(toggle).toBeChecked();
+
+  const downloadReport = async () => {
+    const downloaded = page.waitForEvent('download');
+    await page.getByTestId('settings-debug-download').click();
+    const download = await downloaded;
+    expect(download.suggestedFilename()).toMatch(/^wunder-debug-.*\.json$/);
+    const json = await readFile((await download.path())!, 'utf8');
+    expect(json).not.toContain('fixture-private-value');
+    return JSON.parse(json);
+  };
+  const first = await downloadReport();
+  expect(first.performance.capture.startedAt).toBeTruthy();
+  expect(first.debug.events.some((entry: any) => entry.event === 'fixture-first')).toBe(true);
+  await page.reload();
+  await page.waitForFunction(() => Boolean((window as any).__messengerViewPerformanceE2E));
+  await page.evaluate(() => (window as any).__messengerViewPerformanceE2E.setSection('more'));
+  await expect(toggle).toBeChecked();
+  await expect(page.getByTestId('perf-start')).toBeDisabled();
+  await log('fixture-second');
+  await toggle.locator('..').click();
+  await expect(toggle).not.toBeChecked();
+  await expect(page.getByTestId('perf-stop')).toBeDisabled();
+  await log('fixture-disabled');
+  const second = await downloadReport();
+  expect(second.debug.enabled).toBe(false);
+  expect(second.performance.enabled).toBe(false);
+  expect(second.debug.events.some((entry: any) => entry.event === 'fixture-second')).toBe(true);
+  expect(second.debug.events.some((entry: any) => entry.event === 'fixture-disabled')).toBe(false);
+  await page.getByTestId('settings-debug-clear').click();
+  expect(await page.evaluate(() => JSON.parse((window as any).__wunderChatDebugDump()))).toEqual([]);
+  await page.getByTestId('messenger-test-tools').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: testInfo.outputPath('testing-controls.png') });
+  expect(errors).toEqual([]);
 });

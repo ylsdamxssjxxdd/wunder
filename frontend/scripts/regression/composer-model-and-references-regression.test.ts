@@ -7,13 +7,10 @@ import {
   normalizeComposerModelItems
 } from '../../src/components/chat/composerModelCatalogModel';
 import {
-  COMPOSER_REFERENCE_MAX,
-  buildComposerReferenceBlock,
-  buildComposerSendContent,
-  mergeComposerReferences,
-  normalizeComposerReference,
-  removeComposerReference
-} from '../../src/components/chat/composerReferences';
+  WORKSPACE_REFERENCE_MAX_ITEMS,
+  queueWorkspaceChatReference,
+  takeWorkspaceChatReferences
+} from '../../src/views/messenger/workspace/workspaceChatReference';
 
 // ---------------------------------------------------------------- model catalog
 
@@ -73,46 +70,24 @@ test('missing contract fields degrade without inventing values', () => {
 
 // ------------------------------------------------------------------ references
 
-test('workspace references normalize to removable chips', () => {
-  assert.deepEqual(normalizeComposerReference({ path: 'docs\\notes.md', isDir: false }), {
-    id: 'ws:docs/notes.md',
-    path: 'docs/notes.md',
-    name: 'notes.md',
-    isDir: false,
-    source: 'workspace'
-  });
-  assert.equal(normalizeComposerReference({ path: '   ' }), null);
+test('workspace references hand off normalized relative paths as text', () => {
+  takeWorkspaceChatReferences();
+  assert.equal(queueWorkspaceChatReference({ path: 'docs\\notes.md' }), true);
+  assert.equal(queueWorkspaceChatReference({ path: '   ' }), false);
+  assert.deepEqual(takeWorkspaceChatReferences(), [{ path: 'docs/notes.md' }]);
+  assert.deepEqual(takeWorkspaceChatReferences(), []);
 });
 
-test('merge keeps order, drops duplicates and stays bounded', () => {
-  const first = mergeComposerReferences([], [{ path: 'a.md' }, { path: 'b.md' }, { path: 'a.md' }]);
-  assert.equal(first.added, 2);
-  assert.deepEqual(
-    first.items.map((item) => item.path),
-    ['a.md', 'b.md']
-  );
-
-  const grown = mergeComposerReferences(
-    first.items,
-    Array.from({ length: COMPOSER_REFERENCE_MAX + 4 }, (_, index) => ({ path: `f-${index}.md` }))
-  );
-  assert.equal(grown.items.length, COMPOSER_REFERENCE_MAX);
-  assert.equal(grown.items[grown.items.length - 1].path, `f-${COMPOSER_REFERENCE_MAX + 3}.md`);
-
-  assert.deepEqual(
-    removeComposerReference(first.items, 'ws:a.md').map((item) => item.path),
-    ['b.md']
-  );
-});
-
-test('send content appends an explicit reference block', () => {
-  const references = [
-    normalizeComposerReference({ path: 'src/a.ts' }),
-    normalizeComposerReference({ path: 'docs/b.md' })
-  ].filter(Boolean);
-  const block = buildComposerReferenceBlock(references, '引用文件');
-  assert.equal(block, '引用文件\n@src/a.ts\n@docs/b.md');
-  assert.equal(buildComposerSendContent('帮我看下', references, '引用文件'), '帮我看下\n\n引用文件\n@src/a.ts\n@docs/b.md');
-  assert.equal(buildComposerSendContent('只有正文', [], '引用文件'), '只有正文');
-  assert.equal(buildComposerSendContent('', references, '引用文件'), block);
+test('pending path handoffs remain bounded and can repeat after being consumed', () => {
+  queueWorkspaceChatReference({ path: 'notes.md' });
+  queueWorkspaceChatReference({ path: 'notes.md' });
+  assert.deepEqual(takeWorkspaceChatReferences(), [{ path: 'notes.md' }]);
+  queueWorkspaceChatReference({ path: 'notes.md' });
+  assert.deepEqual(takeWorkspaceChatReferences(), [{ path: 'notes.md' }]);
+  for (let index = 0; index < WORKSPACE_REFERENCE_MAX_ITEMS + 4; index++) {
+    queueWorkspaceChatReference({ path: `file-${index}.md` });
+  }
+  const paths = takeWorkspaceChatReferences();
+  assert.equal(paths.length, WORKSPACE_REFERENCE_MAX_ITEMS);
+  assert.equal(paths.at(-1)?.path, `file-${WORKSPACE_REFERENCE_MAX_ITEMS + 3}.md`);
 });

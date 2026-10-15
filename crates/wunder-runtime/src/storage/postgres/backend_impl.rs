@@ -547,6 +547,8 @@ impl SessionLockStore for PostgresStorage {
     }
 }
 
+impl ThreadOpenLeaseStore for PostgresStorage {}
+
 impl AgentRuntimeStore for PostgresStorage {
     fn insert_agent_message_task(
         &self,

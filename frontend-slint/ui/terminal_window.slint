@@ -21,6 +21,8 @@ export component TerminalWindow inherits Window {
     in property <int> view-offset: 0;
     in property <int> history-depth: 0;
     in property <bool> caret-visible: false;
+    in property <bool> mouse-reporting: false;
+    in property <bool> application-cursor: false;
     in property <int> caret-row: 0;
     in property <int> caret-col: 0;
     in-out property <int> measured-cols: 0;
@@ -35,6 +37,7 @@ export component TerminalWindow inherits Window {
     callback key-input(string);
     callback pasted(string);
     callback paste-requested();
+    callback mouse-event(int, int, int, int);
     callback exit-requested();
     changed measured-cols => { root.geometry-changed(); }
     changed measured-rows => { root.geometry-changed(); }
@@ -65,10 +68,10 @@ export component TerminalWindow inherits Window {
             if event.text == Key.Backspace { root.key-input("\u{7f}"); return accept; }
             if event.text == Key.Tab { root.key-input("\u{9}"); return accept; }
             if event.text == Key.Escape { root.key-input("\u{1b}"); return accept; }
-            if event.text == Key.LeftArrow { root.key-input("\u{1b}[D"); return accept; }
-            if event.text == Key.RightArrow { root.key-input("\u{1b}[C"); return accept; }
-            if event.text == Key.UpArrow { root.key-input("\u{1b}[A"); return accept; }
-            if event.text == Key.DownArrow { root.key-input("\u{1b}[B"); return accept; }
+            if event.text == Key.LeftArrow { root.key-input(root.application-cursor ? "\u{1b}OD" : "\u{1b}[D"); return accept; }
+            if event.text == Key.RightArrow { root.key-input(root.application-cursor ? "\u{1b}OC" : "\u{1b}[C"); return accept; }
+            if event.text == Key.UpArrow { root.key-input(root.application-cursor ? "\u{1b}OA" : "\u{1b}[A"); return accept; }
+            if event.text == Key.DownArrow { root.key-input(root.application-cursor ? "\u{1b}OB" : "\u{1b}[B"); return accept; }
             if event.text == Key.Home { root.key-input("\u{1b}[H"); return accept; }
             if event.text == Key.End { root.key-input("\u{1b}[F"); return accept; }
             if event.text == Key.PageUp { root.key-input("\u{1b}[5~"); return accept; }
@@ -136,10 +139,13 @@ export component TerminalWindow inherits Window {
             view-offset: root.view-offset;
             history-depth: root.history-depth;
             caret-visible: root.caret-visible;
+            mouse-reporting: root.mouse-reporting;
+            application-cursor: root.application-cursor;
             caret-row: root.caret-row;
             caret-col: root.caret-col;
             clear => { root.clear(); }
             interrupt => { root.interrupt(); }
+            mouse-event(action, button, col, row) => { root.mouse-event(action, button, col, row); }
             scrolled(delta) => { root.scrolled(delta); }
             scroll-to(row) => { root.scroll-to(row); }
             activated => { terminal-focus.focus(); }

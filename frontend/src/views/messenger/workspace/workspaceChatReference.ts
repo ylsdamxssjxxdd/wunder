@@ -3,9 +3,7 @@
  *
  * The file area never reaches into the composer directly. It pushes a bounded
  * list of references here; `ChatComposer` drains the list with a single shallow
- * `watch` and turns each item into an `@<relative path>` token plus a chip.
- * B4 can replace the drain site with the real attachment/quote model without
- * touching the file area.
+ * `watch` and inserts the relative paths as ordinary editable input text.
  *
  * A second, equally small channel lets the timeline (B3) ask the file area to
  * reveal a path (`[src/foo.rs]` labels) without importing its component.
@@ -13,12 +11,10 @@
 
 import { ref } from 'vue';
 
-import { normalizeWorkspaceRelativePath, workspaceBaseName } from './workspaceFileModel';
+import { normalizeWorkspaceRelativePath } from './workspaceFileModel';
 
 export type WorkspaceChatReference = {
   path: string;
-  name: string;
-  isDir: boolean;
 };
 
 const MAX_PENDING_REFERENCES = 8;
@@ -29,14 +25,11 @@ export const pendingWorkspaceChatReferences = pendingReferences;
 
 export const queueWorkspaceChatReference = (reference: {
   path: string;
-  name?: string;
-  isDir?: boolean;
 }): boolean => {
   const path = normalizeWorkspaceRelativePath(reference?.path);
   if (!path) return false;
-  const name = String(reference?.name || '').trim() || workspaceBaseName(path);
   const next = pendingReferences.value.filter((item) => item.path !== path);
-  next.push({ path, name, isDir: reference?.isDir === true });
+  next.push({ path });
   // Bounded: keep the most recent references only.
   pendingReferences.value = next.slice(-MAX_PENDING_REFERENCES);
   return true;

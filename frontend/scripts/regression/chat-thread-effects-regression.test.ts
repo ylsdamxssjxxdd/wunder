@@ -1,8 +1,9 @@
+import './mocks/browserStorage';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createPinia, setActivePinia } from 'pinia';
 import { applyChatThreadServerEvent, submitRawChatThreadTurn, hydrateChatThreadRuntime, resetChatThreadRuntime, buildChatThreadMaterializedMessages } from '../../src/realtime/chat/chatThreadRuntime';
-import {beginThreadView,commitThreadView,resetThreadViews} from '../../src/realtime/chat/threadViewStore';
+import {beginThreadView,commitThreadView,resetThreadViews, type ChatViewRow} from '../../src/realtime/chat/threadViewStore';
 import { buildWorkflowToolRuns } from '../../src/components/chat/toolWorkflowRunModel';
 import { resolveCollapsedWorkflowEntryMetadata } from '../../src/components/chat/toolWorkflowCollapsedMetadata';
 
@@ -12,7 +13,7 @@ const setup = async () => {
     getItem: () => null, setItem: () => {}, removeItem: () => {}
   } });
   const { useChatStore } = await import('../../src/stores/chat');
-  const { applyChatThreadEffects, syncChatThreadShell } = await import('../../src/stores/chatThreadEffects');
+  const { applyChatThreadEffects, applyThreadViewEffects, syncChatThreadShell } = await import('../../src/stores/chatThreadEffects');
   setActivePinia(createPinia());
   resetChatThreadRuntime(key);resetThreadViews();
   const chat = useChatStore();
@@ -26,7 +27,11 @@ const setup = async () => {
     applyChatThreadServerEvent(chat, key, 'thread_change', {
       cursor: seq, change_type, turn_id: data.turn_id, item_id: data.item_id, revision: data.revision, payload: data
     }, { onChangesApplied: changes => applyChatThreadEffects(chat, key, changes) });
-  return { chat, events, eventDetails, apply, syncChatThreadShell, cleanup: () => { globalThis.window = original; } };
+  const applyView = (view_seq: number, rows: ChatViewRow[], runtime_status?: string) =>
+    applyChatThreadServerEvent(chat, key, 'thread_view_change', { epoch: 1, view_seq, rows, runtime_status }, {
+      onViewApplied: prior => applyThreadViewEffects(chat, key, prior)
+    });
+  return { chat, events, eventDetails, apply, applyView, syncChatThreadShell, cleanup: () => { globalThis.window = original; } };
 };
 
 test('durable lifecycle settles shell and dispatches workspace effects once even through replay and gaps', async () => {
@@ -52,6 +57,7 @@ test('durable lifecycle settles shell and dispatches workspace effects once even
     assert.equal(chat.sessionRuntimeStatus(key), 'completed');
     assert.equal(chat.isSessionLoading(key), false);
     assert.equal(events.filter(event => event === 'wunder:agent-runtime-refresh').length, 1);
+    assert.equal(events.filter(event => event === 'wunder:workspace-refresh').length, 2);
     submitRawChatThreadTurn(chat, key, 'client-two', 'next question');
     const rows = buildChatThreadMaterializedMessages(key)!;
     assert.deepEqual(rows.map(row => row.role), ['user', 'assistant', 'user', 'assistant']);
@@ -92,7 +98,7 @@ test('row-shaped atomic snapshot restores compact input and complete tool invoca
 
 
 test('production send callback binds its pending pair and settles from server turn_upsert before transport cleanup', async () => {
-  const { chat, cleanup } = await setup();
+  const { chat, events, eventDetails, cleanup } = await setup();
   const { chatWsClient } = await import('../../src/stores/chatWatcher');
   const { clearSessionWatcher } = await import('../../src/stores/chatRuntimeControls');
   const originalRequest = chatWsClient.request;
@@ -110,6 +116,11 @@ test('production send callback binds its pending pair and settles from server tu
     }]}));
     assert.equal(chat.isSessionBusy(key), false);
     assert.equal(chat.isSessionLoading(key), false);
+    const refreshes = events.filter(type => type === 'wunder:workspace-refresh').length;
+    assert.equal(refreshes, 1, 'binding the pending row directly to a terminal row refreshes directories');
+    options.onEvent('workspace_update', JSON.stringify({ data: { paths: ['reports/result.txt'] } }));
+    assert.equal(events.filter(type => type === 'wunder:workspace-refresh').length, refreshes + 1);
+    assert.deepEqual(eventDetails.at(-1).paths, ['reports/result.txt']);
     options.onEvent('final', JSON.stringify({ content: 'answer' }));
   }) as any;
   try {
@@ -124,6 +135,88 @@ test('production send callback binds its pending pair and settles from server tu
     chatWsClient.request = originalRequest;
     cleanup();
   }
+});
+
+test('view lifecycle refreshes on interaction, completion, failure and stop without replay refresh storms', async () => {
+  const { events, eventDetails, applyView, cleanup } = await setup();
+  const row = (status: string, revision: number): ChatViewRow => ({
+    root_turn_id: 'fixture-view-turn', user_round: 1, revision, status,
+    user: { item_id: 'fixture-user', content: 'question' },
+    assistant: { item_id: 'fixture-answer', content: 'output' }, workflow_count: 0, failed_count: 0
+  });
+  try {
+    applyView(1, [row('running', 1)]);
+    applyView(2, [row('waiting_input', 2)]);
+    applyView(3, [row('waiting_input', 3)]);
+    applyView(4, [row('running', 4)]);
+    applyView(5, [row('waiting_approval', 5)]);
+    applyView(6, [row('running', 6)]);
+    applyView(7, [row('completed', 7)]);
+    applyView(8, [row('completed', 8)]);
+    applyView(9, [row('running', 9)]);
+    applyView(10, [row('failed', 10)]);
+    applyView(11, [row('running', 11)]);
+    applyView(12, [row('cancelled', 12)]);
+    const refreshes = eventDetails.filter((_, index) => events[index] === 'wunder:workspace-refresh');
+    assert.deepEqual(refreshes.map(detail => detail.reason), [
+      'thread_waiting_input', 'thread_waiting_approval', 'thread_completed', 'thread_failed', 'thread_cancelled'
+    ]);
+    assert.ok(refreshes.every(detail => detail.forceTree && detail.scope === 'directory'));
+    assert.equal(applyChatThreadServerEvent({}, key, 'workspace_update', {}), false);
+  } finally { cleanup(); }
+});
+
+test('durable failure and cancellation refresh once per status boundary', async () => {
+  const { events, eventDetails, apply, cleanup } = await setup();
+  try {
+    apply(1, 'turn_upsert', { turn_id: 'fixture-failed', status: 'running' });
+    apply(2, 'turn_status', { turn_id: 'fixture-failed', status: 'waiting_approval' });
+    apply(3, 'turn_status', { turn_id: 'fixture-failed', status: 'running' });
+    apply(4, 'turn_status', { turn_id: 'fixture-failed', status: 'failed' });
+    apply(5, 'turn_status', { turn_id: 'fixture-failed', status: 'failed' });
+    apply(6, 'turn_upsert', { turn_id: 'fixture-stopped', status: 'running', user_round: 2 });
+    apply(7, 'turn_status', { turn_id: 'fixture-stopped', status: 'cancelled' });
+    assert.deepEqual(eventDetails.filter((_, index) => events[index] === 'wunder:workspace-refresh')
+      .map(detail => detail.reason), ['thread_waiting_approval', 'thread_failed', 'thread_cancelled']);
+  } finally { cleanup(); }
+});
+
+test('recovering a completed snapshot refreshes an active thread but opening idle history does not', async () => {
+  const { chat, events, syncChatThreadShell, cleanup } = await setup();
+  const { ensureRuntime } = await import('../../src/stores/chatRuntimeState');
+  ensureRuntime(key).threadStatus = 'not_loaded';
+  const row = (status: string, revision: number): ChatViewRow => ({
+    root_turn_id: 'fixture-recovery', user_round: 1, revision, status,
+    user: { item_id: 'fixture-user', content: 'question' },
+    assistant: { item_id: 'fixture-answer', content: 'output' }, workflow_count: 0, failed_count: 0
+  });
+  const commit = (status: string, revision: number) => commitThreadView(key, {
+    session_id: key, epoch: 1, view_seq: revision, projection_state: 'ready', thread_empty: false,
+    latest_round: 1, chat: [row(status, revision)], trajectory: [], tiles: [], tile_level: 0,
+    next_before: null, has_more: false
+  });
+  try {
+    commit('completed', 1); syncChatThreadShell(chat, key);
+    assert.equal(events.filter(type => type === 'wunder:workspace-refresh').length, 0);
+    commit('running', 2); syncChatThreadShell(chat, key);
+    commit('completed', 3); syncChatThreadShell(chat, key); syncChatThreadShell(chat, key);
+    assert.equal(events.filter(type => type === 'wunder:workspace-refresh').length, 1);
+  } finally { cleanup(); }
+});
+
+test('runtime close and user stop provide a forced directory refresh fallback', async () => {
+  const { chat, events, eventDetails, cleanup } = await setup();
+  const { ensureRuntime, applySessionRuntimeEvent, settleUserStoppedSessionRuntime } =
+    await import('../../src/stores/chatRuntimeState');
+  try {
+    ensureRuntime(key).threadStatus = 'running';
+    applySessionRuntimeEvent(chat, key, {}, 'thread_closed');
+    ensureRuntime(key).threadStatus = 'running';
+    settleUserStoppedSessionRuntime(chat, key);
+    const refreshes = eventDetails.filter((_, index) => events[index] === 'wunder:workspace-refresh');
+    assert.deepEqual(refreshes.map(detail => detail.reason), ['thread_not_loaded', 'thread_cancelled']);
+    assert.ok(refreshes.every(detail => detail.forceTree));
+  } finally { cleanup(); }
 });
 
 

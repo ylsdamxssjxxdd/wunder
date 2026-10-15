@@ -212,8 +212,8 @@ import {
   type WorkspaceVisibleRow
 } from './workspaceFileModel';
 import { useWorkspaceFileTree } from './workspaceFileTree';
+import { createWorkspaceDirectoryRefresh } from './workspaceDirectoryRefresh';
 import { createWorkspaceUploadQueue, type WorkspaceUploadTask } from './workspaceUploadQueue';
-import { extractWorkspaceRefreshPaths } from '@/utils/workspaceRefresh';
 import { onWorkspaceRefresh } from '@/utils/workspaceEvents';
 
 // The heavy editors are loaded only when the user actually opens such a file.
@@ -382,8 +382,6 @@ const {
   highlightedPath,
   selectedList,
   selectionMode,
-  workspaceId,
-  treeVersion,
   loadMore,
   refreshDirectory,
   loadDirectory,
@@ -730,8 +728,8 @@ const handleLoadMore = (path: string) => {
 };
 
 const handleRefresh = async (options: { forceTree?: boolean } = {}) => {
-  if (refreshing.value) return;
   if (remoteInterlinkActive.value) {
+    if (refreshing.value) return;
     refreshing.value = true;
     try {
       await enterRemoteWorkspace();
@@ -740,66 +738,22 @@ const handleRefresh = async (options: { forceTree?: boolean } = {}) => {
     }
     return;
   }
-  refreshing.value = true;
-  try {
-    await Promise.all([
-      refreshDirectory('', { refreshTree: options.forceTree !== false }),
-      loadStats()
-    ]);
-    tree.expandedPaths.forEach((path) => {
-      void refreshDirectory(path);
-    });
-  } finally {
-    refreshing.value = false;
-  }
+  await directoryRefresh.request(options);
 };
+
+const directoryRefresh = createWorkspaceDirectoryRefresh(tree, {
+  refreshStats: async () => {
+    if (statsTimer) window.clearTimeout(statsTimer);
+    statsTimer = null;
+    await loadStats();
+  },
+  onBusy: value => { refreshing.value = value; }
+});
 
 const refreshFromWorkspaceEvent = (event: Event) => {
   if (remoteInterlinkActive.value) return;
   const detail = (event as CustomEvent<Record<string, unknown>>).detail || {};
-  const eventWorkspaceId = String(detail.workspaceId ?? detail.workspace_id ?? '').trim();
-  if (eventWorkspaceId && workspaceId.value && eventWorkspaceId !== workspaceId.value) return;
-  const eventVersion = Number(detail.treeVersion ?? detail.tree_version ?? 0);
-  if (
-    Number.isFinite(eventVersion) &&
-    eventVersion > 0 &&
-    treeVersion.value !== null &&
-    eventVersion <= treeVersion.value
-  ) return;
-
-  const changedPaths = extractWorkspaceRefreshPaths(detail);
-  if (!changedPaths.length) {
-    void refreshDirectory('', { refreshTree: true });
-    scheduleStatsRefresh();
-    return;
-  }
-  const targets = new Set<string>();
-  changedPaths.forEach((rawPath) => {
-    let path = normalizeWorkspaceRelativePath(rawPath);
-    // The public path contains the physical cloud subfolder while this panel
-    // presents that folder itself as its root.
-    if (path === 'workspace') path = '';
-    else if (path.startsWith('workspace/')) path = path.slice('workspace/'.length);
-    if (!path) {
-      targets.add('');
-      return;
-    }
-    const parent = workspaceParentPath(path);
-    if (tree.directories.has(path)) targets.add(path);
-    else if (tree.directories.has(parent)) targets.add(parent);
-    else targets.add('');
-  });
-  const boundedTargets = Array.from(targets).slice(0, 6);
-  if (boundedTargets.length) {
-    // Rebuild the filesystem snapshot once per event; the remaining targeted
-    // directory reads can reuse that version instead of scanning the workspace
-    // concurrently for every changed path.
-    void (async () => {
-      await refreshDirectory(boundedTargets[0], { refreshTree: true });
-      await Promise.all(boundedTargets.slice(1).map((path) => refreshDirectory(path)));
-    })();
-  }
-  scheduleStatsRefresh();
+  void directoryRefresh.handleEvent(detail);
 };
 
 /** Menu target: a directory row creates inside it, anything else uses the current folder. */
@@ -1099,9 +1053,7 @@ const handleBatchArchive = async () => {
 
 const quoteEntryToChat = (row: WorkspaceVisibleRow) => {
   const ok = queueWorkspaceChatReference({
-    path: row.path,
-    name: row.name,
-    isDir: row.kind === 'dir'
+    path: row.path
   });
   if (ok) {
     ElMessage.success(t('messenger.filesArea.quoteSuccess'));
@@ -1442,6 +1394,7 @@ watch(
       ? `${remoteInterlinkDeviceId.value || ''}\n${interlinkWorkspaceId.value || ''}`
       : '',
   () => {
+    directoryRefresh.reset();
     void enterRemoteWorkspace();
   }
 );
@@ -1457,6 +1410,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', handleWindowKeydown);
   workspaceRefreshStop?.();
   workspaceRefreshStop = null;
+  directoryRefresh.dispose();
   if (statsTimer) window.clearTimeout(statsTimer);
   statsTimer = null;
   uploadQueue.dispose();

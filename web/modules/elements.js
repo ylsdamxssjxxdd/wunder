@@ -1,3 +1,4 @@
+// AI生成
 // DOM 元素统一收集，避免重复查询并便于复用。
 export const elements = {
   apiKey: document.getElementById("apiKey"),
@@ -714,6 +715,7 @@ export const elements = {
   llmAddBtn: document.getElementById("llmAddBtn"),
   llmDeleteBtn: document.getElementById("llmDeleteBtn"),
   llmSetDefaultBtn: document.getElementById("llmSetDefaultBtn"),
+  llmEnableToggle: document.getElementById("llmEnableToggle"),
   llmConfigList: document.getElementById("llmConfigList"),
   llmDetailTitle: document.getElementById("llmDetailTitle"),
   llmDetailMeta: document.getElementById("llmDetailMeta"),

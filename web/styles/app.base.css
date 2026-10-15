@@ -1,3 +1,4 @@
+/* AI生成 */
 /* 页面基础样式：固定视口高度，避免外层滚动 */
 html,
 body {
@@ -2386,15 +2387,11 @@ button.btn-with-icon[aria-busy="true"] i {
   width: 20%;
 }
 
-.user-table col.col-user-preset {
-  width: 14%;
-}
-
-.user-table col.col-agent {
+.user-table col.col-user-level {
   width: 12%;
 }
 
-.user-table col.col-user-customized {
+.user-table col.col-user-quota {
   width: 14%;
 }
 

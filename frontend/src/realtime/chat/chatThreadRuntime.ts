@@ -495,6 +495,9 @@ export const applyChatThreadServerEvent = (
   payload: unknown,
   hooks: ChatThreadServerEventHooks = {}
 ): boolean => {
+  // This is an out-of-band filesystem notification, not timeline data. Let
+  // every transport deliver its side effect even after a view has committed.
+  if (eventType === 'workspace_update') return false;
   // Queue controls are handled before the durable pipeline classifies them as
   // control frames. This makes queue_start immediately consume the composer
   // item instead of waiting for an eventually consistent queue refresh.

@@ -7,7 +7,6 @@
     :aria-label="t('messenger.filesArea.group')"
     @scroll.passive="handleScroll"
     @keydown.esc.prevent="emit('exit-selection')"
-    @click="closeMenu"
     @contextmenu.prevent.stop="openMenu(null, $event)"
   >
     <div v-if="loading && !rows.length" class="workspace-files-state">
@@ -111,6 +110,7 @@
     <Teleport to="body">
       <div
         v-if="menu.visible"
+        ref="menuRef"
         class="workspace-files-menu"
         :style="menuStyle"
         role="menu"
@@ -206,6 +206,7 @@ const spacerStyle = (height: number) => ({ height: `${height}px` });
 
 let scrollFrame = 0;
 const handleScroll = () => {
+  closeMenu();
   if (scrollFrame) return;
   const apply = () => {
     scrollFrame = 0;
@@ -248,13 +249,17 @@ onBeforeUnmount(() => {
   if (scrollFrame) window.cancelAnimationFrame(scrollFrame);
   resizeObserver?.disconnect();
   resizeObserver = null;
-  window.removeEventListener('click', closeMenu);
-  window.removeEventListener('keydown', handleMenuKeydown);
+  document.removeEventListener('pointerdown', handleOutsideMenu, true);
+  document.removeEventListener('click', handleOutsideMenu, true);
+  document.removeEventListener('keydown', handleMenuKeydown, true);
+  window.removeEventListener('resize', closeMenu);
+  window.removeEventListener('blur', closeMenu);
 });
 
 // --------------------------------------------------------------- row menu
 
 const menu = ref({ visible: false, x: 0, y: 0, row: null as WorkspaceVisibleRow | null });
+const menuRef = ref<HTMLElement | null>(null);
 
 const menuStyle = computed(() => ({
   left: `${menu.value.x}px`,
@@ -263,6 +268,12 @@ const menuStyle = computed(() => ({
 
 const closeMenu = () => {
   menu.value.visible = false;
+  menu.value.row = null;
+};
+
+const handleOutsideMenu = (event: Event) => {
+  if (!menu.value.visible || (menuRef.value && event.composedPath().includes(menuRef.value))) return;
+  closeMenu();
 };
 
 const handleMenuKeydown = (event: KeyboardEvent) => {
@@ -333,8 +344,13 @@ const chooseMenuItem = (command: string) => {
 };
 
 onMounted(() => {
-  window.addEventListener('click', closeMenu);
-  window.addEventListener('keydown', handleMenuKeydown);
+  // Capture outside interactions before rows or other controls stop bubbling.
+  // Ignore the teleported menu itself so choosing an action still works.
+  document.addEventListener('pointerdown', handleOutsideMenu, true);
+  document.addEventListener('click', handleOutsideMenu, true);
+  document.addEventListener('keydown', handleMenuKeydown, true);
+  window.addEventListener('resize', closeMenu);
+  window.addEventListener('blur', closeMenu);
 });
 
 // ------------------------------------------------------------------ helpers

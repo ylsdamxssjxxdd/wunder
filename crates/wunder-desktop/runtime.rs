@@ -11,7 +11,6 @@ use wunder_server::admin_skills;
 use wunder_server::config::{merge_config_value, Config};
 use wunder_server::config_store::ConfigStore;
 use wunder_server::desktop_lan::{self, DesktopLanMeshSettings};
-use wunder_server::desktop_runtime_recovery::recover_desktop_runtime_state;
 use wunder_server::repo_assets;
 use wunder_server::state::{AppState, AppStateInitOptions};
 use wunder_server::storage::{
@@ -20,7 +19,7 @@ use wunder_server::storage::{
 };
 use wunder_server::user_store::UserStore;
 
-pub const DESKTOP_DEFAULT_USER_ID: &str = "desktop_user";
+pub const DESKTOP_DEFAULT_USER_ID: &str = "local_user";
 const BUILTIN_SKILLS_ROOT_ENV: &str = "WUNDER_BUILTIN_SKILLS_ROOT";
 const ADMIN_CUSTOM_SKILLS_ROOT_ENV: &str = "WUNDER_ADMIN_CUSTOM_SKILLS_ROOT";
 const DESKTOP_APPROVAL_MODE_MIGRATION_VERSION: &str = "full_auto_v1";
@@ -345,17 +344,10 @@ impl DesktopRuntime {
 
         step_start = Instant::now();
         if state.runtime_capabilities.thread_runtime_active {
-            let summary = recover_desktop_runtime_state(state.as_ref(), &user_id)
-                .await
-                .context("recover desktop runtime state failed")?;
+            // Runtime state is shared with other local instances. Never clear
+            // another process' locks or tasks during startup; durable leases
+            // expire and are reclaimed by the owning runtime path.
             state.kernel.thread_runtime.clone().start();
-            info!(
-                cancelled_monitor_sessions = summary.cancelled_monitor_sessions,
-                cancelled_session_locks = summary.cancelled_session_locks,
-                cancelled_agent_tasks = summary.cancelled_agent_tasks,
-                reset_task_threads = summary.reset_task_threads,
-                "desktop runtime state recovered"
-            );
         }
         log_startup_segment(
             startup_enabled,
@@ -1368,7 +1360,7 @@ fn apply_desktop_defaults(
     config.server.mode = "desktop".to_string();
     config.storage.backend = "sqlite".to_string();
     config.storage.db_path = temp_root
-        .join("wunder_desktop.sqlite3")
+        .join("data/wunder.db")
         .to_string_lossy()
         .to_string();
     config.workspace.root = workspace_root.to_string_lossy().to_string();

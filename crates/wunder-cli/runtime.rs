@@ -12,7 +12,7 @@ use wunder_server::config_store::ConfigStore;
 use wunder_server::repo_assets;
 use wunder_server::state::{AppState, AppStateInitOptions};
 
-pub const CLI_DEFAULT_USER_ID: &str = "cli_user";
+pub const CLI_DEFAULT_USER_ID: &str = "local_user";
 /// Bumped when the legacy-thread adoption rule changes.
 const CLI_WORKSPACE_MIGRATION_VERSION: u32 = 1;
 
@@ -663,8 +663,8 @@ fn apply_cli_defaults(
 ) {
     config.server.mode = "cli".to_string();
     config.storage.backend = "sqlite".to_string();
-    config.storage.db_path = temp_root
-        .join("wunder_cli.sqlite3")
+    config.storage.db_path = wunder_home
+        .join("data/wunder.db")
         .to_string_lossy()
         .to_string();
     // Runtime-owned data belongs under the user's single Wunder home. The

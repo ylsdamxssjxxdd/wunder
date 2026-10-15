@@ -779,6 +779,16 @@ impl SqliteSchemaStorage for SqliteStorage {
               ON session_locks (user_id, agent_id);
             CREATE INDEX IF NOT EXISTS idx_session_locks_expires
               ON session_locks (expires_at);
+            CREATE TABLE IF NOT EXISTS thread_open_leases (
+              session_id TEXT PRIMARY KEY,
+              user_id TEXT NOT NULL,
+              owner_instance_id TEXT NOT NULL,
+              client_kind TEXT NOT NULL,
+              updated_time REAL NOT NULL,
+              expires_at REAL NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_thread_open_leases_user
+              ON thread_open_leases (user_id, expires_at);
             CREATE TABLE IF NOT EXISTS agent_tasks (
               task_id TEXT PRIMARY KEY,
               thread_id TEXT NOT NULL,

@@ -1,3 +1,4 @@
+// AI生成
 // 前端国际化工具：集中管理文本与语言切换逻辑
 const LOCALES = {
   "zh-CN": {
@@ -749,9 +750,8 @@ const LOCALES = {
     "users.search.label": "搜索用户",
     "users.stats.title": "线程统计",
     "users.table.user": "用户",
-    "users.table.preset": "绑定预设",
-    "users.table.agents": "智能体",
-    "users.table.customized": "自定义状态",
+    "users.table.level": "等级",
+    "users.table.quota": "额度消耗",
     "users.table.totalThreads": "总线程数",
     "users.table.context": "Token 消耗",
     "users.table.active": "活动线程数",
@@ -1001,6 +1001,9 @@ const LOCALES = {
     "llm.action.add": "新增",
     "llm.action.save": "保存配置",
     "llm.action.setDefault": "设为默认",
+    "llm.action.enable": "启用",
+    "llm.enabled": "已启用",
+    "llm.disabled": "已禁用",
     "llm.action.probeContext": "自动探测",
     "llm.list.title": "配置列表",
     "llm.list.empty": "暂无配置",
@@ -2466,9 +2469,8 @@ const LOCALES = {
     "users.search.label": "Search users",
     "users.stats.title": "Thread Stats",
     "users.table.user": "User",
-    "users.table.preset": "Bound Preset",
-    "users.table.agents": "Agent",
-    "users.table.customized": "Customized",
+    "users.table.level": "Level",
+    "users.table.quota": "Quota Used",
     "users.table.totalThreads": "Total Threads",
     "users.table.context": "Token Consumption",
     "users.table.active": "Active Threads",
@@ -2718,6 +2720,9 @@ const LOCALES = {
     "llm.action.add": "Add",
     "llm.action.save": "Save Config",
     "llm.action.setDefault": "Set Default",
+    "llm.action.enable": "Enable",
+    "llm.enabled": "Enabled",
+    "llm.disabled": "Disabled",
     "llm.action.probeContext": "Auto Probe",
     "llm.list.title": "Configs",
     "llm.list.empty": "No configs",

@@ -139,7 +139,7 @@ const normalizeReasoningEffort = (value: unknown): string => {
 import { buildWorkflowItem, normalizeInquiryPanelState, safeJsonParse, syncDemoChatCache } from './chatDemoPanels';
 import { applyGoalStreamEvent, persistAgentSession } from './chatPersist';
 import { abortWatchStream, clearDraftSessionBootstrapMarkers, clearDraftSessionBootstrapMessages, clearRuntimeSendStreamState, clearSlowClientResume, markAssistantMessageRequestFailed, markRuntimeSendStreamActivity, markRuntimeSendStreamStarted, resolveMaxStreamRound, setSessionLoading } from './chatRuntimeControls';
-import { applyCanonicalClientMessageSubmittedRuntimeEvent, applyCanonicalStreamRuntimeEvent, applyLocalAssistantTurnTerminalRuntimeEvent, applySessionRuntimeEvent, buildRuntimeDebugSnapshot, cacheSessionMessages, clearSessionEventsSnapshot, ensureRuntime, notifySessionSnapshot, refreshRuntimeStreamLifecycle, syncChatRuntimeProjectionStatus, touchSessionUpdatedAt } from './chatRuntimeState';
+import { applyCanonicalClientMessageSubmittedRuntimeEvent, applyCanonicalStreamSideEffects, applyCanonicalStreamRuntimeEvent, applyLocalAssistantTurnTerminalRuntimeEvent, applySessionRuntimeEvent, buildRuntimeDebugSnapshot, cacheSessionMessages, clearSessionEventsSnapshot, ensureRuntime, notifySessionSnapshot, refreshRuntimeStreamLifecycle, syncChatRuntimeProjectionStatus, touchSessionUpdatedAt } from './chatRuntimeState';
 import { settleTerminalAssistantArtifacts as settleTerminalAssistantArtifactsBase } from './chatTerminalArtifacts';
 import { chatPageLifecycle } from './chatSharedState';
 import { buildMessage, resolveTimestampMs } from './chatStats';
@@ -650,6 +650,10 @@ export const chatSendActions = {
           const approvalPayload = payload?.data ?? payload;
           const normalizedEventType = resolveNormalizedStreamEventType(eventType, payload);
           const effectiveEventType = normalizedEventType || eventType;
+          if (effectiveEventType === 'workspace_update') {
+            applyCanonicalStreamSideEffects(this, sessionId, effectiveEventType, payload);
+            return;
+          }
           noteChatQueueRuntimeEvent(sessionId, effectiveEventType, payload);
           // Durable frames are the only source of timeline projection.
           if (

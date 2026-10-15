@@ -75,6 +75,7 @@ export const useWorkspaceFileTree = (options: UseWorkspaceFileTreeOptions = {}) 
   const directories = reactive(new Map<string, WorkspaceDirectoryState>());
   const expandedPaths = reactive(new Set<string>());
   const inflight = new Map<string, Promise<void>>();
+  const requests = new WeakMap<WorkspaceDirectoryState, object>();
 
   const loadingPaths = ref<string[]>([]);
   const workspaceId = ref('');
@@ -113,7 +114,7 @@ export const useWorkspaceFileTree = (options: UseWorkspaceFileTreeOptions = {}) 
     const append = loadOptions.append === true;
 
     if (append) {
-      if (state.loadingMore) return Promise.resolve();
+      if (state.loading || state.loadingMore) return Promise.resolve();
       if (state.loaded && state.entries.length >= state.total) return Promise.resolve();
     } else if (!loadOptions.force && state.loaded) {
       return Promise.resolve();
@@ -123,6 +124,11 @@ export const useWorkspaceFileTree = (options: UseWorkspaceFileTreeOptions = {}) 
     }
 
     const offset = append ? state.entries.length : 0;
+    const request = {};
+    requests.set(state, request);
+    const isCurrent = () => directories.get(key) === state && requests.get(state) === request;
+    // A forced replacement supersedes any in-flight pagination response too.
+    if (!append) state.loadingMore = false;
     if (append) {
       state.loadingMore = true;
     } else {
@@ -138,6 +144,7 @@ export const useWorkspaceFileTree = (options: UseWorkspaceFileTreeOptions = {}) 
           limit: pageSize,
           ...(loadOptions.refreshTree === true ? { refreshTree: true } : {})
         });
+        if (!isCurrent()) return;
         if (key === '') {
           if (page.workspaceId) workspaceId.value = page.workspaceId;
           if (Number.isFinite(page.treeVersion)) treeVersion.value = Number(page.treeVersion);
@@ -152,17 +159,16 @@ export const useWorkspaceFileTree = (options: UseWorkspaceFileTreeOptions = {}) 
         state.limit = page.limit || pageSize;
         state.loaded = true;
       } catch (error) {
-        if (!isWorkspaceRequestCancelled(error)) {
+        if (isCurrent() && !isWorkspaceRequestCancelled(error)) {
           state.error = String((error as { message?: string })?.message || '');
           options.onError?.(state.error, error);
         }
       } finally {
-        if (append) {
+        if (isCurrent()) {
           state.loadingMore = false;
-        } else {
           state.loading = false;
+          syncLoadingPaths();
         }
-        syncLoadingPaths();
       }
     })();
 

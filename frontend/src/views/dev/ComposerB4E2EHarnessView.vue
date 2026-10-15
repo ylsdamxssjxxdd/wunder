@@ -80,7 +80,7 @@ const applyModel = async (payload: { modelId: string; reasoningEffort: string })
 };
 
 const queueReference = () => {
-  queueWorkspaceChatReference({ path: 'docs/harness-notes.md', name: 'harness-notes.md', isDir: false });
+  queueWorkspaceChatReference({ path: 'docs/harness-notes.md' });
 };
 
 const resetLog = () => {

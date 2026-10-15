@@ -1,3 +1,4 @@
+/* AI生成 */
 /* 管理面板布局 */
 .companion-admin {
   height: 100%;
@@ -4272,6 +4273,41 @@
   border-radius: 999px;
   background: #dbeafe;
   color: #1d4ed8;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.llm-enable-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid #cbd5e1;
+  background: #f8fafc;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+}
+
+.llm-enable-toggle input {
+  margin: 0;
+  cursor: pointer;
+}
+
+.llm-enable-toggle:hover {
+  border-color: #94a3b8;
+  background: #f1f5f9;
+}
+
+.llm-disabled-tag {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #fee2e2;
+  color: #b91c1c;
   font-size: 11px;
   font-weight: 600;
 }

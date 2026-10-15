@@ -1531,6 +1531,14 @@ async fn admin_users(State(state): State<Arc<AppState>>) -> Result<Json<Value>, 
         );
         if let Value::Object(ref mut map) = item {
             crate::services::user_agent_presets::insert_binding_fields(map, instance);
+            // 线程管理页展示：注入用户等级与额度消耗（数据源为用户档案）。
+            if let Ok(Some(record)) = state.user_store.get_user_by_id(&user_id) {
+                let profile = UserStore::to_profile(&record);
+                map.insert("level".to_string(), json!(profile.level));
+                map.insert("quota_used_total".to_string(), json!(profile.quota_used_total));
+                map.insert("quota_balance".to_string(), json!(profile.quota_balance));
+                map.insert("quota_granted_total".to_string(), json!(profile.quota_granted_total));
+            }
         }
     }
     users.sort_by(|a, b| {

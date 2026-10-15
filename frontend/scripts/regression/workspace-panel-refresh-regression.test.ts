@@ -278,7 +278,7 @@ test('workspace tree context menu exposes a manual refresh action', () => {
 test('workspace file panel refreshes on runtime events and forces a tree rebuild', () => {
   const source = readSource('src/views/messenger/workspace/WorkspaceFilesPanel.vue');
   assert.ok(source.includes('workspaceRefreshStop = onWorkspaceRefresh(refreshFromWorkspaceEvent);'));
-  assert.ok(source.includes("refreshDirectory('', { refreshTree: true })"));
+  assert.ok(source.includes('directoryRefresh.handleEvent(detail)'));
   assert.ok(source.includes('await handleRefresh({ forceTree: true });'));
   assert.ok(source.includes('fetchWorkspaceContentDirectory'));
 });
