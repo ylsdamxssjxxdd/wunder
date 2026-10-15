@@ -14,6 +14,7 @@
 use crate::{TextBlock, TimelineRow};
 #[allow(unused_imports)]
 use slint::{Model, ModelRc, VecModel};
+use std::cell::Cell;
 use std::rc::Rc;
 use wunder_desktop::native::{NativeSubagentCard, NativeWorkflowEntry};
 
@@ -111,6 +112,7 @@ fn blank(kind: i32, id: String) -> TimelineRow {
         tool_name: slint::SharedString::default(),
         tool_icon: slint::SharedString::default(),
         target: slint::SharedString::default(),
+        tool_metrics: slint::SharedString::default(),
         detail: slint::SharedString::default(),
         status_kind: STATUS_DONE,
         foldable: false,
@@ -151,10 +153,14 @@ struct ToolItem {
     index: usize,
     /// The `apply_patch`-family result renders as a diff card.
     patch: bool,
+    /// Batch that owns this invocation. Result frames may arrive after a later
+    /// batch has started, so the current `group` is not a safe lookup key.
+    group: i32,
 }
 /// One batch bar and its bounded readout, kept while the turn lives so a late
 /// result frame still updates the bar it belongs to.
 struct BatchBar {
+    group: i32,
     index: usize,
     entries: usize,
     /// The newest entry of the batch, read out while the bar is folded.
@@ -164,7 +170,7 @@ struct BatchBar {
 /// The live turn reducer.
 pub struct Timeline {
     model: Rc<VecModel<TimelineRow>>,
-
+    marks: Rc<VecModel<f32>>,
     body: Option<Body>,
     thinking: Option<Thinking>,
     tools: Vec<ToolItem>,
@@ -189,6 +195,9 @@ pub struct Timeline {
     /// Whether frozen body blocks get syntax highlighting; the reducer turns
     /// this on for the chat view and off elsewhere.
     highlight: bool,
+    /// Whether MainWindow.timeline already observes `model`. Binding once
+    /// avoids replacing the list's model handle during every 33ms stream tick.
+    published: Cell<bool>,
 }
 
 impl Default for Timeline {
@@ -201,6 +210,7 @@ impl Timeline {
     pub fn new() -> Self {
         Self {
             model: Rc::new(VecModel::default()),
+            marks: Rc::new(VecModel::default()),
 
             body: None,
             thinking: None,
@@ -218,11 +228,31 @@ impl Timeline {
             turn: None,
             settled: false,
             highlight: false,
+            published: Cell::new(false),
         }
     }
 
     pub fn model(&self) -> ModelRc<TimelineRow> {
         ModelRc::from(self.model.clone())
+    }
+
+    pub fn marks_model(&self) -> ModelRc<f32> {
+        ModelRc::from(self.marks.clone())
+    }
+
+    /// Refresh the small turn ruler only when the turn topology changes. The
+    /// transcript model is frame-stable; replacing the marks handle on each
+    /// stream tick made the overlay do needless work alongside it.
+    pub fn sync_turn_marks(&self) {
+        let next = self.turn_marks();
+        if self.marks.iter().ne(next.iter().copied()) {
+            self.marks.set_vec(next);
+        }
+    }
+
+    /// Return true exactly once when the owning window should bind this model.
+    pub fn needs_publish(&self) -> bool {
+        !self.published.replace(true)
     }
 
     pub fn row_count(&self) -> usize {
@@ -296,6 +326,7 @@ impl Timeline {
     #[allow(dead_code)]
     pub fn clear(&mut self) {
         self.model.set_vec(Vec::new());
+        self.marks.set_vec(Vec::new());
 
         self.body = None;
         self.thinking = None;
@@ -330,6 +361,23 @@ impl Timeline {
             return;
         };
         edit(&mut row);
+        self.model.set_row_data(index, row);
+    }
+
+    /// Patch only when a process-fold field actually changed. Streaming tool
+    /// results arrive much more often than the fold topology changes; writing
+    /// an identical row still invalidates Slint's layout and was the source of
+    /// the visible work-process jitter.
+    fn patch_process_state(&self, index: usize, process: i32, open: bool) {
+        let Some(mut row) = self.model.row_data(index) else {
+            return;
+        };
+        let next_open = process != NO_PROCESS && open;
+        if row.process_idx == process && row.process_open == next_open {
+            return;
+        }
+        row.process_idx = process;
+        row.process_open = next_open;
         self.model.set_row_data(index, row);
     }
 
@@ -459,13 +507,15 @@ impl Timeline {
         }
         let open = self.process_is_open();
         for (index, _) in region.iter() {
-            self.patch(*index, |row| {
-                row.process_idx = if enabled { process } else { NO_PROCESS };
-                row.process_open = open;
-            });
+            self.patch_process_state(*index, if enabled { process } else { NO_PROCESS }, open);
         }
         let bar = self.process_bar;
         let label = crate::timeline_text::process_label(steps);
+        if self.model.row_data(bar).is_some_and(|row| {
+            row.text == label.as_str() && row.summary == summary && row.visible == enabled
+        }) {
+            return;
+        }
         self.patch(bar, |row| {
             row.text = label.as_str().into();
             row.summary = summary;
@@ -562,11 +612,12 @@ impl Timeline {
         thinking.summary = crate::message_blocks::reasoning_preview(&thinking.text);
         let index = thinking.index;
         let summary = thinking.summary.clone();
-        self.patch(index, |row| {
-            row.summary = summary.clone();
-        });
-        if let Some(bar) = self.bars.last_mut() {
-            bar.latest = summary;
+        let changed = self
+            .model
+            .row_data(index)
+            .is_some_and(|row| row.summary != summary);
+        if changed {
+            self.patch(index, |row| row.summary = summary.clone());
         }
         Ok(())
     }
@@ -608,6 +659,7 @@ impl Timeline {
             row.group_open = open;
         });
         self.bars.push(BatchBar {
+            group,
             index: bar,
             entries: 0,
             latest: Default::default(),
@@ -616,12 +668,14 @@ impl Timeline {
         self.refresh_process_bar();
     }
 
-    /// Rewrite the bar label of the batch the last upsert landed in. The count
-    /// is the batch's own entry count, not the open batch's.
-    fn refresh_batch_label(&mut self) {
+    /// Rewrite one batch label. Result frames can be out of order, therefore
+    /// this must address the bar by its stable group id rather than by the
+    /// newest bar in the turn.
+    fn refresh_batch_label_for(&mut self, group: i32) {
         let Some((bar, entries, latest)) = self
             .bars
-            .last()
+            .iter()
+            .find(|bar| bar.group == group)
             .map(|bar| (bar.index, bar.entries, bar.latest.clone()))
         else {
             return;
@@ -633,20 +687,24 @@ impl Timeline {
         });
     }
 
+    fn refresh_batch_label(&mut self) {
+        if self.group != NO_GROUP {
+            self.refresh_batch_label_for(self.group);
+        }
+    }
+
     /// Append one tool entry, or update the entry of an already seen id.
     pub fn upsert_tool(&mut self, entry: &NativeWorkflowEntry) {
         let label = crate::timeline_text::tool_label(&entry.title);
         let pending = status_kind(&entry.state) == STATUS_RUNNING;
         let (target, patch) =
             crate::timeline_text::target_of(&entry.title, entry.detail.as_str(), &entry.sections);
-        if pending {
-            self.close_thinking(false);
-        }
-        self.mark_batch();
         if let Some(tool) = self.tools.iter().find(|tool| tool.id == entry.id) {
             let index = tool.index;
             let patch = tool.patch;
-            let summary = crate::timeline_text::summary(entry.detail.as_str());
+            let group = tool.group;
+            let summary = crate::timeline_text::tool_summary(entry);
+            let metrics = crate::timeline_text::tool_metrics(entry);
             let copy = crate::timeline_text::copy_text(&entry.sections, entry.detail.as_str());
             let cards = if patch {
                 crate::timeline_text::patch_cards(&entry.patch_files)
@@ -660,25 +718,37 @@ impl Timeline {
                 row.tool_icon = icon.as_str().into();
                 row.target = target.as_str().into();
                 row.summary = summary.as_str().into();
+                row.tool_metrics = metrics.as_str().into();
                 row.detail = copy.clone();
                 row.status_kind = status;
                 row.patch = cards.clone();
             });
             // A settling result rewrites what the folded bar reads out, even
             // though the batch count stayed the same.
-            if let Some(bar) = self.bars.last_mut() {
+            if let Some(bar) = self.bars.iter_mut().find(|bar| bar.group == group) {
                 bar.latest = summary.as_str().into();
             }
-            self.refresh_batch_label();
+            self.refresh_batch_label_for(group);
             self.refresh_process_bar();
             return;
+        }
+        if pending {
+            self.close_thinking(false);
+        }
+        if pending {
+            self.mark_batch();
+        } else if self.group == NO_GROUP {
+            // A replay can contain a result without its call frame. Preserve a
+            // compact row instead of attaching it to an unrelated later batch.
+            self.mark_batch();
         }
         if self.tools.len() >= MAX_GROUP_ENTRIES {
             return;
         }
         let index = self.push(blank(KIND_TOOL, format!("tool-{}", entry.id)));
         let icon = crate::tool_icons::workflow_icon(&entry.title).to_string();
-        let summary = crate::timeline_text::summary(entry.detail.as_str());
+        let summary = crate::timeline_text::tool_summary(entry);
+        let metrics = crate::timeline_text::tool_metrics(entry);
         let copy = crate::timeline_text::copy_text(&entry.sections, entry.detail.as_str());
         let cards = if patch {
             crate::timeline_text::patch_cards(&entry.patch_files)
@@ -692,6 +762,7 @@ impl Timeline {
             row.tool_icon = icon.as_str().into();
             row.target = target.as_str().into();
             row.summary = summary.as_str().into();
+            row.tool_metrics = metrics.as_str().into();
             row.detail = copy;
             row.status_kind = status;
             row.patch = cards;
@@ -705,14 +776,14 @@ impl Timeline {
             id: entry.id.clone(),
             index,
             patch,
+            group,
         });
-        // Count this entry into its batch and refresh the bar label. `mark_batch`
-        // published the fresh bar, so the first entry of a batch only counts.
-        if let Some(bar) = self.bars.last_mut() {
+        // Count the entry in the batch it was actually attached to.
+        if let Some(bar) = self.bars.iter_mut().find(|bar| bar.group == group) {
             bar.entries += 1;
             bar.latest = summary.as_str().into();
         }
-        self.refresh_batch_label();
+        self.refresh_batch_label_for(group);
         self.refresh_process_bar();
     }
 
@@ -866,7 +937,7 @@ impl Timeline {
             // Either there is no live turn, or the model no longer holds its
             // rows: the snapshot owns everything either way.
             self.forget_turn();
-            self.model.set_vec(rows);
+            self.replace_rows(rows);
             self.sync_fold_ids();
             return;
         };
@@ -877,7 +948,7 @@ impl Timeline {
             // The snapshot carries this turn's own rows: the live builder is
             // done with it and its copy goes with them.
             self.forget_turn();
-            self.model.set_vec(rows);
+            self.replace_rows(rows);
             self.sync_fold_ids();
             return;
         }
@@ -897,9 +968,16 @@ impl Timeline {
             }
             published.push(row);
         }
-        self.model.set_vec(published);
+        self.replace_rows(published);
         self.rebase(delta);
         self.sync_fold_ids();
+    }
+
+    /// Preserve the VecModel handle after the window binds it. Replacing its
+    /// backing vector in place emits one model notification while keeping the
+    /// UI subscription stable across history refreshes and streaming updates.
+    fn replace_rows(&self, rows: Vec<TimelineRow>) {
+        self.model.set_vec(rows);
     }
 
     /// Whether the snapshot's tail is no longer the durable tail the model
@@ -1207,6 +1285,57 @@ mod tests {
             "durable-answer",
             "the durable rows are the authority once they arrive"
         );
+    }
+
+    #[test]
+    fn the_window_model_handle_stays_stable_through_publish_and_clear() {
+        let mut timeline = Timeline::new();
+        let bound = timeline.model.clone();
+        assert!(timeline.needs_publish(), "the owner binds the model once");
+        assert!(!timeline.needs_publish(), "later frames mutate the bound model");
+
+        timeline.begin_turn("live", "Fixture input");
+        timeline.append_reasoning("Fixture reasoning").unwrap();
+        timeline.clear();
+
+        assert!(Rc::ptr_eq(&bound, &timeline.model));
+        assert_eq!(bound.row_count(), 0);
+        assert!(!timeline.needs_publish(), "clear does not replace the binding");
+    }
+
+    #[test]
+    fn late_tool_result_updates_its_original_batch_only() {
+        let mut timeline = Timeline::new();
+        timeline.begin_turn("live", "Fixture input");
+        let entry = |id: &str, state: &str, preview: &str| NativeWorkflowEntry {
+            id: id.into(),
+            title: "read_file".into(),
+            preview: preview.into(),
+            detail: String::new(),
+            state: state.into(),
+            tokens: String::new(),
+            duration: String::new(),
+            sections: Vec::new(),
+            patch_files: Vec::new(),
+        };
+
+        timeline.upsert_tool(&entry("tool-a", "running", "first call"));
+        timeline.close_segments();
+        timeline.upsert_tool(&entry("tool-b", "running", "second call"));
+        timeline.upsert_tool(&entry("tool-a", "completed", "first result"));
+
+        let rows: Vec<_> = timeline.model().iter().collect();
+        let tool_a = rows.iter().find(|row| row.id == "tool-tool-a").expect("tool A");
+        let tool_b = rows.iter().find(|row| row.id == "tool-tool-b").expect("tool B");
+        let groups: Vec<_> = rows.iter().filter(|row| row.kind == KIND_GROUP).collect();
+
+        assert_eq!(groups.len(), 2, "the late result cannot open a third batch");
+        assert_eq!(tool_a.group_idx, groups[0].group_idx);
+        assert_eq!(tool_a.status_kind, STATUS_DONE);
+        assert_eq!(groups[0].summary, "first result");
+        assert_eq!(tool_b.group_idx, groups[1].group_idx);
+        assert_eq!(tool_b.status_kind, STATUS_RUNNING);
+        assert_eq!(groups[1].summary, "second call");
     }
 
     /// The live turn is keyed by the session and a durable turn by its root

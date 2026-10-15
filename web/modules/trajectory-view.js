@@ -3,8 +3,10 @@
 // 纯 DOM 实现，数据由调用方注入（setRawTurns），并提供全屏「轨迹页面」弹窗。
 
 import { elements } from "./elements.js?v=20261011-01";
-import { t } from "./i18n.js?v=20261011-01";
+import { getAuthHeaders } from "./admin-auth.js?v=20261011-01";
+import { getCurrentLanguage, t } from "./i18n.js?v=20261011-01";
 import { getWunderBase } from "./api.js";
+import { notify } from "./notify.js";
 import { normalizeMarkdownForWebPreview, enhanceRenderedMarkdown } from "./markdown-preview.js";
 import {
   attachTurnItems,
@@ -21,7 +23,7 @@ import {
   groupVirtualRows,
   requestIdentity,
   timelineFocusIndexes,
-} from "./trajectory-model.js?v=20261014-01";
+} from "./trajectory-model.js?v=20261015-02";
 
 const OVERSCAN_PX = 360;
 const VIRTUAL_THRESHOLD = 100;
@@ -31,6 +33,24 @@ const EDGE_PAN_FRACTION = 0.08;
 const TOOLTIP_DELAY_MS = 500;
 
 const modelT = createModelTranslate(t);
+const ADMIN_EXPORT_LABELS = {
+  "zh-CN": {
+    exporting: "正在导出线程日志…",
+    exported: "线程日志已导出",
+    exportFailed: (message) => `导出线程日志失败：${message}`,
+  },
+  "en-US": {
+    exporting: "Exporting thread log…",
+    exported: "Thread log exported",
+    exportFailed: (message) => `Failed to export thread log: ${message}`,
+  },
+};
+
+const adminExportLabel = (key, message = "") => {
+  const language = getCurrentLanguage();
+  const labels = ADMIN_EXPORT_LABELS[language] || ADMIN_EXPORT_LABELS["zh-CN"];
+  return key === "exportFailed" ? labels.exportFailed(message) : labels[key];
+};
 
 /* ---------------------------------------------------------------- */
 /* 数据获取                                                          */
@@ -41,7 +61,7 @@ export const fetchThreadLogSnapshot = async (sessionId) => {
   const endpoint = `${getWunderBase()}/admin/monitor/${encodeURIComponent(
     sessionId
   )}/thread-log/snapshot`;
-  const response = await fetch(endpoint);
+  const response = await fetch(endpoint, { headers: getAuthHeaders() });
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}`);
   }
@@ -214,6 +234,7 @@ export function createTrajectoryView(host, options = {}) {
   }
   const showBackButton = options.showBack === true;
   const onBack = typeof options.onBack === "function" ? options.onBack : null;
+  let sessionId = String(options.sessionId || "").trim();
 
   /* ---------- 状态 ---------- */
   const st = {
@@ -241,6 +262,7 @@ export function createTrajectoryView(host, options = {}) {
     panning: false,
     dragging: false,
     selection: null,
+    exporting: false,
   };
 
   let dragState = null;
@@ -308,16 +330,44 @@ export function createTrajectoryView(host, options = {}) {
   search.appendChild(searchInput);
   toolbar.appendChild(search);
 
+  const exportButton = h("button", "tt-toggle tt-export");
+  exportButton.type = "button";
+  exportButton.title = modelT("export");
+  exportButton.setAttribute("aria-label", modelT("export"));
+  const exportSvg = svgEl("svg", { viewBox: "0 0 16 16", width: "12", height: "12", "aria-hidden": "true" });
+  exportSvg.appendChild(svgEl("path", {
+    d: "M8 2.5v7m0 0 2.75-2.75M8 9.5 5.25 6.75",
+    fill: "none",
+    stroke: "currentColor",
+    "stroke-width": "1.25",
+    "stroke-linecap": "round",
+    "stroke-linejoin": "round",
+  }));
+  exportSvg.appendChild(svgEl("path", {
+    d: "M3 11v1.75a.75.75 0 0 0 .75.75h8.5a.75.75 0 0 0 .75-.75V11",
+    fill: "none",
+    stroke: "currentColor",
+    "stroke-width": "1.25",
+    "stroke-linecap": "round",
+    "stroke-linejoin": "round",
+  }));
+  exportButton.appendChild(exportSvg);
+  exportButton.appendChild(h("span", "tt-toggle-label", modelT("export")));
+  toolbar.appendChild(exportButton);
+
   const timelineEl = h("div", "tt-timeline");
   timelineEl.style.display = "none";
+  const plotEl = h("div", "tt-plot");
+  const plotCornerEl = h("div", "tt-plot-corner");
   const axisEl = h("div", "tt-axis");
   const trackEl = h("div", "tt-track");
+  const laneLabelsEl = h("div", "tt-lane-labels");
   const lane0 = h("span", "tt-lane-label tt-lane-0", modelT("laneInput"));
   const lane1 = h("span", "tt-lane-label tt-lane-1", modelT("laneModel"));
   const lane2 = h("span", "tt-lane-label tt-lane-2", modelT("laneTool"));
-  trackEl.appendChild(lane0);
-  trackEl.appendChild(lane1);
-  trackEl.appendChild(lane2);
+  laneLabelsEl.appendChild(lane0);
+  laneLabelsEl.appendChild(lane1);
+  laneLabelsEl.appendChild(lane2);
   const hoverlineEl = h("span", "tt-hoverline");
   hoverlineEl.style.display = "none";
   const selectionEl = h("span", "tt-selection");
@@ -326,8 +376,11 @@ export function createTrajectoryView(host, options = {}) {
   selectionEl.appendChild(h("span", "tt-selection-edge tt-selection-edge-end"));
   trackEl.appendChild(hoverlineEl);
   trackEl.appendChild(selectionEl);
-  timelineEl.appendChild(axisEl);
-  timelineEl.appendChild(trackEl);
+  plotEl.appendChild(plotCornerEl);
+  plotEl.appendChild(axisEl);
+  plotEl.appendChild(laneLabelsEl);
+  plotEl.appendChild(trackEl);
+  timelineEl.appendChild(plotEl);
 
   const tooltipEl = h("div", "tt-tooltip");
   tooltipEl.style.display = "none";
@@ -508,6 +561,10 @@ export function createTrajectoryView(host, options = {}) {
     turnsToggle.setAttribute("aria-pressed", st.showTurns ? "true" : "false");
     callsToggle.classList.toggle("tt-toggle-active", st.showCalls);
     callsToggle.setAttribute("aria-pressed", st.showCalls ? "true" : "false");
+    exportButton.disabled = !sessionId || st.exporting;
+    exportButton.classList.toggle("tt-toggle-active", st.exporting);
+    exportButton.title = st.exporting ? adminExportLabel("exporting") : modelT("export");
+    exportButton.setAttribute("aria-label", exportButton.title);
   };
 
   const clampViewport = (start, span, domain) => {
@@ -589,11 +646,7 @@ export function createTrajectoryView(host, options = {}) {
       if (focusSet && !focusSet.has(modelSpan.index)) node.classList.add("tt-span-outside");
       node.style.left = `${spanLeft}px`;
       node.style.width = `${spanWidth}px`;
-      node.style.top = `${modelSpan.lane * 14}px`;
-      if (modelSpan.kind === "message" && modelSpan.ttftFraction !== null && spanWidth > 6) {
-        const split = Math.round(spanWidth * modelSpan.ttftFraction);
-        node.style.background = `linear-gradient(90deg, rgba(65,118,230,0.92) ${split}px, rgba(65,118,230,0.45) ${split}px)`;
-      }
+      node.style.top = `${7 + modelSpan.lane * 14}px`;
       node.addEventListener("pointerdown", (event) => event.stopPropagation());
       node.addEventListener("pointerenter", (event) => onSpanEnter(modelSpan, event));
       node.addEventListener("pointerleave", onSpanLeave);
@@ -1403,6 +1456,16 @@ export function createTrajectoryView(host, options = {}) {
     if (ledgerEl) st.ledgerViewport = ledgerEl.clientHeight;
   };
 
+  // 舰桥轨迹既可能在全屏弹窗中打开，也可能嵌在调试面板里；仅监听
+  // window.resize 无法覆盖面板折叠、详情栏拖拽等容器尺寸变化。
+  const trackResizeObserver = typeof ResizeObserver === "function"
+    ? new ResizeObserver(() => {
+        updateSizes();
+        scheduleRender();
+      })
+    : null;
+  trackResizeObserver?.observe(trackEl);
+
   /* ---------- 事件绑定 ---------- */
 
   durationToggle.addEventListener("click", () => {
@@ -1423,6 +1486,33 @@ export function createTrajectoryView(host, options = {}) {
   searchInput.addEventListener("input", () => {
     st.searchQuery = searchInput.value;
     scheduleRender();
+  });
+  exportButton.addEventListener("click", async () => {
+    if (!sessionId || st.exporting) return;
+    st.exporting = true;
+    scheduleRender();
+    try {
+      const response = await fetch(`${getWunderBase()}/admin/monitor/${encodeURIComponent(sessionId)}/thread-log/export`, {
+        headers: getAuthHeaders(),
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+      link.href = url;
+      link.download = `thread-log-${sessionId}-${stamp}.jsonl`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      notify(adminExportLabel("exported"), "success");
+    } catch (error) {
+      notify(adminExportLabel("exportFailed", error?.message || String(error)), "error");
+    } finally {
+      st.exporting = false;
+      scheduleRender();
+    }
   });
   if (showBackButton) {
     backBtn.addEventListener("click", () => onBack?.());
@@ -1485,6 +1575,11 @@ export function createTrajectoryView(host, options = {}) {
     callsToggle
       .querySelector(".tt-toggle-label")
       ?.replaceChildren(document.createTextNode(modelT("calls")));
+    exportButton.title = modelT("export");
+    exportButton.setAttribute("aria-label", modelT("export"));
+    exportButton
+      .querySelector(".tt-toggle-label")
+      ?.replaceChildren(document.createTextNode(modelT("export")));
     turnsMemo = null;
     scheduleRender();
   }
@@ -1494,6 +1589,10 @@ export function createTrajectoryView(host, options = {}) {
   render();
 
   return {
+    setSessionId(value) {
+      sessionId = String(value || "").trim();
+      scheduleRender();
+    },
     setRawTurns(turns) {
       st.rawTurns = Array.isArray(turns) ? turns : [];
       st.turnsKey += 1;
@@ -1529,6 +1628,7 @@ export function createTrajectoryView(host, options = {}) {
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("wunder:language-changed", onLanguageChanged);
       if (tooltipTimer !== null) window.clearTimeout(tooltipTimer);
+      trackResizeObserver?.disconnect();
       host.textContent = "";
     },
   };
@@ -1546,15 +1646,20 @@ export const closeTrajectoryPage = () => {
   elements.trajectoryModal?.classList.remove("active");
 };
 
-export const openTrajectoryPage = async (sessionId) => {
+export const openTrajectoryPage = async (sessionId, options = {}) => {
   const cleaned = String(sessionId || "").trim();
   if (!cleaned || !elements.trajectoryModal || !elements.trajectoryMount) {
     return;
   }
+  // The trajectory page is the single session-inspection surface. Close the
+  // legacy event-log dialog before showing it so two competing overlays can
+  // never remain open after a session row is activated.
+  elements.monitorDetailModal?.classList.remove("active");
   if (!pageView) {
     pageView = createTrajectoryView(elements.trajectoryMount, {
       showBack: true,
       onBack: closeTrajectoryPage,
+      sessionId: cleaned,
     });
     elements.trajectoryModal.addEventListener("click", (event) => {
       if (event.target === elements.trajectoryModal) {
@@ -1562,6 +1667,10 @@ export const openTrajectoryPage = async (sessionId) => {
       }
     });
   }
+  pageView.setSessionId?.(cleaned);
+  // A reused page instance must not retain the previous thread's rows while
+  // the next snapshot is in flight.
+  pageView.setRawTurns?.([]);
   const requestId = ++pageRequestId;
   elements.trajectoryModal.classList.add("active");
   pageView.refreshSizes();

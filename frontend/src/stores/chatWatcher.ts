@@ -21,6 +21,7 @@ import { isCompactionMarkerAssistantMessage } from './chatCompactionMarker';
 import { useCommandSessionStore } from './commandSessions';
 
 import { buildWorkflowItem, safeJsonParse } from './chatDemoPanels';
+import { threadViewStoreMessages } from './chatGreeting';
 import { applyGoalStreamEvent } from './chatPersist';
 import { abortWatchStream, clearRuntimeResumeStreamState, clearRuntimeSendStreamState, clearSessionWatcher, clearSlowClientResume, clearWatchdog, recoverRuntimeInteractiveControllers, resolveWatchdogProfile, setSessionLoading } from './chatRuntimeControls';
 import { applyCanonicalStreamSideEffects, applySessionRuntimeEvent, cacheSessionMessages, clearRuntimeProjectionInvalidation, clearSessionEventsSnapshot, ensureRuntime, getRuntime, hasKnownSessionInStore, isSessionUnavailableStatus, purgeUnavailableSession, refreshRuntimeStreamLifecycle, resolveChatHttpStatus, resolveSessionKey, resolveSessionMessageArray, sessionDetailPrefetchInFlight, sessionDetailSnapshotCache, sessionDetailWarmState, sessionEventsSnapshotCache, sessionEventsSnapshotInFlight, sessionHistoryState, sessionHydratedMessageVersion, sessionListCache, sessionListCacheInFlight, sessionMessages, sessionProtectedRealtimeMessages, sessionRuntime, sessionRuntimeShadowState, sessionSubagentsCache, sessionSubagentsInFlight } from './chatRuntimeState';
@@ -122,7 +123,7 @@ export const startSessionWatcher = (store, sessionId) => {
       const response=await getThreadViewBootstrap(key,{kind:'chat'},{signal:controller.signal});
       if(controller.signal.aborted)return;
       if(!commitThreadView(key,response.data.data.page,generation,false,true))throw new Error('view recovery incomplete');
-      recoveryAttempt=0;if(store.activeSessionId===key)store.messages=(threadViewSlots(key)??[]).flatMap(s=>[s.user,s.assistant]);syncChatThreadShell(store,key);resumeWatchFromLastSeq();
+      recoveryAttempt=0;if(store.activeSessionId===key)store.messages=threadViewStoreMessages(store,key);syncChatThreadShell(store,key);resumeWatchFromLastSeq();
     } catch {
       if(controller.signal.aborted)return;
       const delay=[500,1000,2000,5000][Math.min(recoveryAttempt++,3)];

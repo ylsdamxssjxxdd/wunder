@@ -8,6 +8,11 @@ export type QueuedTurn = {
   priority: number;
   status: string;
   clientMessageId: string;
+  rootTurnId?: string;
+  userTurnId?: string;
+  turnId?: string;
+  taskId?: string;
+  itemId?: string;
   createdAt: number;
 };
 
@@ -18,6 +23,7 @@ const QUEUE_EVENT_TYPES = new Set([
   'queue_enter',
   'queue_update',
   'queue_start',
+  'queue_status',
   'queue_finish',
   'queue_cancel',
   'queue_fail'
@@ -51,8 +57,74 @@ export const normalizeQueuedTurn = (value: unknown): QueuedTurn | null => {
     priority: readNumber(source.priority) ?? 0,
     status: cleanText(source.status) || 'pending',
     clientMessageId: cleanText(source.client_message_id ?? source.clientMessageId),
+    rootTurnId: cleanText(source.root_turn_id ?? source.rootTurnId),
+    userTurnId: cleanText(source.user_turn_id ?? source.userTurnId),
+    turnId: cleanText(source.turn_id ?? source.turnId),
+    taskId: cleanText(source.task_id ?? source.taskId),
+    itemId: cleanText(source.item_id ?? source.itemId),
     createdAt: readNumber(source.created_at, source.createdAt) ?? 0
   };
+};
+
+/** Stable identities shared by live queue events and eventually consistent queue snapshots. */
+export const queueItemIdentities = (item: QueuedTurn | Record<string, unknown>): string[] => {
+  const source = item as Record<string, unknown>;
+  return [
+    ['queue', source.queueId ?? source.queue_id],
+    ['client', source.clientMessageId ?? source.client_message_id],
+    ['root', source.rootTurnId ?? source.root_turn_id],
+    ['user', source.userTurnId ?? source.user_turn_id],
+    ['task', source.taskId ?? source.task_id],
+    ['turn', source.turnId ?? source.turn_id],
+    ['item', source.itemId ?? source.item_id]
+  ].map(([kind, value]) => {
+    const text = cleanText(value);
+    return text ? `${kind}:${text}` : '';
+  }).filter(Boolean);
+};
+
+/** Keep an older queue response from restoring turns already consumed by runtime events. */
+export const filterConsumedQueueItems = (
+  items: QueuedTurn[],
+  consumedIdentities: ReadonlySet<string>
+): QueuedTurn[] => consumedIdentities.size
+  ? items.filter((item) => !queueItemIdentities(item).some((identity) => consumedIdentities.has(identity)))
+  : items;
+
+const queueEventData = (payload: unknown): Record<string, unknown> => {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return {};
+  const source = payload as Record<string, unknown>;
+  const nested = source.data && typeof source.data === 'object' && !Array.isArray(source.data)
+    ? source.data as Record<string, unknown>
+    : {};
+  return { ...source, ...nested };
+};
+
+/** Resolve the queue row consumed by a start/terminal event, including legacy identity fallbacks. */
+export const resolveConsumedQueueEventIdentities = (
+  items: QueuedTurn[],
+  eventType: unknown,
+  payload: unknown
+): string[] => {
+  const normalizedType = cleanText(eventType).toLowerCase();
+  const data = queueEventData(payload);
+  const sourceEventType = cleanText(
+    data.source_event_type ?? data.sourceEventType ?? data.event_type ?? data.event
+  ).toLowerCase();
+  const consumesQueueItem = ['queue_start', 'queue_finish', 'queue_cancel', 'queue_fail'].includes(normalizedType) ||
+    sourceEventType === 'queue_start';
+  if (!consumesQueueItem) return [];
+  const eventIdentities = queueItemIdentities(data);
+  let item = eventIdentities.length
+    ? items.find((candidate) => queueItemIdentities(candidate).some((identity) => eventIdentities.includes(identity)))
+    : null;
+  // Legacy queue_start controls occasionally omit all ids. The queue contract
+  // defines that transition as the next dispatch head.
+  if (!item && !eventIdentities.length && (normalizedType === 'queue_start' || sourceEventType === 'queue_start')) {
+    item = items[0] || null;
+  }
+  if (!item) return eventIdentities;
+  return [...new Set([...eventIdentities, ...queueItemIdentities(item)])];
 };
 
 // 引擎列表接口按派发序返回并给出 position；优先级最高的（刚插话的）排最前，

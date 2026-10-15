@@ -8,7 +8,8 @@ import { createSession, listSessions } from '@/api/chat';
 
 import { chatDebugLog } from '@/utils/chatDebug';
 
-import { ensureGreetingMessage, syncDemoChatCache } from './chatDemoPanels';
+import { syncDemoChatCache } from './chatDemoPanels';
+import { ensureGreetingMessage } from './chatGreeting';
 
 import { patchSessionRuntimeFields, persistActiveSession, persistDraftSession, syncGoalFromSessionRecord, syncGoalsFromSessionList } from './chatPersist';
 import { clearDraftSessionBootstrapMarkers, clearSessionWatcher, setSessionLoading } from './chatRuntimeControls';

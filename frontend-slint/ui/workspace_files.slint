@@ -27,9 +27,10 @@ export component WorkspaceFilesPanel inherits Rectangle {
     in property <bool> offline;
     // A listing, refresh or pull is in flight; the refresh button yields.
     in property <bool> busy;
-    // A local workspace folder is browsed read-only: the mutating menu entries
-    // (new / rename / move / delete / archive / clear) are hidden.
-    in property <bool> readonly;
+    // A local workspace folder is browsed instead of the cloud workspace:
+    // cloud-only actions (download / archive / clear) hide and the open entry
+    // works straight off the disk. Local folders are fully editable.
+    in property <bool> local;
 
     callback toggle(int);
     callback refresh();
@@ -84,6 +85,7 @@ export component WorkspaceFilesPanel inherits Rectangle {
                     enabled: !root.busy;
                     clicked => { root.refresh(); }
                 }
+                Tooltip { text: @markdown("\{I18n.wf_menu_refresh}"); }
             }
         }
         // Tunnel down: the region can browse nothing, so it says so and hands
@@ -175,25 +177,26 @@ export component WorkspaceFilesPanel inherits Rectangle {
             ContextMenuArea {
                 x: 0px; y: 0px; width: parent.width; height: parent.height;
                 Menu {
-                    if !root.readonly : MenuItem {
+                    // Blank-area menu: create/refresh for both targets, the
+                    // cloud-only archive/clear pair only when the cloud
+                    // workspace is browsed.
+                    MenuItem {
                         title: I18n.wf_menu_new_dir;
                         activated => { root.menu(-1, 5); }
                     }
-                    if !root.readonly : MenuItem {
+                    MenuItem {
                         title: I18n.wf_menu_new_file;
                         activated => { root.menu(-1, 6); }
                     }
-                    if !root.readonly : MenuItem {
+                    if !root.local : MenuItem {
                         title: I18n.wf_menu_archive_root;
                         activated => { root.menu(-1, 7); }
                     }
-                    if !root.readonly : MenuItem {
+                    if !root.local : MenuItem {
                         title: I18n.wf_menu_clear;
                         activated => { root.menu(-1, 8); }
                     }
-                    // A local folder is read-only: the blank area only offers
-                    // a reload, mirroring the web read-only tree.
-                    if root.readonly : MenuItem {
+                    MenuItem {
                         title: I18n.wf_menu_refresh;
                         activated => { root.refresh(); }
                     }
@@ -206,43 +209,44 @@ export component WorkspaceFilesPanel inherits Rectangle {
                     background: row-touch.has-hover ? Theme.hover : transparent;
                     ContextMenuArea {
                         // Row menu, aligned with the web left-rail tree:
-                        // files preview/download/rename/reference/delete,
-                        // directories open/archive/new dir/new file/rename/
-                        // reference/delete.
+                        // files open/preview + download + rename/reference/
+                        // delete, directories open/archive/new dir/new file/
+                        // rename/reference/delete. The load-more tail row is
+                        // never a mutation target.
                         Menu {
                             if row.kind == 0 : MenuItem {
-                                title: I18n.wf_menu_preview;
+                                title: root.local ? I18n.wf_menu_open : I18n.wf_menu_preview;
                                 activated => { root.menu(index, 0); }
                             }
                             if row.kind == 1 : MenuItem {
                                 title: I18n.wf_menu_open;
                                 activated => { root.menu(index, 0); }
                             }
-                            if !root.readonly && row.kind == 0 : MenuItem {
+                            if !root.local && row.kind == 0 : MenuItem {
                                 title: I18n.wf_menu_download;
                                 activated => { root.menu(index, 1); }
                             }
-                            if !root.readonly && row.kind == 1 : MenuItem {
+                            if !root.local && row.kind == 1 : MenuItem {
                                 title: I18n.wf_menu_archive;
                                 activated => { root.menu(index, 7); }
                             }
-                            if !root.readonly && row.kind == 1 : MenuItem {
+                            if row.kind == 1 : MenuItem {
                                 title: I18n.wf_menu_new_dir;
                                 activated => { root.menu(index, 5); }
                             }
-                            if !root.readonly && row.kind == 1 : MenuItem {
+                            if row.kind == 1 : MenuItem {
                                 title: I18n.wf_menu_new_file;
                                 activated => { root.menu(index, 6); }
                             }
-                            if !root.readonly : MenuItem {
+                            if row.kind != 2 : MenuItem {
                                 title: I18n.wf_menu_rename;
                                 activated => { root.menu(index, 2); }
                             }
-                            if !root.readonly : MenuItem {
+                            if row.kind != 2 : MenuItem {
                                 title: I18n.wf_menu_reference;
                                 activated => { root.menu(index, 4); }
                             }
-                            if !root.readonly : MenuItem {
+                            if row.kind != 2 : MenuItem {
                                 title: I18n.wf_menu_delete;
                                 activated => { root.menu(index, 3); }
                             }
@@ -357,8 +361,8 @@ export component WorkspacePromptDialog inherits ModalDialog {
         }
         if root.input-visible : Rectangle {
             height: 30px; border-radius: Theme.radius-sm;
-            border-width: 1px; border-color: prompt-input.has-focus ? Theme.accent : Theme.border;
-            background: Theme.panel;
+            border-width: 1px; border-color: prompt-input.has-focus ? Theme.accent : Theme.input-border;
+            background: Theme.input-bg;
             prompt-input := TextInput {
                 x: 8px; y: 0px; width: parent.width - 16px; height: parent.height;
                 text <=> root.prompt-value;

@@ -20,6 +20,16 @@ const UI_FAMILY: &str = "Microsoft YaHei";
 const MONO_FAMILY: &str = "Consolas";
 /// 卡片双栏排版的最低文档宽度，低于该值退化为单栏。
 const SINGLE_COLUMN_WIDTH: f32 = 520.0;
+/// 帮助窗口字号阶梯（100% 缩放下的设计像素）。阅读面比聊天面小一档，
+/// 所有块级元素都从这里取号，缩放只乘一次，避免各处再散落魔法数字。
+const SIZE_H1: f32 = 20.0;
+const SIZE_H2: f32 = 15.5;
+const SIZE_LEAD: f32 = 14.0;
+const SIZE_BODY: f32 = 13.0;
+const SIZE_TABLE: f32 = 12.5;
+const SIZE_CARD: f32 = 12.5;
+const SIZE_SMALL: f32 = 12.0;
+const SIZE_CODE: f32 = 12.0;
 
 fn model<T: Clone + 'static>(rows: Vec<T>) -> ModelRc<T> {
     Rc::new(VecModel::from(rows)).into()
@@ -447,19 +457,19 @@ impl Typesetter {
         let mut doc = Document::default();
         let x = 30.0;
         let w = (width - 60.0).max(80.0);
-        let mut y = 22.0;
+        let mut y = 18.0;
         for block in &topic.blocks {
             match block {
                 Block::H1 { spans } => {
-                    y += self.text(&mut doc, spans, x, y, w, 26.0 * zoom, 0x17a81a, true, false)
-                        + 8.0;
+                    y += self.text(&mut doc, spans, x, y, w, SIZE_H1 * zoom, 0x17a81a, true, false)
+                        + 6.0;
                     doc.rects.push(rect(x, y, w, 1.0, 0xe5e7eb, None, 0.0));
-                    y += 16.0;
+                    y += 12.0;
                 }
                 Block::H2 { spans } => {
-                    y += 10.0;
-                    y += self.text(&mut doc, spans, x, y, w, 19.0 * zoom, 0x17a81a, true, false)
-                        + 10.0;
+                    y += 8.0;
+                    y += self.text(&mut doc, spans, x, y, w, SIZE_H2 * zoom, 0x17a81a, true, false)
+                        + 8.0;
                 }
                 Block::Paragraph { spans } | Block::Lead { spans } => {
                     let lead = matches!(block, Block::Lead { .. });
@@ -469,11 +479,11 @@ impl Typesetter {
                         x,
                         y,
                         w,
-                        if lead { 16.0 } else { 15.0 } * zoom,
+                        if lead { SIZE_LEAD } else { SIZE_BODY } * zoom,
                         if lead { 0x3f4a54 } else { 0x202020 },
                         false,
                         false,
-                    ) + 15.0;
+                    ) + 11.0;
                 }
                 Block::Task { spans } | Block::Tip { spans } | Block::Callout { spans } => {
                     let background_index = doc.rects.len();
@@ -486,17 +496,17 @@ impl Typesetter {
                         &mut doc,
                         spans,
                         x + 13.0,
-                        y + 10.0,
+                        y + 9.0,
                         w - 26.0,
                         if matches!(block, Block::Callout { .. }) {
-                            13.0
+                            SIZE_SMALL
                         } else {
-                            15.0
+                            SIZE_BODY
                         } * zoom,
                         ink,
                         false,
                         false,
-                    ) + 20.0;
+                    ) + 18.0;
                     // 装饰矩形始终垫在所有文本之下，与插入顺序无关。
                     doc.rects.insert(
                         background_index,
@@ -513,7 +523,7 @@ impl Typesetter {
                     if side > 0.0 {
                         doc.rects.push(rect(x, y, side, height, border, None, 0.0));
                     }
-                    y += height + 18.0;
+                    y += height + 14.0;
                 }
                 Block::List { spans, marker } => {
                     let marker = [Span {
@@ -526,7 +536,7 @@ impl Typesetter {
                         x + 16.0,
                         y,
                         24.0,
-                        15.0 * zoom,
+                        SIZE_BODY * zoom,
                         0x202020,
                         false,
                         false,
@@ -537,11 +547,11 @@ impl Typesetter {
                         x + 40.0,
                         y,
                         w - 40.0,
-                        15.0 * zoom,
+                        SIZE_BODY * zoom,
                         0x202020,
                         false,
                         false,
-                    ) + 5.0;
+                    ) + 4.0;
                 }
                 Block::Table { rows } => {
                     for row in rows {
@@ -560,7 +570,7 @@ impl Typesetter {
                                     cx + 8.0,
                                     y + 6.0,
                                     cw - 16.0,
-                                    14.0 * zoom,
+                                    SIZE_TABLE * zoom,
                                     if row.header { 0x26323b } else { 0x202020 },
                                     row.header,
                                     false,
@@ -583,7 +593,7 @@ impl Typesetter {
                         }
                         y += height - 1.0;
                     }
-                    y += 16.0;
+                    y += 12.0;
                 }
                 Block::Cards { cards } => {
                     let cols = if single_column { 1 } else { 2 };
@@ -598,7 +608,7 @@ impl Typesetter {
                                 cx + 12.0,
                                 y + 10.0,
                                 cw - 24.0,
-                                13.0 * zoom,
+                                SIZE_CARD * zoom,
                                 0x17a81a,
                                 true,
                                 false,
@@ -609,7 +619,7 @@ impl Typesetter {
                                 cx + 12.0,
                                 y + 14.0 + th,
                                 cw - 24.0,
-                                13.0 * zoom,
+                                SIZE_SMALL * zoom,
                                 0x5b6872,
                                 false,
                                 false,
@@ -645,7 +655,7 @@ impl Typesetter {
                             x + 12.0,
                             cy,
                             w - 24.0,
-                            13.0 * zoom,
+                            SIZE_CODE * zoom,
                             0x1f2933,
                             false,
                             false,
@@ -656,11 +666,11 @@ impl Typesetter {
                         background_index,
                         rect(x, y, w, height, 0xf7f7f7, Some(0xe1e1e1), 4.0),
                     );
-                    y += height + 16.0;
+                    y += height + 12.0;
                 }
             }
         }
-        doc.height = y + 48.0;
+        doc.height = y + 40.0;
         doc
     }
 }
@@ -799,9 +809,15 @@ impl Controller {
     }
 
     fn render(&mut self, docs: &HelpDocs) {
-        let width = docs.get_document_width().max(120.0).round();
-        // The help window has its own compact type scale so the sidebar and
-        // document can remain side-by-side on ordinary desktop widths.
+        // The measured column only exists once the window has been laid out.
+        // Typesetting against the fallback would publish a squeezed document,
+        // so nothing is handed to the view until a real width arrives; the
+        // layout key stays unset and the next heartbeat retries.
+        let measured = docs.get_document_width();
+        if measured < 1.0 {
+            return;
+        }
+        let width = measured.round();
         let zoom = docs.get_zoom_percent().clamp(80, 160);
         let key = (self.zh, self.history.current(), width as i32, zoom);
         if self.layout_key.as_ref() == Some(&key) {
@@ -812,7 +828,7 @@ impl Controller {
         self.document = self.typesetter.layout(
             topic,
             width,
-            zoom as f32 / 110.0,
+            zoom as f32 / 100.0,
             width < SINGLE_COLUMN_WIDTH,
         );
         self.layout_key = Some(key);
@@ -1054,6 +1070,7 @@ pub fn sync_language(app: &crate::MainWindow) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use slint::Model;
 
     #[test]
     fn manual_parses_and_links_resolve() {
@@ -1101,5 +1118,37 @@ mod tests {
         assert!(doc.text.contains("本地 AI 工作台"));
         // 查找应命中中文文本。
         assert!(!doc.find("工作台").is_empty());
+    }
+
+    /// Slint 不会为「只由绑定产生」的属性变化执行 `changed`，所以正文列宽无法
+    /// 靠布局信号送达控制器；没有心跳，排版会永远停在回退宽度上，每行只塞得下
+    /// 两三个字。这里跑真实事件循环，验证列宽确实被送达、正文按真实宽度成行。
+    #[test]
+    #[ignore = "需要窗口与事件循环，单独运行"]
+    fn heartbeat_publishes_the_measured_column_width() {
+        crate::register_bundled_font().expect("注册内嵌字体");
+        let window = HelpWindow::new().expect("创建帮助窗口");
+        wire(&window, true);
+        window.show().expect("显示帮助窗口");
+        let docs = window.global::<HelpDocs>();
+        let done = Rc::new(Cell::new(false));
+        let probe = done.clone();
+        slint::Timer::single_shot(std::time::Duration::from_millis(800), move || {
+            probe.set(true);
+            let _ = slint::quit_event_loop();
+        });
+        let _ = slint::run_event_loop();
+        assert!(done.get(), "事件循环未按时退出");
+        assert!(
+            docs.get_document_width() > 500.0,
+            "列宽未送达：{}",
+            docs.get_document_width()
+        );
+        let widest = docs
+            .get_runs()
+            .iter()
+            .map(|run| run.width)
+            .fold(0.0f32, f32::max);
+        assert!(widest > 300.0, "正文仍按回退宽度排版，最宽行 {widest}px");
     }
 }

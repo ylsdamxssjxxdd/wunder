@@ -1663,20 +1663,51 @@ fn desktop_token_matches_identity(
     })
 }
 
-/// One-time local migration: bind the default workspace to the historical
-/// per-user scoped data root and reattach threads that have no workspace yet.
-/// Safe to call on every startup; it is a no-op once workspaces exist and no
-/// orphan threads remain.
+/// One-time local migration: bind the default workspace to the user
+/// directory's own `workspace` subfolder — the working directory — and
+/// reattach threads that have no workspace yet. The user directory itself
+/// keeps the engine's config folders (agents/global/skills/…), so pointing a
+/// workspace there leaked those into the working-directory tree. Safe to call
+/// on every startup; existing bindings are repaired once.
 fn migrate_local_workspaces(state: &AppState, user_id: &str, legacy_root: &Path) -> Result<()> {
     let storage = state.storage.as_ref();
     let records = storage.list_workspaces(user_id)?;
+    // The working directory lives inside the user directory, mirroring the
+    // cloud form's `用户目录/workspace` split.
+    let workspace_dir = legacy_root.join("workspace");
+    let workspace_dir_cmp = normalize_path_for_compare(&workspace_dir);
+    let legacy_root_cmp = normalize_path_for_compare(legacy_root);
     let workspace_id = match records.first() {
-        Some(first) => first.workspace_id.clone(),
+        Some(first) => {
+            // Repair: early builds bound the default workspace to the user
+            // directory itself, which made its config folders show up as the
+            // working directory. Rebind once, unless another workspace
+            // already occupies the subfolder.
+            let stale = normalize_path_for_compare(Path::new(&first.root_path))
+                == legacy_root_cmp;
+            let occupied = records
+                .iter()
+                .any(|record| normalize_path_for_compare(Path::new(&record.root_path)) == workspace_dir_cmp);
+            if stale && !occupied {
+                fs::create_dir_all(&workspace_dir)?;
+                let root = workspace_dir
+                    .canonicalize()
+                    .unwrap_or_else(|_| workspace_dir.clone());
+                let mut record = first.clone();
+                record.root_path = root.to_string_lossy().into_owned();
+                record.updated_at = now_ts();
+                storage.upsert_workspace(&record)?;
+                state
+                    .workspace
+                    .register_workspace_root(&record.workspace_id, &record.root_path);
+            }
+            first.workspace_id.clone()
+        }
         None => {
-            fs::create_dir_all(legacy_root)?;
-            let root = legacy_root
+            fs::create_dir_all(&workspace_dir)?;
+            let root = workspace_dir
                 .canonicalize()
-                .unwrap_or_else(|_| legacy_root.to_path_buf());
+                .unwrap_or_else(|_| workspace_dir.clone());
             let now = now_ts();
             let record = wunder_server::storage::WorkspaceRecord {
                 workspace_id: format!("ws_{}", uuid::Uuid::new_v4().simple()),
@@ -1690,6 +1721,9 @@ fn migrate_local_workspaces(state: &AppState, user_id: &str, legacy_root: &Path)
                 updated_at: now,
             };
             storage.upsert_workspace(&record)?;
+            state
+                .workspace
+                .register_workspace_root(&record.workspace_id, &record.root_path);
             record.workspace_id
         }
     };

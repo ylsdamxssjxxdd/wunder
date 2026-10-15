@@ -3,8 +3,8 @@ use crate::{AgentCard, MainWindow};
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 use wunder_desktop::{
-    AgentRecord, CloudStatusView, DesktopSettings, LanPeerRecord, ModelEdit, NativeDesktop,
-    NativeProfile, RuntimeToolStatus,
+    AgentRecord, CloudStatusView, DesktopSettings, ModelEdit, NativeDesktop, NativeProfile,
+    RuntimeToolStatus,
 };
 
 pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
@@ -392,63 +392,7 @@ fn bind_preferences_and_prompts(app: &MainWindow, api: Arc<NativeDesktop>) {
             });
         });
     });
-
-    let weak = app.as_weak();
-    let diag_api = api.clone();
-    app.on_export_diagnostics(move || {
-        let Some(app) = weak.upgrade() else { return };
-        let dir =
-            std::path::PathBuf::from(app.get_workspace_root().to_string()).join("diagnostics");
-        let weak = app.as_weak();
-        let api = diag_api.clone();
-        run_background(move || {
-            let result = api.export_diagnostics(&dir);
-            let _ = weak.upgrade_in_event_loop(move |app| match result {
-                Ok(path) => {
-                    let path = path.display().to_string();
-                    app.set_status(format!("诊断信息已导出：{path}").into());
-                    app.set_dialog_title("诊断信息已导出".into());
-                    app.set_dialog_text(format!("已写入 {path}").into());
-                    app.set_dialog_open(true);
-                }
-                Err(error) => show_error(&app, format!("无法导出诊断信息：{error}")),
-            });
-        });
-    });
-
-    let weak = app.as_weak();
-    let reset_api = api.clone();
-    app.on_reset_work_state(move || {
-        let Some(app) = weak.upgrade() else { return };
-        if app.get_saving() {
-            return;
-        }
-        app.set_saving(true);
-        let weak = app.as_weak();
-        let api = reset_api.clone();
-        run_background(move || {
-            let result = api.reset_work_state();
-            let _ = weak.upgrade_in_event_loop(move |app| {
-                app.set_saving(false);
-                match result {
-                    Ok(summary) => {
-                        let text = format!(
-                            "已停止 {} 个运行中任务，清理 {} 个工作区条目；会话历史与文件已保留。",
-                            summary.cancelled_sessions + summary.cancelled_tasks,
-                            summary.removed_workspace_entries
-                        );
-                        app.set_status(text.clone().into());
-                        app.set_dialog_title("工作状态已重置".into());
-                        app.set_dialog_text(text.into());
-                        app.set_dialog_open(true);
-                    }
-                    Err(error) => show_error(&app, format!("无法重置工作状态：{error}")),
-                }
-            });
-        });
-    });
 }
-
 /// Project the façade's `CloudStatusView` onto the shell properties the
 /// settings card and the sidebar quota badge bind to. Signed-in drafts show
 /// the session values; signed-out drafts keep whatever the user typed.
@@ -838,16 +782,9 @@ fn bind_agents(app: &MainWindow, api: Arc<NativeDesktop>) {
             }
         }
     });
-    // §9.3 agent form: the model dropdown hands back a key, the tool switches
-    // hand back a tool name, and the settings search box re-projects the tool
-    // list because Slint 1.18 strings have no substring test.
-    let weak = app.as_weak();
-    app.on_agent_model_picked(move |key| {
-        let Some(app) = weak.upgrade() else { return };
-        if app.get_models().iter().any(|card| card.key == key) {
-            app.set_selected_agent_model(key);
-        }
-    });
+    // §9.3 agent form: the tool switches hand back a tool name, and the
+    // settings search box re-projects the tool list because Slint 1.18 strings
+    // have no substring test.
     let weak = app.as_weak();
     app.on_toggle_agent_tool_option(move |name| {
         let Some(app) = weak.upgrade() else { return };
@@ -856,12 +793,6 @@ fn bind_agents(app: &MainWindow, api: Arc<NativeDesktop>) {
         app.invoke_toggle_agent_tool(name);
         app.invoke_refresh_agent_dirty();
         app.invoke_queue_agent_save();
-    });
-    let weak = app.as_weak();
-    app.on_refresh_agent_model_options(move || {
-        if let Some(app) = weak.upgrade() {
-            update_agent_model_options(&app);
-        }
     });
     let weak = app.as_weak();
     let refresh_api = api.clone();
@@ -1189,7 +1120,6 @@ fn bind_settings(app: &MainWindow, api: Arc<NativeDesktop>) {
         app.set_selected_model(selected);
         let keys: Vec<String> = rows.iter().map(|entry| entry.key.to_string()).collect();
         app.set_models(model_from(rows));
-        update_agent_model_options(&app);
         let weak = weak.clone();
         let api = order_api.clone();
         run_background(move || {
@@ -1200,32 +1130,7 @@ fn bind_settings(app: &MainWindow, api: Arc<NativeDesktop>) {
             }
         });
     });
-    let weak = app.as_weak();
-    let lan_api = api.clone();
-    app.on_save_lan(move |enabled, name| {
-        let Some(app) = weak.upgrade() else { return };
-        if app.get_saving() || app.get_settings_loading() {
-            return;
-        }
-        app.set_saving(true);
-        let weak = weak.clone();
-        let api = lan_api.clone();
-        run_background(move || {
-            let result = api.save_lan(enabled, &name);
-            let _ = weak.upgrade_in_event_loop(move |app| {
-                app.set_saving(false);
-                match result {
-                    Ok(settings) => {
-                        apply_settings(&app, settings);
-                        app.set_status("内网通信设置已保存".into());
-                    }
-                    Err(error) => show_error(&app, format!("无法保存内网通信设置：{error}")),
-                }
-            });
-        });
-    });
 }
-
 fn apply_agents(app: &MainWindow, agents: Vec<AgentRecord>) {
     let selected = usize::try_from(app.get_selected_agent())
         .ok()
@@ -1241,23 +1146,6 @@ fn apply_agents(app: &MainWindow, agents: Vec<AgentRecord>) {
 /// produce identical cards.
 pub(crate) fn replace_agents(app: &MainWindow, cards: Vec<AgentCard>) {
     app.set_agents(model_from(cards));
-}
-
-/// The conversational models the agent form may name. The runtime only accepts
-/// a key that is still configured; a stored key that has since been deleted
-/// stays listed so the editor never drops it silently.
-pub(crate) fn update_agent_model_options(app: &MainWindow) {
-    let mut options: Vec<slint::SharedString> = app
-        .get_models()
-        .iter()
-        .filter(|model| model.model_type == "llm" || model.model_type.is_empty())
-        .map(|model| model.key)
-        .collect();
-    let stored = app.get_selected_agent_model();
-    if !stored.is_empty() && !options.contains(&stored) {
-        options.push(stored);
-    }
-    app.set_agent_model_options(model_from(options));
 }
 
 pub(crate) fn agent_record_to_card(agent: AgentRecord) -> AgentCard {
@@ -1324,21 +1212,6 @@ pub(crate) fn apply_settings(app: &MainWindow, settings: DesktopSettings) {
     app.set_runtime_python_status(status("python").into());
     app.set_runtime_git_status(status("git").into());
     app.set_runtime_rg_status(status("rg").into());
-    app.set_lan_enabled(settings.lan.enabled);
-    app.set_lan_name(settings.lan.display_name.into());
-    app.set_lan_peer_id(settings.lan.peer_id.into());
-    app.set_lan_endpoint(
-        format!("{}:{}", settings.lan.listen_host, settings.lan.listen_port).into(),
-    );
-    app.set_lan_peer_count(settings.lan.peer_count as i32);
-    app.set_lan_peers(model_from(
-        settings
-            .lan
-            .peers
-            .into_iter()
-            .map(to_lan_peer_card)
-            .collect(),
-    ));
     // The catalogue object projects the composer's full model list and mirrors
     // its size for the picker's "empty list" versus "nothing configured" split.
     model_catalogue().set(
@@ -1400,14 +1273,6 @@ fn normalize_palette(theme: &str) -> &'static str {
         "minimal" => "minimal",
         "tech-blue" => "tech-blue",
         _ => "terracotta",
-    }
-}
-
-fn to_lan_peer_card(peer: LanPeerRecord) -> crate::LanPeerCard {
-    crate::LanPeerCard {
-        peer_id: peer.peer_id.into(),
-        display_name: peer.display_name.into(),
-        address: format!("{}:{}", peer.lan_ip, peer.listen_port).into(),
     }
 }
 

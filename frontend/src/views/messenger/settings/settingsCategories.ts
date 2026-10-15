@@ -1,6 +1,7 @@
 // AI生成
 /**
- * 设置页 13 分类注册表（方案 §九.2 + 账号分类拆分 + 互通「我的设备」§5.3）。
+ * 设置页 12 分类注册表（方案 §九.2 + 账号分类拆分 + 互通「我的设备」§5.3；
+ * 帮助入口已并入常规分类，点击在独立窗口打开文档站）。
  *
  * 只描述「导航结构 + 搜索关键词」，不承载业务逻辑：每个分类的内容组件
  * 在 `settingsCategoryComponents.ts` 里按需异步加载。
@@ -21,8 +22,7 @@ export type SettingsCategoryId =
   | 'devices'
   | 'runtime'
   | 'prompts'
-  | 'archived'
-  | 'help';
+  | 'archived';
 
 export type SettingsCategoryMeta = {
   id: SettingsCategoryId;
@@ -49,8 +49,7 @@ export const SETTINGS_CATEGORY_IDS: SettingsCategoryId[] = [
   'devices',
   'runtime',
   'prompts',
-  'archived',
-  'help'
+  'archived'
 ];
 
 const META: Record<SettingsCategoryId, Omit<SettingsCategoryMeta, 'id'>> = {
@@ -69,11 +68,16 @@ const META: Record<SettingsCategoryId, Omit<SettingsCategoryMeta, 'id'>> = {
       '退出',
       '登录',
       '诊断',
+      '帮助',
+      '手册',
+      '帮助文档',
       'general',
       'theme',
       'language',
       'logout',
-      'font'
+      'font',
+      'help',
+      'docs'
     ]
   },
   account: {
@@ -163,12 +167,6 @@ const META: Record<SettingsCategoryId, Omit<SettingsCategoryMeta, 'id'>> = {
     titleKey: 'messenger.settingsPage.cat.archived.title',
     descKey: 'messenger.settingsPage.cat.archived.desc',
     keywords: ['归档', '线程', '恢复', 'archive', 'thread']
-  },
-  help: {
-    icon: 'fa-solid fa-circle-question',
-    titleKey: 'messenger.settingsPage.cat.help.title',
-    descKey: 'messenger.settingsPage.cat.help.desc',
-    keywords: ['帮助', '手册', '更新', '反馈', 'help', 'docs']
   }
 };
 

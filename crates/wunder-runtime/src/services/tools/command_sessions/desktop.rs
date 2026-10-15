@@ -10,6 +10,8 @@
 //! boundaries survive intact (UTF-8 natively, GBK fallback on Windows).
 #[cfg(all(windows, feature = "terminal-pty"))]
 use super::terminal_pty;
+#[cfg(unix)]
+use portable_pty::{ChildKiller, MasterPty, PtySize};
 use crate::storage::StorageBackend;
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
@@ -116,6 +118,7 @@ fn pe_machine(path: &Path) -> Option<u16> {
 pub enum DesktopTerminalBackend {
     Pipes,
     Console,
+    Pty,
 }
 
 /// The console object, where one exists. Elsewhere this is a placeholder that
@@ -132,6 +135,16 @@ enum InputSink {
     /// The console's input pipe: the shell echoes, and a Ctrl-C byte means
     /// Ctrl-C. Writes block on a small pipe buffer, so they run off the task.
     Console(Arc<File>),
+    /// Unix pseudo-terminal input, which delivers control bytes and signals.
+    #[cfg(unix)]
+    Pty(Arc<UnixPtyHandle>),
+}
+
+#[cfg(unix)]
+struct UnixPtyHandle {
+    master: Mutex<Box<dyn MasterPty + Send>>,
+    input: Mutex<Box<dyn std::io::Write + Send>>,
+    killer: Box<dyn ChildKiller + Send + Sync>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -437,6 +450,8 @@ struct TerminalRecord {
     /// Held so the viewport can be resized, and so dropping the record tears the
     /// console down (which takes the shell with it).
     console: Option<Arc<Console>>,
+    #[cfg(unix)]
+    unix_pty: Option<Arc<UnixPtyHandle>>,
     /// Cell size the shell believes it has.
     size: (u16, u16),
     cancel: CancellationToken,
@@ -607,6 +622,8 @@ impl DesktopTerminalService {
             output: OutputBuffer::new(TERMINAL_OUTPUT_BUDGET_BYTES),
             input: Mutex::new(None),
             console: None,
+            #[cfg(unix)]
+            unix_pty: None,
             // The client reports the panel's real size on its first paint.
             size: (DEFAULT_COLS, DEFAULT_ROWS),
             cancel: CancellationToken::new(),
@@ -674,6 +691,8 @@ impl DesktopTerminalService {
                     None
                 }
                 Some(InputSink::Console(file)) => Some((Arc::clone(file), input.to_vec())),
+                #[cfg(unix)]
+                Some(InputSink::Pty(pty)) => Some((Arc::clone(pty), input.to_vec())),
                 None => return Err("terminal stdin is unavailable".to_string()),
             }
         };
@@ -700,18 +719,28 @@ impl DesktopTerminalService {
         terminal_id: &str,
     ) -> Result<(), String> {
         let record = self.scoped_record(user_id, session_id, terminal_id)?;
-        let console_input = {
+        let input = {
             let guard = record.lock();
             let input_guard = guard.input.lock();
             match input_guard.as_ref() {
-                Some(InputSink::Console(file)) => Some(Arc::clone(file)),
+                Some(InputSink::Console(file)) => Some(InterruptTarget::Console(Arc::clone(file))),
+                #[cfg(unix)]
+                Some(InputSink::Pty(pty)) => Some(InterruptTarget::Pty(Arc::clone(pty))),
                 _ => None,
             }
         };
-        if let Some(file) = console_input {
+        if let Some(InterruptTarget::Console(file)) = input {
             // 0x03 is Ctrl-C: the shell turns it into the signal its foreground
             // program expects, and stays up for the next command.
             return std::io::Write::write_all(&mut &*file, &[3u8])
+                .map_err(|error| format!("failed to send Ctrl-C: {error}"));
+        }
+        #[cfg(unix)]
+        if let Some(InterruptTarget::Pty(pty)) = input {
+            return pty
+                .input
+                .lock()
+                .write_all(&[3u8])
                 .map_err(|error| format!("failed to send Ctrl-C: {error}"));
         }
         self.terminate(user_id, session_id, terminal_id)
@@ -736,9 +765,21 @@ impl DesktopTerminalService {
             guard.size = (cols, rows);
             guard.console.clone()
         };
+        #[cfg(unix)]
+        let unix_pty = record.lock().unix_pty.clone();
         match console {
             Some(console) => apply_console_size(&console, cols, rows),
-            None => Ok(()),
+            None => {
+                #[cfg(unix)]
+                if let Some(pty) = unix_pty {
+                    return pty
+                        .master
+                        .lock()
+                        .resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
+                        .map_err(|error| format!("failed to resize terminal: {error}"));
+                }
+                Ok(())
+            }
         }
     }
 

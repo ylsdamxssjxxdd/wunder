@@ -1285,11 +1285,11 @@ export component Composer inherits Rectangle {
                     // "ctrl_enter" sends only with Ctrl+Enter; "none" leaves all
                     // newlines to the editor and sends via the button only.
                     if event.text == "\n" && !event.modifiers.shift && !event.modifiers.control {
-                        if root.send-key == "enter" && !root.send-blocked { root.send(); }
+                        if root.send-key == "enter" && root.send-enabled { root.send(); }
                         return root.send-key == "enter" ? accept : reject;
                     }
                     if event.text == "\n" && event.modifiers.control {
-                        if root.send-key == "ctrl_enter" && !root.send-blocked { root.send(); return accept; }
+                        if root.send-key == "ctrl_enter" && root.send-enabled { root.send(); return accept; }
                         return reject;
                     }
                     return reject;
@@ -1321,16 +1321,16 @@ export component Composer inherits Rectangle {
         HorizontalLayout {
             height: 30px; spacing: 6px;
             Rectangle {
-                width: 28px; height: 30px;
+                width: 26px; height: 30px;
                 plus-btn := Rectangle {
-                    y: 1px; width: 28px; height: 28px;
+                    y: 2px; width: 26px; height: 26px;
                     border-radius: Theme.radius-sm;
                     background: root.plus-open ? Theme.accent-soft : Theme.surface;
                     border-width: 1px;
                     border-color: root.plus-open ? Theme.accent-secondary : Theme.border-strong;
                     drop-shadow-color: #1F23290F; drop-shadow-blur: 2px; drop-shadow-offset-y: 1px;
                     Image {
-                        x: 8px; y: 8px; width: 12px; height: 12px;
+                        x: 5px; y: 5px; width: 16px; height: 16px;
                         source: root.plus-open ? @image-url("../assets/icons/xmark.svg") : @image-url("../assets/icons/plus.svg");
                         colorize: root.plus-open ? Theme.accent : Theme.text-secondary;
                         image-fit: contain;
@@ -1555,37 +1555,36 @@ export component Composer inherits Rectangle {
                 effort-changed(value) => { root.reasoning-effort-changed(value); }
                 open-settings => { root.open-model-settings(); }
             }
-            // Mirrors the web send control: a 28px accent square that swaps a
-            // white arrow-up for a stop glyph while a reply streams. Parking a
-            // follow-up still works from the keyboard (send-key).
+            // While a reply streams, the square itself becomes the stop action;
+            // the editor remains available and Enter sends the next queued turn.
             Rectangle {
                 width: 28px; height: 30px;
                 send-btn := Rectangle {
                     y: 1px; width: 28px; height: 28px;
                     border-radius: Theme.radius-sm;
-                    background: root.generating
+                    background: root.generating && root.draft == ""
                         ? (root.stopping ? Theme.border-strong : Theme.accent)
                         : (root.send-enabled ? (send-touch.has-hover ? Theme.accent-deep : Theme.accent) : Theme.border-strong);
                     Image {
-                        x: 8px; y: 8px; width: 12px; height: 12px;
-                        source: root.generating ? @image-url("../assets/icons/stop.svg") : @image-url("../assets/icons/arrow-up.svg");
+                        x: 6px; y: 6px; width: 16px; height: 16px;
+                        source: root.generating && root.draft == "" ? @image-url("../assets/icons/stop.svg") : @image-url("../assets/icons/arrow-up.svg");
                         colorize: #ffffff;
                         image-fit: contain;
                     }
                     accessible-role: button;
-                    accessible-label: root.generating ? I18n.cp_stop_generation : I18n.cp_send;
+                    accessible-label: root.generating && root.draft == "" ? I18n.cp_stop_generation : I18n.cp_send;
                     accessible-action-default => {
-                        if root.generating {
+                        if root.generating && root.draft == "" {
                             if !root.stopping { root.stop(); }
                         } else {
                             root.send();
                         }
                     }
                     send-touch := TouchArea {
-                        enabled: root.generating ? !root.stopping : root.send-enabled;
+                        enabled: root.generating && root.draft == "" ? !root.stopping : root.send-enabled;
                         mouse-cursor: pointer;
                         clicked => {
-                            if root.generating { root.stop(); } else { root.send(); }
+                            if root.generating && root.draft == "" { root.stop(); } else { root.send(); }
                         }
                     }
                 }

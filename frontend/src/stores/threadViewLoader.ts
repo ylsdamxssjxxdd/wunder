@@ -2,6 +2,7 @@ import { getThreadViewBootstrap, getThreadViewChatPage } from '@/api/chat';
 import { beginThreadView, commitThreadView, failThreadView, threadViewSlots, threadViewHistory, threadViewWindow, threadViewGeneration, threadViewHasNewerPage, threadViewStatus } from '@/realtime/chat/threadViewStore';
 import { clearSessionWatcher, setSessionLoading } from './chatRuntimeControls';
 import { getHistoryState, cacheSessionMessages, ensureRuntime } from './chatRuntimeState';
+import { threadViewStoreMessages } from './chatGreeting';
 import { persistActiveSession, patchSessionRuntimeFields, syncGoalFromSessionRecord } from './chatPersist';
 import { syncChatThreadShell } from './chatThreadEffects';
 import { startSessionWatcher } from './chatWatcher';
@@ -43,7 +44,7 @@ async function openThreadViewInternal(store: any, key: string, task: OpenTask) {
   const controller=task.controller;
   const generation=beginThreadView(key);store.activeSessionId=key;
   const history=getHistoryState(key);history.loading=true;
-  store.messages=(threadViewSlots(key)??[]).flatMap(s=>[s.user,s.assistant]);
+  store.messages=threadViewStoreMessages(store,key);
   // Once the bounded view has been committed, the user already has a valid
   // conversation on screen. Runtime/watcher hydration is best effort and must
   // not turn a successful open into a misleading "open failed" toast.
@@ -66,7 +67,7 @@ async function openThreadViewInternal(store: any, key: string, task: OpenTask) {
     const index=store.sessions.findIndex((s:any)=>s.id===key);
     if(index>=0)store.sessions[index]={...store.sessions[index],...session};else store.sessions.unshift(session);
     syncGoalFromSessionRecord(store,session);
-    store.messages=(threadViewSlots(key)??[]).flatMap(s=>[s.user,s.assistant]);cacheSessionMessages(key,store.messages);
+    store.messages=threadViewStoreMessages(store,key,session.created_at);cacheSessionMessages(key,store.messages);
     const cursor=threadViewHistory(key);
     history.beforeId=cursor.before;history.hasMore=cursor.hasMore;
     store.draftAgentId=String(session.agent_id??'');persistActiveSession(key,store.draftAgentId);
@@ -134,7 +135,7 @@ async function pageThreadView(store: any, key: string, forward: boolean) {
     const next = threadViewWindow(key);
     history.beforeId = next.before;
     history.hasMore = next.hasMore;
-    const messages = (threadViewSlots(key) ?? []).flatMap(s => [s.user, s.assistant]);
+    const messages = threadViewStoreMessages(store, key);
     cacheSessionMessages(key, messages);
     store.messages = messages;
     return page.chat.length ? messages : [];

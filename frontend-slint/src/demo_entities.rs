@@ -88,7 +88,6 @@ pub fn install(app: &MainWindow) {
     app.set_workspace_root("本地演示".into());
     app.set_runtime_language("zh-CN".into());
     app.on_refresh_profile(|| {});
-    app.on_save_lan(|_, _| {});
     app.on_save_profile_avatar(|_, _| {});
     let weak = app.as_weak();
     app.on_filter_settings_categories(move |query| {
@@ -204,10 +203,8 @@ pub fn install(app: &MainWindow) {
         }
     });
     let weak = app.as_weak();
-    app.on_save_runtime(move |workspace, language, _python, _git, _rg| {
+    app.on_save_runtime(move || {
         if let Some(app) = weak.upgrade() {
-            app.set_workspace_root(workspace);
-            app.set_runtime_language(language);
             crate::help_browser::sync_language(&app);
             app.set_status("设置已保存 · 仅本次演示有效".into());
         }

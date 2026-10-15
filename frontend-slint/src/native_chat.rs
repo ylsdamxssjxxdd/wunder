@@ -3,7 +3,7 @@ use wunder_desktop::native::NativeWorkflowEntry;
 
 use crate::{
     terminal_grid, Conversation, DraftRecall, InquiryOption, InquiryQuestion, MainWindow, PlanStep,
-    TermSpan, TimelineRow,
+    TermSpan, TerminalWindow, TimelineRow,
 };
 use serde_json::Value;
 use slint::{ComponentHandle, Model, ModelRc, Timer, TimerMode, VecModel};
@@ -36,6 +36,9 @@ use queue::{drain_entry, recall_step, EntrySignal, ParkedTurn, Recall};
 struct Active {
     stream: NativeStream,
     output: TurnOutput,
+    /// Once the pump sees this request's first execution frame, hide its stale
+    /// queue-strip row while the engine's queue snapshot catches up.
+    client_message_id: String,
 }
 
 /// Live turn state. The timeline rows themselves live in `Timeline`; this
@@ -95,21 +98,23 @@ impl TurnOutput {
         timeline: &mut crate::timeline::Timeline,
         entry: NativeWorkflowEntry,
     ) {
-        if let Some(existing) = self
+        let projected = if let Some(existing) = self
             .workflow
             .iter_mut()
             .find(|old| !entry.id.is_empty() && old.id == entry.id)
         {
-            *existing = entry;
+            *existing = entry.clone();
+            existing.clone()
         } else {
             if self.workflow.len() >= 24 {
                 self.workflow.remove(0);
             }
-            self.workflow.push(entry);
-        }
-        if let Some(entry) = self.workflow.last() {
-            timeline.upsert_tool(entry);
-        }
+            self.workflow.push(entry.clone());
+            entry
+        };
+        // Results are not guaranteed to arrive in call order. Update the row
+        // for this invocation id, never the current vector tail.
+        timeline.upsert_tool(&projected);
     }
 
     /// Append one command-output chunk for a session and return the retained
@@ -330,6 +335,7 @@ struct State {
     /// process keeps running while the terminal panel stays open; leaving the
     /// mode merely hides it, so buffered output survives re-entry.
     terminal: Option<TerminalSession>,
+    terminal_window: Option<TerminalWindow>,
     /// Poll timer for the terminal output; runs for the whole desktop session
     /// and is a no-op while no terminal is alive (kept separate from the
     /// stream pump so chat generation never steals the tick).
@@ -377,6 +383,8 @@ struct State {
 struct TerminalSession {
     terminal_id: String,
     session_id: String,
+    workspace_id: String,
+    workspace_root: String,
     last_seq: u64,
 }
 
@@ -419,6 +427,7 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
         recording: None,
         list_inflight: Arc::new(AtomicBool::new(false)),
         terminal: None,
+        terminal_window: TerminalWindow::new().ok(),
         terminal_timer: Timer::default(),
         // Starts at the size the panel declares before it knows its own
         // geometry; the first layout reports the real one.
@@ -541,9 +550,11 @@ fn bind_timeline(app: &MainWindow, timeline: Rc<RefCell<crate::timeline::Timelin
 /// turn-ruler marks always move together, so the ruler can never drift from
 /// the visible rows.
 pub(crate) fn publish_timeline(app: &MainWindow, live: &crate::timeline::Timeline) {
-    app.set_timeline(live.model());
-    let marks = live.turn_marks();
-    app.set_turn_marks(ModelRc::new(VecModel::from(marks)));
+    if live.needs_publish() {
+        app.set_timeline(live.model());
+        app.set_turn_marks(live.marks_model());
+    }
+    live.sync_turn_marks();
     crate::activity_ui::notify_timeline_rows(live.row_count());
 }
 
@@ -924,8 +935,17 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
         app.set_active_session_id(id.clone().into());
         app.set_session_loading(true);
         state.borrow().timeline.borrow_mut().clear();
-        app.set_timeline(ModelRc::default());
-        app.set_turn_marks(ModelRc::default());
+        // Keep MainWindow attached to the one stable VecModel owned by the
+        // reducer. Replacing it with a detached empty model makes later stream
+        // deltas look stale until a full page reload.
+        {
+            let timeline = state.borrow().timeline.clone();
+            let live = timeline.borrow();
+            if live.needs_publish() {
+                app.set_timeline(live.model());
+                app.set_turn_marks(live.marks_model());
+            }
+        }
         std::thread::spawn(move || {
             let result = desktop.get_session_info(&id);
             let _ = weak.upgrade_in_event_loop(move |app| {
@@ -1131,18 +1151,39 @@ const TERMINAL_SESSION_ID: &str = "terminal_main";
 
 /// Start (or reuse) the live shell for terminal mode. The process stays alive
 /// across mode switches; buffered output is capped by the runtime service.
-fn ensure_terminal(state: &mut State) -> Result<String, String> {
-    if let Some(session) = &state.terminal {
-        return Ok(session.terminal_id.clone());
+fn selected_terminal_workspace(app: &MainWindow) -> Result<(String, String, String), String> {
+    let index = usize::try_from(app.get_selected_workspace()).map_err(|_| "没有选中的工作区".to_string())?;
+    let card = app
+        .get_workspaces()
+        .row_data(index)
+        .ok_or_else(|| "没有选中的本地工作区".to_string())?;
+    let root = std::path::Path::new(card.root_path.as_str());
+    if card.workspace_id.trim().is_empty() || card.root_path.trim().is_empty() {
+        return Err("当前工作区没有本地目录".to_string());
     }
-    let cwd = std::env::current_dir()
-        .map(|path| path.to_string_lossy().to_string())
-        .unwrap_or_default();
+    if !root.is_dir() {
+        return Err("当前工作区目录不存在或不可用".to_string());
+    }
+    Ok((card.workspace_id.to_string(), card.name.to_string(), card.root_path.to_string()))
+}
+
+fn ensure_terminal(state: &mut State, app: &MainWindow) -> Result<String, String> {
+    let (workspace_id, workspace_name, cwd) = selected_terminal_workspace(app)?;
+    if let Some(session) = &state.terminal {
+        if session.workspace_id == workspace_id && session.workspace_root == cwd {
+            return Ok(session.terminal_id.clone());
+        }
+        let _ = state.desktop.terminal_close(&session.session_id, &session.terminal_id);
+        state.terminal = None;
+        state.grid.reset();
+        state.terminal_restored = false;
+    }
+    let session_id = format!("terminal:{workspace_id}");
     let spec = NativeTerminalSpec {
         terminal_id: String::new(),
-        session_id: TERMINAL_SESSION_ID.to_string(),
+        session_id: session_id.clone(),
         command: String::new(),
-        cwd,
+        cwd: cwd.clone(),
         shell: String::new(),
     };
     let snapshot = state
@@ -1152,7 +1193,9 @@ fn ensure_terminal(state: &mut State) -> Result<String, String> {
     let terminal_id = snapshot.terminal_id.clone();
     state.terminal = Some(TerminalSession {
         terminal_id: terminal_id.clone(),
-        session_id: TERMINAL_SESSION_ID.to_string(),
+        session_id,
+        workspace_id,
+        workspace_root: cwd,
         last_seq: 0,
     });
     Ok(terminal_id)
@@ -1637,7 +1680,11 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
             output.plan_explanation = explanation.clone();
             output.plan_steps = steps.clone();
         }
-        state.borrow_mut().active = Some(Active { stream, output });
+        state.borrow_mut().active = Some(Active {
+            stream,
+            output,
+            client_message_id,
+        });
         start_timer(&app, state.clone());
     });
 }
@@ -2354,6 +2401,7 @@ fn start_timer(app: &MainWindow, state: Rc<RefCell<State>>) {
                 state.active = Some(Active {
                     stream: entry.stream,
                     output,
+                    client_message_id: entry.client_message_id,
                 });
                 app.set_busy(true);
                 app.set_stopping(false);
@@ -2364,6 +2412,16 @@ fn start_timer(app: &MainWindow, state: Rc<RefCell<State>>) {
             }
             if parked_moved || queue::due_arrived(&mut state.queue_due) {
                 queue::publish(&app, &desktop, &active_session, &mut state.queue_cache);
+                // Promotion is the point at which the request owns the live
+                // slot. Hide its queue card immediately; the next refresh will
+                // still use the engine snapshot for every other row.
+                if let Some(active) = state.active.as_ref() {
+                    queue::without_client_id(
+                        &mut state.queue_cache,
+                        active.client_message_id.as_str(),
+                    );
+                    queue::publish_rows(&app, &state.queue_cache);
+                }
             }
             // The turn is taken out of the state for the tick so the flush can
             // also touch the plan cache and signature without fighting the

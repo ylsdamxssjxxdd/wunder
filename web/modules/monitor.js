@@ -15,7 +15,7 @@ import { getWunderBase } from "./api.js";
 import { notify } from "./notify.js";
 import { appendQueuePriorityAction } from "./monitor-queue.js";
 import { getCurrentLanguage, t } from "./i18n.js?v=20261011-01";
-import { openTrajectoryPage } from "./trajectory-view.js?v=20261011-01";
+import { openTrajectoryPage } from "./trajectory-view.js?v=20261015-02";
 import { filterRemovedSwarmTools } from "../shared/deprecated-tools.js";
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
@@ -2415,7 +2415,7 @@ const renderMonitorTable = (body, emptyNode, sessions, options = {}) => {
       if (!session.session_id) {
         return;
       }
-      openMonitorDetail(session.session_id);
+      openTrajectoryPage(session.session_id);
     });
     body.appendChild(row);
   });
@@ -2567,7 +2567,7 @@ const renderMonitorStatusList = (sessions) => {
       if (!session?.session_id) {
         return;
       }
-      openMonitorDetail(session.session_id);
+      openTrajectoryPage(session.session_id);
     });
     elements.monitorStatusList.appendChild(item);
   });
@@ -2663,7 +2663,7 @@ const renderMonitorToolList = (sessions, toolName = "") => {
         if (!session?.session_id) {
           return;
         }
-        openMonitorDetail(session.session_id, { focusTool: focusToolName });
+        openTrajectoryPage(session.session_id);
       });
       elements.monitorToolList.appendChild(item);
     });
@@ -4149,8 +4149,11 @@ const exportMonitorDetailLogs = async () => {
   }
 };
 
+// The trajectory page is now the single session inspection surface. Keep this
+// export as a compatibility shim for older modules, but never reopen the
+// legacy event-log dialog.
 export const openMonitorDetail = async (sessionId, options = {}) => {
-  return loadMonitorDetailPage(sessionId, 0, { ...options, resetFilters: true });
+  return openTrajectoryPage(sessionId, options);
 };
 
 const loadMonitorDetailPage = async (sessionId, offset = 0, options = {}) => {
@@ -4316,7 +4319,7 @@ const requestCancelSession = async (sessionId) => {
   notify(result.message || t("monitor.cancelRequested"), "info");
   await loadMonitorData();
   if (state.monitor.selected === sessionId) {
-    await openMonitorDetail(sessionId);
+    await openTrajectoryPage(sessionId);
   }
 };
 

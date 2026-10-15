@@ -63,6 +63,7 @@ ENTRIES = [
     # agents_page.slint
     ("ap_all_hives", "全部蜂群", "All hives"),
     ("ap_archive_thread", "归档线程", "Archive thread"),
+    ("ap_archive_confirm", "归档后线程将从侧边栏隐藏，可在设置 → 归档线程中查看。确认归档该线程吗？", "The thread will be hidden from the sidebar and stays available under Settings → Archived threads. Archive it?"),
     ("ap_agent_settings", "智能体设置", "Agent settings"),
     ("ap_memories", "记忆碎片", "Memories"),
     ("ap_back_chat", "返回对话", "Back to chat"),

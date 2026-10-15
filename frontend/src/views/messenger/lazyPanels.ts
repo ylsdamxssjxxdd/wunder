@@ -13,9 +13,6 @@ export const ArchivedThreadManager = lazy(
 export const AgentSettingsPanel = lazy(
   () => import('@/components/messenger/AgentSettingsPanel.vue')
 );
-export const MessengerHelpManualPanel = lazy(
-  () => import('@/components/messenger/MessengerHelpManualPanel.vue')
-);
 export const MessengerSettingsPanel = lazy(
   () => import('@/components/messenger/MessengerSettingsPanel.vue')
 );
@@ -74,11 +71,9 @@ const scheduleSecondaryMorePanelsPreload = (): void => {
   }
   secondaryMorePanelsScheduled = true;
   scheduleIdleImport(() => {
-    const tasks: Promise<unknown>[] = [
-      import('@/components/messenger/UserPromptSettingsPanel.vue'),
-      import('@/components/messenger/MessengerHelpManualPanel.vue')
-    ];
-    void Promise.allSettled(tasks);
+    void Promise.allSettled([
+      import('@/components/messenger/UserPromptSettingsPanel.vue')
+    ]);
   });
 };
 

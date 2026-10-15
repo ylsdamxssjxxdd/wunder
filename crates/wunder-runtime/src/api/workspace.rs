@@ -171,6 +171,10 @@ async fn workspace_content(
         .as_ref()
         .map(|path| path.relative_path.clone())
         .unwrap_or_else(|| normalize_relative_path(&params.path));
+    if params.refresh_tree {
+        state.workspace.refresh_workspace_tree(&workspace_id);
+    }
+    let tree_version = state.workspace.get_tree_version(&workspace_id);
     let target_path = if normalized.is_empty() {
         ".".to_string()
     } else {
@@ -198,6 +202,7 @@ async fn workspace_content(
                 format_value: "text".to_string(),
                 truncated: false,
                 entries: Vec::new(),
+                tree_version,
                 total: 0,
                 offset: safe_offset,
                 limit: safe_limit,
@@ -265,6 +270,7 @@ async fn workspace_content(
             format_value: "dir".to_string(),
             truncated: false,
             entries,
+            tree_version,
             total,
             offset: safe_offset,
             limit: safe_limit,
@@ -306,6 +312,7 @@ async fn workspace_content(
         format_value: "text".to_string(),
         truncated,
         entries: Vec::new(),
+        tree_version,
         total: 0,
         offset: 0,
         limit: 0,
@@ -1660,6 +1667,8 @@ struct WorkspaceContentQuery {
     agent_id: Option<String>,
     #[serde(default)]
     path: String,
+    #[serde(default)]
+    refresh_tree: bool,
     #[serde(default = "default_true")]
     include_content: bool,
     #[serde(default)]
@@ -1823,6 +1832,8 @@ struct WorkspaceContentResponse {
     truncated: bool,
     #[serde(default)]
     entries: Vec<WorkspaceContentEntry>,
+    #[serde(default)]
+    tree_version: u64,
     total: u64,
     offset: u64,
     limit: u64,

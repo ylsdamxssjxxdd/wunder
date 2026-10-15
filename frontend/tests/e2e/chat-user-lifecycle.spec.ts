@@ -53,7 +53,8 @@ test('user operations drive the production chat through mocked HTTP and WebSocke
     // Do not attribute initial route hydration and font layout to a chat turn.
     await page.waitForTimeout(300);
     await page.evaluate(() => (window as any).wunderPerf.start());
-    // 空线程首屏已是会话活动网格（浮动设置窗口之外唯一的欢迎态），不再渲染问候气泡。
+    // 空线程首屏：年度活动网格 + 合成问候气泡一起上下居中显示；
+    // 网格消失由 turn 槽位驱动，首条用户轮次后恢复流式排布。
     await expect(page.locator('.messenger-thread-activity')).toHaveCount(1);
     coverage.emptyState = true;
     const noticeCount = () => page.evaluate(() => (window as any).__completionNotices.length as number);

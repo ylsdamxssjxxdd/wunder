@@ -291,6 +291,15 @@
     0 0 0 2px var(--tt-brand);
 }
 
+/* Aggregate tiles are deliberately sliced by the view model. A fine light
+   divider keeps adjacent slices visible even when a bucket contains only one
+   lane, while remaining unobtrusive at the 1–2px widths used by huge logs. */
+.tt-span-overview {
+  opacity: 0.94;
+  border-radius: 0;
+  box-shadow: inset -1px 0 rgba(255, 255, 255, 0.42);
+}
+
 .tt-span-user { background: var(--tt-brand); }
 .tt-span-context { background: var(--tt-green-mix); }
 .tt-span-compacted { background: var(--tt-text-3); }

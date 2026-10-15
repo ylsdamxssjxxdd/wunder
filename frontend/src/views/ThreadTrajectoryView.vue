@@ -302,11 +302,6 @@
             >{{ tab }}</button>
           </div>
           <div class="tt-detail-body">
-            <span v-if="detailLoading" role="status">加载详情中…</span>
-            <button v-if="detailError" @click="loadRecordDetail(selectedCell.recordId)">详情读取失败，重试</button>
-            <pre v-if="(details[selectedCell.recordId] as any)?.raw">{{ (details[selectedCell.recordId] as any)?.raw }}</pre>
-            <ThreadBodyViewport v-if="(details[selectedCell.recordId] as any)?.content_body" :key="selectedCell.recordId" :session-id="String(route.query.session ?? '')" :body="(details[selectedCell.recordId] as any).content_body" preview="正文按页读取" :cache-key="`trajectory:${selectedCell.recordId}`" />
-            <button v-if="(details[selectedCell.recordId] as any)?.has_more" :disabled="detailLoading" @click="nextDetail">继续读取详情</button>
             <!-- 概述 -->
             <div v-if="activeTab === overviewTab" class="tt-detail-body-summary">
               <dl class="tt-overview">
@@ -446,7 +441,6 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useI18n } from '@/i18n'
 import { searchThreadView, getThreadViewBootstrap, getThreadViewTrajectoryPage, getThreadViewBody } from '@/api/chat'
-import ThreadBodyViewport from '@/components/chat/ThreadBodyViewport.vue'
 import { exportSingleSessionLog } from '@/utils/sessionLogExport'
 import { renderMarkdown } from '@/utils/markdown'
 import TrajectoryJsonTree from './trajectory/TrajectoryJsonTree.vue'
@@ -635,7 +629,12 @@ const windowTopPx = computed(() => {
 
 const timeline = computed(() => deriveTimeline(turns.value, timelineMode.value))
 
-type OverviewSpan = TimelineSpan & { count: number; aggregate: true }
+type OverviewSpan = TimelineSpan & { count: number; aggregate?: true; bucket?: number }
+
+// The server returns at most 1024 aggregate buckets. Keep that bounded
+// overview, but subdivide each bucket into a small number of deterministic
+// slices so the overview retains the segmented feel of DSH.
+const MAX_OVERVIEW_SPANS = 4096
 
 const overviewTimeline = computed(() => {
   // A detail turn has its own time domain. Keeping the session-wide tile
@@ -645,6 +644,10 @@ const overviewTimeline = computed(() => {
   const page = displayPage.value
   const tiles = Array.isArray(page?.tiles) ? page.tiles : []
   if (tiles.length === 0) return null
+  // A complete small page already has the real per-record timeline.  Tiles
+  // are an overview fallback for a truncated page; using them for every
+  // thread was the reason short sessions appeared as three solid bars.
+  if (!truncated.value && !hasNewer.value) return null
   const level = Number.isFinite(Number(page?.tile_level)) ? Number(page.tile_level) : 0
   const bucketWidth = 128 * (8 ** level)
   const detailLaneCounts = [0, 0, 0]
@@ -656,10 +659,56 @@ const overviewTimeline = computed(() => {
   const spans: OverviewSpan[] = []
   let start = Infinity
   let end = -Infinity
+  const cellsById = new Map(allRecords.value.map(record => [record.cell.recordId, record.cell]))
+  const spanByIndex = new Map((timeline.value?.spans ?? []).map(span => [span.index, span]))
+  const detailedBuckets = new Set<number>()
+  const detailedRanges: Array<{ start: number; end: number }> = []
+  const detailedSpans: OverviewSpan[] = []
+  // Overlay the rows currently in the bounded ledger with their real
+  // positions. The rest of the session remains tile based, so the first
+  // screen has DSH-like event marks without unbounded DOM work.
+  for (const row of summaryRows.value) {
+    const cell = cellsById.get(String(row.item_id))
+    const localSpan = cell ? spanByIndex.get(cell.index) : undefined
+    if (!cell || !localSpan) continue
+    const rawStart = timelineMode.value === 'sequence'
+      ? Number(row.created_seq)
+      : Number(row.started_at) * 1000
+    const rawEnd = timelineMode.value === 'sequence'
+      ? rawStart + 1
+      : Math.max(rawStart, Number(row.completed_at ?? row.started_at) * 1000)
+    if (!Number.isFinite(rawStart) || !Number.isFinite(rawEnd)) continue
+    const bucket = timelineMode.value === 'sequence'
+      ? Math.floor(rawStart / bucketWidth)
+      : null
+    if (bucket !== null) {
+      detailedBuckets.add(bucket)
+    }
+    detailedRanges.push({ start: rawStart, end: Math.max(rawEnd, rawStart + 0.001) })
+    start = Math.min(start, rawStart)
+    end = Math.max(end, rawEnd)
+    detailedSpans.push({
+      ...localSpan,
+      start: rawStart,
+      end: Math.max(rawEnd, rawStart + (timelineMode.value === 'sequence' ? 1 : 0.001)),
+      count: 1,
+    })
+  }
+  const perTileLimit = Math.max(1, Math.min(
+    16,
+    Math.floor(MAX_OVERVIEW_SPANS / Math.max(1, tiles.length)),
+  ))
   for (const tile of tiles) {
     const bucket = Number(tile?.bucket)
     const total = Math.max(0, Number(tile?.count) || 0)
     if (!Number.isFinite(bucket) || total <= 0) continue
+    // Never paint a full aggregate lane underneath real records from the
+    // bounded ledger. The loaded records provide the useful detail; leaving
+    // the remainder of that bucket empty is clearer than a misleading solid
+    // background behind them.
+    if (detailedBuckets.has(bucket)
+      || (timelineMode.value !== 'sequence'
+        && detailedRanges.some(range => range.start <= rawEnd && range.end >= rawStart))) continue
     const explicit = [Number(tile?.input_count) || 0, Number(tile?.model_count) || 0, Number(tile?.tool_count) || 0]
     const explicitTotal = explicit.reduce((sum, value) => sum + value, 0)
     const laneCounts = explicitTotal > 0
@@ -678,22 +727,45 @@ const overviewTimeline = computed(() => {
     if (!Number.isFinite(rawStart) || !Number.isFinite(rawEnd)) continue
     start = Math.min(start, rawStart)
     end = Math.max(end, rawEnd)
-    for (let lane = 0; lane < 3; lane += 1) {
-      if (laneCounts[lane] <= 0) continue
+    const tileEnd = Math.max(rawEnd, rawStart + (timelineMode.value === 'sequence' ? 1 : 0.001))
+    const totalLaneCount = laneCounts.reduce((sum, value) => sum + Math.max(0, value), 0)
+    const segmentCount = Math.max(1, Math.min(perTileLimit, totalLaneCount || total))
+    const segmentWidth = (tileEnd - rawStart) / segmentCount
+    for (let segment = 0; segment < segmentCount; segment += 1) {
+      const eventAt = ((segment + 0.5) / segmentCount) * (totalLaneCount || total)
+      let lane = 2
+      let laneEnd = 0
+      for (let candidate = 0; candidate < 3; candidate += 1) {
+        laneEnd += Math.max(0, laneCounts[candidate] ?? 0)
+        if (eventAt <= laneEnd) {
+          lane = candidate
+          break
+        }
+      }
+      const segmentStart = rawStart + segment * segmentWidth
+      const segmentEnd = segment === segmentCount - 1 ? tileEnd : segmentStart + segmentWidth
       spans.push({
-        start: rawStart,
-        end: Math.max(rawEnd, rawStart + (timelineMode.value === 'sequence' ? 1 : 0.001)),
+        start: segmentStart,
+        end: segmentEnd,
         index: -(spans.length + 1),
         isError: Number(tile?.failed) > 0,
         kind: lane === 0 ? 'context' : lane === 1 ? 'message' : 'tool',
-        label: `${laneCounts[lane]} events`,
+        label: `${Math.max(1, Math.round(total / segmentCount))} events`,
         lane,
         ttftFraction: null,
-        count: laneCounts[lane],
+        count: Math.max(1, Math.round(total / segmentCount)),
         aggregate: true,
+        bucket,
       })
     }
   }
+  const aggregateSpans = spans.splice(0)
+  // Prioritize the loaded ledger window when the bounded cap is reached; it
+  // is the only part users can inspect and click through immediately.
+  spans.push(...detailedSpans, ...aggregateSpans.slice(
+    0,
+    Math.max(0, MAX_OVERVIEW_SPANS - detailedSpans.length),
+  ))
   return spans.length > 0 ? { start, end: Math.max(end, start + 1), spans, turnBoundaries: [] } : null
 })
 
@@ -718,11 +790,12 @@ const projectedOverviewSpans = computed(() => {
   return model.spans.map((modelSpan, i) => {
     const left = ((modelSpan.start - viewStart.value) / span) * width
     const pw = ((modelSpan.end - modelSpan.start) / span) * width
+    const gap = Math.min(pw * 0.15, 0.5)
     return {
       key: `overview-${modelSpan.index}-${i}`,
       model: modelSpan,
-      left,
-      width: Math.max(1, pw),
+      left: left + gap,
+      width: Math.max(1, pw - gap * 2),
       dimmed: false,
       outside: false,
     }
@@ -900,7 +973,7 @@ async function load(cursor: number | null = null, direction: 'older' | 'newer' |
     collapsedAssistants.value = new Set([...collapsedAssistants.value].filter(key => groups.has(key)))
     selectedIndex.value = direction && selectedId
       ? allRecords.value.find(record => record.cell.recordId === selectedId)?.cell.index ?? null : null
-    if (selectedIndex.value === null) { detailAbort?.abort(); details.value = {} }
+    if (selectedIndex.value === null) details.value = {}
     await nextTick()
     updateSizes()
     if (ledgerEl.value) {
@@ -972,29 +1045,6 @@ async function backToOverview(): Promise<void> {
   detailRootTurn.value = null
   await load()
 }
-let detailAbort:AbortController|null=null
-const detailLoading=ref(false),detailError=ref(false)
-async function loadRecordDetail(id:string,cursor=0){
- const body=detailRefById.get(id);if(!body)return
- detailAbort?.abort();const controller=new AbortController();detailAbort=controller;detailLoading.value=true;detailError.value=false
- const session=String(route.query.session??'')
- try {
-  const response=await getThreadViewBody(session,body.body_id,{revision:body.revision,cursor},{signal:controller.signal})
-  if(controller.signal.aborted || detailAbort!==controller || selectedCell.value?.recordId!==id || String(route.query.session??'')!==session)return
-  const page=response.data.data
-  let value:any={raw:page.chunks.join(''),has_more:page.has_more,body,next:page.next_cursor}
-  if(cursor===0 && !page.has_more){try{value={...value,...JSON.parse(value.raw)}}catch{}}
-  details.value={[id]:markRaw(value)}
- }catch{if(!controller.signal.aborted && detailAbort===controller)detailError.value=true}
- finally{if(detailAbort===controller){detailAbort=null;detailLoading.value=false}}
-}
-async function nextDetail(){
- const cell=selectedCell.value;if(!cell)return
- const prior=details.value[cell.recordId] as any;if(!prior?.has_more || detailLoading.value)return
- await loadRecordDetail(cell.recordId,prior.next)
-}
-
-
 function goBack(): void {
   router.back()
 }
@@ -1046,7 +1096,7 @@ watch(trackEl, (el) => {
   trackResizeObserver.observe(el)
 })
 
-watch(()=>route.query.session,()=>{detailRootTurn.value=null;summaryRows.value=[];rawTurns.value=[];displayPage.value=null;details.value={};searchQuery.value='';searchAbort?.abort();detailAbort?.abort();void load()})
+watch(()=>route.query.session,()=>{detailRootTurn.value=null;summaryRows.value=[];rawTurns.value=[];displayPage.value=null;details.value={};searchQuery.value='';searchAbort?.abort();void load()})
 
 onMounted(() => {
   void load()
@@ -1059,7 +1109,6 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   loadAbort?.abort()
-  detailAbort?.abort()
   searchAbort?.abort();if(searchTimer)clearTimeout(searchTimer)
   loadAbort = null
   window.removeEventListener('keydown', onKeyDown)
@@ -1174,7 +1223,6 @@ watch([allRecords, showTurns, showCalls], () => {
 
 function selectIndex(index: number, options: { fromLedger?: boolean } = {}): void {
   selectedIndex.value = index
-  const recordCell=findCell(index);if(recordCell)void loadRecordDetail(recordCell.recordId).catch(()=>{loadError.value=true})
   const cell = findCell(index)
   activeTab.value = defaultTabFor(cell)
   openSections.input = true
@@ -1791,6 +1839,7 @@ function spanStyle(span: { model: TimelineSpan; left: number; width: number }): 
 }
 
 function overviewSpanTitle(span: { model: TimelineSpan }): string {
+  if (!(span.model as OverviewSpan).aggregate) return span.model.label || '记录'
   const count = Number((span.model as OverviewSpan).count || 0)
   return count > 0 ? `${count} 条记录（聚合概览）` : '聚合概览'
 }

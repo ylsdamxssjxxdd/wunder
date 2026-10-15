@@ -41,42 +41,59 @@ export component ToolButton inherits Rectangle {
     if !root.show-label && root.label != "" : Tooltip { text: @markdown("\{root.label}"); }
 }
 
-export component ToolNavigation inherits Rectangle {
-    in property <string> title;
-    in property <string> subtitle;
-    in property <image> icon;
-    in property <bool> selected;
+// 蜂巢 pill tab: 30px 高、8px 圆角，选中时白底加 1px 描边。描边恒定存在，
+// 选中只在颜色上区分，避免边框出现/消失推动文字。
+export component ToolTab inherits Rectangle {
+    in property <string> label;
+    in property <bool> selected: false;
     callback clicked();
-    height: 60px;
-    border-radius: 12px;
-    background: root.selected ? Theme.accent : touch.has-hover ? Theme.accent-soft : transparent;
-    accessible-role: button;
-    accessible-label: root.title;
-    accessible-action-default => { root.clicked(); }
+    height: 30px;
+    // 页签按标签文字取宽，页签条再按页签求和，长中文名不会被挤成省略号。
+    width: caption.preferred-width + 24px;
+    border-radius: Theme.radius-sm;
+    border-width: 1px;
+    border-color: root.selected ? Theme.border : transparent;
+    background: root.selected ? Theme.surface : touch.has-hover ? Theme.selected : transparent;
+    accessible-role: tab;
+    accessible-label: root.label;
+    accessible-checked: root.selected;
     forward-focus: focus;
-    border-width: focus.has-focus ? 1px : 0px;
-    border-color: Theme.accent;
-    Rectangle {
-        x: 12px; y: 9px; width: 36px; height: 36px; border-radius: 18px;
-        background: root.selected ? #ffffff40 : Theme.selected;
-        Image { x: 12px; y: 11px; width: 12px; height: 14px; source: root.icon; colorize: root.selected ? white : Theme.text-secondary; }
+    caption := Text {
+        x: 12px; width: parent.width - 24px; height: parent.height;
+        text: root.label; font-size: Theme.font-md; font-weight: root.selected ? 600 : 400;
+        color: root.selected ? Theme.text : Theme.text-secondary;
+        horizontal-alignment: center; vertical-alignment: center;
     }
-    ToolText { x: 58px; y: 10px; height: 17px; width: parent.width - 68px; text: root.title; font-weight: 700; color: root.selected ? white : Theme.text; }
-    ToolText { x: 58px; y: 27px; height: 17px; width: parent.width - 68px; text: root.subtitle; font-size: 11px; color: root.selected ? white : Theme.muted; }
-    focus := FocusScope { key-pressed(event) => { if event.text == " " || event.text == "\n" { root.clicked(); return accept; } return reject; } }
+    focus := FocusScope { key-pressed(event) => { if event.text == " " || event.text == "\n" { root.clicked(); return accept; } reject } }
     touch := TouchArea { mouse-cursor: pointer; clicked => { focus.focus(); root.clicked(); } }
+}
+
+// 蜂巢 `.mst-toolbar-count`: 999px 药丸，强调色浅底 + 主色数字。
+export component ToolCountPill inherits Rectangle {
+    in property <string> text;
+    height: 18px;
+    width: value.width + 16px;
+    border-radius: 9px;
+    background: Theme.accent-soft;
+    value := ToolText {
+        x: 8px; height: parent.height; text: root.text;
+        font-size: Theme.font-2xs; font-weight: 700; color: Theme.accent-deep;
+    }
 }
 
 export component ToolGroup inherits Rectangle {
     in property <string> title;
-    in property <int> kind;
     in property <[ToolCard]> tools;
     callback inspect(string, string);
-    background: Theme.panel;
-    border-width: 1px; border-color: Theme.border; border-radius: 10px;
+    background: Theme.surface;
+    border-width: 1px; border-color: Theme.border; border-radius: Theme.radius-md;
     VerticalLayout {
         padding: 10px; spacing: 8px; alignment: start;
-        ToolText { height: 18px; text: root.title; color: Theme.text-secondary; font-weight: 600; }
+        HorizontalLayout { height: 18px; spacing: 8px;
+            ToolText { text: root.title; font-size: Theme.font-md; font-weight: 700; color: Theme.text; }
+            ToolCountPill { text: "\{root.tools.length}"; }
+            Rectangle { horizontal-stretch: 1; }
+        }
         FlexboxLayout {
             spacing: 8px; alignment: start; cross-axis-alignment: start;
             for tool in root.tools : chip := Rectangle {

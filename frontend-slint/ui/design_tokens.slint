@@ -31,6 +31,16 @@ export global Theme {
     out property <color> hover: #F6F5F3;
     out property <color> selected: #F1EFEC;
     out property <color> sidebar: #F6F5F3;
+    // Form controls. An editable field paints on the white surface with the
+    // stronger outline, so it never reads as inert; only a real read-only or
+    // disabled field drops to the row tone, and that grey is now a signal.
+    // Same contract as the web inputs (white fill, #dcdfe6 outline, accent on
+    // focus, grey fill once disabled).
+    out property <color> input-bg: surface;
+    out property <color> input-border: border-strong;
+    out property <color> input-readonly-bg: hover;
+    out property <color> input-readonly-border: border;
+    out property <color> input-readonly-text: muted;
     // New-thread activity heatmap: the off cell. Active days ride the accent
     // ramp below (`Theme.activity-tone`), and the not-yet-arrived days of the
     // current week reuse `hover`.

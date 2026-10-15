@@ -35,7 +35,9 @@ export struct TrajSpan {
     index: int,           // logical record index to focus on click
     ttft: float,          // 0..1 first-token fraction inside the span, -1 = none
     selected: bool,
+    outside: bool,
 }
+export struct TrajSearchHit { item-id: string, body-id: string, revision: string, cursor: string, snippet: string }
 export struct TrajTick { pos: float, label: string }
 export struct TrajBoundary { pos: float, label: string }
 export struct TrajTiming { label: string, value: string }
@@ -71,6 +73,10 @@ export struct TimelineRow {
     tool-name: string,
     tool-icon: string,
     target: string,
+    // Compact per-tool footer, e.g. "2.4k token 1.2s". Kept as one bounded
+    // string so the hot path only patches the active row and never rebuilds a
+    // second metrics model for every streamed result frame.
+    tool-metrics: string,
     detail: string,
     status-kind: int,
     foldable: bool,
@@ -203,20 +209,12 @@ export struct ModelCard { key: string, provider: string, model: string, base-url
 // value resolved natively, because Slint has no string→color cast. Avatar
 // surfaces (the sidebar settings button) paint the brush and print the glyph.
 export struct ProfileCard { user-id: string, username: string, email: string, unit: string, unit-id: string, sessions: string, sessions-last-7d: string, tool-calls: string, tokens: string, agents: string, last-active: string, avatar-icon: string, avatar-glyph: string, avatar-color: string, avatar-brush: color }
-export struct LanPeerCard { peer-id: string, display-name: string, address: string }
 
 // ---- 设备互通 interlink (§I9) ----
-// One node visible through the interlink tunnel. `node-id` is the façade's
-// stable key ("device:<id>" / "cloud" / "web:<conn>"); `state` stays a string
-// because Slint enum defaults are not in the value whitelist.
-export struct InterlinkNode { node-id: string, node-type: string, label: string, status: string, connected: bool, shadow-revision: int }
 // One remote command waiting for local approval. `approval-id` answers the
-// decision call, the rest is display copy.
+// decision call, the rest is display copy. The 设备互通 settings page (node
+// list and cloud-workspace browser) has been removed; the working-directory
+// panel owns cloud file operations now, so only the approval card is projected.
 export struct InterlinkApproval { approval-id: string, command-id: string, kind: string, level: string, risk: string, from-node: string, prompt: string }
-// One cloud-workspace listing row; `kind` is "dir" | "file".
-export struct InterlinkEntry { name: string, path: string, kind: string, size: int, updated-time: string }
-// Tunnel status the 2s poll pushes; `note` is the human sentence synthesized
-// natively (state text + last error) so the panel renders one line.
-export struct InterlinkStatus { state: string, note: string }
 
 

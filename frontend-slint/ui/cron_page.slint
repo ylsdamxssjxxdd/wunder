@@ -1,6 +1,6 @@
 import { I18n } from "i18n.slint";
 import { Theme, CronCard, CronRunCard } from "theme.slint";
-import { Action, PageState, PageStateKind } from "components.slint";
+import { Action, InlineInput, PageState, PageStateKind } from "components.slint";
 import { CheckBox, ComboBox, ScrollView } from "std-widgets.slint";
 
 export component CronPage inherits Rectangle {
@@ -122,18 +122,18 @@ export component CronPage inherits Rectangle {
         } } }
         if root.editor-open : Rectangle { Rectangle { background: Theme.overlay; TouchArea { clicked => { } } } Rectangle { x: (parent.width - 460px) / 2; y: 24px; width: 460px; height: parent.height - 48px; border-radius: Theme.radius-lg; background: Theme.surface; border-width: 1px; border-color: Theme.border; VerticalLayout { padding: 18px; spacing: 10px;
             Text { height: 24px; text: I18n.common_cron_tasks; color: Theme.text; font-size: Theme.font-xl; font-weight: 700; }
-            HorizontalLayout { height: 30px; spacing: 10px; Text { width: 64px; text: I18n.common_name; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; } TextInput { horizontal-stretch: 1; text <=> root.editor-name; color: Theme.text; font-size: Theme.font-sm; } }
+            HorizontalLayout { height: 30px; spacing: 10px; Text { width: 64px; text: I18n.common_name; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; } InlineInput { horizontal-stretch: 1; text <=> root.editor-name; } }
             HorizontalLayout { height: 30px; spacing: 10px; Text { width: 64px; text: I18n.cr_schedule; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; } ComboBox { horizontal-stretch: 1; model: [I18n.cr_kind_once, I18n.cr_kind_interval, I18n.cr_kind_cron]; current-index <=> root.editor-kind; enabled: !root.editor-saving; } }
-            if root.editor-kind == 0 : HorizontalLayout { height: 30px; spacing: 10px; Text { width: 64px; text: I18n.cr_field_exec_time; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; } TextInput { horizontal-stretch: 1; text <=> root.editor-at; color: Theme.text; font-size: Theme.font-sm; } }
+            if root.editor-kind == 0 : HorizontalLayout { height: 30px; spacing: 10px; Text { width: 64px; text: I18n.cr_field_exec_time; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; } InlineInput { horizontal-stretch: 1; text <=> root.editor-at; } }
             if root.editor-kind == 1 : VerticalLayout { spacing: 8px;
-                HorizontalLayout { height: 30px; spacing: 10px; Text { width: 64px; text: I18n.cr_field_interval; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; } TextInput { horizontal-stretch: 1; text <=> root.editor-every; color: Theme.text; font-size: Theme.font-sm; input-type: number; } }
-                HorizontalLayout { height: 30px; spacing: 10px; Text { width: 64px; text: I18n.cr_field_first_time; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; } TextInput { horizontal-stretch: 1; text <=> root.editor-at; color: Theme.text; font-size: Theme.font-sm; } }
+                HorizontalLayout { height: 30px; spacing: 10px; Text { width: 64px; text: I18n.cr_field_interval; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; } InlineInput { horizontal-stretch: 1; text <=> root.editor-every; input-type: InputType.number; } }
+                HorizontalLayout { height: 30px; spacing: 10px; Text { width: 64px; text: I18n.cr_field_first_time; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; } InlineInput { horizontal-stretch: 1; text <=> root.editor-at; } }
             }
             if root.editor-kind == 2 : VerticalLayout { spacing: 8px;
-                HorizontalLayout { height: 30px; spacing: 10px; Text { width: 64px; text: I18n.cr_field_expression; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; } TextInput { horizontal-stretch: 1; text <=> root.editor-cron; color: Theme.text; font-size: Theme.font-sm; } }
-                HorizontalLayout { height: 30px; spacing: 10px; Text { width: 64px; text: I18n.cr_field_timezone; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; } TextInput { horizontal-stretch: 1; text <=> root.editor-tz; color: Theme.text; font-size: Theme.font-sm; } }
+                HorizontalLayout { height: 30px; spacing: 10px; Text { width: 64px; text: I18n.cr_field_expression; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; } InlineInput { horizontal-stretch: 1; text <=> root.editor-cron; } }
+                HorizontalLayout { height: 30px; spacing: 10px; Text { width: 64px; text: I18n.cr_field_timezone; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; } InlineInput { horizontal-stretch: 1; text <=> root.editor-tz; } }
             }
-            HorizontalLayout { height: 52px; spacing: 10px; Text { width: 64px; text: I18n.cr_field_message; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; } TextInput { horizontal-stretch: 1; height: 52px; text <=> root.editor-message; color: Theme.text; font-size: Theme.font-sm; wrap: word-wrap; } }
+            HorizontalLayout { height: 52px; spacing: 10px; Text { width: 64px; text: I18n.cr_field_message; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; } InlineInput { horizontal-stretch: 1; height: 52px; text <=> root.editor-message; multiline: true; } }
             HorizontalLayout { height: 30px; spacing: 10px; Text { width: 64px; text: I18n.cr_field_target_agent; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; } ComboBox { horizontal-stretch: 1; model: root.agent-names; current-index <=> root.editor-agent; enabled: !root.editor-saving; } }
             HorizontalLayout { height: 24px; spacing: 10px; CheckBox { text: I18n.cr_delete_after_run; checked <=> root.editor-delete-after; enabled: !root.editor-saving; } CheckBox { text: I18n.common_enable; checked <=> root.editor-enabled; enabled: !root.editor-saving; } }
             Rectangle { vertical-stretch: 1; }

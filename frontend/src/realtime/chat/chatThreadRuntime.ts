@@ -35,6 +35,8 @@ import {
 } from './chatRuntimeRenderAdapter';
 import { chatPerf } from '@/utils/chatPerf';
 import { threadViewSlots, threadViewCommitted, submitThreadView, clearThreadView, applyThreadViewChanges, applyThreadViewTail,threadViewStatus } from './threadViewStore';
+import { noteChatQueueRuntimeEvent } from '@/stores/chatQueueState';
+import { threadViewStoreMessages } from '@/stores/chatGreeting';
 
 interface ChatThreadRuntimeEntry {
   key: string;
@@ -494,6 +496,12 @@ export const applyChatThreadServerEvent = (
   payload: unknown,
   hooks: ChatThreadServerEventHooks = {}
 ): boolean => {
+  // Queue controls are handled before the durable pipeline classifies them as
+  // control frames. This makes queue_start immediately consume the composer
+  // item instead of waiting for an eventually consistent queue refresh.
+  if (isQueueRuntimeEventType(eventType)) {
+    noteChatQueueRuntimeEvent(key, eventType, payload);
+  }
   // The display window only owns the live tail once it has committed a page.
   // While an open is still in flight (or failed) `applyThreadViewTail` finds no
   // row and would swallow the delta, so fall through to the durable state.
@@ -505,9 +513,8 @@ export const applyChatThreadServerEvent = (
     const applied = applyThreadViewChanges(key, data);
     if (!applied) hooks.onSnapshotRequired?.({});
     else {
-      const rows=threadViewSlots(key)??[];
       const target=store as any;
-      if(target.activeSessionId===key)target.messages=rows.flatMap(s=>[s.user,s.assistant]);
+      if(target.activeSessionId===key)target.messages=threadViewStoreMessages(target,key);
       const active=['running','queued','waiting_input','waiting_approval'].includes(threadViewStatus(key)??'');
       if(target.loadingBySession) {if(active)target.loadingBySession[key]=true;else delete target.loadingBySession[key];}
       hooks.onViewApplied?.(prior);
@@ -544,6 +551,13 @@ export const applyChatThreadServerEvent = (
   }
   bumpInvalidation(store, key, frame, result.changed, result.structural);
   return true;
+};
+
+const isQueueRuntimeEventType = (value: unknown): boolean => {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  return normalized === 'queued' || normalized === 'queue_enter' || normalized === 'queue_update' ||
+    normalized === 'queue_start' || normalized === 'queue_status' || normalized === 'queue_finish' ||
+    normalized === 'queue_cancel' || normalized === 'queue_fail';
 };
 
 /**

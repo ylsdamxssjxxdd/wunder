@@ -90,6 +90,29 @@
       </div>
     </section>
 
+    <section class="messenger-settings-card">
+      <div class="messenger-settings-group-head">
+        <div class="messenger-settings-title">{{ t('messenger.settingsPage.general.helpGroup') }}</div>
+        <div class="messenger-settings-subtitle">{{ t('messenger.settingsPage.general.helpHint') }}</div>
+      </div>
+      <div class="messenger-settings-row">
+        <div class="messenger-settings-label">
+          {{ t('messenger.settingsPage.general.helpOpen') }}
+        </div>
+        <div class="messenger-settings-page-row-actions">
+          <button
+            class="messenger-settings-action ghost"
+            type="button"
+            data-testid="settings-open-help"
+            @click="openHelpDocs"
+          >
+            <i class="fa-solid fa-arrow-up-right-from-square" aria-hidden="true"></i>
+            {{ t('messenger.settingsPage.general.helpOpen') }}
+          </button>
+        </div>
+      </div>
+    </section>
+
   </div>
 </template>
 
@@ -100,6 +123,7 @@ import { ElMessage } from 'element-plus';
 
 import type { MessengerControllerContext } from '@/views/messenger/controller/messengerControllerContext';
 import { useI18n } from '@/i18n';
+import { resolveApiBase } from '@/config/runtime';
 import {
   getStressThreadJob,
   listStressThreads,
@@ -129,6 +153,26 @@ const updateCurrentUsername = props.controller.updateCurrentUsername;
 const updateCurrentUserAvatarIcon = props.controller.updateCurrentUserAvatarIcon;
 const updateCurrentUserAvatarColor = props.controller.updateCurrentUserAvatarColor;
 const MessengerSettingsPanel = props.controller.MessengerSettingsPanel;
+
+// 帮助文档在独立窗口浏览：打开完整 docs 站（不带 embed 参数）；
+// 弹窗被拦截时给出提示，成功后切断 opener 引用避免反向操控。
+const openHelpDocs = () => {
+  const apiBase = String(resolveApiBase() || '').trim();
+  let docsUrl = '/docs/';
+  if (/^https?:\/\//i.test(apiBase)) {
+    try {
+      docsUrl = `${new URL(apiBase).origin}/docs/`;
+    } catch {
+      docsUrl = '/docs/';
+    }
+  }
+  const opened = window.open(docsUrl, '_blank', 'width=1180,height=860');
+  if (!opened) {
+    ElMessage.warning(t('messenger.settingsPage.general.helpOpenFailed'));
+    return;
+  }
+  opened.opener = null;
+};
 
 const stressUserRounds = ref<number>(1000);
 const stressModelRounds = ref<number>(1000);

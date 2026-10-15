@@ -4,6 +4,7 @@ use chrono::Local;
 use rusqlite::{params, Connection};
 use std::collections::HashSet;
 use std::sync::atomic::Ordering;
+use tracing::warn;
 
 pub(super) trait SqliteSchemaStorage {
     fn ensure_initialized_impl(&self) -> Result<()>;
@@ -614,6 +615,9 @@ impl SqliteSchemaStorage for SqliteStorage {
             return Ok(());
         }
         let conn = self.open()?;
+        // Before any table exists: a fresh database takes the header directly,
+        // an already populated one is marked for the one-time VACUUM below.
+        self.apply_auto_vacuum(&conn);
         conn.execute_batch(
             r#"
             CREATE TABLE IF NOT EXISTS meta (
@@ -1809,9 +1813,18 @@ impl SqliteSchemaStorage for SqliteStorage {
             .swap(false, Ordering::SeqCst)
         {
             // One-time full VACUUM persists the incremental auto-vacuum header
-            // for databases created before this upgrade; on a fresh database it
-            // finishes instantly.
-            conn.execute_batch("VACUUM")?;
+            // for a database that already had tables when the flag was
+            // introduced. A fresh database is created with the header in place
+            // and never reaches this branch, which keeps the rewrite out of
+            // the startup path where other connections are opening the file.
+            let outcome = conn.execute_batch("VACUUM");
+            if let Err(err) = &outcome {
+                warn!(
+                    "auto-vacuum upgrade VACUUM failed for {}: {err}",
+                    self.db_path.display()
+                );
+            }
+            outcome?;
         }
         self.initialized.store(true, Ordering::SeqCst);
         Ok(())

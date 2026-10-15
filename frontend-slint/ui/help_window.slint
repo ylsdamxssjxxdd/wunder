@@ -9,5 +9,5 @@ export component HelpWindow inherits Window {
     height: 700px;
     background: #ffffff;
 
-    HelpBrowser {}
+    HelpBrowser { polling: root.visible; }
 }

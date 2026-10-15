@@ -24,6 +24,15 @@ const PARKED_POLL_BUDGET: usize = 6;
 /// Messages the recall walks back through, newest first.
 pub const RECALL_DEPTH: usize = 40;
 
+/// Keep a promoted turn off the composer strip while the durable queue snapshot
+/// catches up. The engine list remains authoritative after that window.
+pub fn without_client_id(rows: &mut Vec<NativeQueueTurn>, client_id: &str) {
+    if client_id.is_empty() {
+        return;
+    }
+    rows.retain(|row| row.client_message_id != client_id);
+}
+
 /// One submission the engine may park. `prelude` holds the events that arrived
 /// before the entry could take the live slot; the pump replays them in order so
 /// the handover never loses a token.
@@ -309,6 +318,7 @@ mod tests {
         assert!(projected[0].interjected);
         assert!(!projected[1].interjected);
     }
+
 
     #[test]
     fn recall_walks_only_from_the_caret_edges() {

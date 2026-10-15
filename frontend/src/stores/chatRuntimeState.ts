@@ -151,7 +151,8 @@ import { useCommandSessionStore } from './commandSessions';
 import { hasRetainedMessageConversationContext as hasRetainedConversationContext } from '@/views/messenger/messageConversationRetention';
 import { chatWatcherSharedState } from './chatSharedState';
 
-import { clearSessionCommandSessions, ensureGreetingMessage, removeDemoChatSession, sortSessionsByActivity, syncDemoChatCache } from './chatDemoPanels';
+import { clearSessionCommandSessions, removeDemoChatSession, sortSessionsByActivity, syncDemoChatCache } from './chatDemoPanels';
+import { ensureGreetingMessage } from './chatGreeting';
 import { DEFAULT_AGENT_KEY, applyDesktopOverlayEvent, normalizeAgentKey, patchSessionRuntimeFields, persistAgentSession, persistDraftSession, resolvePersistedSessionId } from './chatPersist';
 import { abortWatchStream, clearRuntimeInteractiveControllers, clearSessionWatcher, clearWatchdog, isWindowingEnabled, resolveMessageWindowLimit, resolveMessageWindowThreshold, setSessionLoading } from './chatRuntimeControls';
 import { clearChatSnapshot, scheduleChatSnapshot } from './chatSnapshot';
@@ -1206,7 +1207,7 @@ export function applySessionRuntimeEvent(store, sessionId, payload, eventType = 
   const targetId = resolveRuntimeSessionId(sessionId, payload);
   if (!targetId) return null;
   // 排队条是引擎队列表的投影：任何 queue_* 事件都按会话去补水一次。
-  noteChatQueueRuntimeEvent(targetId, eventType);
+  noteChatQueueRuntimeEvent(targetId, eventType, payload);
   const runtime = ensureRuntime(targetId);
   if (!runtime) return null;
   // Durable turns own liveness; a delayed monitor control cannot reopen them.
@@ -1923,6 +1924,11 @@ export const applyCanonicalStreamSideEffects = (
 ) => {
   const normalizedEventType = String(eventType || '').trim().toLowerCase();
   const data = extractCanonicalStreamData(payload);
+  // Queue events are delivered through both the legacy runtime channel and
+  // the durable thread-change stream. Keep the composer projection in sync at
+  // the same boundary so queue_start consumes the item before an old queue
+  // snapshot can put it back.
+  noteChatQueueRuntimeEvent(sessionId, normalizedEventType, payload);
   if (normalizedEventType === 'thread_control') {
     void handleThreadControlWorkflowEvent(store, data);
     return;

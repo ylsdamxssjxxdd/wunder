@@ -23,7 +23,7 @@
             <div class="messenger-chat-empty-title">{{ t('messenger.empty.selectConversation') }}</div>
           </div>
 
-          <div v-if="retainedMessageRenderKind === 'agent'">
+          <div v-if="retainedMessageRenderKind === 'agent'" :class="{ 'is-empty-thread': showThreadActivityCard }">
             <button v-if="!atLatest" @click="chatStore.loadSessionDetail(chatStore.activeSessionId)">回到最新消息</button>
             <div v-if="showThreadActivityCard" class="messenger-thread-activity">
               <SessionActivityCard />
@@ -35,7 +35,7 @@
             <template v-for="row in agentVirtualRows" :key="row.key">
               <div v-if="row.kind === 'spacer'" class="messenger-message-virtual-spacer"
                 :style="{ height: `${row.height}px` }" aria-hidden="true"></div>
-              <div v-else-if="row.kind === 'greeting' && !showThreadActivityCard" class="messenger-greeting-region"
+              <div v-else-if="row.kind === 'greeting'" class="messenger-greeting-region"
                 data-chat-measure :data-virtual-key="row.key">
                 <MessengerAgentBubble :controller="controller" :item="row.assistant" />
               </div>
@@ -213,8 +213,9 @@ const toggleWorldVoicePlayback = props.controller.toggleWorldVoicePlayback;
 const worldVirtualBottomSpacer = props.controller.worldVirtualBottomSpacer;
 const worldVirtualGroups = props.controller.worldVirtualGroups;
 const worldVirtualTopSpacer = props.controller.worldVirtualTopSpacer;
-// A thread without a single user turn shows the yearly activity grid in place
-// of the synthetic greeting; the greeting returns with the first real turn.
+// A thread without a single user turn shows the yearly activity grid together
+// with the synthetic greeting, and the pair is vertically centered
+// (`.is-empty-thread`); the grid disappears with the first real turn.
 // History still loading must not flash the grid over a thread that has turns.
 // W2-E: any turn row hides the grid, whichever source produced it (window
 // projection or the transcript fallback), so a failed snapshot renders rows

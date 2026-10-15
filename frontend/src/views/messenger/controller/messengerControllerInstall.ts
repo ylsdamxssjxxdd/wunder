@@ -133,7 +133,6 @@ type SettingsPanelMode =
   | 'general'
   | 'profile'
   | 'prompts'
-  | 'help-manual'
   | 'desktop-models'
   | 'desktop-lan';
 
@@ -606,8 +605,6 @@ function installMessengerControllerStateRefs(ctx: MessengerControllerContext): v
   ctx.currentUserAvatarIcon = ref('initial');
 
   ctx.currentUserAvatarColor = ref('#3b82f6');
-
-  ctx.helpManualLoading = ref(false);
 
   ctx.toolsCatalogLoading = ref(false);
 
@@ -1177,7 +1174,6 @@ type SettingsPanelMode =
   | 'general'
   | 'profile'
   | 'prompts'
-  | 'help-manual'
   | 'desktop-models'
   | 'desktop-lan';
 
@@ -1552,7 +1548,6 @@ type SettingsPanelMode =
   | 'general'
   | 'profile'
   | 'prompts'
-  | 'help-manual'
   | 'desktop-models'
   | 'desktop-lan';
 
@@ -2385,7 +2380,6 @@ type SettingsPanelMode =
   | 'general'
   | 'profile'
   | 'prompts'
-  | 'help-manual'
   | 'desktop-models'
   | 'desktop-lan';
 
@@ -3341,7 +3335,6 @@ type SettingsPanelMode =
   | 'general'
   | 'profile'
   | 'prompts'
-  | 'help-manual'
   | 'desktop-models'
   | 'desktop-lan';
 
@@ -4148,7 +4141,6 @@ type SettingsPanelMode =
   | 'general'
   | 'profile'
   | 'prompts'
-  | 'help-manual'
   | 'desktop-models'
   | 'desktop-lan';
 
@@ -4426,13 +4418,7 @@ function installMessengerControllerMessageRoutingPreferences(ctx: MessengerContr
                               ? 'profile'
                               : panelHint === 'prompts' || panelHint === 'prompt' || panelHint === 'system-prompt'
                                   ? 'prompts'
-                                  : panelHint === 'help-manual' ||
-                                      panelHint === 'manual' ||
-                                      panelHint === 'help' ||
-                                      panelHint === 'docs' ||
-                                      panelHint === 'docs-site'
-                                      ? 'help-manual'
-                                      : 'general';
+                                  : 'general';
       }
       // Section-scoped selections are cleared unconditionally: the shell only has
       // the messages/agents/files/more sections, so nothing survives a switch.
@@ -4526,7 +4512,6 @@ function installMessengerControllerMessageRoutingPreferences(ctx: MessengerContr
       const nextPanelMode = ctx.normalizeSettingsPanelMode(panelMode);
       const panelHint = nextPanelMode === 'profile' ||
           nextPanelMode === 'prompts' ||
-          nextPanelMode === 'help-manual' ||
           nextPanelMode === 'desktop-models' ||
           nextPanelMode === 'desktop-lan'
           ? nextPanelMode
@@ -4749,7 +4734,6 @@ type SettingsPanelMode =
   | 'general'
   | 'profile'
   | 'prompts'
-  | 'help-manual'
   | 'desktop-models'
   | 'desktop-lan';
 
@@ -5072,7 +5056,6 @@ type SettingsPanelMode =
   | 'general'
   | 'profile'
   | 'prompts'
-  | 'help-manual'
   | 'desktop-models'
   | 'desktop-lan';
 
@@ -6387,7 +6370,6 @@ type SettingsPanelMode =
   | 'general'
   | 'profile'
   | 'prompts'
-  | 'help-manual'
   | 'desktop-models'
   | 'desktop-lan';
 
@@ -6728,7 +6710,6 @@ function installMessengerControllerWorkspaceOrderUiActions(ctx: MessengerControl
       const normalized = String(value || '').trim().toLowerCase();
       if (normalized === 'profile' ||
           normalized === 'prompts' ||
-          normalized === 'help-manual' ||
           normalized === 'desktop-models' ||
           normalized === 'desktop-lan') {
           return normalized;
@@ -6795,7 +6776,6 @@ type SettingsPanelMode =
   | 'general'
   | 'profile'
   | 'prompts'
-  | 'help-manual'
   | 'desktop-models'
   | 'desktop-lan';
 
@@ -7103,7 +7083,6 @@ type SettingsPanelMode =
   | 'general'
   | 'profile'
   | 'prompts'
-  | 'help-manual'
   | 'desktop-models'
   | 'desktop-lan';
 
@@ -7427,7 +7406,6 @@ type SettingsPanelMode =
   | 'general'
   | 'profile'
   | 'prompts'
-  | 'help-manual'
   | 'desktop-models'
   | 'desktop-lan';
 
@@ -7605,8 +7583,6 @@ function installMessengerControllerPanelSummaries(ctx: MessengerControllerContex
               return ctx.t('user.profile.enter');
           if (ctx.settingsPanelMode.value === 'prompts')
               return ctx.t('messenger.prompt.title');
-          if (ctx.settingsPanelMode.value === 'help-manual')
-              return ctx.t('messenger.settings.helpManual');
           if (ctx.settingsPanelMode.value === 'desktop-models')
               return ctx.t('desktop.system.llm');
           if (ctx.settingsPanelMode.value === 'desktop-lan')
@@ -7633,8 +7609,6 @@ function installMessengerControllerPanelSummaries(ctx: MessengerControllerContex
               return ctx.currentUsername.value;
           if (ctx.settingsPanelMode.value === 'prompts')
               return ctx.t('messenger.prompt.desc');
-          if (ctx.settingsPanelMode.value === 'help-manual')
-              return ctx.t('messenger.settings.helpManualHint');
           if (ctx.settingsPanelMode.value === 'desktop-models')
               return ctx.t('desktop.system.llmHint');
           if (ctx.settingsPanelMode.value === 'desktop-lan')
@@ -7917,7 +7891,6 @@ type SettingsPanelMode =
   | 'general'
   | 'profile'
   | 'prompts'
-  | 'help-manual'
   | 'desktop-models'
   | 'desktop-lan';
 
@@ -8657,16 +8630,9 @@ function installMessengerControllerRuntimeToolLists(ctx: MessengerControllerCont
 
   ctx.routeSettingsPanelModeIntent = computed<SettingsPanelMode>(() => ctx.resolveRouteSettingsPanelMode(ctx.route.path, ctx.route.query.panel, false));
 
-  ctx.showHelpManualWaitingOverlay = computed(() => ctx.sessionHub.activeSection === 'more' &&
-      ctx.settingsPanelMode.value === 'help-manual' &&
-      ctx.helpManualLoading.value);
-
   ctx.suppressMessengerPageWaitingOverlay = computed(() => (ctx.routeSectionIntent.value === 'agents' &&
       ctx.agentSettingMode.value === 'agent' &&
-      !ctx.showAgentGridOverview.value) ||
-      (ctx.routeSectionIntent.value === 'more' &&
-          ctx.routeSettingsPanelModeIntent.value === 'help-manual') ||
-      ctx.showHelpManualWaitingOverlay.value);
+      !ctx.showAgentGridOverview.value));
 
   ctx.showChatComposerFooter = computed(() => {
       if (ctx.sessionHub.activeSection !== 'messages') {
@@ -8700,10 +8666,6 @@ function installMessengerControllerRuntimeToolLists(ctx: MessengerControllerCont
       storageFallbackKeys: computed(() => ctx.createScopedStorageKeys('messenger:agents:owned'))
   });
 
-
-  ctx.handleHelpManualLoadingChange = (value: boolean) => {
-      ctx.helpManualLoading.value = value === true;
-  };
 
   ctx.filteredOwnedAgentIdSet = computed(() => new Set(ctx.filteredOwnedAgents.value.map((agent) => ctx.normalizeAgentId(agent?.id)).filter(Boolean)));
 
@@ -8742,14 +8704,6 @@ function installMessengerControllerRuntimeToolLists(ctx: MessengerControllerCont
           catalog: true,
           summary: true
       });
-  }, { immediate: true });
-
-  watch(() => [ctx.sessionHub.activeSection, ctx.settingsPanelMode.value] as const, ([section, panelMode]) => {
-      if (section === 'more' && panelMode === 'help-manual') {
-          ctx.helpManualLoading.value = true;
-          return;
-      }
-      ctx.helpManualLoading.value = false;
   }, { immediate: true });
 
   ctx.agentOverviewCards = computed<AgentOverviewCard[]>(() => {
@@ -8853,7 +8807,6 @@ type SettingsPanelMode =
   | 'general'
   | 'profile'
   | 'prompts'
-  | 'help-manual'
   | 'desktop-models'
   | 'desktop-lan';
 
@@ -9194,7 +9147,6 @@ type SettingsPanelMode =
   | 'general'
   | 'profile'
   | 'prompts'
-  | 'help-manual'
   | 'desktop-models'
   | 'desktop-lan';
 
@@ -9755,7 +9707,6 @@ type SettingsPanelMode =
   | 'general'
   | 'profile'
   | 'prompts'
-  | 'help-manual'
   | 'desktop-models'
   | 'desktop-lan';
 
@@ -10228,7 +10179,6 @@ type SettingsPanelMode =
   | 'general'
   | 'profile'
   | 'prompts'
-  | 'help-manual'
   | 'desktop-models'
   | 'desktop-lan';
 
@@ -10602,7 +10552,6 @@ type SettingsPanelMode =
   | 'general'
   | 'profile'
   | 'prompts'
-  | 'help-manual'
   | 'desktop-models'
   | 'desktop-lan';
 
@@ -11480,7 +11429,6 @@ type SettingsPanelMode =
   | 'general'
   | 'profile'
   | 'prompts'
-  | 'help-manual'
   | 'desktop-models'
   | 'desktop-lan';
 
@@ -12307,7 +12255,6 @@ type SettingsPanelMode =
   | 'general'
   | 'profile'
   | 'prompts'
-  | 'help-manual'
   | 'desktop-models'
   | 'desktop-lan';
 
@@ -12693,7 +12640,6 @@ type SettingsPanelMode =
   | 'general'
   | 'profile'
   | 'prompts'
-  | 'help-manual'
   | 'desktop-models'
   | 'desktop-lan';
 
@@ -13111,7 +13057,6 @@ type SettingsPanelMode =
   | 'general'
   | 'profile'
   | 'prompts'
-  | 'help-manual'
   | 'desktop-models'
   | 'desktop-lan';
 
@@ -13794,7 +13739,6 @@ type SettingsPanelMode =
   | 'general'
   | 'profile'
   | 'prompts'
-  | 'help-manual'
   | 'desktop-models'
   | 'desktop-lan';
 
@@ -14177,7 +14121,6 @@ type SettingsPanelMode =
   | 'general'
   | 'profile'
   | 'prompts'
-  | 'help-manual'
   | 'desktop-models'
   | 'desktop-lan';
 
@@ -14310,13 +14253,6 @@ function installMessengerControllerSharedHelpers(ctx: MessengerControllerContext
       }
       if (panelHint === 'prompts' || panelHint === 'prompt' || panelHint === 'system-prompt') {
           return 'prompts';
-      }
-      if (panelHint === 'help-manual' ||
-          panelHint === 'manual' ||
-          panelHint === 'help' ||
-          panelHint === 'docs' ||
-          panelHint === 'docs-site') {
-          return 'help-manual';
       }
       if (desktopEnabled && panelHint === 'desktop-models') {
           return 'desktop-models';

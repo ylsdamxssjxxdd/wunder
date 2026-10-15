@@ -138,11 +138,6 @@
   "en": "Unsaved changes"
  },
  {
-  "key": "ag_prefer_mother",
-  "zh": "偏好母智能体",
-  "en": "Prefer mother agent"
- },
- {
   "key": "ag_switch_on",
   "zh": "已开启",
   "en": "On"
@@ -156,11 +151,6 @@
   "key": "ag_preset_questions",
   "zh": "预设问题",
   "en": "Preset questions"
- },
- {
-  "key": "ag_save_settings",
-  "zh": "保存设置",
-  "en": "Save settings"
  },
  {
   "key": "ag_delete_confirm_title",
@@ -206,16 +196,6 @@
   "key": "ag_cards_empty",
   "zh": "卡片目录暂无可导入的工蜂卡文件",
   "en": "No importable worker cards in the card directory"
- },
- {
-  "key": "ag_preview_skill",
-  "zh": "预览技能",
-  "en": "Skill preview"
- },
- {
-  "key": "ag_silent_run",
-  "zh": "静默运行",
-  "en": "Silent run"
  },
  {
   "key": "av_title",
@@ -341,16 +321,6 @@
   "key": "tl_cat_mcp",
   "zh": "MCP 工具",
   "en": "MCP tools"
- },
- {
-  "key": "tl_cat_skills",
-  "zh": "技能",
-  "en": "Skills"
- },
- {
-  "key": "tl_cat_kb",
-  "zh": "知识库",
-  "en": "Knowledge base"
  },
  {
   "key": "tl_cat_user",
@@ -941,21 +911,6 @@
   "key": "workspace_binding_choose",
   "zh": "选择目录",
   "en": "Choose directory"
- },
- {
-  "key": "reset_title",
-  "zh": "重置工作状态",
-  "en": "Reset work state"
- },
- {
-  "key": "reset_message",
-  "zh": "将停止运行中的任务、清理队列与临时投影。资产、配置、文件与历史保留。确认重置？",
-  "en": "Running tasks will stop; queues and temporary projections will be cleared. Assets, settings, files and history are kept. Reset now?"
- },
- {
-  "key": "reset_confirm",
-  "zh": "确认重置",
-  "en": "Reset"
  },
  {
   "key": "thread_log_overview",
@@ -2358,6 +2313,11 @@
   "key": "ap_archive_thread",
   "zh": "归档线程",
   "en": "Archive thread"
+ },
+ {
+  "key": "ap_archive_confirm",
+  "zh": "归档后线程将从侧边栏隐藏，可在设置 → 归档线程中查看。确认归档该线程吗？",
+  "en": "The thread will be hidden from the sidebar and stays available under Settings → Archived threads. Archive it?"
  },
  {
   "key": "ap_agent_settings",
@@ -3998,11 +3958,6 @@
   "en": "Announcement updated"
  },
  {
-  "key": "st_lan_saved",
-  "zh": "内网通信设置已保存",
-  "en": "LAN mesh settings saved"
- },
- {
   "key": "st_cron_saved",
   "zh": "定时任务已保存",
   "en": "Scheduled task saved"
@@ -4163,11 +4118,6 @@
   "en": "Voice list probe succeeded: {0} items"
  },
  {
-  "key": "st_diagnostics_exported",
-  "zh": "诊断信息已导出：{0}",
-  "en": "Diagnostics exported: {0}"
- },
- {
   "key": "st_attachment_added",
   "zh": "{0}已放入输入区，发送即可交给模型",
   "en": "{0} added to the composer; send to hand it to the model"
@@ -4218,11 +4168,6 @@
   "en": "The card will overwrite the same-name agent's name, prompt, tools and run strategy; this cannot be undone automatically. Continue?"
  },
  {
-  "key": "dlg_work_state_reset",
-  "zh": "工作状态已重置",
-  "en": "Work state reset"
- },
- {
   "key": "dlg_card_exported",
   "zh": "工蜂卡已导出",
   "en": "Worker card exported"
@@ -4241,11 +4186,6 @@
   "key": "dlg_no_voices",
   "zh": "提供方未返回语音列表。",
   "en": "Provider returned no voice list."
- },
- {
-  "key": "dlg_diagnostics_exported",
-  "zh": "诊断信息已导出",
-  "en": "Diagnostics exported"
  },
  {
   "key": "dlg_overwrite_import_title",
@@ -4394,8 +4334,8 @@
  },
  {
   "key": "stc_general_note",
-  "zh": "发送、外观、运行环境与诊断",
-  "en": "Sending, appearance, runtime and diagnostics"
+  "zh": "发送、外观与运行环境",
+  "en": "Sending, appearance and runtime"
  },
  {
   "key": "stc_account",
@@ -4434,8 +4374,8 @@
  },
  {
   "key": "stc_agent_note",
-  "zh": "内置智能体的提示词与行为",
-  "en": "Built-in agent prompt and behaviour"
+  "zh": "内置智能体的提示词与工具",
+  "en": "Built-in agent prompt and tools"
  },
  {
   "key": "stc_pet",
@@ -4484,8 +4424,8 @@
  },
  {
   "key": "stc_runs_note",
-  "zh": "用量统计与线程日志",
-  "en": "Usage statistics and thread logs"
+  "zh": "累计运行、令牌与工具调用",
+  "en": "Total runtime, tokens and tool calls"
  },
  {
   "key": "stc_prompts",
@@ -4514,58 +4454,13 @@
  },
  {
   "key": "stc_help_note",
-  "zh": "快捷键、关于与诊断导出",
-  "en": "Shortcuts, about and diagnostics"
- },
- {
-  "key": "stc_interlink",
-  "zh": "设备互通",
-  "en": "Devices & interlink"
- },
- {
-  "key": "stc_interlink_note",
-  "zh": "隧道状态、设备与云端工作区",
-  "en": "Tunnel status, devices and cloud workspace"
+  "zh": "在本机打开使用手册",
+  "en": "Open the user manual on this machine"
  },
  {
   "key": "il_tunnel_title",
   "zh": "互通隧道",
   "en": "Interlink tunnel"
- },
- {
-  "key": "il_state_connected",
-  "zh": "已连接",
-  "en": "Connected"
- },
- {
-  "key": "il_state_connecting",
-  "zh": "正在接入",
-  "en": "Connecting"
- },
- {
-  "key": "il_state_reconnecting",
-  "zh": "重连中",
-  "en": "Reconnecting"
- },
- {
-  "key": "il_state_disabled",
-  "zh": "未启用",
-  "en": "Disabled"
- },
- {
-  "key": "il_devices_title",
-  "zh": "设备列表",
-  "en": "Devices"
- },
- {
-  "key": "il_devices_note",
-  "zh": "通过互通隧道可见的本机与其他设备",
-  "en": "This machine and other devices visible through the tunnel"
- },
- {
-  "key": "il_devices_empty",
-  "zh": "暂无设备，接入舰体后此处会列出可见节点。",
-  "en": "No devices yet; nodes appear here once the tunnel is up."
  },
  {
   "key": "il_col_label",
@@ -4733,11 +4628,6 @@
   "en": "The companion window owns visibility, scale and position; this manages the library."
  },
  {
-  "key": "stc_runs_flow",
-  "zh": "线程日志",
-  "en": "Thread log"
- },
- {
   "key": "stc_archives_empty",
   "zh": "还没有归档线程。",
   "en": "No archived threads yet."
@@ -4783,24 +4673,9 @@
   "en": "Administrator-enabled tools"
  },
  {
-  "key": "stc_agent_behavior",
-  "zh": "行为开关",
-  "en": "Behaviour"
- },
- {
-  "key": "stc_agent_behavior_note",
-  "zh": "这些开关作用于内置智能体的每一次运行。",
-  "en": "These switches apply to every run of the built-in agent."
- },
- {
-  "key": "stc_agent_model_hint",
-  "zh": "只能选择「模型设置」中已配置的对话模型；未配置时请先到模型设置添加。",
-  "en": "Only conversational models configured in Models can be used; add one there first if the list is empty."
- },
- {
   "key": "stc_agent_tools_note",
-  "zh": "勾选随「保存」一起写入内置智能体的工具启用集合；搜索只过滤当前列表。",
-  "en": "Checks join the built-in agent's enabled tool set on save; the box only filters this list."
+  "zh": "勾选即写入内置智能体的工具启用集合；搜索只过滤当前列表。",
+  "en": "Checks update the built-in agent's enabled tool set; the box only filters this list."
  },
  {
   "key": "stc_agent_tool_no_desc",
@@ -4823,31 +4698,6 @@
   "en": "Type a preset question…"
  },
  {
-  "key": "stc_agent_preview_skill_note",
-  "zh": "运行前先预览将要调用的技能内容。",
-  "en": "Preview the skill content a run is about to use."
- },
- {
-  "key": "stc_agent_silent_note",
-  "zh": "不向用户播报中间步骤，只输出最终结果。",
-  "en": "Skip intermediate narration and emit only the final result."
- },
- {
-  "key": "stc_agent_prefer_mother_note",
-  "zh": "优先选择母智能体承担子任务。",
-  "en": "Prefer the mother agent when delegating subtasks."
- },
- {
-  "key": "stc_agent_run",
-  "zh": "运行策略",
-  "en": "Run strategy"
- },
- {
-  "key": "stc_agent_run_note",
-  "zh": "权限模式由输入区的选择器统一控制。",
-  "en": "The composer's selector owns the permission mode."
- },
- {
   "key": "stc_runs_duration",
   "zh": "累计运行",
   "en": "Total runtime"
@@ -4861,31 +4711,6 @@
   "key": "stc_runs_calls",
   "zh": "工具调用",
   "en": "Tool calls"
- },
- {
-  "key": "stc_runs_heat",
-  "zh": "活跃度",
-  "en": "Activity"
- },
- {
-  "key": "stc_runs_heat_note",
-  "zh": "按最近统计窗口汇总。",
-  "en": "Summarised over the most recent window."
- },
- {
-  "key": "stc_runs_empty",
-  "zh": "还没有统计数据。",
-  "en": "No statistics yet."
- },
- {
-  "key": "stc_runs_open",
-  "zh": "查看轨迹",
-  "en": "Trajectory"
- },
- {
-  "key": "stc_runs_flow_note",
-  "zh": "完整事件流，可筛选、分页与导出。",
-  "en": "The full event stream: filter, page and export."
  },
  {
   "key": "pet_show",
@@ -5136,66 +4961,6 @@
   "key": "st_supplement_importing",
   "zh": "正在导入…",
   "en": "Importing…"
- },
- {
-  "key": "st_lan_title",
-  "zh": "内网通信",
-  "en": "LAN mesh"
- },
- {
-  "key": "st_lan_on",
-  "zh": "已启用节点发现",
-  "en": "Node discovery enabled"
- },
- {
-  "key": "st_lan_off",
-  "zh": "未启用节点发现",
-  "en": "Node discovery disabled"
- },
- {
-  "key": "st_lan_node_name",
-  "zh": "节点名称",
-  "en": "Node name"
- },
- {
-  "key": "st_lan_node_name_hint",
-  "zh": "本机在内网中的显示名称",
-  "en": "Display name of this machine on the LAN"
- },
- {
-  "key": "st_lan_node_id",
-  "zh": "节点 ID：",
-  "en": "Node ID: "
- },
- {
-  "key": "st_lan_listen",
-  "zh": "监听：",
-  "en": "Listening: "
- },
- {
-  "key": "st_lan_discovered_prefix",
-  "zh": "  ·  已发现 ",
-  "en": "  ·  discovered "
- },
- {
-  "key": "st_lan_discovered_suffix",
-  "zh": " 个节点",
-  "en": " nodes"
- },
- {
-  "key": "st_lan_empty",
-  "zh": "暂无已发现节点",
-  "en": "No discovered nodes"
- },
- {
-  "key": "st_lan_enable",
-  "zh": "启用内网通信",
-  "en": "Enable LAN mesh"
- },
- {
-  "key": "st_lan_disable",
-  "zh": "停用内网通信",
-  "en": "Disable LAN mesh"
  },
  {
   "key": "st_models_loading",
@@ -5473,29 +5238,9 @@
   "en": "Diagnostics"
  },
  {
-  "key": "st_export_diagnostics",
-  "zh": "导出诊断信息",
-  "en": "Export diagnostics"
- },
- {
   "key": "st_help_open",
   "zh": "打开帮助手册",
   "en": "Open help"
- },
- {
-  "key": "st_diagnostics_note",
-  "zh": "导出密钥无关的本机设置与能力计数，便于问题排查。",
-  "en": "Exports secret-free local settings and capability counts for troubleshooting."
- },
- {
-  "key": "st_reset_title",
-  "zh": "重置工作状态",
-  "en": "Reset work state"
- },
- {
-  "key": "st_reset_note",
-  "zh": "清理运行状态、队列与临时投影；保留资产、配置、文件与历史。",
-  "en": "Clears run state, queues and temporary projections; keeps assets, settings, files and history."
  },
  {
   "key": "st_stress_title",
@@ -6265,34 +6010,14 @@
   "en": "View available built-in, MCP, skill and knowledge tools"
  },
  {
-  "key": "tm_custom",
-  "zh": "自建工具",
-  "en": "Custom tools"
- },
- {
-  "key": "tm_mcp_desc",
-  "zh": "连接和管理 MCP 工具",
-  "en": "Connect and manage MCP tools"
- },
- {
   "key": "tm_skills",
   "zh": "技能工具",
   "en": "Skill tools"
  },
  {
-  "key": "tm_skills_desc",
-  "zh": "上传与编辑技能包",
-  "en": "Upload and edit skill packages"
- },
- {
   "key": "tm_knowledge",
   "zh": "知识库工具",
   "en": "Knowledge tools"
- },
- {
-  "key": "tm_knowledge_desc",
-  "zh": "管理知识库及检索文件",
-  "en": "Manage knowledge bases and files"
  },
  {
   "key": "tm_none",
@@ -6303,11 +6028,6 @@
   "key": "tm_mcp_tip",
   "zh": "可连接 MCP 服务并管理工具",
   "en": "Connect MCP services and manage tools"
- },
- {
-  "key": "tm_servers",
-  "zh": "MCP 服务器",
-  "en": "MCP servers"
  },
  {
   "key": "tm_no_servers",
@@ -6338,11 +6058,6 @@
   "key": "tm_skill_tip",
   "zh": "从技能目录读取可用技能，并支持直接编辑文件。上传支持常见压缩包格式，部分格式依赖本机解压器。",
   "en": "Read skills from their directories and edit files. Archive support depends on the local extractor."
- },
- {
-  "key": "tm_skill_list",
-  "zh": "技能列表",
-  "en": "Skills"
  },
  {
   "key": "tm_no_skills",
@@ -6378,11 +6093,6 @@
   "key": "tm_kb_tip",
   "zh": "在此创建与管理你的知识库",
   "en": "Create and manage your knowledge bases"
- },
- {
-  "key": "tm_kb_list",
-  "zh": "知识库列表",
-  "en": "Knowledge bases"
  },
  {
   "key": "tm_no_kb",
@@ -6653,6 +6363,11 @@
   "key": "traj_title",
   "zh": "线程轨迹",
   "en": "Thread trajectory"
+ },
+ {
+  "key": "traj_export",
+  "zh": "导出日志",
+  "en": "Export log"
  },
  {
   "key": "traj_back",

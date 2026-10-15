@@ -144,3 +144,59 @@ fn delete_workspace_archives_or_discards_threads_without_touching_disk(
     assert_eq!(std::fs::read_to_string(&marker)?, "磁盘内容必须保留");
     Ok(())
 }
+
+#[test]
+fn default_workspace_lands_in_the_user_workspace_folder() -> Result<(), Box<dyn std::error::Error>>
+{
+    // The working directory must be the user directory's own `workspace`
+    // subfolder (matching the cloud split); the user directory itself keeps
+    // the engine config folders (agents/global/skills/…) and never shows up
+    // as a working directory.
+    let runtime = start_isolated()?;
+    let default = runtime
+        .list_workspaces()?
+        .into_iter()
+        .find(|workspace| workspace.name == "默认工作区")
+        .expect("startup migration created the default workspace");
+    let root = std::path::Path::new(&default.root_path);
+    assert!(root.is_dir(), "{}", default.root_path);
+    assert_eq!(
+        root.file_name().and_then(|name| name.to_str()),
+        Some("workspace")
+    );
+    let user_dir = root.parent().expect("user directory");
+    assert!(user_dir.is_dir());
+    Ok(())
+}
+
+#[test]
+fn local_workspace_folder_crud_stays_inside_the_root() -> Result<(), Box<dyn std::error::Error>> {
+    let runtime = start_isolated()?;
+    let host = tempfile::tempdir()?;
+    let root = make_folder(host.path(), "local-ops");
+    runtime.workspace_local_mkdir(&root, "notes")?;
+    runtime.workspace_local_write(&root, "notes/a.md")?;
+    assert!(std::path::Path::new(&root).join("notes/a.md").is_file());
+
+    // Overwrites are refused for local writes.
+    assert!(runtime.workspace_local_write(&root, "notes/a.md").is_err());
+
+    runtime.workspace_local_rename(&root, "notes/a.md", "b.md")?;
+    assert!(std::path::Path::new(&root).join("notes/b.md").is_file());
+    // The name is one segment; traversal is rejected up front.
+    assert!(runtime.workspace_local_rename(&root, "notes/b.md", "../escape").is_err());
+    assert!(runtime.workspace_local_mkdir(&root, "../outside").is_err());
+
+    let resolved = runtime.workspace_local_resolve(&root, "notes/b.md")?;
+    assert!(resolved.is_file());
+    // Directories are not drag-out material.
+    assert!(runtime.workspace_local_resolve(&root, "notes").is_err());
+
+    runtime.workspace_local_delete(&root, "notes/b.md")?;
+    assert!(!std::path::Path::new(&root).join("notes/b.md").exists());
+    runtime.workspace_local_delete(&root, "notes")?;
+    assert!(!std::path::Path::new(&root).join("notes").exists());
+    // The workspace root itself is never deletable.
+    assert!(runtime.workspace_local_delete(&root, ".").is_err());
+    Ok(())
+}

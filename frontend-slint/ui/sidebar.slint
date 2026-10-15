@@ -210,9 +210,9 @@ export component Sidebar inherits Rectangle {
     in property <string> file-error;
     in property <bool> file-offline;
     in property <bool> file-busy;
-    // A local workspace folder is browsed read-only; the panel hides the
-    // mutating menu entries when set.
-    in property <bool> file-readonly;
+    // Which folder the working-directory region browses: false = the cloud
+    // workspace, true = a local workspace folder (no cloud-only actions).
+    in property <bool> file-local;
     in-out property <length> files-height: 220px;
     callback file-toggle(int);
     callback file-refresh();
@@ -235,6 +235,7 @@ export component Sidebar inherits Rectangle {
                 width: 22px; height: 22px; border-radius: 5px;
                 background: ws-add-touch.has-hover ? Theme.hover : transparent;
                 Image { x: 4px; y: 4px; width: 14px; height: 14px; source: @image-url("../assets/icons/plus.svg"); colorize: Theme.muted; }
+                Tooltip { text: @markdown("\{I18n.ws_dlg_new}"); }
                 ws-add-touch := TouchArea {
                     mouse-cursor: pointer;
                     enabled: !root.busy;
@@ -269,20 +270,19 @@ export component Sidebar inherits Rectangle {
                     Rectangle { x: 0px; y: 5px; width: 2px; height: 24px; border-radius: 1px; background: row.selected ? Theme.accent : transparent; }
                     HorizontalLayout {
                         padding-left: 12px; padding-right: 10px; spacing: 8px;
-                        Image {
-                            y: (parent.height - 12px) / 2;
-                            width: 12px; height: 12px;
-                            source: row.expanded ? @image-url("../assets/icons/chevron-down.svg") : @image-url("../assets/icons/chevron-right.svg");
-                            colorize: Theme.muted;
-                        }
                         Rectangle {
                             y: (parent.height - 22px) / 2;
                             width: 22px; height: 22px; border-radius: 6px;
-                            // The glyph itself carries the workspace colour on a
-                            // light wash of the same hue; the old solid block
-                            // with a white cut-out read the glyph as background.
-                            background: WorkspaceVisual.color(row.color).transparentize(0.87);
-                            Image { x: 2px; y: 2px; width: 18px; height: 18px; source: WorkspaceVisual.icon(row.icon); colorize: WorkspaceVisual.color(row.color); }
+                            // No separate chevron: the glyph itself is the fold
+                            // switch. Expanded = solid workspace colour, the
+                            // threads below are open; collapsed = hollow
+                            // (muted) glyph.
+                            background: row.expanded ? WorkspaceVisual.color(row.color).transparentize(0.87) : Theme.hover;
+                            Image {
+                                x: 2px; y: 2px; width: 18px; height: 18px;
+                                source: WorkspaceVisual.icon(row.icon);
+                                colorize: row.expanded ? WorkspaceVisual.color(row.color) : Theme.muted;
+                            }
                         }
                         Text {
                             height: parent.height; text: row.name;
@@ -299,14 +299,15 @@ export component Sidebar inherits Rectangle {
                     }
                     // Direct actions replace the old ellipsis menu: plus spawns
                     // a thread in this workspace, pen opens the edit dialog
-                    // (icon, color, folder, reveal, delete). Like the thread
+                    // (icon, color, folder, reveal), trash deletes the
+                    // workspace after its own confirm step. Like the thread
                     // row's band they ride over the row instead of joining its
                     // layout, so revealing them moves nothing and they sit on
                     // the name's own centre line.
                     if ws-drag.hover : Rectangle {
-                        x: parent.width - 56px;
+                        x: parent.width - 74px;
                         y: 0px;
-                        width: 56px;
+                        width: 74px;
                         height: parent.height;
                         background: row.selected ? Theme.selected : Theme.accent-soft;
                         Rectangle {
@@ -321,7 +322,7 @@ export component Sidebar inherits Rectangle {
                             }
                         }
                         Rectangle {
-                            x: 24px; y: (parent.height - 22px) / 2; width: 22px; height: 22px; border-radius: 5px;
+                            x: 26px; y: (parent.height - 22px) / 2; width: 22px; height: 22px; border-radius: 5px;
                             background: ws-edit-touch.has-hover ? Theme.selected : transparent;
                             Image { x: 4px; y: 4px; width: 14px; height: 14px; source: @image-url("../assets/icons/pen.svg"); colorize: Theme.muted; }
                             Tooltip { text: @markdown("\{I18n.ws_menu_edit}"); }
@@ -329,6 +330,17 @@ export component Sidebar inherits Rectangle {
                                 mouse-cursor: pointer;
                                 accessible-role: button; accessible-label: I18n.ws_menu_edit;
                                 clicked => { root.workspace-menu(ri, 1); }
+                            }
+                        }
+                        Rectangle {
+                            x: 52px; y: (parent.height - 22px) / 2; width: 22px; height: 22px; border-radius: 5px;
+                            background: ws-delete-touch.has-hover ? Theme.selected : transparent;
+                            Image { x: 4px; y: 4px; width: 14px; height: 14px; source: @image-url("../assets/icons/trash.svg"); colorize: ws-delete-touch.has-hover ? Theme.danger : Theme.muted; }
+                            Tooltip { text: @markdown("\{I18n.ws_menu_delete}"); }
+                            ws-delete-touch := TouchArea {
+                                mouse-cursor: pointer;
+                                accessible-role: button; accessible-label: I18n.ws_menu_delete;
+                                clicked => { root.workspace-menu(ri, 3); }
                             }
                         }
                     }
@@ -423,7 +435,7 @@ export component Sidebar inherits Rectangle {
             error: root.file-error;
             offline: root.file-offline;
             busy: root.file-busy;
-            readonly: root.file-readonly;
+            local: root.file-local;
             toggle(index) => { root.file-toggle(index); }
             refresh => { root.file-refresh(); }
             connect => { root.file-connect(); }

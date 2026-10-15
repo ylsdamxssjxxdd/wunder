@@ -1,6 +1,6 @@
 import { Theme, ToolCard } from "theme.slint";
-import { Action } from "components.slint";
-import { CheckBox, ScrollView, LineEdit } from "std-widgets.slint";
+import { Action, InlineInput } from "components.slint";
+import { CheckBox, ScrollView } from "std-widgets.slint";
 import { ToolIcons } from "tool_icons.slint";
 import { I18n } from "i18n.slint";
 
@@ -21,7 +21,7 @@ export component ExpertField inherits VerticalLayout {
     in property <bool> enabled: true;
     spacing: 7px;
     Text { height: 18px; text: root.label; color: Theme.text; font-weight: 600; font-size: 12px; }
-    LineEdit { height: 36px; text <=> root.text; placeholder-text: root.placeholder-text; enabled: root.enabled; }
+    InlineInput { height: 36px; text <=> root.text; placeholder-text: root.placeholder-text; enabled: root.enabled; }
 }
 component ToolTile inherits Rectangle {
     in property <ToolCard> tool;
@@ -61,15 +61,18 @@ export component ExpertToolPicker inherits Rectangle {
             for column in root.columns : Rectangle {
                 property <int> idx: row * root.columns + column;
                 property <ExpertToolGroup> group: root.groups[self.idx];
+                property <int> rows: Math.ceil(self.group.tools.length / 2);
                 visible: self.idx < root.groups.length;
                 horizontal-stretch: 1;
-                height: 320px;
+                // The box hugs its own rows and only scrolls past the cap; a
+                // fixed height left a two-tool type two thirds empty.
+                height: Math.min(320px, self.rows * 60px + Math.max(0px, (self.rows - 1) * 8px) + 50px);
                 border-width: 1px; border-color: Theme.border; border-radius: 10px;
                 VerticalLayout { padding: 10px; spacing: 8px;
                     HorizontalLayout { height: 22px;
-                        Text { text: "类型：" + group.title; color: Theme.text-secondary; font-size: 12px; font-weight: 600; }
+                        Text { text: I18n.ew_type_label + group.title; color: Theme.text-secondary; font-size: 12px; font-weight: 600; }
                         Rectangle { horizontal-stretch: 1; }
-                        ExpertButton { width: 72px; height: 22px; selected: true; label: group.all-selected ? "取消全选" : "全选"; enabled: root.enabled; clicked => { root.toggle-group(group.title); } }
+                        ExpertButton { width: 72px; height: 22px; selected: true; label: group.all-selected ? I18n.ew_deselect_all : I18n.ew_select_all; enabled: root.enabled; clicked => { root.toggle-group(group.title); } }
                     }
                     ScrollView { horizontal-scrollbar-policy: always-off;
                         VerticalLayout { spacing: 8px; alignment: start;

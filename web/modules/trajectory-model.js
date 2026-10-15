@@ -170,33 +170,66 @@ function summarizeToolResult(payload) {
 function extractUsage(payload) {
   const usage = {};
   const sources = [];
-  const stats = payload.stats;
-  if (isRecord(stats)) sources.push(stats);
-  const messageStats = metaOf(payload).message_stats;
-  if (isRecord(messageStats)) sources.push(messageStats);
-  if (isRecord(payload.usage)) sources.push(payload.usage);
+  // 历史快照和实时事件的用量字段并不完全一致：除了顶层 usage/stats，
+  // 服务端还可能把它们包在 data、message_stats 或 round_usage 中。
+  // 只展开有限的已知容器，避免对大 payload 做无界递归扫描。
+  const addSource = (value) => {
+    if (!isRecord(value)) return;
+    sources.push(value);
+    for (const key of ["usage", "round_usage", "roundUsage", "message_stats", "messageStats"]) {
+      if (isRecord(value[key])) sources.push(value[key]);
+    }
+  };
+  addSource(payload.usage);
+  addSource(payload.round_usage);
+  addSource(payload.roundUsage);
+  addSource(payload.stats);
+  addSource(payload.message_stats);
+  addSource(payload.messageStats);
+  addSource(payload.data);
+  addSource(metaOf(payload).message_stats);
+  addSource(metaOf(payload).messageStats);
+  addSource(payload);
   if (sources.length === 0) return undefined;
+  const numeric = (value) => {
+    if (typeof value === "number" && Number.isFinite(value) && value >= 0) return value;
+    if (typeof value === "string" && value.trim()) {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed) && parsed >= 0) return parsed;
+    }
+    return undefined;
+  };
   const pick = (keys) => {
     for (const source of sources) {
       for (const key of keys) {
-        const value = source[key];
-        if (typeof value === "number" && Number.isFinite(value)) return value;
+        const value = numeric(source[key]);
+        if (value !== undefined) return value;
       }
     }
     return undefined;
   };
-  usage.input = pick(["input_tokens", "prompt_tokens"]);
-  usage.cacheRead = pick(["cached_input_tokens", "cache_read_input_tokens", "cached_tokens"]);
-  usage.cacheWrite = pick(["cache_creation_input_tokens"]);
-  usage.output = pick(["output_tokens", "completion_tokens"]);
-  usage.think = pick(["reasoning_tokens"]);
+  usage.input = pick(["input_tokens", "prompt_tokens", "inputTokens", "promptTokens", "input", "prompt"]);
+  usage.cacheRead = pick([
+    "cached_input_tokens", "cache_read_input_tokens", "cached_tokens",
+    "cacheReadTokens", "cacheReadInputTokens", "cache_read_tokens",
+  ]);
+  usage.cacheWrite = pick([
+    "cache_creation_input_tokens", "cacheWriteTokens", "cacheCreationInputTokens",
+  ]);
+  usage.output = pick([
+    "output_tokens", "completion_tokens", "outputTokens", "completionTokens", "output", "completion",
+  ]);
+  usage.think = pick(["reasoning_tokens", "reasoningTokens", "reasoning"]);
   return Object.values(usage).some((value) => value !== undefined) ? usage : undefined;
 }
 
 function resolveKind(rawKind, payload) {
   if (metaOf(payload).type === "system_prompt") return "system";
   if (rawKind === "assistant_message" || rawKind === "assistant") return "message";
-  if (rawKind === "subagent" || rawKind === "subagent_message") return "subtool";
+  // Mailbox deliveries are context consumed by the model, not tool calls.
+  // Keep this in the input lane so the bridge and hive use the same projection.
+  if (rawKind === "subagent_message") return "context";
+  if (rawKind === "subagent" || rawKind === "subagent_run") return "subtool";
   if (
     rawKind === "tool_message" ||
     rawKind === "tool_call" ||
@@ -254,7 +287,7 @@ function buildCell(item, payload, kind, index) {
 
   if (kind === "message") {
     const contentText = contentToText(payload.content);
-    const thinkingText = contentToText(payload.reasoning);
+    const thinkingText = contentToText(payload.reasoning) || contentToText(payload.reasoning_content);
     const toolCalls = payload.tool_calls;
     if (!contentText.trim() && Array.isArray(toolCalls) && toolCalls.length > 0) {
       cell.text = "";
@@ -333,14 +366,22 @@ function buildCell(item, payload, kind, index) {
         ? Math.max(0, (completedAt - startedAt) / 1000)
         : null;
   } else {
-    const contentText = contentToText(payload.content);
+    let contentText = contentToText(payload.content);
+    if (!contentText.trim()) {
+      for (const key of ["summary", "message", "reason", "stage", "description", "code"]) {
+        const value = payload[key];
+        if (typeof value === "string" && value.trim()) {
+          contentText = value;
+          break;
+        }
+      }
+    }
     cell.text = markdownPreviewText(contentText);
     cell.previewMarkdown = contentText.trim() ? contentText : undefined;
     cell.inputDetail = contentText.trim() ? contentText : undefined;
-    cell.timeSeconds =
-      startedAt !== null && completedAt !== null
-        ? Math.max(0, (completedAt - startedAt) / 1000)
-        : null;
+    // User/context/system events are instantaneous input markers. Falling back
+    // to updated_time here stretches the input lane across the whole turn.
+    cell.timeSeconds = startedAt !== null ? 0 : null;
   }
 
   return cell;
@@ -406,6 +447,21 @@ export function buildTrajectoryLayout(rawTurns, t) {
       const item = ordered[i];
       const payload = payloadOf(item);
       const rawKind = rawKindOf(item, payload);
+      // Transport and lifecycle records are not user-visible trajectory spans.
+      // They are already represented by the model/tool records in the same
+      // round; retaining them makes the bridge timeline longer than the hive.
+      if (
+        rawKind === "progress" || rawKind === "workspace_update"
+        || rawKind === "model_usage" || rawKind === "llm_stream_retry"
+        || rawKind === "thread_turn_started" || rawKind === "model_call"
+      ) continue;
+      if (
+        rawKind === "queue" || rawKind.startsWith("queue_")
+        || rawKind === "tool_message" || rawKind.startsWith("command_session")
+        || rawKind === "knowledge_request" || rawKind.startsWith("hook/")
+      ) continue;
+      if ((rawKind === "terminal" || rawKind === "turn_terminal")
+        && !payload.error && item.status === "completed") continue;
       const kind = resolveKind(rawKind, payload);
       const cell = buildCell(item, payload, kind, index);
       index += 1;

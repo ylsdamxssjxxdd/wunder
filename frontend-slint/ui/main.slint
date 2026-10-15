@@ -4,10 +4,10 @@ import { ExpertToolGroup } from "expert_widgets.slint";
 export { ExpertToolGroup }
 import { RuntimeStatus } from "runtime_status.slint";
 import { I18n } from "i18n.slint";
-import { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, TextBlock, WorkflowLine, WorkflowSection, ToolWorkflowEntry, TimelineRow, TimelineCounts, TurnStatMetric, PatchCard, PatchLine, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, LanPeerCard, TrajRow, TrajSpan, TrajTick, TrajBoundary, TrajTiming, TrajSection, TrajTab, CronCard, CronRunCard, PromptPackCard, ChannelCatalogCard, ChannelAccountCard, ChannelBindingCard, ChannelLogCard, AvatarOption, AvatarColorChip, CompanionCard, PlanStep, InquiryQuestion, QueueTurn, DraftRecall, InterlinkStatus, InterlinkNode, InterlinkEntry, InterlinkApproval, WorkspaceFileRow } from "theme.slint";
+import { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, TextBlock, WorkflowLine, WorkflowSection, ToolWorkflowEntry, TimelineRow, TimelineCounts, TurnStatMetric, PatchCard, PatchLine, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, TrajRow, TrajSpan, TrajTick, TrajBoundary, TrajTiming, TrajSection, TrajTab, TrajSearchHit, CronCard, CronRunCard, PromptPackCard, ChannelCatalogCard, ChannelAccountCard, ChannelBindingCard, ChannelLogCard, AvatarOption, AvatarColorChip, CompanionCard, PlanStep, InquiryQuestion, QueueTurn, DraftRecall, InterlinkApproval, WorkspaceFileRow } from "theme.slint";
 import { Action, EdgeToggle, RailButton, Avatar, FormField, MiddleHeader, MiddleFooter, ConfirmDialog, InfoDialog, ToastHost, ToastState } from "components.slint";
 import { Composer, GoalBanner, InquiryPanel, StatusDock } from "composer.slint";
-import { TerminalView, TermSpan } from "terminal_view.slint";
+import { TermSpan } from "terminal_view.slint";
 import { TimelineView } from "timeline.slint";
 import { ActivityCard, ActivityMonth, ActivityWeek } from "activity_card.slint";
 export { ActivityMonth, ActivityWeek }
@@ -34,10 +34,11 @@ import { ModelPresets } from "model_presets.slint";
 export { ModelPresets }
 // `TimelineView` is deliberately absent: nothing in Rust names it, and an
 // exported component that does not inherit Window only earns a build warning.
-export { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, TextBlock, WorkflowLine, WorkflowSection, ToolWorkflowEntry, TimelineRow, TimelineCounts, TurnStatMetric, PatchCard, PatchLine, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, LanPeerCard, TrajRow, TrajSpan, TrajTick, TrajBoundary, TrajTiming, TrajSection, TrajTab, CronCard, CronRunCard, PromptPackCard, ChannelCatalogCard, ChannelBindingCard, ChannelLogCard, AvatarOption, AvatarColorChip, CompanionCard, PlanStep, InterlinkStatus, InterlinkNode, InterlinkEntry, InterlinkApproval, WorkspaceFileRow }
+export { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, TextBlock, WorkflowLine, WorkflowSection, ToolWorkflowEntry, TimelineRow, TimelineCounts, TurnStatMetric, PatchCard, PatchLine, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, TrajRow, TrajSpan, TrajTick, TrajBoundary, TrajTiming, TrajSection, TrajTab, CronCard, CronRunCard, PromptPackCard, ChannelCatalogCard, ChannelBindingCard, ChannelLogCard, AvatarOption, AvatarColorChip, CompanionCard, PlanStep, InterlinkApproval, WorkspaceFileRow }
 export { AppTray } from "tray.slint";
 export { TrayNotice } from "tray-notice.slint";
 export { HelpWindow } from "help_window.slint";
+export { TerminalWindow } from "terminal_window.slint";
 export { ScreenshotOverlay } from "screenshot_overlay.slint";
 
 export component MainWindow inherits Window {
@@ -120,17 +121,14 @@ export component MainWindow inherits Window {
     in-out property <string> active-agent-id;
     in-out property <bool> busy: false;
     in-out property <bool> command-pending: false;
-    // Terminal mode routes the composer input to the local shell instead of
-    // the model; toggled from the plus menu in the composer.
+    // The terminal button opens a separate terminal window; chat remains in
+    // the main transcript and composer.
     in-out property <bool> terminal-mode: false;
     callback terminal-toggled(bool);
     callback terminal-interrupt();
     callback terminal-clear();
     callback terminal-scrolled(int);
     callback terminal-scroll-to(int);
-    // The panel measures its own cell box, so a window resize changes the grid
-    // even while the shell prints nothing. The screen model has to follow and
-    // tell the shell, or the two disagree about where a line ends.
     callback terminal-geometry-changed();
     in-out property <int> terminal-measured-cols: 0;
     in-out property <int> terminal-measured-rows: 0;
@@ -270,6 +268,9 @@ export component MainWindow inherits Window {
     in-out property <[TrajBoundary]> traj-boundaries;
     in-out property <float> traj-view-start: 0.0;
     in-out property <float> traj-view-width: 1.0;
+    in-out property <bool> traj-selection-active: false;
+    in-out property <float> traj-selection-start: 0.0;
+    in-out property <float> traj-selection-end: 0.0;
     in-out property <string> traj-detail-header;
     in-out property <string> traj-detail-badge;
     in-out property <int> traj-detail-kind: 1;
@@ -286,6 +287,9 @@ export component MainWindow inherits Window {
     in-out property <bool> traj-show-turns: false;
     in-out property <bool> traj-show-calls: false;
     in-out property <string> traj-query;
+    in-out property <string> traj-search-hint;
+    in-out property <[TrajSearchHit]> traj-search-hits;
+    in-out property <string> traj-search-body;
     in-out property <bool> traj-loading;
     in-out property <bool> traj-failed;
     callback traj-select-row(int);
@@ -296,9 +300,15 @@ export component MainWindow inherits Window {
     callback traj-toggle-duration();
     callback traj-toggle-turns();
     callback traj-toggle-calls();
+    callback traj-export();
     callback traj-search-changed();
-    callback traj-zoom(float);
+    callback traj-search-hit(int);
+    callback traj-zoom(float, float);
     callback traj-pan(float);
+    callback traj-select-range(float, float);
+    callback traj-clear-range();
+    callback traj-select-position(float);
+    callback traj-hover-position(float);
     callback traj-edge(bool);
     // Subagent detail dialog: the child thread's rows come from the same
     // projection as the main timeline (src/subagent_detail.rs); Slint only
@@ -370,7 +380,6 @@ export component MainWindow inherits Window {
     in-out property <string> prompt-draft;
     in-out property <bool> prompt-readonly: false;
     in-out property <bool> prompt-loading: false;
-    in-out property <bool> reset-confirm-open: false;
     in-out property <string> pack-name-draft;
     in-out property <string> prompt-preview;
     in-out property <bool> prompt-preview-loading: false;
@@ -482,12 +491,6 @@ export component MainWindow inherits Window {
             root.refresh-expert();
         }
     }
-    in-out property <bool> lan-enabled: false;
-    in-out property <string> lan-name;
-    in-out property <string> lan-peer-id;
-    in-out property <string> lan-endpoint;
-    in-out property <int> lan-peer-count: 0;
-    in-out property <[LanPeerCard]> lan-peers: [];
     // ---- cloud account state (§6.1) ----
     // Login state and the quota snapshot are projected natively; the drafts
     // and the error line live on the shell so the settings card stays plain
@@ -517,25 +520,12 @@ export component MainWindow inherits Window {
     callback cloud-logout();
     callback cloud-refresh-account();
     callback cloud-toggle-sync(bool);
-    // ---- interlink (设备互通, §I9) ----
-    // The 2s poll owns the tunnel status and the approval queue; devices and
-    // cloud listings are fetched on demand. The approval card shows one pending
-    // remote command at a time, so the native side keeps the queue.
-    in-out property <InterlinkStatus> interlink-status;
-    in-out property <[InterlinkNode]> interlink-nodes: [];
-    in-out property <bool> interlink-loading: false;
-    in-out property <string> interlink-cloud-path;
-    in-out property <[InterlinkEntry]> interlink-entries: [];
-    in-out property <string> interlink-cloud-note;
-    in-out property <bool> interlink-cloud-pending: false;
-    in-out property <bool> interlink-cloud-busy: false;
+    // ---- interlink approval (§I9) ----
+    // The 2s poll drains the approval queue; the settings page no longer
+    // browses devices or the cloud workspace, so only the one-at-a-time
+    // remote-command card is left on the shell.
     in-out property <InterlinkApproval> interlink-approval;
     in-out property <bool> interlink-approval-open: false;
-    callback interlink-refresh();
-    callback interlink-open(string);
-    callback interlink-cloud-up();
-    callback interlink-cloud-pull(string);
-    callback interlink-cloud-decide(bool);
     callback interlink-approve();
     callback interlink-reject();
     // ---- working directory (左栏工作目录区, 蜂巢 B2) ----
@@ -550,9 +540,10 @@ export component MainWindow inherits Window {
     in-out property <string> ws-file-error;
     in-out property <bool> ws-file-offline: true;
     in-out property <bool> ws-file-busy: false;
-    // A local workspace folder is browsed read-only: the tree hides the
-    // mutating context-menu entries (new / move / delete / archive / clear).
-    in-out property <bool> ws-file-readonly: false;
+    // Which folder the working-directory region browses: false = the cloud
+    // workspace, true = a local workspace folder (cloud-only actions hide,
+    // file operations run straight off the disk).
+    in-out property <bool> ws-file-local: false;
     callback ws-file-toggle(int);
     callback ws-file-refresh();
     // Context menu (row index or -1 for the blank area, action code),
@@ -579,6 +570,10 @@ export component MainWindow inherits Window {
     in-out property <int> thread-rename-payload: -1;
     in-out property <string> thread-rename-title;
     in-out property <string> thread-rename-draft;
+    // Archive confirmation: the sidebar band parks the payload here, the
+    // dialog decides.
+    in-out property <bool> thread-archive-open: false;
+    in-out property <int> thread-archive-pending: -1;
     in-out property <string> selected-model-key;
     in-out property <string> selected-model-provider;
     in-out property <string> selected-model-name;
@@ -683,8 +678,6 @@ export component MainWindow inherits Window {
     callback open-prompt-preview();
     in-out property <bool> prompt-preview-open: false;
     callback confirm-delete-prompt-pack();
-    callback export-diagnostics();
-    callback reset-work-state();
     // 线程渲染压测：设置页常规卡片的手动入口。
     callback generate-stress-thread();
     in-out property <bool> stress-running: false;
@@ -699,12 +692,6 @@ export component MainWindow inherits Window {
     callback save-cron-editor();
     callback cancel-cron-editor();
     in-out property <string> selected-agent-icon-config;
-    // The resolved avatar shown by the agent form's 形象 button; Rust owns it so
-    // the thumbnail tracks the draft icon config, not the last saved record.
-    in-out property <image> selected-agent-icon-image;
-    // Slint has no string slicing, so the fallback letter ships as its own
-    // projection for the 形象 button's avatar bubble.
-    in-out property <string> selected-agent-initial;
     in-out property <[string]> selected-agent-tool-names: [];
     in-out property <[string]> selected-agent-preset-questions: [];
     in-out property <string> selected-agent-approval-mode: "suggest";
@@ -715,9 +702,6 @@ export component MainWindow inherits Window {
     // §9.3 agent form projections. The model list is built natively: only
     // configured conversational models are selectable. The tool cards reuse the
     // grouped catalog (`expert-tool-groups`), the only place filtering happens.
-    in-out property <[string]> agent-model-options: [];
-    callback agent-model-picked(string);
-    callback refresh-agent-model-options();
     callback toggle-agent-tool-option(string);
     callback save-agent-form();
     callback queue-agent-save();
@@ -741,8 +725,7 @@ export component MainWindow inherits Window {
     in-out property <string> profile-unit-draft;
     callback refresh-tools();
     callback open-file-native(string);
-    callback save-runtime(string, string, string, string, string);
-    callback save-lan(bool, string);
+    callback save-runtime();
     callback refresh-settings();
     callback select-model(int);
     callback move-model(int, int);
@@ -856,7 +839,10 @@ export component MainWindow inherits Window {
                 workspace-menu(workspace, action) => { root.workspace-menu(workspace, action); }
                 new-workspace => { root.new-workspace(); }
                 move-row(index, travel) => { root.move-row(index, travel); }
-                archive-thread(index) => { root.archive-thread(index); }
+                archive-thread(index) => {
+                    root.thread-archive-pending = index;
+                    root.thread-archive-open = true;
+                }
                 rename-request(payload, title) => {
                     root.thread-rename-payload = payload;
                     root.thread-rename-title = title;
@@ -873,7 +859,7 @@ export component MainWindow inherits Window {
                 file-error: root.ws-file-error;
                 file-offline: root.ws-file-offline;
                 file-busy: root.ws-file-busy;
-            file-readonly: root.ws-file-readonly;
+                file-local: root.ws-file-local;
                 file-toggle(index) => { root.ws-file-toggle(index); }
                 file-refresh => { root.ws-file-refresh(); }
                 file-connect => { root.more-open = false; root.settings-open = true; root.settings-active-panel = 13; root.refresh-settings(); }
@@ -922,7 +908,7 @@ export component MainWindow inherits Window {
                         out property <length> scroll-y: timeline_view.scroll-y;
                         public function scroll-to-end() { timeline_view.scroll-to-end(); }
                         timeline_view := TimelineView {
-                            visible: !root.terminal-mode;
+                            visible: true;
                             rows: root.timeline;
                             turn-marks: root.turn-marks;
                             follow-output <=> root.follow-output;
@@ -934,30 +920,10 @@ export component MainWindow inherits Window {
                             open-subagent(id) => { root.timeline-open-subagent(id); }
                             stop-subagent(id) => { root.timeline-stop-subagent(id); }
                         }
-                        TerminalView {
-                            visible: root.terminal-mode;
-                            x: 0px; y: 0px; width: 100%; height: 100%;
-                            spans: root.terminal-spans;
-                            status: root.terminal-status;
-                            error: root.terminal-error;
-                            rows: root.terminal-rows;
-                            cols: root.terminal-cols;
-                            view-offset: root.terminal-view-offset;
-                            history-depth: root.terminal-history-depth;
-                            caret-visible: root.terminal-caret-visible;
-                            caret-row: root.terminal-caret-row;
-                            caret-col: root.terminal-caret-col;
-                            clear => { root.terminal-clear(); }
-                            interrupt => { root.terminal-interrupt(); }
-                            scrolled(delta) => { root.terminal-scrolled(delta); }
-                            scroll-to(row) => { root.terminal-scroll-to(row); }
-                            measured-cols <=> root.terminal-measured-cols;
-                            measured-rows <=> root.terminal-measured-rows;
-                        }
                         // A thread without a single message is a blank pane; the
                         // yearly activity grid holds that space until the first
                         // message lands, then the transcript takes it back.
-                        if root.timeline.length == 0 && !root.terminal-mode && !root.chat-loading && !root.session-loading : ActivityCard {
+                        if root.timeline.length == 0 && !root.chat-loading && !root.session-loading : ActivityCard {
                             x: 0px; y: 0px; width: 100%; height: 100%;
                             sessions: root.activity-sessions;
                             credits: root.activity-credits;
@@ -1009,12 +975,12 @@ export component MainWindow inherits Window {
                                 dismiss => { root.inquiry-dismiss(); }
                             }
                             Composer {
-                                draft <=> root.draft; busy: root.command-pending || root.busy || root.session-loading || root.creating-session || root.chat-loading;
+                                draft <=> root.draft; busy: root.command-pending || root.session-loading || root.creating-session || (root.chat-loading && !root.busy);
                             inquiry-ready: root.inquiry-ready;
-                            terminal-mode: root.terminal-mode;
+                            terminal-mode: false;
                             command => { root.terminal-mode = !root.terminal-mode; root.terminal-toggled(root.terminal-mode); }
                             send-key: root.runtime-send-key;
-                            interrupt => { root.terminal-interrupt(); }
+                            interrupt => { }
                             context-usage: root.context-usage; context-known: root.context-known; context-counts: root.context-counts; reasoning-effort <=> root.reasoning-effort;
                             models: root.models;
                             model-catalogue-count: root.model-catalogue-count;
@@ -1112,9 +1078,7 @@ export component MainWindow inherits Window {
         stress-model-rounds <=> root.stress-model-rounds;
         stress-status <=> root.stress-status;
         generate-stress-thread => { root.generate-stress-thread(); }
-        lan-enabled <=> root.lan-enabled; lan-name <=> root.lan-name; lan-peer-id: root.lan-peer-id; lan-endpoint: root.lan-endpoint; lan-peer-count: root.lan-peer-count; lan-peers: root.lan-peers;
-        save-runtime(workspace, language, python, git, rg) => { root.save-runtime(workspace, language, python, git, rg); }
-        save-lan(enabled, name) => { root.save-lan(enabled, name); }
+        save-runtime => { root.save-runtime(); }
         selected-key: root.selected-model-key; selected-provider: root.selected-model-provider;
         selected-model-name: root.selected-model-name; selected-base-url: root.selected-model-base-url;
         selected-type: root.selected-model-type; selected-is-default: root.selected-model-is-default;
@@ -1147,20 +1111,6 @@ export component MainWindow inherits Window {
         cloud-logout => { root.cloud-logout(); }
         cloud-refresh-account => { root.cloud-refresh-account(); }
         cloud-toggle-sync(enabled) => { root.cloud-toggle-sync(enabled); }
-        // ---- interlink (设备互通, category 12) ----
-        interlink-status: root.interlink-status;
-        interlink-nodes: root.interlink-nodes;
-        interlink-loading: root.interlink-loading;
-        interlink-cloud-path <=> root.interlink-cloud-path;
-        interlink-entries: root.interlink-entries;
-        interlink-cloud-note: root.interlink-cloud-note;
-        interlink-cloud-pending: root.interlink-cloud-pending;
-        interlink-cloud-busy: root.interlink-cloud-busy;
-        interlink-refresh => { root.interlink-refresh(); }
-        interlink-open(path) => { root.interlink-open(path); }
-        interlink-cloud-up => { root.interlink-cloud-up(); }
-        interlink-cloud-pull(path) => { root.interlink-cloud-pull(path); }
-        interlink-cloud-decide(approve) => { root.interlink-cloud-decide(approve); }
         model-creating <=> root.model-creating;
         model-key-draft <=> root.model-key-draft;
         model-provider-draft <=> root.model-provider-draft;
@@ -1207,7 +1157,6 @@ export component MainWindow inherits Window {
         prompt-draft <=> root.prompt-draft;
         prompt-readonly: root.prompt-readonly;
         prompt-loading: root.prompt-loading;
-        reset-confirm-open <=> root.reset-confirm-open;
         settings-tab <=> root.settings-active-panel;
         pack-name-draft <=> root.pack-name-draft;
         prompt-preview: root.prompt-preview;
@@ -1219,8 +1168,6 @@ export component MainWindow inherits Window {
         delete-prompt-pack => { root.delete-prompt-pack(); }
         set-active-prompt-pack => { root.set-active-prompt-pack(); }
         refresh-prompt-preview => { root.refresh-prompt-preview(); }
-        export-diagnostics => { root.export-diagnostics(); }
-        reset-work-state => { root.reset-work-state(); }
         // ---- embedded category state (§9.2) ----
         tool-manager-status: root.status;
         tools-loading: root.tools-loading; tools-working: root.tools-working;
@@ -1307,7 +1254,7 @@ export component MainWindow inherits Window {
         expert-loading: root.expert-loading; expert-saving: root.expert-saving;
         expert-error: root.expert-error; expert-memories: root.expert-memories;
         expert-archives: root.expert-archives; expert-points: root.expert-points;
-        expert-heat: root.expert-heat; expert-duration: root.expert-duration;
+        expert-duration: root.expert-duration;
         expert-tokens: root.expert-tokens; expert-calls: root.expert-calls;
         expert-chart-path: root.expert-chart-path; expert-chart-max: root.expert-chart-max;
         expert-date: root.expert-date; expert-archive-page: root.expert-archive-page;
@@ -1324,7 +1271,6 @@ export component MainWindow inherits Window {
         save-expert-memory => { root.save-expert-memory(); }
         delete-expert-memory(id) => { root.delete-expert-memory(id); }
         open-expert-archive(id) => { root.open-expert-archive(id); }
-        open-trajectory => { root.open-trajectory(-1); }
 
         settings-query <=> root.settings-query;
         settings-category-flags: root.settings-category-flags;
@@ -1335,20 +1281,11 @@ export component MainWindow inherits Window {
         // panel's own `changed` hooks keep the dirty flag honest.
         selected-agent-name <=> root.selected-agent-name;
         selected-agent-description <=> root.selected-agent-description;
-        selected-agent-model <=> root.selected-agent-model;
         selected-agent-system-prompt <=> root.selected-agent-system-prompt;
-        selected-agent-icon-image: root.selected-agent-icon-image;
-        selected-agent-initial: root.selected-agent-initial;
-        selected-agent-preview-skill <=> root.selected-agent-preview-skill;
-        selected-agent-silent <=> root.selected-agent-silent;
-        selected-agent-prefer-mother <=> root.selected-agent-prefer-mother;
-        agent-model-options: root.agent-model-options;
         expert-tool-groups: root.expert-tool-groups;
         expert-tool-keyword <=> root.expert-tool-keyword;
         agents-loading: root.agents-loading;
         agent-question-draft <=> root.agent-question-draft;
-        agent-model-picked(key) => { root.agent-model-picked(key); }
-        refresh-agent-model-options => { root.refresh-agent-model-options(); }
         toggle-agent-tool-option(name) => { root.toggle-agent-tool-option(name); }
         toggle-expert-tool-group(category) => { root.toggle-expert-tool-group(category); }
         search-expert-tools => { root.search-expert-tools(); }
@@ -1359,7 +1296,6 @@ export component MainWindow inherits Window {
         agent-save-pending <=> root.agent-save-pending;
         queue-agent-save => { root.queue-agent-save(); }
         refresh-agent-dirty => { root.refresh-agent-dirty(); }
-        permission-mode <=> root.permission-mode;
         open-info(title, text) => { root.open-info(title, text); }
         }
             }
@@ -1375,6 +1311,7 @@ export component MainWindow inherits Window {
     if root.traj-open : ThreadTrajectoryDialog {
         rows: root.traj-rows; spans: root.traj-spans; ticks: root.traj-ticks; boundaries: root.traj-boundaries;
         view-start: root.traj-view-start; view-width: root.traj-view-width;
+        selection-active: root.traj-selection-active; selection-start: root.traj-selection-start; selection-end: root.traj-selection-end;
         detail-header: root.traj-detail-header; detail-badge: root.traj-detail-badge; detail-kind: root.traj-detail-kind;
         detail-tabs: root.traj-detail-tabs; detail-tab: root.traj-detail-tab;
         overview-rows: root.traj-overview; sections: root.traj-sections; timing-rows: root.traj-timing;
@@ -1382,19 +1319,28 @@ export component MainWindow inherits Window {
         tooltip-text: root.traj-tooltip;
         show-duration: root.traj-show-duration; show-turns <=> root.traj-show-turns; show-calls <=> root.traj-show-calls;
         query <=> root.traj-query;
+        search-hint: root.traj-search-hint;
+        search-hits: root.traj-search-hits;
+        search-body: root.traj-search-body;
         loading: root.traj-loading; failed: root.traj-failed;
         close => { root.traj-open = false; }
         toggle-duration => { root.traj-toggle-duration(); }
         toggle-turns => { root.traj-toggle-turns(); }
-        toggle-calls => { root.traj-toggle-calls(); }
+         toggle-calls => { root.traj-toggle-calls(); }
+         export => { root.traj-export(); }
         select-row(index) => { root.traj-select-row(index); }
         select-tab(tab) => { root.traj-select-tab(tab); }
         select-span(index) => { root.traj-select-span(index); }
         hover-span(index) => { root.traj-hover-span(index); }
         leave-span => { root.traj-leave(); }
         search-edited => { root.traj-search-changed(); }
-        zoom(factor) => { root.traj-zoom(factor); }
+        select-search-hit(index) => { root.traj-search-hit(index); }
+        zoom(factor, anchor) => { root.traj-zoom(factor, anchor); }
         pan(start) => { root.traj-pan(start); }
+        select-range(start, end) => { root.traj-select-range(start, end); }
+        clear-range => { root.traj-clear-range(); }
+        select-position(value) => { root.traj-select-position(value); }
+        hover-position(value) => { root.traj-hover-position(value); }
         edge-reached(older) => { root.traj-edge(older); }
     }
     if root.subagent-open : SubagentDetailDialog {
@@ -1446,15 +1392,6 @@ export component MainWindow inherits Window {
         confirmed => { root.cron-delete-open = false; root.delete-cron(root.cron-delete-pending); }
         canceled => { root.cron-delete-open = false; }
     }
-    if root.reset-confirm-open : ConfirmDialog {
-        title: I18n.reset_title;
-        message: I18n.reset_message;
-        confirm-label: I18n.reset_confirm;
-        cancel-label: I18n.common_cancel;
-        danger: true;
-        confirmed => { root.reset-confirm-open = false; root.reset-work-state(); }
-        canceled => { root.reset-confirm-open = false; }
-    }
     if root.agent-leave-confirm-open : ConfirmDialog {
         title: I18n.ag_unsaved_title;
         message: I18n.ag_unsaved_confirm;
@@ -1463,6 +1400,20 @@ export component MainWindow inherits Window {
         danger: true;
         confirmed => { root.agent-leave-confirm-open = false; root.agent-leave-confirmed(); }
         canceled => { root.agent-leave-confirm-open = false; root.agent-leave-canceled(); }
+    }
+    // Archiving a thread is a deliberate act: the hover band only opens this
+    // confirmation, the actual archive happens after the user confirms.
+    if root.thread-archive-open : ConfirmDialog {
+        title: I18n.ap_archive_thread;
+        message: I18n.ap_archive_confirm;
+        confirm-label: I18n.ap_archive_thread;
+        cancel-label: I18n.common_cancel;
+        danger: true;
+        confirmed => {
+            root.thread-archive-open = false;
+            root.archive-thread(root.thread-archive-pending);
+        }
+        canceled => { root.thread-archive-open = false; }
     }
     // ---- interlink approval (§I9): one remote command at a time ----
     // ConfirmDialog has no meta line, so this is a light self-drawn modal: the
@@ -1548,5 +1499,3 @@ export component MainWindow inherits Window {
 
     Timer { interval: 6000ms; running: root.command-feedback != ""; triggered => { root.command-feedback = ""; } }
 }
-
-

@@ -18,11 +18,9 @@ pub(crate) fn project(app: &MainWindow) {
 }
 
 thread_local! {
-    /// Workspaces the user collapsed manually; every workspace starts expanded.
-    static COLLAPSED: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
-    /// Last workspace row clicked, so a second click folds it instead of
-    /// flipping the selection back and forth.
-    static LAST_SELECTED: RefCell<i32> = RefCell::new(-1);
+    /// Workspaces the user expanded; every workspace starts collapsed and one
+    /// click on its row toggles between open (solid glyph) and closed (hollow).
+    static EXPANDED: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
     /// Manual workspace display order (workspace ids). Session-scoped until the
     /// facade grows a persisted ordering API; a row joins the list the first
     /// time it takes part in a drag, and unknown ids rank before the ordered
@@ -263,10 +261,10 @@ fn rebuild_rows(app: &MainWindow) {
         let order = slot.borrow();
         cards.sort_by_key(|(_, card)| order_rank(&order, card.workspace_id.as_str()));
     });
-    COLLAPSED.with(|slot| {
-        let collapsed = slot.borrow();
+    EXPANDED.with(|slot| {
+        let expanded = slot.borrow();
         for (wi, card) in cards {
-            let expanded = !collapsed.contains(card.workspace_id.as_str());
+            let expanded = expanded.contains(card.workspace_id.as_str());
             rows.push(SidebarRow {
                 kind: 0,
                 workspace_id: card.workspace_id.clone(),
@@ -373,6 +371,11 @@ pub(crate) fn focus_workspace_of(
     for (index, card) in app.get_workspaces().iter().enumerate() {
         if card.workspace_id.as_str() == workspace_id {
             app.set_selected_workspace(index as i32);
+            // The focused thread's workspace must show its threads, so the
+            // focus implicitly expands the workspace.
+            EXPANDED.with(|slot| {
+                slot.borrow_mut().insert(workspace_id.to_string());
+            });
             let root = card.root_path.to_string();
             if !root.is_empty() {
                 crate::workspace_files::set_target(
@@ -398,7 +401,6 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
         if row.kind == 2 {
             // Pinned cloud row: point the file panel back at the cloud
             // workspace and drop the local selection.
-            LAST_SELECTED.with(|slot| *slot.borrow_mut() = -1);
             app.set_selected_workspace(-1);
             crate::workspace_files::set_target(
                 &app,
@@ -409,16 +411,14 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
         } else if row.kind == 0 {
             let workspace = row.payload;
             let id = row.workspace_id.to_string();
-            let repeat = LAST_SELECTED.with(|slot| *slot.borrow() == workspace);
-            LAST_SELECTED.with(|slot| *slot.borrow_mut() = workspace);
-            if repeat {
-                COLLAPSED.with(|slot| {
-                    let mut collapsed = slot.borrow_mut();
-                    if !collapsed.remove(id.as_str()) {
-                        collapsed.insert(id);
-                    }
-                });
-            }
+            // The row itself is the fold switch: every click toggles between
+            // open (solid glyph, threads visible) and closed (hollow).
+            EXPANDED.with(|slot| {
+                let mut expanded = slot.borrow_mut();
+                if !expanded.remove(id.as_str()) {
+                    expanded.insert(id);
+                }
+            });
             app.set_selected_workspace(workspace);
             // Mirror this workspace's folder in the working-directory panel.
             if let Some(card) = app.get_workspaces().row_data(workspace as usize) {

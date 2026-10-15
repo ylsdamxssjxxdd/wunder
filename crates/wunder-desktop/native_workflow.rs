@@ -32,30 +32,20 @@ impl NativeWorkflowEntry {
             .take(640)
             .map(|c| if c.is_whitespace() { ' ' } else { c })
             .collect();
-        let tokens = request_consumed_tokens(data)
+        let tokens = request_context_tokens(data)
             .map(|n| format!("{} token", compact(n)))
             .unwrap_or_default();
-        let duration = number(
-            data,
-            &[
-                "duration_ms",
-                "elapsed_ms",
-                "durationMs",
-                "elapsedMs",
-                "latency_ms",
-                "latencyMs",
-            ],
-            0,
-        )
-        .map(|ms| {
-            if ms < 1000.0 {
-                format!("{:.0}ms", ms.floor())
-            } else if ms < 10000.0 {
-                format!("{:.1}s", ms / 1000.0)
-            } else {
-                format!("{:.0}s", ms / 1000.0)
-            }
-        })
+        let duration = number(data, &["duration_ms"], 0)
+            .or_else(|| number(data.get("meta").unwrap_or(&Value::Null), &["duration_ms"], 0))
+            .map(|ms| {
+                if ms < 1000.0 {
+                    format!("{:.0}ms", ms.round())
+                } else if ms < 10000.0 {
+                    format!("{:.1}s", (ms / 100.0).round() / 10.0)
+                } else {
+                    format!("{:.0}s", (ms / 1000.0).round())
+                }
+            })
         .unwrap_or_default();
         let sections = sections::project(title, data, state, &detail);
         let patch_files = patch::project(title, data, args.unwrap_or(&Value::Null));
@@ -73,19 +63,30 @@ impl NativeWorkflowEntry {
     }
 }
 
-/// Match the web's applyWorkflowMetrics: invocation usage is transport
-/// metadata, not a number to search for inside a tool's business result.
-fn request_consumed_tokens(data: &Value) -> Option<f64> {
-    if let Some(usage) = data.get("request_usage") {
-        let value = usage
-            .get("total_tokens")
-            .filter(|v| !v.is_null())
-            .or_else(|| usage.get("total"));
-        return value.and_then(count);
+/// Match the web timeline's collapsed-row metadata: context occupancy wins,
+/// then request usage total, then its input/output sum. These are request
+/// metrics, not numbers found in a tool's business result.
+fn request_context_tokens(data: &Value) -> Option<f64> {
+    if let Some(value) = data.get("request_context_tokens").and_then(positive_count) {
+        return Some(value);
     }
-    // Presence of runtime metadata (even null) means this is a modern event.
-    // Do not substitute context occupancy, result usage or cumulative totals.
-    if data.get("request_context_tokens").is_some() {
+    if let Some(usage) = data.get("request_usage").and_then(Value::as_object) {
+        if let Some(total) = usage
+            .get("total_tokens")
+            .or_else(|| usage.get("total"))
+            .and_then(positive_count)
+        {
+            return Some(total);
+        }
+        let input = usage.get("input_tokens").and_then(positive_count);
+        let output = usage.get("output_tokens").and_then(positive_count);
+        if let Some(total) = input.map(|value| value + output.unwrap_or_default()) {
+            return Some(total);
+        }
+    }
+    // A present modern metric (including null/zero) is authoritative. Never
+    // replace it with cumulative session counts or tool-result usage.
+    if data.get("request_context_tokens").is_some() || data.get("request_usage").is_some() {
         return None;
     }
     let explicit = [
@@ -143,6 +144,10 @@ fn request_consumed_tokens(data: &Value) -> Option<f64> {
     })
 }
 
+fn positive_count(value: &Value) -> Option<f64> {
+    count(value).filter(|value| *value > 0.0)
+}
+
 fn count(value: &Value) -> Option<f64> {
     value
         .as_f64()
@@ -197,11 +202,11 @@ mod tests {
     use super::*;
     use serde_json::json;
     #[test]
-    fn invocation_usage_matches_web_and_ignores_business_metrics() {
+    fn collapsed_metrics_match_web_and_ignore_business_metrics() {
         for (payload, expected) in [
             (
                 json!({"request_usage":{"total":2400},"request_context_tokens":1800,"data":{"consumed_tokens":99999}}),
-                "2.4k token",
+                "1.8k token",
             ),
             (
                 json!({"request_usage":{"total_tokens":"3200","total":1}}),
@@ -211,7 +216,7 @@ mod tests {
                 json!({"request_usage":{"total_tokens":null,"total":1250}}),
                 "1.2k token",
             ),
-            (json!({"request_usage":{"total":0}}), "0 token"),
+            (json!({"request_usage":{"total":0}}), ""),
             (
                 json!({"request_usage":{"total":-1},"consumed_tokens":123}),
                 "",
@@ -266,5 +271,32 @@ mod tests {
             &Value::Null,
         );
         assert!(empty.tokens.is_empty() && empty.duration.is_empty());
+    }
+
+    #[test]
+    fn collapsed_metrics_prefer_request_context_then_usage_and_meta_duration() {
+        for (payload, expected) in [
+            (
+                json!({"request_context_tokens":1800,"request_usage":{"total":2400},"meta":{"duration_ms":19}}),
+                ("1.8k token", "19ms"),
+            ),
+            (
+                json!({"request_usage":{"input_tokens":1100,"output_tokens":120},"meta":{"duration_ms":1999}}),
+                ("1.2k token", "2.0s"),
+            ),
+            (
+                json!({"result":{"usage":{"total":9999}},"meta":{"duration_ms":20000}}),
+                ("", "20s"),
+            ),
+        ] {
+            let row = NativeWorkflowEntry::from_payload(
+                "fixture-tool",
+                "read_file",
+                String::new(),
+                "completed",
+                &payload,
+            );
+            assert_eq!((row.tokens.as_str(), row.duration.as_str()), expected);
+        }
     }
 }

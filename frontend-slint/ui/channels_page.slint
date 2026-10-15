@@ -1,7 +1,7 @@
 import { ExpertButton } from "expert_widgets.slint";
 import { I18n } from "i18n.slint";
 import { Theme, ChannelAccountCard, ChannelBindingCard, ChannelCatalogCard, ChannelLogCard } from "theme.slint";
-import { Action, FormField, PageState, PageStateKind } from "components.slint";
+import { Action, FormField, InlineInput, PageState, PageStateKind } from "components.slint";
 import { TextEditBase } from "textedit-base.slint";
 import { CheckBox, ComboBox, ScrollView } from "std-widgets.slint";
 
@@ -181,7 +181,7 @@ export component ChannelsPage inherits Rectangle {
                     vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
                     VerticalLayout { spacing: 9px; alignment: start;
                         HorizontalLayout { height: 30px; spacing: 10px; Text { width: 84px; text: I18n.common_channels; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; } ComboBox { horizontal-stretch: 1; model: root.catalog-names.length == 0 ? [I18n.ch_no_channels] : root.catalog-names; current-index <=> root.editor-kind; enabled: root.editor-id == "" && !root.editor-saving; } }
-                        HorizontalLayout { height: 30px; spacing: 10px; Text { width: 84px; text: I18n.ch_display_name; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; } TextInput { horizontal-stretch: 1; height: 30px; text <=> root.edit-name; color: Theme.text; font-size: Theme.font-sm; } }
+                        HorizontalLayout { height: 30px; spacing: 10px; Text { width: 84px; text: I18n.ch_display_name; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; } InlineInput { horizontal-stretch: 1; height: 30px; text <=> root.edit-name; } }
                         HorizontalLayout { height: 30px; spacing: 10px; Text { width: 84px; text: I18n.common_ai; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; } ComboBox { horizontal-stretch: 1; model: root.agent-names; current-index <=> root.editor-agent; enabled: !root.editor-saving; } }
                         HorizontalLayout { height: 24px; spacing: 10px; CheckBox { text: I18n.ch_enable_account; checked <=> root.edit-enabled; enabled: !root.editor-saving; } if root.editor-channel-key == "feishu" : CheckBox { text: I18n.ch_receive_group; checked <=> root.edit-group-chat; enabled: !root.editor-saving; } }
                         if root.editor-channel-key == "feishu" : VerticalLayout { spacing: 7px;
@@ -214,7 +214,7 @@ export component ChannelsPage inherits Rectangle {
                         }
                         if root.editor-channel-key != "feishu" && root.editor-channel-key != "wechat" && root.editor-channel-key != "wechat_mp" && root.editor-channel-key != "weixin" : Text { height: 34px; text: I18n.ch_guided_form_empty; color: Theme.muted; font-size: Theme.font-xs; wrap: word-wrap; }
                         Text { height: 18px; text: I18n.ch_advanced_json; color: Theme.muted; font-size: Theme.font-xs; }
-                        TextEditBase { height: 110px; text <=> root.edit-config-json; wrap: word-wrap; foreground: Theme.text; font-size: Theme.font-xs; background: Theme.panel; border-width: 1px; border-color: Theme.border; border-radius: Theme.radius-sm; scroll-view-padding: 8px; }
+                        TextEditBase { height: 110px; text <=> root.edit-config-json; wrap: word-wrap; foreground: Theme.text; font-size: Theme.font-xs; background: Theme.input-bg; border-width: 1px; border-color: Theme.input-border; border-radius: Theme.radius-sm; scroll-view-padding: 8px; }
                     }
                 }
                 HorizontalLayout { height: 34px; spacing: 8px; Rectangle { horizontal-stretch: 1; }

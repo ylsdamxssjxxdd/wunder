@@ -115,9 +115,9 @@ import { hasRetainedMessageConversationContext as hasRetainedConversationContext
 
 import { patchSessionRuntimeFields } from './chatPersist';
 import { resolveSessionKey } from './chatRuntimeState';
-import { buildMessage, resolveGreetingContent, resolveTimestampIso, resolveTimestampMs } from './chatStats';
+import { resolveTimestampMs } from './chatStats';
 import { normalizeFlag } from './chatStreamIds';
-import { DemoChatCachePatch, GreetingMessageOptions, PendingApproval } from './chatTypes';
+import { DemoChatCachePatch, PendingApproval } from './chatTypes';
 import { pickString } from './chatWorkflowHydration';
 
 export const buildDemoChatState = () => ({
@@ -181,46 +181,6 @@ export const sortSessionsByActivity = (sessions = []) =>
       return a.index - b.index;
     })
     .map((item) => item.session);
-
-export const buildGreetingMessage = (createdAt, greeting) => ({
-  ...buildMessage('assistant', resolveGreetingContent(greeting), createdAt),
-  workflowItems: [],
-  workflowStreaming: false,
-  isGreeting: true
-});
-
-export const resolveGreetingTimestamp = (messages, createdAt) => {
-  const direct = resolveTimestampIso(createdAt);
-  if (direct) return direct;
-  const safeMessages = Array.isArray(messages) ? messages : [];
-  const candidate = safeMessages.find((message) => message?.created_at)?.created_at;
-  return resolveTimestampIso(candidate);
-};
-
-export const ensureGreetingMessage = (messages, options: GreetingMessageOptions = {}) => {
-  const safeMessages = Array.isArray(messages) ? messages : [];
-  const greetingText = resolveGreetingContent(options?.greeting);
-  // 鏃犺鍘嗗彶浼氳瘽涓庡惁锛岄兘琛ヤ竴鏉￠棶鍊欒锛屼繚璇佹彁绀鸿瘝棰勮鍏ュ彛绋冲畾鍙
-  const greetingIndex = safeMessages.findIndex((message) => message?.isGreeting);
-  if (greetingIndex >= 0) {
-    if (safeMessages[greetingIndex]?.content !== greetingText) {
-      safeMessages[greetingIndex].content = greetingText;
-    }
-    const createdAt = options?.createdAt ?? options?.sessionCreatedAt;
-    if (createdAt) {
-      const greetingAt = resolveGreetingTimestamp(safeMessages, createdAt);
-      if (greetingAt) {
-        const currentAt = resolveTimestampIso(safeMessages[greetingIndex]?.created_at);
-        if (currentAt !== greetingAt) {
-          safeMessages[greetingIndex].created_at = greetingAt;
-        }
-      }
-    }
-    return safeMessages;
-  }
-  const greetingAt = resolveGreetingTimestamp(safeMessages, options?.createdAt ?? options?.sessionCreatedAt);
-  return [buildGreetingMessage(greetingAt, greetingText), ...safeMessages];
-};
 
 export const safeJsonParse = (raw) => {
   if (!raw) return null;

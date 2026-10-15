@@ -496,16 +496,6 @@
   border-top: 1px dashed var(--mz-border);
 }
 
-.messenger-settings-page-manual {
-  display: flex;
-  flex: 1 1 auto;
-  min-height: 420px;
-  margin-top: 10px;
-  overflow: hidden;
-  border: 1px solid var(--mz-border);
-  border-radius: var(--mz-radius-card);
-}
-
 .messenger-settings-page-kbd {
   display: inline-flex;
   align-items: center;
@@ -521,17 +511,6 @@
 
 .messenger-settings-card--danger {
   border-color: var(--mz-danger-soft, var(--mz-border));
-}
-
-.messenger-settings-card--manual {
-  display: flex;
-  flex: 1 1 auto;
-  min-height: 0;
-  flex-direction: column;
-}
-
-.messenger-settings-card--manual .messenger-settings-group-head {
-  flex: 0 0 auto;
 }
 
 /* 分类内容里复用既有面板时，去掉外层额外边距，保持卡片统一。 */

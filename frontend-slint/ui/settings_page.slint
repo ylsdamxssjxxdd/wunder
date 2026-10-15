@@ -1,6 +1,6 @@
 import { I18n } from "i18n.slint";
-import { Theme, PromptPackCard, ToolCard, ModelCard, LanPeerCard, ProfileCard, FileCard, CronCard, CronRunCard, ChannelCatalogCard, ChannelAccountCard, ChannelBindingCard, ChannelLogCard, InterlinkStatus, InterlinkNode, InterlinkEntry } from "theme.slint";
-import { Action, Avatar, FormField, MiddleHeader, MiddleFooter, PageState, PageStateKind } from "components.slint";
+import { Theme, PromptPackCard, ToolCard, ModelCard, ProfileCard, FileCard, CronCard, CronRunCard, ChannelCatalogCard, ChannelAccountCard, ChannelBindingCard, ChannelLogCard } from "theme.slint";
+import { Action, FormField, MiddleHeader, MiddleFooter, PageState, PageStateKind } from "components.slint";
 import { TextEditBase } from "textedit-base.slint";
 import { DragRow } from "drag_row.slint";
 import { ModelPresets } from "model_presets.slint";
@@ -9,7 +9,7 @@ import { CheckBox, ComboBox, ScrollView, Switch } from "std-widgets.slint";
 import { CronPage } from "cron_page.slint";
 import { ChannelsPage } from "channels_page.slint";
 import { ToolsPage, ToolResource } from "tools_page.slint";
-import { ExpertData, MemoryCard, ArchiveCard, RuntimePoint, HeatCard } from "expert_data.slint";
+import { ExpertData, MemoryCard, ArchiveCard, RuntimePoint } from "expert_data.slint";
 import { AvatarDialogState } from "avatar_dialog.slint";
 
 // Web-style settings navigation entry: 36px circular icon badge, title and
@@ -198,12 +198,6 @@ export component SettingsPage inherits Rectangle {
     in-out property <string> stress-model-rounds: "1000";
     in-out property <string> stress-status;
     callback generate-stress-thread();
-    in-out property <bool> lan-enabled: false;
-    in-out property <string> lan-name;
-    in property <string> lan-peer-id;
-    in property <string> lan-endpoint;
-    in property <int> lan-peer-count;
-    in property <[LanPeerCard]> lan-peers;
     // ---- cloud account (§6.1) ----
     // Login state, quota snapshot and the drafts are wired two-way to the
     // shell; the native side owns every cloud call and pushes results back.
@@ -290,8 +284,7 @@ export component SettingsPage inherits Rectangle {
     callback probe-model-context();
     callback probe-model-voices();
     callback refresh();
-    callback save-runtime(string, string, string, string, string);
-    callback save-lan(bool, string);
+    callback save-runtime();
     callback save-preferences();
     callback refresh-prompt-packs();
     callback select-prompt-pack(string);
@@ -300,8 +293,6 @@ export component SettingsPage inherits Rectangle {
     callback delete-prompt-pack();
     callback set-active-prompt-pack();
     callback refresh-prompt-preview();
-    callback export-diagnostics();
-    callback reset-work-state();
     in-out property <string> theme;
     in-out property <string> send-key;
     in-out property <float> font-size: 14;
@@ -313,7 +304,6 @@ export component SettingsPage inherits Rectangle {
     in-out property <string> prompt-draft;
     in property <bool> prompt-readonly;
     in property <bool> prompt-loading: false;
-    in-out property <bool> reset-confirm-open: false;
     in-out property <string> pack-name-draft;
     in property <string> prompt-preview;
     in property <bool> prompt-preview-loading: false;
@@ -330,11 +320,11 @@ export component SettingsPage inherits Rectangle {
     // have no substring test, so the filter runs natively and the matching
     // categories come back as a bit set (bit N = category N).
     in-out property <string> settings-query: "";
-    // One flag per category, in navigation order (12 categories). Slint 1.18 has
+    // One flag per category, in navigation order (11 categories). Slint 1.18 has
     // no bitwise operators, so the native search projection ships booleans rather
     // than a mask; an all-true list means "no query". Index = nav position, not
     // tab id.
-    in-out property <[bool]> settings-category-flags: [true, true, true, true, true, true, true, true, true, true, true, true];
+    in-out property <[bool]> settings-category-flags: [true, true, true, true, true, true, true, true, true, true, true];
     out property <bool> settings-has-matches: root.count-visible() > 0;
     out property <int> settings-visible-count: root.count-visible();    // How many categories the current query keeps; the empty state and the test
     // projections both read this instead of re-deriving the flags.
@@ -349,8 +339,7 @@ export component SettingsPage inherits Rectangle {
             + (root.settings-category-flags[7] ? 1 : 0)
             + (root.settings-category-flags[8] ? 1 : 0)
             + (root.settings-category-flags[9] ? 1 : 0)
-            + (root.settings-category-flags[10] ? 1 : 0)
-            + (root.settings-category-flags[11] ? 1 : 0);
+            + (root.settings-category-flags[10] ? 1 : 0);
     }
     // Slint cannot test a substring, so the query is projected out and the
     // matching categories come back as a bit set.
@@ -480,7 +469,6 @@ export component SettingsPage inherits Rectangle {
     in-out property <[MemoryCard]> expert-memories;
     in-out property <[ArchiveCard]> expert-archives;
     in-out property <[RuntimePoint]> expert-points;
-    in-out property <[HeatCard]> expert-heat;
     in-out property <string> expert-duration;
     in-out property <string> expert-tokens;
     in-out property <string> expert-calls;
@@ -504,73 +492,16 @@ export component SettingsPage inherits Rectangle {
     callback save-expert-memory();
     callback delete-expert-memory(string);
     callback open-expert-archive(string);
-    callback open-trajectory();
 
-    // ---- interlink (设备互通, category 12) ----
-    // The 2s poll pushes the tunnel status; devices and cloud listings are
-    // fetched on demand through the native façade. `interlink-cloud-path` is
-    // two-way: the user edits it, the native side rewrites it to the listing's
-    // canonical path after every open.
-    in property <InterlinkStatus> interlink-status;
-    in property <[InterlinkNode]> interlink-nodes;
-    in property <bool> interlink-loading: false;
-    in-out property <string> interlink-cloud-path;
-    in property <[InterlinkEntry]> interlink-entries;
-    in property <string> interlink-cloud-note;
-    in property <bool> interlink-cloud-pending: false;
-    in property <bool> interlink-cloud-busy: false;
-    callback interlink-refresh();
-    callback interlink-open(string);
-    callback interlink-cloud-up();
-    callback interlink-cloud-pull(string);
-    callback interlink-cloud-decide(bool);
-    // Human size for a cloud entry; the façade ships raw bytes as an int.
-    // Slint integer division promotes to float, so every tier rounds.
-    public pure function interlink-size-text(bytes: int) -> string {
-        return bytes < 1024 ? "\{bytes} B"
-            : bytes < 1048576 ? "\{round(bytes / 1024)} KB"
-            : bytes < 1073741824 ? "\{round(bytes / 1048576)} MB"
-            : "\{round(bytes / 1073741824)} GB";
-    }
-    // State copy + dot color for the tunnel status row.
-    pure function interlink-state-text(state: string) -> string {
-        return state == "connected" ? I18n.il_state_connected
-            : state == "connecting" ? I18n.il_state_connecting
-            : state == "reconnecting" ? I18n.il_state_reconnecting
-            : I18n.il_state_disabled;
-    }
-    pure function interlink-dot-color(state: string) -> color {
-        return state == "connected" ? Theme.success
-            : state == "connecting" || state == "reconnecting" ? Theme.warning
-            : Theme.muted;
-    }
-    // Entering the agent category prefetches its model options so the editor
-    // never shows stale copy from a previous visit.
-    changed settings-tab => {
-        if root.settings-tab == 3 {
-            root.refresh-agent-model-options();
-        }
-    }
-
-    // ---- permission mode (§8.4) is echoed in the agent category ----
-    in-out property <string> permission-mode: "full_auto";
     // ---- built-in agent editor (§9.3 分类 4) ----
     // The personal build owns exactly one agent, so this category is a single
-    // form. Every editable field is two-way bound to the Rust projection and
-    // flags itself dirty; the name is preset-owned and stays read-only.
+    // form. Its field set matches 蜂巢's agent panel: name, greeting, extra
+    // prompt, tool selection and preset questions. Model, permission mode and
+    // the three behaviour switches have no web counterpart, so the record's
+    // values round-trip untouched through the shell projection instead.
     in-out property <string> selected-agent-name;
     in-out property <string> selected-agent-description;
-    in-out property <string> selected-agent-model;
     in-out property <string> selected-agent-system-prompt;
-    in property <image> selected-agent-icon-image;
-    in property <string> selected-agent-initial;
-    in-out property <bool> selected-agent-preview-skill: false;
-    in-out property <bool> selected-agent-silent: false;
-    in-out property <bool> selected-agent-prefer-mother: false;
-    // Conversational (llm) model keys. The built-in agent may name one of
-    // these; the runtime accepts only keys that exist in this list. An empty
-    // list means no conversational model is configured yet.
-    in property <[string]> agent-model-options;
     // Preset questions live on the agent record and stay two-way bound: the
     // Rust projection owns the list, the rows only add and remove entries.
     in-out property <[string]> selected-agent-preset-questions;
@@ -580,10 +511,6 @@ export component SettingsPage inherits Rectangle {
     in-out property <string> expert-tool-keyword;
     in property <bool> agents-loading: false;
     in-out property <string> agent-question-draft;
-    callback agent-model-picked(string);
-    // The model catalogue is edited from another category, so the selectable
-    // list is re-projected every time this form is shown.
-    callback refresh-agent-model-options();
     callback toggle-agent-tool-option(string);
     callback toggle-expert-tool-group(string);
     callback search-expert-tools();
@@ -612,10 +539,6 @@ export component SettingsPage inherits Rectangle {
     changed selected-agent-name => { root.refresh-agent-dirty(); root.queue-agent-save(); }
     changed selected-agent-description => { root.refresh-agent-dirty(); root.queue-agent-save(); }
     changed selected-agent-system-prompt => { root.refresh-agent-dirty(); root.queue-agent-save(); }
-    changed selected-agent-preview-skill => { root.refresh-agent-dirty(); root.queue-agent-save(); }
-    changed selected-agent-silent => { root.refresh-agent-dirty(); root.queue-agent-save(); }
-    changed selected-agent-prefer-mother => { root.refresh-agent-dirty(); root.queue-agent-save(); }
-    changed selected-agent-model => { root.refresh-agent-dirty(); root.queue-agent-save(); }
     changed expert-tool-keyword => { root.search-expert-tools(); }
     callback open-info(string, string);
 
@@ -655,8 +578,8 @@ export component SettingsPage inherits Rectangle {
                     height: 46px; background: transparent;
                     Rectangle {
                         x: 12px; y: 8px; width: parent.width - 24px; height: 30px;
-                        border-radius: Theme.radius-sm; background: Theme.surface;
-                        border-width: 1px; border-color: Theme.border;
+                        border-radius: Theme.radius-sm; background: Theme.input-bg;
+                        border-width: 1px; border-color: query.has-focus ? Theme.accent : Theme.input-border;
                         Image { x: 8px; y: 8px; width: 13px; height: 13px; source: @image-url("../assets/icons/magnifying-glass.svg"); colorize: Theme.muted; image-fit: contain; }
                         query := TextInput {
                             x: 28px; y: 0px; width: parent.width - 36px; height: parent.height;
@@ -751,13 +674,6 @@ export component SettingsPage inherits Rectangle {
                             selected: root.settings-tab == 10;
                             clicked => { root.settings-tab = 10;  }
                         }
-                        SettingsNavItem {
-                            visible: root.settings-category-flags[11];
-                            icon: @image-url("../assets/icons/plug.svg");
-                            title: I18n.stc_interlink; subtitle: I18n.stc_interlink_note;
-                            selected: root.settings-tab == 12;
-                            clicked => { root.settings-tab = 12; root.interlink-refresh(); }
-                        }
                         // A live query that matches nothing says so instead of
                         // leaving an empty column with no explanation.
                         if !root.settings-has-matches : Rectangle {
@@ -793,7 +709,7 @@ export component SettingsPage inherits Rectangle {
                                 }
                                 SettingRow { label: I18n.st_ui_language; note: I18n.st_language_hint;
                                     ComboBox { width: 132px; height: 38px; model: ["zh-CN", "en-US"]; current-index: root.language == "en-US" ? 1 : 0; enabled: !root.saving && !root.loading;
-                                        selected(value) => { root.language = value; root.save-runtime(root.workspace-root, root.language, root.python-path, root.git-path, root.rg-path); } }
+                                        selected(value) => { root.language = value; root.save-runtime(); } }
                                 }
                                 ThemeModeRow { label: I18n.st_palette; note: I18n.st_palette_note; theme: root.theme;
                                     picked(name) => { root.theme = name; Theme.palette = name; root.save-preferences(); } }
@@ -824,21 +740,22 @@ export component SettingsPage inherits Rectangle {
                                     }
                                 }
                             }
+                            // 执行路径就地保存：选完或改完立即落盘，不再设「保存设置」按钮。
                             SettingsCard {
                                 SettingsCardHeader { title: I18n.st_tab_runtime; subtitle: I18n.st_exec_paths_note; }
                                 Rectangle { height: 10px; }
                                 Rectangle { height: 62px;
-                                    FormField { width: parent.width - 120px; label: I18n.st_python_path; placeholder: I18n.st_python_hint; text <=> root.python-path; read-only: root.saving || root.loading; }
+                                    FormField { width: parent.width - 120px; label: I18n.st_python_path; placeholder: I18n.st_python_hint; text <=> root.python-path; read-only: root.saving || root.loading; edited => { root.save-runtime(); } }
                                     Action { x: parent.width - 110px; y: 22px; width: 110px; height: 34px; label: I18n.st_browse; show-label: true; enabled: !root.saving && !root.loading; clicked => { root.pick-python-path(); } }
                                 }
                                 Text { height: 18px; text: root.python-status; color: root.python-status.starts-with("⚠") ? Theme.danger : Theme.muted; font-size: Theme.font-xs; overflow: elide; }
                                 Rectangle { height: 62px;
-                                    FormField { width: parent.width - 120px; label: I18n.st_git_path; placeholder: I18n.st_git_hint; text <=> root.git-path; read-only: root.saving || root.loading; }
+                                    FormField { width: parent.width - 120px; label: I18n.st_git_path; placeholder: I18n.st_git_hint; text <=> root.git-path; read-only: root.saving || root.loading; edited => { root.save-runtime(); } }
                                     Action { x: parent.width - 110px; y: 22px; width: 110px; height: 34px; label: I18n.st_browse; show-label: true; enabled: !root.saving && !root.loading; clicked => { root.pick-git-path(); } }
                                 }
                                 Text { height: 18px; text: root.git-status; color: root.git-status.starts-with("⚠") ? Theme.danger : Theme.muted; font-size: Theme.font-xs; overflow: elide; }
                                 Rectangle { height: 62px;
-                                    FormField { width: parent.width - 120px; label: I18n.st_rg_path; placeholder: I18n.st_rg_hint; text <=> root.rg-path; read-only: root.saving || root.loading; }
+                                    FormField { width: parent.width - 120px; label: I18n.st_rg_path; placeholder: I18n.st_rg_hint; text <=> root.rg-path; read-only: root.saving || root.loading; edited => { root.save-runtime(); } }
                                     Action { x: parent.width - 110px; y: 22px; width: 110px; height: 34px; label: I18n.st_browse; show-label: true; enabled: !root.saving && !root.loading; clicked => { root.pick-rg-path(); } }
                                 }
                                 Text { height: 18px; text: root.rg-status; color: root.rg-status.starts-with("⚠") ? Theme.danger : Theme.muted; font-size: Theme.font-xs; overflow: elide; }
@@ -848,18 +765,6 @@ export component SettingsPage inherits Rectangle {
                                     Rectangle { horizontal-stretch: 1; }
                                 }
                                 Text { height: 18px; text: root.supplement-status; color: root.supplement-status.starts-with("导入失败") ? Theme.danger : Theme.muted; font-size: Theme.font-xs; overflow: elide; visible: root.supplement-status != ""; }
-                                Rectangle { height: 8px; }
-                                HorizontalLayout { height: 34px; Rectangle { horizontal-stretch: 1; } Action { width: 108px; label: root.saving ? I18n.common_saving : I18n.ag_save_settings; show-label: true; primary: true; enabled: !root.saving && !root.loading; clicked => { root.save-runtime(root.workspace-root, root.language, root.python-path, root.git-path, root.rg-path); } } }
-                            }
-                            SettingsCard {
-                                SettingsCardHeader { title: I18n.st_lan_title; subtitle: root.lan-enabled ? I18n.st_lan_on : I18n.st_lan_off; }
-                                Rectangle { height: 10px; }
-                                FormField { label: I18n.st_lan_node_name; placeholder: I18n.st_lan_node_name_hint; text <=> root.lan-name; read-only: root.saving || root.loading; }
-                                Text { height: 18px; text: I18n.st_lan_node_id + root.lan-peer-id; color: Theme.muted; font-size: Theme.font-xs; overflow: elide; }
-                                Text { height: 18px; text: I18n.st_lan_listen + root.lan-endpoint + I18n.st_lan_discovered_prefix + root.lan-peer-count + I18n.st_lan_discovered_suffix; color: Theme.muted; font-size: Theme.font-xs; overflow: elide; }
-                                ScrollView { height: 84px; horizontal-scrollbar-policy: always-off; VerticalLayout { alignment: start; spacing: 3px; for peer in root.lan-peers : Rectangle { height: 24px; border-radius: 5px; background: Theme.accent-soft; Text { x: 8px; width: parent.width - 16px; height: parent.height; text: peer.display-name + "  ·  " + peer.address; color: Theme.text; font-size: Theme.font-2xs; vertical-alignment: center; overflow: elide; } } if root.lan-peer-count == 0 : Text { height: 20px; text: I18n.st_lan_empty; color: Theme.muted; font-size: Theme.font-2xs; } } }
-                                Rectangle { height: 8px; }
-                                HorizontalLayout { height: 34px; Rectangle { horizontal-stretch: 1; } Action { width: 128px; label: root.lan-enabled ? I18n.st_lan_disable : I18n.st_lan_enable; show-label: true; primary: root.lan-enabled; enabled: !root.saving && !root.loading; clicked => { root.save-lan(!root.lan-enabled, root.lan-name); } } }
                             }
                             // ---- 线程渲染压测（用户手动触发） ----
                             SettingsCard {
@@ -876,23 +781,12 @@ export component SettingsPage inherits Rectangle {
                                 }
                                 Text { height: 18px; visible: root.stress-status != ""; text: root.stress-status; color: root.stress-status.starts-with("⚠") ? Theme.danger : Theme.muted; font-size: Theme.font-xs; overflow: elide; }
                             }
-                            // 帮助与诊断：帮助手册在独立窗口打开（节省设置弹窗空间），
-                            // 诊断导出保持就地按钮。
+                            // 帮助：手册在独立窗口打开（节省设置弹窗空间）。
                             SettingsCard {
                                 SettingsCardHeader { title: I18n.stc_help; subtitle: I18n.stc_help_note; }
                                 Rectangle { height: 10px; }
                                 HorizontalLayout { height: 34px; spacing: 10px;
                                     Action { width: 140px; label: I18n.st_help_open; show-label: true; primary: true; enabled: !root.loading; clicked => { root.open-help(); } }
-                                    Action { width: 140px; label: I18n.st_export_diagnostics; show-label: true; enabled: !root.loading; clicked => { root.export-diagnostics(); } }
-                                    Rectangle { horizontal-stretch: 1; }
-                                }
-                                Text { height: 18px; text: I18n.st_diagnostics_note; color: Theme.muted; font-size: Theme.font-xs; overflow: elide; }
-                            }
-                            SettingsCard {
-                                SettingsCardHeader { title: I18n.st_reset_title; subtitle: I18n.st_reset_note; title-color: Theme.danger; }
-                                Rectangle { height: 10px; }
-                                HorizontalLayout { height: 34px;
-                                    Action { width: 140px; label: I18n.st_reset_title; show-label: true; danger: true; enabled: !root.loading && !root.saving; clicked => { root.reset-confirm-open = true; } }
                                     Rectangle { horizontal-stretch: 1; }
                                 }
                             }
@@ -1015,24 +909,6 @@ export component SettingsPage inherits Rectangle {
                                             Text { height: 17px; text: item.label; color: Theme.muted; font-size: Theme.font-xs; }
                                             Text { height: 32px; text: item.value; color: Theme.text; font-size: Theme.font-display; font-weight: 700; }
                                         }
-                                    }
-                                }
-                                SettingRow { label: I18n.stc_runs_flow; note: I18n.stc_runs_flow_note; last: true;
-                                    HorizontalLayout { spacing: 8px;
-                                        Action { label: I18n.stc_runs_open; show-label: true; clicked => { root.open-trajectory(); } }
-                                    }
-                                }
-                            }
-                            SettingsCard {
-                                SettingsCardHeader { title: I18n.stc_runs_heat; subtitle: I18n.stc_runs_heat_note; }
-                                if root.expert-heat.length == 0 : Text { height: 44px; text: I18n.stc_runs_empty; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; }
-                                HorizontalLayout { spacing: 4px; alignment: start;
-                                    for cell in root.expert-heat : Rectangle {
-                                        width: 18px; height: 18px; border-radius: 4px;
-                                        background: cell.intensity <= 0.0 ? Theme.hover
-                                            : cell.intensity < 0.34 ? Theme.accent-soft
-                                            : cell.intensity < 0.67 ? Theme.accent-secondary
-                                            : Theme.accent;
                                     }
                                 }
                             }
@@ -1269,41 +1145,12 @@ export component SettingsPage inherits Rectangle {
                             // preset-owned and stays read-only; the extra prompt
                             // edits the agent record, while every thread keeps the
                             // prompt it froze on first use.
-                            Rectangle { height: 62px;
-                                FormField {
-                                    x: 0px; y: 0px; width: parent.width - 102px; height: 62px;
-                                    label: I18n.stc_agent_name;
-                                    placeholder: I18n.stc_agent_name;
-                                    strong-label: true;
-                                    text: root.selected-agent-name;
-                                    read-only: true;
-                                }
-                                // The avatar button opens the shared avatar dialog,
-                                // which writes the draft icon config the save
-                                // handler reads back.
-                                Rectangle {
-                                    x: parent.width - 98px; y: 21px; width: 98px; height: 40px;
-                                    border-radius: Theme.radius-sm; border-width: 1px;
-                                    border-color: avatar-touch.has-hover ? Theme.accent : Theme.border;
-                                    background: avatar-touch.has-hover ? Theme.accent-soft : Theme.panel;
-                                    Avatar {
-                                        x: 6px; y: 3px;
-                                        source: root.selected-agent-icon-image;
-                                        glyph: root.selected-agent-initial;
-                                    }
-                                    Text {
-                                        x: 46px; y: 0px; width: parent.width - 50px; height: parent.height;
-                                        text: I18n.av_title; color: Theme.text; font-size: Theme.font-sm;
-                                        vertical-alignment: center; overflow: elide;
-                                    }
-                                    avatar-touch := TouchArea { mouse-cursor: pointer; enabled: !root.saving;
-                                        clicked => {
-                                            AvatarDialogState.kind = 0;
-                                            AvatarDialogState.open = true;
-                                            AvatarDialogState.open-requested();
-                                        }
-                                    }
-                                }
+                            FormField {
+                                label: I18n.stc_agent_name;
+                                placeholder: I18n.stc_agent_name;
+                                strong-label: true;
+                                text: root.selected-agent-name;
+                                read-only: true;
                             }
                             FormField {
                                 label: I18n.stc_agent_greeting;
@@ -1315,8 +1162,9 @@ export component SettingsPage inherits Rectangle {
                             VerticalLayout { spacing: 7px;
                                 Text { height: 18px; text: I18n.stc_agent_extra_prompt; color: Theme.text; font-size: Theme.font-sm; font-weight: 600; }
                                 Rectangle {
-                                    height: 176px; border-radius: Theme.radius-sm; background: Theme.panel;
-                                    border-width: 1px; border-color: prompt-edit.has-focus ? Theme.accent : Theme.border;
+                                    height: 176px; border-radius: Theme.radius-sm;
+                                    background: root.saving ? Theme.input-readonly-bg : Theme.input-bg;
+                                    border-width: 1px; border-color: prompt-edit.has-focus ? Theme.accent : root.saving ? Theme.input-readonly-border : Theme.input-border;
                                     prompt-edit := TextEditBase {
                                         x: 1px; y: 1px; width: parent.width - 2px; height: parent.height - 2px;
                                         text <=> root.selected-agent-system-prompt;
@@ -1330,26 +1178,9 @@ export component SettingsPage inherits Rectangle {
                                     }
                                 }
                             }
-                            SettingsCard {
-                                // §9.4: the dropdown keeps its fixed width at the
-                                // row's end. The runtime only accepts a key that is
-                                // still configured, and the native projection keeps
-                                // the stored value in this list.
-                                SettingRow { label: I18n.common_default_model; note: I18n.stc_agent_model_hint; last: true;
-                                    ComboBox {
-                                        width: 200px; height: 38px;
-                                        enabled: !root.saving;
-                                        model: root.agent-model-options;
-                                        current-value: root.selected-agent-model;
-                                        selected(value) => { root.agent-model-picked(value); }
-                                    }
-                                }
-                            }
-                            // Tool selection. Filtering happens natively because
-                            // Slint 1.18 strings have no substring test.
                             // Tool selection as cards, grouped by type with a
                             // per-group select-all. Filtering happens natively
-                            // because Slint 1.18 strings have no substring test.
+                            // because Slint strings have no substring test.
                             SettingsCard {
                                 Rectangle { height: 34px;
                                     Text {
@@ -1360,8 +1191,8 @@ export component SettingsPage inherits Rectangle {
                                     }
                                     Rectangle {
                                         x: parent.width - 270px; y: 0px; width: 270px; height: 34px;
-                                        border-radius: Theme.radius-sm; background: Theme.panel;
-                                        border-width: 1px; border-color: Theme.border;
+                                        border-radius: Theme.radius-sm; background: Theme.input-bg;
+                                        border-width: 1px; border-color: agent-tool-search.has-focus ? Theme.accent : Theme.input-border;
                                         Image { x: 9px; y: 10px; width: 13px; height: 13px; source: @image-url("../assets/icons/magnifying-glass.svg"); colorize: Theme.muted; image-fit: contain; }
                                         agent-tool-search := TextInput {
                                             x: 30px; y: 0px; width: parent.width - 38px; height: parent.height;
@@ -1415,7 +1246,8 @@ export component SettingsPage inherits Rectangle {
                                 HorizontalLayout { spacing: 8px;
                                     Rectangle {
                                         horizontal-stretch: 1; height: 36px; border-radius: Theme.radius-sm;
-                                        background: Theme.panel; border-width: 1px; border-color: Theme.border;
+                                        background: root.saving ? Theme.input-readonly-bg : Theme.input-bg;
+                                        border-width: 1px; border-color: agent-question-input.has-focus ? Theme.accent : root.saving ? Theme.input-readonly-border : Theme.input-border;
                                         agent-question-input := TextInput {
                                             x: 10px; y: 0px; width: parent.width - 20px; height: parent.height;
                                             text <=> root.agent-question-draft;
@@ -1435,24 +1267,6 @@ export component SettingsPage inherits Rectangle {
                                         enabled: !root.saving && !root.agent-question-draft.is-empty;
                                         clicked => { root.add-agent-question(); }
                                     }
-                                }
-                            }
-                            SettingsCard {
-                                SettingsCardHeader { title: I18n.stc_agent_behavior; subtitle: I18n.stc_agent_behavior_note; }
-                                SettingRow { label: I18n.ag_preview_skill; note: I18n.stc_agent_preview_skill_note;
-                                    Switch { checked: root.selected-agent-preview-skill; enabled: !root.saving; toggled => { root.selected-agent-preview-skill = self.checked; } }
-                                }
-                                SettingRow { label: I18n.ag_silent_run; note: I18n.stc_agent_silent_note;
-                                    Switch { checked: root.selected-agent-silent; enabled: !root.saving; toggled => { root.selected-agent-silent = self.checked; } }
-                                }
-                                SettingRow { label: I18n.ag_prefer_mother; note: I18n.stc_agent_prefer_mother_note; last: true;
-                                    Switch { checked: root.selected-agent-prefer-mother; enabled: !root.saving; toggled => { root.selected-agent-prefer-mother = self.checked; } }
-                                }
-                            }
-                            SettingsCard {
-                                SettingsCardHeader { title: I18n.stc_agent_run; subtitle: I18n.stc_agent_run_note; }
-                                SettingRow { label: I18n.cp_permission; note: I18n.cp_permission_note; last: true;
-                                    Text { text: root.permission-mode; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; }
                                 }
                             }
                         }
@@ -1600,53 +1414,6 @@ export component SettingsPage inherits Rectangle {
                         reconnect => { root.reconnect-channel(); }
                     }
 
-                    // Desktop-only device/interlink settings stay available
-                    // alongside the cloud categories. The page is elastic so
-                    // the node list and cloud workspace do not leave a blank
-                    // lower half when the window is tall.
-                    if root.settings-tab == 12 : ScrollView { vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
-                        VerticalLayout { padding: 24px; spacing: 16px; vertical-stretch: 1; alignment: start;
-                            SettingsCard {
-                                SettingsCardHeader { title: I18n.stc_interlink; subtitle: I18n.stc_interlink_note; }
-                                HorizontalLayout { height: 28px; spacing: 8px;
-                                    Rectangle { width: 9px; height: 9px; border-radius: 5px; background: root.interlink-dot-color(root.interlink-status.state); }
-                                    Text { horizontal-stretch: 1; text: root.interlink-state-text(root.interlink-status.state); color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                                    Action { width: 76px; label: I18n.common_refresh; show-label: true; enabled: !root.interlink-loading; clicked => { root.interlink-refresh(); } }
-                                }
-                                Text { text: root.interlink-status.note; color: Theme.muted; font-size: Theme.font-xs; overflow: elide; }
-                            }
-                            SettingsCard {
-                                SettingsCardHeader { title: I18n.il_devices_title; subtitle: I18n.il_devices_note; }
-                                if root.interlink-nodes.length == 0 : Text { height: 42px; text: root.interlink-loading ? I18n.common_loading : I18n.il_devices_empty; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; wrap: word-wrap; }
-                                for node in root.interlink-nodes : SettingRow {
-                                    label: node.label; note: node.node-id + " · " + node.status; last: false;
-                                    Rectangle { width: 8px; height: 8px; border-radius: 4px; background: node.connected ? Theme.success : Theme.muted; }
-                                }
-                            }
-                            SettingsCard {
-                                SettingsCardHeader { title: I18n.wf_title; subtitle: I18n.wf_open_hint; }
-                                HorizontalLayout { height: 34px; spacing: 8px;
-                                    TextInput { horizontal-stretch: 1; text <=> root.interlink-cloud-path; font-size: Theme.font-sm; color: Theme.text; vertical-alignment: center; }
-                                    Action { width: 84px; label: I18n.common_open; show-label: true; primary: true; enabled: !root.interlink-cloud-busy; clicked => { root.interlink-open(root.interlink-cloud-path); } }
-                                    Action { width: 84px; label: I18n.common_refresh; show-label: true; enabled: !root.interlink-cloud-busy; clicked => { root.interlink-cloud-up(); } }
-                                }
-                                Text { text: root.interlink-cloud-note; color: Theme.muted; font-size: Theme.font-xs; overflow: elide; }
-                                ScrollView { vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
-                                    VerticalLayout { alignment: start; spacing: 4px;
-                                        for entry in root.interlink-entries : Rectangle { height: 30px; border-radius: Theme.radius-sm; background: Theme.panel;
-                                            HorizontalLayout { padding-left: 8px; padding-right: 8px; spacing: 8px;
-                                                Text { horizontal-stretch: 1; text: entry.name; color: Theme.text; font-size: Theme.font-sm; overflow: elide; vertical-alignment: center; }
-                                                Text { text: entry.kind == "dir" ? "文件夹" : root.interlink-size-text(entry.size); color: Theme.muted; font-size: Theme.font-2xs; vertical-alignment: center; }
-                                                if entry.kind == "dir" : Action { width: 46px; label: I18n.common_open; show-label: true; enabled: !root.interlink-cloud-busy; clicked => { root.interlink-open(entry.path); } }
-                                                if entry.kind != "dir" : Action { width: 46px; label: "拉取"; show-label: true; enabled: !root.interlink-cloud-busy; clicked => { root.interlink-cloud-pull(entry.path); } }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
                     if root.settings-tab == 10 : ScrollView { vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
                         VerticalLayout { padding: 24px; spacing: 16px; alignment: start; vertical-stretch: 1;
                             SettingsCard {
@@ -1704,7 +1471,7 @@ export component SettingsPage inherits Rectangle {
                                     Rectangle { horizontal-stretch: 1; border-radius: Theme.radius-sm; background: Theme.surface; border-width: 1px; border-color: Theme.border;
                                         VerticalLayout { padding: 12px; spacing: 8px;
                                             HorizontalLayout { height: 22px; Text { text: root.selected-pack == "" ? I18n.pm_segment_edit : I18n.pm_segment_edit_prefix + root.selected-pack; color: Theme.text; font-size: 13px; font-weight: 700; overflow: elide; } Rectangle { horizontal-stretch: 1; } Text { text: root.prompt-readonly ? I18n.pm_readonly_hint : I18n.pm_editable_hint; color: root.prompt-readonly ? Theme.muted : Theme.success; font-size: Theme.font-2xs; vertical-alignment: center; } }
-                                            TextEditBase { vertical-stretch: 1; text <=> root.prompt-draft; read-only: root.prompt-readonly || root.prompt-loading; wrap: word-wrap; foreground: Theme.text; font-size: Theme.font-sm; background: Theme.panel; border-width: 1px; border-color: Theme.border; border-radius: Theme.radius-sm; selection-background-color: Theme.accent; selection-foreground-color: white; }
+                                            TextEditBase { vertical-stretch: 1; text <=> root.prompt-draft; read-only: root.prompt-readonly || root.prompt-loading; wrap: word-wrap; foreground: root.prompt-readonly || root.prompt-loading ? Theme.input-readonly-text : Theme.text; font-size: Theme.font-sm; background: root.prompt-readonly || root.prompt-loading ? Theme.input-readonly-bg : Theme.input-bg; border-width: 1px; border-color: Theme.input-border; border-radius: Theme.radius-sm; selection-background-color: Theme.accent; selection-foreground-color: white; }
                                             HorizontalLayout { height: 30px; Rectangle { horizontal-stretch: 1; } Action { width: 96px; label: I18n.pm_save_segment; show-label: true; primary: true; enabled: !root.prompt-readonly && !root.prompt-loading && root.selected-pack != ""; clicked => { root.save-prompt-segment(); } } }
                                         }
                                     }
@@ -1714,7 +1481,7 @@ export component SettingsPage inherits Rectangle {
                                 VerticalLayout { padding: 14px; spacing: 8px;
                                     HorizontalLayout { height: 22px; Text { text: I18n.pm_preview_title; color: Theme.text; font-size: 13px; font-weight: 700; } Rectangle { horizontal-stretch: 1; } Action { label: I18n.pm_preview_refresh; show-label: true; enabled: !root.prompt-preview-loading; clicked => { root.refresh-prompt-preview(); } } }
                                     Text { text: I18n.pm_preview_hint; color: Theme.muted; font-size: Theme.font-2xs; overflow: elide; }
-                                    TextEditBase { vertical-stretch: 1; text: root.prompt-preview; read-only: true; wrap: word-wrap; foreground: Theme.text; font-size: Theme.font-xs; background: Theme.panel; border-width: 1px; border-color: Theme.border; border-radius: Theme.radius-sm; scroll-view-padding: 8px; selection-background-color: Theme.accent; selection-foreground-color: white; }
+                                    TextEditBase { vertical-stretch: 1; text: root.prompt-preview; read-only: true; wrap: word-wrap; foreground: Theme.text; font-size: Theme.font-xs; background: Theme.input-readonly-bg; border-width: 1px; border-color: Theme.input-readonly-border; border-radius: Theme.radius-sm; scroll-view-padding: 8px; selection-background-color: Theme.accent; selection-foreground-color: white; }
                                 }
                             }
                         }

@@ -3,6 +3,7 @@
 # ledger rows, collapse summaries and the details panel.
 ENTRIES = [
     ("traj_title", "线程轨迹", "Thread trajectory"),
+    ("traj_export", "导出日志", "Export log"),
     ("traj_back", "返回", "Back"),
     ("traj_search", "搜索轨迹", "Search trajectory"),
     ("traj_duration", "时长", "Duration"),

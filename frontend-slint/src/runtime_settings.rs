@@ -6,37 +6,51 @@ use wunder_desktop::NativeDesktop;
 
 pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
     install_supplement_import(app, api.clone());
-    install_tool_path_pickers(app);
+    install_tool_path_pickers(app, api.clone());
     let weak = app.as_weak();
-    app.on_save_runtime(move |workspace, language, python, git, rg| {
+    app.on_save_runtime(move || {
         let Some(app) = weak.upgrade() else { return };
-        if app.get_saving() || app.get_settings_loading() {
-            return;
-        }
-        if workspace.trim().is_empty() || !matches!(language.as_str(), "zh-CN" | "en-US") {
-            app.set_status("请填写工作目录和有效的运行时语言".into());
-            return;
-        }
-        app.set_saving(true);
-        let api = api.clone();
-        let weak = app.as_weak();
-        std::thread::spawn(move || {
-            let result = api.save_runtime(&workspace, &language, &python, &git, &rg);
-            let _ = weak.upgrade_in_event_loop(move |app| {
-                app.set_saving(false);
-                match result {
-                    Ok(settings) => {
-                        crate::native_pages::apply_settings(&app, settings);
-                        app.set_status("运行时设置已保存".into());
-                    }
-                    Err(error) => {
-                        app.set_dialog_title("保存失败".into());
-                        app.set_dialog_text("配置保存失败，请检查目录权限后重试".into());
-                        eprintln!("native settings failed: {error:#}");
-                        app.set_dialog_open(true);
-                    }
+        persist(&app, &api);
+    });
+}
+
+/// Write the shell's current runtime drafts back to the configuration. The
+/// settings page has no submit button: a picked or typed executable path is
+/// effective on its own, so every entry point funnels here.
+fn persist(app: &MainWindow, api: &Arc<NativeDesktop>) {
+    if app.get_saving() || app.get_settings_loading() {
+        return;
+    }
+    let workspace = app.get_workspace_root().to_string();
+    if workspace.trim().is_empty()
+        || !matches!(app.get_runtime_language().as_str(), "zh-CN" | "en-US")
+    {
+        app.set_status("请填写工作目录和有效的运行时语言".into());
+        return;
+    }
+    app.set_saving(true);
+    let language = app.get_runtime_language().to_string();
+    let python = app.get_runtime_python().to_string();
+    let git = app.get_runtime_git().to_string();
+    let rg = app.get_runtime_rg().to_string();
+    let api = api.clone();
+    let weak = app.as_weak();
+    std::thread::spawn(move || {
+        let result = api.save_runtime(&workspace, &language, &python, &git, &rg);
+        let _ = weak.upgrade_in_event_loop(move |app| {
+            app.set_saving(false);
+            match result {
+                Ok(settings) => {
+                    crate::native_pages::apply_settings(&app, settings);
+                    app.set_status("运行时设置已保存".into());
                 }
-            });
+                Err(error) => {
+                    app.set_dialog_title("保存失败".into());
+                    app.set_dialog_text("配置保存失败，请检查目录权限后重试".into());
+                    eprintln!("native settings failed: {error:#}");
+                    app.set_dialog_open(true);
+                }
+            }
         });
     });
 }
@@ -100,11 +114,11 @@ fn non_empty_or(value: &str) -> String {
 
 /// Runtime tool path pickers: each handler opens the native single-file
 /// dialog and writes the picked executable into the settings draft. The native
-/// dialog runs modally on the UI thread; the draft only becomes effective after
-/// the save callback persists it, and the status line refreshes from the
-/// backend after a load or save.
-fn install_tool_path_pickers(app: &MainWindow) {
+/// dialog runs modally on the UI thread, and the picked path is persisted and
+/// re-projected immediately - the settings page has no submit button.
+fn install_tool_path_pickers(app: &MainWindow, api: Arc<NativeDesktop>) {
     let weak = app.as_weak();
+    let persist_api = api.clone();
     app.on_pick_python_path(move || {
         let Some(app) = weak.upgrade() else { return };
         if app.get_saving() || app.get_settings_loading() {
@@ -112,9 +126,11 @@ fn install_tool_path_pickers(app: &MainWindow) {
         }
         if let Some(path) = crate::file_dialog::pick_executable("python") {
             app.set_runtime_python(path.into());
+            persist(&app, &persist_api);
         }
     });
     let weak = app.as_weak();
+    let persist_api = api.clone();
     app.on_pick_git_path(move || {
         let Some(app) = weak.upgrade() else { return };
         if app.get_saving() || app.get_settings_loading() {
@@ -122,9 +138,11 @@ fn install_tool_path_pickers(app: &MainWindow) {
         }
         if let Some(path) = crate::file_dialog::pick_executable("git") {
             app.set_runtime_git(path.into());
+            persist(&app, &persist_api);
         }
     });
     let weak = app.as_weak();
+    let persist_api = api.clone();
     app.on_pick_rg_path(move || {
         let Some(app) = weak.upgrade() else { return };
         if app.get_saving() || app.get_settings_loading() {
@@ -132,6 +150,7 @@ fn install_tool_path_pickers(app: &MainWindow) {
         }
         if let Some(path) = crate::file_dialog::pick_executable("rg") {
             app.set_runtime_rg(path.into());
+            persist(&app, &persist_api);
         }
     });
 }

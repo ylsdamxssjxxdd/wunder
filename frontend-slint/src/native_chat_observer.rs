@@ -283,6 +283,7 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
                 row.tool_name = label.as_str().into();
                 row.tool_icon = crate::tool_icons::workflow_icon(&item.title).into();
                 row.target = target.as_str().into();
+                row.tool_metrics = crate::timeline_text::tool_metrics(item).into();
                 row.summary = crate::timeline_text::summary(item.detail.as_str())
                     .as_str()
                     .into();
@@ -434,6 +435,7 @@ fn blank_row(kind: i32, id: String) -> TimelineRow {
         tool_name: Default::default(),
         tool_icon: Default::default(),
         target: Default::default(),
+        tool_metrics: Default::default(),
         detail: Default::default(),
         status_kind: crate::timeline::STATUS_DONE,
         foldable: false,

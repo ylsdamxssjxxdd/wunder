@@ -454,10 +454,122 @@ impl NativeDesktop {
         Ok(())
     }
 
+    /// Resolve one workspace-relative path to its absolute host file for the
+    /// drag-out gesture. The path must exist inside the workspace root.
+    pub fn workspace_local_resolve(&self, root_path: &str, relative: &str) -> Result<PathBuf> {
+        let root = normalize_root(root_path)?;
+        if !root.is_dir() {
+            bail!(WORKSPACE_ROOT_MISSING);
+        }
+        let target = workspace_resource_target(&root, relative)?;
+        if !target.is_file() {
+            bail!("只有文件支持拖出");
+        }
+        Ok(target)
+    }
+
+    /// Create one directory inside the workspace. The name is a single path
+    /// segment; the parent may be nested ("notes/archive").
+    pub fn workspace_local_mkdir(&self, root_path: &str, relative: &str) -> Result<()> {
+        let target = self.workspace_new_target(root_path, relative)?;
+        std::fs::create_dir_all(&target).map_err(|error| anyhow!("创建目录失败：{error}"))?;
+        Ok(())
+    }
+
+    /// Create one empty file inside the workspace. An existing entry is never
+    /// overwritten — the cloud write semantics do not apply to disk content.
+    pub fn workspace_local_write(&self, root_path: &str, relative: &str) -> Result<()> {
+        let target = self.workspace_new_target(root_path, relative)?;
+        if target.exists() {
+            bail!("同名文件或目录已存在");
+        }
+        std::fs::write(&target, b"").map_err(|error| anyhow!("创建文件失败：{error}"))?;
+        Ok(())
+    }
+
+    /// Copy one dropped OS file into the workspace root (drag-in upload for a
+    /// local folder). The stored name is the file's own; an existing entry is
+    /// replaced, matching the cloud write semantics.
+    pub fn workspace_local_upload(&self, root_path: &str, source: &Path) -> Result<String> {
+        let root = normalize_root(root_path)?;
+        if !root.is_dir() {
+            bail!(WORKSPACE_ROOT_MISSING);
+        }
+        let meta = std::fs::metadata(source).map_err(|error| anyhow!("读取失败：{error}"))?;
+        if meta.is_dir() {
+            bail!("目录不支持直接上传");
+        }
+        let name = source
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .ok_or_else(|| anyhow!("无效的文件名"))?;
+        validate_entry_name(&name)?;
+        let target = workspace_new_entry_target(&root, &name)?;
+        std::fs::copy(source, &target).map_err(|error| anyhow!("复制失败：{error}"))?;
+        Ok(name)
+    }
+
+    /// Rename one workspace entry within its own parent directory.
+    pub fn workspace_local_rename(
+        &self,
+        root_path: &str,
+        relative: &str,
+        new_name: &str,
+    ) -> Result<()> {
+        validate_entry_name(new_name)?;
+        let root = normalize_root(root_path)?;
+        if !root.is_dir() {
+            bail!(WORKSPACE_ROOT_MISSING);
+        }
+        let source = workspace_resource_target(&root, relative)?;
+        let parent = source
+            .parent()
+            .ok_or_else(|| anyhow!("路径超出当前工作区"))?;
+        let target = parent.join(new_name.trim());
+        if paths_equal(&target, &source) {
+            return Ok(());
+        }
+        if target.exists() {
+            bail!("同名文件或目录已存在");
+        }
+        std::fs::rename(&source, &target).map_err(|error| anyhow!("重命名失败：{error}"))?;
+        Ok(())
+    }
+
+    /// Delete one workspace entry; directories go with their whole subtree.
+    /// The workspace root itself is never deletable.
+    pub fn workspace_local_delete(&self, root_path: &str, relative: &str) -> Result<()> {
+        let root = normalize_root(root_path)?;
+        if !root.is_dir() {
+            bail!(WORKSPACE_ROOT_MISSING);
+        }
+        let target = workspace_resource_target(&root, relative)?;
+        if paths_equal(&target, &root) {
+            bail!("不能删除工作区根目录");
+        }
+        if target.is_dir() {
+            std::fs::remove_dir_all(&target).map_err(|error| anyhow!("删除失败：{error}"))?;
+        } else {
+            std::fs::remove_file(&target).map_err(|error| anyhow!("删除失败：{error}"))?;
+        }
+        Ok(())
+    }
+
+    /// Validate a new-entry relative path and resolve it under `root`. Unlike
+    /// `workspace_resource_target` the entry does not exist yet, so the
+    /// boundary check is purely lexical.
+    fn workspace_new_target(&self, root_path: &str, relative: &str) -> Result<PathBuf> {
+        let root = normalize_root(root_path)?;
+        if !root.is_dir() {
+            bail!(WORKSPACE_ROOT_MISSING);
+        }
+        workspace_new_entry_target(&root, relative)
+    }
+
     /// List one local workspace folder for the working-directory region. Paths
     /// are relative to the workspace root and cannot escape it; the result uses
     /// the same shape as the cloud listing so the panel projects either source
-    /// identically. A local folder is read-only through this path.
+    /// identically. Mutations run through the `workspace_local_*` façade.
     pub fn workspace_local_listing(
         &self,
         root_path: &str,
@@ -686,6 +798,51 @@ fn workspace_resource_target(root: &Path, source: &str) -> Result<PathBuf> {
     Ok(target)
 }
 
+/// Validate one path segment the user typed for a new or renamed entry.
+fn validate_entry_name(name: &str) -> Result<()> {
+    let cleaned = name.trim();
+    if cleaned.is_empty() {
+        bail!("名称不能为空");
+    }
+    if cleaned.chars().count() > 120 {
+        bail!("名称过长");
+    }
+    if cleaned == "." || cleaned == ".." {
+        bail!("无效的名称");
+    }
+    if cleaned
+        .chars()
+        .any(|c| matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') || c.is_control())
+    {
+        bail!("名称不能包含分隔符或特殊字符");
+    }
+    if cfg!(windows) && (cleaned.ends_with('.') || cleaned.ends_with(' ')) {
+        bail!("名称不能以点或空格结尾");
+    }
+    Ok(())
+}
+
+/// Resolve a workspace-relative path for an entry that does not exist yet:
+/// the boundary check stays lexical (no canonicalize) and parent traversal,
+/// prefixes and absolute forms are rejected outright.
+fn workspace_new_entry_target(root: &Path, relative: &str) -> Result<PathBuf> {
+    let path = PathBuf::from(relative.trim().replace('\\', "/"));
+    if path
+        .components()
+        .any(|part| !matches!(part, Component::Normal(_)))
+    {
+        bail!("路径超出当前工作区");
+    }
+    if path.as_os_str().is_empty() {
+        bail!("无效的工作区路径");
+    }
+    let target = root.join(&path);
+    if !target.starts_with(root) {
+        bail!("路径超出当前工作区");
+    }
+    Ok(target)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -730,5 +887,26 @@ mod tests {
             "folder"
         );
         assert_eq!(normalize_choice("  ", "blue", &["blue"]), "blue");
+    }
+
+    #[test]
+    fn entry_names_reject_separators_and_traversal() {
+        assert!(validate_entry_name(" 新目录 ").is_ok());
+        for bad in ["", "  ", ".", "..", "a/b", "a\\b", "a:b", "a*b", "a?b", "a<b"] {
+            assert!(validate_entry_name(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn new_entry_targets_stay_inside_the_root() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().canonicalize().unwrap();
+        assert_eq!(
+            workspace_new_entry_target(&root, "notes/todo.md").unwrap(),
+            root.join("notes/todo.md")
+        );
+        for bad in ["", "  ", "../x.md", "a/../../x.md", "/abs/x.md"] {
+            assert!(workspace_new_entry_target(&root, bad).is_err(), "{bad}");
+        }
     }
 }

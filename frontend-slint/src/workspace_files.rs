@@ -5,6 +5,9 @@
 //! web left-rail's semantics: lazy directories, 200-entry pages with a
 //! load-more tail, dirs-first natural order, and a click on a file pulls it
 //! into the local workspace and opens it with the OS default application.
+//! A locally bound workspace folder mirrors the same tree from the disk with
+//! the same menu (minus the cloud-only download/archive/clear trio) and
+//! executes its writes directly through the `workspace_local_*` façade.
 use crate::{MainWindow, WorkspaceFileRow};
 use anyhow::Result;
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
@@ -132,11 +135,11 @@ pub(crate) fn set_target(app: &MainWindow, api: Arc<NativeDesktop>, target: Targ
     }
 }
 
-/// Push the target's chrome: the read-only flag a local folder imposes, the
+/// Push the target's chrome: the local flag swaps cloud-only actions out, the
 /// offline hint (a local folder needs no tunnel) and a cleared usage line.
 fn reflect_target(app: &MainWindow) {
     let cloud = is_cloud_target();
-    app.set_ws_file_readonly(!cloud);
+    app.set_ws_file_local(!cloud);
     app.set_ws_file_stats("".into());
     app.set_ws_file_error("".into());
     if !cloud {
@@ -182,6 +185,20 @@ fn with_panel<R>(run: impl FnOnce(&mut Panel) -> R) -> Option<R> {
     })
 }
 
+/// Drop the page cache of one directory and everything below it (rename and
+/// delete leave the old path behind; a refresh would fail to re-list it).
+fn drop_dir_cache(path: &str) {
+    if path.is_empty() {
+        return;
+    }
+    let prefix = format!("{path}/");
+    with_panel(|panel| {
+        panel
+            .dirs
+            .retain(|key, _| key != path && !key.starts_with(&prefix));
+    });
+}
+
 /// The model must be bound before the first poll tick can push rows into it,
 /// so this runs before `native_interlink::install` starts its timer.
 pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
@@ -220,7 +237,9 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
 
     // Context menu (aligned with the web left-rail). `index` is -1 for the
     // blank-area entries (new dir / new file land in the root); actions and
-    // the destructive confirm dialog ride the shared prompt.
+    // the destructive confirm dialog ride the shared prompt. Local folders
+    // run the same menu minus the cloud-only download/archive/clear trio —
+    // their writes execute straight off the disk in the prompt flow.
     let weak = app.as_weak();
     let menu_api = api.clone();
     app.on_ws_file_menu(move |index, action| {
@@ -230,11 +249,6 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         let row = (index >= 0)
             .then(|| app.get_ws_file_rows().row_data(index as usize))
             .flatten();
-        // A local workspace folder is browsed read-only: only open/expand are
-        // meaningful, so every cloud write action is ignored here.
-        if !is_cloud_target() && action != MENU_OPEN {
-            return;
-        }
         match action {
             MENU_OPEN => {
                 if let Some(row) = row {
@@ -251,6 +265,9 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                 }
             }
             MENU_DOWNLOAD => {
+                if !is_cloud_target() {
+                    return;
+                }
                 if let Some(row) = row.filter(|row| row.kind == 0) {
                     download_file(
                         &app,
@@ -282,7 +299,7 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
             }
             MENU_REFERENCE => {
                 if let Some(row) = row {
-                    // 引用到聊天：把云端路径追加进草稿，模型可按路径取用。
+                    // 引用到聊天：把路径追加进草稿，模型可按路径取用。
                     let draft = app.get_draft();
                     app.set_draft(format!("{draft}@{} ", row.path).into());
                 }
@@ -302,7 +319,10 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                 open_prompt(&app, PromptKind::NewFile, dir, String::new());
             }
             MENU_ARCHIVE => {
-                // 打包下载：目录行打整棵子树，空白区打当前根。
+                // 打包下载：目录行打整棵子树，空白区打当前根（云端专属）。
+                if !is_cloud_target() {
+                    return;
+                }
                 let (path, name) = match row.as_ref() {
                     Some(row) if row.kind == 1 => (row.path.to_string(), row.name.to_string()),
                     _ => (String::new(), "workspace".to_string()),
@@ -310,7 +330,10 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                 archive_dir(&app, menu_api.clone(), path, name);
             }
             MENU_CLEAR => {
-                // 清空只作用于工作目录根（对齐蜂巢空白区菜单）。
+                // 清空只作用于云端工作目录根（对齐蜂巢空白区菜单，云端专属）。
+                if !is_cloud_target() {
+                    return;
+                }
                 if row.is_none() {
                     clear_root(&app, menu_api.clone());
                 }
@@ -363,17 +386,18 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         });
     });
 
-    // Drag-in: Explorer drops upload text files into the cloud workspace
-    // root; the drag-in gesture itself is the user's approval for the write.
-    // The panel answers "copy" for the gesture in .slint; a drop carrying
-    // nothing uploadable simply does nothing here.
+    // Drag-in: Explorer drops land inside the active target — text uploads
+    // into the cloud workspace root (the gesture is the user's approval for
+    // the write), or a plain copy into the browsed local folder. A drop
+    // carrying nothing uploadable simply does nothing here.
     let weak = app.as_weak();
     let drop_api = api.clone();
     app.on_ws_file_drop(move |event| {
         let Some(app) = weak.upgrade() else {
             return;
         };
-        if app.get_ws_file_offline() {
+        let local = !is_cloud_target();
+        if !local && app.get_ws_file_offline() {
             return;
         }
         let paths: Vec<PathBuf> = match event.data.file_paths() {
@@ -384,21 +408,40 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
             Err(_) => Vec::new(),
         };
         if paths.is_empty() {
-            app.set_status("落点没有可上传的文件（仅支持文本文件）".into());
+            app.set_status(
+                if local {
+                    "落点没有可复制的文件".into()
+                } else {
+                    "落点没有可上传的文件（仅支持文本文件）".into()
+                },
+            );
             return;
         }
         let count = paths.len();
-        app.set_status(format!("正在上传 {count} 个文件…").into());
+        app.set_status(
+            if local {
+                format!("正在复制 {count} 个文件…")
+            } else {
+                format!("正在上传 {count} 个文件…")
+            },
+        );
         begin_busy(&app.as_weak());
         let weak = app.as_weak();
         let worker_api = drop_api.clone();
+        let target = current_target();
         std::thread::spawn(move || {
-            let (done, failed) = upload_files(&worker_api, &paths);
+            let (done, failed) = match &target {
+                Target::Local(root) => copy_files(&worker_api, root, &paths),
+                Target::Cloud => upload_files(&worker_api, &paths),
+            };
             let refresh_api = worker_api;
             let _ = weak.upgrade_in_event_loop(move |app| {
                 end_busy(&app);
                 refresh(&app, refresh_api);
-                let mut message = format!("已上传 {done}/{count} 个文件");
+                let mut message = format!(
+                    "已{verb} {done}/{count} 个文件",
+                    verb = if local { "复制" } else { "上传" }
+                );
                 if !failed.is_empty() {
                     message.push_str(&format!("；失败：{}", failed.join("；")));
                 }
@@ -424,6 +467,60 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
             return;
         }
         let value = value.trim().to_string();
+        // A local workspace folder writes straight off the disk: no parked
+        // command, no approval stage — validate, run, refresh.
+        if let Target::Local(root) = current_target() {
+            if op.kind != PromptKind::Delete && value.is_empty() {
+                PROMPT.with(|slot| *slot.borrow_mut() = Some(op));
+                app.set_ws_prompt_body("名称不能为空".into());
+                return;
+            }
+            app.set_ws_prompt_busy(true);
+            let kind = op.kind;
+            let path = op.path.clone();
+            let weak = app.as_weak();
+            let local_api = prompt_api.clone();
+            let refresh_api = prompt_api.clone();
+            std::thread::spawn(move || {
+                let result = match kind {
+                    PromptKind::Rename => local_api.workspace_local_rename(&root, &path, &value),
+                    PromptKind::Delete => local_api.workspace_local_delete(&root, &path),
+                    PromptKind::NewDir => {
+                        local_api.workspace_local_mkdir(&root, &join_cloud(&path, &value))
+                    }
+                    PromptKind::NewFile => {
+                        local_api.workspace_local_write(&root, &join_cloud(&path, &value))
+                    }
+                };
+                let _ = weak.upgrade_in_event_loop(move |app| match result {
+                    Ok(()) => {
+                        // A renamed or removed directory leaves stale page
+                        // cache entries behind; drop them before the refresh
+                        // re-lists the expanded set.
+                        match kind {
+                            PromptKind::Rename | PromptKind::Delete => drop_dir_cache(&path),
+                            _ => {}
+                        }
+                        app.set_ws_prompt_open(false);
+                        PROMPT.with(|slot| *slot.borrow_mut() = None);
+                        app.set_status(done_message(kind, &value).into());
+                        refresh(&app, refresh_api);
+                    }
+                    Err(error) => {
+                        app.set_ws_prompt_busy(false);
+                        PROMPT.with(|slot| {
+                            *slot.borrow_mut() = Some(PromptOp {
+                                kind,
+                                path,
+                                command_id: None,
+                            })
+                        });
+                        app.set_ws_prompt_body(format!("操作失败：{error}").into());
+                    }
+                });
+            });
+            return;
+        }
         // Stage two: the cloud parked the command; this accept confirms it.
         if let Some(command_id) = op.command_id.clone() {
             app.set_ws_prompt_busy(true);
@@ -503,6 +600,11 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                     app.set_ws_prompt_danger(true);
                 }
                 Ok(CloudOpOutcome::Done(_)) => {
+                    // Same stale-cache rule as the local path: the renamed or
+                    // removed directory must not be re-listed on refresh.
+                    if matches!(kind, PromptKind::Rename | PromptKind::Delete) {
+                        drop_dir_cache(&path);
+                    }
                     app.set_ws_prompt_open(false);
                     PROMPT.with(|slot| *slot.borrow_mut() = None);
                     app.set_status(done_message(kind, &value).into());
@@ -543,9 +645,12 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
     });
 }
 
-/// Open the shared prompt dialog for one cloud write; destructive deletes
-/// hide the input and flip the dialog into its danger styling.
+/// Open the shared prompt dialog for one workspace write (cloud or local);
+/// destructive deletes hide the input and flip the dialog into its danger
+/// styling.
 fn open_prompt(app: &MainWindow, kind: PromptKind, path: String, name: String) {
+    let local = !is_cloud_target();
+    let root_word = if local { "工作目录" } else { "云端工作目录" };
     let (title, body, confirm, danger, input, seed) = match kind {
         PromptKind::Rename => (
             "重命名",
@@ -557,7 +662,11 @@ fn open_prompt(app: &MainWindow, kind: PromptKind, path: String, name: String) {
         ),
         PromptKind::Delete => (
             "删除",
-            format!("删除「{name}」？云端文件不可恢复。"),
+            if local {
+                format!("删除「{name}」？本地文件删除后不可恢复。")
+            } else {
+                format!("删除「{name}」？云端文件不可恢复。")
+            },
             "确认删除",
             true,
             false,
@@ -566,7 +675,7 @@ fn open_prompt(app: &MainWindow, kind: PromptKind, path: String, name: String) {
         PromptKind::NewDir => (
             "新建目录",
             if path.is_empty() {
-                "在云端工作目录根下新建目录，名称：".to_string()
+                format!("在{root_word}根下新建目录，名称：")
             } else {
                 format!("在 {path} 下新建目录，名称：")
             },
@@ -578,7 +687,7 @@ fn open_prompt(app: &MainWindow, kind: PromptKind, path: String, name: String) {
         PromptKind::NewFile => (
             "新建文件",
             if path.is_empty() {
-                "在云端工作目录根下新建空文件，名称：".to_string()
+                format!("在{root_word}根下新建空文件，名称：")
             } else {
                 format!("在 {path} 下新建空文件，名称：")
             },
@@ -605,12 +714,18 @@ fn open_prompt(app: &MainWindow, kind: PromptKind, path: String, name: String) {
     app.set_ws_prompt_busy(false);
 }
 
-/// Drag-out on a worker thread: stage the cloud file locally (a fresh pull,
-/// so the handed-out copy is current), then run the modal OLE gesture.
+/// Drag-out on a worker thread: a local file leaves straight off the disk; a
+/// cloud file is staged first (a fresh pull, so the handed-out copy is
+/// current), then the modal OLE gesture runs.
 fn drag_out(api: &Arc<NativeDesktop>, path: &str, name: &str) -> Result<bool, String> {
-    let local = api
-        .interlink_cloud_stage(path)
-        .map_err(|error| format!("暂存 {name} 失败：{error}"))?;
+    let local = match current_target() {
+        Target::Local(root) => api
+            .workspace_local_resolve(&root, path)
+            .map_err(|error| format!("定位 {name} 失败：{error}"))?,
+        Target::Cloud => api
+            .interlink_cloud_stage(path)
+            .map_err(|error| format!("暂存 {name} 失败：{error}"))?,
+    };
     crate::os_drag::drag_file(&local)
 }
 
@@ -628,6 +743,24 @@ fn upload_files(api: &Arc<NativeDesktop>, paths: &[PathBuf]) -> (usize, Vec<Stri
             .unwrap_or_else(|| path.to_string_lossy().into_owned());
         match upload_one(api, path) {
             Ok(()) => done += 1,
+            Err(error) => failed.push(format!("{name}（{error}）")),
+        }
+    }
+    (done, failed)
+}
+
+/// Drop-in for a local workspace folder: copy each dropped OS file into the
+/// folder as-is (no text-only or size caps — the copy never leaves the disk).
+fn copy_files(api: &Arc<NativeDesktop>, root: &str, paths: &[PathBuf]) -> (usize, Vec<String>) {
+    let mut done = 0usize;
+    let mut failed = Vec::new();
+    for path in paths {
+        let name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.to_string_lossy().into_owned());
+        match api.workspace_local_upload(root, path) {
+            Ok(_) => done += 1,
             Err(error) => failed.push(format!("{name}（{error}）")),
         }
     }

@@ -3,7 +3,7 @@
 //! the mapping from native workflow sections onto the detail model.
 use crate::{PatchCard, PatchLine};
 use slint::{ModelRc, VecModel};
-use wunder_desktop::native::{NativePatchFile, NativeWorkflowSection};
+use wunder_desktop::native::{NativePatchFile, NativeWorkflowEntry, NativeWorkflowSection};
 
 /// Tool display names (§7.3 C). Built-in runtime tools are already named in
 /// Chinese; this maps the English aliases so the timeline reads the same
@@ -67,6 +67,9 @@ pub fn target_of(title: &str, detail: &str, sections: &[NativeWorkflowSection]) 
         if let Some(section) = sections.iter().find(|section| section.kind == "patch") {
             return (short(&section.title, 64), true);
         }
+    }
+    if matches!(title.trim(), "execute_command" | "运行命令" | "command_session") {
+        return (String::new(), patch);
     }
     let mut lines = detail.lines();
     let _action = lines.next();
@@ -160,4 +163,34 @@ pub fn summary(detail: &str) -> String {
         .chars()
         .take(160)
         .collect()
+}
+
+/// The web timeline's collapsed row describes the call, not the result status.
+/// The native workflow adapter carries the bounded call preview separately so
+/// live and durable rows stay identical even when result frames arrive later.
+pub fn tool_summary(entry: &NativeWorkflowEntry) -> String {
+    let preview = entry.preview.trim();
+    if !preview.is_empty() {
+        return short(preview, 160);
+    }
+    if matches!(entry.title.trim(), "execute_command" | "运行命令" | "command_session") {
+        return entry
+            .detail
+            .lines()
+            .next()
+            .map(|line| short(line, 160))
+            .unwrap_or_default();
+    }
+    summary(entry.detail.as_str())
+}
+
+/// The web timeline keeps invocation usage at the far edge of the row. Native
+/// projection already receives the bounded, formatted values from the shared
+/// desktop workflow adapter, so this helper only joins the populated parts.
+pub fn tool_metrics(entry: &NativeWorkflowEntry) -> String {
+    [entry.tokens.as_str(), entry.duration.as_str()]
+        .into_iter()
+        .filter(|value| !value.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
 }

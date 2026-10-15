@@ -22,12 +22,13 @@ use crate::storage::{
 use anyhow::Result;
 use chrono::Utc;
 use parking_lot::Mutex;
-use rusqlite::Connection;
+use rusqlite::{Connection, OpenFlags};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
+use tracing::warn;
 
 mod agent_directory_store;
 mod agent_message;
@@ -99,9 +100,9 @@ pub struct SqliteStorage {
     db_path: PathBuf,
     initialized: AtomicBool,
     init_guard: Mutex<()>,
-    // Set when open() upgrades a legacy database header to incremental
-    // auto-vacuum; ensure_initialized then runs the one-time VACUUM that
-    // persists the change.
+    // Set when `apply_auto_vacuum` could not change the header because the
+    // database already had tables; `ensure_initialized` then runs the one-time
+    // VACUUM that persists the change. A fresh database never sets it.
     auto_vacuum_upgrade_pending: AtomicBool,
     // SQLite has one writer. Reuse one bounded connection for message admission
     // instead of reopening/checkpointing the WAL for every small queue write.
@@ -133,31 +134,156 @@ impl SqliteStorage {
 
     fn open(&self) -> Result<Connection> {
         self.ensure_db_dir()?;
-        if std::env::var("WUNDER_SQLITE_TRACE_OPEN").is_ok() {
-            eprintln!(
-                "[sqlite-open] {} thread={:?}",
-                self.db_path.display(),
-                std::thread::current().id()
+        // Take a write lock right away and self-heal the one failure mode that
+        // has no in-process remedy otherwise: the first connection to a WAL
+        // database creates the `-shm` wal-index, and when a real-time scanner
+        // holds that fresh file for a moment, `winOpen` silently reopens it
+        // READONLY (`pShmNode->isReadonly = 1`). The shared node lives as long
+        // as any connection to the database, so every later write fails with a
+        // bare "attempt to write a readonly database" while the file itself is
+        // writable. Dropping the connection releases the node (when no other
+        // connection shares it), the backoff lets the scanner finish, and the
+        // next open rebuilds the node read-write.
+        for attempt in 0..6u32 {
+            let conn = self.open_connection()?;
+            match conn.execute_batch("BEGIN IMMEDIATE; ROLLBACK") {
+                Ok(()) => return Ok(conn),
+                Err(err) => {
+                    // probe catches genuine read-only files too; those fail all
+                    // six attempts and surface here with the file named.
+                    if attempt == 5 {
+                        return Err(anyhow::anyhow!(
+                            "{} rejected a write lock right after open, 6 attempts: {err}",
+                            self.db_path.display()
+                        ));
+                    }
+                    drop(conn);
+                    std::thread::sleep(Duration::from_millis(40 * u64::from(attempt + 1)));
+                }
+            }
+        }
+        unreachable!("the loop returns or errors on its last iteration")
+    }
+
+    /// One plain connection attempt: open, verify no silent read-only
+    /// downgrade, then set WAL and prime the wal-index sidecar.
+    fn open_connection(&self) -> Result<Connection> {
+        // Ask for read/write instead of letting SQLite decide: when it cannot
+        // open the file for writing, the Windows (and POSIX) VFS silently
+        // downgrades the connection to read-only, and the first symptom is
+        // then a misleading "attempt to write a readonly database" thrown by
+        // some later, unrelated statement. SQLITE_OPEN_READ_WRITE is a
+        // request, not a guarantee, so the downgrade is detected here and
+        // fails with the file named - while the caller stack still tells us
+        // which component was opening it.
+        let conn = Connection::open_with_flags(
+            &self.db_path,
+            OpenFlags::SQLITE_OPEN_READ_WRITE
+                | OpenFlags::SQLITE_OPEN_CREATE
+                | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )?;
+        // 0: not read-only, 1: read-only, 2: unknown (SQLITE_READONLY detection
+        // raced an exclusive lock). Only a definite downgrade is fatal here.
+        let downgraded = unsafe {
+            rusqlite::ffi::sqlite3_db_readonly(conn.handle(), b"main\0".as_ptr().cast())
+        };
+        if downgraded == 1 {
+            anyhow::bail!(
+                "{} cannot be opened for writing; SQLite silently downgraded the \
+                 connection to read-only (check file permissions or another \
+                 process holding the file)",
+                self.db_path.display()
             );
         }
-        let conn = Connection::open(&self.db_path)?;
         // Parallel child runs can briefly contend on SQLite writes.
         conn.busy_timeout(Duration::from_secs(5)).ok();
-        conn.pragma_update(None, "journal_mode", "WAL").ok();
+        // The WAL switch needs the -wal/-shm pair. Losing it silently leaves
+        // the connection on the rollback journal and, when the file cannot be
+        // written at all, turns every later write into the same opaque
+        // readonly error - so it is reported where it happens.
+        if let Err(err) = conn.pragma_update(None, "journal_mode", "WAL") {
+            warn!(
+                "could not switch {} to WAL, writes will use the rollback journal: {err}",
+                self.db_path.display()
+            );
+        }
         conn.pragma_update(None, "synchronous", "NORMAL").ok();
-        // Enable incremental auto-vacuum so retention deletes gradually return
-        // pages to the OS. For databases created before this upgrade the header
-        // change only persists after a one-time VACUUM, which
-        // ensure_initialized runs when this flag is set.
-        let auto_vacuum: i64 = conn
+        self.prime_wal_index();
+        Ok(conn)
+    }
+
+    /// Open the WAL-index sidecar before SQLite does.
+    ///
+    /// The first connection to a WAL database creates the `-shm` file. On
+    /// Windows a real-time antivirus scanner or the indexer opens a freshly
+    /// created file for a moment; that makes the `CREATE|READWRITE` open of
+    /// `-shm` fail, and `winOpen` silently falls back to opening it READONLY
+    /// (`pShmNode->isReadonly = 1`). The shared shm node lives as long as any
+    /// connection to the database, so from that unlucky open on, *every*
+    /// write transaction in the process fails with a bare
+    /// `SQLITE_READONLY` ("attempt to write a readonly database") while the
+    /// database file itself is perfectly writable - exactly the intermittent
+    /// loopback failure this used to be.
+    ///
+    /// Creating/opening the sidecar here means SQLite later finds an existing
+    /// file instead of creating one, which is outside the "just created" scan
+    /// window. If the file is locked right now, back off briefly and retry;
+    /// giving up only warns - SQLite then behaves exactly as before.
+    fn prime_wal_index(&self) {
+        let shm_path = self.db_path.as_os_str().to_string_lossy() + "-shm";
+        let shm_path = PathBuf::from(&*shm_path);
+        for attempt in 0..5u32 {
+            match std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .open(&shm_path)
+            {
+                // Dropping the handle immediately: SQLite opens the same file
+                // with its own locking; a lingering handle of ours is neither
+                // needed nor wanted.
+                Ok(_) => return,
+                Err(err) if attempt < 4 => {
+                    std::thread::sleep(Duration::from_millis(40 * u64::from(attempt + 1)));
+                    let _ = err;
+                }
+                Err(err) => {
+                    warn!(
+                        "wal-index sidecar {} is not writable ({err}); SQLite may \
+                         downgrade it to read-only for this process",
+                        shm_path.display()
+                    );
+                    return;
+                }
+            }
+        }
+    }
+
+    /// Incremental auto-vacuum, applied by the one place that owns schema
+    /// creation.
+    ///
+    /// `PRAGMA auto_vacuum` only takes effect before the first table exists;
+    /// changing it on a populated database needs a full VACUUM to persist the
+    /// header. That VACUUM rewrites the whole file and leaves concurrent
+    /// readers holding a handle to the version that was just replaced, which
+    /// surfaces as `attempt to write a readonly database` on their next write.
+    /// Doing this here - before `ensure_initialized_impl` creates anything -
+    /// means a fresh database is born with the right header and never needs
+    /// the rewrite at all; only a database upgraded from before this flag
+    /// pays for one.
+    fn apply_auto_vacuum(&self, conn: &Connection) {
+        let current: i64 = conn
             .pragma_query_value(None, "auto_vacuum", |row| row.get(0))
             .unwrap_or(0);
-        if auto_vacuum != 2 {
-            conn.pragma_update(None, "auto_vacuum", 2).ok();
-            self.auto_vacuum_upgrade_pending
-                .store(true, Ordering::Relaxed);
+        if current == 2 {
+            return;
         }
-        Ok(conn)
+        conn.pragma_update(None, "auto_vacuum", 2).ok();
+        let applied: i64 = conn
+            .pragma_query_value(None, "auto_vacuum", |row| row.get(0))
+            .unwrap_or(0);
+        self.auto_vacuum_upgrade_pending
+            .store(applied != 2, Ordering::SeqCst);
     }
 
     fn now_ts() -> f64 {

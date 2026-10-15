@@ -4,10 +4,13 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
   applyLocalQueueReorder,
+  filterConsumedQueueItems,
   hasOnlyQueueMarkers,
   isChatQueueRuntimeEvent,
   isParkedQueueTurn,
   projectQueueItems,
+  queueItemIdentities,
+  resolveConsumedQueueEventIdentities,
   selectParkedTurnMessageIds,
   type QueuedTurn
 } from '../../src/stores/chatQueueProjection';
@@ -55,6 +58,27 @@ test('isChatQueueRuntimeEvent 只认排队相关事件', () => {
   assert.equal(isChatQueueRuntimeEvent('llm_output_delta'), false);
   assert.equal(isChatQueueRuntimeEvent('thread_status'), false);
   assert.equal(isChatQueueRuntimeEvent(''), false);
+});
+
+test('queue_start 消费身份可挡住旧队列快照复活', () => {
+  const items = projectQueueItems([
+    { queue_id: 'task-running', client_message_id: 'cm-running', root_turn_id: 'root-running', position: 0 },
+    { queue_id: 'task-next', client_message_id: 'cm-next', root_turn_id: 'root-next', position: 1 }
+  ]);
+  const identities = new Set(queueItemIdentities({ queue_id: 'task-running', client_message_id: 'cm-running' }));
+  assert.deepEqual(filterConsumedQueueItems(items, identities).map((item) => item.queueId), ['task-next']);
+  const started = resolveConsumedQueueEventIdentities(items, 'queue_start', {
+    queue_id: 'task-running', client_message_id: 'cm-running', root_turn_id: 'root-running'
+  });
+  assert.ok(started.includes('root:root-running'));
+  assert.ok(filterConsumedQueueItems(items, new Set(started)).some((item) => item.queueId === 'task-next'));
+  const withoutQueueId = resolveConsumedQueueEventIdentities(items, 'queue_start', { root_turn_id: 'root-running' });
+  assert.ok(withoutQueueId.includes('queue:task-running'), 'root identity should resolve the corresponding queue row');
+  assert.deepEqual(
+    resolveConsumedQueueEventIdentities(items, 'queue_start', {}),
+    ['queue:task-running', 'client:cm-running', 'root:root-running'],
+    'an unidentified start consumes only the queue head'
+  );
 });
 
 const parkedItem = (overrides: Partial<QueuedTurn> = {}): QueuedTurn => ({
@@ -155,4 +179,7 @@ test('排队让位与剪枝真的接在渲染与撤下路径上', () => {
       /removeThreadViewTurnByClientMessageId\(sessionId,cleanedClientMessageId\)/.test(sendActions),
     'store 上的剪枝动作缺失'
   );
+  const queueState = readSource('stores/chatQueueState.ts');
+  assert.ok(/queue_start/.test(queueState) && /consumedQueueIds/.test(queueState), 'queue_start 没有消费并屏蔽旧快照');
+  assert.ok(/noteChatQueueRuntimeEvent\(targetId, eventType, payload\)/.test(readSource('stores/chatRuntimeState.ts')), '队列事件没有透传 payload 身份');
 });

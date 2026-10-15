@@ -54,12 +54,20 @@ impl SqliteRetentionStorage for SqliteStorage {
             super::log_stats_store::read_meta_f64_tx(&tx, USAGE_CHAT_WATERMARK_KEY)?.unwrap_or(0.0);
         let tool_wm = super::log_stats_store::read_meta_f64_tx(&tx, USAGE_TOOL_WATERMARK_KEY)?
             .unwrap_or(0.0) as i64;
-        let orphan_predicate = "created_time < ?1 \
-             AND NOT EXISTS (SELECT 1 FROM chat_sessions c WHERE c.session_id = {table}.session_id) \
-             AND NOT EXISTS (SELECT 1 FROM deleted_session_log_grace g WHERE g.session_id = {table}.session_id)";
+        // `{table}` is interpolated per iteration below, so the predicate is
+        // built with replace(), not a raw string literal - `{table}` inside a
+        // plain literal never goes through the formatter and stays literal in
+        // the SQL, which SQLite rejects as "unrecognized token".
+        let orphan_predicate = |table: &str| {
+            format!(
+                "created_time < ?1 \
+                 AND NOT EXISTS (SELECT 1 FROM chat_sessions c WHERE c.session_id = {table}.session_id) \
+                 AND NOT EXISTS (SELECT 1 FROM deleted_session_log_grace g WHERE g.session_id = {table}.session_id)"
+            )
+        };
         let mut removed_total = 0i64;
         for table in ["thread_turns", "thread_log_changes", "artifact_logs"] {
-            let sql = format!("DELETE FROM {table} WHERE {orphan_predicate}");
+            let sql = format!("DELETE FROM {table} WHERE {}", orphan_predicate(table));
             let removed = tx.execute(&sql, params![cutoff_epoch_s])? as i64;
             if removed > 0 {
                 removed_total += removed;

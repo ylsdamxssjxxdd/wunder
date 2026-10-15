@@ -153,12 +153,33 @@ struct Server {
     _dir: TempDir,
 }
 
+// tempdir_in below the target tree instead of the user %TEMP%: real-time
+// antivirus treats freshly written database files in the system temp
+// directory differently, and an intermittent `readonly database` that hits
+// both harness databases at once smells like scanner interference there.
+// Keeping the scratch space inside the repo rules that out (or confirms it).
+fn scratch_dir() -> TempDir {
+    let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../target/loopback-scratch");
+    std::fs::create_dir_all(root).expect("scratch root");
+    tempfile::tempdir_in(root).expect("scratch tempdir")
+}
+
 async fn spawn_server() -> Server {
-    let dir = tempfile::tempdir().expect("server tempdir");
+    let dir = scratch_dir();
     let config = base_config(&dir, "server.db");
     let state = Arc::new(
         AppState::new_with_options(
-            wunder_server::config_store::ConfigStore::new(dir.path().join("wunder.yaml")),
+            // `ConfigStore::new` reads the path it is given and silently falls
+            // back to `Config::default()` when that file does not exist, so
+            // everything reading `state.config_store` would see unrelated
+            // defaults (a `./config/data/wunder.db` storage path, another
+            // workspace root) instead of this harness's database. The store
+            // has to start from the config the state is built with - the same
+            // reason the local node below uses `from_config`.
+            wunder_server::config_store::ConfigStore::from_config(
+                dir.path().join("wunder.yaml"),
+                config.clone(),
+            ),
             config,
             AppStateInitOptions::cli_default(),
         )
@@ -210,7 +231,7 @@ async fn spawn_local_node(server: &Server) -> LocalNode {
 /// still down. The idle measurement needs a same-process baseline where only
 /// the two engines run, so it can subtract them from the tunnel's own cost.
 async fn build_local_node(server: &Server) -> LocalNode {
-    let dir = tempfile::tempdir().expect("local tempdir");
+    let dir = scratch_dir();
     let mock_base = spawn_mock_llm().await;
     let mut config = base_config(&dir, "local.db");
     config.llm.default = "model-default".to_string();
@@ -654,6 +675,17 @@ fn session_count(state: &AppState) -> usize {
 /// same reason 舵机 sizes its runtime workers (main.rs, CLI_WORKER_STACK_BYTES).
 #[test]
 fn loopback_tunnel_shadow_commands_and_approvals_end_to_end() {
+    // SQLite's own log reports the extended error code behind every failed
+    // API call. The variants of "readonly" alone decide the fix: 8 (file),
+    // 264 (hot rollback journal), 656/1286 (wal-index / directory). Install
+    // before any connection exists, as sqlite3_config requires.
+    unsafe {
+        let _ = rusqlite::trace::config_log(Some(|code: std::os::raw::c_int, msg: &str| {
+            if code != 0 {
+                eprintln!("[sqlite-log] code={code} {msg}");
+            }
+        }));
+    }
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(4)
         .thread_stack_size(8 * 1024 * 1024)

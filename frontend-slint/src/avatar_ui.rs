@@ -313,8 +313,6 @@ fn confirm_dialog(app: &MainWindow) {
     }
     // `to_payload` is the single canonical writer of the shared web/server shape.
     app.set_selected_agent_icon_config(config.to_payload().into());
-    // The editor's thumbnail and dirty tracker follow the draft the dialog owns.
-    app.set_selected_agent_icon_image(avatar_visual(&config));
     crate::agent_editor::refresh_agent_dirty(app);
     close_dialog(app);
 }

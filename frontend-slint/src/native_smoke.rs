@@ -444,13 +444,7 @@ fn advance(
                 "native UI default failed",
             )?;
             crate::smoke::snapshot(app, &directory.join("native-settings.png"))?;
-            app.invoke_save_runtime(
-                app.get_workspace_root(),
-                "zh-CN".into(),
-                "".into(),
-                "".into(),
-                "".into(),
-            );
+            app.invoke_save_runtime();
         }
         12 => {
             // §9.3 agent form: point the built-in agent at a configured model

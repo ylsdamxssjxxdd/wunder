@@ -814,12 +814,20 @@ mod tests {
             .load_thread_context_items("user-a", "session-a", 500, true)
             .expect("load chat after delete")
             .is_empty());
-        assert_eq!(
-            storage
-                .delete_thread_logs_by_user("user-a")
-                .expect("delete remaining chat"),
-            6
-        );
+        // The six durable backing rows (thread_logs, thread_turns,
+        // thread_items, 2x thread_log_changes, thread_log_metrics) are all
+        // swept, and so are the projection/derived tables (body search,
+        // chunks, view heads, trajectory tiles...). The derived-row count
+        // tracks the projection implementation and drifted from 6 to 15
+        // before, so pin only the durable minimum plus emptiness afterwards.
+        assert!(storage
+            .delete_thread_logs_by_user("user-a")
+            .expect("delete remaining chat")
+            >= 6);
+        assert!(storage
+            .load_thread_context_items("user-a", "session-b", 500, true)
+            .expect("load chat b after delete")
+            .is_empty());
         assert_eq!(
             storage
                 .delete_tool_logs_by_session("user-a", "session-a")

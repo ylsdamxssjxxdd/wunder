@@ -10,11 +10,21 @@ import { HelpDocument } from "help_document.slint";
 // lives in the HelpDocs global; the controller binds it natively.
 export component HelpBrowser inherits Rectangle {
     background: #ffffff;
-    // Relayed layout signal: the document width change drives re-typesetting.
-    out property <float> document-width: document.content-width;
-    changed document-width => {
-        HelpDocs.document-width = self.document-width;
-        HelpDocs.layout-changed();
+    // Slint never runs a `changed` handler for a value that only a binding
+    // produced, so the measured column width cannot be relayed on layout
+    // change: the controller would typeset forever against its fallback.
+    // While the window is on screen a light heartbeat compares one float and
+    // asks for a re-typeset only when the column actually moved.
+    in property <bool> polling: false;
+    Timer {
+        interval: 40ms;
+        running: root.polling;
+        triggered => {
+            if (HelpDocs.document-width != document.content-width) {
+                HelpDocs.document-width = document.content-width;
+                HelpDocs.layout-changed();
+            }
+        }
     }
     clipboard := TextInput {
         visible: false;

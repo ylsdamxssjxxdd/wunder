@@ -2452,6 +2452,20 @@
   padding: clamp(24px, 8vh, 92px) 4px 12px;
 }
 
+/* 空线程（问候语 + 活动热力图）在聊天区内上下居中；
+   首条用户轮次出现后网格消失，内容恢复顶部流式排布。 */
+.messenger-message-panel > .is-empty-thread {
+  flex: 1 0 auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 18px;
+}
+
+.messenger-message-panel > .is-empty-thread .messenger-thread-activity {
+  padding: 0 4px;
+}
+
 .session-activity-card {
   --activity-gap: 3px;
   --activity-cols: 53;

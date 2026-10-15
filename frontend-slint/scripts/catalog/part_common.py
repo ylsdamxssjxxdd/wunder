@@ -108,10 +108,6 @@ ENTRIES = [
     ("workspace_binding_choose", "选择目录", "Choose directory"),
 
     # ---- reset confirm ----
-    ("reset_title", "重置工作状态", "Reset work state"),
-    ("reset_message", "将停止运行中的任务、清理队列与临时投影。资产、配置、文件与历史保留。确认重置？",
-     "Running tasks will stop; queues and temporary projections will be cleared. Assets, settings, files and history are kept. Reset now?"),
-    ("reset_confirm", "确认重置", "Reset"),
 
     # ---- thread log dialog ----
     ("thread_log_overview", "线程概况", "Thread overview"),

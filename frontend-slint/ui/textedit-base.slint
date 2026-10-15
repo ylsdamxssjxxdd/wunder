@@ -109,6 +109,10 @@ export component TextEditBase inherits Rectangle {
             height: parent.height - 2 * root.scroll-view-padding;
             content-width: root.wrap == TextWrap.no-wrap ? max(self.visible-width, text-input.preferred-width) : self.visible-width;
             content-height: max(self.visible-height, text-input.preferred-height);
+            // Keep scrolling available through wheel/touchpad without a
+            // reserving scrollbar track that changes the editor width.
+            horizontal-scrollbar-policy: always-off;
+            vertical-scrollbar-policy: always-off;
 
             text-input := TextInput {
                 enabled: true;
@@ -177,4 +181,3 @@ export component TextEditBase inherits Rectangle {
 
     @children
 }
-

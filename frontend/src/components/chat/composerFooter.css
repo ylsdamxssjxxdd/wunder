@@ -35,8 +35,10 @@
 
 /* 旧暗色主题 `.chat-shell textarea`（0,1,1）会漏进 17px 字号 / 48px 最小高 / 220px 上限，
    这里用 (0,2,0) 压回去：B4 输入卡默认双行高度、随内容长高（脚本 resizeInput 同步写 inline height），
-   到 INPUT_MAX_HEIGHT(168px) 后转内部滚动。 */
+   到 INPUT_MAX_HEIGHT(168px) 后转内部滚动。flex:none 同样是压旧主题的 `flex:1`——
+   输入卡已改列向布局，flex-basis:0% 会让 textarea 主轴高度塌缩到 min-height，inline height 全部失效。 */
 .chat-shell .composer-textarea {
+  flex: none;
   min-height: 44px;
   max-height: 168px;
   overflow-y: hidden;

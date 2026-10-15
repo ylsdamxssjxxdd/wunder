@@ -4,7 +4,7 @@
 //! Slint only lays out bounded rows, and every row and span is keyed by the
 //! global record index so hover and selection survive filtering.
 use crate::{
-    I18n, MainWindow, TrajBoundary, TrajRow, TrajSection, TrajSpan, TrajTab, TrajTick, TrajTiming,
+    I18n, MainWindow, TrajBoundary, TrajRow, TrajSearchHit, TrajSection, TrajSpan, TrajTab, TrajTick, TrajTiming,
 };
 use chrono::{Local, TimeZone};
 use serde_json::{json, Value};
@@ -163,6 +163,15 @@ struct Record {
     cell: usize,
 }
 
+#[derive(Clone)]
+struct SearchHit {
+    item_id: String,
+    body_id: String,
+    revision: i64,
+    cursor: i64,
+    snippet: String,
+}
+
 struct SpanBase {
     start: f64,
     end: f64,
@@ -189,6 +198,15 @@ struct SnapshotModel {
     boundaries: Vec<(i64, f64, usize)>,
     tl_start: f64,
     tl_end: f64,
+    /// Session-wide aggregate tiles are retained separately from detail rows.
+    /// They are projected even when the first page is bounded, so a large
+    /// thread keeps the same segmented overview as the web client.
+    overview_spans: Vec<SpanBase>,
+    overview_start: f64,
+    overview_end: f64,
+    overview_sequence_end: f64,
+    has_overview: bool,
+    overview_error_buckets: HashSet<i64>,
 }
 
 #[derive(Default)]
@@ -211,6 +229,12 @@ struct State {
     show_turns: bool,
     show_calls: bool,
     query: String,
+    search_generation: u64,
+    search_hits: Vec<SearchHit>,
+    search_text: String,
+    selected_search: Option<usize>,
+    selection: Option<(f64, f64)>,
+    search_timer: Option<slint::Timer>,
     collapsed_turns: HashSet<i64>,
     collapsed_assistants: HashSet<String>,
 }
@@ -235,6 +259,18 @@ impl State {
 
 fn to_model<T: Clone + 'static>(rows: Vec<T>) -> ModelRc<T> {
     ModelRc::new(VecModel::from(rows))
+}
+
+fn project_search(app: &MainWindow, state: &State) {
+    let hits = state.search_hits.iter().map(|hit| TrajSearchHit {
+        item_id: hit.item_id.clone().into(),
+        body_id: hit.body_id.clone().into(),
+        revision: hit.revision.to_string().into(),
+        cursor: hit.cursor.to_string().into(),
+        snippet: hit.snippet.clone().into(),
+    }).collect();
+    app.set_traj_search_hits(to_model(hits));
+    app.set_traj_search_body(state.search_text.clone().into());
 }
 
 // ------------------------------------------------------------------ */
@@ -652,6 +688,32 @@ fn parse_view_page(page: &Value) -> SnapshotModel {
         snapshot_items.push(item);
     }
     let mut model = parse_snapshot(&json!({"turns": snapshot_turns, "items": snapshot_items}));
+    // The detail parser assigns sequence positions relative to the current
+    // bounded page. Restore the durable session sequence before combining it
+    // with aggregate buckets, otherwise every page appears at the origin.
+    let sequence_by_item: HashMap<&str, f64> = rows
+        .iter()
+        .filter_map(|row| {
+            Some((
+                row.get("item_id")?.as_str()?,
+                row.get("created_seq")?.as_i64()? as f64,
+            ))
+        })
+        .collect();
+    for span in &mut model.spans {
+        if let Some(record) = model.records.get(span.record) {
+            if let Some(cell) = model.cells.get(record.cell) {
+                if let Some(sequence) = sequence_by_item.get(cell.record_id.as_str()) {
+                span.sequence_start = Some(*sequence);
+                span.sequence_end = Some(*sequence + 1.0);
+                }
+            }
+        }
+    }
+    let mut overview_start = f64::MAX;
+    let mut overview_end = f64::MIN;
+    let mut overview_sequence_end: f64 = 1.0;
+    let mut overview_error_buckets = HashSet::new();
     let tiles = page
         .get("tiles")
         .and_then(Value::as_array)
@@ -659,11 +721,26 @@ fn parse_view_page(page: &Value) -> SnapshotModel {
         .unwrap_or_default();
     let level = page.get("tile_level").and_then(Value::as_u64).unwrap_or(0) as f64;
     let bucket_width = 128.0 * 8.0_f64.powf(level);
+    let detailed_ranges: Vec<(f64, f64)> = rows
+        .iter()
+        .filter_map(|row| {
+            let raw_start = row.get("started_at").and_then(Value::as_f64)?;
+            let start = if raw_start.abs() < 1e11 { raw_start * 1000.0 } else { raw_start };
+            let end = row
+                .get("completed_at")
+                .and_then(Value::as_f64)
+                .map(|value| if value.abs() < 1e11 { value * 1000.0 } else { value })
+                .unwrap_or(start);
+            Some((start, end.max(start + 0.001)))
+        })
+        .collect();
     let mut overview = Vec::new();
     let mut start = f64::MAX;
     let mut end = f64::MIN;
+    let per_tile_limit = (4096 / tiles.len().max(1)).clamp(1, 16);
     for tile in tiles {
-        let bucket = tile.get("bucket").and_then(Value::as_i64).unwrap_or(0) as f64;
+        let bucket_index = tile.get("bucket").and_then(Value::as_i64).unwrap_or(0);
+        let bucket = bucket_index as f64;
         let count = tile
             .get("count")
             .and_then(Value::as_i64)
@@ -697,33 +774,103 @@ fn parse_view_page(page: &Value) -> SnapshotModel {
         let tile_end = ts("end").max(tile_start + 1.0);
         start = start.min(tile_start);
         end = end.max(tile_end);
-        for (lane, lane_count) in counts.into_iter().enumerate() {
-            if lane_count <= 0 {
-                continue;
+        overview_sequence_end = overview_sequence_end.max((bucket + 1.0) * bucket_width);
+        if tile.get("failed").and_then(Value::as_i64).unwrap_or(0) > 0 {
+            overview_error_buckets.insert(bucket_index);
+        }
+        // Loaded records are drawn with their exact event type and timing.
+        // Subtract their sequence/time windows from each aggregate segment to
+        // avoid painting a broad block beneath detailed marks.
+        let total_count = counts.iter().sum::<i64>().max(count);
+        let segment_count = (total_count as usize).clamp(1, per_tile_limit);
+        let segment_start = bucket * bucket_width;
+        let segment_span = bucket_width / segment_count as f64;
+        let total_lane_count = counts.iter().map(|value| (*value).max(0)).sum::<i64>().max(1);
+        for segment in 0..segment_count {
+            let quantile = (segment as f64 + 0.5) / segment_count as f64 * total_lane_count as f64;
+            let mut accumulated = 0i64;
+            let mut lane = 2usize;
+            for candidate in 0..3 {
+                accumulated += counts[candidate].max(0);
+                if quantile <= accumulated as f64 {
+                    lane = candidate;
+                    break;
+                }
             }
-            overview.push(SpanBase {
-                start: tile_start,
-                end: tile_end,
-                record: usize::MAX,
-                kind: if lane == 0 {
+            let start_fraction = segment as f64 / segment_count as f64;
+            let end_fraction = (segment + 1) as f64 / segment_count as f64;
+            let raw_time_start = tile_start + (tile_end - tile_start) * start_fraction;
+            let raw_time_end = tile_start + (tile_end - tile_start) * end_fraction;
+            let raw_sequence_start = segment_start + segment_span * segment as f64;
+            let raw_sequence_end = segment_start + segment_span * (segment + 1) as f64;
+            let kind = if lane == 0 {
                     KIND_CONTEXT
                 } else if lane == 1 {
                     KIND_MESSAGE
                 } else {
                     KIND_TOOL
-                },
-                lane,
-                ttft: None,
-                sequence_start: Some(bucket * bucket_width),
-                sequence_end: Some((bucket + 1.0) * bucket_width),
-            });
+                };
+            let mut fragments = vec![(raw_time_start, raw_time_end, raw_sequence_start, raw_sequence_end)];
+            for &(detail_time_start, detail_time_end) in &detailed_ranges {
+                if timed && detail_time_start <= raw_time_end && detail_time_end >= raw_time_start {
+                    let cut_start = detail_time_start.max(raw_time_start);
+                    let cut_end = detail_time_end.min(raw_time_end);
+                    let mut next = Vec::new();
+                    for (a,b,sa,sb) in fragments {
+                        if cut_end <= a || cut_start >= b { next.push((a,b,sa,sb)); continue; }
+                        let to_sequence = |time: f64| sa + (time-a) / (b-a).max(0.001) * (sb-sa);
+                        if cut_start > a { next.push((a,cut_start,sa,to_sequence(cut_start))); }
+                        if cut_end < b { next.push((cut_end,b,to_sequence(cut_end),sb)); }
+                    }
+                    fragments = next;
+                    if fragments.is_empty() { break; }
+                }
+            }
+            if !timed {
+                for row in &rows {
+                    let Some(sequence) = row.get("created_seq").and_then(Value::as_i64).map(|value| value as f64) else { continue; };
+                    if sequence < raw_sequence_start || sequence >= raw_sequence_end { continue; }
+                    let mut next = Vec::new();
+                    for (a,b,sa,sb) in fragments {
+                        if sequence < sa || sequence >= sb { next.push((a,b,sa,sb)); continue; }
+                        if sequence > sa { next.push((a,b,sa,sequence)); }
+                        if sequence + 1.0 < sb { next.push((a,b,sequence+1.0,sb)); }
+                    }
+                    fragments = next;
+                }
+            }
+            for (time_start,time_end,sequence_start,sequence_end) in fragments {
+                if time_end <= time_start || sequence_end <= sequence_start { continue; }
+                overview.push(SpanBase {
+                    start: time_start, end: time_end, record: usize::MAX,
+                    kind: if overview_error_buckets.contains(&bucket_index) { KIND_TOOL } else { kind }, lane,
+                    ttft: None, sequence_start: Some(sequence_start), sequence_end: Some(sequence_end),
+                });
+            }
         }
     }
-    if !overview.is_empty() {
-        model.spans.extend(overview);
-        model.tl_start = start;
-        model.tl_end = end.max(start + 1.0);
+    // Even when aggregate marks are fully subtracted by current detail,
+    // retain the complete wall-clock domain for correct axis/zoom bounds.
+    for row in &rows {
+        let Some(raw_start) = row.get("started_at").and_then(Value::as_f64) else { continue; };
+        let raw_end = row.get("completed_at").and_then(Value::as_f64).unwrap_or(raw_start);
+        let start = if raw_start.abs() < 1e11 { raw_start * 1000.0 } else { raw_start };
+        let finish = if raw_end.abs() < 1e11 { raw_end * 1000.0 } else { raw_end };
+        overview_start = overview_start.min(start);
+        overview_end = overview_end.max(finish.max(start + 1.0));
     }
+    if start.is_finite() && end.is_finite() {
+        overview_start = start;
+        overview_end = end.max(start + 1.0);
+    }
+    let has_overview = !tiles.is_empty() && start.is_finite() && end.is_finite();
+    let overview_spans = overview;
+    model.overview_spans = overview_spans;
+    model.overview_start = overview_start;
+    model.overview_end = overview_end;
+    model.overview_sequence_end = overview_sequence_end;
+    model.has_overview = has_overview;
+    model.overview_error_buckets = overview_error_buckets;
     model
 }
 
@@ -1335,6 +1482,12 @@ fn parse_snapshot(snapshot: &Value) -> SnapshotModel {
         boundaries,
         tl_start,
         tl_end,
+        overview_spans: Vec::new(),
+        overview_start: 0.0,
+        overview_end: 1.0,
+        overview_sequence_end: 1.0,
+        has_overview: false,
+        overview_error_buckets: HashSet::new(),
     }
 }
 
@@ -1770,13 +1923,24 @@ fn project_timeline(app: &MainWindow, state: &State, model: &SnapshotModel, text
     let view_start = state.view_start.clamp(0.0, 1.0);
     let view_width = state.view_width.clamp(0.02, 1.0);
     let timed = state.show_duration;
-    let sequence_end = model
+    let use_overview = model.has_overview && (state.has_more || state.has_newer);
+    let detail_sequence_end = model
         .spans
         .iter()
         .filter_map(|span| span.sequence_end)
         .fold(model.records.len().max(1) as f64, f64::max);
+    let overview_sequence_end = model
+        .overview_spans
+        .iter()
+        .filter_map(|span| span.sequence_end)
+        .fold(model.overview_sequence_end.max(1.0), f64::max);
+    let sequence_end = if use_overview { overview_sequence_end.max(detail_sequence_end) } else { detail_sequence_end };
     let (total_lo, total_hi) = if timed {
-        (model.tl_start, model.tl_end)
+        if use_overview {
+            (model.overview_start, model.overview_end)
+        } else {
+            (model.tl_start, model.tl_end)
+        }
     } else {
         (0.0, sequence_end.max(1.0))
     };
@@ -1784,13 +1948,24 @@ fn project_timeline(app: &MainWindow, state: &State, model: &SnapshotModel, text
     let window_lo = total_lo + view_start * total;
     let window_total = view_width * total;
     let clamp_pos = |value: f64| ((value - window_lo) / window_total).clamp(0.0, 1.0) as f32;
+    let selected_range = model.spans.get(state.selected.max(0) as usize).filter(|_| state.selected >= 0).map(|span| {
+        if timed {
+            (span.start, span.end.max(span.start + 0.001))
+        } else {
+            (span.sequence_start.unwrap_or(state.selected as f64), span.sequence_end.unwrap_or(state.selected as f64 + 1.0))
+        }
+    });
 
     let mut spans: Vec<TrajSpan> = Vec::new();
-    let has_overview = model.spans.iter().any(|span| span.record == usize::MAX);
-    for base in &model.spans {
-        if has_overview && base.record != usize::MAX {
-            continue;
-        }
+    let visible_detail_ranges: Vec<(f64, f64, Option<f64>, Option<f64>)> = model.spans.iter().map(|span| {
+        (span.start, span.end.max(span.start + 0.001), span.sequence_start, span.sequence_end)
+    }).collect();
+    let sources: Vec<(&SpanBase, bool)> = if use_overview {
+        model.overview_spans.iter().map(|span| (span, true)).chain(model.spans.iter().map(|span| (span, false))).collect()
+    } else {
+        model.spans.iter().map(|span| (span, false)).collect()
+    };
+    for (base, aggregate) in sources {
         let (start, end) = if timed {
             (base.start, base.end)
         } else if let (Some(start), Some(end)) = (base.sequence_start, base.sequence_end) {
@@ -1798,6 +1973,19 @@ fn project_timeline(app: &MainWindow, state: &State, model: &SnapshotModel, text
         } else {
             (base.record as f64, base.record as f64 + 1.0)
         };
+        let outside = selected_range.is_some_and(|(focus_start, focus_end)| end < focus_start || start > focus_end);
+        if aggregate {
+            let overlaps = visible_detail_ranges.iter().any(|(detail_start, detail_end, sequence_start, sequence_end)| {
+                if timed {
+                    *detail_start <= end && *detail_end >= start
+                } else {
+                    sequence_start.zip(*sequence_end).is_some_and(|(lo, hi)| {
+                        lo <= base.sequence_end.unwrap_or(start) && hi >= base.sequence_start.unwrap_or(end)
+                    })
+                }
+            });
+            if overlaps { continue; }
+        }
         let pos = (start - window_lo) / window_total;
         let width = (end - start) / window_total;
         let x0 = pos.max(0.0);
@@ -1819,6 +2007,7 @@ fn project_timeline(app: &MainWindow, state: &State, model: &SnapshotModel, text
             selected: base.record != usize::MAX
                 && state.selected >= 0
                 && base.record == state.selected as usize,
+            outside,
         });
     }
 
@@ -1832,7 +2021,7 @@ fn project_timeline(app: &MainWindow, state: &State, model: &SnapshotModel, text
         while tick <= window_lo + window_total {
             ticks.push(TrajTick {
                 pos: clamp_pos(tick),
-                label: format_offset(tick - model.tl_start).into(),
+                label: format_offset(tick - total_lo).into(),
             });
             tick += step;
         }
@@ -1856,6 +2045,13 @@ fn project_timeline(app: &MainWindow, state: &State, model: &SnapshotModel, text
     app.set_traj_boundaries(to_model(boundaries));
     app.set_traj_view_start(view_start as f32);
     app.set_traj_view_width(view_width as f32);
+    if let Some((start, end)) = state.selection {
+        app.set_traj_selection_active(true);
+        app.set_traj_selection_start(start as f32);
+        app.set_traj_selection_end(end as f32);
+    } else {
+        app.set_traj_selection_active(false);
+    }
 }
 
 fn bounded_body(text: &str) -> String {
@@ -2204,6 +2400,7 @@ fn apply_model(app: &MainWindow, state: &State) {
     project_rows(app, state, snapshot, &texts);
     project_timeline(app, state, snapshot, &texts);
     project_details(app, state, snapshot, &texts);
+    project_search(app, state);
 }
 
 pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
@@ -2567,21 +2764,150 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         apply_model(&app, &current.borrow());
     });
 
-    let (weak, current) = (app.as_weak(), state.clone());
+    let (weak, current, backend) = (app.as_weak(), state.clone(), api.clone());
     app.on_traj_search_changed(move || {
         let Some(app) = weak.upgrade() else { return };
-        current.borrow_mut().query = app.get_traj_query().to_string();
+        let query = app.get_traj_query().to_string();
+        let (session, generation) = {
+            let mut state = current.borrow_mut();
+            state.query = query.clone();
+            state.search_generation = state.search_generation.wrapping_add(1);
+            state.search_hits.clear();
+            state.search_text.clear();
+            state.selected_search = None;
+            (state.session.clone(), state.search_generation)
+        };
+        app.set_traj_search_hint("".into());
         apply_model(&app, &current.borrow());
+        if query.trim().is_empty() { return; }
+        let (tx, rx) = sync_channel(1);
+        let backend = backend.clone();
+        let needle = query.trim().chars().take(128).collect::<String>();
+        let weak_done = app.as_weak();
+        let current_done = current.clone();
+        let mut timer = slint::Timer::default();
+        timer.start(slint::TimerMode::SingleShot, std::time::Duration::from_millis(250), move || {
+            let backend = backend.clone();
+            let session = session.clone();
+            let needle = needle.clone();
+            let tx = tx.clone();
+            std::thread::spawn(move || {
+                let result = backend.thread_trajectory_search(&session, &needle);
+                let _ = tx.send((session, generation, result));
+            });
+        });
+        current.borrow_mut().search_timer = Some(timer);
+        let receiver_current = current.clone();
+        poll(move || {
+            let Ok((session, generation, result)) = rx.try_recv() else { return false; };
+            receiver_current.borrow_mut().search_timer = None;
+            let Some(app) = weak_done.upgrade() else { return true; };
+            let state = current_done.borrow();
+            if state.session != session || state.search_generation != generation { return true; }
+            match result {
+                Ok(value) => {
+                    let hits = value.get("hits").and_then(Value::as_array).into_iter().flatten().map(|hit| SearchHit {
+                        item_id: hit.get("item_id").and_then(Value::as_str).unwrap_or_default().to_string(),
+                        body_id: hit.pointer("/body/body_id").and_then(Value::as_str).unwrap_or_default().to_string(),
+                        revision: hit.pointer("/body/revision").and_then(Value::as_i64).unwrap_or(0),
+                        cursor: hit.get("cursor").and_then(Value::as_i64).unwrap_or(0),
+                        snippet: hit.get("snippet").and_then(Value::as_str).unwrap_or_default().to_string(),
+                    }).collect::<Vec<_>>();
+                    let more = value.get("has_more").and_then(Value::as_bool).unwrap_or(false);
+                    drop(state);
+                    let mut state = current_done.borrow_mut();
+                    if state.session != session || state.search_generation != generation { return true; }
+                    state.search_hits = hits;
+                    project_search(&app, &state);
+                    app.set_traj_search_hint(if app.global::<I18n>().get_zh() {
+                        format!("搜索命中 {} 条{}", state.search_hits.len(), if more { "（缩小关键词可查看更多）" } else { "" })
+                    } else {
+                        format!("{} search matches{}", state.search_hits.len(), if more { " (narrow the query for more)" } else { "" })
+                    }.into());
+                }
+                Err(error) => {
+                    drop(state);
+                    app.set_traj_search_hint(if app.global::<I18n>().get_zh() {
+                        format!("搜索失败：{error}")
+                    } else {
+                        format!("Search failed: {error}")
+                    }.into());
+                }
+            }
+            true
+        });
+    });
+
+    let (weak, current, backend) = (app.as_weak(), state.clone(), api.clone());
+    app.on_traj_search_hit(move |index| {
+        let Some(app) = weak.upgrade() else { return };
+        let (session, generation, hit) = {
+            let mut state = current.borrow_mut();
+            if index < 0 || index as usize >= state.search_hits.len() { return; }
+            let hit = state.search_hits[index as usize].clone();
+            state.selected_search = Some(index as usize);
+            (state.session.clone(), state.search_generation, hit)
+        };
+        let (tx, rx) = sync_channel(1);
+        let backend = backend.clone();
+        std::thread::spawn(move || {
+            let result = backend.thread_trajectory_body(&session, &hit.body_id, hit.revision, hit.cursor);
+            let _ = tx.send((session, generation, result));
+        });
+        let weak_done = app.as_weak();
+        let current_done = current.clone();
+        poll(move || {
+            let Ok((session, generation, result)) = rx.try_recv() else { return false; };
+            let Some(app) = weak_done.upgrade() else { return true; };
+            let Ok(page) = result else {
+                app.set_traj_search_hint(if app.global::<I18n>().get_zh() { "读取命中正文失败" } else { "Failed to read matching text" }.into());
+                return true;
+            };
+            let mut state = current_done.borrow_mut();
+            if state.session != session || state.search_generation != generation { return true; }
+            state.search_text = page.get("chunks").and_then(Value::as_array).into_iter().flatten()
+                .filter_map(Value::as_str).collect::<String>();
+            project_search(&app, &state);
+            true
+        });
+    });
+
+    let (weak, current, backend) = (app.as_weak(), state.clone(), api.clone());
+    app.on_traj_export(move || {
+        let Some(app) = weak.upgrade() else { return };
+        let session = current.borrow().session.clone();
+        if session.is_empty() { return; }
+        let Some(path) = crate::file_dialog::save_file("导出线程日志", "thread-log.jsonl") else {
+            return;
+        };
+        let (tx, rx) = sync_channel(1);
+        let backend = backend.clone();
+        std::thread::spawn(move || {
+            let result = backend.export_thread_log(&session, std::path::Path::new(&path));
+            let _ = tx.send((path, result));
+        });
+        let weak_done = app.as_weak();
+        poll(move || {
+            let Ok((path, result)) = rx.try_recv() else { return false; };
+            if let Some(app) = weak_done.upgrade() {
+                match result {
+                    Ok(()) => app.set_status(format!("线程日志已导出：{path}").into()),
+                    Err(error) => app.set_status(format!("导出线程日志失败：{error}").into()),
+                }
+            }
+            true
+        });
     });
 
     let (weak, current) = (app.as_weak(), state.clone());
-    app.on_traj_zoom(move |factor| {
+    app.on_traj_zoom(move |factor, anchor| {
         let Some(app) = weak.upgrade() else { return };
         {
             let mut s = current.borrow_mut();
-            let center = s.view_start + s.view_width / 2.0;
+            let anchor = (s.view_start + (anchor as f64).clamp(0.0, 1.0) * s.view_width).clamp(0.0, 1.0);
+            let fraction = (anchor - s.view_start) / s.view_width.max(0.02);
             s.view_width = (s.view_width * factor as f64).clamp(0.02, 1.0);
-            s.view_start = (center - s.view_width / 2.0).clamp(0.0, 1.0 - s.view_width);
+            s.view_start = (anchor - fraction * s.view_width).clamp(0.0, 1.0 - s.view_width);
         }
         let s = current.borrow();
         if let Some(snapshot) = &s.model {
@@ -2602,6 +2928,82 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
             let texts = Texts::new(app.global::<I18n>().get_zh());
             project_timeline(&app, &s, snapshot, &texts);
         }
+    });
+
+    let (weak, current) = (app.as_weak(), state.clone());
+    app.on_traj_select_range(move |start, end| {
+        let Some(app) = weak.upgrade() else { return };
+        let mut state = current.borrow_mut();
+        let start = (start as f64).clamp(0.0, 1.0);
+        let end = (end as f64).clamp(0.0, 1.0);
+        state.selection = Some((start.min(end), start.max(end)));
+        if let Some(snapshot) = &state.model {
+            let (domain_start, domain_end) = if state.show_duration && !snapshot.overview_spans.is_empty() && (state.has_more || state.has_newer) {
+                (snapshot.overview_start, snapshot.overview_end)
+            } else if state.show_duration { (snapshot.tl_start, snapshot.tl_end) }
+            else { (0.0, snapshot.records.len().max(1) as f64) };
+            let lo = domain_start + state.selection.unwrap().0 * (domain_end - domain_start);
+            let hi = domain_start + state.selection.unwrap().1 * (domain_end - domain_start);
+            let selected_record = snapshot.spans.iter().min_by(|a,b| {
+                let da = if a.end < lo { lo - a.end } else if a.start > hi { a.start - hi } else { 0.0 };
+                let db = if b.end < lo { lo - b.end } else if b.start > hi { b.start - hi } else { 0.0 };
+                da.total_cmp(&db)
+            }).map(|span| span.record).filter(|record| *record < snapshot.records.len());
+            if let Some(record) = selected_record { state.selected = record as i32; }
+        }
+        drop(state);
+        apply_model(&app, &current.borrow());
+    });
+
+    let (weak, current) = (app.as_weak(), state.clone());
+    app.on_traj_clear_range(move || {
+        let Some(app) = weak.upgrade() else { return };
+        current.borrow_mut().selection = None;
+        apply_model(&app, &current.borrow());
+    });
+
+    let (weak, current) = (app.as_weak(), state.clone());
+    app.on_traj_select_position(move |position| {
+        let Some(app) = weak.upgrade() else { return };
+        let mut state = current.borrow_mut();
+        let Some(snapshot) = &state.model else { return };
+        let position = position as f64;
+        let timed = state.show_duration;
+        let (lo, hi) = if timed && !snapshot.overview_spans.is_empty() && (state.has_more || state.has_newer) {
+            (snapshot.overview_start, snapshot.overview_end)
+        } else if timed { (snapshot.tl_start, snapshot.tl_end) }
+        else { (0.0, snapshot.records.len().max(1) as f64) };
+        let absolute = lo + position.clamp(0.0, 1.0) * (hi - lo);
+        let selected_record = snapshot.spans.iter().min_by(|a,b| {
+            let at = if timed { (a.start + a.end) / 2.0 } else { a.sequence_start.unwrap_or(a.record as f64) };
+            let bt = if timed { (b.start + b.end) / 2.0 } else { b.sequence_start.unwrap_or(b.record as f64) };
+            (at - absolute).abs().total_cmp(&(bt - absolute).abs())
+        }).map(|span| span.record).filter(|record| *record < snapshot.records.len());
+        if let Some(record) = selected_record { state.selected = record as i32; }
+        state.selection = None;
+        drop(state);
+        apply_model(&app, &current.borrow());
+    });
+
+    let (weak, current) = (app.as_weak(), state.clone());
+    app.on_traj_hover_position(move |position| {
+        let Some(app) = weak.upgrade() else { return };
+        let state = current.borrow();
+        let Some(snapshot) = &state.model else { return };
+        let timed = state.show_duration;
+        let (lo, hi) = if timed && snapshot.has_overview && (state.has_more || state.has_newer) {
+            (snapshot.overview_start, snapshot.overview_end)
+        } else if timed { (snapshot.tl_start, snapshot.tl_end) }
+        else { (0.0, snapshot.overview_sequence_end.max(1.0)) };
+        let absolute = lo + (position as f64).clamp(0.0, 1.0) * (hi - lo);
+        let span = snapshot.spans.iter().min_by(|a, b| {
+            let value = |item: &SpanBase| if timed { (item.start + item.end) / 2.0 } else { item.sequence_start.unwrap_or(item.record as f64) };
+            (value(a) - absolute).abs().total_cmp(&(value(b) - absolute).abs())
+        });
+        let Some(span) = span else { return };
+        app.set_traj_hover(span.record as i32);
+        let texts = Texts::new(app.global::<I18n>().get_zh());
+        app.set_traj_tooltip(tooltip_for(snapshot, &texts, span.record as i32).into());
     });
 }
 
@@ -2719,6 +3121,32 @@ mod tests {
         assert_eq!(usage.think, Some(7.0));
         assert_eq!(model.tl_start, 1_000_000.0);
         assert_eq!(model.tl_end, 1_100_000.0);
+    }
+
+    #[test]
+    fn view_page_restores_global_sequence_and_segments_aggregate_tiles() {
+        let page = json!({
+            "tile_level": 0,
+            "trajectory": [{
+                "item_id": "detail-900", "root_turn_id": "root-1", "turn_id": "turn-1",
+                "user_round": 1, "item_index": 0, "created_seq": 900,
+                "kind": "assistant_message", "status": "completed", "summary": "bounded detail",
+                "model_round": 1, "started_at": 10.0, "completed_at": 11.0
+            }],
+            "tiles": [{
+                "bucket": 0, "count": 64, "failed": 0, "running": 0,
+                "start": 1.0, "end": 2.0,
+                "input_count": 12, "model_count": 40, "tool_count": 12
+            }]
+        });
+        let model = parse_view_page(&page);
+        assert_eq!(model.spans.len(), 1);
+        assert_eq!(model.spans[0].sequence_start, Some(900.0));
+        assert_eq!(model.spans[0].sequence_end, Some(901.0));
+        assert_eq!(model.overview_spans.len(), 16);
+        assert!(model.overview_spans.windows(2).all(|pair| pair[0].end <= pair[1].start));
+        assert!(model.has_overview);
+        assert_eq!(model.overview_sequence_end, 128.0);
     }
 
     #[test]

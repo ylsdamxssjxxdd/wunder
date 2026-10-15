@@ -1,0 +1,159 @@
+import { TerminalView, TermSpan } from "terminal_view.slint";
+import { I18n } from "i18n.slint";
+import { Action } from "components.slint";
+
+// A real desktop window keeps the terminal's focus, sizing and keyboard input
+// independent from the chat composer. The shell itself remains owned by the
+// native runtime; this component only projects its screen and sends commands.
+export component TerminalWindow inherits Window {
+    title: I18n.cp_terminal_panel_title;
+    width: 980px;
+    height: 640px;
+    background: #16181d;
+
+    in property <string> workspace-name;
+    in property <string> workspace-root;
+    in property <[TermSpan]> spans;
+    in property <string> status;
+    in property <bool> error: false;
+    in property <int> rows: 24;
+    in property <int> cols: 80;
+    in property <int> view-offset: 0;
+    in property <int> history-depth: 0;
+    in property <bool> caret-visible: false;
+    in property <int> caret-row: 0;
+    in property <int> caret-col: 0;
+    in-out property <int> measured-cols: 0;
+    in-out property <int> measured-rows: 0;
+    in-out property <int> paste-request: 0;
+
+    callback clear();
+    callback interrupt();
+    callback scrolled(int);
+    callback scroll-to(int);
+    callback geometry-changed();
+    callback key-input(string);
+    callback pasted(string);
+    callback paste-requested();
+    callback exit-requested();
+
+    changed measured-cols => { root.geometry-changed(); }
+    changed measured-rows => { root.geometry-changed(); }
+    changed paste-request => {
+        clipboard.text = "";
+        clipboard.focus();
+        clipboard.paste();
+    }
+
+    clipboard := TextInput {
+        visible: false;
+        width: 0px;
+        height: 0px;
+        changed text => {
+            if self.text != "" {
+                root.pasted(self.text);
+                self.text = "";
+                terminal-focus.focus();
+            }
+        }
+    }
+
+    VerticalLayout {
+        spacing: 0px;
+        terminal-focus := FocusScope {
+        capture-key-pressed(event) => {
+            if event.text == Key.Return { root.key-input("\u{d}"); return accept; }
+            if event.text == Key.Backspace { root.key-input("\u{7f}"); return accept; }
+            if event.text == Key.Tab { root.key-input("\u{9}"); return accept; }
+            if event.text == Key.Escape { root.key-input("\u{1b}"); return accept; }
+            if event.text == Key.LeftArrow { root.key-input("\u{1b}[D"); return accept; }
+            if event.text == Key.RightArrow { root.key-input("\u{1b}[C"); return accept; }
+            if event.text == Key.UpArrow { root.key-input("\u{1b}[A"); return accept; }
+            if event.text == Key.DownArrow { root.key-input("\u{1b}[B"); return accept; }
+            if event.text == Key.Home { root.key-input("\u{1b}[H"); return accept; }
+            if event.text == Key.End { root.key-input("\u{1b}[F"); return accept; }
+            if event.text == Key.PageUp { root.key-input("\u{1b}[5~"); return accept; }
+            if event.text == Key.PageDown { root.key-input("\u{1b}[6~"); return accept; }
+            if event.text == Key.Delete { root.key-input("\u{1b}[3~"); return accept; }
+            if event.text == Key.Insert { root.key-input("\u{1b}[2~"); return accept; }
+            if event.text == Key.F1 { root.key-input("\u{1b}OP"); return accept; }
+            if event.text == Key.F2 { root.key-input("\u{1b}OQ"); return accept; }
+            if event.text == Key.F3 { root.key-input("\u{1b}OR"); return accept; }
+            if event.text == Key.F4 { root.key-input("\u{1b}OS"); return accept; }
+            if event.text == Key.F5 { root.key-input("\u{1b}[15~"); return accept; }
+            if event.text == Key.F6 { root.key-input("\u{1b}[17~"); return accept; }
+            if event.text == Key.F7 { root.key-input("\u{1b}[18~"); return accept; }
+            if event.text == Key.F8 { root.key-input("\u{1b}[19~"); return accept; }
+            if event.text == Key.F9 { root.key-input("\u{1b}[20~"); return accept; }
+            if event.text == Key.F10 { root.key-input("\u{1b}[21~"); return accept; }
+            if event.text == Key.F11 { root.key-input("\u{1b}[23~"); return accept; }
+            if event.text == Key.F12 { root.key-input("\u{1b}[24~"); return accept; }
+            if event.modifiers.control && event.text == " " { root.key-input("\u{0}"); return accept; }
+            if event.modifiers.control && event.text == "[" { root.key-input("\u{1b}"); return accept; }
+            if event.modifiers.control && event.text == "v" { root.paste-requested(); return accept; }
+            if event.modifiers.alt && event.text != "" { root.key-input("\u{1b}" + event.text); return accept; }
+            if event.modifiers.control && event.text == "a" { root.key-input("\u{1}"); return accept; }
+            if event.modifiers.control && event.text == "b" { root.key-input("\u{2}"); return accept; }
+            if event.modifiers.control && event.text == "c" { root.key-input("\u{3}"); return accept; }
+            if event.modifiers.control && event.text == "d" { root.key-input("\u{4}"); return accept; }
+            if event.modifiers.control && event.text == "e" { root.key-input("\u{5}"); return accept; }
+            if event.modifiers.control && event.text == "l" { root.key-input("\u{c}"); return accept; }
+            if event.modifiers.control && event.text == "u" { root.key-input("\u{15}"); return accept; }
+            if event.modifiers.control && event.text == "w" { root.key-input("\u{17}"); return accept; }
+            if event.modifiers.control && event.text == "z" { root.key-input("\u{1a}"); return accept; }
+            if event.modifiers.control && event.text == "\\" { root.key-input("\u{1c}"); return accept; }
+            if event.text != "" { root.key-input(event.text); return accept; }
+            reject
+        }
+        Rectangle {
+            height: 42px;
+            background: #1f252e;
+            HorizontalLayout {
+                padding-left: 14px; padding-right: 8px; spacing: 10px;
+                VerticalLayout {
+                    vertical-stretch: 1; spacing: 0px;
+                    Text { text: root.workspace-name != "" ? root.workspace-name : I18n.cp_terminal_panel_title; color: #e8eef5; font-size: 13px; font-weight: 600; vertical-alignment: center; }
+                    Text { text: root.workspace-root; color: #8fa2b6; font-size: 10px; vertical-alignment: center; overflow: elide; }
+                }
+                Rectangle { horizontal-stretch: 1; }
+                Text { text: root.status != "" ? root.status : I18n.cp_terminal_idle; color: root.error ? #f48f8f : #7fd6a0; font-size: 11px; vertical-alignment: center; }
+                Action { width: 28px; height: 28px; icon: @image-url("../assets/icons/trash.svg"); icon-size: 14px; label: I18n.cp_terminal_clear; clicked => { root.clear(); } }
+                Action { width: 28px; height: 28px; icon: @image-url("../assets/icons/stop.svg"); icon-size: 14px; label: I18n.cp_terminal_interrupt; clicked => { root.interrupt(); } }
+                Action { width: 28px; height: 28px; icon: @image-url("../assets/icons/xmark.svg"); label: I18n.cp_terminal_exit; clicked => { root.exit-requested(); } }
+            }
+        }
+        terminal := TerminalView {
+            vertical-stretch: 1;
+            show-header: false;
+            spans: root.spans;
+            status: root.status;
+            error: root.error;
+            rows: root.rows;
+            cols: root.cols;
+            view-offset: root.view-offset;
+            history-depth: root.history-depth;
+            caret-visible: root.caret-visible;
+            caret-row: root.caret-row;
+            caret-col: root.caret-col;
+            clear => { root.clear(); }
+            interrupt => { root.interrupt(); }
+            scrolled(delta) => { root.scrolled(delta); }
+            scroll-to(row) => { root.scroll-to(row); }
+            activated => { terminal-focus.focus(); }
+            measured-cols <=> root.measured-cols;
+            measured-rows <=> root.measured-rows;
+        }
+        Rectangle {
+            height: 48px;
+            background: #1f252e;
+            HorizontalLayout {
+                padding-left: 10px; padding-right: 10px; padding-top: 8px; padding-bottom: 8px; spacing: 8px;
+                Text { text: ">"; width: 16px; color: #7fd6a0; font-family: "Consolas"; font-size: 15px; vertical-alignment: center; }
+                Text { text: I18n.cp_terminal_placeholder; color: #8fa2b6; font-family: "Consolas"; font-size: 12px; vertical-alignment: center; }
+                Rectangle { horizontal-stretch: 1; }
+                Action { width: 28px; height: 28px; icon: @image-url("../assets/icons/paperclip.svg"); icon-size: 14px; label: I18n.cp_terminal_placeholder; clicked => { root.paste-requested(); } }
+            }
+        }
+        }
+    }
+}

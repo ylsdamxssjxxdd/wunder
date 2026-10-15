@@ -2099,8 +2099,6 @@ export default {
   'messenger.settings.desktopSystemHint': 'Configure desktop runtime behavior',
   'messenger.settings.desktopLan': 'LAN Mesh',
   'messenger.settings.desktopLanHint': 'Configure subnet rules, blacklist, and discovered peers',
-  'messenger.settings.helpManual': 'Help Manual',
-  'messenger.settings.helpManualHint': 'Open the wunder docs site for features and integration guides',
   'messenger.prompt.title': 'Prompt Settings',
   'messenger.prompt.desc': 'Manage prompt template packs and preview for current user',
   'messenger.prompt.pack': 'Template Pack',
@@ -2343,7 +2341,6 @@ export default {
   'messenger.waiting.summary.tools': 'Loading your tools, skills, and knowledge catalog...',
   'messenger.waiting.summary.settings': 'Loading current settings and related local configuration...',
   'messenger.waiting.summary.helperApps': 'Connecting online helper apps and syncing available entries...',
-  'messenger.waiting.summary.helpManual': 'Loading the help manual and embedded docs site...',
   'messenger.waiting.summary.agentSettings':
     'Loading agent configuration, tool catalog, and available model options...',
   'messenger.waiting.summary.promptSettings':
@@ -2524,8 +2521,6 @@ export default {
   'messenger.settingsPage.cat.prompts.desc': 'Enable and edit prompt packs',
   'messenger.settingsPage.cat.archived.title': 'Archived threads',
   'messenger.settingsPage.cat.archived.desc': 'Restore or delete archived threads',
-  'messenger.settingsPage.cat.help.title': 'Help',
-  'messenger.settingsPage.cat.help.desc': 'Shortcuts, docs and about',
 
   'messenger.settingsPage.general.accountGroup': 'Account',
   'messenger.settingsPage.general.accountHint': 'Current account and profile entry',
@@ -2556,6 +2551,10 @@ export default {
   'messenger.settingsPage.general.sessionHint': 'You will need to sign in again',
   'messenger.settingsPage.general.logoutHint': 'Sign out and return to the login page',
   'messenger.settingsPage.general.logoutConfirm': 'Sign out of the current account? Unsent drafts stay on this device.',
+  'messenger.settingsPage.general.helpGroup': 'Help',
+  'messenger.settingsPage.general.helpHint': 'Browse the wunder docs site in a new window for features and integration guides',
+  'messenger.settingsPage.general.helpOpen': 'Open Help Docs',
+  'messenger.settingsPage.general.helpOpenFailed': 'The browser blocked the new window. Allow pop-ups and try again.',
 
   'messenger.settingsPage.models.defaultGroup': 'Default model',
   'messenger.settingsPage.models.defaultHint': 'The user default model is decided by the bound preset agent',
