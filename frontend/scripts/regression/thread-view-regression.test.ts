@@ -122,3 +122,85 @@ assert.equal(threadViewSlots(key)![0].assistant.process_activity.kind,'tool');
 applyThreadViewTail(key,{item_id:'fixture-answer-1',field:'content',content_offset:0,text:'fixture late reply',base_seq:0});
 assert.equal(threadViewSlots(key)![0].assistant.process_activity.kind,'tool');
 console.log('thread view: late model tails cannot replace a newer tool phase pass');
+
+// Display-only delivery must consume the composer queue and reject stale HTTP rows.
+import { chatQueueState, applyItems } from '../../src/stores/chatQueueLiveState';
+import { projectQueueItems, isParkedQueueTurn } from '../../src/stores/chatQueueProjection';
+clearThreadView(key); generation = beginThreadView(key);
+commitThreadView(key, { ...page([ { ...row(1, 1), status: 'running' } ]), runtime_status: 'running' }, generation);
+submitThreadView(key, 'fixture-queued-client', 'queued input');
+assert.equal(threadViewStatus(key), 'running');
+const pendingQueue = threadViewSlots(key)!.at(-1)!;
+assert.equal(isParkedQueueTurn([], pendingQueue.user, pendingQueue.assistant), true);
+const parked = projectQueueItems([{queue_id:'fixture-queue', root_turn_id:'fixture-turn-2', client_message_id:'fixture-queued-client'}]);
+chatQueueState.sessionId = key; applyItems(key, parked);
+applyThreadViewChanges(key, { view_seq: 12, runtime_status: 'running', rows: [{ ...row(2, 12), client_message_id:'fixture-queued-client', status: 'running' }] });
+assert.equal(chatQueueState.items.length, 0);
+applyItems(key, parked); assert.equal(chatQueueState.items.length, 0);
+// An idle submission remains mounted while the server accepts it before execution.
+clearThreadView(key); generation = beginThreadView(key); commitThreadView(key, page([]), generation);
+submitThreadView(key, 'fixture-admission', 'input');
+applyThreadViewChanges(key, { view_seq: 20, rows: [{ ...row(3,20), client_message_id:'fixture-admission', status:'accepted', assistant:{item_id:'',content:''} }] });
+const admitted = threadViewSlots(key)![0];
+assert.equal(isParkedQueueTurn([], admitted.user, admitted.assistant), false);
+// A durable thinking preview may lag behind the live answer tail for the same item.
+applyThreadViewChanges(key, {view_seq:21, rows:[{...row(3,21), status:'running', assistant:{item_id:'fixture-phase',content:'',created_seq:10}, process_activity:{kind:'thinking',item_id:'fixture-phase',created_seq:10}}]});
+applyThreadViewTail(key, {item_id:'fixture-phase',field:'content',offset:0,text:'answer'});
+applyThreadViewChanges(key, {view_seq:22, rows:[{...row(3,22),status:'running',assistant:{item_id:'fixture-phase',content:'',created_seq:10},process_activity:{kind:'thinking',item_id:'fixture-phase',created_seq:10}}]});
+applyThreadViewTail(key, {item_id:'fixture-phase',field:'reasoning',offset:0,text:'late thought'});
+assert.equal(threadViewSlots(key)![0].assistant.process_activity.kind,'responding');
+assert.equal(threadViewSlots(key)![0].assistant.reasoning,'late thought');
+console.log('thread view: queue handoff, stale response, admission continuity and monotonic phase pass');
+
+// Historical pages and interleaved feeder rows cannot overwrite the head.
+import {threadViewActiveTurnId,threadViewOwnsExecution} from '../../src/realtime/chat/threadViewStore';
+clearThreadView(key); generation=beginThreadView(key);
+commitThreadView(key,{...page([row(1,50)],50),runtime_status:'running',active_turn_id:'fixture-execution'},generation);
+applyThreadViewChanges(key,{view_seq:49,runtime_status:'queued',active_turn_id:'fixture-stale',rows:[{...row(2,49),status:'queued'}]});
+assert.equal(threadViewStatus(key),'running');
+assert.equal(threadViewActiveTurnId(key),'fixture-execution');
+assert.equal(threadViewOwnsExecution(key),true);
+commitThreadView(key,{...page([row(0,60)],60),runtime_status:'completed',active_turn_id:''},generation,true);
+commitThreadView(key,{...page([row(2,61)],61),runtime_status:'queued',active_turn_id:'fixture-page'},generation,false,false,true);
+assert.equal(threadViewStatus(key),'running');
+assert.equal(threadViewActiveTurnId(key),'fixture-execution');
+applyThreadViewChanges(key,{view_seq:62,runtime_status:'completed',active_turn_id:'',rows:[]});
+applyThreadViewChanges(key,{view_seq:61,rows:[{...row(3,61),status:'running'}]});
+assert.equal(threadViewStatus(key),'completed');
+assert.equal(threadViewActiveTurnId(key),'');
+// A background thread owns its queue independently; no HTTP refresh required.
+const background='fixture-background';
+applyThreadViewChanges(background,{epoch:1,view_seq:1,runtime_status:'running',rows:[{
+  ...row(1),root_turn_id:'fixture-background-turn',client_message_id:'fixture-background-client',status:'queued',
+  queued_input:{queue_id:'fixture-background-queue',reason:'input',priority:0}
+}]});
+assert.equal(chatQueueState.sessionId,key);
+chatQueueState.sessionId=background;
+assert.equal(chatQueueState.items[0].queueId,'fixture-background-queue');
+applyThreadViewChanges(background,{epoch:1,view_seq:2,runtime_status:'running',rows:[{
+  ...row(1,2),root_turn_id:'fixture-background-turn',client_message_id:'fixture-background-client',status:'running'
+}]});
+assert.equal(chatQueueState.items.length,0);
+applyItems(background,projectQueueItems([{queue_id:'fixture-background-queue',client_message_id:'fixture-background-client'}]));
+assert.equal(chatQueueState.items.length,0);
+console.log('thread view: independent monotonic head, old pages, background queue isolation and stale snapshots pass');
+
+// Accepted input must not flash into the transcript before its queue decision.
+clearThreadView(key);generation=beginThreadView(key);
+commitThreadView(key,{...page([row(1,1)]),runtime_status:'running',active_turn_id:'fixture-active'},generation);
+submitThreadView(key,'fixture-busy-admission','fixture input');
+applyThreadViewChanges(key,{epoch:1,view_seq:2,runtime_status:'running',active_turn_id:'fixture-active',rows:[{
+  ...row(2,2),client_message_id:'fixture-busy-admission',status:'accepted',assistant:{item_id:'',content:''}
+}]});
+const busyAdmission=threadViewSlots(key)!.at(-1)!;
+assert.equal(isParkedQueueTurn([],busyAdmission.user,busyAdmission.assistant),true);
+console.log('thread view: busy admission preserves composer ownership until dispatch pass');
+
+import {applyThreadViewHead} from '../../src/realtime/chat/threadViewStore';
+const replayCursor=threadViewCursor(key);
+assert.equal(applyThreadViewHead(key,{epoch:1,view_seq:200,runtime_status:'completed',active_turn_id:''}),true);
+assert.equal(threadViewStatus(key),'completed');
+assert.equal(threadViewCursor(key),replayCursor);
+assert.equal(applyThreadViewHead(key,{epoch:1,view_seq:199,runtime_status:'running',active_turn_id:'fixture-stale'}),false);
+assert.equal(threadViewStatus(key),'completed');
+console.log('thread view: detached catalog head advances without skipping transcript replay pass');

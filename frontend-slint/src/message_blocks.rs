@@ -17,7 +17,7 @@ const KIND_TEXT: i32 = 0;
 const KIND_CODE: i32 = 1;
 const KIND_QUOTE: i32 = 4;
 const KIND_TABLE: i32 = 5;
-const KIND_IMAGE: i32 = 6;
+pub(crate) const KIND_IMAGE: i32 = 6;
 const KIND_H1: i32 = 10;
 
 pub struct Blocks {
@@ -589,5 +589,16 @@ mod tests {
         let code = markdown_blocks("```python\n# 示例\nvalue = 42\n```");
         assert_eq!(code[0].language, "python");
         assert_eq!(code[0].text, "# 示例\nvalue = 42\n");
+    }
+
+    #[test]
+    fn public_workspace_paths_are_kept_as_local_resource_cards() {
+        let blocks = markdown_blocks(
+            "![图片](/workspaces/scope/workspace/image.png)\n\n[文档](/workspaces/scope/workspace/report.docx)",
+        );
+        assert_eq!(blocks[0].kind, KIND_IMAGE);
+        assert_eq!(blocks[0].image_source, "/workspaces/scope/workspace/image.png");
+        assert_eq!(blocks[1].kind, 7);
+        assert_eq!(blocks[1].image_source, "/workspaces/scope/workspace/report.docx");
     }
 }

@@ -47,6 +47,7 @@ async fn virtual_provider_enforces_capabilities_and_completes_tool_exchange() {
             false,
             None,
             None,
+            None,
         )
         .await
         .unwrap_err();
@@ -68,6 +69,7 @@ async fn virtual_provider_enforces_capabilities_and_completes_tool_exchange() {
             RoundInfo::new(1, 1),
             false,
             false,
+            None,
             None,
             None,
         )
@@ -125,6 +127,7 @@ async fn virtual_provider_enforces_capabilities_and_completes_tool_exchange() {
             false,
             Some(&tools),
             None,
+            None,
         )
         .await
         .unwrap();
@@ -152,6 +155,7 @@ async fn virtual_provider_enforces_capabilities_and_completes_tool_exchange() {
             false,
             false,
             Some(&tools),
+            None,
             None,
         )
         .await
@@ -234,6 +238,7 @@ async fn virtual_replay_works_at_zero_balance_without_spending_or_granting_token
             RoundInfo::new(1, 1),
             false,
             false,
+            None,
             None,
             None,
         )
@@ -338,6 +343,7 @@ async fn random_simulation_persists_records_like_real_models() {
             false,
             None,
             None,
+            None,
         )
         .await
         .unwrap();
@@ -363,4 +369,94 @@ async fn random_simulation_persists_records_like_real_models() {
             .any(|item| item["kind"] == json!("assistant_message")),
         "assistant_message item must appear in thread context"
     );
+}
+
+/// 虚拟模型的轮次约定必须由本回合权威的人类输入推导，而不是从（可能被压缩改写
+/// 的）请求消息里回捞。历史里没有数字时，只有显式传来的 `user_question` 能决定
+/// 本次计划轮数，否则同一回合跑到中途会换计划，轮次数不再等于用户给的数字。
+#[tokio::test]
+async fn user_question_drives_virtual_round_plan_after_history_rewrite() {
+    let root = tempfile::tempdir().unwrap();
+    let mut config = Config::default();
+    config.storage.backend = "sqlite".into();
+    config.storage.db_path = root.path().join("state.db").to_string_lossy().into_owned();
+    config.workspace.root = root.path().join("workspace").to_string_lossy().into_owned();
+    let store = ConfigStore::new(root.path().join("config.yaml"));
+    store
+        .update(|current| *current = config.clone())
+        .await
+        .unwrap();
+    let state =
+        AppState::new_with_options(store, config, AppStateInitOptions::cli_default()).unwrap();
+    let emitter = EventEmitter::new(
+        "session_1".into(),
+        "user_1".into(),
+        None,
+        None,
+        state.monitor.clone(),
+        false,
+        None,
+    );
+    use wunder_core::virtual_model::VirtualModelOptions;
+    let model = LlmModelConfig {
+        provider: Some("virtual_replay".into()),
+        simulation: Some(VirtualModelOptions {
+            error_rate: 0.0,
+            disconnect_rate: 0.0,
+            ..Default::default()
+        }),
+        max_context: Some(8192),
+        max_output: Some(1024),
+        ..Default::default()
+    };
+    let tools =
+        [json!({"type":"function","function":{"name":"读取文件","parameters":{"type":"object"}}})];
+    // 压缩后的历史：最新一条“用户”文本是摘要，不含任何数字。
+    let compacted = [
+        json!({"role":"system","content":"system"}),
+        json!({"role":"user","content":"以下是之前对话的结构化摘要，可忽略。"}),
+    ];
+    let orchestrator = &state.kernel.orchestrator;
+    let turn = orchestrator
+        .call_llm(
+            &model,
+            &compacted,
+            "user_1",
+            true,
+            &emitter,
+            "session_1",
+            false,
+            RoundInfo::new(1, 1),
+            false,
+            false,
+            Some(&tools),
+            None,
+            Some("4"),
+        )
+        .await
+        .unwrap();
+    assert!(
+        turn.3.is_some(),
+        "plan says 4 rounds, so round 1 must emit tool calls"
+    );
+    // 不传权威输入、只靠被改写的历史时，退化成随机计划（不保证有工具调用）；
+    // 这里只断言不会崩，语义由上面的断言保证。
+    let _ = orchestrator
+        .call_llm(
+            &model,
+            &compacted,
+            "user_1",
+            true,
+            &emitter,
+            "session_1",
+            false,
+            RoundInfo::new(1, 1),
+            false,
+            false,
+            Some(&tools),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
 }

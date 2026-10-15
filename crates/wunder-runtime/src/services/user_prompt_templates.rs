@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const DEFAULT_SYSTEM_PACKS_ROOT: &str = "./config/data/prompt_templates";
-const DEFAULT_USER_PROMPT_ROOT: &str = "./config/data/user_prompt_templates";
+const DEFAULT_SYSTEM_PACKS_ROOT: &str = "./data/prompt_templates";
+const DEFAULT_USER_PROMPT_ROOT: &str = "./data/user_prompt_templates";
 const PROMPTS_ROOT_ENV: &str = "WUNDER_PROMPTS_ROOT";
 const USER_ACTIVE_PACK_CACHE_MAX_ITEMS: usize = 512;
 
@@ -326,6 +326,15 @@ fn resolve_user_prompt_templates_root(_config: &Config) -> PathBuf {
 }
 
 pub fn resolve_prompts_root() -> PathBuf {
+    if let Some(home) = std::env::var_os("WUNDER_HOME")
+        .map(PathBuf::from)
+        .filter(|path| !path.as_os_str().is_empty())
+    {
+        let shared = home.join("config");
+        if shared.join("prompts").is_dir() {
+            return shared;
+        }
+    }
     for candidate in resolve_prompts_root_candidates() {
         if let Some(repo_root) = repo_assets::find_repo_root_at_or_above(&candidate) {
             return repo_root;

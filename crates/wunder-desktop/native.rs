@@ -11,7 +11,10 @@ use crate::{
 use anyhow::{anyhow, Result};
 use bytes::Bytes;
 use serde_json::{json, Value};
+use std::collections::HashSet;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::runtime::Runtime;
 use wunder_server::DesktopTerminalSnapshot;
@@ -303,6 +306,9 @@ pub struct NativeDesktop {
     desktop: DesktopRuntime,
     settings_lock: std::sync::Mutex<()>,
     terminal: NativeTerminal,
+    instance_id: String,
+    open_threads: Arc<std::sync::Mutex<HashSet<String>>>,
+    lease_heartbeat_stop: Arc<AtomicBool>,
 }
 
 impl NativeDesktop {
@@ -336,21 +342,23 @@ impl NativeDesktop {
         {
             let state = Arc::clone(&desktop.state);
             let user_id = desktop.user_id.clone();
-            runtime
-                .block_on(async {
-                    tokio::task::spawn_blocking(move || {
-                        wunder_server::interlink::client::start_with_options(
-                            state,
-                            wunder_server::interlink::client::InterlinkLocalOptions {
-                                local_user_id: user_id,
-                                workspace_id: None,
-                                session_base_dir: wunder_server::cloud::session::wunder_home_dir(),
-                            },
-                        );
-                    })
-                    .await
+            // Interlink startup may take a blocking lock while it restores its
+            // durable ledger. Do not wait for it before returning the native
+            // desktop handle: the UI can render immediately and the tunnel
+            // publishes its state asynchronously when ready.
+            runtime.spawn(async move {
+                let _ = tokio::task::spawn_blocking(move || {
+                    wunder_server::interlink::client::start_with_options(
+                        state,
+                        wunder_server::interlink::client::InterlinkLocalOptions {
+                            local_user_id: user_id,
+                            workspace_id: None,
+                            session_base_dir: wunder_server::cloud::session::wunder_home_dir(),
+                        },
+                    );
                 })
-                .ok();
+                .await;
+            });
         }
         // A console for the shell, when the host ships winpty next to its git.
         let settings = load_desktop_settings(&desktop.settings_path).unwrap_or_default();
@@ -359,12 +367,115 @@ impl NativeDesktop {
             Arc::clone(&desktop.state.storage),
             resolve_winpty_library(&desktop.app_dir, &settings),
         );
+        let instance_id = uuid::Uuid::new_v4().simple().to_string();
+        let open_threads: Arc<std::sync::Mutex<HashSet<String>>> =
+            Arc::new(std::sync::Mutex::new(HashSet::new()));
+        let lease_heartbeat_stop = Arc::new(AtomicBool::new(false));
+        let heartbeat_threads = Arc::clone(&open_threads);
+        let heartbeat_stop = Arc::clone(&lease_heartbeat_stop);
+        let heartbeat_storage = Arc::clone(&desktop.state.storage);
+        let heartbeat_instance = instance_id.clone();
+        thread::Builder::new()
+            .name("wunder-desktop-thread-lease".into())
+            .spawn(move || {
+                while !heartbeat_stop.load(Ordering::Acquire) {
+                    thread::sleep(std::time::Duration::from_secs(10));
+                    if heartbeat_stop.load(Ordering::Acquire) {
+                        break;
+                    }
+                    let sessions = heartbeat_threads
+                        .lock()
+                        .map(|set| set.iter().cloned().collect::<Vec<_>>())
+                        .unwrap_or_default();
+                    for session in sessions {
+                        let _ = heartbeat_storage.touch_thread_open_lease(
+                            &session,
+                            &heartbeat_instance,
+                            30.0,
+                        );
+                    }
+                }
+            })
+            .ok();
         Ok(Self {
             runtime,
             desktop,
             settings_lock: std::sync::Mutex::new(()),
             terminal,
+            instance_id,
+            open_threads,
+            lease_heartbeat_stop,
         })
+    }
+
+    fn ensure_thread_open(&self, session_id: &str) -> Result<()> {
+        let session_id = session_id.trim();
+        anyhow::ensure!(!session_id.is_empty(), "线程不存在");
+        if self
+            .open_threads
+            .lock()
+            .map_err(|_| anyhow!("线程租约状态不可用"))?
+            .contains(session_id)
+        {
+            // Same-process opens are idempotent, but the durable owner must
+            // still be touched. A paused process whose lease expired must not
+            // keep writing after another instance has taken ownership.
+            if self
+                .state()
+                .storage
+                .touch_thread_open_lease(session_id, &self.instance_id, 30.0)?
+            {
+                return Ok(());
+            }
+            self.open_threads
+                .lock()
+                .map_err(|_| anyhow!("线程租约状态不可用"))?
+                .remove(session_id);
+            return Err(anyhow!(
+                "THREAD_IN_USE: 当前实例的线程租约已失效，请重新打开线程"
+            ));
+        }
+        use wunder_server::storage::ThreadOpenLeaseStatus;
+        match self.state().storage.try_acquire_thread_open_lease(
+            session_id,
+            self.user_id(),
+            &self.instance_id,
+            "desktop",
+            30.0,
+        )? {
+            ThreadOpenLeaseStatus::Acquired => {
+                self.open_threads
+                    .lock()
+                    .map_err(|_| anyhow!("线程租约状态不可用"))?
+                    .insert(session_id.to_string());
+                Ok(())
+            }
+            ThreadOpenLeaseStatus::Busy => Err(anyhow!(
+                "THREAD_IN_USE: 线程正在由其他蛹或舵机实例打开，关闭占用实例后重试"
+            )),
+        }
+    }
+
+    pub fn open_session(&self, session_id: &str) -> Result<()> {
+        self.ensure_thread_open(session_id)
+    }
+
+    pub fn close_session(&self, session_id: &str) -> Result<()> {
+        let session_id = session_id.trim();
+        if session_id.is_empty() {
+            return Ok(());
+        }
+        let removed = self
+            .open_threads
+            .lock()
+            .map_err(|_| anyhow!("线程租约状态不可用"))?
+            .remove(session_id);
+        if removed {
+            self.state()
+                .storage
+                .release_thread_open_lease(session_id, &self.instance_id)?;
+        }
+        Ok(())
     }
 
     pub fn user_id(&self) -> &str {
@@ -438,6 +549,7 @@ impl NativeDesktop {
         record: wunder_server::storage::ChatSessionRecord,
         workspaces: &std::collections::HashMap<String, wunder_server::storage::WorkspaceRecord>,
     ) -> NativeSession {
+        let session_id = record.session_id.clone();
         let overview = self
             .desktop
             .state
@@ -459,7 +571,7 @@ impl NativeDesktop {
             .and_then(|id| workspaces.get(id));
         NativeSession {
             goal: NativeGoal::default(),
-            id: record.session_id,
+            id: session_id.clone(),
             title: record.title,
             updated_at: record.updated_at,
             agent_id: record.agent_id,
@@ -501,7 +613,13 @@ impl NativeDesktop {
                 .as_deref()
                 .and_then(|source| source.strip_prefix("remote:"))
                 .map(str::to_string),
-            locked: false,
+            locked: self
+                .state()
+                .storage
+                .get_thread_open_lease(&session_id, self.user_id())
+                .ok()
+                .flatten()
+                .is_some_and(|lease| lease.owner_instance_id != self.instance_id),
             reasoning_effort,
             session_model_name,
         }
@@ -584,6 +702,7 @@ impl NativeDesktop {
             .user_store
             .get_chat_session(self.user_id(), session_id.trim())?
             .ok_or_else(|| anyhow!("chat session not found"))?;
+        self.ensure_thread_open(session_id)?;
         let workspaces = self.workspace_lookup();
         Ok(self.session_with_stats(record, &workspaces))
     }
@@ -593,12 +712,14 @@ impl NativeDesktop {
         session_id: &str,
     ) -> Result<(NativeSession, Vec<NativeChatTurn>)> {
         let cleaned = session_id.trim();
+        self.ensure_thread_open(cleaned)?;
         let record = self
             .desktop
             .state
             .user_store
             .get_chat_session(&self.desktop.user_id, cleaned)?
             .ok_or_else(|| anyhow!("chat session not found"))?;
+        self.ensure_thread_open(cleaned)?;
         let turns = self.load_chat_turns(cleaned)?;
         let workspaces = self.workspace_lookup();
         Ok((self.session_with_stats(record, &workspaces), turns))
@@ -683,6 +804,7 @@ impl NativeDesktop {
         offset: usize,
         limit: usize,
     ) -> Result<Value> {
+        self.ensure_thread_open(session_id)?;
         self.desktop
             .state
             .monitor
@@ -691,6 +813,7 @@ impl NativeDesktop {
     }
 
     pub fn cancel_chat(&self, session_id: &str) -> Result<()> {
+        self.ensure_thread_open(session_id)?;
         self.runtime.block_on(stream::cancel_chat(
             &self.desktop.state,
             &self.desktop.user_id,
@@ -735,6 +858,7 @@ impl NativeDesktop {
             matches!(action.trim(), "interrupt" | "terminate"),
             "unsupported subagent action"
         );
+        self.ensure_thread_open(parent)?;
         let state = self.state();
         wunder_server::control_parent_subagents(
             state.storage.as_ref(),
@@ -759,6 +883,7 @@ impl NativeDesktop {
                 "chat session and content or attachment are required"
             ));
         }
+        self.ensure_thread_open(&input.session_id)?;
         Ok(stream::start(
             &self.runtime,
             self.desktop.state.clone(),
@@ -872,6 +997,24 @@ impl NativeDesktop {
             return Err(anyhow!("语音识别没有返回文字"));
         }
         Ok(text)
+    }
+}
+
+impl Drop for NativeDesktop {
+    fn drop(&mut self) {
+        self.lease_heartbeat_stop.store(true, Ordering::Release);
+        let sessions = self
+            .open_threads
+            .lock()
+            .map(|mut set| set.drain().collect::<Vec<_>>())
+            .unwrap_or_default();
+        for session_id in sessions {
+            let _ = self
+                .desktop
+                .state
+                .storage
+                .release_thread_open_lease(&session_id, &self.instance_id);
+        }
     }
 }
 

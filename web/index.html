@@ -21,7 +21,7 @@
       rel="stylesheet"
       href="./third/fontawesome-free-6.7.2-web/css/solid.min.css"
     />
-    <link rel="stylesheet" href="./app.css?v=20261015-03" />
+    <link rel="stylesheet" href="./app.css?v=20261015-07" />
     <link rel="stylesheet" href="./styles/throughput.css?v=20261012-01" />
   </head>
   <body>
@@ -97,6 +97,10 @@
               <i class="fa-solid fa-chevron-down nav-group-caret" aria-hidden="true"></i>
             </button>
             <div class="nav-children">
+              <button id="navDebug" class="nav-btn">
+                <i class="fa-solid fa-bug"></i>
+                <span data-i18n="panel.debug">调试面板</span>
+              </button>
               <button id="navThroughput" class="nav-btn">
                 <i class="fa-solid fa-gauge-high"></i>
                 <span data-i18n="panel.throughput">吞吐量测试</span>
@@ -112,14 +116,6 @@
               <button id="navMultimodalDebug" class="nav-btn">
                 <i class="fa-solid fa-photo-film"></i>
                 <span data-i18n="panel.multimodalDebug">多模调试</span>
-              </button>
-              <button id="navDebug" class="nav-btn">
-                <i class="fa-solid fa-bug"></i>
-                <span data-i18n="panel.debug">调试面板</span>
-              </button>
-              <button id="navLsp" class="nav-btn">
-                <i class="fa-solid fa-code"></i>
-                <span data-i18n="panel.lsp">LSP</span>
               </button>
             </div>
           </div>
@@ -242,33 +238,21 @@
                     </div>
                     <div>
                       <div class="monitor-section-title" data-i18n="monitor.section.service">
-                        服务状态
+                        服务概览
                       </div>
                       <table class="monitor-kv-table">
                         <tbody>
                           <tr>
-                            <th data-i18n="monitor.metric.sessions.active">活动线程</th>
-                            <td><strong id="metricServiceActive">-</strong></td>
+                            <th data-i18n="monitor.metric.users.count">用户总数</th>
+                            <td><strong id="metricUserCount">-</strong></td>
                           </tr>
                           <tr>
-                            <th data-i18n="monitor.metric.sessions.queued">排队线程</th>
-                            <td><strong id="metricServiceQueued">-</strong></td>
-                          </tr>
-                          <tr>
-                            <th data-i18n="monitor.metric.sessions.history">历史线程</th>
-                            <td><strong id="metricServiceHistory">-</strong></td>
-                          </tr>
-                          <tr>
-                            <th data-i18n="monitor.metric.sessions.total">总线程</th>
+                            <th data-i18n="monitor.metric.sessions.total">线程总数</th>
                             <td><strong id="metricServiceTotal">-</strong></td>
                           </tr>
                           <tr>
-                            <th data-i18n="monitor.metric.sessions.avgTokens">平均 Token 消耗</th>
-                            <td><strong id="metricServiceTokenAvg">-</strong></td>
-                          </tr>
-                          <tr>
-                            <th data-i18n="monitor.metric.sessions.avg">平均耗时</th>
-                            <td><strong id="metricServiceAvg">-</strong></td>
+                            <th data-i18n="monitor.metric.sessions.tokens">Token 消耗总数</th>
+                            <td><strong id="metricServiceTokenTotal">-</strong></td>
                           </tr>
                           <tr>
                             <th data-i18n="monitor.metric.sessions.prefillSpeed">平均预填充速度</th>
@@ -279,41 +263,8 @@
                             <td><strong id="metricServiceDecodeSpeed">-</strong></td>
                           </tr>
                           <tr>
-                            <th data-i18n="monitor.metric.sessions.tokens">Token 总消耗</th>
-                            <td><strong id="metricServiceTokenTotal">-</strong></td>
-                          </tr>
-                        </tbody>
-                      </table>
-                    </div>
-                    <div>
-                      <div class="monitor-section-title" data-i18n="monitor.section.userDashboard">
-                        用户看板
-                      </div>
-                      <table class="monitor-kv-table">
-                        <tbody>
-                          <tr>
-                            <th data-i18n="monitor.metric.users.count">用户数</th>
-                            <td><strong id="metricUserCount">-</strong></td>
-                          </tr>
-                          <tr>
-                            <th data-i18n="monitor.metric.users.sessions">会话数</th>
-                            <td><strong id="metricUserSessions">-</strong></td>
-                          </tr>
-                          <tr>
-                            <th data-i18n="monitor.metric.users.records">历史记录</th>
-                            <td><strong id="metricUserRecords">-</strong></td>
-                          </tr>
-                          <tr>
-                            <th data-i18n="monitor.metric.users.tools">工具调用</th>
-                            <td><strong id="metricUserTools">-</strong></td>
-                          </tr>
-                          <tr>
-                            <th data-i18n="monitor.metric.users.active">活动线程</th>
-                            <td><strong id="metricUserActive">-</strong></td>
-                          </tr>
-                          <tr>
-                            <th data-i18n="monitor.metric.users.tokens">Token 消耗</th>
-                            <td><strong id="metricUserTokens">-</strong></td>
+                            <th data-i18n="monitor.metric.sessions.avgTokens">平均 Token 消耗</th>
+                            <td><strong id="metricServiceTokenAvg">-</strong></td>
                           </tr>
                         </tbody>
                       </table>
@@ -378,9 +329,6 @@
                   <span data-i18n="users.cleanup.throughput">清理压测线程</span>
                 </button>
               </div>
-            </div>
-            <div class="tips" data-i18n="users.tip">
-              统计各用户线程与上下文占用情况。
             </div>
             <div class="management-layout user-layout">
               <div class="management-list">
@@ -470,32 +418,28 @@
                         </div>
                       </div>
                       <div class="monitor-section-body monitor-paged">
-                        <div class="monitor-table-scroll">
-                          <table class="monitor-table">
+                        <div class="monitor-table-scroll thread-list-scroll">
+                          <table class="monitor-table thread-list-table">
                             <colgroup>
-                              <col class="col-start" />
-                              <col class="col-session" />
+                              <col class="col-thread-name" />
                               <col class="col-user" />
                               <col class="col-question" />
                               <col class="col-status" />
-                              <col class="col-feedback" />
                               <col class="col-token" />
                               <col class="col-elapsed" />
-                              <col class="col-stage" />
                               <col class="col-action" />
+                              <col class="col-start" />
                             </colgroup>
                             <thead>
                               <tr>
-                                <th data-i18n="monitor.table.start">开始时间</th>
-                                <th data-i18n="monitor.table.session">会话</th>
+                                <th data-i18n="monitor.table.session">线程名称</th>
                                 <th data-i18n="monitor.table.user">用户</th>
                                 <th data-i18n="monitor.table.question">问题</th>
                                 <th data-i18n="monitor.table.status">状态</th>
-                                <th data-i18n="monitor.table.feedback">反馈</th>
                                 <th data-i18n="monitor.table.token">Token</th>
                                 <th data-i18n="monitor.table.elapsed">耗时</th>
-                                <th data-i18n="monitor.table.stage">阶段</th>
                                 <th data-i18n="monitor.table.action">操作</th>
+                                <th data-i18n="monitor.table.start">开始时间</th>
                               </tr>
                             </thead>
                             <tbody id="monitorTableBody"></tbody>
@@ -544,7 +488,6 @@
           <div class="tips" data-i18n="presetAgents.tip">
             管理预设智能体模板，配置与用户侧一致的智能体设置、定时任务与渠道设置。
           </div>
-          <div id="presetAgentsStatusText" class="muted preset-agents-status"></div>
           <div class="management-layout preset-agents-layout">
             <div class="management-list preset-agents-list-pane">
               <div class="list-header">
@@ -582,27 +525,6 @@
                     <span data-i18n="visibility.title">可见性</span>
                   </button>
                 </div>
-              </div>
-
-              <div class="preset-agent-sync-card">
-                <div class="preset-agent-sync-head">
-                  <div class="preset-agent-sync-title" data-i18n="presetAgents.sync.title">同步与绑定</div>
-                  <span id="presetAgentSyncContractBadge" class="preset-contract-badge" style="display: none"></span>
-                </div>
-                <div id="presetAgentSyncSummary" class="muted" data-i18n="presetAgents.sync.empty">
-                  保存后会显示同步影响范围与待处理用户数量。
-                </div>
-                <div class="tips preset-agent-sync-tip" data-i18n="presetAgents.sync.tip">
-                  安全同步只覆盖仍跟随模板的字段；强制覆盖同步会改写绑定用户智能体的模板字段，不改写已冻结线程的系统提示词（仅影响新线程）。
-                </div>
-                <div class="preset-sync-log-head">
-                  <span class="preset-agent-sync-title" data-i18n="presetAgents.sync.logTitle">操作结果日志</span>
-                  <button id="presetAgentSyncLogClearBtn" class="secondary btn-with-icon" type="button">
-                    <i class="fa-solid fa-eraser"></i>
-                    <span data-i18n="presetAgents.sync.logClear">清空</span>
-                  </button>
-                </div>
-                <div id="presetAgentSyncLog" class="preset-sync-log" aria-live="polite"></div>
               </div>
 
               <div class="preset-agent-tabs" role="tablist" aria-label="preset agent tabs">
@@ -644,10 +566,6 @@
                     <label for="presetAgentFormModelName" data-i18n="presetAgents.form.modelName">启用模型</label>
                     <div class="preset-agent-model-row">
                       <select id="presetAgentFormModelName"></select>
-                      <button id="presetAgentAvatarTrigger" class="secondary btn-with-icon preset-agent-avatar-trigger" type="button">
-                        <span id="presetAgentAvatarPreview" class="preset-agent-avatar-preview" aria-hidden="true"></span>
-                        <span data-i18n="presetAgents.form.avatarPick">设置头像</span>
-                      </button>
                     </div>
                     <div class="tips" data-i18n="presetAgents.form.modelHint">
                       为空时使用系统默认模型。
@@ -682,40 +600,7 @@
                       <option value="full_auto">full_auto</option>
                     </select>
                   </div>
-                  <div class="preset-agent-subsection preset-customizable-section">
-                    <div class="preset-agent-subsection-title" data-i18n="presetAgents.customizable.title">
-                      允许用户自定义
-                    </div>
-                    <div class="tips" data-i18n="presetAgents.customizable.tip">
-                      开启后用户可在智能体设置中修改该字段；未开启的字段对用户只读。
-                    </div>
-                    <div class="preset-customizable-grid">
-                      <label class="checkbox-row" for="presetAgentCustomizableSystemPrompt">
-                        <input id="presetAgentCustomizableSystemPrompt" type="checkbox" />
-                        <span data-i18n="presetAgents.customizable.field.systemPrompt">系统提示词</span>
-                      </label>
-                      <label class="checkbox-row" for="presetAgentCustomizableWelcome">
-                        <input id="presetAgentCustomizableWelcome" type="checkbox" />
-                        <span data-i18n="presetAgents.customizable.field.welcome">欢迎语</span>
-                      </label>
-                      <label class="checkbox-row" for="presetAgentCustomizableModelName">
-                        <input id="presetAgentCustomizableModelName" type="checkbox" />
-                        <span data-i18n="presetAgents.customizable.field.modelName">默认模型</span>
-                      </label>
-                      <label class="checkbox-row" for="presetAgentCustomizableReasoningEffort">
-                        <input id="presetAgentCustomizableReasoningEffort" type="checkbox" />
-                        <span data-i18n="presetAgents.customizable.field.reasoningEffort">默认推理强度</span>
-                      </label>
-                      <label class="checkbox-row" for="presetAgentCustomizableToolNames">
-                        <input id="presetAgentCustomizableToolNames" type="checkbox" />
-                        <span data-i18n="presetAgents.customizable.field.toolNames">工具集合</span>
-                      </label>
-                      <label class="checkbox-row" for="presetAgentCustomizableApprovalMode">
-                        <input id="presetAgentCustomizableApprovalMode" type="checkbox" />
-                        <span data-i18n="presetAgents.customizable.field.approvalMode">审批模式</span>
-                      </label>
-                    </div>
-                  </div>
+                  
                 </div>
               </div>
 
@@ -805,77 +690,7 @@
                 </div>
               </div>
 
-              <div class="preset-agent-sync-card preset-binding-card">
-                <div class="preset-agent-sync-head">
-                  <div class="preset-agent-sync-title" data-i18n="presetAgents.bindings.title">绑定用户</div>
-                  <span id="presetBindingContractBadge" class="preset-contract-badge" style="display: none"></span>
-                </div>
-                <div class="tips" data-i18n="presetAgents.bindings.tip">
-                  每个用户仅有一个智能体实例，由绑定的预设生成；解绑必须指定新预设；操作前会显示影响面预览。
-                </div>
-                <div class="preset-binding-toolbar">
-                  <input
-                    id="presetBindingSearchInput"
-                    type="text"
-                    placeholder="按用户或智能体筛选"
-                    data-i18n-placeholder="presetAgents.bindings.searchPlaceholder"
-                  />
-                  <button id="presetBindingSearchBtn" class="secondary btn-with-icon" type="button">
-                    <i class="fa-solid fa-magnifying-glass"></i>
-                    <span data-i18n="common.search">筛选</span>
-                  </button>
-                  <button id="presetBindingReloadBtn" class="secondary btn-with-icon" type="button">
-                    <i class="fa-solid fa-arrows-rotate"></i>
-                    <span data-i18n="common.refresh">刷新</span>
-                  </button>
-                  <button id="presetBindingAddBtn" class="secondary btn-with-icon" type="button">
-                    <i class="fa-solid fa-user-plus"></i>
-                    <span data-i18n="presetAgents.bindings.add">绑定用户</span>
-                  </button>
-                  <button id="presetBindingRebindBtn" class="secondary btn-with-icon" type="button">
-                    <i class="fa-solid fa-right-left"></i>
-                    <span data-i18n="presetAgents.bindings.rebind">换绑到另一预设</span>
-                  </button>
-                  <button id="presetBindingUnbindBtn" class="danger btn-with-icon" type="button">
-                    <i class="fa-solid fa-link-slash"></i>
-                    <span data-i18n="presetAgents.bindings.unbind">解绑并迁移</span>
-                  </button>
-                </div>
-                <div id="presetBindingSummary" class="muted preset-binding-summary"></div>
-                <div class="monitor-table-scroll preset-binding-table-scroll">
-                  <table class="monitor-table preset-binding-table">
-                    <thead>
-                      <tr>
-                        <th class="preset-binding-select-cell">
-                          <input
-                            id="presetBindingSelectAll"
-                            type="checkbox"
-                            data-i18n-aria-label="presetAgents.bindings.table.selectAll"
-                          />
-                        </th>
-                        <th data-i18n="presetAgents.bindings.table.user">用户</th>
-                        <th data-i18n="presetAgents.bindings.table.agent">绑定智能体</th>
-                        <th data-i18n="presetAgents.bindings.table.customized">自定义字段</th>
-                      </tr>
-                    </thead>
-                    <tbody id="presetBindingTableBody"></tbody>
-                  </table>
-                  <div id="presetBindingEmpty" class="muted" data-i18n="presetAgents.bindings.empty">
-                    该预设暂无绑定用户
-                  </div>
-                </div>
-                <div id="presetBindingPagination" class="monitor-pagination">
-                  <div id="presetBindingPageInfo" class="monitor-pagination-info"></div>
-                  <div class="monitor-pagination-controls">
-                    <button id="presetBindingPrevBtn" class="secondary" type="button" data-i18n="pagination.prev">
-                      上一页
-                    </button>
-                    <button id="presetBindingNextBtn" class="secondary" type="button" data-i18n="pagination.next">
-                      下一页
-                    </button>
-                  </div>
-                </div>
-              </div>
+              
             </div>
           </div>
         </section>
@@ -1049,6 +864,12 @@
                 </button>
                 <button id="userAccountCleanupBtn" class="secondary btn-with-icon btn-compact icon-only" type="button" data-i18n-title="userAccounts.action.cleanupTest" data-i18n-aria-label="userAccounts.action.cleanupTest">
                   <i class="fa-solid fa-trash"></i>
+                </button>
+                <button id="userAccountImportBtn" class="secondary btn-with-icon btn-compact icon-only" type="button" data-i18n-title="userAccounts.action.import" data-i18n-aria-label="userAccounts.action.import">
+                  <i class="fa-solid fa-file-import"></i>
+                </button>
+                <button id="userAccountExportBtn" class="secondary btn-with-icon btn-compact icon-only" type="button" data-i18n-title="userAccounts.action.export" data-i18n-aria-label="userAccounts.action.export">
+                  <i class="fa-solid fa-file-export"></i>
                 </button>
                 <button id="userAccountCreateBtn" class="btn-with-icon btn-compact icon-only" type="button" data-i18n-title="userAccounts.action.create" data-i18n-aria-label="userAccounts.action.create">
                   <i class="fa-solid fa-user-plus"></i>
@@ -1575,119 +1396,10 @@
               </button>
             </div>
           </div>
-          <div class="tips" data-i18n="debug.tip">
-            本页面用于快速测试 /wunder 接口（SSE 或非流式）。请确保后端服务已启动，并且地址可访问。
-            如果使用 file:// 打开页面，浏览器可能拦截跨域请求，请使用本地静态服务或开启 CORS。
-          </div>
           <div class="debug-layout">
             <div class="debug-form">
               <div class="form-section debug-form-section">
-                <div id="debugWorkspaceMount">
-                  <div id="workspaceSharedBlock" class="form-row">
-                  <div class="workspace-header">
-                    <label data-i18n="workspace.panel.title">用户工作目录</label>
-                    <div class="workspace-actions">
-                      <button
-                        id="workspaceUpBtn"
-                        class="secondary btn-with-icon icon-only"
-                        type="button"
-                        title="上级"
-                        aria-label="上级"
-                        data-i18n-title="workspace.action.up"
-                        data-i18n-aria-label="workspace.action.up"
-                      >
-                        <i class="fa-solid fa-arrow-up"></i>
-                      </button>
-                      <button
-                        id="workspaceRefreshBtn"
-                        class="secondary btn-with-icon icon-only"
-                        type="button"
-                        title="刷新"
-                        aria-label="刷新"
-                        data-i18n-title="common.refresh"
-                        data-i18n-aria-label="common.refresh"
-                      >
-                        <i class="fa-solid fa-arrows-rotate"></i>
-                      </button>
-                      <button
-                        id="workspaceClearBtn"
-                        class="secondary btn-with-icon icon-only"
-                        type="button"
-                        title="清空"
-                        aria-label="清空"
-                        data-i18n-title="workspace.action.clear"
-                        data-i18n-aria-label="workspace.action.clear"
-                      >
-                        <i class="fa-solid fa-trash"></i>
-                      </button>
-                      <button
-                        id="workspaceUploadBtn"
-                        class="btn-with-icon icon-only"
-                        type="button"
-                        title="上传"
-                        aria-label="上传"
-                        data-i18n-title="workspace.action.upload"
-                        data-i18n-aria-label="workspace.action.upload"
-                      >
-                        <i class="fa-solid fa-upload"></i>
-                      </button>
-                      <button
-                        id="workspaceDownloadAllBtn"
-                        class="secondary btn-with-icon icon-only"
-                        type="button"
-                        title="全下"
-                        aria-label="全下"
-                        data-i18n-title="workspace.action.downloadAll"
-                        data-i18n-aria-label="workspace.action.downloadAll"
-                      >
-                        <i class="fa-solid fa-download"></i>
-                      </button>
-                    </div>
-                  </div>
-                  <div class="workspace-desc muted" data-i18n="workspace.panel.desc">
-                    每个用户只有一个云端目录，位于服务端数据根下的用户目录；没有容器选择，也不绑定本地路径。
-                  </div>
-                  <div id="workspacePath" class="workspace-path">/</div>
-                  <div class="workspace-toolbar">
-                    <div class="workspace-search">
-                      <i class="fa-solid fa-magnifying-glass"></i>
-                      <input
-                        id="workspaceSearchInput"
-                        type="text"
-                        placeholder="搜索工作区（名称）"
-                        data-i18n-placeholder="workspace.search.placeholder"
-                      />
-                    </div>
-                    <div id="workspaceSelectionMeta" class="workspace-selection-meta muted"></div>
-                  </div>
-                  <div id="workspaceStats" class="workspace-stats">
-                    <div class="workspace-stats-head">
-                      <span class="workspace-stats-label" data-i18n="workspace.stats.title">目录用量</span>
-                      <span id="workspaceStatsText" class="workspace-stats-text muted"></span>
-                    </div>
-                    <div id="workspaceStatsQuota" class="workspace-stats-quota is-hidden">
-                      <div id="workspaceStatsQuotaFill" class="workspace-stats-quota-fill"></div>
-                    </div>
-                    <div id="workspaceStatsNote" class="workspace-stats-note muted is-hidden"></div>
-                  </div>
-                  <div id="workspaceUploadProgress" class="workspace-upload-progress" aria-live="polite">
-                    <div class="workspace-upload-bar">
-                      <div id="workspaceUploadProgressBar" class="workspace-upload-bar-fill"></div>
-                    </div>
-                    <div id="workspaceUploadProgressText" class="workspace-upload-text"></div>
-                  </div>
-                  <div id="workspaceList" class="workspace-list"></div>
-                  </div>
-                </div>
-              <div class="form-row debug-attachments">
-                <div class="debug-attachments-header">
-                  <label data-i18n="debug.attachments.title">附件</label>
-                  <div id="debugAttachmentMeta" class="muted"></div>
-                </div>
-                <div id="debugAttachmentList" class="debug-attachments-list" data-i18n="debug.attachments.empty">
-                  暂未附加文件或图片
-                </div>
-              </div>
+              
 
               <div id="debugStabilityPanel" class="form-row debug-stability is-hidden">
                 <div class="debug-stability-header">
@@ -1737,19 +1449,6 @@
               <!-- 操作按钮：发送、停止 -->
               <div class="actions debug-actions">
                 <button
-                  id="debugStabilityToggleBtn"
-                  class="secondary btn-with-icon icon-only"
-                  type="button"
-                  title="长对话稳定性测试"
-                  aria-label="长对话稳定性测试"
-                  aria-expanded="false"
-                  aria-controls="debugStabilityPanel"
-                  data-i18n-title="debug.stability.title"
-                  data-i18n-aria-label="debug.stability.title"
-                >
-                  <i class="fa-solid fa-shield-halved"></i>
-                </button>
-                <button
                   id="debugCompactionBtn"
                   class="secondary btn-with-icon icon-only"
                   type="button"
@@ -1794,6 +1493,80 @@
                   <i class="fa-solid fa-paper-plane"></i>
                 </button>
               </div>
+                <div id="debugWorkspaceMount">
+                  <div id="workspaceSharedBlock" class="form-row">
+                  <div class="workspace-header">
+                    <label data-i18n="workspace.panel.title">用户工作目录</label>
+                    <div class="workspace-actions">
+                      <button
+                        id="workspaceRefreshBtn"
+                        class="secondary btn-with-icon icon-only"
+                        type="button"
+                        title="刷新"
+                        aria-label="刷新"
+                        data-i18n-title="common.refresh"
+                        data-i18n-aria-label="common.refresh"
+                      >
+                        <i class="fa-solid fa-arrows-rotate"></i>
+                      </button>
+                      <button
+                        id="workspaceClearBtn"
+                        class="secondary btn-with-icon icon-only"
+                        type="button"
+                        title="清空"
+                        aria-label="清空"
+                        data-i18n-title="workspace.action.clear"
+                        data-i18n-aria-label="workspace.action.clear"
+                      >
+                        <i class="fa-solid fa-trash"></i>
+                      </button>
+                      <button
+                        id="workspaceUploadBtn"
+                        class="btn-with-icon icon-only"
+                        type="button"
+                        title="上传"
+                        aria-label="上传"
+                        data-i18n-title="workspace.action.upload"
+                        data-i18n-aria-label="workspace.action.upload"
+                      >
+                        <i class="fa-solid fa-upload"></i>
+                      </button>
+                      <button
+                        id="workspaceDownloadAllBtn"
+                        class="secondary btn-with-icon icon-only"
+                        type="button"
+                        title="全下"
+                        aria-label="全下"
+                        data-i18n-title="workspace.action.downloadAll"
+                        data-i18n-aria-label="workspace.action.downloadAll"
+                      >
+                        <i class="fa-solid fa-download"></i>
+                      </button>
+                    </div>
+                  </div>
+                  
+                  <div class="workspace-toolbar">
+                    <div id="workspaceSelectionMeta" class="workspace-selection-meta muted"></div>
+                  </div>
+                  <div id="workspaceStats" class="workspace-stats">
+                    <div class="workspace-stats-head">
+                      <span class="workspace-stats-label" data-i18n="workspace.stats.title">目录用量</span>
+                      <span id="workspaceStatsText" class="workspace-stats-text muted"></span>
+                    </div>
+                    <div id="workspaceStatsQuota" class="workspace-stats-quota is-hidden">
+                      <div id="workspaceStatsQuotaFill" class="workspace-stats-quota-fill"></div>
+                    </div>
+                    <div id="workspaceStatsNote" class="workspace-stats-note muted is-hidden"></div>
+                  </div>
+                  <div id="workspaceUploadProgress" class="workspace-upload-progress" aria-live="polite">
+                    <div class="workspace-upload-bar">
+                      <div id="workspaceUploadProgressBar" class="workspace-upload-bar-fill"></div>
+                    </div>
+                    <div id="workspaceUploadProgressText" class="workspace-upload-text"></div>
+                  </div>
+                  <div id="workspaceList" class="workspace-list"></div>
+                  </div>
+                </div>
               </div>
             </div>
             <div class="panel-logs panel-trajectory">
@@ -1850,7 +1623,6 @@
                       <option value="evaluation" data-i18n="panel.evaluation">Evaluation</option>
                       <option value="multimodalDebug" data-i18n="panel.multimodalDebug">Multimodal Debug</option>
                       <option value="debug" data-i18n="panel.debug">Debug</option>
-                      <option value="lsp" data-i18n="panel.lsp">LSP</option>
                       <option value="docsSite" data-i18n="panel.docsSite">Docs Site</option>
                       <option value="apiDocs" data-i18n="panel.apiDocs">API Docs</option>
                     </select>
@@ -2366,119 +2138,6 @@
                 </div>
               </div>
               <div id="mcpToolList" class="tool-list"></div>
-            </div>
-          </div>
-        </section>
-        <section id="lspPanel" class="panel">
-          <div class="list-header lsp-list-header">
-            <div class="lsp-title-group">
-              <h1 data-i18n="lsp.title">LSP 服务</h1>
-              <button id="lspStatusIndicator" class="status-indicator status-indicator-compact" type="button">
-                <span class="status-dot"></span>
-              </button>
-              <label class="checkbox-row checkbox-compact lsp-title-toggle">
-                <input id="lspEnabled" type="checkbox" />
-                <span data-i18n="lsp.config.enabled">启用 LSP</span>
-              </label>
-            </div>
-            <div class="header-actions lsp-header-actions">
-              <button id="lspConfigBtn" class="btn-with-icon" type="button">
-                <i class="fa-solid fa-sliders"></i>
-                <span data-i18n="lsp.action.config">LSP 配置</span>
-              </button>
-              <div class="lsp-inline-controls">
-                <label for="lspTestUserId" class="lsp-inline-label" data-i18n="lsp.workspace.userId">user_id</label>
-                <input id="lspTestUserId" type="text" placeholder="demo_user" />
-              </div>
-            </div>
-          </div>
-          <div class="tips" data-i18n="lsp.tip">
-            配置并启用 LSP 服务后，可为模型提供代码导航、符号检索与诊断能力。
-          </div>
-          <div class="lsp-layout lsp-layout-main">
-            <div class="lsp-column lsp-column-main">
-              <div class="settings-card lsp-workspace-card">
-                <div class="settings-card-title">
-                  <i class="fa-solid fa-folder-tree"></i>
-                  <span data-i18n="lsp.workspace.title">LSP 调试工作区</span>
-                </div>
-                <div id="lspWorkspaceMount" class="lsp-workspace-mount"></div>
-                <div class="muted" data-i18n="lsp.workspace.tip">
-                  复用调试面板的临时文件区，保存文件后自动触发 LSP 刷新。
-                </div>
-              </div>
-              <div class="settings-card lsp-result-card">
-                <div class="settings-card-title lsp-result-header">
-                  <i class="fa-solid fa-terminal"></i>
-                  <span data-i18n="lsp.result.title">LSP 结果</span>
-                  <span id="lspResultMeta" class="muted lsp-result-meta"></span>
-                  <span
-                    id="lspResultStatus"
-                    class="lsp-result-status"
-                    data-status="idle"
-                    aria-live="polite"
-                  >
-                    <span class="status-dot"></span>
-                    <span id="lspResultStatusText" class="lsp-result-status-text" data-i18n="lsp.result.status.idle">空闲</span>
-                  </span>
-                </div>
-                <pre id="lspTestResult" class="tool-schema"></pre>
-              </div>
-            </div>
-            <div class="lsp-column lsp-column-editor">
-              <div class="settings-card lsp-editor-card">
-                <div class="settings-card-title lsp-editor-header">
-                  <div>
-                    <div id="lspEditorTitle" class="detail-title">编辑文件</div>
-                    <div id="lspEditorPath" class="muted"></div>
-                  </div>
-                  <div class="lsp-editor-actions">
-                    <button
-                      id="lspEditorUndo"
-                      class="secondary btn-with-icon icon-only"
-                      type="button"
-                      title="撤销"
-                      aria-label="撤销"
-                      data-i18n-title="common.undo"
-                      data-i18n-aria-label="common.undo"
-                    >
-                      <i class="fa-solid fa-rotate-left"></i>
-                    </button>
-                    <button
-                      id="lspEditorRedo"
-                      class="secondary btn-with-icon icon-only"
-                      type="button"
-                      title="恢复"
-                      aria-label="恢复"
-                      data-i18n-title="common.redo"
-                      data-i18n-aria-label="common.redo"
-                    >
-                      <i class="fa-solid fa-rotate-right"></i>
-                    </button>
-                    <button
-                      id="lspEditorSave"
-                      class="btn-with-icon icon-only"
-                      type="button"
-                      title="保存"
-                      aria-label="保存"
-                      data-i18n-title="common.save"
-                      data-i18n-aria-label="common.save"
-                    >
-                      <i class="fa-solid fa-floppy-disk"></i>
-                    </button>
-                  </div>
-                </div>
-                <div id="lspEditorStatus" class="muted mcp-test-status"></div>
-                <div class="lsp-editor-body">
-                  <pre id="lspEditorHighlight" class="lsp-editor-highlight"></pre>
-                  <textarea
-                    id="lspEditorContent"
-                    class="workspace-editor-text"
-                    placeholder="选择文件开始编辑"
-                    data-i18n-placeholder="lsp.workspace.editor.placeholder"
-                  ></textarea>
-                </div>
-              </div>
             </div>
           </div>
         </section>
@@ -4297,28 +3956,53 @@
               <option value="disabled">disabled</option>
             </select>
           </div>
+        </form>
+        <div class="modal-actions">
+          <button id="userAccountModalCancel" class="secondary btn-with-icon" type="button">
+            <i class="fa-solid fa-xmark"></i><span data-i18n="common.cancel">取消</span>
+          </button>
+          <button id="userAccountModalSave" class="btn-with-icon" type="button">
+            <i class="fa-solid fa-floppy-disk"></i><span data-i18n="common.save">保存</span>
+          </button>
+        </div>
+      </div>
+    </div>
+    <div id="userAccountImportModal" class="modal">
+      <div class="modal-card">
+        <div class="modal-header">
+          <div class="detail-title" data-i18n="userAccounts.modal.import.title">批量导入用户</div>
+          <button id="userAccountImportModalClose" class="icon-btn" type="button">×</button>
+        </div>
+        <div class="modal-body">
           <div class="form-row form-row-span">
-            <label for="userAccountImportFile" data-i18n="userAccounts.modal.import.file">Excel file</label>
+            <label for="userAccountImportFile" data-i18n="userAccounts.modal.import.file">批量导入 Excel</label>
             <input
               id="userAccountImportFile"
               type="file"
               accept=".xlsx,.xls,.xlsm,.xlsb,.ods"
             />
             <div id="userAccountImportHint" class="muted" data-i18n="userAccounts.modal.import.hint">
-              First row must contain username and password columns. Optional columns: email, unit_id, status, roles.
+              首行需包含 username/用户名 与 password/密码，可选 email/邮箱、unit_id/单位、status/状态、roles/角色。
+            </div>
+            <div class="tips" data-i18n="userAccounts.modal.import.limit">
+              单次最多 1000 行、文件不超过 8MB；用户名重复或已存在会跳过该行，其余行继续导入。
             </div>
           </div>
+          <div class="form-row form-row-span">
+            <button id="userAccountImportTemplateBtn" class="secondary btn-with-icon" type="button">
+              <i class="fa-solid fa-file-arrow-down"></i>
+              <span data-i18n="userAccounts.modal.import.template">下载导入模板</span>
+            </button>
+          </div>
           <div id="userAccountImportResult" class="muted user-account-import-result" aria-live="polite"></div>
-        </form>
+        </div>
         <div class="modal-actions">
-          <button id="userAccountModalCancel" class="secondary btn-with-icon" type="button">
+          <button id="userAccountImportModalCancel" class="secondary btn-with-icon" type="button">
             <i class="fa-solid fa-xmark"></i><span data-i18n="common.cancel">取消</span>
           </button>
-          <button id="userAccountImportBtn" class="secondary btn-with-icon" type="button">
-            <i class="fa-solid fa-file-arrow-up"></i><span data-i18n="userAccounts.modal.import.action">Import</span>
-          </button>
-          <button id="userAccountModalSave" class="btn-with-icon" type="button">
-            <i class="fa-solid fa-floppy-disk"></i><span data-i18n="common.save">保存</span>
+          <button id="userAccountImportSubmitBtn" class="btn-with-icon" type="button">
+            <i class="fa-solid fa-file-arrow-up"></i>
+            <span data-i18n="userAccounts.modal.import.action">开始导入</span>
           </button>
         </div>
       </div>
@@ -4974,82 +4658,6 @@
     <div id="toastContainer" class="toast-container"></div>
 
   
-    <div id="lspConfigModal" class="modal">
-      <div class="modal-card modal-card-lg">
-        <div class="modal-header">
-          <div class="detail-title" data-i18n="lsp.config.title">LSP 配置</div>
-          <div class="modal-header-actions">
-            <button id="lspSaveBtn" class="btn-with-icon btn-compact" type="button">
-              <i class="fa-solid fa-check"></i><span data-i18n="common.save">保存</span>
-            </button>
-            <button id="lspConfigModalClose" class="icon-btn" type="button">&times;</button>
-          </div>
-        </div>
-        <div class="modal-body">
-          <div class="settings-grid">
-            <div class="form-row">
-              <label for="lspTimeout" data-i18n="lsp.config.timeout">请求超时（秒）</label>
-              <input id="lspTimeout" type="number" min="0" step="1" placeholder="30" />
-            </div>
-            <div class="form-row">
-              <label for="lspDiagnosticsDebounce" data-i18n="lsp.config.debounce">诊断去抖（毫秒）</label>
-              <input id="lspDiagnosticsDebounce" type="number" min="0" step="10" placeholder="150" />
-            </div>
-            <div class="form-row">
-              <label for="lspIdleTtl" data-i18n="lsp.config.idleTtl">空闲回收（秒）</label>
-              <input id="lspIdleTtl" type="number" min="0" step="60" placeholder="1800" />
-            </div>
-            <div class="form-row">
-              <label data-i18n="lsp.config.template">配置模板</label>
-              <div class="form-row-inline">
-                <select id="lspTemplateSelect">
-                  <option value="" data-i18n="lsp.template.select">选择模板</option>
-                  <option value="fullstack" data-i18n="lsp.template.fullstack">全栈</option>
-                  <option value="frontend" data-i18n="lsp.template.frontend">前端</option>
-                  <option value="backend" data-i18n="lsp.template.backend">后端</option>
-                  <option value="cpp" data-i18n="lsp.template.cpp">C/C++</option>
-                  <option value="ops" data-i18n="lsp.template.ops">运维</option>
-                </select>
-                <button id="lspTemplateApplyBtn" class="secondary btn-with-icon" type="button">
-                  <i class="fa-solid fa-wand-magic-sparkles"></i>
-                  <span data-i18n="lsp.template.apply">应用模板</span>
-                </button>
-              </div>
-              <div class="muted" data-i18n="lsp.config.templateHint">
-                选择模板后会覆盖服务列表，请先确认保存的配置。
-              </div>
-            </div>
-            <div class="form-row">
-              <label for="lspServers" data-i18n="lsp.config.servers">LSP 服务（JSON 数组）</label>
-              <textarea
-                id="lspServers"
-                class="code-preview"
-                placeholder='[{"id":"rust-analyzer","command":["rust-analyzer"],"extensions":["rs"],"root_markers":["Cargo.toml"],"enabled":true}]'
-              ></textarea>
-              <div class="muted" data-i18n="lsp.config.serversHint">
-                每个服务需要 id/command，extensions 与 root_markers 用于匹配项目与文件类型。
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-    <div id="lspStatusModal" class="modal">
-      <div class="modal-card">
-        <div class="modal-header">
-          <div class="detail-title" data-i18n="lsp.status.title">连接状态</div>
-          <div class="modal-header-actions">
-            <button id="lspRefreshBtn" class="secondary btn-with-icon btn-compact" type="button">
-              <i class="fa-solid fa-arrows-rotate"></i><span data-i18n="common.refresh">刷新</span>
-            </button>
-            <button id="lspStatusModalClose" class="icon-btn" type="button">&times;</button>
-          </div>
-        </div>
-        <div class="modal-body">
-          <div id="lspStatusList" class="list-body"></div>
-        </div>
-      </div>
-    </div>
     <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
       <g id="airlockTreeLines" fill="none" stroke-linecap="round">
         <line pathLength="1" x1="200" y1="42" x2="330" y2="138"/>
@@ -5134,6 +4742,6 @@
     </div>
     <script src="./third/echarts/echarts.min.js?v=20260118-07"></script>
     <script src="./third/marked.min.js?v=20260118-07"></script>
-    <script type="module" src="./app.js?v=20261015-03"></script>
+    <script type="module" src="./app.js?v=20261015-06"></script>
   </body>
 </html>

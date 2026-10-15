@@ -2204,7 +2204,7 @@ export default {
   'chat.composer.queue.title': '排队中',
   'chat.composer.queue.count': '共 {count} 条',
   'chat.composer.queue.interject': '插话',
-  'chat.composer.queue.interjectHint': '提到队首，在当前动作边界优先执行这一条',
+  'chat.composer.queue.interjectHint': '立即中断当前回复并优先发送这一条',
   'chat.composer.queue.edit': '编辑',
   'chat.composer.queue.editHint': '撤下这一条并放回输入框',
   'chat.composer.queue.remove': '删除',

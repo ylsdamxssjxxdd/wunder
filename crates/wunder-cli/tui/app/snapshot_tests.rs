@@ -5193,14 +5193,20 @@ async fn model_add_registers_the_endpoint_in_the_shared_store() {
         .models
         .get("demo-chat-model")
         .expect("the registered entry");
-    assert_eq!(entry.base_url.as_deref(), Some("https://api.example.test/v1"));
+    assert_eq!(
+        entry.base_url.as_deref(),
+        Some("https://api.example.test/v1")
+    );
     assert_eq!(entry.api_key.as_deref(), Some("sk-fixture-model"));
     assert_eq!(entry.model.as_deref(), Some("demo-chat-model"));
     assert_eq!(entry.model_type.as_deref(), Some("llm"));
     assert_eq!(entry.enable, Some(true));
     assert_eq!(entry.max_context, Some(32000));
     assert_eq!(config.llm.default, "demo-chat-model");
-    assert_ne!(before, config.llm.default, "a new model becomes the default");
+    assert_ne!(
+        before, config.llm.default,
+        "a new model becomes the default"
+    );
 
     // The user layer has to state the same endpoint, otherwise the next start
     // projects a config without it and the entry reads as unreachable.
@@ -5226,7 +5232,10 @@ async fn model_add_collects_the_missing_fields_one_answer_at_a_time() {
     app.handle_slash_command("/model add".to_string())
         .await
         .expect("open the wizard");
-    assert!(app.model_wizard.is_some(), "/model add must open the wizard");
+    assert!(
+        app.model_wizard.is_some(),
+        "/model add must open the wizard"
+    );
     assert!(asked(&app, "1"), "the first question is base_url");
 
     app.handle_model_wizard_input("https://api.example.test/v1")
@@ -5268,12 +5277,22 @@ async fn model_add_seeds_the_wizard_with_what_the_caller_already_typed() {
         .expect("partial endpoint");
 
     let wizard = app.model_wizard.as_ref().expect("seeded wizard");
-    assert_eq!(wizard.base_url.as_deref(), Some("https://api.example.test/v1"));
+    assert_eq!(
+        wizard.base_url.as_deref(),
+        Some("https://api.example.test/v1")
+    );
     assert_eq!(wizard.api_key.as_deref(), Some("sk-fixture-model"));
     assert!(wizard.model_name.is_none());
     let texts: Vec<String> = app.logs.iter().map(|entry| entry.text.clone()).collect();
-    let asked = |step: &str| texts.iter().any(|text| text.contains(&format!("step {step}/4")));
-    assert!(asked("3"), "the wizard must ask for the model name: {texts:?}");
+    let asked = |step: &str| {
+        texts
+            .iter()
+            .any(|text| text.contains(&format!("step {step}/4")))
+    };
+    assert!(
+        asked("3"),
+        "the wizard must ask for the model name: {texts:?}"
+    );
     assert!(
         texts
             .iter()
@@ -5329,10 +5348,8 @@ async fn a_model_registered_for_another_job_is_not_switchable() {
         "a non-chat entry must not become the session model"
     );
     assert!(
-        !crate::sorted_model_names(
-            &app.runtime.state.config_store.get().await
-        )
-        .contains(&"fixture-embedder".to_string()),
+        !crate::sorted_model_names(&app.runtime.state.config_store.get().await)
+            .contains(&"fixture-embedder".to_string()),
         "the model list must not offer an embedding entry"
     );
 }

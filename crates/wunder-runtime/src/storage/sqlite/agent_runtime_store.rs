@@ -78,8 +78,9 @@ impl SqliteAgentRuntimeStorage for SqliteStorage {
         }
         let payload =
             serde_json::to_string(&record.request_payload).unwrap_or_else(|_| "{}".to_string());
-        let conn = self.open()?;
-        conn.execute(
+        let mut conn = self.open()?;
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        tx.execute(
             "INSERT INTO agent_tasks (task_id, thread_id, user_id, agent_id, session_id, status, request_payload, request_id, retry_count, retry_at, created_at, updated_at, started_at, finished_at, last_error) \
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
              ON CONFLICT(task_id) DO UPDATE SET status = excluded.status, request_payload = excluded.request_payload, \
@@ -103,6 +104,13 @@ impl SqliteAgentRuntimeStorage for SqliteStorage {
                 record.last_error.as_deref()
             ],
         )?;
+        crate::storage::thread_queue::park_input(
+            &mut super::thread_view_store::Db(&tx),
+            cleaned_user,
+            &record.session_id,
+            &record.request_payload,
+        )?;
+        tx.commit()?;
         Ok(())
     }
 

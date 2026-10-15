@@ -399,6 +399,7 @@ pub(crate) async fn resume_queued_thread_view(
         Some(feeder_cancel.clone()),
     );
     tokio::pin!(feeder);
+    let mut last_task_status = String::new();
     loop {
         tokio::select! {
             _=&mut feeder=>return,
@@ -437,6 +438,16 @@ pub(crate) async fn resume_queued_thread_view(
                 );
                 return;
             }
+            // A queued request is accepted before it starts, so an older
+            // display cursor can miss the hand-off row while the queue feeder
+            // is switching subscriptions. Re-send the bounded current view
+            // at the running edge; the client merges by row revision and
+            // receives the user bubble without a page refresh.
+            if task.status == "running" && last_task_status != "running" {
+                tokio::time::sleep(std::time::Duration::from_millis(40)).await;
+                send_final_thread_view(&state, &session, &user, request, &tx).await;
+            }
+            last_task_status = task.status.clone();
         }
     }
 }

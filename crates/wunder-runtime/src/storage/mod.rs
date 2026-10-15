@@ -22,6 +22,7 @@ mod session_cleanup;
 #[cfg(any(feature = "sqlite-storage", test))]
 mod sqlite;
 pub(crate) mod stress_model;
+mod thread_queue;
 mod thread_view_projection;
 mod thread_view_source;
 mod thread_view_store;

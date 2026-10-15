@@ -1,5 +1,6 @@
 import { isTerminalLlmOutputPayload as isTerminalLlmOutput } from '@/utils/chatStreamTerminal';
 import type { ChatRuntimeEvent } from './chatRuntimeTypes';
+import { resolveQueueWaitReason } from '@/stores/chatQueueProjection';
 
 type CanonicalBuildOptions = {
   sessionId: string;
@@ -588,11 +589,14 @@ export const buildCanonicalChatRuntimeEvents = (
   }
 
   if (eventType === 'queued' || eventType === 'queue_enter' || eventType === 'queue_update') {
+    const waitReason = resolveQueueWaitReason(payload);
+    const runtimeStatus = waitReason === 'capacity' ? 'queued' : 'running';
+    const queuePayload = waitReason ? { ...payload, queue_wait_reason: waitReason } : payload;
     return [
-      buildBaseEvent(options, 'session_runtime', {
-        runtime_status: 'queued'
+      buildBaseEvent({ ...options, payload: queuePayload }, 'session_runtime', {
+        runtime_status: runtimeStatus
       }),
-      buildBaseEvent(options, 'queue_status', {
+      buildBaseEvent({ ...options, payload: queuePayload }, 'queue_status', {
         strict: false,
         event_seq: null
       }, 'queue')

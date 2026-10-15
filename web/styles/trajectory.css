@@ -451,6 +451,7 @@
   border-collapse: collapse;
   font-size: 12px;
   line-height: 18px;
+  border-spacing: 0;
 }
 
 .tt-col-event {
@@ -459,6 +460,7 @@
 
 .tt-row td {
   height: 30px;
+  box-sizing: border-box;
   padding: 0 8px;
   border-bottom: 0.5px solid var(--tt-border);
   vertical-align: middle;

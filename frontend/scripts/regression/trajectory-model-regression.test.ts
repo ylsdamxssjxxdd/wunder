@@ -90,6 +90,46 @@ test('usage accepts DSH camelCase and nested persisted shapes', () => {
   }), { input: 20, output: 4 });
 });
 
+test('assistant overview keeps response in output and never duplicates it as input', async () => {
+  const turns = buildTrajectoryLayout([{ user_turn_index: 2, items: [
+    { kind: 'assistant_message', payload: {
+      event_type: 'assistant_message', content: 'model response',
+      reasoning_content: 'model reasoning'
+    } }
+  ] }], translate);
+  const [assistant] = flattenRecords(turns).map(record => record.cell);
+  assert.equal(assistant?.inputDetail, undefined);
+  assert.equal(assistant?.outputDetail, 'model response');
+  assert.equal(assistant?.thinkingDetail, 'model reasoning');
+
+  const bridgeSource = readFileSync(resolve(__dirname, '../../web/modules/trajectory-model.js'), 'utf8');
+  const bridge = await import(`data:text/javascript;base64,${Buffer.from(bridgeSource).toString('base64')}`);
+  const bridgeCell = bridge.flattenRecords(bridge.buildTrajectoryLayout([
+    { user_turn_index: 2, items: [{ kind: 'assistant_message', payload: {
+      event_type: 'assistant_message', content: 'model response', reasoning_content: 'model reasoning'
+    } }] }
+  ], translate)).map((record: any) => record.cell)[0];
+  assert.equal(bridgeCell.inputDetail, undefined);
+  assert.equal(bridgeCell.outputDetail, 'model response');
+});
+
+test('compaction uses summary_text instead of the history placeholder and ignores marker rows', async () => {
+  const bridgeSource = readFileSync(resolve(__dirname, '../../web/modules/trajectory-model.js'), 'utf8');
+  const bridge = await import(`data:text/javascript;base64,${Buffer.from(bridgeSource).toString('base64')}`);
+  const turns = bridge.buildTrajectoryLayout([{ user_turn_index: 1, items: [
+    { kind: 'assistant_message', payload: {
+      content: 'summary marker', meta: { type: 'manual_compaction_marker', manual_compaction: true }
+    } },
+    { kind: 'compaction', payload: {
+      event_type: 'compaction', content: 'history', summary_text: 'real durable summary'
+    } }
+  ] }], translate);
+  const cells = bridge.flattenRecords(turns).map((record: any) => record.cell);
+  assert.equal(cells.some((cell: any) => cell.text === 'summary marker'), false);
+  const compacted = cells.find((cell: any) => cell.kind === 'compacted');
+  assert.equal(compacted?.text, 'real durable summary');
+});
+
 test('turn summaries preserve the first row and restore the hidden turn on expansion', () => {
   const turns = buildTrajectoryLayout([{
     user_turn_index: 4,

@@ -1404,6 +1404,8 @@ async fn admin_users(State(state): State<Arc<AppState>>) -> Result<Json<Value>, 
         history_sessions: i64,
         total_sessions: i64,
         consumed_tokens: i64,
+        /// 额度消耗：按“每次模型请求消耗 1 额度”，聚合用户各会话的请求数。
+        quota_used: i64,
         chat_records: i64,
         tool_calls: i64,
         agent_ids: HashSet<String>,
@@ -1426,6 +1428,11 @@ async fn admin_users(State(state): State<Arc<AppState>>) -> Result<Json<Value>, 
         }
         let entry = summary.entry(user_id.to_string()).or_default();
         entry.total_sessions += 1;
+        entry.quota_used += session
+            .get("quota_used")
+            .and_then(Value::as_i64)
+            .or_else(|| session.get("model_request_count").and_then(Value::as_i64))
+            .unwrap_or(0);
         entry.consumed_tokens += session
             .get("consumed_tokens")
             .and_then(Value::as_i64)
@@ -1492,6 +1499,7 @@ async fn admin_users(State(state): State<Arc<AppState>>) -> Result<Json<Value>, 
                 "chat_records": stats.chat_records,
                 "tool_calls": stats.tool_calls,
                 "consumed_tokens": stats.consumed_tokens,
+                "quota_used_total": stats.quota_used,
                 "context_tokens": stats.consumed_tokens,
                 "context_occupancy_tokens": stats.consumed_tokens,
                 "agent_count": agent_count
@@ -1534,10 +1542,22 @@ async fn admin_users(State(state): State<Arc<AppState>>) -> Result<Json<Value>, 
             // 线程管理页展示：注入用户等级与额度消耗（数据源为用户档案）。
             if let Ok(Some(record)) = state.user_store.get_user_by_id(&user_id) {
                 let profile = UserStore::to_profile(&record);
-                map.insert("level".to_string(), json!(profile.level));
-                map.insert("quota_used_total".to_string(), json!(profile.quota_used_total));
+                // 额度消耗按“每次模型请求消耗 1 额度”统计：档案缺少消费记录时回退为
+                // 监控会话聚合出的真实请求数，避免恒为 0；等级至少为 1。
+                let usage_quota = map
+                    .get("quota_used_total")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(0);
+                map.insert("level".to_string(), json!(profile.level.max(1)));
+                map.insert(
+                    "quota_used_total".to_string(),
+                    json!(profile.quota_used_total.max(usage_quota)),
+                );
                 map.insert("quota_balance".to_string(), json!(profile.quota_balance));
-                map.insert("quota_granted_total".to_string(), json!(profile.quota_granted_total));
+                map.insert(
+                    "quota_granted_total".to_string(),
+                    json!(profile.quota_granted_total),
+                );
             }
         }
     }

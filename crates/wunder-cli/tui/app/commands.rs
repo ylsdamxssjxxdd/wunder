@@ -371,11 +371,19 @@ impl TuiApp {
             return;
         };
         let (step, field_zh, field_en) = if wizard.base_url.is_none() {
-            (1, "base_url（留空可取消）", "base_url (empty line to cancel)")
+            (
+                1,
+                "base_url（留空可取消）",
+                "base_url (empty line to cancel)",
+            )
         } else if wizard.api_key.is_none() {
             (2, "api_key（留空可取消）", "api_key (empty line to cancel)")
         } else if wizard.model_name.is_none() {
-            (3, "模型名（留空可取消）", "model name (empty line to cancel)")
+            (
+                3,
+                "模型名（留空可取消）",
+                "model name (empty line to cancel)",
+            )
         } else {
             (
                 4,

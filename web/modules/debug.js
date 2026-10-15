@@ -1,6 +1,6 @@
 // AI生成
 import { APP_CONFIG } from "../app.config.js?v=20260110-04";
-import { elements } from "./elements.js?v=20261011-01";
+import { elements } from "./elements.js?v=20261016-01";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
 import { ensureToolSelectionLoaded, getSelectedToolNames } from "./tools.js?v=20261012-01";
@@ -8,7 +8,7 @@ import { loadWorkspace } from "./workspace.js?v=20260118-07";
 import { notify } from "./notify.js";
 import { formatTimestamp } from "./utils.js?v=20251229-02";
 import { ensureLlmConfigLoaded } from "./llm.js";
-import { getCurrentLanguage, t } from "./i18n.js?v=20261011-01";
+import { getCurrentLanguage, t } from "./i18n.js?v=20261016-01";
 import { resolveApiErrorMessage } from "./api-error.js";
 import { createTrajectoryView, fetchThreadLogSnapshot } from "./trajectory-view.js?v=20261015-03";
 

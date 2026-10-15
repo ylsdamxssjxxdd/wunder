@@ -28,11 +28,11 @@
             class="composer-queue-action composer-queue-action--label"
             type="button"
             data-testid="chat-queue-interject"
-            :disabled="busy || item.priority > 0"
+            :disabled="busy"
             :title="t('chat.composer.queue.interjectHint')"
             @click.stop="handleInterject(item)"
           >
-            <i class="fa-solid fa-rotate-left composer-queue-action-icon" aria-hidden="true"></i>
+            <i class="fa-solid fa-arrow-up-from-bracket composer-queue-action-icon" aria-hidden="true"></i>
             <span>{{ t('chat.composer.queue.interject') }}</span>
           </button>
           <button
@@ -71,6 +71,7 @@ import {
   chatQueueState,
   interjectChatQueueTurn,
   refreshChatQueue,
+  resetChatQueue,
   reorderChatQueueTurns,
   withdrawChatQueueTurn,
   type QueuedTurn
@@ -83,7 +84,7 @@ const emit = defineEmits<{
 }>();
 const { t } = useI18n();
 
-const items = computed(() => chatQueueState.items);
+const items = computed(() => chatQueueState.sessionId === props.sessionId ? chatQueueState.items : []);
 const busy = ref(false);
 const draggingId = ref('');
 const dropIndex = ref(-1);
@@ -92,6 +93,7 @@ watch(
   () => String(props.sessionId || '').trim(),
   (sessionId) => {
     if (sessionId) void refreshChatQueue(sessionId, { silent: true });
+    else resetChatQueue();
   },
   { immediate: true }
 );

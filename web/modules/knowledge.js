@@ -1,11 +1,11 @@
 // AI生成
-import { elements } from "./elements.js?v=20261011-01";
+import { elements } from "./elements.js?v=20261016-01";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
 import { notify } from "./notify.js";
 import { syncPromptTools } from "./tools.js?v=20261012-01";
 import { buildHeadingHighlightHtml, escapeHtml, formatTimestamp } from "./utils.js?v=20251229-02";
-import { t } from "./i18n.js?v=20261011-01";
+import { t } from "./i18n.js?v=20261016-01";
 import { resolveApiErrorMessage } from "./api-error.js";
 
 const knowledgeModal = document.getElementById("knowledgeModal");

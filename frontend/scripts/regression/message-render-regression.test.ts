@@ -131,6 +131,13 @@ test('keeps public workspace markdown paths without rewriting owner scope', () =
   );
 });
 
+test('renders cloud workspace markdown images as workspace resource cards', () => {
+  const html = renderMarkdown('![爱心](/workspaces/sjxx/workspace/爱心.png)');
+  assert.match(html, /ai-resource-card/);
+  assert.match(html, /data-workspace-kind="image"/);
+  assert.match(html, /data-workspace-path="\/workspaces\/sjxx\/workspace\/%E7%88%B1%E5%BF%83\.png"/);
+});
+
 test('uses public workspace paths directly for resource requests', () => {
   const params = buildWorkspaceResourceRequestParams(
     {
@@ -158,8 +165,7 @@ test('keeps scoped parameters for relative workspace resource requests', () => {
   assert.deepEqual(params, {
     path: 'heart.png',
     user_id: 'demo-user',
-    agent_id: 'agent-a',
-    container_id: '3'
+    agent_id: 'agent-a'
   });
 });
 

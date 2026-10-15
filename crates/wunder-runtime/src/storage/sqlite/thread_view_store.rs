@@ -215,6 +215,170 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn admission_queue_reason_and_execution_share_one_durable_head() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = SqliteStorage::new(dir.path().join("fixture.db").to_string_lossy().into());
+        let accepted = storage
+            .accept_thread_turn(
+                "fixture-user",
+                "fixture-thread",
+                &json!({"content":"fixture input"}),
+            )
+            .unwrap();
+        let turn = accepted["turn_id"].as_str().unwrap();
+        let page = storage
+            .thread_view_page("fixture-user", "fixture-thread", "chat", None, 12)
+            .unwrap();
+        assert_eq!(page.chat[0].status, "accepted");
+        assert_eq!(page.runtime_status, "running");
+        assert!(page.chat[0].queued_input.is_none());
+        let admission_seq = page.view_seq;
+        for (reason, expected) in [
+            ("input", "running"),
+            ("scheduler", "running"),
+            ("capacity", "queued"),
+        ] {
+            let payload =
+                json!({"queued_input":{"queue_id":"fixture-queue","reason":reason,"priority":1}});
+            assert!(storage
+                .update_thread_turn(
+                    "fixture-user",
+                    "fixture-thread",
+                    turn,
+                    "queued",
+                    "",
+                    &payload
+                )
+                .unwrap());
+            let page = storage
+                .thread_view_page("fixture-user", "fixture-thread", "chat", None, 12)
+                .unwrap();
+            assert_eq!(page.runtime_status, expected);
+            assert_eq!(page.chat[0].queued_input.as_ref().unwrap().reason, reason);
+            let changes = storage
+                .thread_view_changes("fixture-user", "fixture-thread", admission_seq)
+                .unwrap();
+            assert_eq!(changes.runtime_status, expected);
+            assert_eq!(
+                changes.rows[0].queued_input.as_ref().unwrap().queue_id,
+                "fixture-queue"
+            );
+            assert!(!storage
+                .update_thread_turn(
+                    "fixture-user",
+                    "fixture-thread",
+                    turn,
+                    "queued",
+                    "",
+                    &payload
+                )
+                .unwrap());
+        }
+        storage
+            .update_thread_turn(
+                "fixture-user",
+                "fixture-thread",
+                turn,
+                "running",
+                "",
+                &json!({}),
+            )
+            .unwrap();
+        // A stale scheduler scan cannot reclaim composer ownership after dispatch.
+        assert!(!storage
+            .update_thread_turn(
+                "fixture-user",
+                "fixture-thread",
+                turn,
+                "queued",
+                "",
+                &json!({"queued_input":{"queue_id":"fixture-queue","reason":"input","priority":0}})
+            )
+            .unwrap());
+        let page = storage
+            .thread_view_page("fixture-user", "fixture-thread", "chat", None, 12)
+            .unwrap();
+        assert_eq!(page.runtime_status, "running");
+        assert!(page.chat[0].queued_input.is_none());
+        storage
+            .open()
+            .unwrap()
+            .execute("UPDATE thread_view_heads SET projection_state='source'", [])
+            .unwrap();
+        let page = storage
+            .thread_view_page("fixture-user", "fixture-thread", "chat", None, 12)
+            .unwrap();
+        assert_eq!(page.active_turn_id, turn);
+        assert_eq!(page.runtime_status, "running");
+        assert!(page.chat[0].queued_input.is_none());
+    }
+
+    #[test]
+    fn queued_input_preserves_active_head_and_answer_phase() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = SqliteStorage::new(dir.path().join("fixture.db").to_string_lossy().into());
+        let first = storage
+            .accept_thread_turn(
+                "fixture-user",
+                "fixture-thread",
+                &json!({"content":"first"}),
+            )
+            .unwrap();
+        let root = first["turn_id"].as_str().unwrap();
+        storage
+            .update_thread_turn(
+                "fixture-user",
+                "fixture-thread",
+                root,
+                "running",
+                "",
+                &json!({}),
+            )
+            .unwrap();
+        storage
+            .accept_thread_turn(
+                "fixture-user",
+                "fixture-thread",
+                &json!({"content":"second"}),
+            )
+            .unwrap();
+        let page = storage
+            .thread_view_page("fixture-user", "fixture-thread", "chat", None, 12)
+            .unwrap();
+        assert_eq!(page.runtime_status, "running");
+        assert_eq!(page.active_turn_id, root);
+        let id = format!("{root}:text-1");
+        storage.append_thread_item("fixture-user", &json!({"session_id":"fixture-thread","turn_id":root,"item_id":id,"kind":"assistant_message","content":"","status":"running"})).unwrap();
+        for (field, data) in [
+            ("content", json!({"content":"answer"})),
+            ("reasoning", json!({"reasoning":"late thought"})),
+        ] {
+            storage
+                .upsert_thread_text_block(
+                    "fixture-user",
+                    "fixture-thread",
+                    &json!({"item_id":id,"field":field,"block_index":0,"event_id":1,"data":data}),
+                )
+                .unwrap();
+        }
+        let page = storage
+            .thread_view_page("fixture-user", "fixture-thread", "chat", None, 12)
+            .unwrap();
+        assert_eq!(page.chat[0].process_activity.kind, "responding");
+        assert_eq!(page.chat[0].assistant.reasoning, "late thought");
+        storage
+            .open()
+            .unwrap()
+            .execute("UPDATE thread_view_heads SET projection_state='source'", [])
+            .unwrap();
+        let page = storage
+            .thread_view_page("fixture-user", "fixture-thread", "chat", None, 12)
+            .unwrap();
+        assert_eq!(page.runtime_status, "running");
+        assert_eq!(page.active_turn_id, root);
+    }
+
+    #[test]
     fn live_process_phase_and_reasoning_tail_advance_past_preview_limit() {
         let dir = tempfile::tempdir().unwrap();
         let storage = SqliteStorage::new(dir.path().join("fixture.db").to_string_lossy().into());

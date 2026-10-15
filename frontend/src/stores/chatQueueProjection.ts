@@ -145,6 +145,26 @@ const queueEventData = (payload: unknown): Record<string, unknown> => {
   return { ...source, ...nested };
 };
 
+/**
+ * Queue waiting has two different meanings. `input`/`scheduler` means the
+ * current session is still running and this message is only parked behind
+ * it; `capacity` means the request is waiting for a global execution slot.
+ * Keep this interpretation in one place so transport and durable projections
+ * cannot drift apart.
+ */
+export const resolveQueueWaitReason = (payload: unknown): string => {
+  const data = queueEventData(payload);
+  const nested = data.queued_input && typeof data.queued_input === 'object' && !Array.isArray(data.queued_input)
+    ? data.queued_input as Record<string, unknown>
+    : data.queue_wait && typeof data.queue_wait === 'object' && !Array.isArray(data.queue_wait)
+      ? data.queue_wait as Record<string, unknown>
+      : {};
+  return cleanText(
+    nested.reason ?? nested.wait_reason ??
+    data.reason ?? data.wait_reason ?? data.queue_reason ?? data.queue_wait_reason
+  ).toLowerCase();
+};
+
 /** Resolve the queue row consumed by a start/terminal event, including legacy identity fallbacks. */
 export const resolveConsumedQueueEventIdentities = (
   items: QueuedTurn[],

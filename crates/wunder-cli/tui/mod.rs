@@ -41,13 +41,20 @@ pub async fn run_main(
 ) -> Result<()> {
     let (frame_requester, frame_notifications) = spawn_frame_scheduler();
     let mut terminal = setup_terminal()?;
-    let mut app = TuiApp::new(
+    let mut app = match TuiApp::new(
         runtime.clone(),
         global.clone(),
         session_override,
         frame_requester,
     )
-    .await?;
+    .await
+    {
+        Ok(app) => app,
+        Err(error) => {
+            let _ = restore_terminal(&mut terminal);
+            return Err(error);
+        }
+    };
 
     // Interlink tunnel (互通方案 I9): the TUI is the only resident 舵机 form, so
     // it is the only place a node may open its outbound link. One-shot
@@ -60,7 +67,10 @@ pub async fn run_main(
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
     {
-        app.submit_line(prompt).await?;
+        if let Err(error) = app.submit_line(prompt).await {
+            let _ = restore_terminal(&mut terminal);
+            return Err(error);
+        }
     }
 
     app.request_redraw();

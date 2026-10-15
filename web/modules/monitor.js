@@ -1,6 +1,6 @@
 // AI生成
 import { APP_CONFIG } from "../app.config.js?v=20260110-04";
-import { elements } from "./elements.js?v=20261011-01";
+import { elements } from "./elements.js?v=20261016-01";
 import { state } from "./state.js";
 import { appendLog } from "./log.js?v=20261011-01";
 import {
@@ -14,7 +14,7 @@ import {
 import { getWunderBase } from "./api.js";
 import { notify } from "./notify.js";
 import { appendQueuePriorityAction } from "./monitor-queue.js";
-import { getCurrentLanguage, t } from "./i18n.js?v=20261011-01";
+import { getCurrentLanguage, t } from "./i18n.js?v=20261016-01";
 import { openTrajectoryPage } from "./trajectory-view.js?v=20261015-03";
 import { filterRemovedSwarmTools } from "../shared/deprecated-tools.js";
 
@@ -1396,16 +1396,12 @@ const submitMonitorLogCleanup = async () => {
 
 const renderServiceMetrics = (service) => {
   if (!service) {
-    elements.metricServiceActive.textContent = "-";
-    if (elements.metricServiceQueued) {
-      elements.metricServiceQueued.textContent = "-";
+    if (elements.metricServiceTotal) {
+      elements.metricServiceTotal.textContent = "-";
     }
-    elements.metricServiceHistory.textContent = "-";
-    elements.metricServiceTotal.textContent = "-";
     if (elements.metricServiceTokenAvg) {
       elements.metricServiceTokenAvg.textContent = "-";
     }
-    elements.metricServiceAvg.textContent = "-";
     if (elements.metricServicePrefillSpeed) {
       elements.metricServicePrefillSpeed.textContent = "-";
     }
@@ -1414,17 +1410,13 @@ const renderServiceMetrics = (service) => {
     }
     return;
   }
-  elements.metricServiceActive.textContent = `${service.active_sessions ?? 0}`;
-  if (elements.metricServiceQueued) {
-    elements.metricServiceQueued.textContent = `${service.queued_sessions ?? 0}`;
+  if (elements.metricServiceTotal) {
+    elements.metricServiceTotal.textContent = `${service.total_sessions ?? 0}`;
   }
-  elements.metricServiceHistory.textContent = `${service.history_sessions ?? 0}`;
-  elements.metricServiceTotal.textContent = `${service.total_sessions ?? 0}`;
   if (elements.metricServiceTokenAvg) {
     const avgTokens = parseMetricNumber(service.avg_context_tokens);
     elements.metricServiceTokenAvg.textContent = formatTokenCount(avgTokens);
   }
-  elements.metricServiceAvg.textContent = formatDurationLong(service.avg_elapsed_s);
   if (elements.metricServicePrefillSpeed) {
     const prefillSpeed = parseMetricNumber(service.avg_prefill_speed_tps);
     elements.metricServicePrefillSpeed.textContent = formatTokenRate(prefillSpeed);
@@ -1511,19 +1503,9 @@ const renderUserDashboardMetrics = (summary, hasData) => {
   }
   if (!hasData || !summary) {
     elements.metricUserCount.textContent = "-";
-    elements.metricUserSessions.textContent = "-";
-    elements.metricUserRecords.textContent = "-";
-    elements.metricUserTools.textContent = "-";
-    elements.metricUserActive.textContent = "-";
-    elements.metricUserTokens.textContent = "-";
     return;
   }
   elements.metricUserCount.textContent = `${summary.user_count}`;
-  elements.metricUserSessions.textContent = `${summary.total_sessions}`;
-  elements.metricUserRecords.textContent = `${summary.chat_records}`;
-  elements.metricUserTools.textContent = `${summary.tool_calls}`;
-  elements.metricUserActive.textContent = `${summary.active_sessions}`;
-  elements.metricUserTokens.textContent = formatTokenCount(summary.consumed_tokens || summary.context_tokens);
 };
 
 const shouldRefreshUserDashboard = (options = {}) => {
@@ -2361,25 +2343,21 @@ const renderMonitorTable = (body, emptyNode, sessions, options = {}) => {
     const startCell = document.createElement("td");
     startCell.textContent = formatTimestamp(session.start_time);
     const sessionCell = document.createElement("td");
+    sessionCell.classList.add("monitor-thread-name");
     const rawSessionId = session.session_id || "";
-    sessionCell.textContent = rawSessionId ? rawSessionId.slice(0, 4) : "-";
-    if (rawSessionId) {
-      sessionCell.title = rawSessionId;
-    }
+    const threadName = String(session.thread_name || session.question || "").trim();
+    sessionCell.textContent = threadName || (rawSessionId ? rawSessionId.slice(0, 4) : "-");
+    sessionCell.title = threadName || rawSessionId;
     const userCell = document.createElement("td");
     userCell.textContent = session.user_id || "-";
     const questionCell = document.createElement("td");
     questionCell.textContent = session.question || "-";
     const statusCell = document.createElement("td");
     statusCell.appendChild(buildStatusBadge(session.status || ""));
-    const feedbackCell = document.createElement("td");
-    feedbackCell.textContent = buildSessionFeedbackSummary(session);
     const tokenCell = document.createElement("td");
     tokenCell.textContent = formatTokenCount(resolveSessionConsumedTokens(session));
     const elapsedCell = document.createElement("td");
     elapsedCell.textContent = formatDuration(session.elapsed_s);
-    const stageCell = document.createElement("td");
-    stageCell.textContent = session.stage || "-";
     const actionCell = document.createElement("td");
     appendQueuePriorityAction(actionCell, session, loadMonitorData);
     if (statusMatches(session.status, "active") || statusMatches(session.status, "queued")) {
@@ -2401,16 +2379,14 @@ const renderMonitorTable = (body, emptyNode, sessions, options = {}) => {
       });
       actionCell.appendChild(btn);
     }
-    row.appendChild(startCell);
     row.appendChild(sessionCell);
     row.appendChild(userCell);
     row.appendChild(questionCell);
     row.appendChild(statusCell);
-    row.appendChild(feedbackCell);
     row.appendChild(tokenCell);
     row.appendChild(elapsedCell);
-    row.appendChild(stageCell);
     row.appendChild(actionCell);
+    row.appendChild(startCell);
     row.addEventListener("click", () => {
       if (!session.session_id) {
         return;

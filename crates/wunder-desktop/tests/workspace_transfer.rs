@@ -184,7 +184,9 @@ fn local_workspace_folder_crud_stays_inside_the_root() -> Result<(), Box<dyn std
     runtime.workspace_local_rename(&root, "notes/a.md", "b.md")?;
     assert!(std::path::Path::new(&root).join("notes/b.md").is_file());
     // The name is one segment; traversal is rejected up front.
-    assert!(runtime.workspace_local_rename(&root, "notes/b.md", "../escape").is_err());
+    assert!(runtime
+        .workspace_local_rename(&root, "notes/b.md", "../escape")
+        .is_err());
     assert!(runtime.workspace_local_mkdir(&root, "../outside").is_err());
 
     let resolved = runtime.workspace_local_resolve(&root, "notes/b.md")?;

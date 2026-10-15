@@ -470,6 +470,23 @@ fn build_snapshot(
         running: activity.running,
     }
     .resolve();
+    let status = tail
+        .and_then(|tail| {
+            tail.runtime_head
+                .as_ref()
+                .map(|head| head.runtime_status.as_str())
+        })
+        .map(|head| {
+            StatusSignals {
+                record: "",
+                monitor: "",
+                turn: head,
+                runtime: "",
+                running: false,
+            }
+            .resolve()
+        })
+        .unwrap_or(status);
     let last_activity = if activity.running {
         usage.map(|summary| summary.activity.clone())
     } else {
@@ -596,11 +613,16 @@ impl StatusSignals<'_> {
     /// derived from the same precedence, so one row never answers twice.
     pub fn runtime_status(&self) -> &'static str {
         let (_, monitor, turn, runtime) = self.parts();
-        let queued = |value: &str| matches!(value, "queued" | "admitted" | "accepted");
+        let queued = |value: &str| matches!(value, "queued");
         match self.resolve() {
             ThreadStatus::NeedsYou => "waiting_user_input",
             ThreadStatus::Working => {
-                if queued(&monitor) || queued(&turn) || queued(&runtime) {
+                if [monitor.as_str(), runtime.as_str(), turn.as_str()]
+                    .iter()
+                    .any(|value| matches!(*value, "running" | "cancelling"))
+                {
+                    "running"
+                } else if queued(&monitor) || queued(&turn) || queued(&runtime) {
                     "queued"
                 } else {
                     "running"
@@ -926,6 +948,31 @@ mod tests {
     }
 
     #[test]
+    fn pending_input_does_not_replace_executing_thread_status() {
+        for (monitor, runtime) in [("running", ""), ("", "running"), ("cancelling", "")] {
+            let state = StatusSignals {
+                record: "active",
+                monitor,
+                turn: "queued",
+                runtime,
+                running: true,
+            };
+            assert_eq!(state.runtime_status(), "running");
+        }
+        assert_eq!(
+            StatusSignals {
+                record: "active",
+                monitor: "queued",
+                turn: "queued",
+                runtime: "",
+                running: true
+            }
+            .runtime_status(),
+            "queued"
+        );
+    }
+
+    #[test]
     fn status_priority_prefers_needs_you_over_running() {
         assert_eq!(
             signals(
@@ -1011,6 +1058,7 @@ mod tests {
             session_id: "s-1".to_string(),
             user_round: 4,
             turn_status: "completed".to_string(),
+            runtime_head: None,
             last_activity: "done".to_string(),
             change_seq: 97,
         };
@@ -1047,6 +1095,7 @@ mod tests {
             session_id: "s-1".to_string(),
             user_round: 2,
             turn_status: "running".to_string(),
+            runtime_head: None,
             last_activity: String::new(),
             change_seq: 12,
         };
@@ -1071,6 +1120,7 @@ mod tests {
             session_id: "s-1".to_string(),
             user_round: 1,
             turn_status: "waiting_input".to_string(),
+            runtime_head: None,
             last_activity: String::new(),
             change_seq: 4,
         };

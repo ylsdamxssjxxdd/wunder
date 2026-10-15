@@ -69,8 +69,9 @@ fn source_chat_rows(
         .map(|row| text(&row[0]).to_owned())
         .collect::<Vec<_>>();
     let mut latest_turns = std::collections::HashMap::new();
+    let queue_field = db.json_text("payload", "queued_input");
     let latest = batch_query(db, root_ids.iter().map(|root| (
-        "SELECT root_turn_id,turn_id,status,updated_time FROM thread_turns WHERE user_id=? AND session_id=? AND root_turn_id=? ORDER BY created_time DESC,turn_id DESC LIMIT 1".into(),
+        format!("SELECT root_turn_id,turn_id,status,updated_time,{queue_field} FROM thread_turns WHERE user_id=? AND session_id=? AND root_turn_id=? ORDER BY created_time DESC,turn_id DESC LIMIT 1"),
         vec![json!(user), json!(session), json!(root)],
     )).collect())?;
     for row in latest {
@@ -227,6 +228,11 @@ fn source_chat_rows(
         if let Some(latest) = latest_turns.get(id) {
             row.execution_turn_id = text(&latest[1]).into();
             row.status = text(&latest[2]).into();
+            row.queued_input = if row.status == "queued" {
+                serde_json::from_str(text(&latest[4])).ok()
+            } else {
+                None
+            };
             row.updated_time = float(&latest[3]);
         }
         (row.workflow_count, row.failed_count, row.reasoning_count) =
@@ -275,17 +281,8 @@ pub(super) fn page(
     page.latest_round = int(&envelope[0]);
     page.projection_state = "source".into();
     page.thread_empty = Some(page.latest_round == 0);
-    if let Some(active) = one(
-        db,
-        "SELECT status,turn_id FROM thread_turns WHERE user_id=? AND session_id=? AND status IN ('queued','running','waiting_input','waiting_approval') ORDER BY user_turn_index DESC,created_time DESC LIMIT 1",
-        &[json!(user), json!(session)],
-    )? {
-        page.runtime_status = text(&active[0]).into();
-        page.active_turn_id = text(&active[1]).into();
-    } else {
-        page.runtime_status = "idle".into();
-        page.active_turn_id.clear();
-    }
+    (page.runtime_status, page.active_turn_id) =
+        super::thread_view_store::execution_head(db, user, session)?;
     let cursor = after.or(before).unwrap_or(i64::MAX);
     let comparison = if after.is_some() { ">" } else { "<" };
     let direction = if after.is_some() { "ASC" } else { "DESC" };

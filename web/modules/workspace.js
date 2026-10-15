@@ -1,10 +1,11 @@
-import { elements } from "./elements.js?v=20261011-01";
+// AI生成
+import { elements } from "./elements.js?v=20261016-01";
 import { state } from "./state.js";
 import { appendLog } from "./log.js?v=20261011-01";
 import { escapeHtml, formatBytes } from "./utils.js?v=20251229-02";
 import { getWunderBase } from "./api.js";
 import { notify } from "./notify.js";
-import { getCurrentLanguage, t } from "./i18n.js?v=20261011-01";
+import { getCurrentLanguage, t } from "./i18n.js?v=20261016-01";
 import { getAuthHeaders } from "./admin-auth.js?v=20260120-01";
 import {
   closeWorkspacePropertiesModal,
@@ -906,9 +907,7 @@ const renderWorkspaceList = (entries) => {
 };
 
 const updateWorkspacePath = () => {
-  const displayPath = state.workspace.path ? `/${state.workspace.path}` : "/";
-  elements.workspacePath.textContent = displayPath;
-  elements.workspaceUpBtn.disabled = !state.workspace.path;
+  // 工作目录固定为云端目录，路径显示与上级按钮已移除。
 };
 
 export const loadWorkspace = async (options = {}) => {
@@ -2500,18 +2499,6 @@ export const initWorkspace = () => {
       isUserMissing ? "warn" : "error"
     );
   });
-  elements.workspaceUpBtn.addEventListener("click", () => {
-    if (!state.workspace.path) {
-      return;
-    }
-    state.workspace.path = getWorkspaceParentPath(state.workspace.path);
-    state.workspace.expanded = new Set();
-    state.workspace.selected = null;
-    loadWorkspace({ refreshTree: true, resetExpanded: true, resetSearch: true });
-  });
-  elements.workspaceUpBtn.addEventListener("dragover", handleWorkspaceUpDragOver);
-  elements.workspaceUpBtn.addEventListener("dragleave", handleWorkspaceUpDragLeave);
-  elements.workspaceUpBtn.addEventListener("drop", handleWorkspaceUpDrop);
   elements.workspaceUploadBtn.addEventListener("click", () => {
     elements.workspaceUploadInput.value = "";
     elements.workspaceUploadInput.click();

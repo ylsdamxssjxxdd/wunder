@@ -159,13 +159,17 @@ impl ThreadRuntime {
         .await
     }
 
-    /// 插话：把指定排队轮次提到队首，在当前动作边界优先执行。
+    /// 插话：先提升指定轮次，再中断当前执行；保留该线程的待发送队列。
     pub async fn prioritize_queued_task(
         &self,
         user_id: &str,
         session_id: &str,
         queue_id: &str,
     ) -> Result<Value> {
+        // Keep successors out until cancellation and descendant cleanup finish.
+        // The current lease may drain while the promotion database call awaits.
+        let transition = self.transition_gate(session_id);
+        let _transition = transition.lock().await;
         let task = self
             .load_owned_parked_task(user_id, session_id, queue_id)
             .await?;
@@ -178,6 +182,22 @@ impl ThreadRuntime {
         .await?;
         if !promoted {
             return Err(anyhow!("task is no longer pending"));
+        }
+        // A capacity-waiting thread has no executor to settle cancellation.
+        let selected_turn = task
+            .request_payload
+            .pointer("/config_overrides/__thread_log_turn_id")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let successor_reserved = self
+            .executions
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(session_id)
+            .is_some_and(|run| !selected_turn.is_empty() && run.turn_id == selected_turn);
+        if !successor_reserved && self.session_has_active_runtime_slot(session_id) {
+            self.cancel_session_activity_inner(user_id, session_id, "user_interject", true)
+                .await?;
         }
         self.emit_queue_event(
             &task.session_id,
@@ -197,7 +217,7 @@ impl ThreadRuntime {
             "ok": true,
             "queue_id": task.task_id,
             "priority": 1,
-            "resume_policy": "automatic_at_action_boundary",
+            "resume_policy": "interrupt_then_dispatch",
         }))
     }
 
@@ -522,6 +542,86 @@ mod tests {
             .expect("withdraw");
         let items = list_items(&state, "user-a", "session-a").await;
         assert_eq!(queue_ids(&items), vec!["task-b"]);
+    }
+
+    #[tokio::test]
+    async fn interject_interrupts_active_execution_and_preserves_pending_inputs() {
+        let (_root, state) = build_state("queue-interrupt").await;
+        let runtime = &state.kernel.thread_runtime;
+        park_task(
+            &state,
+            "task-a",
+            "user-a",
+            "session-a",
+            "first",
+            100.0,
+            json!({}),
+        );
+        park_task(
+            &state,
+            "task-b",
+            "user-a",
+            "session-a",
+            "second",
+            200.0,
+            json!({}),
+        );
+        let lease = runtime
+            .try_acquire_start_lease("session-a", "fixture-execution")
+            .await
+            .unwrap();
+        runtime
+            .monitor
+            .register("session-a", "user-a", "agent-a", "fixture", false);
+        runtime
+            .prioritize_queued_task("user-a", "session-a", "task-b")
+            .await
+            .unwrap();
+        assert!(runtime.monitor.is_cancelled("session-a"));
+        assert!(runtime.execution_interrupted("session-a"));
+        // Late registration resets monitor flags, not this lease's cancellation.
+        runtime
+            .monitor
+            .register("session-a", "user-a", "agent-a", "fixture", false);
+        assert!(runtime.execution_interrupted("session-a"));
+        assert_eq!(
+            queue_ids(&list_items(&state, "user-a", "session-a").await),
+            vec!["task-b", "task-a"]
+        );
+        assert!(runtime
+            .try_acquire_start_lease("session-a", "fixture-execution")
+            .await
+            .is_none());
+        drop(lease);
+        assert!(!runtime.execution_interrupted("session-a"));
+        assert!(runtime
+            .try_acquire_start_lease("session-a", "fixture-execution")
+            .await
+            .is_some());
+    }
+
+    #[tokio::test]
+    async fn interject_does_not_cancel_the_selected_input_already_reserved_for_dispatch() {
+        let (_root, state) = build_state("fixture-reserved").await;
+        let runtime = &state.kernel.thread_runtime;
+        park_task(
+            &state,
+            "fixture-task",
+            "fixture-user",
+            "fixture-thread",
+            "fixture input",
+            100.,
+            json!({"config_overrides":{"__thread_log_turn_id":"fixture-turn"}}),
+        );
+        let _lease = runtime
+            .try_acquire_start_lease("fixture-thread", "fixture-turn")
+            .await
+            .unwrap();
+        runtime
+            .prioritize_queued_task("fixture-user", "fixture-thread", "fixture-task")
+            .await
+            .unwrap();
+        assert!(!runtime.execution_interrupted("fixture-thread"));
     }
 
     #[tokio::test]

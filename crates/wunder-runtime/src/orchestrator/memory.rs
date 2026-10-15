@@ -442,6 +442,7 @@ impl Orchestrator {
                 true,
                 None,
                 Some(summary_config),
+                None,
             )
             .await
         {

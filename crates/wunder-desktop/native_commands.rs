@@ -151,7 +151,9 @@ mod tests {
         use wunder_server::{
             config::Config,
             config_store::ConfigStore,
+            goal::GoalCommand,
             state::{AppState, AppStateInitOptions},
+            storage::ChatSessionRecord,
         };
         let temp = tempfile::tempdir().unwrap();
         let mut config = Config::default();
@@ -194,14 +196,25 @@ mod tests {
             last_login_at: None,
         };
         state.storage.upsert_user_account(&user).unwrap();
-        wunder_server::goal::ensure_session(
-            state.storage.clone(),
-            &user.user_id,
-            "fixture-thread",
-            None,
-        )
-        .await
-        .unwrap();
+        state
+            .user_store
+            .upsert_chat_session(&ChatSessionRecord {
+                session_id: "fixture-thread".into(),
+                user_id: user.user_id.clone(),
+                title: "Fixture".into(),
+                status: "active".into(),
+                created_at: 0.0,
+                updated_at: 0.0,
+                last_message_at: 0.0,
+                agent_id: None,
+                workspace_id: None,
+                tool_overrides: vec![],
+                parent_session_id: None,
+                parent_message_id: None,
+                spawn_label: None,
+                spawned_by: None,
+            })
+            .unwrap();
         let api = wunder_server::api::chat_goal::native_session_goal;
         assert!(api(&state, &user, "missing-thread", GoalCommand::Show)
             .await
@@ -212,29 +225,31 @@ mod tests {
             .is_none());
         assert!(api(&state, &user, "fixture-thread", GoalCommand::Resume)
             .await
-            .is_err());
+            .unwrap()
+            .is_none());
         let goal = api(
             &state,
             &user,
             "fixture-thread",
-            GoalCommand::Set {
+            GoalCommand::Create {
                 objective: "Fixture objective".into(),
-                token_budget: None,
             },
         )
         .await
         .unwrap()
         .unwrap();
         assert_eq!(goal.objective, "Fixture objective");
-        assert_eq!(goal.approval_mode.as_deref(), Some("full_auto"));
-        assert!(goal.user_round.is_some());
+        assert_eq!(goal.phase, "active");
+        assert!(goal.revision > 0);
         let turns =
             super::super::chat_turns::load_turns(&state, &user.user_id, "fixture-thread").unwrap();
-        assert_eq!(turns.len(), 1);
-        assert_eq!(turns[0].user.text, "/goal Fixture objective");
+        assert_eq!(turns.len(), 2);
+        assert_eq!(turns[0].user.text, "/goal resume");
+        assert_eq!(turns[1].user.text, "/goal Fixture objective");
         assert!(api(&state, &user, "fixture-thread", GoalCommand::Clear)
             .await
-            .is_err());
+            .unwrap()
+            .is_none());
         super::super::stream::cancel_chat(&state, &user.user_id, "fixture-thread")
             .await
             .unwrap();
@@ -247,14 +262,25 @@ mod tests {
                 .await
                 .is_err()
         );
-        wunder_server::goal::ensure_session(
-            state.storage.clone(),
-            &user.user_id,
-            "fixture-compact",
-            None,
-        )
-        .await
-        .unwrap();
+        state
+            .user_store
+            .upsert_chat_session(&ChatSessionRecord {
+                session_id: "fixture-compact".into(),
+                user_id: user.user_id.clone(),
+                title: "Fixture".into(),
+                status: "active".into(),
+                created_at: 0.0,
+                updated_at: 0.0,
+                last_message_at: 0.0,
+                agent_id: None,
+                workspace_id: None,
+                tool_overrides: vec![],
+                parent_session_id: None,
+                parent_message_id: None,
+                spawn_label: None,
+                spawned_by: None,
+            })
+            .unwrap();
         let accepted =
             wunder_server::api::chat::compact_native_session(&state, &user, "fixture-compact")
                 .await

@@ -2225,7 +2225,7 @@ export default {
   'chat.composer.queue.title': 'Queued',
   'chat.composer.queue.count': '{count} in queue',
   'chat.composer.queue.interject': 'Interject',
-  'chat.composer.queue.interjectHint': 'Move to the front and run it at the next action boundary',
+  'chat.composer.queue.interjectHint': 'Interrupt the current reply and send this message next',
   'chat.composer.queue.edit': 'Edit',
   'chat.composer.queue.editHint': 'Withdraw this turn and put it back in the input',
   'chat.composer.queue.remove': 'Remove',

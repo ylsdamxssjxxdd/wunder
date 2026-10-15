@@ -820,10 +820,12 @@ mod tests {
         // chunks, view heads, trajectory tiles...). The derived-row count
         // tracks the projection implementation and drifted from 6 to 15
         // before, so pin only the durable minimum plus emptiness afterwards.
-        assert!(storage
-            .delete_thread_logs_by_user("user-a")
-            .expect("delete remaining chat")
-            >= 6);
+        assert!(
+            storage
+                .delete_thread_logs_by_user("user-a")
+                .expect("delete remaining chat")
+                >= 6
+        );
         assert!(storage
             .load_thread_context_items("user-a", "session-b", 500, true)
             .expect("load chat b after delete")

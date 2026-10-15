@@ -10,12 +10,12 @@
 //! boundaries survive intact (UTF-8 natively, GBK fallback on Windows).
 #[cfg(all(windows, feature = "terminal-pty"))]
 use super::terminal_pty;
-#[cfg(unix)]
-use portable_pty::{ChildKiller, MasterPty, PtySize};
 use crate::storage::StorageBackend;
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use parking_lot::Mutex;
+#[cfg(unix)]
+use portable_pty::{ChildKiller, MasterPty, PtySize};
 use serde_json::Value;
 use std::collections::VecDeque;
 use std::fs::File;
@@ -701,9 +701,10 @@ impl DesktopTerminalService {
                         .map_err(|error| format!("failed to write terminal stdin: {error}"))?;
                     None
                 }
-                Some(InputSink::Console(file)) => {
-                    Some((BlockingTerminalIo::Console(Arc::clone(file)), input.to_vec()))
-                }
+                Some(InputSink::Console(file)) => Some((
+                    BlockingTerminalIo::Console(Arc::clone(file)),
+                    input.to_vec(),
+                )),
                 #[cfg(unix)]
                 Some(InputSink::Pty(pty)) => {
                     Some((BlockingTerminalIo::Pty(Arc::clone(pty)), input.to_vec()))
@@ -744,7 +745,9 @@ impl DesktopTerminalService {
             let guard = record.lock();
             let input_guard = guard.input.lock();
             match input_guard.as_ref() {
-                Some(InputSink::Console(file)) => Some(BlockingTerminalIo::Console(Arc::clone(file))),
+                Some(InputSink::Console(file)) => {
+                    Some(BlockingTerminalIo::Console(Arc::clone(file)))
+                }
                 #[cfg(unix)]
                 Some(InputSink::Pty(pty)) => Some(BlockingTerminalIo::Pty(Arc::clone(pty))),
                 _ => None,
@@ -754,9 +757,7 @@ impl DesktopTerminalService {
             // In canonical terminal mode Ctrl-C is interpreted by the PTY as
             // SIGINT for the foreground process group, while the shell stays.
             let result = match input {
-                BlockingTerminalIo::Console(file) => {
-                    std::io::Write::write_all(&mut &*file, &[3u8])
-                }
+                BlockingTerminalIo::Console(file) => std::io::Write::write_all(&mut &*file, &[3u8]),
                 #[cfg(unix)]
                 BlockingTerminalIo::Pty(pty) => pty.input.lock().write_all(&[3u8]),
             };
@@ -794,7 +795,12 @@ impl DesktopTerminalService {
                     return pty
                         .master
                         .lock()
-                        .resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
+                        .resize(PtySize {
+                            rows,
+                            cols,
+                            pixel_width: 0,
+                            pixel_height: 0,
+                        })
                         .map_err(|error| format!("failed to resize terminal: {error}"));
                 }
                 Ok(())
@@ -1118,7 +1124,11 @@ impl DesktopTerminalService {
         session: UnixPtySession,
         record: Arc<Mutex<TerminalRecord>>,
     ) {
-        let UnixPtySession { handle, reader, mut child } = session;
+        let UnixPtySession {
+            handle,
+            reader,
+            mut child,
+        } = session;
         let cancel = record.lock().cancel.clone();
         {
             let mut guard = record.lock();
@@ -1172,23 +1182,41 @@ fn open_unix_pty(
 ) -> Result<UnixPtySession, String> {
     use portable_pty::{native_pty_system, CommandBuilder, PtySize, SlavePty};
     let pair = native_pty_system()
-        .openpty(PtySize { rows: size.1.max(1), cols: size.0.max(1), pixel_width: 0, pixel_height: 0 })
+        .openpty(PtySize {
+            rows: size.1.max(1),
+            cols: size.0.max(1),
+            pixel_width: 0,
+            pixel_height: 0,
+        })
         .map_err(|error| error.to_string())?;
     let launch = resolve_terminal_shell(spec.shell.as_deref().unwrap_or_default());
     let program = launch.bash_bin.unwrap_or_else(|| PathBuf::from("bash"));
     let mut command = CommandBuilder::new(program);
     command.arg("--norc");
     command.cwd(&spec.cwd);
-    let child = pair.slave.spawn_command(command).map_err(|error| error.to_string())?;
-    let reader = pair.master.try_clone_reader().map_err(|error| error.to_string())?;
-    let writer = pair.master.take_writer().map_err(|error| error.to_string())?;
+    let child = pair
+        .slave
+        .spawn_command(command)
+        .map_err(|error| error.to_string())?;
+    let reader = pair
+        .master
+        .try_clone_reader()
+        .map_err(|error| error.to_string())?;
+    let writer = pair
+        .master
+        .take_writer()
+        .map_err(|error| error.to_string())?;
     let killer = child.clone_killer();
     let handle = Arc::new(UnixPtyHandle {
         master: Mutex::new(pair.master),
         input: Mutex::new(writer),
         killer: Mutex::new(killer),
     });
-    Ok(UnixPtySession { handle, reader, child })
+    Ok(UnixPtySession {
+        handle,
+        reader,
+        child,
+    })
 }
 
 #[cfg(unix)]

@@ -1,6 +1,6 @@
-import { elements } from "./elements.js?v=20261011-01";
+import { elements } from "./elements.js?v=20261016-01";
 import { getWunderBase } from "./api.js";
-import { t } from "./i18n.js?v=20261011-01";
+import { t } from "./i18n.js?v=20261016-01";
 
 const AUTH_STORAGE_KEY = "wunder_admin_auth";
 

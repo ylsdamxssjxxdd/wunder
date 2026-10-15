@@ -276,6 +276,8 @@ pub struct ThreadTurnTail {
     pub user_round: i64,
     /// Status of that turn ("" when the thread has no durable turn).
     pub turn_status: String,
+    /// Authoritative execution head, independent of the newest input round.
+    pub runtime_head: Option<crate::thread_view::ThreadExecutionHead>,
     /// Summary text of that turn, used as the catalog's last-activity line.
     pub last_activity: String,
     /// `thread_log_changes` watermark: the durable cursor clients replay from.

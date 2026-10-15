@@ -276,8 +276,11 @@ pub async fn load_turn_for_round(
     tools: Option<&[Value]>,
     goal_entry_allowed: bool,
     // 本次人类消息（最新一条用户文本），用于驱动两条测试约定：
-    //   * 消息里第一个纯数字 token -> 覆盖本次计划模型轮次数；
-    //   * 消息含 `subagent`（大小写不敏感）-> 本次必定调用子智能体工具。
+    //   * 消息里第一个纯数字 token -> 覆盖本次计划模型轮次数（`5`、`5s`、`5轮` 均可）；
+    //   * 消息含 `subagent`（或简拼 `s` / `sub` / `子智能体`，数字后缀 `s`）-> 本次必定
+    //     调用子智能体工具。
+    // 每个模型轮次都会重新解析一次，因此调用方必须传本轮次权威的原始人类输入；
+    // 上下文压缩改写过的历史不能用来推导，否则同一回合中途会换计划。
     user_message: Option<&str>,
     // 当前会话是否允许派生子智能体。子会话（由子智能体控制派生而来）为 false，
     // 从结构上杜绝“子智能体再派生子智能体”的无限递归。
@@ -344,8 +347,15 @@ pub async fn load_turn_for_round(
         // may additionally arm a long-running goal so the goal driver keeps
         // producing rounds until the operator stops it.
         // 用户在消息里给出的数字覆盖本次计划轮次，直接决定“本次模型轮数”。
-        let total_rounds =
+        let planned_rounds =
             round_override.unwrap_or_else(|| random_sim::plan_rounds(&session_seed, round));
+        // 要求派生子智能体时，首轮必须是工具轮：至少留出“发派生调用”与“收尾”两轮，
+        // 否则 `1 subagent` / `1s` 会因为计划只有一轮而直接走到最终轮，永远派不出子智能体。
+        let total_rounds = if subagent_entry.as_ref().is_some_and(|(_, force)| *force) {
+            random_sim::rounds_with_forced_subagent(planned_rounds)
+        } else {
+            planned_rounds
+        };
         let subagent_arg = subagent_entry
             .as_ref()
             .map(|(entry, force)| (entry, *force));
@@ -958,5 +968,131 @@ mod tests {
             ),
             "child sessions must not spawn grandchildren"
         );
+    }
+
+    #[tokio::test]
+    async fn shorthand_subagent_round_control_spawns_a_child() {
+        let config = Config::default();
+        let model = LlmModelConfig {
+            provider: Some(VIRTUAL_REPLAY_PROVIDER.to_string()),
+            model: None,
+            ..Default::default()
+        };
+        let tools = vec![
+            json!({"type":"function","function":{"name":"读取文件","parameters":json!({"type":"object","required":["path"],"properties":{"path":{"type":"string"}}})}}),
+            json!({"type":"function","function":{"name":"子智能体控制","parameters":json!({"type":"object","required":["action"],"properties":{"action":{"type":"string"}}})}}),
+        ];
+        // `1 subagent` 与简拼 `1s` 等价：首轮必须发出派生调用，末轮收尾。
+        for message in ["1 subagent", "1s", "1S", "1 sub"] {
+            let first = load_turn_for_round(
+                config.clone(),
+                &model,
+                "session-shorthand",
+                Some(1),
+                Some(1),
+                Some(&tools),
+                true,
+                Some(message),
+                true,
+            )
+            .await
+            .expect("turn");
+            let calls = first
+                .tool_calls
+                .as_ref()
+                .and_then(Value::as_array)
+                .unwrap_or(&Vec::new())
+                .clone();
+            assert!(
+                calls.iter().any(
+                    |call| call.pointer("/function/name").and_then(Value::as_str)
+                        == Some("子智能体控制")
+                ),
+                "{message}: first round must spawn a subagent"
+            );
+            let args: Value = serde_json::from_str(
+                calls
+                    .iter()
+                    .find(|call| {
+                        call.pointer("/function/name").and_then(Value::as_str)
+                            == Some("子智能体控制")
+                    })
+                    .and_then(|call| call.pointer("/function/arguments"))
+                    .and_then(Value::as_str)
+                    .expect("args"),
+            )
+            .expect("arguments are json");
+            let action = args.get("action").and_then(Value::as_str).expect("action");
+            assert!(
+                matches!(action, "spawn" | "batch_spawn"),
+                "{message}: forced request must dispatch, got {action}"
+            );
+            // 计划被抬到 2 轮：第 2 轮是收尾轮。
+            let last = load_turn_for_round(
+                config.clone(),
+                &model,
+                "session-shorthand",
+                Some(1),
+                Some(2),
+                Some(&tools),
+                true,
+                Some(message),
+                true,
+            )
+            .await
+            .expect("turn");
+            assert!(
+                last.tool_calls.is_none(),
+                "{message}: round 2 is the final turn"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn round_override_stays_stable_across_model_rounds() {
+        let config = Config::default();
+        let model = LlmModelConfig {
+            provider: Some(VIRTUAL_REPLAY_PROVIDER.to_string()),
+            model: None,
+            ..Default::default()
+        };
+        let tools = vec![
+            json!({"type":"function","function":{"name":"读取文件","parameters":json!({"type":"object","required":["path"],"properties":{"path":{"type":"string"}}})}}),
+        ];
+        // 数字 4：前 3 轮是工具轮，第 4 轮收尾。同一回合内每一轮都用同一份计划，
+        // 压缩改写过的历史不会让计划中途变化。
+        for model_round in 1..=3 {
+            let turn = load_turn_for_round(
+                config.clone(),
+                &model,
+                "session-stable",
+                Some(1),
+                Some(model_round),
+                Some(&tools),
+                true,
+                Some("4"),
+                true,
+            )
+            .await
+            .expect("turn");
+            assert!(
+                turn.tool_calls.is_some(),
+                "model round {model_round} of 4 is a tool turn"
+            );
+        }
+        let final_turn = load_turn_for_round(
+            config.clone(),
+            &model,
+            "session-stable",
+            Some(1),
+            Some(4),
+            Some(&tools),
+            true,
+            Some("4"),
+            true,
+        )
+        .await
+        .expect("turn");
+        assert!(final_turn.tool_calls.is_none(), "round 4 of 4 is final");
     }
 }

@@ -12,9 +12,17 @@ import {
   queueItemIdentities,
   resolveEmbeddedChatQueueRuntimeEvent,
   resolveConsumedQueueEventIdentities,
+  resolveQueueWaitReason,
   selectParkedTurnMessageIds,
   type QueuedTurn
 } from '../../src/stores/chatQueueProjection';
+
+test('队列等待原因区分输入等待与容量等待', () => {
+  assert.equal(resolveQueueWaitReason({ reason: 'input' }), 'input');
+  assert.equal(resolveQueueWaitReason({ queued_input: { reason: 'scheduler' } }), 'scheduler');
+  assert.equal(resolveQueueWaitReason({ data: { queue_wait: { reason: 'capacity' } } }), 'capacity');
+  assert.equal(resolveQueueWaitReason({ queued: true }), '');
+});
 
 const parked = (queueId: string, content: string, createdAt: number): QueuedTurn =>
   projectQueueItems([{ queue_id: queueId, content, created_at: createdAt, position: createdAt }])[0];
@@ -229,6 +237,6 @@ test('排队让位与剪枝真的接在渲染与撤下路径上', () => {
     'store 上的剪枝动作缺失'
   );
   const queueState = readSource('stores/chatQueueState.ts');
-  assert.ok(/resolveEmbeddedChatQueueRuntimeEvent/.test(queueState) && /consumedQueueIds/.test(queueState), '队列终态没有消费并屏蔽旧快照');
+  assert.ok(/resolveEmbeddedChatQueueRuntimeEvent/.test(queueState) && /consumedQueueIds/.test(readSource('stores/chatQueueLiveState.ts')), '队列终态没有消费并屏蔽旧快照');
   assert.ok(/noteChatQueueRuntimeEvent\(targetId, eventType, payload\)/.test(readSource('stores/chatRuntimeState.ts')), '队列事件没有透传 payload 身份');
 });

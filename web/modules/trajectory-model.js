@@ -95,7 +95,14 @@ export function markdownPreviewText(text) {
 
 const isRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 
-const payloadOf = (item) => (isRecord(item.payload) ? item.payload : {});
+const payloadOf = (item) => {
+  if (!isRecord(item)) return {};
+  // Admin snapshots use both row-shaped items (`payload`) and flat projected
+  // rows.  Preserve the row fields when no envelope exists so reasoning,
+  // schema and compaction metadata do not disappear in the bridge.
+  if (!isRecord(item.payload)) return item;
+  return { ...item, ...item.payload };
+};
 
 const metaOf = (payload) => (isRecord(payload.meta) ? payload.meta : {});
 
@@ -165,6 +172,26 @@ function summarizeToolResult(payload) {
   }
   const fallback = payload.result ?? payload.output ?? payload.content;
   return contentToText(fallback);
+}
+
+// Stream snapshots may wrap the event body in `data`/`payload.data`.  Keep a
+// single bounded merge so reasoning, compaction summaries and tool metadata
+// are read identically in the bridge and hive projections.
+function eventPayloadOf(payload) {
+  if (!isRecord(payload)) return {};
+  const nested = isRecord(payload.data) ? payload.data : null;
+  return nested ? { ...payload, ...nested } : payload;
+}
+
+function isCompactionMarkerPayload(payload) {
+  const meta = metaOf(payload);
+  const type = String(meta.type ?? payload.type ?? '').trim().toLowerCase();
+  return meta.manual_compaction === true ||
+    payload.manual_compaction_marker === true ||
+    payload.manualCompactionMarker === true ||
+    type === 'manual_compaction_marker' ||
+    (typeof meta.compaction_id === 'string' &&
+      (type === 'system_message' || Array.isArray(meta.replacement_history)));
 }
 
 function extractUsage(payload) {
@@ -268,6 +295,7 @@ function isToolFailure(payload, status = "") {
 /* ------------------------------------------------------------------ */
 
 function buildCell(item, payload, kind, index) {
+  payload = eventPayloadOf(payload);
   const status = typeof item.status === "string" ? item.status : "";
   const recordId = typeof item.item_id === "string" ? item.item_id : String(index);
   const createdMs = firstTime(item, ["created_time"]) ?? firstTime(payload, ["created_time"]);
@@ -287,7 +315,12 @@ function buildCell(item, payload, kind, index) {
 
   if (kind === "message") {
     const contentText = contentToText(payload.content);
-    const thinkingText = contentToText(payload.reasoning) || contentToText(payload.reasoning_content);
+    const meta = isRecord(payload.meta) ? payload.meta : {};
+    const thinkingText = [
+      payload.reasoning, payload.reasoning_content, payload.thinking, payload.thought,
+      payload.reasoningText, payload.thinking_content,
+      meta.reasoning_content, meta.reasoning, meta.thinking,
+    ].map(contentToText).find((value) => value.trim()) || "";
     const toolCalls = payload.tool_calls;
     if (!contentText.trim() && Array.isArray(toolCalls) && toolCalls.length > 0) {
       cell.text = "";
@@ -310,7 +343,12 @@ function buildCell(item, payload, kind, index) {
         : prefill !== null && decode !== null
           ? prefill + decode
           : null;
-    cell.inputDetail = contentText.trim() ? contentText : undefined;
+    // Assistant rows contain the model response.  The persisted row does not
+    // carry the prompt that produced it, so exposing `content` as both input
+    // and output makes the overview misleading.  Keep the response in the
+    // output section and leave input absent until a real request payload is
+    // available.
+    cell.inputDetail = undefined;
     cell.outputDetail = contentText.trim() ? contentText : undefined;
     cell.thinkingDetail = thinkingText.trim() ? thinkingText : undefined;
     cell.usage = usage;
@@ -356,11 +394,21 @@ function buildCell(item, payload, kind, index) {
         ? Math.max(0, (completedAt - startedAt) / 1000)
         : null;
   } else if (kind === "compacted") {
-    const summaryText = contentToText(payload.summary ?? payload.content);
+    const summaryText = contentToText(
+      payload.summary_text ?? payload.summaryText ?? payload.summary_model_output ??
+      payload.summaryModelOutput ?? payload.summary ??
+      (payload.content === "history" ? "" : payload.content)
+    );
     const text = summaryText.trim() ? summaryText : "";
     cell.text = text;
     cell.previewMarkdown = text.trim() ? text : undefined;
-    cell.inputDetail = text.trim() ? text : undefined;
+    cell.outputDetail = text.trim() ? text : undefined;
+    cell.thinkingDetail = contentToText(
+      payload.raw_output ?? payload.rawOutput ?? payload.summary_model_output ?? payload.summaryModelOutput
+    ).trim() || undefined;
+    // A compaction row is a workflow result; its summary is output, not a
+    // second copy of an input prompt.
+    cell.inputDetail = undefined;
     cell.timeSeconds =
       startedAt !== null && completedAt !== null
         ? Math.max(0, (completedAt - startedAt) / 1000)
@@ -447,6 +495,11 @@ export function buildTrajectoryLayout(rawTurns, t) {
       const item = ordered[i];
       const payload = payloadOf(item);
       const rawKind = rawKindOf(item, payload);
+      // Compatibility rows for manual compaction duplicate the real
+      // `compaction` workflow item. They carry the summary as assistant/system
+      // content and must never appear as an ordinary transcript row.
+      if ((rawKind === "assistant_message" || rawKind === "system_message" || rawKind === "system") &&
+          isCompactionMarkerPayload(payload)) continue;
       // Transport and lifecycle records are not user-visible trajectory spans.
       // They are already represented by the model/tool records in the same
       // round; retaining them makes the bridge timeline longer than the hive.
@@ -856,12 +909,12 @@ export const ROW_PX = 30;
 export const ROW_SUMMARY_PX = 20;
 
 /** 固定行高的虚拟行布局（一条记录一行）。 */
-export function groupVirtualRows(records) {
+export function groupVirtualRows(records, rowHeight = ROW_PX, summaryHeight = ROW_SUMMARY_PX) {
   const rows = [];
   records.forEach((record, index) => {
     rows.push({
       record,
-      height: record.collapsedSummary ? ROW_SUMMARY_PX : ROW_PX,
+      height: record.collapsedSummary ? summaryHeight : rowHeight,
       key: `${record.turn ?? "none"}-${record.group}-${record.cell.recordId}-${index}`,
     });
   });

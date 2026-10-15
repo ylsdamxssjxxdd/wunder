@@ -464,7 +464,7 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
     crate::navigation_ui::install(app, desktop_preview.clone());
     crate::workspace_ui::install(app, desktop_preview.clone());
     let timeline = state.borrow().timeline.clone();
-    bind_timeline(app, timeline);
+    bind_timeline(app, timeline, desktop_preview.clone());
     {
         let timeline = state.borrow().timeline.clone();
         let live = timeline.borrow();
@@ -508,7 +508,17 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
 /// These bind the row model's own handle instead of reaching through `State`:
 /// the sidebar and pet projection invoke them from inside a `State` borrow, and
 /// a second borrow of `State` there aborts the process.
-fn bind_timeline(app: &MainWindow, timeline: Rc<RefCell<crate::timeline::Timeline>>) {
+fn bind_timeline(
+    app: &MainWindow,
+    timeline: Rc<RefCell<crate::timeline::Timeline>>,
+    desktop: Arc<NativeDesktop>,
+) {
+    timeline
+        .borrow_mut()
+        .set_markdown_desktop(desktop.clone());
+    timeline
+        .borrow_mut()
+        .set_markdown_root(markdown_root(app));
     let toggle_timeline = timeline.clone();
     app.on_timeline_toggle(move |payload| {
         // A fold patches only the rows it owns, so the click never re-runs the
@@ -523,6 +533,29 @@ fn bind_timeline(app: &MainWindow, timeline: Rc<RefCell<crate::timeline::Timelin
             return;
         }
         app.invoke_open_file_native(resource.into());
+    });
+    let open_desktop = desktop;
+    let weak = app.as_weak();
+    app.on_open_file_native(move |resource| {
+        let Some(app) = weak.upgrade() else { return };
+        let resource = resource.to_string();
+        if resource.trim().is_empty() {
+            return;
+        }
+        let root = markdown_root(&app);
+        if root.trim().is_empty() {
+            app.set_status("当前会话没有可用的本地工作区".into());
+            return;
+        }
+        let desktop = open_desktop.clone();
+        let weak = app.as_weak();
+        std::thread::spawn(move || {
+            let result = desktop.open_workspace_resource(&root, &resource);
+            let _ = weak.upgrade_in_event_loop(move |app| match result {
+                Ok(()) => app.set_status("已打开工作区文件".into()),
+                Err(error) => app.set_status(format!("无法打开工作区文件：{error}").into()),
+            });
+        });
     });
     let weak = app.as_weak();
     app.on_timeline_download(move |text| {
@@ -549,6 +582,19 @@ fn bind_timeline(app: &MainWindow, timeline: Rc<RefCell<crate::timeline::Timelin
     });
     let answer_timeline = timeline;
     app.on_timeline_last_answer(move || answer_timeline.borrow().last_answer().into());
+}
+
+/// Resolve the folder used for Markdown resources in the focused thread.
+/// Workspace selection follows the thread; settings provide the default root
+/// before a workspace has been selected or when the focused thread is local
+/// but unassigned.
+pub(crate) fn markdown_root(app: &MainWindow) -> String {
+    let active = app.get_active_workspace_root().to_string();
+    if active.trim().is_empty() {
+        app.get_workspace_root().to_string()
+    } else {
+        active
+    }
 }
 
 /// One projection point for every timeline publish: the row model and the
@@ -874,6 +920,15 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
             return;
         };
         let id = row.id.to_string();
+        let desktop = state.borrow().desktop.clone();
+        let previous_session = app.get_active_session_id().to_string();
+        if let Err(error) = desktop.open_session(&id) {
+            app.set_status(format!("无法打开线程：{error}").into());
+            return;
+        }
+        if !previous_session.is_empty() && previous_session != id {
+            let _ = desktop.close_session(&previous_session);
+        }
         app.set_goal_active(row.goal_active);
         app.set_goal_objective(row.goal_objective.clone());
         set_goal_clock(&app, row.goal_seconds);
@@ -930,7 +985,6 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
         // The strip is the engine's queue of the thread now on screen, not a
         // leftover of the one that was just left behind.
         publish_queue(&app, &state, &id);
-        let desktop = state.borrow().desktop.clone();
         let generation = state.borrow().history_generation.clone();
         let request = generation.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
         let weak = app.as_weak();

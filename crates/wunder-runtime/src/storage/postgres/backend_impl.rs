@@ -8,9 +8,9 @@ use crate::storage::{
     InterlinkStore, ListCloudDeviceLogsQuery, ListCloudRecordsQuery, ListInterlinkAuditQuery,
     ListInterlinkCommandsQuery, LogStatsStore, MediaStore, MemoryRecordStore, MetaStore,
     MonitorStore, QuotaBalanceStore, RetentionStore, SessionGoalStore, SessionLockStore,
-    SessionRunStore, StorageLifecycle, TerminalTranscriptStore, ThreadLogStore, UserAccountStore,
-    UserRefreshTokenRecord, UserRefreshTokenStore, UserWorldStore, VectorDocumentStore,
-    WorkspaceRecord, WorkspaceStore,
+    SessionRunStore, StorageLifecycle, TerminalTranscriptStore, ThreadLogStore,
+    ThreadOpenLeaseStore, UserAccountStore, UserRefreshTokenRecord, UserRefreshTokenStore,
+    UserWorldStore, VectorDocumentStore, WorkspaceRecord, WorkspaceStore,
 };
 use wunder_core::storage_backend::ThreadSnapshotWindow;
 

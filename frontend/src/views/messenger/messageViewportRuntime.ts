@@ -1,4 +1,4 @@
-import { nextTick, type Ref } from 'vue';
+import { nextTick, watch, type Ref } from 'vue';
 
 import { chatDebugLog, isChatDebugEnabled } from '../../utils/chatDebug';
 import {
@@ -294,6 +294,11 @@ export const createMessageViewportRuntime = (
   let messageViewportRefreshFrame: number | null = null;
   let messageDeferredMeasureHandle: number | null = null;
   let messageResizeRefreshHandle: number | null = null;
+  let viewportResizeObserver: ResizeObserver | null = null;
+  let observedViewportContent: Element | null = null;
+  let lastScrollTop = 0;
+  let lastScrollHeight = 0;
+  let lastClientHeight = 0;
   let messageDeferredMeasureUsesIdleCallback = false;
   let scheduledViewportRefreshNeedsScrollState = false;
   let scheduledViewportRefreshNeedsMeasure = false;
@@ -312,6 +317,16 @@ export const createMessageViewportRuntime = (
   let disposed = false;
   let bottomScrollPending: Promise<void> | null = null;
   let bottomScrollForced = false;
+  let followIntentVersion = 0;
+  let releaseViewportInput = () => {};
+
+  // Wheel/touch/key intent precedes layout and scroll events. A pending bottom
+  // request must yield immediately even when the composer resized this frame.
+  const pauseFollowing = () => {
+    followIntentVersion++;
+    bottomScrollForced = false;
+    options.autoStickToBottom.value = false;
+  };
 
   const logViewportDebug = (event: string, payload?: unknown) => {
     if (!isChatDebugEnabled()) {
@@ -364,6 +379,12 @@ export const createMessageViewportRuntime = (
     }
     if (options.showChatSettingsView.value) {
       return;
+    }
+    // The panel can mount after the container ref during route/bootstrap.
+    if (viewportResizeObserver && !observedViewportContent?.isConnected) {
+      if (observedViewportContent) viewportResizeObserver.unobserve(observedViewportContent);
+      observedViewportContent = container.querySelector?.('.messenger-message-panel') || null;
+      if (observedViewportContent) viewportResizeObserver.observe(observedViewportContent);
     }
     const nextScrollTop = container.scrollTop;
     // The virtual window has overscan, so sub-row movement need not invalidate Vue's
@@ -600,6 +621,7 @@ export const createMessageViewportRuntime = (
     });
     if (changes.length) {
       options.messageVirtualLayoutVersion.value += 1;
+      if (options.autoStickToBottom.value) void scrollMessagesToBottom();
     }
     logViewportDebug('measure-visible', {
       targetKeys: normalizedTargetKeys,
@@ -636,7 +658,7 @@ export const createMessageViewportRuntime = (
     logViewportDebug('deferred-measure-scheduled', { reason, mode: 'timeout' });
   };
 
-  const updateMessageScrollState = () => {
+  const updateMessageScrollState = (fromScroll = false) => {
     const container = options.messageListRef.value;
     if (!container) {
       options.showScrollTopButton.value = false;
@@ -652,10 +674,20 @@ export const createMessageViewportRuntime = (
     const nearTop = container.scrollTop <= 72;
     const remaining = container.scrollHeight - container.clientHeight - container.scrollTop;
     const shouldStick = remaining <= 72;
+    const layoutChanged = lastScrollHeight > 0 &&
+      (lastScrollHeight !== container.scrollHeight || lastClientHeight !== container.clientHeight);
+    const movedUp = container.scrollTop < lastScrollTop - 1;
+    // Layout growth is not a user scroll. In particular, a virtual height
+    // correction must not switch follow off before its bottom scroll runs.
+    const following = options.autoStickToBottom.value &&
+      (!fromScroll || (layoutChanged && !movedUp));
     const isConversation = options.isAgentConversationActive.value || options.isWorldConversationActive.value;
-    options.autoStickToBottom.value = shouldStick;
+    options.autoStickToBottom.value = following || shouldStick;
     options.showScrollTopButton.value = !nearTop && isConversation;
-    options.showScrollBottomButton.value = !shouldStick && isConversation;
+    options.showScrollBottomButton.value = !options.autoStickToBottom.value && isConversation;
+    lastScrollTop = container.scrollTop;
+    lastScrollHeight = container.scrollHeight;
+    lastClientHeight = container.clientHeight;
   };
 
   const maybeLoadOlderHistory = async () => {
@@ -722,7 +754,7 @@ export const createMessageViewportRuntime = (
     const restored = restoreMessageScrollPosition(options.activeConversationKey.value, container);
     if (!restored) return false;
     syncMessageVirtualMetrics();
-    updateMessageScrollState();
+    updateMessageScrollState(true);
     if (restoreOptions.deferMeasure === true) {
       scheduleDeferredVisibleMeasure('restore-conversation-scroll');
     } else {
@@ -841,7 +873,7 @@ export const createMessageViewportRuntime = (
   const handleMessageListScroll = () => {
     // Commit the follow mode in the scroll event itself. Streaming layout
     // updates may request a bottom scroll before the deferred frame runs.
-    updateMessageScrollState();
+    updateMessageScrollState(true);
     if (typeof window === 'undefined') {
       syncMessageVirtualMetrics();
       rememberCurrentScroll();
@@ -902,6 +934,7 @@ export const createMessageViewportRuntime = (
       ? top - container.clientHeight / 2 + height / 2
       : top;
     const maxTop = Math.max(0, container.scrollHeight - container.clientHeight);
+    pauseFollowing();
     container.scrollTop = clamp(targetTop, 0, maxTop);
     syncMessageVirtualMetrics();
     updateMessageScrollState();
@@ -913,11 +946,12 @@ export const createMessageViewportRuntime = (
     bottomScrollForced ||= force;
     if (bottomScrollPending) return bottomScrollPending;
     const conversationKey = options.activeConversationKey.value;
+    const intentVersion = followIntentVersion;
     bottomScrollPending = nextTick().then(() => {
       const forced = bottomScrollForced;
       bottomScrollForced = false;
       const container = options.messageListRef.value;
-      if (disposed || !container || conversationKey !== options.activeConversationKey.value ||
+      if (disposed || !container || intentVersion !== followIntentVersion || conversationKey !== options.activeConversationKey.value ||
           (!forced && !options.autoStickToBottom.value)) return;
       container.scrollTop = container.scrollHeight;
       syncMessageVirtualMetrics();
@@ -928,6 +962,45 @@ export const createMessageViewportRuntime = (
     return bottomScrollPending;
   };
 
+  // Clearing a multiline draft and consuming queue rows resize the viewport
+  // without resizing any message. Keep the bottom pinned before the next paint.
+  const stopViewportWatch = watch(options.messageListRef, (container) => {
+    releaseViewportInput();
+    viewportResizeObserver?.disconnect();
+    observedViewportContent = null;
+    if (container?.addEventListener) {
+      let touchY = 0;
+      const wheel = (event: WheelEvent) => { if (event.deltaY < 0) pauseFollowing(); };
+      const touchStart = (event: TouchEvent) => { touchY=event.touches[0]?.clientY || 0; };
+      const touchMove = (event: TouchEvent) => {
+        const next=event.touches[0]?.clientY || 0;
+        if(next>touchY)pauseFollowing();
+        touchY=next;
+      };
+      const key = (event: KeyboardEvent) => {
+        if(['ArrowUp','PageUp','Home'].includes(event.key))pauseFollowing();
+      };
+      container.addEventListener('wheel',wheel,{passive:true});
+      container.addEventListener('touchstart',touchStart,{passive:true});
+      container.addEventListener('touchmove',touchMove,{passive:true});
+      container.addEventListener('keydown',key);
+      releaseViewportInput=()=>{
+        container.removeEventListener('wheel',wheel);
+        container.removeEventListener('touchstart',touchStart);
+        container.removeEventListener('touchmove',touchMove);
+        container.removeEventListener('keydown',key);
+      };
+    }
+    if (!container || typeof ResizeObserver === 'undefined') return;
+    viewportResizeObserver = new ResizeObserver(() => {
+      if (disposed || options.showChatSettingsView.value) return;
+      if (options.autoStickToBottom.value) container.scrollTop = container.scrollHeight;
+      syncMessageVirtualMetrics();
+    });
+    viewportResizeObserver.observe(container);
+    syncMessageVirtualMetrics();
+  }, { immediate: true, flush: 'post' });
+
   const jumpToMessageBottom = async () => {
     options.autoStickToBottom.value = true;
     await scrollMessagesToBottom(true);
@@ -937,7 +1010,7 @@ export const createMessageViewportRuntime = (
     await nextTick();
     const container = options.messageListRef.value;
     if (!container) return;
-    options.autoStickToBottom.value = false;
+    pauseFollowing();
     container.scrollTop = 0;
     syncMessageVirtualMetrics();
     updateMessageScrollState();
@@ -987,6 +1060,10 @@ export const createMessageViewportRuntime = (
     }
     rememberCurrentScroll();
     persistMessageHeightEstimates();
+    stopViewportWatch();
+    releaseViewportInput();
+    viewportResizeObserver?.disconnect();
+    viewportResizeObserver = null;
     releaseObservedMessageNodes();
     messageResizeObserver = null;
     scheduledViewportRefreshNeedsScrollState = false;

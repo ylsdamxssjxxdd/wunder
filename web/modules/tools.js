@@ -1,9 +1,9 @@
 // AI生成
 import { APP_CONFIG } from "../app.config.js?v=20260110-04";
-import { elements } from "./elements.js?v=20261011-01";
+import { elements } from "./elements.js?v=20261016-01";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
-import { t } from "./i18n.js?v=20261011-01";
+import { t } from "./i18n.js?v=20261016-01";
 import { appendLog } from "./log.js?v=20261011-01";
 import { filterRemovedSwarmTools } from "../shared/deprecated-tools.js";
 

@@ -120,6 +120,21 @@ fn verify_queue_control(storage: &dyn StorageBackend) {
 }
 
 #[test]
+fn repeated_interjection_claims_the_selected_input_first() {
+    let dir = tempfile::tempdir().unwrap();
+    let storage = SqliteStorage::new(dir.path().join("fixture.db").to_string_lossy().into());
+    for (id, at) in [("fixture-first", 1.0), ("fixture-second", 2.0)] {
+        let mut entry = task(id, at);
+        entry.session_id = "fixture-thread".into();
+        storage.insert_agent_task(&entry).unwrap();
+    }
+    storage.promote_agent_task("fixture-first", 3.0).unwrap();
+    storage.promote_agent_task("fixture-second", 4.0).unwrap();
+    assert!(!storage.claim_agent_task("fixture-first", 5.0).unwrap());
+    assert!(storage.claim_agent_task("fixture-second", 5.0).unwrap());
+}
+
+#[test]
 fn sqlite_queue_control_preserves_order_cancellation_and_suspended_ownership() {
     let dir = tempfile::tempdir().unwrap();
     let storage = SqliteStorage::new(dir.path().join("queue.db").to_string_lossy().into());

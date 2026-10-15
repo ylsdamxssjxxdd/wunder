@@ -26,22 +26,23 @@ impl SqliteStorage {
                 conn.execute(ddl, [])?;
             }
         }
-        conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_agent_tasks_dispatch ON agent_tasks(status, priority DESC, retry_at, created_at, task_id)")?;
+        conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_agent_tasks_session_dispatch ON agent_tasks(session_id, status, priority DESC, retry_at);
+            CREATE INDEX IF NOT EXISTS idx_agent_tasks_dispatch ON agent_tasks(status, priority DESC, retry_at, created_at, task_id)")?;
         Ok(())
     }
 
     pub(super) fn claim_agent_task_impl(&self, task_id: &str, now: f64) -> Result<bool> {
         self.ensure_initialized()?;
         Ok(self.open()?.execute(
-            "UPDATE agent_tasks SET status='running', started_at=?, updated_at=?, finished_at=NULL, last_error=NULL WHERE task_id=? AND status IN ('pending','retry') AND retry_at<=?",
-            params![now, now, task_id, now],
+            "UPDATE agent_tasks SET status='running', started_at=?, updated_at=?, finished_at=NULL, last_error=NULL WHERE task_id=? AND status IN ('pending','retry') AND retry_at<=? AND NOT EXISTS (SELECT 1 FROM agent_tasks ahead WHERE ahead.session_id=agent_tasks.session_id AND ahead.status IN ('pending','retry') AND ahead.retry_at<=? AND (ahead.priority>agent_tasks.priority OR (ahead.priority=agent_tasks.priority AND ahead.retry_at<agent_tasks.retry_at)))",
+            params![now, now, task_id, now, now],
         )? == 1)
     }
 
     pub(super) fn promote_agent_task_impl(&self, task_id: &str, now: f64) -> Result<bool> {
         self.ensure_initialized()?;
         Ok(self.open()?.execute(
-            "UPDATE agent_tasks SET priority=1, retry_at=MIN(retry_at, ?), updated_at=?, request_payload=json_set(request_payload, '$.queue_priority', 1) WHERE task_id=? AND status IN ('pending','retry')",
+            "UPDATE agent_tasks SET priority=1, retry_at=MIN(retry_at, ?, COALESCE((SELECT MIN(a.retry_at)-1 FROM agent_tasks a WHERE a.session_id=agent_tasks.session_id AND a.status IN ('pending','retry') AND a.priority>0), retry_at)), updated_at=?, request_payload=json_set(request_payload, '$.queue_priority', 1) WHERE task_id=? AND status IN ('pending','retry')",
             params![now, now, task_id],
         )? == 1)
     }

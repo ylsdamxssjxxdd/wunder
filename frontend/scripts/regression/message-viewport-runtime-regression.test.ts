@@ -115,15 +115,15 @@ test('message viewport runtime remeasures visible message rows on resize observe
 
     assert.equal(messageVirtualHeightCache.get('assistant-1'), 164);
     assert.equal(messageVirtualLayoutVersion.value, 1);
-    assert.equal(FakeResizeObserver.instances.length, 1);
-    assert.ok(FakeResizeObserver.instances[0]?.observed.has(messageNode));
+    assert.equal(FakeResizeObserver.instances.length, 2);
+    assert.ok(FakeResizeObserver.instances.at(-1)?.observed.has(messageNode));
 
     const grownHeight = 252;
     Object.assign(messageNode, {
       offsetHeight: grownHeight,
       getBoundingClientRect: () => ({ height: grownHeight })
     });
-    FakeResizeObserver.instances[0]?.emit([messageNode]);
+    FakeResizeObserver.instances.at(-1)?.emit([messageNode]);
 
     assert.equal(messageVirtualHeightCache.get('assistant-1'), grownHeight);
     assert.equal(messageVirtualLayoutVersion.value, 2);
@@ -131,7 +131,7 @@ test('message viewport runtime remeasures visible message rows on resize observe
     // Browsers may deliver queued observer entries after a virtual row is detached.
     Object.assign(messageNode, { isConnected: false, offsetHeight: 0,
       getBoundingClientRect: () => ({ height: 0 }) });
-    FakeResizeObserver.instances[0]?.emit([messageNode]);
+    FakeResizeObserver.instances.at(-1)?.emit([messageNode]);
     assert.equal(messageVirtualHeightCache.get('assistant-1'), grownHeight);
     assert.equal(messageVirtualLayoutVersion.value, 2);
     runtime.dispose();
@@ -215,12 +215,12 @@ test('message viewport runtime batches rapid resize observer updates', () => {
       offsetHeight: 148,
       getBoundingClientRect: () => ({ height: 148 })
     });
-    FakeResizeObserver.instances[0]?.emit([messageNode]);
+    FakeResizeObserver.instances.at(-1)?.emit([messageNode]);
     Object.assign(messageNode, {
       offsetHeight: 196,
       getBoundingClientRect: () => ({ height: 196 })
     });
-    FakeResizeObserver.instances[0]?.emit([messageNode]);
+    FakeResizeObserver.instances.at(-1)?.emit([messageNode]);
 
     assert.equal(timerQueue.length, 1);
     assert.equal(messageVirtualLayoutVersion.value, 1);
@@ -717,4 +717,32 @@ test('message viewport runtime auto-loads older history when refreshed viewport 
       (globalThis as Record<string, unknown>).window = originalWindow;
     }
   }
+});
+
+
+test('upward wheel cancels a pending forced bottom request before a simultaneous layout resize', async () => {
+  const listeners=new Map<string,Function>();
+  const container={scrollTop:900,clientHeight:500,scrollHeight:1400,
+    querySelectorAll:()=>[],getBoundingClientRect:()=>({top:0,height:500}),
+    addEventListener:(name:string,callback:Function)=>listeners.set(name,callback),
+    removeEventListener:(name:string)=>listeners.delete(name)
+  } as unknown as HTMLElement;
+  const following=ref(true);
+  const runtime=createMessageViewportRuntime({
+    messageListRef:ref(container),showChatSettingsView:ref(false),autoStickToBottom:following,
+    showScrollTopButton:ref(false),showScrollBottomButton:ref(false),
+    isAgentConversationActive:ref(true),isWorldConversationActive:ref(false),
+    activeConversationKey:ref('fixture-wheel-thread'),shouldVirtualizeMessages:ref(false),
+    agentRenderableMessages:ref([]),worldRenderableMessages:ref([]),messageVirtualHeightCache:new Map(),
+    messageVirtualLayoutVersion:ref(0),messageVirtualScrollTop:ref(0),messageVirtualViewportHeight:ref(0),
+    estimateVirtualOffsetTop:()=>0,resolveVirtualMessageHeight:()=>0
+  });
+  const pending=runtime.scrollMessagesToBottom(true);
+  listeners.get('wheel')!({deltaY:-100});
+  (container as any).scrollHeight=1500;
+  await pending;
+  assert.equal(following.value,false);
+  assert.equal(container.scrollTop,900);
+  runtime.dispose();
+  assert.equal(listeners.size,0);
 });

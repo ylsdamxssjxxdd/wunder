@@ -810,16 +810,15 @@ const approvalModeSyncing = computed(() => props.approvalModeSyncing);
 const voiceSupported = computed(() => Boolean(props.voiceSupported));
 const voiceRecording = computed(() => Boolean(props.voiceRecording));
 const voiceTranscribing = computed(() => Boolean(props.voiceTranscribing));
-const stopButtonActive = computed(() => Boolean(props.loading));
+const hasSendableContent = computed(() =>
+  Boolean(inputText.value.trim()) || attachments.value.length > 0 || hasInquirySelection.value
+);
+const stopButtonActive = computed(() => Boolean(props.loading) && !hasSendableContent.value);
 const canSendOrStop = computed(() => {
 
   if (stopButtonActive.value) return true;
   if (composerBusy.value > 0) return false;
-  return (
-    Boolean(inputText.value.trim()) ||
-    attachments.value.length > 0 ||
-    hasInquirySelection.value
-  );
+  return hasSendableContent.value;
 });
 const slashCommandDefinitions: SlashCommandDefinition[] = [
   { command: '/new', aliases: ['/reset'], descriptionKey: 'chat.commandMenu.new' },
@@ -1170,7 +1169,7 @@ const focusComposerInputAtEnd = () => {
     if (!el) return;
     const cursor = String(inputText.value || '').length;
     if (typeof el.focus === 'function') {
-      el.focus();
+      el.focus({ preventScroll: true });
     }
     if (typeof el.setSelectionRange === 'function') {
       el.setSelectionRange(cursor, cursor);
@@ -1859,7 +1858,6 @@ const uploadDroppedFilesToWorkspace = async (items: WorkspaceDroppedFile[]): Pro
 const ingestComposerFiles = async (items: WorkspaceDroppedFile[]) => {
   const files = (Array.isArray(items) ? items : []).filter((item) => Boolean(item?.file));
   if (!files.length) return;
-  if (stopButtonActive.value) return;
   closeComposerPanels();
   workspaceDropBusy.value += 1;
   try {
@@ -1876,7 +1874,6 @@ const ingestComposerFiles = async (items: WorkspaceDroppedFile[]) => {
 // 「上传到工作目录」的显式文件对话框随 `+` 菜单移除：入口回到左栏工作目录区
 // （WorkspaceFilesPanel 的上传按钮走同一条 /workspace 上传契约），输入卡只保留拖拽上传。
 const handleDragEnter = (event) => {
-  if (stopButtonActive.value) return;
   if (!hasFileDrag(event) && !hasWorkspaceDragPaths(event?.dataTransfer)) return;
   event.preventDefault();
   dragCounter.value += 1;
@@ -1891,7 +1888,6 @@ const handleDragEnter = (event) => {
 };
 
 const handleDragOver = (event) => {
-  if (stopButtonActive.value) return;
   if (!hasFileDrag(event) && !hasWorkspaceDragPaths(event?.dataTransfer)) return;
   event.preventDefault();
   if (event.dataTransfer) {
@@ -1912,7 +1908,6 @@ const handleDragLeave = (event) => {
 };
 
 const handleDrop = async (event) => {
-  if (stopButtonActive.value) return;
   if (!hasFileDrag(event) && !hasWorkspaceDragPaths(event?.dataTransfer)) return;
   event.preventDefault();
   dragCounter.value = 0;
@@ -2037,7 +2032,6 @@ const processImageFile = async (file: File): Promise<ComposerDraftAttachment> =>
 const ingestAttachmentFiles = async (files: File[]) => {
   const list = (Array.isArray(files) ? files : []).filter(Boolean);
   if (!list.length) return;
-  if (stopButtonActive.value) return;
   attachmentBusy.value += 1;
   try {
     for (const file of list) {

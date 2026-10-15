@@ -49,7 +49,7 @@ test('concurrent opens share one bounded bootstrap and preserve a newer recovery
     f.pending[0].reply();
     assert.equal((await first).id, 'fixture-a');
     assert.equal((await second).id, 'fixture-a');
-    assert.equal(f.store.messages[1].content, 'answer 2');
+    assert.equal(f.store.messages.find(message => message.role === 'assistant' && !message.isGreeting)?.content, 'answer 2');
     assert.equal(f.views.threadViewPhase('fixture-a'), 'ready');
   } finally { f.cleanup(); }
 });
@@ -68,7 +68,7 @@ test('A to B to A starts a fresh request before cancelled promises settle', asyn
     f.pending[0].reply(); f.pending[1].reply();
     assert.equal(await first, null); assert.equal(await middle, null);
     assert.equal(f.store.activeSessionId, 'fixture-a');
-    assert.equal(f.store.messages[1].content, 'answer 3');
+    assert.equal(f.store.messages.find(message => message.role === 'assistant' && !message.isGreeting)?.content, 'answer 3');
   } finally { f.cleanup(); }
 });
 
@@ -105,7 +105,7 @@ test('reset cancels pending opens and does not reuse generations for the same th
     assert.equal((await current).id, 'fixture-a');
     f.pending[0].reply(); assert.equal(await old, null);
     assert.equal(f.views.threadViewPhase('fixture-a'), 'verified_empty');
-    assert.equal(f.store.messages.length, 0);
+    assert.equal(f.store.messages.filter(message => !message.isGreeting).length, 0);
   } finally { f.cleanup(); }
 });
 

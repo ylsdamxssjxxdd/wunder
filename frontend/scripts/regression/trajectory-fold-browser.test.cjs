@@ -105,7 +105,28 @@ for (const kind of ['hive', 'bridge']) for (const count of [3, 70]) {
         assert.match(await page.locator('.tt-payload-pre').textContent(), /properties/);
         assert.equal(await page.evaluate(() => window.fixtureDetailRequests), 1, 'tool details should hydrate once');
       }
+      if (count === 3 && kind === 'bridge') {
+        await page.evaluate(() => {
+          window.fixture[0].items[1].payload.reasoning_content = 'fixture thinking detail';
+          window.trajectoryView.setRawTurns(window.fixture);
+        });
+        await page.waitForTimeout(50);
+        await page.locator('.tt-row-message .tt-content-cell').first().click();
+        await page.waitForFunction(() => document.querySelector('.tt-details')?.textContent.includes('fixture thinking detail'));
+      }
       if (count > 3) {
+        if (kind === 'bridge') {
+          await page.locator('.tt-ledger').evaluate(el => { el.scrollTop = el.scrollHeight; el.dispatchEvent(new Event('scroll')); });
+          await page.waitForTimeout(60);
+          const bottom = await page.locator('.tt-ledger').evaluate(el => ({
+            scrollTop: el.scrollTop, maxScrollTop: el.scrollHeight - el.clientHeight,
+            clientHeight: el.clientHeight, scrollHeight: el.scrollHeight,
+            canvasHeight: el.querySelector('.tt-ledger-canvas').getBoundingClientRect().height,
+            tableHeight: el.querySelector('.tt-table').getBoundingClientRect().height,
+          }));
+          assert.ok(bottom.maxScrollTop - bottom.scrollTop <= 1,
+            `bridge ledger should reach its native bottom: ${JSON.stringify(bottom)}`);
+        }
         await page.locator('.tt-ledger').evaluate(el => { el.scrollTop = 5000; el.dispatchEvent(new Event('scroll')); });
         await page.waitForTimeout(50);
         const anchor = await page.locator('.tt-ledger').evaluate(el => {

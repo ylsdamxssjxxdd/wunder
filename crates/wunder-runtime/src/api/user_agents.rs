@@ -492,6 +492,14 @@ async fn list_running_agents(
         if !allowed_set.contains(agent_id) {
             continue;
         }
+        // Pending composer input is a backlog, not evidence that the running
+        // execution is waiting for capacity. Keep its live state authoritative.
+        if status_by_agent
+            .get(agent_id)
+            .is_some_and(|current| matches!(current.state, STATE_RUNNING | STATE_CANCELLING))
+        {
+            continue;
+        }
         let task_status = task.status.trim().to_ascii_lowercase();
         if task_status != "pending" && task_status != "retry" {
             continue;

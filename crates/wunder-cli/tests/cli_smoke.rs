@@ -49,16 +49,15 @@ fn unique_temp_root(tag: &str) -> PathBuf {
 /// regression here is silent until runtime.
 ///
 /// 不要给 CLI 传 `--config <repo>/config/wunder.yaml`：CLI 会把生效后的配置**回写**到
-/// 它读到的那份文件，于是跑一次测试就把开发者本机的 `config/wunder.yaml` 改写成
-/// `--temp-root` 里的临时库/工作区路径（`config/wunder.yaml` 是 gitignore 的本地文件，
-/// 被改写后无声无息）。不传 `--config` 时 `prepare_runtime_config_path` 会把仓库配置
-/// **复制**到 `<temp-root>/config/wunder.yaml` 再用副本，回写只落在临时目录里。
+/// 它读到的那份文件。测试通过独立的 `WUNDER_HOME` 隔离共享配置、数据库和登录态，
+/// `--temp-root` 只承载临时文件。
 fn run_cli(args: &[&str], lang: &str) {
     let repo_root = repo_root();
     let temp_root = unique_temp_root("cli");
     let output = Command::new(wunder_cli_exe())
         .current_dir(&repo_root)
         .env("WUNDER_CLI_PROJECT_ROOT", &repo_root)
+        .env("WUNDER_HOME", temp_root.join("home"))
         .args(args)
         .arg("--lang")
         .arg(lang)
@@ -113,6 +112,7 @@ fn the_command_surface_matches_the_codex_shaped_contract() {
     let output = Command::new(wunder_cli_exe())
         .current_dir(&repo_root)
         .env("WUNDER_CLI_PROJECT_ROOT", &repo_root)
+        .env("WUNDER_HOME", temp_root.join("home"))
         .arg("--help")
         .arg("--user")
         .arg("smoke_user")

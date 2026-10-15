@@ -14,6 +14,7 @@ pub mod i18n;
 pub mod interlink;
 pub mod json_schema;
 pub mod llm_speed;
+pub mod local_bootstrap;
 pub mod onlyoffice_config;
 pub mod path_utils;
 pub mod repo_assets;

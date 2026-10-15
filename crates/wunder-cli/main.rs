@@ -40,6 +40,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{self, IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tracing_subscriber::EnvFilter;
 use wunder_server::approval::{
@@ -50,7 +51,7 @@ use wunder_server::llm::{is_openai_compatible_provider, probe_openai_context_win
 use wunder_server::path_utils::is_within_root;
 use wunder_server::schemas::{AttachmentPayload, WunderRequest};
 use wunder_server::skills::{load_skills, SkillSpec};
-use wunder_server::storage::ChatSessionRecord;
+use wunder_server::storage::{ChatSessionRecord, ThreadOpenLeaseStatus};
 use wunder_server::tools::{
     build_tool_roots, collect_available_tool_names, execute_tool, is_browser_group_name,
     ToolContext,
@@ -3544,12 +3545,12 @@ async fn handle_doctor(
         if is_zh {
             format!(
                 "- 覆盖配置存在: {}",
-                runtime.temp_root.join("config/wunder.yaml").exists()
+                runtime.wunder_home.join("config/wunder.yaml").exists()
             )
         } else {
             format!(
                 "- config_exists: {}",
-                runtime.temp_root.join("config/wunder.yaml").exists()
+                runtime.wunder_home.join("config/wunder.yaml").exists()
             )
         }
     );
@@ -3753,6 +3754,26 @@ async fn run_agent_once(
     last_message_file: Option<&Path>,
     color: Option<ColorArg>,
 ) -> Result<AgentTurnOutcome> {
+    let owner_instance_id = uuid::Uuid::new_v4().simple().to_string();
+    match runtime.state.storage.try_acquire_thread_open_lease(
+        session_id,
+        &runtime.user_id,
+        &owner_instance_id,
+        "cli",
+        30.0,
+    )? {
+        ThreadOpenLeaseStatus::Acquired => {}
+        ThreadOpenLeaseStatus::Busy => {
+            return Err(anyhow!(
+                "THREAD_IN_USE: 线程正在由其他蛹或舵机实例打开或运行"
+            ));
+        }
+    }
+    let lease_guard = LeaseGuard::new(
+        runtime.state.storage.clone(),
+        session_id.to_string(),
+        owner_instance_id,
+    );
     let language = locale::resolve_cli_language(global);
     let color = resolve_color(color);
     let mut request =
@@ -3808,6 +3829,7 @@ async fn run_agent_once(
         }
         write_last_message_file(last_message_file, final_event.answer.as_str())?;
         emit_turn_complete_notification(runtime, session_id, &final_event, "exec", None);
+        drop(lease_guard);
         return Ok(AgentTurnOutcome::completed_round(final_event));
     }
 
@@ -3848,6 +3870,7 @@ async fn run_agent_once(
         writer.finish(outcome.failure().as_deref());
         write_last_message_file(last_message_file, outcome.final_event.answer.as_str())?;
         emit_turn_complete_notification(runtime, session_id, &outcome.final_event, "exec", None);
+        drop(lease_guard);
         return Ok(outcome);
     }
 
@@ -3867,11 +3890,65 @@ async fn run_agent_once(
     renderer.finish();
     write_last_message_file(last_message_file, final_event.answer.as_str())?;
     emit_turn_complete_notification(runtime, session_id, &final_event, "exec", None);
+    drop(lease_guard);
     Ok(AgentTurnOutcome {
         final_event,
         saw_final,
         saw_error,
     })
+}
+
+struct LeaseGuard {
+    storage: std::sync::Arc<dyn wunder_server::storage::StorageBackend>,
+    session_id: String,
+    owner_instance_id: String,
+    stop: std::sync::Arc<AtomicBool>,
+}
+
+impl LeaseGuard {
+    fn new(
+        storage: std::sync::Arc<dyn wunder_server::storage::StorageBackend>,
+        session_id: String,
+        owner_instance_id: String,
+    ) -> Self {
+        let stop = std::sync::Arc::new(AtomicBool::new(false));
+        let heartbeat_stop = stop.clone();
+        let heartbeat_storage = storage.clone();
+        let heartbeat_session = session_id.clone();
+        let heartbeat_owner = owner_instance_id.clone();
+        std::thread::Builder::new()
+            .name("wunder-cli-thread-lease".to_string())
+            .spawn(move || {
+                while !heartbeat_stop.load(Ordering::Acquire) {
+                    std::thread::sleep(Duration::from_secs(10));
+                    if heartbeat_stop.load(Ordering::Acquire) {
+                        break;
+                    }
+                    if !heartbeat_storage
+                        .touch_thread_open_lease(&heartbeat_session, &heartbeat_owner, 30.0)
+                        .unwrap_or(false)
+                    {
+                        break;
+                    }
+                }
+            })
+            .ok();
+        Self {
+            storage,
+            session_id,
+            owner_instance_id,
+            stop,
+        }
+    }
+}
+
+impl Drop for LeaseGuard {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Release);
+        let _ = self
+            .storage
+            .release_thread_open_lease(&self.session_id, &self.owner_instance_id);
+    }
 }
 
 /// A turn only counts as completed when the stream actually reached its final

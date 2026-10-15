@@ -14,7 +14,9 @@ use crate::{TextBlock, TimelineRow};
 use slint::{Model, ModelRc, VecModel};
 use std::cell::Cell;
 use std::rc::Rc;
+use std::sync::Arc;
 use wunder_desktop::native::{NativeSubagentCard, NativeWorkflowEntry};
+use wunder_desktop::NativeDesktop;
 
 /// Row kinds; keep in sync with `EntryKind` in ui/timeline.slint.
 pub const KIND_USER: i32 = 0;
@@ -202,6 +204,43 @@ pub struct Timeline {
     /// Whether MainWindow.timeline already observes `model`. Binding once
     /// avoids replacing the list's model handle during every 33ms stream tick.
     published: Cell<bool>,
+    markdown_desktop: Option<Arc<NativeDesktop>>,
+    markdown_root: String,
+}
+
+impl Timeline {
+    pub fn set_markdown_desktop(&mut self, desktop: Arc<NativeDesktop>) {
+        self.markdown_desktop = Some(desktop);
+    }
+
+    pub fn set_markdown_root(&mut self, root: String) {
+        if self.markdown_root == root {
+            return;
+        }
+        self.markdown_root = root;
+        self.hydrate_markdown_images();
+    }
+
+    /// Start bounded image loading for the rows already projected into the
+    /// timeline. This is called after history replacement because restored
+    /// rows do not pass through the streaming body builder.
+    pub fn hydrate_markdown_images(&self) {
+        let Some(desktop) = self.markdown_desktop.clone() else {
+            return;
+        };
+        if self.markdown_root.trim().is_empty() {
+            return;
+        }
+        for row in self.model.iter() {
+            if row.blocks.row_count() > 0 {
+                crate::native_markdown::hydrate_model(
+                    row.blocks,
+                    desktop.clone(),
+                    self.markdown_root.clone(),
+                );
+            }
+        }
+    }
 }
 
 impl Default for Timeline {
@@ -232,6 +271,8 @@ impl Timeline {
             settled: false,
             highlight: false,
             published: Cell::new(false),
+            markdown_desktop: None,
+            markdown_root: String::new(),
         }
     }
 
@@ -852,6 +893,9 @@ impl Timeline {
         };
         let mut blocks = body.blocks;
         blocks.finalize_markdown();
+        if let Some(desktop) = self.markdown_desktop.clone() {
+            crate::native_markdown::hydrate(&mut blocks, desktop, self.markdown_root.clone());
+        }
         let styled = self.highlight.then(|| highlight_code(&mut blocks));
         let text = body.text.clone();
         let index = body.index;

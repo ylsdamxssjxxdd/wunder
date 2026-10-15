@@ -36,6 +36,13 @@ impl NativeThreadWatch {
 impl NativeDesktop {
     pub fn watch_chat(&self, session: &str) -> NativeThreadWatch {
         let (output, receiver) = mpsc::channel(8);
+        if let Err(error) = self.open_session(session) {
+            let _ = output.try_send(NativeThreadUpdate::Failed(error.to_string()));
+            return NativeThreadWatch {
+                receiver,
+                cancel: CancellationToken::new(),
+            };
+        }
         let cancel = CancellationToken::new();
         let token = cancel.clone();
         let state = self.state().clone();

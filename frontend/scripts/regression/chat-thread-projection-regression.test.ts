@@ -131,6 +131,26 @@ test('unnamed tool lifecycle rows stay out of the workflow projection', () => {
   assert.deepEqual(assistant?.timeline, []);
 });
 
+test('manual compaction marker summary stays inside the workflow card', () => {
+  const state = emptyChatThreadState('compaction-summary-projection');
+  const turn = { turn_id: 'compact-turn', user_round: 1, status: 'completed', content: '/compact' };
+  const marker = textItemData(turn.turn_id, 1, {
+    content: '[context summary] should be expandable',
+    meta: { type: 'manual_compaction_marker', manual_compaction: true },
+    manual_compaction_marker: true
+  });
+  const compaction = {
+    item_id: `${turn.turn_id}:compaction-1`, turn_id: turn.turn_id, kind: 'compaction',
+    status: 'completed', revision: 1, model_round: 1,
+    summary_text: 'Durable context summary', content: 'history', event_type: 'compaction'
+  };
+  applyFrames(state, [turnUpsert(1, turn), itemUpsert(2, marker), itemUpsert(3, compaction)]);
+  const assistant = buildChatThreadRenderableMessages(state).find(message => message.role === 'assistant')!;
+  assert.equal(assistant.content, '');
+  assert.equal(assistant.workflowItems?.[0]?.kind, 'compaction');
+  assert.equal(assistant.workflowItems?.[0]?.summary_text, 'Durable context summary');
+});
+
 test('assistant timeline keeps each round body as its own block between activity batches', () => {
   const state = emptyChatThreadState('session-projection-timeline');
   const roundOne = textItemData('turn-1', 1, { content: 'step one', reasoning: 'plan one' });

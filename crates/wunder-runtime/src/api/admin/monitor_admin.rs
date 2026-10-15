@@ -98,7 +98,10 @@ async fn admin_monitor(
     let system = state.monitor.get_system_metrics();
     let system_ms = stage_started_at.elapsed().as_millis();
     stage_started_at = Instant::now();
-    let sessions = state.monitor.list_sessions(active_only);
+    let mut sessions = state.monitor.list_sessions(active_only);
+    // 线程管理页展示「线程名称」：线程名称即用户在蜂巢中的会话标题，监控摘要
+    // 本身只带首条问题，这里按用户批量读取会话目录回填 thread_name。
+    attach_thread_names(&state, &mut sessions);
     let sessions_ms = stage_started_at.elapsed().as_millis();
 
     stage_started_at = Instant::now();
@@ -187,6 +190,62 @@ async fn admin_monitor(
         total_ms,
     );
     Ok(response)
+}
+
+/// 线程管理页展示「线程名称」：线程名称即用户在蜂巢中的会话标题。监控会话摘要
+/// 本身只带首条问题，这里按用户批量读取会话目录，把标题回填到 `thread_name`；
+/// 取不到标题时回退为线程首条问题。
+fn attach_thread_names(state: &Arc<AppState>, sessions: &mut [Value]) {
+    if sessions.is_empty() {
+        return;
+    }
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut user_ids: Vec<String> = Vec::new();
+    for session in sessions.iter() {
+        let user_id = session
+            .get("user_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+        if !user_id.is_empty() && seen.insert(user_id.to_string()) {
+            user_ids.push(user_id.to_string());
+        }
+    }
+    let mut titles: HashMap<String, String> = HashMap::new();
+    for user_id in user_ids {
+        let Ok((records, _)) = state
+            .user_store
+            .list_chat_sessions(&user_id, None, None, 0, 1000)
+        else {
+            continue;
+        };
+        for record in records {
+            let title = record.title.trim();
+            if !title.is_empty() {
+                titles.insert(record.session_id, title.to_string());
+            }
+        }
+    }
+    for session in sessions.iter_mut() {
+        let Some(map) = session.as_object_mut() else {
+            continue;
+        };
+        let session_id = map
+            .get("session_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        if let Some(title) = titles.get(&session_id) {
+            map.insert("thread_name".to_string(), json!(title));
+            continue;
+        }
+        if let Some(question) = map.get("question").and_then(Value::as_str) {
+            let trimmed = question.trim();
+            if !trimmed.is_empty() {
+                map.insert("thread_name".to_string(), json!(trimmed));
+            }
+        }
+    }
 }
 
 async fn admin_runtime_metrics() -> Json<Value> {

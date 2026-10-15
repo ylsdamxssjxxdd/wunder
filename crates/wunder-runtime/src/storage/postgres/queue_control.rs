@@ -7,6 +7,7 @@ impl PostgresStorage {
     pub(super) fn ensure_queue_control_schema(&self, conn: &mut PgConn<'_>) -> Result<()> {
         conn.batch_execute("ALTER TABLE agent_tasks ADD COLUMN IF NOT EXISTS priority BIGINT NOT NULL DEFAULT 0;
             ALTER TABLE session_locks ADD COLUMN IF NOT EXISTS suspended BIGINT NOT NULL DEFAULT 0;
+            CREATE INDEX IF NOT EXISTS idx_agent_tasks_session_dispatch ON agent_tasks(session_id, status, priority DESC, retry_at);
             CREATE INDEX IF NOT EXISTS idx_agent_tasks_dispatch ON agent_tasks(status, priority DESC, retry_at, created_at, task_id)")?;
         Ok(())
     }
@@ -14,7 +15,7 @@ impl PostgresStorage {
     pub(super) fn claim_agent_task_impl(&self, task_id: &str, now: f64) -> Result<bool> {
         self.ensure_initialized()?;
         Ok(self.conn()?.execute(
-            "UPDATE agent_tasks SET status='running', started_at=$1, updated_at=$1, finished_at=NULL, last_error=NULL WHERE task_id=$2 AND status IN ('pending','retry') AND retry_at<=$1",
+            "UPDATE agent_tasks SET status='running', started_at=$1, updated_at=$1, finished_at=NULL, last_error=NULL WHERE task_id=$2 AND status IN ('pending','retry') AND retry_at<=$1 AND NOT EXISTS (SELECT 1 FROM agent_tasks ahead WHERE ahead.session_id=agent_tasks.session_id AND ahead.status IN ('pending','retry') AND ahead.retry_at<=$1 AND (ahead.priority>agent_tasks.priority OR (ahead.priority=agent_tasks.priority AND ahead.retry_at<agent_tasks.retry_at)))",
             &[&now, &task_id],
         )? == 1)
     }
@@ -22,7 +23,7 @@ impl PostgresStorage {
     pub(super) fn promote_agent_task_impl(&self, task_id: &str, now: f64) -> Result<bool> {
         self.ensure_initialized()?;
         Ok(self.conn()?.execute(
-            "UPDATE agent_tasks SET priority=1, retry_at=LEAST(retry_at, $1), updated_at=$1, request_payload=(request_payload::jsonb || '{\"queue_priority\":1}'::jsonb)::text WHERE task_id=$2 AND status IN ('pending','retry')",
+            "UPDATE agent_tasks SET priority=1, retry_at=LEAST(retry_at, $1, COALESCE((SELECT MIN(a.retry_at)-1 FROM agent_tasks a WHERE a.session_id=agent_tasks.session_id AND a.status IN ('pending','retry') AND a.priority>0), retry_at)), updated_at=$1, request_payload=(request_payload::jsonb || '{\"queue_priority\":1}'::jsonb)::text WHERE task_id=$2 AND status IN ('pending','retry')",
             &[&now, &task_id],
         )? == 1)
     }

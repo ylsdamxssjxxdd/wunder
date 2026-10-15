@@ -14,8 +14,8 @@ use chrono::Utc;
 use futures::future::BoxFuture;
 use futures::StreamExt;
 use serde_json::{json, Value};
-use std::collections::HashSet;
-use std::sync::{Arc, Mutex as StdMutex};
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex as StdMutex, Weak};
 use tokio::sync::{mpsc, Mutex};
 use tracing::warn;
 use uuid::Uuid;
@@ -46,6 +46,9 @@ pub struct QueueInfo {
     pub queue_total: usize,
     pub active_ahead: usize,
     pub wait_ahead: usize,
+    /// Why this task is waiting. `input`/`scheduler` keep the session running;
+    /// only `capacity` represents a global concurrency wait.
+    pub wait_reason: String,
     /// Durable ThreadLog change cursor for this queue Item.
     pub queue_change_seq: i64,
     pub queue_after_change_seq: i64,
@@ -67,11 +70,19 @@ pub enum ThreadSubmitOutcome {
     Queued(QueueInfo),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct SessionLease {
     session_id: String,
     pending_sessions: Arc<StdMutex<HashSet<String>>>,
     active_runtime_sessions: Arc<StdMutex<HashSet<String>>>,
+    queue_wake: Option<mpsc::Sender<()>>,
+    executions: Option<Arc<StdMutex<HashMap<String, LeaseExecution>>>>,
+}
+
+#[derive(Debug, Default)]
+struct LeaseExecution {
+    turn_id: String,
+    interrupted: bool,
 }
 
 impl SessionLease {
@@ -84,6 +95,8 @@ impl SessionLease {
             session_id,
             pending_sessions,
             active_runtime_sessions,
+            queue_wake: None,
+            executions: None,
         }
     }
 }
@@ -96,8 +109,16 @@ impl Drop for SessionLease {
         if let Ok(mut guard) = self.pending_sessions.lock() {
             guard.remove(self.session_id.as_str());
         }
-        if let Ok(mut guard) = self.active_runtime_sessions.lock() {
-            guard.remove(self.session_id.as_str());
+        if let Ok(mut active) = self.active_runtime_sessions.lock() {
+            if let Some(executions) = &self.executions {
+                if let Ok(mut guard) = executions.lock() {
+                    guard.remove(&self.session_id);
+                }
+            }
+            active.remove(self.session_id.as_str());
+        }
+        if let Some(wake) = &self.queue_wake {
+            let _ = wake.try_send(());
         }
     }
 }
@@ -115,6 +136,8 @@ pub struct ThreadRuntime {
     pending_sessions: Arc<StdMutex<HashSet<String>>>,
     active_runtime_sessions: Arc<StdMutex<HashSet<String>>>,
     started: Arc<std::sync::atomic::AtomicBool>,
+    transitions: Arc<StdMutex<HashMap<String, Weak<Mutex<()>>>>>,
+    executions: Arc<StdMutex<HashMap<String, LeaseExecution>>>,
 }
 
 impl ThreadRuntime {
@@ -138,6 +161,8 @@ impl ThreadRuntime {
             pending_sessions: Arc::new(StdMutex::new(HashSet::new())),
             active_runtime_sessions: Arc::new(StdMutex::new(HashSet::new())),
             started: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            transitions: Arc::new(StdMutex::new(HashMap::new())),
+            executions: Arc::default(),
         });
         *runtime.orchestrator.task_runtime.write() = Arc::downgrade(&runtime);
         runtime
@@ -322,7 +347,9 @@ impl ThreadRuntime {
                         .await?;
                     return Ok(ThreadSubmitOutcome::Queued(info));
                 }
-                lease = self.try_acquire_start_lease(session_id).await;
+                lease = self
+                    .try_acquire_start_lease(session_id, &thread_turn_id)
+                    .await;
                 if lease.is_none() {
                     let info = self
                         .enqueue_task(&request, &agent_id, Some(session_id))
@@ -547,6 +574,17 @@ impl ThreadRuntime {
         session_id: &str,
         cancel_source: &str,
     ) -> Result<ThreadCancelSettlement> {
+        self.cancel_session_activity_inner(user_id, session_id, cancel_source, false)
+            .await
+    }
+
+    async fn cancel_session_activity_inner(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        cancel_source: &str,
+        preserve_root_queue: bool,
+    ) -> Result<ThreadCancelSettlement> {
         let cleaned_user = user_id.trim();
         let cleaned_session = session_id.trim();
         if cleaned_user.is_empty() || cleaned_session.is_empty() {
@@ -559,6 +597,24 @@ impl ThreadRuntime {
             source
         };
 
+        // This fence belongs to the lease, including the pre-registration gap.
+        // Registration may reset monitor flags, but cannot reset this execution.
+        if preserve_root_queue {
+            let active = self
+                .active_runtime_sessions
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if active.contains(cleaned_session) {
+                if let Some(execution) = self
+                    .executions
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .get_mut(cleaned_session)
+                {
+                    execution.interrupted = true;
+                }
+            }
+        }
         let monitor_cancelled = self.monitor.cancel_with_source(cleaned_session, source);
         self.cancel_remote_command_sessions(cleaned_user, cleaned_session)
             .await;
@@ -605,6 +661,12 @@ impl ThreadRuntime {
         for task_session_id in std::iter::once(cleaned_session)
             .chain(descendant_session_ids.iter().map(String::as_str))
         {
+            // Interjection cancels the live execution token. Its executor owns
+            // terminal settlement; touching the task ledger here could cancel
+            // the promoted successor after the current lease is released.
+            if preserve_root_queue && task_session_id == cleaned_session {
+                continue;
+            }
             let thread_id = format!("thread_{task_session_id}");
             for status in [TASK_STATUS_PENDING, TASK_STATUS_RETRY, TASK_STATUS_RUNNING] {
                 loop {
@@ -653,9 +715,11 @@ impl ThreadRuntime {
             }
         }
 
-        let thread_status_reset = true;
-        let settlement_event_id = self
-            .emit_thread_status_event(
+        let thread_status_reset = !preserve_root_queue;
+        let settlement_event_id = if preserve_root_queue {
+            0
+        } else {
+            self.emit_thread_status_event(
                 cleaned_session,
                 cleaned_user,
                 "cancelled",
@@ -663,7 +727,8 @@ impl ThreadRuntime {
                 queued_tasks_cancelled,
                 running_tasks_marked_cancelled,
             )
-            .await;
+            .await
+        };
         let _ = self.queue_tx.try_send(());
 
         tracing::info!(
@@ -722,9 +787,16 @@ impl ThreadRuntime {
             .await
     }
 
-    async fn try_acquire_start_lease(&self, session_id: &str) -> Option<SessionLease> {
+    async fn try_acquire_start_lease(
+        &self,
+        session_id: &str,
+        turn_id: &str,
+    ) -> Option<SessionLease> {
+        let transition = self.transition_gate(session_id);
+        // A hand-off may await remote cleanup; keep scheduling other threads.
+        let _transition = transition.try_lock().ok()?;
         let config = self.config_store.get().await;
-        try_acquire_start_lease_with_limit(
+        let mut lease = try_acquire_start_lease_with_limit(
             session_id,
             config
                 .server
@@ -733,7 +805,40 @@ impl ThreadRuntime {
                 .saturating_add(self.orchestrator.scheduling.suspended_count()),
             &self.pending_sessions,
             &self.active_runtime_sessions,
-        )
+        )?;
+        lease.queue_wake = Some(self.queue_tx.clone());
+        self.executions
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(
+                session_id.into(),
+                LeaseExecution {
+                    turn_id: turn_id.into(),
+                    interrupted: false,
+                },
+            );
+        lease.executions = Some(self.executions.clone());
+        Some(lease)
+    }
+
+    pub(crate) fn execution_interrupted(&self, session: &str) -> bool {
+        self.executions
+            .lock()
+            .map(|runs| runs.get(session).is_some_and(|run| run.interrupted))
+            .unwrap_or(true)
+    }
+
+    /// Serialize destructive hand-off with admission for this thread only.
+    /// Weak entries retain no idle locks; unrelated threads never await each other.
+    fn transition_gate(&self, session: &str) -> Arc<Mutex<()>> {
+        let mut gates = self.transitions.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(gate) = gates.get(session).and_then(Weak::upgrade) {
+            return gate;
+        }
+        gates.retain(|_, gate| gate.strong_count() > 0);
+        let gate = Arc::new(Mutex::new(()));
+        gates.insert(session.to_owned(), Arc::downgrade(&gate));
+        gate
     }
 
     async fn enqueue_task(
@@ -751,7 +856,7 @@ impl ThreadRuntime {
         if let Value::Object(ref mut map) = payload {
             map.insert("stream".to_string(), Value::Bool(true));
         }
-        let record = AgentTaskRecord {
+        let mut record = AgentTaskRecord {
             task_id: format!("task_{}", Uuid::new_v4().simple()),
             thread_id: thread_id.clone(),
             user_id: request.user_id.clone(),
@@ -768,6 +873,10 @@ impl ThreadRuntime {
             finished_at: None,
             last_error: None,
         };
+        let wait_reason = self.queue_wait_reason(&record.session_id).await.to_string();
+        record.request_payload["__queue_wait"] = json!({
+            "queue_id":record.task_id,"reason":wait_reason,"priority":0
+        });
         let store = self.user_store.clone();
         let inserted_record = record.clone();
         blocking::run_db("runtime.thread.insert_agent_task", move || {
@@ -798,6 +907,7 @@ impl ThreadRuntime {
                     "queue_total": queue_stats.queue_total,
                     "active_ahead": queue_stats.active_ahead,
                     "wait_ahead": queue_stats.wait_ahead,
+                    "reason": wait_reason.clone(),
                     "turn_id": request.config_overrides.as_ref()
                         .and_then(|value| value.get("__thread_log_turn_id"))
                         .cloned().unwrap_or(Value::Null),
@@ -840,6 +950,7 @@ impl ThreadRuntime {
             queue_total: queue_stats.queue_total,
             active_ahead: queue_stats.active_ahead,
             wait_ahead: queue_stats.wait_ahead,
+            wait_reason,
             queue_change_seq,
             queue_after_change_seq: queue_change_seq.saturating_sub(1),
         })
@@ -858,6 +969,41 @@ impl ThreadRuntime {
         })
         .await
         .unwrap_or(0)
+    }
+
+    async fn queue_wait_reason(&self, session: &str) -> &'static str {
+        if self.session_has_active_runtime_slot(session) {
+            "input"
+        } else if self.active_runtime_session_count()
+            >= self
+                .config_store
+                .get()
+                .await
+                .server
+                .max_active_sessions
+                .max(1)
+        {
+            "capacity"
+        } else {
+            "scheduler"
+        }
+    }
+
+    async fn publish_queue_wait(&self, task: &AgentTaskRecord) -> Result<()> {
+        let Some(turn) = task
+            .request_payload
+            .pointer("/config_overrides/__thread_log_turn_id")
+            .and_then(Value::as_str)
+        else {
+            return Ok(());
+        };
+        let reason = self.queue_wait_reason(&task.session_id).await;
+        self.orchestrator.committer.update_turn(&task.user_id, &task.session_id, turn,
+            "queued", "", &json!({"queued_input": {
+                "queue_id": task.task_id, "reason": reason,
+                "priority": task.request_payload.get("queue_priority").and_then(Value::as_i64).unwrap_or(0)
+            }})).await?;
+        Ok(())
     }
 
     async fn compute_queue_stats(
@@ -931,6 +1077,9 @@ impl ThreadRuntime {
     }
 
     async fn emit_queue_update(&self, task: &AgentTaskRecord, total_pending: usize) {
+        if let Err(error) = self.publish_queue_wait(task).await {
+            warn!("publish queue wait failed: {error}");
+        }
         let stats = self.compute_queue_stats(task, total_pending).await;
         let payload = json!({"queue_ahead":stats.queue_ahead, "queue_total":stats.queue_total,
             "active_ahead":stats.active_ahead, "wait_ahead":stats.wait_ahead});
@@ -964,7 +1113,8 @@ impl ThreadRuntime {
                 "queue_ahead": stats.queue_ahead,
                 "queue_total": stats.queue_total,
                 "active_ahead": stats.active_ahead,
-                "wait_ahead": stats.wait_ahead,
+            "wait_ahead": stats.wait_ahead,
+            "reason": self.queue_wait_reason(&task.session_id).await,
             }),
         )
         .await;
@@ -1236,7 +1386,12 @@ impl ThreadRuntime {
         }
         running.insert(task.thread_id.clone());
         drop(running);
-        if let Some(lease) = self.try_acquire_start_lease(&task.session_id).await {
+        let turn = task
+            .request_payload
+            .pointer("/config_overrides/__thread_log_turn_id")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        if let Some(lease) = self.try_acquire_start_lease(&task.session_id, turn).await {
             Some(lease)
         } else {
             self.finish_thread(&task.thread_id).await;
@@ -1415,6 +1570,17 @@ impl ThreadRuntime {
                     let _ = self.queue_tx.try_send(());
                     return;
                 }
+                // Interjection preserves pending tasks and lets this executor
+                // settle its own ledger. A cancelled stream is not a failure.
+                if self.monitor.is_cancelled(&task.session_id)
+                    || self.execution_interrupted(&task.session_id)
+                {
+                    let _ = self
+                        .fail_task(&task, "cancelled".into(), TASK_STATUS_CANCELLED)
+                        .await;
+                    self.finish_thread(&task.thread_id).await;
+                    return;
+                }
                 if failed.is_some() || !completed {
                     let _ = self
                         .fail_task(
@@ -1464,7 +1630,13 @@ impl ThreadRuntime {
                     .downcast_ref::<OrchestratorError>()
                     .map(|inner| inner.code() == "USER_BUSY")
                     .unwrap_or(false);
-                if is_busy {
+                if self.execution_interrupted(&task.session_id)
+                    || self.monitor.is_cancelled(&task.session_id)
+                {
+                    let _ = self
+                        .fail_task(&task, "cancelled".into(), TASK_STATUS_CANCELLED)
+                        .await;
+                } else if is_busy {
                     let _ = self.retry_task(&task, err.to_string()).await;
                 } else {
                     let _ = self

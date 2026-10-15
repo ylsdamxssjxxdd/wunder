@@ -1131,10 +1131,24 @@ async fn workspace_download(
         .workspace
         .ensure_user_root(&workspace_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    let target = state
-        .workspace
-        .resolve_path(&workspace_id, &normalized)
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    // A public path already includes the cloud user's `workspace` segment:
+    // `/workspaces/<user>/workspace/file`. Resolve it through the public-root
+    // mapping instead of treating `workspace/file` as relative to the current
+    // workspace, which would produce `workspace/workspace/file`.
+    let target = if let Some(public_path) = public_path.as_ref() {
+        let public_target = PathBuf::from(WORKSPACE_PUBLIC_PREFIX.trim_end_matches('/'))
+            .join(&public_path.workspace_id)
+            .join(&public_path.relative_path);
+        state
+            .workspace
+            .map_public_path(&workspace_id, &public_target)
+            .unwrap_or(public_target)
+    } else {
+        state
+            .workspace
+            .resolve_path(&workspace_id, &normalized)
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+    };
     if !target.exists() || !target.is_file() {
         return Err(error_response(
             StatusCode::NOT_FOUND,

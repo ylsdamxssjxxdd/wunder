@@ -150,6 +150,20 @@ const SUBAGENT_TOOL_NAME: &str = "子智能体控制";
 const SUBAGENT_ACTION_ONE_IN: u64 = 4;
 /// 用户消息可覆盖的本次计划模型轮次上限（避免一次测试跑出过多轮次）。
 const MAX_ROUND_OVERRIDE: u64 = 2000;
+/// 消息里表示“本次必须调用子智能体”的简拼 token（大小写不敏感，整 token 匹配）。
+const SUBAGENT_SHORTHAND_TOKENS: &[&str] = &[
+    "s",
+    "sub",
+    "subagent",
+    "subagents",
+    "子智能体",
+    "子代理",
+    "子智能体控制",
+];
+/// 数字后缀 `s`（如 `1s` / `12S`）同样表示“派子智能体”，数字本身仍是轮次覆盖值。
+const SUBAGENT_SUFFIX: char = 's';
+/// 强制子智能体时最少需要的模型轮次：首轮发出派生调用，末轮输出结论。
+const MIN_ROUNDS_WITH_FORCED_SUBAGENT: usize = 2;
 /// 合成子任务描述：真实派生子智能体时作为 `task` 参数。
 const SUBAGENT_TASKS: &[&str] = &[
     "在只读范围内梳理当前目录结构并汇报。",
@@ -278,8 +292,25 @@ pub(super) fn subagent_entry_candidate(tools: Option<&[Value]>) -> Option<(Strin
 /// 默认派生一个子任务（`spawn`），并周期性派发一批（`batch_spawn`），偶尔用
 /// `list` 做一次无副作用巡检。这些动作在编排器里都会**真实执行**；递归由调用方
 /// 兜底——被派生的子会话自身不再被允许派生子智能体（见 `load_turn_for_round`
-/// 的 `allow_subagent`）。
-fn subagent_arguments(rng: &mut u64) -> Value {
+/// 的 `allow_subagent`）。用户显式要求派生时（`force`）只发 `spawn` /
+/// `batch_spawn`，不发 `list`，保证「要子智能体」一定真的派生出一个。
+fn subagent_arguments(rng: &mut u64, force: bool) -> Value {
+    if force {
+        return match next_u64(rng) % 4 {
+            0 => json!({
+                "action": "batch_spawn",
+                "tasks": [
+                    { "task": pick(SUBAGENT_TASKS, rng), "label": "sim-child-1" },
+                    { "task": pick(SUBAGENT_TASKS, rng), "label": "sim-child-2" },
+                ],
+            }),
+            _ => json!({
+                "action": "spawn",
+                "task": pick(SUBAGENT_TASKS, rng),
+                "label": "sim-child",
+            }),
+        };
+    }
     match next_u64(rng) % 5 {
         0 => json!({ "action": "list", "limit": 20 }),
         1 => json!({
@@ -297,49 +328,92 @@ fn subagent_arguments(rng: &mut u64) -> Value {
     }
 }
 
+/// 去掉一个消息 token 两端的常见标点，便于整 token 匹配。
+fn trim_token(token: &str) -> &str {
+    token.trim_matches(|c: char| {
+        matches!(
+            c,
+            ',' | '.'
+                | ';'
+                | ':'
+                | '!'
+                | '?'
+                | '('
+                | ')'
+                | '['
+                | ']'
+                | '，'
+                | '。'
+                | '；'
+                | '：'
+                | '！'
+                | '？'
+                | '、'
+                | '（'
+                | '）'
+        )
+    })
+}
+
 /// 从用户消息中解析“本次计划模型轮次数”覆盖值：取消息里第一个纯数字 token。
 ///
-/// 例如 `100` 或 `100 subagent` -> 100；`跑 12 轮` -> 12。结果被夹到
-/// `1..=MAX_ROUND_OVERRIDE`，因而“用户输入一个数字就决定本次模型轮次”这一
-/// 测试约定被严格遵守。`abc100` 这类以字母开头的 token 不会被误读。
+/// 例如 `100` 或 `100 subagent` -> 100；`跑 12 轮` -> 12；简拼 `1s` -> 1（`s`
+/// 后缀只表示派子智能体，不影响数字）。结果被夹到 `1..=MAX_ROUND_OVERRIDE`，
+/// 因而“用户输入一个数字就决定本次模型轮次”这一测试约定被严格遵守。`abc100`
+/// 这类以字母开头的 token 不会被误读。
 pub(super) fn parse_round_override(message: &str) -> Option<usize> {
     message.split_whitespace().find_map(|token| {
-        let token = token.trim_matches(|c: char| {
-            matches!(
-                c,
-                ',' | '.'
-                    | ';'
-                    | ':'
-                    | '!'
-                    | '?'
-                    | '('
-                    | ')'
-                    | '['
-                    | ']'
-                    | '，'
-                    | '。'
-                    | '；'
-                    | '：'
-                    | '！'
-                    | '？'
-                    | '、'
-                    | '（'
-                    | '）'
-            )
-        });
-        if token.is_empty() || !token.chars().all(|c| c.is_ascii_digit()) {
+        let token = trim_token(token);
+        // 允许 `5s` / `5S` / `5轮` / `5次` 这类写法，数字仍是轮次，后缀只是修饰语。
+        let lowered = token.to_ascii_lowercase();
+        let digits = lowered
+            .as_str()
+            .strip_suffix(SUBAGENT_SUFFIX)
+            .or_else(|| token.strip_suffix("轮"))
+            .or_else(|| token.strip_suffix("次"))
+            .unwrap_or(token);
+        if digits.is_empty() || !digits.chars().all(|c| c.is_ascii_digit()) {
             return None;
         }
-        token
+        digits
             .parse::<u64>()
             .ok()
             .map(|value| value.clamp(1, MAX_ROUND_OVERRIDE) as usize)
     })
 }
 
-/// 用户消息是否要求本次必定调用子智能体工具（大小写不敏感的 `subagent`）。
+/// 用户消息是否要求本次必定调用子智能体工具。
+///
+/// 三种写法等价：完整词 `subagent`（大小写不敏感）、中文 `子智能体` / `子代理`、
+/// 以及简拼——独立 token `s` / `sub`，或数字后直接带 `s`（`1s`）。
 pub(super) fn wants_subagent(message: &str) -> bool {
-    message.to_ascii_lowercase().contains("subagent")
+    let lowered = message.to_ascii_lowercase();
+    if lowered.contains("subagent") || message.contains("子智能体") || message.contains("子代理")
+    {
+        return true;
+    }
+    message.split_whitespace().any(|token| {
+        let token = trim_token(token).to_ascii_lowercase();
+        if SUBAGENT_SHORTHAND_TOKENS.contains(&token.as_str()) {
+            return true;
+        }
+        // `subagent` 的拼写变体（`subagnet` 等）：只认以 `suba` 开头的 token，
+        // 避免把 `subject` / `submit` 这类普通英文当成派生指令。
+        if token.len() >= 4 && token.starts_with("suba") {
+            return true;
+        }
+        // 数字 + s 简拼：`1s` / `12S`。
+        token.len() > 1
+            && token.ends_with(SUBAGENT_SUFFIX)
+            && token[..token.len() - SUBAGENT_SUFFIX.len_utf8()]
+                .chars()
+                .all(|c| c.is_ascii_digit())
+    })
+}
+
+/// 子智能体工具可用、且用户要求派生时，本次计划至少要留出工具轮与收尾轮。
+pub(super) fn rounds_with_forced_subagent(planned: usize) -> usize {
+    planned.max(MIN_ROUNDS_WITH_FORCED_SUBAGENT)
 }
 
 /// 构造 `create_goal` 的合法参数：必需 objective + 一个把轮次上限顶到天花板的
@@ -430,8 +504,8 @@ fn build_tool_turn(
         _ => false,
     };
     if opens_subagent {
-        if let Some(((name, _schema), _)) = subagent_entry {
-            let args = subagent_arguments(rng);
+        if let Some(((name, _schema), force)) = subagent_entry {
+            let args = subagent_arguments(rng, force);
             calls.push(json!({
                 "id": format!("sim_{round}_{model_round}_subagent"),
                 "type": "function",
@@ -1123,6 +1197,12 @@ mod tests {
             parse_round_override("999999"),
             Some(MAX_ROUND_OVERRIDE as usize)
         );
+        // 简拼：`5s` / `12轮` 里的数字仍是轮次，后缀只是修饰。
+        assert_eq!(parse_round_override("1s"), Some(1));
+        assert_eq!(parse_round_override("12S"), Some(12));
+        assert_eq!(parse_round_override("8轮"), Some(8));
+        assert_eq!(parse_round_override("3次"), Some(3));
+        assert_eq!(parse_round_override("s"), None);
     }
 
     #[test]
@@ -1130,6 +1210,69 @@ mod tests {
         assert!(wants_subagent("please SubAgent this"));
         assert!(wants_subagent("subagent"));
         assert!(!wants_subagent("100"));
+    }
+
+    #[test]
+    fn wants_subagent_accepts_shorthand() {
+        assert!(wants_subagent("1s"), "数字 + s 简拼");
+        assert!(wants_subagent("12S"), "大小写不敏感");
+        assert!(wants_subagent("1 subagent"), "完整词");
+        assert!(wants_subagent("s"), "单独简拼");
+        assert!(wants_subagent("sub"), "sub 简拼");
+        assert!(wants_subagent("派个 子智能体 出来"), "中文");
+        assert!(wants_subagent("1 subagnet"), "拼写变体");
+        assert!(!wants_subagent("submit the report"), "普通英文不被误判");
+        assert!(!wants_subagent("subject"), "普通英文不被误判");
+        assert!(!wants_subagent("跑 12 轮"), "单纯的数字不是派生指令");
+        assert!(!wants_subagent("this is a summary"), "普通英文不被误判");
+    }
+
+    #[test]
+    fn forced_subagent_never_falls_back_to_list() {
+        let subagent = summary(
+            "子智能体控制",
+            json!({"type":"object","required":["action"],"properties":{"action":{"type":"string"}}}),
+        );
+        for i in 0..24 {
+            let seed = format!("session-force-action-{i}");
+            let turn = build_turn(
+                &seed,
+                1,
+                1,
+                50,
+                &[subagent.clone()],
+                None,
+                Some((&subagent, true)),
+            );
+            let calls = turn
+                .tool_calls
+                .as_ref()
+                .and_then(Value::as_array)
+                .expect("calls");
+            let call = calls
+                .iter()
+                .find(|call| {
+                    call.pointer("/function/name").and_then(Value::as_str) == Some("子智能体控制")
+                })
+                .expect("forced subagent call present");
+            let args: Value = serde_json::from_str(
+                call.pointer("/function/arguments")
+                    .and_then(Value::as_str)
+                    .expect("args"),
+            )
+            .expect("subagent arguments are json");
+            let action = args.get("action").and_then(Value::as_str).expect("action");
+            assert!(
+                matches!(action, "spawn" | "batch_spawn"),
+                "forced request must really dispatch a child, got {action}"
+            );
+        }
+    }
+
+    #[test]
+    fn rounds_with_forced_subagent_reserves_a_tool_round() {
+        assert_eq!(rounds_with_forced_subagent(1), 2);
+        assert_eq!(rounds_with_forced_subagent(7), 7);
     }
 
     #[test]

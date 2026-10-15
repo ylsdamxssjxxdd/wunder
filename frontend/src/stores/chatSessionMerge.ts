@@ -1,3 +1,4 @@
+import { applyThreadViewHead, threadViewOwnsExecution, threadViewStatus } from '@/realtime/chat/threadViewStore';
 import { mergeSessionQuotaUsed } from './chatSessionQuota';
 
 export type ChatSessionLike = Record<string, unknown> & {
@@ -41,6 +42,13 @@ export const mergeSessionRuntimeFields = (
     merged.runtimeStatus = currentRecord.runtimeStatus ?? currentRecord.runtime_status;
     if (currentRecord.thread_status !== undefined) merged.thread_status = currentRecord.thread_status;
     if (currentRecord.threadStatus !== undefined) merged.threadStatus = currentRecord.threadStatus;
+  }
+  const sessionId = resolveChatSessionKey(merged.id);
+  applyThreadViewHead(sessionId, incomingRecord.runtime_head);
+  if (threadViewOwnsExecution(sessionId)) {
+    const status = threadViewStatus(sessionId);
+    merged.runtime_status=status; merged.runtimeStatus=status;
+    merged.thread_status=status; merged.threadStatus=status;
   }
   const quotaUsed = mergeSessionQuotaUsed(currentRecord, incomingRecord);
   if (quotaUsed !== null) {

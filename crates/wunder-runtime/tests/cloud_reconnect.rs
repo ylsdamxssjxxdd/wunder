@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
-use wunder_server::cloud::{shared as cloud_shared, CloudSessionExpired};
+use wunder_server::cloud::{shared as cloud_shared, CloudService, CloudSessionExpired};
 use wunder_server::config::LlmModelConfig;
 use wunder_server::config_store::ConfigStore;
 use wunder_server::llm::{build_llm_client, ChatMessage};
@@ -267,8 +267,18 @@ fn test_message() -> ChatMessage {
 }
 
 fn write_session_file(home: &std::path::Path, token: &str, refresh: &str, expires_in: f64) {
+    write_session_file_with_server(home, "http://127.0.0.1:9999", token, refresh, expires_in);
+}
+
+fn write_session_file_with_server(
+    home: &std::path::Path,
+    server: &str,
+    token: &str,
+    refresh: &str,
+    expires_in: f64,
+) {
     let session = json!({
-        "server": "http://127.0.0.1:9999",
+        "server": server,
         "user_id": "u-reconnect",
         "username": "tester",
         "scope": "local_desktop",
@@ -587,7 +597,7 @@ async fn concurrent_recover_auth_is_single_flight() {
         assert_eq!(presented.as_deref(), Some(REFRESH_V1));
         MockResponse::json(
             200,
-            refresh_body(REFRESH_V1, TOKEN_V2, REFRESH_V2, 90.0 * 24.0 * 3600.0),
+            refresh_body(TOKEN_V2, REFRESH_V2, 90.0 * 24.0 * 3600.0),
         )
     });
     let server = spawn_mock_server(refresh_handler).await;
@@ -723,7 +733,7 @@ async fn proactive_renewal_only_fires_below_the_threshold() {
         assert_eq!(presented.as_deref(), Some(REFRESH_V1));
         MockResponse::json(
             200,
-            refresh_body(REFRESH_V1, TOKEN_V2, REFRESH_V2, 90.0 * 24.0 * 3600.0),
+            refresh_body(TOKEN_V2, REFRESH_V2, 90.0 * 24.0 * 3600.0),
         )
     });
     let server = spawn_mock_server(refresh_handler).await;
@@ -757,4 +767,64 @@ async fn proactive_renewal_only_fires_below_the_threshold() {
     assert_eq!(persisted["token"], TOKEN_V2);
     assert_eq!(persisted["refresh_token"], REFRESH_V2);
     assert_eq!(cloud.status().connection, "online");
+}
+
+#[tokio::test]
+async fn independent_cloud_instances_share_rotating_session_file() {
+    let refresh_hits = Arc::new(AtomicUsize::new(0));
+    let refresh_hits_clone = refresh_hits.clone();
+    let handler: MockHandler = Arc::new(move |request: MockRequest| {
+        assert_eq!(request.path, "/wunder/auth/refresh");
+        refresh_hits_clone.fetch_add(1, Ordering::SeqCst);
+        let body: Value = serde_json::from_str(&request.body).expect("refresh body");
+        assert_eq!(body["refresh_token"], REFRESH_V1);
+        MockResponse::json(
+            200,
+            refresh_body(TOKEN_V2, REFRESH_V2, 90.0 * 24.0 * 3600.0),
+        )
+    });
+    let server = spawn_mock_server(handler).await;
+    let home = tempfile::tempdir().expect("temp home");
+    write_session_file_with_server(home.path(), &server, TOKEN_V1, REFRESH_V1, 3600.0);
+
+    let first = CloudService::new();
+    let second = CloudService::new();
+    first.set_session_base_dir(home.path().to_path_buf());
+    second.set_session_base_dir(home.path().to_path_buf());
+    assert_eq!(first.session().expect("first session").token, TOKEN_V1);
+    assert_eq!(second.session().expect("second session").token, TOKEN_V1);
+
+    assert!(second.recover_auth(TOKEN_V1).await.expect("second refresh"));
+    // The first instance notices the changed fingerprint before attempting a
+    // refresh and observes the rotated pair from disk instead.
+    assert!(first
+        .recover_auth(TOKEN_V1)
+        .await
+        .expect("first observes refresh"));
+    assert_eq!(refresh_hits.load(Ordering::SeqCst), 1);
+    assert_eq!(first.session().expect("rotated session").token, TOKEN_V2);
+    assert_eq!(
+        first
+            .session()
+            .expect("rotated session")
+            .refresh_token
+            .as_deref(),
+        Some(REFRESH_V2)
+    );
+}
+
+#[tokio::test]
+async fn independent_cloud_instance_observes_external_logout() {
+    let home = tempfile::tempdir().expect("temp home");
+    write_session_file(home.path(), TOKEN_V1, REFRESH_V1, 3600.0);
+    let first = CloudService::new();
+    let second = CloudService::new();
+    first.set_session_base_dir(home.path().to_path_buf());
+    second.set_session_base_dir(home.path().to_path_buf());
+    assert!(first.session().is_some());
+    assert!(second.session().is_some());
+
+    std::fs::remove_file(home.path().join("config/cloud.session.json")).expect("remove session");
+    assert!(!first.status().logged_in);
+    assert_eq!(first.status().connection, "logged_out");
 }

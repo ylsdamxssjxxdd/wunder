@@ -86,7 +86,7 @@ pub struct GlobalArgs {
     #[arg(long = "lang", alias = "language", global = true)]
     pub language: Option<String>,
 
-    /// Base config path / 基础配置路径（默认 <repo>/config/wunder.yaml）。
+    /// Base config path / 基础配置路径（默认 WUNDER_HOME/config/wunder.yaml，与蛹共用）。
     #[arg(long = "config", global = true)]
     pub config_path: Option<PathBuf>,
 

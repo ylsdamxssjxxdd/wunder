@@ -80,19 +80,18 @@ impl CliRuntime {
         let user_tools_root = wunder_home.join("user_tools");
         let vector_root = wunder_home.join("vector_knowledge");
         let companions_root = wunder_home.join("config/data/companions/global");
+        wunder_server::local_assets::release_embedded_local_assets(&wunder_home)
+            .context("release embedded local assets failed")?;
         ensure_runtime_dirs(&temp_root, &wunder_home, &user_tools_root, &vector_root)?;
 
-        let config_path = prepare_runtime_config_path(global, &repo_root, &temp_root)?;
-        let i18n_path = repo_root.join("config/i18n.messages.json");
-        let skill_runner = repo_root.join("scripts/skill_runner.py");
+        let config_path = prepare_runtime_config_path(global, &repo_root, &wunder_home)?;
+        let i18n_path = wunder_home.join("config/i18n.messages.json");
+        let skill_runner = wunder_home.join("scripts/skill_runner.py");
 
         set_env_path("WUNDER_CONFIG_PATH", &config_path);
         set_env_path_if_exists("WUNDER_I18N_MESSAGES_PATH", &i18n_path);
-        set_env_prompts_root_if_unset(&repo_root);
-        set_env_path(
-            "WUNDER_BUILTIN_SKILLS_ROOT",
-            &repo_assets::builtin_skills_root(&repo_root),
-        );
+        set_env_prompts_root_if_unset(&wunder_home);
+        set_env_path("WUNDER_BUILTIN_SKILLS_ROOT", &wunder_home.join("skills"));
         set_env_path_if_exists("WUNDER_SKILL_RUNNER_PATH", &skill_runner);
         set_env_path("WUNDER_HOME", &wunder_home);
         set_env_path("WUNDER_USER_TOOLS_ROOT", &user_tools_root);
@@ -239,7 +238,7 @@ impl CliRuntime {
     }
 
     pub fn turn_notification_file(&self) -> PathBuf {
-        self.temp_root.join("config/turn_notification.json")
+        self.wunder_home.join("config/turn_notification.json")
     }
 
     pub fn load_turn_notification_config(&self) -> TurnNotificationConfig {
@@ -539,12 +538,13 @@ fn ensure_runtime_dirs(
 ) -> Result<()> {
     for dir in [
         temp_root.to_path_buf(),
-        temp_root.join("config"),
-        temp_root.join("logs"),
         wunder_home.to_path_buf(),
+        wunder_home.join("config"),
+        wunder_home.join("logs"),
         wunder_home.join("skills"),
         user_tools_root.to_path_buf(),
         vector_root.to_path_buf(),
+        temp_root.join("sessions"),
     ] {
         fs::create_dir_all(dir)?;
     }
@@ -552,7 +552,7 @@ fn ensure_runtime_dirs(
 }
 
 fn default_cli_temp_root(wunder_home: &Path) -> PathBuf {
-    wunder_home.to_path_buf()
+    wunder_home.join("temp")
 }
 
 /// Older CLI builds placed mutable state one level below `cli/WUNDER_TEMP`.
@@ -605,16 +605,17 @@ fn set_env_prompts_root_if_unset(repo_root: &Path) {
 fn prepare_runtime_config_path(
     global: &GlobalArgs,
     repo_root: &Path,
-    temp_root: &Path,
+    wunder_home: &Path,
 ) -> Result<PathBuf> {
     if let Some(path) = global.config_path.clone() {
         return Ok(path);
     }
-    let runtime_config = temp_root.join("config/wunder.yaml");
+    // The shared home is the only persistent config root. The temp root is reserved for scratch files.
+    let runtime_config = wunder_home.join("config/wunder.yaml");
     if runtime_config.exists() {
         return Ok(runtime_config);
     }
-    let repo_config = repo_root.join("config/wunder.yaml");
+    let repo_config = repo_root.join("config/wunder-example.yaml");
     if repo_config.exists() {
         if let Some(parent) = runtime_config.parent() {
             fs::create_dir_all(parent)?;
@@ -642,7 +643,10 @@ fn ensure_generated_base_config(path: &Path) -> Result<()> {
         .ok_or_else(|| anyhow!("invalid generated base config path: {}", path.display()))?;
     fs::create_dir_all(parent)?;
     let mut config = Config::default();
-    config.server.mode = "cli".to_string();
+    // CLI and desktop are two local frontends over the same runtime. Keep a
+    // shared local mode in the persisted YAML so starting one cannot rewrite
+    // the engine into a client-specific mode for the other.
+    config.server.mode = "desktop".to_string();
     let content =
         serde_yaml::to_string(&config).context("serialize generated cli base config failed")?;
     fs::write(path, content).with_context(|| {
@@ -657,11 +661,13 @@ fn ensure_generated_base_config(path: &Path) -> Result<()> {
 fn apply_cli_defaults(
     config: &mut Config,
     launch_dir: &Path,
-    temp_root: &Path,
+    _temp_root: &Path,
     repo_root: &Path,
     wunder_home: &Path,
 ) {
-    config.server.mode = "cli".to_string();
+    // Both local frontends share one engine configuration; the mode must not
+    // oscillate as the second client starts.
+    config.server.mode = "desktop".to_string();
     config.storage.backend = "sqlite".to_string();
     config.storage.db_path = wunder_home
         .join("data/wunder.db")
@@ -670,12 +676,18 @@ fn apply_cli_defaults(
     // Runtime-owned data belongs under the user's single Wunder home. The
     // launch directory remains an input workspace only when explicitly
     // selected by the caller; it is never used as a storage root.
-    config.workspace.root = wunder_home.join("workspace").to_string_lossy().to_string();
+    if config.workspace.root.trim().is_empty() {
+        config.workspace.root = wunder_home.join("workspace").to_string_lossy().to_string();
+    }
 
-    config.channels.enabled = false;
+    // These switches belong to the shared local engine configuration. Keep
+    // the same values for 蛹 and 舵机 so starting one client never rewrites
+    // the other client's runtime policy.
+    config.channels.enabled = true;
+    config.channels.outbox.worker_enabled = true;
     config.gateway.enabled = false;
-    config.agent_queue.enabled = false;
-    config.cron.enabled = false;
+    config.agent_queue.enabled = true;
+    config.cron.enabled = true;
 
     // 舵机 is a local form like 蛹: the workspace folder is the boundary, so
     // commands are not filtered by a per-call whitelist and the approval gate
@@ -687,7 +699,7 @@ fn apply_cli_defaults(
     config.security.approval_mode = Some("full_auto".to_string());
 
     let user_skills = wunder_home.join("skills");
-    let repo_skills = repo_assets::builtin_skills_root(repo_root);
+    let repo_skills = wunder_home.join("skills");
     let mut skill_paths = vec![user_skills, repo_skills];
     for existing in &config.skills.paths {
         if is_eva_skills_path(existing) {
@@ -709,9 +721,7 @@ fn apply_cli_defaults(
     let allow_paths = vec![
         wunder_home.to_string_lossy().to_string(),
         launch_dir.join(".wunder").to_string_lossy().to_string(),
-        repo_assets::builtin_skills_root(repo_root)
-            .to_string_lossy()
-            .to_string(),
+        wunder_home.join("skills").to_string_lossy().to_string(),
         launch_dir.to_string_lossy().to_string(),
     ];
     config.security.allow_paths = dedupe_strings(allow_paths);
@@ -851,10 +861,10 @@ fn warn_on_dangerous_sandbox(config: &Config, sandbox: Option<crate::args::Sandb
     );
 }
 
-/// The shipped engine template (`config/wunder.yaml`). It is the base the local
-/// forms rebuild their generated YAML from on every start.
+/// The shipped local engine template (`config/wunder-example.yaml`). The
+/// deployment `config/wunder.yaml` is never read by local packaged forms.
 fn load_engine_template(repo_root: &Path) -> Result<Config> {
-    let path = repo_root.join("config/wunder.yaml");
+    let path = repo_root.join("config/wunder-example.yaml");
     let text = fs::read_to_string(&path)
         .with_context(|| format!("read engine config template failed: {}", path.display()))?;
     // A template saved by a Windows editor can carry a BOM, which serde_yaml
@@ -1021,42 +1031,7 @@ pub(crate) fn apply_user_config(
 }
 
 fn resolve_wunder_home_dir(_launch_dir: &Path) -> PathBuf {
-    if let Some(path) = read_non_empty_env_path("WUNDER_HOME") {
-        return path;
-    }
-    if let Some(home) = resolve_user_home_dir() {
-        return home.join(".wunder");
-    }
-    // A missing OS home is exceptional (for example a restricted service
-    // account); keep the fallback inside the platform temp directory rather
-    // than polluting the launch directory.
-    std::env::temp_dir().join("wunder-user")
-}
-
-fn resolve_user_home_dir() -> Option<PathBuf> {
-    if let Some(path) = read_non_empty_env_path("HOME") {
-        return Some(path);
-    }
-    if let Some(path) = read_non_empty_env_path("USERPROFILE") {
-        return Some(path);
-    }
-    let drive = std::env::var("HOMEDRIVE").ok().unwrap_or_default();
-    let home_path = std::env::var("HOMEPATH").ok().unwrap_or_default();
-    let combined = format!("{drive}{home_path}");
-    let cleaned = combined.trim();
-    if cleaned.is_empty() {
-        None
-    } else {
-        Some(PathBuf::from(cleaned))
-    }
-}
-
-fn read_non_empty_env_path(key: &str) -> Option<PathBuf> {
-    std::env::var(key)
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
+    wunder_server::local_bootstrap::resolve_home_from_env_or_user()
 }
 
 fn is_eva_skills_path(raw: &str) -> bool {
@@ -1456,9 +1431,7 @@ mod workspace_tests {
             vec![
                 wunder_home.to_string_lossy().to_string(),
                 launch_dir.join(".wunder").to_string_lossy().to_string(),
-                repo_assets::builtin_skills_root(&repo_root)
-                    .to_string_lossy()
-                    .to_string(),
+                wunder_home.join("skills").to_string_lossy().to_string(),
                 launch_dir.to_string_lossy().to_string(),
             ],
             "only the local form's own roots are writable"
@@ -1695,7 +1668,10 @@ mod workspace_tests {
             .models
             .get("desktop-chat-model")
             .expect("another client's model must survive the CLI start");
-        assert_eq!(entry.base_url.as_deref(), Some("https://api.example.test/v1"));
+        assert_eq!(
+            entry.base_url.as_deref(),
+            Some("https://api.example.test/v1")
+        );
         assert_eq!(
             config.llm.default, "template-model",
             "the floor still replaces a default the user stopped naming"

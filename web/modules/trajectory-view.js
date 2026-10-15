@@ -2,9 +2,9 @@
 // 工具栏 + 三泳道时间线 + 台账表格（虚拟滚动）+ 详情检查器。
 // 纯 DOM 实现，数据由调用方注入（setRawTurns），并提供全屏「轨迹页面」弹窗。
 
-import { elements } from "./elements.js?v=20261011-01";
+import { elements } from "./elements.js?v=20261016-01";
 import { getAuthHeaders } from "./admin-auth.js?v=20261011-01";
-import { getCurrentLanguage, t } from "./i18n.js?v=20261011-01";
+import { getCurrentLanguage, t } from "./i18n.js?v=20261016-01";
 import { getWunderBase } from "./api.js";
 import { notify } from "./notify.js";
 import { normalizeMarkdownForWebPreview, enhanceRenderedMarkdown } from "./markdown-preview.js";
@@ -251,7 +251,7 @@ export function createTrajectoryView(host, options = {}) {
     selectedIndex: null,
     activeTab: "",
     detailsWidth: null,
-    openSections: { input: true, output: true },
+    openSections: { input: true, output: true, thinking: true },
     timestampMode: "local",
     collapsedTurns: new Set(),
     collapsedAssistants: new Set(),
@@ -851,6 +851,16 @@ export function createTrajectoryView(host, options = {}) {
       tbody.appendChild(tr);
     }
 
+    // The ledger model uses the intended row heights for virtualization, while
+    // the browser may round fractional borders and font metrics differently.
+    // Extend the scroll canvas to the measured rendered table tail so the
+    // native scrollbar always exposes the final row instead of stopping a few
+    // pixels early.
+    const measuredTableTail = topPx + table.offsetHeight;
+    if (Number.isFinite(measuredTableTail) && measuredTableTail > ledgerHeight) {
+      ledgerCanvas.style.height = `${Math.ceil(measuredTableTail)}px`;
+    }
+
     emptyEl.style.display = records.length === 0 ? "" : "none";
     if (records.length === 0) {
       emptyEl.textContent = st.loading
@@ -1161,11 +1171,14 @@ export function createTrajectoryView(host, options = {}) {
       }
       wrap.appendChild(dl);
 
-      if (selectedCell.kind === "message") {
-        const sections = [
-          { key: "input", title: modelT("input"), content: selectedCell.inputDetail },
-          { key: "output", title: modelT("output"), content: selectedCell.outputDetail },
-        ];
+      if (selectedCell.kind === "message" || selectedCell.kind === "compacted") {
+        const sections = selectedCell.kind === "compacted"
+          ? [{ key: "output", title: modelT("output"), content: selectedCell.outputDetail }]
+          : [
+              { key: "input", title: modelT("input"), content: selectedCell.inputDetail },
+              { key: "thinking", title: modelT("reasoning"), content: selectedCell.thinkingDetail },
+              { key: "output", title: modelT("output"), content: selectedCell.outputDetail },
+            ];
         for (const section of sections) {
           if (!section.content) continue;
           const sectionEl = h("div", "tt-overview-section");

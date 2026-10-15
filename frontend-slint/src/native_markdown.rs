@@ -1,8 +1,7 @@
 //! Bounded workspace image loading. No disk IO or decoding runs on the UI thread.
 use crate::{message_blocks::Blocks, TextBlock};
-use slint::{Model, VecModel};
+use slint::Model;
 use std::{
-    rc::Weak,
     sync::{mpsc, Arc, OnceLock},
     time::Duration,
 };
@@ -75,7 +74,30 @@ mod tests {
 }
 
 pub fn hydrate(blocks: &mut Blocks, desktop: Arc<NativeDesktop>, agent: String) {
-    let sources = blocks.take_image_sources();
+    hydrate_model(
+        slint::ModelRc::from(blocks.model.clone()),
+        desktop,
+        agent,
+    );
+}
+
+/// Hydrate an already projected block model. History rows are projected as
+/// `TextBlock` models directly, so they cannot retain the temporary `Blocks`
+/// builder used by streaming output. Keeping the same bounded worker here
+/// makes live and restored messages follow one image loading path.
+pub fn hydrate_model(
+    model: slint::ModelRc<TextBlock>,
+    desktop: Arc<NativeDesktop>,
+    agent: String,
+) {
+    let sources = model
+        .iter()
+        .filter_map(|block| {
+            (block.kind == crate::message_blocks::KIND_IMAGE
+                && !block.image_source.is_empty())
+                .then(|| block.image_source.to_string())
+        })
+        .collect::<Vec<_>>();
     if sources.is_empty() {
         return;
     }
@@ -89,15 +111,13 @@ pub fn hydrate(blocks: &mut Blocks, desktop: Arc<NativeDesktop>, agent: String) 
         })
         .is_ok()
     {
-        poll(std::rc::Rc::downgrade(&blocks.model), rx);
+        poll(model, rx);
     }
 }
 
-fn poll(target: Weak<VecModel<TextBlock>>, rx: mpsc::Receiver<Vec<(String, Option<Pixels>)>>) {
+fn poll(target: slint::ModelRc<TextBlock>, rx: mpsc::Receiver<Vec<(String, Option<Pixels>)>>) {
     slint::Timer::single_shot(Duration::from_millis(33), move || {
-        let Some(model) = target.upgrade() else {
-            return;
-        };
+        let model = target.clone();
         match rx.try_recv() {
             Ok(images) => {
                 for (source, pixels) in images {

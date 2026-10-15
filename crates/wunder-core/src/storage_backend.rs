@@ -547,7 +547,14 @@ pub trait ThreadOpenLeaseStore {
         client_kind: &str,
         ttl_s: f64,
     ) -> Result<ThreadOpenLeaseStatus> {
-        let _ = (self, session_id, user_id, owner_instance_id, client_kind, ttl_s);
+        let _ = (
+            self,
+            session_id,
+            user_id,
+            owner_instance_id,
+            client_kind,
+            ttl_s,
+        );
         Ok(ThreadOpenLeaseStatus::Busy)
     }
     fn touch_thread_open_lease(
@@ -559,8 +566,7 @@ pub trait ThreadOpenLeaseStore {
         let _ = (self, session_id, owner_instance_id, ttl_s);
         Ok(false)
     }
-    fn release_thread_open_lease(&self, session_id: &str, owner_instance_id: &str)
-        -> Result<bool> {
+    fn release_thread_open_lease(&self, session_id: &str, owner_instance_id: &str) -> Result<bool> {
         let _ = (self, session_id, owner_instance_id);
         Ok(false)
     }

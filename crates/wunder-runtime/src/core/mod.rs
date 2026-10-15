@@ -13,6 +13,8 @@ pub mod exec_policy;
 pub mod i18n;
 pub mod json_schema;
 pub(crate) mod llm_speed;
+pub mod local_assets;
+pub mod local_bootstrap;
 pub mod logging;
 pub mod long_task;
 pub mod onlyoffice_config;

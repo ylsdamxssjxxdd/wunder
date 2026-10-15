@@ -11,7 +11,7 @@ import {
 
 } from "./app.config.js?v=20260215-01";
 
-import { elements } from "./modules/elements.js?v=20261011-01";
+import { elements } from "./modules/elements.js?v=20261016-01";
 
 import { state } from "./modules/state.js";
 
@@ -41,20 +41,15 @@ import {
   loadMonitorData,
   refreshMonitorPanelLayout,
   toggleMonitorPolling,
-} from "./modules/monitor.js?v=20261015-03";
+} from "./modules/monitor.js?v=20261015-06";
 import { initUserManagementPanel, loadUserStats } from "./modules/users.js?v=20260215-01";
-import { initUserAccountsPanel, loadUserAccounts } from "./modules/user-accounts.js?v=20260518-01";
+import { initUserAccountsPanel, loadUserAccounts } from "./modules/user-accounts.js?v=20261016-01";
 import { initPresetAgentsPanel, loadPresetAgents } from "./modules/preset-agents.js?v=20261012-01";
 import { initCompanionsPanel, loadCompanions } from "./modules/companions.js?v=20260506-01";
 import { initOrgUnitsPanel, loadOrgUnits } from "./modules/org-units.js?v=20260215-01";
 
 import { initMcpPanel, loadMcpServers } from "./modules/mcp.js?v=20260215-01";
-import {
-  initLspPanel,
-  loadLspConfig,
-  onLspPanelActivate,
-  onLspPanelDeactivate,
-} from "./modules/lsp.js?v=20260215-01";
+
 
 import { initBuiltinPanel, loadBuiltinTools } from "./modules/builtin.js?v=20261012-01";
 
@@ -79,7 +74,7 @@ import {
 } from "./modules/multimodal-debug.js?v=20261011-01";
 import { applyAuthHeaders, getAuthScope, initAdminAuth } from "./modules/admin-auth.js?v=20260926-05";
 
-import { getCurrentLanguage, setLanguage, t } from "./modules/i18n.js?v=20261011-01";
+import { getCurrentLanguage, setLanguage, t } from "./modules/i18n.js?v=20261015-06";
 
 
 
@@ -170,8 +165,6 @@ const panelMap = {
   builtin: { panel: elements.builtinPanel, nav: elements.navBuiltin },
 
   mcp: { panel: elements.mcpPanel, nav: elements.navBuiltin },
-
-  lsp: { panel: elements.lspPanel, nav: elements.navLsp },
 
   skills: { panel: elements.skillsPanel, nav: elements.navBuiltin },
   toolVisibility: { panel: elements.toolVisibilityPanel, nav: elements.navBuiltin },
@@ -339,12 +332,6 @@ const switchPanel = (panel) => {
 
   state.runtime.activePanel = panel;
   syncToolManagerShortcutState(panel);
-
-  if (previousPanel === "lsp" && panel !== "lsp") {
-    onLspPanelDeactivate();
-  } else if (panel === "lsp" && previousPanel !== "lsp") {
-    onLspPanelActivate();
-  }
 
   toggleMonitorPolling(panel === "monitor", { mode: "full" });
 
@@ -766,34 +753,6 @@ const bindNavigation = () => {
 
   elements.navSettings.addEventListener("click", () => switchPanel("settings"));
 
-  if (elements.navLsp) {
-    elements.navLsp.addEventListener("click", async () => {
-
-      switchPanel("lsp");
-
-      if (!state.panelLoaded.lsp) {
-
-        try {
-
-          await loadLspConfig();
-
-          state.panelLoaded.lsp = true;
-
-        } catch (error) {
-
-          elements.lspStatusList.textContent = t("common.loadFailedWithMessage", {
-
-            message: error.message,
-
-          });
-
-        }
-
-      }
-
-    });
-  }
-
   if (elements.navBuiltin) {
     elements.navBuiltin.addEventListener("click", openBuiltinPanel);
   }
@@ -1122,8 +1081,6 @@ const bootstrap = async () => {
   initOrgUnitsPanel();
 
   initMcpPanel();
-
-  initLspPanel();
 
   initBuiltinPanel();
 

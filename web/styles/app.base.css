@@ -1763,7 +1763,7 @@ button.btn-with-icon[aria-busy="true"] i {
 
 .monitor-summary {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
   min-height: 0;
   overflow: hidden;
@@ -1778,6 +1778,12 @@ button.btn-with-icon[aria-busy="true"] i {
 
 .monitor-block-summary .monitor-summary > div {
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.monitor-block-summary .monitor-summary > div > .monitor-kv-table {
+  flex: 1 1 auto;
 }
 
 .monitor-kv-table {
@@ -2106,12 +2112,22 @@ button.btn-with-icon[aria-busy="true"] i {
   gap: 16px;
 }
 
-#usersPanel .monitor-table col.col-session {
-  width: 10%;
+#usersPanel .monitor-table col.col-thread-name {
+  width: 20%;
 }
 
 #usersPanel .monitor-table col.col-action {
   width: 8%;
+}
+
+/* 线程列表：列较多时允许横向滚动，避免各列被挤压；
+   左侧用户统计表保持原有布局，不启用横向滚动。 */
+#usersPanel .thread-list-scroll {
+  overflow-x: auto;
+}
+
+#usersPanel .monitor-table.thread-list-table {
+  min-width: 1080px;
 }
 
 #usersPanel .monitor-table td:last-child {

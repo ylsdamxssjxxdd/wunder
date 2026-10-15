@@ -428,7 +428,14 @@ function buildCell(item: RawRecord, payload: RawRecord, kind: TrajKind, index: n
     const contentText = contentToText(payload.content)
     // 流式壳写入 `reasoning`；会话写入器覆盖 payload 后字段名为
     // `reasoning_content`，两个来源都要读。
-    const thinkingText = contentToText(payload.reasoning) || contentToText(payload.reasoning_content)
+    const thinkingSources = [
+      payload.reasoning, payload.reasoning_content, payload.thinking, payload.thought,
+      payload.reasoningText, payload.thinking_content,
+      isRecord(payload.meta) ? payload.meta.reasoning_content : undefined,
+      isRecord(payload.meta) ? payload.meta.reasoning : undefined,
+      isRecord(payload.meta) ? payload.meta.thinking : undefined,
+    ]
+    const thinkingText = thinkingSources.map(contentToText).find(value => value.trim()) ?? ''
     const toolCalls = payload.tool_calls
     if (!contentText.trim() && Array.isArray(toolCalls) && toolCalls.length > 0) {
       cell.text = ''
@@ -445,7 +452,12 @@ function buildCell(item: RawRecord, payload: RawRecord, kind: TrajKind, index: n
     cell.timeSeconds = startedAt !== null && completedAt !== null
       ? Math.max(0, (completedAt - startedAt) / 1000)
       : prefill !== null && decode !== null ? prefill + decode : null
-    cell.inputDetail = contentText.trim() ? contentText : undefined
+    // Assistant rows contain the model response.  The persisted row does not
+    // carry the prompt that produced it, so exposing `content` as both input
+    // and output makes the overview misleading.  Keep the response in the
+    // output section and leave input absent until a real request payload is
+    // available.
+    cell.inputDetail = undefined
     cell.outputDetail = contentText.trim() ? contentText : undefined
     cell.thinkingDetail = thinkingText.trim() ? thinkingText : undefined
     cell.usage = usage
@@ -486,11 +498,21 @@ function buildCell(item: RawRecord, payload: RawRecord, kind: TrajKind, index: n
       ? Math.max(0, (completedAt - startedAt) / 1000)
       : null
   } else if (kind === 'compacted') {
-    const summaryText = contentToText(payload.summary ?? payload.content)
+    const summaryText = contentToText(
+      payload.summary_text ?? payload.summaryText ?? payload.summary_model_output ??
+      payload.summaryModelOutput ?? payload.summary ??
+      (payload.content === 'history' ? '' : payload.content)
+    )
     const text = summaryText.trim() ? summaryText : ''
     cell.text = text
     cell.previewMarkdown = text.trim() ? text : undefined
-    cell.inputDetail = text.trim() ? text : undefined
+    cell.outputDetail = text.trim() ? text : undefined
+    cell.thinkingDetail = contentToText(
+      payload.raw_output ?? payload.rawOutput ?? payload.summary_model_output ?? payload.summaryModelOutput
+    ).trim() || undefined
+    // A compaction row is a workflow result; its summary is output, not a
+    // second copy of an input prompt.
+    cell.inputDetail = undefined
     cell.timeSeconds = startedAt !== null && completedAt !== null
       ? Math.max(0, (completedAt - startedAt) / 1000)
       : null

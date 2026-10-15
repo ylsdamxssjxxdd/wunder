@@ -142,6 +142,7 @@ fn build_queued_event_data(info: &QueueInfo) -> serde_json::Value {
         "queue_total": info.queue_total,
         "active_ahead": info.active_ahead,
         "wait_ahead": info.wait_ahead,
+        "reason": info.wait_reason,
         "queue_change_seq": info.queue_change_seq,
         "queue_after_change_seq": info.queue_after_change_seq,
     })
@@ -1527,6 +1528,7 @@ mod tests {
             queue_total: 4,
             active_ahead: 1,
             wait_ahead: 3,
+            wait_reason: "input".to_string(),
             queue_change_seq: 42,
             queue_after_change_seq: 41,
         };
@@ -1544,6 +1546,7 @@ mod tests {
                 "queue_total": 4,
                 "active_ahead": 1,
                 "wait_ahead": 3,
+                "reason": "input",
                 "queue_change_seq": 42,
                 "queue_after_change_seq": 41,
             })

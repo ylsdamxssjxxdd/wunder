@@ -85,6 +85,14 @@ With a virtual model selected in model configuration, you can set the maximum co
 
 Replay follows the tool-calling mode: `function_call` uses the native tool channel, `tool_call` uses the text protocol, and `freeform_call` falls back to native or text depending on the API mode. Tool names and arguments come straight from the log, so nothing has to be filled in by hand; tool execution still follows permissions and approvals, and replay continues to the next model round once results come back. Running out of log entries raises an error rather than repeating old calls. Synthetic replies do not initiate tools. An over-long output is marked as a length termination, incomplete tool arguments are not executed, and the reasoning capability and budget also apply to throughput tests.
 
+### Round conventions of the random simulator
+
+With no replay log available, the random simulator follows conventions carried by the human input of the current turn. They behave identically in every form (蛹, 蜂巢, 舵机):
+
+- Rounds: the first number in the input sets the model rounds for this turn and may carry an `s` / `轮` / `次` suffix (`12`, `12轮`, `1s` all read as 12 or 1). The value is capped at 2000 and anything below 1 counts as 1. Only the human input of the current turn is read — never history, so context compaction cannot change the plan mid-turn.
+- Spawning a subagent: an input containing `subagent`, the shorthand `s` / `sub`, `子智能体` / `子代理`, or a number followed directly by `s` (`1s`) makes the first model round emit a real subagent dispatch (`spawn` or `batch_spawn`). Such turns span at least two rounds — one to dispatch, one to close — so `1s` still spawns the child before answering.
+- Middle rounds pick read-only tools from the request's tool list and issue harmless calls; the last round outputs the summary. The plan is derived deterministically from (session, user round), so cancel-and-resume stays consistent.
+
 ### Performance testing
 
 Tests response performance with single-request latency measurement and performance sampling.

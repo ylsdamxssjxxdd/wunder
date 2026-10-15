@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS thread_chat_rows (
  user_round BIGINT NOT NULL, revision BIGINT NOT NULL, payload TEXT NOT NULL,
  PRIMARY KEY(session_id,root_turn_id)
 );
-CREATE INDEX IF NOT EXISTS idx_thread_active_view ON thread_turns(user_id,session_id,user_turn_index DESC,created_time DESC) WHERE status IN ('queued','running','waiting_input','waiting_approval');
+CREATE INDEX IF NOT EXISTS idx_thread_active_view_v2 ON thread_turns(user_id,session_id,user_turn_index DESC,created_time DESC) WHERE status IN ('accepted','queued','running','waiting_input','waiting_approval');
 CREATE INDEX IF NOT EXISTS idx_thread_execution_view ON thread_turns(user_id,session_id,root_turn_id,created_time DESC,turn_id DESC);
 CREATE INDEX IF NOT EXISTS idx_thread_chat_page ON thread_chat_rows(user_id,session_id,user_round DESC);
 CREATE INDEX IF NOT EXISTS idx_thread_chat_changes ON thread_chat_rows(user_id,session_id,revision);
@@ -276,6 +276,34 @@ fn save_body(
     Ok(rev)
 }
 
+/// The newest user input is not the executor. Select actual execution first,
+/// admission second, parked input last; only capacity waiting is a queued thread.
+pub(super) fn execution_head(
+    db: &mut impl ViewDb,
+    user: &str,
+    session: &str,
+) -> Result<(String, String)> {
+    let reason = db.json_text(&db.json_text("payload", "queued_input"), "reason");
+    let active = one(db, &format!("SELECT status,turn_id,{reason} FROM thread_turns WHERE user_id=? AND session_id=? AND status IN ('accepted','queued','running','waiting_input','waiting_approval') ORDER BY CASE status WHEN 'queued' THEN 2 WHEN 'accepted' THEN 1 ELSE 0 END,user_turn_index DESC,created_time DESC LIMIT 1"), &[json!(user),json!(session)])?;
+    if let Some(row) = active {
+        let status = match text(&row[0]) {
+            "accepted" => "running",
+            "queued" if matches!(text(&row[2]), "input" | "scheduler") => "running",
+            value => value,
+        };
+        return Ok((status.into(), text(&row[1]).into()));
+    }
+    let latest = one(db, "SELECT status FROM thread_turns WHERE user_id=? AND session_id=? ORDER BY user_turn_index DESC,created_time DESC LIMIT 1", &[json!(user),json!(session)])?;
+    Ok((
+        latest
+            .as_ref()
+            .map(|row| text(&row[0]))
+            .unwrap_or("idle")
+            .into(),
+        String::new(),
+    ))
+}
+
 pub(crate) fn project_turn(
     db: &mut impl ViewDb,
     user: &str,
@@ -292,7 +320,8 @@ pub(crate) fn project_turn(
     };
     let root = text(&t[0]);
     let root_record=one(db,"SELECT user_turn_index,client_message_id,created_time FROM thread_turns WHERE session_id=? AND user_id=? AND turn_id=?",&[json!(session),json!(user),json!(root)])?.unwrap_or_else(||vec![t[1].clone(),t[2].clone(),t[4].clone()]);
-    let latest=one(db,"SELECT status,updated_time,turn_id FROM thread_turns WHERE session_id=? AND user_id=? AND root_turn_id=? ORDER BY created_time DESC,turn_id DESC LIMIT 1",&[json!(session),json!(user),json!(root)])?.unwrap_or_else(||vec![t[3].clone(),t[5].clone(),json!(turn)]);
+    let queue_field = db.json_text("payload", "queued_input");
+    let latest=one(db,&format!("SELECT status,updated_time,turn_id,{queue_field} FROM thread_turns WHERE session_id=? AND user_id=? AND root_turn_id=? ORDER BY created_time DESC,turn_id DESC LIMIT 1"),&[json!(session),json!(user),json!(root)])?.unwrap_or_else(||vec![t[3].clone(),t[5].clone(),json!(turn),Value::Null]);
     let existing = one(
         db,
         "SELECT payload FROM thread_chat_rows WHERE session_id=? AND root_turn_id=?",
@@ -312,6 +341,11 @@ pub(crate) fn project_turn(
     };
     row.execution_turn_id = text(&latest[2]).into();
     row.status = text(&latest[0]).into();
+    row.queued_input = if row.status == "queued" {
+        serde_json::from_str(text(&latest[3])).ok()
+    } else {
+        None
+    };
     row.updated_time = float(&latest[1]);
     let seq = head(db, user, session)?;
     if projection::is_running(&row.status) == 0 {
@@ -329,19 +363,7 @@ pub(crate) fn project_turn(
     }
     save_chat(db, user, session, &mut row, seq)?;
     db.execute("UPDATE thread_view_heads SET latest_round=CASE WHEN latest_round<? THEN ? ELSE latest_round END WHERE session_id=?", &[json!(row.user_round),json!(row.user_round),json!(session)])?;
-    let active = one(
-        db,
-        "SELECT status,turn_id FROM thread_turns WHERE user_id=? AND session_id=? AND status IN ('queued','running','waiting_input','waiting_approval') ORDER BY user_turn_index DESC,created_time DESC LIMIT 1",
-        &[json!(user), json!(session)],
-    )?;
-    let latest_root=one(db,"SELECT payload FROM thread_chat_rows WHERE user_id=? AND session_id=? ORDER BY user_round DESC LIMIT 1",&[json!(user),json!(session)])?.and_then(|r|serde_json::from_str::<ChatViewRow>(text(&r[0])).ok());
-    let status = active.as_ref().map(|r| text(&r[0])).unwrap_or_else(|| {
-        latest_root
-            .as_ref()
-            .map(|r| r.status.as_str())
-            .unwrap_or("idle")
-    });
-    let id = active.as_ref().map(|r| text(&r[1])).unwrap_or("");
+    let (status, id) = execution_head(db, user, session)?;
     db.execute("UPDATE thread_view_heads SET runtime_status=?,active_turn_id=? WHERE session_id=? AND user_id=?",&[json!(status),json!(id),json!(session),json!(user)])?;
     Ok(())
 }
@@ -670,10 +692,13 @@ pub(crate) fn project_item(
             .get("tool_calls")
             .and_then(Value::as_array)
             .is_some_and(|calls| !calls.is_empty());
+        let assistant_empty = row.assistant.content.is_empty();
         projection::set_activity(
             &mut row,
             if calls_tools {
                 "processing"
+            } else if content.is_empty() && assistant_empty {
+                "thinking"
             } else {
                 "responding"
             },

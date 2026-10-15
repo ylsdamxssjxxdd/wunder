@@ -119,6 +119,7 @@ async fn usage_accounting_includes_rejected_calls_empty_responses_and_compaction
                 true,
                 Some(&tools),
                 None,
+                None,
             )
             .await
             .unwrap();
@@ -170,6 +171,7 @@ async fn usage_accounting_includes_rejected_calls_empty_responses_and_compaction
                 true,
                 true,
                 Some(&tools),
+                None,
                 None,
             )
             .await;
@@ -223,6 +225,7 @@ async fn usage_accounting_includes_rejected_calls_empty_responses_and_compaction
                 RoundInfo::new(2, 1),
                 true,
                 true,
+                None,
                 None,
                 None,
             )
@@ -336,6 +339,7 @@ async fn administrator_requests_track_thread_quota_without_debiting_account() {
             RoundInfo::new(1, 1),
             true,
             true,
+            None,
             None,
             None,
         )

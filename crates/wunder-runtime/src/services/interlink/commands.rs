@@ -1884,7 +1884,10 @@ mod tests {
             .expect("result handled");
 
         assert!(settled, "a first terminal frame is accepted");
-        let stored = storage.get_interlink_command("cmd_result").unwrap().unwrap();
+        let stored = storage
+            .get_interlink_command("cmd_result")
+            .unwrap()
+            .unwrap();
         assert_eq!(stored.status, COMMAND_STATUS_SUCCEEDED);
         assert_eq!(stored.finished_at, Some(120.0));
     }

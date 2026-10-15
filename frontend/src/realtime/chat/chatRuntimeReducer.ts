@@ -2,6 +2,7 @@ import { captureTranscriptTail, restoreTranscriptTail } from './chatTranscriptTa
 import { normalizeTokenUsage } from '@/utils/tokenUsage';
 import { applyWorkflowMetrics, finishWorkflowMetrics } from './chatWorkflowMetrics';
 import { continuesRecoveryOnModelRequest, isChatRetryEventType, resolveChatRetryEvent } from './chatRetryState';
+import { resolveQueueWaitReason } from '@/stores/chatQueueProjection';
 import type {
   ChatRuntimeApplyResult,
   ChatRuntimeBusyReason,
@@ -1365,7 +1366,9 @@ const applyWorkflowEvent = (
     const status = resolveProjectedWorkflowStatus(sourceType, event.payload);
     const compactionSummary = resolveManualCompactionSummary(source, event.payload);
     if (compactionSummary && isManualCompactionEvent(sourceType, source, event.payload, settledMessage)) {
-      settledMessage.content = compactionSummary;
+      // A compaction summary belongs to the compaction workflow item.  The
+      // assistant-shaped marker is durable compatibility metadata, not a user
+      // reply, so never put the summary in the normal message body.
       ensureMessageDisplayProjection(settledMessage).manual_compaction_marker = true;
     }
     upsertProjectedWorkflowEventItem(
@@ -1399,7 +1402,6 @@ const applyWorkflowEvent = (
   // bubble immediately instead of waiting for transcript hydration on refresh.
   const compactionSummary = resolveManualCompactionSummary(source, event.payload);
   if (compactionSummary && isManualCompactionEvent(sourceType, source, event.payload, message)) {
-    message.content = compactionSummary;
     ensureMessageDisplayProjection(message).manual_compaction_marker = true;
     markMessageStructureChanged(message);
   }
@@ -1499,7 +1501,7 @@ const isManualCompactionWorkflowEvent = (
     return true;
   }
   if (
-    (sourceType === 'llm_request' || sourceType === 'llm_response') &&
+    (sourceType === 'llm_request' || sourceType === 'llm_response' || sourceType === 'llm_output') &&
     normalizeText(firstText(source.purpose, payload.purpose)) === 'compaction_summary'
   ) {
     return true;
@@ -1789,11 +1791,15 @@ const applyQueueStatus = (
   const message = ensureAssistantMessageForModelTurn(session, event, 'queued');
   upsertProjectedQueueWorkflowItem(message, event);
   const resumed = event.payload.source_event_type === 'queue_start';
-  message.status = resumed ? 'streaming' : 'queued';
+  const waitReason = resolveQueueWaitReason(event.payload);
+  // Older replay records do not carry the reason. Preserve their historical
+  // queued projection; new records always include the explicit reason.
+  const capacityWait = !waitReason || waitReason === 'capacity';
+  message.status = resumed ? 'streaming' : capacityWait ? 'queued' : 'streaming';
   message.updatedSeq = event.eventSeq ?? message.updatedSeq;
   markMessageStructureChanged(message);
-  modelTurn.status = resumed ? 'streaming' : 'waiting_first_output';
-  setSessionBusy(session, resumed ? 'running' : 'queued', resumed ? 'streaming' : 'queued');
+  modelTurn.status = resumed || !capacityWait ? 'streaming' : 'waiting_first_output';
+  setSessionBusy(session, resumed || !capacityWait ? 'running' : 'queued', resumed || !capacityWait ? 'streaming' : 'queued');
 };
 
 const isQueueMessageStillWaiting = (
@@ -4683,6 +4689,14 @@ const upsertToolWorkflowItem = (
     model_turn_id: modelTurn?.id || event.modelTurnId || message.modelTurnId,
     updatedSeq: event.eventSeq ?? message.updatedSeq
   };
+  const compactionSummary = (eventType === 'compaction' || eventType === 'compaction_progress')
+    ? firstText(detailSource.summary_text, detailSource.summaryText,
+      detailSource.summary_model_output, detailSource.summaryModelOutput)
+    : '';
+  if (compactionSummary) {
+    next.summary_text = compactionSummary;
+    next.summaryText = compactionSummary;
+  }
   if (toolName) {
     next.toolName = toolName;
     next.tool = toolName;
@@ -6068,6 +6082,10 @@ const resolveProjectedGenericWorkflowEventType = (
   sourceType: string,
   source: Record<string, unknown>
 ): string => {
+  if ((sourceType === 'llm_response' || sourceType === 'llm_output' || sourceType === 'llm_request') &&
+      normalizeText(firstText(source.purpose, source.intent)) === 'compaction_summary') {
+    return 'compaction';
+  }
   if (sourceType === 'progress' && resolveChatRetryEvent(sourceType, source)) {
     return 'model_recovery';
   }

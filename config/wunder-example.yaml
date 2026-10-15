@@ -24,7 +24,7 @@ user_agents: # 用户侧默认智能体应用（首次访问 /wunder/agents 时�
 
 prompt_templates: # 系统提示词模板包配置（管理端可切换/编辑）
   active: default # 当前启用模板包 ID；default 对应 config/prompts 目录
-  root: ./config/data/prompt_templates # 管理端模板包根目录（按语言/模板组织）
+  root: ./data/prompt_templates # 管理端模板包根目录（按语言/模板组织）
 
 security: # 安全与权限配置
   api_key: ${WUNDER_API_KEY} # API/MCP 访问密钥，客户端需通过 X-API-Key 或 Authorization: Bearer 传入

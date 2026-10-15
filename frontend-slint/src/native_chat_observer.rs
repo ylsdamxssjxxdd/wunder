@@ -45,8 +45,11 @@ impl Observation {
         app: &MainWindow,
         timeline: &Rc<RefCell<crate::timeline::Timeline>>,
     ) {
+        let root = crate::native_chat::markdown_root(app);
         let mut live = timeline.borrow_mut();
+        live.set_markdown_root(root);
         live.publish_history(self.rows.clone());
+        live.hydrate_markdown_images();
         crate::native_chat::publish_timeline(app, &live);
     }
 }
@@ -73,6 +76,9 @@ pub(super) fn install(app: &MainWindow, state: Rc<RefCell<State>>) {
             // Cloned before the observation borrow: the history rows and a live
             // turn share one model.
             let timeline = current.timeline.clone();
+            timeline
+                .borrow_mut()
+                .set_markdown_root(crate::native_chat::markdown_root(&app));
             let observation = &mut current.observation;
             let session = app.get_active_session_id().to_string();
             if observation.session != session {

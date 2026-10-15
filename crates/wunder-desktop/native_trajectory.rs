@@ -8,8 +8,16 @@ use std::sync::Arc;
 
 impl NativeDesktop {
     /// Bounded full-text search used by the native trajectory view.
-    pub fn thread_trajectory_search(&self, session: &str, query: &str) -> Result<serde_json::Value> {
-        let page = self.state().storage.thread_view_search(self.user_id(), session, query)?;
+    pub fn thread_trajectory_search(
+        &self,
+        session: &str,
+        query: &str,
+    ) -> Result<serde_json::Value> {
+        self.open_session(session)?;
+        let page = self
+            .state()
+            .storage
+            .thread_view_search(self.user_id(), session, query)?;
         Ok(serde_json::to_value(page)?)
     }
 
@@ -22,8 +30,13 @@ impl NativeDesktop {
         revision: i64,
         cursor: i64,
     ) -> Result<serde_json::Value> {
+        self.open_session(session)?;
         let page = self.state().storage.thread_body_page(
-            self.user_id(), session, body_id, revision, cursor,
+            self.user_id(),
+            session,
+            body_id,
+            revision,
+            cursor,
         )?;
         Ok(serde_json::to_value(page)?)
     }
@@ -31,6 +44,7 @@ impl NativeDesktop {
     /// Full user-visible snapshot of one thread: turns, user-visible items and
     /// text blocks, read directly from storage in one bounded query set.
     pub fn thread_snapshot(&self, session: &str) -> Result<Value> {
+        self.open_session(session)?;
         self.state()
             .storage
             .thread_snapshot(self.user_id(), session)
@@ -47,6 +61,7 @@ impl NativeDesktop {
         before: Option<i64>,
         limit: usize,
     ) -> Result<Value> {
+        self.open_session(session)?;
         self.thread_trajectory_page_window(session, before, None, limit)
     }
 
@@ -59,6 +74,7 @@ impl NativeDesktop {
         after: Option<i64>,
         limit: usize,
     ) -> Result<Value> {
+        self.open_session(session)?;
         self.thread_trajectory_page_window(session, None, after, limit)
     }
 

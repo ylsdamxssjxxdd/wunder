@@ -62,7 +62,7 @@ import {
 } from '@/utils/messageFeedback';
 import { applyChatThreadServerEvent, submitChatThreadTurn, getChatThreadState } from '@/realtime/chat/chatThreadRuntime';
 import { markRuntimeProjectionChanged } from '@/realtime/chat/chatRuntimeProjectionInvalidation';
-import { selectParkedTurnMessageIds } from '@/stores/chatQueueProjection';
+import { resolveQueueWaitReason, selectParkedTurnMessageIds } from '@/stores/chatQueueProjection';
 import { noteChatQueueRuntimeEvent } from '@/stores/chatQueueState';
 import { createWsMultiplexer } from '@/utils/ws';
 import { isDemoMode, loadDemoChatState, saveDemoChatState } from '@/utils/demo';
@@ -997,22 +997,30 @@ export const chatSendActions = {
               payload?.data?.queued === true
             );
           if (queuedFlag) {
+            const queueWaitReason = resolveQueueWaitReason(payload);
+            // Legacy queued acknowledgements predate the reason field and
+            // must retain their queued display until queue_start arrives.
+            const capacityWait = !queueWaitReason || queueWaitReason === 'capacity';
             if (!queued) {
               queued = true;
             }
             if (runtime) {
-              runtime.threadStatus = 'queued';
+              // A parked input does not make the active session queued. Only
+              // a global capacity wait owns the queued runtime state.
+              runtime.threadStatus = capacityWait ? 'queued' : 'running';
               runtime.loaded = true;
               runtime.lastThreadStatusAt = Date.now();
             }
-            syncChatRuntimeProjectionStatus(this, sessionId, 'queued');
-            markAssistantMessageQueued(
-              assistantMessage,
-              payload,
-              approvalPayload,
-              normalizedEventType,
-              eventId
-            );
+            syncChatRuntimeProjectionStatus(this, sessionId, capacityWait ? 'queued' : 'running');
+            if (capacityWait) {
+              markAssistantMessageQueued(
+                assistantMessage,
+                payload,
+                approvalPayload,
+                normalizedEventType,
+                eventId
+              );
+            }
             syncRuntimeLastAppliedEventId();
             return;
           }

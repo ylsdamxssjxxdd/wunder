@@ -123,7 +123,10 @@ impl DesktopRuntime {
         let repo_root = resolve_repo_root(&app_dir);
         let wunder_home = resolve_wunder_home_dir();
         fs::create_dir_all(&wunder_home)?;
+        // Shared configuration, settings and the database always live below
+        // WUNDER_HOME. `--temp-root` only selects ephemeral process files.
         let temp_root = resolve_temp_root(args.temp_root.as_deref(), &wunder_home)?;
+        let state_root = wunder_home.clone();
         let user_id = normalize_user_id(args.user.as_deref());
         log_startup_segment(
             startup_enabled,
@@ -134,7 +137,9 @@ impl DesktopRuntime {
         );
 
         step_start = Instant::now();
-        ensure_runtime_dirs(&temp_root)?;
+        wunder_server::local_assets::release_embedded_local_assets(&state_root)
+            .context("release embedded local assets failed")?;
+        ensure_runtime_dirs(&state_root, &temp_root)?;
         log_startup_segment(
             startup_enabled,
             "bridge-runtime",
@@ -143,7 +148,7 @@ impl DesktopRuntime {
             startup_boot,
         );
 
-        let settings_path = temp_root.join("config/desktop.settings.json");
+        let settings_path = state_root.join("config/desktop.settings.json");
         step_start = Instant::now();
         let mut settings = load_desktop_settings(&settings_path)?;
         log_startup_segment(
@@ -221,13 +226,13 @@ impl DesktopRuntime {
         );
 
         step_start = Instant::now();
-        let config_path = prepare_runtime_config_path(&repo_root, &temp_root, &app_dir)?;
-        let i18n_path = repo_root.join("config/i18n.messages.json");
-        let skill_runner = repo_root.join("scripts/skill_runner.py");
-        let user_tools_root = temp_root.join("user_tools");
-        let admin_custom_skills_root = temp_root.join("admin_skills");
-        let vector_root = temp_root.join("vector_knowledge");
-        let companions_root = temp_root.join("config/data/companions/global");
+        let config_path = prepare_runtime_config_path(&repo_root, &state_root, &app_dir)?;
+        let i18n_path = state_root.join("config/i18n.messages.json");
+        let skill_runner = state_root.join("scripts/skill_runner.py");
+        let user_tools_root = state_root.join("user_tools");
+        let admin_custom_skills_root = state_root.join("admin_skills");
+        let vector_root = state_root.join("vector_knowledge");
+        let companions_root = state_root.join("config/data/companions/global");
         log_startup_segment(
             startup_enabled,
             "bridge-runtime",
@@ -239,7 +244,7 @@ impl DesktopRuntime {
         step_start = Instant::now();
         set_env_path("WUNDER_CONFIG_PATH", &config_path);
         set_env_path_if_exists("WUNDER_I18N_MESSAGES_PATH", &i18n_path);
-        set_env_prompts_root_if_unset(&repo_root);
+        set_env_prompts_root_if_unset(&state_root);
         set_env_path_if_exists("WUNDER_SKILL_RUNNER_PATH", &skill_runner);
         set_env_path("WUNDER_USER_TOOLS_ROOT", &user_tools_root);
         set_env_path(ADMIN_CUSTOM_SKILLS_ROOT_ENV, &admin_custom_skills_root);
@@ -249,10 +254,7 @@ impl DesktopRuntime {
         set_env_path("WUNDER_DESKTOP_APP_DIR", &app_dir);
         refresh_runtime_tool_env(&settings, &app_dir);
         set_env_path("WUNDER_DESKTOP_DEFAULT_WORKSPACE_ROOT", &workspace_root);
-        set_env_path(
-            BUILTIN_SKILLS_ROOT_ENV,
-            &repo_assets::builtin_skills_root(&repo_root),
-        );
+        set_env_path(BUILTIN_SKILLS_ROOT_ENV, &state_root.join("skills"));
         std::env::set_var("WUNDER_DESKTOP_USER_ID", user_id.clone());
         set_env_path("WUNDER_HOME", &wunder_home);
         std::env::set_var("WUNDER_WORKSPACE_SINGLE_ROOT", "1");
@@ -269,18 +271,17 @@ impl DesktopRuntime {
         step_start = Instant::now();
         let config_store = ConfigStore::new(config_path);
         let workspace_for_update = workspace_root.clone();
-        let temp_root_for_update = temp_root.clone();
+        let state_root_for_update = state_root.clone();
         let repo_root_for_update = repo_root.clone();
         let token_for_update = desktop_token.clone();
         let container_roots_for_update = settings.container_roots.clone();
         let language_for_update = settings.language.clone();
-        let native_runtime = args.native_runtime;
         let _config = config_store
             .update(move |config| {
                 apply_desktop_defaults(
                     config,
                     &workspace_for_update,
-                    &temp_root_for_update,
+                    &state_root_for_update,
                     &repo_root_for_update,
                     DesktopDefaultsInput {
                         desktop_token: &token_for_update,
@@ -288,9 +289,9 @@ impl DesktopRuntime {
                         language: &language_for_update,
                     },
                 );
-                // The native facade owns a dispatcher and must retain the
-                // shared ThreadRuntime lease/queue contract for concurrent turns.
-                config.agent_queue.enabled = native_runtime;
+                // Queue and channel switches are shared by 蛹 and 舵机. The
+                // native facade starts its dispatcher below; it must not
+                // rewrite the shared YAML according to this process only.
             })
             .await
             .context("apply desktop runtime config failed")?;
@@ -493,23 +494,7 @@ fn resolve_workspace_root(
 }
 
 fn resolve_wunder_home_dir() -> PathBuf {
-    if let Some(path) = std::env::var_os("WUNDER_HOME")
-        .map(PathBuf::from)
-        .filter(|path| !path.as_os_str().is_empty())
-    {
-        return path;
-    }
-    #[cfg(windows)]
-    let home = std::env::var_os("USERPROFILE")
-        .map(PathBuf::from)
-        .or_else(|| {
-            let drive = std::env::var_os("HOMEDRIVE")?;
-            let path = std::env::var_os("HOMEPATH")?;
-            Some(PathBuf::from(drive).join(path))
-        });
-    #[cfg(not(windows))]
-    let home = std::env::var_os("HOME").map(PathBuf::from);
-    home.unwrap_or_else(|| std::env::temp_dir()).join(".wunder")
+    wunder_server::local_bootstrap::resolve_home_from_env_or_user()
 }
 
 fn resolve_frontend_root(
@@ -544,15 +529,16 @@ fn resolve_frontend_root(
     candidates.into_iter().find(|candidate| candidate.exists())
 }
 
-fn ensure_runtime_dirs(temp_root: &Path) -> Result<()> {
+fn ensure_runtime_dirs(state_root: &Path, temp_root: &Path) -> Result<()> {
     for dir in [
+        state_root.to_path_buf(),
+        state_root.join("config"),
+        state_root.join("logs"),
+        state_root.join("user_tools"),
+        state_root.join("admin_skills"),
+        state_root.join("vector_knowledge"),
         temp_root.to_path_buf(),
-        temp_root.join("config"),
-        temp_root.join("logs"),
         temp_root.join("sessions"),
-        temp_root.join("user_tools"),
-        temp_root.join("admin_skills"),
-        temp_root.join("vector_knowledge"),
     ] {
         fs::create_dir_all(dir)?;
     }
@@ -1194,10 +1180,10 @@ fn set_env_prompts_root_if_unset(repo_root: &Path) {
 
 fn prepare_runtime_config_path(
     repo_root: &Path,
-    temp_root: &Path,
+    state_root: &Path,
     app_dir: &Path,
 ) -> Result<PathBuf> {
-    let runtime_config = temp_root.join("config/wunder.yaml");
+    let runtime_config = state_root.join("config/wunder.yaml");
     if runtime_config.exists() {
         return Ok(runtime_config);
     }
@@ -1207,7 +1193,7 @@ fn prepare_runtime_config_path(
     fs::create_dir_all(parent)
         .with_context(|| format!("create desktop config dir failed: {}", parent.display()))?;
 
-    let repo_config = repo_root.join("config/wunder.yaml");
+    let repo_config = repo_root.join("config/wunder-example.yaml");
     if repo_config.exists() {
         fs::copy(&repo_config, &runtime_config).with_context(|| {
             format!(
@@ -1353,17 +1339,19 @@ struct DesktopDefaultsInput<'a> {
 fn apply_desktop_defaults(
     config: &mut Config,
     workspace_root: &Path,
-    temp_root: &Path,
+    state_root: &Path,
     repo_root: &Path,
     defaults: DesktopDefaultsInput<'_>,
 ) {
     config.server.mode = "desktop".to_string();
     config.storage.backend = "sqlite".to_string();
-    config.storage.db_path = temp_root
+    config.storage.db_path = state_root
         .join("data/wunder.db")
         .to_string_lossy()
         .to_string();
-    config.workspace.root = workspace_root.to_string_lossy().to_string();
+    if config.workspace.root.trim().is_empty() {
+        config.workspace.root = workspace_root.to_string_lossy().to_string();
+    }
     config.workspace.container_roots = defaults.container_roots.clone();
     config.lsp.enabled = false;
 
@@ -1375,13 +1363,12 @@ fn apply_desktop_defaults(
     // file is shared with 舵机, which writes new entries into it, so the file
     // itself is the source of truth for `llm`.
 
-    // Keep per-agent channel settings available in desktop local mode.
+    // Keep the shared local engine switches identical to 舵机. They are
+    // persisted once and are not client-specific startup flags.
     config.channels.enabled = true;
-    // Desktop local mode has no admin panel to toggle outbox worker, so keep
-    // channel outbound delivery worker enabled by default.
     config.channels.outbox.worker_enabled = true;
     config.gateway.enabled = false;
-    config.agent_queue.enabled = false;
+    config.agent_queue.enabled = true;
     config.cron.enabled = true;
     if let Some(preset_worker_cards_root) = resolve_desktop_preset_worker_cards_root(
         &config.user_agents.worker_cards_root,
@@ -1396,8 +1383,8 @@ fn apply_desktop_defaults(
         config.security.api_key = Some(defaults.desktop_token.to_string());
     }
 
-    let repo_skills = repo_assets::builtin_skills_root(repo_root);
-    let admin_custom_skills = temp_root.join("admin_skills");
+    let repo_skills = state_root.join("skills");
+    let admin_custom_skills = state_root.join("admin_skills");
     let mut skill_paths = vec![repo_skills, admin_custom_skills];
     for existing in &config.skills.paths {
         if is_legacy_eva_skills_path(existing) {
@@ -1445,12 +1432,13 @@ fn apply_desktop_defaults(
         .filter(|path| !is_legacy_eva_skills_path(path))
         .cloned()
         .collect::<Vec<_>>();
+    allow_paths.push(state_root.join("skills").to_string_lossy().to_string());
     allow_paths.push(
-        repo_assets::builtin_skills_root(repo_root)
+        state_root
+            .join("admin_skills")
             .to_string_lossy()
             .to_string(),
     );
-    allow_paths.push(temp_root.join("admin_skills").to_string_lossy().to_string());
     allow_paths.push(workspace_root.to_string_lossy().to_string());
     config.security.allow_paths = dedupe_strings(allow_paths);
     config.security.allow_commands = vec!["*".to_string()];
@@ -1477,7 +1465,10 @@ fn resolve_desktop_preset_worker_cards_root(
 }
 
 fn resolve_desktop_builtin_skill_names(config: &Config, repo_root: &Path) -> Vec<String> {
-    let mut skill_roots = vec![repo_assets::builtin_skills_root(repo_root)];
+    let mut skill_roots = vec![std::env::var_os("WUNDER_HOME")
+        .map(PathBuf::from)
+        .map(|home| home.join("skills"))
+        .unwrap_or_else(|| repo_assets::builtin_skills_root(repo_root))];
     for raw_path in &config.skills.paths {
         let cleaned = raw_path.trim();
         if cleaned.is_empty() {
@@ -1669,11 +1660,10 @@ fn migrate_local_workspaces(state: &AppState, user_id: &str, legacy_root: &Path)
             // directory itself, which made its config folders show up as the
             // working directory. Rebind once, unless another workspace
             // already occupies the subfolder.
-            let stale = normalize_path_for_compare(Path::new(&first.root_path))
-                == legacy_root_cmp;
-            let occupied = records
-                .iter()
-                .any(|record| normalize_path_for_compare(Path::new(&record.root_path)) == workspace_dir_cmp);
+            let stale = normalize_path_for_compare(Path::new(&first.root_path)) == legacy_root_cmp;
+            let occupied = records.iter().any(|record| {
+                normalize_path_for_compare(Path::new(&record.root_path)) == workspace_dir_cmp
+            });
             if stale && !occupied {
                 fs::create_dir_all(&workspace_dir)?;
                 let root = workspace_dir
@@ -2367,7 +2357,7 @@ mod tests {
         ));
         let app_dir = root.join("app");
         let repo_root = root.join("repo");
-        let config_path = root.join("temp/config/wunder.yaml");
+        let config_path = root.join("home/config/wunder.yaml");
         let docs_dir = repo_root.join("docs/分发");
 
         fs::create_dir_all(&app_dir).expect("create app dir");
@@ -2378,7 +2368,7 @@ mod tests {
         )
         .expect("write preconfig");
 
-        prepare_runtime_config_path(&repo_root, &root.join("temp"), &app_dir).expect("seed config");
+        prepare_runtime_config_path(&repo_root, &root.join("home"), &app_dir).expect("seed config");
 
         let content = fs::read_to_string(&config_path).expect("read config");
         assert!(content.contains("seeded_model"));
@@ -2394,7 +2384,7 @@ mod tests {
         ));
         let app_dir = root.join("app");
         let repo_root = root.join("repo");
-        let config_path = root.join("temp/config/wunder.yaml");
+        let config_path = root.join("home/config/wunder.yaml");
         let docs_dir = repo_root.join("docs/分发");
 
         fs::create_dir_all(&app_dir).expect("create app dir");
@@ -2409,7 +2399,7 @@ mod tests {
         )
         .expect("write preconfig");
 
-        prepare_runtime_config_path(&repo_root, &root.join("temp"), &app_dir).expect("seed config");
+        prepare_runtime_config_path(&repo_root, &root.join("home"), &app_dir).expect("seed config");
 
         let content = fs::read_to_string(&config_path).expect("read config");
         assert!(content.contains("existing_model"));

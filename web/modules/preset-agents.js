@@ -1,10 +1,10 @@
 // AI生成
-﻿import { elements } from "./elements.js?v=20261011-01";
+﻿import { elements } from "./elements.js?v=20261016-01";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
 import { appendLog } from "./log.js?v=20261011-01";
 import { notify } from "./notify.js";
-import { t } from "./i18n.js?v=20261011-01";
+import { t } from "./i18n.js?v=20261016-01";
 import { formatTimestamp } from "./utils.js?v=20251229-02";
 import { ensureLlmConfigLoaded } from "./llm.js?v=20260923-04";
 import { listGlobalCompanions } from "./companions.js?v=20260506-01";
@@ -396,10 +396,8 @@ const REQUIRED_KEYS = [
   "presetAgentSaveBtn",
   "presetAgentSyncSafeBtn",
   "presetAgentSyncForceBtn",
-  "presetAgentSyncSummary",
   "presetAgentDeleteBtn",
   "presetAgentVisibilityBtn",
-  "presetAgentsStatusText",
   "presetAgentTabPreset",
   "presetAgentTabCron",
   "presetAgentTabChannels",
@@ -411,30 +409,6 @@ const REQUIRED_KEYS = [
   "presetAgentFormPrompt",
   "presetAgentPreviewSkill",
   "presetAgentFormModelName",
-  "presetAgentCustomizableSystemPrompt",
-  "presetAgentCustomizableWelcome",
-  "presetAgentCustomizableModelName",
-  "presetAgentCustomizableReasoningEffort",
-  "presetAgentCustomizableToolNames",
-  "presetAgentCustomizableApprovalMode",
-  "presetAgentSyncContractBadge",
-  "presetAgentSyncLog",
-  "presetAgentSyncLogClearBtn",
-  "presetBindingContractBadge",
-  "presetBindingSearchInput",
-  "presetBindingSearchBtn",
-  "presetBindingReloadBtn",
-  "presetBindingAddBtn",
-  "presetBindingRebindBtn",
-  "presetBindingUnbindBtn",
-  "presetBindingSummary",
-  "presetBindingTableBody",
-  "presetBindingSelectAll",
-  "presetBindingEmpty",
-  "presetBindingPagination",
-  "presetBindingPageInfo",
-  "presetBindingPrevBtn",
-  "presetBindingNextBtn",
   "presetBindingPickerModal",
   "presetBindingPickerClose",
   "presetBindingPickerCancel",
@@ -462,8 +436,6 @@ const REQUIRED_KEYS = [
   "presetImpactAck",
   "presetImpactAckLabel",
   "presetImpactHint",
-  "presetAgentAvatarTrigger",
-  "presetAgentAvatarPreview",
   "presetAgentAvatarModal",
   "presetAgentAvatarModalClose",
   "presetAgentAvatarModalCancel",
@@ -1392,8 +1364,12 @@ const renderToolSelector = (selected) => {
 };
 
 const setStatus = (text, kind = "") => {
-  elements.presetAgentsStatusText.textContent = String(text || "").trim();
-  elements.presetAgentsStatusText.dataset.kind = kind;
+  const node = elements.presetAgentsStatusText;
+  if (!node) {
+    return;
+  }
+  node.textContent = String(text || "").trim();
+  node.dataset.kind = kind;
 };
 
 const markPresetDraftDirty = () => {
@@ -1636,6 +1612,9 @@ const renderPresetIconFace = (container, icon, initial) => {
 };
 
 const renderPresetAvatarTrigger = (preset) => {
+  if (!elements.presetAgentAvatarTrigger) {
+    return;
+  }
   const initial = resolveAvatarInitial(preset?.name);
   renderPresetIconFace(elements.presetAgentAvatarPreview, preset?.icon, initial);
   elements.presetAgentAvatarTrigger.disabled = !selectedPreset();
@@ -2042,34 +2021,41 @@ const renderSyncSummary = () => {
   elements.presetAgentSyncSafeBtn.disabled = !canSync || state.presetAgents.syncLoading;
   elements.presetAgentSyncForceBtn.disabled = !canSync || state.presetAgents.syncLoading;
 
+  // 同步摘要卡片已移除，仅维护按钮状态与契约徽章
+  const summary = elements.presetAgentSyncSummary;
+  if (!summary) {
+    renderContractBadges();
+    return;
+  }
+
   if (!preset || !preset.preset_id) {
-    elements.presetAgentSyncSummary.textContent = t("presetAgents.sync.empty");
+    summary.textContent = t("presetAgents.sync.empty");
     renderContractBadges();
     return;
   }
   if (dirty) {
-    elements.presetAgentSyncSummary.textContent = t("presetAgents.sync.saveRequired");
+    summary.textContent = t("presetAgents.sync.saveRequired");
     renderContractBadges();
     return;
   }
   if (state.presetAgents.syncLoading) {
-    elements.presetAgentSyncSummary.textContent = t("presetAgents.sync.summaryLoading");
+    summary.textContent = t("presetAgents.sync.summaryLoading");
     renderContractBadges();
     return;
   }
   if (isBindingContractUnavailable()) {
-    elements.presetAgentSyncSummary.textContent = t("presetAgents.sync.notReady");
+    summary.textContent = t("presetAgents.sync.notReady");
     renderContractBadges();
     return;
   }
   const preview =
     state.presetAgents.syncPreview?.preset_id === preset.preset_id ? state.presetAgents.syncPreview : null;
   if (!preview) {
-    elements.presetAgentSyncSummary.textContent = t("presetAgents.sync.empty");
+    summary.textContent = t("presetAgents.sync.empty");
     renderContractBadges();
     return;
   }
-  elements.presetAgentSyncSummary.textContent = t("presetAgents.sync.summary", {
+  summary.textContent = t("presetAgents.sync.summary", {
     affected: preview.affected_users || 0,
     updated: preview.updated_agents || 0,
     skipped: preview.skipped_customized || 0,
@@ -3843,6 +3829,11 @@ const bindBindingControls = () => {
     node.addEventListener("click", handler);
   };
 
+  // 绑定用户区块已移除，跳过其控件事件绑定
+  if (!elements.presetBindingTableBody) {
+    return;
+  }
+
   bindOnce(elements.presetBindingSearchBtn, () => {
     const bindings = ensureBindingsState();
     bindings.keyword = String(elements.presetBindingSearchInput.value || "").trim();
@@ -3911,7 +3902,7 @@ const bindBindingControls = () => {
 };
 
 const bindPresetAvatarControls = () => {
-  if (elements.presetAgentAvatarTrigger.dataset.bound === "1") {
+  if (!elements.presetAgentAvatarTrigger || elements.presetAgentAvatarTrigger.dataset.bound === "1") {
     return;
   }
   elements.presetAgentAvatarTrigger.dataset.bound = "1";

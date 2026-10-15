@@ -1,10 +1,10 @@
 // AI生成
-import { elements } from "./elements.js?v=20261011-01";
+import { elements } from "./elements.js?v=20261016-01";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
 import { appendLog } from "./log.js?v=20261011-01";
 import { notify } from "./notify.js";
-import { t, getCurrentLanguage } from "./i18n.js?v=20261011-01";
+import { t, getCurrentLanguage } from "./i18n.js?v=20261016-01";
 import { normalizeSimulationSpeed, renderSimulationConfig, showSimulationConfig, readSimulationConfig, readSimulationOptions } from "./llm-simulation.js?v=20260923-04";
 
 let contextProbeTimer = null;

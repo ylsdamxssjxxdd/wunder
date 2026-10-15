@@ -56,11 +56,11 @@ mod schema;
 mod session_cleanup;
 mod session_goal;
 mod session_lock_store;
-mod thread_open_lease_store;
 mod session_run;
 pub(crate) mod stress_thread;
 mod terminal_transcript_store;
 mod thread_log_store;
+mod thread_open_lease_store;
 mod thread_view_store;
 mod user_account_store;
 mod user_world_store;
@@ -89,10 +89,10 @@ use retention_store::SqliteRetentionStorage;
 use schema::SqliteSchemaStorage;
 use session_goal::SqliteSessionGoalStorage;
 use session_lock_store::SqliteSessionLockStorage;
-use thread_open_lease_store::SqliteThreadOpenLeaseStorage;
 use session_run::SqliteSessionRunStorage;
 use terminal_transcript_store::SqliteTerminalTranscriptStorage;
 use thread_log_store::SqliteThreadLogStorage;
+use thread_open_lease_store::SqliteThreadOpenLeaseStorage;
 use user_account_store::SqliteUserAccountStorage;
 use user_world_store::SqliteUserWorldStorage;
 use vector_document_store::SqliteVectorDocumentStorage;
@@ -186,9 +186,8 @@ impl SqliteStorage {
         )?;
         // 0: not read-only, 1: read-only, 2: unknown (SQLITE_READONLY detection
         // raced an exclusive lock). Only a definite downgrade is fatal here.
-        let downgraded = unsafe {
-            rusqlite::ffi::sqlite3_db_readonly(conn.handle(), b"main\0".as_ptr().cast())
-        };
+        let downgraded =
+            unsafe { rusqlite::ffi::sqlite3_db_readonly(conn.handle(), b"main\0".as_ptr().cast()) };
         if downgraded == 1 {
             anyhow::bail!(
                 "{} cannot be opened for writing; SQLite silently downgraded the \

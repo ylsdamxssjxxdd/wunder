@@ -294,7 +294,15 @@ impl Orchestrator {
             );
             let tool_call_mode =
                 self.resolve_frozen_session_tool_call_mode(&user_id, &session_id, &llm_config);
-            let function_tooling = if uses_native_tool_api(tool_call_mode, &llm_config)
+            // 虚拟模型不接触真实供应商，工具面只用于合成轨迹：即便当前会话冻结在
+            // 文本协议（`tool_call`），也要把工具定义交给模拟器，否则它拿不到可调用
+            // 的工具名，随机轨迹会退化成「一轮直接收尾」，数字指定的模型轮次随之失效。
+            // 文本协议下 `tool_protocol::adapt` 会把这些调用还原成 `<tool_call>` 文本。
+            let virtual_model = crate::services::virtual_llm::is_virtual_replay_provider(
+                llm_config.provider.as_deref(),
+            );
+            let function_tooling = if (uses_native_tool_api(tool_call_mode, &llm_config)
+                || virtual_model)
                 && !prepared.skip_tool_calls
             {
                 self.build_function_tooling(
@@ -568,6 +576,7 @@ impl Orchestrator {
                             true,
                             tools_payload,
                             empty_output_guard.config_override(&llm_config),
+                            Some(question.as_str()),
                         )
                         .await
                     {

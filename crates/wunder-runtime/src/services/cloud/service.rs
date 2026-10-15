@@ -18,9 +18,11 @@ use anyhow::{anyhow, Result};
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
+use std::fs::OpenOptions;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::Notify;
 
 /// Provider name for synthesized cloud model entries (alias `cloud`).
@@ -42,6 +44,8 @@ pub const TOKEN_RENEW_AHEAD_SECS: f64 = 72.0 * 3600.0;
 pub const TOKEN_RENEW_CHECK_INTERVAL_SECS: u64 = 300;
 const CONNECT_TIMEOUT_SECS: u64 = 5;
 const REQUEST_TIMEOUT_SECS: u64 = 20;
+const SESSION_LOCK_WAIT_SECS: u64 = 8;
+const SESSION_LOCK_STALE_SECS: u64 = 60;
 
 static SHARED: OnceLock<Arc<CloudService>> = OnceLock::new();
 
@@ -54,6 +58,7 @@ pub fn shared() -> &'static Arc<CloudService> {
 struct CloudServiceState {
     loaded: bool,
     loaded_base: Option<std::path::PathBuf>,
+    session_fingerprint: Option<SessionFingerprint>,
     session: Option<CloudSessionFile>,
     expired: bool,
     reporter_task: Option<tokio::task::JoinHandle<()>>,
@@ -67,6 +72,35 @@ struct CloudServiceState {
     last_success_at: Option<f64>,
     /// When `reconnecting`: the scheduled reporter retry moment.
     next_retry_at: Option<f64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SessionFingerprint {
+    len: u64,
+    modified_secs: u64,
+    modified_nanos: u32,
+}
+
+fn session_fingerprint(base: &Path) -> Option<SessionFingerprint> {
+    let path = CloudSessionFile::path_for(base, "shared");
+    let metadata = std::fs::metadata(path).ok()?;
+    let modified = metadata.modified().ok()?;
+    let duration = modified.duration_since(UNIX_EPOCH).ok()?;
+    Some(SessionFingerprint {
+        len: metadata.len(),
+        modified_secs: duration.as_secs(),
+        modified_nanos: duration.subsec_nanos(),
+    })
+}
+
+struct SessionFileLock {
+    path: PathBuf,
+}
+
+impl Drop for SessionFileLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
 }
 
 /// UI-facing login/account status snapshot.
@@ -129,6 +163,7 @@ impl CloudService {
             state: Mutex::new(CloudServiceState {
                 loaded: false,
                 loaded_base: None,
+                session_fingerprint: None,
                 session: None,
                 expired: false,
                 reporter_task: None,
@@ -173,14 +208,38 @@ impl CloudService {
     }
 
     fn ensure_loaded(&self) {
-        let mut state = self.lock_state();
         let base = self.session_base_dir();
-        if state.loaded && state.loaded_base.as_deref() == Some(base.as_path()) {
+        let fingerprint = session_fingerprint(&base);
+        {
+            let state = self.lock_state();
+            if state.loaded
+                && state.loaded_base.as_deref() == Some(base.as_path())
+                && state.session_fingerprint == fingerprint
+            {
+                return;
+            }
+        };
+        let mut state = self.lock_state();
+        // Another caller may have refreshed the in-memory state while this
+        // thread was computing metadata.
+        if state.loaded
+            && state.loaded_base.as_deref() == Some(base.as_path())
+            && state.session_fingerprint == fingerprint
+        {
             return;
         }
         state.loaded = true;
         state.loaded_base = Some(base.clone());
-        if let Some(session) = CloudSessionFile::load_any(&base) {
+        state.session_fingerprint = fingerprint;
+        let next_session = CloudSessionFile::load_any(&base);
+        let changed = match (&state.session, &next_session) {
+            (Some(old), Some(new)) => {
+                old.token != new.token || old.refresh_token != new.refresh_token
+            }
+            (None, None) => false,
+            _ => true,
+        };
+        if let Some(session) = next_session {
             tracing::info!(
                 "[cloud] session restored for user {} on {}",
                 session.username,
@@ -190,12 +249,69 @@ impl CloudService {
             state.connection = CONNECTION_ONLINE;
         } else {
             state.session = None;
+            state.expired = false;
             state.connection = CONNECTION_LOGGED_OUT;
         }
+        let has_session = state.session.is_some();
+        if changed {
+            if let Some(task) = state.reporter_task.take() {
+                task.abort();
+            }
+            if let Some(task) = state.keeper_task.take() {
+                task.abort();
+            }
+        }
         drop(state);
+        // Never acquire `reporter` while holding `state`: install_session and
+        // clear_session_state update the two mutexes in the opposite phases.
+        if changed {
+            *self.reporter.lock().unwrap_or_else(|err| err.into_inner()) = None;
+        }
         // Background loops are bound to the process singleton; spawn them on
         // the first async touch of a restored session.
-        self.ensure_keeper_task();
+        if has_session {
+            self.ensure_keeper_task();
+        }
+    }
+
+    async fn acquire_session_file_lock(&self) -> Result<SessionFileLock> {
+        let base = self.session_base_dir();
+        let path = base.join("config/cloud.session.lock");
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let started = std::time::Instant::now();
+        loop {
+            match OpenOptions::new().write(true).create_new(true).open(&path) {
+                Ok(file) => {
+                    use std::io::Write;
+                    let mut file = file;
+                    let _ = writeln!(file, "{}", std::process::id());
+                    return Ok(SessionFileLock { path });
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    let stale = std::fs::metadata(&path)
+                        .and_then(|meta| meta.modified())
+                        .ok()
+                        .and_then(|modified| SystemTime::now().duration_since(modified).ok())
+                        .is_some_and(|age| age > Duration::from_secs(SESSION_LOCK_STALE_SECS));
+                    if stale {
+                        let _ = std::fs::remove_file(&path);
+                        continue;
+                    }
+                    if started.elapsed() >= Duration::from_secs(SESSION_LOCK_WAIT_SECS) {
+                        return Err(anyhow!("cloud session refresh is busy"));
+                    }
+                    tokio::time::sleep(Duration::from_millis(40)).await;
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
+    }
+
+    fn persist_session_fingerprint(&self) {
+        let base = self.session_base_dir();
+        self.lock_state().session_fingerprint = session_fingerprint(&base);
     }
 
     /// Current session snapshot (lazy-loads the session file once).
@@ -356,18 +472,18 @@ impl CloudService {
     /// token and return `Ok(true)` without another request.
     pub async fn recover_auth(&self, stale_access_token: &str) -> Result<bool> {
         let _guard = self.refresh_lock.lock().await;
-        {
+        // The file lock only protects the disk snapshot and the final atomic
+        // replacement. Do not hold it across the network request: logout or a
+        // second client must be able to make progress while the server is slow.
+        let (server, refresh_token) = {
+            let _file_lock = self.acquire_session_file_lock().await?;
+            // A different process may have completed the rotation while this
+            // process was waiting for the local single-flight lock.
+            self.ensure_loaded();
             let state = self.lock_state();
             match state.session.as_ref() {
                 // Another waiter already rotated the token for us.
                 Some(session) if session.token != stale_access_token => return Ok(true),
-                Some(_) => {}
-                None => return Ok(false),
-            }
-        }
-        let (server, refresh_token) = {
-            let state = self.lock_state();
-            match state.session.as_ref() {
                 Some(session) => (session.server.clone(), session.refresh_token.clone()),
                 None => return Ok(false),
             }
@@ -441,7 +557,19 @@ impl CloudService {
 
         let mut persist = None;
         {
+            let _file_lock = self.acquire_session_file_lock().await?;
+            // Re-read after the request while holding the file lock. Another
+            // process may have rotated or removed the session in the meantime;
+            // never overwrite that newer state with this response.
+            self.ensure_loaded();
             let mut state = self.lock_state();
+            if state
+                .session
+                .as_ref()
+                .is_none_or(|session| session.token != stale_access_token)
+            {
+                return Ok(state.session.is_some());
+            }
             if let Some(session) = state.session.as_mut() {
                 session.token = new_access;
                 if let Some(new_refresh) = new_refresh {
@@ -466,6 +594,7 @@ impl CloudService {
         if let Some(session) = persist {
             let base_dir = self.session_base_dir();
             let _ = tokio::task::spawn_blocking(move || session.save(&base_dir)).await;
+            self.persist_session_fingerprint();
         }
         Ok(true)
     }
@@ -757,6 +886,7 @@ impl CloudService {
 
         // 5. Persist and install; the reporter starts from the persisted cursor.
         let base_dir = self.session_base_dir();
+        let _file_lock = self.acquire_session_file_lock().await?;
         session.save(&base_dir)?;
         self.install_session(session);
 
@@ -772,23 +902,25 @@ impl CloudService {
     /// session without rerunning the login HTTP flow.
     pub fn install_session(&self, session: CloudSessionFile) {
         let reporter = Arc::new(LogReporter::new(session.log_report.last_synced_seq));
+        {
+            let mut state = self.lock_state();
+            state.loaded = true;
+            state.loaded_base = Some(self.session_base_dir());
+            state.session_fingerprint = session_fingerprint(&self.session_base_dir());
+            state.expired = false;
+            state.connection = CONNECTION_ONLINE;
+            state.last_error = None;
+            state.last_success_at = Some(super::reporter::now_unix_seconds());
+            state.next_retry_at = None;
+            state.session = Some(session);
+            if let Some(old) = state.reporter_task.take() {
+                old.abort();
+            }
+            if let Some(old) = state.keeper_task.take() {
+                old.abort();
+            }
+        }
         *self.reporter.lock().unwrap_or_else(|err| err.into_inner()) = Some(reporter);
-        let mut state = self.lock_state();
-        state.loaded = true;
-        state.loaded_base = Some(self.session_base_dir());
-        state.expired = false;
-        state.connection = CONNECTION_ONLINE;
-        state.last_error = None;
-        state.last_success_at = Some(super::reporter::now_unix_seconds());
-        state.next_retry_at = None;
-        state.session = Some(session);
-        if let Some(old) = state.reporter_task.take() {
-            old.abort();
-        }
-        if let Some(old) = state.keeper_task.take() {
-            old.abort();
-        }
-        drop(state);
         self.ensure_reporter_task();
         self.ensure_keeper_task();
     }
@@ -811,6 +943,7 @@ impl CloudService {
                 .timeout(Duration::from_secs(5))
                 .send()
                 .await;
+            let _file_lock = self.acquire_session_file_lock().await?;
             CloudSessionFile::remove(&self.session_base_dir(), &session.client);
         }
         self.clear_session_state();
@@ -845,6 +978,7 @@ impl CloudService {
         if let Some(client) = client.as_deref() {
             CloudSessionFile::remove(&self.session_base_dir(), client);
         }
+        self.lock_state().session_fingerprint = session_fingerprint(&self.session_base_dir());
         *self.reporter.lock().unwrap_or_else(|err| err.into_inner()) = None;
     }
 

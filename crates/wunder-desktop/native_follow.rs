@@ -657,7 +657,7 @@ mod tests {
                 .get_session_goal("owner", "fixture-session")
                 .unwrap()
                 .unwrap()
-                .status,
+                .phase,
             "active"
         );
         // Explicit stop must clear the goal even when UI delivery is full.

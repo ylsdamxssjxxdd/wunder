@@ -1,3 +1,4 @@
+import { threadViewActiveTurnId, threadViewOwnsExecution } from '@/realtime/chat/threadViewStore';
 import { getChatThreadState } from '@/realtime/chat/chatThreadRuntime';
 import type { ThreadChangeFrame } from '@/realtime/chat/chatThreadTypes';
 import { markRuntimeProjectionChanged } from '@/realtime/chat/chatRuntimeProjectionInvalidation';
@@ -56,8 +57,8 @@ export const syncChatThreadShell = (store, key: string, options: { refreshWorksp
     const active=slots.find(s=>!terminal(s.assistant.status));
     const latest=slots[slots.length-1];
     const status=String(threadViewStatus(key)??active?.assistant.status??latest?.assistant.status??'idle');
-    const runtime=ensureRuntime(key);runtime.threadStatus=status;runtime.loaded=true;runtime.activeTurnId=active?.rootTurnId??'';
-    const session=store.sessions?.find(s=>s.id===key);if(session){session.runtime_status=status;session.runtimeStatus=status;}
+    const runtime=ensureRuntime(key);runtime.threadStatus=status;runtime.loaded=true;runtime.activeTurnId=threadViewOwnsExecution(key)?threadViewActiveTurnId(key):active?.rootTurnId??'';
+    const session=store.sessions?.find(s=>s.id===key);if(session){session.runtime_status=status;session.runtimeStatus=status;session.thread_status=status;session.threadStatus=status;}
     if(['running','queued','waiting_input','waiting_approval'].includes(status))store.loadingBySession[key]=true;else delete store.loadingBySession[key];
     refreshWorkspace(status);
     return status;

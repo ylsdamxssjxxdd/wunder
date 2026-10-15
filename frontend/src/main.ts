@@ -50,14 +50,22 @@ function reportRendererFailure(payload: RendererFailurePayload): void {
   console.error('[wunder-renderer]', payload.source, payload.stage || rendererBootstrapStage, payload.message);
 }
 
+// Chromium 按 ResizeObserver 规范在当帧通知未全部投递时发出的提示性 message：
+// 非异常、无 error 对象，剩余通知下一帧照常送达，不属于渲染故障。
+const BENIGN_RESIZE_OBSERVER_LOOP_PATTERN = /ResizeObserver loop/i;
+
 function installRendererFailureHandlers(): void {
   if (typeof window === 'undefined') {
     return;
   }
   window.addEventListener('error', (event) => {
+    const message = event.message || normalizeErrorMessage(event.error);
+    if (BENIGN_RESIZE_OBSERVER_LOOP_PATTERN.test(message)) {
+      return;
+    }
     reportRendererFailure({
       source: 'window-error',
-      message: event.message || normalizeErrorMessage(event.error),
+      message,
       stage: rendererBootstrapStage
     });
   });

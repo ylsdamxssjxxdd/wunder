@@ -8,7 +8,8 @@ use crate::storage::{
     InterlinkStore, ListCloudDeviceLogsQuery, ListCloudRecordsQuery, ListInterlinkAuditQuery,
     ListInterlinkCommandsQuery, LogStatsStore, MediaStore, MemoryRecordStore, MetaStore,
     MonitorStore, QuotaBalanceStore, RetentionStore, SessionGoalStore, SessionLockStore,
-    SessionRunStore, StorageLifecycle, TerminalTranscriptStore, ThreadLogStore, UserAccountStore,
+    SessionRunStore, StorageLifecycle, TerminalTranscriptStore, ThreadLogStore,
+    ThreadOpenLeaseRecord, ThreadOpenLeaseStatus, ThreadOpenLeaseStore, UserAccountStore,
     UserRefreshTokenRecord, UserRefreshTokenStore, UserWorldStore, VectorDocumentStore,
     WorkspaceRecord, WorkspaceStore,
 };

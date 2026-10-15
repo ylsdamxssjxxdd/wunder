@@ -3,7 +3,6 @@ import { getCurrentLanguage } from "../i18n.js?v=20260710-01";
 
 const copy = {
   title: ["吞吐量测试", "Model throughput"],
-  subtitle: ["一次测试一个模型、并发数与长度组合，积累结果，比较性能变化。", "Test one model, concurrency and length combination, then compare results over time."],
   scenario: ["测试配置", "Test configuration"], concurrency: ["并发数", "Concurrency"], concurrencyList: ["并发列表", "Concurrency list"],
   concurrencyHint: ["同一模型同时发起的请求数，支持自定义。", "Number of simultaneous requests; custom values are supported."],
   concurrencyListHint: ["用逗号、空格或中文逗号分隔，例如 1,2,4,8。系统会按顺序逐项测试。", "Separate values with commas or spaces, for example 1,2,4,8. The system runs values in order."],
@@ -31,7 +30,7 @@ const copy = {
   simulationSpeed: ["模拟速度", "Simulation speed"],
   time: ["测试时间", "Test time"], reason: ["结束原因", "Finish reason"], unknown: ["API 未提供", "Not reported by API"],
   persistError: ["摘要保存失败；当前结果仍可导出，重启后可能丢失。", "Summary could not be saved. Export it now; it may be lost after restart."],
-  comparison: ["历史性能对比", "Historical performance"],
+  comparison: ["性能对比", "Performance comparison"],
   comparisonHint: ["横轴为并发数，纵轴为该次测试各并发档的实测速度。点击下方历史记录即可查看对应结果。", "Concurrency is on the x-axis; the y-axis shows the measured speed of each concurrency level in the viewed run. Click a history row to inspect its result."],
   speed: ["速度 (tok/s)", "Speed (tok/s)"], viewing: ["当前查看", "Viewing"],
   metric: ["指标", "Metric"], axis: ["横轴", "X axis"], axisInput: ["上下文长度", "Context length"], axisTime: ["测试时间", "Test time"],
@@ -42,10 +41,8 @@ const copy = {
   connected: ["实时同步", "Live"], reconnecting: ["正在重连，定时补水中", "Reconnecting; refreshing snapshots"],
   noModels: ["请先配置并启用语言模型", "Configure and enable a language model first"],
   busy: ["正在提交…", "Submitting…"],
-  batchProgress: ["正在测试第 {current} / {total} 个并发档", "Testing concurrency point {current} / {total}"],
   batchSamples: ["并发档结果", "Concurrency points"],
   contextError: ["输入与输出之和超过该模型配置的上下文窗口", "Input plus output exceeds the model's configured context window"],
   status: ["状态", "Status"],
-  measurement: ["整体生成速度只计算首字之后的并发批次生成区间，不含预填充；它按批次墙钟时间计算，所以不一定等于单生成速度乘以并发数。预填充速度包含网络等待，首字延迟按并发请求取平均。", "Overall generation speed covers only the concurrent generation interval after the first token, excluding prefill. It uses batch wall time, so it may differ from per-request generation speed multiplied by concurrency. Prefill includes network wait, and TTFT is averaged across requests."],
-};
+  };
 export const label = (key) => copy[key]?.[getCurrentLanguage().startsWith("zh") ? 0 : 1] ?? key;

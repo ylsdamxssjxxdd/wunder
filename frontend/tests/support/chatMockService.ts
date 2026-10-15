@@ -73,7 +73,7 @@ export class ChatMockService {
       const answer = items.filter(i => i.kind === 'assistant_message' && String(i.item_id).includes(':text-')).at(-1);
       const user = items.find(i => i.kind === 'user_message');
       const status = String(execution.status);
-      const running = ['queued', 'running', 'waiting_input', 'waiting_approval'].includes(status);
+      const running = ['accepted', 'queued', 'running', 'waiting_input', 'waiting_approval'].includes(status);
       const block = this.blocks.get(String(answer?.item_id ?? ''));
       // Durable text blocks are the persistent prefix; the item row can lag or stay
       // empty after a cancel while the retained block still carries text.
@@ -93,6 +93,7 @@ export class ChatMockService {
         execution_turn_id: String(execution.turn_id), root_turn_id: String(root.turn_id),
         user_round: Number(root.user_round), client_message_id: root.client_message_id ?? null,
         revision: this.changes.length, status,
+        queued_input: status==='queued'?{queue_id:String(root.turn_id),reason:this.active?'input':'capacity',priority:0}:null,
         user: { ...message(user, userContent), tail: '', failure: '', attachments: [] },
         assistant: { ...message(answer, content), content_offset: content.length,
           reasoning: activeReasoning, reasoning_offset: activeReasoning.length,
@@ -109,8 +110,8 @@ export class ChatMockService {
     // A user round stays hot while its latest execution turn is hot; settling the
     // root before the continuation exists would flash an idle head.
     const active = this.turnGroups().map(group => group.at(-1)!)
-      .find(turn => ['queued', 'running', 'waiting_input', 'waiting_approval'].includes(String(turn.status)));
-    return { runtime_status: active ? String(active.status) : 'idle', active_turn_id: String(active?.turn_id ?? '') };
+      .find(turn => ['accepted', 'queued', 'running', 'waiting_input', 'waiting_approval'].includes(String(turn.status)));
+    return { runtime_status: active ? (active.status==='accepted'?'running':String(active.status)) : 'idle', active_turn_id: String(active?.turn_id ?? '') };
   }
   private viewChanges() {
     return { epoch: 1, view_seq: this.changes.length, rows: this.viewRows().slice(-12), ...this.runtimeHead() };
@@ -205,7 +206,7 @@ export class ChatMockService {
   private state(turn: Row, status: string) { turn.status = status; this.commit('turn_upsert', turn); }
   private accept(content: string, client_message_id = '') {
     const turn = { turn_id: `fixture-turn-${++this.round}`, user_round: this.round,
-      content, client_message_id, status: 'queued', held: this.holdNext,
+      content, client_message_id, status: this.active || this.queueNext ? 'queued' : 'accepted', held: this.holdNext,
       autoCompact: this.autoCompactNext, failTool: this.failToolNext };
     this.holdNext = false; this.autoCompactNext = false; this.failToolNext = false;
     this.turns.push(turn);
@@ -413,6 +414,17 @@ export class ChatMockService {
       };
       else if (path === `/agents/${MOCK_AGENT}`) data = agent;
       else if (path === '/chat/sessions') data = request.method() === 'POST' ? session : { items: [session], total: 1 };
+      else if (path.endsWith('/queue')) data = { items: this.queue.map((turn, position) => ({
+        queue_id: turn.turn_id, root_turn_id: turn.turn_id, client_message_id: turn.client_message_id,
+        content: turn.content, position, status: 'pending', priority: 0
+      })) };
+      else if (path.includes('/queue/') && path.endsWith('/prioritize')) {
+        const id = decodeURIComponent(path.split('/queue/')[1].split('/')[0]);
+        const index = this.queue.findIndex(turn => turn.turn_id === id);
+        if (index >= 0) this.queue.unshift(this.queue.splice(index, 1)[0]);
+        this.cancel();
+        data = { ok: true };
+      }
       else if(path.endsWith('/view/bootstrap')||path.endsWith('/view/chat')||path.endsWith('/view/trajectory')) {
         const query = new URL(request.url()).searchParams;
         const before = query.has('before') ? Number(query.get('before')) : Number.MAX_SAFE_INTEGER;

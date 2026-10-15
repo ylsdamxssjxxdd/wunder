@@ -1454,14 +1454,26 @@ const selectedCell = computed<TrajCell | null>(() => {
     : base.metrics
   const args = source?.args ?? source?.arguments
   const content = source?.content ?? source?.message
+  const compactionSummary = source?.summary_text ?? source?.summaryText ?? source?.summary_model_output
+    ?? source?.summaryModelOutput ?? source?.summary
   const resultValue = source?.result ?? source?.data ?? source?.output ?? source?.raw
   const schema = source?.schema ?? source?.tool_schema ?? source?.input_schema ?? source?.inputSchema
   const stringify=(v:unknown)=>typeof v==='string'?v:v===undefined||v===null?'':JSON.stringify(v,null,2)
   return {
     ...base,
-    inputDetail:stringify(args ?? base.inputDetail ?? content),
-    outputDetail:stringify(content ?? base.outputDetail),
-    thinkingDetail:stringify(source?.reasoning ?? source?.reasoning_content ?? base.thinkingDetail),
+    // Assistant rows only have their response in the durable detail payload.
+    // Do not use `content` as a synthetic input: that produced identical
+    // Input/Output sections in the overview. Tool rows still use their args.
+    inputDetail: base.kind === 'tool' || base.kind === 'subtool'
+      ? stringify(args ?? base.inputDetail)
+      : undefined,
+    outputDetail: stringify(base.kind === 'compacted'
+      ? (compactionSummary ?? base.outputDetail)
+      : (content ?? base.outputDetail)),
+    thinkingDetail:stringify(
+      source?.reasoning || source?.reasoning_content || source?.thinking || source?.thought
+        || source?.reasoningText || source?.thinking_content || base.thinkingDetail
+    ),
     result:stringify(resultValue ?? base.result),
     schemaDetail:stringify(schema ?? base.schemaDetail),
     toolName: typeof source?.tool === 'string' ? source.tool : (typeof source?.name === 'string' ? source.name : base.toolName),

@@ -23,6 +23,7 @@ let viewed = "";
 let data = { active: null, history: [] };
 let historySignature = "";
 let chartSignature = "";
+let detailsSignature = "";
 let requestSequence = 0;
 let appliedSequence = 0;
 const $ = (id) => document.getElementById(id);
@@ -84,11 +85,10 @@ function apply(snapshot, sequence) {
 
 function render(force = false) {
   const item = currentRecord();
-  details($("tpDetail"), item);
-  if (running() && data.active?.config?.concurrency_list?.length) {
-    const total = data.active.config.concurrency_list.length;
-    const current = Math.min(data.active.samples?.length || 0, total);
-    $("tpFeedback").textContent = l("batchProgress").replace("{current}", String(current)).replace("{total}", String(total));
+  const detailSignature = JSON.stringify(item);
+  if (force || detailSignature !== detailsSignature) {
+    details($("tpDetail"), item);
+    detailsSignature = detailSignature;
   }
   $("tpCurrent").hidden = !viewed;
   $("tpStart").hidden = running();
@@ -190,7 +190,7 @@ async function command(action) {
     saveForm();
     const epoch = generation;
     busy = true;
-    $("tpFeedback").textContent = l("batchProgress").replace("{current}", "0").replace("{total}", String(config.concurrency_list.length));
+    $("tpFeedback").textContent = "";
     render();
     try {
       const snapshot = await api("start", config);
@@ -198,7 +198,6 @@ async function command(action) {
       viewed = "";
       appliedSequence = ++requestSequence;
       data.active = snapshot;
-      $("tpFeedback").textContent = l("batchProgress").replace("{current}", "1").replace("{total}", String(config.concurrency_list.length));
     } catch (error) {
       if (visible && epoch === generation) $("tpFeedback").textContent = error.message;
     } finally {
@@ -271,7 +270,7 @@ function rebuild() {
   const config = initialized ? form() : null;
   observer?.disconnect(); chart?.dispose(); chart = null;
   mount($("throughputPanel")); models(); restoreForm(config); bind();
-  historySignature = ""; chartSignature = "";
+  historySignature = ""; chartSignature = ""; detailsSignature = "";
   render(true);
   observer = new ResizeObserver(() => { if (visible) chart?.resize(); });
   observer.observe($("tpChart"));

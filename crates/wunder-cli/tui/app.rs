@@ -20,6 +20,7 @@ use wunder_server::approval::{
 };
 use wunder_server::interlink::client::Decision;
 use wunder_server::schemas::StreamEvent;
+use wunder_server::storage::ThreadOpenLeaseStatus;
 use wunder_server::user_tools::UserMcpServer;
 use wunder_server::ThreadChangeFrame;
 
@@ -679,6 +680,8 @@ pub struct TuiApp {
     /// The transcript's own literal search: its query, the hits a bounded per-frame scan
     /// collected, and the reading position to hand back on exit.
     transcript_search: TranscriptSearch,
+    open_instance_id: String,
+    last_open_lease_touch: Instant,
 }
 
 /// One copy result in the composer gap. `expires_at: None` is the shape a pending
@@ -844,6 +847,8 @@ impl TuiApp {
             tail_line_baseline: None,
             copy_feedback: None,
             transcript_search: TranscriptSearch::default(),
+            open_instance_id: uuid::Uuid::new_v4().simple().to_string(),
+            last_open_lease_touch: Instant::now(),
         };
         app.load_persisted_history();
         app.load_popup_recents();
@@ -870,6 +875,7 @@ impl TuiApp {
         // The first frame owns the terminal: the file index, the popup catalogs,
         // the model status and the session stats all arrive afterwards.
         app.display_language = crate::locale::resolve_cli_language(&app.global);
+        app.acquire_thread_lease(&session_id)?;
         app.spawn_startup_fills();
         let is_zh = app.is_zh_language();
         let brand = crate::empty_state_animation::brand_name(is_zh);
@@ -925,6 +931,49 @@ impl TuiApp {
             }
         }
         Ok(app)
+    }
+
+    fn acquire_thread_lease(&mut self, session_id: &str) -> Result<()> {
+        let session_id = session_id.trim();
+        anyhow::ensure!(!session_id.is_empty(), "线程不存在");
+        match self.runtime.state.storage.try_acquire_thread_open_lease(
+            session_id,
+            &self.runtime.user_id,
+            &self.open_instance_id,
+            "cli",
+            30.0,
+        )? {
+            ThreadOpenLeaseStatus::Acquired => {
+                self.last_open_lease_touch = Instant::now();
+                Ok(())
+            }
+            ThreadOpenLeaseStatus::Busy => Err(anyhow!(
+                "THREAD_IN_USE: 线程正在由其他蛹或舵机实例打开，关闭占用实例后重试"
+            )),
+        }
+    }
+
+    fn release_thread_lease(&self, session_id: &str) {
+        let _ = self
+            .runtime
+            .state
+            .storage
+            .release_thread_open_lease(session_id, &self.open_instance_id);
+    }
+
+    fn touch_thread_lease_if_due(&mut self) {
+        if self.last_open_lease_touch.elapsed() < Duration::from_secs(10) {
+            return;
+        }
+        if self
+            .runtime
+            .state
+            .storage
+            .touch_thread_open_lease(&self.session_id, &self.open_instance_id, 30.0)
+            .unwrap_or(false)
+        {
+            self.last_open_lease_touch = Instant::now();
+        }
     }
 
     pub fn should_quit(&self) -> bool {
@@ -986,6 +1035,10 @@ impl TuiApp {
     }
 
     pub fn schedule_periodic_redraw_if_needed(&self) {
+        // Keep the cross-process open lease alive even while the selected
+        // thread is idle and no stream animation is running.
+        self.frame_requester
+            .schedule_frame_in(Duration::from_secs(10));
         let ctrl_c_pending = self
             .ctrl_c_hint_deadline
             .is_some_and(|deadline| Instant::now() <= deadline);
@@ -4106,6 +4159,7 @@ impl TuiApp {
     }
 
     pub async fn drain_stream_events(&mut self) {
+        self.touch_thread_lease_if_due();
         self.flush_key_paste_burst_if_due(false);
         self.flush_pending_paste();
         self.drain_pending_attachment_paths().await;
@@ -5607,6 +5661,7 @@ impl TuiApp {
         if session_id == self.session_id {
             return Ok(());
         }
+        let previous_session_id = self.session_id.clone();
         // The write-access verdict is read first: a thread whose input belongs to an
         // orchestration run opens in read-only watch, honoring the same rule the
         // 舰体 HTTP layer applies. A failed read leaves the thread writable - the
@@ -5650,8 +5705,11 @@ impl TuiApp {
                 })?;
             self.thread_ui_cache.remove(evict);
         }
+        // Acquire the new lease only after all fallible reads and capacity
+        // checks have completed. If another instance owns it, the current
+        // thread remains untouched and no lease is leaked on a read error.
+        self.acquire_thread_lease(session_id)?;
         let target_state = cached_index.and_then(|index| self.thread_ui_cache.remove(index));
-        let previous_session_id = self.session_id.clone();
         self.thread_registry.save_view_state(
             previous_session_id.as_str(),
             self.input.clone(),
@@ -5669,6 +5727,7 @@ impl TuiApp {
                 .queue_approval(previous_session_id.as_str(), request);
         }
         self.session_id = session_id.to_string();
+        self.release_thread_lease(&previous_session_id);
         self.thread_registry.activate(session_id);
         self.busy = self.thread_has_live_work(session_id);
         let (draft, saved_scroll) = self.thread_registry.view_state(session_id);
@@ -8742,6 +8801,12 @@ impl TuiApp {
         entry.durable_id = Some(item_id.to_string());
         entry.markdown_cache = None;
         self.invalidate_transcript_metrics();
+    }
+}
+
+impl Drop for TuiApp {
+    fn drop(&mut self) {
+        self.release_thread_lease(&self.session_id);
     }
 }
 

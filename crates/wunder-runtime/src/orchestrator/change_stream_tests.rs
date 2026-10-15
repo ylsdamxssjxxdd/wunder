@@ -572,6 +572,84 @@ async fn feedback_commit_wakes_feeder_with_snapshot_payload() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn completed_llm_output_closes_turn_and_user_bubble() {
+    let (state, _dir) = build_test_state("change_stream_terminal_reconcile").await;
+    let (queue_tx, _queue_rx) = mpsc::channel::<StreamSignal>(128);
+    let emitter = EventEmitter::new(
+        "session-a".into(),
+        "user-a".into(),
+        Some(queue_tx),
+        Some(state.storage.clone()),
+        state.monitor.clone(),
+        false,
+        None,
+    )
+    .with_committer(state.kernel.orchestrator.committer.clone());
+    let turn = accept_turn(&state, "session-a", "user-a");
+    emitter.bind_turn(&turn, 1);
+
+    emitter
+        .emit(
+            "llm_output",
+            json!({
+                "turn_id": turn,
+                "model_round": 1,
+                "content": "已完成",
+                "reasoning": "",
+                "tool_calls": [],
+            }),
+        )
+        .await;
+
+    let turns = state
+        .storage
+        .list_thread_turns("user-a", "session-a", None, 10)
+        .expect("refresh turns");
+    assert_eq!(turns[0]["status"], json!("completed"));
+    let detail = state
+        .storage
+        .get_thread_turn_page("user-a", "session-a", &turn, None, None, 100, true)
+        .expect("load turn")
+        .expect("turn exists");
+    let user_item = detail["items"]
+        .as_array()
+        .and_then(|items| {
+            items
+                .iter()
+                .find(|item| item["item_id"] == json!(format!("{turn}:user")))
+        })
+        .expect("user bubble");
+    assert_eq!(user_item["status"], json!("completed"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn refresh_repairs_terminal_item_without_turn_terminal_event() {
+    let (state, _dir) = build_test_state("change_stream_terminal_recovery").await;
+    let turn = accept_turn(&state, "session-a", "user-a");
+    // Simulate the historical failure window: the final assistant item was
+    // durable, but the follow-up turn update never ran.
+    state
+        .storage
+        .append_thread_item(
+            "user-a",
+            &json!({
+                "session_id":"session-a", "turn_id":turn,
+                "item_id":format!("{turn}:text-1"),
+                "kind":"assistant_message", "event_type":"llm_output",
+                "status":"completed", "visibility":"user", "content":"已完成",
+                "tool_calls":[]
+            }),
+        )
+        .expect("append historical final item");
+
+    let turns = state
+        .storage
+        .list_thread_turns("user-a", "session-a", None, 10)
+        .expect("refresh turns");
+    assert_eq!(turns[0]["status"], json!("completed"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn freeze_system_prompt_append_wakes_feeder_with_snapshot() {
     let (state, _dir) = build_test_state("change_stream_system_prompt").await;
     let turn = accept_turn(&state, "session-a", "user-a");

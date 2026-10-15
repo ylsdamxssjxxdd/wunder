@@ -16,7 +16,7 @@ const numberField = (id, label, value, presets, hint) => `<div class="form-row" 
 
 export function mount(panel) {
   panel.innerHTML = `
-    <div class="list-header"><div><h1>${l("title")}</h1><p class="muted">${l("subtitle")}</p></div>
+    <div class="list-header"><div><h1>${l("title")}</h1></div>
       <button id="tpRefresh" class="secondary" type="button">${l("refresh")}</button></div>
     <div class="tp-layout">
       <aside class="tp-config monitor-block">
@@ -73,7 +73,6 @@ export function details(element, item) {
   }).join("");
   element.innerHTML = `<div class="tp-run-heading"><strong>${escape(item.config.model_name)}</strong><span class="tp-badge tp-${escape(item.status)}">${l(item.status)}</span>${item.simulated ? `<span class="tp-badge">${l("simulated")}</span>` : ""}${item.simulated && item.simulation_speed ? `<span class="muted">${l("simulationSpeed")}: ${escape(simulationSpeedLabel(item.simulation_speed))}</span>` : ""}<span class="muted">${l("concurrencyList")}: ${escape((item.config.concurrency_list || [item.config.concurrency || 1]).join(", "))}</span></div>
     <div class="tp-table-wrap"><table class="monitor-table tp-detail-table"><thead><tr>${headings.map((key) => `<th scope="col">${l(key)}</th>`).join("")}</tr></thead><tbody>${rows || `<tr><td colspan="${headings.length}" class="tp-empty">${l("none")}</td></tr>`}</tbody></table></div>
-    <p class="muted">${l("measurement")}</p>
     ${item.error ? `<p class="tp-error" role="alert">${escape(item.error)}</p>` : ""}
     ${item.persistence_error ? `<p class="tp-warning">${l("persistError")}</p>` : ""}`;
 }

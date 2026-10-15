@@ -372,7 +372,21 @@ async fn list_sessions(
             running: false,
         }
         .runtime_status();
+        let runtime_status = durable_turn_tails
+            .get(&record.session_id)
+            .and_then(|tail| {
+                tail.runtime_head
+                    .as_ref()
+                    .map(|head| head.runtime_status.as_str())
+            })
+            .unwrap_or(runtime_status);
         if let Value::Object(map) = &mut payload {
+            if let Some(head) = durable_turn_tails
+                .get(&record.session_id)
+                .and_then(|tail| tail.runtime_head.as_ref())
+            {
+                map.insert("runtime_head".into(), json!(head));
+            }
             map.insert("runtime_status".to_string(), json!(runtime_status));
             map.insert("runtimeStatus".to_string(), json!(runtime_status));
             map.insert("thread_status".to_string(), json!(runtime_status));
@@ -475,9 +489,21 @@ async fn get_session(
     let activity = load_chat_session_activity(&state, &session_id, monitor_record.as_ref()).await;
     let monitor_active = activity.running;
     let active_queue_tasks = list_active_queue_tasks(&state.user_store, &session_id);
-    let pure_queue_phase = !monitor_active && !active_queue_tasks.is_empty();
+    // The queue endpoint contains both parked input (`input`/`scheduler`) and
+    // global capacity waits. Only the latter owns the session's queued state;
+    // an input parked behind an active execution must keep the thread running.
+    let capacity_queue_phase = !monitor_active
+        && active_queue_tasks.iter().any(|task| {
+            task.request_payload
+                .pointer("/__queue_wait/reason")
+                .and_then(Value::as_str)
+                // Older queue records predate the reason field. Keep their
+                // historical projection until they are rewritten by the
+                // queue worker; new records always carry an explicit reason.
+                .is_none_or(|reason| reason.eq_ignore_ascii_case("capacity"))
+        });
     let mut transcript = std::mem::take(&mut transcript_page.transcript);
-    project_queued_session_messages(&mut transcript, &active_queue_tasks, pure_queue_phase);
+    project_queued_session_messages(&mut transcript, &active_queue_tasks, capacity_queue_phase);
     apply_session_running_state(
         &mut transcript,
         monitor_active,
@@ -565,8 +591,8 @@ async fn get_session(
             "before_seq": transcript_page.before_seq,
             "thread_change_cursor": thread_change_cursor,
             "running": monitor_active,
-            "queued": pure_queue_phase,
-            "runtime": activity.runtime.unwrap_or_else(|| json!({"thread_status": if monitor_active { "running" } else if pure_queue_phase { "queued" } else { "idle" }, "loaded": true}))
+            "queued": capacity_queue_phase,
+            "runtime": activity.runtime.unwrap_or_else(|| json!({"thread_status": if monitor_active { "running" } else if capacity_queue_phase { "queued" } else { "idle" }, "loaded": true}))
         }
     })))
 }

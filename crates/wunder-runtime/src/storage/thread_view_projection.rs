@@ -44,6 +44,14 @@ pub(crate) fn set_activity(row: &mut ChatViewRow, kind: &str, id: &str, seq: i64
     if seq < row.process_activity.created_seq {
         return;
     }
+    // Reasoning and answer blocks can flush independently for one model item.
+    // Once its answer starts, a late reasoning block cannot regress the phase.
+    if row.process_activity.item_id == id
+        && row.process_activity.kind == "responding"
+        && kind == "thinking"
+    {
+        return;
+    }
     row.process_activity = wunder_core::thread_view::ProcessActivity {
         kind: kind.into(),
         item_id: id.into(),
@@ -62,7 +70,7 @@ pub(crate) fn is_failed(status: &str) -> i64 {
 pub(crate) fn is_running(status: &str) -> i64 {
     i64::from(matches!(
         status,
-        "running" | "queued" | "waiting_input" | "waiting_approval"
+        "accepted" | "running" | "queued" | "waiting_input" | "waiting_approval"
     ))
 }
 

@@ -132,10 +132,56 @@ impl ThreadLogCommitter {
         let storage = self.storage.clone();
         let owner = user_id.to_string();
         let payload = payload.clone();
+        let item_payload = payload.clone();
         let receipt = blocking::run_db("thread_log.committer.item", move || {
-            storage.commit_thread_item(&owner, &payload)
+            storage.commit_thread_item(&owner, &item_payload)
         })
         .await?;
+        // A completed assistant stream item is the durable completion signal
+        // for a normal model response.  Keep this reconciliation in the same
+        // per-session commit gate as the item write: if the request task is
+        // cancelled immediately after the provider emits its final item, the
+        // turn must still become terminal and survive a page refresh.
+        if receipt.is_some() && is_terminal_assistant_item(&payload) {
+            let turn_id = payload
+                .get("turn_id")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            let summary = payload
+                .get("content")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            if !turn_id.is_empty() {
+                let storage = self.storage.clone();
+                let owner = user_id.to_string();
+                let thread = session_id.to_string();
+                let terminal_session = thread.clone();
+                let terminal_turn = turn_id.clone();
+                let terminal_payload = serde_json::json!({
+                    "session_id": terminal_session,
+                    "turn_id": terminal_turn,
+                    "status": "completed",
+                    "stop_reason": "model_response",
+                });
+                let terminal_changed =
+                    blocking::run_db("thread_log.committer.item_terminal", move || {
+                        storage.update_thread_turn(
+                            &owner,
+                            &thread,
+                            &turn_id,
+                            "completed",
+                            &summary,
+                            &terminal_payload,
+                        )
+                    })
+                    .await?;
+                if terminal_changed {
+                    self.publish_latest(session_id);
+                }
+            }
+        }
         if let Some(receipt) = receipt.as_ref() {
             self.publish_receipt(session_id, receipt);
         }
@@ -203,6 +249,19 @@ impl ThreadLogCommitter {
     }
 }
 
+fn is_terminal_assistant_item(payload: &Value) -> bool {
+    if payload.get("kind").and_then(Value::as_str) != Some("assistant_message")
+        || payload.get("status").and_then(Value::as_str) != Some("completed")
+        || payload.get("event_type").and_then(Value::as_str) != Some("llm_output")
+    {
+        return false;
+    }
+    !payload
+        .get("tool_calls")
+        .and_then(Value::as_array)
+        .is_some_and(|calls| !calls.is_empty())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -267,7 +326,7 @@ mod tests {
         // Repeating the same status update writes no change and wakes nothing.
         let turn = accepted["turn_id"].as_str().unwrap();
         let changed = committer
-            .update_turn("user-a", "session-a", turn, "queued", "", &json!({}))
+            .update_turn("user-a", "session-a", turn, "accepted", "", &json!({}))
             .await
             .unwrap();
         assert!(!changed);

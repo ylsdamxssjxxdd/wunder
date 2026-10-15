@@ -47,7 +47,9 @@ const ASSISTANT_BUBBLE_ID_PREFIX = 'tturn:';
 // model_call, system_message, ...) is lifecycle bookkeeping, not a card.
 // Queue entries remain available to the composer projection so queue metadata
 // (position/ahead) survives replay, but they are explicitly non-tool records.
-const WORKFLOW_ITEM_KINDS = new Set(['tool_call', 'approval', 'plan', 'compaction', 'queue']);
+const WORKFLOW_ITEM_KINDS = new Set([
+  'tool_call', 'approval', 'plan', 'compaction', 'compacted', 'compaction_summary', 'queue'
+]);
 
 // User-facing visibility. 'admin' is excluded per the v2 contract;
 // 'model_internal' matches the legacy snapshot behaviour (never rendered).
@@ -254,7 +256,8 @@ const buildTurnSlot = (
   for (const item of items) {
     // EventEmitter owns visible output with this stable identity. Execution
     // history snapshots use random ids and must never become duplicate bubbles.
-    if (item.kind === 'assistant_message' && item.itemId === textItemId(item.turnId, item.modelRound)) {
+    if (item.kind === 'assistant_message' && item.itemId === textItemId(item.turnId, item.modelRound) &&
+        !isCompactionSummaryAssistantItem(item)) {
       textItems.push(item);
     } else if (WORKFLOW_ITEM_KINDS.has(item.kind)) {
       workflows.push(item);
@@ -703,25 +706,40 @@ export const buildWorkflowRecord = (
       (firstText(cached.record.toolName, cached.record.tool, cached.record.toolFunctionName) || item.kind !== 'tool_call')) {
     return cached.record;
   }
-  const payload = item.raw ?? {};
+  const rawPayload = item.raw ?? {};
+  const payload = isPlainRecord(rawPayload.data)
+    ? { ...rawPayload, ...rawPayload.data }
+    : isPlainRecord(rawPayload.payload)
+      ? { ...rawPayload, ...rawPayload.payload }
+      : rawPayload;
   const eventType = resolveWorkflowEventType(item);
   // Compaction is a workflow activity, not a model tool call. Its payload
   // need not contain a tool name; never infer its identity from a generic title.
   const toolCallIdentity = item.kind === 'tool_call'
     ? resolveToolCallIdentity(item, assistantItems)
     : { name: '', arguments: undefined, functionName: '' };
-  const toolName = item.kind === 'compaction'
+  const isCompaction = ['compaction', 'compacted', 'compaction_summary'].includes(item.kind);
+  const toolName = isCompaction
     ? 'context_compaction'
     : toolCallIdentity.name || firstText(payload.tool, payload.tool_name, payload.name, payload.toolName);
   const record: WorkflowItemRecord = {
     ...payload,
+    // The compaction row stores the durable summary in summary_text; its
+    // content field is only a short reason marker such as "history".
+    ...(isCompaction ? {
+      summary_text: firstText(payload.summary_text, payload.summaryText,
+        payload.summary_model_output, payload.summaryModelOutput),
+      detail: stringifyWorkflowDetail(payload)
+    } : {}),
     ...(payload.request_usage ? { usage: payload.request_usage } : {}),
     id: item.itemId,
     eventType,
     status: mapWorkflowStatus(item.status),
     isTool: item.kind !== 'queue',
     title: firstText(payload.title, deriveWorkflowTitle(eventType, toolName)),
-    detail: resolveWorkflowDetail(payload),
+    detail: isCompaction
+      ? stringifyWorkflowDetail(payload)
+      : resolveWorkflowDetail(payload),
     modelTurnId,
     model_turn_id: modelTurnId,
     updatedSeq: item.revision
@@ -857,6 +875,28 @@ const composeTurnText = (
 
 const hasToolCalls = (item: ThreadItemState): boolean =>
   Array.isArray(item.raw.tool_calls) && item.raw.tool_calls.length > 0;
+
+/**
+ * A completed manual compaction is persisted as an assistant-shaped marker so
+ * older clients can recover its state.  Its content is the context summary,
+ * not a reply for the user.  Keep it attached to the compaction workflow card
+ * instead of leaking the summary into the normal assistant body.
+ */
+const isCompactionSummaryAssistantItem = (item: ThreadItemState): boolean => {
+  if (item.kind !== 'assistant_message') return false;
+  const rawSource = item.raw ?? {};
+  const raw = isPlainRecord(rawSource.data)
+    ? { ...rawSource, ...rawSource.data }
+    : isPlainRecord(rawSource.payload)
+      ? { ...rawSource, ...rawSource.payload }
+      : rawSource;
+  const meta = isPlainRecord(raw.meta) ? raw.meta : {};
+  const type = normalizeStatus(firstText(meta.type, raw.type));
+  return meta.manual_compaction === true ||
+    type === 'manual_compaction_marker' ||
+    raw.manual_compaction_marker === true ||
+    raw.manualCompactionMarker === true;
+};
 
 /** Do not render a lifecycle-only tool row until its function identity is
  * available.  Rendering that transient row creates the misleading “unknown

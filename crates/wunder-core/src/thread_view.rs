@@ -57,6 +57,9 @@ pub struct ChatViewRow {
     pub client_message_id: Option<String>,
     pub revision: i64,
     pub status: String,
+    /// Explicit composer ownership, independent of the executing thread head.
+    #[serde(default)]
+    pub queued_input: Option<QueuedInput>,
     pub user: ViewMessage,
     pub assistant: ViewMessage,
     pub workflow_count: i64,
@@ -126,6 +129,21 @@ pub struct ProcessActivity {
     pub item_id: String,
     pub tool: String,
     pub created_seq: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct QueuedInput {
+    pub queue_id: String,
+    pub reason: String,
+    pub priority: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ThreadExecutionHead {
+    pub runtime_status: String,
+    pub active_turn_id: String,
+    pub epoch: i64,
+    pub view_seq: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

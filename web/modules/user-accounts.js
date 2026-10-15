@@ -1,14 +1,15 @@
 // AI生成
-import { elements } from "./elements.js?v=20261011-01";
+import { elements } from "./elements.js?v=20261016-01";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
 import { appendLog } from "./log.js?v=20261011-01";
 import { notify } from "./notify.js";
 import { formatTimestamp } from "./utils.js?v=20251229-02";
-import { t } from "./i18n.js?v=20261011-01";
+import { t } from "./i18n.js?v=20261016-01";
 import { ensureOrgUnitsLoaded, getOrgUnitMap, getOrgUnitOptions } from "./org-units.js?v=20260210-01";
 import { getAuthHeaders } from "./admin-auth.js?v=20260120-01";
 import { isRemovedSwarmTool } from "../shared/deprecated-tools.js";
+import { downloadXlsx } from "../shared/xlsx.js?v=20261016-01";
 import { openImpactConfirmModal } from "./preset-agents.js?v=20261012-01";
 import {
   CONTRACT_STATE_UNAVAILABLE,
@@ -24,8 +25,20 @@ const DEFAULT_TEST_USER_PASSWORD = "Test@123456";
 const DEFAULT_TEST_USER_PER_UNIT = 1;
 const MAX_TEST_USERS_PER_UNIT = 200;
 const USER_ACCOUNT_ONLINE_REFRESH_MS = 12000;
+// 导出分页拉取上限：后端单页最多 200 条，导出按当前筛选条件整批拉取
+const EXPORT_PAGE_SIZE = 200;
+const MAX_EXPORT_ROWS = 5000;
+const IMPORT_TEMPLATE_HEADERS = [
+  "username",
+  "password",
+  "email",
+  "unit_id",
+  "status",
+  "roles",
+];
 let userAccountOnlineRefreshTimer = null;
 let importBusy = false;
+let exportBusy = false;
 
 const USER_FRONTEND_PORT_BY_ADMIN_PORT = {
   "18000": "18001",
@@ -100,8 +113,12 @@ const ensureUserAccountElements = () => {
     "userAccountModalClose",
     "userAccountModalCancel",
     "userAccountModalSave",
-    "userAccountImportFile",
     "userAccountImportBtn",
+    "userAccountExportBtn",
+    "userAccountImportModal",
+    "userAccountImportSubmitBtn",
+    "userAccountImportTemplateBtn",
+    "userAccountImportFile",
     "userAccountImportResult",
     "userAccountSeedModal",
     "userAccountSeedModalClose",
@@ -659,12 +676,15 @@ const setUserAccountsLoading = (loading) => {
 
 const setImportBusy = (busy) => {
   importBusy = busy;
-  if (elements.userAccountImportBtn) {
-    elements.userAccountImportBtn.disabled = busy;
-    elements.userAccountImportBtn.classList.toggle("is-loading", busy);
+  if (elements.userAccountImportSubmitBtn) {
+    elements.userAccountImportSubmitBtn.disabled = busy;
+    elements.userAccountImportSubmitBtn.classList.toggle("is-loading", busy);
   }
   if (elements.userAccountImportFile) {
     elements.userAccountImportFile.disabled = busy;
+  }
+  if (elements.userAccountImportTemplateBtn) {
+    elements.userAccountImportTemplateBtn.disabled = busy;
   }
 };
 
@@ -677,6 +697,164 @@ const resetImportPanel = () => {
     elements.userAccountImportResult.classList.remove("is-error", "is-success");
   }
   setImportBusy(false);
+};
+
+const openImportModal = () => {
+  ensureUserAccountsState();
+  if (!ensureUserAccountElements()) {
+    return;
+  }
+  resetImportPanel();
+  openModal(elements.userAccountImportModal);
+};
+
+const closeImportModal = () => closeModal(elements.userAccountImportModal);
+
+const setExportBusy = (busy) => {
+  exportBusy = busy;
+  if (elements.userAccountExportBtn) {
+    elements.userAccountExportBtn.disabled = busy;
+    elements.userAccountExportBtn.classList.toggle("is-loading", busy);
+  }
+};
+
+// 导出文件名带时间戳，避免多次导出互相覆盖
+const buildExportFilename = () => {
+  const now = new Date();
+  const pad = (value) => String(value).padStart(2, "0");
+  const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(
+    now.getHours()
+  )}${pad(now.getMinutes())}`;
+  return `user-accounts-${stamp}.xlsx`;
+};
+
+const buildExportRows = (users) => {
+  const header = [
+    t("userAccounts.table.user"),
+    t("userAccounts.modal.create.email"),
+    t("userAccounts.table.unit"),
+    t("userAccounts.export.column.unitId"),
+    t("userAccounts.modal.create.status"),
+    t("userAccounts.export.column.roles"),
+    t("userAccounts.export.column.quotaBalance"),
+    t("userAccounts.export.column.quotaUsed"),
+    t("userAccounts.table.lastLogin"),
+    t("userAccounts.export.column.activeThreads"),
+  ];
+  const body = users.map((user) => [
+    user.username || user.id || "-",
+    user.email || "",
+    resolveUnitLabel(user),
+    user.unit_id || "",
+    user.status || "active",
+    Array.isArray(user.roles) ? user.roles.join(",") : "",
+    Number(user.quota_balance) || 0,
+    Number(user.quota_used_total) || 0,
+    formatLoginTime(user.last_login_at),
+    Number(user.active_sessions) || 0,
+  ]);
+  return [header, ...body];
+};
+
+// 按当前搜索与单位筛选整批拉取账号，避免只导出当前分页
+const fetchExportUserAccounts = async () => {
+  ensureUserAccountsState();
+  // 直接取输入框当前值，避免用户改了搜索词但还没回车时导出旧结果
+  const keyword = String(
+    elements.userAccountSearchInput?.value || state.userAccounts.search || ""
+  ).trim();
+  const unitId = String(
+    elements.userAccountUnitFilter?.value || state.userAccounts.unitId || ""
+  ).trim();
+  const wunderBase = getWunderBase();
+  const collected = [];
+  let offset = 0;
+  while (offset < MAX_EXPORT_ROWS) {
+    const params = new URLSearchParams({
+      offset: String(offset),
+      limit: String(EXPORT_PAGE_SIZE),
+    });
+    if (keyword) {
+      params.set("keyword", keyword);
+    }
+    if (unitId) {
+      params.set("unit_id", unitId);
+    }
+    const response = await fetch(`${wunderBase}/admin/user_accounts?${params.toString()}`);
+    if (!response.ok) {
+      throw new Error(t("common.requestFailed", { status: response.status }));
+    }
+    const payload = (await response.json())?.data || {};
+    const items = Array.isArray(payload.items) ? payload.items : [];
+    if (!items.length) {
+      break;
+    }
+    items.forEach((item) => {
+      if (collected.length < MAX_EXPORT_ROWS) {
+        collected.push(normalizeUserAccount(item));
+      }
+    });
+    const total = Number(payload.total) || 0;
+    if (total > 0) {
+      if (offset + items.length >= total || collected.length >= total) {
+        break;
+      }
+    } else if (items.length < EXPORT_PAGE_SIZE) {
+      break;
+    }
+    offset += items.length;
+  }
+  return collected;
+};
+
+const exportUserAccounts = async () => {
+  ensureUserAccountsState();
+  if (!ensureUserAccountElements()) {
+    return;
+  }
+  if (exportBusy) {
+    return;
+  }
+  setExportBusy(true);
+  try {
+    const users = await fetchExportUserAccounts();
+    if (!users.length) {
+      notify(t("userAccounts.toast.exportEmpty"), "warn");
+      return;
+    }
+    await downloadXlsx({
+      filename: buildExportFilename(),
+      sheetName: t("userAccounts.export.sheetName"),
+      rows: buildExportRows(users),
+    });
+    notify(t("userAccounts.toast.exportSuccess", { count: users.length }), "success");
+  } catch (error) {
+    const message = error?.message || t("common.unknownError");
+    appendLog(t("userAccounts.toast.exportFailed", { message }));
+    notify(t("userAccounts.toast.exportFailed", { message }), "error");
+  } finally {
+    setExportBusy(false);
+  }
+};
+
+const downloadImportTemplate = async () => {
+  ensureUserAccountsState();
+  if (!ensureUserAccountElements()) {
+    return;
+  }
+  try {
+    await downloadXlsx({
+      filename: "user-accounts-import-template.xlsx",
+      sheetName: t("userAccounts.export.sheetName"),
+      rows: [
+        IMPORT_TEMPLATE_HEADERS,
+        ["sample_user", "Pass@123456", "sample@example.com", "", "active", "user"],
+      ],
+    });
+  } catch (error) {
+    const message = error?.message || t("common.unknownError");
+    notify(t("userAccounts.toast.exportFailed", { message }), "error");
+  }
 };
 
 const renderImportResult = (data) => {
@@ -887,7 +1065,6 @@ const openCreateModal = async () => {
   syncUnitSelect(elements.userAccountFormUnit, "");
   elements.userAccountFormStatus.value = "active";
   renderCreatePresetOptions();
-  resetImportPanel();
   if (elements.userAccountModalTitle) {
     elements.userAccountModalTitle.textContent = t("userAccounts.modal.create.title");
   }
@@ -979,15 +1156,21 @@ const submitImportUsers = async () => {
     }
     const payload = await response.json();
     const data = payload?.data || {};
-    renderImportResult(data);
+    const failedCount = Number(data.failed) || 0;
     notify(
       t("userAccounts.toast.importSuccess", {
         created: Number(data.created) || 0,
-        failed: Number(data.failed) || 0,
+        failed: failedCount,
       }),
       "success"
     );
     await loadUserAccounts();
+    // 全部成功时直接关闭弹窗；有失败行时保留弹窗展示逐行错误
+    if (failedCount === 0) {
+      closeImportModal();
+      return;
+    }
+    renderImportResult(data);
   } catch (error) {
     const message = error?.message || t("common.unknownError");
     notify(t("userAccounts.toast.importFailed", { message }), "error");
@@ -1624,7 +1807,12 @@ export const initUserAccountsPanel = () => {
   elements.userAccountModalClose?.addEventListener("click", () => closeModal(elements.userAccountModal));
   elements.userAccountModalCancel.addEventListener("click", () => closeModal(elements.userAccountModal));
   elements.userAccountModalSave.addEventListener("click", submitCreateUser);
-  elements.userAccountImportBtn.addEventListener("click", submitImportUsers);
+  elements.userAccountImportBtn.addEventListener("click", openImportModal);
+  elements.userAccountExportBtn.addEventListener("click", exportUserAccounts);
+  elements.userAccountImportModalClose?.addEventListener("click", closeImportModal);
+  elements.userAccountImportModalCancel?.addEventListener("click", closeImportModal);
+  elements.userAccountImportTemplateBtn.addEventListener("click", downloadImportTemplate);
+  elements.userAccountImportSubmitBtn.addEventListener("click", submitImportUsers);
   elements.userAccountSeedModalClose?.addEventListener("click", () =>
     closeModal(elements.userAccountSeedModal)
   );

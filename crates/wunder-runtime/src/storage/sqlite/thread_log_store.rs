@@ -87,6 +87,9 @@ pub(super) trait SqliteThreadLogStorage {
         summary: &str,
         payload: &Value,
     ) -> Result<bool>;
+    /// Repair a turn whose completed assistant item was durable but whose
+    /// terminal turn update was interrupted before it committed.
+    fn reconcile_terminal_turns_impl(&self, user_id: &str, session_id: &str) -> Result<()>;
     fn delete_thread_log_by_session_impl(&self, user_id: &str, session_id: &str) -> Result<i64>;
     fn append_thread_item_impl(&self, user_id: &str, payload: &Value) -> Result<Option<Value>>;
     fn list_thread_turns_impl(
@@ -273,7 +276,7 @@ impl SqliteThreadLogStorage for SqliteStorage {
     ) -> Result<Vec<Value>> {
         self.ensure_initialized()?;
         let conn = self.open()?;
-        let mut stmt = conn.prepare("SELECT i.payload FROM thread_items i JOIN thread_turns t ON t.session_id=i.session_id AND t.turn_id=i.turn_id WHERE i.user_id=? AND i.session_id=? AND (? OR i.visibility='user') AND (? IS NULL OR (t.status<>'queued' AND i.item_id<>? || ':user')) AND i.kind IN ('user_message','assistant_message','tool_message','system_message') ORDER BY i.created_seq DESC LIMIT ?")?;
+        let mut stmt = conn.prepare("SELECT i.payload FROM thread_items i JOIN thread_turns t ON t.session_id=i.session_id AND t.turn_id=i.turn_id WHERE i.user_id=? AND i.session_id=? AND (? OR i.visibility='user') AND (? IS NULL OR (t.status NOT IN ('accepted','queued') AND i.item_id<>? || ':user')) AND i.kind IN ('user_message','assistant_message','tool_message','system_message') ORDER BY i.created_seq DESC LIMIT ?")?;
         let rows = stmt
             .query_map(
                 params![
@@ -537,7 +540,7 @@ impl SqliteThreadLogStorage for SqliteStorage {
         item["item_id"] = json!(item_id);
         item["status"] = json!("completed");
         let text = serde_json::to_string(&item)?;
-        tx.execute("INSERT INTO thread_turns(session_id,turn_id,root_turn_id,trigger_kind,client_message_id,user_id,user_turn_index,status,summary,payload,created_time,updated_time) VALUES(?,?,?,?,?,?,?,'queued',?,'{}',?,?)", params![session_id,turn_id,root_id,trigger,client_id,user_id,round,summary,now,now])?;
+        tx.execute("INSERT INTO thread_turns(session_id,turn_id,root_turn_id,trigger_kind,client_message_id,user_id,user_turn_index,status,summary,payload,created_time,updated_time) VALUES(?,?,?,?,?,?,?,'accepted',?,'{}',?,?)", params![session_id,turn_id,root_id,trigger,client_id,user_id,round,summary,now,now])?;
         let index:i64=tx.query_row("SELECT COALESCE(MAX(item_index),-1)+1 FROM thread_items WHERE session_id=? AND root_turn_id=?", params![session_id,root_id], |r| r.get(0))?;
         let visibility = if trigger == "user" {
             "user"
@@ -557,7 +560,7 @@ impl SqliteThreadLogStorage for SqliteStorage {
             "turn_id": turn_id,
             "root_turn_id": root_id,
             "trigger_kind": trigger,
-            "status": "queued",
+            "status": "accepted",
             "user_round": round,
             "client_message_id": client_id,
         }))?;
@@ -626,7 +629,7 @@ impl SqliteThreadLogStorage for SqliteStorage {
             map.remove("summary");
         }
         let text = serde_json::to_string(&payload)?;
-        let changed=tx.execute("UPDATE thread_turns SET status=?,payload=?,updated_time=? WHERE session_id=? AND turn_id=? AND status IN ('queued','running','waiting_input') AND (status<>? OR payload<>?)", params![status,text,now,session_id,turn_id,status,text])?;
+        let changed=tx.execute("UPDATE thread_turns SET status=?,payload=?,updated_time=? WHERE session_id=? AND turn_id=? AND status IN ('accepted','queued','running','waiting_input','waiting_approval') AND (status<>? OR payload<>?) AND (json_extract(?, '$.queued_input') IS NULL OR status IN ('accepted','queued'))", params![status,text,now,session_id,turn_id,status,text,text])?;
         if changed == 0 {
             tx.commit()?;
             return Ok(false);
@@ -713,6 +716,50 @@ impl SqliteThreadLogStorage for SqliteStorage {
         tx.commit()?;
         Ok(changed > 0 || input_changed > 0 || had_settled)
     }
+
+    fn reconcile_terminal_turns_impl(&self, user_id: &str, session_id: &str) -> Result<()> {
+        self.ensure_initialized()?;
+        // This is deliberately bounded: a read repairs only a small number of
+        // abandoned requests, while normal traffic is repaired at commit time.
+        let conn = self.open()?;
+        let mut stmt = conn.prepare(
+            "SELECT t.turn_id, COALESCE(json_extract(i.payload, '$.content'), '')
+             FROM thread_turns t
+             JOIN thread_items i ON i.session_id=t.session_id AND i.turn_id=t.turn_id
+             WHERE t.user_id=? AND t.session_id=?
+               AND t.status IN ('accepted','queued','running','waiting_input','waiting_approval')
+               AND i.kind='assistant_message' AND i.status='completed'
+               AND json_extract(i.payload, '$.event_type')='llm_output'
+               AND (json_extract(i.payload, '$.tool_calls') IS NULL
+                    OR json_array_length(json_extract(i.payload, '$.tool_calls'))=0)
+             GROUP BY t.turn_id ORDER BY t.user_turn_index DESC LIMIT 32",
+        )?;
+        let candidates = stmt
+            .query_map(params![user_id, session_id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        drop(stmt);
+        drop(conn);
+        for (turn_id, summary) in candidates {
+            let _ = self.update_thread_turn_impl(
+                user_id,
+                session_id,
+                &turn_id,
+                "completed",
+                &summary,
+                &json!({
+                    "session_id": session_id,
+                    "turn_id": turn_id,
+                    "status": "completed",
+                    "stop_reason": "model_response",
+                    "reconciled": true,
+                }),
+            )?;
+        }
+        Ok(())
+    }
+
     fn append_thread_item_impl(&self, user_id: &str, payload: &Value) -> Result<Option<Value>> {
         self.ensure_initialized()?;
         let session_id = payload
@@ -823,6 +870,7 @@ impl SqliteThreadLogStorage for SqliteStorage {
         limit: i64,
     ) -> Result<Vec<Value>> {
         self.ensure_initialized()?;
+        self.reconcile_terminal_turns_impl(user_id, session_id)?;
         let conn = self.open()?;
         let before = before.unwrap_or(i64::MAX);
         let limit = limit.clamp(1, 101);
@@ -873,6 +921,9 @@ impl SqliteThreadLogStorage for SqliteStorage {
         if ids.is_empty() {
             return Ok(std::collections::HashMap::new());
         }
+        for session_id in &ids {
+            self.reconcile_terminal_turns_impl(user_id, session_id)?;
+        }
         let placeholders = std::iter::repeat("?")
             .take(ids.len())
             .collect::<Vec<_>>()
@@ -882,7 +933,7 @@ impl SqliteThreadLogStorage for SqliteStorage {
         let conn = self.open()?;
         // Newest durable user turn per session in one pass: round, status and summary.
         let turn_sql = format!(
-            "SELECT session_id,user_turn_index,status,summary FROM (SELECT session_id,user_turn_index,status,summary,ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY user_turn_index DESC) AS row_number FROM thread_turns WHERE user_id=? AND trigger_kind='user' AND session_id IN ({placeholders})) WHERE row_number=1"
+            "SELECT latest.session_id,latest.user_turn_index,latest.status,latest.summary,h.runtime_status,h.active_turn_id,h.epoch,h.view_seq FROM (SELECT session_id,user_turn_index,status,summary,ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY user_turn_index DESC) AS row_number FROM thread_turns WHERE user_id=? AND trigger_kind='user' AND session_id IN ({placeholders})) latest LEFT JOIN thread_view_heads h ON h.session_id=latest.session_id AND h.projection_state='ready' WHERE row_number=1"
         );
         let mut values = Vec::with_capacity(ids.len() + 1);
         values.push(rusqlite::types::Value::Text(user_id.to_owned()));
@@ -898,16 +949,29 @@ impl SqliteThreadLogStorage for SqliteStorage {
                     row.get::<_, i64>(1)?,
                     row.get::<_, String>(2)?,
                     row.get::<_, Option<String>>(3)?.unwrap_or_default(),
+                    row.get::<_, Option<String>>(4)?
+                        .map(|runtime_status| {
+                            Ok::<_, rusqlite::Error>(
+                                wunder_core::thread_view::ThreadExecutionHead {
+                                    runtime_status,
+                                    active_turn_id: row.get(5)?,
+                                    epoch: row.get(6)?,
+                                    view_seq: row.get(7)?,
+                                },
+                            )
+                        })
+                        .transpose()?,
                 ))
             })?;
             for row in rows {
-                let (session_id, user_round, turn_status, last_activity) = row?;
+                let (session_id, user_round, turn_status, last_activity, runtime_head) = row?;
                 tails.insert(
                     session_id.clone(),
                     crate::storage::ThreadTurnTail {
                         session_id,
                         user_round,
                         turn_status,
+                        runtime_head,
                         last_activity,
                         change_seq: 0,
                     },
@@ -977,6 +1041,7 @@ impl SqliteThreadLogStorage for SqliteStorage {
         include_internal: bool,
     ) -> Result<Option<Value>> {
         self.ensure_initialized()?;
+        self.reconcile_terminal_turns_impl(user_id, session_id)?;
         let conn = self.open()?;
         let limit = limit.clamp(1, 100);
         let fetch = limit + 1;
@@ -1753,7 +1818,7 @@ mod tests {
         // A session with no durable turn is absent, never invented.
         assert_eq!(tails.len(), 2);
         assert_eq!(tails["thread-a"].user_round, 3);
-        assert_eq!(tails["thread-a"].turn_status, "queued");
+        assert_eq!(tails["thread-a"].turn_status, "accepted");
         assert!(tails["thread-a"].last_activity.starts_with("message"));
         assert_eq!(tails["thread-b"].user_round, 1);
         assert_eq!(tails["thread-b"].turn_status, "failed");
@@ -1842,7 +1907,7 @@ mod tests {
         let changes = db
             .list_thread_changes_impl("owner", "thread", 0, 100)
             .unwrap();
-        for status in ["queued", "running"] {
+        for status in ["accepted", "running"] {
             let change = changes
                 .iter()
                 .find(|change| {

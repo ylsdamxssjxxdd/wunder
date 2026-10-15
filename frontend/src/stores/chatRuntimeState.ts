@@ -1,3 +1,4 @@
+import { threadViewOwnsExecution, threadViewStatus, threadViewActiveTurnId } from '@/realtime/chat/threadViewStore';
 import { getChatThreadStatus } from '@/realtime/chat/chatThreadRuntime';
 import { emitSubagentPoolChanged } from '@/utils/subagentPoolEvents';
 import { applySessionQuotaUsage } from './chatSessionQuota';
@@ -1212,6 +1213,11 @@ export function applySessionRuntimeEvent(store, sessionId, payload, eventType = 
   const runtime = ensureRuntime(targetId);
   if (!runtime) return null;
   const previousStatus = runtime.threadStatus;
+  if (threadViewOwnsExecution(targetId)) {
+    runtime.threadStatus = normalizeThreadRuntimeStatus(threadViewStatus(targetId));
+    runtime.activeTurnId = threadViewActiveTurnId(targetId);
+    return runtime;
+  }
   // Durable turns own liveness; a delayed monitor control cannot reopen them.
   const durableStatus = getChatThreadStatus(targetId);
   if (durableStatus) {

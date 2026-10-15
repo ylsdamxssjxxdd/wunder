@@ -780,7 +780,8 @@ fn workspace_resource_target(root: &Path, source: &str) -> Result<PathBuf> {
             bytes.push(raw[index]);
             index += 1;
         }
-        PathBuf::from(String::from_utf8(bytes)?.replace('\\', "/"))
+        let decoded = String::from_utf8(bytes)?.replace('\\', "/");
+        PathBuf::from(normalize_public_workspace_source(&decoded))
     };
     if path
         .components()
@@ -798,6 +799,25 @@ fn workspace_resource_target(root: &Path, source: &str) -> Result<PathBuf> {
     Ok(target)
 }
 
+/// Convert the logical paths emitted by cloud agents back to the local
+/// workspace-relative form before applying the normal containment check.
+/// Both `/workspaces/<scope>/file` and the cloud form
+/// `/workspaces/<user>/workspace/file` are accepted.
+fn normalize_public_workspace_source(source: &str) -> String {
+    let normalized = source.trim_start_matches('/');
+    let Some(rest) = normalized.strip_prefix("workspaces/") else {
+        return source.to_string();
+    };
+    let mut parts = rest.splitn(2, '/');
+    let _scope = parts.next().unwrap_or_default();
+    let remainder = parts.next().unwrap_or_default();
+    if let Some(relative) = remainder.strip_prefix("workspace/") {
+        relative.to_string()
+    } else {
+        remainder.to_string()
+    }
+}
+
 /// Validate one path segment the user typed for a new or renamed entry.
 fn validate_entry_name(name: &str) -> Result<()> {
     let cleaned = name.trim();
@@ -810,10 +830,9 @@ fn validate_entry_name(name: &str) -> Result<()> {
     if cleaned == "." || cleaned == ".." {
         bail!("无效的名称");
     }
-    if cleaned
-        .chars()
-        .any(|c| matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') || c.is_control())
-    {
+    if cleaned.chars().any(|c| {
+        matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') || c.is_control()
+    }) {
         bail!("名称不能包含分隔符或特殊字符");
     }
     if cfg!(windows) && (cleaned.ends_with('.') || cleaned.ends_with(' ')) {
@@ -892,9 +911,23 @@ mod tests {
     #[test]
     fn entry_names_reject_separators_and_traversal() {
         assert!(validate_entry_name(" 新目录 ").is_ok());
-        for bad in ["", "  ", ".", "..", "a/b", "a\\b", "a:b", "a*b", "a?b", "a<b"] {
+        for bad in [
+            "", "  ", ".", "..", "a/b", "a\\b", "a:b", "a*b", "a?b", "a<b",
+        ] {
             assert!(validate_entry_name(bad).is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn public_workspace_markdown_paths_become_workspace_relative() {
+        assert_eq!(
+            normalize_public_workspace_source("/workspaces/demo/workspace/爱心.png"),
+            "爱心.png"
+        );
+        assert_eq!(
+            normalize_public_workspace_source("/workspaces/demo__c__1/reports/result.pdf"),
+            "reports/result.pdf"
+        );
     }
 
     #[test]

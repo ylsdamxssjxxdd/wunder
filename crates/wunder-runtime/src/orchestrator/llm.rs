@@ -327,7 +327,13 @@ impl Orchestrator {
     }
 
     pub(super) fn ensure_not_cancelled(&self, session_id: &str) -> Result<(), OrchestratorError> {
-        if self.monitor.is_cancelled(session_id) {
+        if self.monitor.is_cancelled(session_id)
+            || self
+                .task_runtime
+                .read()
+                .upgrade()
+                .is_some_and(|runtime| runtime.execution_interrupted(session_id))
+        {
             return Err(OrchestratorError::cancelled(i18n::t(
                 "error.session_cancelled",
             )));
@@ -339,7 +345,13 @@ impl Orchestrator {
         let mut interval = tokio::time::interval(Duration::from_millis(200));
         loop {
             interval.tick().await;
-            if self.monitor.is_cancelled(session_id) {
+            if self.monitor.is_cancelled(session_id)
+                || self
+                    .task_runtime
+                    .read()
+                    .upgrade()
+                    .is_some_and(|runtime| runtime.execution_interrupted(session_id))
+            {
                 let detail = self
                     .monitor
                     .get_record(session_id)
@@ -494,6 +506,10 @@ impl Orchestrator {
         emit_quota_events: bool,
         tools: Option<&[Value]>,
         llm_config_override: Option<LlmModelConfig>,
+        // 本轮次权威的人类输入。虚拟模型的测试约定（数字决定模型轮次、`subagent`
+        // 简拼强制派生）每轮都会重新解析它；压缩改写过的历史消息不能作为来源，
+        // 否则同一回合跑到中途会换一份计划，轮次数不再等于用户给的数字。
+        user_question: Option<&str>,
     ) -> Result<
         (
             String,
@@ -619,9 +635,12 @@ impl Orchestrator {
         let context_cache_probe = build_context_cache_probe(&chat_messages.messages, tools);
         let virtual_turn = if virtual_replay {
             let app_config = self.config_store.get().await;
-            // 用户消息可驱动两条测试约定：数字 -> 本次模型轮次；`subagent` -> 必定
-            // 调用子智能体工具（见 load_turn_for_round）。
-            let user_message = crate::services::virtual_llm::latest_user_text(&request_messages);
+            // 用户消息可驱动两条测试约定：数字 -> 本次模型轮次；`subagent` / `s` 简拼
+            // -> 必定调用子智能体工具（见 load_turn_for_round）。优先用调用方传来的
+            // 权威人类输入，只有取不到时才回落到请求消息里的最新一条用户文本。
+            let user_message = user_question
+                .map(|text| text.to_string())
+                .or_else(|| crate::services::virtual_llm::latest_user_text(&request_messages));
             // 子会话不再派生子智能体：`spawned_by` 判定当前会话是否由子智能体控制派生。
             // 判定属于阻塞 DB 读取，放到 blocking 线程池执行。
             let allow_subagent = {

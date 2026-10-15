@@ -20,6 +20,7 @@ mod file_icons;
 mod help_browser;
 mod hotkey;
 mod message_blocks;
+mod native_markdown;
 mod native_chat;
 mod native_interlink;
 mod native_pages;

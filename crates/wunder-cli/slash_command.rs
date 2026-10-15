@@ -507,7 +507,8 @@ mod tests {
     }
 
     #[test]
-    fn busy_task_availability_matrix_smoke() {        assert!(SlashCommand::Edit.available_during_task());
+    fn busy_task_availability_matrix_smoke() {
+        assert!(SlashCommand::Edit.available_during_task());
         assert!(SlashCommand::Attach.available_during_task());
         assert!(SlashCommand::Status.available_during_task());
         assert!(SlashCommand::Permissions.available_during_task());

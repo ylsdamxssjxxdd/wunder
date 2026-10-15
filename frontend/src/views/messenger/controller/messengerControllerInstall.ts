@@ -20,7 +20,7 @@ import { getCurrentLanguage, setLanguage, useI18n } from '@/i18n';
 import { flushBackgroundPublication } from '@/realtime/chat/chatBackgroundPublication';
 import { resolveChatRuntimeRenderableKey } from '@/realtime/chat/chatRuntimeMessageKeys';
 import { resolveChatRuntimeMessageRenderKey } from '@/realtime/chat/chatRuntimeRenderAdapter';
-import { threadViewClock } from '@/realtime/chat/threadViewStore';
+import { threadViewClock, threadViewOwnsExecution } from '@/realtime/chat/threadViewStore';
 import { threadViewPhase, threadViewSlots } from '@/realtime/chat/threadViewStore';
 import { readThreadBody } from '@/realtime/chat/threadBodyReader';
 import { buildChatThreadMaterializedSlots } from '@/realtime/chat/chatThreadRuntime';
@@ -1907,7 +1907,7 @@ function installMessengerControllerRenderableMessages(ctx: MessengerControllerCo
       return buildChatThreadMaterializedSlots(ctx.chatStore.activeSessionId);
   });
   ctx.agentTurnSlots = computed(() => {
-      const queuedItems = chatQueueState.items;
+      const queuedItems = chatQueueState.sessionId === ctx.chatStore.activeSessionId ? chatQueueState.items : [];
       return (ctx.agentThreadSlotSource.value ?? [])
           .filter((slot) => !isParkedQueueTurn(queuedItems, slot.user, slot.assistant))
           .map(slot => ({
@@ -11820,9 +11820,9 @@ function installMessengerControllerLifecycleRuntimeMeta(ctx: MessengerController
               // when its websocket is not mounted in the foreground.
               runtimeItems.forEach((item) => {
                   const sessionId = String(item.sessionId || '').trim();
-                  if (!sessionId) return;
+                  if (!sessionId || threadViewOwnsExecution(sessionId)) return;
                   const session = ctx.chatStore.sessions?.find((entry) => String(entry?.id || '').trim() === sessionId);
-                  if (!session) return;
+                  if (!session || session.runtime_head) return;
                   const catalogStatus = item.state === 'running'
                       ? 'running'
                       : item.state === 'pending'

@@ -2,14 +2,15 @@
 // The display window is independent of connection and execution-log state.
 import { shallowRef, markRaw } from 'vue';
 import type { ProcessActivity } from '@/components/chat/timelineActivity';
+import { reconcileChatQueueRows } from '@/stores/chatQueueLiveState';
 
 export interface ThreadBodyRef { body_id: string; revision: number; bytes: number }
 export interface ViewMessage { item_id: string; content: string; reasoning?: string; created_seq?: number; durable_seq?: number; content_offset?: number; reasoning_offset?: number; tail_offset?: number; body?: ThreadBodyRef; feedback?: unknown; stats?: unknown; tail?: string; failure?: string; attachments?: unknown[] }
-export interface ChatViewRow { root_turn_id: string; execution_turn_id?:string; user_round: number; client_message_id?: string; revision: number; status: string; user: ViewMessage; assistant: ViewMessage; workflow_count: number; reasoning_count?: number; reasoning_item_id?: string; process_activity?: ProcessActivity; failed_count: number; subagents?: any[] }
+export interface ChatViewRow { root_turn_id: string; execution_turn_id?:string; user_round: number; client_message_id?: string; revision: number; status: string; queued_input?: { queue_id: string; reason: string; priority: number } | null; user: ViewMessage; assistant: ViewMessage; workflow_count: number; reasoning_count?: number; reasoning_item_id?: string; process_activity?: ProcessActivity; failed_count: number; subagents?: any[] }
 export interface ThreadViewPage { runtime_status?:string;active_turn_id?:string; session_id: string; epoch: number; view_seq: number; projection_state: string; degraded?: boolean; diagnostic?: string | null; thread_empty: boolean | null; latest_round: number; chat: ChatViewRow[]; trajectory: any[]; tiles: any[]; tile_level: number; next_before: number | null; has_more: boolean; next_after?: number | null; has_newer?: boolean }
 export type ViewPhase = 'opening' | 'ready' | 'verified_empty' | 'refreshing' | 'error';
 export interface ViewSlot { key: string; rootTurnId: string; user: Record<string, any>; assistant: Record<string, any> }
-interface Entry { phase: ViewPhase; epoch: number; seq: number; generation: number; rows: Map<string, ChatViewRow>; slots: Map<string, ViewSlot>; order: string[]; next: number | null; more: boolean; bytes: number; error: string; atLatest: boolean; latestRound: number; latestStatus: string }
+interface Entry { phase: ViewPhase; epoch: number; seq: number; generation: number; rows: Map<string, ChatViewRow>; slots: Map<string, ViewSlot>; order: string[]; next: number | null; more: boolean; bytes: number; error: string; atLatest: boolean; latestRound: number; latestStatus: string; headSeq: number; activeTurnId: string; headAuthoritative: boolean }
 const entries = new Map<string, Entry>();
 export const threadViewClock = shallowRef(0);
 const MAX_BYTES = 48 * 1024 * 1024;
@@ -18,7 +19,7 @@ let activeKey = '';
 let nextGeneration = 0;
 function entry(key: string): Entry {
   let e = entries.get(key);
-  if (!e) { e = { phase: 'opening', epoch: 0, seq: 0, generation: 0, rows: new Map(), slots: new Map(), order: [], next: null, more: false, bytes: 0, error: '', atLatest: true, latestRound: 0, latestStatus: 'idle' }; entries.set(key, e); }
+  if (!e) { e = { phase: 'opening', epoch: 0, seq: 0, generation: 0, rows: new Map(), slots: new Map(), order: [], next: null, more: false, bytes: 0, error: '', atLatest: true, latestRound: 0, latestStatus: 'idle', headSeq: -1, activeTurnId: '', headAuthoritative: false }; entries.set(key, e); }
   return e;
 }
 let tailTimer:ReturnType<typeof setTimeout>|null=null;
@@ -47,11 +48,12 @@ export function pauseThreadViewHistory(key: string) { const e = entry(key); e.mo
 export const uiMessageStatus = (status: string) =>
   status === 'completed' ? 'final' : status === 'rejected' ? 'failed' : status;
 function materialize(row: ChatViewRow): ViewSlot {
-  const running = ['running','queued','waiting_input','waiting_approval'].includes(row.status);
+  const running = ['accepted','running','queued','waiting_input','waiting_approval'].includes(row.status);
   const make = (role: string, m: ViewMessage) => markRaw({ id: `tturn:${row.root_turn_id}:${role}`, role, content: m.content, item_id: m.item_id,
     turn_id: row.execution_turn_id??row.root_turn_id, root_turn_id: row.root_turn_id, user_round: row.user_round, client_message_id: row.client_message_id,
     __runtime_projected: true, __thread_view:true, final: !running, state:role==='assistant'?(running?'streaming':row.status==='completed'?'final':row.status):'final', __thread_body: m.body, __thread_preview: Boolean(m.body && m.body.bytes > new TextEncoder().encode(m.content).length),
     streaming: role === 'assistant' && running, status: role === 'assistant' ? row.status : 'completed',
+    queued_input: row.queued_input,
     // The process badge counts every visible process entry.  The server keeps
     // tool counts separately, so include the aggregated reasoning entry here.
     workflow_count: row.workflow_count, reasoning_count: Number(row.reasoning_count || 0), reasoning_item_id: row.reasoning_item_id || '', process_count: row.workflow_count + Number(row.reasoning_count || 0) + (role === 'assistant' && String(m.reasoning || '').trim() && !Number(row.reasoning_count || 0) ? 1 : 0), workflow_failed_count: row.failed_count, feedback: m.feedback, stats: m.stats, reasoning: m.reasoning || '',
@@ -100,7 +102,16 @@ function mergeTail(previous: ViewMessage, next: ViewMessage): ViewMessage {
 function merge(e: Entry, row: ChatViewRow) {
   const old = e.rows.get(row.root_turn_id);
   if (old && old.revision >= row.revision) return;
-  if(old && old.assistant.item_id===row.assistant.item_id && ['running','queued','waiting_input','waiting_approval'].includes(row.status)) {
+  // Acceptance binds identity; dispatch decides ownership of parked input.
+  const previous = old ?? e.rows.get(`pending:${row.client_message_id}`);
+  if (row.status === 'accepted' && previous?.status === 'queued') row={...row,status:'queued'};
+  if(old && old.assistant.item_id===row.assistant.item_id && ['accepted','running','queued','waiting_input','waiting_approval'].includes(row.status)) {
+    const previous = old.process_activity;
+    const incoming = row.process_activity;
+    if (previous && (!incoming || Number(previous.created_seq || 0) > Number(incoming.created_seq || 0) ||
+        (previous.item_id === incoming.item_id && previous.kind === 'responding' && incoming.kind === 'thinking'))) {
+      row = { ...row, process_activity: previous };
+    }
     const oldContentOffset = Number(old.assistant.content_offset || 0);
     const newContentOffset = Number(row.assistant.content_offset || 0);
     const oldReasoningOffset = Number(old.assistant.reasoning_offset || 0);
@@ -153,10 +164,42 @@ export function threadViewHasNewerPage(key: string, page: ThreadViewPage, genera
     ['ready', 'source'].includes(page.projection_state) && !page.degraded &&
     e.epoch === page.epoch && e.seq > page.view_seq);
 }
+/** State and transcript cursors are independent: old row revisions may fill
+ * holes, but only a monotonic envelope can change the execution head. */
+function applyExecutionHead(e: Entry, payload: {view_seq:number;runtime_status?:string;active_turn_id?:string}, rows: ChatViewRow[]) {
+  if (payload.view_seq < e.headSeq) return;
+  if (payload.runtime_status) {
+    e.latestStatus=payload.runtime_status;
+    e.activeTurnId=String(payload.active_turn_id || '');
+    e.headAuthoritative=true;
+  } else if (!e.headAuthoritative) {
+    // Source fixtures/legacy reads have no head. Once supplied, rows never own it again.
+    const active=rows.find(r=>['running','waiting_input','waiting_approval'].includes(r.status))
+      ?? rows.find(r=>r.status==='accepted') ?? rows.at(-1);
+    if(active) {e.latestStatus=active.status==='accepted'?'running':active.status;e.activeTurnId=active.execution_turn_id || active.root_turn_id;}
+  }
+  e.headSeq=payload.view_seq;
+}
+export function threadViewActiveTurnId(key:string):string {void threadViewClock.value;return entries.get(key)?.activeTurnId || '';}
+export function threadViewOwnsExecution(key:string):boolean {void threadViewClock.value;return entries.get(key)?.headAuthoritative ?? false;}
+/** Catalog reads can advance detached thread status without advancing the
+ * transcript replay cursor (otherwise reconnect would skip missing rows). */
+export function applyThreadViewHead(key:string, head:any):boolean {
+  const e=entries.get(key);
+  if(!e || !head || head.epoch!==e.epoch || !Number.isSafeInteger(head.view_seq) ||
+      !head.runtime_status || head.view_seq<=e.headSeq)return false;
+  applyExecutionHead(e,head,[]);
+  notify();return true;
+}
+
 export function commitThreadView(key: string, page: ThreadViewPage, generation?: number, historical = false, recovery=false, forward=false): boolean {
   const e = entry(key);
   if (generation !== undefined && e.generation !== generation) return false;
   if(!page || page.session_id!==key || !Number.isSafeInteger(page.epoch) || !Number.isSafeInteger(page.view_seq) || !validRows(page.chat))return false;
+  // Source-log fallback can only advance into the presentation epoch. A late
+  // fallback HTTP response cannot switch an already live projection back.
+  if (e.headAuthoritative && e.epoch > 0 && page.epoch === -1) return false;
+  const receivedRows=page.chat;
   page = { ...page, chat: page.chat.filter(row => !isQueueOnlyCancelledRow(row)) };
   if((historical || forward) && e.epoch!==page.epoch)return false;
   if (!historical && !forward && e.epoch === page.epoch && page.view_seq < e.seq) return false;
@@ -173,12 +216,13 @@ export function commitThreadView(key: string, page: ThreadViewPage, generation?:
     const covered=new Set(page.chat.map(r=>r.root_turn_id));
     for(const id of e.order)if(!id.startsWith('pending:')&&!covered.has(id)){e.rows.delete(id);e.slots.delete(id);}
     e.order=e.order.filter(id=>e.rows.has(id));e.atLatest=true;
-    if(e.epoch && e.epoch!==page.epoch){e.rows.clear();e.slots.clear();e.order=[];}
-    e.latestRound=page.latest_round;e.latestStatus=page.runtime_status??page.chat.at(-1)?.status??'idle';
+    if(e.epoch && e.epoch!==page.epoch){e.rows.clear();e.slots.clear();e.order=[];e.headSeq=-1;e.headAuthoritative=false;e.activeTurnId='';}
+    e.latestRound=Math.max(e.latestRound,page.latest_round);
   }
   for (const row of page.chat)if(!recovery||e.atLatest||e.rows.has(row.root_turn_id))merge(e,row);
+  reconcileChatQueueRows(key, receivedRows, page.epoch);
   if (!historical && !forward) { e.seq=page.view_seq;e.epoch=page.epoch; }
-  if(!historical && page.runtime_status)e.latestStatus=page.runtime_status;
+  if(!historical && !forward) applyExecutionHead(e, page, page.chat);
   if (forward) e.atLatest = !page.has_newer;
   else if(!recovery||e.atLatest){e.next=page.next_before;e.more=page.has_more;}
   e.phase=page.thread_empty === true && !e.rows.size ? 'verified_empty' : 'ready';
@@ -187,10 +231,12 @@ export function commitThreadView(key: string, page: ThreadViewPage, generation?:
 export function applyThreadViewChanges(key: string, payload: { runtime_status?:string;active_turn_id?:string;epoch?:number; view_seq: number; reset_required?: boolean; rows: ChatViewRow[] }): boolean {
   const e=entry(key);if(!payload || payload.reset_required || !Number.isSafeInteger(payload.view_seq) || !validRows(payload.rows) || (payload.epoch!==undefined && e.epoch && e.epoch!==payload.epoch)) return false;
   for(const row of payload.rows.filter(row => !isQueueOnlyCancelledRow(row))) {
-    if(row.user_round>=e.latestRound){e.latestRound=row.user_round;e.latestStatus=row.status;}
+    e.latestRound=Math.max(e.latestRound,row.user_round);
     if(e.atLatest||e.rows.has(row.root_turn_id)||e.rows.has(`pending:${row.client_message_id}`))merge(e,row);
   }
-  if(payload.runtime_status && payload.view_seq>=e.seq)e.latestStatus=payload.runtime_status;
+  applyExecutionHead(e, payload, payload.rows);
+  if (!e.epoch && payload.epoch !== undefined) e.epoch=payload.epoch;
+  reconcileChatQueueRows(key, payload.rows, payload.epoch);
   e.seq=Math.max(e.seq,payload.view_seq);if(e.rows.size)e.phase='ready';bound(e);notify();return true;
 }
 export function failThreadView(key: string, generation: number, error: unknown) { const e=entry(key);if(e.generation!==generation)return;e.error=String(error);e.phase=e.rows.size?'ready':'error';notify(); }
@@ -214,13 +260,16 @@ export function threadViewCommitted(key:string):boolean {
   return Boolean(e && (e.order.length > 0 || e.phase === 'ready' || e.phase === 'verified_empty'));
 }
 export function submitThreadView(key:string,client:string,content:string) { const e=entry(key);const id=`pending:${client}`;if(e.rows.has(id))return;
-  merge(e,{root_turn_id:id,user_round:Math.max(e.latestRound,...[...e.rows.values()].map(r=>r.user_round))+1,client_message_id:client,revision:-1,status:'running',user:{item_id:'',content},assistant:{item_id:'',content:''},workflow_count:0,failed_count:0});e.phase='ready';bound(e);notify(); }
+  const queued = ['accepted','running','queued','waiting_input','waiting_approval'].includes(threadViewStatus(key) || '');
+  merge(e,{root_turn_id:id,user_round:Math.max(e.latestRound,...[...e.rows.values()].map(r=>r.user_round))+1,client_message_id:client,revision:-1,status:queued?'queued':'accepted',user:{item_id:'',content},assistant:{item_id:'',content:''},workflow_count:0,failed_count:0});e.phase='ready';bound(e);notify(); }
 export function resetThreadViews(){entries.clear();notify();}
 export function clearThreadView(key:string) {entries.delete(key);notify();}
 export function threadViewStatus(key:string):string|null {
   void threadViewClock.value;const e=entries.get(key);if(!e)return null;
   const rows=e.order.map(id=>e.rows.get(id)!);
-  return rows.find(r=>r.root_turn_id.startsWith('pending:')&&['running','queued','waiting_input','waiting_approval'].includes(r.status))?.status??e.latestStatus;
+  // Local queued input cannot replace the active execution's shell status.
+  if (['running','waiting_input','waiting_approval'].includes(e.latestStatus)) return e.latestStatus;
+  return rows.find(r=>r.root_turn_id.startsWith('pending:')&&r.status==='accepted')?'running':e.latestStatus;
 }
 export function settlePendingThreadView(key:string,client:string,status:string,detail='') {
   const e=entries.get(key);const id=`pending:${client}`;const r=e?.rows.get(id);if(!e||!r)return;
@@ -257,6 +306,7 @@ function advanceTailActivity(row: ChatViewRow, kind: 'thinking' | 'responding'):
   // It must not switch the process header back to that older model phase.
   if (Number(current?.created_seq || 0) > createdSeq ||
     (!createdSeq && current?.item_id && current.item_id !== row.assistant.item_id)) return;
+  if (current?.item_id === row.assistant.item_id && current.kind === 'responding' && kind === 'thinking') return;
   row.process_activity = { kind, item_id: row.assistant.item_id, created_seq: createdSeq };
 }
 export function applyThreadViewTail(key:string,payload:any):boolean {
@@ -265,7 +315,7 @@ export function applyThreadViewTail(key:string,payload:any):boolean {
   if(!id||!delta)return true;
   for(const row of e.rows.values()) {
     if(row.assistant.item_id!==id)continue;
-    if(!['running','queued','waiting_input','waiting_approval'].includes(row.status))return true;
+    if(!['accepted','running','queued','waiting_input','waiting_approval'].includes(row.status))return true;
     if (String(p?.field || 'content') === 'reasoning') {
       // Reasoning is a bounded live projection (the durable item remains the
       // source of truth). Keep enough text for the expanded process entry and

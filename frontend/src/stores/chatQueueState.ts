@@ -1,4 +1,5 @@
-import { reactive } from 'vue';
+import { chatQueueState as state, applyItems, rememberQueueIdentities, consumeQueueItem, chatQueueRevision, chatQueueForSession } from './chatQueueLiveState';
+export { chatQueueState } from './chatQueueLiveState';
 import {
   cancelQueuedTurn,
   getSessionQueue,
@@ -7,45 +8,19 @@ import {
 } from '@/api/chat';
 import {
   applyLocalQueueReorder,
-  filterConsumedQueueItems,
   isChatQueueRuntimeEvent,
   projectQueueItems,
   queueItemIdentities,
   resolveEmbeddedChatQueueRuntimeEvent,
-  resolveConsumedQueueEventIdentities,
   type QueuedTurn
 } from './chatQueueProjection';
 
 export type { QueuedTurn };
 export { isChatQueueRuntimeEvent };
 
-type QueueState = {
-  sessionId: string;
-  items: QueuedTurn[];
-  loading: boolean;
-  error: string;
-};
-
 const QUEUE_REFRESH_DEBOUNCE_MS = 220;
-
-const state = reactive<QueueState>({
-  sessionId: '',
-  items: [],
-  loading: false,
-  error: ''
-});
-
 let latestRequestId = 0;
 let refreshTimer: ReturnType<typeof setTimeout> | null = null;
-
-// A queue-start frame is the authoritative hand-off from the composer queue
-// to the live thread.  The queue endpoint is eventually consistent, so keep a
-// small per-session tombstone set to stop an older response from resurrecting
-// an item that has already started (or was withdrawn).
-const consumedQueueIds = new Map<string, Set<string>>();
-const MAX_CONSUMED_QUEUE_IDS = 128;
-const MAX_CONSUMED_QUEUE_SESSIONS = 32;
-
 const cleanText = (value: unknown): string => String(value ?? '').trim();
 
 const readResponseData = (response: unknown): Record<string, unknown> => {
@@ -58,44 +33,6 @@ const readResponseData = (response: unknown): Record<string, unknown> => {
   return body as Record<string, unknown>;
 };
 
-const applyItems = (sessionId: string, items: QueuedTurn[]) => {
-  if (state.sessionId !== sessionId) return;
-  const consumed = consumedQueueIds.get(sessionId);
-  state.items = filterConsumedQueueItems(items, consumed || new Set<string>());
-};
-
-const rememberQueueIdentities = (sessionId: string, identities: Iterable<string>) => {
-  if (!sessionId) return;
-  let set = consumedQueueIds.get(sessionId);
-  if (!set) {
-    set = new Set<string>();
-    consumedQueueIds.set(sessionId, set);
-  }
-  for (const identity of identities) {
-    const value = cleanText(identity);
-    if (!value) continue;
-    set.add(value);
-  }
-  while (set.size > MAX_CONSUMED_QUEUE_IDS) set.delete(set.values().next().value as string);
-  while (consumedQueueIds.size > MAX_CONSUMED_QUEUE_SESSIONS) {
-    consumedQueueIds.delete(consumedQueueIds.keys().next().value as string);
-  }
-};
-
-const consumeQueueItem = (sessionId: string, payload: unknown, eventType: unknown): void => {
-  if (!sessionId) return;
-  const identities = resolveConsumedQueueEventIdentities(
-    state.sessionId === sessionId ? state.items : [], eventType, payload
-  );
-  if (!identities.length) return;
-  rememberQueueIdentities(sessionId, identities);
-  if (state.sessionId === sessionId) {
-    state.items = filterConsumedQueueItems(state.items, consumedQueueIds.get(sessionId) || new Set<string>());
-  }
-};
-
-export const chatQueueState = state;
-
 export async function refreshChatQueue(
   sessionId: unknown,
   options: { silent?: boolean } = {}
@@ -106,11 +43,21 @@ export async function refreshChatQueue(
     return;
   }
   const requestId = ++latestRequestId;
+  const revision = chatQueueRevision(targetId);
+  const target = chatQueueForSession(targetId);
+  if (state.sessionId !== targetId) {
+    if (refreshTimer) clearTimeout(refreshTimer);
+    refreshTimer = null;
+  }
   state.sessionId = targetId;
-  if (!options.silent) state.loading = true;
+  if (!options.silent) target.loading = true;
   try {
     const response = await getSessionQueue(targetId);
     if (requestId !== latestRequestId || state.sessionId !== targetId) return;
+    if (revision !== chatQueueRevision(targetId)) {
+      scheduleChatQueueRefresh(targetId);
+      return;
+    }
     applyItems(targetId, projectQueueItems(readResponseData(response).items));
     state.error = '';
   } catch (error) {
@@ -119,7 +66,7 @@ export async function refreshChatQueue(
       state.error = (error as { message?: string })?.message || '';
     }
   } finally {
-    if (requestId === latestRequestId) state.loading = false;
+    target.loading = false;
   }
 }
 
@@ -132,6 +79,7 @@ export function scheduleChatQueueRefresh(
   if (refreshTimer) clearTimeout(refreshTimer);
   refreshTimer = setTimeout(() => {
     refreshTimer = null;
+    if (state.sessionId && state.sessionId !== targetId) return;
     void refreshChatQueue(targetId, { silent: true });
   }, delayMs);
 }
@@ -145,8 +93,17 @@ export function noteChatQueueRuntimeEvent(sessionId: unknown, eventType: unknown
   // thread_change payloads. Consume a terminal row once at this boundary so
   // the composer cannot retain it while the eventual queue refresh is in
   // flight.
-  if (targetId && embedded) consumeQueueItem(targetId, embedded.payload, embedded.eventType);
-  scheduleChatQueueRefresh(sessionId);
+  // Direct queue lifecycle frames are authoritative too. Waiting for the
+  // eventual queue endpoint refresh leaves a stale composer row behind and
+  // makes its cancel action race a task that has already started (409).
+  if (targetId && (embedded || direct)) {
+    consumeQueueItem(
+      targetId,
+      embedded?.payload ?? (payload && typeof payload === 'object' ? payload : {}),
+      embedded?.eventType ?? cleanText(eventType).toLowerCase()
+    );
+  }
+  if (state.sessionId === targetId) scheduleChatQueueRefresh(sessionId);
 }
 
 export function resetChatQueue(): void {
@@ -164,8 +121,11 @@ export function resetChatQueue(): void {
 /** Drop the local queue projection when a session-wide stop settles it. */
 export function clearChatQueueForSession(sessionId: unknown): void {
   const targetId = cleanText(sessionId);
-  if (!targetId || state.sessionId !== targetId) return;
-  resetChatQueue();
+  if (!targetId) return;
+  const target = chatQueueForSession(targetId);
+  rememberQueueIdentities(targetId, target.items.flatMap(queueItemIdentities));
+  target.revision = chatQueueRevision(targetId) + 1;
+  applyItems(targetId, []);
 }
 
 export type QueueActionResult = { ok: boolean; message: string; item: QueuedTurn | null };
@@ -173,16 +133,26 @@ export type QueueActionResult = { ok: boolean; message: string; item: QueuedTurn
 const resolveActionError = (error: unknown): string => {
   const source = error as {
     message?: string;
-    response?: { data?: { message?: string; detail?: string } };
+    response?: { status?: number; data?: unknown };
   };
-  return cleanText(
-    source?.response?.data?.message || source?.response?.data?.detail || source?.message
-  );
+  const data = source?.response?.data;
+  const body = data && typeof data === 'object' && !Array.isArray(data)
+    ? data as Record<string, unknown>
+    : {};
+  const nested = body.data && typeof body.data === 'object' && !Array.isArray(body.data)
+    ? body.data as Record<string, unknown>
+    : {};
+  const message = body.message ?? body.detail ?? body.error ?? nested.message ?? nested.detail;
+  if (typeof message === 'string' && message.trim()) return message.trim();
+  if (message && typeof message === 'object') {
+    try { return JSON.stringify(message); } catch { /* fall through */ }
+  }
+  return cleanText(source?.message || (source?.response?.status === 409 ? '队列消息已开始执行或已结束' : ''));
 };
 
 const rejected = (message = ''): QueueActionResult => ({ ok: false, message, item: null });
 
-/** 插话：把这一条提到队首，在当前动作边界优先执行。 */
+/** 插话：由引擎中断当前执行并优先派发这一条，保留其他排队输入。 */
 export async function interjectChatQueueTurn(
   sessionId: unknown,
   queueId: unknown
@@ -192,7 +162,7 @@ export async function interjectChatQueueTurn(
   if (!targetId || !cleanedQueueId) return rejected();
   try {
     await prioritizeQueuedTurn(targetId, cleanedQueueId);
-    await refreshChatQueue(targetId, { silent: true });
+    if (state.sessionId === targetId) await refreshChatQueue(targetId, { silent: true });
     return { ok: true, message: '', item: null };
   } catch (error) {
     scheduleChatQueueRefresh(targetId, 0);
@@ -208,17 +178,31 @@ export async function withdrawChatQueueTurn(
   const targetId = cleanText(sessionId);
   const cleanedQueueId = cleanText(queueId);
   if (!targetId || !cleanedQueueId) return rejected();
-  const removed = state.items.find((item) => item.queueId === cleanedQueueId) || null;
+  const target = chatQueueForSession(targetId);
+  const removed = target.items.find((item) => item.queueId === cleanedQueueId) || null;
   try {
     await cancelQueuedTurn(targetId, cleanedQueueId);
     if (removed) rememberQueueIdentities(targetId, queueItemIdentities(removed));
     applyItems(
       targetId,
-      projectQueueItems(state.items.filter((item) => item.queueId !== cleanedQueueId))
+      projectQueueItems(target.items.filter((item) => item.queueId !== cleanedQueueId))
     );
     scheduleChatQueueRefresh(targetId, 0);
     return { ok: true, message: '', item: removed };
   } catch (error) {
+    const status = Number((error as { response?: { status?: unknown } })?.response?.status);
+    if (status === 409) {
+      // A queue_start/finish may have won the race. Reconcile once before
+      // surfacing an error; an absent row means the requested removal already
+      // succeeded from the user's point of view.
+      try {
+        await refreshChatQueue(targetId, { silent: true });
+        if (!chatQueueForSession(targetId).items.some((item) => item.queueId === cleanedQueueId)) {
+          if (removed) rememberQueueIdentities(targetId, queueItemIdentities(removed));
+          return { ok: true, message: '', item: removed };
+        }
+      } catch { /* preserve the original conflict below */ }
+    }
     scheduleChatQueueRefresh(targetId, 0);
     return rejected(resolveActionError(error));
   }
@@ -234,9 +218,9 @@ export async function reorderChatQueueTurns(
     .map((value) => cleanText(value))
     .filter(Boolean);
   if (!targetId || orderedIds.length < 2) return rejected();
-  const nextItems = applyLocalQueueReorder(state.items, orderedIds);
+  const nextItems = applyLocalQueueReorder(chatQueueForSession(targetId).items, orderedIds);
   if (!nextItems) {
-    await refreshChatQueue(targetId, { silent: true });
+    if (state.sessionId === targetId) await refreshChatQueue(targetId, { silent: true });
     return rejected();
   }
   applyItems(targetId, nextItems);
