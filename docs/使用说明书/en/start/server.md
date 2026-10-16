@@ -1,6 +1,6 @@
 ---
 title: Deploying the Hull (Server)
-summary: An optional form. The user-and-agent management platform for multi-user sharing: multi-tenancy, permission governance, channel integration, and agent-app publishing. Once the Hull is up, the Bridge (18000) is served on the same port, and the Beehive is delivered by a separate web-service container (18001).
+summary: An optional form. Multi-tenancy governance, channel integration and agent-app publishing; the Bridge on 18000 and the Beehive delivered on 18001, plus Compose and cargo startup, first login and the post-deployment checklist.
 read_when:
   - You are deploying the Hull for a team or multiple users
   - You need its ports, config precedence, or first-login checklist
@@ -9,14 +9,14 @@ source_docs:
   - crates/wunder-core/src/config.rs
   - config/wunder.yaml
   - docker-compose-x86.yml
-updated_at: 2026-10-13
+updated_at: 2026-10-16
 ---
 
 # Deploying the Hull (Server)
 
-The Hull (server) is wunder's **user-and-agent management platform** and an optional form: the Pupa (desktop) is enough for personal use. Deploy the Hull only when you need multi-tenancy, user and organization management, channel integration, building and publishing agent apps, and unified gateway scheduling.
+The Hull (server) is the user-and-agent management platform and an optional form. The Pupa (desktop) is enough for personal use; deploy the Hull only when you need multi-tenancy, user and organization management, channel integration, building and publishing agent apps, and unified gateway scheduling.
 
-## The three pieces and their ports
+## Port layout
 
 Once deployed, the Hull provides **three access entries at once** (default ports, all overridable by environment variables):
 
@@ -30,7 +30,7 @@ Note: **the Beehive is not hosted by the Hull.** The Hull process only serves th
 
 Other related service ports: sandbox mode 9001, onlyoffice 18080, drawio 18081, PostgreSQL 5432, extra-mcp 18004.
 
-## When you need the Hull
+## Prerequisites
 
 | Scenario | Choose the Hull |
 | --- | --- |
@@ -41,7 +41,7 @@ Other related service ports: sandbox mode 9001, onlyoffice 18080, drawio 18081, 
 | Need to build and publish agent apps | ✅ |
 | Just personal use | ❌ Choose the Pupa (desktop) |
 
-## Prerequisites
+## Before deploying
 
 - Docker and Docker Compose (recommended)
 - At least 4 GB of available memory
@@ -98,7 +98,7 @@ The admin credentials are in `config/wunder.yaml`; change the admin password imm
 
 Passwords are stored with Argon2 encryption; login tokens are opaque random strings (in the form `wund_<uuid>`, `wundr_<uuid>`, `wundc_<uuid>`, **not JWTs**); refresh tokens rotate by family, and replaying the same refresh token revokes the whole family.
 
-## Must-do after deployment
+## Post-deployment checklist
 
 1. **Change the admin password**
 2. **Bridge → Model configuration**: add LLM / TTS / image / video model endpoints and API keys
@@ -108,28 +108,26 @@ Passwords are stored with Argon2 encryption; login tokens are opaque random stri
 6. **For channel integration**: Feishu / WeCom / WeChat / QQ Bot / WhatsApp Cloud / weixin / xmpp (7 provided by default)
 7. **Watch health**: the Bridge's "internal status" page, and the `/wunder/admin/monitor` interface
 
-## Core capabilities
-
-### Multi-tenancy and governance
+## Multi-tenancy and governance
 
 - Users and organizations managed in layers; permissions assigned by role (admin / leader / user), with data isolated by user and agent
 - Online status shown in three columns: Beehive / Pupa / Helm
 - User levels and quotas (up to 200 levels)
 
-### Channel integration
+## Channel integration
 
 - 7 registered by default: WhatsApp Cloud / Feishu / QQ Bot / WeChat / WeChat Official Account / weixin / xmpp
 - Of these, Feishu / QQ Bot / xmpp / weixin use long-lived connections; the rest use webhooks only
 - **Telegram / Discord / Slack / LINE / DingTalk are not supported**; they exist only as generic webhook entries in the directory
 - Inbound queue capacity 512, concurrency 8, enqueue timeout 80ms; outbound messages are persisted and retried with exponential backoff
 
-### Observability
+## Observability
 
 - Logs go to both the console and a JSONL file (rolled daily), written to `./config/data/logs/server` by default, at `info` level by default, and never cleaned up by default (retention 0)
 - Runtime metrics: blocking, queueing, long tasks, and loop cadence, plus alerts and thresholds
 - Channel run logs: the most recent 300 entries kept in memory, with duplicate floods within 20 seconds deduplicated
 
-### Security and isolation
+## Security and isolation
 
 - Read / write / execute tools in the cloud **all run inside the sandbox**; with no available sandbox endpoint they fail outright and **do not fall back to the host**. One container per user, mounting only that user's directory, with tenant isolation handled by the sandbox.
 - Exec policy has three states: allow / audit / enforce
@@ -142,10 +140,3 @@ Passwords are stored with Argon2 encryption; login tokens are opaque random stri
 The `config/` directory holds the engine's main `wunder.yaml`, an example configuration, sandbox runtime configuration, MCP configuration, organization units, i18n copy, version numbers, and font and drawing configuration, among others; there are also the `benchmark/`, `data/`, `fonts/`, `ppt_templates/`, `preset_worker_cards/`, `prompts/`, and `skills/` subdirectories.
 
 Configuration supports hot reloading at runtime, and changes are written straight back to the YAML file.
-
-## Further reading
-
-- [Bridge interface](/docs/en/surfaces/web-admin/)
-- [Beehive interface](/docs/en/surfaces/frontend/)
-- [Configuration reference](/docs/en/capabilities/config/)
-- [First-run troubleshooting](/docs/en/start/troubleshooting-first-run/)

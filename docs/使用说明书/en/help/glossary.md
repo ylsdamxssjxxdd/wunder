@@ -1,7 +1,7 @@
 ---
 title: Glossary
-summary: Core terms in wunder documentation, explained in plain language.
-updated_at: 2026-10-13
+summary: Form and layer names in wunder, plus definitions for threads, turns, workspaces, and other core terms.
+updated_at: 2026-10-16
 ---
 
 ## Product and Form Names
@@ -14,7 +14,7 @@ updated_at: 2026-10-13
 | Hull | server | The **user and agent management platform**: the server form, aimed at teams and organizations, handling multi-user access, permissions, and channel access, and providing the Beehive. |
 | Bridge | bridge | The governance frontend: the system administrator's management interface for system configuration and for user and channel governance. |
 | Bridge node | bridge node | A channel bridging node: it carries channel account access and message routing and is managed uniformly by the backend, with no standalone frontend page today. Keep it distinct from the governance frontend "Bridge". |
-| Beehive | web | The **cloud AI workbench**: the web form provided with the Hull, which users open in a browser. |
+| Beehive | web | The **cloud AI workbench**: the web form, provided with the Hull and opened by users in a browser. |
 | Pupa | desktop | The **local AI workbench**: the desktop form, the default entry point for individual users, running locally with direct access to local files. Formerly Honeycomb. |
 | Helm | cli | The **manual local entry point**: the command-line form, aimed at hands-on operation, developers, and automation scripts. |
 
@@ -83,9 +83,3 @@ When a conversation gets too long, the system automatically compresses the histo
 ## Long-term Memory
 
 Knowledge an agent remembers across conversations. You can add it manually, or let the system distill it automatically.
-
-## Further Reading
-
-- [Sessions and Turns](/docs/en/concepts/sessions-and-rounds/)
-- [Workspaces and Working Directory](/docs/en/concepts/workspaces/)
-- [Stream Events Reference](/docs/en/capabilities/stream-events/)

@@ -123,8 +123,8 @@ export const runInterlinkCommand = async (options: {
           record,
           status: record.status === 'succeeded' && record.result == null ? 'failed' : record.status,
           approvalState: record.approval_state,
-          errorCode: record.error_code,
-          errorSummary: record.error_summary,
+          errorCode: record.error_code || (record.status === 'succeeded' && record.result == null ? 'RESULT_EXPIRED' : ''),
+          errorSummary: record.error_summary || (record.status === 'succeeded' && record.result == null ? 'RESULT_EXPIRED' : ''),
           result: record.result,
           timedOut: false
         };
@@ -155,7 +155,7 @@ export const cancelInterlinkCommandRun = async (commandId: string): Promise<bool
 const asRecord = (value: unknown): Record<string, unknown> =>
   value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
 
-/** 契约里小文件内联在 command_result（base64 ≤1MB），字段名兼容几种常见写法。 */
+/** 小文件内联在 command_result；更大的设备文件经分块传输后从 blob 读取。 */
 const pickInlineBase64 = (result: Record<string, unknown> | null): string => {
   const record = asRecord(result);
   const keys = ['inline', 'content_base64', 'base64', 'data_base64', 'binary_base64'];

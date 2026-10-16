@@ -1,14 +1,14 @@
 ---
 title: Stability
-summary: Errors that do not spread, failures that can recover, and problems that can be reviewed. Stability comes from four kinds of hard constraint — bounds, budgets, circuit breaking, and a single writer — plus a consistent error structure and clear actions when something goes wrong.
-updated_at: 2026-10-13
+summary: Four kinds of hard constraint — bounded queues, limits and budgets, session locks with a single writer, and circuit-breaker thresholds — plus a uniform error structure and a symptom-to-action table.
+updated_at: 2026-10-16
 ---
 
 Stability rests on three things: **containing the spread** (one failing link does not bring down the others), **being able to recover** (failures have a formal recovery path), and **being able to review** (errors are structured and classifiable). It comes down to four kinds of hard constraint: bounds, budgets, circuit breaking, and a single writer.
 
 ![Stability diagram: risk sources pass through isolation governance and recovery paths to prevent cascading failures and form a regressable system](/docs/assets/manual/core-stability.svg)
 
-## Every queue is bounded, and a full queue reports busy
+## Bounded queues
 
 Every queue has a fixed capacity. A write that fails and times out returns "queue busy" and records a busy metric. There is **no unbounded buffer and no silent drop**.
 
@@ -78,13 +78,13 @@ Retry circuit breaking counts by the same fingerprint; the thresholds are:
 
 A fingerprint keeps at most 240 characters of detail. **Circuit breaking looks at how many times the same problem repeats, not at how many calls were made in total**, so a ten-thousand-call tool budget will not be burned away by a single infinite loop.
 
-## What an error looks like from the outside
+## Error structure
 
 Every interface error uses the same structure: it marks the failure and carries an error code, a description for the user, the corresponding HTTP status, an actionable hint, and a trace id and timestamp for tracking, with the trace id and error code also written back in the response headers.
 
 **Judge by the error code, not by the message text** — message text changes with language and version, whereas the mapping between error code and HTTP status is the contract.
 
-## Whether to wait or to act
+## Symptoms and actions
 
 | What you see | What the system is doing | What to do |
 | --- | --- | --- |
@@ -96,11 +96,3 @@ Every interface error uses the same structure: it marks the failure and carries 
 | Reports insufficient quota | The admission-stage deduction did not pass | See [Quota and Token Usage](/docs/en/concepts/quota-and-token-usage/) |
 | The UI and backend state disagree | The projection is behind | Refresh or re-enter; if it still disagrees, look at the runtime state |
 | You need to start completely over | — | Use "reset work state" (cancels the user's sessions and tasks, clears the workspace, and returns a brand-new session) |
-
-## Further reading
-
-- [Boundary Handling](/docs/en/concepts/boundary-handling/) — behavior and values for each boundary case
-- [Realtime](/docs/en/concepts/core-realtime/) — catch-up, cursors, and backpressure
-- [Context Compression](/docs/en/concepts/core-context-compression/) — details of over-limit compression
-- [Observability](/docs/en/concepts/core-observability/) — metrics and logs
-- [Troubleshooting](/docs/en/help/troubleshooting/) — steps for handling real problems

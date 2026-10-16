@@ -287,15 +287,24 @@ fn decode_chat_row(
     }
     if legacy_panel && !row.assistant.item_id.is_empty() {
         row.assistant.question_panel = super::thread_view_source::load_question_panels(
-            db, user, session, &[row.assistant.item_id.clone()],
-        )?.remove(&row.assistant.item_id);
+            db,
+            user,
+            session,
+            &[row.assistant.item_id.clone()],
+        )?
+        .remove(&row.assistant.item_id);
         projection::settle_question_panel(&mut row);
     }
     repair_stop_reason(db, user, session, &mut row)?;
     Ok(row)
 }
 
-fn repair_stop_reason(db: &mut impl ViewDb, user: &str, session: &str, row: &mut ChatViewRow) -> Result<()> {
+fn repair_stop_reason(
+    db: &mut impl ViewDb,
+    user: &str,
+    session: &str,
+    row: &mut ChatViewRow,
+) -> Result<()> {
     if row.stop_reason.is_none() {
         let field = db.json_text("payload", "stop_reason");
         if let Some(record) = one(db, &format!("SELECT substr(COALESCE({field},''),1,128) FROM thread_turns WHERE user_id=? AND session_id=? AND turn_id=?"),
@@ -686,7 +695,9 @@ pub(crate) fn project_item(
         }
         projection::set_reasoning(&mut row.assistant, &item);
         row.assistant.created_seq = int(&i[3]);
-        row.assistant.question_panel = item.pointer("/meta/panel").and_then(projection::question_panel);
+        row.assistant.question_panel = item
+            .pointer("/meta/panel")
+            .and_then(projection::question_panel);
         projection::settle_question_panel(&mut row);
         row.assistant.durable_seq = one(
             db,
@@ -1200,13 +1211,25 @@ pub(crate) fn page(
         Default::default()
     };
     let panel_ids = if kind == "chat" {
-        rows.iter().take(cap).filter_map(|r| {
-            let value: Value = serde_json::from_str(text(&r[0])).ok()?;
-            if value.pointer("/assistant/question_panel").is_some() { return None; }
-            value.pointer("/assistant/item_id")?.as_str().filter(|id| !id.is_empty()).map(str::to_owned)
-        }).collect::<Vec<_>>()
-    } else { vec![] };
-    let mut panels = super::thread_view_source::load_question_panels(db, user, session, &panel_ids)?;
+        rows.iter()
+            .take(cap)
+            .filter_map(|r| {
+                let value: Value = serde_json::from_str(text(&r[0])).ok()?;
+                if value.pointer("/assistant/question_panel").is_some() {
+                    return None;
+                }
+                value
+                    .pointer("/assistant/item_id")?
+                    .as_str()
+                    .filter(|id| !id.is_empty())
+                    .map(str::to_owned)
+            })
+            .collect::<Vec<_>>()
+    } else {
+        vec![]
+    };
+    let mut panels =
+        super::thread_view_source::load_question_panels(db, user, session, &panel_ids)?;
     for r in rows.into_iter().take(cap) {
         if kind == "trajectory" {
             let mut trajectory: TrajectoryViewRow = serde_json::from_str(text(&r[0]))?;
@@ -1380,14 +1403,25 @@ pub(crate) fn changes(
             })
             .collect::<Vec<_>>()
     };
-    let panel_ids = if reset { vec![] } else {
-        rows.iter().filter_map(|r| {
-            let value: Value = serde_json::from_str(text(&r[0])).ok()?;
-            if value.pointer("/assistant/question_panel").is_some() { return None; }
-            value.pointer("/assistant/item_id")?.as_str().filter(|id| !id.is_empty()).map(str::to_owned)
-        }).collect::<Vec<_>>()
+    let panel_ids = if reset {
+        vec![]
+    } else {
+        rows.iter()
+            .filter_map(|r| {
+                let value: Value = serde_json::from_str(text(&r[0])).ok()?;
+                if value.pointer("/assistant/question_panel").is_some() {
+                    return None;
+                }
+                value
+                    .pointer("/assistant/item_id")?
+                    .as_str()
+                    .filter(|id| !id.is_empty())
+                    .map(str::to_owned)
+            })
+            .collect::<Vec<_>>()
     };
-    let mut panels = super::thread_view_source::load_question_panels(db, user, session, &panel_ids)?;
+    let mut panels =
+        super::thread_view_source::load_question_panels(db, user, session, &panel_ids)?;
     let mut chat_rows: Vec<ChatViewRow> = if reset {
         vec![]
     } else {

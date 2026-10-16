@@ -1,14 +1,14 @@
 ---
 title: 舵机（cli）使用
-summary: 手工本地操作入口。终端里进交互界面，管道里自动降级为一次性执行；22 条斜杠命令、exec --json 事件流、cloud 子命令全套；舵机侧关闭定时任务与引擎排队。
+summary: 手工本地操作入口。TTY 下进交互界面、非 TTY 下次性执行；11 个子命令、22 条斜杠命令、exec --json 事件流、cloud 子命令全套；定时任务与引擎排队在舵机侧关闭。
 updated_at: 2026-10-16
 ---
 
 # 舵机（cli）使用
 
-舵机（cli）是 wunder 的**手工本地操作入口**，属于可选形态：日常使用装蛹（desktop）即可；终端驱动、脚本化与自动化场景才用舵机。它同进程调用引擎，复用同一套配置、工具与存储，不另起一套执行链路。
+手工本地操作入口，属于可选形态。日常使用装蛹（desktop）；终端驱动、脚本化与自动化场景用舵机。它同进程调用引擎，复用同一套配置、工具与存储，不另起一套执行链路。
 
-## 什么时候用舵机
+## 适用条件
 
 | 场景 | 选舵机 |
 | --- | --- |
@@ -34,6 +34,15 @@ cargo build --release -p wunder-cli
 - **非 TTY**：自动降级为**一次性执行**；管道、脚本走这条
 - **数据目录**：`WUNDER_HOME` → `~/.wunder`
 - **用户配置**：`~/.wunder/config.toml`
+
+第一次会话：
+
+```bash
+wunder-cli
+> 帮我写一个 Hello World 的 Python 脚本
+```
+
+看到模型思考 → 工具批次 → 结果 → 回复即跑通。`wunder-cli doctor` 检查本地运行环境是否就绪。
 
 ## 子命令
 
@@ -72,7 +81,9 @@ cloud audit / approve            # 命令台账与审批
 wunder-cli exec --json "整理当前目录的文件" | jq -c 'select(.type=="item.text")'
 ```
 
-## 斜杠命令（22 条）
+## 斜杠命令
+
+共 22 条：
 
 | 命令 | 别名 | 作用 |
 | --- | --- | --- |
@@ -100,7 +111,6 @@ wunder-cli exec --json "整理当前目录的文件" | jq -c 'select(.type=="ite
 | `/quit` | `/q` | 退出 |
 
 **没有** `cloud`、`cron`、`channel`、`memory`、`knowledge` 斜杠命令：`cloud` 是子命令形式；后四者在舵机上没有管理界面。
-
 
 ## 轨迹日志
 
@@ -171,16 +181,9 @@ wunder-cli trajectory <session_id> --export -
 | `?` | 快捷键面板 |
 | `←` | 任务中心 |
 
-## 第一次会话
+## 与其他界面的能力差
 
-```bash
-wunder-cli
-> 帮我写一个 Hello World 的 Python 脚本
-```
-
-看到模型思考 → 工具批次 → 结果 → 回复即跑通。
-
-## 舵机独有能力（其他界面没有）
+### 舵机独有
 
 - `exec --json` 事件流脚本契约
 - `cloud` 子命令全套
@@ -189,7 +192,7 @@ wunder-cli
 - `completion` Shell 补全
 - `tool` / `mcp` / `skills` 直接命令行运行（不走智能体主循环）
 
-## 舵机没有的东西
+### 舵机没有
 
 - **定时任务被显式关闭**：不能新增、修改、启用或立即运行定时任务；但查看状态、列表、删除与禁用仍可用——所以你能看到旧任务列表，舵机却不会再排新任务。
 - **引擎排队也被显式关闭**：运行中再发一条消息不会进排队条，而是直接撞会话锁，被判「该用户已有会话正在执行」，要等满忙窗口才返回。这和蛹相反——蛹会强制打开队列。想在运行中插话、排队或改写下一条，请用蛹或蜂巢。
@@ -216,21 +219,3 @@ wunder-cli
 - 管道：`cat input.txt | wunder-cli` 触发非 TTY 降级
 - 与 `tool` / `mcp` / `skills` 组合做纯工具运行
 - **定时任务不在舵机里做**：舵机关闭了 cron；请放到蛹或蜂巢的定时任务页面
-
-## 常见问题
-
-**图形界面**：不支持，需要 GUI 请用蛹。
-
-**定时任务**：不支持，舵机显式关闭 cron。
-
-**管道使用**：支持。非 TTY 自动降级为一次性 exec；`--json` 出 JSONL。
-
-**本地环境体检**：`wunder-cli doctor`。
-
-## 延伸阅读
-
-- [快速开始](/docs/zh-CN/start/quickstart/)
-- [界面概览](/docs/zh-CN/surfaces/index/)
-- [核心概览](/docs/zh-CN/concepts/)
-- [工具总览](/docs/zh-CN/tools/)
-- [首次运行排查](/docs/zh-CN/start/troubleshooting-first-run/)

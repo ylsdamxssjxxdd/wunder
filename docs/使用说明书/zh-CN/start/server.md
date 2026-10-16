@@ -1,14 +1,14 @@
 ---
 title: 舰体（server）部署
-summary: 可选形态。多人共用的用户与智能体管理平台：多租户、权限治理、渠道接入、智能体应用发布。舰体启动后同端口挂舰桥（18000），蜂巢由独立的网页服务容器下发（18001）。
-updated_at: 2026-10-13
+summary: 可选形态。多租户治理、渠道接入、智能体应用发布；18000 挂舰桥、18001 下发蜂巢，以及 compose 与 cargo 两种启动方式、首次登录与部署后清单。
+updated_at: 2026-10-16
 ---
 
 # 舰体（server）部署
 
-舰体（server）是 wunder 的**用户与智能体管理平台**，属于可选形态：个人用装蛹（desktop）就够了，只有在需要多租户、用户与单位管理、渠道接入、智能体应用构建发布与网关统一调度时才部署舰体。
+舰体（server）是用户与智能体管理平台，属于可选形态。个人用装蛹（desktop）就够了；需要多租户、用户与单位管理、渠道接入、智能体应用构建发布与网关统一调度时才部署舰体。
 
-## 三件套与端口
+## 端口分布
 
 舰体部署后同时提供 **三个访问入口**（默认端口，均可用环境变量覆盖）：
 
@@ -22,7 +22,7 @@ updated_at: 2026-10-13
 
 其它相关服务端口：沙箱模式 9001、onlyoffice 18080、drawio 18081、PostgreSQL 5432、extra-mcp 18004。
 
-## 什么时候需要舰体
+## 适用条件
 
 | 场景 | 选舰体 |
 | --- | --- |
@@ -33,7 +33,7 @@ updated_at: 2026-10-13
 | 需要构建并发布智能体应用 | ✅ |
 | 只是个人用 | ❌ 选蛹（desktop） |
 
-## 部署前准备
+## 前提条件
 
 - Docker 与 Docker Compose（推荐方式）
 - 至少 4 GB 可用内存
@@ -90,7 +90,7 @@ WUNDER_HOST=127.0.0.1 WUNDER_PORT=18000 cargo run -p wunder-server
 
 口令用 Argon2 加密存储；登录令牌是不透明随机串（形如 `wund_<uuid>`、`wundr_<uuid>`、`wundc_<uuid>`，**不是 JWT**）；刷新按族轮换，同一个刷新令牌被重放会整族吊销。
 
-## 部署后必做
+## 部署后清单
 
 1. **改管理员口令**
 2. **舰桥 → 模型配置**：添加 LLM / TTS / 图像 / 视频模型端点与 API Key
@@ -100,28 +100,26 @@ WUNDER_HOST=127.0.0.1 WUNDER_PORT=18000 cargo run -p wunder-server
 6. **如需接入渠道**：飞书 / 企业微信 / 微信 / QQ Bot / WhatsApp Cloud / weixin / xmpp（默认提供 7 个）
 7. **观察健康**：舰桥「内部状态」页，以及 `/wunder/admin/monitor` 接口
 
-## 主要能力
-
-### 多租户与治理
+## 多租户与治理
 
 - 用户与单位分层管理；权限按角色分配（admin / leader / user），数据按用户与智能体隔离
 - 在线状态分蜂巢 / 蛹 / 舵机三列展示
 - 用户等级与配额（上限 200 级）
 
-### 渠道接入
+## 渠道接入
 
 - 默认注册 7 个：WhatsApp Cloud / 飞书 / QQ Bot / 微信 / 微信公众号 / weixin / xmpp
 - 其中飞书 / QQ Bot / xmpp / weixin 走长连接，其余只走 webhook
 - **Telegram / Discord / Slack / LINE / 钉钉未支持**，只在目录里作为通用 webhook 条目存在
 - 入站队列容量 512、并发 8、入队超时 80ms；出站消息持久化并做指数退避重试
 
-### 可观测性
+## 可观测性
 
 - 日志同时输出到控制台与 JSONL 文件（按天滚动），默认写在 `./config/data/logs/server`，级别默认 `info`，默认永不清理（保留期 0）
 - 运行时指标：阻塞、队列、长任务、循环节拍，外加告警与阈值
 - 渠道运行日志：内存里保留最近 300 条，并对 20 秒内的重复洪泛去重
 
-### 安全与隔离
+## 安全与隔离
 
 - 云端的读 / 写 / 执行类工具一律**在沙盒内运行**；没有可用沙盒端点时直接失败、**不回落到宿主**。每个用户一个容器，只挂本用户目录，租户隔离由沙盒承担。
 - exec 策略三态：allow / audit / enforce
@@ -134,10 +132,3 @@ WUNDER_HOST=127.0.0.1 WUNDER_PORT=18000 cargo run -p wunder-server
 `config/` 目录里有引擎主配置 `wunder.yaml`、示例配置、沙箱运行时配置、MCP 配置、组织单位、国际化文案、版本号、字体与绘图配置等，另有 `benchmark/`、`data/`、`fonts/`、`ppt_templates/`、`preset_worker_cards/`、`prompts/`、`skills/` 等子目录。
 
 配置支持运行中热更新，改动会直接写回 YAML 文件。
-
-## 延伸阅读
-
-- [舰桥界面](/docs/zh-CN/surfaces/web-admin/)
-- [蜂巢界面](/docs/zh-CN/surfaces/frontend/)
-- [配置说明](/docs/zh-CN/capabilities/config/)
-- [首次运行排查](/docs/zh-CN/start/troubleshooting-first-run/)

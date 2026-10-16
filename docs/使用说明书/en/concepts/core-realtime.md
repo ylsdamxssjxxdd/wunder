@@ -1,14 +1,14 @@
 ---
 title: Realtime
-summary: The realtime channel runs on WebSocket; a reconnect catches up by cursor; what the client sees is a projection of backend truth; slow clients are uncoupled to protect the stream.
-updated_at: 2026-10-13
+summary: WebSocket endpoints and event categories, cursor-based catch-up after a disconnect, backpressure and slow-client uncoupling on a bounded projection, and interlink as a separate realtime path.
+updated_at: 2026-10-16
 ---
 
-Realtime is not about text appearing quickly but about three things: the **process stays visible**, a **disconnect can be caught up on**, and **what the client sees matches backend truth**. The approach is durable events, cursor-based catch-up, and a bounded projection — not hoping a reconnect happens to work.
+Realtime covers three things: the **process stays visible**, a **disconnect can be caught up on**, and **what the client sees matches backend truth**. The approach is durable events, cursor-based catch-up, and a bounded projection — not a full re-pull after a reconnect.
 
 ![Realtime diagram: thread facts projected to client state through event streams and recovery mechanisms](/docs/assets/manual/core-realtime.svg)
 
-## The backend is truth, the frontend is a projection
+## Truth and projection
 
 The thread log is the single source of truth. Every event push is **written synchronously to the persistence layer first**, and only then travels the realtime channel. The change wake-up signal only wakes subscribers; it is **not a data source**, and not the truth.
 
@@ -18,11 +18,11 @@ Three things follow directly:
 - When the interface shows something odd, trust the actual execution state — do not decide from the UI whether a task has finished.
 - To tell whether a turn has ended, look only at terminal events, not at "it seems to have gone quiet".
 
-## Chat streaming runs only over WebSocket
+## WebSocket endpoints
 
 Streaming chat output runs only over WebSocket. Requesting the chat stream over HTTP is rejected with a message pointing you to `/wunder/chat/ws`. SSE is for external workflows only and is **not a fallback for chat**.
 
-WebSocket endpoints are distributed by purpose:
+Endpoints are distributed by purpose:
 
 | Endpoint | Purpose |
 | --- | --- |
@@ -35,7 +35,7 @@ WebSocket endpoints are distributed by purpose:
 
 Handshake and authentication: send a connection envelope first, or pass `access_token` / `token` directly as a query parameter. Any other message before the handshake completes is rejected.
 
-## The events you receive
+## Events
 
 Event names are not enumerated in one place — each is declared where it is sent, and a new one is added the same way. The events that currently exist fall into these categories by purpose:
 
@@ -50,9 +50,9 @@ Event names are not enumerated in one place — each is declared where it is sen
 | Terminal state | `final`, `turn_terminal` |
 | Flow control and errors | `heartbeat`, `slow_client`, `stream_overflow`, `error`; `resume_recommended` is emitted together with `slow_client` or `stream_overflow` |
 
-## How a reconnect catches up
+## Catch-up after a disconnect
 
-The right way to reconnect after a disconnect is not to pull everything again, but to catch up with cursors. Three cursors each cover a different span:
+A reconnect does not pull everything again; it catches up with cursors. Three cursors each cover a different span:
 
 | Cursor | Meaning |
 | --- | --- |
@@ -77,11 +77,11 @@ The realtime channel is bounded everywhere; the key values are:
 | Single message cap | 512 KiB (256 KiB for interlink remote view) |
 | User input cap | 1,048,576 characters (image attachments not counted) |
 
-A slow client is handled by **notifying first, then uncoupling**: when the write queue crosses the watermark, a `slow_client` or `stream_overflow` is sent first along with `resume_recommended`, and the subscription is then dropped. This is not a failure but protection — better for one lagging subscription to exit and rebuild through catch-up than for a slow client to drag down the whole stream and the engine.
+A slow client is handled by **notifying first, then uncoupling**: when the write queue crosses the watermark, a `slow_client` or `stream_overflow` is sent first along with `resume_recommended`, and the subscription is then dropped. Better for one lagging subscription to exit and rebuild through catch-up than for a slow client to drag down the whole stream and the engine.
 
 The right reaction to a `resume_recommended`: rebuild the projection through the catch-up endpoints above, then re-subscribe with the new cursor, rather than waiting for the same connection to bring back what was missed.
 
-## Display reads are bounded and paged
+## Paged display reads
 
 For threads with a lot of data, the timeline and trajectory are not pulled in one shot; they are paged and given a response budget:
 
@@ -96,7 +96,7 @@ While the projection is not ready, reads fall back to a **bounded window** over 
 
 Thread listing pagination caps at 100, and keyword search scans at most 10 pages × 100, that is 1000 entries; anything beyond that is not found. This is a deliberate latency cap.
 
-## Interlink: the other realtime path
+## Interlink
 
 The realtime surface between local devices (Pupa, Helm) and the cloud is interlink, which differs from the client WebSocket above:
 
@@ -106,11 +106,3 @@ The realtime surface between local devices (Pupa, Helm) and the cloud is interli
 - Interlink governance currently exposes only backend interfaces; **the Bridge has no interlink panel**.
 
 Details and protocol are in [Interlink](/docs/en/capabilities/interlink/).
-
-## Further reading
-
-- [Streaming Execution](/docs/en/concepts/streaming/) — token increments and coalescing cadence
-- [Stability](/docs/en/concepts/core-stability/) — timeouts, circuit breaking, and resource governance
-- [Stream Events](/docs/en/capabilities/stream-events/) — detailed meanings of states and events
-- [Chat WebSocket](/docs/en/capabilities/chat-ws/) — handshake and message format
-- [Interlink](/docs/en/capabilities/interlink/) — tunnels, shadows, commands, and approvals

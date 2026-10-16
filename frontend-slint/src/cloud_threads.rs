@@ -3,6 +3,7 @@ use crate::{CloudTurn, MainWindow};
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use std::{
     cell::RefCell,
+    collections::HashMap,
     rc::Rc,
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -21,6 +22,10 @@ use wunder_server::{
 thread_local! {
     static CATALOG: RefCell<(Vec<NativeCloudAgent>,Vec<NativeCloudThread>)> = RefCell::new((Vec::new(),Vec::new()));
     static ROWS: Rc<VecModel<CloudTurn>> = Rc::new(VecModel::default());
+    // Keep only the bounded page that is on screen. It carries lazy body refs
+    // for on-demand, lossless clipboard reads without retaining prior pages.
+    static MESSAGE_ROWS: RefCell<HashMap<String, ChatViewRow>> = RefCell::new(HashMap::new());
+    static NEXT_BEFORE: RefCell<Option<i64>> = const { RefCell::new(None) };
     static WATCH: RefCell<Option<wunder_server::cloud::CloudThreadCancellation>> = const { RefCell::new(None) };
 }
 static GENERATION: AtomicU64 = AtomicU64::new(0);
@@ -62,6 +67,11 @@ fn row(value: ChatViewRow) -> CloudTurn {
     }
 }
 fn apply_rows(app: &MainWindow, rows: Vec<ChatViewRow>, reset: bool) {
+    MESSAGE_ROWS.with(|stored| {
+        let mut stored = stored.borrow_mut();
+        if reset { stored.clear(); }
+        for value in &rows { stored.insert(value.root_turn_id.clone(), value.clone()); }
+    });
     ROWS.with(|model| {
         if reset {
             model.set_vec(
@@ -94,12 +104,17 @@ fn apply_rows(app: &MainWindow, rows: Vec<ChatViewRow>, reset: bool) {
             }
         }
         app.set_cloud_turns(ModelRc::from(model.clone()));
+        let visible: std::collections::HashSet<String> = (0..model.row_count())
+            .filter_map(|index| model.row_data(index).map(|row| row.id.to_string()))
+            .collect();
+        MESSAGE_ROWS.with(|stored| stored.borrow_mut().retain(|id, _| visible.contains(id)));
     });
 }
 fn load(app: &MainWindow, api: Arc<NativeDesktop>) {
     let id = thread_id(app);
     let generation = invalidate();
     app.set_cloud_thread_busy(!id.is_empty());
+    app.set_cloud_thread_history_mode(false);
     if id.is_empty() {
         apply_rows(app, Vec::new(), true);
         return;
@@ -179,7 +194,80 @@ fn load(app: &MainWindow, api: Arc<NativeDesktop>) {
 }
 fn apply_page(app: &MainWindow, page: ThreadViewPage) {
     app.set_cloud_thread_status(page.runtime_status.into());
+    app.set_cloud_thread_has_older(page.has_more);
+    NEXT_BEFORE.with(|cursor| *cursor.borrow_mut() = page.next_before);
     apply_rows(app, page.chat, true);
+}
+
+fn earlier(app: &MainWindow, api: Arc<NativeDesktop>) {
+    if app.get_cloud_thread_busy() {
+        return;
+    }
+    let Some(before) = NEXT_BEFORE.with(|cursor| *cursor.borrow()) else {
+        return;
+    };
+    let id = thread_id(app);
+    if id.is_empty() {
+        return;
+    }
+    let generation = invalidate();
+    app.set_cloud_thread_busy(true);
+    let weak = app.as_weak();
+    std::thread::spawn(move || {
+        let page = api.cloud_thread_history(&id, before);
+        let _ = weak.upgrade_in_event_loop(move |app| {
+            if !active(generation) {
+                return;
+            }
+            app.set_cloud_thread_busy(false);
+            match page {
+                Ok(page) => {
+                    apply_page(&app, page);
+                    app.set_cloud_thread_history_mode(true);
+                    app.set_cloud_thread_status("更早的消息页 / Earlier messages".into());
+                }
+                Err(error) => app.set_cloud_thread_status(error.to_string().into()),
+            }
+        });
+    });
+}
+
+fn copy_message(app: &MainWindow, api: Arc<NativeDesktop>, id: String, assistant: bool) {
+    if app.get_cloud_thread_busy() {
+        return;
+    }
+    let Some(message) = MESSAGE_ROWS.with(|rows| {
+        rows.borrow().get(&id).map(|row| {
+            if assistant { row.assistant.clone() } else { row.user.clone() }
+        })
+    }) else {
+        app.set_cloud_thread_status("消息已不在当前页，请刷新后重试 / Message is no longer on this page; refresh and try again".into());
+        return;
+    };
+    let thread = thread_id(app);
+    if thread.is_empty() {
+        return;
+    }
+    let generation = GENERATION.load(Ordering::Acquire);
+    app.set_cloud_thread_busy(true);
+    let weak = app.as_weak();
+    std::thread::spawn(move || {
+        let text = api.cloud_message_text(&thread, &message);
+        let _ = weak.upgrade_in_event_loop(move |app| {
+            if !active(generation) {
+                return;
+            }
+            app.set_cloud_thread_busy(false);
+            match text {
+                Ok(text) => {
+                    app.set_cloud_thread_copy_text(text.into());
+                    app.set_cloud_thread_copy_request(app.get_cloud_thread_copy_request().saturating_add(1));
+                    app.set_cloud_thread_status("已复制完整原文 / Complete original text copied".into());
+                }
+                Err(error) => app.set_cloud_thread_status(error.to_string().into()),
+            }
+        });
+    });
 }
 fn refresh(app: &MainWindow, api: Arc<NativeDesktop>) {
     if app.get_cloud_thread_busy() {
@@ -215,6 +303,9 @@ fn refresh(app: &MainWindow, api: Arc<NativeDesktop>) {
                     CATALOG.with(|catalog| *catalog.borrow_mut() = (agents, threads));
                     app.set_cloud_thread_index(0);
                     app.set_cloud_agent_index(0);
+                    app.set_cloud_thread_has_older(false);
+                    app.set_cloud_thread_history_mode(false);
+                    NEXT_BEFORE.with(|cursor| *cursor.borrow_mut() = None);
                     apply_rows(&app, Vec::new(), true);
                     app.set_cloud_thread_status("最近 50 个线程 / Up to 50 recent threads".into());
                 }
@@ -252,6 +343,27 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
     app.on_cloud_select_thread(move |_| {
         if let Some(app) = weak.upgrade() {
             load(&app, backend.clone());
+        }
+    });
+    let weak = app.as_weak();
+    let backend = api.clone();
+    app.on_cloud_older_thread(move || {
+        if let Some(app) = weak.upgrade() {
+            earlier(&app, backend.clone());
+        }
+    });
+    let weak = app.as_weak();
+    let backend = api.clone();
+    app.on_cloud_latest_thread(move || {
+        if let Some(app) = weak.upgrade() {
+            load(&app, backend.clone());
+        }
+    });
+    let weak = app.as_weak();
+    let backend = api.clone();
+    app.on_cloud_copy_message(move |id, assistant| {
+        if let Some(app) = weak.upgrade() {
+            copy_message(&app, backend.clone(), id.to_string(), assistant);
         }
     });
     for action in 0..3 {

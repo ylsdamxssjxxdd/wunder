@@ -1,20 +1,20 @@
 ---
 title: Chat WebSocket
-summary: The real-time channel for chat and also the session control channel: starting an execution, resuming after a disconnect, watching, canceling, and returning approvals all happen on the same connection.
-updated_at: 2026-10-13
+summary: The handshake flow, client message types, server returns, and reconnect behavior of `/wunder/chat/ws`.
+updated_at: 2026-10-16
 ---
 
-`/wunder/chat/ws` does more than push events to you; it is also the control channel for a session. Both chat and desktop real-time sessions use it, and there is no SSE fallback.
+`/wunder/chat/ws` is both the event-push channel and the control channel for a session: starting an execution, resuming after a disconnect, watching, canceling, and returning approvals all happen on the same connection. Chat and desktop real-time sessions both use it, and there is no SSE fallback.
 
 ## Use Cases
 
-- You are building a chat workbench or a desktop session.
-- You need to start, resume, watch, and cancel an execution on the same connection.
-- You need long-lived connection keepalive and consistent real-time state.
+- Chat workbenches and desktop sessions;
+- Starting, resuming, watching, and canceling an execution on the same connection;
+- Long-lived connection keepalive and consistent real-time state.
 
-## Connecting
+## Handshake Flow
 
-1. Create a session first and take note of its ID.
+1. Create a session and take its ID.
 2. Open the WebSocket connection.
 3. Send the `connect` handshake.
 4. Receive `ready`.
@@ -48,33 +48,33 @@ Starting an execution:
 }
 ```
 
-## What You Can Do on the Connection
+## Message Types
 
-- `connect`: handshake and protocol negotiation
-- `start`: begin an execution
-- `resume`: catch up on what was missed after a disconnect
-- `watch`: observe a session without driving it
-- `cancel`: cancel the current execution
-- `approval`: return an approval decision
-- `ping`: keepalive
+Client to server:
+
+| kind | Effect |
+| --- | --- |
+| `connect` | Handshake and protocol negotiation |
+| `start` | Begin an execution |
+| `resume` | Catch up on events missed after a disconnect |
+| `watch` | Observe a session without driving it |
+| `cancel` | Cancel the current execution |
+| `approval` | Return an approval decision |
+| `ping` | Keepalive |
 
 The server mainly returns `ready`, `event`, `error`, and `pong`.
 
-## Key Settings and Common Pitfalls
+## Settings and Limits
 
-- Watch these event categories in particular: queued, approval resolved, error, and end of turn. `turn_terminal` is the terminal signal for a single execution round and works well as the frontend's convergence condition.
+- Event categories to consume: queued, approval resolved, error, and end of turn. `turn_terminal` is the terminal signal for a single execution round and works as the frontend's convergence condition.
 - `start` must explicitly carry the session ID.
 - The body text uses `content`, not `/wunder`'s `question`.
 - `resume` (catching up on events) and `watch` (observing the runtime state) are two different actions.
 - Approvals on this connection only handle approval items that come from the WebSocket.
 
-## Handling a Disconnect
+## Disconnect and Reconnect
 
 Do not fall back to SSE. Reconnect to `/wunder/chat/ws`, then send as the situation requires:
 
 - `resume`: carry the position of the last handled event to fill in the events missed during the disconnect.
 - `watch`: observe the current session's runtime state again.
-
-## Further Reading
-
-- [Stream Events Reference](/docs/en/capabilities/stream-events/)

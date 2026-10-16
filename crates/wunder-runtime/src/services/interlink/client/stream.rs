@@ -28,7 +28,9 @@ use crate::services::interlink::blob;
 use crate::services::interlink::OutboundFrame;
 
 /// Results at or below this size are base64-inlined in `command_result`.
-pub const INLINE_MAX_BYTES: usize = 1024 * 1024;
+// Base64 adds 4/3 overhead and the control frame adds metadata. Stay below
+// the tunnel's 512 KiB message ceiling; larger files use bounded chunks.
+pub const INLINE_MAX_BYTES: usize = 256 * 1024;
 /// Chunk size used when the local config does not say otherwise (docs §3.3).
 pub const DEFAULT_CHUNK_KB: usize = 256;
 pub const MIN_CHUNK_KB: usize = 16;
@@ -146,10 +148,16 @@ pub async fn pump_file(
     chunk_bytes: usize,
     rate_bps: u64,
 ) -> PumpOutcome {
-    let chunk_bytes = chunk_bytes.max(1);
+    let chunk_bytes = chunk_bytes.clamp(1, MAX_CHUNK_KB * 1024);
     let mut file = match tokio::fs::File::open(path).await {
         Ok(file) => file,
         Err(_) => return PumpOutcome::Failed,
+    };
+    // Freeze the transfer length at open time. An append-only source cannot
+    // keep a stream alive indefinitely or grow beyond the protocol ceiling.
+    let expected = match file.metadata().await {
+        Ok(metadata) if metadata.is_file() && metadata.len() <= MAX_STREAM_BYTES => metadata.len(),
+        _ => return PumpOutcome::Failed,
     };
     let started = Instant::now();
     let mut sent_bytes: u64 = 0;
@@ -158,19 +166,25 @@ pub async fn pump_file(
         if cancel.is_cancelled() {
             return PumpOutcome::Cancelled;
         }
-        let read = match file.read(&mut buffer).await {
+        let remaining = expected.saturating_sub(sent_bytes) as usize;
+        let capacity = buffer.len().min(remaining);
+        let read = match file.read(&mut buffer[..capacity]).await {
             Ok(read) => read,
             Err(_) => {
                 let frame = encode_error(stream_id, sent_bytes as u32);
-                let _ = tx.send(OutboundFrame::Binary(frame)).await;
+                let _ = send_chunk(tx, cancel, frame).await;
                 return PumpOutcome::Failed;
             }
         };
         if read == 0 {
+            if sent_bytes < expected {
+                let _ = send_chunk(tx, cancel, encode_error(stream_id, sent_bytes as u32)).await;
+                return PumpOutcome::Failed;
+            }
             // EOF: close the stream with a zero-length LAST chunk.
             let frame = blob::encode_chunk(stream_id, DATA_FLAG_LAST, sent_bytes as u32, &[]);
-            if tx.send(OutboundFrame::Binary(frame)).await.is_err() {
-                return PumpOutcome::Aborted;
+            if let Err(outcome) = send_chunk(tx, cancel, frame).await {
+                return outcome;
             }
             return PumpOutcome::Completed;
         }
@@ -180,13 +194,13 @@ pub async fn pump_file(
             last: false,
         };
         let frame = encode(stream_id, &chunk, &buffer[..read]);
-        if tx.send(OutboundFrame::Binary(frame)).await.is_err() {
-            return PumpOutcome::Aborted;
+        if let Err(outcome) = send_chunk(tx, cancel, frame).await {
+            return outcome;
         }
         sent_bytes += read as u64;
         // Pacing is measured against the wall clock since the stream started,
         // so a fast socket still cannot exceed `rate_bps`.
-        let allowed = rate_bps * started.elapsed().as_secs_f64() as u64;
+        let allowed = (rate_bps as f64 * started.elapsed().as_secs_f64()) as u64;
         if rate_bps > 0 && sent_bytes > allowed {
             let wait = pace_delay((sent_bytes - allowed) as usize, rate_bps);
             tokio::select! {
@@ -194,6 +208,30 @@ pub async fn pump_file(
                 _ = cancel.cancelled() => return PumpOutcome::Cancelled,
             }
         }
+    }
+}
+
+async fn send_chunk(tx: &mpsc::Sender<OutboundFrame>, cancel: &CancellationToken, bytes: Vec<u8>) -> Result<(), PumpOutcome> {
+    tokio::select! {
+        biased;
+        _ = cancel.cancelled() => Err(PumpOutcome::Cancelled),
+        result = tx.send(OutboundFrame::Binary(bytes)) => result.map_err(|_| PumpOutcome::Aborted),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[tokio::test]
+    async fn cancel_interrupts_full_data_queue() {
+        let (sender, _receiver) = mpsc::channel(1);
+        sender.send(OutboundFrame::Binary(vec![])).await.unwrap();
+        let token = CancellationToken::new();
+        let cancel = token.clone();
+        let task = tokio::spawn(async move { send_chunk(&sender, &token, vec![1]).await });
+        tokio::task::yield_now().await;
+        cancel.cancel();
+        assert_eq!(tokio::time::timeout(Duration::from_secs(1), task).await.unwrap().unwrap(), Err(PumpOutcome::Cancelled));
     }
 }
 
@@ -284,10 +322,11 @@ pub async fn read_command(
     }
     let mime = content_type_for(&target);
     if size as usize <= INLINE_MAX_BYTES {
-        let mut file = match tokio::fs::File::open(&target).await {
+        let file = match tokio::fs::File::open(&target).await {
             Ok(file) => file,
             Err(err) => return CommandReport::failed("READ_FAILED", sanitize(&err.to_string())),
         };
+        let mut file = file.take(ceiling.min(INLINE_MAX_BYTES as u64) + 1);
         let mut buffer = Vec::with_capacity(size as usize);
         if let Err(err) = file.read_to_end(&mut buffer).await {
             return CommandReport::failed("READ_FAILED", sanitize(&err.to_string()));

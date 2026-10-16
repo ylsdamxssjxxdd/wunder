@@ -1,17 +1,12 @@
 ---
 title: Schedule Task
-summary: Creates, changes, inspects, runs right away, and enables or disables scheduled jobs.
-updated_at: 2026-10-13
+summary: The eight actions and common fields of `schedule_task`, its two execution threads, concurrency and missed-run policy for recurring jobs, and failure diagnosis around queries and the scheduler switch.
+updated_at: 2026-10-16
 ---
 
-Schedule Task creates, changes, inspects, runs right away, and enables or disables jobs that run automatically at a set time (a scheduled inspection, a recurring reminder, cross-channel message handling).
+Use it when something should not be done only once but repeated on a fixed cadence, or when it should run automatically once at a designated moment: it creates, changes, inspects, runs right away, and enables or disables jobs.
 
-## When to use it
-
-- Something should not be done only once, but repeated on a fixed cadence.
-- Something should run automatically once at a designated moment.
-
-## How to use it
+## Actions and fields
 
 A call specifies the action and the job's content. The flat form uses top-level fields:
 
@@ -52,7 +47,7 @@ Common fields:
 - `session`: which thread the job runs in, `main` or `isolated` only.
 - `enabled`: whether the job is enabled right after creation.
 
-## Where a job runs
+## Execution threads
 
 `session` decides where this happens:
 
@@ -61,15 +56,11 @@ Common fields:
 
 If the bound thread is archived or deleted, or its owning agent does not match, the job fails explicitly rather than quietly picking another thread to stand in.
 
-## Recurring jobs do not pile up
+## Concurrency of recurring jobs
 
-The behavior is closer to "keep the latest cadence" than "catch up on every missed run":
+A single recurring job has at most one run active at any moment. Even if it is written as once per second while a single run takes far longer than a second, it will not fan out into a pile of identical concurrent jobs. Missed intervals are skipped or coalesced, and the next run time is pushed forward again from the current time: the behavior keeps the latest cadence rather than catching up on every missed run.
 
-- A single recurring job has at most one run active at any moment.
-- Even if it is written as once per second while a single run takes far longer than a second, it will not fan out into a pile of identical concurrent jobs.
-- Missed intervals are skipped or coalesced, and the next run time is pushed forward again from the current time.
-
-## Diagnosing problems
+## Errors
 
 - `run` returning `queued: true` only means the asynchronous run has been accepted, not that it has finished. Do not repeatedly poll for it within the turn that created the job; finish the current reply first.
 - Querying a job shows the thread it is bound to, whether it is running, and its last result and last error; it displays local-time-zone time, the run rule, and the bound thread, while the raw result stays in the thread log.

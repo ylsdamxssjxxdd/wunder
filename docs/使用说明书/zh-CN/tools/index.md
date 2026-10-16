@@ -1,16 +1,14 @@
 ---
 title: 工具总览
-summary: wunder 的内置工具矩阵，按八个分类指向对应工具文档；选型入口、结果形态约定，以及不套统一外壳的几个例外。
-updated_at: 2026-10-13
+summary: 内置工具的规范名与英文别名、八个分类对应的说明页、场景到工具的对照，以及统一结果外壳与不套外壳的例外。
+updated_at: 2026-10-16
 ---
 
 # 工具总览
 
-wunder 的工具体系覆盖文件、命令、Web、桌面、协作、系统连接等场景。大多数内置工具的成功和失败结果都收敛到一套统一外壳，少数工具例外。
+工具规范名大多为中文，另配英文别名，由 `resolve_tool_name` 归一（`crates/wunder-runtime/src/services/tools/catalog.rs`）。MCP 工具（`server@tool`）、技能名、知识库名与用户工具别名按配置动态注册，不在下表之列。
 
-## 工具一览
-
-模型看到的工具规范名大多为中文，另配英文别名，由 `resolve_tool_name` 归一（`crates/wunder-runtime/src/services/tools/catalog.rs`）。MCP 工具（`server@tool`）、技能名、知识库名与用户工具别名按配置动态注册，不在下表之列。
+## 工具矩阵
 
 | 工具（规范名） | 英文别名 | 简介 | 分类 |
 | :--- | :--- | :--- | :--- |
@@ -44,87 +42,44 @@ wunder 的工具体系覆盖文件、命令、Web、桌面、协作、系统连�
 
 `网页搜索` 与 `ptc` 属代码保留、当前**临时下架**（对模型与用户不可见，见 `default_tool_profile.rs`），不是已移除。已彻底移除：渠道工具、用户世界工具、`a2a_*` 工具、`final_response`、`a2ui`、LSP 查询类工具。
 
-## 按场景选工具
+## 场景与工具
 
-### 只有关键词，想找网页来源
+| 场景 | 用什么 |
+| --- | --- |
+| 手上有明确 URL，要读这一页正文 | [网页抓取](/docs/zh-CN/tools/web-fetch/) |
+| 只有关键词，要找公开网页来源 | 网页搜索当前临时下架；拿到 URL 后再走网页抓取 |
+| 要点击、输入、等页面动态渲染 | [浏览器](/docs/zh-CN/tools/browser/) |
+| 看本地代码 | 先用 [工作区文件](/docs/zh-CN/tools/workspace-files/) 列目录或搜索，再读片段 |
+| 小而精确、带上下文匹配的改代码 | `文本编辑` 的补丁形态 |
+| 一次精确文本替换 | [工作区文件](/docs/zh-CN/tools/workspace-files/) 里的 `文本编辑` |
+| 复杂替换逻辑 | [执行命令](/docs/zh-CN/tools/exec/) 跑脚本 |
+| 整份重写或新建文件 | [工作区文件](/docs/zh-CN/tools/workspace-files/) 里的 `write_file` |
+| 编译、测试、跑脚本 | [执行命令](/docs/zh-CN/tools/exec/) |
+| 当前会话里临时拉起子运行 | [子智能体控制](/docs/zh-CN/tools/subagent-control/) |
+| 管理任务线程 / 分支线程 | [会话线程控制](/docs/zh-CN/tools/thread-control/) |
 
-网页搜索当前临时下架；手上有明确的 URL 时，直接用 [网页抓取](/docs/zh-CN/tools/web-fetch/) 读正文。
+## 分类与文档
 
-### 只读网页正文
+| 分类 | 说明页 |
+| --- | --- |
+| 收尾与前端协同 | 计划面板 / 问询面板 / 会话让出：[计划面板 / 问询面板 / 会话让出](/docs/zh-CN/tools/panels/) |
+| 工作区与代码 | 列出文件 / glob / 搜索内容 / 读取文件 / 写入文件 / 文本编辑：[工作区文件](/docs/zh-CN/tools/workspace-files/)；执行命令 / 命令会话：[执行命令](/docs/zh-CN/tools/exec/)；技能调用：[技能调用](/docs/zh-CN/tools/skill-call/) |
+| Web | 网页抓取：[网页抓取](/docs/zh-CN/tools/web-fetch/)；浏览器：[浏览器工具族](/docs/zh-CN/tools/browser/) |
+| 多模态 | 读图工具：[读图工具](/docs/zh-CN/tools/read-image/)；图像生成 / 视频生成 / 语音生成 / 声转文：[多模态生成](/docs/zh-CN/tools/multimodal-generation/) |
+| 桌面 | 桌面监视器 / 桌面控制器：[桌面控制](/docs/zh-CN/tools/desktop-control/) |
+| 线程与子智能体 | 子智能体控制：[子智能体控制](/docs/zh-CN/tools/subagent-control/)；会话线程控制：[会话线程控制](/docs/zh-CN/tools/thread-control/) |
+| 系统与记忆 | 自我状态：[自我状态](/docs/zh-CN/tools/self-status/)；记忆管理：[记忆管理](/docs/zh-CN/tools/memory-manager/)；定时任务：[定时任务](/docs/zh-CN/tools/schedule-task/) |
+| 目标态 | `get_goal` / `create_goal` / `update_goal` 由运行时按会话自动注入，不对桌面端开放选择 |
 
-先用 [网页抓取](/docs/zh-CN/tools/web-fetch/)，不要一上来就用浏览器。
+## 结果外壳
 
-### 要点击、输入、等页面动态渲染
-
-用 [浏览器](/docs/zh-CN/tools/browser/)。
-
-### 要看本地代码
-
-通常顺序是：先用 [工作区文件](/docs/zh-CN/tools/workspace-files/) 列目录或搜索，再读片段。
-
-### 要改代码
-
-- 小而精确、带上下文匹配的修改：用 `文本编辑` 的补丁形态
-- 一次精确文本替换：用 [工作区文件](/docs/zh-CN/tools/workspace-files/) 里的 `文本编辑`
-- 复杂替换逻辑：用 [执行命令](/docs/zh-CN/tools/exec/) 跑脚本
-- 整文件重写：用 [工作区文件](/docs/zh-CN/tools/workspace-files/) 里的 `write_file`
-- 要编译、测试、跑脚本：用 [执行命令](/docs/zh-CN/tools/exec/)
-
-### 要做协作
-
-- 当前会话里临时拉起子运行：用 [子智能体控制](/docs/zh-CN/tools/subagent-control/)
-- 管理任务线程 / 分支线程：用 [会话线程控制](/docs/zh-CN/tools/thread-control/)
-
-## 按分类查文档
-
-### 收尾与前端协同
-
-- 计划面板 / 问询面板 / 会话让出：[计划面板 / 问询面板 / 会话让出](/docs/zh-CN/tools/panels/)
-
-### 工作区与代码
-
-- 列出文件 / glob / 搜索内容 / 读取文件 / 写入文件 / 文本编辑：[工作区文件](/docs/zh-CN/tools/workspace-files/)
-- 执行命令 / 命令会话：[执行命令](/docs/zh-CN/tools/exec/)
-- 技能调用：[技能调用](/docs/zh-CN/tools/skill-call/)
-
-### Web
-
-- 网页抓取：[网页抓取](/docs/zh-CN/tools/web-fetch/)
-- 浏览器：[浏览器工具族](/docs/zh-CN/tools/browser/)
-
-### 多模态
-
-- 读图工具：[读图工具](/docs/zh-CN/tools/read-image/)
-- 图像生成 / 视频生成 / 语音生成 / 声转文：[多模态生成](/docs/zh-CN/tools/multimodal-generation/)
-
-### 桌面
-
-- 桌面监视器 / 桌面控制器：[桌面控制](/docs/zh-CN/tools/desktop-control/)
-
-### 线程与子智能体
-
-- 子智能体控制：[子智能体控制](/docs/zh-CN/tools/subagent-control/)
-- 会话线程控制：[会话线程控制](/docs/zh-CN/tools/thread-control/)
-
-### 系统与记忆
-
-- 自我状态：[自我状态](/docs/zh-CN/tools/self-status/)
-- 记忆管理：[记忆管理](/docs/zh-CN/tools/memory-manager/)
-- 定时任务：[定时任务](/docs/zh-CN/tools/schedule-task/)
-
-### 目标态
-
-- `get_goal` / `create_goal` / `update_goal`：由运行时按会话自动注入，不对桌面端开放选择。
-
-## 结果怎么读
-
-大多数内置工具成功时返回一套统一外壳：是否成功、动作名、状态、一句摘要，以及承载业务结果的数据区。业务结果优先在数据区里取。部分工具还会再补一句“下一步该怎么做”。
+大多数内置工具成功时返回同一套外壳：是否成功、动作名、状态、一句摘要，以及承载业务结果的数据区。业务结果优先在数据区里取。部分工具还会再补一句“下一步该怎么做”。
 
 常见的状态包括：已完成、仅预演、已接收、运行中、已让出、等待输入、部分完成、超时、无改动。超时不一定代表彻底失败。
 
 失败时也走统一外壳：一句错误、可读的原因说明和修复提示，以及能帮助定位的数据。
 
-几个不套统一外壳的例外：
+不套统一外壳的例外：
 
 - **最终回复**（已移除）：只是终结信号，只回一条给用户的答案。
 - **定时任务**：返回压缩后的调度结果。
@@ -132,9 +87,3 @@ wunder 的工具体系覆盖文件、命令、Web、桌面、协作、系统连�
 - **网页搜索**（临时下架）：曾用于关键词搜公开网页，结果在数据区的 `results` 里；现在要正文直接用网页抓取。
 - **网页抓取**：成功时直接返回抓取结果对象。
 - **文本编辑**（旧名 `apply_patch`）：成功走统一外壳；补丁形态失败时，错误语义比普通文件工具更严格。
-
-## 延伸阅读
-
-- 文件和代码的读写：[工作区文件](/docs/zh-CN/tools/workspace-files/)
-- 子智能体的派生与回收：[子智能体控制](/docs/zh-CN/tools/subagent-control/)
-- 单个工具的返回：见对应工具页

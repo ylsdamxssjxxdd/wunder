@@ -1,14 +1,12 @@
 ---
 title: Tools Overview
-summary: wunder's built-in tool matrix, eight categories pointing at the matching tool pages, plus selection entry points by situation, the conventions for how results are shaped, and a few exceptions that skip the shared shell.
-updated_at: 2026-10-13
+summary: Canonical names and English aliases of the built-in tools, the doc pages for each of the eight categories, situations mapped to tools, and the shared result shell plus the exceptions that skip it.
+updated_at: 2026-10-16
 ---
 
-wunder's tool system covers files, commands, the web, the desktop, collaboration, and system connections. Most built-in tools converge on one shared shell for both success and failure; a few stay outside it.
+Canonical tool names the model sees are mostly Chinese, each paired with an English alias, normalized by `resolve_tool_name` (`crates/wunder-runtime/src/services/tools/catalog.rs`). MCP tools (`server@tool`), skill names, knowledge-base names, and user tool aliases are registered dynamically from configuration and are not in the table below.
 
 ## The tool matrix
-
-Most canonical tool names the model sees are Chinese, each paired with an English alias, normalized by `resolve_tool_name` (`crates/wunder-runtime/src/services/tools/catalog.rs`). MCP tools (`server@tool`), skill names, knowledge-base names, and user tool aliases are registered dynamically from configuration and are not in the table below.
 
 | 工具（规范名） | 英文别名 | 简介 | 分类 |
 | :--- | :--- | :--- | :--- |
@@ -42,87 +40,44 @@ Most canonical tool names the model sees are Chinese, each paired with an Englis
 
 `网页搜索` and `ptc` are retained in code but currently **temporarily delisted** — invisible to the model and to the user (see `default_tool_profile.rs`); they are not removed. Removed entirely: channel tools, user-world tools, `a2a_*` tools, `final_response`, `a2ui`, LSP query tools.
 
-## Choose a tool by situation
+## Situations and tools
 
-### You only have keywords and want a web source
+| Situation | Use |
+| --- | --- |
+| You have a URL and want that page's body | [Web Fetch](/docs/en/tools/web-fetch/) |
+| You only have keywords and need a public web source | Web search is currently delisted; once you have a URL, use Web Fetch |
+| You need to click, type, or wait for dynamic rendering | [Browser](/docs/en/tools/browser/) |
+| Looking at local code | List directories or search with [Workspace Files](/docs/en/tools/workspace-files/) first, then read the ranges you need |
+| A small, precise, context-matched code edit | the patch form of `文本编辑` |
+| One exact text replacement | `文本编辑` in [Workspace Files](/docs/en/tools/workspace-files/) |
+| Complex replacement logic | run a script with [Execute Command](/docs/en/tools/exec/) |
+| Rewriting or creating a whole file | `write_file` in [Workspace Files](/docs/en/tools/workspace-files/) |
+| Compiling, testing, or running a script | [Execute Command](/docs/en/tools/exec/) |
+| Spinning up a temporary child run in the current session | [Subagent Control](/docs/en/tools/subagent-control/) |
+| Managing the task thread or branch threads | [Thread Control](/docs/en/tools/thread-control/) |
 
-Web search is currently delisted; when you already have a URL, read the page directly with [Web Fetch](/docs/en/tools/web-fetch/).
+## Categories and docs
 
-### You only want to read the main content of a page
+| Category | Pages |
+| --- | --- |
+| Turn finishing and frontend coordination | Plan Panel / Question Panel / Sessions Yield: [Plan Panel / Question Panel / Sessions Yield](/docs/en/tools/panels/) |
+| Workspace and code | List files / glob / search content / read file / write file / text edit: [Workspace Files](/docs/en/tools/workspace-files/); execute command / command session: [Execute Command](/docs/en/tools/exec/); skill call: [Skill Call](/docs/en/tools/skill-call/) |
+| Web | Web fetch: [Web Fetch](/docs/en/tools/web-fetch/); browser: [Browser Tools](/docs/en/tools/browser/) |
+| Multimodal | Read image: [Read Image](/docs/en/tools/read-image/); generate image / generate video / generate speech / transcribe speech: canonical names `图像生成` / `视频生成` / `语音生成` / `声转文`, aliases `generate_image` / `generate_video` / `generate_speech` / `transcribe_speech`; no dedicated page in this section |
+| Desktop | Desktop monitor / desktop controller: [Desktop Control](/docs/en/tools/desktop-control/) |
+| Threads and subagents | Subagent control: [Subagent Control](/docs/en/tools/subagent-control/); thread control: [Thread Control](/docs/en/tools/thread-control/) |
+| System and memory | Self status: [Self Status](/docs/en/tools/self-status/); memory manager: [Memory Manager](/docs/en/tools/memory-manager/); schedule task: [Schedule Task](/docs/en/tools/schedule-task/) |
+| Goal state | `get_goal` / `create_goal` / `update_goal` are injected by the runtime per session, and not offered for selection on the desktop endpoint |
 
-Start with [Web Fetch](/docs/en/tools/web-fetch/); do not jump straight to the browser.
+## Result shell
 
-### You need to click, type, or wait for dynamic rendering
-
-Use [Browser](/docs/en/tools/browser/).
-
-### You want to look at local code
-
-The usual order is: list directories or search with [Workspace Files](/docs/en/tools/workspace-files/) first, then read the ranges you need.
-
-### You want to change code
-
-- Small, precise, context-matched edits: use the patch form of `文本编辑`
-- One exact text replacement: use `文本编辑` in [Workspace Files](/docs/en/tools/workspace-files/)
-- Complex replacement logic: run a script with [Execute Command](/docs/en/tools/exec/)
-- Rewriting a whole file: use `write_file` in [Workspace Files](/docs/en/tools/workspace-files/)
-- Compiling, testing, or running a script: use [Execute Command](/docs/en/tools/exec/)
-
-### You want to collaborate
-
-- Spinning up a temporary child run in the current session: use [Subagent Control](/docs/en/tools/subagent-control/)
-- Managing the task thread or branch threads: use [Thread Control](/docs/en/tools/thread-control/)
-
-## Docs by category
-
-### Turn finishing and frontend coordination
-
-- Plan Panel / Question Panel / Sessions Yield: [Plan Panel / Question Panel / Sessions Yield](/docs/en/tools/panels/)
-
-### Workspace and code
-
-- List files / glob / search content / read file / write file / text edit: [Workspace Files](/docs/en/tools/workspace-files/)
-- Execute command / command session: [Execute Command](/docs/en/tools/exec/)
-- Skill call: [Skill Call](/docs/en/tools/skill-call/)
-
-### Web
-
-- Web fetch: [Web Fetch](/docs/en/tools/web-fetch/)
-- Browser: [Browser Tools](/docs/en/tools/browser/)
-
-### Multimodal
-
-- Read image: [Read Image](/docs/en/tools/read-image/)
-- Generate image / generate video / generate speech / transcribe speech: canonical names `图像生成` / `视频生成` / `语音生成` / `声转文`, aliases `generate_image` / `generate_video` / `generate_speech` / `transcribe_speech`; no dedicated page in this section.
-
-### Desktop
-
-- Desktop monitor / desktop controller: [Desktop Control](/docs/en/tools/desktop-control/)
-
-### Threads and subagents
-
-- Subagent control: [Subagent Control](/docs/en/tools/subagent-control/)
-- Thread control: [Thread Control](/docs/en/tools/thread-control/)
-
-### System and memory
-
-- Self status: [Self Status](/docs/en/tools/self-status/)
-- Memory manager: [Memory Manager](/docs/en/tools/memory-manager/)
-- Schedule task: [Schedule Task](/docs/en/tools/schedule-task/)
-
-### Goal state
-
-- `get_goal` / `create_goal` / `update_goal`: injected by the runtime per session, and not offered for selection on the desktop endpoint.
-
-## How to read results
-
-Most built-in tools return one shared shell on success: whether it succeeded, the action name, a state, a one-line summary, and a data area that carries the business result. Read the business result from the data area first. Some tools add one more line telling you what to do next.
+Most built-in tools return the same shell on success: whether it succeeded, the action name, a state, a one-line summary, and a data area that carries the business result. Read the business result from the data area first. Some tools add one more line telling you what to do next.
 
 Common states include: completed, dry run only, accepted, running, yielded, awaiting input, partially complete, timed out, and no change. A timeout does not always mean a permanent failure.
 
-Failures use the same shared shell: an error line, a readable reason and fix hint, and data that helps with diagnosis.
+Failures use the same shell: an error line, a readable reason and fix hint, and data that helps with diagnosis.
 
-A few exceptions do not use the shared shell:
+Exceptions that skip the shared shell:
 
 - **Final Response** (removed): only a termination signal, returning a single answer to the user.
 - **Schedule Task**: returns a compact scheduling result.
@@ -130,9 +85,3 @@ A few exceptions do not use the shared shell:
 - **Web Search** (delisted): used to search the public web by keyword, with results in the data area's `results` field; to read a page now, use Web Fetch directly.
 - **Web Fetch**: returns the fetched result object directly on success.
 - **Text Edit** (formerly `apply_patch`): success uses the shared shell; in its patch form, failures carry stricter error semantics than ordinary file tools.
-
-## See also
-
-- How to read and write files and code → [Workspace Files](/docs/en/tools/workspace-files/)
-- How subagents are spawned and reclaimed → [Subagent Control](/docs/en/tools/subagent-control/)
-- What one specific tool returns → go to that tool's page

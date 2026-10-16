@@ -70,7 +70,9 @@ pub(crate) fn body_id(item_id: &str, field: &str) -> String {
     format!("{item_id}|{field}")
 }
 
-pub(crate) fn question_panel(payload: &Value) -> Option<wunder_core::thread_view::ThreadQuestionPanel> {
+pub(crate) fn question_panel(
+    payload: &Value,
+) -> Option<wunder_core::thread_view::ThreadQuestionPanel> {
     use wunder_core::thread_view::{ThreadQuestion, ThreadQuestionOption, ThreadQuestionPanel};
     let raw = payload.get("questions").and_then(Value::as_array)?;
     let questions = raw
@@ -94,10 +96,17 @@ pub(crate) fn question_panel(payload: &Value) -> Option<wunder_core::thread_view
                     Some(ThreadQuestionOption {
                         label: preview(label, 256),
                         description: preview(
-                            option.get("description").and_then(Value::as_str).unwrap_or("").trim(),
+                            option
+                                .get("description")
+                                .and_then(Value::as_str)
+                                .unwrap_or("")
+                                .trim(),
                             512,
                         ),
-                        recommended: option.get("recommended").and_then(Value::as_bool).unwrap_or(false),
+                        recommended: option
+                            .get("recommended")
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false),
                     })
                 })
                 .collect::<Vec<_>>();
@@ -106,10 +115,17 @@ pub(crate) fn question_panel(payload: &Value) -> Option<wunder_core::thread_view
             }
             Some(ThreadQuestion {
                 question: preview(
-                    question.get("question").and_then(Value::as_str).unwrap_or("").trim(),
+                    question
+                        .get("question")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .trim(),
                     1024,
                 ),
-                multiple: question.get("multiple").and_then(Value::as_bool).unwrap_or(false),
+                multiple: question
+                    .get("multiple")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
                 options,
             })
         })
@@ -119,12 +135,16 @@ pub(crate) fn question_panel(payload: &Value) -> Option<wunder_core::thread_view
     }
     Some(ThreadQuestionPanel {
         questions,
-        keep_open: payload.get("keep_open").and_then(Value::as_bool).unwrap_or(true),
+        keep_open: payload
+            .get("keep_open")
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
         status: match payload.get("status").and_then(Value::as_str) {
             Some("answered") => "answered",
             Some("dismissed") => "dismissed",
             _ => "pending",
-        }.into(),
+        }
+        .into(),
     })
 }
 

@@ -1,20 +1,14 @@
 ---
 title: Thread Control
-summary: Letting the agent move several things forward at once: create, switch, rename, archive, and restore task threads.
-updated_at: 2026-10-13
+summary: The seven actions and available fields of `thread_control`, the four listing scopes, persistence behavior of writes and switches, ownership checks and list caps, and how it is exposed per form.
+updated_at: 2026-10-16
 ---
 
-The tool is `thread_control`, also known as `session_thread`.
+The tool is `thread_control`, also known as `session_thread`. A single agent can hold several independent task threads at once, and scheduling, locking, and live status are all isolated per thread. This tool manages the task threads themselves; the temporary units of work that a subagent dispatches and reclaims once done are a different matter, covered in [Subagent Control](/docs/en/tools/subagent-control/). The thread and round model is described in [Sessions and Rounds](/docs/en/concepts/sessions-and-rounds/).
 
-A single agent can hold several independent task threads at once, and scheduling, locking, and live status are all isolated per thread. This tool manages the task threads themselves; the temporary units of work that a subagent dispatches and reclaims once done are a different matter, covered in [Subagent Control](/docs/en/tools/subagent-control/).
+## Actions
 
-## When to use it
-
-- The user raises a separate, independent matter that should be carried by a new thread rather than continued in the current one.
-- You need to switch between threads, go back to a parent thread, or rename a thread.
-- You need to archive or restore a thread, or look at its ancestors and child threads.
-
-## How to use it
+When the user raises a separate, independent matter, carry it with a new thread rather than continuing in the current one. Switching between threads, going back to a parent thread, renaming, archiving, and restoring all go through this tool too.
 
 Each call specifies one action:
 
@@ -28,6 +22,8 @@ Each call specifies one action:
 
 The available fields are `session_id` (the target thread, the current thread by default), `parent_session_id` (used only when creating, the current thread by default), `title` (for creating or renaming; when omitted on creation the thread is called "New session" by default), `scope`, `status`, and `limit`.
 
+## Listing scopes
+
 `scope` decides which threads are listed:
 
 - `branch` (the default): the ancestor chain from the root to the current thread, plus the current thread and its direct child threads; each one is marked as an ancestor, the current thread, or a child.
@@ -37,13 +33,13 @@ The available fields are `session_id` (the target thread, the current thread by 
 
 Each thread in the list shows which one it is, its status, and when its latest message arrived. The "runtime status" there comes from live in-memory monitoring and is not the same measure as the persisted "active / archived".
 
-## What it handles
+## Automatic behavior
 
 - A newly created thread inherits the parent thread's agent and tool overrides.
 - Archiving, restoring, and switching write the change to storage and refresh the session's modification time.
 - When archiving is combined with switching away, it picks another active thread under the same agent to switch to.
 
-## When something goes wrong
+## Errors
 
 - A missing user identity, a target thread that does not exist, a rename with no title, or a "back to parent" when the current thread has no parent all raise clear errors.
 - Viewing details, switching, archiving, and restoring all check agent ownership; an explicitly given agent that does not match the target thread is rejected as a permission error.
@@ -56,8 +52,3 @@ Each thread in the list shows which one it is, its status, and when its latest m
 ## Form differences
 
 Pupa lists this tool as a system-level hidden tool, in neither the default set nor the desktop selectable set; Beehive, Helm, and Hull expose it according to the administrator's selection.
-
-## Related pages
-
-- Temporarily dispatched units of work: [Subagent Control](/docs/en/tools/subagent-control/)
-- Thread and round model: [Core Concepts · Sessions and Rounds](/docs/en/concepts/sessions-and-rounds/)

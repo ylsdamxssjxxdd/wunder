@@ -1,12 +1,12 @@
 ---
 title: 首次运行排查
-summary: 各形态第一次启动或部署最常见的失败模式与验证点：蛹启动、舰体部署、蜂巢访问、舵机执行。
-updated_at: 2026-10-13
+summary: 各形态第一次启动或部署的失败模式与验证点：蛹启动、舰体部署、蜂巢访问、舵机执行。
+updated_at: 2026-10-16
 ---
 
 # 首次运行排查
 
-按形态分节：验证点、失败现象与回查路径。
+按形态分节。每节的验证点是一份健康检查清单，失败现象表给出优先检查项与回查入口。
 
 ## 蛹（desktop）
 
@@ -88,16 +88,8 @@ updated_at: 2026-10-13
 | JSONL 事件缺字段 | 事件名 `thread` / `turn` / `item.*`；对照解析 | [舵机使用](/docs/zh-CN/start/cli/) |
 | 想在脚本里跑单工具 | 用 `wunder-cli tool ...` 直跑，不走智能体循环 | [舵机使用](/docs/zh-CN/start/cli/) |
 
-## 通用提醒
+## 通用判断
 
 - **不要把「停止维护前端壳」理解成「停止维护蛹后端」**：Electron / Tauri 前端壳停止迭代，引擎与蛹后端继续开发。
 - 列表、日志、面板都有分页、筛选或限量；如果某个页面一次性渲染大量内容导致卡顿，属于已知的工程缺口，反馈即可。
 
-## 延伸阅读
-
-- [快速开始](/docs/zh-CN/start/quickstart/)
-- [界面概览](/docs/zh-CN/surfaces/index/)
-- [蛹入门](/docs/zh-CN/start/desktop/)
-- [舰体部署](/docs/zh-CN/start/server/)
-- [舵机使用](/docs/zh-CN/start/cli/)
-- [故障排查](/docs/zh-CN/help/troubleshooting/)

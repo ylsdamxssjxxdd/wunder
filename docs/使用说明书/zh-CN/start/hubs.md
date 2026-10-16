@@ -1,14 +1,14 @@
 ---
 title: 说明书总览
-summary: 说明书导航页：从蛹起步，按需进入界面地图、其它形态与能力。start 与 surfaces 两组的全部页面都在这里。
-updated_at: 2026-10-13
+summary: 说明书导航页：从蛹起步，按分区进入界面、概念与其它形态。start 与 surfaces 两组的全部页面都在这里。
+updated_at: 2026-10-16
 ---
 
 # 说明书总览
 
-所有人都从[蛹（desktop）](/docs/zh-CN/start/desktop/)开始：下载安装，打开就是你的本地 AI 工作台。以下入口按使用频率排列。
+起点是[蛹（desktop）](/docs/zh-CN/start/desktop/)：下载安装后在本地直接运行，不需要先部署舰体。
 
-## 开始使用
+## 入门
 
 <div class="docs-card-grid docs-card-grid-compact">
   <a class="docs-card" href="/docs/zh-CN/start/quickstart/">
@@ -25,7 +25,7 @@ updated_at: 2026-10-13
   </a>
 </div>
 
-## 界面地图
+## 界面
 
 <div class="docs-card-grid docs-card-grid-compact">
   <a class="docs-card" href="/docs/zh-CN/surfaces/index/">
@@ -46,7 +46,7 @@ updated_at: 2026-10-13
   </a>
 </div>
 
-## 用得更深
+## 概念与工具
 
 <div class="docs-card-grid docs-card-grid-compact">
   <a class="docs-card" href="/docs/zh-CN/concepts/">
@@ -59,9 +59,9 @@ updated_at: 2026-10-13
   </a>
 </div>
 
-## 其它形态（可选）
+## 可选形态
 
-个人用户默认用蛹；下列是团队协作或自动化场景才需要：
+个人用户用蛹即可；下列是团队协作或自动化场景才需要：
 
 <div class="docs-card-grid docs-card-grid-compact">
   <a class="docs-card" href="/docs/zh-CN/start/server/">
@@ -74,19 +74,12 @@ updated_at: 2026-10-13
   </a>
 </div>
 
-## 排障入口
+## 排障与文档
 
 - [首次运行排查](/docs/zh-CN/start/troubleshooting-first-run/)：按形态定位装 / 启 / 访 三类失败
 - [帮助中心](/docs/zh-CN/help/)
 - [故障排查](/docs/zh-CN/help/troubleshooting/)
 - [FAQ](/docs/zh-CN/help/faq/)
 - [配置说明](/docs/zh-CN/capabilities/config/)
-
-## 文档生态
-
 - [常用说明目录](/docs/zh-CN/start/docs-directory/)：说明书 / 设计文档 / 技术说明书 / API 文档 / 性能标准与评分 / 功能迭代 / 经验教训 的分工与读法
 - [API 索引](/docs/zh-CN/capabilities/api-index/)
-
-## 首页
-
-回到 [wunder 心舰首页](/docs/zh-CN/index/)。

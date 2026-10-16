@@ -1,6 +1,6 @@
 ---
 title: Observability
-summary: Where to start looking when something breaks — what logs, runtime metrics and alerts, monitoring and thread traces, and performance testing each tell you, and the order to work through a failure from the error message onward.
+summary: What logs, runtime metrics and alerts, monitoring and thread traces, and performance testing each cover, and the troubleshooting flow that starts from the structured error.
 read_when:
   - A request, session, or channel failed and you need the first place to look
   - You need to size log retention, alert thresholds, or a stress test before deploying
@@ -14,10 +14,10 @@ source_docs:
   - crates/wunder-runtime/src/api/user_channel_logs.rs
   - crates/wunder-runtime/src/ops/throughput.rs
   - crates/wunder-runtime/src/services/stress_thread.rs
-updated_at: 2026-10-13
+updated_at: 2026-10-16
 ---
 
-When something goes wrong, the clues are concentrated in four places: **logs** record what happened, **runtime metrics and alerts** show how loaded the system is right now, **monitoring and thread traces** reconstruct what a particular thread went through, and **performance testing** tells you how much the system can take. The four are independent and each covers its own area, and following them in this order is the fastest way to work a problem through.
+The clues are concentrated in four places: **logs** record what happened, **runtime metrics and alerts** show how loaded the system is right now, **monitoring and thread traces** reconstruct what a particular thread went through, and **performance testing** tells you how much the system can take. The four are independent and each covers its own area.
 
 ![Observability diagram: three-layer separation of fact layer, replay layer, and profile layer](/docs/assets/manual/core-observability.svg)
 
@@ -25,7 +25,7 @@ When something goes wrong, the clues are concentrated in four places: **logs** r
 
 Logs go to two channels at once: a colorized layer on the console and a file layer with one JSON object per line. Files roll daily, their names begin with `server.jsonl`, and by default they sit under `./config/data/logs/server`.
 
-The default level is `info`, and it can be overridden with the `RUST_LOG` environment variable; noise from third-party libraries is quieted out of the box.
+The default level is `info`, and it can be overridden with the `RUST_LOG` environment variable; noise from third-party libraries is quieted by default.
 
 Retention defaults to **0, which means files are never cleaned up automatically** — the system only deletes old files by day once you set an explicit positive number of days. Long-running deployments should either set retention explicitly or rotate the log directory themselves. Note that in sandbox mode nothing is written to files, and only console output is produced. The Helm (cli) logs at `warn` and above by default, the standalone local bridge at `info`/`warn`, and neither writes log files.
 
@@ -49,7 +49,7 @@ The log pane on the right side of the Bridge debug panel is the **thread trace v
 
 Not everything has a Bridge panel: interlink governance, long-term memory, and goals are backend-only, with no Bridge UI, so those are checked through their APIs and the logs.
 
-## Three performance entry points
+## Performance entry points
 
 | Entry point | What it is for | Key limits |
 | --- | --- | --- |
@@ -63,14 +63,9 @@ Throughput and performance sampling belong to the admin side (`/wunder/admin/thr
 
 The three forms — the Pupa, the Beehive, and the Hull — are each scored **independently** on a weighted 0–100 scale, and scores cannot be added across forms. Comparisons are always made in the same environment, through the same entry point, before and after a change; the matching baselines live in the documentation's performance-baseline section. Numbers obtained on a different machine or through a different entry point are not comparable.
 
-## Troubleshooting order
+## Troubleshooting flow
 
 1. **Get the structured error.** When an interface fails, it returns one error object carrying an error code, a description, the HTTP status, an actionable hint for the user, and this request's trace id and timestamp; the trace id and error code are also written back in the response headers. Note the trace id first.
 2. **Check monitoring.** Look at a session's status and turns; when a thread seems stuck, first tell apart "waiting for a person" from "queueing or waiting on a lock".
 3. **Match it against the logs.** Search the log files by trace id; for live-connection problems, filter on the WebSocket stages; for a channel that is not getting through, check the runtime logs and the probe result.
 4. **Go into the trace.** In the thread trace view, check each round's model calls, tool batches, and results to find the first point of divergence.
-
-## Related pages
-
-- [Stream Events](/docs/en/capabilities/stream-events/) — WebSocket event fields
-- [Bridge Panel Guide](/docs/en/capabilities/admin-panels/) — entry points for the monitoring and debug panels

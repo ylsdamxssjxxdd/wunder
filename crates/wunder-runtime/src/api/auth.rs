@@ -348,7 +348,11 @@ async fn login(
         (session, None)
     };
     if !UserStore::is_local_refresh_scope(&session_scope) {
-        state.control.auth_sessions.force_logout_user(&session.user.user_id, &session.token.session_scope).await;
+        state
+            .control
+            .auth_sessions
+            .force_logout_user(&session.user.user_id, &session.token.session_scope)
+            .await;
     }
     let profile = build_user_profile_value(&state, &session.user)?;
     Ok(Json(match refresh_token {
@@ -363,25 +367,59 @@ async fn login(
 }
 
 #[derive(Deserialize)]
-struct LocalSessionRequest { client: String }
+struct LocalSessionRequest {
+    client: String,
+}
 
-async fn exchange_local_session(State(state): State<Arc<AppState>>, headers: HeaderMap, Json(payload): Json<LocalSessionRequest>) -> Result<Json<Value>, Response> {
+async fn exchange_local_session(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(payload): Json<LocalSessionRequest>,
+) -> Result<Json<Value>, Response> {
     let _ = resolve_user(&state, &headers, None).await?;
-    let token = auth::extract_bearer_token(&headers).ok_or_else(|| error_response(StatusCode::UNAUTHORIZED, "authentication required".to_string()))?;
+    let token = auth::extract_bearer_token(&headers).ok_or_else(|| {
+        error_response(
+            StatusCode::UNAUTHORIZED,
+            "authentication required".to_string(),
+        )
+    })?;
     let store = state.user_store.clone();
-    let auth = blocking::run_db("auth.local_exchange.authenticate", move || store.authenticate_token_details(&token)).await.map_err(|err| error_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?
-        .filter(|auth| UserStore::is_local_refresh_scope(&auth.session_scope)).ok_or_else(|| error_response(StatusCode::UNAUTHORIZED, "local session required".to_string()))?;
-    if !matches!(payload.client.as_str(), "desktop" | "cli") { return Err(error_response(StatusCode::BAD_REQUEST, "invalid client".to_string())); }
+    let auth = blocking::run_db("auth.local_exchange.authenticate", move || {
+        store.authenticate_token_details(&token)
+    })
+    .await
+    .map_err(|err| error_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?
+    .filter(|auth| UserStore::is_local_refresh_scope(&auth.session_scope))
+    .ok_or_else(|| {
+        error_response(
+            StatusCode::UNAUTHORIZED,
+            "local session required".to_string(),
+        )
+    })?;
+    if !matches!(payload.client.as_str(), "desktop" | "cli") {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "invalid client".to_string(),
+        ));
+    }
     let family = uuid::Uuid::new_v4().simple().to_string();
     let scope = format!("local_{}", payload.client);
     let store = state.user_store.clone();
     let (session, refresh) = blocking::run_db("auth.local_exchange.issue", move || {
-        let session = store.issue_session_for_user_with_scope_and_family(auth.user, &scope, Some(&family))?;
+        let session =
+            store.issue_session_for_user_with_scope_and_family(auth.user, &scope, Some(&family))?;
         let refresh = store.create_refresh_token(&session.user.user_id, &scope, &family)?;
         Ok::<_, anyhow::Error>((session, refresh))
-    }).await.map_err(|err| error_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
+    })
+    .await
+    .map_err(|err| error_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
     let profile = build_user_profile_value(&state, &session.user)?;
-    Ok(Json(auth_response_with_refresh(profile, session.token.token, session.token.expires_at, &refresh)))
+    Ok(Json(auth_response_with_refresh(
+        profile,
+        session.token.token,
+        session.token.expires_at,
+        &refresh,
+    )))
 }
 
 /// `POST /wunder/auth/refresh` — public endpoint (no bearer required).
@@ -454,14 +492,27 @@ async fn refresh(
             "refresh token is invalid",
         ));
     }
-    if storage.get_user_session_scope(&user_id, &session_scope)
+    if storage
+        .get_user_session_scope(&user_id, &session_scope)
         .map_err(|err| error_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?
-        .is_some_and(|scope| record.created_at + 0.000_001 < scope.last_login_at) {
-        return Err(refresh_error(StatusCode::UNAUTHORIZED, "REFRESH_TOKEN_INVALID", "session was revoked"));
+        .is_some_and(|scope| record.created_at + 0.000_001 < scope.last_login_at)
+    {
+        return Err(refresh_error(
+            StatusCode::UNAUTHORIZED,
+            "REFRESH_TOKEN_INVALID",
+            "session was revoked",
+        ));
     }
-    if !state.user_store.session_device_active(&family_id, &user_id)
-        .map_err(|err| error_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))? {
-        return Err(refresh_error(StatusCode::UNAUTHORIZED, "DEVICE_REVOKED", "device session was revoked"));
+    if !state
+        .user_store
+        .session_device_active(&family_id, &user_id)
+        .map_err(|err| error_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?
+    {
+        return Err(refresh_error(
+            StatusCode::UNAUTHORIZED,
+            "DEVICE_REVOKED",
+            "device session was revoked",
+        ));
     }
     let user = state
         .user_store
@@ -483,10 +534,17 @@ async fn refresh(
     }
 
     let user_store = state.user_store.clone();
-    let rotated = crate::core::blocking::run_db("api.auth.rotate", move || user_store.rotate_refresh_token(&record))
-        .await.map_err(|err| error_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
+    let rotated = crate::core::blocking::run_db("api.auth.rotate", move || {
+        user_store.rotate_refresh_token(&record)
+    })
+    .await
+    .map_err(|err| error_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
     let Some((new_access, new_refresh)) = rotated else {
-        return Err(refresh_error(StatusCode::UNAUTHORIZED, "REFRESH_TOKEN_REUSED", "session was revoked"));
+        return Err(refresh_error(
+            StatusCode::UNAUTHORIZED,
+            "REFRESH_TOKEN_REUSED",
+            "session was revoked",
+        ));
     };
 
     let profile = build_user_profile_value(&state, &user)?;
@@ -1014,7 +1072,8 @@ async fn me(
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, Response> {
     // Identity inspection is allowed during the short pre-registration step.
-    let resolved = crate::api::user_context::resolve_user_for_device_registration(&state, &headers).await?;
+    let resolved =
+        crate::api::user_context::resolve_user_for_device_registration(&state, &headers).await?;
     let profile = build_user_profile_value(&state, &resolved.user)?;
     Ok(Json(json!({ "data": profile })))
 }
@@ -1043,13 +1102,23 @@ async fn logout(
         let _ = storage.delete_user_tokens_by_family(family_id);
     }
     if let Some(family) = session.family_id.as_deref() {
-        if let Some(bound) = state.storage.get_user_session_device(family).map_err(|err| error_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))? {
+        if let Some(bound) = state
+            .storage
+            .get_user_session_device(family)
+            .map_err(|err| error_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?
+        {
             crate::api::interlink_ws::close_tunnel(&bound.device_id, "session_revoked").await;
             crate::services::interlink::remote::hub().close_node(&bound.device_id);
         }
     } else {
-        let _ = state.user_store.force_logout_user_scope(&session.user.user_id, &session.session_scope);
-        state.control.auth_sessions.force_logout_user(&session.user.user_id, &session.session_scope).await;
+        let _ = state
+            .user_store
+            .force_logout_user_scope(&session.user.user_id, &session.session_scope);
+        state
+            .control
+            .auth_sessions
+            .force_logout_user(&session.user.user_id, &session.session_scope)
+            .await;
     }
     Ok(Json(json!({ "data": { "ok": true } })))
 }

@@ -1,6 +1,6 @@
 ---
 title: Starting with the Pupa (Desktop)
-summary: wunder's default way to work: a local AI workbench. Download, install, open, go — no Hull to deploy first; it calls the engine natively in-process, takes no port, and routes through no HTTP/WebSocket relay.
+summary: The local AI workbench: install and launch, layout of local data, the two-page main window, first-run configuration, capabilities unique to the desktop, and interaction constraints.
 read_when:
   - You are installing or first launching the Pupa
   - You need to know where its local data lives or how to migrate it
@@ -11,14 +11,14 @@ source_docs:
   - crates/wunder-desktop/native.rs
   - crates/wunder-desktop/runtime.rs
   - crates/wunder-runtime/src/services/desktop_runtime_recovery.rs
-updated_at: 2026-10-13
+updated_at: 2026-10-16
 ---
 
 # Starting with the Pupa (Desktop)
 
-The Pupa (desktop) is wunder's desktop edition and the **default way to work**: a **local AI workbench**. It needs no Hull (server) deployment. It calls the engine natively in-process, has no port of its own, and routes through no HTTP/WebSocket relay.
+It calls the engine natively in-process, has no port of its own, and routes through no HTTP/WebSocket relay. Individual users install just this — there is no Hull (server) to deploy first.
 
-## When to choose the Pupa
+## Prerequisites
 
 | Scenario | Choose the Pupa |
 | --- | --- |
@@ -31,7 +31,11 @@ The Pupa (desktop) is wunder's desktop edition and the **default way to work**: 
 | Need multi-user governance and an admin backend | ❌ Choose the Hull (server) |
 | Need to access it in a browser | ❌ Choose the Beehive (web, ships with the Hull) |
 
+The Pupa covers single-user local scenarios; sharing among several people runs through the Hull and the Beehive.
+
 ## Install and launch
+
+Download the installer for your system from Releases.
 
 - **Executable**: `wunder-frontend-slint`
 - **Development launch**: on Windows, use the project's bundled `run.bat`
@@ -50,11 +54,13 @@ The Pupa (desktop) is wunder's desktop edition and the **default way to work**: 
 | Desktop settings | `<temp>/config/desktop.settings.json` |
 | Sessions and tool logs | local SQLite |
 
-To move to a new machine, copy `~/.wunder` across. On startup it scans the work tree (up to 4096 items), restores the state of unfinished tasks from last time, and clears session locks and leftover tasks.
+To move to a new machine, copy `~/.wunder` across. "Local first" means data stays on your machine; it doesn't affect reaching remote models or web pages.
 
-## Interface layout (the main window has only two pages)
+On startup it scans the work tree (up to 4096 items), restores the state of unfinished tasks from last time, and clears session locks and leftover tasks.
 
-The main window has only two pages, Chat and Settings; everything else hangs off them as panels and dialogs.
+## Interface layout
+
+The main window has two switchable pages, Chat and Settings; everything else hangs off them as panels and dialogs.
 
 ### Chat page
 
@@ -69,17 +75,13 @@ The main window has only two pages, Chat and Settings; everything else hangs off
 
 The category navigation supports search filtering. There is **no "device interlink" category**.
 
-## Get running in 5 steps
+## First run
 
-### 1. Download and install
-
-Download the installer for your system from Releases.
-
-### 2. First launch
+### Launch preparation
 
 On launch, a lightweight splash screen appears first while local working directories, configuration, and sessions are prepared. The window appearing doesn't mean sessions are ready; you can start working once the workbench opens. First launches or slower devices may take longer to prepare.
 
-### 3. Configure the model
+### Model configuration
 
 Settings → Model → Add:
 
@@ -89,11 +91,11 @@ Settings → Model → Add:
 
 Confirm with "Test connection" before saving. This is also where you hook up TTS, image, and video models; **TTS can currently only be configured — there is no playback implementation**.
 
-### 4. Complete your account profile
+### Account profile
 
 Settings → Account: username, email, avatar; set a login password if you plan to use it long-term.
 
-### 5. Start your first conversation
+### First conversation
 
 Back on the chat page, type:
 
@@ -103,7 +105,9 @@ List the files in the current working directory
 
 When you see the model think → a batch of tools → the final reply landing in the chat area, you're up and running.
 
-## What only the Pupa can do
+## Capabilities unique to the Pupa
+
+None of these exist on the Beehive, the Bridge, or the Helm:
 
 - **Interactive terminal** (winpty on Windows, PTY on Linux)
 - **Screenshot capture** (X11 on Linux, Win32 APIs on Windows)
@@ -111,7 +115,7 @@ When you see the model think → a batch of tools → the final reply landing in
 - **Global hotkeys**
 - **Voice input**
 
-## About device interlink
+## Device interlink surfaces
 
 Only **two** interlink surfaces are available in the Pupa:
 
@@ -120,7 +124,7 @@ Only **two** interlink surfaces are available in the Pupa:
 
 The Settings page still holds a set of device-interlink options, but they aren't wired to any interface; **that entry point is not open yet**.
 
-## One-click workspace state reset
+## Resetting the working state
 
 When sessions, subagents, or workspaces get into a bad state, use "Settings → General → Reset workspace state":
 
@@ -129,29 +133,9 @@ When sessions, subagents, or workspaces get into a bad state, use "Settings → 
 
 It **clears working state**; it is not a factory reset.
 
-## Two interaction constraints
+## Interaction constraints
+
+Two default behaviors are worth separating:
 
 - **The session queue is on by default**: sending another message during a run queues it instead of rejecting it as "user busy." Turn it off and messages sent during a run are bounced outright without entering the queue bar.
 - **The subagent activity indicator**: when a task has spawned subagents, the chat area shows the child runs that are still working; subagents are temporary work units the main agent creates, reclaimed once the task ends.
-
-## Common questions
-
-**Where data lives**
-The workspace is under `~/.wunder/workspace`, session history is in local SQLite, and configuration is in `<temp>/config/desktop.settings.json`.
-
-**Migrating to another computer**
-Yes. Copy `~/.wunder` to the new machine.
-
-**Networking in local mode**
-Yes. "Local first" only means data stays on your machine; it doesn't affect reaching remote models or web pages.
-
-**Sharing among several people**
-The Pupa focuses on single-user local scenarios; for team collaboration, deploy the Hull and have members use the Beehive.
-
-## Further reading
-
-- [Quick Start](/docs/en/start/quickstart/)
-- [Pupa Interface](/docs/en/surfaces/desktop-ui/)
-- [Surfaces Overview](/docs/en/surfaces/index/)
-- [First-Run Troubleshooting](/docs/en/start/troubleshooting-first-run/)
-- [Troubleshooting](/docs/en/help/troubleshooting/)

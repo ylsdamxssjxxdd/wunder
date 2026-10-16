@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>多线程 | 使用说明书</title>
-  <meta name="description" content="多线程核心在单进程内通过并发控制提升吞吐与资源利用：单用户可并发多任务线程，配会话队列、会话锁、并行度上限与日配额。">
+  <meta name="description" content="单进程内按线程隔离的调度、锁与实时状态：引擎级会话队列、会话锁 TTL 120 秒、工具并行度 ≤ 4 与轮次上限 1000。">
   <link rel="stylesheet" href="/docs/site.css?v=911481f6077c">
   <script type="module" src="/docs/site.js?v=911481f6077c"></script>
 </head>
@@ -55,6 +55,6 @@
       </aside>
     </div>
   </div>
-  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/concepts/core-multithreading","language":"zh-CN","title":"多线程","summary":"多线程核心在单进程内通过并发控制提升吞吐与资源利用：单用户可并发多任务线程，配会话队列、会话锁、并行度上限与日配额。","updated_at":"2026-10-13","read_when":[],"source_docs":[],"tab":"能力","group":"核心能力","group_path":["核心能力"],"url":"/docs/zh-CN/concepts/core-multithreading/","headings":[{"id":"section-1","level":1,"text":"多线程"},{"id":"section-2","level":2,"text":"怎么运作"},{"id":"section-3","level":2,"text":"关键数字"},{"id":"section-4","level":2,"text":"边界与当前限制"}],"prev_slug":"zh-CN/concepts/core-memory","next_slug":"zh-CN/concepts/core-multi-user-management","markdown":"# 多线程\n\n多线程核心在单进程内通过并发控制提升吞吐与资源利用：单个用户可以同时拥有多个任务线程，调度、锁与实时状态都按线程隔离。\n\n## 怎么运作\n\n- **引擎级会话队列**默认开启，配合 `会话让出` 让位。\n- **会话锁** TTL 120 秒并带心跳续约，持有方异常退出后由 TTL 释放。\n- **工具并行度 ≤ 4**：并行执行的工具取读锁，独占执行的工具取写锁。\n- **轮次上限、活跃会话上限、日配额、重试熔断**构成四条硬约束。\n\n## 关键数字\n\n| 项 | 值 |\n| --- | --- |\n| 会话锁 TTL | 120 秒（带心跳） |\n| 工具并行度 | ≤ 4 |\n| 轮次上限 | 默认 1000 |\n\n## 边界与当前限制\n\n- 关闭 `agent_queue.enabled` 后，运行中再发消息会被判「用户忙」，也不再进排队条（舰体启动时会告警）。这是配置取舍，不是故障。\n- blocking 分类配额与有界队列是硬上限，满了即报 busy，不会排队等待。\n","source_path":"使用说明书/zh-CN/concepts/core-multithreading.md"}</script>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/concepts/core-multithreading","language":"zh-CN","title":"多线程","summary":"单进程内按线程隔离的调度、锁与实时状态：引擎级会话队列、会话锁 TTL 120 秒、工具并行度 ≤ 4 与轮次上限 1000。","updated_at":"2026-10-16","read_when":[],"source_docs":[],"tab":"能力","group":"核心能力","group_path":["核心能力"],"url":"/docs/zh-CN/concepts/core-multithreading/","headings":[{"id":"section-1","level":1,"text":"多线程"},{"id":"section-2","level":2,"text":"并发控制"},{"id":"section-3","level":2,"text":"默认值"},{"id":"section-4","level":2,"text":"限制"}],"prev_slug":"zh-CN/concepts/core-memory","next_slug":"zh-CN/concepts/core-multi-user-management","markdown":"# 多线程\n\n单个用户可以同时持有多个任务线程，调度、锁与实时状态都按线程隔离，互不阻塞。\n\n## 并发控制\n\n- **引擎级会话队列**默认开启，配合 `会话让出` 让位。\n- **会话锁** TTL 120 秒并带心跳续约，持有方异常退出后由 TTL 释放。\n- **工具并行度 ≤ 4**：并行执行的工具取读锁，独占执行的工具取写锁。\n- **轮次上限、活跃会话上限、日配额、重试熔断**构成四条硬约束。\n\n## 默认值\n\n| 项 | 值 |\n| --- | --- |\n| 会话锁 TTL | 120 秒（带心跳） |\n| 工具并行度 | ≤ 4 |\n| 轮次上限 | 默认 1000 |\n\n## 限制\n\n- 关闭 `agent_queue.enabled` 后，运行中再发消息会被判「用户忙」，也不再进排队条（舰体启动时会告警）。这是配置取舍，不是故障。\n- blocking 分类配额与有界队列是硬上限，满了即报 busy，不会排队等待。\n","source_path":"使用说明书/zh-CN/concepts/core-multithreading.md"}</script>
 </body>
 </html>

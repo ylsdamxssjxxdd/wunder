@@ -327,6 +327,18 @@ impl CommandLedger {
             }
         }
         state.order.push_back(command_id.to_string());
+        // Large result bodies remain available on the server while cached.
+        // The local replay ledger keeps a small tombstone instead of retaining
+        // hundreds of file bodies on a low-memory desktop.
+        let result = if serde_json::to_vec(&result).is_ok_and(|body| body.len() <= 32 * 1024) {
+            result
+        } else {
+            CommandReport::failed(
+                "RESULT_EXPIRED",
+                "result body is no longer retained on this node",
+            )
+            .payload()
+        };
         state.seen.insert(command_id.to_string(), (now, result));
     }
 
@@ -577,6 +589,49 @@ pub async fn execute(
     if cancel.is_cancelled() {
         return CommandReport::failed("COMMAND_CANCELED", "command canceled");
     }
+    // Local tools deliberately support host paths. Remote commands have a
+    // narrower contract: explicit owned workspace plus relative, unlinked paths.
+    if spec.kind.starts_with("workspace.") || spec.args.get("workspace_id").is_some() {
+        let owner = ctx.local_user_id.clone();
+        let workspace_id = arg_str(&spec.args, "workspace_id").or_else(|| ctx.workspace_id.clone());
+        if let Some(id) = workspace_id {
+            let storage = ctx.state.storage.clone();
+            match blocking::run_db("interlink.workspace.owner", move || {
+                storage.get_workspace(&owner, &id)
+            })
+            .await
+            {
+                Ok(Some(record)) => ctx
+                    .state
+                    .workspace
+                    .register_workspace_root(&record.workspace_id, &record.root_path),
+                _ => {
+                    return CommandReport::failed(
+                        "WORKSPACE_NOT_FOUND",
+                        "workspace is not owned by the current user",
+                    )
+                }
+            }
+        }
+        let root = ctx.state.workspace.user_root(&ctx.scope_user(&spec.args));
+        let args = spec.args.clone();
+        let kind = spec.kind.clone();
+        if let Err(error) = blocking::run_fs("interlink.workspace.fence", move || {
+            for key in ["path", "source", "destination"] {
+                if let Some(path) = args.get(key).and_then(Value::as_str) {
+                    let target = remote_workspace_path(&root, path)?;
+                    if kind != CMD_WORKSPACE_LIST && kind != CMD_WORKSPACE_STAT && target == root {
+                        anyhow::bail!("workspace root cannot be modified");
+                    }
+                }
+            }
+            Ok(())
+        })
+        .await
+        {
+            return CommandReport::failed("PATH_REJECTED", sanitize(&error.to_string()));
+        }
+    }
     match spec.kind.as_str() {
         CMD_NODE_SUMMARY => node_summary(ctx).await,
         CMD_SHADOW_REFRESH => {
@@ -593,15 +648,77 @@ pub async fn execute(
         CMD_THREAD_CREATE | CMD_THREAD_MESSAGE => drive_thread(spec, ctx).await,
         CMD_THREAD_CANCEL => thread_cancel(spec, ctx).await,
         CMD_THREAD_ANSWER => thread_answer(spec, ctx).await,
-        CMD_WORKSPACE_WRITE => workspace_write(spec, ctx, collector).await,
-        CMD_WORKSPACE_MKDIR => workspace_mkdir(spec, ctx, collector).await,
+        CMD_WORKSPACE_WRITE => workspace_write(spec, ctx, collector, &cancel).await,
+        CMD_WORKSPACE_MKDIR => workspace_mkdir(spec, ctx, collector, &cancel).await,
         CMD_WORKSPACE_MOVE | CMD_WORKSPACE_COPY | CMD_WORKSPACE_DELETE => {
-            workspace_mutate(spec, ctx, collector).await
+            workspace_mutate(spec, ctx, collector, &cancel).await
         }
         CMD_TOOL_EXEC => tool_exec(spec, ctx, collector, &cancel).await,
         CMD_AGENT_SPAWN => agent_spawn(spec, ctx, collector).await,
         other => CommandReport::failed(ERR_UNKNOWN_KIND, format!("unsupported kind {other}")),
     }
+}
+
+/// A remote path is always relative to one shared root. Existing components
+/// cannot be symlinks or reparse points, including an internal backup folder.
+fn remote_workspace_path(root: &Path, path: &str) -> anyhow::Result<PathBuf> {
+    let normalized = path.replace('\\', "/");
+    anyhow::ensure!(
+        path == path.trim()
+            && !path.contains('\\')
+            && normalized.len() <= 4096
+            && !normalized.starts_with('/')
+            && !normalized.contains(':')
+            && !normalized.contains('\0'),
+        "relative workspace path required"
+    );
+    let mut target = root.to_path_buf();
+    for component in normalized.split('/') {
+        if component.is_empty() || component == "." {
+            continue;
+        }
+        anyhow::ensure!(component != "..", "parent traversal is not allowed");
+        anyhow::ensure!(
+            !component.eq_ignore_ascii_case(backup_dir_name())
+                && !component.ends_with([' ', '.'])
+                && !component.contains(['<', '>', '"', '|', '?', '*'])
+                && !component.chars().any(char::is_control),
+            "reserved workspace path"
+        );
+        // WorkspaceManager interprets this prefix as a public/sandbox alias.
+        // Remote commands accept only literal paths below their selected root.
+        anyhow::ensure!(
+            target != root || !component.eq_ignore_ascii_case("workspaces"),
+            "public workspace aliases are not allowed"
+        );
+        let stem = component
+            .split('.')
+            .next()
+            .unwrap_or("")
+            .to_ascii_uppercase();
+        anyhow::ensure!(
+            !matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+                && !(stem.len() == 4
+                    && (stem.starts_with("COM") || stem.starts_with("LPT"))
+                    && matches!(stem.as_bytes()[3], b'1'..=b'9')),
+            "reserved device name"
+        );
+        target.push(component);
+        match std::fs::symlink_metadata(&target) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+            Ok(metadata) => {
+                let mut linked = metadata.file_type().is_symlink();
+                #[cfg(windows)]
+                {
+                    use std::os::windows::fs::MetadataExt;
+                    linked |= metadata.file_attributes() & 0x400 != 0;
+                }
+                anyhow::ensure!(!linked, "linked workspace path is not allowed");
+            }
+        }
+    }
+    Ok(target)
 }
 
 async fn node_summary(ctx: &ExecContext) -> CommandReport {
@@ -1118,6 +1235,7 @@ async fn workspace_write(
     spec: &CommandSpec,
     ctx: &ExecContext,
     collector: &shadow::ShadowCollector,
+    cancel: &CancellationToken,
 ) -> CommandReport {
     let Some(path) = arg_str(&spec.args, "path") else {
         return CommandReport::failed("PATH_REQUIRED", "path is required");
@@ -1133,7 +1251,7 @@ async fn workspace_write(
         return CommandReport::failed("PAYLOAD_TOO_LARGE", "content exceeds the local ceiling");
     }
     let scope = ctx.scope_user(&spec.args);
-    let before = match backup_before(ctx, &scope, &spec.command_id, &path).await {
+    let before = match backup_before(ctx, &scope, &spec.command_id, &path, cancel).await {
         Ok(before) => before,
         Err(message) => return CommandReport::failed("BACKUP_FAILED", message),
     };
@@ -1142,7 +1260,10 @@ async fn workspace_write(
     let write_path = path.clone();
     let write_content = content.clone();
     let write_workspace = workspace.clone();
+    let cancel = cancel.clone();
     match blocking::run_fs("interlink.client.write", move || {
+        anyhow::ensure!(!cancel.is_cancelled(), "command canceled before write");
+        remote_workspace_path(&write_workspace.user_root(&write_scope), &write_path)?;
         write_workspace.write_file(&write_scope, &write_path, &write_content, true)
     })
     .await
@@ -1166,6 +1287,7 @@ async fn workspace_mkdir(
     spec: &CommandSpec,
     ctx: &ExecContext,
     collector: &shadow::ShadowCollector,
+    cancel: &CancellationToken,
 ) -> CommandReport {
     let Some(path) = arg_str(&spec.args, "path") else {
         return CommandReport::failed("PATH_REQUIRED", "path is required");
@@ -1179,7 +1301,12 @@ async fn workspace_mkdir(
     if target.exists() && !target.is_dir() {
         return CommandReport::failed("TARGET_EXISTS", "target exists and is not a directory");
     }
+    let cancel = cancel.clone();
+    let root = workspace.user_root(&scope);
+    let relative = path.clone();
     let created = blocking::run_fs("interlink.client.mkdir", move || {
+        anyhow::ensure!(!cancel.is_cancelled(), "command canceled before mkdir");
+        remote_workspace_path(&root, &relative)?;
         std::fs::create_dir_all(&target).map_err(|err| anyhow::anyhow!(err.to_string()))
     })
     .await;
@@ -1200,6 +1327,7 @@ async fn workspace_mutate(
     spec: &CommandSpec,
     ctx: &ExecContext,
     collector: &shadow::ShadowCollector,
+    cancel: &CancellationToken,
 ) -> CommandReport {
     let Some(source) = arg_str(&spec.args, "path").or_else(|| arg_str(&spec.args, "source")) else {
         return CommandReport::failed("PATH_REQUIRED", "source path is required");
@@ -1233,14 +1361,23 @@ async fn workspace_mutate(
         }
     }
     // Moving, copying over, or deleting all need the pre-change copy (§6.4).
-    let before = match backup_before(ctx, &scope, &spec.command_id, &source).await {
+    let before = match backup_before(ctx, &scope, &spec.command_id, &source, cancel).await {
         Ok(before) => before,
         Err(message) => return CommandReport::failed("BACKUP_FAILED", message),
     };
     let kind = spec.kind.clone();
     let src = source_path;
     let dst = destination_path.unwrap_or_default();
+    let cancel = cancel.clone();
+    let root = workspace.user_root(&scope);
+    let source_relative = source.clone();
+    let destination_relative = destination.clone();
     let performed = blocking::run_fs("interlink.client.mutate", move || {
+        anyhow::ensure!(!cancel.is_cancelled(), "command canceled before mutation");
+        remote_workspace_path(&root, &source_relative)?;
+        if let Some(relative) = destination_relative {
+            remote_workspace_path(&root, &relative)?;
+        }
         let result = if kind == CMD_WORKSPACE_DELETE {
             if src.is_dir() {
                 std::fs::remove_dir_all(&src)
@@ -1253,7 +1390,7 @@ async fn workspace_mutate(
             }
             std::fs::rename(&src, &dst)
         } else if src.is_dir() {
-            copy_dir_all(&src, &dst)
+            copy_dir_all(&src, &dst, &cancel)
         } else {
             if let Some(parent) = dst.parent() {
                 std::fs::create_dir_all(parent)?;
@@ -1280,12 +1417,15 @@ async fn workspace_mutate(
 }
 
 /// Recursively copy a directory, mirroring the workspace API's own helper.
-fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
+fn copy_dir_all(src: &Path, dst: &Path, cancel: &CancellationToken) -> std::io::Result<()> {
     // Validate the entire bounded tree before copying. Never follow nested
     // symlinks/reparse points or recursively exhaust the worker stack.
     let mut plan = Vec::new();
     let mut bytes = 0u64;
     for entry in walkdir::WalkDir::new(src).follow_links(false).max_depth(33) {
+        if cancel.is_cancelled() {
+            return Err(std::io::Error::other("copy canceled"));
+        }
         let entry = entry?;
         let metadata = std::fs::symlink_metadata(entry.path())?;
         let mut linked = metadata.file_type().is_symlink();
@@ -1312,6 +1452,9 @@ fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
         ));
     }
     for (source, target, dir) in plan {
+        if cancel.is_cancelled() {
+            return Err(std::io::Error::other("copy canceled"));
+        }
         if dir {
             std::fs::create_dir_all(target)?;
         } else {
@@ -1350,6 +1493,7 @@ async fn backup_before(
     scope: &str,
     command_id: &str,
     relative_path: &str,
+    cancel: &CancellationToken,
 ) -> Result<Option<String>, String> {
     let root = ctx
         .state
@@ -1363,34 +1507,59 @@ async fn backup_before(
         .map_err(|err| sanitize(&err.to_string()))?;
     let generation_id = sanitize_segment(command_id);
     let relative = sanitize_segment(relative_path);
+    let remote_relative = relative_path.to_string();
+    let cancel = cancel.clone();
     blocking::run_fs("interlink.client.backup", move || {
-        let generation = backup_root_for(&root).join(&generation_id);
-        std::fs::create_dir_all(&generation).map_err(|err| anyhow::anyhow!(err.to_string()))?;
-        let staged = generation.join(&relative);
-        let mut replaced: Option<String> = None;
-        if let Ok(metadata) = std::fs::symlink_metadata(&source) {
+        anyhow::ensure!(!cancel.is_cancelled(), "command canceled before backup");
+        remote_workspace_path(&root, &remote_relative)?;
+        let backup = backup_root_for(&root);
+        if let Ok(metadata) = std::fs::symlink_metadata(&backup) {
             let mut linked = metadata.file_type().is_symlink();
             #[cfg(windows)]
             {
                 use std::os::windows::fs::MetadataExt;
                 linked |= metadata.file_attributes() & 0x400 != 0;
             }
-            anyhow::ensure!(!linked, "linked backup source is not allowed");
+            anyhow::ensure!(!linked, "linked backup folder is not allowed");
         }
-        if source.is_dir() {
-            copy_dir_all(&source, &staged).map_err(|err| anyhow::anyhow!(err.to_string()))?;
-        } else if source.exists() {
-            if std::fs::metadata(&source)?.len() > 256 * 1024 * 1024 {
-                anyhow::bail!("file exceeds backup byte limit");
+        let generation = backup_root_for(&root).join(&generation_id);
+        std::fs::create_dir_all(&backup)?;
+        // One immutable generation per command. Never reuse a pre-existing
+        // directory that may have been replaced with a link locally.
+        std::fs::create_dir(&generation)?;
+        let outcome = (|| -> anyhow::Result<Option<String>> {
+            let staged = generation.join(&relative);
+            let mut replaced: Option<String> = None;
+            if let Ok(metadata) = std::fs::symlink_metadata(&source) {
+                let mut linked = metadata.file_type().is_symlink();
+                #[cfg(windows)]
+                {
+                    use std::os::windows::fs::MetadataExt;
+                    linked |= metadata.file_attributes() & 0x400 != 0;
+                }
+                anyhow::ensure!(!linked, "linked backup source is not allowed");
             }
-            replaced = digest_of(&source);
-            if let Some(parent) = staged.parent().filter(|path| !path.as_os_str().is_empty()) {
-                std::fs::create_dir_all(parent).map_err(|err| anyhow::anyhow!(err.to_string()))?;
+            if source.is_dir() {
+                copy_dir_all(&source, &staged, &cancel)
+                    .map_err(|err| anyhow::anyhow!(err.to_string()))?;
+            } else if source.exists() {
+                if std::fs::metadata(&source)?.len() > 256 * 1024 * 1024 {
+                    anyhow::bail!("file exceeds backup byte limit");
+                }
+                replaced = digest_of(&source);
+                if let Some(parent) = staged.parent().filter(|path| !path.as_os_str().is_empty()) {
+                    std::fs::create_dir_all(parent)
+                        .map_err(|err| anyhow::anyhow!(err.to_string()))?;
+                }
+                std::fs::copy(&source, &staged).map_err(|err| anyhow::anyhow!(err.to_string()))?;
             }
-            std::fs::copy(&source, &staged).map_err(|err| anyhow::anyhow!(err.to_string()))?;
+            Ok::<Option<String>, anyhow::Error>(replaced)
+        })();
+        if outcome.is_err() {
+            let _ = std::fs::remove_dir_all(&generation);
         }
-        let _ = rotate_backups(&backup_root_for(&root), BACKUP_KEEP);
-        Ok::<Option<String>, anyhow::Error>(replaced)
+        let _ = rotate_backups(&backup, BACKUP_KEEP);
+        outcome
     })
     .await
     .map_err(|err| sanitize(&err.to_string()))
@@ -1931,6 +2100,43 @@ mod tests {
         ledger.cancel_or_remember("running", 1.2).await;
         assert!(cancel.is_cancelled());
         assert!(!ledger.claim("running", "workspace.write", 1.3).await);
+    }
+
+    #[test]
+    fn remote_paths_reject_host_paths_traversal_and_reserved_backup() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        for path in [
+            "../outside",
+            "/outside",
+            "C:/outside",
+            "folder/../../outside",
+            "\\\\host\\share",
+            ".interlink_backup/item",
+            "folder./item",
+            "file:stream",
+            " workspaces/other",
+            "workspaces/other",
+            "folder /item",
+            "NUL.txt",
+            "folder/COM1",
+        ] {
+            assert!(remote_workspace_path(root, path).is_err(), "{path}");
+        }
+        assert_eq!(
+            remote_workspace_path(root, "folder/file.txt").unwrap(),
+            root.join("folder/file.txt")
+        );
+        assert_eq!(remote_workspace_path(root, ".").unwrap(), root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_paths_reject_nested_symlinks() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::os::unix::fs::symlink(outside.path(), dir.path().join("linked")).unwrap();
+        assert!(remote_workspace_path(dir.path(), "linked/file.txt").is_err());
     }
 
     fn spec(kind: &str, args: Value) -> CommandSpec {

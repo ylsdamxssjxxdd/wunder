@@ -1,19 +1,15 @@
 ---
 title: Desktop Control
-summary: In desktop mode, the Desktop Controller and Desktop Monitor drive the local mouse and keyboard, capture screenshots, and feed the picture to the model as appended visual input.
-updated_at: 2026-10-13
+summary: Enablement conditions for Desktop Controller and Desktop Monitor, coordinates and the 17 actions, how screenshots are appended to the model, failure diagnosis, and rollback boundaries.
+updated_at: 2026-10-16
 ---
+
+`桌面控制器` exists for targets whose only entry point is a graphical interface: if commands, files, or browser tools can solve it, do not go through desktop control, because it is slower, more error-prone, and it directly drives the user's real screen. To see the desktop's current state, or to confirm whether the previous action took effect, use `桌面监视器`.
 
 | Canonical name | Aliases |
 | --- | --- |
 | `桌面控制器` | `desktop_controller`, `controller` |
 | `桌面监视器` | `desktop_monitor`, `monitor` |
-
-## When to use it
-
-- Only when a target has a **graphical interface as its sole entry point**, with no command line or interface available, use `桌面控制器` to click and type.
-- To see the desktop's current state, or to confirm whether the previous action took effect, use `桌面监视器`.
-- If commands, files, or browser tools can solve it, do not go through desktop control: it is slower, more error-prone, and it directly drives the user's real screen.
 
 ## Prerequisites
 
@@ -25,9 +21,7 @@ All three must hold:
 
 Across the forms: the Pupa (desktop mode) lists these three tools in its extra-enabled set by default; under the Hull, Beehive, and Helm forms the desktop tools are unavailable.
 
-## How to use it
-
-### Desktop Controller
+## Desktop Controller
 
 One call needs both a **position** and an **action**:
 
@@ -39,17 +33,17 @@ Loose aliases are accepted too: `keyboard`→`press_key`, `send_text`→`type_te
 
 The action description is only used for the on-screen hint, and defaults to the action name itself.
 
-### Desktop Monitor
+## Desktop Monitor
 
-Give a wait duration (0–30000 ms; anything larger is clamped to 30000), optionally with a one-line observation note that is echoed back verbatim. The wait argument also accepts forms such as `wait` and `delay_ms`.
+`桌面监视器` reads desktop windows and screen state. Give a wait duration (0–30000 ms; anything larger is clamped to 30000), optionally with a one-line observation note that is echoed back verbatim. The wait argument also accepts forms such as `wait` and `delay_ms`.
 
-## What it does automatically
+## Automatic behavior
 
 - **It takes a screenshot after every action.** The controller does not return the screen state from before the action; the outcome is delivered by the visual input that follows.
-- After a successful return, the orchestrator assembles the screenshots into a **user-role multimodal message** appended to the model: a text hint plus the screenshot from before the action (if any) and the current screenshot. In other words, the tool result the model sees contains no image itself; the picture arrives through that appended message. Budget a task as "one action = one call + one look". A single screenshot entering context is capped at 8 MiB, and exceeding that fails.
+- After a successful return, the orchestrator assembles the screenshots into a **user-role multimodal message** appended to the model: a text hint plus the screenshot from before the action (if any) and the current screenshot, so the tool result the model sees contains no image itself and the picture arrives through that appended message. Budget a task as "one action = one call + one look". A single screenshot entering context is capped at 8 MiB, and exceeding that fails.
 - Hints appear on screen: before an action runs, a red dot on the real screen says "AI is clicking here" and disappears when done; the monitor shows a countdown hint.
 
-## Diagnosing problems
+## Errors
 
 - Desktop control not compiled in: the call fails outright and says the capability is not enabled.
 - Not in desktop mode, or the switch is off: it returns "desktop control is disabled".
@@ -63,8 +57,3 @@ Give a wait duration (0–30000 ms; anything larger is clamped to 30000), option
 - A screenshot is also saved to the user's container directory; a persistence failure only logs a warning and does not affect the result.
 - The screenshot directory keeps frames by count, holding only the most recent few (3 by default), so temporary files do not pile up without bound.
 - Authorization follows least privilege: it needs an explicit user switch, it does not silently capture the screen in the background, and it does not expose system capabilities to a remote party.
-
-## Related pages
-
-- Reading local images / video frames: [Read Image](/docs/en/tools/read-image/)
-- Interaction inside a webpage: [Browser Tools](/docs/en/tools/browser/)

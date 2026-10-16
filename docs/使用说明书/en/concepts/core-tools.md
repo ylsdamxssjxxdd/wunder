@@ -1,7 +1,7 @@
 ---
 title: Tools
-summary: The agent's ability to act comes from a four-layer structure: executor tools, skills that package callable knowledge and scripts, capabilities the administrator selects, and tools the user connects. Keeping the layers distinct is what keeps "selectable" separate from "invokable".
-updated_at: 2026-10-13
+summary: How the four layers — tools, skills, capabilities, and user tools — are told apart, canonical names and aliases, dispatch order for dynamic registration, default sets and visibility gates, and the two result-trimming tracks.
+updated_at: 2026-10-16
 ---
 
 The agent's ability to act is collectively called "tools," but tools, skills, capabilities, and user tools are four different layers, and conflating them is the most common cause of broken configuration.
@@ -17,9 +17,9 @@ The agent's ability to act is collectively called "tools," but tools, skills, ca
 | **Capability** | Selection unit on the governance side: a unified descriptor an administrator uses to choose what an agent may use | Configured on the admin side; never enters the execution chain | Its source is built-in, MCP, skill, knowledge base, user MCP, user skill, user knowledge base, or shared |
 | **User tool** | An extension the user connects, in three kinds: MCP, skill, knowledge base | Mounted per user; the alias enters the routing table | Registered in the user tool catalog |
 
-**Tools are executors; skills are callable knowledge and scripts; capabilities are the administrator's selection layer; user tools are the three kinds of user-side connection.** A capability being selected does not mean an executor exists, and an executor existing does not mean the model can see it.
+A capability being selected does not mean an executor exists, and an executor existing does not mean the model can see it.
 
-## Names: canonical name plus alias
+## Canonical names and aliases
 
 Most of the tool names the model sees are Chinese canonical names, with English aliases alongside, and a normalization pass runs before every invocation.
 
@@ -36,7 +36,7 @@ Most of the tool names the model sees are Chinese canonical names, with English 
 
 When a tool is written down in configuration, logs, or documentation, give both the canonical name and the alias; writing only one makes the two easy to mismatch.
 
-## Dynamic registration: the model sees more than the built-in list
+## Dynamic registration
 
 The names that enter the model's tool list are assembled from four kinds of dynamic registration.
 
@@ -50,7 +50,7 @@ The names that enter the model's tool list are assembled from four kinds of dyna
 
 Dispatch order is alias → skill → MCP → knowledge base → built-in tools, and a hit earlier in the chain short-circuits the rest.
 
-## Defaults and per-form differences
+## Default sets and per-form differences
 
 Default tool sets, the desktop hidden set, and the desktop extra set all have a single registration; do not keep a second copy in the docs or the configuration.
 
@@ -74,7 +74,7 @@ Visibility also runs through a few real gates.
 
 Browser is not a single tool: once enabled it registers 17 native tools named `browser_*`, and the aggregate display name "Browser" is only a documentation convention.
 
-## Result trimming runs on two tracks
+## Result trimming
 
 **Display trimming and model-input trimming are separate and do not affect each other**.
 
@@ -93,12 +93,3 @@ Approvals are filed by the tool's risk category, and there are four categories: 
 - The cache that lets one approval cover a short window lasts 600 seconds within the same session.
 - Execution policy has three states: allow, audit, and enforce; under enforce, high-risk actions must have human approval.
 - A front-end confirmation cannot replace back-end authorization.
-
-## Further reading
-
-- [Tool System](/docs/en/concepts/tools/) — the dispatch chain, trimming constants, and protocol differences
-- [Tools Overview](/docs/en/tools/) — arguments and usage for each tool
-- [Context Compression](/docs/en/concepts/core-context-compression/) — how the model-input track saves tokens
-- [Prompts and Skills](/docs/en/concepts/prompt-and-skills/) — `SKILL.md` and skill injection
-- [Multi-user and Capability Management](/docs/en/concepts/core-multi-user-management/) — how administrators choose capabilities
-- [Configuration Reference](/docs/en/capabilities/config/) — tool- and capability-related settings

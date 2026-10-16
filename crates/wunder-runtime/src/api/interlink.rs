@@ -332,9 +332,19 @@ fn device_node(
         ),
         None => (default_device_capabilities(), false, None),
     };
-    let policy = digest::DevicePolicy::parse(device.interlink.as_ref().and_then(|patch| patch.policy_overrides.as_deref()));
-    let capabilities = live.map(|channel| channel.capabilities.clone()).unwrap_or_else(|| interlink_ws::grant_capabilities(&capabilities, &capabilities, &policy));
-    let allowed: Vec<_> = wunder_core::interlink::allowed_commands(&capabilities).into_iter().filter(|kind| !policy.disables(kind)).collect();
+    let policy = digest::DevicePolicy::parse(
+        device
+            .interlink
+            .as_ref()
+            .and_then(|patch| patch.policy_overrides.as_deref()),
+    );
+    let capabilities = live
+        .map(|channel| channel.capabilities.clone())
+        .unwrap_or_else(|| interlink_ws::grant_capabilities(&capabilities, &capabilities, &policy));
+    let allowed: Vec<_> = wunder_core::interlink::allowed_commands(&capabilities)
+        .into_iter()
+        .filter(|kind| !policy.disables(kind))
+        .collect();
 
     let status = match live {
         // A live tunnel answers immediately; its presence beat carries busy/away
@@ -714,12 +724,16 @@ async fn rotate_node_secret(
         let bound = blocking::run_db("api.interlink.secret_binding", move || {
             let auth = store.authenticate_token_details(&token)?;
             match auth.and_then(|auth| auth.family_id) {
-                Some(family) => Ok(storage.get_user_session_device(&family)?
+                Some(family) => Ok(storage
+                    .get_user_session_device(&family)?
                     .is_some_and(|binding| binding.device_id == target)),
                 None => Ok(true),
             }
-        }).await;
-        if !matches!(bound, Ok(true)) { return shadow_device_error(); }
+        })
+        .await;
+        if !matches!(bound, Ok(true)) {
+            return shadow_device_error();
+        }
     }
     if device.revoked || device.user_id != user_id {
         return shadow_device_error();
@@ -819,10 +833,6 @@ struct CommandRequest {
     command_id: Option<String>,
     #[serde(default)]
     timeout_s: Option<f64>,
-    /// Where the request came from; the server fills it in from the device
-    /// header when the caller is a local node.
-    #[serde(default)]
-    from: Option<String>,
 }
 
 async fn issue_command(
@@ -871,14 +881,11 @@ async fn issue_command(
     };
     let args = request.args.clone().unwrap_or_else(|| json!({}));
 
-    // Where did this come from? A local node sends its own device header; a
-    // browser session is `web`.
-    let from_node = headers
-                .get("x-wunder-device-id")
-                .and_then(|value| value.to_str().ok())
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(|value| format!("device:{value}"))
+    // The authenticated session binding owns the source identity.
+    let from_node = resolved
+        .device_id
+        .as_deref()
+        .map(|value| format!("device:{value}"))
         .unwrap_or_else(|| "web".to_string());
 
     let (direction, node) = if to == "cloud" {
@@ -950,6 +957,12 @@ async fn issue_command(
                     format!("unknown command kind: {kind}"),
                 );
             }
+            Err(commands::IssueError::PayloadTooLarge) => {
+                return error_response(
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    "command exceeds the bounded payload limit".to_string(),
+                );
+            }
             Err(commands::IssueError::Storage(err)) => {
                 return error_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string());
             }
@@ -970,11 +983,23 @@ async fn issue_command(
         let kind = kind.to_string();
         let actor = outcome.record.actor_user_id.clone();
         let pending = outcome.record.approval_state == APPROVAL_PENDING;
-        static CLOUD_COMMAND_SLOTS: std::sync::OnceLock<Arc<tokio::sync::Semaphore>> = std::sync::OnceLock::new();
+        static CLOUD_COMMAND_SLOTS: std::sync::OnceLock<Arc<tokio::sync::Semaphore>> =
+            std::sync::OnceLock::new();
         let slots = CLOUD_COMMAND_SLOTS.get_or_init(|| Arc::new(tokio::sync::Semaphore::new(64)));
         let Ok(permit) = slots.clone().try_acquire_owned() else {
-            let _ = commands::finalize(state.storage.clone(), &command_id, COMMAND_STATUS_FAILED, Some(now_unix_seconds()), Some(ERR_NODE_BUSY), None).await;
-            return error_response(StatusCode::SERVICE_UNAVAILABLE, "cloud command capacity reached".to_string());
+            let _ = commands::finalize(
+                state.storage.clone(),
+                &command_id,
+                COMMAND_STATUS_FAILED,
+                Some(now_unix_seconds()),
+                Some(ERR_NODE_BUSY),
+                None,
+            )
+            .await;
+            return error_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "cloud command capacity reached".to_string(),
+            );
         };
         tokio::spawn(async move {
             let _permit = permit;
@@ -1243,7 +1268,14 @@ async fn wait_for_cloud_approval(state: &Arc<AppState>, command_id: &str) -> boo
     // Ticket TTL is 120s; the waiter outlives it so expiry is observed here.
     let deadline = now_unix_seconds() + 180.0;
     loop {
-        if !load_command(state, command_id).await.ok().flatten().is_some_and(|row| !wunder_core::interlink::is_terminal_command_status(&row.status)) { return false; }
+        if !load_command(state, command_id)
+            .await
+            .ok()
+            .flatten()
+            .is_some_and(|row| !wunder_core::interlink::is_terminal_command_status(&row.status))
+        {
+            return false;
+        }
         let now = now_unix_seconds();
         if now > deadline {
             let _ = commands::finalize(

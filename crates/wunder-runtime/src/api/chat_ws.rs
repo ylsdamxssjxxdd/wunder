@@ -294,7 +294,14 @@ async fn handle_ws(
                 };
 
                 let kind = envelope.kind.trim().to_ascii_lowercase();
-                if !matches!(kind.as_str(), "ping" | "connect") && !crate::api::user_context::credential_active(&state, &credential, &user.user_id).await {
+                if !matches!(kind.as_str(), "ping" | "connect")
+                    && !crate::api::user_context::credential_active(
+                        &state,
+                        &credential,
+                        &user.user_id,
+                    )
+                    .await
+                {
                     let _ = out_tx.try_send(Message::Close(None));
                     break;
                 }
@@ -613,10 +620,17 @@ async fn handle_ws(
                                     // make the start feeder and the later watch
                                     // publish the same change rows concurrently.
                                     let feeder_cancel = cancel.child_token();
-                                    long_task::spawn("api.chat_ws.command_stream", crate::api::ws_helpers::watch_command_sessions(
-                                        state_snapshot.control.command_sessions.clone(), display_user.clone(), session_id_cleanup.clone(),
-                                        Some(request_id_cleanup.clone()), ws_tx_snapshot.clone(), feeder_cancel.child_token(),
-                                    ));
+                                    long_task::spawn(
+                                        "api.chat_ws.command_stream",
+                                        crate::api::ws_helpers::watch_command_sessions(
+                                            state_snapshot.control.command_sessions.clone(),
+                                            display_user.clone(),
+                                            session_id_cleanup.clone(),
+                                            Some(request_id_cleanup.clone()),
+                                            ws_tx_snapshot.clone(),
+                                            feeder_cancel.child_token(),
+                                        ),
+                                    );
                                     let mut stream_drained = false;
                                     loop {
                                         tokio::select! {
@@ -823,11 +837,14 @@ async fn handle_ws(
                         let task_id_cleanup = task_id.clone();
                         long_task::spawn("api.chat_ws.resume_stream", async move {
                             let command_stream = crate::api::ws_helpers::watch_command_sessions(
-                                state_snapshot.control.command_sessions.clone(), command_user, session_id.clone(),
-                                Some(request_id_cleanup.clone()), ws_tx_snapshot.clone(), cancel.clone(),
+                                state_snapshot.control.command_sessions.clone(),
+                                command_user,
+                                session_id.clone(),
+                                Some(request_id_cleanup.clone()),
+                                ws_tx_snapshot.clone(),
+                                cancel.clone(),
                             );
-                            let thread_stream =
-                            resume_thread_changes_v2(
+                            let thread_stream = resume_thread_changes_v2(
                                 state_snapshot,
                                 session_id,
                                 after_change_seq,
@@ -913,32 +930,36 @@ async fn handle_ws(
                         let task_id_cleanup = task_id.clone();
                         long_task::spawn("api.chat_ws.watch_stream", async move {
                             let command_stream = crate::api::ws_helpers::watch_command_sessions(
-                                state_snapshot.control.command_sessions.clone(), view_user.clone(), session_id.clone(),
-                                Some(request_id_cleanup.clone()), ws_tx_snapshot.clone(), cancel.clone(),
+                                state_snapshot.control.command_sessions.clone(),
+                                view_user.clone(),
+                                session_id.clone(),
+                                Some(request_id_cleanup.clone()),
+                                ws_tx_snapshot.clone(),
+                                cancel.clone(),
                             );
                             let thread_stream = async {
-                            if let Some(seq) = view_seq {
-                                crate::api::ws_helpers::resume_thread_view(
-                                    state_snapshot,
-                                    session_id,
-                                    view_user,
-                                    seq,
-                                    Some(&request_id_cleanup),
-                                    ws_tx_snapshot,
-                                    Some(cancel.clone()),
-                                )
-                                .await;
-                            } else {
-                                resume_thread_changes_v2(
-                                    state_snapshot,
-                                    session_id,
-                                    after_change_seq,
-                                    Some(&request_id_cleanup),
-                                    ws_tx_snapshot,
-                                    Some(cancel.clone()),
-                                )
-                                .await;
-                            }
+                                if let Some(seq) = view_seq {
+                                    crate::api::ws_helpers::resume_thread_view(
+                                        state_snapshot,
+                                        session_id,
+                                        view_user,
+                                        seq,
+                                        Some(&request_id_cleanup),
+                                        ws_tx_snapshot,
+                                        Some(cancel.clone()),
+                                    )
+                                    .await;
+                                } else {
+                                    resume_thread_changes_v2(
+                                        state_snapshot,
+                                        session_id,
+                                        after_change_seq,
+                                        Some(&request_id_cleanup),
+                                        ws_tx_snapshot,
+                                        Some(cancel.clone()),
+                                    )
+                                    .await;
+                                }
                             };
                             tokio::select! { _ = command_stream => {}, _ = thread_stream => {} }
                             let _ = cleanup_ws_task(

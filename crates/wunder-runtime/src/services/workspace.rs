@@ -687,7 +687,7 @@ impl WorkspaceManager {
 
     /// 相对路径与文件树的基准目录：云端形态是智能体云端目录（用户目录下的
     /// `workspace`），其余形态就是该作用域的根目录。
-    fn user_root(&self, user_id: &str) -> PathBuf {
+    pub(crate) fn user_root(&self, user_id: &str) -> PathBuf {
         if !self.single_root && self.flatten_agent_scope_enabled() {
             return self
                 .root
@@ -3298,13 +3298,15 @@ fn run_orphan_sweep_once(storage: &dyn StorageBackend, flag: &AtomicI64, cutoff:
             {
                 info!(
                     total,
-                    cutoff, swept_until = result.swept_until,
+                    cutoff,
+                    swept_until = result.swept_until,
                     "orphan session log sweep catching up"
                 );
             } else {
                 debug!(
                     total,
-                    cutoff, swept_until = result.swept_until,
+                    cutoff,
+                    swept_until = result.swept_until,
                     "orphan session log sweep in progress"
                 );
             }

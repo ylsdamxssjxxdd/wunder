@@ -56,7 +56,11 @@ pub(crate) async fn watch_command_sessions(
             if tokio::select! {
                 _ = cancel.cancelled() => return,
                 result = send_ws_event(&tx, request_id.as_deref(), event) => result,
-            }.is_err() { return; }
+            }
+            .is_err()
+            {
+                return;
+            }
         }
         loop {
             let event = tokio::select! {
@@ -68,21 +72,37 @@ pub(crate) async fn watch_command_sessions(
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => break,
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
             };
-            if event.user_id != user_id || event.session_id != session_id { continue; }
-            let id = event.data.get("command_session_id").and_then(Value::as_str).unwrap_or_default();
+            if event.user_id != user_id || event.session_id != session_id {
+                continue;
+            }
+            let id = event
+                .data
+                .get("command_session_id")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
             let seq = event.data.get("seq").and_then(Value::as_u64).unwrap_or(0);
-            if cursors.get(id).is_some_and(|cursor| seq <= *cursor) { continue; }
+            if cursors.get(id).is_some_and(|cursor| seq <= *cursor) {
+                continue;
+            }
             // The receiver and deduplication window are both bounded.
-            if cursors.len() >= 256 { cursors.clear(); }
+            if cursors.len() >= 256 {
+                cursors.clear();
+            }
             cursors.insert(id.to_string(), seq);
             let event = StreamEvent {
-                event: event.event_type.into(), data: event.data,
-                id: None, timestamp: Some(Utc::now()),
+                event: event.event_type.into(),
+                data: event.data,
+                id: None,
+                timestamp: Some(Utc::now()),
             };
             if tokio::select! {
                 _ = cancel.cancelled() => return,
                 result = send_ws_event(&tx, request_id.as_deref(), event) => result,
-            }.is_err() { return; }
+            }
+            .is_err()
+            {
+                return;
+            }
         }
     }
 }

@@ -590,13 +590,16 @@ async fn register_device(
             "device_id must be a UUID",
         ));
     }
-    let binding = identity
-        .family_id
-        .as_deref()
-        .map(|family| state.storage.get_user_session_device(family))
-        .transpose()
+    let binding = if let Some(family) = identity.family_id.clone() {
+        let storage = state.storage.clone();
+        blocking::run_db("api.cloud.device_binding", move || {
+            storage.get_user_session_device(&family)
+        })
+        .await
         .map_err(internal_error)?
-        .flatten();
+    } else {
+        None
+    };
     let device_id = binding
         .as_ref()
         .map(|bound| bound.device_id.clone())

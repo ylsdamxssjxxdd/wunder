@@ -1,14 +1,12 @@
 ---
 title: Memory Manager
-summary: Manage the current agent's long-term memory fragments under the current user: list, search, read, add, update, and remove, along with the "short index injection plus fetch-on-demand" pattern.
-updated_at: 2026-10-13
+summary: The seven actions of `memory_manager`, the short-index-injection plus fetch-on-demand usage pattern, a write example, and field constraints.
+updated_at: 2026-10-16
 ---
 
-`memory_manager` manages the current agent's long-term memory within the current user scope.
+`memory_manager` manages the current agent's long-term memory within the current user scope, with seven supported actions: `list`, `search`, `get`, `add`, `update`, `remove`, `clear`.
 
-Supported actions: `list`, `search`, `get`, `add`, `update`, `remove`, `clear`.
-
-## How it works
+## Injection and retrieval
 
 - By default the system prompt receives only a short index (memory id plus title); the full content is **not** injected along with it.
 - When detail is needed, first use `list` / `search` to find the memory id, then use `get` to fetch the full text.

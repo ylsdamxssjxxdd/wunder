@@ -17,6 +17,7 @@ use std::time::{Duration, Instant};
 use tempfile::TempDir;
 use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::tungstenite::Message as WsMessage;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 use wunder_server::{
     build_router,
@@ -166,7 +167,8 @@ fn scratch_dir() -> TempDir {
 
 async fn spawn_server() -> Server {
     let dir = scratch_dir();
-    let config = base_config(&dir, "server.db");
+    let mut config = base_config(&dir, "server.db");
+    configure_mock_model(&mut config, spawn_mock_llm().await);
     let state = Arc::new(
         AppState::new_with_options(
             // `ConfigStore::new` reads the path it is given and silently falls
@@ -181,7 +183,7 @@ async fn spawn_server() -> Server {
                 config.clone(),
             ),
             config,
-            AppStateInitOptions::cli_default(),
+            AppStateInitOptions::cli_default().with_start_thread_runtime(true),
         )
         .expect("server app state"),
     );
@@ -234,6 +236,51 @@ async fn build_local_node(server: &Server) -> LocalNode {
     let dir = scratch_dir();
     let mock_base = spawn_mock_llm().await;
     let mut config = base_config(&dir, "local.db");
+    configure_mock_model(&mut config, mock_base);
+    // Every turn reloads this store; it must match the engine's configuration.
+    let config_store = wunder_server::config_store::ConfigStore::from_config(
+        dir.path().join("wunder.yaml"),
+        config.clone(),
+    );
+    let state = Arc::new(
+        AppState::new_with_options(
+            config_store,
+            config,
+            AppStateInitOptions::cli_default().with_start_thread_runtime(true),
+        )
+        .expect("local app state"),
+    );
+    create_user(&state, LOCAL_USER);
+
+    // The tunnel session is separate from this node's local engine identity.
+    let session: CloudSessionFile = serde_json::from_value(json!({
+        "server": server.base_url,
+        "user_id": server.user_id,
+        "username": SERVER_USER,
+        "scope": "local_desktop",
+        "token": server.token,
+        "device_id": DEVICE_ID,
+        "device_name": "loopback",
+        "client": "desktop",
+        "logged_in_at": 0.0,
+        "interlink": {"enabled":true,"full_shadow":true},
+    }))
+    .expect("session file");
+    session.save(dir.path()).expect("save session");
+    cloud_shared().set_session_base_dir(dir.path().to_path_buf());
+    assert!(cloud_shared().session().is_some());
+    let client = InterlinkClient::new(
+        state.clone(),
+        InterlinkLocalOptions {
+            local_user_id: LOCAL_USER.to_string(),
+            workspace_id: None,
+            session_base_dir: dir.path().to_path_buf(),
+        },
+    );
+    LocalNode { state, client, _dir: dir }
+}
+
+fn configure_mock_model(config: &mut Config, mock_base: String) {
     config.llm.default = "model-default".to_string();
     config.llm.models.insert(
         "model-default".to_string(),
@@ -251,64 +298,6 @@ async fn build_local_node(server: &Server) -> LocalNode {
             ..Default::default()
         },
     );
-    // Every turn re-reads the config store (orchestrator/config.rs), so a model
-    // that only lives in the in-memory `config` argument is invisible to a
-    // remote-driven turn: it fails with "no model configured" before the mock
-    // is ever called. The store must start from this same config.
-    let config_store = wunder_server::config_store::ConfigStore::from_config(
-        dir.path().join("wunder.yaml"),
-        config.clone(),
-    );
-    let state = Arc::new(
-        AppState::new_with_options(
-            config_store,
-            config,
-            // The CLI profile leaves the queue pump off; a remote turn that is
-            // admitted while its session still holds a run needs the pump to
-            // ever start, exactly like a 舵机 controlled node.
-            AppStateInitOptions::cli_default().with_start_thread_runtime(true),
-        )
-        .expect("local app state"),
-    );
-    create_user(&state, LOCAL_USER);
-
-    // The tunnel session: the client reads it through the process-global
-    // cloud service, pinned to this test's directory.
-    let session: CloudSessionFile = serde_json::from_value(json!({
-        "server": server.base_url,
-        "user_id": server.user_id,
-        "username": SERVER_USER,
-        "scope": "local_desktop",
-        "token": server.token,
-        "device_id": DEVICE_ID,
-        "device_name": "loopback",
-        "client": "desktop",
-        "logged_in_at": 0.0,
-        "interlink": {"enabled":true,"full_shadow":true},
-    }))
-    .expect("session file");
-    session
-        .save(&dir.path().to_path_buf())
-        .expect("save session");
-    cloud_shared().set_session_base_dir(dir.path().to_path_buf());
-    assert!(
-        cloud_shared().session().is_some(),
-        "cloud session must be visible to the client engine"
-    );
-
-    let client = InterlinkClient::new(
-        state.clone(),
-        InterlinkLocalOptions {
-            local_user_id: LOCAL_USER.to_string(),
-            workspace_id: None,
-            session_base_dir: dir.path().to_path_buf(),
-        },
-    );
-    LocalNode {
-        state,
-        client,
-        _dir: dir,
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -372,13 +361,14 @@ struct RemoteView {
 impl RemoteView {
     async fn open(server: &Server, device_id: &str, thread_id: &str) -> Self {
         let url = format!(
-            "{}/wunder/interlink/remote_ws?target=device:{}&thread={}&token={}",
+            "{}/wunder/interlink/remote_ws?target=device:{}&thread={}",
             server.base_url.replace("http://", "ws://"),
             device_id,
-            thread_id,
-            server.token
+            thread_id
         );
-        let (socket, _response) = tokio_tungstenite::connect_async(url)
+        let mut request = url.into_client_request().expect("remote request");
+        request.headers_mut().insert("authorization", format!("Bearer {}", server.token).parse().unwrap());
+        let (socket, _response) = tokio_tungstenite::connect_async(request)
             .await
             .expect("remote_ws handshake");
         Self { socket }
@@ -698,7 +688,12 @@ fn loopback_tunnel_shadow_commands_and_approvals_end_to_end() {
 
 async fn loopback_run() {
     let server = spawn_server().await;
-    server.state.config_store.update(|config| config.interlink.heartbeat_s = 1).await.unwrap();
+    server
+        .state
+        .config_store
+        .update(|config| config.interlink.heartbeat_s = 1)
+        .await
+        .unwrap();
     // The alert pump is a 舰体 background task that the real server starts with
     // its janitor; this harness builds the router directly, so without an
     // explicit spawn every detected alert would only be counted as dropped.
@@ -710,7 +705,10 @@ async fn loopback_run() {
     let initial_channel = node.client.status().channel_id;
     // Survive more than three negotiated heartbeats without reconnecting.
     tokio::time::sleep(Duration::from_secs(5)).await;
-    assert_eq!(node.client.status().state, wunder_server::interlink::client::TunnelState::Connected);
+    assert_eq!(
+        node.client.status().state,
+        wunder_server::interlink::client::TunnelState::Connected
+    );
     assert_eq!(node.client.status().channel_id, initial_channel);
     assert_eq!(
         node.client.status().device_id.as_deref(),
@@ -800,6 +798,61 @@ async fn loopback_run() {
         "cloud listing returns entries (is_array={}): {cloud_record}",
         entries.is_array()
     );
+    // A local client controls its own cloud threads without a second device
+    // approval. Prove admission, actual model completion, view and cancellation.
+    let (agent_status, agents) = get_json(&format!("{}/wunder/agents", server.base_url), &server.token).await;
+    assert_eq!(agent_status, 200, "{agents}");
+    let agent = agents.pointer("/data/items/0/id").and_then(Value::as_str).unwrap_or("");
+    let submitted = issue(&server, "cloud", "thread.message", json!({"message":"fixture cloud turn","agent":agent}), None).await;
+    assert_eq!(submitted["approval_state"], "none", "{submitted}");
+    let record = wait_terminal(&server, submitted["command_id"].as_str().unwrap(), Duration::from_secs(20)).await;
+    assert_eq!(record["status"], "succeeded", "{record}");
+    let thread = record["result"]["local_thread_id"].as_str().expect("cloud thread id");
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let (status, view) = get_json(&format!("{}/wunder/chat/sessions/{thread}/view/bootstrap?kind=chat", server.base_url), &server.token).await;
+        assert_eq!(status, 200, "{view}");
+        if view["data"]["page"]["chat"].as_array().is_some_and(|rows| rows.iter().any(|row| row["assistant"]["content"] == "ok")) { break; }
+        assert!(Instant::now() < deadline, "cloud model reply missing: {view}");
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    let slow = issue(&server, "cloud", "thread.message", json!({"local_thread_id":thread,"message":"loopback-slow"}), None).await;
+    let slow_record = wait_terminal(&server, slow["command_id"].as_str().unwrap(), Duration::from_secs(20)).await;
+    assert_eq!(slow_record["status"], "succeeded", "{slow_record}");
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while !SLOW_ROUND.load(std::sync::atomic::Ordering::SeqCst) {
+        assert!(Instant::now() < deadline, "cloud slow turn never started");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let stopped = issue(&server, "cloud", "thread.cancel", json!({"local_thread_id":thread}), None).await;
+    let stopped = wait_terminal(&server, stopped["command_id"].as_str().unwrap(), Duration::from_secs(15)).await;
+    assert_eq!(stopped["status"], "succeeded", "{stopped}");
+    SLOW_ROUND.store(false, std::sync::atomic::Ordering::SeqCst);
+    // Exercise the production executor fence through authenticated HTTP,
+    // rather than only testing the path parser in isolation.
+    for path in [
+        "../outside",
+        "/outside",
+        "workspaces/other",
+        ".interlink_backup/item",
+    ] {
+        let rejected = issue(
+            &server,
+            "cloud",
+            "workspace.list",
+            json!({"path": path}),
+            None,
+        )
+        .await;
+        let row = wait_terminal(
+            &server,
+            rejected["command_id"].as_str().unwrap(),
+            Duration::from_secs(10),
+        )
+        .await;
+        assert_eq!(row["status"], "failed", "{row}");
+        assert_eq!(row["error_code"], "PATH_REJECTED", "{row}");
+    }
 
     // The cloud node has no L3 capability: a self-approvable ticket must not
     // turn the 舰体 host into a controllable device (docs §9.2, §13.5 17).
@@ -845,9 +898,7 @@ async fn loopback_run() {
     )
     .await;
     assert_eq!(record["status"], json!("succeeded"), "{record}");
-    let entries = record["result"]["entries"]
-        .as_array()
-        .expect("entries");
+    let entries = record["result"]["entries"].as_array().expect("entries");
     assert!(
         entries
             .iter()
@@ -855,8 +906,32 @@ async fn loopback_run() {
         "remote listing sees the local file: {record}"
     );
 
+    // This size fits the former inline limit but base64 would exceed the
+    // tunnel's 512 KiB frame cap. It must now take the chunked path.
+    let medium = pattern_bytes(384 * 1024);
+    std::fs::write(user_root.join("medium.bin"), &medium).unwrap();
+    let sent = issue(
+        &server,
+        &format!("device:{DEVICE_ID}"),
+        "workspace.read",
+        json!({"path":"medium.bin"}),
+        None,
+    )
+    .await;
+    let id = sent["command_id"].as_str().unwrap();
+    let read = wait_terminal(&server, id, Duration::from_secs(20)).await;
+    assert_eq!(read["status"], "succeeded", "{read}");
+    assert_eq!(read["result"]["transport"], "stream", "{read}");
+    let (status, bytes) = get_bytes(
+        &format!("{}/wunder/interlink/commands/{id}/blob", server.base_url),
+        &server.token,
+    )
+    .await;
+    assert_eq!(status, 200);
+    assert_eq!(bytes, medium);
+
     // -- §13.2 6: a shadowed file read rides the tunnel data plane ----------
-    // Anything past `stream::INLINE_MAX_BYTES` (1 MiB) leaves the control
+    // Anything past `stream::INLINE_MAX_BYTES` leaves the control
     // channel and comes back as chunks, so this is the path the ledger can
     // never carry.
     let blob = pattern_bytes(1024 * 1024 + 4096);

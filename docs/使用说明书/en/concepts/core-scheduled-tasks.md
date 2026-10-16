@@ -1,6 +1,6 @@
 ---
 title: Scheduled Tasks
-summary: Scheduled tasks run the agent at a chosen time: three schedule kinds — at for a one-off point, every for a fixed interval, cron for a recurring pattern — with leases, backoff, and auto-disable, so tasks survive a process restart.
+summary: The semantics and bounds of the at, every, and cron schedule kinds, the two delivery targets, lease, backoff, and auto-disable parameters, and support by form.
 read_when:
   - You want a report, inspection, or reminder to run on a schedule instead of by hand
   - A scheduled task did not run, ran twice, or was disabled on its own
@@ -10,18 +10,16 @@ source_docs:
   - crates/wunder-runtime/src/services/cron_schedule.rs
   - crates/wunder-runtime/src/services/cron/policy.rs
   - crates/wunder-runtime/src/api/cron.rs
-updated_at: 2026-10-13
+updated_at: 2026-10-16
 ---
 
-Scheduled tasks let the agent run automatically at a chosen time, for periodic reports, inspections, and reminders.
-
-This is **engine-level scheduling**: the task definition is persisted in storage, and a background loop claims work by due time, independent of which session you happen to be viewing. Every run is recorded (`/wunder/cron/runs`): whether it ran, whether it succeeded, and when it will run next; failures come with backoff and auto-disable; and a process restart does not lose the task definitions.
+The task definition is persisted in storage, and a background loop claims work by due time, independent of which session you happen to be viewing. Every run is recorded (`/wunder/cron/runs`): whether it ran, whether it succeeded, and when it will run next; failures come with backoff and auto-disable; and a process restart does not lose the task definitions.
 
 This differs from waiting inside a session: yielding in a session only affects the current thread, whereas a scheduled task creates a new run in the future.
 
 ![Scheduled tasks diagram: scheduling rules enter the scheduler, then dispatch to background execution and execution records](/docs/assets/manual/core-scheduled-tasks.svg)
 
-## Three kinds of schedule
+## Schedule kinds
 
 The `kind` field is one of `at`, `every`, or `cron`.
 
@@ -35,7 +33,7 @@ Natural language also works in tools and quick input, and the system converts it
 
 Content limits: a task name is at most 128 characters, and a trigger message at most 16,384 characters.
 
-## Where results are delivered
+## Result delivery
 
 `session_target` has two values.
 
@@ -62,11 +60,11 @@ Default scheduling parameters:
 
 After a failure, backoff steps up with the consecutive-failure count: **30 seconds → 60 seconds → 5 minutes → 15 minutes → 1 hour**, then stays at the last step. Once the failure limit is reached, the task is auto-disabled with a written reason; re-enabling it resets the failure count.
 
-## The master switch
+## Master switch
 
-With the master switch off (`cron.enabled=false`), **only four kinds of write operation are rejected — `add`, `update`, `enable`, and `run`** (each with a clear message). Status, list, a single detail, run records, delete, and disable all remain available, so existing tasks can still be reviewed and cleaned up. This is not a blanket refusal of the whole interface.
+With the master switch off (`cron.enabled=false`), four kinds of write operation are rejected: `add`, `update`, `enable`, and `run`, each with a clear message. Status, list, a single detail, run records, delete, and disable all remain available, so existing tasks can still be reviewed and cleaned up.
 
-## Where to create one, and support by form
+## Entry points and support by form
 
 | Surface | Status |
 | --- | --- |
@@ -78,9 +76,3 @@ With the master switch off (`cron.enabled=false`), **only four kinds of write op
 | Bridge | No user-level task management page; it exists only as a template configuration under preset agents |
 
 When you need something to run on a schedule, configure it on the Beehive, the Pupa, or the Hull side.
-
-## Related pages
-
-- [Schedule Task](/docs/en/tools/schedule-task/) — tool parameters and usage
-- [Stability](/docs/en/concepts/core-stability/) — the wider view of backoff and bounded design
-- [Agent Loop](/docs/en/concepts/core-agent-loop/) — how a triggered task enters the execution chain

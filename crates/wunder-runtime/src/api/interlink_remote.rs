@@ -48,8 +48,6 @@ struct RemoteQuery {
     /// Local thread id inside that node.
     #[serde(default)]
     thread: Option<String>,
-    #[serde(default)]
-    token: Option<String>,
 }
 
 async fn remote_ws(
@@ -68,8 +66,16 @@ async fn remote_ws(
     }
     drop(config);
 
-    let protocol_token = headers.get("sec-websocket-protocol").and_then(|value| value.to_str().ok()).and_then(|value| value.split(',').map(str::trim).find_map(|item| item.strip_prefix("wunder-auth.")));
-    let auth_headers = match query.token.as_deref().or(protocol_token).map(str::trim) {
+    let protocol_token = headers
+        .get("sec-websocket-protocol")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| {
+            value
+                .split(',')
+                .map(str::trim)
+                .find_map(|item| item.strip_prefix("wunder-auth."))
+        });
+    let auth_headers = match protocol_token.map(str::trim) {
         Some(token) if !token.is_empty() && headers.get(AUTHORIZATION).is_none() => {
             let mut cloned = headers.clone();
             if let Ok(value) = HeaderValue::from_str(&format!("Bearer {token}")) {
@@ -127,7 +133,33 @@ async fn remote_ws(
         }
     };
     match device {
-        Some(device) if !device.revoked && device.user_id == user_id => {}
+        Some(device) if !device.revoked && device.user_id == user_id => {
+            let patch = device.interlink.unwrap_or_default();
+            let policy = crate::services::interlink::digest::DevicePolicy::parse(
+                patch.policy_overrides.as_deref(),
+            );
+            let authorized = patch
+                .capabilities
+                .as_deref()
+                .map(|raw| serde_json::from_str::<Vec<String>>(raw).unwrap_or_default())
+                .unwrap_or_else(wunder_core::interlink::default_device_capabilities);
+            let effective = registry()
+                .by_device(device_id)
+                .map(|live| live.capabilities)
+                .unwrap_or(authorized);
+            if patch.interlink_enabled == Some(false)
+                || policy.disables(wunder_core::interlink::CMD_THREADS_GET)
+                || policy.disables_cap(wunder_core::interlink::CAP_QUERY_BASIC)
+                || !effective
+                    .iter()
+                    .any(|cap| cap == wunder_core::interlink::CAP_QUERY_BASIC)
+            {
+                return Err(error_response(
+                    StatusCode::FORBIDDEN,
+                    "remote thread access is disabled by device policy".to_string(),
+                ));
+            }
+        }
         _ => {
             return Err(error_response(
                 StatusCode::UNAUTHORIZED,
@@ -142,7 +174,9 @@ async fn remote_ws(
         .protocols([REMOTE_WS_PROTOCOL, TUNNEL_WS_PROTOCOL])
         .max_message_size(WS_MAX_MESSAGE_BYTES)
         .max_frame_size(WS_MAX_MESSAGE_BYTES)
-        .on_upgrade(move |socket| handle_remote(socket, state, device_id, thread_id, credential, user_id)))
+        .on_upgrade(move |socket| {
+            handle_remote(socket, state, device_id, thread_id, credential, user_id)
+        }))
 }
 
 /// Bridge one watched `(device, thread)` pair onto the browser socket.
@@ -213,7 +247,25 @@ async fn handle_remote(
                     let _ = send_json(&mut sender, &json!({"type": REMOTE_FRAME_CLOSE, "reason": "session_revoked"})).await;
                     break;
                 }
-                if sender.send(Message::Ping(Vec::new().into())).await.is_err() {
+                let storage = state.storage.clone();
+                let lookup = device_id.clone();
+                let expected_user = user_id.clone();
+                let allowed = blocking::run_db("interlink.remote.revalidate", move || {
+                    let Some(device) = storage.get_cloud_device(&lookup)? else { return Ok(false) };
+                    let patch = device.interlink.unwrap_or_default();
+                    let policy = crate::services::interlink::digest::DevicePolicy::parse(patch.policy_overrides.as_deref());
+                    let caps = patch.capabilities.as_deref().map(|raw| serde_json::from_str::<Vec<String>>(raw).unwrap_or_default())
+                        .unwrap_or_else(wunder_core::interlink::default_device_capabilities);
+                    Ok::<bool, anyhow::Error>(!device.revoked && device.user_id == expected_user && patch.interlink_enabled != Some(false)
+                        && !policy.disables(wunder_core::interlink::CMD_THREADS_GET)
+                        && !policy.disables_cap(wunder_core::interlink::CAP_QUERY_BASIC)
+                        && caps.iter().any(|cap| cap == wunder_core::interlink::CAP_QUERY_BASIC))
+                }).await.unwrap_or(false);
+                if !allowed {
+                    let _ = send_json(&mut sender, &json!({"type": REMOTE_FRAME_CLOSE, "reason": "PERMISSION_DENIED"})).await;
+                    break;
+                }
+        if sender.send(Message::Ping(Vec::new().into())).await.is_err() {
                     break;
                 }
             }
@@ -291,10 +343,13 @@ async fn send_json(
 }
 
 async fn send_text(sender: &mut SplitSink<WebSocket, Message>, text: &str) -> Result<(), ()> {
-    sender
-        .send(Message::Text(text.to_string().into()))
-        .await
-        .map_err(|_| ())
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        sender.send(Message::Text(text.to_string().into())),
+    )
+    .await
+    .map_err(|_| ())?
+    .map_err(|_| ())
 }
 
 fn now_unix_seconds() -> f64 {

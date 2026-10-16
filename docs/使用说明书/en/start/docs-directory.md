@@ -9,14 +9,14 @@ source_docs:
   - docs/性能标准.md
   - docs/SOP.md
   - docs/功能迭代.md
-updated_at: 2026-10-13
+updated_at: 2026-10-16
 ---
 
 # Documentation Directory
 
 wunder's documentation falls into seven categories, each answering a different kind of question. When writing docs, don't mix them: **design docs cover boundaries and rationale**, the **technical manual covers engineering execution** (change points, run method, verification points), the **API reference covers interface contracts**, the **user manual covers user and admin operations**, **performance standards and scoring cover conventions and quantification**, the **changelog covers the flow of changes**, and **lessons-learned covers recurring problems**.
 
-## What the seven categories are for
+## Documentation categories
 
 | Category | Location | Audience | When to look |
 | --- | --- | --- | --- |
@@ -125,7 +125,7 @@ A single file, from the interface consumer's perspective. All HTTP endpoints use
 
 `docs/SOP.md`: a 6-step flow (worktree → quality-gate → peer review → merge-gate → PR → merge and cleanup); Biome `pnpm check`, `pnpm lint`; files warn at 200 lines and hard-cap at 350.
 
-## Suggested reading paths
+## Reading paths
 
 **New users**: user manual → Quick Start → Pupa intro; when something goes wrong, first-run troubleshooting.
 **Developers getting started**: technical manual 01–03 → 02 repository structure and modules → 03 runtime and execution path; then design docs 01–02 to fill in the "why."
@@ -133,9 +133,3 @@ A single file, from the interface consumer's perspective. All HTTP endpoints use
 **Performance issues**: performance standards → performance scoring → performance baselines; for specific paging constants, see technical manual 03–04.
 **Operations and acceptance**: technical manual 10 → `docs/SOP.md`; `docs/功能迭代.md` for historical decisions; `docs/经验教训.md` to avoid repeating pitfalls.
 
-## Further reading
-
-- [Manual overview](/docs/en/start/hubs/)
-- [wunder home page](/docs/en/index/)
-- [API index](/docs/en/capabilities/api-index/)
-- [Configuration reference](/docs/en/capabilities/config/)

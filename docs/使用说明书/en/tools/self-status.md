@@ -1,22 +1,12 @@
 ---
 title: Self Status
-summary: Checks the current session's model, context usage, round progress, and event counts, for deciding whether to compress context or wrap up.
-updated_at: 2026-10-13
+summary: The detail levels and event-list arguments of `self_status`, the fields of the returned status object, and the differences in what the numbers measure.
+updated_at: 2026-10-16
 ---
 
-The tool is named `自我状态`, also known as `self_status`. It is a read-only diagnostic tool that performs no business action. It reports how far the run has progressed, how much context remains, which model is in use, and what this turn has done.
+The canonical name is `自我状态` and the alias is `self_status`. It is read-only: it performs no business action, triggers no approval, and does not run in the sandbox. It reports the current session's model, context usage, round progress, and event counts (model requests, tool calls, approvals), for deciding whether to compress context or wrap up. It is not in the tool set by default; an administrator must tick it on the capability panel for it to appear.
 
-It is not in the tool set by default; an administrator must tick it on the capability panel for it to appear.
-
-## When to use it
-
-- To confirm which model the current session uses, how much context is occupied, and how far the rounds have progressed.
-- To judge whether context should be compressed or the turn should be wrapped up.
-- To get event counts (model requests, tool calls, approvals) in order to review what this turn did.
-
-It is read-only and changes no state, so do not use it for business actions.
-
-## How to use it
+## Arguments
 
 The level of detail is selectable as needed:
 
@@ -24,7 +14,7 @@ The level of detail is selectable as needed:
 - Besides those three, `lite`, `summary`, `detail`, `detailed`, and `verbose` are also accepted and are normalized to roughly the matching level; an unrecognized value falls back to `standard`.
 - To see a recent event list, turn on `include_events` (the `full` level turns it on by default); `events_limit` controls how many come back, in the range 1–200, 20 by default.
 
-## What the result contains
+## Return fields
 
 It returns a status object directly, rather than the shared success shell:
 
@@ -44,13 +34,8 @@ A few points worth noting:
 - The "model in use" comes from the event stream and may not match the configured default.
 - The context values use several different measures, returned side by side without converting between them; do not mix numbers from different measures.
 
-## Diagnosing problems
+## Errors
 
 - A bad argument is returned with its error text unchanged, and the execution layer records it as a failure.
 - An unavailable monitor or a missing orchestrator is not an error; the corresponding fields are simply empty.
-- It works across Pupa, Beehive, Helm, and Hull; it is read-only, triggers no approval, and does not run in the sandbox.
-
-## Related pages
-
-- Thread-level session management: [Thread Control](/docs/en/tools/thread-control/)
-- Tool overview and enablement tiers: [Tools](/docs/en/tools/index/)
+- It works across Pupa, Beehive, Helm, and Hull.

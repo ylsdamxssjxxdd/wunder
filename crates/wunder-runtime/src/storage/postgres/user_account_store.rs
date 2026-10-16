@@ -787,7 +787,10 @@ impl PostgresUserAccountStorage for PostgresStorage {
         }
         let mut conn = self.conn()?;
         let mut tx = conn.transaction()?;
-        tx.query_one("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", &[&cleaned])?;
+        tx.query_one(
+            "SELECT pg_advisory_xact_lock(hashtextextended($1,0))",
+            &[&cleaned],
+        )?;
         let affected = tx.execute(
             "UPDATE user_refresh_tokens SET revoked = TRUE WHERE family_id = $1 AND revoked = FALSE",
             &[&cleaned],

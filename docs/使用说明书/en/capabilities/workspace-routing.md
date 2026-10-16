@@ -1,12 +1,12 @@
 ---
 title: Workspace Routing and File Management
-summary: Each user has a single cloud workspace directory. Paths are always workspace-relative, and the container parameter has been converged — directories are no longer derived per agent or container.
-updated_at: 2026-10-13
+summary: Uniqueness and isolation of the cloud directory, how `/wunder/workspace*` is resolved, path conventions, usage statistics, and file management.
+updated_at: 2026-10-16
 ---
 
 Every user has a single cloud directory.
 
-## One cloud directory per user
+## Cloud Directory
 
 Isolation has one layer only: by user. Each user's files live in their own single cloud directory, partitioned by the server under its data root.
 
@@ -17,7 +17,7 @@ Isolation has one layer only: by user. Each user's files live in their own singl
 | **Isolated** | Path checks are bounded by the user root; out-of-bounds access is rejected |
 | **Persistent** | The workspace is persistent storage and is not cleaned up automatically |
 
-## Routing rules
+## Routing Rules
 
 Routing for `/wunder/workspace*`:
 
@@ -29,14 +29,14 @@ Routing for `/wunder/workspace*`:
 - **No more per-agent roots**: `agent_id` only affects conversation and configuration binding, not directory derivation.
 - **Subagents do not get their own directory**: a subagent is a temporary work unit created by the main agent and shares the same user directory.
 
-## Path conventions
+## Path Conventions
 
 - The API takes and returns **workspace-relative paths**, for example `docs/notes.md`
 - The root directory is written as an empty string
 - Do not pass a machine absolute path, and never show a server absolute path in the front end
 - Invalid or out-of-bounds names are rejected outright rather than silently redirected
 
-## Workspace versus temporary directory
+## Workspace versus Temporary Directory
 
 | | Workspace | Temporary directory |
 |--|--------|----------|
@@ -46,7 +46,7 @@ Routing for `/wunder/workspace*`:
 
 Keep files you need to keep in the workspace and transit files in the temporary directory.
 
-## Usage statistics
+## Usage Statistics
 
 `GET /wunder/workspace/stats` returns a bare object whose fields include the file count, directory count, bytes used, whether the walk was truncated, and recently modified files:
 
@@ -54,7 +54,7 @@ Keep files you need to keep in the workspace and transit files in the temporary 
 - A `null` `quota_bytes` means no quota is configured; the interface then shows only the used amount, with no quota denominator
 - The working-directory overview card on the welcome page and the usage bar at the bottom of the left sidebar share this data
 
-## File management essentials
+## File Management
 
 - **Browse**: directories load lazily, fetching children only when expanded; large directories are paginated and rows are virtualized
 - **Upload**: use the toolbar, or drag files onto the file-tree area; uploads are concurrency-limited and can be cancelled or retried
@@ -63,7 +63,7 @@ Keep files you need to keep in the workspace and transit files in the temporary 
 - **Batch and archive**: multi-select to delete in bulk or download an archive
 - **High-risk operations**: deleting or clearing a directory needs a second confirmation; front-end confirmation never replaces server-side authorization
 
-## Uploads and file types
+## Uploads and File Types
 
 | Type | Handling |
 |------|------|
@@ -75,7 +75,3 @@ Keep files you need to keep in the workspace and transit files in the temporary 
 | Other | Stored as-is, and the agent can try to read them |
 
 Some files must be processed after upload (document-to-text, audio transcription, and so on), and the send button stays disabled until processing finishes.
-
-## Further reading
-
-- [Workspaces and Working Directory](/docs/en/concepts/workspaces/) — the isolation model

@@ -63,6 +63,7 @@ async fn watch(
         return;
     };
     let mut failures = 0u32;
+    let mut epoch = None;
     loop {
         let _ = cloud.renew_if_needed().await;
         let Some(session) = cloud.session() else {
@@ -89,11 +90,13 @@ async fn watch(
             let (mut sink, mut stream) = socket.split();
             sink.send(Message::Text(json!({"type":"connect","request_id":"cloud_connect","payload":{"protocol_version":1}}).to_string().into())).await?;
             let mut subscribed = false;
+            let opened = tokio::time::Instant::now();
             let mut heartbeat = tokio::time::interval(Duration::from_secs(15));
             let mut last_received = tokio::time::Instant::now();
             loop {
                 tokio::select! {
                     _ = heartbeat.tick() => {
+                        if !subscribed && opened.elapsed() > Duration::from_secs(10) { anyhow::bail!("cloud thread handshake timeout"); }
                         if last_received.elapsed() > Duration::from_secs(60) { anyhow::bail!("cloud thread heartbeat timeout"); }
                         sink.send(Message::Text(json!({"type":"ping"}).to_string().into())).await?;
                     }
@@ -124,7 +127,8 @@ async fn watch(
                                 }
                                 if event == "thread_view_change" {
                                     let change: ThreadViewChanges = serde_json::from_value(frame["payload"]["data"].clone())?;
-                                    if change.reset_required { let _ = sender.send(CloudThreadEvent::Reload).await; return Ok(()); }
+                                    if change.reset_required || epoch.is_some_and(|value| value != change.epoch) || (epoch.is_none() && change.view_seq < after) { let _ = sender.send(CloudThreadEvent::Reload).await; return Ok(()); }
+                                    epoch = Some(change.epoch);
                                     if change.view_seq > after {
                                         after = change.view_seq;
                                         if sender.send(CloudThreadEvent::Change(change)).await.is_err() { return Ok(()); }
@@ -138,6 +142,11 @@ async fn watch(
             }
         }.await;
         if result.is_ok() || sender.is_closed() {
+            return;
+        }
+        if result.as_ref().err().and_then(|error| error.downcast_ref::<tokio_tungstenite::tungstenite::Error>())
+            .is_some_and(|error| matches!(error, tokio_tungstenite::tungstenite::Error::Http(response) if matches!(response.status().as_u16(), 403 | 404))) {
+            let _ = sender.send(CloudThreadEvent::Connection("PERMISSION_DENIED".into())).await;
             return;
         }
         // One refresh/reconnect path, bounded backoff; cursor advances only on accepted changes.

@@ -1,26 +1,10 @@
 ---
 title: Capabilities Overview
-summary: Capabilities and operating references: the core capabilities, where a feature lives, what a status means, and how to change a setting.
-updated_at: 2026-10-13
+summary: The ten pages in this partition, plus where each of the nine core capabilities is documented under concepts.
+updated_at: 2026-10-16
 ---
 
-The pages below cover the product's per-item core capabilities, plus where a feature lives, what a status means, and how to change a setting.
-
-## Core capabilities
-
-<div class="docs-card-grid docs-card-grid-compact">
-  <a class="docs-card" href="/docs/en/concepts/core-goal/"><strong>Goal</strong><span>Lets an agent enter goal mode and keep working on one task.</span></a>
-  <a class="docs-card" href="/docs/en/concepts/core-compatibility/"><strong>Compatibility</strong><span>Lets the Pupa and the Helm run in older operating-system environments under explicit constraints.</span></a>
-  <a class="docs-card" href="/docs/en/concepts/core-context-compression/"><strong>Context compression</strong><span>Keeps context size under control in long conversations while retaining useful information.</span></a>
-  <a class="docs-card" href="/docs/en/concepts/core-subagent/"><strong>Subagents</strong><span>Forks a subtask inside a single thread; an independent executor completes it and returns the result.</span></a>
-  <a class="docs-card" href="/docs/en/concepts/core-scheduled-tasks/"><strong>Scheduled tasks</strong><span>Supports system-level periodic execution and background governance.</span></a>
-  <a class="docs-card" href="/docs/en/concepts/core-channels/"><strong>Channels</strong><span>Connects multiple entries to the same runtime capability.</span></a>
-  <a class="docs-card" href="/docs/en/concepts/core-memory/"><strong>Memory</strong><span>Supports long conversations and long-term material use without polluting the thread's core cognition.</span></a>
-  <a class="docs-card" href="/docs/en/concepts/core-multithreading/"><strong>Multi-threading</strong><span>Raises throughput and resource use through concurrency control inside a single process.</span></a>
-  <a class="docs-card" href="/docs/en/concepts/core-multi-user-management/"><strong>Multi-tenancy</strong><span>Supports the Hull's organization, user, tenant, and permission governance.</span></a>
-</div>
-
-## All pages
+The ten pages in this partition are organized by entry point: capability entries, session status, prompts and personalization, system settings, workspace routing, Bridge panels, the WeChat iLink channel, the chat WebSocket, the MCP endpoint, and interlink.
 
 <div class="docs-card-grid docs-card-grid-compact">
   <a class="docs-card" href="/docs/en/capabilities/api-index/"><strong>Feature and Capability Quick Reference</strong><span>What wunder can do, and where each capability lives.</span></a>
@@ -35,23 +19,18 @@ The pages below cover the product's per-item core capabilities, plus where a fea
   <a class="docs-card" href="/docs/en/capabilities/interlink/"><strong>Interlink</strong><span>Unified presence across the Beehive, the Pupa, and the Helm, cross-end workspace visibility, and two-way remote control.</span></a>
 </div>
 
-## By role
+## Core capabilities
 
-### Regular users
+The nine core capabilities are documented in the concepts partition:
 
-- Feature and Capability Quick Reference — what abilities wunder has
-- Session Status Guide — what the various prompts in a chat mean
-- Workspace Routing and File Management — where files live and how to manage them
-- Prompts and Personalization — customize the agent's answer style
-
-### System administrators
-
-- System Settings Reference — what each setting controls
-- Bridge Panel Guide — where the admin entries are
-- Feature and Capability Quick Reference — the overall range of system capabilities
-
-## Further reading
-
-- [Core](/docs/en/concepts/) — how the system works as a whole
-- [Troubleshooting](/docs/en/help/troubleshooting/) — how to work through specific problems
-- [Help Center](/docs/en/help/)
+<div class="docs-card-grid docs-card-grid-compact">
+  <a class="docs-card" href="/docs/en/concepts/core-goal/"><strong>Goal</strong><span>Lets an agent enter goal mode and keep working on one task.</span></a>
+  <a class="docs-card" href="/docs/en/concepts/core-compatibility/"><strong>Compatibility</strong><span>Lets the Pupa and the Helm run in older operating-system environments under explicit constraints.</span></a>
+  <a class="docs-card" href="/docs/en/concepts/core-context-compression/"><strong>Context compression</strong><span>Keeps context size under control in long conversations while retaining useful information.</span></a>
+  <a class="docs-card" href="/docs/en/concepts/core-subagent/"><strong>Subagents</strong><span>Forks a subtask inside a single thread; an independent executor completes it and returns the result.</span></a>
+  <a class="docs-card" href="/docs/en/concepts/core-scheduled-tasks/"><strong>Scheduled tasks</strong><span>Supports system-level periodic execution and background governance.</span></a>
+  <a class="docs-card" href="/docs/en/concepts/core-channels/"><strong>Channels</strong><span>Connects multiple entries to the same runtime capability.</span></a>
+  <a class="docs-card" href="/docs/en/concepts/core-memory/"><strong>Memory</strong><span>Supports long conversations and long-term material use without polluting the thread's core cognition.</span></a>
+  <a class="docs-card" href="/docs/en/concepts/core-multithreading/"><strong>Multi-threading</strong><span>Raises throughput and resource use through concurrency control inside a single process.</span></a>
+  <a class="docs-card" href="/docs/en/concepts/core-multi-user-management/"><strong>Multi-tenancy</strong><span>Supports the Hull's organization, user, tenant, and permission governance.</span></a>
+</div>

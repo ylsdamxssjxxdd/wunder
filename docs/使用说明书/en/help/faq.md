@@ -1,7 +1,7 @@
 ---
 title: FAQ
-summary: Common conclusions for using wunder, ahead of symptom-level troubleshooting.
-updated_at: 2026-10-13
+summary: Common conclusions on registration, usage, requirement scope, memory loading, the thread button, subagents, passwords, and tool visibility.
+updated_at: 2026-10-16
 ---
 
 ## Registration and Sign-in
@@ -10,7 +10,7 @@ No registration is required. You can start a conversation under any name, and th
 
 ## Cost and Usage
 
-The token count is not the cost. It only reflects the context length of the current conversation, and the actual cost depends on your model provider's billing rules.
+The token count is not the cost. It only reflects the context length of the current conversation; the actual cost depends on your model provider's billing rules.
 
 ## Scope of Requirement Settings
 
@@ -30,15 +30,15 @@ A subagent is a temporary work unit the agent creates during a task, used to spl
 
 ## Pupa and Hull Dependency
 
-Deploying the Hull is not required. The Pupa can run locally on its own. Deploy the Hull when you need multi-person collaboration and unified management.
+Deploying the Hull is not required. The Pupa can run locally on its own; deploy the Hull when you need multi-person collaboration and unified management.
 
 ## Changing Your Username and Password
 
-Go to "My Profile → Edit". Changing your password requires entering your current password.
+Change them under "My Profile → Edit". Changing your password requires entering your current password.
 
 ## Password Recovery
 
-Click "Reset Password" on the login page. You only need your username, email, and a new password — no old password required.
+On the login page, click "Reset Password". You need your username, email, and a new password — no old password required.
 
 ## Cleanup of Uploaded Files
 
@@ -55,4 +55,4 @@ Possible causes: the tool is not enabled, the MCP/A2A service is not running, or
 
 ## Where to Look When Something Goes Wrong
 
-Start with [Troubleshooting](/docs/en/help/troubleshooting/).
+Symptom-level troubleshooting lives in [Troubleshooting](/docs/en/help/troubleshooting/).

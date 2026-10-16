@@ -291,19 +291,19 @@ impl TunnelWriter {
     ) -> Result<(), ()> {
         let frame = self.frame(kind, corr, payload);
         let text = serde_json::to_string(&frame).map_err(|_| ())?;
-        self.control
-            .send(OutboundFrame::Text(text))
-            .await
-            .map_err(|_| ())
+        if text.len() > 480 * 1024 { return Err(()); }
+        tokio::select! {
+            _ = self.cancel.cancelled() => Err(()),
+            result = self.control.send(OutboundFrame::Text(text)) => result.map_err(|_| ()),
+        }
     }
 
-    /// Fire-and-forget variant for frames that may be dropped when the tunnel
-    /// is saturated (presence, forwarded thread events - docs §10.2).
+    /// Presence may be dropped; durable thread senders must recover on false.
     pub fn try_send_frame(&self, kind: &str, corr: Option<&str>, payload: Value) -> bool {
         let frame = self.frame(kind, corr, payload);
         match serde_json::to_string(&frame) {
             Ok(text) => {
-                if self.control.try_send(OutboundFrame::Text(text)).is_err() {
+                if text.len() > 480 * 1024 || self.control.try_send(OutboundFrame::Text(text)).is_err() {
                     DROPPED_FRAMES.fetch_add(1, Ordering::Relaxed);
                     return false;
                 }
@@ -1532,6 +1532,9 @@ impl ClientInner {
     /// [`MAX_THREAD_FORWARDERS`]; the feeder is the same projection the local
     /// UI consumes, so no second event source exists (docs §7.4).
     fn attach_thread(self: &Arc<Self>, writer: &Arc<TunnelWriter>, thread_id: &str) {
+        if !self.capabilities().iter().any(|cap| cap == CAP_QUERY_BASIC) {
+            return;
+        }
         let thread_id = thread_id.trim().to_string();
         if thread_id.is_empty() {
             return;
@@ -1603,6 +1606,7 @@ impl ClientInner {
                     "payload": snapshot,
                 }),
             ) {
+                writer.cancel.cancel();
                 inner.forget_forwarder(&owned_thread, &forwarder_id);
                 return;
             }
@@ -1657,23 +1661,35 @@ impl ClientInner {
 }
 
 async fn thread_snapshot(inner: &Arc<ClientInner>, user_id: &str, thread_id: &str) -> (Value, i64) {
-    let workspace = inner.state.workspace.clone();
+    let storage = inner.state.storage.clone();
     let owner = user_id.to_string();
     let thread = thread_id.to_string();
-    let seq_thread = thread.clone();
-    let cursor = crate::core::blocking::run_db("interlink.client.snapshot_seq", move || {
-        workspace.latest_thread_change_seq(&seq_thread)
-    })
-    .await
-    .unwrap_or(0);
-    let workspace = inner.state.workspace.clone();
     let snapshot = crate::core::blocking::run_db("interlink.client.snapshot", move || {
-        workspace.try_load_thread_snapshot(&owner, &thread)
+        storage.thread_snapshot_window(&owner, &thread, &crate::storage::ThreadSnapshotWindow {
+            max_turns: 12, max_items: 100, max_blocks: 64, before_turn_index: None,
+        })
     })
     .await
     .ok()
     .unwrap_or(Value::Null);
-    (snapshot, cursor)
+    let cursor = snapshot["cursor"].as_i64().unwrap_or(0);
+    (bound_remote_snapshot(snapshot), cursor)
+}
+
+// This is a presentation window. Original bodies stay in the owning engine.
+fn bound_remote_snapshot(mut snapshot: Value) -> Value {
+    for field in ["blocks", "items", "turns"] {
+        loop {
+            if serde_json::to_vec(&snapshot).is_ok_and(|bytes| bytes.len() <= 384 * 1024) {
+                return snapshot;
+            }
+            let Some(rows) = snapshot.get_mut(field).and_then(Value::as_array_mut) else { break };
+            if rows.is_empty() { break; }
+            rows.remove(0);
+            snapshot["truncated"] = json!(true);
+        }
+    }
+    snapshot
 }
 
 async fn forward_changes(
@@ -1688,6 +1704,7 @@ async fn forward_changes(
     loop {
         tokio::select! {
             _ = cancel.cancelled() => return,
+            _ = writer.cancel.cancelled() => return,
             _ = stop.cancelled() => return,
             frame = receiver.recv() => {
                 let Some(frame) = frame else { return };
@@ -1703,9 +1720,9 @@ async fn forward_changes(
                         (json!({ "overflow": true, "cursor": cursor }), false)
                     }
                 };
-                // A full queue means nobody is watching: drop the frame rather
-                // than back-pressure the tunnel (docs §7.4).
-                writer.try_send_frame(
+                // Never lose a final update silently: reconnect all viewers
+                // onto a fresh atomic snapshot when the bounded lane fills.
+                if !writer.try_send_frame(
                     FRAME_EVENT,
                     None,
                     json!({
@@ -1715,7 +1732,7 @@ async fn forward_changes(
                         "snapshot": is_baseline,
                         "payload": payload,
                     }),
-                );
+                ) { writer.cancel.cancel(); return; }
             }
         }
     }
@@ -1738,6 +1755,7 @@ async fn write_pump<S>(
     loop {
         let message = tokio::select! {
             biased;
+            _ = writer.cancel.cancelled() => return,
             Some(message) = pong_rx.recv() => message,
             Some(frame) = control_rx.recv() => {
                 match frame {
@@ -1760,7 +1778,8 @@ async fn write_pump<S>(
             WsMessage::Text(text) => WsMessage::Text(with_channel(&writer, text).into()),
             other => other,
         };
-        if sink.send(message).await.is_err() {
+        if !matches!(tokio::time::timeout(Duration::from_secs(5), sink.send(message)).await, Ok(Ok(()))) {
+            writer.cancel.cancel();
             return;
         }
     }
@@ -2036,6 +2055,15 @@ async fn run_command(inner: Arc<ClientInner>, writer: Arc<TunnelWriter>, spec: C
     )
     .await;
     let payload = report.payload();
+    let payload = if serde_json::to_vec(&payload).map_or(true, |body| body.len() > 480 * 1024) {
+        CommandReport::failed(
+            "PAYLOAD_TOO_LARGE",
+            "command result exceeds the tunnel frame limit; request a smaller page",
+        )
+        .payload()
+    } else {
+        payload
+    };
     writer
         .send_frame(
             FRAME_COMMAND_RESULT,
@@ -2129,6 +2157,23 @@ async fn request_decision(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn remote_snapshot_keeps_cursor_and_bounds_large_payloads() {
+        let bounded = bound_remote_snapshot(json!({"cursor":17,"items":[{"content":"x".repeat(512*1024)}],"blocks":[],"turns":[]}));
+        assert_eq!(bounded["cursor"], 17);
+        assert_eq!(bounded["truncated"], true);
+        assert!(serde_json::to_vec(&bounded).unwrap().len() <= 384*1024);
+    }
+
+    #[tokio::test]
+    async fn saturated_thread_lane_requires_reconnect() {
+        let (writer, _control, _data) = TunnelWriter::new();
+        for _ in 0..CONTROL_QUEUE_CAPACITY { assert!(writer.try_send_frame(FRAME_EVENT, None, json!({}))); }
+        assert!(!writer.try_send_frame(FRAME_EVENT, None, json!({})));
+        writer.cancel.cancel();
+        assert!(writer.send_frame(FRAME_EVENT, None, json!({})).await.is_err());
+    }
 
     fn platform(legacy_windows: bool, thread_runtime_active: bool) -> NodePlatform {
         NodePlatform {

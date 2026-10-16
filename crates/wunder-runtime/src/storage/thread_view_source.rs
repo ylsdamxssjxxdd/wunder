@@ -53,7 +53,11 @@ fn source_timeline_page(
     page: &mut ThreadViewPage,
     bytes: &mut usize,
 ) -> Result<()> {
-    let root_filter = if root.is_some() { " AND i.root_turn_id=?" } else { "" };
+    let root_filter = if root.is_some() {
+        " AND i.root_turn_id=?"
+    } else {
+        ""
+    };
     let mut params = vec![json!(user), json!(session)];
     if let Some(root) = root {
         params.push(json!(root));
@@ -131,7 +135,9 @@ pub(super) fn load_question_panels(
     let mut panels = std::collections::HashMap::new();
     for row in batch_query(db, queries)? {
         if let Some(panel) = serde_json::from_str::<Value>(text(&row[1]))
-            .ok().as_ref().and_then(projection::question_panel)
+            .ok()
+            .as_ref()
+            .and_then(projection::question_panel)
         {
             panels.insert(text(&row[0]).to_owned(), panel);
         }
@@ -329,7 +335,9 @@ fn source_chat_rows(
         });
         if is_assistant {
             message.question_panel = serde_json::from_str::<Value>(text(&row[9]))
-                .ok().as_ref().and_then(projection::question_panel);
+                .ok()
+                .as_ref()
+                .and_then(projection::question_panel);
             message.reasoning = text(&row[7]).to_owned();
             message.reasoning_offset = message.reasoning.encode_utf16().count();
             if let Ok(stats) = serde_json::from_str::<Value>(text(&row[8])) {

@@ -1,6 +1,6 @@
 ---
 title: Pupa Interface
-summary: The Pupa (desktop) is the local AI workbench and the default entry for individual users. Its main window has only two pages, chat and settings, with 12 categories in settings; everything else appears as panels and dialogs.
+summary: The local AI workbench and the default entry for individual users. Its main window has only two pages, chat and settings, with 12 categories in settings; everything else appears as panels and dialogs, including desktop-only capabilities and entries not yet wired up.
 read_when:
   - You use the Pupa desktop app and want to know where a capability lives
   - You cannot find the device-interconnection panel or TTS playback in the Pupa
@@ -10,12 +10,12 @@ source_docs:
   - frontend-slint/ui/settings_page.slint
   - frontend-slint/src/native_interlink.rs
   - crates/wunder-desktop/native.rs
-updated_at: 2026-10-13
+updated_at: 2026-10-16
 ---
 
 # Pupa Interface
 
-The Pupa is wunder's **local AI workbench**, and the default entry for individual users. It runs entirely on your own computer: there is no separate backend port and no network relay, and the interface calls the local engine directly.
+It runs entirely on your own computer: there is no separate backend port and no network relay, and the interface calls the local engine directly. It is the default entry for individual users.
 
 ## Starting and running
 
@@ -24,9 +24,14 @@ Open the desktop app: there is no port to specify and no required parameters.
 - Data root: `~/.wunder`; the `WUNDER_HOME` environment variable moves it elsewhere
 - Workspace: `~/.wunder/workspace`
 - Desktop settings: `<temp>/config/desktop.settings.json`
+- Sessions and tool logs: a local database
 - A separate compatibility port (18123 by default) serves a few older clients only; day-to-day use never touches it
 
-## The main window: only two pages
+"Local-first" means the data stays on this machine; it does not affect access to remote models or web pages.
+
+Moving to another computer: copy the whole `~/.wunder` folder (workspace, database, and settings). On the first launch it scans the work tree and restores the state of tasks that were queued, waiting, running, or cancelling.
+
+## Main window structure
 
 The main window has two switchable pages, **chat** and **settings**; every other capability hangs off them as panels and dialogs.
 
@@ -36,11 +41,13 @@ Two columns:
 
 - **Left column**: tasks and thread tree, working directory, settings entry
   - The working directory shows both the local work tree and the **cloud workspace**
-  - One agent can hold **several independent task threads** at once, and there can be **several** workspaces: the local directory, a cloud workspace, and remote device workspaces reached through device interconnection
+  - One agent can hold **several independent task threads** at once, and there can be **several** workspaces: the local directory, a cloud workspace, and remote device workspaces reached through device interconnection; locks and realtime state are isolated per thread
 - **Right column**: top bar (workspace / thread name) + timeline + input area
   - The welcome page shows when no thread is selected
   - The input area holds the model switch, approval mode, reasoning level, attachments, a voice-input button (when available), a screenshot button (when available), and send / stop
   - Below each reply, "Work process" folds away intermediate thinking, tool batches, and interim output
+
+With the session queue on, messages sent to a new thread during a run queue up instead of being rejected as "user busy".
 
 ### Settings page
 
@@ -65,7 +72,7 @@ The category bar supports search filtering; when nothing matches it shows an emp
 
 ## Panels and dialogs
 
-These are distinct areas inside the Pupa, not separate pages:
+These areas live inside the two pages, not as pages of their own:
 
 - **Sidebar / timeline / input area**: the three parts of the chat page
 - **Terminal view**: an interactive command session where you type just as in a terminal
@@ -84,7 +91,7 @@ These are distinct areas inside the Pupa, not separate pages:
 
 ## Capabilities unique to the Pupa
 
-These are not available in the other interfaces:
+The Beehive, the Bridge, and the Helm have none of these:
 
 | Capability | What it is |
 | --- | --- |
@@ -95,13 +102,13 @@ These are not available in the other interfaces:
 | **Voice input** | Speak into the microphone and get text |
 | **Local files and desktop control** | Read and write local files and operate the desktop; needs vision capability |
 
-## Capabilities that do not work yet
+## Entries not wired up yet
 
 - The **Device interconnection** category in settings is not wired up: the entry exists in code but never renders, so it cannot be opened today. Interconnection in the Pupa lives in only two places — the cloud workspace under "Working directory" in the sidebar, and the remote-command approval pop-up.
 - **Voice output (TTS) is not implemented**: TTS models can be configured in settings, but there is no playback; the voice side is input-only. For spoken output, use the Beehive.
 - **The early desktop shells are no longer maintained**: the Electron / Tauri frontend shells receive no feature updates. This does not affect the Pupa's underlying engine.
 
-## One-click reset of the working state
+## Resetting the working state
 
 When a session is stuck in the running state, a subagent's status is inconsistent, or the interface does not match reality, use **Settings → General → Reset working state**.
 
@@ -111,7 +118,7 @@ It keeps skills, knowledge bases, long-term memory, user configuration, workspac
 
 It cleans up the working state rather than performing a factory reset.
 
-## Pupa vs. Beehive
+## Differences from the Beehive
 
 | Item | Pupa | Beehive |
 | --- | --- | --- |
@@ -122,18 +129,3 @@ It cleans up the working state rather than performing a factory reset.
 | Tray / system notifications / global hotkey / screenshot | ✅ | ❌ |
 | Device-interconnection settings panel | Category not opened; only the cloud workspace + approval pop-up | ✅ Devices category + interconnection view |
 | One agent | Multiple threads, multiple workspaces | The same |
-
-## Common questions
-
-- **Data location**: the workspace is at `~/.wunder/workspace`, sessions and tool logs are in a local database, and settings are at `<temp>/config/desktop.settings.json`; `WUNDER_HOME` moves the root elsewhere.
-- **Local mode can still go online**: "local-first" means the data stays on this machine; it does not affect access to remote models or web pages.
-- **Moving to another computer**: copy the whole `~/.wunder` folder (workspace, database, and settings). On the first launch it scans the work tree and restores the state of tasks that were queued, waiting, running, or cancelling.
-- **Creating threads while running**: one agent can hold several independent task threads at once, with locks and realtime state isolated per thread; with the session queue on, new messages queue up instead of being rejected as "user busy".
-
-## Further Reading
-
-- [Quick Start](/docs/en/start/quickstart/)
-- [Pupa quick start](/docs/en/start/desktop/)
-- [Interface overview and capability matrix](/docs/en/surfaces/index/)
-- [Beehive Interface](/docs/en/surfaces/frontend/)
-- [Troubleshooting](/docs/en/help/troubleshooting/)

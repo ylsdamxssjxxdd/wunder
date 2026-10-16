@@ -1,6 +1,6 @@
 ---
 title: Interface Overview
-summary: Four forms, four interfaces — the Pupa (local AI workbench), the Beehive (cloud AI workbench), the Helm (terminal interface), and the Bridge (admin governance console). Look up interface capabilities by form.
+summary: Four forms, four interfaces — the Pupa (local AI workbench, the default entry), the Beehive (cloud AI workbench), the Helm (terminal interface), and the Bridge (admin governance console); plus main-area notes and the capability matrix.
 read_when:
   - You are choosing between the forms and need to know what each interface can do
   - You expect a capability in one interface and want to check whether it exists there at all
@@ -10,14 +10,14 @@ source_docs:
   - frontend/src/router/index.ts
   - web/index.html
   - crates/wunder-cli/tui/app.rs
-updated_at: 2026-10-13
+updated_at: 2026-10-16
 ---
 
 # Interface Overview
 
-wunder's interfaces fall into four kinds by form: the **Pupa** (local AI workbench), the **Beehive** (cloud AI workbench), the **Helm** (terminal interface), and the **Bridge** (admin governance console). All four share one engine, but they differ in how you open them, what you can do, and how they present.
+Four interfaces map to the four forms. They share one engine but differ in how you open them, what you can do, and how they present. The default entry for individual users is the **Pupa** (local AI workbench, a desktop app); the **Beehive** (cloud AI workbench) ships with the Hull and is reached in a browser; the **Helm** (terminal interface) serves manual local operation; the **Bridge** (admin governance console) serves governance and debugging.
 
-## What each interface is
+## Interfaces and their users
 
 | Interface | Who uses it | What it is | How to open it |
 | --- | --- | --- | --- |
@@ -26,7 +26,7 @@ wunder's interfaces fall into four kinds by form: the **Pupa** (local AI workben
 | **Helm** | Terminal and automation users | Manual local entry point | Start it in a terminal |
 | **Bridge** | Administrators | Governance and debugging console | Open the Hull address in a browser |
 
-## The main area of each interface
+## Main areas
 
 The **Pupa**'s main window has **only two pages**: chat and settings. Everything else sits in panels and dialogs — sidebar, input area, timeline, terminal view, tools dialog, companion dialog, workspace dialog, working directory, thread trajectory, subagent details, channels page, scheduled page, settings sections, activity card, expert data, patch-diff card, screenshot overlay, and tray and system notifications. The settings navigation has **12 categories**: General, Account, Models, Tools, Agent, Companion, Scheduled, Memory, Channels, Prompt packs, Archive, and Help. There is **no "Device interconnection" category**.
 
@@ -71,7 +71,7 @@ What each interface has and lacks; details are on each form's own page.
 - **Terminal and automation**: use the [Helm](/docs/en/start/cli/); it supports JSON output and cloud subcommands.
 - **Admin governance**: use the [Bridge](/docs/en/surfaces/web-admin/).
 
-## Common misconceptions
+## Boundaries worth clarifying
 
 - **The Bridge does not chat**: it is the governance and debugging console, and regular users never see it after signing in.
 - **The Beehive and the Bridge are not the same interface**: the Beehive faces users and the Bridge faces admins, with different routing and visual conventions.
@@ -79,11 +79,3 @@ What each interface has and lacks; details are on each form's own page.
 - **The Pupa cannot play voice (TTS)**: voice input works and TTS models can be configured in settings, but there is no playback. For spoken output, use the Beehive.
 - **The Helm cannot create scheduled tasks**: scheduling is explicitly switched off in the Helm, and channels, knowledge bases, long-term memory, and companions have no management interface either.
 - **The Bridge has no user-level scheduled tasks, channel management, long-term memory, or interconnection panel**: scheduled tasks and channels exist only as templates under "Preset agents"; long-term memory and the interconnection panel were never implemented.
-
-## Further Reading
-
-- [Pupa Interface](/docs/en/surfaces/desktop-ui/)
-- [Beehive Interface](/docs/en/surfaces/frontend/)
-- [Bridge Interface](/docs/en/surfaces/web-admin/)
-- [Using the Helm](/docs/en/start/cli/)
-- [Core concepts](/docs/en/concepts/)

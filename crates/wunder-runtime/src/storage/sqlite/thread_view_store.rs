@@ -222,7 +222,13 @@ mod tests {
     fn trajectory_timing_is_independent_of_ledger_cursor_and_compaction_keeps_summary() {
         let dir = tempfile::tempdir().unwrap();
         let storage = SqliteStorage::new(dir.path().join("fixture.db").to_string_lossy().into());
-        let accepted = storage.accept_thread_turn("fixture-user", "fixture-thread", &json!({"content":"fixture input"})).unwrap();
+        let accepted = storage
+            .accept_thread_turn(
+                "fixture-user",
+                "fixture-thread",
+                &json!({"content":"fixture input"}),
+            )
+            .unwrap();
         let turn = accepted["turn_id"].as_str().unwrap();
         for index in 0..3 {
             storage.append_thread_item("fixture-user", &json!({
@@ -231,32 +237,70 @@ mod tests {
                 "kind":"assistant_message", "status":"completed", "content":"fixture response"
             })).unwrap();
         }
-        storage.append_thread_item("fixture-user", &json!({
-            "session_id":"fixture-thread", "turn_id":turn, "item_id":"fixture-compaction",
-            "kind":"compaction", "status":"completed", "content":"history",
-            "summary_text":"Fixture retained context."
-        })).unwrap();
+        storage
+            .append_thread_item(
+                "fixture-user",
+                &json!({
+                    "session_id":"fixture-thread", "turn_id":turn, "item_id":"fixture-compaction",
+                    "kind":"compaction", "status":"completed", "content":"history",
+                    "summary_text":"Fixture retained context."
+                }),
+            )
+            .unwrap();
         // Reproduce an already persisted legacy projection without rebuilding
         // the entire thread or changing its execution payload.
         storage.open().unwrap().execute(
             "UPDATE thread_trajectory_rows SET payload=json_set(payload,'$.summary','history') WHERE item_id='fixture-compaction'", []
         ).unwrap();
         for state in ["ready", "source"] {
-            storage.open().unwrap().execute("UPDATE thread_view_heads SET projection_state=?", [state]).unwrap();
-            let first = storage.thread_view_trajectory_page("fixture-user", "fixture-thread", None, None, 2).unwrap();
-            let older = storage.thread_view_trajectory_page("fixture-user", "fixture-thread", first.next_before, None, 2).unwrap();
+            storage
+                .open()
+                .unwrap()
+                .execute("UPDATE thread_view_heads SET projection_state=?", [state])
+                .unwrap();
+            let first = storage
+                .thread_view_trajectory_page("fixture-user", "fixture-thread", None, None, 2)
+                .unwrap();
+            let older = storage
+                .thread_view_trajectory_page(
+                    "fixture-user",
+                    "fixture-thread",
+                    first.next_before,
+                    None,
+                    2,
+                )
+                .unwrap();
             assert!(first.has_more);
-            assert_eq!(serde_json::to_value(&first.timeline).unwrap(), serde_json::to_value(&older.timeline).unwrap());
+            assert_eq!(
+                serde_json::to_value(&first.timeline).unwrap(),
+                serde_json::to_value(&older.timeline).unwrap()
+            );
             assert!(!first.timeline_has_more);
             assert!(first.timeline.len() >= 4);
             assert!(first.timeline.iter().all(|row| row.started_at > 0.0));
-            let row = first.trajectory.iter().find(|row| row.item_id == "fixture-compaction").unwrap();
+            let row = first
+                .trajectory
+                .iter()
+                .find(|row| row.item_id == "fixture-compaction")
+                .unwrap();
             assert_eq!(row.summary, "Fixture retained context.");
             let body = row.detail.as_ref().unwrap();
-            let detail = storage.thread_body_page("fixture-user", "fixture-thread", &body.body_id, body.revision, 0).unwrap();
+            let detail = storage
+                .thread_body_page(
+                    "fixture-user",
+                    "fixture-thread",
+                    &body.body_id,
+                    body.revision,
+                    0,
+                )
+                .unwrap();
             assert!(detail.chunks.join("").contains("Fixture retained context."));
             assert!(serde_json::to_vec(&first).unwrap().len() < TRAJECTORY_RESPONSE_BYTES);
-            assert!(storage.thread_view_trajectory_page("fixture-other", "fixture-thread", None, None, 2).unwrap().timeline.is_empty());
+            assert!(storage
+                .thread_view_trajectory_page("fixture-other", "fixture-thread", None, None, 2)
+                .unwrap()
+                .timeline
+                .is_empty());
         }
     }
 
@@ -264,21 +308,42 @@ mod tests {
     fn chat_plan_projects_live_updates_reload_legacy_and_source() {
         let dir = tempfile::tempdir().unwrap();
         let storage = SqliteStorage::new(dir.path().join("fixture.db").to_string_lossy().into());
-        let accepted = storage.accept_thread_turn("fixture-user", "fixture-thread", &json!({"content":"Fixture input"})).unwrap();
+        let accepted = storage
+            .accept_thread_turn(
+                "fixture-user",
+                "fixture-thread",
+                &json!({"content":"Fixture input"}),
+            )
+            .unwrap();
         let turn = accepted["turn_id"].as_str().unwrap();
         let id = format!("{turn}:plan");
         let first = json!({"session_id":"fixture-thread", "turn_id":turn, "item_id":id,
             "kind":"plan", "status":"completed", "event_type":"plan_update", "explanation":"Fixture plan",
             "plan":[{"step":"First step","status":"in_progress"},{"step":"Second step","status":"pending"}]});
-        let read = || storage.thread_view_page("fixture-user", "fixture-thread", "chat", None, 12).unwrap();
+        let read = || {
+            storage
+                .thread_view_page("fixture-user", "fixture-thread", "chat", None, 12)
+                .unwrap()
+        };
         let before = read().view_seq;
         storage.append_thread_item("fixture-user", &first).unwrap();
         let initial = read();
-        let plan = initial.chat[0].plan.as_ref().expect("plan without assistant output");
+        let plan = initial.chat[0]
+            .plan
+            .as_ref()
+            .expect("plan without assistant output");
         assert_eq!(plan.item_id, id);
         assert_eq!(plan.steps[0].status, "in_progress");
         assert!(initial.chat[0].assistant.content.is_empty());
-        assert_eq!(storage.thread_view_changes("fixture-user", "fixture-thread", before).unwrap().rows[0].plan.as_ref(), Some(plan));
+        assert_eq!(
+            storage
+                .thread_view_changes("fixture-user", "fixture-thread", before)
+                .unwrap()
+                .rows[0]
+                .plan
+                .as_ref(),
+            Some(plan)
+        );
         let mut second = first.clone();
         second["plan"][0]["status"] = json!("completed");
         second["plan"][1]["status"] = json!("in_progress");
@@ -295,17 +360,38 @@ mod tests {
         let conn = storage.open().unwrap();
         let mut legacy = serde_json::to_value(&read().chat[0]).unwrap();
         legacy.as_object_mut().unwrap().remove("plan");
-        conn.execute("UPDATE thread_chat_rows SET payload=?", [legacy.to_string()]).unwrap();
+        conn.execute(
+            "UPDATE thread_chat_rows SET payload=?",
+            [legacy.to_string()],
+        )
+        .unwrap();
         assert_eq!(read().chat[0].plan.as_ref(), Some(plan));
-        assert_eq!(storage.thread_view_changes("fixture-user", "fixture-thread", before).unwrap().rows[0].plan.as_ref(), Some(plan));
+        assert_eq!(
+            storage
+                .thread_view_changes("fixture-user", "fixture-thread", before)
+                .unwrap()
+                .rows[0]
+                .plan
+                .as_ref(),
+            Some(plan)
+        );
         storage.append_thread_item("fixture-user", &json!({"session_id":"fixture-thread", "turn_id":turn,
             "item_id":format!("{turn}:text-3"),"kind":"assistant_message","status":"completed","model_round":3,"content":"Next fixture result"})).unwrap();
         assert_eq!(read().chat[0].plan.as_ref(), Some(plan));
-        conn.execute("UPDATE thread_view_heads SET projection_state='source'", []).unwrap();
+        conn.execute("UPDATE thread_view_heads SET projection_state='source'", [])
+            .unwrap();
         assert_eq!(read().chat[0].plan.as_ref(), Some(plan));
         // A fresh storage instance reads the same plan from disk.
         let reloaded = SqliteStorage::new(dir.path().join("fixture.db").to_string_lossy().into());
-        assert_eq!(reloaded.thread_view_page("fixture-user", "fixture-thread", "chat", None, 12).unwrap().chat[0].plan.as_ref(), Some(plan));
+        assert_eq!(
+            reloaded
+                .thread_view_page("fixture-user", "fixture-thread", "chat", None, 12)
+                .unwrap()
+                .chat[0]
+                .plan
+                .as_ref(),
+            Some(plan)
+        );
     }
 
     #[test]
@@ -313,23 +399,89 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let storage = SqliteStorage::new(dir.path().join("fixture.db").to_string_lossy().into());
         for reason in ["goal_command", "question_panel", "user_reply"] {
-            let accepted = storage.accept_thread_turn("fixture-user", "fixture-thread", &json!({"content":"Fixture input"})).unwrap();
+            let accepted = storage
+                .accept_thread_turn(
+                    "fixture-user",
+                    "fixture-thread",
+                    &json!({"content":"Fixture input"}),
+                )
+                .unwrap();
             let turn = accepted["turn_id"].as_str().unwrap();
-            let before = storage.thread_view_page("fixture-user", "fixture-thread", "chat", None, 12).unwrap().view_seq;
-            storage.update_thread_turn("fixture-user", "fixture-thread", turn, "completed", "", &json!({"stop_reason":reason})).unwrap();
-            let read = || storage.thread_view_page("fixture-user", "fixture-thread", "chat", None, 12).unwrap();
-            let live = read().chat.into_iter().find(|row| row.root_turn_id == turn).unwrap();
+            let before = storage
+                .thread_view_page("fixture-user", "fixture-thread", "chat", None, 12)
+                .unwrap()
+                .view_seq;
+            storage
+                .update_thread_turn(
+                    "fixture-user",
+                    "fixture-thread",
+                    turn,
+                    "completed",
+                    "",
+                    &json!({"stop_reason":reason}),
+                )
+                .unwrap();
+            let read = || {
+                storage
+                    .thread_view_page("fixture-user", "fixture-thread", "chat", None, 12)
+                    .unwrap()
+            };
+            let live = read()
+                .chat
+                .into_iter()
+                .find(|row| row.root_turn_id == turn)
+                .unwrap();
             assert_eq!(live.stop_reason.as_deref(), Some(reason));
-            assert_eq!(storage.thread_view_changes("fixture-user", "fixture-thread", before).unwrap().rows[0].stop_reason.as_deref(), Some(reason));
+            assert_eq!(
+                storage
+                    .thread_view_changes("fixture-user", "fixture-thread", before)
+                    .unwrap()
+                    .rows[0]
+                    .stop_reason
+                    .as_deref(),
+                Some(reason)
+            );
             let mut legacy = serde_json::to_value(&live).unwrap();
             legacy.as_object_mut().unwrap().remove("stop_reason");
             let conn = storage.open().unwrap();
-            conn.execute("UPDATE thread_chat_rows SET payload=? WHERE root_turn_id=?", [legacy.to_string(), turn.into()]).unwrap();
-            assert_eq!(read().chat.into_iter().find(|row| row.root_turn_id == turn).unwrap().stop_reason.as_deref(), Some(reason));
-            assert_eq!(storage.thread_view_changes("fixture-user", "fixture-thread", before).unwrap().rows[0].stop_reason.as_deref(), Some(reason));
-            conn.execute("UPDATE thread_view_heads SET projection_state='source'", []).unwrap();
-            assert_eq!(read().chat.into_iter().find(|row| row.root_turn_id == turn).unwrap().stop_reason.as_deref(), Some(reason));
-            conn.execute("UPDATE thread_view_heads SET projection_state='ready'", []).unwrap();
+            conn.execute(
+                "UPDATE thread_chat_rows SET payload=? WHERE root_turn_id=?",
+                [legacy.to_string(), turn.into()],
+            )
+            .unwrap();
+            assert_eq!(
+                read()
+                    .chat
+                    .into_iter()
+                    .find(|row| row.root_turn_id == turn)
+                    .unwrap()
+                    .stop_reason
+                    .as_deref(),
+                Some(reason)
+            );
+            assert_eq!(
+                storage
+                    .thread_view_changes("fixture-user", "fixture-thread", before)
+                    .unwrap()
+                    .rows[0]
+                    .stop_reason
+                    .as_deref(),
+                Some(reason)
+            );
+            conn.execute("UPDATE thread_view_heads SET projection_state='source'", [])
+                .unwrap();
+            assert_eq!(
+                read()
+                    .chat
+                    .into_iter()
+                    .find(|row| row.root_turn_id == turn)
+                    .unwrap()
+                    .stop_reason
+                    .as_deref(),
+                Some(reason)
+            );
+            conn.execute("UPDATE thread_view_heads SET projection_state='ready'", [])
+                .unwrap();
         }
     }
 
@@ -337,39 +489,117 @@ mod tests {
     fn question_panel_survives_live_legacy_source_reload_and_cancel() {
         let dir = tempfile::tempdir().unwrap();
         let storage = SqliteStorage::new(dir.path().join("fixture.db").to_string_lossy().into());
-        let accepted = storage.accept_thread_turn("fixture-user", "fixture-thread", &json!({"content":"Fixture question"})).unwrap();
+        let accepted = storage
+            .accept_thread_turn(
+                "fixture-user",
+                "fixture-thread",
+                &json!({"content":"Fixture question"}),
+            )
+            .unwrap();
         let turn = accepted["turn_id"].as_str().unwrap();
         let id = format!("{turn}:text-1");
-        let before = storage.thread_view_page("fixture-user", "fixture-thread", "chat", None, 12).unwrap().view_seq;
+        let before = storage
+            .thread_view_page("fixture-user", "fixture-thread", "chat", None, 12)
+            .unwrap()
+            .view_seq;
         storage.append_thread_item("fixture-user", &json!({"session_id":"fixture-thread", "turn_id":turn,
             "item_id":id,"kind":"assistant_message","status":"completed","content":"Fixture waiting",
             "meta":{"type":"question_panel","panel":{"status":"pending","keep_open":true,"questions":[
                 {"question":"Fixture choice?","multiple":false,"options":[{"label":"First option","recommended":true},{"label":"Second option"}]}]}}})).unwrap();
-        storage.update_thread_turn("fixture-user", "fixture-thread", turn, "waiting_input", "", &json!({"stop_reason":"question_panel"})).unwrap();
-        let read = || storage.thread_view_page("fixture-user", "fixture-thread", "chat", None, 12).unwrap();
+        storage
+            .update_thread_turn(
+                "fixture-user",
+                "fixture-thread",
+                turn,
+                "waiting_input",
+                "",
+                &json!({"stop_reason":"question_panel"}),
+            )
+            .unwrap();
+        let read = || {
+            storage
+                .thread_view_page("fixture-user", "fixture-thread", "chat", None, 12)
+                .unwrap()
+        };
         let initial = read();
         let panel = initial.chat[0].assistant.question_panel.as_ref().unwrap();
         assert_eq!(panel.status, "pending");
         assert_eq!(panel.questions[0].options.len(), 2);
         assert!(panel.questions[0].options[0].recommended);
         assert_eq!(initial.runtime_status, "waiting_input");
-        assert_eq!(storage.thread_view_changes("fixture-user", "fixture-thread", before).unwrap().rows[0].assistant.question_panel.as_ref(), Some(panel));
+        assert_eq!(
+            storage
+                .thread_view_changes("fixture-user", "fixture-thread", before)
+                .unwrap()
+                .rows[0]
+                .assistant
+                .question_panel
+                .as_ref(),
+            Some(panel)
+        );
         let mut legacy = serde_json::to_value(&initial.chat[0]).unwrap();
-        legacy["assistant"].as_object_mut().unwrap().remove("question_panel");
+        legacy["assistant"]
+            .as_object_mut()
+            .unwrap()
+            .remove("question_panel");
         let conn = storage.open().unwrap();
-        conn.execute("UPDATE thread_chat_rows SET payload=?", [legacy.to_string()]).unwrap();
-        assert_eq!(read().chat[0].assistant.question_panel.as_ref(), Some(panel));
-        assert_eq!(storage.thread_view_changes("fixture-user", "fixture-thread", before).unwrap().rows[0].assistant.question_panel.as_ref(), Some(panel));
-        conn.execute("UPDATE thread_view_heads SET projection_state='source'", []).unwrap();
-        assert_eq!(read().chat[0].assistant.question_panel.as_ref(), Some(panel));
-        conn.execute("UPDATE thread_view_heads SET projection_state='ready'", []).unwrap();
-        storage.update_thread_turn("fixture-user", "fixture-thread", turn, "cancelled", "", &json!({"stop_reason":"user_stop"})).unwrap();
+        conn.execute(
+            "UPDATE thread_chat_rows SET payload=?",
+            [legacy.to_string()],
+        )
+        .unwrap();
+        assert_eq!(
+            read().chat[0].assistant.question_panel.as_ref(),
+            Some(panel)
+        );
+        assert_eq!(
+            storage
+                .thread_view_changes("fixture-user", "fixture-thread", before)
+                .unwrap()
+                .rows[0]
+                .assistant
+                .question_panel
+                .as_ref(),
+            Some(panel)
+        );
+        conn.execute("UPDATE thread_view_heads SET projection_state='source'", [])
+            .unwrap();
+        assert_eq!(
+            read().chat[0].assistant.question_panel.as_ref(),
+            Some(panel)
+        );
+        conn.execute("UPDATE thread_view_heads SET projection_state='ready'", [])
+            .unwrap();
+        storage
+            .update_thread_turn(
+                "fixture-user",
+                "fixture-thread",
+                turn,
+                "cancelled",
+                "",
+                &json!({"stop_reason":"user_stop"}),
+            )
+            .unwrap();
         let cancelled = read();
         assert_eq!(cancelled.runtime_status, "cancelled");
-        assert_eq!(cancelled.chat[0].assistant.question_panel.as_ref().unwrap().status, "dismissed");
+        assert_eq!(
+            cancelled.chat[0]
+                .assistant
+                .question_panel
+                .as_ref()
+                .unwrap()
+                .status,
+            "dismissed"
+        );
         assert_eq!(cancelled.chat[0].assistant.content, "Fixture waiting");
         let reloaded = SqliteStorage::new(dir.path().join("fixture.db").to_string_lossy().into());
-        assert_eq!(reloaded.thread_view_page("fixture-user", "fixture-thread", "chat", None, 12).unwrap().runtime_status, "cancelled");
+        assert_eq!(
+            reloaded
+                .thread_view_page("fixture-user", "fixture-thread", "chat", None, 12)
+                .unwrap()
+                .runtime_status,
+            "cancelled"
+        );
     }
 
     #[test]
@@ -1080,7 +1310,10 @@ mod tests {
         assert!(first.trajectory.iter().all(|row| !row.overview_only));
         assert!(first.trajectory.iter().all(|row| row.kind == "tool_call"));
         assert!(first.timeline.len() >= 25);
-        assert!(first.timeline.windows(2).all(|rows| rows[0].created_seq < rows[1].created_seq));
+        assert!(first
+            .timeline
+            .windows(2)
+            .all(|rows| rows[0].created_seq < rows[1].created_seq));
         assert!(first.timeline.iter().any(|row| row.kind == "tool_call"));
 
         let second = db

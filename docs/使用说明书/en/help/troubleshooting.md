@@ -1,10 +1,10 @@
 ---
 title: Troubleshooting
-summary: Cause and check points by symptom.
-updated_at: 2026-10-13
+summary: Three health checks, checks listed by symptom, and what to include when reporting an issue.
+updated_at: 2026-10-16
 ---
 
-Find the cause by symptom.
+Find the cause by symptom, then read the logs.
 
 ## Health check
 
@@ -12,39 +12,34 @@ Find the cause by symptom.
 2. Make sure you can sign in and your account and password are correct.
 3. Make sure the model is configured correctly and the API key works.
 
-## Find by Symptom
+## Symptoms and Checks
 
 ### Login Fails or Access Denied
 
-Check:
 - Whether your username and password are correct
 - Whether you used the wrong entry point for the Bridge and the Beehive
 - Whether your account is disabled
 
 ### Configuration Changes Not Taking Effect
 
-Check:
 - Whether you edited the right configuration file
 - Whether the change needs a service restart
 - Whether the running instance actually loaded the changed configuration
 
 ### Service Starts but Features Are Unavailable
 
-Check:
 - Whether the database is connected properly
 - Whether the external tool services (MCP, A2A) are online
 - Whether the sandbox service is reachable
 
 ### Real-time Status Not Updating, No Intermediate Steps Visible
 
-Check:
 - Whether your network connection is stable
 - Whether WebSocket is being blocked by a firewall or proxy
 - Whether it recovers after refreshing the page
 
 ### Tools Don't Appear or Can't Be Called
 
-Check:
 - Whether the tool is enabled
 - Whether the MCP / A2A service is running
 - Whether the current agent has that tool mounted
@@ -52,14 +47,14 @@ Check:
 
 ### Attachment Uploaded but Can't Be Sent
 
-Check:
 - Whether the file type is supported (images, audio, video, common documents)
 - Whether the file is still being processed (the send button stays disabled until processing finishes)
 - Whether the workspace has write permission
 
 ### Password Recovery
 
-Click "Reset Password" on the login page. You only need:
+On the login page, click "Reset Password". Required:
+
 - Username
 - Email
 - New password
@@ -68,7 +63,6 @@ No old password is required, and you don't need to sign in first.
 
 ### Password Change Won't Save
 
-Check:
 - Whether you entered your current password (changing a password while signed in always verifies the old one)
 - Whether the new password and the confirmation match
 - Whether the new password is the same as the current one
@@ -79,30 +73,27 @@ The button is briefly disabled while a thread is being created or switched. Thre
 
 ### Session State Completely Messed Up
 
-Use "System Settings → Reset Working State".
+Use "System Settings → Reset Working State":
 
-It will:
 - Stop running sessions and tasks
 - Rebuild clean threads
 
-It will not delete skills, knowledge bases, or other long-term assets.
+It does not delete skills, knowledge bases, or other long-term assets.
 
 ### Microphone or Screenshot Button Unavailable
 
-Check:
 - Whether you are in an environment that supports these features
 - Whether the browser has been granted microphone/screen permission
 - Whether the desktop bridge is working properly
 
 ### Help Manual Blank or Won't Open
 
-Check:
 - Whether the docs site has been built
 - Whether the reverse proxy is configured correctly for the `/docs/` path
 
 ### Capturing a Performance Report for Chat Stutter
 
-Open "More → Settings → Performance Capture" and follow three steps:
+Open "More → Settings → Performance Capture":
 
 1. Click "Start", then return to chat and reproduce the stutter while replying, scrolling, or switching pages.
 2. Go back to settings and click "Download JSON"; the browser downloads the report directly, ready to attach to your issue report.
@@ -116,11 +107,11 @@ When you submit, add what you did and when the stutter happened. Total model rep
 
 ## Still Unresolved
 
-Continue with:
+When a symptom isn't covered here, continue with the [Configuration Reference](/docs/en/capabilities/config/).
 
-- [Configuration Reference](/docs/en/capabilities/config/)
+## Issue Report Contents
 
-## What to Include When Reporting an Issue
+Include these when reporting an issue:
 
 - Runtime form: desktop / server / cli
 - Steps that reproduce the problem

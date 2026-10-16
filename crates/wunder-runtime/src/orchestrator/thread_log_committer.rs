@@ -75,7 +75,10 @@ impl ThreadLogCommitter {
         let storage = self.storage.clone();
         let owner = user_id.to_string();
         let thread = session_id.to_string();
-        let consumes_question_wait = input.get("root_user_round").and_then(Value::as_i64).is_none()
+        let consumes_question_wait = input
+            .get("root_user_round")
+            .and_then(Value::as_i64)
+            .is_none()
             && input.pointer("/meta/type").and_then(Value::as_str) != Some("goal_command");
         let input = input.clone();
         let accepted = blocking::run_db("thread_log.committer.accept", move || {
@@ -143,7 +146,13 @@ impl ThreadLogCommitter {
         self.settle_turns_locked(
             user_id,
             session_id,
-            &["accepted", "queued", "running", "waiting_input", "waiting_approval"],
+            &[
+                "accepted",
+                "queued",
+                "running",
+                "waiting_input",
+                "waiting_approval",
+            ],
             "cancelled",
             source,
         )
@@ -168,7 +177,8 @@ impl ThreadLogCommitter {
                 let terminal = terminal.to_owned();
                 let source = source.to_owned();
                 let changed = blocking::run_db("thread_log.committer.settle_active", move || {
-                    let ids = storage.list_thread_turn_ids_by_status(&owner, &session, &status, 32)?;
+                    let ids =
+                        storage.list_thread_turn_ids_by_status(&owner, &session, &status, 32)?;
                     let mut changed = 0;
                     for id in ids {
                         changed += usize::from(storage.update_thread_turn(
@@ -361,30 +371,103 @@ mod tests {
     async fn question_panel_reply_consumes_wait_and_stop_settles_durable_turns() {
         let (committer, hub, _dir) = build_committer();
         let mut wake = hub.subscribe("fixture-thread");
-        let first = committer.accept_turn("fixture-user", "fixture-thread", &json!({"content":"Fixture input","client_message_id":"fixture-first"})).await.unwrap();
+        let first = committer
+            .accept_turn(
+                "fixture-user",
+                "fixture-thread",
+                &json!({"content":"Fixture input","client_message_id":"fixture-first"}),
+            )
+            .await
+            .unwrap();
         let first_id = first["turn_id"].as_str().unwrap();
-        committer.update_turn("fixture-user", "fixture-thread", first_id, "waiting_input", "", &json!({})).await.unwrap();
+        committer
+            .update_turn(
+                "fixture-user",
+                "fixture-thread",
+                first_id,
+                "waiting_input",
+                "",
+                &json!({}),
+            )
+            .await
+            .unwrap();
         let second = committer.accept_turn("fixture-user", "fixture-thread", &json!({"content":"Fixture reply","client_message_id":"fixture-second","root_user_round":null})).await.unwrap();
-        let settled = committer.storage.get_thread_turn("fixture-user", "fixture-thread", first_id, 0, 1, false).unwrap().unwrap();
+        let settled = committer
+            .storage
+            .get_thread_turn("fixture-user", "fixture-thread", first_id, 0, 1, false)
+            .unwrap()
+            .unwrap();
         assert_eq!(settled["status"], "completed");
         assert_eq!(settled["payload"]["stop_reason"], "user_reply");
-        assert_eq!(committer.storage.thread_view_page("fixture-user", "fixture-thread", "chat", None, 12).unwrap().chat[0].stop_reason.as_deref(), Some("user_reply"));
+        assert_eq!(
+            committer
+                .storage
+                .thread_view_page("fixture-user", "fixture-thread", "chat", None, 12)
+                .unwrap()
+                .chat[0]
+                .stop_reason
+                .as_deref(),
+            Some("user_reply")
+        );
         let second_id = second["turn_id"].as_str().unwrap();
-        committer.update_turn("fixture-user", "fixture-thread", second_id, "waiting_input", "", &json!({})).await.unwrap();
-        committer.accept_turn("fixture-user", "fixture-thread", &json!({"content":"Fixture reply","client_message_id":"fixture-second"})).await.unwrap();
-        assert_eq!(committer.storage.thread_view_page("fixture-user", "fixture-thread", "chat", None, 12).unwrap().runtime_status, "waiting_input");
+        committer
+            .update_turn(
+                "fixture-user",
+                "fixture-thread",
+                second_id,
+                "waiting_input",
+                "",
+                &json!({}),
+            )
+            .await
+            .unwrap();
+        committer
+            .accept_turn(
+                "fixture-user",
+                "fixture-thread",
+                &json!({"content":"Fixture reply","client_message_id":"fixture-second"}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            committer
+                .storage
+                .thread_view_page("fixture-user", "fixture-thread", "chat", None, 12)
+                .unwrap()
+                .runtime_status,
+            "waiting_input"
+        );
         wake.borrow_and_update();
-        assert_eq!(committer.cancel_active_turns("fixture-user", "fixture-thread", "user_stop").await.unwrap(), 1);
+        assert_eq!(
+            committer
+                .cancel_active_turns("fixture-user", "fixture-thread", "user_stop")
+                .await
+                .unwrap(),
+            1
+        );
         assert!(wake.has_changed().unwrap());
-        let page = committer.storage.thread_view_page("fixture-user", "fixture-thread", "chat", None, 12).unwrap();
+        let page = committer
+            .storage
+            .thread_view_page("fixture-user", "fixture-thread", "chat", None, 12)
+            .unwrap();
         assert_eq!(page.runtime_status, "cancelled");
         assert!(page.active_turn_id.is_empty());
         assert_eq!(page.chat[0].status, "completed");
         assert_eq!(page.chat[1].status, "cancelled");
         wake.borrow_and_update();
-        assert_eq!(committer.cancel_active_turns("fixture-user", "fixture-thread", "user_stop").await.unwrap(), 0);
+        assert_eq!(
+            committer
+                .cancel_active_turns("fixture-user", "fixture-thread", "user_stop")
+                .await
+                .unwrap(),
+            0
+        );
         assert!(!wake.has_changed().unwrap());
-        assert!(committer.storage.list_thread_turn_ids_by_status("fixture-other", "fixture-thread", "cancelled", 32).unwrap().is_empty());
+        assert!(committer
+            .storage
+            .list_thread_turn_ids_by_status("fixture-other", "fixture-thread", "cancelled", 32)
+            .unwrap()
+            .is_empty());
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

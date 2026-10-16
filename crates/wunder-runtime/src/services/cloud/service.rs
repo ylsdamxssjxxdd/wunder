@@ -1153,7 +1153,7 @@ impl CloudService {
         }
     }
 
-    /// Toggle basic-preference sharing (§4.6).
+    /// Persist explicit consent to inbound access and metadata publication.
     pub async fn set_local_sharing(&self, enabled: bool, full_shadow: bool) -> Result<()> {
         let _lock = self.acquire_session_file_lock().await?;
         let mut session = self.session().ok_or_else(|| anyhow!(CloudSessionExpired))?;
@@ -1325,6 +1325,21 @@ impl CloudService {
             "thread view",
         )
         .await
+    }
+
+    pub async fn cloud_thread_chat_page(&self, thread: &str, before: i64) -> Result<Value> {
+        let thread = urlencode_component(thread);
+        self.interlink_data(|session| self.http.get(format!(
+            "{}/wunder/chat/sessions/{thread}/view/chat?before={before}&limit=12", session.server
+        )).bearer_auth(&session.token), "thread history").await
+    }
+
+    pub async fn cloud_thread_body(&self, thread: &str, body: &str, revision: i64, cursor: i64) -> Result<Value> {
+        let thread = urlencode_component(thread);
+        let body = urlencode_component(body);
+        self.interlink_data(|session| self.http.get(format!(
+            "{}/wunder/chat/sessions/{thread}/bodies/{body}?revision={revision}&cursor={cursor}", session.server
+        )).bearer_auth(&session.token), "thread body").await
     }
 
     /// Device fleet with tunnel-aware presence, as the user sees it.

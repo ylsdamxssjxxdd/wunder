@@ -1326,7 +1326,9 @@ mod tests {
         );
         assert_eq!(
             orchestrator.resolve_tool_timeout(
-                &config, "command_session", &json!({"action": "write_stdin"})
+                &config,
+                "command_session",
+                &json!({"action": "write_stdin"})
             ),
             Some(Duration::from_millis(30_500))
         );

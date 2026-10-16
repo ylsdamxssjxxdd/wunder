@@ -1,6 +1,6 @@
 ---
 title: First-Run Troubleshooting
-summary: The most common failure modes and verification points for the first launch or deployment of each form: Pupa startup, Hull deployment, Beehive access, Helm execution. When the first run doesn't work, locate the failure by form here.
+summary: The failure modes and verification points for the first launch or deployment of each form: Pupa startup, Hull deployment, Beehive access, Helm execution.
 read_when:
   - A first install, launch, or deployment failed
   - You need verification points to confirm a form is healthy
@@ -10,12 +10,12 @@ source_docs:
   - crates/wunder-cli/main.rs
   - crates/wunder-cli/runtime.rs
   - docker-compose-x86.yml
-updated_at: 2026-10-13
+updated_at: 2026-10-16
 ---
 
 # First-Run Troubleshooting
 
-Sections are organized by form: each section lists what a healthy run looks like (verification points) first, then failure symptoms and where to check.
+Sections are organized by form. Each section's verification points are a health checklist for that form; the failure table gives what to check first and where to go next.
 
 ## Pupa (desktop)
 
@@ -98,16 +98,8 @@ Sections are organized by form: each section lists what a healthy run looks like
 | Want to run a single tool in a script | Use `wunder-cli tool ...` directly; it doesn't go through the agent loop | [Helm usage](/docs/en/start/cli/) |
 | A second message during a run is rejected as "user busy" | Expected: the Helm sets `config.agent_queue.enabled = false` (`crates/wunder-cli/runtime.rs`) — messages don't queue, they hit the session lock; use Pupa or Beehive to queue | [Helm usage](/docs/en/start/cli/) |
 
-## General reminders
+## General checks
 
 - **Don't read "the frontend shells are no longer maintained" as "the Pupa backend stopped being maintained"**: the Electron / Tauri frontend shells stopped getting iterations; the engine and the Pupa backend continue to be developed.
 - Lists, logs, and panels all have paging, filtering, or bounded limits. If a page renders a large amount of content at once and stutters, that is a known engineering gap — report it.
 
-## Further reading
-
-- [Quick Start](/docs/en/start/quickstart/)
-- [Surfaces overview](/docs/en/surfaces/index/)
-- [Pupa intro](/docs/en/start/desktop/)
-- [Hull deployment](/docs/en/start/server/)
-- [Helm usage](/docs/en/start/cli/)
-- [Troubleshooting](/docs/en/help/troubleshooting/)

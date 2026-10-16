@@ -5,5 +5,10 @@
 .interlink-fleet-toolbar input { max-width: 260px; }
 .interlink-fleet-table { max-height: 58vh; overflow: auto; margin: 12px 0; }
 .interlink-fleet-table td { vertical-align: top; padding: 10px; }
+.interlink-fleet-table small { display: block; margin-top: 5px; opacity: .7; }
+.interlink-fleet-table table { width: 100%; border-collapse: collapse; text-align: left; }
+.interlink-fleet-table th { padding: 8px 10px; border-bottom: 1px solid #e2e8f0; }
+.interlink-fleet-table tr + tr td { border-top: 1px solid #e2e8f0; }
+.interlink-fleet { font-family: system-ui, sans-serif; }
 .interlink-fleet-table td label { display: block; white-space: nowrap; font-size: 12px; }
 .interlink-fleet-table td button { display: block; margin: 0 0 6px; white-space: nowrap; }

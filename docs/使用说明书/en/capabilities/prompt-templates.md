@@ -1,14 +1,14 @@
 ---
 title: Prompts and Personalization
-summary: Customize the agent's role and answer style — pick a built-in template, or write your own.
-updated_at: 2026-10-13
+summary: The built-in packs `default-zh` and `default-en`, the segments a pack is made of, switching and effect rules, and how to create a custom pack.
+updated_at: 2026-10-16
 ---
 
-A prompt template sets the agent's role and answer style. Pick a built-in one, or write your own, and the agent works to that agreement.
+A prompt template sets the agent's role and answer style. Two built-in packs ship with wunder — `default-zh` and `default-en` — and custom packs can be created in the interface.
 
 ## Prompt templates
 
-A prompt template is the agent's handbook. It defines:
+A template sets four things:
 
 - The role
 - How to think and answer
@@ -19,28 +19,19 @@ Switch to another template and the agent's style and emphasis change with it.
 
 ## Built-in template packs
 
-wunder ships two built-in packs.
+| Pack | Language | Fits |
+| --- | --- | --- |
+| `default-zh` | Thinks and answers in Chinese | Chinese-language conversations; the default Chinese assistant style |
+| `default-en` | Thinks and answers in English | English-language conversations; the default English assistant style |
 
-### Chinese pack (default-zh)
-
-- Thinks and answers in Chinese
-- Fits Chinese-language conversations
-- The default Chinese assistant style
-
-### English pack (default-en)
-
-- Thinks and answers in English
-- Fits English-language conversations
-- The default English assistant style
-
-Pick the pack that matches the language the user mostly works in.
+Pick the pack that matches the language the user mostly works in. A template only sets a default tendency: even with `default-zh`, asking for English in the conversation is followed.
 
 ## What a pack is made of
 
-Each pack is assembled from several segments that together form the agent's complete handbook:
+Each pack is assembled from several segments:
 
 | Segment | Purpose |
-|------|------|
+| --- | --- |
 | Role | Defines who the agent is and what role it plays |
 | Engineering principles | Defines how it works and thinks |
 | Tool protocol | Defines how it uses tools |
@@ -50,7 +41,7 @@ Each pack is assembled from several segments that together form the agent's comp
 
 ## Switching packs
 
-### Switching in the interface
+### Switching steps
 
 1. Go to Settings at the bottom of the left sidebar → Agent
 2. Find the prompt template option
@@ -62,19 +53,21 @@ Each pack is assembled from several segments that together form the agent's comp
 - **New conversations**: ones created after the switch use the new template
 - **Existing conversations**: unchanged, keeping the template from when they were created
 
+A conversation fixes its prompt when it is created and then keeps it frozen, so behavior stays consistent and does not shift partway through. An existing conversation's prompt cannot be edited directly: start a new conversation to use the new template, or copy the content you want to keep into a new conversation and continue there.
+
 ## Creating a custom template
 
-### How to create one
+### Creation steps
 
 1. In the template settings page, click New template pack
-2. Pick a template to copy as the base (starting from a built-in one is recommended)
+2. Pick a template to copy as the base; starting from a built-in one works well
 3. Edit the content of each segment
 4. Save, and it is ready to use
 
-### Editing tips
+### Writing each segment
 
 - **Role segment**: state the role, such as "coding assistant" or "data analysis expert"
-- **Engineering principles**: set the answer style (concise or detailed, formal or casual)
+- **Engineering principles**: set the answer style, concise or detailed, formal or casual
 - **Tool protocol**: usually leave it alone
 - **Extra notes**: put your own specific requirements here
 
@@ -99,40 +92,12 @@ The agent's final prompt is combined from several layers:
 2. **User template**: the pack the user picked
 3. **Agent settings**: extra configuration for that particular agent
 
-An upper layer overrides a lower one, and anything missing falls back to the lower layer.
+An upper layer overrides a lower one, and anything missing falls back to the lower layer. Each agent configures its template independently.
 
-## Common situations
-
-### Why an existing conversation keeps its template
-
-A conversation fixes its prompt when it is created and then keeps it frozen, so behavior stays consistent and does not shift partway through.
-
-### Changing one conversation's prompt
-
-An existing conversation's prompt cannot be edited directly. Start a new conversation to use the new template, or copy the content you want to keep into a new conversation and continue there.
-
-### Different agents can use different templates
-
-Each agent configures its template independently.
-
-### Longer is not always better
-
-A template should state the key requirements clearly and avoid redundancy and contradiction; a long or self-contradictory one runs counter to that.
-
-### A Chinese template can still answer in English
-
-The template only sets a default tendency; ask for English in the conversation and the agent will follow.
-
-## Usage notes
+## Writing notes
 
 - Start from a built-in template, then customize from there
 - Create a separate pack for each scenario if you like
-- State the key requirements clearly and keep it short
+- State the key requirements clearly and avoid redundancy; longer is not better, and a long or self-contradictory template works against that
 - Do not put contradictory requirements in the same template
 - Review it occasionally and drop entries you no longer need
-
-## Further reading
-
-- [Feature and Capability Quick Reference](/docs/en/capabilities/api-index/) — where agent management lives
-- [Prompts and Skills](/docs/en/concepts/prompt-and-skills/)
-- [Long-term Memory](/docs/en/concepts/memory/)

@@ -861,10 +861,22 @@ async fn execute_goal_command_show_renders_current_state() {
 #[tokio::test]
 async fn human_edit_publishes_final_activation_after_execution_handoff() {
     let (service, storage, _dir) = setup().await;
-    service.create(storage.clone(), USER, SESSION, "Fixture objective", None).await.unwrap();
+    service
+        .create(storage.clone(), USER, SESSION, "Fixture objective", None)
+        .await
+        .unwrap();
     service.disarm(SESSION);
-    let (_, payload) = execute_goal_command(&service, storage.clone(), USER, SESSION,
-        GoalCommand::Edit { objective: "Revised fixture objective".into() }).await.unwrap();
+    let (_, payload) = execute_goal_command(
+        &service,
+        storage.clone(),
+        USER,
+        SESSION,
+        GoalCommand::Edit {
+            objective: "Revised fixture objective".into(),
+        },
+    )
+    .await
+    .unwrap();
     assert_eq!(payload.unwrap()["activation"], "armed");
     let events = storage.load_recent_stream_events(SESSION, 1).unwrap();
     assert_eq!(events.len(), 1);

@@ -1127,7 +1127,11 @@ async fn admin_user_accounts_force_logout(
             .await;
     }
     // Close live tunnels as well as rejecting their next HTTP request.
-    for channel in crate::services::interlink::registry().snapshot().into_iter().filter(|channel| channel.user_id == cleaned) {
+    for channel in crate::services::interlink::registry()
+        .snapshot()
+        .into_iter()
+        .filter(|channel| channel.user_id == cleaned)
+    {
         crate::api::interlink_ws::close_tunnel(&channel.device_id, "session_revoked").await;
         crate::services::interlink::remote::hub().close_node(&channel.device_id);
     }

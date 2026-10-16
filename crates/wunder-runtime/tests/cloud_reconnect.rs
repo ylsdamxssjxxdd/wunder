@@ -798,7 +798,7 @@ async fn proactive_renewal_only_fires_below_the_threshold() {
     assert!(renewed, "token within the threshold is renewed");
     assert_eq!(refresh_hits.load(Ordering::SeqCst), 1);
     let persisted: Value = serde_json::from_str(
-        &std::fs::read_to_string(home_near.path().join("config/cloud.session.json"))
+        &std::fs::read_to_string(home_near.path().join("config/cloud.desktop.session.json"))
             .expect("session file"),
     )
     .expect("session json");

@@ -6,10 +6,10 @@ export function remoteThreadModel(thread: string) {
   const state = emptyChatThreadState(thread);
   return {
     apply(frame: Record<string, any>): boolean {
-      const envelope = frame.payload || {};
+      const envelope = frame;
       if (envelope.thread_id !== thread) return false;
       const payload = envelope.payload || {};
-      if (envelope.snapshot) {
+      if (frame.type === 'snapshot') {
         applyChatThreadSnapshot(state, payload as ChatThreadSnapshot, Date.now());
       } else if (payload.overflow) return true;
       else if (payload.event === 'thread_change') {

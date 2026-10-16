@@ -316,17 +316,22 @@ mod tests {
     #[test]
     fn slow_watcher_is_dropped_not_backpressuring() {
         let hub = RemoteHub::default();
-        let (sub, _rx) = hub.subscribe("dev-1", "th_1").expect("sub");
-        let key = ("dev-1".to_string(), "th_1".to_string());
+        let (sub, mut rx) = hub.subscribe("dev-1", "th_1").expect("sub");
         // Drain the watcher's queue to its bound, then publishing still returns.
         for index in 0..SUBSCRIBER_QUEUE {
             assert_eq!(hub.publish("dev-1", "th_1", &format!("f{index}")), 1);
         }
         assert_eq!(hub.publish("dev-1", "th_1", "overflow"), 0);
-        // The queue slot stays registered; the frame was simply skipped.
+        for _ in 0..SUBSCRIBER_QUEUE {
+            assert!(rx.try_recv().is_ok());
+        }
+        assert!(matches!(
+            rx.try_recv(),
+            Err(mpsc::error::TryRecvError::Disconnected)
+        ));
+        // The socket sees channel closure and can reconnect with a fresh snapshot.
         assert_eq!(hub.unsubscribe("dev-1", "th_1", sub.id), true);
         assert!(!hub.is_upstream("dev-1", "th_1"));
-        assert_eq!(key.0, "dev-1");
     }
 
     #[test]

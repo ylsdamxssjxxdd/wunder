@@ -1,6 +1,6 @@
 ---
 title: Using the Helm (CLI)
-summary: The manual local entry point. In a terminal it opens an interactive session; in a pipeline it degrades to a one-shot run. The full set of 22 slash commands, an exec --json event stream, and the complete cloud subcommand family; scheduled tasks and engine queueing are off on the Helm.
+summary: The manual local entry point. An interactive session on a TTY and a one-shot run off it; 11 subcommands, the full set of 22 slash commands, an exec --json event stream, and the complete cloud subcommand family; scheduled tasks and engine queueing are off on the Helm.
 read_when:
   - You work terminal-driven, scripted, or in CI/CD
   - You need the cloud subcommands to operate device interlink from a shell
@@ -16,9 +16,9 @@ updated_at: 2026-10-16
 
 # Using the Helm (CLI)
 
-The Helm (CLI) is wunder's **manual local entry point**, an optional form: for daily use, install the Pupa (desktop); reach for the Helm when you work terminal-driven, scripted, or automated. It calls the engine in-process, reusing the same configuration, tools, and storage rather than standing up a separate execution path.
+The manual local entry point, an optional form. For daily use, install the Pupa (desktop); reach for the Helm when you work terminal-driven, scripted, or automated. It calls the engine in-process, reusing the same configuration, tools, and storage rather than standing up a separate execution path.
 
-## When to use the Helm
+## Prerequisites
 
 | Scenario | Choose the Helm |
 | --- | --- |
@@ -44,6 +44,15 @@ cargo build --release -p wunder-cli
 - **Non-TTY**: degrades to a **one-shot run**; pipelines and scripts take this path
 - **Data directory**: `WUNDER_HOME` → `~/.wunder`
 - **User configuration**: `~/.wunder/config.toml`
+
+Your first session:
+
+```bash
+wunder-cli
+> Write me a Hello World Python script
+```
+
+Seeing the model think → a batch of tools → results → a reply means it's working. `wunder-cli doctor` checks whether the local runtime environment is ready.
 
 ## Subcommands
 
@@ -82,7 +91,9 @@ One JSON object per line, with event names `thread` / `turn` / `item.*`. For pip
 wunder-cli exec --json "tidy up the files in the current directory" | jq -c 'select(.type=="item.text")'
 ```
 
-## Slash commands (22)
+## Slash commands
+
+22 in total:
 
 | Command | Alias | Action |
 | --- | --- | --- |
@@ -110,7 +121,6 @@ wunder-cli exec --json "tidy up the files in the current directory" | jq -c 'sel
 | `/quit` | `/q` | Exit |
 
 There are **no** `cloud`, `cron`, `channel`, `memory`, or `knowledge` slash commands: `cloud` is a subcommand, and the other four have no management interface on the Helm.
-
 
 ## Trajectory logs
 
@@ -181,16 +191,9 @@ Use returned `next_before` / `next_after` cursors; `--before` and `--after` are 
 | `?` | Shortcut panel |
 | `←` | Task center |
 
-## First session
+## Capability differences from the other interfaces
 
-```bash
-wunder-cli
-> Write me a Hello World Python script
-```
-
-Seeing the model think → a batch of tools → results → a reply means it's working.
-
-## What only the Helm can do
+### Only the Helm has these
 
 - The `exec --json` event-stream scripting contract
 - The full set of `cloud` subcommands
@@ -199,7 +202,7 @@ Seeing the model think → a batch of tools → results → a reply means it's w
 - `completion` shell completions
 - `tool` / `mcp` / `skills` run straight from the command line (without going through the agent main loop)
 
-## What the Helm lacks
+### The Helm lacks these
 
 - **Scheduled tasks are explicitly off**: you can't add, modify, enable, or immediately run a scheduled task; viewing status, listing, deleting, and disabling still work — so you'll see old task lists, but the Helm won't schedule anything new.
 - **Engine queueing is explicitly off too**: sending another message during a run doesn't join a queue; it hits the session lock outright and is judged "this user already has a running session," returning only once the busy window elapses. This is the opposite of the Pupa, which forces the queue open. To interject, queue, or rewrite the next message during a run, use the Pupa or the Beehive.
@@ -213,7 +216,7 @@ Seeing the model think → a batch of tools → results → a reply means it's w
 By default the Helm keeps runtime files under `~/.wunder`:
 
 - Runtime configuration and SQLite state: `~/.wunder/cli/WUNDER_TEMP/`
-- Engine configuration YAML: `~/.wunder/config/wunder.yaml`, the same file 蛹 uses; the Helm reads it back, projects its own layers onto it and writes it out, so the model list is visible to both
+- Engine configuration YAML: `~/.wunder/config/wunder.yaml`, the same file the Pupa uses; the Helm reads it back, projects its own layers onto it and writes it out, so the model list is visible to both
 - User tools and skills: `~/.wunder/user_tools/` and `~/.wunder/skills/`
 - Temporary-file API: `WUNDER_TEMP_DIR_ROOT` points to the same `~/.wunder/cli/WUNDER_TEMP/`
 
@@ -226,21 +229,3 @@ When a script needs an isolated runtime directory, override it with `--temp-root
 - Pipelines: `cat input.txt | wunder-cli` triggers the non-TTY degradation
 - Combining with `tool` / `mcp` / `skills` for pure tool runs
 - **Scheduled tasks don't belong on the Helm**: it turns cron off; put them on the Pupa or Beehive scheduled-tasks page
-
-## Common questions
-
-**Graphical interface**: not supported; use the Pupa when you need a GUI.
-
-**Scheduled tasks**: not supported; the Helm explicitly turns cron off.
-
-**Pipelines**: supported. Non-TTY degrades to a one-shot exec; `--json` emits JSONL.
-
-**Local environment check**: `wunder-cli doctor`.
-
-## Further reading
-
-- [Quick Start](/docs/en/start/quickstart/)
-- [Surfaces Overview](/docs/en/surfaces/index/)
-- [Core Concepts](/docs/en/concepts/)
-- [Tools Overview](/docs/en/tools/)
-- [First-Run Troubleshooting](/docs/en/start/troubleshooting-first-run/)

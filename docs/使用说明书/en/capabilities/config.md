@@ -1,12 +1,10 @@
 ---
 title: System Settings Reference
-summary: What the common settings mean and what to set them to.
-updated_at: 2026-10-13
+summary: The six settings categories, configuration layers and effect timing, and a configuration comparison across two deployment forms.
+updated_at: 2026-10-16
 ---
 
-## Settings categories
-
-wunder's settings fall into a few broad categories by responsibility:
+Settings fall into six categories by responsibility:
 
 - **Basic settings**: service address, port, and run mode
 - **Security settings**: access control and permission boundaries
@@ -15,93 +13,75 @@ wunder's settings fall into a few broad categories by responsibility:
 - **Model settings**: AI model selection and parameters
 - **Channel settings**: external platform access
 
+New settings take effect for new sessions immediately; existing sessions do not change and keep the settings from when they were created. The three layers, bottom to top, are **system defaults** (the bottom layer that any unset value falls back to), **per-user settings** (override the system defaults and affect only that user), and **agent settings** (the top layer, affecting only that agent). The order of precedence is agent settings > user settings > system defaults.
+
 ## Basic settings
 
 ### Service address and port
 
-These decide the network address and port the wunder service listens on.
-
-- For local use, the defaults are fine
-- For a team deployment, set an address the team can reach
+For local use, keep the defaults; for a team deployment, set an address the team can reach.
 
 ### Run mode
 
-This decides the form wunder runs in.
-
-- **Pupa local mode**: suited to individual local use, with all data stored locally
-- **Hull mode**: suited to teams and organizations, with multi-user support and centralized management
-
-Pick Pupa local mode for individual use; pick Hull mode when you need multi-user collaboration and centralized management.
+Two values: **Pupa local mode** (all data stored locally) and **Hull mode** (multi-user support and centralized management). Pick Pupa local mode for individual use, and Hull mode when you need multi-user collaboration or centralized management.
 
 ### Concurrency limit
 
-This caps how many sessions can be active at once, so the system does not get overloaded.
-
-- For individual use, the default is enough
-- For team use, adjust it to the number of users and the available hardware
+A cap on how many sessions can be active at once. The default is enough for individual use; for team use, adjust it to the number of users and the available hardware.
 
 ## Security settings
 
 ### API key
 
-This protects access to the Bridge and the Hull interfaces. A few points:
-
-- The key should be long enough — over 16 characters, mixing letters, digits, and symbols
-- Do not use a key that is easy to guess
-- Rotate the key regularly
+The credential guarding access to the Bridge and the Hull interfaces. The key should be long enough — over 16 characters, mixing letters, digits, and symbols; do not use a key that is easy to guess, and rotate the key regularly.
 
 ### Path access control
 
-This limits the file paths the agent may touch and the commands it may run.
+Limits the file paths the agent may touch and the commands it may run:
 
 - **Allowed paths**: the directories the agent may work in
 - **Denied patterns**: the file types or paths that are off limits
 
-As a safety practice, do not open the whole filesystem: name the working directories the agent may use and block sensitive system directories.
+Do not open the whole filesystem: name the working directories the agent may use and block sensitive system directories.
 
 ### External auth key
 
-When wunder is embedded in another system, this key verifies incoming external requests. It fits cases such as calling wunder from another system or an embedded integration.
+Used to verify external requests when wunder is embedded in another system, or when another system calls into wunder's capabilities.
 
 ## Storage settings
 
 ### Database type
 
-This decides which database stores business data.
-
-- **SQLite**: a lightweight local database, the default for Pupa local mode
+- **SQLite**: a lightweight local database, suited to Pupa local mode (default)
 - **PostgreSQL**: a full-scale database, suited to the Hull multi-user mode
 
 ### Workspace location
 
-This decides where user files and agent artifacts are stored. A few points:
-
-- In Hull mode, make sure the workspace directory is persistent (use NAS or network storage)
-- Do not put the workspace in a temporary directory
+Where user files and agent artifacts are stored. In Hull mode, make sure the workspace directory is persistent (use NAS or network storage); do not put the workspace in a temporary directory.
 
 ### Vector storage
 
-This is the storage backend used by knowledge-base retrieval, saved alongside the main storage backend: PostgreSQL in Hull mode and SQLite in Pupa local mode. Configure it when you need knowledge-base retrieval.
+The storage backend used by knowledge-base retrieval, saved alongside the main storage backend: PostgreSQL in Hull mode and SQLite in Pupa local mode. Configure it when you need knowledge-base retrieval.
 
 ## Tool settings
 
 ### Built-in tool switches
 
-These control which built-in tools the agent may use. In sensitive environments, consider turning off command-execution tools and opening only what is actually needed.
+Controls which built-in tools the agent may use. In sensitive environments, consider turning off command-execution tools and opening only what is actually needed.
 
 ### Browser tools
 
-These let the agent browse pages and take screenshots. Enable them directly for local use; a Hull deployment may need Docker container support.
+Once enabled, the agent can browse pages and take screenshots. Enable them directly for local use; a Hull deployment may need Docker container support.
 
 ### MCP extension tools
 
-These connect external tool services over the MCP protocol. Use them when you need specialized database operations, particular API calls, or third-party services.
+External tool services connected over the MCP protocol. Use them for specialized database operations, particular API calls, or third-party services.
 
 ## Model settings
 
 ### Available model list
 
-This decides which AI models the agent can choose from.
+The AI models the agent can choose from.
 
 - Adding a model means supplying its API key and endpoint
 - Different models have different billing and different strengths
@@ -109,45 +89,23 @@ This decides which AI models the agent can choose from.
 
 ### Context limit
 
-This caps the conversation context so it stays within what the model handles. Setting it to the model's maximum is fine; when the limit is reached, the system compresses older content automatically.
+A cap on the conversation context length. Setting it to the model's maximum is fine; when the limit is reached, the system compresses older content automatically.
 
 ## Channel settings
 
 ### Channel account binding
 
-This binds accounts on external platforms such as Feishu and WeCom. Create an app on the platform, obtain its credentials, and fill in the configuration for that channel type.
+Binds accounts on external platforms such as Feishu and WeCom. Create an app on the platform, obtain its credentials, and fill in the configuration for that channel type.
 
 ### Webhook configuration
 
-This lets an external platform push messages to wunder. Set up a publicly reachable receiving address and configure the webhook URL on the external platform.
+The receiving address external platforms push messages to. Set up a publicly reachable address and configure the webhook URL on the external platform.
 
-## When configuration takes effect
+## Deployment forms
 
-### Timing of changes
-
-- **New settings**: take effect for new sessions immediately
-- **Existing sessions**: do not change; they keep the settings from when they were created
-
-### Configuration layers
-
-- **System defaults**: the bottom layer that any unset value falls back to
-- **Per-user settings**: override the system defaults and affect only that user
-- **Agent settings**: the top layer, affecting only that agent
-
-**Order of precedence**: agent settings > user settings > system defaults.
-
-## Recommended configuration by scenario
-
-### Individual local use (Pupa desktop)
-
-- Database: SQLite (default)
-- Workspace: a local directory
-- Security: limit sensitive paths reasonably
-- Tools: open them as needed
-
-### Team collaboration (Hull server)
-
-- Database: PostgreSQL
-- Workspace: network storage (persistent)
-- Security: configure keys and path limits strictly
-- Tools: assign permissions by role
+| Item | Individual local use (Pupa desktop) | Team collaboration (Hull server) |
+| --- | --- | --- |
+| Database | SQLite (default) | PostgreSQL |
+| Workspace | A local directory | Network storage (persistent) |
+| Security | Limit sensitive paths reasonably | Configure keys and path limits strictly |
+| Tools | Open them as needed | Assign permissions by role |

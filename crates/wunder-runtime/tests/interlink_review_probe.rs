@@ -19,6 +19,50 @@ use wunder_server::{
 
 const DEVICE_HEADER: &str = "x-wunder-device-id";
 
+#[tokio::test]
+async fn concurrent_registration_binds_one_device_without_orphan_records() {
+    let context = build_context(|_| {}).await;
+    let user = create_user_id(&context, "fixture_registration");
+    let token = create_local_token(&context, &user);
+    let first = send_request(
+        &context.app,
+        Method::POST,
+        "/wunder/cloud/devices",
+        Some(&token),
+        &[],
+        Some(register_device_body("desktop", "fixture_a")),
+    );
+    let second = send_request(
+        &context.app,
+        Method::POST,
+        "/wunder/cloud/devices",
+        Some(&token),
+        &[],
+        Some(register_device_body("desktop", "fixture_b")),
+    );
+    let (first, second) = tokio::join!(first, second);
+    assert!(first.0 == StatusCode::OK || second.0 == StatusCode::OK);
+    let (devices, total) = context
+        .state
+        .storage
+        .list_cloud_devices(Some(&user), 0, 50)
+        .unwrap();
+    assert_eq!(total, 1);
+    let auth = context
+        .state
+        .user_store
+        .authenticate_token_details(&token)
+        .unwrap()
+        .unwrap();
+    let binding = context
+        .state
+        .storage
+        .get_user_session_device(auth.family_id.as_deref().unwrap())
+        .unwrap()
+        .unwrap();
+    assert_eq!(binding.device_id, devices[0].device_id);
+}
+
 struct TestContext {
     state: Arc<AppState>,
     app: Router,
@@ -35,16 +79,74 @@ async fn immutable_device_identity_blocks_header_body_and_scope_spoofing() {
     let second = create_local_token(&context, &user);
     let b = register_device(&context, &second, "desktop", "fixture_b").await;
     assert_ne!(a, b);
-    let (status, _, _) = send_request(&context.app, Method::GET, "/wunder/cloud/account", Some(&first), &[(DEVICE_HEADER, &b)], None).await;
+    let (status, _, _) = send_request(
+        &context.app,
+        Method::GET,
+        "/wunder/cloud/account",
+        Some(&first),
+        &[(DEVICE_HEADER, &b)],
+        None,
+    )
+    .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
-    for endpoint in ["/wunder/interlink/node_secret", "/wunder/interlink/channel_ticket"] {
-        let (status, _, _) = send_request(&context.app, Method::POST, endpoint, Some(&first), &[], Some(json!({"device_id":b}))).await;
-        assert!(matches!(status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN), "{endpoint}: {status}");
+    let (status, body, _) = send_request(
+        &context.app,
+        Method::POST,
+        "/wunder/interlink/commands",
+        Some(&first),
+        &[],
+        Some(json!({"to":"cloud","kind":"node.summary","from":"device:spoofed","args":{}})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["data"]["from"], format!("device:{a}"));
+    let (status, body, _) = send_request(
+        &context.app, Method::POST, "/wunder/interlink/commands", Some(&first), &[],
+        Some(json!({"to":"cloud","kind":"thread.cancel","args":{"local_thread_id":"fixture_missing"}})),
+    ).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["data"]["approval_state"], "none",
+        "own cloud thread control must not park behind an invisible approval"
+    );
+    for endpoint in [
+        "/wunder/interlink/node_secret",
+        "/wunder/interlink/channel_ticket",
+    ] {
+        let (status, _, _) = send_request(
+            &context.app,
+            Method::POST,
+            endpoint,
+            Some(&first),
+            &[],
+            Some(json!({"device_id":b})),
+        )
+        .await;
+        assert!(
+            matches!(status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN),
+            "{endpoint}: {status}"
+        );
     }
-    let (status, _, _) = send_request(&context.app, Method::POST, "/wunder/cloud/devices", Some(&first), &[], Some(register_device_body("cli", "fixture_c"))).await;
+    let (status, _, _) = send_request(
+        &context.app,
+        Method::POST,
+        "/wunder/cloud/devices",
+        Some(&first),
+        &[],
+        Some(register_device_body("cli", "fixture_c")),
+    )
+    .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
     let unbound = create_local_token(&context, &user);
-    let (status, _, _) = send_request(&context.app, Method::POST, "/wunder/interlink/commands", Some(&unbound), &[], Some(json!({"to":"cloud","kind":"node.summary","args":{}}))).await;
+    let (status, _, _) = send_request(
+        &context.app,
+        Method::POST,
+        "/wunder/interlink/commands",
+        Some(&unbound),
+        &[],
+        Some(json!({"to":"cloud","kind":"node.summary","args":{}})),
+    )
+    .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
 
@@ -226,24 +328,44 @@ async fn register_device(context: &TestContext, token: &str, client: &str, name:
         .to_string()
 }
 
-
 #[tokio::test]
 async fn admin_logout_invalidates_every_user_surface() {
     let context = build_context(|_| {}).await;
     let user_id = create_user_id(&context, "fixture_account");
     let mut sessions = Vec::new();
     for scope in ["user_web", "local_desktop", "local_cli"] {
-        let token = context.state.user_store.create_session_token_with_scope(&user_id, scope).unwrap().token;
+        let token = context
+            .state
+            .user_store
+            .create_session_token_with_scope(&user_id, scope)
+            .unwrap()
+            .token;
         sessions.push((scope, token));
     }
-    let (status, body, _) = send_request(&context.app, Method::POST,
+    let (status, body, _) = send_request(
+        &context.app,
+        Method::POST,
         &format!("/wunder/admin/user_accounts/{user_id}/logout"),
-        Some(&context.admin_token), &[], None).await;
+        Some(&context.admin_token),
+        &[],
+        None,
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["data"]["session_scopes"], json!(["user_web", "default", "local_desktop", "local_cli"]));
+    assert_eq!(
+        body["data"]["session_scopes"],
+        json!(["user_web", "default", "local_desktop", "local_cli"])
+    );
     for (scope, token) in sessions {
-        let (status, _, _) = send_request(&context.app, Method::GET,
-            "/wunder/auth/me", Some(&token), &[], None).await;
+        let (status, _, _) = send_request(
+            &context.app,
+            Method::GET,
+            "/wunder/auth/me",
+            Some(&token),
+            &[],
+            None,
+        )
+        .await;
         assert_eq!(status, StatusCode::UNAUTHORIZED);
         println!("review logout scope={scope} status={status}");
     }
@@ -255,16 +377,35 @@ async fn device_revocation_invalidates_cloud_and_interlink() {
     let user_id = create_user_id(&context, "fixture_account");
     let token = create_local_token(&context, &user_id);
     let device_id = register_device(&context, &token, "desktop", "fixture_device").await;
-    let (status, body, _) = send_request(&context.app, Method::DELETE,
+    let (status, body, _) = send_request(
+        &context.app,
+        Method::DELETE,
         &format!("/wunder/admin/cloud/devices/{device_id}"),
-        Some(&context.admin_token), &[], None).await;
+        Some(&context.admin_token),
+        &[],
+        None,
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    let (status, _, _) = send_request(&context.app, Method::GET,
-        "/wunder/cloud/account", Some(&token), &[(DEVICE_HEADER, &device_id)], None).await;
+    let (status, _, _) = send_request(
+        &context.app,
+        Method::GET,
+        "/wunder/cloud/account",
+        Some(&token),
+        &[(DEVICE_HEADER, &device_id)],
+        None,
+    )
+    .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
-    let (status, body, _) = send_request(&context.app, Method::POST,
-        "/wunder/interlink/commands", Some(&token), &[],
-        Some(json!({"to": "cloud", "kind": "node.summary", "args": {}}))).await;
+    let (status, body, _) = send_request(
+        &context.app,
+        Method::POST,
+        "/wunder/interlink/commands",
+        Some(&token),
+        &[],
+        Some(json!({"to": "cloud", "kind": "node.summary", "args": {}})),
+    )
+    .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
 }
 
@@ -273,12 +414,27 @@ async fn independent_local_logins_coexist() {
     let context = build_context(|_| {}).await;
     create_user_id(&context, "fixture_account");
     let store = &context.state.user_store;
-    let (first, refresh) = store.login_local_with_refresh_token(
-        "fixture_account", "password-123", "local_desktop").unwrap();
-    let (second, _) = store.login_local_with_refresh_token(
-        "fixture_account", "password-123", "local_desktop").unwrap();
-    assert!(store.authenticate_token_details(&first.token.token).unwrap().is_some());
-    assert!(store.authenticate_token_details(&second.token.token).unwrap().is_some());
-    assert!(!context.state.storage.get_user_refresh_token(&refresh.refresh_token).unwrap().unwrap().revoked);
-
+    let (first, refresh) = store
+        .login_local_with_refresh_token("fixture_account", "password-123", "local_desktop")
+        .unwrap();
+    let (second, _) = store
+        .login_local_with_refresh_token("fixture_account", "password-123", "local_desktop")
+        .unwrap();
+    assert!(store
+        .authenticate_token_details(&first.token.token)
+        .unwrap()
+        .is_some());
+    assert!(store
+        .authenticate_token_details(&second.token.token)
+        .unwrap()
+        .is_some());
+    assert!(
+        !context
+            .state
+            .storage
+            .get_user_refresh_token(&refresh.refresh_token)
+            .unwrap()
+            .unwrap()
+            .revoked
+    );
 }

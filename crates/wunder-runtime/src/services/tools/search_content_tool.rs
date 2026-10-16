@@ -2853,8 +2853,16 @@ mod tests {
             false,
         )
         .expect("attempt");
-        let summary =
-            build_search_summary(&params, &attempt, &[], &[], &[], 0, SearchEngine::Rust, false);
+        let summary = build_search_summary(
+            &params,
+            &attempt,
+            &[],
+            &[],
+            &[],
+            0,
+            SearchEngine::Rust,
+            false,
+        );
         assert!(summary
             .next_hint
             .as_deref()

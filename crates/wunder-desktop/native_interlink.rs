@@ -26,7 +26,7 @@ const CLOUD_PULL_TIMEOUT: Duration = Duration::from_secs(30);
 const OPEN_STATUSES: [&str; 4] = ["issued", "queued", "acked", "running"];
 /// Pull ceiling of a cloud target: with no tunnel data plane the executor pins
 /// one read to the inline cap (`interlink::client::stream::INLINE_MAX_BYTES`).
-const CLOUD_INLINE_LIMIT: u64 = 1024 * 1024;
+const CLOUD_INLINE_LIMIT: u64 = 256 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct NativeInterlinkStatus {

@@ -542,6 +542,10 @@ export component MainWindow inherits Window {
     in-out property <string> cloud-thread-approval;
     in-out property <string> cloud-thread-status;
     in-out property <bool> cloud-thread-busy;
+    in-out property <bool> cloud-thread-has-older;
+    in-out property <bool> cloud-thread-history-mode;
+    in-out property <string> cloud-thread-copy-text;
+    in-out property <int> cloud-thread-copy-request;
     callback cloud-open-threads();
     callback cloud-close-threads();
     callback cloud-reload-threads();
@@ -549,6 +553,9 @@ export component MainWindow inherits Window {
     callback cloud-send-thread();
     callback cloud-stop-thread();
     callback cloud-answer-thread(bool);
+    callback cloud-older-thread();
+    callback cloud-latest-thread();
+    callback cloud-copy-message(string, bool);
     callback cloud-login();
     callback cloud-logout();
     callback cloud-refresh-account();
@@ -1477,12 +1484,16 @@ export component MainWindow inherits Window {
         z: 230;
         threads: root.cloud-thread-names; agents: root.cloud-agent-names;
         turns: root.cloud-turns; busy: root.cloud-thread-busy; status: root.cloud-thread-status;
+        has-older: root.cloud-thread-has-older; history-mode: root.cloud-thread-history-mode;
+        copy-text: root.cloud-thread-copy-text; copy-request: root.cloud-thread-copy-request;
         thread-index <=> root.cloud-thread-index; agent-index <=> root.cloud-agent-index;
         message <=> root.cloud-thread-message; approval <=> root.cloud-thread-approval;
         refresh => { root.cloud-reload-threads(); }
         select-thread(index) => { root.cloud-select-thread(index); }
         send => { root.cloud-send-thread(); } stop => { root.cloud-stop-thread(); }
         answer(approve) => { root.cloud-answer-thread(approve); }
+        older => { root.cloud-older-thread(); } latest => { root.cloud-latest-thread(); }
+        copy-message(id, assistant) => { root.cloud-copy-message(id, assistant); }
         close => { root.cloud-close-threads(); }
     }
     // ---- interlink approval (§I9): one remote command at a time ----

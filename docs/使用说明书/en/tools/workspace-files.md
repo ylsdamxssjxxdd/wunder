@@ -1,18 +1,12 @@
 ---
 title: Workspace Files
-summary: Browsing the workspace, searching content, reading files, and writing files.
-updated_at: 2026-10-13
+summary: Parameters, matching rules, and failure diagnosis for the five operations: list a directory, search content, read a range, exact replacement, and whole-file write.
+updated_at: 2026-10-16
 ---
 
-The most common operations in the local workspace are these: listing a directory, searching content, reading a file, editing a file, and writing a file.
+# Workspace Files
 
-## Choosing between the tools
-
-- To see the directory structure first: `list_files`.
-- When you already know the word you are looking for and want to locate it: `search_content`.
-- When you know the path and want to read a range: `read_file`.
-- To create or overwrite a whole file: `write_file`.
-- To make one exact text replacement: `edit_file2`.
+Five common operations in the local workspace map to five tools: list a directory with `list_files`, search content with `search_content`, read a range with `read_file`, exact replacement with `edit_file2`, and whole-file write with `write_file`.
 
 ## Listing a directory
 
@@ -26,7 +20,7 @@ It searches a directory by keyword and returns the files and positions that matc
 
 When you know the path, read that range: give a start and end line, reading one file at a time, or pass several files and line ranges to read in a batch. The result assembles the content into directly readable text and gives a summary for each file; when the default window is not enough or the budget truncates the output, it tells you that more reading is needed.
 
-## Editing a file
+## Exact replacement
 
 `edit_file2` does one exact replacement, swapping one stretch of original text for new text:
 
@@ -39,10 +33,10 @@ When you know the path, read that range: give a start and end line, reading one 
 
 It suits an edit where you already have the exact original text, it is a single replacement, and you do not need regular expressions or multi-step logic. For complex replacements, regular-expression replacements, edits spanning several stretches, or edits with conditional logic, write a script with [Execute Command](/docs/en/tools/exec/); to generate or overwrite a whole file, use `write_file`; and for a small code patch reviewed with its surrounding context, use the patch form of `文本编辑`.
 
-## Writing a file
+## Whole-file write
 
 `write_file` is for creating or overwriting a whole file. If the workspace has a matching language service, a diagnostic runs alongside the write. It is not meant for small, precise code edits (use the patch form) or for running scripts or builds (use [Execute Command](/docs/en/tools/exec/)).
 
-## When something goes wrong
+## Errors
 
 When any of these tools fails it puts the reason in the result; look mainly at the error code, the hint, and the attached data, which usually shows directly whether the path is missing, the arguments are wrong, or the file cannot be read.

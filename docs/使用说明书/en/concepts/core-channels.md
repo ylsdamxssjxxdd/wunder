@@ -1,18 +1,16 @@
 ---
 title: Channels
-summary: Feishu, QQ, WeChat, XMPP, and generic webhooks differ in support level; an inbound message is routed to its agent and workspace by binding.
-updated_at: 2026-10-13
+summary: The support level of Feishu, QQ, WeChat, XMPP, and generic webhooks; the binding score that routes a message to its agent and workspace; inbound, outbound, and rate-limit parameters.
+updated_at: 2026-10-16
 ---
 
-## A channel is only an entry point
+## Scope of responsibility
 
-All execution happens in the engine. A channel does just two things: parse an external message into a unified inbound shape, and deliver the unified outbound shape back into an external protocol. Protocol adaptation stops at the entry; a channel does not copy business logic, does not keep its own storage, and does not change thread semantics.
+All execution happens in the engine. A channel does just two things: parse an external message into a unified inbound shape, and deliver the unified outbound shape back into an external protocol. Protocol adaptation stops at the entry; a channel does not copy business logic, does not keep its own storage, and does not change thread semantics. The same task thread can take a message from Beehive, continue it from Feishu, and finish it from Pupa; a channel never creates a second execution path.
 
-So the same task thread can take a message from Beehive, continue it from Feishu, and finish it from Pupa; a channel never creates a second execution path.
+A form (Pupa / Beehive / Helm / Hull) is the shape of running and access; a channel (Feishu / QQ / WeChat …) is an off-site platform. The two are not one layer. The statement that many entries share one engine holds; what tends to be written wrong is the support level.
 
-A form (Pupa / Beehive / Helm / Hull) is the shape of running and access; a channel (Feishu / QQ / WeChat …) is an off-site platform.
-
-## Which channels are supported today
+## Support level
 
 - **Feishu (feishu)**: a persistent connection plus a webhook, fully implemented, with a dedicated webhook entry point.
 - **QQ Bot (qqbot)**: a persistent connection plus a webhook, fully implemented, with a dedicated webhook entry point.
@@ -24,9 +22,9 @@ A form (Pupa / Beehive / Helm / Hull) is the shape of running and access; a chan
 
 Only four channels use a persistent connection: Feishu, QQ Bot, XMPP, and WeChat (weixin). WeCom, the Official Account, and WhatsApp Cloud are pure webhook callbacks.
 
-The following platforms have no adapter at all: telegram, discord, slack, LINE, DingTalk. They exist only as generic-webhook directory entries, handled through the generic entry point and generic parsing — with no platform-specific signature verification, rich-text mapping, attachment download, or proactive push. The accurate statement is that they are visible in the directory and can send and receive text over a generic webhook, but they have no platform-specific adapter.
+The following platforms have no adapter at all: telegram, discord, slack, LINE, DingTalk. They exist only as generic-webhook directory entries, handled through the generic entry point and generic parsing — with no platform-specific signature verification, rich-text mapping, attachment download, or proactive push. The accurate statement is that they are visible in the directory and can send and receive text over a generic webhook, but they have no platform-specific adapter. Writing them up as "supported channels" is wrong.
 
-## How a message finds its agent and workspace
+## Binding resolution
 
 An inbound message is first resolved by binding: candidates are scored by specificity, the single best one is taken, and priority breaks a tie.
 
@@ -39,7 +37,7 @@ An inbound message is first resolved by binding: candidates are scored by specif
 
 A hit yields the target agent and any tool overrides, after which the workspace is decided: empty, as well as the default and __default__ aliases, all point to that user's default agent workspace. In the Hull form, workspaces are flattened per user into a single cloud directory, so files arriving from different channels for the same user land in the same place.
 
-## The boundaries of inbound, outbound, and rate limiting
+## Inbound, outbound, and rate limiting
 
 Inbound uses a bounded queue: capacity 512, concurrency 8, enqueue timeout 80 ms. A full queue or an enqueue timeout counts as backpressure and reports "queue busy" rather than piling up without limit. The visible effect is that the platform redelivers or briefly delays; messages are not silently dropped.
 
@@ -59,7 +57,7 @@ The generic entry point is `POST /wunder/channel/{provider}/webhook`; Feishu and
 
 Verification differs by platform: some loop back a verification token from configuration, some use a content signature, and WeCom additionally verifies the signature and decrypts the encrypted message. The generic webhook does no platform-specific verification, so platforms that use the generic entry point need to close this off themselves at a gateway or reverse proxy to guarantee a trustworthy source.
 
-## Troubleshooting message problems
+## Troubleshooting messages
 
 1. **Presence**: for a persistent-connection channel, check whether its connection process is running; a webhook-only channel has no notion of presence, so check only whether the callback arrives.
 2. **Whether the callback arrives**: check the platform-side push logs and the channel's runtime logs.
@@ -71,16 +69,9 @@ Verification differs by platform: some loop back a verification token from confi
 
 - telegram / discord / slack / LINE / DingTalk have no adapter; they are only generic directory entries.
 - WeCom and the Official Account have no persistent connection; only Feishu, QQ Bot, XMPP, and WeChat have one.
-- XMPP is not usable out of the box; while disabled by default it is a placeholder.
+- XMPP is disabled by default, and while disabled it is a placeholder.
 - A channel cannot be configured with business logic; it has only two layers, the target agent and tool overrides, and everything else lives in the engine and on the management side.
 - The core capabilities are the same across channels; the differences are only in protocol expression (rich text, attachments, cards) and whether a persistent connection is supported.
 - The inbound queue does not guarantee no loss by queuing forever; it is bounded at 512 with an 80 ms enqueue timeout, and anything beyond goes to backpressure and platform redelivery.
 - A failed outbound delivery is not dropped outright; it uses a persistent queue with exponential backoff and at most 5 retries.
 - Pupa and Helm do not go through the channel layer: Pupa is a native in-process call, and Helm uses its own access path.
-
-## Related pages
-
-- [WeChat Channel Integration](/docs/en/capabilities/weixin-channel/) — the details of weixin long polling
-- [Workspace Routing Reference](/docs/en/capabilities/workspace-routing/) — the rules that map a binding to a workspace
-- [Realtime](/docs/en/concepts/core-realtime/) — event push and refill
-- [Bridge Panel Guide](/docs/en/capabilities/admin-panels/) — where channel accounts are configured

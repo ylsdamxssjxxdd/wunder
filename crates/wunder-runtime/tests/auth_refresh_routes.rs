@@ -34,15 +34,43 @@ async fn concurrent_refresh_has_one_winner_and_reuse_burns_family() {
     create_user_id(&context, "fixture_concurrent");
     let (_, body) = login(&context, "fixture_concurrent", Some("local_desktop")).await;
     let refresh = body["data"]["refresh_token"].as_str().unwrap();
-    let first = send_request(&context.app, Method::POST, "/wunder/auth/refresh", None, None, Some(refresh_body(refresh)));
-    let second = send_request(&context.app, Method::POST, "/wunder/auth/refresh", None, None, Some(refresh_body(refresh)));
+    let first = send_request(
+        &context.app,
+        Method::POST,
+        "/wunder/auth/refresh",
+        None,
+        None,
+        Some(refresh_body(refresh)),
+    );
+    let second = send_request(
+        &context.app,
+        Method::POST,
+        "/wunder/auth/refresh",
+        None,
+        None,
+        Some(refresh_body(refresh)),
+    );
     let (first, second) = tokio::join!(first, second);
     let results = [first, second];
-    assert_eq!(results.iter().filter(|row| row.0 == StatusCode::OK).count(), 1);
-    assert_eq!(results.iter().filter(|row| row.0 == StatusCode::UNAUTHORIZED).count(), 1);
+    assert_eq!(
+        results.iter().filter(|row| row.0 == StatusCode::OK).count(),
+        1
+    );
+    assert_eq!(
+        results
+            .iter()
+            .filter(|row| row.0 == StatusCode::UNAUTHORIZED)
+            .count(),
+        1
+    );
     let winner = results.iter().find(|row| row.0 == StatusCode::OK).unwrap();
     let access = winner.1["data"]["access_token"].as_str().unwrap();
-    assert!(context.state.user_store.authenticate_token_details(access).unwrap().is_none());
+    assert!(context
+        .state
+        .user_store
+        .authenticate_token_details(access)
+        .unwrap()
+        .is_none());
 }
 
 async fn build_context() -> TestContext {
@@ -437,11 +465,25 @@ async fn independent_families_survive_login_and_other_family_logout() {
         "independent access token must remain valid"
     );
 
-    let (status, _, _) = send_request(&context.app, Method::POST,
-        "/wunder/auth/logout", Some(&first_access), None, None).await;
+    let (status, _, _) = send_request(
+        &context.app,
+        Method::POST,
+        "/wunder/auth/logout",
+        Some(&first_access),
+        None,
+        None,
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
-    let (status, _, _) = send_request(&context.app, Method::GET,
-        "/wunder/auth/me", Some(&first_access), None, None).await;
+    let (status, _, _) = send_request(
+        &context.app,
+        Method::GET,
+        "/wunder/auth/me",
+        Some(&first_access),
+        None,
+        None,
+    )
+    .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 
     // Logout also burns the refresh credential; it cannot resurrect the family.

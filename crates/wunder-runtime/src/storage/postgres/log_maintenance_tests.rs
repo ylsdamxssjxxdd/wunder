@@ -331,12 +331,15 @@ fn postgres_log_maintenance_orphan_watermark_waits_for_every_row() {
     ).unwrap();
     // One projection holds its rows back: the interval keeps them, so the
     // watermark must stay put even though other tables are already empty.
-    f.db.conn().unwrap().batch_execute(
-        "CREATE FUNCTION fixture_keep_row() RETURNS trigger LANGUAGE plpgsql AS
+    f.db.conn()
+        .unwrap()
+        .batch_execute(
+            "CREATE FUNCTION fixture_keep_row() RETURNS trigger LANGUAGE plpgsql AS
          'BEGIN RETURN NULL; END';
          CREATE TRIGGER fixture_keep BEFORE DELETE ON thread_log_changes
          FOR EACH ROW EXECUTE FUNCTION fixture_keep_row()",
-    ).unwrap();
+        )
+        .unwrap();
     f.db.reconcile_user_usage_impl(true).unwrap();
     let partial = f.db.cleanup_orphan_session_logs_impl(200.0).unwrap();
     assert!(
@@ -361,12 +364,19 @@ fn postgres_log_maintenance_orphan_watermark_waits_for_every_row() {
         .unwrap();
     let mut completed = false;
     for _ in 0..5 {
-        if f.db.cleanup_orphan_session_logs_impl(200.0).unwrap().completed {
+        if f.db
+            .cleanup_orphan_session_logs_impl(200.0)
+            .unwrap()
+            .completed
+        {
             completed = true;
             break;
         }
     }
-    assert!(completed, "sweep must reach the cutoff once rows are deletable");
+    assert!(
+        completed,
+        "sweep must reach the cutoff once rows are deletable"
+    );
     assert_eq!(f.count("thread_items"), 2);
     assert_eq!(f.count("tool_logs"), 2);
     assert_eq!(

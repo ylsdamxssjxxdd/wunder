@@ -1,12 +1,12 @@
 ---
 title: Form matrix
 summary: How the program forms compare on tech stack, purpose, run model and OS support, plus which form to pick for your scenario.
-updated_at: 2026-10-13
+updated_at: 2026-10-16
 ---
 
 # Form matrix
 
-One engine is shipped as several program forms; the difference is only in the access layer. The table below lists each form's tech stack, purpose, run model and OS support.
+wunder is an agent scheduling platform. One engine is shipped as several program forms; the difference is only in the access layer.
 
 | Icon | Form | Tech stack | Purpose | Run model | OS support |
 | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -24,9 +24,3 @@ All forms share the same engine (wunder-runtime) and core (wunder-core): threads
 - **Teams, or anyone working in a browser** → Beehive (web). Hull's user side, provided with Hull; once Hull is deployed, members reach it in a browser.
 - **Terminal and scripting** → Helm (cli). The manual local entry point, terminal-driven, scriptable, automation-friendly.
 - **Multi-user management and governance** → Hull (server). Multi-tenancy, user and org-unit management, agent app build and publish, unified gateway access and scheduling. The admin console is the Bridge (web), which starts with Hull and is aimed at administrators.
-
-## Further reading
-
-- [wunder home](/docs/en/index/)
-- [Manual overview](/docs/en/start/hubs/)
-- [Quickstart](/docs/en/start/quickstart/)

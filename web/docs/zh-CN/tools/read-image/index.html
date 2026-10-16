@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>读图工具 | 使用说明书</title>
-  <meta name="description" content="把本地的图片、动图或视频送进当前对话，让智能体直接看这些素材。">
+  <meta name="description" content="`read_image` 的路径与取帧参数，静态图、GIF、视频三类素材的进上下文方式与返回字段。">
   <link rel="stylesheet" href="/docs/site.css?v=911481f6077c">
   <script type="module" src="/docs/site.js?v=911481f6077c"></script>
 </head>
@@ -55,6 +55,6 @@
       </aside>
     </div>
   </div>
-  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/tools/read-image","language":"zh-CN","title":"读图工具","summary":"把本地的图片、动图或视频送进当前对话，让智能体直接看这些素材。","updated_at":"2026-06-05","read_when":[],"source_docs":[],"tab":"工具","group":"多模态","group_path":["多模态"],"url":"/docs/zh-CN/tools/read-image/","headings":[{"id":"section-1","level":1,"text":"读图工具"},{"id":"section-2","level":2,"text":"什么时候用"},{"id":"section-3","level":2,"text":"怎么用"},{"id":"section-4","level":2,"text":"它会自动做什么"},{"id":"section-5","level":2,"text":"出问题时怎么判断"}],"prev_slug":"zh-CN/tools/browser","next_slug":"zh-CN/tools/multimodal-generation","markdown":"# 读图工具\n\n读图工具把本地素材送进当前对话，让智能体看到这些画面。它不只认静态图片，也处理 GIF 和本地视频。\n\n## 什么时候用\n\n- 有一张截图、照片或设计稿，想让智能体读里面的内容。\n- 有一段动图或视频，想让它按帧看个大概。\n\n## 怎么用\n\n参数是文件路径：\n\n```json\n{\n  \"path\": \"screenshots/demo.png\"\n}\n```\n\nGIF 可以再加一个取帧间隔，视频可以再指定每秒取几帧：\n\n```json\n{\n  \"path\": \"captures/demo.gif\",\n  \"frame_step\": 2\n}\n```\n\n```json\n{\n  \"path\": \"captures/demo.mp4\",\n  \"frame_rate\": 1\n}\n```\n\n## 它会自动做什么\n\n- 静态图片原样作为图片输入进上下文；模型只需要给路径，看的意图由当前对话补上。\n- GIF 不会整段丢给模型：默认只取第一帧，给了取帧间隔就按间隔抽帧。\n- 视频会被整理成一串图片帧；如果视频里带音轨，还会附上转写出来的文字。\n- 返回里会说明素材的类型和大小，但那只表示素材已经准备好，不是模型的分析结论。\n\n## 出问题时怎么判断\n\n返回里可以核对路径是否解析到真实文件、素材类型是否正确、字节大小是否符合预期。路径写错或素材类型不支持，会直接报错。\n","source_path":"使用说明书/zh-CN/tools/read-image.md"}</script>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/tools/read-image","language":"zh-CN","title":"读图工具","summary":"`read_image` 的路径与取帧参数，静态图、GIF、视频三类素材的进上下文方式与返回字段。","updated_at":"2026-10-16","read_when":[],"source_docs":[],"tab":"工具","group":"多模态","group_path":["多模态"],"url":"/docs/zh-CN/tools/read-image/","headings":[{"id":"section-1","level":1,"text":"读图工具"},{"id":"section-2","level":2,"text":"参数"},{"id":"section-3","level":2,"text":"素材处理"},{"id":"section-4","level":2,"text":"返回值"},{"id":"section-5","level":2,"text":"错误与处理"}],"prev_slug":"zh-CN/tools/browser","next_slug":"zh-CN/tools/multimodal-generation","markdown":"# 读图工具\n\n读图工具按路径把本地素材送进当前对话：截图、照片、设计稿，以及 GIF 和本地视频。\n\n## 参数\n\n参数是文件路径：\n\n```json\n{\n  \"path\": \"screenshots/demo.png\"\n}\n```\n\nGIF 可以再加一个取帧间隔，视频可以再指定每秒取几帧：\n\n```json\n{\n  \"path\": \"captures/demo.gif\",\n  \"frame_step\": 2\n}\n```\n\n```json\n{\n  \"path\": \"captures/demo.mp4\",\n  \"frame_rate\": 1\n}\n```\n\n## 素材处理\n\n- 静态图片原样作为图片输入进上下文；调用时给路径，看的意图由当前对话补上。\n- GIF 不会整段丢给模型：默认只取第一帧，给了取帧间隔就按间隔抽帧。\n- 视频会被整理成一串图片帧；如果视频里带音轨，还会附上转写出来的文字。\n\n## 返回值\n\n返回里会说明素材的类型和大小，但那只表示素材已经准备好，不是模型的分析结论。\n\n## 错误与处理\n\n返回里可以核对路径是否解析到真实文件、素材类型是否正确、字节大小是否符合预期。路径写错或素材类型不支持，会直接报错。\n","source_path":"使用说明书/zh-CN/tools/read-image.md"}</script>
 </body>
 </html>

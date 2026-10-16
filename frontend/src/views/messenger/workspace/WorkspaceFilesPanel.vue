@@ -485,6 +485,8 @@ const seedTreeFromShadow = (): void => {
 /** 进入一个远程工作区：先铺影子快照，在线时再把根目录换成实时列表。 */
 const enterRemoteWorkspace = async (): Promise<void> => {
   if (!remoteInterlinkActive.value) return;
+  exitSelectionMode();
+  remoteOperationState.value = '';
   directoryAbort.controller.abort();
   directoryAbort = createAbortHost();
   closePreview();
@@ -567,6 +569,7 @@ const handleDragEnter = () => {
 };
 
 const handleDragOver = (event: DragEvent) => {
+  if (remoteInterlinkActive.value) return;
   dragActive.value = true;
   if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
 };

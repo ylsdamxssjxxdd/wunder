@@ -3,7 +3,7 @@ use super::NativeDesktop;
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 use std::time::{Duration, Instant};
-use wunder_server::{cloud::CloudThreadWatch, stable_core::thread_view::ThreadViewPage};
+use wunder_server::{cloud::CloudThreadWatch, stable_core::thread_view::{BodyRef, ThreadBodyPage, ThreadViewPage, ViewMessage}};
 
 #[derive(Debug, Clone)]
 pub struct NativeCloudAgent {
@@ -53,6 +53,48 @@ impl NativeDesktop {
             .runtime
             .block_on(self.state().cloud.cloud_thread_view(thread))?;
         Ok(serde_json::from_value(data["page"].clone())?)
+    }
+    pub fn cloud_thread_history(&self, thread: &str, before: i64) -> Result<ThreadViewPage> {
+        let data = self.runtime.block_on(self.state().cloud.cloud_thread_chat_page(thread, before))?;
+        Ok(serde_json::from_value(data["page"].clone())?)
+    }
+
+    /// Copy complete content on demand. Preview/tail text is never substituted
+    /// for an incomplete body; oversized clipboard payloads fail explicitly.
+    pub fn cloud_message_text(&self, thread: &str, message: &ViewMessage) -> Result<String> {
+        if let Some(body) = &message.body {
+            self.cloud_body_text(thread, body)
+        } else {
+            anyhow::ensure!(message.tail_offset == 0 && message.content_offset <= message.content.encode_utf16().count(), "full message body is unavailable; refresh the thread");
+            Ok(if message.tail.is_empty() { message.content.clone() } else { message.tail.clone() })
+        }
+    }
+
+    fn cloud_body_text(&self, thread: &str, body: &BodyRef) -> Result<String> {
+        let cloud = self.state().cloud.clone();
+        let identity = cloud.session().ok_or_else(|| anyhow!("not logged in"))?;
+        self.runtime.block_on(async {
+            let mut cursor = 0;
+            let mut text = String::new();
+            for _ in 0..1024 {
+                let live = cloud.session().ok_or_else(|| anyhow!("cloud session ended"))?;
+                anyhow::ensure!(live.server == identity.server && live.user_id == identity.user_id && live.device_id == identity.device_id && live.logged_in_at == identity.logged_in_at, "cloud account changed; refresh the thread");
+                let page: ThreadBodyPage = serde_json::from_value(cloud.cloud_thread_body(thread, &body.body_id, body.revision, cursor).await?)?;
+                anyhow::ensure!(page.body_id == body.body_id && page.revision == body.revision, "cloud body revision changed; refresh the thread");
+                for chunk in page.chunks {
+                    anyhow::ensure!(text.len() + chunk.len() <= 8 * 1024 * 1024, "message exceeds the clipboard limit (8 MiB); use a smaller body selection");
+                    text.push_str(&chunk);
+                }
+                if !page.has_more {
+                    anyhow::ensure!(text.len() == body.bytes, "message body is incomplete; refresh the thread");
+                    return Ok(text);
+                }
+                let next = page.next_cursor.ok_or_else(|| anyhow!("missing body cursor"))?;
+                anyhow::ensure!(next > cursor, "body cursor did not advance");
+                cursor = next;
+            }
+            Err(anyhow!("message body exceeds the page limit"))
+        })
     }
     pub fn cloud_thread_watch(&self, thread: &str, after: i64) -> CloudThreadWatch {
         let _guard = self.runtime.enter();

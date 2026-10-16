@@ -265,7 +265,12 @@ async fn device_registration_is_idempotent() {
     let device_a_again = register_device(&context, &token, "desktop", "workstation").await;
     assert_eq!(device_a, device_a_again, "same identity reuses the device");
 
-    let cli_token = context.state.user_store.create_session_token_with_scope(&user_id, "local_cli").unwrap().token;
+    let cli_token = context
+        .state
+        .user_store
+        .create_session_token_with_scope(&user_id, "local_cli")
+        .unwrap()
+        .token;
     let device_b = register_device(&context, &cli_token, "cli", "workstation").await;
     assert_ne!(device_a, device_b, "different client means new device");
 
@@ -571,7 +576,12 @@ fn log_entry(seq: i64, message: &str) -> Value {
 async fn logs_upload_is_idempotent_and_bounded() {
     let context = build_context(|_| {}).await;
     let user_id = create_user_id(&context, "log_user");
-    let token = context.state.user_store.create_token_for_user_with_scope(&user_id, "local_cli").unwrap().token;
+    let token = context
+        .state
+        .user_store
+        .create_session_token_with_scope(&user_id, "local_cli")
+        .unwrap()
+        .token;
     let device_id = register_device(&context, &token, "cli", "log-host").await;
 
     let payload = json!({
@@ -700,8 +710,15 @@ async fn device_revocation_blocks_access() {
     assert_eq!(body["error"]["code"], json!("AUTH_REQUIRED"));
 
     // A revoked credential cannot bootstrap registration or reset the flag.
-    let (status, _, _) = send_request(&context.app, Method::POST,
-        "/wunder/cloud/devices", Some(&token), &[], Some(register_device_body("desktop", "fixture_device"))).await;
+    let (status, _, _) = send_request(
+        &context.app,
+        Method::POST,
+        "/wunder/cloud/devices",
+        Some(&token),
+        &[],
+        Some(register_device_body("desktop", "fixture_device")),
+    )
+    .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     let (status, body, _) = send_request(
         &context.app,

@@ -112,20 +112,26 @@ function watchThread() {
 async function drive(kind: string, extra: Record<string, unknown> = {}) {
   if (busy.value) return;
   busy.value = true; const current = generation;
+  let succeeded = false;
   try {
     const result = await command(kind, { ...(selected.value ? { local_thread_id: selected.value } : {}), ...(kind === 'thread.message' ? { message: message.value } : {}), ...extra });
     if (current !== generation) return;
     if (result.status !== 'succeeded') throw new Error(result.errorSummary || result.errorCode);
     if (kind === 'thread.message') { message.value = ''; selected.value = String(result.result?.local_thread_id || selected.value); }
     status.value = text('操作成功', 'Completed');
+    succeeded = true;
   } catch (error) { if (current === generation) status.value = String(error); }
-  finally { if (current === generation) { busy.value = false; if (selected.value) await loadThread(); } }
+  finally { if (current === generation) { busy.value = false; if (succeeded && selected.value) await loadThread(); } }
 }
 async function answer() {
   try {
     const { value } = await ElMessageBox.prompt(text('输入待处理的工具审批 ID', 'Enter the pending tool approval ID'), text('工具审批', 'Tool approval'));
-    await ElMessageBox.confirm(text('允许此工具执行一次？取消则不提交决定。', 'Allow this tool once? Cancel leaves the approval unchanged.'), text('确认', 'Confirm'));
-    await drive('thread.answer', { approval_id: value.trim(), decision: 'approve_once' });
+    if (!value.trim()) return;
+    let decision = 'approve_once';
+    try {
+      await ElMessageBox.confirm(text('允许此工具执行一次？也可以明确拒绝。', 'Allow this tool once, or explicitly reject it.'), text('确认', 'Confirm'), { confirmButtonText: text('允许一次', 'Allow once'), cancelButtonText: text('拒绝', 'Reject'), distinguishCancelAndClose: true });
+    } catch (action) { if (action !== 'cancel') return; decision = 'deny'; }
+    await drive('thread.answer', { approval_id: value.trim(), decision });
   } catch { /* Dialog canceled. */ }
 }
 function open() { visible.value = true; void reload(); }

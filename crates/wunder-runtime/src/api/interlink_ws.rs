@@ -108,7 +108,13 @@ impl TicketStore {
         // At most one pending ticket per device and a hard global ceiling.
         guard.retain(|_, pending| pending.device_id != entry.device_id);
         if guard.len() >= 4096 {
-            if let Some(oldest) = guard.iter().min_by(|a,b| a.1.expires_at.total_cmp(&b.1.expires_at)).map(|(key,_)| key.clone()) { guard.remove(&oldest); }
+            if let Some(oldest) = guard
+                .iter()
+                .min_by(|a, b| a.1.expires_at.total_cmp(&b.1.expires_at))
+                .map(|(key, _)| key.clone())
+            {
+                guard.remove(&oldest);
+            }
         }
         guard.insert(ticket, entry);
     }
@@ -147,7 +153,9 @@ async fn issue_ticket(
         Err(response) => return response,
     };
     let user_id = resolved.user.user_id.clone();
-    let Some(credential) = crate::auth::extract_bearer_token(&headers) else { return device_error(); };
+    let Some(credential) = crate::auth::extract_bearer_token(&headers) else {
+        return device_error();
+    };
 
     let config = state.config_store.get().await;
     if !config.interlink.enabled {
@@ -197,10 +205,14 @@ async fn issue_ticket(
     }
 
     // Body device IDs must obey the same immutable binding as header IDs.
-    let auth = state.user_store.authenticate_token_details(&credential).ok().flatten();
+    let auth = state
+        .user_store
+        .authenticate_token_details(&credential)
+        .ok()
+        .flatten();
     if let Some(family) = auth.and_then(|auth| auth.family_id) {
         match state.storage.get_user_session_device(&family) {
-            Ok(Some(binding)) if binding.device_id == device_id => {},
+            Ok(Some(binding)) if binding.device_id == device_id => {}
             _ => return device_error(),
         }
     }
@@ -270,7 +282,8 @@ async fn interlink_ws(
             "ticket is invalid or expired".to_string(),
         )
     })?;
-    if !crate::api::user_context::credential_active(&state, &entry.credential, &entry.user_id).await {
+    if !crate::api::user_context::credential_active(&state, &entry.credential, &entry.user_id).await
+    {
         return Err(device_error());
     }
     // The ticket is bound to the address it was minted for (docs §9.1). A
@@ -311,13 +324,17 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>, ticket: TicketEntry)
     let shadow_limits = shadow_limit_config(&config.interlink.shadow);
     drop(config);
 
-    if !crate::api::user_context::credential_active(&state, &ticket.credential, &ticket.user_id).await {
+    if !crate::api::user_context::credential_active(&state, &ticket.credential, &ticket.user_id)
+        .await
+    {
         let _ = send_close(&mut sender, "session_revoked", None).await;
         return;
     }
     // 1) First frame must be `hello`.
-    let hello = match tokio::time::timeout(Duration::from_secs(10), read_hello(&mut receiver)).await
-        .unwrap_or_else(|_| Err("hello timeout".to_string())) {
+    let hello = match tokio::time::timeout(Duration::from_secs(10), read_hello(&mut receiver))
+        .await
+        .unwrap_or_else(|_| Err("hello timeout".to_string()))
+    {
         Ok(hello) => hello,
         Err(reason) => {
             let _ = send_close(&mut sender, &reason, None).await;

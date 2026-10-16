@@ -67,14 +67,7 @@ pub async fn run(
     let collector = ShadowCollector::new();
     let wake = Arc::new(tokio::sync::Notify::new());
     let cancel = CancellationToken::new();
-    let execution = execute::execute(
-        &spec,
-        &ctx,
-        &writer,
-        &collector,
-        &wake,
-        cancel.clone(),
-    );
+    let execution = execute::execute(&spec, &ctx, &writer, &collector, &wake, cancel.clone());
     tokio::pin!(execution);
     let mut tick = tokio::time::interval(std::time::Duration::from_millis(250));
     let report = loop {
@@ -92,8 +85,10 @@ pub async fn run(
     let mut payload = report.result.clone();
     if let Some(map) = payload.as_object_mut() {
         if let Some(extra) = report.payload().as_object() {
-            for key in ["inline", "stream_id", "size", "usage"] {
-                if let Some(value) = extra.get(key) { map.insert(key.to_string(), value.clone()); }
+            for key in ["inline", "stream_id", "size", "usage", "mime", "max_bytes"] {
+                if let Some(value) = extra.get(key) {
+                    map.insert(key.to_string(), value.clone());
+                }
             }
         }
     }

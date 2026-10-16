@@ -35,7 +35,7 @@ const TERMINAL_STATUSES: [&str; 4] = ["succeeded", "failed", "canceled", "timeou
 /// The cloud node has no tunnel data plane, so its executor pins one read or
 /// write at the inline cap (docs §6.4, §8.1). Checked locally so an oversized
 /// push fails before the file is read into the ledger.
-pub const CLOUD_FILE_CEILING: usize = 1024 * 1024;
+pub const CLOUD_FILE_CEILING: usize = 256 * 1024;
 /// One preview line never exceeds this many characters: a single-line multi-kB
 /// file must not dump itself into the terminal.
 pub const CAT_LINE_CHARS: usize = 2000;
@@ -78,7 +78,11 @@ pub(crate) async fn handle_cloud_interlink(
     global: &GlobalArgs,
     command: crate::args::CloudSubcommand,
 ) -> Result<()> {
-    if cloud_shared().session().is_none() { cloud_shared().adopt_shared_login().await?; }
+    if cloud_shared().session().is_none() {
+        cloud_shared().adopt_shared_login().await.context(
+            "未登录云端（先 cloud login）/ not logged in (run cloud login first)",
+        )?;
+    }
     match command {
         crate::args::CloudSubcommand::Agents => {
             let data = get_json(&session()?, "/wunder/agents").await?;
@@ -318,7 +322,7 @@ fn failure_error(data: &Value, is_zh: bool) -> anyhow::Error {
 fn failure_hint(code: &str) -> Option<&'static str> {
     match code {
         "PAYLOAD_TOO_LARGE" => Some(
-            "云端目标没有隧道数据面，单次读写上限 1 MiB；请拆分文件，或改用设备目标（--to device:<id>）/ the cloud target has no tunnel data plane: 1 MiB per read or write; split the file or target a device node (--to device:<id>)",
+            "云端目标没有隧道数据面，单次读写上限 256 KiB；请拆分文件，或改用设备目标（--to device:<id>）/ the cloud target has no tunnel data plane: 256 KiB per read or write; split the file or target a device node (--to device:<id>)",
         ),
         "CAP_DENIED" => Some(
             "云端节点不授予 L3 能力，tool.exec / agent.spawn 只能在设备节点执行 / the cloud node grants no L3 capability: tool.exec and agent.spawn only run on a device node",
@@ -2909,9 +2913,9 @@ mod tests {
 
     #[test]
     fn the_ceiling_and_its_hint_are_documented_in_one_place() {
-        assert_eq!(CLOUD_FILE_CEILING, 1024 * 1024);
+        assert_eq!(CLOUD_FILE_CEILING, 256 * 1024);
         let hint = failure_hint("PAYLOAD_TOO_LARGE").unwrap_or_default();
-        assert!(hint.contains("1 MiB"), "{hint}");
+        assert!(hint.contains("256 KiB"), "{hint}");
         assert!(failure_hint("CAP_DENIED")
             .unwrap_or_default()
             .contains("L3"));

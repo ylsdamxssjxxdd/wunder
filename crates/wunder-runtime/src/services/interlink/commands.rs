@@ -7,7 +7,9 @@
 //! argument body exists solely in the frame text handed to the tunnel.
 
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use serde_json::{json, Map, Value};
 use uuid::Uuid;
@@ -23,6 +25,7 @@ use wunder_core::interlink::{
     ERR_TIMEOUT, FRAME_COMMAND, REMOTE_FRAME_COMMAND,
 };
 
+use super::client::now_ts;
 use super::{audit, blob, digest, registry, remote, DispatchError, OutboundFrame};
 use crate::core::blocking;
 use crate::storage::{
@@ -30,9 +33,14 @@ use crate::storage::{
 };
 
 /// Longest time a frame body stays tracked for a server-driven retry.
-const MAX_TRACKED_FRAMES: usize = 1024;
+const MAX_TRACKED_FRAMES: usize = 128;
+const MAX_QUEUED_COMMANDS: usize = 256;
+const MAX_COMMAND_ARGS_BYTES: usize = 256 * 1024;
 /// Terminal result summaries kept for the polling endpoint.
 const MAX_TRACKED_RESULTS: usize = 512;
+const MAX_RESULT_BYTES: usize = 2 * 1024 * 1024;
+const MAX_TOTAL_RESULT_BYTES: usize = 32 * 1024 * 1024;
+const RESULT_TTL: Duration = Duration::from_secs(600);
 /// Ledger rows scanned per sweep tick.
 const SWEEP_PAGE: i64 = 200;
 
@@ -118,6 +126,7 @@ pub enum IssueError {
     /// The id was already used: the caller returns the original state.
     Replay(InterlinkCommandRecord),
     UnknownKind(String),
+    PayloadTooLarge,
     Storage(anyhow::Error),
 }
 
@@ -145,8 +154,45 @@ struct HubState {
     frames: HashMap<String, String>,
     frame_order: VecDeque<String>,
     /// Result summaries for the polling endpoint.
-    results: HashMap<String, Value>,
+    results: HashMap<String, CachedResult>,
     result_order: VecDeque<String>,
+    result_bytes: usize,
+}
+
+#[derive(Debug)]
+struct CachedResult {
+    value: Value,
+    bytes: usize,
+    inserted: Instant,
+}
+
+// Bounded striped locks serialize progress, completion and cancellation for
+// one ledger row without a growing per-command lock registry.
+fn command_lock(command_id: &str) -> &'static tokio::sync::Mutex<()> {
+    static LOCKS: OnceLock<[tokio::sync::Mutex<()>; 256]> = OnceLock::new();
+    let mut hash = std::collections::hash_map::DefaultHasher::new();
+    command_id.hash(&mut hash);
+    &LOCKS.get_or_init(|| std::array::from_fn(|_| tokio::sync::Mutex::new(())))
+        [hash.finish() as usize % 256]
+}
+
+fn result_bytes(value: &Value) -> Option<usize> {
+    struct Counter(usize);
+    impl std::io::Write for Counter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0 = self.0.saturating_add(bytes.len());
+            if self.0 > MAX_RESULT_BYTES {
+                return Err(std::io::Error::other("result exceeds cache limit"));
+            }
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut counter = Counter(0);
+    serde_json::to_writer(&mut counter, value).ok()?;
+    Some(counter.0)
 }
 
 /// In-process command hub; the durable ledger is `interlink_commands`, this
@@ -184,21 +230,51 @@ impl CommandHub {
     }
 
     fn track_result(&self, command_id: &str, result: Value) {
+        let bytes = result_bytes(&result);
         let mut state = self.lock();
+        if let Some(old) = state.results.remove(command_id) {
+            state.result_bytes = state.result_bytes.saturating_sub(old.bytes);
+            state.result_order.retain(|id| id != command_id);
+        }
+        let Some(bytes) = bytes else {
+            return;
+        };
         if !state.results.contains_key(command_id) {
             state.result_order.push_back(command_id.to_string());
         }
-        state.results.insert(command_id.to_string(), result);
-        while state.result_order.len() > MAX_TRACKED_RESULTS {
+        state.result_bytes += bytes;
+        state.results.insert(
+            command_id.to_string(),
+            CachedResult {
+                value: result,
+                bytes,
+                inserted: Instant::now(),
+            },
+        );
+        while state.result_order.len() > MAX_TRACKED_RESULTS
+            || state.result_bytes > MAX_TOTAL_RESULT_BYTES
+            || state
+                .result_order
+                .front()
+                .and_then(|id| state.results.get(id))
+                .is_some_and(|entry| entry.inserted.elapsed() > RESULT_TTL)
+        {
             if let Some(old) = state.result_order.pop_front() {
-                state.results.remove(&old);
+                if let Some(entry) = state.results.remove(&old) {
+                    state.result_bytes = state.result_bytes.saturating_sub(entry.bytes);
+                }
             }
         }
     }
 
     /// Result/progress summary of one command (polling fallback, docs §3.2).
     pub fn result(&self, command_id: &str) -> Option<Value> {
-        self.lock().results.get(command_id).cloned()
+        let state = self.lock();
+        state
+            .results
+            .get(command_id)
+            .filter(|entry| entry.inserted.elapsed() <= RESULT_TTL)
+            .map(|entry| entry.value.clone())
     }
 
     fn reserve(&self, device_id: &str, command_id: &str) {
@@ -237,6 +313,9 @@ impl CommandHub {
             return false;
         }
         let mut state = self.lock();
+        if state.queued.values().map(VecDeque::len).sum::<usize>() >= MAX_QUEUED_COMMANDS {
+            return false;
+        }
         let queue = state.queued.entry(user_id.to_string()).or_default();
         if queue.len() >= bound {
             return false;
@@ -261,16 +340,24 @@ impl CommandHub {
         {
             return None;
         }
-        queue.remove(index)
+        let item = queue.remove(index);
+        if queue.is_empty() {
+            state.queued.remove(user_id);
+        }
+        item
     }
 
-    fn requeue_front(&self, user_id: &str, item: Queued) {
+    fn requeue_front(&self, user_id: &str, item: Queued) -> bool {
         let mut state = self.lock();
+        if state.queued.values().map(VecDeque::len).sum::<usize>() >= MAX_QUEUED_COMMANDS {
+            return false;
+        }
         state
             .queued
             .entry(user_id.to_string())
             .or_default()
             .push_front(item);
+        true
     }
 
     pub fn queued_depth(&self, user_id: Option<&str>) -> usize {
@@ -339,6 +426,11 @@ pub async fn issue(
     now: f64,
 ) -> Result<Outcome, IssueError> {
     let kind = spec.kind;
+    if spec.command_id.is_some_and(|id| id.len() > 128)
+        || serde_json::to_vec(spec.args).map_or(true, |args| args.len() > MAX_COMMAND_ARGS_BYTES)
+    {
+        return Err(IssueError::PayloadTooLarge);
+    }
     if !is_known_kind(kind) {
         return Err(IssueError::UnknownKind(kind.to_string()));
     }
@@ -352,13 +444,18 @@ pub async fn issue(
 
     // Approval precedence (docs §7.3 2): admin force > hard rule > server
     // default list > kind default.
+    // Driving one's own cloud thread is ordinary authenticated chat admission.
+    // The local-device approval boundary applies to C2L; cloud workspace writes
+    // still require an explicit ticket, and in-thread tool approvals stay intact.
+    let own_cloud_thread = spec.to_node == "cloud" && command_level(kind) == "L1";
     let requires_approval = node.policy.forces_approval(kind)
-        || requires_hard_approval(kind)
-        || limits
-            .require_approval_defaults
-            .iter()
-            .any(|item| item == kind)
-        || default_approval;
+        || (!own_cloud_thread
+            && (requires_hard_approval(kind)
+                || limits
+                    .require_approval_defaults
+                    .iter()
+                    .any(|item| item == kind)
+                || default_approval));
 
     let args_digest_base = digest::digest_args(kind, spec.args);
 
@@ -920,6 +1017,7 @@ pub async fn on_event(
     payload: &Value,
     now: f64,
 ) -> anyhow::Result<()> {
+    let _guard = command_lock(command_id).lock().await;
     let Some(record) = load(storage.clone(), command_id).await? else {
         return Ok(());
     };
@@ -956,6 +1054,7 @@ pub async fn on_result(
     limits: &Limits,
     now: f64,
 ) -> anyhow::Result<bool> {
+    let _guard = command_lock(command_id).lock().await;
     let Some(record) = load(storage.clone(), command_id).await? else {
         return Ok(false);
     };
@@ -999,14 +1098,16 @@ pub async fn on_result(
     // belong to the ledger and transport metadata has its own stable fields.
     let mut result = payload.get("result").cloned().unwrap_or_else(|| json!({}));
     if let Some(map) = result.as_object_mut() {
-        for key in ["usage", "inline", "stream_id", "size"] {
-            if let Some(value) = payload.get(key) { map.insert(key.to_string(), value.clone()); }
+        for key in ["usage", "inline", "stream_id", "size", "mime", "max_bytes"] {
+            if let Some(value) = payload.get(key) {
+                map.insert(key.to_string(), value.clone());
+            }
         }
     }
     hub().track_result(command_id, result);
 
     let device_id = target_device(&record);
-    finalize(
+    finalize_unlocked(
         storage.clone(),
         command_id,
         status,
@@ -1015,6 +1116,7 @@ pub async fn on_result(
         error_summary.as_deref(),
     )
     .await?;
+    drop(_guard);
     if let Some(device_id) = &device_id {
         hub().release(device_id, command_id);
         remote::hub().publish_control(device_id, &lifecycle_json(&record.kind, status, command_id));
@@ -1033,6 +1135,7 @@ pub async fn cancel(
     actor: &str,
     now: f64,
 ) -> anyhow::Result<CancelOutcome> {
+    let _guard = command_lock(command_id).lock().await;
     let Some(record) = load(storage.clone(), command_id).await? else {
         return Ok(CancelOutcome::Unknown);
     };
@@ -1052,7 +1155,7 @@ pub async fn cancel(
             hub().release(&device_id, command_id);
         }
     }
-    finalize(
+    finalize_unlocked(
         storage.clone(),
         command_id,
         COMMAND_STATUS_CANCELED,
@@ -1089,7 +1192,10 @@ pub async fn drain(
         let Some(item) = hub().dequeue_for(user_id, &target) else {
             break;
         };
-        if load(storage.clone(), &item.command_id).await?.is_none_or(|record| is_terminal_command_status(&record.status)) {
+        if load(storage.clone(), &item.command_id)
+            .await?
+            .is_none_or(|record| is_terminal_command_status(&record.status))
+        {
             hub().drop_frame(&item.command_id);
             continue;
         }
@@ -1116,13 +1222,33 @@ pub async fn drain(
                     // with nothing behind it in the queue would strand it for
                     // good. Put it back and free the slot before failing.
                     hub().release(device_id, &item.command_id);
-                    hub().requeue_front(user_id, item);
+                    if !hub().requeue_front(user_id, item.clone()) {
+                        finalize(
+                            storage.clone(),
+                            &item.command_id,
+                            COMMAND_STATUS_FAILED,
+                            Some(now_ts()),
+                            Some(ERR_QUEUE_FULL),
+                            None,
+                        )
+                        .await?;
+                    }
                     return Err(err);
                 }
                 delivered += 1;
             }
             Err(_) => {
-                hub().requeue_front(user_id, item);
+                if !hub().requeue_front(user_id, item.clone()) {
+                    finalize(
+                        storage.clone(),
+                        &item.command_id,
+                        COMMAND_STATUS_FAILED,
+                        Some(now_ts()),
+                        Some(ERR_QUEUE_FULL),
+                        None,
+                    )
+                    .await?;
+                }
                 break;
             }
         }
@@ -1178,6 +1304,13 @@ pub async fn sweep(
             .map(|(rows, _total)| rows)?
         };
         for record in rows {
+            let _guard = command_lock(&record.command_id).lock().await;
+            let Some(record) = load(storage.clone(), &record.command_id).await? else {
+                continue;
+            };
+            if is_terminal_command_status(&record.status) {
+                continue;
+            }
             let timeout = record_timeout_s(&record, limits);
             if now - record.created_at <= timeout {
                 continue;
@@ -1266,6 +1399,10 @@ pub async fn fail_device_commands(
     };
     let mut failed = 0usize;
     for record in rows {
+        let _guard = command_lock(&record.command_id).lock().await;
+        let Some(record) = load(storage.clone(), &record.command_id).await? else {
+            continue;
+        };
         if is_terminal_command_status(&record.status) {
             continue;
         }
@@ -1306,6 +1443,26 @@ pub async fn fail_device_commands(
 
 /// Persist a terminal state and audit it.
 pub async fn finalize(
+    storage: Arc<dyn StorageBackend>,
+    command_id: &str,
+    status: &str,
+    finished_at: Option<f64>,
+    error_code: Option<&str>,
+    error_summary: Option<&str>,
+) -> anyhow::Result<()> {
+    let _guard = command_lock(command_id).lock().await;
+    finalize_unlocked(
+        storage,
+        command_id,
+        status,
+        finished_at,
+        error_code,
+        error_summary,
+    )
+    .await
+}
+
+async fn finalize_unlocked(
     storage: Arc<dyn StorageBackend>,
     command_id: &str,
     status: &str,
@@ -1368,8 +1525,15 @@ pub async fn finish_local(
     error_code: Option<&str>,
     now: f64,
 ) -> anyhow::Result<()> {
+    let _guard = command_lock(command_id).lock().await;
+    if load(storage.clone(), command_id)
+        .await?
+        .is_none_or(|row| is_terminal_command_status(&row.status))
+    {
+        return Ok(());
+    }
     hub().track_result(command_id, result);
-    finalize(storage, command_id, status, Some(now), error_code, None).await
+    finalize_unlocked(storage, command_id, status, Some(now), error_code, None).await
 }
 
 async fn decide_ticket(
@@ -1722,6 +1886,71 @@ mod tests {
             hub.track_result(&format!("r_{index}"), json!({}));
         }
         assert_eq!(hub.lock().results.len(), MAX_TRACKED_RESULTS);
+    }
+
+    #[test]
+    fn result_cache_enforces_bytes_expiry_and_oversized_replacement() {
+        let hub = CommandHub::default();
+        hub.track_result("oversized", json!({"progress":1}));
+        hub.track_result("oversized", json!("x".repeat(MAX_RESULT_BYTES)));
+        assert!(hub.result("oversized").is_none());
+        let value = json!("x".repeat(MAX_RESULT_BYTES / 2));
+        for index in 0..40 {
+            hub.track_result(&format!("bytes_{index}"), value.clone());
+        }
+        assert!(hub.lock().result_bytes <= MAX_TOTAL_RESULT_BYTES);
+        assert!(hub.result("bytes_0").is_none());
+        hub.track_result("expired", json!({}));
+        hub.lock().results.get_mut("expired").unwrap().inserted =
+            Instant::now() - RESULT_TTL - Duration::from_secs(1);
+        assert!(hub.result("expired").is_none());
+    }
+
+    #[tokio::test]
+    async fn late_progress_and_completion_preserve_first_terminal_result() {
+        let root = tempfile::tempdir().unwrap();
+        let storage: Arc<dyn StorageBackend> = Arc::new(crate::storage::SqliteStorage::new(
+            root.path().join("ledger.db").to_string_lossy().into_owned(),
+        ));
+        let mut row = record(CMD_WORKSPACE_READ, "cloud");
+        row.command_id = "fixture_terminal_result".into();
+        storage.insert_interlink_command(&row).unwrap();
+        finish_local(
+            storage.clone(),
+            &row.command_id,
+            COMMAND_STATUS_SUCCEEDED,
+            json!({"value":"first"}),
+            None,
+            120.0,
+        )
+        .await
+        .unwrap();
+        let progress = json!({"progress":true});
+        let (progress_result, completion_result) = tokio::join!(
+            on_event(storage.clone(), &row.command_id, &progress, 121.0),
+            finish_local(
+                storage.clone(),
+                &row.command_id,
+                COMMAND_STATUS_FAILED,
+                json!({"value":"late"}),
+                Some("LATE"),
+                122.0
+            )
+        );
+        progress_result.unwrap();
+        completion_result.unwrap();
+        assert_eq!(
+            storage
+                .get_interlink_command(&row.command_id)
+                .unwrap()
+                .unwrap()
+                .status,
+            COMMAND_STATUS_SUCCEEDED
+        );
+        assert_eq!(
+            hub().result(&row.command_id).unwrap(),
+            json!({"value":"first"})
+        );
     }
 
     #[test]

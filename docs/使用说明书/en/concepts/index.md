@@ -1,12 +1,12 @@
 ---
 title: Core Concepts
-summary: Why wunder behaves the way it does—the four cores (fast, stable, general, lightweight), along with the four forms and the deep dives.
-updated_at: 2026-10-13
+summary: The four design principles, the four forms, the four cores, deeper pages by topic, and capabilities that are removed or restricted.
+updated_at: 2026-10-16
 ---
 
-wunder is an agent-scheduling platform: hand it a goal and it breaks the task down, calls tools, and delivers results. These four cores describe **what the system aims to be**, not a list of what it can do. For the feature list, see [Tools](/docs/en/tools/) and the [Capability Quick Reference](/docs/en/capabilities/api-index/).
+wunder is an agent-scheduling platform: hand it a goal and the agent breaks the task down, calls tools, and delivers results. The feature list lives in [Tools](/docs/en/tools/) and the [Capability Quick Reference](/docs/en/capabilities/api-index/).
 
-## Four design principles
+## Design Principles
 
 | Principle | Meaning |
 | --- | --- |
@@ -15,7 +15,7 @@ wunder is an agent-scheduling platform: hand it a goal and it breaks the task do
 | **One engine across forms** | There is only one core and one engine; the four forms differ only at the access layer |
 | **Boundaries and governance are built in** | Prompt freezing, approval tiers, daily quotas, and bounded views with pagination are part of the skeleton, not left to the upper layers |
 
-## The four forms
+## Forms
 
 | Form | Role |
 | --- | --- |
@@ -26,7 +26,7 @@ wunder is an agent-scheduling platform: hand it a goal and it breaks the task do
 
 The Pupa and the Helm do not depend on the Hull and can run and ship on their own. The Electron / Tauri front-end shells are no longer maintained day to day and are no longer described as a capability.
 
-## The four cores
+## Cores
 
 | Core | Meaning |
 | --- | --- |
@@ -35,11 +35,9 @@ The Pupa and the Helm do not depend on the Hull and can run and ship on their ow
 | **General** | Deployable on any operating-system platform, connectable to any mainstream model, able to complete all kinds of complex tasks |
 | **Lightweight** | A small program body, light prompt and tool design, and low token consumption |
 
-(The per-item detail pages from the old "9 cores" now live under [Capabilities › Core Capabilities](/docs/en/capabilities/).)
+The per-item detail pages for the 9 capabilities — goal, compatibility, context compression, subagent, scheduled tasks, channels, memory, multithreading, and multi-tenancy — live under [Capabilities › Core Capabilities](/docs/en/capabilities/).
 
-## Going deeper by topic
-
-One layer down, by topic (all under [Capabilities › In Depth](/docs/en/capabilities/)):
+## Deeper Pages by Topic
 
 | Topic | Page |
 | --- | --- |
@@ -61,22 +59,16 @@ One layer down, by topic (all under [Capabilities › In Depth](/docs/en/capabil
 | Bounded views, budgets, and circuit breaking | [Stability](/docs/en/concepts/core-stability/) |
 | Logs, metrics, and thread trajectories | [Observability](/docs/en/concepts/core-observability/) |
 
-## Recommended reading by role
+## Reading Paths
 
 - **First time on the Pupa**: [Quickstart](/docs/en/start/quickstart/) → Agent Loop → Tools → Memory → Context Compression.
 - **Administrator / governance**: Multi-user Management → Stability → Observability → Channels → [Configuration Reference](/docs/en/capabilities/config/).
 - **Integration and development**: [Architecture](/docs/en/concepts/architecture/) → [Chat WebSocket](/docs/en/capabilities/chat-ws/) → Streaming Execution.
 
-## Common misconceptions
+## Limits
 
 - **"Several agents can form a swarm and collaborate"** — they cannot. The only collaborative form is the **subagent**: a temporary work unit the main agent creates and reclaims when the task ends. Swarm orchestration (swarm tools, hives, orchestration mode, team runs, swarm packs) has been removed from the engine and the scheduling surface; a few terminal strings and UI labels still carry the old wording, but that is leftover to clean up, not a capability.
 - **"Every listed tool is usable"** — it is not. The default usable set is a fixed tier, and `网页搜索` and `ptc` are currently **temporarily withdrawn** (code kept, invisible to model and user), not deleted.
 - **"Editing the prompt affects the current conversation at once"** — it does not. Once a thread first fixes its system prompt, it is frozen.
 - **"What the UI shows is the back-end truth"** — the UI consumes a bounded view (pagination plus a byte budget), not the full history. When the content looks wrong, trust the thread ledger.
 - **"Stopping maintenance of the front-end shell stops the Pupa back end"** — they are two different things. The Pupa runs the local native UI with in-process native calls by default, and its execution, tools, and storage semantics still reuse the engine.
-
-## Further reading
-
-- [Architecture](/docs/en/concepts/architecture/) — stages and links
-- [Sessions and Rounds](/docs/en/concepts/sessions-and-rounds/) — counting conventions
-- [Glossary](/docs/en/help/glossary/) — consistent wording
