@@ -393,6 +393,7 @@ export const useCompanionStore = defineStore('companions', () => {
   const globalCompanions = ref<CompanionPackageRecord[]>([]);
   const globalCompanionsLoaded = ref(false);
   const globalCompanionsLoading = ref(false);
+  let globalCompanionsRequest: Promise<CompanionPackageRecord[]> | null = null;
   const settings = ref<CompanionSettings>(loadSettings());
   const agentOverrides = ref<Record<string, AgentCompanionOverride>>(loadAgentOverrides());
   const message = ref<CompanionMessage | null>(null);
@@ -477,9 +478,16 @@ export const useCompanionStore = defineStore('companions', () => {
     loading.value = true;
     lastError.value = '';
     try {
-      const desktopState = await loadDesktopCompanionLibraryState();
+      // Restore the global catalog before validating selectedId. Global companions are
+      // read-only and do not exist in IndexedDB, so validating against the private
+      // library alone makes a valid selection look stale after a page reload.
+      const globalCompanionLoad = loadGlobalCompanions().catch(() => undefined);
+      const [desktopState, storedCompanions] = await Promise.all([
+        loadDesktopCompanionLibraryState(),
+        listStoredCompanions()
+      ]);
+      await globalCompanionLoad;
       const desktopCompanions = normalizeDesktopCompanionRecords(desktopState?.companions);
-      const storedCompanions = await listStoredCompanions();
       companions.value = mergeCompanionRecords(desktopCompanions, storedCompanions);
       if (companions.value.length) {
         await Promise.all(companions.value.map((item) => saveStoredCompanion(item).catch(() => undefined)));
@@ -504,6 +512,7 @@ export const useCompanionStore = defineStore('companions', () => {
         agentOverrides.value = nextOverrides;
       }
       if (
+        globalCompanionsLoaded.value &&
         settings.value.selectedId &&
         !companions.value.some((item) => item.id === settings.value.selectedId) &&
         !globalCompanions.value.some((item) => item.id === settings.value.selectedId)
@@ -528,15 +537,21 @@ export const useCompanionStore = defineStore('companions', () => {
     if (!options.force && globalCompanionsLoaded.value) {
       return globalCompanions.value;
     }
-    globalCompanionsLoading.value = true;
-    try {
-      const items = await requestGlobalCompanions();
-      globalCompanions.value = items;
-      globalCompanionsLoaded.value = true;
-      return items;
-    } finally {
-      globalCompanionsLoading.value = false;
+    if (globalCompanionsRequest) {
+      return globalCompanionsRequest;
     }
+    globalCompanionsLoading.value = true;
+    globalCompanionsRequest = requestGlobalCompanions()
+      .then((items) => {
+        globalCompanions.value = items;
+        globalCompanionsLoaded.value = true;
+        return items;
+      })
+      .finally(() => {
+        globalCompanionsLoading.value = false;
+        globalCompanionsRequest = null;
+      });
+    return globalCompanionsRequest;
   };
 
   const ensureGlobalCompanion = async (id: string): Promise<CompanionPackageRecord | null> => {

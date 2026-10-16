@@ -794,13 +794,9 @@ async fn independent_cloud_instances_share_rotating_session_file() {
     assert_eq!(first.session().expect("first session").token, TOKEN_V1);
     assert_eq!(second.session().expect("second session").token, TOKEN_V1);
 
-    assert!(second.recover_auth(TOKEN_V1).await.expect("second refresh"));
-    // The first instance notices the changed fingerprint before attempting a
-    // refresh and observes the rotated pair from disk instead.
-    assert!(first
-        .recover_auth(TOKEN_V1)
-        .await
-        .expect("first observes refresh"));
+    let (left, right) = tokio::join!(first.recover_auth(TOKEN_V1), second.recover_auth(TOKEN_V1));
+    assert!(left.expect("first refresh"));
+    assert!(right.expect("second refresh"));
     assert_eq!(refresh_hits.load(Ordering::SeqCst), 1);
     assert_eq!(first.session().expect("rotated session").token, TOKEN_V2);
     assert_eq!(
@@ -827,4 +823,29 @@ async fn independent_cloud_instance_observes_external_logout() {
     std::fs::remove_file(home.path().join("config/cloud.session.json")).expect("remove session");
     assert!(!first.status().logged_in);
     assert_eq!(first.status().connection, "logged_out");
+}
+
+#[tokio::test]
+async fn logout_racing_refresh_keeps_session_removed() {
+    let hits = Arc::new(AtomicUsize::new(0));
+    let observed = hits.clone();
+    let server = spawn_mock_server(Arc::new(move |request| {
+        if request.path == "/wunder/auth/refresh" {
+            observed.fetch_add(1, Ordering::SeqCst);
+            MockResponse::json(200, refresh_body(TOKEN_V2, REFRESH_V2, 90.0 * 24.0 * 3600.0))
+        } else { MockResponse::json(200, json!({"data": {}})) }
+    })).await;
+    let home = tempfile::tempdir().unwrap();
+    write_session_file_with_server(home.path(), &server, TOKEN_V1, REFRESH_V1, 3600.0);
+    let first = CloudService::new();
+    let second = CloudService::new();
+    first.set_session_base_dir(home.path().into());
+    second.set_session_base_dir(home.path().into());
+    let store = ConfigStore::new(home.path().join("config/wunder.yaml"));
+    let (refresh, logout) = tokio::join!(first.recover_auth(TOKEN_V1), second.logout(&store));
+    refresh.unwrap(); logout.unwrap();
+    assert!(!first.status().logged_in);
+    assert!(!second.status().logged_in);
+    assert!(!home.path().join("config/cloud.session.json").exists());
+    assert!(hits.load(Ordering::SeqCst) <= 1);
 }

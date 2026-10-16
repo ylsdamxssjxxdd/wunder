@@ -871,13 +871,11 @@ fn parse_final(event: &StreamEvent) -> Option<FinalEvent> {
 }
 
 fn is_apply_patch_tool_name(tool: &str) -> bool {
-    let normalized = tool.trim().to_ascii_lowercase();
-    normalized == "apply_patch" || tool.contains("应用补丁")
+    crate::tool_presentation::is_patch_tool_name(tool)
 }
 
 fn is_execute_command_tool_name(tool: &str) -> bool {
-    let normalized = tool.trim().to_ascii_lowercase();
-    normalized == "execute_command" || tool.contains("执行命令")
+    crate::tool_presentation::is_command_tool_name(tool)
 }
 
 fn extract_tool_result_object(payload: &Value) -> &Value {

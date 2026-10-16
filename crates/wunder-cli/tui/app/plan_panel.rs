@@ -18,6 +18,7 @@ use crate::tui::theme;
 use super::patch_log::continuation_prefix;
 use super::patch_log::disclosure_line;
 use super::patch_log::fold_marker_line;
+use super::patch_log::Disclosure;
 use super::patch_log::tail_prefix;
 
 /// Steps shown before the rest fold. Matches the preview depth the other cards
@@ -137,8 +138,11 @@ impl PlanLogEntry {
         lines.join("\n")
     }
 
-    pub(super) fn is_collapsible(&self) -> bool {
-        self.steps.len() > VISIBLE_STEPS
+    /// Steps are not output rows, so the row names the content and the `⋮` marker keeps the
+    /// step count where the reference keeps it too.
+    pub(super) fn card_fold(&self) -> Option<Disclosure> {
+        (self.steps.len() > VISIBLE_STEPS || self.explanation.is_some())
+            .then_some(Disclosure::Generic)
     }
 
     pub(super) fn render_lines_for_width(&self, width: u16, expanded: bool) -> Vec<Line<'static>> {
@@ -165,7 +169,7 @@ impl PlanLogEntry {
                 format!("+{hidden} steps")
             }));
         }
-        if let Some(line) = disclosure_line(expanded, hidden > 0 || self.explanation.is_some()) {
+        if let Some(line) = disclosure_line(expanded, self.card_fold(), width, self.is_zh) {
             lines.push(line);
         }
         lines
@@ -335,7 +339,7 @@ mod tests {
             false,
         )
         .expect("plan");
-        assert!(entry.is_collapsible());
+        assert!(entry.card_fold().is_some());
         let lines = entry.render_lines_for_width(60, false);
         assert!(lines.len() > VISIBLE_STEPS);
     }

@@ -9,13 +9,14 @@ use super::exploring_group::ExploringGroupEntry;
 use super::plan_panel::PlanLogEntry;
 use crate::command_session_display::{CommandSessionDisplayStatus, CommandSessionView};
 use crate::patch_diff::{
-    build_patch_diff_preview, PatchDiffBlock, PatchDiffBlockKind, PatchDiffLine, PatchDiffLineKind,
+    build_patch_diff_preview, patch_diff_preview_from_blocks, PatchDiffBlock, PatchDiffBlockKind,
+    PatchDiffLine, PatchDiffLineKind,
     PatchDiffPreview,
 };
 use crate::tool_display::summarize_tool_result;
 use crate::tool_presentation::{
-    is_subagent_tool, mcp_invocation_label, present, present_subagent_action, target_argument,
-    ToolAccess, ToolPresentation,
+    is_mcp_tool_name, is_subagent_tool, mcp_invocation_label, present, present_subagent_action,
+    target_argument, ToolAccess, ToolPresentation,
 };
 use crate::tui::activity_indicator;
 use crate::tui::theme;
@@ -75,15 +76,22 @@ impl SpecialLogEntry {
     }
 
     /// Whether the Enter disclosure has anything to reveal for this card.
-    pub(super) fn is_collapsible(&self, width: u16) -> bool {
+    /// What Enter can bring back on this card. This is the single source for both the
+    /// disclosure row and the key/mouse gate, so a row can never promise a fold that the
+    /// gate refuses to open.
+    pub(super) fn card_fold(&self, width: u16) -> Option<Disclosure> {
         match self {
-            Self::Patch(entry) => entry.is_collapsible(width),
-            Self::Command(entry) => entry.is_collapsible(),
-            Self::Tool(entry) => entry.is_collapsible(),
-            Self::Exploring(entry) => entry.is_collapsible(),
-            Self::Plan(entry) => entry.is_collapsible(),
-            _ => false,
+            Self::Patch(entry) => entry.card_fold(width),
+            Self::Command(entry) => entry.card_fold(),
+            Self::Tool(entry) => entry.card_fold(),
+            Self::Exploring(entry) => entry.card_fold(),
+            Self::Plan(entry) => entry.card_fold(),
+            _ => None,
         }
+    }
+
+    pub(super) fn is_collapsible(&self, width: u16) -> bool {
+        self.card_fold(width).is_some()
     }
 
     pub(super) fn is_pending_patch(&self) -> bool {
@@ -141,9 +149,16 @@ pub(super) struct GenericToolLogEntry {
     status: GenericToolLogStatus,
     summary: Option<String>,
     details: Vec<PatchNote>,
+    /// The arguments the call was made with, shown on the open card: a remote result is
+    /// only readable next to what was actually asked for.
+    arguments: Option<String>,
     is_zh: bool,
     pub(super) presentation: ToolPresentation,
 }
+
+/// Rows a folded tool card still shows. The reference keeps a preview instead of hiding a
+/// result until it is asked for, which is what makes a tool call readable as it lands.
+const TOOL_PREVIEW_ROWS: usize = 3;
 
 impl GenericToolLogEntry {
     fn summary_text(&self) -> String {
@@ -177,7 +192,13 @@ impl GenericToolLogEntry {
         } else {
             self.header_line()
         }];
-        let mut remaining_items = if expanded { self.details.len() } else { 0 };
+        let visible_details = if expanded {
+            self.details.len()
+        } else {
+            self.details.len().min(TOOL_PREVIEW_ROWS)
+        };
+        let show_arguments = expanded && self.arguments.is_some();
+        let mut remaining_items = visible_details + usize::from(show_arguments);
         if !used_inline_summary && body_summary.is_some() {
             remaining_items += 1;
         }
@@ -193,22 +214,38 @@ impl GenericToolLogEntry {
                 remaining_items = remaining_items.saturating_sub(1);
             }
         }
-        if expanded {
-            for detail in &self.details {
-                let is_last = remaining_items == 1;
-                lines.extend(detail.render_wrapped(width, is_last));
-                remaining_items = remaining_items.saturating_sub(1);
-            }
+        for detail in self.details.iter().take(visible_details) {
+            let is_last = remaining_items == 1;
+            lines.extend(detail.render_wrapped(width, is_last));
+            remaining_items = remaining_items.saturating_sub(1);
         }
-        if let Some(line) = disclosure_line(expanded, self.is_collapsible()) {
+        if show_arguments {
+            let text = format!(
+                "{}{}",
+                if self.is_zh { "参数: " } else { "Arguments: " },
+                self.arguments.as_deref().unwrap_or_default()
+            );
+            lines.extend(render_wrapped_tree_text(
+                text.as_str(),
+                summary_style(),
+                remaining_items == 1,
+                width,
+            ));
+        }
+        if let Some(line) = disclosure_line(expanded, self.card_fold(), width, self.is_zh) {
             lines.push(line);
         }
         lines
     }
 
-    /// Detail rows are what Enter reveals on a tool card.
-    fn is_collapsible(&self) -> bool {
-        !self.details.is_empty()
+    /// Rows outside the preview are what Enter brings back. When the whole list already
+    /// fits, the fold is only worth a row if the arguments still have to appear.
+    fn card_fold(&self) -> Option<Disclosure> {
+        let hidden = self.details.len().saturating_sub(TOOL_PREVIEW_ROWS);
+        if hidden > 0 {
+            return Some(Disclosure::Lines(hidden));
+        }
+        self.arguments.as_ref().map(|_| Disclosure::Generic)
     }
 
     /// The verb comes from the tool classifier and the language from the session, never
@@ -218,25 +255,31 @@ impl GenericToolLogEntry {
             return summary.to_string();
         }
         let verb = self.presentation.verb(self.is_zh);
-        let names_self = self.presentation.access == ToolAccess::Other;
+        // A remote call must name the tool it reached: the verb alone would leave the reader
+        // with "called an external tool" and no idea which one.
+        let names_self =
+            self.presentation.access == ToolAccess::Other || is_mcp_tool_name(&self.tool_name);
+        let subject = || match mcp_invocation_label(self.tool_name.as_str()) {
+            Some(label) => label,
+            None => self.tool_name.clone(),
+        };
         match self.status {
             GenericToolLogStatus::Failure => {
                 if self.is_zh {
                     if names_self {
-                        format!("{} 失败", self.tool_name)
+                        format!("{} 失败", subject())
                     } else {
                         format!("{}失败", verb)
                     }
+                } else if names_self {
+                    format!("{} failed", subject())
                 } else {
-                    format!("{} failed", self.tool_name)
+                    format!("{verb} failed")
                 }
             }
             _ => {
                 if names_self {
-                    match mcp_invocation_label(self.tool_name.as_str()) {
-                        Some(label) => format!("{verb} {label}"),
-                        None => format!("{verb} {}", self.tool_name),
-                    }
+                    format!("{verb} {}", subject())
                 } else if self.status == GenericToolLogStatus::Success {
                     self.presentation.verb_done(self.is_zh).to_string()
                 } else {
@@ -333,6 +376,7 @@ pub(super) struct CommandLogEntry {
     command: String,
     metrics: Option<String>,
     sections: Vec<CommandSection>,
+    is_zh: bool,
 }
 
 impl CommandLogEntry {
@@ -340,40 +384,79 @@ impl CommandLogEntry {
         format!("{} {}", self.title, self.command)
     }
 
+    /// Rows held for the whole stream. Counting, not collecting: a collapsed card must not
+    /// copy the window it keeps in memory.
+    fn merged_output_len(&self) -> usize {
+        self.sections
+            .iter()
+            .map(|section| section.lines.len())
+            .sum()
+    }
+
+    /// What Enter brings back: the output rows outside the tail budget, plus the command's
+    /// own continuation rows. Rows the stored window already dropped are excluded, because
+    /// no expansion can reveal what is gone — the storage marker owns those.
+    fn card_fold(&self) -> Option<Disclosure> {
+        let hidden = self.hidden_output_lines()
+            + self.command.lines().count().saturating_sub(/*header row*/ 1);
+        Disclosure::new_lines(hidden)
+    }
+
+    /// Rows the tail budget leaves out of the collapsed card.
+    fn hidden_output_lines(&self) -> usize {
+        self.merged_output_len()
+            .saturating_sub(COMMAND_TAIL_PREVIEW_LINES)
+    }
+
     fn render_lines_for_width(&self, width: u16, expanded: bool) -> Vec<Line<'static>> {
         let mut lines = vec![self.header_line()];
         let mut tail_first = true;
-        for command_line in self.command.lines().skip(1) {
+        if expanded {
+            for command_line in self.command.lines().skip(1) {
+                lines.extend(render_wrapped_tail_text(
+                    command_line,
+                    command_style(),
+                    tail_first,
+                    width,
+                ));
+                tail_first = false;
+            }
+        }
+
+        if expanded {
+            for section in &self.sections {
+                for index in 0..section.lines.len() {
+                    let rendered = section.render_row(index, tail_first, width);
+                    tail_first = tail_first && rendered.is_empty();
+                    lines.extend(rendered);
+                }
+            }
+        } else {
+            let mut skipped = self.hidden_output_lines();
+            for section in &self.sections {
+                let take = section.lines.len().saturating_sub(skipped);
+                skipped = skipped.saturating_sub(section.lines.len());
+                for index in (section.lines.len() - take)..section.lines.len() {
+                    let rendered = section.render_row(index, tail_first, width);
+                    tail_first = tail_first && rendered.is_empty();
+                    lines.extend(rendered);
+                }
+            }
+        }
+
+        if self.sections.iter().any(|section| section.window_truncated) {
             lines.extend(render_wrapped_tail_text(
-                command_line,
-                command_style(),
+                window_truncated_note(self.is_zh).as_str(),
+                summary_style(),
                 tail_first,
                 width,
             ));
-            tail_first = false;
         }
 
-        for section in &self.sections {
-            if !tail_first {
-                lines.extend(section.render_wrapped(width, false, expanded));
-                continue;
-            }
-            let rendered = section.render_wrapped(width, true, expanded);
-            tail_first = rendered.is_empty();
-            lines.extend(rendered);
-        }
-
-        if let Some(line) = disclosure_line(expanded, self.is_collapsible()) {
+        if let Some(line) = disclosure_line(expanded, self.card_fold(), width, self.is_zh) {
             lines.push(line);
         }
         lines
-    }
-
-    /// Any section that folded is worth an Enter on this card.
-    fn is_collapsible(&self) -> bool {
-        self.sections
-            .iter()
-            .any(|section| section.preview > 0 && section.lines.len() > section.preview)
     }
 
     /// `• Ran <cmd>` on success, `• Failed (exit 1) <cmd>` on failure, with the elapsed
@@ -406,6 +489,14 @@ impl CommandLogEntry {
             Span::raw(" "),
             Span::styled(command, command_style()),
         ];
+        // A multi-line command keeps its head in the header; the rest is a fold, exactly as
+        // the reference marks it, whether or not this card is open.
+        if self.command.lines().nth(1).is_some() {
+            spans.push(Span::styled(
+                " \u{2026}".to_string(),
+                theme::secondary_text(),
+            ));
+        }
         if let Some(metrics) = self.metrics.as_ref().filter(|value| !value.is_empty()) {
             spans.push(Span::styled(
                 format!(" \u{00b7} {metrics}"),
@@ -419,61 +510,33 @@ impl CommandLogEntry {
 #[derive(Debug, Clone)]
 struct CommandSection {
     label: String,
-    /// Bounded window of the real output. Folding into a card preview happens at render
+    /// Bounded window of the real output. Folding into the card tail happens at render
     /// time so the transcript overlay can show this same window without a rebuild.
     lines: Vec<String>,
-    preview: usize,
     window_truncated: bool,
     style: Style,
-    is_zh: bool,
 }
 
-impl CommandSection {
-    fn render_wrapped(&self, width: u16, first_body: bool, expanded: bool) -> Vec<Line<'static>> {
-        let mut rendered = Vec::new();
-        for (index, line) in self.visible_lines(expanded).iter().enumerate() {
-            let first_line = index == 0;
-            if hides_command_section_label(self.label.as_str()) {
-                rendered.extend(render_wrapped_tail_text(
-                    line.as_str(),
-                    self.style,
-                    first_line && first_body,
-                    width,
-                ));
-                continue;
-            }
-            if first_line {
-                rendered.extend(render_wrapped_labeled_tree_text(
-                    format!("{}{}: ", tree_prefix(first_body), self.label),
-                    line.as_str(),
-                    self.style,
-                    width,
-                ));
-            } else {
-                rendered.extend(render_wrapped_continuation_text(
-                    line.as_str(),
-                    self.style,
-                    width,
-                ));
-            }
-        }
-        rendered
-    }
+/// Rows of output a collapsed command card keeps: the tail of the stream, which is what
+/// the reader is watching while a command runs.
+const COMMAND_TAIL_PREVIEW_LINES: usize = 3;
 
-    /// The card shows `preview` lines with the rest folded; the overlay shows the window.
-    fn visible_lines(&self, expanded: bool) -> Vec<String> {
-        if expanded || self.preview == 0 || self.lines.len() <= self.preview {
-            return self.lines.clone();
+impl CommandSection {
+    /// Render one row of this section. Only the section's first row may carry its label,
+    /// and a plain output stream never announces `stdout` — the reference keeps silent too.
+    fn render_row(&self, index: usize, first_body: bool, width: u16) -> Vec<Line<'static>> {
+        let Some(line) = self.lines.get(index) else {
+            return Vec::new();
+        };
+        if hides_command_section_label(self.label.as_str()) || index > 0 {
+            return render_wrapped_tail_text(line.as_str(), self.style, first_body, width);
         }
-        let keep_head = self.preview.div_ceil(2);
-        let keep_tail = self.preview.saturating_sub(keep_head);
-        let omitted = self.lines.len().saturating_sub(keep_head + keep_tail);
-        let mut visible = self.lines[..keep_head].to_vec();
-        visible.push(fold_note(omitted, self.window_truncated, self.is_zh));
-        if keep_tail > 0 {
-            visible.extend(self.lines[self.lines.len() - keep_tail..].to_vec());
-        }
-        visible
+        render_wrapped_labeled_tree_text(
+            format!("{}{}: ", tree_prefix(first_body), self.label),
+            line.as_str(),
+            self.style,
+            width,
+        )
     }
 }
 
@@ -492,6 +555,7 @@ pub(super) struct PatchLogEntry {
     notes: Vec<PatchNote>,
     files: Vec<PatchFileRow>,
     diff_preview: Option<PatchDiffPreview>,
+    is_zh: bool,
 }
 
 impl PatchLogEntry {
@@ -553,10 +617,16 @@ impl PatchLogEntry {
             remaining_items = remaining_items.saturating_sub(1);
         }
 
+        let mut fold = None;
         if has_diff_preview {
-            if let Some(diff_preview) = self.diff_preview.as_ref() {
-                lines.extend(render_patch_diff_preview(diff_preview, width, expanded));
-            }
+            let body = self.diff_body_lines(width);
+            fold = Disclosure::new_lines(body.len().saturating_sub(PATCH_FOLD_DIFF_LINES));
+            let shown = if expanded {
+                body.len()
+            } else {
+                body.len().min(PATCH_FOLD_DIFF_LINES)
+            };
+            lines.extend(body.into_iter().take(shown));
         } else {
             for file in &self.files {
                 let is_last = remaining_items == 1;
@@ -565,27 +635,30 @@ impl PatchLogEntry {
             }
         }
 
-        if let Some(line) = disclosure_line(expanded, self.is_collapsible(width)) {
+        if let Some(line) = disclosure_line(expanded, fold, width, self.is_zh) {
             lines.push(line);
         }
 
         lines
     }
 
-    /// A diff longer than the fold budget is what Enter is for on this card.
-    fn is_collapsible(&self, _width: u16) -> bool {
-        self.diff_line_total() > PATCH_FOLD_DIFF_LINES
+    /// The diff body in full, with nothing folded. Both the renderer and the fold decision
+    /// read this, so a disclosure row can never count rows the card would not reveal.
+    fn diff_body_lines(&self, width: u16) -> Vec<Line<'static>> {
+        self.diff_preview
+            .as_ref()
+            .map(|preview| render_patch_diff_preview(preview, width))
+            .unwrap_or_default()
     }
 
-    fn diff_line_total(&self) -> usize {
-        self.diff_preview.as_ref().map_or(0, |preview| {
-            preview
-                .blocks
-                .iter()
-                .map(|block| block.lines.len())
-                .sum::<usize>()
-                + usize::from(preview.omitted_text.is_some())
-        })
+    /// A diff longer than the fold budget is what Enter is for on this card, and the count
+    /// is what the row says.
+    fn card_fold(&self, width: u16) -> Option<Disclosure> {
+        Disclosure::new_lines(
+            self.diff_body_lines(width)
+                .len()
+                .saturating_sub(PATCH_FOLD_DIFF_LINES),
+        )
     }
 
     pub(super) fn inherit_diff_from(&mut self, previous: &PatchLogEntry) {
@@ -758,11 +831,7 @@ const PATCH_FOLD_DIFF_LINES: usize = 10;
 /// the window is what keeps a large patch from costing the transcript unbounded rows.
 const PATCH_DIFF_WINDOW_LINES: usize = 40;
 
-fn render_patch_diff_preview(
-    preview: &PatchDiffPreview,
-    width: u16,
-    expanded: bool,
-) -> Vec<Line<'static>> {
+fn render_patch_diff_preview(preview: &PatchDiffPreview, width: u16) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     let total_items = preview.item_count();
     let mut rendered_items = 0usize;
@@ -784,12 +853,6 @@ fn render_patch_diff_preview(
         ));
     }
 
-    if expanded || lines.len() <= PATCH_FOLD_DIFF_LINES {
-        return lines;
-    }
-    let omitted = lines.len().saturating_sub(PATCH_FOLD_DIFF_LINES);
-    lines.truncate(PATCH_FOLD_DIFF_LINES);
-    lines.push(fold_marker_line(format!("+{omitted} lines")));
     lines
 }
 
@@ -804,18 +867,70 @@ pub(super) fn fold_marker_line(text: String) -> Line<'static> {
     ])
 }
 
-/// The row that carries a card's fold state, same shape as codex's disclosure control: an
-/// open card offers to close it, a folded one names the key that opens it. Folded-away
-/// counts stay on the `⋮` markers, so this row never repeats them.
-pub(super) fn disclosure_line(expanded: bool, collapsible: bool) -> Option<Line<'static>> {
-    if !collapsible {
-        return None;
+/// What a card's fold can hand back. The counted shape only ever covers rows the expansion
+/// can actually reveal, so a stored window that already dropped rows never promises them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Disclosure {
+    Generic,
+    Lines(usize),
+}
+
+impl Disclosure {
+    pub(super) fn new_lines(hidden: usize) -> Option<Self> {
+        (hidden > 0).then_some(Self::Lines(hidden))
     }
-    let text = if expanded {
-        "  \u{2212} Show less".to_string()
-    } else {
-        "  + Show details (enter)".to_string()
+}
+
+/// The row that carries a card's fold state: an open card offers to close it, a folded one
+/// names either how many rows Enter brings back or what kind of content it reveals. No fold
+/// means no row in either direction, so an open card never advertises a fold that is not there.
+pub(super) fn disclosure_line(
+    expanded: bool,
+    disclosure: Option<Disclosure>,
+    width: u16,
+    is_zh: bool,
+) -> Option<Line<'static>> {
+    let disclosure = disclosure?;
+    if expanded {
+        let text = if is_zh {
+            "  \u{2212} 收起".to_string()
+        } else {
+            "  \u{2212} Show less".to_string()
+        };
+        return Some(Line::from(Span::styled(text, theme::accent_text())));
+    }
+    let (label, hint) = match disclosure {
+        Disclosure::Generic => (
+            if is_zh {
+                "  + 展开详情".to_string()
+            } else {
+                "  + Show details".to_string()
+            },
+            None,
+        ),
+        Disclosure::Lines(hidden) => {
+            let label = if is_zh {
+                format!("  +{hidden} 行")
+            } else if hidden == 1 {
+                "  +1 line".to_string()
+            } else {
+                format!("  +{hidden} lines")
+            };
+            let hint = if is_zh {
+                "（enter 展开）"
+            } else {
+                " (enter to expand)"
+            };
+            (label, Some(hint))
+        }
     };
+    let mut text = label;
+    if let Some(hint) = hint {
+        let indent = usize::from(width / 4).min(/*never steal a whole column*/ 4);
+        if Line::from(format!("{text}{hint}")).width() + indent <= usize::from(width) {
+            text.push_str(hint);
+        }
+    }
     Some(Line::from(Span::styled(text, theme::accent_text())))
 }
 
@@ -1045,17 +1160,6 @@ fn render_wrapped_labeled_tree_text(
     )
 }
 
-fn render_wrapped_continuation_text(text: &str, style: Style, width: u16) -> Vec<Line<'static>> {
-    render_wrapped_prefixed_text(
-        continuation_prefix().to_string(),
-        continuation_prefix().to_string(),
-        theme::secondary_text(),
-        text,
-        style,
-        width,
-    )
-}
-
 fn render_wrapped_prefixed_text(
     first_prefix: String,
     continuation_prefix: String,
@@ -1140,6 +1244,7 @@ pub(super) fn build_pending_command_log(args: &Value, is_zh: bool) -> Option<Spe
     let command = extract_command_input(args)?.to_string();
     Some(SpecialLogEntry::Command(CommandLogEntry {
         status: CommandLogStatus::Pending,
+        is_zh,
         success: true,
         title: if is_zh {
             "正在运行".to_string()
@@ -1228,32 +1333,29 @@ pub(super) fn build_command_session_log(view: &CommandSessionView, is_zh: bool) 
         if let Some(section) = build_output_section(
             if is_zh { "\u{9519}\u{8bef}" } else { "error" },
             error,
-            4,
             Style::default().fg(Color::Red),
-            is_zh,
         ) {
             sections.push(section);
         }
     }
 
+    // One stream with one tail budget. stderr keeps its own colour but no longer gets its
+    // own fold row, which is what made a single card promise expansion twice.
     if !view.pty.trim().is_empty() {
         if let Some(section) =
-            build_output_section("output", view.pty.as_str(), 12, summary_style(), is_zh)
+            build_output_section("output", view.pty.as_str(), summary_style())
         {
             sections.push(section);
         }
     } else if !terminal || success {
-        if let Some(section) =
-            build_output_section("stdout", view.stdout.as_str(), 10, summary_style(), is_zh)
+        if let Some(section) = build_output_section("stdout", view.stdout.as_str(), summary_style())
         {
             sections.push(section);
         }
         if let Some(section) = build_output_section(
             "stderr",
             view.stderr.as_str(),
-            5,
             Style::default().fg(Color::Yellow),
-            is_zh,
         ) {
             sections.push(section);
         }
@@ -1261,14 +1363,11 @@ pub(super) fn build_command_session_log(view: &CommandSessionView, is_zh: bool) 
         if let Some(section) = build_output_section(
             "stderr",
             view.stderr.as_str(),
-            10,
             Style::default().fg(Color::Red),
-            is_zh,
         ) {
             sections.push(section);
         }
-        if let Some(section) =
-            build_output_section("stdout", view.stdout.as_str(), 6, summary_style(), is_zh)
+        if let Some(section) = build_output_section("stdout", view.stdout.as_str(), summary_style())
         {
             sections.push(section);
         }
@@ -1289,6 +1388,7 @@ pub(super) fn build_command_session_log(view: &CommandSessionView, is_zh: bool) 
         command,
         metrics: (!metrics.is_empty()).then(|| metrics.join(", ")),
         sections,
+        is_zh,
     })
 }
 
@@ -1347,10 +1447,10 @@ pub(super) fn build_completed_command_log(payload: &Value, is_zh: bool) -> Optio
     } else {
         summary_style()
     };
-    if let Some(section) = build_output_section(first_label, first_text, 6, first_style, is_zh) {
+    if let Some(section) = build_output_section(first_label, first_text, first_style) {
         sections.push(section);
     }
-    if let Some(section) = build_output_section(second_label, second_text, 4, second_style, is_zh) {
+    if let Some(section) = build_output_section(second_label, second_text, second_style) {
         sections.push(section);
     }
     let title = if success {
@@ -1375,6 +1475,7 @@ pub(super) fn build_completed_command_log(payload: &Value, is_zh: bool) -> Optio
         command,
         metrics: Some(metrics.join(", ")),
         sections,
+        is_zh,
     }))
 }
 
@@ -1388,6 +1489,9 @@ pub(super) fn build_pending_tool_log(
         status: GenericToolLogStatus::Pending,
         summary: Some(summarize_tool_args(args)),
         details: Vec::new(),
+        // A pending card already shows its arguments as the summary; repeating them under
+        // a fold would be the same text twice.
+        arguments: None,
         is_zh,
         presentation: resolve_presentation(tool_name, args),
     })
@@ -1465,6 +1569,24 @@ pub(super) fn build_completed_tool_log(
         None
     };
 
+    // A remote call's result only reads properly next to what was asked for, so its
+    // arguments ride on the open card. Local tools already name their target in the header.
+    let presentation = inherited.unwrap_or_else(|| present(tool_name));
+    let arguments = if presentation.access == ToolAccess::Delegate {
+        // Live events carry `args` at the top level; a replayed durable row can arrive
+        // already wrapped, so read whichever copy holds it.
+        payload
+            .get("args")
+            .or_else(|| payload.get("arguments"))
+            .or_else(|| result.get("args"))
+            .or_else(|| result.get("arguments"))
+            .filter(|value| !value.is_null())
+            .map(compact_json)
+            .filter(|text| !text.is_empty() && text != "{}")
+    } else {
+        None
+    };
+
     SpecialLogEntry::Tool(GenericToolLogEntry {
         tool_name: tool_name.to_string(),
         status: if ok == Some(false) {
@@ -1474,8 +1596,9 @@ pub(super) fn build_completed_tool_log(
         },
         summary,
         details,
+        arguments,
         is_zh,
-        presentation: inherited.unwrap_or_else(|| present(tool_name)),
+        presentation,
     })
 }
 
@@ -1507,8 +1630,18 @@ pub(super) fn build_pending_patch_log(args: &Value, is_zh: bool) -> Option<Speci
         notes: Vec::new(),
         files,
         diff_preview,
+        is_zh,
     }))
 }
+/// A finished change reads its diff from the engine's own blocks. The pending card had to
+/// parse what the model asked for; a write or a literal replace never asked for anything a
+/// parser could read, so only the applied result can draw this card at all.
+fn completed_diff_preview(data: &Value, is_zh: bool) -> Option<PatchDiffPreview> {
+    let files = data.get("files").and_then(Value::as_array)?;
+    let preview = patch_diff_preview_from_blocks(files, 12, PATCH_DIFF_WINDOW_LINES, is_zh);
+    (!preview.is_empty()).then_some(preview)
+}
+
 pub(super) fn build_completed_patch_log(payload: &Value, is_zh: bool) -> SpecialLogEntry {
     let result = payload.get("result").unwrap_or(payload);
     let data = result.get("data").unwrap_or(result);
@@ -1645,7 +1778,8 @@ pub(super) fn build_completed_patch_log(payload: &Value, is_zh: bool) -> Special
         summary,
         notes,
         files,
-        diff_preview: None,
+        diff_preview: completed_diff_preview(data, is_zh),
+        is_zh,
     })
 }
 
@@ -1839,20 +1973,12 @@ fn empty_output_section(is_zh: bool) -> CommandSection {
     CommandSection {
         label: if is_zh { "输出" } else { "output" }.to_string(),
         lines: vec![if is_zh { "<空>" } else { "<empty>" }.to_string()],
-        preview: 1,
         window_truncated: false,
         style: theme::secondary_text(),
-        is_zh,
     }
 }
 
-fn build_output_section(
-    label: &str,
-    text: &str,
-    preview: usize,
-    style: Style,
-    is_zh: bool,
-) -> Option<CommandSection> {
+fn build_output_section(label: &str, text: &str, style: Style) -> Option<CommandSection> {
     let (lines, window_truncated) = output_window(text);
     if lines.is_empty() {
         return None;
@@ -1860,10 +1986,8 @@ fn build_output_section(
     Some(CommandSection {
         label: label.to_string(),
         lines,
-        preview,
         window_truncated,
         style,
-        is_zh,
     })
 }
 
@@ -1881,36 +2005,15 @@ fn truncate_by_chars(text: &str, max_chars: usize) -> (String, bool) {
     (output, true)
 }
 
-/// Fold row: it marks what is hidden and names the key that shows it. `…` is the glyph
-/// the sample uses for hidden output, while `⋮` stays inside a diff for a folded range.
-/// The pointer is only honest while the stored window still holds the whole output; once
-/// the window itself dropped lines, `ctrl+t` cannot bring them back and the row says so.
-fn fold_note(omitted_lines: usize, window_truncated: bool, is_zh: bool) -> String {
-    let mut note = if omitted_lines > 0 {
-        if is_zh {
-            format!("\u{2026} +{omitted_lines} 行")
-        } else if omitted_lines == 1 {
-            "\u{2026} +1 line".to_string()
-        } else {
-            format!("\u{2026} +{omitted_lines} lines")
-        }
+/// The row that marks output the stored window already dropped. It names no count and no
+/// key: those lines are gone, so promising `ctrl+t` would be a lie. Revealable rows are
+/// counted by the disclosure control instead.
+fn window_truncated_note(is_zh: bool) -> String {
+    if is_zh {
+        "\u{2026} \u{00b7} 窗口已截断".to_string()
     } else {
-        "\u{2026}".to_string()
-    };
-    if window_truncated {
-        note.push_str(if is_zh {
-            " \u{00b7} 窗口已截断"
-        } else {
-            " \u{00b7} window truncated"
-        });
-    } else if omitted_lines > 0 {
-        note.push_str(if is_zh {
-            "（ctrl+t 查看完整输出）"
-        } else {
-            " (ctrl+t to view transcript)"
-        });
+        "\u{2026} \u{00b7} window truncated".to_string()
     }
-    note
 }
 
 fn summarize_patch_input(patch: &str) -> String {
@@ -2452,17 +2555,31 @@ mod tests {
 
         let folded = flat_command_lines(&entry, 80, false);
         assert!(
-            folded.iter().any(|line| line.contains("+2 lines")),
-            "the card folds the middle: {folded:?}"
+            folded
+                .iter()
+                .any(|line| line
+                    .contains(format!("+{} lines", 8 - COMMAND_TAIL_PREVIEW_LINES).as_str())),
+            "the disclosure row counts the folded head: {folded:?}"
+        );
+        assert!(
+            folded.iter().any(|line| line.contains("line 8")),
+            "the tail is what stays on the card: {folded:?}"
         );
         assert!(!folded.iter().any(|line| line.contains("line 4")));
 
         let opened = flat_command_lines(&entry, 80, true);
         assert!(
+            opened.iter().any(|line| line.contains("line 1")),
+            "the open card shows the whole window: {opened:?}"
+        );
+        assert!(
             opened.iter().any(|line| line.contains("line 4")),
             "the transcript shows the whole window: {opened:?}"
         );
-        assert!(!opened.iter().any(|line| line.contains("+2 lines")));
+        assert!(
+            !opened.iter().any(|line| line.contains("lines (enter")),
+            "an open card has nothing left to promise: {opened:?}"
+        );
     }
 
     #[test]
@@ -2700,20 +2817,180 @@ mod tests {
         assert!(
             folded
                 .iter()
-                .any(|row| row.contains("\u{22ee} +") && row.contains("lines")),
-            "the fold counts what it hides: {folded:?}"
+                .any(|row| row.contains("+6 lines (enter to expand)")),
+            "one row carries both the count and the key: {folded:?}"
         );
         assert!(
-            folded
-                .iter()
-                .any(|row| row.contains("+ Show details (enter)")),
-            "the disclosure names the key: {folded:?}"
+            !folded.iter().any(|row| row.contains("\u{22ee} +")),
+            "the count may not be said twice on this card: {folded:?}"
         );
         assert!(!folded.iter().any(|row| row.contains("line 14")));
 
         let opened = flat_patch_lines(&entry, 80, true);
         assert!(opened.iter().any(|row| row.contains("line 14")));
         assert!(!opened.iter().any(|row| row.contains("Show details")));
+    }
+
+    /// A folded *range* inside one file keeps its own marker. `⋮` says the window dropped
+    /// part of that file's change, which must not be confused with the card's counted fold.
+    #[test]
+    fn a_range_that_left_the_window_keeps_its_own_marker() {
+        let body = (1..=45)
+            .map(|n| format!("+line {n}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let args = serde_json::json!({
+            "input": format!("*** Begin Patch\n*** Update File: src/wide.rs\n@@\n{body}\n*** End Patch")
+        });
+        let SpecialLogEntry::Patch(entry) = build_pending_patch_log(&args, false).expect("patch")
+        else {
+            panic!("expected patch log");
+        };
+        let rows = flat_patch_lines(&entry, 80, false);
+        assert!(
+            rows
+                .iter()
+                .any(|row| row.contains("lines (enter to expand)")),
+            "the card counts what Enter reveals: {rows:?}"
+        );
+        // The window's own marker sits past the fold budget, so it belongs to the open card.
+        let opened = flat_patch_lines(&entry, 80, true);
+        assert!(
+            opened
+                .iter()
+                .any(|row| row.contains("\u{22ee}") && row.contains("more lines")),
+            "the range marker names the window, not the fold: {opened:?}"
+        );
+    }
+
+    #[test]
+    fn a_finished_change_draws_the_diff_the_engine_applied() {
+        let SpecialLogEntry::Patch(entry) = build_completed_patch_log(
+            &serde_json::json!({"result": {"ok": true, "data": {
+                "added_lines": 2, "deleted_lines": 1, "changed_files": 1, "hunks_applied": 1,
+                "files": [{"action": "update", "path": "src/main.rs", "hunks": 1,
+                    "added_lines": 2, "deleted_lines": 1,
+                    "diff_blocks": [{"header": "",
+                        "start_line_before": 10, "end_line_before": 10,
+                        "start_line_after": 12, "end_line_after": 13,
+                        "lines": [
+                            {"kind": "delete", "old_line": 10, "new_line": null, "text": "let b = 2;"},
+                            {"kind": "add", "old_line": null, "new_line": 12, "text": "let b = 3;"},
+                            {"kind": "add", "old_line": null, "new_line": 13, "text": "let c = 4;"}
+                        ]}]}]
+            }}}),
+            false,
+        ) else {
+            panic!("expected a patch card");
+        };
+        let rows = flat_patch_lines(&entry, 80, false);
+        assert!(
+            rows.iter().any(|row| row.contains("diff src/main.rs")),
+            "{rows:?}"
+        );
+        assert!(
+            rows.iter().any(|row| row.contains("-10,1 +12,2")),
+            "the hunk row is built from the engine's own range: {rows:?}"
+        );
+        assert!(
+            rows.iter().any(|row| row.contains("let c = 4;")),
+            "{rows:?}"
+        );
+    }
+
+    /// A write is not a patch the model wrote, so nothing parseable ever arrived: the
+    /// applied blocks are the only way this card can exist at all.
+    #[test]
+    fn a_write_result_renders_as_a_diff_card() {
+        let SpecialLogEntry::Patch(entry) = build_completed_patch_log(
+            &serde_json::json!({"result": {"ok": true, "data": {
+                "added_lines": 2, "deleted_lines": 0, "changed_files": 1,
+                "files": [{"action": "add", "path": "notes/new.md",
+                    "added_lines": 2, "deleted_lines": 0,
+                    "diff_blocks": [{"header": "",
+                        "start_line_before": 0, "end_line_before": 0,
+                        "start_line_after": 1, "end_line_after": 2,
+                        "lines": [
+                            {"kind": "add", "old_line": null, "new_line": 1, "text": "# 第一段"},
+                            {"kind": "add", "old_line": null, "new_line": 2, "text": "line two"}
+                        ]}]}]
+            }}}),
+            true,
+        ) else {
+            panic!("expected a patch card");
+        };
+        let rows = flat_patch_lines(&entry, 80, false);
+        assert!(
+            rows.iter().any(|row| row.contains("已新增 notes/new.md")),
+            "{rows:?}"
+        );
+        assert!(rows.iter().any(|row| row.contains("# 第一段")), "{rows:?}");
+        let numbered = rows
+            .iter()
+            .find(|row| row.contains("# 第一段"))
+            .expect("added row");
+        assert!(
+            numbered.contains('1'),
+            "the gutter carries the new file's own line numbers: {numbered}"
+        );
+    }
+
+    /// A remote call's rows are the thing worth reading; hiding all of them until Enter
+    /// made the card a heading with no content.
+    #[test]
+    fn a_remote_result_previews_rows_and_holds_the_rest_for_enter() {
+        fn flat(entry: &SpecialLogEntry, width: u16, expanded: bool) -> Vec<String> {
+            entry
+                .render_lines_for_width(width, expanded)
+                .iter()
+                .map(|line| {
+                    line.spans
+                        .iter()
+                        .map(|span| span.content.as_ref())
+                        .collect::<String>()
+                })
+                .collect()
+        }
+
+        let content = (1..=7)
+            .map(|n| serde_json::json!({ "type": "text", "text": format!("row {n}") }))
+            .collect::<Vec<_>>();
+        let entry = build_completed_tool_log(
+            "crm@lookup",
+            &serde_json::json!({ "ok": true, "args": {"customer": "42"}, "data": {
+                "server": "crm", "tool": "lookup",
+                "result": { "content": content }
+            }}),
+            false,
+            None,
+        );
+
+        let folded = flat(&entry, 80, false);
+        assert!(
+            folded.iter().any(|row| row.contains("row 1")),
+            "the card previews its result: {folded:?}"
+        );
+        assert!(
+            !folded.iter().any(|row| row.contains("row 5")),
+            "and stops at the preview budget: {folded:?}"
+        );
+        assert!(
+            folded
+                .iter()
+                .any(|row| row.contains("+4 lines (enter to expand)")),
+            "{folded:?}"
+        );
+
+        let opened = flat(&entry, 80, true);
+        assert!(
+            opened.iter().any(|row| row.contains("row 7")),
+            "{opened:?}"
+        );
+        assert!(
+            opened.iter().any(|row| row.contains("Arguments:"))
+                && opened.iter().any(|row| row.contains("customer")),
+            "the open card shows what was asked for: {opened:?}"
+        );
     }
 
     fn flat_patch_lines(entry: &PatchLogEntry, width: u16, expanded: bool) -> Vec<String> {
@@ -2835,7 +3112,7 @@ mod tests {
     }
 
     #[test]
-    fn command_head_carries_exit_and_duration_with_a_corner_gutter_tail() {
+    fn command_head_carries_exit_and_duration_and_folds_a_multi_line_command() {
         let entry = CommandLogEntry {
             status: CommandLogStatus::Completed,
             success: false,
@@ -2843,25 +3120,32 @@ mod tests {
             command: "echo first\necho second".to_string(),
             metrics: Some("28ms".to_string()),
             sections: Vec::new(),
+            is_zh: false,
         };
         let rendered = flat_command_lines(&entry, 80, false);
-        assert_eq!(rendered[0], "• Failed (exit 1) echo first · 28ms");
+        assert_eq!(rendered[0], "• Failed (exit 1) echo first … · 28ms");
         assert!(
-            rendered.iter().any(|line| line.contains("  └ echo second")),
-            "tail must lead with a corner and hang the rest: {rendered:?}"
+            rendered
+                .iter()
+                .any(|line| line.contains("+1 line (enter to expand)")),
+            "the folded continuation is counted on the row that opens it: {rendered:?}"
         );
-        assert!(!rendered.iter().any(|line| line.contains('│')));
+
+        let opened = flat_command_lines(&entry, 80, true);
+        assert!(
+            opened.iter().any(|line| line.contains("  └ echo second")),
+            "the open card hangs the rest of the command: {opened:?}"
+        );
+        assert!(!opened.iter().any(|line| line.contains('│')));
     }
 
     #[test]
-    fn command_sections_fold_to_preview_and_open_in_the_transcript() {
+    fn command_output_folds_to_a_tail_and_the_row_counts_what_enter_reveals() {
         let section = CommandSection {
             label: "stdout".to_string(),
             lines: (1..=9).map(|n| format!("line {n}")).collect(),
-            preview: 5,
             window_truncated: false,
             style: Style::default(),
-            is_zh: false,
         };
         let entry = CommandLogEntry {
             status: CommandLogStatus::Completed,
@@ -2870,27 +3154,36 @@ mod tests {
             command: "ls".to_string(),
             metrics: None,
             sections: vec![section],
+            is_zh: false,
         };
         let folded = flat_command_lines(&entry, 80, false);
+        // The tail is what a running command last printed, so that is what the card keeps.
         assert!(
-            folded.iter().any(|line| line.contains("\u{2026} +4 lines")),
-            "the fold marks what it hides: {folded:?}"
+            folded.iter().any(|line| line.contains("line 7"))
+                && folded.iter().any(|line| line.contains("line 9")),
+            "the card keeps the tail: {folded:?}"
+        );
+        assert!(
+            !folded.iter().any(|line| line.contains("line 5")),
+            "the head is folded away: {folded:?}"
         );
         assert!(
             folded
                 .iter()
-                .any(|line| line.contains("+ Show details (enter)")),
-            "the card names the key that opens it: {folded:?}"
+                .any(|line| line.contains("+6 lines (enter to expand)")),
+            "one row carries both the count and the key: {folded:?}"
         );
-        assert!(!folded.iter().any(|line| line.contains("line 5")));
         assert!(
-            folded
-                .iter()
-                .any(|line| line.contains("(ctrl+t to view transcript)")),
-            "the fold row points at the overlay that still holds what it hides: {folded:?}"
+            !folded.iter().any(|line| line.contains('\u{2026}')),
+            "nothing was lost, so no second marker may promise it: {folded:?}"
         );
         let opened = flat_command_lines(&entry, 80, true);
+        assert!(opened.iter().any(|line| line.contains("line 1")));
         assert!(opened.iter().any(|line| line.contains("line 5")));
+        assert!(
+            opened.iter().any(|line| line.contains("\u{2212} Show less")),
+            "{opened:?}"
+        );
         assert!(
             !opened.iter().any(|line| line.contains("Show details")),
             "an open card needs no second hint"
@@ -2898,40 +3191,51 @@ mod tests {
     }
 
     #[test]
-    fn a_fold_only_points_at_the_overlay_when_it_can_honour_the_promise() {
-        assert_eq!(
-            fold_note(4, false, false),
-            "\u{2026} +4 lines (ctrl+t to view transcript)"
+    fn a_truncated_window_says_so_instead_of_promising_the_overlay() {
+        let note = window_truncated_note(false);
+        assert_eq!(note, "\u{2026} \u{00b7} window truncated");
+        assert!(!note.contains("ctrl+t"), "{note}");
+        let zh = window_truncated_note(true);
+        assert_eq!(zh, "\u{2026} \u{00b7} 窗口已截断");
+        assert!(!zh.contains("ctrl+t"), "{zh}");
+
+        // The row must actually appear on a card whose window dropped rows, and it must not
+        // pretend there is anything left for Enter to reveal.
+        let entry = CommandLogEntry {
+            status: CommandLogStatus::Completed,
+            success: true,
+            title: "Ran".to_string(),
+            command: "ls".to_string(),
+            metrics: None,
+            sections: vec![CommandSection {
+                label: "stdout".to_string(),
+                lines: vec!["last".to_string()],
+                window_truncated: true,
+                style: Style::default(),
+            }],
+            is_zh: false,
+        };
+        let folded = flat_command_lines(&entry, 80, false);
+        assert!(
+            folded.iter().any(|line| line.contains("window truncated")),
+            "{folded:?}"
         );
-        assert_eq!(
-            fold_note(1, false, false),
-            "\u{2026} +1 line (ctrl+t to view transcript)"
+        assert!(
+            !folded.iter().any(|line| line.contains("Show details"))
+                && !folded.iter().any(|line| line.contains("lines (enter")),
+            "a lost row cannot be promised back: {folded:?}"
         );
-        assert_eq!(
-            fold_note(3, false, true),
-            "\u{2026} +3 行（ctrl+t 查看完整输出）"
-        );
-        // The stored window dropped lines, so the overlay cannot show them; promising
-        // the key would be a lie and the row says what happened instead.
-        let truncated = fold_note(4, true, false);
-        assert!(truncated.contains("window truncated"), "{truncated}");
-        assert!(!truncated.contains("ctrl+t"), "{truncated}");
-        let truncated_zh = fold_note(4, true, true);
-        assert!(truncated_zh.contains("窗口已截断"), "{truncated_zh}");
-        assert!(!truncated_zh.contains("ctrl+t"), "{truncated_zh}");
     }
 
-    /// The pointer is a new element on an existing row, so it has to fit the same
-    /// narrow frames the fold already survived.
+    /// The disclosure row is never wrapped, so its own width rule has to survive the same
+    /// narrow frames the rest of the card already survived.
     #[test]
-    fn a_chinese_fold_hint_still_fits_the_narrowest_frame() {
+    fn a_chinese_fold_row_keeps_its_count_and_drops_its_hint_before_it_overflows() {
         let section = CommandSection {
             label: "输出".to_string(),
             lines: (1..=9).map(|n| format!("line {n}")).collect(),
-            preview: 5,
             window_truncated: false,
             style: Style::default(),
-            is_zh: true,
         };
         let entry = CommandLogEntry {
             status: CommandLogStatus::Completed,
@@ -2940,6 +3244,7 @@ mod tests {
             command: "ls".to_string(),
             metrics: None,
             sections: vec![section],
+            is_zh: true,
         };
         for narrow_width in [24u16, 40] {
             let folded = flat_command_lines(&entry, narrow_width, false);
@@ -2949,13 +3254,24 @@ mod tests {
                     .all(|row| UnicodeWidthStr::width(row.as_str()) <= usize::from(narrow_width)),
                 "overflow at {narrow_width}: {folded:?}"
             );
+            assert!(
+                folded.iter().any(|row| row.contains("+6 行")),
+                "the count is the point, and it may not be the first thing lost: {folded:?}"
+            );
         }
-        let folded = flat_command_lines(&entry, 80, false);
+        // At the tightest frame the key hint bows out; the count stays.
+        let tight = flat_command_lines(&entry, 24, false);
         assert!(
-            folded
+            !tight.iter().any(|row| row.contains("enter")),
+            "the hint must not be squeezed into an overflow: {tight:?}"
+        );
+        // Given room it returns.
+        let roomy = flat_command_lines(&entry, 40, false);
+        assert!(
+            roomy
                 .iter()
-                .any(|row| row.contains("（ctrl+t 查看完整输出）")),
-            "{folded:?}"
+                .any(|row| row.contains("+6 行（enter 展开）")),
+            "{roomy:?}"
         );
     }
 

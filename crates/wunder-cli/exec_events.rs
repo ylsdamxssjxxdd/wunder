@@ -13,7 +13,9 @@
 use serde_json::{json, Value};
 
 use crate::command_session_display::{CommandSessionDisplayState, CommandSessionDisplayStatus};
-use crate::tool_presentation::{present, target_argument, ToolAccess};
+use crate::tool_presentation::{
+    is_patch_tool_name, is_web_tool_name, is_write_tool_name, present, target_argument, ToolAccess,
+};
 use wunder_server::schemas::StreamEvent;
 
 /// Per-item text budget. Long command output keeps its tail; the count of what
@@ -648,14 +650,10 @@ fn combined_output(view: &crate::command_session_display::CommandSessionView) ->
 /// Map a tool name onto the item vocabulary a script can switch on, reusing the
 /// same classifier the transcript cards use so the two never disagree.
 fn item_type_for(tool_name: &str) -> &'static str {
-    let normalized = tool_name.trim().to_ascii_lowercase();
-    if normalized.contains("apply_patch") || normalized.contains("patch") {
+    if is_patch_tool_name(tool_name) || is_write_tool_name(tool_name) {
         return "file_change";
     }
-    if normalized.contains("search")
-        || normalized.contains("fetch")
-        || normalized.contains("browse")
-    {
+    if is_web_tool_name(tool_name) {
         return "web_search";
     }
     match present(tool_name).access {

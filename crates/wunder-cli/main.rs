@@ -3755,29 +3755,33 @@ async fn run_agent_once(
     color: Option<ColorArg>,
 ) -> Result<AgentTurnOutcome> {
     let owner_instance_id = uuid::Uuid::new_v4().simple().to_string();
-    match runtime.state.storage.try_acquire_thread_open_lease(
+    let fencing_token = match runtime.state.storage.try_acquire_thread_open_lease(
         session_id,
         &runtime.user_id,
         &owner_instance_id,
         "cli",
         30.0,
     )? {
-        ThreadOpenLeaseStatus::Acquired => {}
+        ThreadOpenLeaseStatus::Acquired { fencing_token } => fencing_token,
         ThreadOpenLeaseStatus::Busy => {
             return Err(anyhow!(
                 "THREAD_IN_USE: 线程正在由其他蛹或舵机实例打开或运行"
             ));
         }
-    }
+    };
     let lease_guard = LeaseGuard::new(
         runtime.state.storage.clone(),
         session_id.to_string(),
         owner_instance_id,
+        fencing_token,
     );
     let language = locale::resolve_cli_language(global);
     let color = resolve_color(color);
     let mut request =
         build_wunder_request(runtime, global, prompt, session_id, attachments).await?;
+    request
+        .config_overrides
+        .get_or_insert_with(|| serde_json::json!({}))["__local_open_lease"] = serde_json::json!({"owner":lease_guard.owner_instance_id,"token":lease_guard.fencing_token});
     if !should_interactive_approvals(global) && !global.json {
         // A gated policy with no approver is a real trap: the turn proceeds but
         // every gated tool call is refused with an engine message about an
@@ -3806,6 +3810,16 @@ async fn run_agent_once(
     } else {
         None
     };
+
+    anyhow::ensure!(
+        runtime.state.storage.touch_thread_open_lease(
+            session_id,
+            &lease_guard.owner_instance_id,
+            lease_guard.fencing_token,
+            30.0
+        )?,
+        "THREAD_IN_USE: thread lease expired before execution"
+    );
 
     if global.no_stream {
         let response = runtime.state.kernel.orchestrator.run(request).await?;
@@ -3902,6 +3916,7 @@ struct LeaseGuard {
     storage: std::sync::Arc<dyn wunder_server::storage::StorageBackend>,
     session_id: String,
     owner_instance_id: String,
+    fencing_token: u64,
     stop: std::sync::Arc<AtomicBool>,
 }
 
@@ -3910,12 +3925,14 @@ impl LeaseGuard {
         storage: std::sync::Arc<dyn wunder_server::storage::StorageBackend>,
         session_id: String,
         owner_instance_id: String,
+        fencing_token: u64,
     ) -> Self {
         let stop = std::sync::Arc::new(AtomicBool::new(false));
         let heartbeat_stop = stop.clone();
         let heartbeat_storage = storage.clone();
         let heartbeat_session = session_id.clone();
         let heartbeat_owner = owner_instance_id.clone();
+        let heartbeat_token = fencing_token;
         std::thread::Builder::new()
             .name("wunder-cli-thread-lease".to_string())
             .spawn(move || {
@@ -3925,7 +3942,12 @@ impl LeaseGuard {
                         break;
                     }
                     if !heartbeat_storage
-                        .touch_thread_open_lease(&heartbeat_session, &heartbeat_owner, 30.0)
+                        .touch_thread_open_lease(
+                            &heartbeat_session,
+                            &heartbeat_owner,
+                            heartbeat_token,
+                            30.0,
+                        )
                         .unwrap_or(false)
                     {
                         break;
@@ -3937,6 +3959,7 @@ impl LeaseGuard {
             storage,
             session_id,
             owner_instance_id,
+            fencing_token,
             stop,
         }
     }
@@ -3945,9 +3968,11 @@ impl LeaseGuard {
 impl Drop for LeaseGuard {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Release);
-        let _ = self
-            .storage
-            .release_thread_open_lease(&self.session_id, &self.owner_instance_id);
+        let _ = self.storage.release_thread_open_lease(
+            &self.session_id,
+            &self.owner_instance_id,
+            self.fencing_token,
+        );
     }
 }
 

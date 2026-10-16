@@ -166,6 +166,38 @@ test('view lifecycle refreshes on interaction, completion, failure and stop with
   } finally { cleanup(); }
 });
 
+test('durable file writes refresh while running and terminal heads clear all shell busy state', async () => {
+  const { chat, events, applyView, cleanup } = await setup();
+  const { ensureRuntime } = await import('../../src/stores/chatRuntimeState');
+  const row = (revision: number, workspace_change_seq: number, status = 'running'): ChatViewRow => ({
+    root_turn_id: 'fixture-write-turn', user_round: 1, revision, status, workspace_change_seq,
+    user: { item_id: 'fixture-user', content: 'input' },
+    assistant: { item_id: 'fixture-answer', content: 'output' }, workflow_count: 1, failed_count: 0
+  });
+  try {
+    applyView(1, [row(1, 0)], 'running');
+    applyView(2, [row(2, 10)], 'running');
+    assert.equal(chat.isSessionBusy(key), true);
+    const count = () => events.filter(event => event === 'wunder:workspace-refresh').length;
+    assert.equal(count(), 1, 'queue-owned executions need no transient workspace event');
+    applyView(2, [row(2, 10)], 'running');
+    applyView(3, [row(3, 10)], 'running');
+    assert.equal(count(), 1, 'replay and token-only changes do not rescan directories');
+    applyView(4, [row(4, 20)], 'running');
+    assert.equal(count(), 2);
+    const runtime = ensureRuntime(key);
+    runtime.pendingApprovalIds = ['fixture-approval'];
+    runtime.pendingApprovalCount = 1;
+    runtime.waitingForUserInput = true;
+    applyView(5, [row(5, 20, 'completed')], 'completed');
+    assert.equal(chat.isSessionBusy(key), false);
+    assert.equal(chat.isSessionLoading(key), false);
+    assert.equal(runtime.pendingApprovalCount, 0);
+    assert.equal(runtime.waitingForUserInput, false);
+    assert.equal(count(), 3);
+  } finally { cleanup(); }
+});
+
 test('durable failure and cancellation refresh once per status boundary', async () => {
   const { events, eventDetails, apply, cleanup } = await setup();
   try {

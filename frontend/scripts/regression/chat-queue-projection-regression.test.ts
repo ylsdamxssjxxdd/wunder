@@ -200,6 +200,14 @@ test('撤下一条没开跑的轮次会挑出本地占位的两条消息', () =>
   assert.deepEqual(selectParkedTurnMessageIds(messages, 'cm-1'), ['cm-1', 'local-assistant:m-2']);
   // 已经产出的那一轮不属于排队条，一条都不许剪。
   assert.deepEqual(selectParkedTurnMessageIds(messages, 'cm-0'), []);
+  assert.deepEqual(selectParkedTurnMessageIds([
+    { role: 'user', message_id: 'cm-running', client_message_id: 'cm-running', user_turn_id: 'round-running' },
+    { role: 'assistant', message_id: 'assistant-running', user_turn_id: 'round-running', status: 'running', content: '' }
+  ], 'cm-running'), [], 'an empty dispatched placeholder is not cancellable queue state');
+  assert.deepEqual(selectParkedTurnMessageIds([
+    { role: 'user', message_id: 'cm-unbound', client_message_id: 'cm-unbound' },
+    { role: 'assistant', message_id: 'assistant-other', client_message_id: 'cm-other', status: 'queued', content: '', workflowItems: [{ id: 'queue:other', eventType: 'queued' }] }
+  ], 'cm-unbound'), [], 'an unbound user bubble cannot claim an unrelated queued assistant');
   assert.deepEqual(selectParkedTurnMessageIds(messages, 'missing'), []);
   assert.deepEqual(selectParkedTurnMessageIds(messages, ''), []);
   assert.deepEqual(selectParkedTurnMessageIds(undefined, 'cm-1'), []);

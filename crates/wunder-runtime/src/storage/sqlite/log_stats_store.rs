@@ -152,7 +152,6 @@ impl SqliteLogStatsStorage for SqliteStorage {
             "SELECT user_id, COUNT(*) as tool_records, MAX(created_time) as last_time FROM tool_logs",
         );
         let mut filters = Vec::new();
-        let mut params_list: Vec<SqlValue> = Vec::new();
         append_tool_log_exclusions(&mut filters);
         if !filters.is_empty() {
             query.push_str(" WHERE ");
@@ -161,7 +160,7 @@ impl SqliteLogStatsStorage for SqliteStorage {
         query.push_str(" GROUP BY user_id");
         let mut stmt = conn.prepare(&query)?;
         let rows = stmt
-            .query_map(params_from_iter(params_list.iter()), |row| {
+            .query_map([], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, i64>(1)?,

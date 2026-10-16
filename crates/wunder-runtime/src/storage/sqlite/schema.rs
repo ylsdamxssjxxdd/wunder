@@ -65,6 +65,18 @@ impl SqliteStorage {
         Ok(())
     }
 
+    fn ensure_thread_open_lease_columns(&self, conn: &Connection) -> Result<()> {
+        let tx =
+            rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
+        let columns = load_table_columns(&tx, "thread_open_leases")?;
+        if !columns.is_empty() && !columns.contains("fencing_token") {
+            tx.execute("ALTER TABLE thread_open_leases ADD COLUMN fencing_token INTEGER NOT NULL DEFAULT 0", [])?;
+        }
+        tx.execute_batch("CREATE TABLE IF NOT EXISTS thread_open_lease_generations (session_id TEXT PRIMARY KEY, last_token INTEGER NOT NULL);")?;
+        tx.commit()?;
+        Ok(())
+    }
+
     fn ensure_thread_trajectory_tile_columns(&self, conn: &Connection) -> Result<()> {
         let tx =
             rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
@@ -784,8 +796,13 @@ impl SqliteSchemaStorage for SqliteStorage {
               user_id TEXT NOT NULL,
               owner_instance_id TEXT NOT NULL,
               client_kind TEXT NOT NULL,
+              fencing_token INTEGER NOT NULL DEFAULT 0,
               updated_time REAL NOT NULL,
               expires_at REAL NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS thread_open_lease_generations (
+              session_id TEXT PRIMARY KEY,
+              last_token INTEGER NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_thread_open_leases_user
               ON thread_open_leases (user_id, expires_at);
@@ -1810,6 +1827,7 @@ impl SqliteSchemaStorage for SqliteStorage {
         self.ensure_stream_event_workflow_columns(&conn)?;
         self.ensure_channel_columns(&conn)?;
         self.ensure_session_lock_columns(&conn)?;
+        self.ensure_thread_open_lease_columns(&conn)?;
         self.ensure_queue_control_schema(&conn)?;
         self.ensure_session_run_columns(&conn)?;
         self.ensure_user_agent_columns(&conn)?;

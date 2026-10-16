@@ -89,19 +89,6 @@ impl Usage {
             || self.output.is_some()
             || self.think.is_some()
     }
-    fn add(&mut self, other: Usage) {
-        for (target, value) in [
-            (&mut self.input, other.input),
-            (&mut self.cache_read, other.cache_read),
-            (&mut self.cache_write, other.cache_write),
-            (&mut self.output, other.output),
-            (&mut self.think, other.think),
-        ] {
-            if let Some(value) = value {
-                *target = Some(target.unwrap_or(0.0) + value);
-            }
-        }
-    }
 }
 
 struct Metrics {
@@ -147,12 +134,9 @@ struct TurnModel {
 
 struct Request {
     number: usize,
-    turn: Option<i64>,
+    /// Turn-local identity of the group that issued the call; shared by every
+    /// record of that step so a request can be located from any of its rows.
     identity: String,
-    started_at: Option<f64>,
-    completed_at: Option<f64>,
-    usage: Option<Usage>,
-    cumulative: Usage,
     assistant_index: usize,
     first_record: usize,
 }
@@ -191,7 +175,6 @@ struct SpanBase {
 /// thread and handed to the UI state in one piece.
 struct SnapshotModel {
     cells: Vec<Cell>,
-    turns: Vec<TurnModel>,
     records: Vec<Record>,
     requests: Vec<Request>,
     spans: Vec<SpanBase>,
@@ -835,7 +818,6 @@ fn parse_view_page(page: &Value) -> SnapshotModel {
                 raw_sequence_start,
                 raw_sequence_end,
             )];
-            let timed = true;
             for &(detail_time_start, detail_time_end) in &detailed_ranges {
                 if detail_time_start <= raw_time_end && detail_time_end >= raw_time_start {
                     let cut_start = detail_time_start.max(raw_time_start);
@@ -1441,9 +1423,8 @@ fn parse_snapshot(snapshot: &Value) -> SnapshotModel {
         });
     }
 
-    // requests: numbered model-call groups with cumulative usage
+    // requests: one per model-call group, numbered in ledger order
     let mut requests: Vec<Request> = Vec::new();
-    let mut cumulative = Usage::default();
     for turn in &turns {
         for group in &turn.groups {
             if group.compaction || group.step.is_none() {
@@ -1457,17 +1438,9 @@ fn parse_snapshot(snapshot: &Value) -> SnapshotModel {
             else {
                 continue;
             };
-            if let Some(usage) = message_cell.usage {
-                cumulative.add(usage);
-            }
             requests.push(Request {
                 number: requests.len() + 1,
-                turn: turn.turn,
                 identity: State::identity_key(turn.turn, &group.identity),
-                started_at: message_cell.started_at,
-                completed_at: message_cell.metrics.as_ref().and_then(|m| m.completed),
-                usage: message_cell.usage,
-                cumulative,
                 assistant_index: message_cell.index,
                 first_record: 0,
             });
@@ -1556,7 +1529,6 @@ fn parse_snapshot(snapshot: &Value) -> SnapshotModel {
 
     SnapshotModel {
         cells,
-        turns,
         records,
         requests,
         spans,
@@ -2407,7 +2379,7 @@ fn project_details(app: &MainWindow, state: &State, model: &SnapshotModel, texts
                     (metrics.step_start, metrics.first_token)
                 {
                     timing.push(TrajTiming {
-                        label: label(zh, "首字延迟", "First token").into(),
+                        label: label(zh, "首 token 延迟", "First token").into(),
                         value: texts.millis(first_token - step_start).into(),
                     });
                     if let Some(completed) = metrics.completed {
@@ -2522,7 +2494,7 @@ fn project_details(app: &MainWindow, state: &State, model: &SnapshotModel, texts
                 if let Some(think) = usage.think {
                     parts.push(format!(
                         "{} {}",
-                        label(zh, "推理", "think"),
+                        label(zh, "思考", "think"),
                         thousands(think)
                     ));
                 }
@@ -2541,6 +2513,12 @@ fn project_details(app: &MainWindow, state: &State, model: &SnapshotModel, texts
                     body: bounded_body(input).into(),
                 });
             }
+            if let Some(thinking) = &cell.thinking_detail {
+                sections.push(TrajSection {
+                    title: label(zh, "思考", "Thinking").into(),
+                    body: bounded_body(thinking).into(),
+                });
+            }
             if let Some(output) = &cell.output_detail {
                 if cell.kind == KIND_MESSAGE || cell.kind == KIND_TOOL || cell.kind == KIND_SUBTOOL
                 {
@@ -2549,12 +2527,6 @@ fn project_details(app: &MainWindow, state: &State, model: &SnapshotModel, texts
                         body: bounded_body(output).into(),
                     });
                 }
-            }
-            if let Some(thinking) = &cell.thinking_detail {
-                sections.push(TrajSection {
-                    title: label(zh, "思考", "Thinking").into(),
-                    body: bounded_body(thinking).into(),
-                });
             }
         }
     }
@@ -3023,7 +2995,7 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         let needle = query.trim().chars().take(128).collect::<String>();
         let weak_done = app.as_weak();
         let current_done = current.clone();
-        let mut timer = slint::Timer::default();
+        let timer = slint::Timer::default();
         timer.start(
             slint::TimerMode::SingleShot,
             std::time::Duration::from_millis(250),
@@ -3495,12 +3467,21 @@ mod tests {
         let model = parse_snapshot(&snapshot);
         // the tool_result item folds into its tool_call cell
         assert_eq!(model.cells.len(), 4);
-        assert_eq!(model.turns.len(), 2);
-        assert_eq!(model.turns[0].groups.len(), 3); // messages + step:1 + step:2
-        assert_eq!(model.turns[1].groups.len(), 1);
+        // turn 1 owns its user row, the answer and the merged tool; turn 2
+        // holds only its own user row
+        let turn_of = |turn: i64| {
+            model
+                .records
+                .iter()
+                .filter(|record| record.turn == Some(turn))
+                .count()
+        };
+        assert_eq!(turn_of(1), 3); // messages + step:1 + step:2
+        assert_eq!(turn_of(2), 1);
         assert_eq!(model.requests.len(), 1);
         assert_eq!(model.requests[0].number, 1);
-        assert_eq!(model.requests[0].usage.unwrap().output, Some(340.0));
+        // the assistant cell carries the round's own token usage
+        assert_eq!(model.cells[1].usage.unwrap().output, Some(340.0));
         assert_eq!(model.records.len(), 4);
         // merged tool call carries the result and the real duration
         let tool = &model.cells[2];

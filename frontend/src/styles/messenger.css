@@ -5205,6 +5205,94 @@
   border-color: rgba(var(--ui-accent-rgb), 0.6);
 }
 
+/* 最终回复中的工作目录引用统一收进固定资源卡片，避免原图尺寸撑大时间线。
+   图片保持原始比例并在预览区域内缩放；文档沿用同一宽度和预览/下载入口。 */
+.messenger-chat-body .message-markdown-body--assistant .ai-resource-card,
+.messenger-chat-body .message-markdown-body--assistant .ai-external-image-card {
+  box-sizing: border-box;
+  margin: 8px 0;
+  border: 1px solid #dce0e7;
+  border-radius: 10px;
+  background: #f8fafc;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.messenger-chat-body .message-markdown-body--assistant .ai-resource-card.ai-resource-image,
+.messenger-chat-body .message-markdown-body--assistant .ai-external-image-card {
+  width: min(100%, 280px);
+  max-width: 280px;
+  padding: 8px;
+}
+
+.messenger-chat-body .message-markdown-body--assistant .ai-resource-card.ai-resource-file {
+  width: min(100%, 280px);
+  max-width: 280px;
+  display: inline-flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.messenger-chat-body .message-markdown-body--assistant .ai-resource-header,
+.messenger-chat-body .message-markdown-body--assistant .ai-external-image-header {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 8px;
+}
+
+.messenger-chat-body .message-markdown-body--assistant .ai-resource-title,
+.messenger-chat-body .message-markdown-body--assistant .ai-resource-name,
+.messenger-chat-body .message-markdown-body--assistant .ai-external-image-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.messenger-chat-body .message-markdown-body--assistant .ai-resource-body,
+.messenger-chat-body .message-markdown-body--assistant .ai-external-image-body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 180px;
+}
+
+.messenger-chat-body .message-markdown-body--assistant .ai-resource-preview,
+.messenger-chat-body .message-markdown-body--assistant .ai-external-image-preview {
+  display: none;
+  max-width: 100%;
+  max-height: 180px;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  border-radius: 8px;
+  cursor: zoom-in;
+}
+
+.messenger-chat-body .message-markdown-body--assistant .ai-resource-card.is-ready .ai-resource-preview,
+.messenger-chat-body .message-markdown-body--assistant .ai-external-image-preview {
+  display: block;
+}
+
+.messenger-chat-body .message-markdown-body--assistant .ai-resource-body.ai-resource-file {
+  min-height: 0;
+  display: block;
+}
+
+@media (max-width: 480px) {
+  .messenger-chat-body .message-markdown-body--assistant .ai-resource-card.ai-resource-image,
+  .messenger-chat-body .message-markdown-body--assistant .ai-resource-card.ai-resource-file,
+  .messenger-chat-body .message-markdown-body--assistant .ai-external-image-card {
+    width: min(100%, 248px);
+    max-width: 248px;
+  }
+}
+
 .messenger-view .chat-shell{
   --chat-bg: #f1f1f1;
   --chat-panel: #ffffff;

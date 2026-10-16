@@ -64,6 +64,7 @@ impl NativeDesktop {
         session: &str,
         command: NativeChatCommand,
     ) -> Result<String> {
+        self.ensure_thread_open(session)?;
         self.runtime.block_on(async {
             let store = self.state().user_store.clone();
             let owner = self.user_id().to_owned();

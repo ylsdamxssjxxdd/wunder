@@ -125,7 +125,8 @@ impl Orchestrator {
             reserved
         } else {
             let input = json!({"role":"user", "content":question, "attachments":attachments,
-                "client_message_id":client_message_id});
+                "client_message_id":client_message_id,
+                "local_open_lease":request.config_overrides.as_ref().and_then(|v| v.get("__local_open_lease"))});
             let accepted = self
                 .committer
                 .accept_turn(user_id.as_str(), session_id.as_str(), &input)

@@ -13,12 +13,13 @@ use serde_json::Value;
 use unicode_width::UnicodeWidthChar;
 use unicode_width::UnicodeWidthStr;
 
+use crate::tool_presentation::canonical_tool_name;
 use crate::tool_presentation::ToolPresentation;
 use crate::tui::theme;
 
 use super::patch_log::continuation_prefix;
 use super::patch_log::disclosure_line;
-use super::patch_log::fold_marker_line;
+use super::patch_log::Disclosure;
 use super::patch_log::pending_status_icon_span;
 use super::patch_log::tail_prefix;
 use super::ToolCallKey;
@@ -139,7 +140,7 @@ impl ExploringGroupEntry {
         }
         self.children.iter().position(|child| {
             child.status == ExploringChildStatus::Pending
-                && child.tool_name.eq_ignore_ascii_case(tool_name)
+                && canonical_tool_name(child.tool_name.as_str()) == canonical_tool_name(tool_name)
         })
     }
 
@@ -165,8 +166,8 @@ impl ExploringGroupEntry {
         lines.join("\n")
     }
 
-    pub(super) fn is_collapsible(&self) -> bool {
-        self.children.len() > VISIBLE_CHILDREN
+    pub(super) fn card_fold(&self) -> Option<Disclosure> {
+        Disclosure::new_lines(self.children.len().saturating_sub(VISIBLE_CHILDREN))
     }
 
     pub(super) fn render_lines_for_width(&self, width: u16, expanded: bool) -> Vec<Line<'static>> {
@@ -179,15 +180,9 @@ impl ExploringGroupEntry {
         for (index, child) in self.children.iter().take(visible).enumerate() {
             lines.push(self.child_line(child, index, width));
         }
-        let hidden = self.children.len().saturating_sub(visible);
-        if hidden > 0 {
-            lines.push(fold_marker_line(if self.is_zh {
-                format!("+{hidden} 行")
-            } else {
-                format!("+{hidden} lines")
-            }));
-        }
-        if let Some(line) = disclosure_line(expanded, hidden > 0) {
+        // The count lives on the disclosure row, where Enter is named next to it: a second
+        // marker row carrying the same number only made the card say it twice.
+        if let Some(line) = disclosure_line(expanded, self.card_fold(), width, self.is_zh) {
             lines.push(line);
         }
         lines
@@ -494,11 +489,13 @@ mod tests {
             })
             .collect();
         let group = group(children);
-        assert!(group.is_collapsible());
+        assert!(group.card_fold().is_some());
 
         let folded = group.render_lines_for_width(80, false);
         let folded_text = folded.iter().map(row_text).collect::<Vec<_>>().join("\n");
-        assert_eq!(folded_text.lines().count(), 1 + VISIBLE_CHILDREN + 2);
+        // One header, the preview budget, and the single row that counts the rest: the fold
+        // used to spend a second row repeating that number.
+        assert_eq!(folded_text.lines().count(), 1 + VISIBLE_CHILDREN + 1);
         assert!(folded_text.contains("+2 lines"), "{folded_text}");
         assert!(!folded_text.contains("module_7"), "{folded_text}");
 

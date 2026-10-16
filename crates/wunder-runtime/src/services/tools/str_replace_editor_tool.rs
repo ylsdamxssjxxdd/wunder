@@ -12,6 +12,7 @@
 
 use super::capabilities::{local_fs, FsCapability};
 use super::context::collect_allow_roots;
+use super::line_diff::{diff_literal_replaces, insert_diff_fields, LineDiff};
 use super::{
     build_model_tool_success, recover_tool_args_value, resolve_tool_path,
     tool_error::{build_failed_tool_result, ToolErrorMeta},
@@ -21,7 +22,7 @@ use crate::core::blocking;
 use crate::path_utils::{is_within_root, normalize_path_for_compare, normalize_target_path};
 use crate::workspace::WorkspaceManager;
 use anyhow::Result;
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use walkdir::WalkDir;
@@ -372,14 +373,31 @@ fn replace_command(
         &before[offset + old_str.len()..]
     );
     write_target(ws, user_id, target, path, &updated)?;
+    // 唯一命中：一个区间一个块，键名与取值词汇与补丁家族完全一致。
+    let (diff, unavailable) =
+        diff_literal_replaces(&before, &updated, &offsets, old_str.len(), &new_str);
     Ok(ok(
         success(
             "str_replace",
             &format!("The file {path} has been edited successfully."),
-            json!({ "path": path }),
+            build_str_replace_data(path, &diff, unavailable),
         ),
         true,
     ))
+}
+
+/// 组装 `str_replace` 子命令的结果 `data`：保留既有 `path` 键，追加 diff 家族键。
+fn build_str_replace_data(path: &str, diff: &LineDiff, unavailable: Option<&'static str>) -> Value {
+    let mut fields = Map::<String, Value>::new();
+    insert_diff_fields(&mut fields, "update", path, diff);
+    if let Some(reason) = unavailable {
+        fields.insert("diff_unavailable".to_string(), json!(reason));
+    }
+    let mut data = json!({ "path": path });
+    if let Some(map) = data.as_object_mut() {
+        map.extend(fields);
+    }
+    data
 }
 
 fn insert_command(
@@ -680,5 +698,51 @@ mod tests {
         let out = maybe_truncate("0123456789", 4);
         assert!(out.starts_with("0123"));
         assert!(out.contains("<response clipped>"));
+    }
+
+    #[test]
+    fn str_replace_data_carries_the_diff_contract() {
+        let before = "alpha\nbeta\ngamma\n";
+        let after = "alpha\nBETA\ngamma\n";
+        let (diff, unavailable) =
+            diff_literal_replaces(before, after, &[6], "beta".len(), "BETA");
+        assert!(unavailable.is_none());
+        let data = build_str_replace_data("f.txt", &diff, unavailable);
+        let mut keys: Vec<&str> = data
+            .as_object()
+            .expect("object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            vec![
+                "added",
+                "added_lines",
+                "changed_files",
+                "deleted",
+                "deleted_lines",
+                "diff_lines_omitted",
+                "files",
+                "hunks_applied",
+                "moved",
+                "path",
+                "updated",
+            ]
+        );
+        assert_eq!(data["files"][0]["action"], json!("update"));
+        assert_eq!(data["added_lines"], json!(1));
+        assert_eq!(data["deleted_lines"], json!(1));
+        assert_eq!(data["hunks_applied"], json!(1));
+        let block = &data["files"][0]["diff_blocks"][0];
+        assert_eq!(block["header"], json!("@@ -2,1 +2,1 @@"));
+        assert_eq!(block["lines"][0]["kind"], json!("delete"));
+        assert_eq!(block["lines"][0]["old_line"], json!(2));
+        assert!(block["lines"][0]["new_line"].is_null());
+        assert_eq!(block["lines"][0]["text"], json!("beta"));
+        assert_eq!(block["lines"][1]["kind"], json!("add"));
+        assert_eq!(block["lines"][1]["new_line"], json!(2));
+        assert_eq!(block["lines"][1]["text"], json!("BETA"));
     }
 }

@@ -343,11 +343,7 @@
                   <dt>{{ t('messenger.trajectory.token') }}</dt>
                   <dd>{{ formatTokens(selectedCell.usage.output) }}</dd>
                 </div>
-                  <div class="tt-overview-row">
-                    <dt>{{ t('messenger.trajectory.reasoning') }}</dt>
-                    <dd>{{ formatTokens(selectedCell.usage.think) }}</dd>
-                  </div>
-                </template>
+              </template>
                 <div v-else-if="selectedCell.kind === 'message'" class="tt-overview-row">
                   <dt>{{ t('messenger.trajectory.token') }}</dt>
                   <dd>{{ t('messenger.trajectory.usageNotReported') }}</dd>

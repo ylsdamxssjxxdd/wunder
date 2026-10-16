@@ -10,6 +10,11 @@ use super::{
     MAX_READ_BYTES, MAX_READ_LINES, MAX_READ_OUTPUT_BUDGET_BYTES, MAX_READ_TIME_BUDGET_MS,
     MIN_READ_OUTPUT_BUDGET_BYTES,
 };
+use super::line_diff::{
+    diff_added_file, diff_replaced, diff_source_too_large, insert_diff_fields, LineDiff,
+    DIFF_UNAVAILABLE_BINARY, DIFF_UNAVAILABLE_OVERSIZE, DIFF_UNAVAILABLE_UNREADABLE,
+    MAX_DIFF_SOURCE_BYTES,
+};
 use crate::core::atomic_write::atomic_write_text;
 use crate::core::blocking;
 use crate::i18n;
@@ -18,7 +23,9 @@ use crate::workspace::WorkspaceManager;
 use anyhow::{anyhow, Result};
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::fs::File;
+use std::io::Read;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use walkdir::WalkDir;
 pub(crate) async fn list_files(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
@@ -1337,6 +1344,82 @@ struct WriteFileOutcome {
     target: PathBuf,
     existed: bool,
     previous_bytes: u64,
+    diff: WriteDiff,
+}
+
+/// 覆盖写前的旧内容，只为 diff 服务；读不到或过大时降级为「只有计数」。
+enum PreviousContent {
+    /// 目标原本不存在（新建）。
+    Absent,
+    /// 有界读出的 UTF-8 文本。
+    Text(String),
+    /// 放弃 diff 的短原因串，直接进 `data.diff_unavailable`。
+    Skipped(&'static str),
+}
+
+/// 写入结果的 diff 载荷：动作词沿用补丁家族的 `add`/`update`。
+struct WriteDiff {
+    action: &'static str,
+    diff: LineDiff,
+    unavailable: Option<&'static str>,
+}
+
+/// 有界读取旧内容：先按 metadata 长度判上限，最多读 `MAX_DIFF_SOURCE_BYTES + 1`
+/// 字节；非 UTF-8 视为二进制。任何一步都只降级，不阻断写入。
+fn read_previous_for_diff(target: &Path, size: u64) -> PreviousContent {
+    if usize::try_from(size)
+        .map(|size| size > MAX_DIFF_SOURCE_BYTES)
+        .unwrap_or(true)
+    {
+        return PreviousContent::Skipped(DIFF_UNAVAILABLE_OVERSIZE);
+    }
+    let read = File::open(target).and_then(|file| {
+        let mut buffer = Vec::new();
+        file.take((MAX_DIFF_SOURCE_BYTES + 1) as u64)
+            .read_to_end(&mut buffer)
+            .map(|_| buffer)
+    });
+    match read {
+        Err(_) => PreviousContent::Skipped(DIFF_UNAVAILABLE_UNREADABLE),
+        Ok(buffer) if buffer.len() > MAX_DIFF_SOURCE_BYTES => {
+            PreviousContent::Skipped(DIFF_UNAVAILABLE_OVERSIZE)
+        }
+        Ok(buffer) => match String::from_utf8(buffer) {
+            Ok(text) => PreviousContent::Text(text),
+            Err(_) => PreviousContent::Skipped(DIFF_UNAVAILABLE_BINARY),
+        },
+    }
+}
+
+/// 新文件走整份新增（热路径：不读盘、只扫一遍新内容）；覆盖写只在旧内容有界
+/// 且为 UTF-8 时给真实块，否则只给计数与 `diff_unavailable` 原因。
+fn build_write_diff(existed: bool, previous: &PreviousContent, content: &str) -> WriteDiff {
+    if !existed {
+        return WriteDiff {
+            action: "add",
+            diff: diff_added_file(content),
+            unavailable: None,
+        };
+    }
+    let skipped = |unavailable: &'static str| WriteDiff {
+        action: "update",
+        diff: LineDiff::default(),
+        unavailable: Some(unavailable),
+    };
+    let previous_text = match previous {
+        PreviousContent::Text(text) => text.as_str(),
+        PreviousContent::Skipped(reason) => return skipped(reason),
+        // 判定存在却读不到内容：按不可 diff 处理，不谎报为新建。
+        PreviousContent::Absent => return skipped(DIFF_UNAVAILABLE_UNREADABLE),
+    };
+    if diff_source_too_large(previous_text, content) {
+        return skipped(DIFF_UNAVAILABLE_OVERSIZE);
+    }
+    WriteDiff {
+        action: "update",
+        diff: diff_replaced(previous_text, content),
+        unavailable: None,
+    }
 }
 
 /// Validate the small, model-facing part of `write_file` before sandbox or
@@ -1424,30 +1507,36 @@ pub(crate) async fn write_file(context: &ToolContext<'_>, args: &Value) -> Resul
         } else {
             0
         };
-        if dry_run {
-            return Ok::<WriteFileOutcome, anyhow::Error>(WriteFileOutcome {
-                target,
-                existed,
-                previous_bytes,
-            });
-        }
-        let workspace_root = workspace.workspace_root(&user_id);
-        let default_workspace_target = workspace.resolve_path(&user_id, &path_for_write)?;
-        if is_within_root(&workspace_root, &target)
-            && normalize_path_for_compare(&normalize_target_path(&target))
-                == normalize_path_for_compare(&normalize_target_path(&default_workspace_target))
-        {
-            workspace.write_file(&user_id, &path_for_write, &content, true)?;
+        // 旧内容必须在落盘前取，且有硬上限；失败只降级为「只有计数」。
+        let previous = if existed {
+            read_previous_for_diff(&target, previous_bytes)
         } else {
-            if let Some(parent) = target.parent() {
-                std::fs::create_dir_all(parent)?;
+            PreviousContent::Absent
+        };
+        if !dry_run {
+            let workspace_root = workspace.workspace_root(&user_id);
+            let default_workspace_target = workspace.resolve_path(&user_id, &path_for_write)?;
+            if is_within_root(&workspace_root, &target)
+                && normalize_path_for_compare(&normalize_target_path(&target))
+                    == normalize_path_for_compare(&normalize_target_path(
+                        &default_workspace_target,
+                    ))
+            {
+                workspace.write_file(&user_id, &path_for_write, &content, true)?;
+            } else {
+                if let Some(parent) = target.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                atomic_write_text(&target, &content)?;
             }
-            atomic_write_text(&target, &content)?;
         }
+        // dry_run 也给预览 diff，与 apply_patch 的 dry_run 语义一致。
+        let diff = build_write_diff(existed, &previous, &content);
         Ok::<WriteFileOutcome, anyhow::Error>(WriteFileOutcome {
             target,
             existed,
             previous_bytes,
+            diff,
         })
     })
     .await;
@@ -1475,6 +1564,15 @@ pub(crate) async fn write_file(context: &ToolContext<'_>, args: &Value) -> Resul
     } else {
         touch_lsp_file(context, &write_outcome.target, true).await
     };
+    let data = build_write_data(
+        &path,
+        bytes,
+        dry_run,
+        write_outcome.existed,
+        write_outcome.previous_bytes,
+        lsp_info,
+        &write_outcome.diff,
+    );
     Ok(build_model_tool_success(
         "write_file",
         if dry_run { "dry_run" } else { "completed" },
@@ -1485,13 +1583,221 @@ pub(crate) async fn write_file(context: &ToolContext<'_>, args: &Value) -> Resul
         } else {
             format!("Created file {path}.")
         },
-        json!({
-            "path": path,
-            "bytes": bytes,
-            "dry_run": dry_run,
-            "existed": write_outcome.existed,
-            "previous_bytes": write_outcome.previous_bytes,
-            "lsp": lsp_info
-        }),
+        data,
     ))
+}
+
+/// 组装写入结果 `data`：既有字段保持不变，补丁家族的 diff 键由其一并给出，
+/// 保证「模型看到的」「事件里带的」「测试断言的」是同一份构造。
+fn build_write_data(
+    path: &str,
+    bytes: usize,
+    dry_run: bool,
+    existed: bool,
+    previous_bytes: u64,
+    lsp: Value,
+    diff: &WriteDiff,
+) -> Value {
+    let mut diff_fields = Map::<String, Value>::new();
+    insert_diff_fields(&mut diff_fields, diff.action, path, &diff.diff);
+    if let Some(reason) = diff.unavailable {
+        diff_fields.insert("diff_unavailable".to_string(), json!(reason));
+    }
+    let mut data = json!({
+        "path": path,
+        "bytes": bytes,
+        "dry_run": dry_run,
+        "existed": existed,
+        "previous_bytes": previous_bytes,
+        "lsp": lsp
+    });
+    if let Some(map) = data.as_object_mut() {
+        map.extend(diff_fields);
+    }
+    data
+}
+
+#[cfg(test)]
+mod write_diff_tests {
+    use super::*;
+    use std::fs;
+    use std::io::Write;
+
+    /// 走生产路径同一份构造函数，只换输入。
+    fn write_data(existed: bool, previous: PreviousContent, content: &str) -> Value {
+        let diff = build_write_diff(existed, &previous, content);
+        build_write_data(
+            "sample.txt",
+            content.len(),
+            false,
+            existed,
+            0,
+            Value::Null,
+            &diff,
+        )
+    }
+
+    fn sorted_keys(value: &Value) -> Vec<String> {
+        let mut keys: Vec<String> = value
+            .as_object()
+            .expect("object")
+            .keys()
+            .cloned()
+            .collect();
+        keys.sort();
+        keys
+    }
+
+    #[test]
+    fn new_file_write_reports_all_added_lines() {
+        let data = write_data(false, PreviousContent::Absent, "one\ntwo\nthree\n");
+        assert_eq!(data["added_lines"], json!(3));
+        assert_eq!(data["deleted_lines"], json!(0));
+        assert_eq!(data["changed_files"], json!(1));
+        assert_eq!(data["added"], json!(1));
+        assert_eq!(data["updated"], json!(0));
+        assert_eq!(data["existed"], json!(false));
+        let file = &data["files"][0];
+        assert_eq!(file["action"], json!("add"));
+        assert_eq!(file["path"], json!("sample.txt"));
+        assert_eq!(file["hunks"], json!(1));
+        let block = &file["diff_blocks"][0];
+        assert_eq!(block["header"], json!("new file"));
+        assert_eq!(block["start_line_before"], json!(0));
+        assert_eq!(block["start_line_after"], json!(1));
+        assert_eq!(block["end_line_after"], json!(3));
+        assert_eq!(
+            block["lines"]
+                .as_array()
+                .expect("rows")
+                .iter()
+                .map(|row| row["kind"].as_str().expect("kind"))
+                .collect::<Vec<_>>(),
+            vec!["add", "add", "add"]
+        );
+        assert_eq!(block["lines"][1]["text"], json!("two"));
+        assert_eq!(block["lines"][1]["new_line"], json!(2));
+        assert!(block["lines"][1]["old_line"].is_null());
+        assert!(data.get("diff_unavailable").is_none());
+    }
+
+    #[test]
+    fn overwrite_write_diffs_middle_with_both_line_numbers() {
+        let data = write_data(
+            true,
+            PreviousContent::Text("a\nb\nc\nd\n".to_string()),
+            "a\nb\nX\nY\nd\n",
+        );
+        assert_eq!(data["added_lines"], json!(2));
+        assert_eq!(data["deleted_lines"], json!(1));
+        assert_eq!(data["updated"], json!(1));
+        assert_eq!(data["added"], json!(0));
+        let file = &data["files"][0];
+        assert_eq!(file["action"], json!("update"));
+        let block = &file["diff_blocks"][0];
+        assert_eq!(block["header"], json!("@@ -3,1 +3,2 @@"));
+        assert_eq!(block["lines"][0]["kind"], json!("delete"));
+        assert_eq!(block["lines"][0]["old_line"], json!(3));
+        assert!(block["lines"][0]["new_line"].is_null());
+        assert_eq!(block["lines"][1]["new_line"], json!(3));
+        assert_eq!(block["lines"][2]["new_line"], json!(4));
+    }
+
+    #[test]
+    fn guard_cases_emit_counts_only() {
+        for reason in [
+            DIFF_UNAVAILABLE_OVERSIZE,
+            DIFF_UNAVAILABLE_BINARY,
+            DIFF_UNAVAILABLE_UNREADABLE,
+        ] {
+            let data = write_data(true, PreviousContent::Skipped(reason), "a\nb\n");
+            assert_eq!(data["diff_unavailable"], json!(reason));
+            assert!(data["files"][0]["diff_blocks"]
+                .as_array()
+                .expect("array")
+                .is_empty());
+            assert_eq!(data["added_lines"], json!(0));
+            assert_eq!(data["changed_files"], json!(1));
+        }
+        // 旧内容本身过界也只在读取阶段降级，不影响写入。
+        let oversized = build_write_diff(
+            true,
+            &PreviousContent::Text("x".repeat(MAX_DIFF_SOURCE_BYTES + 1)),
+            "y\n",
+        );
+        assert_eq!(oversized.unavailable, Some(DIFF_UNAVAILABLE_OVERSIZE));
+        let data = build_write_data(
+            "sample.txt",
+            2,
+            false,
+            true,
+            (MAX_DIFF_SOURCE_BYTES + 1) as u64,
+            Value::Null,
+            &oversized,
+        );
+        assert_eq!(data["diff_unavailable"], json!("oversize"));
+        assert!(data["files"][0]["diff_blocks"]
+            .as_array()
+            .expect("array")
+            .is_empty());
+    }
+
+    #[test]
+    fn bounded_read_classifies_oversize_and_binary() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let big = dir.path().join("big.txt");
+        {
+            let mut file = File::create(&big).expect("create");
+            file.write_all(&[b'x'; 1024])
+                .expect("write chunk");
+            for _ in 0..(MAX_DIFF_SOURCE_BYTES / 1024 + 1) {
+                file.write_all(&[b'x'; 1024]).expect("write fill");
+            }
+        }
+        let size = big.metadata().expect("meta").len();
+        assert!(matches!(
+            read_previous_for_diff(&big, size),
+            PreviousContent::Skipped(DIFF_UNAVAILABLE_OVERSIZE)
+        ));
+
+        let binary = dir.path().join("binary.bin");
+        fs::write(&binary, [0u8, 1, 2, 255, 254]).expect("write binary");
+        assert!(matches!(
+            read_previous_for_diff(&binary, 5),
+            PreviousContent::Skipped(DIFF_UNAVAILABLE_BINARY)
+        ));
+
+        let text = dir.path().join("text.txt");
+        fs::write(&text, "a\nb\n").expect("write text");
+        assert!(matches!(
+            read_previous_for_diff(&text, 4),
+            PreviousContent::Text(content) if content == "a\nb\n"
+        ));
+    }
+
+    #[test]
+    fn write_data_key_set_matches_the_contract() {
+        let data = write_data(true, PreviousContent::Text("a\n".to_string()), "b\n");
+        assert_eq!(
+            sorted_keys(&data),
+            vec![
+                "added",
+                "added_lines",
+                "bytes",
+                "changed_files",
+                "deleted",
+                "deleted_lines",
+                "diff_lines_omitted",
+                "dry_run",
+                "existed",
+                "files",
+                "hunks_applied",
+                "lsp",
+                "moved",
+                "path",
+                "previous_bytes",
+                "updated",
+            ]
+        );
+    }
 }

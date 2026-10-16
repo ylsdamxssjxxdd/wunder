@@ -572,7 +572,7 @@ async fn feedback_commit_wakes_feeder_with_snapshot_payload() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn completed_llm_output_closes_turn_and_user_bubble() {
+async fn completed_llm_output_waits_for_runner_to_close_turn_and_user_bubble() {
     let (state, _dir) = build_test_state("change_stream_terminal_reconcile").await;
     let (queue_tx, _queue_rx) = mpsc::channel::<StreamSignal>(128);
     let emitter = EventEmitter::new(
@@ -600,6 +600,29 @@ async fn completed_llm_output_closes_turn_and_user_bubble() {
             }),
         )
         .await;
+
+    let pending = state
+        .storage
+        .thread_view_changes("user-a", "session-a", 0)
+        .unwrap();
+    assert_eq!(
+        pending.runtime_status, "running",
+        "model action completion is not a user turn boundary"
+    );
+    state
+        .kernel
+        .orchestrator
+        .committer
+        .update_turn(
+            "user-a",
+            "session-a",
+            &turn,
+            "completed",
+            "",
+            &json!({"status":"completed"}),
+        )
+        .await
+        .unwrap();
 
     let turns = state
         .storage

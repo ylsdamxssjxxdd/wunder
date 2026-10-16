@@ -8,27 +8,33 @@ use wunder_server::approval::ApprovalRequestKind;
 #[test]
 fn thinking_fold_metrics_match_the_renderer() {
     for rows in 0..12usize {
-        let mut lines: Vec<Line<'static>> =
-            (0..rows).map(|n| Line::from(format!("t{n}"))).collect();
-        fold_reasoning_lines(&mut lines);
-        assert_eq!(
-            lines.len(),
-            reasoning_folded_rows(rows, false),
-            "{rows} rendered rows must measure the same in both directions"
-        );
+        // Both languages must emit the same row count: the fold is measured once and the
+        // locale only rewrites the words on it.
+        for is_zh in [false, true] {
+            let mut lines: Vec<Line<'static>> =
+                (0..rows).map(|n| Line::from(format!("t{n}"))).collect();
+            fold_reasoning_lines(&mut lines, is_zh);
+            assert_eq!(
+                lines.len(),
+                reasoning_folded_rows(rows, false),
+                "{rows} rendered rows must measure the same in both directions (zh={is_zh})"
+            );
 
-        // The other direction is a row too: an open block carries the one control
-        // that closes it, and nothing else.
-        let mut opened: Vec<Line<'static>> =
-            (0..rows).map(|n| Line::from(format!("t{n}"))).collect();
-        if let Some(line) = patch_log::disclosure_line(true, opened.len() > REASONING_FOLD_LINES) {
-            opened.push(line);
+            // The other direction is a row too: an open block carries the one control
+            // that closes it, and nothing else.
+            let mut opened: Vec<Line<'static>> =
+                (0..rows).map(|n| Line::from(format!("t{n}"))).collect();
+            let fold =
+                (opened.len() > REASONING_FOLD_LINES).then_some(patch_log::Disclosure::Generic);
+            if let Some(line) = patch_log::disclosure_line(true, fold, 80, is_zh) {
+                opened.push(line);
+            }
+            assert_eq!(
+                opened.len(),
+                reasoning_folded_rows(rows, true),
+                "{rows} open rows must measure the same in both directions (zh={is_zh})"
+            );
         }
-        assert_eq!(
-            opened.len(),
-            reasoning_folded_rows(rows, true),
-            "{rows} open rows must measure the same in both directions"
-        );
     }
 }
 

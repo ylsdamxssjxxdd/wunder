@@ -1,3 +1,5 @@
+use serde_json::Value;
+
 #[derive(Debug, Clone, Default)]
 pub(crate) struct PatchDiffPreview {
     pub(crate) blocks: Vec<PatchDiffBlock>,
@@ -130,6 +132,18 @@ impl PatchDiffBlockBuilder {
 
     fn push_line(&mut self, kind: PatchDiffLineKind, text: &str) {
         let (old_line, new_line) = self.note_position(kind, text);
+        self.push_positioned(kind, text, old_line, new_line);
+    }
+
+    /// A caller that already knows each line's real position (the engine's structured diff)
+    /// still shares this window budget, so both paths fold and count identically.
+    fn push_positioned(
+        &mut self,
+        kind: PatchDiffLineKind,
+        text: &str,
+        old_line: Option<u32>,
+        new_line: Option<u32>,
+    ) {
         if self.lines.len() >= self.max_lines {
             self.hidden_lines = self.hidden_lines.saturating_add(1);
             return;
@@ -292,6 +306,110 @@ pub(crate) fn build_patch_diff_preview(
         });
     }
     preview
+}
+
+/// Read the engine's structured diff instead of re-parsing patch text. A completed card must
+/// show what was actually applied, which for a write or a literal replace is nothing the
+/// model ever typed: only the engine knows the old file and the new one.
+pub(crate) fn patch_diff_preview_from_blocks(
+    files: &[Value],
+    max_files: usize,
+    max_lines_per_file: usize,
+    is_zh: bool,
+) -> PatchDiffPreview {
+    let mut preview = PatchDiffPreview::default();
+    let mut hidden_files = 0usize;
+
+    for file in files {
+        if preview.blocks.len() >= max_files {
+            hidden_files = hidden_files.saturating_add(1);
+            continue;
+        }
+        let path = file.get("path").and_then(Value::as_str).unwrap_or_default();
+        let mut kind = match file.get("action").and_then(Value::as_str) {
+            Some("add") => PatchDiffBlockKind::Add,
+            Some("delete") => PatchDiffBlockKind::Delete,
+            _ => PatchDiffBlockKind::Update,
+        };
+        let mut block = PatchDiffBlockBuilder::new(kind, path, max_lines_per_file, is_zh);
+        if let Some(to_path) = file
+            .get("to_path")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            kind = PatchDiffBlockKind::Rename;
+            block.kind = kind;
+            block.to_path = Some(to_path.to_string());
+        }
+
+        let diff_blocks = file.get("diff_blocks").and_then(Value::as_array);
+        for item in diff_blocks.iter().flat_map(|items| items.iter()) {
+            let old_start = number_field(item, "start_line_before");
+            let new_start = number_field(item, "start_line_after");
+            let hunk = match (old_start, new_start) {
+                (Some(old_at), Some(new_at)) => {
+                    let old_len = range_len(number_field(item, "end_line_before"), old_start);
+                    let new_len = range_len(number_field(item, "end_line_after"), new_start);
+                    format!("-{old_at},{old_len} +{new_at},{new_len}")
+                }
+                _ => String::new(),
+            };
+            block.push_positioned(
+                PatchDiffLineKind::Hunk,
+                hunk.as_str(),
+                old_start.map(|value| value as u32),
+                new_start.map(|value| value as u32),
+            );
+
+            let lines = item.get("lines").and_then(Value::as_array);
+            for line in lines.iter().flat_map(|items| items.iter()) {
+                let text = line.get("text").and_then(Value::as_str).unwrap_or_default();
+                let line_kind = match line.get("kind").and_then(Value::as_str) {
+                    Some("add") => PatchDiffLineKind::Add,
+                    Some("delete") => PatchDiffLineKind::Delete,
+                    _ => PatchDiffLineKind::Context,
+                };
+                block.push_positioned(
+                    line_kind,
+                    text,
+                    number_field(line, "old_line").map(|value| value as u32),
+                    number_field(line, "new_line").map(|value| value as u32),
+                );
+            }
+        }
+
+        let finished = block.finish();
+        if !finished.lines.is_empty() {
+            preview.blocks.push(finished);
+        }
+    }
+
+    if hidden_files > 0 {
+        preview.omitted_text = Some(if is_zh {
+            format!("… 还有 {hidden_files} 个文件")
+        } else {
+            format!("… +{hidden_files} more files")
+        });
+    }
+    preview
+}
+
+fn number_field(value: &Value, key: &str) -> Option<usize> {
+    value
+        .get(key)
+        .and_then(|raw| raw.as_u64().or_else(|| raw.as_i64().map(|n| n.max(0) as u64)))
+        .map(|raw| raw as usize)
+}
+
+fn range_len(end: Option<usize>, start: Option<usize>) -> usize {
+    match (end, start) {
+        // A whole-file add has no old side at all: the engine says so with a zero range,
+        // and `-0,1` would claim a line that never existed.
+        (Some(0), Some(0)) => 0,
+        (Some(end), Some(start)) if end >= start => end.saturating_sub(start).saturating_add(1),
+        _ => 0,
+    }
 }
 
 pub(crate) fn format_patch_diff_preview_lines(preview: &PatchDiffPreview) -> Vec<String> {

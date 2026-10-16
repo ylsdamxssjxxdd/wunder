@@ -316,7 +316,7 @@ fn demo_timeline() -> Vec<TimelineRow> {
     bar.process_idx = process;
     bar.summary = "完成 · 更新 +41 −41".into();
     rows.push(bar);
-    let mut fold = |row: &mut TimelineRow| {
+    let fold = |row: &mut TimelineRow| {
         row.process_idx = process;
     };
     // First batch: one thinking segment and one read.

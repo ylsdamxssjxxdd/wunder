@@ -1329,10 +1329,7 @@ export const chatSendActions = {
         const messageId = String(
           message?.message_id ?? message?.messageId ?? message?.id ?? ''
         ).trim();
-        const messageClientId = String(
-          message?.client_message_id ?? message?.clientMessageId ?? ''
-        ).trim();
-        if (staleIds.has(messageId) || messageClientId === cleanedClientMessageId) {
+        if (staleIds.has(messageId)) {
           this.messages.splice(index, 1);
         }
       }
@@ -1340,7 +1337,9 @@ export const chatSendActions = {
       if (threadState) {
         const removedTurnIds = new Set<string>();
         for (const [turnId, turn] of threadState.turns) {
-          if (turn.clientMessageId !== cleanedClientMessageId && turnId !== `pending:${cleanedClientMessageId}`) continue;
+          const locallyPending = turnId === `pending:${cleanedClientMessageId}`;
+          const durablyParked = turn.clientMessageId === cleanedClientMessageId && turn.status === 'queued';
+          if (!locallyPending && !durablyParked) continue;
           removedTurnIds.add(turnId);
           threadState.turns.delete(turnId);
         }
@@ -1351,6 +1350,9 @@ export const chatSendActions = {
           threadState.tails.delete(itemId);
         }
       }
+      // The thread-view helper applies the same pending/queued constraint.
+      // It cannot remove a running or completed turn merely because it shares
+      // the original client message id.
       removeThreadViewTurnByClientMessageId(sessionId,cleanedClientMessageId);
       cacheSessionMessages(sessionId, this.messages);
       markRuntimeProjectionChanged(this, {

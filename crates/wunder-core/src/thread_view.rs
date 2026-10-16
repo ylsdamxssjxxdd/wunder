@@ -63,6 +63,10 @@ pub struct ChatViewRow {
     pub user: ViewMessage,
     pub assistant: ViewMessage,
     pub workflow_count: i64,
+    /// Monotonic durable tool identity for directory invalidation, including
+    /// queue-owned runs and replay where transient workspace events are absent.
+    #[serde(default)]
+    pub workspace_change_seq: i64,
     /// Number of model rounds that emitted reasoning in this user turn.
     #[serde(default)]
     pub reasoning_count: i64,

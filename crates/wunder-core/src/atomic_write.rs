@@ -37,19 +37,6 @@ fn build_temp_path(path: &Path) -> Result<PathBuf> {
     Ok(parent.join(format!(".{name}.wunder.tmp.{suffix:x}")))
 }
 
-#[cfg(windows)]
-fn build_backup_path(path: &Path) -> Result<PathBuf> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| anyhow!("target path has no parent: {}", path.display()))?;
-    let name = path
-        .file_name()
-        .and_then(|item| item.to_str())
-        .ok_or_else(|| anyhow!("target path has invalid file name: {}", path.display()))?;
-    let suffix = unique_suffix();
-    Ok(parent.join(format!(".{name}.wunder.bak.{suffix:x}")))
-}
-
 fn cleanup(path: &Path) {
     let _ = fs::remove_file(path);
 }
@@ -81,30 +68,20 @@ fn replace_target(temp_path: &Path, target: &Path) -> Result<()> {
 
 #[cfg(windows)]
 fn replace_target(temp_path: &Path, target: &Path) -> Result<()> {
-    if !target.exists() {
-        fs::rename(temp_path, target)?;
-        return Ok(());
+    use std::os::windows::ffi::OsStrExt;
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn MoveFileExW(existing: *const u16, destination: *const u16, flags: u32) -> i32;
     }
-    let backup_path = build_backup_path(target)?;
-    fs::rename(target, &backup_path)?;
-    match fs::rename(temp_path, target) {
-        Ok(()) => {
-            cleanup(&backup_path);
-            Ok(())
-        }
-        Err(err) => {
-            let rollback_result = fs::rename(&backup_path, target);
-            cleanup(temp_path);
-            match rollback_result {
-                Ok(()) => Err(anyhow!(
-                    "failed to replace target file atomically: {err}; rollback restored original file"
-                )),
-                Err(rollback_err) => Err(anyhow!(
-                    "failed to replace target file atomically: {err}; rollback failed: {rollback_err}"
-                )),
-            }
-        }
+    let source: Vec<u16> = temp_path.as_os_str().encode_wide().chain(Some(0)).collect();
+    let destination: Vec<u16> = target.as_os_str().encode_wide().chain(Some(0)).collect();
+    // Win7-compatible same-volume atomic replacement: never expose a gap in
+    // which readers could mistake the shared config/session for a logout.
+    let result = unsafe { MoveFileExW(source.as_ptr(), destination.as_ptr(), 0x1 | 0x8) };
+    if result == 0 {
+        return Err(std::io::Error::last_os_error().into());
     }
+    Ok(())
 }
 
 /// Write bytes to `target` with an atomic swap strategy.

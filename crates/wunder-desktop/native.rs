@@ -11,7 +11,6 @@ use crate::{
 use anyhow::{anyhow, Result};
 use bytes::Bytes;
 use serde_json::{json, Value};
-use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
@@ -307,7 +306,7 @@ pub struct NativeDesktop {
     settings_lock: std::sync::Mutex<()>,
     terminal: NativeTerminal,
     instance_id: String,
-    open_threads: Arc<std::sync::Mutex<HashSet<String>>>,
+    open_threads: Arc<std::sync::Mutex<std::collections::HashMap<String, u64>>>,
     lease_heartbeat_stop: Arc<AtomicBool>,
 }
 
@@ -368,8 +367,8 @@ impl NativeDesktop {
             resolve_winpty_library(&desktop.app_dir, &settings),
         );
         let instance_id = uuid::Uuid::new_v4().simple().to_string();
-        let open_threads: Arc<std::sync::Mutex<HashSet<String>>> =
-            Arc::new(std::sync::Mutex::new(HashSet::new()));
+        let open_threads: Arc<std::sync::Mutex<std::collections::HashMap<String, u64>>> =
+            Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
         let lease_heartbeat_stop = Arc::new(AtomicBool::new(false));
         let heartbeat_threads = Arc::clone(&open_threads);
         let heartbeat_stop = Arc::clone(&lease_heartbeat_stop);
@@ -385,12 +384,17 @@ impl NativeDesktop {
                     }
                     let sessions = heartbeat_threads
                         .lock()
-                        .map(|set| set.iter().cloned().collect::<Vec<_>>())
+                        .map(|set| {
+                            set.iter()
+                                .map(|(session, token)| (session.clone(), *token))
+                                .collect::<Vec<_>>()
+                        })
                         .unwrap_or_default();
-                    for session in sessions {
+                    for (session, token) in sessions {
                         let _ = heartbeat_storage.touch_thread_open_lease(
                             &session,
                             &heartbeat_instance,
+                            token,
                             30.0,
                         );
                     }
@@ -411,28 +415,21 @@ impl NativeDesktop {
     fn ensure_thread_open(&self, session_id: &str) -> Result<()> {
         let session_id = session_id.trim();
         anyhow::ensure!(!session_id.is_empty(), "线程不存在");
-        if self
+        let mut leases = self
             .open_threads
             .lock()
-            .map_err(|_| anyhow!("线程租约状态不可用"))?
-            .contains(session_id)
-        {
-            // Same-process opens are idempotent, but the durable owner must
-            // still be touched. A paused process whose lease expired must not
-            // keep writing after another instance has taken ownership.
-            if self
-                .state()
-                .storage
-                .touch_thread_open_lease(session_id, &self.instance_id, 30.0)?
-            {
+            .map_err(|_| anyhow!("thread lease state unavailable"))?;
+        if let Some(&fencing_token) = leases.get(session_id) {
+            if self.state().storage.touch_thread_open_lease(
+                session_id,
+                &self.instance_id,
+                fencing_token,
+                30.0,
+            )? {
                 return Ok(());
             }
-            self.open_threads
-                .lock()
-                .map_err(|_| anyhow!("线程租约状态不可用"))?
-                .remove(session_id);
             return Err(anyhow!(
-                "THREAD_IN_USE: 当前实例的线程租约已失效，请重新打开线程"
+                "THREAD_IN_USE: thread lease expired; close and reopen the thread"
             ));
         }
         use wunder_server::storage::ThreadOpenLeaseStatus;
@@ -443,11 +440,8 @@ impl NativeDesktop {
             "desktop",
             30.0,
         )? {
-            ThreadOpenLeaseStatus::Acquired => {
-                self.open_threads
-                    .lock()
-                    .map_err(|_| anyhow!("线程租约状态不可用"))?
-                    .insert(session_id.to_string());
+            ThreadOpenLeaseStatus::Acquired { fencing_token } => {
+                leases.insert(session_id.to_string(), fencing_token);
                 Ok(())
             }
             ThreadOpenLeaseStatus::Busy => Err(anyhow!(
@@ -465,15 +459,18 @@ impl NativeDesktop {
         if session_id.is_empty() {
             return Ok(());
         }
-        let removed = self
+        let mut leases = self
             .open_threads
             .lock()
-            .map_err(|_| anyhow!("线程租约状态不可用"))?
-            .remove(session_id);
-        if removed {
-            self.state()
-                .storage
-                .release_thread_open_lease(session_id, &self.instance_id)?;
+            .map_err(|_| anyhow!("thread lease state unavailable"))?;
+        let fencing_token = leases.get(session_id).copied();
+        if let Some(fencing_token) = fencing_token {
+            self.state().storage.release_thread_open_lease(
+                session_id,
+                &self.instance_id,
+                fencing_token,
+            )?;
+            leases.remove(session_id);
         }
         Ok(())
     }
@@ -626,6 +623,7 @@ impl NativeDesktop {
     }
 
     pub fn save_session_reasoning_effort(&self, session_id: &str, value: &str) -> Result<String> {
+        self.ensure_thread_open(session_id)?;
         let session_id = session_id.trim();
         if session_id.is_empty() {
             return Err(anyhow!("线程不存在"));
@@ -649,6 +647,7 @@ impl NativeDesktop {
     /// validated against the engine's LLM catalogue; a stale key written
     /// earlier degrades to the agent/global chain at turn time.
     pub fn set_session_model(&self, session_id: &str, model_key: &str) -> Result<()> {
+        self.ensure_thread_open(session_id)?;
         let session_id = session_id.trim();
         if session_id.is_empty() {
             return Err(anyhow!("线程不存在"));
@@ -884,11 +883,19 @@ impl NativeDesktop {
             ));
         }
         self.ensure_thread_open(&input.session_id)?;
+        let token = self
+            .open_threads
+            .lock()
+            .map_err(|_| anyhow!("thread lease unavailable"))?
+            .get(&input.session_id)
+            .copied()
+            .ok_or_else(|| anyhow!("THREAD_IN_USE"))?;
         Ok(stream::start(
             &self.runtime,
             self.desktop.state.clone(),
             self.desktop.user_id.clone(),
             input,
+            json!({"owner":self.instance_id,"token":token}),
         ))
     }
 
@@ -1008,12 +1015,12 @@ impl Drop for NativeDesktop {
             .lock()
             .map(|mut set| set.drain().collect::<Vec<_>>())
             .unwrap_or_default();
-        for session_id in sessions {
-            let _ = self
-                .desktop
-                .state
-                .storage
-                .release_thread_open_lease(&session_id, &self.instance_id);
+        for (session_id, fencing_token) in sessions {
+            let _ = self.desktop.state.storage.release_thread_open_lease(
+                &session_id,
+                &self.instance_id,
+                fencing_token,
+            );
         }
     }
 }

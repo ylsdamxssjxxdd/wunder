@@ -434,7 +434,9 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                 }
             }
         }
-        Rectangle { height: 1px; background: TrajTokens.border-1; }
+        // 时间轴与下方内容之间用一级分隔（--tt-border-2），避免详情面板的顶部
+        // 直接贴着轨迹条、看起来像压在上面。
+        Rectangle { height: 1px; background: TrajTokens.border-2; }
 
         // ---- body: ledger | resize handle | details ----
         HorizontalLayout {
@@ -650,16 +652,19 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                         }
                     }
                     moved => {
-                        root.details-width = clamp(root.press-width - (self.mouse-x - root.press-x), 320px, 720px);
+                        root.details-width = clamp(root.press-width - (self.mouse-x - root.press-x), 320px, 440px);
                     }
                 }
             }
             // details aside
             details := Rectangle {
-                width: clamp(320px, root.details-width, 720px);
+                // 与蜂巢 .tt-details 对齐：clamp(320px, 38%, 440px) +
+                // max-width(100% - 280px) + 左侧 border-2。
+                width: clamp(min(root.details-width, root.width - 280px), 320px, 440px);
                 background: white;
-                border-width: 1px; border-color: TrajTokens.border-1;
+                border-width: 1px; border-color: TrajTokens.border-2;
                 VerticalLayout {
+                    padding-top: 8px;
                     // header
                     HorizontalLayout {
                         height: 38px;

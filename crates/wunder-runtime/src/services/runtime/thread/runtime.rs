@@ -283,6 +283,7 @@ impl ThreadRuntime {
             "role": "user", "content": request.question,
             "client_message_id": request.client_message_id, "attachments": request.attachments,
             "meta": goal_meta,
+            "local_open_lease": request.config_overrides.as_ref().and_then(|v| v.get("__local_open_lease")),
         });
         let storage = self.user_store.storage_backend().clone();
         let resume_from_seq = {
@@ -1205,7 +1206,6 @@ impl ThreadRuntime {
         if session_id.is_empty() || user_id.is_empty() || event_type.is_empty() {
             return 0;
         }
-        self.monitor.record_event(session_id, event_type, &payload);
         let queue_id = payload
             .get("queue_id")
             .and_then(Value::as_str)
@@ -1248,6 +1248,11 @@ impl ThreadRuntime {
             );
             map.insert("visibility".into(), json!("user"));
         }
+        // Monitoring receives the same stable identity payload that the
+        // durable queue item and direct websocket consumers receive.  Recording
+        // the caller's incomplete payload made queue_start impossible to
+        // correlate in the diagnostic path.
+        self.monitor.record_event(session_id, event_type, &payload);
         // The queue item commit goes through the unified exit: the committer
         // persists the upsert and publishes the receipt cursor only on a real
         // change; no-op replays return 0 without waking feeders.
@@ -1437,6 +1442,50 @@ impl ThreadRuntime {
                     warn!("queue claim failed: {err}");
                 }
                 self.finish_thread(&task.thread_id).await;
+                return;
+            }
+        }
+        // Claiming an agent task is the queue → execution hand-off.  Persist
+        // the corresponding durable turn before publishing queue_start so a
+        // snapshot can never observe a running task as a still-parked input.
+        let task_turn_id = task
+            .request_payload
+            .pointer("/config_overrides/__thread_log_turn_id")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        if let Some(turn_id) = task_turn_id.as_deref() {
+            let payload = json!({
+                "session_id": task.session_id,
+                "turn_id": turn_id,
+                "status": "running",
+                "queue_task_id": task.task_id,
+                "queue_started_at": started_at,
+            });
+            if let Err(error) = self
+                .orchestrator
+                .committer
+                .update_turn(
+                    &task.user_id,
+                    &task.session_id,
+                    turn_id,
+                    "running",
+                    "",
+                    &payload,
+                )
+                .await
+            {
+                warn!("queue hand-off could not mark durable turn running: {error}");
+                let _ = self
+                    .fail_task(
+                        &task,
+                        "queue hand-off could not update durable turn".into(),
+                        TASK_STATUS_FAILED,
+                    )
+                    .await;
+                self.finish_thread(&task.thread_id).await;
+                let _ = self.queue_tx.try_send(());
                 return;
             }
         }

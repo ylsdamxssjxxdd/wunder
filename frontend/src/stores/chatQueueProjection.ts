@@ -320,9 +320,18 @@ export const selectParkedTurnMessageIds = (
     (message) =>
       message &&
       cleanText(message.role).toLowerCase() === 'assistant' &&
-      (!userTurnId || cleanText(message.user_turn_id) === userTurnId)
+      (userTurnId
+        ? cleanText(message.user_turn_id) === userTurnId
+        : cleanText(message.client_message_id ?? message.clientMessageId) === cleaned)
   );
-  if (!assistants.length || !assistants.every((assistant) => hasOnlyQueueMarkers(assistant))) {
+  // Empty assistant placeholders occur briefly when a dispatched turn has no
+  // output yet.  They are not proof that the turn is still cancellable.  Only
+  // a durable queued status or an actual queue lifecycle marker permits local
+  // removal.
+  if (!assistants.length || !assistants.every((assistant) =>
+    hasOnlyQueueMarkers(assistant) &&
+    (hasExplicitQueuedStatus(assistant) || markerQueueIdsOf(assistant).size > 0)
+  )) {
     return [];
   }
   return [readMessageId(user), ...assistants.map(readMessageId)].filter(Boolean);

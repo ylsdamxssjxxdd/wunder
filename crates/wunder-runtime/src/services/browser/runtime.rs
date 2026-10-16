@@ -8,10 +8,18 @@ use serde_json::{json, Value};
 use std::net::IpAddr;
 use std::path::PathBuf;
 use std::sync::OnceLock;
+use std::time::Duration;
 use url::{Host, Url};
 use uuid::Uuid;
 
 const TEMP_DIR_ROOT_ENV: &str = "WUNDER_TEMP_DIR_ROOT";
+/// Grace on top of the per-call budget so the Rust deadline always fires after
+/// Playwright's own timeout and can report the bridge's error instead.
+const CALL_GRACE: Duration = Duration::from_secs(15);
+/// Hard ceiling for a single bridge command, however the budget is derived.
+const MAX_CALL_DEADLINE: Duration = Duration::from_secs(900);
+/// A batch runs its steps serially inside one bridge command.
+const MAX_BATCH_STEPS: u64 = 10;
 
 pub struct BrowserControlService {
     config: EffectiveBrowserConfig,
@@ -36,6 +44,16 @@ impl BrowserControlService {
     }
 
     pub fn status(&self) -> Value {
+        self.status_for(None)
+    }
+
+    /// Model-facing status: one shared bridge process holds every tenant's
+    /// sessions, so only the caller's own keys are listed.
+    pub fn status_for(&self, owner: Option<&str>) -> Value {
+        let sessions = match owner {
+            Some(owner) if !owner.trim().is_empty() => self.bridge.session_keys_for_owner(owner.trim()),
+            _ => self.bridge.session_keys(),
+        };
         json!({
             "ok": true,
             "enabled": self.config.enabled,
@@ -77,7 +95,7 @@ impl BrowserControlService {
                 "public_base_url": self.config.control_public_base_url.clone(),
                 "auth_token_configured": self.config.control_auth_token.is_some(),
             },
-            "sessions": self.bridge.session_keys(),
+            "sessions": sessions,
         })
     }
 
@@ -98,7 +116,7 @@ impl BrowserControlService {
     ) -> Result<Value> {
         let normalized = normalize_action(action);
         match normalized.as_str() {
-            "status" => Ok(self.status()),
+            "status" => Ok(self.status_for(Some(&scope.user_id))),
             "profiles" => self.profiles().await,
             "start" => self.start(scope).await,
             "stop" => self.stop(scope).await,
@@ -111,29 +129,44 @@ impl BrowserControlService {
             "act" => self.act(scope, args).await,
             "screenshot" => self.screenshot(scope, args).await,
             "read_page" => self.read_page(scope, args).await,
-            "click" => self.shortcut_act(scope, "click", args).await,
-            "type" => self.shortcut_act(scope, "type", args).await,
-            "press" => self.shortcut_act(scope, "press", args).await,
-            "hover" => self.shortcut_act(scope, "hover", args).await,
-            "wait" => self.shortcut_act(scope, "wait", args).await,
+            "click" | "type" | "press" | "hover" | "wait" => {
+                self.shortcut_act(scope, &normalized, args).await
+            }
             _ => Err(anyhow!("Unknown browser action: {action}")),
         }
+    }
+
+    /// Every bridge command carries a wall-clock budget. Playwright's own
+    /// timeouts do not bound a wedged page (a synchronous JS loop ignores them),
+    /// and an unbounded read would hold a session slot and a worker forever.
+    async fn command(
+        &self,
+        session_key: &str,
+        action: &str,
+        args: &Value,
+        payload: Value,
+    ) -> Result<BridgeResponse> {
+        let deadline = call_deadline(self.config.timeout_secs, action, args);
+        self.bridge
+            .send_command(session_key, payload, deadline)
+            .await
+            .map_err(anyhow::Error::msg)
     }
 
     async fn start(&self, scope: &BrowserSessionScope) -> Result<Value> {
         self.ensure_available()?;
         let session_key = scope.session_key()?;
         let response = self
-            .bridge
-            .send_command(
+            .command(
                 &session_key,
+                "start",
+                &json!({}),
                 json!({
                     "action": "start",
                     "profile": scope.profile_name().unwrap_or_else(|| self.config.default_profile.clone()),
                 }),
             )
-            .await
-            .map_err(|err| anyhow!(err))?;
+            .await?;
         self.extract_data(response, "Browser session start failed")
     }
 
@@ -154,16 +187,16 @@ impl BrowserControlService {
         self.ensure_available()?;
         let session_key = scope.session_key()?;
         let response = self
-            .bridge
-            .send_command(
+            .command(
                 &session_key,
+                "tabs",
+                &json!({}),
                 json!({
                     "action": "tabs",
                     "profile": scope.profile_name().unwrap_or_else(|| self.config.default_profile.clone()),
                 }),
             )
-            .await
-            .map_err(|err| anyhow!(err))?;
+            .await?;
         self.extract_data(response, "Browser tabs query failed")
     }
 
@@ -175,9 +208,10 @@ impl BrowserControlService {
             .transpose()?;
         let timeout_ms = optional_timeout_ms(args, self.config.timeout_secs);
         let response = self
-            .bridge
-            .send_command(
+            .command(
                 &session_key,
+                "open",
+                args,
                 json!({
                     "action": "open",
                     "profile": scope.profile_name().unwrap_or_else(|| self.config.default_profile.clone()),
@@ -185,8 +219,7 @@ impl BrowserControlService {
                     "timeout_ms": timeout_ms,
                 }),
             )
-            .await
-            .map_err(|err| anyhow!(err))?;
+            .await?;
         self.extract_data(response, "Open browser tab failed")
     }
 
@@ -195,16 +228,16 @@ impl BrowserControlService {
         let session_key = scope.session_key()?;
         let target_id = required_string(args, "target_id")?;
         let response = self
-            .bridge
-            .send_command(
+            .command(
                 &session_key,
+                "focus",
+                args,
                 json!({
                     "action": "focus",
                     "target_id": target_id,
                 }),
             )
-            .await
-            .map_err(|err| anyhow!(err))?;
+            .await?;
         self.extract_data(response, "Focus browser tab failed")
     }
 
@@ -216,16 +249,16 @@ impl BrowserControlService {
         let session_key = scope.session_key()?;
         let target_id = optional_string(args, "target_id").map(ToString::to_string);
         let response = self
-            .bridge
-            .send_command(
+            .command(
                 &session_key,
+                "close",
+                args,
                 json!({
                     "action": "close",
                     "target_id": target_id,
                 }),
             )
-            .await
-            .map_err(|err| anyhow!(err))?;
+            .await?;
         self.extract_data(response, "Close browser tab failed")
     }
 
@@ -235,9 +268,10 @@ impl BrowserControlService {
         let url = self.normalize_url(required_string(args, "url")?)?;
         let timeout_ms = optional_timeout_ms(args, self.config.timeout_secs);
         let response = self
-            .bridge
-            .send_command(
+            .command(
                 &session_key,
+                "navigate",
+                args,
                 json!({
                     "action": "navigate",
                     "target_id": optional_string(args, "target_id"),
@@ -245,8 +279,7 @@ impl BrowserControlService {
                     "timeout_ms": timeout_ms,
                 }),
             )
-            .await
-            .map_err(|err| anyhow!(err))?;
+            .await?;
         self.extract_data(response, "Navigate browser failed")
     }
 
@@ -254,22 +287,20 @@ impl BrowserControlService {
         self.ensure_available()?;
         let session_key = scope.session_key()?;
         let response = self
-            .bridge
-            .send_command(
+            .command(
                 &session_key,
+                "snapshot",
+                args,
                 json!({
                     "action": "snapshot",
                     "target_id": optional_string(args, "target_id"),
                     "format": optional_string(args, "format").unwrap_or("role"),
                     "interactive": optional_bool(args, "interactive").unwrap_or(true),
                     "compact": optional_bool(args, "compact").unwrap_or(true),
-                    "max_chars": optional_u64(args, "max_chars")
-                        .map(|value| value.min(self.config.max_snapshot_chars as u64))
-                        .unwrap_or(self.config.max_snapshot_chars as u64),
+                    "max_chars": self.snapshot_budget(args),
                 }),
             )
-            .await
-            .map_err(|err| anyhow!(err))?;
+            .await?;
         self.extract_data(response, "Browser snapshot failed")
     }
 
@@ -284,17 +315,17 @@ impl BrowserControlService {
             return Err(anyhow!("Missing browser act request"));
         }
         let response = self
-            .bridge
-            .send_command(
+            .command(
                 &session_key,
+                "act",
+                args,
                 json!({
                     "action": "act",
                     "request": request,
                     "target_id": optional_string(args, "target_id"),
                 }),
             )
-            .await
-            .map_err(|err| anyhow!(err))?;
+            .await?;
         self.extract_data(response, "Browser act failed")
     }
 
@@ -331,17 +362,17 @@ impl BrowserControlService {
         self.ensure_available()?;
         let session_key = scope.session_key()?;
         let response = self
-            .bridge
-            .send_command(
+            .command(
                 &session_key,
+                "screenshot",
+                args,
                 json!({
                     "action": "screenshot",
                     "target_id": optional_string(args, "target_id"),
                     "full_page": optional_bool(args, "full_page").unwrap_or(false),
                 }),
             )
-            .await
-            .map_err(|err| anyhow!(err))?;
+            .await?;
         let mut data = self.extract_data(response, "Browser screenshot failed")?;
         let base64_payload = data
             .get("image_base64")
@@ -372,20 +403,26 @@ impl BrowserControlService {
         self.ensure_available()?;
         let session_key = scope.session_key()?;
         let response = self
-            .bridge
-            .send_command(
+            .command(
                 &session_key,
+                "read_page",
+                args,
                 json!({
                     "action": "read_page",
                     "target_id": optional_string(args, "target_id"),
-                    "max_chars": optional_u64(args, "max_chars")
-                        .map(|value| value.min(self.config.max_snapshot_chars as u64))
-                        .unwrap_or(self.config.max_snapshot_chars as u64),
+                    "max_chars": self.snapshot_budget(args),
                 }),
             )
-            .await
-            .map_err(|err| anyhow!(err))?;
+            .await?;
         self.extract_data(response, "Browser page read failed")
+    }
+
+    /// Text payloads never exceed the configured character budget, whatever the
+    /// caller asked for.
+    fn snapshot_budget(&self, args: &Value) -> u64 {
+        optional_u64(args, "max_chars")
+            .unwrap_or(self.config.max_snapshot_chars as u64)
+            .min(self.config.max_snapshot_chars as u64)
     }
 
     fn ensure_available(&self) -> Result<()> {
@@ -446,6 +483,37 @@ impl BrowserControlService {
 pub fn browser_service(config: &Config) -> &'static BrowserControlService {
     static INSTANCE: OnceLock<BrowserControlService> = OnceLock::new();
     INSTANCE.get_or_init(|| BrowserControlService::new(effective_browser_config(config)))
+}
+
+/// Wall-clock budget for one bridge command.
+///
+/// The bridge's own timeout only bounds Playwright operations that accept one;
+/// `evaluate` and a page with a wedged synchronous loop do not, so this is the
+/// only ceiling on how long a single call can hold a session slot.
+fn call_deadline(timeout_secs: u64, action: &str, args: &Value) -> Duration {
+    let per_step = Duration::from_secs(timeout_secs.max(1).saturating_mul(4));
+    let steps = if action == "act" && act_kind(args).as_deref() == Some("batch") {
+        args.get("request")
+            .and_then(|request| request.get("steps"))
+            .and_then(Value::as_array)
+            .map(|steps| (steps.len() as u64).clamp(1, MAX_BATCH_STEPS))
+            .unwrap_or(1)
+    } else {
+        1
+    };
+    per_step
+        .saturating_mul(steps as u32)
+        .saturating_add(CALL_GRACE)
+        .min(MAX_CALL_DEADLINE)
+}
+
+fn act_kind(args: &Value) -> Option<String> {
+    args.get("request")
+        .and_then(|request| request.get("kind"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
 }
 
 fn normalize_action(action: &str) -> String {
@@ -583,9 +651,19 @@ fn is_private_host(host: &str) -> bool {
                     || addr.is_link_local()
                     || addr.is_broadcast()
                     || addr.is_unspecified()
+                    || addr.is_multicast()
             }
             IpAddr::V6(addr) => {
-                addr.is_loopback() || addr.is_unspecified() || addr.is_unique_local()
+                // An IPv4-mapped literal (::ffff:127.0.0.1) must be judged by the
+                // IPv4 rules it aliases, otherwise it routes around this check.
+                if let Some(mapped) = addr.to_ipv4_mapped() {
+                    return is_private_host(&mapped.to_string());
+                }
+                addr.is_loopback()
+                    || addr.is_unspecified()
+                    || addr.is_unique_local()
+                    || addr.is_unicast_link_local()
+                    || addr.is_multicast()
             }
         };
     }
@@ -594,15 +672,56 @@ fn is_private_host(host: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{browser_service, is_private_host, optional_timeout_ms, BrowserControlService};
+    use super::{
+        browser_service, call_deadline, is_private_host, optional_timeout_ms, BrowserControlService,
+        CALL_GRACE, MAX_CALL_DEADLINE,
+    };
     use crate::config::Config;
+    use crate::services::browser::config::effective_browser_config;
     use serde_json::json;
+    use std::time::Duration;
 
     #[test]
     fn detects_private_hosts() {
         assert!(is_private_host("127.0.0.1"));
         assert!(is_private_host("localhost"));
+        assert!(is_private_host("169.254.169.254"));
+        assert!(is_private_host("10.0.0.8"));
+        assert!(is_private_host("::1"));
+        assert!(is_private_host("fe80::1"));
+        assert!(is_private_host("fc00::1"));
+        // IPv4-mapped literals alias an IPv4 private address.
+        assert!(is_private_host("::ffff:127.0.0.1"));
+        assert!(is_private_host("::ffff:10.0.0.8"));
         assert!(!is_private_host("example.com"));
+        assert!(!is_private_host("::ffff:8.8.8.8"));
+    }
+
+    #[test]
+    fn command_deadline_is_bounded_and_batch_aware() {
+        // A plain command gets 4x the configured timeout plus reporting grace.
+        assert_eq!(
+            call_deadline(30, "navigate", &json!({})),
+            Duration::from_secs(120).saturating_add(CALL_GRACE)
+        );
+        // A wedged evaluate can never hold a slot for more than the ceiling.
+        assert_eq!(
+            call_deadline(u64::MAX, "act", &json!({"request": {"kind": "evaluate"}})),
+            MAX_CALL_DEADLINE
+        );
+        let batch = json!({"request": {"kind": "batch", "steps": [1, 2, 3]}});
+        assert_eq!(
+            call_deadline(10, "act", &batch),
+            Duration::from_secs(120).saturating_add(CALL_GRACE)
+        );
+        // Step count is clamped, so nesting cannot stretch the ceiling.
+        let many = json!({"request": {"kind": "batch", "steps": vec![json!(1); 500]}});
+        assert_eq!(
+            call_deadline(10, "act", &many),
+            Duration::from_secs(400).saturating_add(CALL_GRACE)
+        );
+        // Garbage timeouts still produce a usable window.
+        assert!(call_deadline(0, "snapshot", &json!({})) >= CALL_GRACE);
     }
 
     #[test]
@@ -620,6 +739,26 @@ mod tests {
             Some(120_000)
         );
         assert_eq!(optional_timeout_ms(&json!({}), 30), None);
+    }
+
+    #[test]
+    fn status_and_budget_stay_scoped_and_bounded() {
+        // Built directly: `browser_service` is a process-wide singleton, so a
+        // shared instance would freeze whichever config another test loaded first.
+        let mut config = Config::default();
+        config.browser.enabled = true;
+        config.browser.limits.max_snapshot_chars = 2_000;
+        let service = BrowserControlService::new(effective_browser_config(&config));
+        let scoped = service.status_for(Some("unit-a"));
+        assert_eq!(scoped.get("ok").and_then(serde_json::Value::as_bool), Some(true));
+        // No tenant keys leak into a scoped status payload.
+        let sessions = scoped["sessions"].as_array().expect("sessions array");
+        assert!(sessions
+            .iter()
+            .all(|key| key.as_str().unwrap_or_default().starts_with("unit-a:")));
+        // A requested budget never exceeds the configured ceiling.
+        assert_eq!(service.snapshot_budget(&json!({ "max_chars": 900_000 })), 2_000);
+        assert_eq!(service.snapshot_budget(&json!({})), 2_000);
     }
 
     #[test]

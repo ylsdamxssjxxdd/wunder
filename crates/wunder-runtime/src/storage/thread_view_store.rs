@@ -284,7 +284,7 @@ pub(super) fn execution_head(
     session: &str,
 ) -> Result<(String, String)> {
     let reason = db.json_text(&db.json_text("payload", "queued_input"), "reason");
-    let active = one(db, &format!("SELECT status,turn_id,{reason} FROM thread_turns WHERE user_id=? AND session_id=? AND status IN ('accepted','queued','running','waiting_input','waiting_approval') ORDER BY CASE status WHEN 'queued' THEN 2 WHEN 'accepted' THEN 1 ELSE 0 END,user_turn_index DESC,created_time DESC LIMIT 1"), &[json!(user),json!(session)])?;
+    let active = one(db, &format!("SELECT status,turn_id,{reason} FROM thread_turns WHERE user_id=? AND session_id=? AND status IN ('accepted','queued','running','waiting_input','waiting_approval') ORDER BY CASE status WHEN 'running' THEN 3 WHEN 'waiting_input' THEN 3 WHEN 'waiting_approval' THEN 3 WHEN 'accepted' THEN 2 WHEN 'queued' THEN 1 ELSE 0 END DESC,user_turn_index DESC,created_time DESC LIMIT 1"), &[json!(user),json!(session)])?;
     if let Some(row) = active {
         let status = match text(&row[0]) {
             "accepted" => "running",
@@ -676,6 +676,22 @@ pub(crate) fn project_item(
         );
     }
     if kind == "tool_call" {
+        if item
+            .pointer("/meta/workspace_changed")
+            .and_then(Value::as_bool)
+            == Some(true)
+        {
+            // Completion order can differ from tool admission order. Use the
+            // commit revision so a slower, earlier parallel write is not lost.
+            let committed = one(
+                db,
+                "SELECT latest_change_seq FROM thread_logs WHERE session_id=? AND user_id=?",
+                &[json!(session), json!(user)],
+            )?
+            .map(|r| int(&r[0]))
+            .unwrap_or(0);
+            row.workspace_change_seq = row.workspace_change_seq.max(committed);
+        }
         projection::set_activity(
             &mut row,
             if projection::is_running(status) != 0 {

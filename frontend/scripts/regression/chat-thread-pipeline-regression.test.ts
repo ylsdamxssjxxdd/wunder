@@ -1,4 +1,5 @@
 // AI生成
+import './mocks/browserStorage';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 

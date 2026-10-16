@@ -39,6 +39,25 @@ fn collect(path: &Path, root: &Path, files: &mut Vec<(String, PathBuf)>) {
     };
     for entry in entries.flatten() {
         let path = entry.path();
+        // Do not follow links outside the release source tree, or package
+        // generated caches and hidden deployment files from approved folders.
+        let Ok(kind) = entry.file_type() else {
+            continue;
+        };
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if kind.is_symlink()
+            || name.starts_with('.')
+            || matches!(name.as_ref(), "__pycache__" | "node_modules" | "target")
+        {
+            continue;
+        }
+        if matches!(
+            path.extension().and_then(|s| s.to_str()),
+            Some("pyc" | "db" | "sqlite3" | "lock" | "log")
+        ) {
+            continue;
+        }
         let relative = path
             .strip_prefix(root)
             .unwrap()

@@ -438,43 +438,38 @@ fn push_cloud_status(app: &MainWindow, status: CloudStatusView) {
     app.set_cloud_error("".into());
 }
 
-// Poll timer for the settings cloud card. One thread-local timer reused for
-// the whole process: it is (re)started whenever the settings page opens and
-// stops itself on the first tick after the page closes, so the only standing
-// cost while the page is hidden is nothing at all.
+// One bounded background read keeps the settings card and sidebar synchronized
+// even when settings are closed. No network request is issued by cloud_status.
 thread_local! {
     static CLOUD_POLL_TIMER: slint::Timer = slint::Timer::default();
 }
 
-/// (Re)start the 30s cloud-status poll. Every path that opens the settings
-/// page goes through `refresh-settings`, which lands here. The tick skips the
-/// fetch unless the page is open on the cloud card's panel, and stops itself
-/// once the page has closed.
 fn restart_cloud_status_poll(app_weak: slint::Weak<MainWindow>, api: Arc<NativeDesktop>) {
+    let in_flight = Arc::new(std::sync::atomic::AtomicBool::new(false));
     CLOUD_POLL_TIMER.with(|timer| {
         timer.start(
             slint::TimerMode::Repeated,
-            std::time::Duration::from_secs(30),
+            std::time::Duration::from_secs(2),
             move || {
                 let Some(app) = app_weak.upgrade() else {
                     return;
                 };
-                if !app.get_settings_open() || app.get_settings_active_panel() != 13 {
-                    // Page closed or the cloud card's tab is hidden: stop polling.
-                    CLOUD_POLL_TIMER.with(slint::Timer::stop);
-                    return;
-                }
-                if app.get_cloud_busy() {
+                if app.get_cloud_busy() || in_flight.swap(true, std::sync::atomic::Ordering::AcqRel)
+                {
                     return;
                 }
                 let weak = app_weak.clone();
                 let api = api.clone();
+                let pending = in_flight.clone();
                 run_background(move || {
                     let status = api.cloud_status();
                     let _ = weak.upgrade_in_event_loop(move |app| {
-                        if let Ok(status) = status {
-                            push_cloud_status(&app, status);
+                        if !app.get_cloud_busy() {
+                            if let Ok(status) = status {
+                                push_cloud_status(&app, status);
+                            }
                         }
+                        pending.store(false, std::sync::atomic::Ordering::Release);
                     });
                 });
             },
@@ -487,6 +482,7 @@ fn restart_cloud_status_poll(app_weak: slint::Weak<MainWindow>, api: Arc<NativeD
 /// land their result back on the UI thread. The password draft only travels
 /// from the shell into the call; it is never logged nor persisted.
 fn bind_cloud(app: &MainWindow, api: Arc<NativeDesktop>) {
+    restart_cloud_status_poll(app.as_weak(), api.clone());
     let weak = app.as_weak();
     let login_api = api.clone();
     app.on_cloud_login(move || {
@@ -912,9 +908,6 @@ fn bind_settings(app: &MainWindow, api: Arc<NativeDesktop>) {
     let refresh_api = api.clone();
     app.on_refresh_settings(move || {
         let Some(app) = weak.upgrade() else { return };
-        // Every open of the settings page lands here: keep the 30s cloud
-        // status poll running while the page stays open.
-        restart_cloud_status_poll(app.as_weak(), refresh_api.clone());
         if app.get_settings_loading() || app.get_saving() {
             return;
         }

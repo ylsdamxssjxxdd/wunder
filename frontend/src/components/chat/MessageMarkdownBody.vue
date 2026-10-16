@@ -5,12 +5,14 @@
     class="markdown-body message-markdown-body"
     :class="{
       'message-markdown-body--streaming-text': isStreamingTextPreview,
-      'message-markdown-body--plain-text': !isStreamingTextPreview
+      'message-markdown-body--plain-text': !isStreamingTextPreview,
+      'message-markdown-body--assistant': assistantDisplay
     }"
   ></div>
   <div
     v-else
     class="markdown-body message-markdown-body"
+    :class="{ 'message-markdown-body--assistant': assistantDisplay }"
     v-html="visibleHtml"
   ></div>
   <button

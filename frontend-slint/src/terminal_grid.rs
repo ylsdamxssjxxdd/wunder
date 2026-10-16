@@ -320,10 +320,6 @@ impl TerminalGrid {
         self.view_offset = next as usize;
     }
 
-    pub fn scroll_to_bottom(&mut self) {
-        self.view_offset = 0;
-    }
-
     /// Put absolute row `top` (counted from the oldest line still held) at the
     /// top of the viewport, as a scrollbar thumb does.
     pub fn scroll_to_row(&mut self, top: usize) {
@@ -782,7 +778,7 @@ mod tests {
         g.feed(b"\r\nline 6");
         assert_eq!(g.view_offset(), 3);
         assert_eq!(viewport(&g), "line 1\nline 2\nline 3");
-        g.scroll_to_bottom();
+        g.scroll_by(-(g.view_offset() as i32));
         assert_eq!(viewport(&g), "line 4\nline 5\nline 6");
     }
 

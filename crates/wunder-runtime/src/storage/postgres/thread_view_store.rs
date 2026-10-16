@@ -1,3 +1,4 @@
+use super::thread_log_store::PostgresThreadLogStorage;
 use super::{PgTx, PostgresStorage};
 use crate::storage::{
     thread_view_store::{self as view, ViewDb},
@@ -176,6 +177,7 @@ impl PostgresStorage {
         l: usize,
     ) -> Result<ThreadViewPage> {
         self.ensure_initialized()?;
+        self.reconcile_terminal_turns_impl(u, s)?;
         let mut c = self.conn()?;
         let mut tx = c.transaction()?;
         tx.batch_execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY; SET LOCAL statement_timeout='1500ms'")?;

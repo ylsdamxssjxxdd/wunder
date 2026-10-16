@@ -53,12 +53,13 @@ pub(super) fn start(
     state: Arc<AppState>,
     user: String,
     input: NativeChatInput,
+    lease_proof: Value,
 ) -> NativeStream {
     let (output, receiver) = mpsc::channel(CAPACITY);
     let cancel = CancellationToken::new();
     let token = cancel.clone();
     runtime.spawn(async move {
-        let result = run(state, user, input, &output, &token).await;
+        let result = run(state, user, input, lease_proof, &output, &token).await;
         if let Err(error) = result {
             tracing::warn!(%error, "native chat failed");
             let _ = output
@@ -77,6 +78,7 @@ async fn run(
     state: Arc<AppState>,
     user_id: String,
     input: NativeChatInput,
+    lease_proof: Value,
     output: &mpsc::Sender<NativeChatEvent>,
     cancel: &CancellationToken,
 ) -> Result<()> {
@@ -93,7 +95,7 @@ async fn run(
             .ok_or_else(|| anyhow!("desktop user unavailable"))
     })
     .await?;
-    let request = build_native_chat_request(
+    let mut request = build_native_chat_request(
         &state,
         &user,
         &session,
@@ -112,6 +114,7 @@ async fn run(
         input.reasoning_effort,
     )
     .await?;
+    request.config_overrides.get_or_insert_with(|| json!({}))["__local_open_lease"] = lease_proof;
     if cancel.is_cancelled() {
         let _ = output
             .send(NativeChatEvent::Event(

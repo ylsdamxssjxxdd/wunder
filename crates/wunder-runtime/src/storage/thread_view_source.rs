@@ -70,8 +70,9 @@ fn source_chat_rows(
         .collect::<Vec<_>>();
     let mut latest_turns = std::collections::HashMap::new();
     let queue_field = db.json_text("payload", "queued_input");
+    let watermark = db.json_text("card.payload", "workspace_change_seq");
     let latest = batch_query(db, root_ids.iter().map(|root| (
-        format!("SELECT root_turn_id,turn_id,status,updated_time,{queue_field} FROM thread_turns WHERE user_id=? AND session_id=? AND root_turn_id=? ORDER BY created_time DESC,turn_id DESC LIMIT 1"),
+        format!("SELECT root_turn_id,turn_id,status,updated_time,{queue_field},(SELECT CAST(COALESCE({watermark},'0') AS BIGINT) FROM thread_chat_rows card WHERE card.user_id=thread_turns.user_id AND card.session_id=thread_turns.session_id AND card.root_turn_id=thread_turns.root_turn_id) FROM thread_turns WHERE user_id=? AND session_id=? AND root_turn_id=? ORDER BY created_time DESC,turn_id DESC LIMIT 1"),
         vec![json!(user), json!(session), json!(root)],
     )).collect())?;
     for row in latest {
@@ -234,6 +235,7 @@ fn source_chat_rows(
                 None
             };
             row.updated_time = float(&latest[3]);
+            row.workspace_change_seq = int(&latest[5]);
         }
         (row.workflow_count, row.failed_count, row.reasoning_count) =
             counts.get(id).copied().unwrap_or_default();

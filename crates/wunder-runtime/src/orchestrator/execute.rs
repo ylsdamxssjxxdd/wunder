@@ -202,7 +202,7 @@ impl Orchestrator {
                 });
                 // The unified commit exit persists the turn update and publishes
                 // the change cursor only when the write actually changed state.
-                let _ = self
+                self
                     .committer
                     .update_turn(
                         &user_id,
@@ -212,7 +212,10 @@ impl Orchestrator {
                         &display_question,
                         &payload,
                     )
-                    .await;
+                    .await
+                    .map_err(|error| OrchestratorError::internal(format!(
+                        "persist running thread turn: {error}"
+                    )))?;
             }
             // Child cancellation survives monitor registration resetting the turn flags.
             self.ensure_not_cancelled(&session_id)?;
@@ -1947,7 +1950,6 @@ impl Orchestrator {
                 &turn_decode_speed,
             );
             final_payload["interaction_duration_s"] = json!(turn_started_at.elapsed().as_secs_f64());
-            emitter.emit("final", final_payload).await;
             self.finish_request_success(
                 &user_id,
                 &session_id,
@@ -1967,7 +1969,9 @@ impl Orchestrator {
                 skip_auto_memory_extract,
                 llm_config.clone(),
             )
-            .await;
+            .await?;
+            // A successful transport receipt follows the durable lifecycle.
+            emitter.emit("final", final_payload).await;
             Ok(response)
         }
         .await;

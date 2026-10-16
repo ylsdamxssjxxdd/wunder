@@ -33,7 +33,12 @@
       />
     </section>
 
-    <section class="messenger-settings-card">
+    <!-- 测试区（压测线程 + 调试工具）仅管理员可见，避免普通用户误操作。 -->
+    <section
+      v-if="isAdminUser"
+      class="messenger-settings-card"
+      data-testid="settings-category-general-test"
+    >
       <div class="messenger-settings-group-head">
         <div class="messenger-settings-title">{{ t('messenger.settingsPage.general.testGroup') }}</div>
         <div class="messenger-settings-subtitle">{{ t('messenger.settingsPage.general.testHint') }}</div>
@@ -118,7 +123,7 @@
 </template>
 
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 
 import { ElMessage } from 'element-plus';
 
@@ -126,6 +131,7 @@ import type { MessengerControllerContext } from '@/views/messenger/controller/me
 import MessengerTestTools from '@/components/messenger/MessengerTestTools.vue';
 import { useI18n } from '@/i18n';
 import { resolveApiBase } from '@/config/runtime';
+import { useAuthStore } from '@/stores/auth';
 import {
   getStressThreadJob,
   listStressThreads,
@@ -135,6 +141,13 @@ import {
 
 const props = defineProps<{ controller: MessengerControllerContext }>();
 const { t } = useI18n();
+const authStore = useAuthStore();
+
+// 与后端 UserStore::is_admin 同一判定口径：admin / super_admin。
+const isAdminUser = computed(() => {
+  const roles = (authStore.user as { roles?: unknown } | null)?.roles;
+  return Array.isArray(roles) && roles.some((role) => role === 'admin' || role === 'super_admin');
+});
 
 const currentUsername = props.controller.currentUsername;
 const currentUserId = props.controller.currentUserId;
@@ -255,7 +268,9 @@ const refreshStressJob = async (jobId: string) => {
 };
 
 // 重新进入设置页时恢复任务可见性：后端任务注册表仍在，避免"退出页面进度即丢"。
+// 非管理员直接跳过，避免无谓的 403 请求。
 onMounted(async () => {
+  if (!isAdminUser.value) return;
   try {
     const { data } = await listStressThreads();
     const jobs = (data?.jobs || []) as StressThreadJobSnapshot[];

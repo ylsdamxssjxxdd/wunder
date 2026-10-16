@@ -209,7 +209,7 @@ impl Orchestrator {
         stop_meta: Option<&Value>,
         skip_auto_memory_extract: bool,
         llm_config: LlmModelConfig,
-    ) {
+    ) -> Result<(), OrchestratorError> {
         let _ = self.workspace.flush_writes_async().await;
         if let Some(thread_turn_id) = last_round_info.thread_turn_id {
             let status = if waiting_question_panel {
@@ -224,8 +224,7 @@ impl Orchestrator {
                 "status": status,
                 "stop_reason": stop_reason,
             });
-            if let Err(error) = self
-                .committer
+            self.committer
                 .update_turn(
                     user_id,
                     session_id,
@@ -235,9 +234,9 @@ impl Orchestrator {
                     &payload,
                 )
                 .await
-            {
-                warn!("update completed thread turn failed for session {session_id}: {error}")
-            }
+                .map_err(|error| {
+                    OrchestratorError::internal(format!("persist completed thread turn: {error}"))
+                })?;
         }
         emit_turn_terminal_event(
             emitter,
@@ -302,6 +301,7 @@ impl Orchestrator {
         } else {
             self.monitor.mark_finished(session_id);
         }
+        Ok(())
     }
 
     #[allow(clippy::too_many_arguments)]

@@ -529,13 +529,19 @@ impl ThreadOpenLeaseStore for SqliteStorage {
         &self,
         session_id: &str,
         owner_instance_id: &str,
+        fencing_token: u64,
         ttl_s: f64,
     ) -> Result<bool> {
-        self.touch_thread_open_lease_impl(session_id, owner_instance_id, ttl_s)
+        self.touch_thread_open_lease_impl(session_id, owner_instance_id, fencing_token, ttl_s)
     }
 
-    fn release_thread_open_lease(&self, session_id: &str, owner_instance_id: &str) -> Result<bool> {
-        self.release_thread_open_lease_impl(session_id, owner_instance_id)
+    fn release_thread_open_lease(
+        &self,
+        session_id: &str,
+        owner_instance_id: &str,
+        fencing_token: u64,
+    ) -> Result<bool> {
+        self.release_thread_open_lease_impl(session_id, owner_instance_id, fencing_token)
     }
 
     fn get_thread_open_lease(

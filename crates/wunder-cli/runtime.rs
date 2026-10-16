@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use wunder_server::admin_skills;
 use wunder_server::config::{Config, LlmModelConfig};
 use wunder_server::config_store::ConfigStore;
@@ -69,6 +69,9 @@ pub enum TurnNotificationWhen {
 
 impl CliRuntime {
     pub async fn init(global: &GlobalArgs) -> Result<Self> {
+        let startup_boot = Instant::now();
+        let mut step_start = startup_boot;
+        cli_startup_point("init_begin", startup_boot);
         let launch_dir = resolve_launch_dir(global)?;
         let repo_root = resolve_repo_root(&launch_dir);
         let wunder_home = resolve_wunder_home_dir(&launch_dir);
@@ -83,6 +86,8 @@ impl CliRuntime {
         wunder_server::local_assets::release_embedded_local_assets(&wunder_home)
             .context("release embedded local assets failed")?;
         ensure_runtime_dirs(&temp_root, &wunder_home, &user_tools_root, &vector_root)?;
+        cli_startup_segment("release_assets_and_dirs", step_start, startup_boot);
+        step_start = Instant::now();
 
         let config_path = prepare_runtime_config_path(global, &repo_root, &wunder_home)?;
         let i18n_path = wunder_home.join("config/i18n.messages.json");
@@ -126,6 +131,8 @@ impl CliRuntime {
                 )
             }
         };
+        cli_startup_segment("load_user_config", step_start, startup_boot);
+        step_start = Instant::now();
 
         // The engine YAML is the same file 蛹 writes, so it is read back on every
         // start instead of being rebuilt from the shipped template. The template
@@ -170,7 +177,11 @@ impl CliRuntime {
             })
             .await
             .context("apply cli runtime config failed")?;
+        cli_startup_segment("config_projection", step_start, startup_boot);
+        step_start = Instant::now();
         let config = admin_skills::normalize_server_admin_skill_layout(&config_store).await;
+        cli_startup_segment("normalize_admin_skills", step_start, startup_boot);
+        step_start = Instant::now();
         warn_on_dangerous_sandbox(&config, global.sandbox);
 
         let state = Arc::new(
@@ -178,10 +189,14 @@ impl CliRuntime {
                 config_store.clone(),
                 config.clone(),
                 AppStateInitOptions::cli_default(),
-            )
+        )
             .context("initialize cli state failed")?,
         );
+        cli_startup_segment("app_state_init", step_start, startup_boot);
+        step_start = Instant::now();
         state.lsp_manager.sync_with_config(&config).await;
+        cli_startup_segment("lsp_sync", step_start, startup_boot);
+        step_start = Instant::now();
 
         // Cloud self-healing: refresh the session, re-synthesize the cloud
         // models and fire one heartbeat in the background. The engine probes
@@ -189,6 +204,8 @@ impl CliRuntime {
         wunder_server::cloud::shared()
             .startup_probe(&config_store)
             .await;
+        cli_startup_segment("cloud_probe_schedule", step_start, startup_boot);
+        step_start = Instant::now();
 
         let user_id = global
             .user
@@ -197,6 +214,8 @@ impl CliRuntime {
         let workspace = ensure_workspace_binding(state.clone(), user_id.as_str(), &launch_dir)
             .await
             .context("bind cli workspace failed")?;
+        cli_startup_segment("workspace_binding", step_start, startup_boot);
+        step_start = Instant::now();
         // Tools resolve their root through the workspace registry, exactly like
         // the desktop runtime; the request only carries the workspace id.
         state.workspace.register_workspace_root(
@@ -210,6 +229,7 @@ impl CliRuntime {
         )
         .await
         .context("adopt legacy threads failed")?;
+        cli_startup_segment("legacy_thread_adoption", step_start, startup_boot);
 
         let runtime = Self {
             state,
@@ -226,6 +246,7 @@ impl CliRuntime {
         if let Err(err) = runtime.apply_user_notify() {
             eprintln!("[warn] ignoring notify setting: {err}");
         }
+        cli_startup_point("init_done", startup_boot);
         Ok(runtime)
     }
 
@@ -399,7 +420,19 @@ async fn ensure_workspace_binding(
             }
             let mut record = record;
             record.sort_index = state.storage.next_workspace_sort_index(&record.user_id)?;
-            state.storage.upsert_workspace(&record)?;
+            if let Err(error) = state.storage.upsert_workspace(&record) {
+                // The existence check and insert are separate storage calls.
+                // A competing process can publish the same binding between
+                // them; only suppress the error when its durable row exists.
+                if state
+                    .storage
+                    .find_workspace_by_root(&record.user_id, &record.root_path)?
+                    .is_some()
+                {
+                    return Ok(false);
+                }
+                return Err(error);
+            }
             Ok(true)
         }
     })
@@ -487,6 +520,21 @@ async fn adopt_legacy_threads(
     })
     .await
     .map_err(|err| anyhow!("legacy thread adoption cancelled: {err}"))?
+}
+
+fn cli_startup_segment(segment: &str, started: Instant, startup_boot: Instant) {
+    tracing::info!(
+        "[startup][cli] segment={segment} elapsed_ms={:.1} total_ms={:.1}",
+        started.elapsed().as_secs_f64() * 1000.0,
+        startup_boot.elapsed().as_secs_f64() * 1000.0,
+    );
+}
+
+fn cli_startup_point(point: &str, startup_boot: Instant) {
+    tracing::info!(
+        "[startup][cli] point={point} total_ms={:.1}",
+        startup_boot.elapsed().as_secs_f64() * 1000.0,
+    );
 }
 
 fn now_ts() -> f64 {
@@ -1189,6 +1237,27 @@ mod workspace_tests {
                 assert_eq!(rows[0].root_path, first.root_path.to_string_lossy());
                 assert_eq!(rows[0].name, "project");
             });
+    }
+
+    #[test]
+    fn concurrent_binding_the_same_folder_reuses_the_winning_row() {
+        let temp = TempRoot::new("concurrent-binding");
+        let work = temp.path().join("project");
+        fs::create_dir_all(&work).expect("create project dir");
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .expect("test runtime");
+        runtime.block_on(async {
+            let state = fixture_state(temp.path());
+            let (left, right) = tokio::join!(
+                ensure_workspace_binding(state.clone(), "u1", &work),
+                ensure_workspace_binding(state.clone(), "u1", &work),
+            );
+            assert_eq!(left.expect("left binding").workspace_id, right.expect("right binding").workspace_id);
+            assert_eq!(state.storage.list_workspaces("u1").expect("list").len(), 1);
+        });
     }
 
     #[test]

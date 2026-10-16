@@ -507,7 +507,7 @@ pub(super) fn should_skip_event_payload_truncation(tool_name: &str) -> bool {
     should_skip_tool_truncation(canonical.as_str())
         || matches!(
             canonical.as_str(),
-            "apply_patch" | "应用补丁" | "编辑" | "文本编辑"
+            "apply_patch" | "应用补丁" | "编辑" | "文本编辑" | "写入文件" | "write_file"
         )
 }
 
@@ -519,7 +519,7 @@ fn compact_observation_payload(payload: &mut Value, tool_name: &str) {
     let keep_path_in_data = matches!(canonical.as_str(), "写入文件" | "write_file");
     if matches!(
         canonical.as_str(),
-        "apply_patch" | "应用补丁" | "编辑" | "文本编辑"
+        "apply_patch" | "应用补丁" | "编辑" | "文本编辑" | "写入文件" | "write_file"
     ) {
         let maybe_compacted = map
             .get("data")

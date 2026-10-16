@@ -36,6 +36,40 @@ mod tests {
     }
 
     #[test]
+    fn manifest_excludes_runtime_data_and_unsafe_paths() {
+        let mut seen = std::collections::HashSet::new();
+        for (name, bytes) in EMBEDDED_LOCAL_ASSETS {
+            assert!(seen.insert(*name), "duplicate asset: {name}");
+            assert!(!bytes.is_empty(), "empty asset: {name}");
+            assert!(Path::new(name)
+                .components()
+                .all(|part| matches!(part, std::path::Component::Normal(_))));
+            assert!(
+                *name == "config/wunder.yaml"
+                    || *name == "config/i18n.messages.json"
+                    || *name == "scripts/skill_runner.py"
+                    || [
+                        "config/prompts/",
+                        "config/skills/",
+                        "config/preset_worker_cards/",
+                        "config/preset_worker_cards_example/"
+                    ]
+                    .iter()
+                    .any(|prefix| name.starts_with(prefix)),
+                "unapproved asset: {name}"
+            );
+            assert!(
+                !name.ends_with(".db")
+                    && !name.ends_with(".sqlite3")
+                    && !name.ends_with(".lock")
+                    && !name.contains("__pycache__")
+                    && !name.contains(".env"),
+                "runtime data embedded: {name}"
+            );
+        }
+    }
+
+    #[test]
     fn release_is_idempotent() {
         let dir = tempdir().unwrap();
         let first = release_embedded_local_assets(dir.path()).unwrap();

@@ -1618,9 +1618,12 @@ fn browser_fallback_scope(context: &ToolContext<'_>, request_url: &Url) -> Brows
         session_id: context.session_id.to_string(),
         agent_id: context.agent_id.map(ToString::to_string),
         profile: None,
+        // Deterministic per thread and URL: repeated fetches reuse one tab set
+        // instead of minting a fresh browser session per call and filling every
+        // available slot. Thread-scoped so two conversations of the same user
+        // never drive each other's page.
         browser_session_id: Some(format!(
-            "web-fetch:{}:{}:{url_hash:x}",
-            chrono::Utc::now().timestamp_millis(),
+            "web-fetch:{}:{url_hash:x}",
             context.session_id
         )),
     }

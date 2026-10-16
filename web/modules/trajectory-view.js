@@ -1152,7 +1152,6 @@ export function createTrajectoryView(host, options = {}) {
       }
       if (selectedCell.usage) {
         addRow(modelT("token"), formatTokens(selectedCell.usage.output));
-        addRow(modelT("reasoning"), formatTokens(selectedCell.usage.think));
       } else if (selectedCell.kind === "message") {
         addRow(modelT("token"), modelT("usageNotReported"));
       }
@@ -1176,7 +1175,7 @@ export function createTrajectoryView(host, options = {}) {
           ? [{ key: "output", title: modelT("output"), content: selectedCell.outputDetail }]
           : [
               { key: "input", title: modelT("input"), content: selectedCell.inputDetail },
-              { key: "thinking", title: modelT("reasoning"), content: selectedCell.thinkingDetail },
+              { key: "thinking", title: modelT("thinking"), content: selectedCell.thinkingDetail },
               { key: "output", title: modelT("output"), content: selectedCell.outputDetail },
             ];
         for (const section of sections) {

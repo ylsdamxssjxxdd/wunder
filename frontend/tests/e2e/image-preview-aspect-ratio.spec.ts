@@ -85,6 +85,19 @@ for (const [label, fixture, intrinsicRatio] of [
       await page.setViewportSize({ width: 1600, height: 1200 });
       await login(page);
       await expect(page.locator('.ai-resource-card[data-workspace-state="ready"]')).toHaveCount(2);
+      const cardGeometry = await page.locator('.message-markdown-body--assistant .ai-resource-card').first()
+        .evaluate((card) => {
+          const preview = card.querySelector('.ai-resource-preview') as HTMLImageElement | null;
+          const cardRect = (card as HTMLElement).getBoundingClientRect();
+          const previewRect = preview?.getBoundingClientRect();
+          return {
+            card: [Math.round(cardRect.width), Math.round(cardRect.height)],
+            preview: previewRect ? [Math.round(previewRect.width), Math.round(previewRect.height)] : [0, 0]
+          };
+        });
+      expect(cardGeometry.card[0]).toBeLessThanOrEqual(280);
+      expect(cardGeometry.preview[0]).toBeLessThanOrEqual(264);
+      expect(cardGeometry.preview[1]).toBeLessThanOrEqual(180);
       await page.locator('.ai-resource-card img').first().click();
 
       const image = page.locator('.messenger-image-preview-dialog .zoomable-image');

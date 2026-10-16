@@ -1,3 +1,4 @@
+use super::thread_log_store::SqliteThreadLogStorage;
 use super::SqliteStorage;
 use crate::storage::{
     thread_view_store::{self as view, ViewDb},
@@ -164,6 +165,9 @@ impl SqliteStorage {
         r: Option<&str>,
         l: usize,
     ) -> Result<ThreadViewPage> {
+        // Repair legacy lifecycle writes before opening the read-only snapshot.
+        // Catalog reads do the same for threads that are not currently open.
+        self.reconcile_terminal_turns_impl(u, s)?;
         let mut conn = self.view_connection()?;
         let tx = conn.transaction()?;
         let page = view::page(&mut Db(&tx), u, s, k, b, a, r, l)?;
@@ -300,6 +304,31 @@ mod tests {
             .unwrap();
         assert_eq!(page.runtime_status, "running");
         assert!(page.chat[0].queued_input.is_none());
+        let parked = storage
+            .accept_thread_turn(
+                "fixture-user",
+                "fixture-thread",
+                &json!({"content":"parked input"}),
+            )
+            .unwrap();
+        let parked_turn = parked["turn_id"].as_str().unwrap();
+        storage
+            .update_thread_turn(
+                "fixture-user",
+                "fixture-thread",
+                parked_turn,
+                "queued",
+                "",
+                &json!({"queued_input":{"queue_id":"fixture-queue-2","reason":"input","priority":0}}),
+            )
+            .unwrap();
+        // A newer composer-parked input is not the executor.  The running
+        // turn remains the one durable session head used by shell controls.
+        let page = storage
+            .thread_view_page("fixture-user", "fixture-thread", "chat", None, 12)
+            .unwrap();
+        assert_eq!(page.runtime_status, "running");
+        assert_eq!(page.active_turn_id, turn);
         storage
             .open()
             .unwrap()
@@ -472,7 +501,7 @@ mod tests {
                 )
                 .unwrap();
             let root = turn["turn_id"].as_str().unwrap();
-            storage.append_thread_item("fixture-user", &json!({"session_id":"fixture-thread", "turn_id":root,"item_id":format!("{root}:tool"),"kind":"tool_call","status":"failed","tool":"fixture_tool"})).unwrap();
+            storage.append_thread_item("fixture-user", &json!({"session_id":"fixture-thread", "turn_id":root,"item_id":format!("{root}:tool"),"kind":"tool_call","status":"failed","tool":"fixture_tool","meta":{"workspace_changed":true}})).unwrap();
             let item = format!("{root}:text-1");
             storage.append_thread_item("fixture-user", &json!({"session_id":"fixture-thread", "turn_id":root,"item_id":item,"kind":"assistant_message","content":"","status":"completed"})).unwrap();
             for (field, data) in [
@@ -529,6 +558,10 @@ mod tests {
         assert_eq!(large.next_before, Some(2));
         assert_eq!(small.chat[0].assistant.content, "answer 21");
         for row in &large.chat {
+            assert!(
+                row.workspace_change_seq > 0,
+                "source pages retain file invalidations"
+            );
             assert_eq!(row.user.content, format!("input {}", row.user_round));
             assert_eq!(row.assistant.content, format!("answer {}", row.user_round));
             assert_eq!(

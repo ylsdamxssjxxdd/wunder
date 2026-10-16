@@ -2678,7 +2678,6 @@ export default {
   'messenger.trajectory.status': 'Status',
   'messenger.trajectory.hierarchy': 'Hierarchy',
   'messenger.trajectory.token': 'Tokens',
-  'messenger.trajectory.reasoning': 'Reasoning',
   'messenger.trajectory.thinking': 'Thinking',
   'messenger.trajectory.tokens': '{value} tok',
   'messenger.trajectory.usageNotReported': 'Usage not reported',

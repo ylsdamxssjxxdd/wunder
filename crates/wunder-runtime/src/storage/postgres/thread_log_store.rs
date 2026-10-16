@@ -718,7 +718,10 @@ impl PostgresThreadLogStorage for PostgresStorage {
             map.remove("summary");
         }
         let text = serde_json::to_string(&payload)?;
-        let changed=tx.execute("UPDATE thread_turns SET status=$1,payload=$2,updated_time=$3 WHERE session_id=$4 AND turn_id=$5 AND status IN ('accepted','queued','running','waiting_input','waiting_approval') AND (status<>$6 OR payload<>$7) AND ($2::jsonb->'queued_input' IS NULL OR status IN ('accepted','queued'))", &[&status,&text,&now,&session_id,&turn_id,&status,&text])?;
+        // The driver binds payload as String. A direct $2::jsonb makes PostgreSQL
+        // infer JSONB for that parameter and rejects every lifecycle update
+        // before execution (the item writes use TEXT and still succeed).
+        let changed=tx.execute("UPDATE thread_turns SET status=$1,payload=$2::text,updated_time=$3 WHERE session_id=$4 AND turn_id=$5 AND status IN ('accepted','queued','running','waiting_input','waiting_approval') AND (status<>$1 OR payload<>$2::text) AND (($2::text)::jsonb->>'queued_input' IS NULL OR status IN ('accepted','queued'))", &[&status,&text,&now,&session_id,&turn_id])?;
         if changed == 0 {
             tx.commit()?;
             return Ok(false);
@@ -763,6 +766,12 @@ impl PostgresThreadLogStorage for PostgresStorage {
         )?;
         tx.execute("INSERT INTO thread_log_changes(session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)", &[&session_id,&seq,&user_id,&change_type,&turn_id,&change_item,&revision,&change_payload,&now])?;
         if input_changed > 0 {
+            crate::storage::thread_view_store::project_item(
+                &mut super::thread_view_store::Db(&mut tx),
+                user_id,
+                session_id,
+                &input_item_id,
+            )?;
             seq += 1;
             let bubble_payload = {
                 let row = tx.query_one("SELECT item_id,item_index,kind,status,revision,payload,created_time,updated_time,turn_id,visibility,root_turn_id,created_seq FROM thread_items WHERE session_id=$1 AND item_id=$2", &[&session_id, &input_item_id])?;
@@ -825,30 +834,44 @@ impl PostgresThreadLogStorage for PostgresStorage {
         let mut conn = self.conn()?;
         let candidates = conn
             .query(
-                "SELECT t.turn_id, COALESCE(i.payload::jsonb->>'content','')
-                 FROM thread_turns t
-                 JOIN thread_items i ON i.session_id=t.session_id AND i.turn_id=t.turn_id
-                 WHERE t.user_id=$1 AND t.session_id=$2
-                   AND t.status IN ('accepted','queued','running','waiting_input','waiting_approval')
-                   AND i.kind='assistant_message' AND i.status='completed'
-                   AND i.payload::jsonb->>'event_type'='llm_output'
-                   AND (i.payload::jsonb->'tool_calls' IS NULL
-                        OR jsonb_array_length(i.payload::jsonb->'tool_calls')=0)
-                 GROUP BY t.turn_id,i.payload,t.user_turn_index
-                 ORDER BY t.user_turn_index DESC LIMIT 32",
-                &[&user_id, &session_id],
+                "SELECT t.turn_id
+                 FROM (SELECT * FROM thread_turns WHERE user_id=$1 AND session_id=$2
+                       AND status IN ('accepted','running') ORDER BY user_turn_index LIMIT 32) t
+                 JOIN thread_items i ON i.user_id=t.user_id AND i.session_id=t.session_id AND i.root_turn_id=t.root_turn_id AND i.turn_id=t.turn_id
+                 WHERE NOT EXISTS (SELECT 1 FROM session_locks l
+                        WHERE l.session_id=t.session_id AND l.expires_at>$3)
+                   AND i.item_id=(SELECT candidate.item_id FROM thread_items candidate
+                        WHERE candidate.user_id=t.user_id AND candidate.session_id=t.session_id
+                          AND candidate.root_turn_id=t.root_turn_id AND candidate.turn_id=t.turn_id
+                          AND candidate.kind='assistant_message'
+                        ORDER BY candidate.created_seq DESC LIMIT 1)
+                   AND i.kind='assistant_message' AND i.status='completed' AND i.visibility='user'
+                   AND length(trim(COALESCE(i.payload::jsonb->>'content','')))>0
+                   AND (i.payload::jsonb->>'event_type'='llm_output'
+                        OR (i.payload::jsonb->>'role'='assistant'
+                            AND jsonb_typeof(i.payload::jsonb->'meta'->'message_stats')='object'
+                            AND i.payload::jsonb->'meta'->>'type' IS NULL))
+                   AND (i.payload::jsonb->>'tool_calls' IS NULL
+                        OR i.payload::jsonb->'tool_calls'='[]'::jsonb)
+                   AND NOT EXISTS (SELECT 1 FROM thread_items newer
+                        WHERE newer.user_id=i.user_id AND newer.session_id=i.session_id
+                      AND newer.root_turn_id=i.root_turn_id AND newer.turn_id=i.turn_id
+                          AND newer.created_seq>i.created_seq
+                          AND newer.kind IN ('assistant_message','tool_call','approval'))
+                 ORDER BY t.user_turn_index LIMIT 32",
+                &[&user_id, &session_id, &Self::now_ts()],
             )?
             .into_iter()
-            .map(|row| Ok((row.get::<_, String>(0), row.get::<_, String>(1))))
+            .map(|row| Ok(row.get::<_, String>(0)))
             .collect::<Result<Vec<_>>>()?;
         drop(conn);
-        for (turn_id, summary) in candidates {
+        for turn_id in candidates {
             let _ = self.update_thread_turn_impl(
                 user_id,
                 session_id,
                 &turn_id,
                 "completed",
-                &summary,
+                "",
                 &json!({
                     "session_id": session_id,
                     "turn_id": turn_id,

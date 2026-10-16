@@ -25,6 +25,7 @@ mod file_tool;
 mod freeform;
 mod glob_tool;
 mod knowledge_tool;
+mod line_diff;
 mod lsp_support;
 mod mcp_pack;
 mod memory_manager_tool;

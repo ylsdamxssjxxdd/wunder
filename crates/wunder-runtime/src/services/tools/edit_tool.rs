@@ -10,6 +10,7 @@
 
 use super::capabilities::{local_fs, FsCapability};
 use super::context::collect_allow_roots;
+use super::line_diff::{diff_literal_replaces, insert_diff_fields, LineDiff};
 use super::{
     build_model_tool_success,
     command_options::parse_dry_run,
@@ -20,10 +21,14 @@ use super::{
 use crate::core::blocking;
 use crate::path_utils::{is_within_root, normalize_path_for_compare, normalize_target_path};
 use anyhow::{anyhow, Result};
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 use std::path::PathBuf;
 
 pub(crate) const TOOL_EDIT: &str = "文本编辑";
+
+/// 采集的命中数上限：diff 的行数统计只覆盖这些命中，命中总数由
+/// `replacements`/`hunks` 给出；块数上限另由 `line_diff` 收口。
+const MAX_DIFF_OFFSETS: usize = 200;
 
 /// 判断参数是否以补丁（patch）形态调用，兼容旧 `应用补丁` 的 `input`/`patch`。
 pub(crate) fn has_patch_input(args: &Value) -> bool {
@@ -60,6 +65,26 @@ struct EditOutcome {
     occurrences: usize,
     bytes_before: usize,
     bytes_after: usize,
+    /// 字面替换的真实 diff；`unavailable` 有值时只带计数不带块。
+    diff: LineDiff,
+    unavailable: Option<&'static str>,
+}
+
+/// 字面替换路由的 diff 构造：有界采样命中起点，块上限与有界性守卫都在
+/// `line_diff` 里收口；命中数被采样上限截断时 `hunks` 仍报真实替换次数。
+fn build_replace_diff(
+    before: &str,
+    after: &str,
+    offsets: &[usize],
+    occurrences: usize,
+    needle_len: usize,
+    replacement: &str,
+) -> (LineDiff, Option<&'static str>) {
+    let (diff, unavailable) = diff_literal_replaces(before, after, offsets, needle_len, replacement);
+    if unavailable.is_none() && occurrences > offsets.len() {
+        return (diff.with_hunks(occurrences), None);
+    }
+    (diff, unavailable)
 }
 
 /// 模型侧参数的最小校验，返回 `Some(failure)` 表示调用不合法。
@@ -192,6 +217,16 @@ pub(crate) async fn edit_file(context: &ToolContext<'_>, args: &Value) -> Result
         if occurrences > 1 && !replace_all {
             return Err(anyhow::Error::new(EditFailure::NotUnique(occurrences)));
         }
+        // diff 只需要有界个命中起点；命中总数仍由 matches().count() 给出。
+        let offsets: Vec<usize> = if replace_all {
+            content
+                .match_indices(&old_for_edit)
+                .map(|(index, _)| index)
+                .take(MAX_DIFF_OFFSETS)
+                .collect()
+        } else {
+            content.find(&old_for_edit).into_iter().collect()
+        };
         let updated = if replace_all {
             content.replace(&old_for_edit, &new_for_edit)
         } else {
@@ -212,11 +247,21 @@ pub(crate) async fn edit_file(context: &ToolContext<'_>, args: &Value) -> Result
                 fs_cap.write_text(&target, &updated)?;
             }
         }
+        let (diff, unavailable) = build_replace_diff(
+            &content,
+            &updated,
+            &offsets,
+            occurrences,
+            old_for_edit.len(),
+            &new_for_edit,
+        );
         Ok::<EditOutcome, anyhow::Error>(EditOutcome {
             target,
             occurrences,
             bytes_before: content.len(),
             bytes_after: updated.len(),
+            diff,
+            unavailable,
         })
     })
     .await;
@@ -278,6 +323,18 @@ pub(crate) async fn edit_file(context: &ToolContext<'_>, args: &Value) -> Result
         touch_lsp_file(context, &outcome.target, true).await
     };
 
+    let data = build_edit_data(
+        &file_path,
+        outcome.occurrences,
+        replace_all,
+        outcome.bytes_before,
+        outcome.bytes_after,
+        dry_run,
+        lsp_info,
+        &outcome.diff,
+        outcome.unavailable,
+    );
+
     Ok(build_model_tool_success(
         "edit",
         if dry_run { "dry_run" } else { "completed" },
@@ -289,16 +346,40 @@ pub(crate) async fn edit_file(context: &ToolContext<'_>, args: &Value) -> Result
                 outcome.occurrences
             )
         },
-        json!({
-            "path": file_path,
-            "replacements": outcome.occurrences,
-            "replace_all": replace_all,
-            "bytes_before": outcome.bytes_before,
-            "bytes_after": outcome.bytes_after,
-            "dry_run": dry_run,
-            "lsp": lsp_info,
-        }),
+        data,
     ))
+}
+
+/// 组装字面替换结果 `data`：既有键保持不变，补丁家族的 diff 键一并给出。
+fn build_edit_data(
+    path: &str,
+    occurrences: usize,
+    replace_all: bool,
+    bytes_before: usize,
+    bytes_after: usize,
+    dry_run: bool,
+    lsp: Value,
+    diff: &LineDiff,
+    unavailable: Option<&'static str>,
+) -> Value {
+    let mut diff_fields = Map::<String, Value>::new();
+    insert_diff_fields(&mut diff_fields, "update", path, diff);
+    if let Some(reason) = unavailable {
+        diff_fields.insert("diff_unavailable".to_string(), json!(reason));
+    }
+    let mut data = json!({
+        "path": path,
+        "replacements": occurrences,
+        "replace_all": replace_all,
+        "bytes_before": bytes_before,
+        "bytes_after": bytes_after,
+        "dry_run": dry_run,
+        "lsp": lsp,
+    });
+    if let Some(map) = data.as_object_mut() {
+        map.extend(diff_fields);
+    }
+    data
 }
 
 #[cfg(test)]
@@ -334,5 +415,173 @@ mod tests {
             "new_string": ""
         }));
         assert!(failure.is_none(), "空 new_string 应当合法（表示删除）");
+    }
+
+    fn replace_all_offsets(count: usize) -> Vec<usize> {
+        (0..count).map(|index| index * 2).collect()
+    }
+
+    /// 断言全部走生产路径产出的 `data`，不触碰 `line_diff` 内部字段。
+    fn edit_data_for(before: &str, after: &str, offsets: &[usize], needle: &str, new: &str) -> Value {
+        let occurrences = offsets.len().max(1);
+        let (diff, unavailable) =
+            build_replace_diff(before, after, offsets, occurrences, needle.len(), new);
+        build_edit_data(
+            "a.txt",
+            occurrences,
+            offsets.len() > 1,
+            before.len(),
+            after.len(),
+            false,
+            Value::Null,
+            &diff,
+            unavailable,
+        )
+    }
+
+    #[test]
+    fn single_hit_edit_reports_line_numbers_on_both_sides() {
+        let data = edit_data_for("alpha\nbeta\ngamma\n", "alpha\nBETA\ngamma\n", &[6], "beta", "BETA");
+        assert_eq!(data["added_lines"], json!(1));
+        assert_eq!(data["deleted_lines"], json!(1));
+        assert_eq!(data["hunks_applied"], json!(1));
+        assert_eq!(data["replacements"], json!(1));
+        let file = &data["files"][0];
+        assert_eq!(file["action"], json!("update"));
+        assert_eq!(file["path"], json!("a.txt"));
+        let block = &file["diff_blocks"][0];
+        assert_eq!(block["header"], json!("@@ -2,1 +2,1 @@"));
+        assert_eq!(block["lines"][0]["kind"], json!("delete"));
+        assert_eq!(block["lines"][0]["old_line"], json!(2));
+        assert!(block["lines"][0]["new_line"].is_null());
+        assert_eq!(block["lines"][0]["text"], json!("beta"));
+        assert_eq!(block["lines"][1]["kind"], json!("add"));
+        assert_eq!(block["lines"][1]["new_line"], json!(2));
+        assert_eq!(block["lines"][1]["text"], json!("BETA"));
+    }
+
+    #[test]
+    fn replace_all_emits_one_block_per_hit_and_honours_block_cap() {
+        let before = "x\n".repeat(30);
+        let after = "y\n".repeat(30);
+        let data = edit_data_for(&before, &after, &replace_all_offsets(30), "x", "y");
+        let blocks = data["files"][0]["diff_blocks"].as_array().expect("blocks");
+        // 一个命中一个块，块数上限由 line_diff 收口为 12。
+        assert_eq!(blocks.len(), 12);
+        assert_eq!(blocks[11]["start_line_before"], json!(12));
+        assert_eq!(data["hunks_applied"], json!(30));
+        assert_eq!(data["added_lines"], json!(30));
+        assert_eq!(data["deleted_lines"], json!(30));
+        assert_eq!(data["diff_lines_omitted"], json!(36));
+    }
+
+    #[test]
+    fn sampled_hits_keep_exact_hunk_count() {
+        let before = "x\n".repeat(MAX_DIFF_OFFSETS + 5);
+        let after = "y\n".repeat(MAX_DIFF_OFFSETS + 5);
+        let offsets = replace_all_offsets(MAX_DIFF_OFFSETS);
+        let (diff, unavailable) =
+            build_replace_diff(&before, &after, &offsets, 205, "x".len(), "y");
+        assert!(unavailable.is_none());
+        let data = build_edit_data(
+            "a.txt",
+            205,
+            true,
+            before.len(),
+            after.len(),
+            false,
+            Value::Null,
+            &diff,
+            unavailable,
+        );
+        assert_eq!(offsets.len(), MAX_DIFF_OFFSETS);
+        // 采样截断只影响块数，不影响替换次数。
+        assert_eq!(data["hunks_applied"], json!(205));
+        assert_eq!(data["replacements"], json!(205));
+        assert_eq!(data["files"][0]["hunks"], json!(205));
+        assert_eq!(
+            data["files"][0]["diff_blocks"]
+                .as_array()
+                .expect("blocks")
+                .len(),
+            12
+        );
+        assert_eq!(data["added_lines"], json!(MAX_DIFF_OFFSETS));
+    }
+
+    #[test]
+    fn oversized_source_keeps_counts_only() {
+        let before = "x\n".repeat(300_000);
+        let offsets = [0usize];
+        let (diff, unavailable) = build_replace_diff(&before, "y\n", &offsets, 1, "x".len(), "y");
+        assert_eq!(unavailable, Some("oversize"));
+        let data = build_edit_data(
+            "a.txt",
+            1,
+            false,
+            before.len(),
+            2,
+            false,
+            Value::Null,
+            &diff,
+            unavailable,
+        );
+        assert_eq!(data["diff_unavailable"], json!("oversize"));
+        assert_eq!(data["added_lines"], json!(0));
+        assert!(data["files"][0]["diff_blocks"]
+            .as_array()
+            .expect("array")
+            .is_empty());
+    }
+
+    #[test]
+    fn edit_data_key_set_matches_the_contract() {
+        let data = edit_data_for("a\nb\n", "a\nc\n", &[2], "b", "c");
+        let map = data.as_object().expect("object");
+        let mut keys: Vec<&str> = map.keys().map(String::as_str).collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            vec![
+                "added",
+                "added_lines",
+                "bytes_after",
+                "bytes_before",
+                "changed_files",
+                "deleted",
+                "deleted_lines",
+                "diff_lines_omitted",
+                "dry_run",
+                "files",
+                "hunks_applied",
+                "lsp",
+                "moved",
+                "path",
+                "replace_all",
+                "replacements",
+                "updated",
+            ]
+        );
+        let file = &data["files"][0];
+        let mut file_keys: Vec<&str> = file
+            .as_object()
+            .expect("object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        file_keys.sort_unstable();
+        assert_eq!(
+            file_keys,
+            vec![
+                "action",
+                "added_lines",
+                "deleted_lines",
+                "diff_blocks",
+                "diff_lines_omitted",
+                "hunks",
+                "path",
+                "to_path"
+            ]
+        );
     }
 }

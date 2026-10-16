@@ -561,13 +561,19 @@ pub trait ThreadOpenLeaseStore {
         &self,
         session_id: &str,
         owner_instance_id: &str,
+        fencing_token: u64,
         ttl_s: f64,
     ) -> Result<bool> {
-        let _ = (self, session_id, owner_instance_id, ttl_s);
+        let _ = (self, session_id, owner_instance_id, fencing_token, ttl_s);
         Ok(false)
     }
-    fn release_thread_open_lease(&self, session_id: &str, owner_instance_id: &str) -> Result<bool> {
-        let _ = (self, session_id, owner_instance_id);
+    fn release_thread_open_lease(
+        &self,
+        session_id: &str,
+        owner_instance_id: &str,
+        fencing_token: u64,
+    ) -> Result<bool> {
+        let _ = (self, session_id, owner_instance_id, fencing_token);
         Ok(false)
     }
     fn get_thread_open_lease(

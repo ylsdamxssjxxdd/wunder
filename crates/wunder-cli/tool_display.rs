@@ -28,6 +28,7 @@ pub(crate) fn summarize_tool_result(payload: &Value, is_zh: bool) -> Option<Tool
         .or_else(|| summarize_read_files(data, is_zh))
         .or_else(|| summarize_write_file(result, data))
         .or_else(|| summarize_read_image(data))
+        .or_else(|| summarize_mcp_result(data, is_zh))
         .or_else(|| summarize_skill_call(data, is_zh))
         .or_else(|| summarize_lsp_query(result, data, is_zh))
         .or_else(|| summarize_ptc(data, is_zh))
@@ -204,6 +205,116 @@ fn summarize_read_image(data: &Value) -> Option<ToolDisplaySummary> {
         summary: Some(path.to_string()),
         details,
     })
+}
+
+/// Rows one MCP card keeps. The server decides how long a payload is, so the transcript
+/// must bound it before holding it.
+const MAX_MCP_DETAIL_ROWS: usize = 24;
+
+/// An MCP result is a list of typed content blocks and the engine hands them through
+/// unchanged: text, image, audio, embedded resource and link all arrive, and a block the
+/// client could not decode arrives as a `null` element instead of being dropped. The card
+/// has to read all of that, because a server that returns a chart is not an error.
+fn summarize_mcp_result(data: &Value, is_zh: bool) -> Option<ToolDisplaySummary> {
+    let server = data.get("server").and_then(Value::as_str)?;
+    if server.trim().is_empty() {
+        return None;
+    }
+    let inner = data.get("result").filter(|value| value.is_object())?;
+
+    let mut details = Vec::new();
+    let mut hidden_rows = 0usize;
+    let blocks = inner.get("content").and_then(Value::as_array);
+    for block in blocks.iter().flat_map(|items| items.iter()) {
+        let rows = mcp_block_rows(block, is_zh);
+        if details.len().saturating_add(rows.len()) > MAX_MCP_DETAIL_ROWS {
+            hidden_rows = hidden_rows.saturating_add(rows.len());
+            continue;
+        }
+        details.extend(rows);
+    }
+
+    // A lone text block that parses to exactly `structured_content` is stored once: the
+    // engine clears `content` in that case, so the structured form is the only copy left.
+    if details.is_empty() {
+        if let Some(structured) = inner.get("structured_content") {
+            if !structured.is_null() {
+                details.push(ToolDisplayLine {
+                    label: Some(if is_zh { "结构化结果:" } else { "structured:" }.to_string()),
+                    text: truncate_text(&compact_structured(structured), MAX_PREVIEW_CHARS),
+                });
+            }
+        }
+    }
+    if details.is_empty() {
+        return None;
+    }
+
+    let total = details.len().saturating_add(hidden_rows);
+    let shown = details.len();
+    append_remaining_count(&mut details, total, shown, is_zh);
+    Some(ToolDisplaySummary {
+        summary: None,
+        details,
+    })
+}
+
+/// One block, rendered as the rows it occupies. Media arrives as a marker: the bytes are
+/// for the model, and a wall of base64 is neither readable nor bounded.
+fn mcp_block_rows(block: &Value, is_zh: bool) -> Vec<ToolDisplayLine> {
+    match block.get("type").and_then(Value::as_str) {
+        Some("text") => block
+            .get("text")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .lines()
+            .map(|line| ToolDisplayLine {
+                label: None,
+                text: truncate_text(line, MAX_PREVIEW_CHARS),
+            })
+            .collect(),
+        Some("image") => vec![marker_line(if is_zh { "返回图片" } else { "Returned image" })],
+        Some("audio") => vec![marker_line(if is_zh { "<音频内容>" } else { "<audio content>" })],
+        Some("resource") => vec![marker_line(match resource_uri(block) {
+            Some(uri) => format!(
+                "{} {}",
+                if is_zh { "内嵌资源:" } else { "embedded resource:" },
+                uri
+            ),
+            None if is_zh => "<未知内嵌资源>".to_string(),
+            None => "<unknown embedded resource>".to_string(),
+        })],
+        Some("resource_link") => vec![marker_line(match resource_uri(block) {
+            Some(uri) => format!("{} {}", if is_zh { "链接:" } else { "link:" }, uri),
+            None if is_zh => "<未知链接>".to_string(),
+            None => "<unknown link>".to_string(),
+        })],
+        Some(other) => vec![marker_line(format!("<{other}>"))],
+        // A block the client could not read still occupies a slot in the array.
+        None => vec![marker_line(if is_zh {
+            "<无法解析的返回块>"
+        } else {
+            "<unread content block>"
+        })],
+    }
+}
+
+fn marker_line(text: impl Into<String>) -> ToolDisplayLine {
+    ToolDisplayLine { label: None, text: text.into() }
+}
+
+fn resource_uri(block: &Value) -> Option<String> {
+    block
+        .get("uri")
+        .or_else(|| block.get("resource").and_then(|value| value.get("uri")))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+}
+
+fn compact_structured(value: &Value) -> String {
+    serde_json::to_string(value).unwrap_or_default()
 }
 
 fn summarize_skill_call(data: &Value, is_zh: bool) -> Option<ToolDisplaySummary> {
@@ -531,6 +642,105 @@ fn number_value(value: Option<&Value>) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_mcp_result_keeps_its_content_blocks_and_marks_media() {
+        let summary = summarize_tool_result(
+            &serde_json::json!({ "ok": true, "data": {
+                "server": "crm", "tool": "lookup",
+                "result": { "content": [
+                    {"type": "text", "text": "two\nlines"},
+                    {"type": "image", "data": "AAAA", "mimeType": "image/png"},
+                    {"type": "resource_link", "uri": "https://example.invalid/a", "name": "a"},
+                    null
+                ] }
+            }}),
+            false,
+        )
+        .expect("mcp summary");
+        let texts = summary
+            .details
+            .iter()
+            .map(|line| line.text.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            texts,
+            [
+                "two",
+                "lines",
+                "Returned image",
+                "link: https://example.invalid/a",
+                "<unread content block>"
+            ],
+            "a block the client could not decode still gets a row: {texts:?}"
+        );
+        // The bytes of an image are for the model; the card must not carry them.
+        assert!(!summary
+            .details
+            .iter()
+            .any(|line| line.text.contains("AAAA")));
+    }
+
+    #[test]
+    fn an_mcp_result_in_chinese_marks_media_in_chinese() {
+        let summary = summarize_tool_result(
+            &serde_json::json!({ "ok": true, "data": {
+                "server": "crm", "tool": "lookup",
+                "result": { "content": [
+                    {"type": "audio", "data": "AAAA", "mimeType": "audio/wav"},
+                    {"type": "resource", "resource": {"uri": "file:///tmp/a"}}
+                ] }
+            }}),
+            true,
+        )
+        .expect("mcp summary");
+        assert_eq!(summary.details[0].text, "<音频内容>");
+        assert_eq!(summary.details[1].text, "内嵌资源: file:///tmp/a");
+    }
+
+    #[test]
+    fn an_mcp_result_that_stored_its_text_once_shows_the_structured_copy() {
+        // The engine clears `content` when its only text block parses to exactly
+        // `structured_content`, so the structured form is the only copy left to show.
+        let summary = summarize_tool_result(
+            &serde_json::json!({ "ok": true, "data": {
+                "server": "crm", "tool": "lookup",
+                "result": { "content": [], "structured_content": { "total": 2 } }
+            }}),
+            false,
+        )
+        .expect("mcp summary");
+        assert_eq!(summary.details[0].label.as_deref(), Some("structured:"));
+        assert!(summary.details[0].text.contains("total"), "{summary:?}");
+    }
+
+    #[test]
+    fn a_long_mcp_result_is_bounded_and_says_so() {
+        let blocks = (0..40)
+            .map(|n| serde_json::json!({ "type": "text", "text": format!("row {n}") }))
+            .collect::<Vec<_>>();
+        let summary = summarize_tool_result(
+            &serde_json::json!({ "ok": true, "data": {
+                "server": "crm", "tool": "lookup",
+                "result": { "content": blocks }
+            }}),
+            false,
+        )
+        .expect("mcp summary");
+        assert!(
+            summary.details.len() <= MAX_MCP_DETAIL_ROWS + 1,
+            "the card holds a bound, not the server's whole reply: {}",
+            summary.details.len()
+        );
+        assert!(
+            summary
+                .details
+                .last()
+                .is_some_and(|line| line.text.contains("more")),
+            "and it says what it left out: {:?}",
+            summary.details.last()
+        );
+    }
 
     #[test]
     fn summarize_list_files_result_uses_preview_lines() {

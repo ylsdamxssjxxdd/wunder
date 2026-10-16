@@ -639,6 +639,13 @@ async fn handle_ws(
                                                     }
                                                     continue;
                                                 }
+                                                if event.event == "workspace_update" {
+                                                    // Directory invalidations are side effects,
+                                                    // not transcript content. Queue/replay paths
+                                                    // additionally carry a durable row watermark.
+                                                    let _ = send_ws_event(&ws_tx_snapshot, Some(&request_id_cleanup), event).await;
+                                                    continue;
+                                                }
                                                 if event.event == "thread_item_tail" {
                                                     let _ = send_ws_tail_event(&ws_tx_snapshot, Some(&request_id_cleanup), event).await;
                                                     continue;

@@ -2,8 +2,10 @@
 //! 消息渲染与性能验证。生成走任务服务，批量写入与 CLI/蛹入口共用同一实现。
 
 use super::error_response;
-use crate::api::user_context::resolve_user;
+use crate::api::user_context::{resolve_user, ResolvedUser};
+use crate::i18n;
 use crate::services::stress_thread::{self, StartStressJobRequest};
+use crate::services::user_store::UserStore;
 use crate::state::AppState;
 use axum::extract::{Path as AxumPath, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -35,12 +37,25 @@ struct StartStressThreadRequest {
     title: Option<String>,
 }
 
+/// 压测线程属于测试能力，仅管理员可操作，避免普通用户误触发批量写入。
+fn require_admin(resolved: &ResolvedUser) -> Result<(), Response> {
+    if UserStore::is_admin(&resolved.user) {
+        Ok(())
+    } else {
+        Err(error_response(
+            StatusCode::FORBIDDEN,
+            i18n::t("error.permission_denied"),
+        ))
+    }
+}
+
 async fn start_stress_thread(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Json(payload): Json<StartStressThreadRequest>,
 ) -> Result<Json<Value>, Response> {
     let resolved = resolve_user(&state, &headers, None).await?;
+    require_admin(&resolved)?;
     let config = state.config_store.get().await;
     let target = stress_thread::StressStorageTarget::from_config(&config.storage)
         .map_err(|message| error_response(StatusCode::BAD_REQUEST, message))?;
@@ -61,6 +76,7 @@ async fn get_stress_thread(
     AxumPath(job_id): AxumPath<String>,
 ) -> Result<Json<Value>, Response> {
     let resolved = resolve_user(&state, &headers, None).await?;
+    require_admin(&resolved)?;
     stress_thread::stress_job_status(&resolved.user.user_id, job_id.trim())
         .map(Json)
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, format!("任务不存在: {job_id}")))
@@ -71,6 +87,7 @@ async fn list_stress_threads(
     headers: HeaderMap,
 ) -> Result<Json<Value>, Response> {
     let resolved = resolve_user(&state, &headers, None).await?;
+    require_admin(&resolved)?;
     Ok(Json(serde_json::json!({
         "jobs": stress_thread::list_stress_jobs(&resolved.user.user_id),
     })))

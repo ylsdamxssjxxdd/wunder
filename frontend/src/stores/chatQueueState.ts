@@ -199,7 +199,10 @@ export async function withdrawChatQueueTurn(
         await refreshChatQueue(targetId, { silent: true });
         if (!chatQueueForSession(targetId).items.some((item) => item.queueId === cleanedQueueId)) {
           if (removed) rememberQueueIdentities(targetId, queueItemIdentities(removed));
-          return { ok: true, message: '', item: removed };
+          // The task has already crossed the queue → execution boundary.  It
+          // is no longer a withdrawable composer row, so do not broadcast the
+          // stale item to the transcript-pruning path.
+          return { ok: true, message: '', item: null };
         }
       } catch { /* preserve the original conflict below */ }
     }

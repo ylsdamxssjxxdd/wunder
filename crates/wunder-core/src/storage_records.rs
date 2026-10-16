@@ -615,13 +615,16 @@ pub struct ThreadOpenLeaseRecord {
     pub user_id: String,
     pub owner_instance_id: String,
     pub client_kind: String,
+    /// Monotonically increasing ownership generation. Calls carrying an older
+    /// value are fenced after a lease expires or is released and reacquired.
+    pub fencing_token: u64,
     pub updated_time: f64,
     pub expires_at: f64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThreadOpenLeaseStatus {
-    Acquired,
+    Acquired { fencing_token: u64 },
     Busy,
 }
 

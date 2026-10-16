@@ -99,6 +99,8 @@ mod runtime_snapshot;
 mod stream_timeout;
 mod thread_change_hub;
 mod thread_log_committer;
+#[cfg(test)]
+mod thread_lifecycle_tests;
 mod thread_runtime;
 mod tool_calls;
 mod tool_exec;

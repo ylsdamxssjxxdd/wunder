@@ -245,7 +245,7 @@ impl CloudSessionFile {
     }
 
     /// Load the canonical shared session file. A corrupt file is treated as
-    /// logged out and removed.
+    /// logged out. Readers never remove a file that a writer may have replaced.
     pub fn load_any(base_dir: &Path) -> Option<Self> {
         let path = Self::path_for(base_dir, "shared");
         match std::fs::read_to_string(&path) {
@@ -253,7 +253,6 @@ impl CloudSessionFile {
                 Ok(session) => Some(session),
                 Err(err) => {
                     tracing::warn!("cloud session file is corrupt, ignoring: {err}");
-                    let _ = std::fs::remove_file(&path);
                     None
                 }
             },

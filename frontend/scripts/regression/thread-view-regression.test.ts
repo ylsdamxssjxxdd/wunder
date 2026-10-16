@@ -102,7 +102,10 @@ clearThreadView(key);generation=beginThreadView(key);
 commitThreadView(key,page([{...row(1,1),status:'queued',client_message_id:'fixture-queued'}]),generation);
 removeThreadViewTurnByClientMessageId(key,'fixture-queued');
 assert.equal(threadViewSlots(key)!.length,0);
-console.log('thread view: queued durable row is removable by client message id pass');
+commitThreadView(key,page([{...row(1,2),status:'running',client_message_id:'fixture-started'}],2),generation);
+removeThreadViewTurnByClientMessageId(key,'fixture-started');
+assert.equal(threadViewSlots(key)!.length,1);
+console.log('thread view: only queued durable rows are removable by client message id pass');
 
 clearThreadView(key);generation=beginThreadView(key);
 commitThreadView(key,page([{...row(1,1),status:'running',process_activity:{kind:'thinking'},assistant:{item_id:'fixture-answer-1',content:'',reasoning:'fixture thought',reasoning_offset:15}}]),generation);
@@ -199,6 +202,10 @@ console.log('thread view: busy admission preserves composer ownership until disp
 import {applyThreadViewHead} from '../../src/realtime/chat/threadViewStore';
 const replayCursor=threadViewCursor(key);
 assert.equal(applyThreadViewHead(key,{epoch:1,view_seq:200,runtime_status:'completed',active_turn_id:''}),true);
+assert.equal(threadViewStatus(key),'completed');
+// A composer-only pending row cannot reopen a server-authoritative terminal
+// head. This is the lifecycle that previously kept the stop button active.
+submitThreadView(key,'fixture-terminal-pending','next input');
 assert.equal(threadViewStatus(key),'completed');
 assert.equal(threadViewCursor(key),replayCursor);
 assert.equal(applyThreadViewHead(key,{epoch:1,view_seq:199,runtime_status:'running',active_turn_id:'fixture-stale'}),false);

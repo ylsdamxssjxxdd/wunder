@@ -6,7 +6,7 @@ import { reconcileChatQueueRows } from '@/stores/chatQueueLiveState';
 
 export interface ThreadBodyRef { body_id: string; revision: number; bytes: number }
 export interface ViewMessage { item_id: string; content: string; reasoning?: string; created_seq?: number; durable_seq?: number; content_offset?: number; reasoning_offset?: number; tail_offset?: number; body?: ThreadBodyRef; feedback?: unknown; stats?: unknown; tail?: string; failure?: string; attachments?: unknown[] }
-export interface ChatViewRow { root_turn_id: string; execution_turn_id?:string; user_round: number; client_message_id?: string; revision: number; status: string; queued_input?: { queue_id: string; reason: string; priority: number } | null; user: ViewMessage; assistant: ViewMessage; workflow_count: number; reasoning_count?: number; reasoning_item_id?: string; process_activity?: ProcessActivity; failed_count: number; subagents?: any[] }
+export interface ChatViewRow { root_turn_id: string; execution_turn_id?:string; user_round: number; client_message_id?: string; revision: number; status: string; queued_input?: { queue_id: string; reason: string; priority: number } | null; user: ViewMessage; assistant: ViewMessage; workflow_count: number; workspace_change_seq?: number; reasoning_count?: number; reasoning_item_id?: string; process_activity?: ProcessActivity; failed_count: number; subagents?: any[] }
 export interface ThreadViewPage { runtime_status?:string;active_turn_id?:string; session_id: string; epoch: number; view_seq: number; projection_state: string; degraded?: boolean; diagnostic?: string | null; thread_empty: boolean | null; latest_round: number; chat: ChatViewRow[]; trajectory: any[]; tiles: any[]; tile_level: number; next_before: number | null; has_more: boolean; next_after?: number | null; has_newer?: boolean }
 export type ViewPhase = 'opening' | 'ready' | 'verified_empty' | 'refreshing' | 'error';
 export interface ViewSlot { key: string; rootTurnId: string; user: Record<string, any>; assistant: Record<string, any> }
@@ -53,7 +53,7 @@ function materialize(row: ChatViewRow): ViewSlot {
     turn_id: row.execution_turn_id??row.root_turn_id, root_turn_id: row.root_turn_id, user_round: row.user_round, client_message_id: row.client_message_id,
     __runtime_projected: true, __thread_view:true, final: !running, state:role==='assistant'?(running?'streaming':row.status==='completed'?'final':row.status):'final', __thread_body: m.body, __thread_preview: Boolean(m.body && m.body.bytes > new TextEncoder().encode(m.content).length),
     streaming: role === 'assistant' && running, status: role === 'assistant' ? row.status : 'completed',
-    queued_input: row.queued_input,
+    queued_input: row.queued_input, workspace_change_seq: row.workspace_change_seq ?? 0,
     // The process badge counts every visible process entry.  The server keeps
     // tool counts separately, so include the aggregated reasoning entry here.
     workflow_count: row.workflow_count, reasoning_count: Number(row.reasoning_count || 0), reasoning_item_id: row.reasoning_item_id || '', process_count: row.workflow_count + Number(row.reasoning_count || 0) + (role === 'assistant' && String(m.reasoning || '').trim() && !Number(row.reasoning_count || 0) ? 1 : 0), workflow_failed_count: row.failed_count, feedback: m.feedback, stats: m.stats, reasoning: m.reasoning || '',
@@ -266,8 +266,14 @@ export function resetThreadViews(){entries.clear();notify();}
 export function clearThreadView(key:string) {entries.delete(key);notify();}
 export function threadViewStatus(key:string):string|null {
   void threadViewClock.value;const e=entries.get(key);if(!e)return null;
+  // Once a server head is available it is the sole execution authority.  A
+  // local `pending:` row represents a composer submission only; allowing it
+  // to reopen a completed head left the shell permanently busy after the
+  // server had already closed the turn.
+  if (e.headAuthoritative) return e.latestStatus;
   const rows=e.order.map(id=>e.rows.get(id)!);
-  // Local queued input cannot replace the active execution's shell status.
+  // Before the first durable head arrives, keep the optimistic submission
+  // responsive by treating an accepted local row as a provisional run.
   if (['running','waiting_input','waiting_approval'].includes(e.latestStatus)) return e.latestStatus;
   return rows.find(r=>r.root_turn_id.startsWith('pending:')&&r.status==='accepted')?'running':e.latestStatus;
 }
@@ -276,16 +282,19 @@ export function settlePendingThreadView(key:string,client:string,status:string,d
   r.status=status;r.assistant={...r.assistant,content:detail};e.slots.set(id,materialize(r));notify();
 }
 export function removePendingThreadView(key:string,client:string) {const e=entries.get(key);if(!e)return;const id=`pending:${client}`;e.rows.delete(id);e.slots.delete(id);e.order=e.order.filter(v=>v!==id);notify();}
-/** Remove a queued turn after the optimistic row has already been bound to a
- * durable root_turn_id. Queue withdrawal must address both identities because
- * the binding can race the cancel response. */
+/** Remove a locally parked turn after a confirmed queue withdrawal.  A client
+ * message id is not itself permission to remove a durable conversation turn:
+ * a queue start may win the cancel race and bind that same id to real output. */
 export function removeThreadViewTurnByClientMessageId(key:string,client:string) {
   const e = entries.get(key);
   const cleaned = String(client || '').trim();
   if (!e || !cleaned) return;
   const removed = new Set<string>();
   for (const [id, row] of e.rows) {
-    if (String(row.client_message_id || '').trim() === cleaned || id === `pending:${cleaned}`) {
+    const locallyPending = id === `pending:${cleaned}`;
+    const durablyParked = String(row.client_message_id || '').trim() === cleaned &&
+      row.status === 'queued';
+    if (locallyPending || durablyParked) {
       removed.add(id);
       e.rows.delete(id);
       e.slots.delete(id);

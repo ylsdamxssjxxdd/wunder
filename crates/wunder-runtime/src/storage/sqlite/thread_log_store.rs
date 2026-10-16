@@ -459,6 +459,12 @@ impl SqliteThreadLogStorage for SqliteStorage {
         let now = Self::now_ts();
         let mut conn = self.open()?;
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        if let Some(proof) = input.get("local_open_lease").filter(|value| !value.is_null()) {
+            let owner = proof.get("owner").and_then(Value::as_str).unwrap_or_default();
+            let token = proof.get("token").and_then(Value::as_u64).unwrap_or_default();
+            let valid: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM thread_open_leases WHERE session_id=? AND user_id=? AND owner_instance_id=? AND fencing_token=? AND expires_at > (julianday('now')-2440587.5)*86400.0)", params![session_id,user_id,owner,token], |row| row.get(0))?;
+            ensure!(valid, "THREAD_IN_USE: stale thread lease");
+        }
         tx.execute("INSERT INTO thread_logs(session_id,user_id,created_time,updated_time) VALUES(?,?,?,?) ON CONFLICT(session_id) DO NOTHING", params![session_id,user_id,now,now])?;
         let owner: Option<String> = tx
             .query_row(
@@ -533,6 +539,7 @@ impl SqliteThreadLogStorage for SqliteStorage {
             .take(240)
             .collect();
         let mut item = input.clone();
+        if let Some(fields) = item.as_object_mut() { fields.remove("local_open_lease"); }
         item["session_id"] = json!(session_id);
         item["turn_id"] = json!(turn_id);
         item["user_round"] = json!(round);
@@ -676,6 +683,12 @@ impl SqliteThreadLogStorage for SqliteStorage {
             "root_turn_id": root_id, "trigger_kind": trigger, "user_round": user_round}))?;
         tx.execute("INSERT INTO thread_log_changes(session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time) VALUES(?,?,?,?,?,?,?,?,?)", params![session_id,seq,user_id,change_type,turn_id,change_item,revision,change_payload,now])?;
         if input_changed > 0 {
+            crate::storage::thread_view_store::project_item(
+                &mut super::thread_view_store::Db(&tx),
+                user_id,
+                session_id,
+                &input_item_id,
+            )?;
             seq += 1;
             let bubble_payload = committed_item_payload(&tx, session_id, &input_item_id)?;
             let bubble_revision = bubble_payload.parse::<Value>()?["revision"]
@@ -720,34 +733,49 @@ impl SqliteThreadLogStorage for SqliteStorage {
     fn reconcile_terminal_turns_impl(&self, user_id: &str, session_id: &str) -> Result<()> {
         self.ensure_initialized()?;
         // This is deliberately bounded: a read repairs only a small number of
-        // abandoned requests, while normal traffic is repaired at commit time.
+        // abandoned requests, while normal traffic is settled by the runner.
         let conn = self.open()?;
         let mut stmt = conn.prepare(
-            "SELECT t.turn_id, COALESCE(json_extract(i.payload, '$.content'), '')
-             FROM thread_turns t
-             JOIN thread_items i ON i.session_id=t.session_id AND i.turn_id=t.turn_id
-             WHERE t.user_id=? AND t.session_id=?
-               AND t.status IN ('accepted','queued','running','waiting_input','waiting_approval')
-               AND i.kind='assistant_message' AND i.status='completed'
-               AND json_extract(i.payload, '$.event_type')='llm_output'
+            "SELECT t.turn_id
+             FROM (SELECT * FROM thread_turns WHERE user_id=? AND session_id=?
+                   AND status IN ('accepted','running') ORDER BY user_turn_index LIMIT 32) t
+             JOIN thread_items i ON i.user_id=t.user_id AND i.session_id=t.session_id AND i.root_turn_id=t.root_turn_id AND i.turn_id=t.turn_id
+             WHERE NOT EXISTS (SELECT 1 FROM session_locks l
+                    WHERE l.session_id=t.session_id AND l.expires_at>?)
+               AND i.item_id=(SELECT candidate.item_id FROM thread_items candidate
+                    WHERE candidate.user_id=t.user_id AND candidate.session_id=t.session_id
+                      AND candidate.root_turn_id=t.root_turn_id AND candidate.turn_id=t.turn_id
+                      AND candidate.kind='assistant_message'
+                    ORDER BY candidate.created_seq DESC LIMIT 1)
+               AND i.kind='assistant_message' AND i.status='completed' AND i.visibility='user'
+               AND length(trim(COALESCE(json_extract(i.payload, '$.content'), '')))>0
+               AND (json_extract(i.payload, '$.event_type')='llm_output'
+                    OR (json_extract(i.payload, '$.role')='assistant'
+                        AND json_type(i.payload, '$.meta.message_stats')='object'
+                        AND json_extract(i.payload, '$.meta.type') IS NULL))
                AND (json_extract(i.payload, '$.tool_calls') IS NULL
                     OR json_array_length(json_extract(i.payload, '$.tool_calls'))=0)
-             GROUP BY t.turn_id ORDER BY t.user_turn_index DESC LIMIT 32",
+               AND NOT EXISTS (SELECT 1 FROM thread_items newer
+                    WHERE newer.user_id=i.user_id AND newer.session_id=i.session_id
+                      AND newer.root_turn_id=i.root_turn_id AND newer.turn_id=i.turn_id
+                      AND newer.created_seq>i.created_seq
+                      AND newer.kind IN ('assistant_message','tool_call','approval'))
+             ORDER BY t.user_turn_index LIMIT 32",
         )?;
         let candidates = stmt
-            .query_map(params![user_id, session_id], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            .query_map(params![user_id, session_id, Self::now_ts()], |row| {
+                row.get::<_, String>(0)
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         drop(stmt);
         drop(conn);
-        for (turn_id, summary) in candidates {
+        for turn_id in candidates {
             let _ = self.update_thread_turn_impl(
                 user_id,
                 session_id,
                 &turn_id,
                 "completed",
-                &summary,
+                "",
                 &json!({
                     "session_id": session_id,
                     "turn_id": turn_id,

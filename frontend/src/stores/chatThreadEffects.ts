@@ -15,25 +15,37 @@ import { refreshWorkspaceForThreadStatus, shouldRefreshWorkspaceForThreadStatus 
 // with the same identifiers is not accidentally suppressed.
 const completedTurnClaims = new WeakMap<object, Set<string>>();
 const workspaceTurnStatuses = new WeakMap<object, Map<string, string>>();
+const workspaceViewChanges = new WeakMap<object, Map<string, number>>();
 
 const viewCompletions=new Map<string,Set<string>>();
 export const applyThreadViewEffects=(store,key:string,prior:Map<string,string>)=>{
   const previousStatus = ensureRuntime(key).threadStatus;
   const status = syncChatThreadShell(store,key, { refreshWorkspace: false });
   const agentId=store.sessions?.find(s=>s.id===key)?.agent_id;
-  const workspaceStatus = (threadViewSlots(key) ?? []).find(slot =>
+  const slots = threadViewSlots(key) ?? [];
+  const workspaceStatus = slots.find(slot =>
     shouldRefreshWorkspaceForThreadStatus(
       prior.get(slot.rootTurnId) ?? prior.get(`pending:${slot.assistant.client_message_id}`),
       slot.assistant.status
     )
   )?.assistant.status;
-  if (workspaceStatus || shouldRefreshWorkspaceForThreadStatus(previousStatus, status)) {
-    refreshWorkspaceForThreadStatus(store, key, workspaceStatus || status);
+  const watermarks = workspaceViewChanges.get(store) ?? new Map<string, number>();
+  workspaceViewChanges.set(store, watermarks);
+  let watermark = 0;
+  for (const slot of slots) watermark = Math.max(watermark, Number(slot.assistant.workspace_change_seq || 0));
+  const workspaceChanged = watermark > (watermarks.get(key) ?? 0);
+  if (workspaceChanged) {
+    watermarks.delete(key);
+    watermarks.set(key, watermark);
+    while (watermarks.size > 32) watermarks.delete(watermarks.keys().next().value!);
+  }
+  if (workspaceChanged || workspaceStatus || shouldRefreshWorkspaceForThreadStatus(previousStatus, status)) {
+    refreshWorkspaceForThreadStatus(store, key, workspaceChanged ? 'workspace_changed' : workspaceStatus || status);
   }
   const claims=viewCompletions.get(key)??new Set<string>();viewCompletions.delete(key);viewCompletions.set(key,claims);
   while(viewCompletions.size>32)viewCompletions.delete(viewCompletions.keys().next().value!);
   const completedTurns:AgentRuntimeCompletion[]=[];
-  for(const slot of threadViewSlots(key)??[]){const status=String(slot.assistant.status),turnId=String(slot.assistant.turn_id);
+  for(const slot of slots){const status=String(slot.assistant.status),turnId=String(slot.assistant.turn_id);
     if(!terminal(status)||!prior.has(slot.rootTurnId)||terminal(prior.get(slot.rootTurnId))||claims.has(turnId))continue;
     claims.add(turnId);if(claims.size>256)claims.delete(claims.values().next().value!);
     completedTurns.push({sessionId:key,turnId,status:status==='completed'?'completed':status==='failed'?'failed':'cancelled',...(agentId?{agentId}: {})});
@@ -58,8 +70,25 @@ export const syncChatThreadShell = (store, key: string, options: { refreshWorksp
     const latest=slots[slots.length-1];
     const status=String(threadViewStatus(key)??active?.assistant.status??latest?.assistant.status??'idle');
     const runtime=ensureRuntime(key);runtime.threadStatus=status;runtime.loaded=true;runtime.activeTurnId=threadViewOwnsExecution(key)?threadViewActiveTurnId(key):active?.rootTurnId??'';
+    runtime.lastThreadStatusAt = Date.now();
     const session=store.sessions?.find(s=>s.id===key);if(session){session.runtime_status=status;session.runtimeStatus=status;session.thread_status=status;session.threadStatus=status;}
-    if(['running','queued','waiting_input','waiting_approval'].includes(status))store.loadingBySession[key]=true;else delete store.loadingBySession[key];
+    const busy = ['accepted','running','queued','waiting_input','waiting_approval'].includes(status);
+    if (busy) store.loadingBySession[key] = true;
+    else {
+      delete store.loadingBySession[key];
+      runtime.pendingApprovalIds = [];
+      runtime.pendingApprovalCount = 0;
+      runtime.waitingForUserInput = false;
+    }
+    const projection = store.runtimeProjection?.sessions?.[key];
+    const busyReason = busy ? (status === 'queued' ? 'queued' : 'streaming') : null;
+    const shellChanged = previousStatus !== status || (projection &&
+      (projection.runtimeStatus !== status || projection.busyReason !== busyReason));
+    if (projection) {
+      projection.runtimeStatus = status;
+      projection.busyReason = busyReason;
+    }
+    if (shellChanged) markRuntimeProjectionChanged(store, { sessionId: key, reason: 'thread_shell', immediate: true });
     refreshWorkspace(status);
     return status;
   }

@@ -263,7 +263,10 @@ impl TempToolKind {
             Self::Patch => special.is_some_and(SpecialLogEntry::is_pending_patch),
             Self::Command => special.is_some_and(SpecialLogEntry::is_pending_command),
             Self::Generic(name) => {
-                name.eq_ignore_ascii_case(tool)
+                // A resumed thread can replay a row under a spelling the engine no longer
+                // emits; compare the resolved name or a pending card never closes.
+                crate::tool_presentation::canonical_tool_name(name)
+                    == crate::tool_presentation::canonical_tool_name(tool)
                     && special.is_some_and(|entry| entry.is_pending_tool_named(name))
             }
         }
@@ -681,6 +684,7 @@ pub struct TuiApp {
     /// collected, and the reading position to hand back on exit.
     transcript_search: TranscriptSearch,
     open_instance_id: String,
+    open_lease_token: u64,
     last_open_lease_touch: Instant,
 }
 
@@ -848,8 +852,10 @@ impl TuiApp {
             copy_feedback: None,
             transcript_search: TranscriptSearch::default(),
             open_instance_id: uuid::Uuid::new_v4().simple().to_string(),
+            open_lease_token: 0,
             last_open_lease_touch: Instant::now(),
         };
+        app.acquire_thread_lease(&session_id)?;
         app.load_persisted_history();
         app.load_popup_recents();
         app.refresh_workspace_context();
@@ -875,7 +881,6 @@ impl TuiApp {
         // The first frame owns the terminal: the file index, the popup catalogs,
         // the model status and the session stats all arrive afterwards.
         app.display_language = crate::locale::resolve_cli_language(&app.global);
-        app.acquire_thread_lease(&session_id)?;
         app.spawn_startup_fills();
         let is_zh = app.is_zh_language();
         let brand = crate::empty_state_animation::brand_name(is_zh);
@@ -943,7 +948,8 @@ impl TuiApp {
             "cli",
             30.0,
         )? {
-            ThreadOpenLeaseStatus::Acquired => {
+            ThreadOpenLeaseStatus::Acquired { fencing_token } => {
+                self.open_lease_token = fencing_token;
                 self.last_open_lease_touch = Instant::now();
                 Ok(())
             }
@@ -953,26 +959,35 @@ impl TuiApp {
         }
     }
 
-    fn release_thread_lease(&self, session_id: &str) {
-        let _ = self
-            .runtime
-            .state
-            .storage
-            .release_thread_open_lease(session_id, &self.open_instance_id);
+    fn release_thread_lease(&self, session_id: &str, fencing_token: u64) {
+        let _ = self.runtime.state.storage.release_thread_open_lease(
+            session_id,
+            &self.open_instance_id,
+            fencing_token,
+        );
+    }
+
+    fn validate_thread_lease(&self) -> Result<()> {
+        anyhow::ensure!(
+            self.runtime.state.storage.touch_thread_open_lease(
+                &self.session_id,
+                &self.open_instance_id,
+                self.open_lease_token,
+                30.0
+            )?,
+            "THREAD_IN_USE: thread lease expired; reopen the thread"
+        );
+        Ok(())
     }
 
     fn touch_thread_lease_if_due(&mut self) {
         if self.last_open_lease_touch.elapsed() < Duration::from_secs(10) {
             return;
         }
-        if self
-            .runtime
-            .state
-            .storage
-            .touch_thread_open_lease(&self.session_id, &self.open_instance_id, 30.0)
-            .unwrap_or(false)
-        {
-            self.last_open_lease_touch = Instant::now();
+        self.last_open_lease_touch = Instant::now();
+        if let Err(error) = self.validate_thread_lease() {
+            self.push_log(LogKind::Error, error.to_string());
+            self.should_quit = true;
         }
     }
 
@@ -3810,6 +3825,7 @@ impl TuiApp {
         };
         let expanded = self.card_is_expanded(index);
         let streaming = self.entry_is_streaming(kind, index);
+        let fold_is_zh = self.is_zh_language();
         let Some(entry) = self.logs.get_mut(index) else {
             return Vec::new();
         };
@@ -3856,14 +3872,16 @@ impl TuiApp {
         // A finished thinking block is background noise in the transcript: keep its head,
         // let Enter open the rest, and never fold a block that is still arriving.
         if entry.kind == LogKind::Reasoning && !streaming {
+            // A folded thinking block already carries its own `⋮ +N lines` and
+            // `+ Show thinking` pair; only the open card needs the generic closer.
             if expanded {
-                if let Some(line) =
-                    patch_log::disclosure_line(true, lines.len() > REASONING_FOLD_LINES)
-                {
+                let fold =
+                    (lines.len() > REASONING_FOLD_LINES).then_some(patch_log::Disclosure::Generic);
+                if let Some(line) = patch_log::disclosure_line(true, fold, width, fold_is_zh) {
                     lines.push(line);
                 }
             } else {
-                fold_reasoning_lines(&mut lines);
+                fold_reasoning_lines(&mut lines, fold_is_zh);
             }
         }
 
@@ -5183,6 +5201,11 @@ impl TuiApp {
     }
 
     fn handle_ctrl_c(&mut self) {
+        if let Err(error) = self.validate_thread_lease() {
+            self.push_log(LogKind::Error, error.to_string());
+            self.should_quit = true;
+            return;
+        }
         if self.model_wizard.is_some() {
             self.cancel_model_wizard();
             return;
@@ -5236,6 +5259,11 @@ impl TuiApp {
     /// Esc asks the running round to stop. It never quits the app and never arms the
     /// exit window: both belong to Ctrl+C, and a user reaching for Esc expects neither.
     fn request_esc_interrupt(&mut self) {
+        if let Err(error) = self.validate_thread_lease() {
+            self.push_log(LogKind::Error, error.to_string());
+            self.should_quit = true;
+            return;
+        }
         if self.runtime.state.monitor.cancel(&self.session_id) {
             self.turn_was_interrupted = true;
             self.push_log(
@@ -5684,11 +5712,6 @@ impl TuiApp {
             .thread_ui_cache
             .iter()
             .position(|(id, _)| id == session_id);
-        let history = if cached_index.is_none() {
-            Some(crate::load_session_history_entries(&self.runtime, session_id, 0).await?)
-        } else {
-            None
-        };
         if cached_index.is_none()
             && self.thread_ui_cache.len() >= super::thread_registry::MAX_THREAD_PROJECTIONS - 1
         {
@@ -5708,7 +5731,21 @@ impl TuiApp {
         // Acquire the new lease only after all fallible reads and capacity
         // checks have completed. If another instance owns it, the current
         // thread remains untouched and no lease is leaked on a read error.
+        let previous_lease_token = self.open_lease_token;
         self.acquire_thread_lease(session_id)?;
+        let history = if cached_index.is_none() {
+            match crate::load_session_history_entries(&self.runtime, session_id, 0).await {
+                Ok(history) => Some(history),
+                Err(error) => {
+                    self.release_thread_lease(session_id, self.open_lease_token);
+                    self.open_lease_token = previous_lease_token;
+                    return Err(error);
+                }
+            }
+        } else {
+            None
+        };
+
         let target_state = cached_index.and_then(|index| self.thread_ui_cache.remove(index));
         self.thread_registry.save_view_state(
             previous_session_id.as_str(),
@@ -5727,7 +5764,7 @@ impl TuiApp {
                 .queue_approval(previous_session_id.as_str(), request);
         }
         self.session_id = session_id.to_string();
-        self.release_thread_lease(&previous_session_id);
+        self.release_thread_lease(&previous_session_id, previous_lease_token);
         self.thread_registry.activate(session_id);
         self.busy = self.thread_has_live_work(session_id);
         let (draft, saved_scroll) = self.thread_registry.view_state(session_id);
@@ -6461,6 +6498,7 @@ impl TuiApp {
     }
 
     pub async fn submit_line(&mut self, line: String) -> Result<()> {
+        self.validate_thread_lease()?;
         self.flush_pending_paste();
         self.sync_attachment_placeholders();
         let visible_line = line.trim_end().to_string();
@@ -6632,6 +6670,8 @@ impl TuiApp {
             attachments,
         )
         .await?;
+        request.config_overrides.get_or_insert_with(|| json!({}))["__local_open_lease"] =
+            json!({"owner":self.open_instance_id,"token":self.open_lease_token});
         request.approval_tx = Some(approval_tx);
         let orchestrator = self.runtime.state.kernel.orchestrator.clone();
         let frame_requester = self.frame_requester.clone();
@@ -7906,7 +7946,16 @@ impl TuiApp {
                 {
                     self.note_session_warning(note.as_str());
                 }
-                if is_apply_patch_tool_name(tool) {
+                // A finished write carries the same applied-diff shape as a patch, so it
+                // belongs on the diff card; a failed write keeps the tool card that can show
+                // its error note instead.
+                let write_landed = crate::tool_presentation::is_write_tool_name(tool)
+                    && payload
+                        .get("ok")
+                        .or_else(|| payload.get("result").and_then(|value| value.get("ok")))
+                        .and_then(Value::as_bool)
+                        .unwrap_or(true);
+                if is_apply_patch_tool_name(tool) || write_landed {
                     self.complete_patch_log(payload);
                 } else if is_execute_command_tool_name(tool) {
                     let updates = self.command_sessions.register_tool_result_all(payload);
@@ -8806,7 +8855,7 @@ impl TuiApp {
 
 impl Drop for TuiApp {
     fn drop(&mut self) {
-        self.release_thread_lease(&self.session_id);
+        self.release_thread_lease(&self.session_id, self.open_lease_token);
     }
 }
 
@@ -9155,15 +9204,23 @@ fn reasoning_folded_rows(full_rows: usize, expanded: bool) -> usize {
     }
 }
 
-fn fold_reasoning_lines(lines: &mut Vec<Line<'static>>) {
+fn fold_reasoning_lines(lines: &mut Vec<Line<'static>>, is_zh: bool) {
     if lines.len() <= REASONING_FOLD_LINES {
         return;
     }
     let omitted = lines.len().saturating_sub(REASONING_FOLD_LINES);
     lines.truncate(REASONING_FOLD_LINES);
-    lines.push(fold_marker_line(format!("+{omitted} lines")));
+    lines.push(fold_marker_line(if is_zh {
+        format!("+{omitted} 行")
+    } else {
+        format!("+{omitted} lines")
+    }));
     lines.push(Line::from(Span::styled(
-        "  + Show thinking (enter)".to_string(),
+        if is_zh {
+            "  + 展开思考 (enter)".to_string()
+        } else {
+            "  + Show thinking (enter)".to_string()
+        },
         super::theme::accent_text(),
     )));
 }

@@ -14,15 +14,15 @@ use super::session::{wunder_home_dir, CloudAccountSnapshot, CloudSessionFile};
 use super::CloudSessionExpired;
 use crate::config::LlmModelConfig;
 use crate::config_store::ConfigStore;
+use crate::core::process_file_lock::ProcessFileLock;
 use anyhow::{anyhow, Result};
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
-use std::fs::OpenOptions;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, UNIX_EPOCH};
 use tokio::sync::Notify;
 
 /// Provider name for synthesized cloud model entries (alias `cloud`).
@@ -45,7 +45,6 @@ pub const TOKEN_RENEW_CHECK_INTERVAL_SECS: u64 = 300;
 const CONNECT_TIMEOUT_SECS: u64 = 5;
 const REQUEST_TIMEOUT_SECS: u64 = 20;
 const SESSION_LOCK_WAIT_SECS: u64 = 8;
-const SESSION_LOCK_STALE_SECS: u64 = 60;
 
 static SHARED: OnceLock<Arc<CloudService>> = OnceLock::new();
 
@@ -91,16 +90,6 @@ fn session_fingerprint(base: &Path) -> Option<SessionFingerprint> {
         modified_secs: duration.as_secs(),
         modified_nanos: duration.subsec_nanos(),
     })
-}
-
-struct SessionFileLock {
-    path: PathBuf,
-}
-
-impl Drop for SessionFileLock {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.path);
-    }
 }
 
 /// UI-facing login/account status snapshot.
@@ -274,39 +263,12 @@ impl CloudService {
         }
     }
 
-    async fn acquire_session_file_lock(&self) -> Result<SessionFileLock> {
-        let base = self.session_base_dir();
-        let path = base.join("config/cloud.session.lock");
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let started = std::time::Instant::now();
-        loop {
-            match OpenOptions::new().write(true).create_new(true).open(&path) {
-                Ok(file) => {
-                    use std::io::Write;
-                    let mut file = file;
-                    let _ = writeln!(file, "{}", std::process::id());
-                    return Ok(SessionFileLock { path });
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                    let stale = std::fs::metadata(&path)
-                        .and_then(|meta| meta.modified())
-                        .ok()
-                        .and_then(|modified| SystemTime::now().duration_since(modified).ok())
-                        .is_some_and(|age| age > Duration::from_secs(SESSION_LOCK_STALE_SECS));
-                    if stale {
-                        let _ = std::fs::remove_file(&path);
-                        continue;
-                    }
-                    if started.elapsed() >= Duration::from_secs(SESSION_LOCK_WAIT_SECS) {
-                        return Err(anyhow!("cloud session refresh is busy"));
-                    }
-                    tokio::time::sleep(Duration::from_millis(40)).await;
-                }
-                Err(error) => return Err(error.into()),
-            }
-        }
+    async fn acquire_session_file_lock(&self) -> Result<ProcessFileLock> {
+        ProcessFileLock::acquire(
+            &self.session_base_dir().join("config/cloud.session.lock"),
+            Duration::from_secs(SESSION_LOCK_WAIT_SECS),
+        )
+        .await
     }
 
     fn persist_session_fingerprint(&self) {
@@ -472,11 +434,10 @@ impl CloudService {
     /// token and return `Ok(true)` without another request.
     pub async fn recover_auth(&self, stale_access_token: &str) -> Result<bool> {
         let _guard = self.refresh_lock.lock().await;
-        // The file lock only protects the disk snapshot and the final atomic
-        // replacement. Do not hold it across the network request: logout or a
-        // second client must be able to make progress while the server is slow.
+        // Rotating refresh tokens are single-use. Serialize the whole exchange
+        // across processes, including publication, to prevent family revocation.
+        let _file_lock = self.acquire_session_file_lock().await?;
         let (server, refresh_token) = {
-            let _file_lock = self.acquire_session_file_lock().await?;
             // A different process may have completed the rotation while this
             // process was waiting for the local single-flight lock.
             self.ensure_loaded();
@@ -555,46 +516,31 @@ impl CloudService {
         let expires_at = data["expires_at"].as_f64();
         let username = data["user"]["username"].as_str().map(str::to_string);
 
-        let mut persist = None;
-        {
-            let _file_lock = self.acquire_session_file_lock().await?;
-            // Re-read after the request while holding the file lock. Another
-            // process may have rotated or removed the session in the meantime;
-            // never overwrite that newer state with this response.
-            self.ensure_loaded();
-            let mut state = self.lock_state();
-            if state
-                .session
-                .as_ref()
-                .is_none_or(|session| session.token != stale_access_token)
-            {
-                return Ok(state.session.is_some());
-            }
-            if let Some(session) = state.session.as_mut() {
-                session.token = new_access;
-                if let Some(new_refresh) = new_refresh {
-                    session.refresh_token = Some(new_refresh);
-                }
-                if expires_at.is_some() {
-                    session.token_expires_at = expires_at;
-                }
-                if let Some(username) = username {
-                    session.username = username;
-                }
-            }
-            if state.session.is_some() {
-                state.expired = false;
-                state.connection = CONNECTION_ONLINE;
-                state.last_error = None;
-                state.next_retry_at = None;
-                state.last_success_at = Some(super::reporter::now_unix_seconds());
-                persist = state.session.clone();
-            }
+        self.ensure_loaded();
+        let mut next = match self.session() {
+            Some(session) if session.token == stale_access_token => session,
+            session => return Ok(session.is_some()),
+        };
+        next.token = new_access;
+        if let Some(token) = new_refresh {
+            next.refresh_token = Some(token);
         }
-        if let Some(session) = persist {
-            let base_dir = self.session_base_dir();
-            let _ = tokio::task::spawn_blocking(move || session.save(&base_dir)).await;
-            self.persist_session_fingerprint();
+        if expires_at.is_some() {
+            next.token_expires_at = expires_at;
+        }
+        if let Some(username) = username {
+            next.username = username;
+        }
+        next.save(&self.session_base_dir())?;
+        {
+            let mut state = self.lock_state();
+            state.session = Some(next);
+            state.session_fingerprint = session_fingerprint(&self.session_base_dir());
+            state.expired = false;
+            state.connection = CONNECTION_ONLINE;
+            state.last_error = None;
+            state.next_retry_at = None;
+            state.last_success_at = Some(super::reporter::now_unix_seconds());
         }
         Ok(true)
     }
@@ -931,9 +877,12 @@ impl CloudService {
     /// die with the file, so nothing stale can be replayed afterwards.
     pub async fn logout(&self, config_store: &ConfigStore) -> Result<()> {
         let session = {
-            let mut state = self.lock_state();
-            state.loaded = true;
-            state.session.take()
+            let _file_lock = self.acquire_session_file_lock().await?;
+            self.ensure_loaded();
+            let session = self.session();
+            self.clear_session_state();
+            remove_cloud_models(config_store).await?;
+            session
         };
         if let Some(session) = session {
             let _ = self
@@ -943,11 +892,7 @@ impl CloudService {
                 .timeout(Duration::from_secs(5))
                 .send()
                 .await;
-            let _file_lock = self.acquire_session_file_lock().await?;
-            CloudSessionFile::remove(&self.session_base_dir(), &session.client);
         }
-        self.clear_session_state();
-        remove_cloud_models(config_store).await?;
         Ok(())
     }
 
@@ -1034,6 +979,8 @@ impl CloudService {
 
     /// Toggle basic-preference sharing (§4.6).
     pub async fn set_preferences_sync(&self, enabled: bool) -> Result<()> {
+        let _file_lock = self.acquire_session_file_lock().await?;
+        self.ensure_loaded();
         let snapshot = {
             let mut state = self.lock_state();
             let Some(session) = state.session.as_mut() else {
@@ -1043,9 +990,8 @@ impl CloudService {
             session.clone()
         };
         let base_dir = self.session_base_dir();
-        tokio::task::spawn_blocking(move || snapshot.save(&base_dir))
-            .await
-            .ok();
+        snapshot.save(&base_dir)?;
+        self.persist_session_fingerprint();
         Ok(())
     }
 
@@ -1100,7 +1046,15 @@ impl CloudService {
 
     /// Pull the account overview, refresh the in-memory snapshot and persist.
     pub async fn refresh_account(&self) -> Result<CloudAccountSnapshot> {
+        let before = self.session();
         let mut account = self.fetch_cloud_account().await?;
+        let _file_lock = self.acquire_session_file_lock().await?;
+        self.ensure_loaded();
+        if self.session().as_ref().map(|s| (&s.user_id, &s.device_id))
+            != before.as_ref().map(|s| (&s.user_id, &s.device_id))
+        {
+            return Err(anyhow!("cloud session changed during account refresh"));
+        }
         let persist = {
             let mut state = self.lock_state();
             if let Some(current) = state.session.as_mut() {
@@ -1114,7 +1068,8 @@ impl CloudService {
         };
         if let Some(session) = persist {
             let base_dir = self.session_base_dir();
-            let _ = tokio::task::spawn_blocking(move || session.save(&base_dir)).await;
+            session.save(&base_dir)?;
+            self.persist_session_fingerprint();
         }
         Ok(account)
     }
@@ -1412,6 +1367,20 @@ impl CloudService {
     }
 
     fn persist_log_cursor(&self, last_seq: i64) {
+        let base = self.session_base_dir();
+        let Ok(lock) = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(base.join("config/cloud.session.lock"))
+        else {
+            return;
+        };
+        if lock.try_lock().is_err() {
+            return;
+        }
+        self.ensure_loaded();
         let persist = {
             let mut state = self.lock_state();
             let Some(session) = state.session.as_mut() else {
@@ -1425,6 +1394,7 @@ impl CloudService {
         };
         let base_dir = self.session_base_dir();
         let _ = persist.save(&base_dir);
+        self.persist_session_fingerprint();
         self.flush_in_flight.store(false, Ordering::Release);
     }
 }

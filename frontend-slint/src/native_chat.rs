@@ -1398,7 +1398,7 @@ fn terminal_spans(grid: &mut terminal_grid::TerminalGrid) -> Vec<TermSpan> {
 /// callback means the very first frame is already laid out for the real box.
 /// A geometry change is also reported to the shell: a console backend reflows
 /// its lines to it, so the panel and the program agree on one width.
-fn paint_terminal(app: &MainWindow, host: &mut State) {
+fn paint_terminal(host: &mut State) {
     let Some(workspace_id) = host.terminal_workspace.clone() else {
         return;
     };
@@ -1471,7 +1471,7 @@ fn bind_terminal(app: &MainWindow, state: Rc<RefCell<State>>) {
             Ok(_) => {
                 let mut host = state.borrow_mut();
                 if let Some(window) = host.terminal_window.clone() {
-                    paint_terminal(&app, &mut host);
+                    paint_terminal(&mut host);
                     let _ = window.show();
                 }
             }
@@ -1480,7 +1480,7 @@ fn bind_terminal(app: &MainWindow, state: Rc<RefCell<State>>) {
     });
     let window = state.borrow().terminal_window.clone();
     let Some(window) = window else {
-        bind_terminal_poll(app, state);
+        bind_terminal_poll(state);
         return;
     };
     let callback_state = Rc::downgrade(&state);
@@ -1552,12 +1552,11 @@ fn bind_terminal(app: &MainWindow, state: Rc<RefCell<State>>) {
             workspace.status = "已中断".into();
             workspace.error = false;
         }
-        paint_terminal(&app, &mut host);
+        paint_terminal(&mut host);
     });
     let callback_state = Rc::downgrade(&state);
-    let weak = app.as_weak();
     window.on_clear(move || {
-        let (Some(app), Some(state)) = (weak.upgrade(), callback_state.upgrade()) else {
+        let Some(state) = callback_state.upgrade() else {
             return;
         };
         let mut host = state.borrow_mut();
@@ -1569,12 +1568,11 @@ fn bind_terminal(app: &MainWindow, state: Rc<RefCell<State>>) {
         };
         workspace.grid.clear();
         workspace.loss_marked = false;
-        paint_terminal(&app, &mut host);
+        paint_terminal(&mut host);
     });
     let callback_state = Rc::downgrade(&state);
-    let weak = app.as_weak();
     window.on_scrolled(move |delta| {
-        let (Some(app), Some(state)) = (weak.upgrade(), callback_state.upgrade()) else {
+        let Some(state) = callback_state.upgrade() else {
             return;
         };
         let mut host = state.borrow_mut();
@@ -1585,12 +1583,11 @@ fn bind_terminal(app: &MainWindow, state: Rc<RefCell<State>>) {
             return;
         };
         workspace.grid.scroll_by(delta);
-        paint_terminal(&app, &mut host);
+        paint_terminal(&mut host);
     });
     let callback_state = Rc::downgrade(&state);
-    let weak = app.as_weak();
     window.on_scroll_to(move |row| {
-        let (Some(app), Some(state)) = (weak.upgrade(), callback_state.upgrade()) else {
+        let Some(state) = callback_state.upgrade() else {
             return;
         };
         let mut host = state.borrow_mut();
@@ -1601,15 +1598,14 @@ fn bind_terminal(app: &MainWindow, state: Rc<RefCell<State>>) {
             return;
         };
         workspace.grid.scroll_to_row(row.max(0) as usize);
-        paint_terminal(&app, &mut host);
+        paint_terminal(&mut host);
     });
     let callback_state = Rc::downgrade(&state);
-    let weak = app.as_weak();
     window.on_geometry_changed(move || {
-        let (Some(app), Some(state)) = (weak.upgrade(), callback_state.upgrade()) else {
+        let Some(state) = callback_state.upgrade() else {
             return;
         };
-        paint_terminal(&app, &mut state.borrow_mut());
+        paint_terminal(&mut state.borrow_mut());
     });
     let callback_state = Rc::downgrade(&state);
     let weak = app.as_weak();
@@ -1635,7 +1631,7 @@ fn bind_terminal(app: &MainWindow, state: Rc<RefCell<State>>) {
         }
         app.set_terminal_mode(false);
     });
-    bind_terminal_poll(app, state);
+    bind_terminal_poll(state);
 }
 
 fn enqueue_terminal_input(app: &MainWindow, state: &Rc<RefCell<State>>, input: &[u8]) {
@@ -1759,14 +1755,13 @@ fn describe_terminal_status(frame: &wunder_desktop::NativeTerminalFrame) -> Stri
 /// screen model and repaints the viewport. Cheap no-op while no terminal is
 /// alive, and the work per tick stays bounded by the screen however much the
 /// shell printed.
-fn bind_terminal_poll(app: &MainWindow, state: Rc<RefCell<State>>) {
-    let weak = app.as_weak();
+fn bind_terminal_poll(state: Rc<RefCell<State>>) {
     let callback_state = Rc::downgrade(&state);
     state.borrow().terminal_timer.start(
         TimerMode::Repeated,
         Duration::from_millis(300),
         move || {
-            let (Some(app), Some(state)) = (weak.upgrade(), callback_state.upgrade()) else {
+            let Some(state) = callback_state.upgrade() else {
                 return;
             };
             let mut state = state.borrow_mut();
@@ -1805,7 +1800,7 @@ fn bind_terminal_poll(app: &MainWindow, state: Rc<RefCell<State>>) {
                         if let Some(workspace) = state.terminals.get_mut(&workspace_id) {
                             workspace.grid.feed(frame.text.as_bytes());
                         }
-                        paint_terminal(&app, &mut state);
+                        paint_terminal(&mut state);
                     }
                     let status = describe_terminal_status(&frame);
                     if let Some(workspace) = state.terminals.get_mut(&workspace_id) {

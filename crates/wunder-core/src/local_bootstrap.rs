@@ -6,7 +6,8 @@
 //! from choosing a client-specific layout.
 
 use anyhow::{Context, Result};
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 pub const HOME_ENV: &str = "WUNDER_HOME";
@@ -104,8 +105,42 @@ pub fn release_file_if_missing(target: &Path, bytes: &[u8]) -> Result<bool> {
     if let Some(parent) = target.parent() {
         fs::create_dir_all(parent)?;
     }
-    crate::atomic_write::atomic_write_bytes(target, bytes)?;
-    Ok(true)
+    // Publish a complete staging inode with create-if-absent semantics. A
+    // check followed by rename would overwrite another client's first write.
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let sequence = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let staging = target.with_file_name(format!(
+        ".asset-{}-{stamp}-{sequence}.tmp",
+        std::process::id()
+    ));
+    // These bytes are immutable bundled seeds. The destination is linked only
+    // after the complete staging write, so a crash leaves either a valid file
+    // or no destination and the next launch retries it. Avoiding a per-asset
+    // fsync is material on the first launch with hundreds of small files; the
+    // user database and credentials still use strict atomic writes.
+    let mut file = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&staging)?;
+    file.write_all(bytes)?;
+    file.flush()?;
+    drop(file);
+    let result = fs::hard_link(&staging, target);
+    let _ = fs::remove_file(&staging);
+    match result {
+        Ok(()) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
+        // Windows can report AccessDenied while the winning publisher removes
+        // its staging link. A complete destination is already published then;
+        // preserve it just as in the initial existence check. Do not hide a
+        // permission error when no regular destination file exists.
+        Err(_) if target.is_file() => Ok(false),
+        Err(error) => Err(error.into()),
+    }
 }
 
 #[cfg(test)]
@@ -131,5 +166,37 @@ mod tests {
         assert!(release_file_if_missing(&file, b"first").unwrap());
         assert!(!release_file_if_missing(&file, b"second").unwrap());
         assert_eq!(fs::read(file).unwrap(), b"first");
+    }
+
+    #[test]
+    fn concurrent_publishers_preserve_one_complete_file() {
+        let dir = tempdir().unwrap();
+        let barrier = std::sync::Barrier::new(2);
+        std::thread::scope(|scope| {
+            let run = |payload: &[u8]| {
+                let mut results = Vec::new();
+                for index in 0..128 {
+                    let file = dir.path().join(format!("asset-{index}"));
+                    barrier.wait();
+                    results.push(release_file_if_missing(&file, payload));
+                }
+                results
+            };
+            let left = scope.spawn(move || run(b"first complete payload"));
+            let right = scope.spawn(move || run(b"second complete payload"));
+            let left = left.join().unwrap();
+            let right = right.join().unwrap();
+            let published: usize = left
+                .into_iter()
+                .chain(right)
+                .map(|r| usize::from(r.unwrap()))
+                .sum();
+            assert_eq!(published, 128);
+        });
+        for index in 0..128 {
+            let bytes = fs::read(dir.path().join(format!("asset-{index}"))).unwrap();
+            assert!(bytes == b"first complete payload" || bytes == b"second complete payload");
+        }
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 128);
     }
 }

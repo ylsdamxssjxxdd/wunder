@@ -7,6 +7,7 @@ pub mod bounded_queue;
 pub mod command_utils;
 pub mod config;
 pub mod config_store;
+pub(crate) mod process_file_lock;
 pub mod dpi;
 pub mod drawio_config;
 pub mod exec_policy;

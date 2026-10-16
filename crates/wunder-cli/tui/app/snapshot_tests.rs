@@ -740,7 +740,7 @@ async fn the_acceptance_sample_composes_the_documented_template() {
         "Ran cargo test --workspace",
         "└ ",
         "lines",
-        "+ Show details (enter)",
+        "lines (enter to expand)",
         "Failed (exit 1)",
         "Edited src/main.rs (+12 -3 2 hunks)",
         "esc to interrupt",
@@ -763,15 +763,15 @@ async fn the_acceptance_sample_composes_the_documented_template() {
         frame.contains('+') && frame.contains('-'),
         "diff markers survive: {frame}"
     );
-    // The two fold glyphs stay distinct: `…` is hidden output on a command card, `⋮` is a
-    // folded range inside a diff.
+    // The two fold marks stay distinct: `…` is output the stored window lost, the counted
+    // disclosure row is what Enter brings back.
     assert!(
         frame.contains('\u{2026}'),
         "hidden output uses the sample's ellipsis: {frame}"
     );
     assert!(
-        frame.contains('\u{22ee}'),
-        "the diff keeps its range separator: {frame}"
+        frame.contains("lines (enter to expand)"),
+        "the diff's fold is counted on the row that opens it: {frame}"
     );
 
     // Same sample at a narrow frame: nothing may exceed the columns it was given, and the
@@ -1581,32 +1581,45 @@ async fn a_click_in_the_composer_places_the_caret_under_the_pointer() {
     assert!(matches!(app.focus_area, FocusArea::Input));
 }
 
-/// A tool card is a disclosure subject like any other: its detail rows hold behind the
-/// same row, and Enter reads them.
+/// A tool card is a disclosure subject like any other: it previews the head of its result
+/// and holds the overflow — and a remote call's arguments — behind the same row.
 #[tokio::test]
-async fn a_tool_card_holds_its_detail_rows_behind_the_disclosure() {
+async fn a_tool_card_previews_its_rows_and_holds_the_rest_behind_the_disclosure() {
     let root = TempRoot::new("tool_fold");
     let mut app = fixture_app(root.path()).await;
     app.logs.clear();
+    let content = (1..=5)
+        .map(|n| json!({ "type": "text", "text": format!("row {n}") }))
+        .collect::<Vec<_>>();
     let card = build_completed_tool_log(
-        "search_web",
-        &json!({ "result": { "ok": false, "error": "403 forbidden by the provider" } }),
+        "crm@lookup",
+        &json!({ "result": { "ok": true, "args": { "customer": "42" }, "data": {
+            "server": "crm", "tool": "lookup", "result": { "content": content }
+        }} }),
         false,
         None,
     );
     let summary = card.summary_text();
     app.push_special_log(LogKind::Tool, summary, card);
 
-    let folded = draw_rows(&mut app, 60, 12);
+    let folded = draw_rows(&mut app, 60, 16);
+    assert!(
+        folded.iter().any(|row| row.contains("row 1")),
+        "a result is readable without asking for it: {folded:?}"
+    );
+    assert!(
+        !folded.iter().any(|row| row.contains("row 5")),
+        "the overflow stays folded: {folded:?}"
+    );
     assert!(
         folded
             .iter()
-            .any(|row| row.contains("+ Show details (enter)")),
-        "a tool card with details offers them: {folded:?}"
+            .any(|row| row.contains("+2 lines (enter to expand)")),
+        "the row counts exactly what Enter adds: {folded:?}"
     );
     assert!(
-        !folded.iter().any(|row| row.contains("Error:")),
-        "the detail row stays folded: {folded:?}"
+        !folded.iter().any(|row| row.contains("Arguments:")),
+        "the arguments wait for the open card: {folded:?}"
     );
 
     app.transcript_selected = Some(app.logs.len() - 1);
@@ -1614,10 +1627,14 @@ async fn a_tool_card_holds_its_detail_rows_behind_the_disclosure() {
         app.toggle_selected_card(),
         "Enter has something to reveal on this card"
     );
-    let opened = draw_rows(&mut app, 60, 12);
+    let opened = draw_rows(&mut app, 60, 16);
     assert!(
-        opened.iter().any(|row| row.contains("Error:")),
-        "Enter revealed it: {opened:?}"
+        opened.iter().any(|row| row.contains("row 5")),
+        "Enter revealed the overflow: {opened:?}"
+    );
+    assert!(
+        opened.iter().any(|row| row.contains("customer")),
+        "and the remote call's arguments: {opened:?}"
     );
     assert!(
         opened.iter().any(|row| row.contains("\u{2212} Show less")),

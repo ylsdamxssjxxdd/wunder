@@ -2,20 +2,409 @@
 #!/usr/bin/env python3
 """Wunder browser bridge over JSON-line stdio.
 
-This bridge intentionally keeps the runtime side in Python/Playwright for now,
-while the Rust side owns session/tab orchestration and public contracts.
+The runtime side stays in Python/Playwright while the Rust side owns
+session/tab orchestration and public contracts. Three things are enforced here
+rather than only in Rust, because a browser can always reach a URL the caller
+never named, and can always show things the outer document does not contain:
+
+* the URL policy is applied to every request the browser makes (redirects,
+  subresources, script-driven fetch/navigation, popups), not just the entry URL;
+* the snapshot and page read cover every frame Playwright can reach plus the
+  open shadow roots inside each frame, and every ref records the frame it came
+  from so the action can address it again;
+* popups and `window.open` targets are adopted into the tab list, so a tab the
+  model can see is also a tab it can focus and close.
 """
 
 from __future__ import annotations
 
 import argparse
 import base64
+import ipaddress
 import json
 import os
+import re
+import socket
 import sys
 import traceback
 from collections import OrderedDict
 from pathlib import Path
+from urllib.parse import urlparse
+
+# Runs inside one frame: open shadow roots are traversed here because they share
+# the frame's document; nested frames are handled by the caller so each gets its
+# own execution context and selector namespace.
+SNAPSHOT_JS = """(opts) => {
+  const lines = [];
+  const refs = [];
+  let localCounter = 0;
+  const seenTexts = new Set();
+
+  const escape = (value) => (window.CSS && CSS.escape ? CSS.escape(value) : String(value));
+
+  function cssPath(el, stopNode) {
+    const parts = [];
+    let node = el;
+    while (node && node.nodeType === Node.ELEMENT_NODE && node !== stopNode) {
+      if (node.id) {
+        parts.unshift('#' + escape(node.id));
+        break;
+      }
+      let part = node.tagName.toLowerCase();
+      if (node.classList.length > 0) {
+        const classes = Array.from(node.classList)
+          .filter(Boolean)
+          .slice(0, 2)
+          .map((name) => '.' + escape(name))
+          .join('');
+        part += classes;
+      }
+      const parent = node.parentElement;
+      if (parent) {
+        const siblings = Array.from(parent.children).filter(
+          (child) => child.tagName === node.tagName
+        );
+        if (siblings.length > 1) {
+          part += ':nth-of-type(' + (siblings.indexOf(node) + 1) + ')';
+        }
+      }
+      parts.unshift(part);
+      node = parent;
+    }
+    return parts.join(' > ');
+  }
+
+  function isVisible(el) {
+    if (!(el instanceof HTMLElement)) return false;
+    let style = null;
+    try {
+      style = window.getComputedStyle(el);
+    } catch (e) {
+      return false;
+    }
+    if (!style || style.display === 'none' || style.visibility === 'hidden') return false;
+    const rect = el.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  }
+
+  function roleOf(el) {
+    const explicit = el.getAttribute && el.getAttribute('role');
+    if (explicit) return explicit;
+    const tag = el.tagName.toLowerCase();
+    if (tag === 'a') return 'link';
+    if (tag === 'button') return 'button';
+    if (tag === 'input') {
+      const type = (el.getAttribute('type') || 'text').toLowerCase();
+      if (['submit', 'button', 'reset'].includes(type)) return 'button';
+      if (type === 'checkbox') return 'checkbox';
+      if (type === 'radio') return 'radio';
+      return 'textbox';
+    }
+    if (tag === 'textarea') return 'textbox';
+    if (tag === 'select') return 'combobox';
+    if (tag === 'option') return 'option';
+    if (tag === 'img') return 'image';
+    return tag;
+  }
+
+  function nameOf(el) {
+    const attrs = [
+      el.getAttribute('aria-label'),
+      el.getAttribute('alt'),
+      el.getAttribute('title'),
+      el.getAttribute('placeholder'),
+    ].filter(Boolean);
+    if (attrs.length > 0) return String(attrs[0]).trim();
+    if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement) {
+      const value = el.value || el.getAttribute('value');
+      if (value) return String(value).trim();
+    }
+    const text = (el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
+    return text.slice(0, 200);
+  }
+
+  function isInteractive(el) {
+    if (!(el instanceof HTMLElement)) return false;
+    if (el.matches('a[href], button, textarea, select, summary')) return true;
+    if (el.matches('input:not([type=hidden])')) return true;
+    if (el.hasAttribute('contenteditable')) return true;
+    const role = (el.getAttribute('role') || '').toLowerCase();
+    if (['button', 'link', 'textbox', 'checkbox', 'radio', 'tab', 'switch', 'menuitem'].includes(role)) {
+      return true;
+    }
+    const tabindex = el.getAttribute('tabindex');
+    return tabindex !== null && tabindex !== '-1';
+  }
+
+  function lineFor(format, role, name, ref) {
+    const safeName = name || role;
+    if (format === 'aria') {
+      return '- role=' + role + ' name="' + safeName + '" [ref=' + ref + ']';
+    }
+    if (format === 'ai') {
+      return role + ' "' + safeName + '" [ref=' + ref + ']';
+    }
+    return '- ' + role + ' "' + safeName + '" [ref=' + ref + ']';
+  }
+
+  // selectorPrefix carries the shadow-host chain (`>>>`), because Playwright's
+  // CSS engine pierces open shadow roots but a bare path is ambiguous inside
+  // them.
+  function walkRoot(root, stopNode, selectorPrefix, depth) {
+    if (!root || depth > 8) return;
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+    while (walker.nextNode()) {
+      const node = walker.currentNode;
+      if (!(node instanceof HTMLElement) || !isVisible(node)) continue;
+      const own = cssPath(node, stopNode);
+      const selector = selectorPrefix ? selectorPrefix + ' >>> ' + own : own;
+      const tag = node.tagName.toLowerCase();
+
+      if (tag === 'iframe' || tag === 'frame') {
+        const src = node.getAttribute('src') || '';
+        if (seenTexts.has('frame:' + src + ':' + selector)) continue;
+        seenTexts.add('frame:' + src + ':' + selector);
+        lines.push('## nested frame (listed separately) src=' + (src || 'about:blank'));
+        continue;
+      }
+
+      const role = roleOf(node);
+      const name = nameOf(node);
+      if (isInteractive(node)) {
+        if (opts.interactive) {
+          localCounter += 1;
+          const ref = 'e' + (opts.ref_start + localCounter);
+          refs.push({
+            ref: ref,
+            role: role,
+            name: name,
+            selector: selector,
+            tag: tag,
+          });
+          lines.push(lineFor(opts.fmt, role, name, ref));
+        }
+      } else if (/^H[1-6]$/.test(node.tagName)) {
+        if (name && !seenTexts.has(name)) {
+          lines.push('## ' + name);
+          seenTexts.add(name);
+        }
+      } else if (!opts.compact && node.matches('p, li, td, th, label')) {
+        if (name && !seenTexts.has(name)) {
+          lines.push(name);
+          seenTexts.add(name);
+        }
+      } else if (opts.compact && node.matches('main, article') && name && !seenTexts.has(name)) {
+        lines.push(name);
+        seenTexts.add(name);
+      }
+
+      if (node.shadowRoot) {
+        walkRoot(node.shadowRoot, node.shadowRoot, selector, depth + 1);
+      }
+    }
+  }
+
+  if (document.body) walkRoot(document.body, document.body, '', 0);
+  return { lines: lines, refs: refs, count: localCounter };
+}"""
+
+# Selector of the element handed in as an argument, used to address the frame
+# host element from its parent frame.
+HOST_PATH_JS = """(el) => {
+  const escape = (value) => (window.CSS && CSS.escape ? CSS.escape(value) : String(value));
+  const parts = [];
+  let node = el;
+  while (node && node.nodeType === Node.ELEMENT_NODE) {
+    if (node.id) {
+      parts.unshift('#' + escape(node.id));
+      break;
+    }
+    let part = node.tagName.toLowerCase();
+    const parent = node.parentElement;
+    if (parent) {
+      const siblings = Array.from(parent.children).filter(
+        (child) => child.tagName === node.tagName
+      );
+      if (siblings.length > 1) {
+        part += ':nth-of-type(' + (siblings.indexOf(node) + 1) + ')';
+      }
+    }
+    parts.unshift(part);
+    node = parent;
+  }
+  return parts.join(' > ');
+}"""
+
+READABLE_JS = """(maxChars) => {
+  const lines = [];
+  const skip = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'SVG', 'CANVAS', 'IFRAME', 'FRAME']);
+  const seen = new Set();
+
+  function push(text) {
+    const value = (text || '').replace(/\\s+/g, ' ').trim();
+    if (!value || seen.has(value)) return;
+    seen.add(value);
+    lines.push(value);
+  }
+
+  function walk(node, heading) {
+    if (!node) return;
+    if (node.nodeType === Node.TEXT_NODE) {
+      push(node.textContent);
+      return;
+    }
+    if (node.nodeType !== Node.ELEMENT_NODE) return;
+    const el = node;
+    if (skip.has(el.tagName)) return;
+    const isHeading = /^H[1-6]$/.test(el.tagName);
+    if (isHeading) push('## ' + (el.innerText || el.textContent || ''));
+    else if (el.tagName === 'LI') push('- ' + (el.innerText || el.textContent || ''));
+    else if (el.childNodes && el.childNodes.length === 0) push(el.innerText || el.textContent || '');
+    if (el.shadowRoot) walk(el.shadowRoot, isHeading);
+    for (const child of Array.from(el.childNodes || [])) walk(child, isHeading);
+  }
+
+  const main = document.querySelector('main, article, [role="main"], .content, #content');
+  walk(main || document.body, false);
+  const joined = lines.join('\\n').replace(/\\n{3,}/g, '\\n\\n').trim();
+  return joined.length > maxChars ? joined.slice(0, maxChars) : joined;
+}"""
+
+
+class Policy:
+    """URL policy mirrored from the Rust runtime and applied inside the browser."""
+
+    def __init__(self, args):
+        self.allow_private_network = bool(args.allow_private_network)
+        self.allow_file_scheme = not bool(args.deny_file_scheme)
+        self.allow_hosts = {
+            str(item).strip().lower() for item in (args.allow_host or []) if str(item).strip()
+        }
+        # Interception is installed only when the policy can actually refuse a
+        # request: with private network access allowed there is nothing left to
+        # gate at the network layer (scheme and file:// checks stay at the entry),
+        # so the local workbench keeps page loads at full speed.
+        self.restrictive = not self.allow_private_network
+        self._dns_cache = OrderedDict()
+
+    @staticmethod
+    def _ip_private(raw):
+        try:
+            ip = ipaddress.ip_address(raw)
+        except ValueError:
+            return False
+        if ip.version == 6 and ip.ipv4_mapped is not None:
+            ip = ip.ipv4_mapped
+        return bool(
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_unspecified
+            or ip.is_reserved
+            or ip.is_multicast
+        )
+
+    def _dns_reaches_private(self, host):
+        if host in self._dns_cache:
+            self._dns_cache.move_to_end(host)
+            return self._dns_cache[host]
+        try:
+            infos = socket.getaddrinfo(host, None)
+        except Exception:
+            private = False
+        else:
+            private = any(self._ip_private(item[4][0]) for item in infos)
+        while len(self._dns_cache) >= 256:
+            self._dns_cache.popitem(last=False)
+        self._dns_cache[host] = private
+        return private
+
+    @staticmethod
+    def _numeric_alias(host):
+        """Collapse inet_aton-style hostnames (2130706433, 127.1, 0x7f.0.0.1).
+
+        Chromium accepts these and packs them into an IPv4 address, so a bare
+        literal test would let them alias a private host straight through.
+        """
+        if "_" in host or not re.fullmatch(r"[0-9a-fA-Fx.]+", host):
+            return None
+        parts = host.split(".")
+        if not 1 <= len(parts) <= 4 or any(not part or part == "." for part in parts):
+            return None
+        try:
+            chunks = [Policy._parse_part(part) for part in parts]
+        except ValueError:
+            return None
+        if any(chunk is None for chunk in chunks):
+            return None
+        trailing_limit = 256 ** (5 - len(chunks))
+        if any(
+            chunk < 0 or chunk >= (trailing_limit if index == len(chunks) - 1 else 256)
+            for index, chunk in enumerate(chunks)
+        ):
+            return None
+        packed = chunks[-1]
+        for index, chunk in enumerate(chunks[:-1]):
+            # The first part is the most significant byte, counted down from 24.
+            packed |= chunk << (8 * (3 - index))
+        return ".".join(str((packed >> shift) & 0xFF) for shift in (24, 16, 8, 0))
+
+    @staticmethod
+    def _parse_part(part):
+        """inet_aton number: 0x.. is hex, leading 0 is octal, else decimal."""
+        lowered = part.lower()
+        if lowered.startswith("0x"):
+            if len(lowered) == 2:
+                return None
+            return int(lowered, 16)
+        if lowered.startswith("0") and len(lowered) > 1:
+            if any(char not in "01234567" for char in lowered[1:]):
+                return None
+            return int(lowered, 8)
+        if not lowered.isdigit():
+            return None
+        return int(lowered, 10)
+
+    def check(self, url):
+        """Return (allowed, reason) for anything the browser is about to request."""
+        try:
+            parsed = urlparse(str(url))
+        except Exception:
+            return False, "unparseable URL"
+        scheme = (parsed.scheme or "").lower()
+        if scheme in ("", "about", "data", "blob"):
+            return True, ""
+        if scheme == "file":
+            if self.allow_file_scheme:
+                return True, ""
+            return False, "file:// URLs are disabled"
+        if scheme not in ("http", "https"):
+            return False, "only http/https URLs are supported (got %s)" % scheme
+        if self.allow_private_network:
+            return True, ""
+        host = (parsed.hostname or "").strip().lower().strip("[]")
+        if not host:
+            return True, ""
+        if host in self.allow_hosts:
+            return True, ""
+        if (
+            host in ("localhost", "host.docker.internal", "gateway.docker.internal")
+            or host.endswith(".localhost")
+            or host.endswith(".local")
+            or host.endswith(".internal")
+        ):
+            return False, "private-network host '%s'" % host
+        if self._ip_private(host):
+            return False, "private-network address '%s'" % host
+        alias = self._numeric_alias(host)
+        if alias is not None and self._ip_private(alias):
+            return False, "private-network address '%s' (%s)" % (host, alias)
+        # Anything that is not already a private literal is resolved: decimal,
+        # octal and short-form hostnames all alias private addresses once the
+        # stub resolver sees them, so a numeric literal cannot skip this check.
+        if self._dns_reaches_private(host):
+            return False, "host '%s' resolves to a private address" % host
+        return True, ""
 
 
 def respond(data):
@@ -24,9 +413,11 @@ def respond(data):
 
 
 class BridgeSession:
-    def __init__(self, args):
+    def __init__(self, args, policy):
         self.args = args
+        self.policy = policy
         self.timeout_ms = max(args.timeout, 1) * 1000
+        self.blocked = []
         try:
             from playwright.sync_api import sync_playwright
         except Exception:
@@ -73,11 +464,19 @@ class BridgeSession:
             self.context = self._new_context(args)
             self._owns_context = True
         self.pages = OrderedDict()
+        self.pages_by_key = {}
         self.refs = {}
         self.target_counter = 0
         self.active_target_id = None
+        try:
+            if policy.restrictive:
+                # Interception costs a round trip per request, so it is only
+                # installed when the policy can actually refuse something.
+                self.context.route("**/*", self._handle_route)
+        except Exception:
+            pass
         for page in list(self.context.pages):
-            self._adopt_page(page)
+            self._register(page)
         if not self.pages:
             self._new_page()
         else:
@@ -93,19 +492,74 @@ class BridgeSession:
             ),
         )
 
-    def _adopt_page(self, page):
+    def _handle_route(self, route, request):
+        allowed, reason = self.policy.check(request.url)
+        if allowed:
+            try:
+                route.continue_()
+            except Exception:
+                pass
+            return
+        self.blocked.append(reason)
+        try:
+            route.fulfill(
+                status=403,
+                content_type="text/plain; charset=utf-8",
+                body="Blocked by wunder browser URL policy: %s\n" % reason,
+            )
+        except Exception:
+            try:
+                route.abort("blockedbyclient")
+            except Exception:
+                pass
+
+    def _register(self, page):
         self.target_counter += 1
-        target_id = f"tab-{self.target_counter}"
+        target_id = "tab-%d" % self.target_counter
         try:
             page.set_default_timeout(self.timeout_ms)
             page.set_default_navigation_timeout(self.timeout_ms)
         except Exception:
             pass
         self.pages[target_id] = page
+        self.pages_by_key[id(page)] = target_id
         self.refs[target_id] = {}
         if self.active_target_id is None:
             self.active_target_id = target_id
         return target_id, page
+
+    def _sync_pages(self):
+        """Reconcile the tab table with the context's live pages.
+
+        Popups are adopted here rather than from the `page` event: a popup can
+        emit more than one event before its first navigation commits, and an
+        event-driven table fills up with handles that point at nothing.
+        """
+        try:
+            live = list(self.context.pages)
+        except Exception:
+            return
+        limit = max(int(self.args.max_tabs), 1)
+        live_ids = set()
+        for page in live:
+            key = id(page)
+            live_ids.add(key)
+            if key in self.pages_by_key:
+                continue
+            if len(self.pages) >= limit:
+                try:
+                    page.close()
+                except Exception:
+                    pass
+                continue
+            self._register(page)
+        for key, target_id in list(self.pages_by_key.items()):
+            if key not in live_ids:
+                self.pages_by_key.pop(key, None)
+                self.pages.pop(target_id, None)
+                self.refs.pop(target_id, None)
+        if self.active_target_id not in self.pages:
+            self.active_target_id = next(iter(self.pages), None)
 
     def close(self):
         # Never tear down a browser we merely attached to; only drop the context
@@ -126,6 +580,7 @@ class BridgeSession:
             pass
 
     def handle(self, raw):
+        self._sync_pages()
         action = str(raw.get("action", "")).strip().lower()
         if action in ("start", "status"):
             return self.status()
@@ -166,7 +621,7 @@ class BridgeSession:
                 target_id=raw.get("target_id"),
                 max_chars=int(raw.get("max_chars") or 40000),
             )
-        return {"success": False, "error": f"Unknown action: {action}"}
+        return {"success": False, "error": "Unknown action: %s" % action}
 
     def status(self):
         return {
@@ -189,14 +644,21 @@ class BridgeSession:
         }
 
     def open_tab(self, url=None, timeout_ms=None):
-        if len(self.pages) >= max(int(self.args.max_tabs), 1):
+        if url:
+            allowed, reason = self.policy.check(url)
+            if not allowed:
+                return {"success": False, "error": "Navigation blocked: %s" % reason}
+        target_id, page = self._new_page()
+        if page is None:
             return {
                 "success": False,
-                "error": f"Browser session reached max tabs limit ({self.args.max_tabs})",
+                "error": "Browser session reached max tabs limit (%s)" % self.args.max_tabs,
             }
-        target_id, page = self._new_page()
         if url:
             page.goto(url, wait_until="domcontentloaded", timeout=self._timeout_ms(timeout_ms))
+            verdict = self._final_url_verdict(page)
+            if verdict is not None:
+                return verdict
         return {
             "success": True,
             "data": {
@@ -230,6 +692,7 @@ class BridgeSession:
         except Exception:
             pass
         self.pages.pop(target_id, None)
+        self.pages_by_key.pop(id(page), None)
         self.refs.pop(target_id, None)
         if not self.pages:
             new_target_id, _ = self._new_page()
@@ -249,8 +712,14 @@ class BridgeSession:
     def navigate(self, url, target_id=None, timeout_ms=None):
         if not url:
             return {"success": False, "error": "Missing 'url' parameter"}
+        allowed, reason = self.policy.check(url)
+        if not allowed:
+            return {"success": False, "error": "Navigation blocked: %s" % reason}
         page, target_id = self._resolve_page(target_id)
         page.goto(url, wait_until="domcontentloaded", timeout=self._timeout_ms(timeout_ms))
+        verdict = self._final_url_verdict(page)
+        if verdict is not None:
+            return verdict
         self.refs[target_id] = {}
         return {
             "success": True,
@@ -258,41 +727,112 @@ class BridgeSession:
                 "target_id": target_id,
                 "title": page.title(),
                 "url": page.url,
-                "content": extract_readable(page, 40000),
                 "tabs": self._tabs_state(),
             },
         }
 
+    def _final_url_verdict(self, page):
+        """A redirect can land somewhere the entry URL never named."""
+        allowed, reason = self.policy.check(page.url)
+        if allowed:
+            return None
+        try:
+            page.goto("about:blank", wait_until="domcontentloaded", timeout=self.timeout_ms)
+        except Exception:
+            pass
+        return {"success": False, "error": "Navigation ended at a blocked address: %s" % reason}
+
     def snapshot(self, target_id=None, fmt="role", interactive=True, compact=True, max_chars=40000):
         page, target_id = self._resolve_page(target_id)
-        payload = build_snapshot(page, fmt=fmt, interactive=interactive, compact=compact)
-        refs_map = {}
-        for item in payload["refs"]:
-            refs_map[item["ref"]] = item
+        lines, refs = self._collect(page, fmt, interactive, compact, max_chars)
+        refs_map = {item["ref"]: item for item in refs}
         self.refs[target_id] = refs_map
-        text = "\n".join(payload["lines"]).strip()
-        truncated = False
-        if len(text) > max_chars:
+        text = "\n".join(lines).strip()
+        truncated = len(text) > max_chars
+        if truncated:
             text = text[:max_chars].rstrip() + "\n\n[Truncated]"
-            truncated = True
         return {
             "success": True,
             "data": {
                 "target_id": target_id,
-                "title": page.title(),
-                "url": page.url,
+                "title": safe_page_title(page),
+                "url": safe_page_url(page),
                 "format": fmt,
                 "snapshot": text,
-                "refs": refs_map,
                 "stats": {
-                    "lines": len(payload["lines"]),
+                    "lines": len(lines),
                     "chars": len(text),
                     "refs": len(refs_map),
-                    "interactive": payload["interactive"],
+                    "frames": len(self._reachable_frames(page)),
                 },
                 "truncated": truncated,
+                "blocked": self._drain_blocked(),
             },
         }
+
+    def _collect(self, page, fmt, interactive, compact, max_chars):
+        """Snapshot every reachable frame; refs remember which frame they came from."""
+        lines = []
+        refs = []
+        ref_start = 0
+        main = page.main_frame
+        frames = self._reachable_frames(page)
+        for frame in frames:
+            is_main = frame is main or frame.parent_frame is None
+            frame_path = [] if is_main else self._frame_path(frame)
+            try:
+                payload = frame.evaluate(
+                    SNAPSHOT_JS,
+                    {
+                        "fmt": fmt,
+                        "interactive": interactive,
+                        "compact": compact,
+                        "ref_start": ref_start,
+                    },
+                )
+            except Exception as exc:
+                lines.append("## frame unreadable (%s)" % _short(str(exc)))
+                continue
+            if not is_main:
+                url = frame.url or "about:blank"
+                lines.append("## frame url=%s" % url)
+            for item in payload.get("refs") or []:
+                entry = dict(item)
+                entry["frame_path"] = list(frame_path)
+                refs.append(entry)
+            lines.extend(payload.get("lines") or [])
+            ref_start += int(payload.get("count") or 0)
+            if len("\n".join(lines)) > max_chars:
+                lines.append("[Truncated: more frames not read]")
+                break
+        return lines, refs
+
+    def _reachable_frames(self, page):
+        try:
+            return list(page.frames)
+        except Exception:
+            return []
+
+    def _frame_path(self, frame):
+        """frame_locator hops from the main page down to `frame`."""
+        hops = []
+        current = frame
+        while current is not None and current.parent_frame is not None:
+            parent = current.parent_frame
+            try:
+                handle = current.frame_element()
+                selector = parent.evaluate(HOST_PATH_JS, handle)
+            except Exception:
+                return hops
+            hops.insert(0, selector)
+            current = parent
+        return hops
+
+    def _drain_blocked(self):
+        # Report policy blocks without echoing an unbounded list.
+        recent = self.blocked[-3:]
+        del self.blocked[:]
+        return recent
 
     def act(self, request, target_id=None):
         if not isinstance(request, dict):
@@ -300,23 +840,9 @@ class BridgeSession:
         kind = str(request.get("kind", "")).strip().lower()
         if not kind:
             return {"success": False, "error": "Browser act request missing 'kind'"}
-        page, target_id = self._resolve_page(target_id or request.get("target_id"))
         if kind == "batch":
-            steps = request.get("steps") or request.get("actions") or request.get("items") or []
-            if not isinstance(steps, list):
-                return {"success": False, "error": "Browser batch 'steps' must be an array"}
-            if len(steps) > 10:
-                return {"success": False, "error": "Browser batch supports at most 10 steps"}
-            results = []
-            for step in steps:
-                result = self.act(step, target_id)
-                if not result.get("success"):
-                    return result
-                results.append(result.get("data"))
-            return {
-                "success": True,
-                "data": {"target_id": target_id, "results": results, "url": page.url},
-            }
+            return self.batch(request, target_id)
+        page, target_id = self._resolve_page(target_id or request.get("target_id"))
         if kind == "wait":
             return self._wait(page, target_id, request)
         if kind == "evaluate":
@@ -324,12 +850,20 @@ class BridgeSession:
             if not expression:
                 return {"success": False, "error": "Browser evaluate missing 'script' or 'expression'"}
             result = page.evaluate(expression)
-            return {
-                "success": True,
-                "data": {"target_id": target_id, "result": result, "url": page.url},
-            }
+            verdict = self._final_url_verdict(page)
+            if verdict is not None:
+                return verdict
+            payload = {"target_id": target_id, "result": result, "url": page.url}
+            blocked = self._drain_blocked()
+            if blocked:
+                payload["blocked"] = blocked
+            return {"success": True, "data": payload}
         if kind == "close":
             return self.close_tab(target_id)
+        if kind == "navigate":
+            return self.navigate(
+                request.get("url"), target_id, request.get("timeout_ms")
+            )
         locator = self._resolve_locator(page, target_id, request)
         timeout_ms = self._timeout_ms(request.get("timeout_ms"), request.get("timeout_secs"))
         if kind == "click":
@@ -371,7 +905,26 @@ class BridgeSession:
             )
             locator.drag_to(target_locator, timeout=timeout_ms)
             return self._action_result(page, target_id, kind)
-        return {"success": False, "error": f"Unsupported browser act kind: {kind}"}
+        return {"success": False, "error": "Unsupported browser act kind: %s" % kind}
+
+    def batch(self, request, target_id=None):
+        """Flat, bounded step list: nesting cannot multiply one call's work."""
+        steps = request.get("steps") or request.get("actions") or request.get("items") or []
+        if not isinstance(steps, list):
+            return {"success": False, "error": "Browser batch 'steps' must be an array"}
+        if len(steps) > 10:
+            return {"success": False, "error": "Browser batch supports at most 10 steps"}
+        for step in steps:
+            if isinstance(step, dict) and str(step.get("kind", "")).strip().lower() == "batch":
+                return {"success": False, "error": "Browser batch steps must not nest batch"}
+        results = []
+        for step in steps:
+            result = self.act(step, target_id)
+            if not result.get("success"):
+                return result
+            results.append(result.get("data"))
+        page, resolved = self._resolve_page(target_id)
+        return {"success": True, "data": {"target_id": resolved, "results": results, "url": page.url}}
 
     def screenshot(self, target_id=None, full_page=False):
         page, target_id = self._resolve_page(target_id)
@@ -389,25 +942,38 @@ class BridgeSession:
 
     def read_page(self, target_id=None, max_chars=40000):
         page, target_id = self._resolve_page(target_id)
-        content = extract_readable(page, max_chars)
+        content = self._read_all_frames(page, max_chars)
         return {
             "success": True,
             "data": {
                 "target_id": target_id,
-                "title": page.title(),
-                "url": page.url,
+                "title": safe_page_title(page),
+                "url": safe_page_url(page),
                 "content": content,
             },
         }
 
+    def _read_all_frames(self, page, max_chars):
+        chunks = []
+        used = 0
+        for frame in self._reachable_frames(page):
+            budget = max(max_chars - used, 0)
+            if budget <= 0:
+                chunks.append("[Truncated: more frames not read]")
+                break
+            body = extract_readable(frame, budget)
+            if frame is not page.main_frame and frame.parent_frame is not None:
+                body = ("## frame url=%s\n%s" % (frame.url or "about:blank", body)) if body else ""
+            if body:
+                chunks.append(body)
+                used += len(body)
+        return "\n\n".join(chunks)
+
     def _new_page(self):
-        self.target_counter += 1
-        target_id = f"tab-{self.target_counter}"
-        page = self.context.new_page()
-        page.set_default_timeout(self.timeout_ms)
-        page.set_default_navigation_timeout(self.timeout_ms)
-        self.pages[target_id] = page
-        self.refs[target_id] = {}
+        limit = max(int(self.args.max_tabs), 1)
+        if len(self.pages) >= limit:
+            return None, None
+        target_id, page = self._register(self.context.new_page())
         self.active_target_id = target_id
         try:
             page.bring_to_front()
@@ -436,7 +1002,7 @@ class BridgeSession:
             if page is not None:
                 self.active_target_id = target_id
                 return page, target_id
-            raise ValueError(f"Unknown browser target_id: {target_id}")
+            raise ValueError("Unknown browser target_id: %s" % target_id)
         if self.active_target_id and self.active_target_id in self.pages:
             return self.pages[self.active_target_id], self.active_target_id
         if not self.pages:
@@ -447,7 +1013,9 @@ class BridgeSession:
 
     def _tabs_state(self):
         tabs = []
-        for target_id, page in self.pages.items():
+        # Copied: a popup can be adopted by the event callback while this list is
+        # being built, and mutating the registry mid-iteration raises.
+        for target_id, page in list(self.pages.items()):
             tabs.append(
                 {
                     "target_id": target_id,
@@ -463,11 +1031,13 @@ class BridgeSession:
         if ref_id:
             ref = self.refs.get(target_id, {}).get(str(ref_id))
             if ref is None:
-                raise ValueError(f"Unknown browser ref: {ref_id}. Capture a new snapshot first.")
+                raise ValueError(
+                    "Unknown browser ref: %s. Capture a new snapshot first." % ref_id
+                )
             selector = ref.get("selector")
             if not selector:
-                raise ValueError(f"Browser ref {ref_id} has no selector mapping")
-            return page.locator(selector).first
+                raise ValueError("Browser ref %s has no selector mapping" % ref_id)
+            return self._locator_for(page, ref.get("frame_path") or [], selector)
         selector = request.get("selector")
         if selector:
             return page.locator(str(selector)).first
@@ -476,11 +1046,20 @@ class BridgeSession:
             return page.get_by_text(str(text), exact=False).first
         raise ValueError("Browser action requires 'ref' or 'selector'")
 
+    @staticmethod
+    def _locator_for(page, frame_path, selector):
+        root = page
+        for hop in frame_path:
+            root = root.frame_locator(str(hop))
+        return root.locator(str(selector)).first
+
     def _wait(self, page, target_id, request):
         timeout_ms = self._timeout_ms(request.get("timeout_ms"), request.get("timeout_secs"))
         if request.get("wait_ms") is not None:
             page.wait_for_timeout(int(request.get("wait_ms")))
-            return self._action_result(page, target_id, "wait", extra={"wait_ms": request.get("wait_ms")})
+            return self._action_result(
+                page, target_id, "wait", extra={"wait_ms": request.get("wait_ms")}
+            )
         selector = request.get("selector")
         if selector:
             page.locator(str(selector)).first.wait_for(state="visible", timeout=timeout_ms)
@@ -491,13 +1070,19 @@ class BridgeSession:
             return self._action_result(page, target_id, "wait", extra={"text": text})
         url = request.get("url")
         if url:
+            allowed, reason = self.policy.check(url)
+            if not allowed:
+                return {"success": False, "error": "Wait target blocked: %s" % reason}
             page.wait_for_url(str(url), timeout=timeout_ms)
             return self._action_result(page, target_id, "wait", extra={"url": url})
         load_state = request.get("load_state")
         if load_state:
             page.wait_for_load_state(str(load_state), timeout=timeout_ms)
             return self._action_result(page, target_id, "wait", extra={"load_state": load_state})
-        return {"success": False, "error": "Browser wait requires one of wait_ms/selector/text/url/load_state"}
+        return {
+            "success": False,
+            "error": "Browser wait requires one of wait_ms/selector/text/url/load_state",
+        }
 
     def _action_result(self, page, target_id, kind, extra=None):
         payload = {
@@ -510,7 +1095,15 @@ class BridgeSession:
         }
         if extra:
             payload.update(extra)
+        blocked = self._drain_blocked()
+        if blocked:
+            payload["blocked"] = blocked
         return {"success": True, "data": payload}
+
+
+def _short(text, limit=120):
+    value = " ".join(str(text).split())
+    return value[:limit]
 
 
 def safe_page_title(page):
@@ -527,190 +1120,19 @@ def safe_page_url(page):
         return ""
 
 
-def build_snapshot(page, fmt="role", interactive=True, compact=True):
-    result = page.evaluate(
-        """({fmt, interactive, compact}) => {
-        function isVisible(el) {
-            if (!(el instanceof HTMLElement)) return false;
-            const style = window.getComputedStyle(el);
-            if (style.display === 'none' || style.visibility === 'hidden') return false;
-            const rect = el.getBoundingClientRect();
-            return rect.width > 0 && rect.height > 0;
-        }
-        function cssPath(el) {
-            if (!(el instanceof HTMLElement)) return '';
-            if (el.id) return '#' + CSS.escape(el.id);
-            const parts = [];
-            let node = el;
-            while (node && node instanceof HTMLElement && node !== document.body) {
-                let part = node.tagName.toLowerCase();
-                if (node.classList.length > 0) {
-                    const classes = Array.from(node.classList)
-                        .filter(Boolean)
-                        .slice(0, 2)
-                        .map((name) => '.' + CSS.escape(name))
-                        .join('');
-                    part += classes;
-                }
-                const parent = node.parentElement;
-                if (parent) {
-                    const siblings = Array.from(parent.children).filter(
-                        (child) => child.tagName === node.tagName
-                    );
-                    if (siblings.length > 1) {
-                        part += `:nth-of-type(${siblings.indexOf(node) + 1})`;
-                    }
-                }
-                parts.unshift(part);
-                node = parent;
-            }
-            return parts.join(' > ');
-        }
-        function roleOf(el) {
-            const explicit = el.getAttribute('role');
-            if (explicit) return explicit;
-            const tag = el.tagName.toLowerCase();
-            if (tag === 'a') return 'link';
-            if (tag === 'button') return 'button';
-            if (tag === 'input') {
-                const type = (el.getAttribute('type') || 'text').toLowerCase();
-                if (['submit', 'button', 'reset'].includes(type)) return 'button';
-                if (type === 'checkbox') return 'checkbox';
-                if (type === 'radio') return 'radio';
-                return 'textbox';
-            }
-            if (tag === 'textarea') return 'textbox';
-            if (tag === 'select') return 'combobox';
-            if (tag === 'option') return 'option';
-            if (tag === 'img') return 'image';
-            return tag;
-        }
-        function nameOf(el) {
-            const attrs = [
-                el.getAttribute('aria-label'),
-                el.getAttribute('alt'),
-                el.getAttribute('title'),
-                el.getAttribute('placeholder'),
-            ].filter(Boolean);
-            if (attrs.length > 0) return attrs[0].trim();
-            if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement) {
-                const value = el.value || el.getAttribute('value');
-                if (value) return String(value).trim();
-            }
-            const text = (el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
-            return text.slice(0, 200);
-        }
-        function lineFor(format, role, name, ref) {
-            const safeName = name || role;
-            if (format === 'aria') {
-                return `- role=${role} name=\\"${safeName}\\" [ref=${ref}]`;
-            }
-            if (format === 'ai') {
-                return `${role} \\"${safeName}\\" [ref=${ref}]`;
-            }
-            return `- ${role} \\"${safeName}\\" [ref=${ref}]`;
-        }
-        function isInteractive(el) {
-            if (!(el instanceof HTMLElement)) return false;
-            if (el.matches('a[href], button, textarea, select, summary')) return true;
-            if (el.matches('input:not([type=hidden])')) return true;
-            if (el.hasAttribute('contenteditable')) return true;
-            if (el.hasAttribute('role') && ['button','link','textbox','checkbox','radio','tab','switch','menuitem'].includes((el.getAttribute('role') || '').toLowerCase())) {
-                return true;
-            }
-            const tabindex = el.getAttribute('tabindex');
-            return tabindex !== null && tabindex !== '-1';
-        }
-        const lines = [];
-        const refs = [];
-        let interactiveCount = 0;
-        let refCounter = 0;
-        const seenTexts = new Set();
-        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
-        while (walker.nextNode()) {
-            const node = walker.currentNode;
-            if (!(node instanceof HTMLElement) || !isVisible(node)) continue;
-            const role = roleOf(node);
-            const name = nameOf(node);
-            if (isInteractive(node)) {
-                if (!interactive) continue;
-                refCounter += 1;
-                const ref = `e${refCounter}`;
-                refs.push({
-                    ref,
-                    role,
-                    name,
-                    selector: cssPath(node),
-                    tag: node.tagName.toLowerCase(),
-                });
-                lines.push(lineFor(fmt, role, name, ref));
-                interactiveCount += 1;
-                continue;
-            }
-            if (node.matches('h1, h2, h3, h4, h5, h6')) {
-                if (name && !seenTexts.has(name)) {
-                    lines.push('## ' + name);
-                    seenTexts.add(name);
-                }
-                continue;
-            }
-            if (!compact && node.matches('p, li, td, th, label')) {
-                if (name && !seenTexts.has(name)) {
-                    lines.push(name);
-                    seenTexts.add(name);
-                }
-                continue;
-            }
-            if (compact && node.matches('main, article') && name && !seenTexts.has(name)) {
-                lines.push(name);
-                seenTexts.add(name);
-            }
-        }
-        return { lines, refs, interactive: interactiveCount };
-    }""",
-        {"fmt": fmt, "interactive": interactive, "compact": compact},
-    )
-    return result
-
-
-def extract_readable(page, max_chars=40000):
+def extract_readable(target, max_chars=40000):
+    """Read one frame (or page) as text, piercing open shadow roots."""
+    limit = max(int(max_chars), 512)
     try:
-        content = page.evaluate(
-            """() => {
-            const clone = document.body.cloneNode(true);
-            const remove = ['script', 'style', 'nav', 'footer', 'header', 'aside', 'iframe', 'noscript', 'svg', 'canvas'];
-            remove.forEach((tag) => clone.querySelectorAll(tag).forEach((el) => el.remove()));
-            const main = clone.querySelector('main, article, [role="main"], .content, #content');
-            const source = main || clone;
-            const lines = [];
-            const walker = document.createTreeWalker(source, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
-            while (walker.nextNode()) {
-                const node = walker.currentNode;
-                if (node.nodeType === Node.TEXT_NODE) {
-                    const text = (node.textContent || '').replace(/\\s+/g, ' ').trim();
-                    if (text) lines.push(text);
-                    continue;
-                }
-                if (!(node instanceof HTMLElement)) continue;
-                if (/^H[1-6]$/.test(node.tagName)) {
-                    const text = (node.innerText || '').replace(/\\s+/g, ' ').trim();
-                    if (text) lines.push('## ' + text);
-                } else if (node.tagName === 'LI') {
-                    const text = (node.innerText || '').replace(/\\s+/g, ' ').trim();
-                    if (text) lines.push('- ' + text);
-                }
-            }
-            return lines.join('\\n').replace(/\\n{3,}/g, '\\n\\n').trim();
-        }"""
-        )
-        if len(content) > max_chars:
-            return content[:max_chars].rstrip() + f"\\n\\n[Truncated - {len(content)} total chars]"
-        return content
+        content = target.evaluate(READABLE_JS, limit)
     except Exception:
-        text = page.inner_text("body")
-        if len(text) > max_chars:
-            return text[:max_chars].rstrip() + f"\\n\\n[Truncated - {len(text)} total chars]"
-        return text
+        try:
+            content = target.inner_text("body")
+        except Exception:
+            return ""
+    if len(content) > limit:
+        return content[:limit].rstrip() + "\n\n[Truncated - %d total chars]" % len(content)
+    return content
 
 
 def main():
@@ -719,13 +1141,20 @@ def main():
     parser.add_argument("--no-headless", dest="headless", action="store_false")
     parser.add_argument("--width", type=int, default=1280)
     parser.add_argument("--height", type=int, default=720)
-    parser.add_argument("--max-tabs", type=int, default=8)
+    parser.add_argument("--max-tabs", dest="max_tabs", type=int, default=8)
     parser.add_argument("--timeout", type=int, default=30)
-    parser.add_argument("--launch-arg", action="append", default=[])
+    parser.add_argument("--launch-arg", dest="launch_arg", action="append", default=[])
     parser.add_argument("--mode", default="launch")
     parser.add_argument("--channel", default=None)
     parser.add_argument("--executable-path", dest="executable_path", default=None)
     parser.add_argument("--attach-endpoint", dest="attach_endpoint", default=None)
+    parser.add_argument(
+        "--allow-private-network", dest="allow_private_network", action="store_true", default=False
+    )
+    parser.add_argument(
+        "--allow-file-scheme", dest="deny_file_scheme", action="store_false", default=True
+    )
+    parser.add_argument("--allow-host", dest="allow_host", action="append", default=[])
     args = parser.parse_args()
 
     # Bundled supplements install Playwright browsers under
@@ -747,13 +1176,14 @@ def main():
                 os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(bundled)
                 break
 
+    policy = Policy(args)
     try:
-        session = BridgeSession(args)
+        session = BridgeSession(args, policy)
     except Exception as exc:
         respond(
             {
                 "success": False,
-                "error": f"{type(exc).__name__}: {exc}",
+                "error": "%s: %s" % (type(exc).__name__, exc),
                 "traceback": traceback.format_exc(limit=6),
                 "phase": "startup",
             }
@@ -789,7 +1219,7 @@ def main():
                 respond(
                     {
                         "success": False,
-                        "error": f"{type(exc).__name__}: {exc}",
+                        "error": "%s: %s" % (type(exc).__name__, exc),
                         "traceback": traceback.format_exc(limit=2),
                     }
                 )
