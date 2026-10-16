@@ -42,7 +42,7 @@ pub(crate) fn is_process_step(kind: i32, index: usize, newest_body: usize) -> bo
 }
 /// Live rows form a rolling window. Durable process pagination keeps every
 /// earlier step accessible without retaining the whole execution in memory.
-const MAX_LIVE_PROCESS_ROWS: usize = 160;
+pub(crate) const MAX_LIVE_PROCESS_ROWS: usize = 160;
 
 pub fn status_kind(state: &str) -> i32 {
     match state {
@@ -151,6 +151,7 @@ fn blank(kind: i32, id: String) -> TimelineRow {
 
 /// One body block streamed by a model round and frozen when the round ends.
 struct Body {
+    placeholder: bool,
     text: String,
     blocks: crate::message_blocks::Blocks,
     index: usize,
@@ -201,6 +202,7 @@ pub struct Timeline {
     group: i32,
     next_group: i32,
     reasons: usize,
+    body_serial: u64,
     discarded_steps: i32,
     /// Work-process fold of the live turn: its id, its bar row, and the newest
     /// answer block, which is the one row the fold leaves open.
@@ -277,6 +279,7 @@ impl Timeline {
             group: NO_GROUP,
             next_group: 0,
             reasons: 0,
+            body_serial: 0,
             discarded_steps: 0,
             process: NO_PROCESS,
             next_process: 0,
@@ -454,6 +457,7 @@ impl Timeline {
                 }
                 if let Some(previous) = children.row_data(index) {
                     entry.payload = previous.payload;
+                    entry.open = previous.open;
                 }
             }
             children.set_row_data(index, entry);
@@ -689,23 +693,25 @@ impl Timeline {
     /// text item per model round, so a block starts where the last one ended.
     pub fn start_body(&mut self, round: i64) -> usize {
         self.close_thinking(false);
-        if let Some(body) = self.body.as_ref().filter(|body| body.text.is_empty()) {
-            if self
-                .model
-                .row_data(body.index)
-                .is_some_and(|row| row.id == "body-0")
-            {
-                let index = body.index;
-                self.patch(index, |row| row.id = format!("body-{round}").into());
-                return index;
-            }
+        if let Some(body) = self
+            .body
+            .as_mut()
+            .filter(|body| body.placeholder && body.text.is_empty())
+        {
+            body.placeholder = false;
+            return body.index;
         }
         self.close_body();
         let blocks = crate::message_blocks::Blocks::new();
-        let mut row = blank(KIND_BODY, format!("body-{round}"));
+        self.body_serial = self.body_serial.wrapping_add(1);
+        let mut row = blank(
+            KIND_BODY,
+            format!("body-{}-{}-{round}", self.process, self.body_serial),
+        );
         row.blocks = ModelRc::from(blocks.model.clone());
         let index = self.push(row);
         self.body = Some(Body {
+            placeholder: round == 0,
             text: String::new(),
             blocks,
             index,
@@ -715,7 +721,7 @@ impl Timeline {
         // newest answer block of the turn stays outside the fold.
         self.last_body = index;
         self.refresh_process_bar();
-        index
+        self.body.as_ref().map(|body| body.index).unwrap_or(index)
     }
 
     pub fn append_body(&mut self, delta: &str) -> Result<(), String> {

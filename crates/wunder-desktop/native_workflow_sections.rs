@@ -52,14 +52,7 @@ pub(super) fn project(tool: &str, payload: &Value, state: &str, fallback: &str) 
         return compaction::project(payload, state);
     }
     let result = payload.get("result").unwrap_or(payload);
-    let mut data = result;
-    for _ in 0..4 {
-        if let Some(nested) = data.get("data").filter(|v| v.is_object()) {
-            data = nested;
-        } else {
-            break;
-        }
-    }
+    let data = super::result_data(payload);
     let args = payload
         .get("args")
         .or_else(|| payload.get("arguments"))

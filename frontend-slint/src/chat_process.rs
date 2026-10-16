@@ -3,7 +3,7 @@
 use crate::{MainWindow, ProcessEntry, TimelineRow};
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::HashMap,
     rc::Rc,
     sync::{mpsc::sync_channel, Arc},
@@ -21,8 +21,9 @@ struct Cursor {
 }
 
 pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
-    bind(app, api.clone(), false);
-    bind(app, api, true);
+    let pending = Rc::new(Cell::new(0usize));
+    bind(app, api.clone(), false, pending.clone());
+    bind(app, api, true, pending);
 }
 
 fn rows(app: &MainWindow, child: bool) -> ModelRc<TimelineRow> {
@@ -41,7 +42,7 @@ fn session(app: &MainWindow, child: bool) -> String {
     }
 }
 
-fn bind(app: &MainWindow, api: Arc<NativeDesktop>, child: bool) {
+fn bind(app: &MainWindow, api: Arc<NativeDesktop>, child: bool, pending: Rc<Cell<usize>>) {
     let cursors = Rc::new(RefCell::new(HashMap::<(String, String), Cursor>::new()));
     let weak = app.as_weak();
     let callback = move |payload: i32, direction: i32| {
@@ -68,7 +69,7 @@ fn bind(app: &MainWindow, api: Arc<NativeDesktop>, child: bool) {
         held.retain(|(session_id, root_id), _| {
             session_id == &target && model.iter().any(|row| row.process_root == root_id.as_str())
         });
-        if held.values().filter(|cursor| cursor.busy).count() >= 4 {
+        if pending.get() >= 4 {
             return;
         }
         let cursor = held.entry(key.clone()).or_default();
@@ -99,6 +100,7 @@ fn bind(app: &MainWindow, api: Arc<NativeDesktop>, child: bool) {
         };
         cursor.busy = true;
         cursor.retry = direction;
+        pending.set(pending.get() + 1);
         drop(held);
         let entries = row.process_entries.clone();
         // Background tail refreshes keep the existing layout and scroll anchor.
@@ -114,12 +116,14 @@ fn bind(app: &MainWindow, api: Arc<NativeDesktop>, child: bool) {
         });
         let weak = app.as_weak();
         let cursors = cursors.clone();
+        let pending = pending.clone();
         poll(move || {
             let result = match rx.try_recv() {
                 Ok(value) => value,
                 Err(std::sync::mpsc::TryRecvError::Empty) => return false,
                 Err(_) => Err(anyhow::anyhow!("process reader stopped")),
             };
+            pending.set(pending.get().saturating_sub(1));
             if let Some(cursor) = cursors
                 .borrow_mut()
                 .get_mut(&key)

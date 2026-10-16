@@ -30,6 +30,10 @@ pub struct NativeChatTurn {
 #[derive(Debug, Clone, PartialEq)]
 pub struct NativeChatRound {
     pub round: i64,
+    /// Model-round ordinals restart for a continuation execution.
+    pub execution: String,
+    /// Only the authoritative reply stays outside the work-process fold.
+    pub is_answer: bool,
     pub reasoning: String,
     pub text: String,
     pub items: Vec<NativeWorkflowEntry>,
@@ -109,6 +113,9 @@ pub(super) fn load_turn(
     let mut projected = project_turn(root, &items);
     if let (Some(turn), Some(chat)) = (&mut projected, chat) {
         turn.process_steps = chat.workflow_count + chat.reasoning_count;
+        if let Some(stats) = &chat.assistant.stats {
+            turn.assistant.stats = super::NativeMessageStats::from_payload(stats);
+        }
         // Cards are presentation metadata, independent of the process tail.
         if !chat.subagents.is_empty() {
             turn.subagents = chat
@@ -188,7 +195,7 @@ fn recover_text(
             if data["field"].as_str().unwrap_or(field) != field {
                 continue;
             }
-            if let Some(part) = data["content"].as_str() {
+            if let Some(part) = data[field].as_str().or_else(|| data["content"].as_str()) {
                 if text.len() + part.len() > 8 * 1024 * 1024 {
                     return Err(anyhow!("turn text limit exceeded"));
                 }
@@ -222,7 +229,10 @@ fn project_turn(root: &Value, items: &[Value]) -> Option<NativeChatTurn> {
     user_payload["turn_id"] = json!(id);
     user_payload["user_round"] = root["user_turn_index"].clone();
     let user = message_from_value(user_payload)?;
-    let latest = items.iter().rev().find(|item| stable_answer(item));
+    let latest = items
+        .iter()
+        .rev()
+        .find(|item| stable_answer(item) && !has_tool_calls(item));
     let mut payload = latest
         .map(|item| item["payload"].clone())
         .unwrap_or_else(|| json!({"content":""}));
@@ -270,6 +280,7 @@ fn project_turn(root: &Value, items: &[Value]) -> Option<NativeChatTurn> {
         let kind = item["kind"].as_str().unwrap_or_default();
         let data = &item["payload"];
         let round = item_round(item).unwrap_or(last_round);
+        let execution = item["turn_id"].as_str().unwrap_or(id);
         if kind == "assistant_message" {
             if !stable_answer(item) {
                 continue;
@@ -282,13 +293,21 @@ fn project_turn(root: &Value, items: &[Value]) -> Option<NativeChatTurn> {
                 // no timeline entry of its own.
                 continue;
             }
-            match rounds.iter_mut().rev().find(|slot| slot.round == round) {
+            match rounds
+                .iter_mut()
+                .rev()
+                .find(|slot| slot.round == round && slot.execution == execution)
+            {
                 Some(slot) => {
                     slot.text = text;
                     slot.reasoning = reasoning;
+                    slot.is_answer =
+                        latest.is_some_and(|latest| latest["item_id"] == item["item_id"]);
                 }
                 None => rounds.push(NativeChatRound {
                     round,
+                    execution: execution.into(),
+                    is_answer: latest.is_some_and(|latest| latest["item_id"] == item["item_id"]),
                     reasoning,
                     text,
                     items: Vec::new(),
@@ -342,17 +361,27 @@ fn project_turn(root: &Value, items: &[Value]) -> Option<NativeChatTurn> {
                 matches!(item["status"].as_str(), Some("running" | "queued")),
             );
             NativeWorkflowEntry::from_payload(
-                item["item_id"].as_str().unwrap_or(tool),
+                data["tool_call_id"]
+                    .as_str()
+                    .filter(|id| !id.is_empty())
+                    .or_else(|| item["item_id"].as_str())
+                    .unwrap_or(tool),
                 tool,
                 detail,
                 item["status"].as_str().unwrap_or_default(),
                 data,
             )
         };
-        match rounds.iter_mut().rev().find(|slot| slot.round == round) {
+        match rounds
+            .iter_mut()
+            .rev()
+            .find(|slot| slot.round == round && slot.execution == execution)
+        {
             Some(slot) => slot.items.push(entry),
             None => rounds.push(NativeChatRound {
                 round,
+                execution: execution.into(),
+                is_answer: false,
                 reasoning: String::new(),
                 text: String::new(),
                 items: vec![entry],
@@ -367,6 +396,15 @@ fn project_turn(root: &Value, items: &[Value]) -> Option<NativeChatTurn> {
         subagents,
         process_steps: 0,
     })
+}
+
+fn has_tool_calls(item: &Value) -> bool {
+    [
+        &item["payload"]["tool_calls"],
+        &item["payload"]["meta"]["tool_calls"],
+    ]
+    .iter()
+    .any(|calls| calls.as_array().is_some_and(|calls| !calls.is_empty()))
 }
 
 /// The model round a durable item was recorded against. Envelope fields are
@@ -404,6 +442,17 @@ mod tests {
         assert_eq!(turn.assistant.stats.speed_tps, Some(42.75));
         assert_eq!(turn.assistant.stats.tool_calls, Some(0.0));
         assert_eq!(turn.assistant.stats.credits, Some(4.0));
+    }
+    #[test]
+    fn intermediate_tool_call_body_never_replaces_the_reply() {
+        let turn = project_turn(&json!({"turn_id":"fixture-root", "status":"running"}), &[
+            json!({"kind":"user_message","turn_id":"fixture-root","payload":{"content":"Fixture input"}}),
+            json!({"kind":"assistant_message","item_id":"fixture-root:text-1","turn_id":"fixture-root","payload":{"content":"Earlier reply","model_round":1}}),
+            json!({"kind":"assistant_message","item_id":"fixture-root:text-2","turn_id":"fixture-root","payload":{"content":"Intermediate note","model_round":2,"tool_calls":[{"id":"fixture-call"}]}}),
+        ]).unwrap();
+        assert_eq!(turn.assistant.text, "Earlier reply");
+        assert!(turn.rounds[0].is_answer);
+        assert!(!turn.rounds[1].is_answer);
     }
     #[test]
     fn compact_command_replay_keeps_failure_details_without_summary() {
@@ -494,6 +543,8 @@ mod tests {
         assert!(!turn.assistant.mine);
         assert_eq!(turn.assistant.text, "Retained partial");
         assert_eq!(turn.assistant.stats_status, "已停止");
+        assert_eq!(turn.rounds.len(), 2);
+        assert_ne!(turn.rounds[0].execution, turn.rounds[1].execution);
         assert!(project_turn(&root, &items[1..]).is_none());
     }
 

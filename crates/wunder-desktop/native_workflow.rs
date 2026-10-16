@@ -7,6 +7,50 @@ mod patch;
 #[path = "native_workflow_sections.rs"]
 mod sections;
 
+/// Keep result payloads separate from transport envelopes. In particular image
+/// metadata has its own `result` object, which is not another tool envelope.
+pub(super) fn result_data(payload: &Value) -> &Value {
+    let mut current = payload.get("result").unwrap_or(payload);
+    const DISPLAY: &[&str] = &[
+        "content",
+        "text",
+        "output",
+        "stdout",
+        "stderr",
+        "questions",
+        "options",
+        "plan",
+        "media_kind",
+        "files",
+        "rows",
+        "rows_jsonl",
+        "chunks",
+        "items",
+        "items_jsonl",
+        "hits",
+        "hits_jsonl",
+        "matches",
+        "sources",
+        "jobs",
+        "job",
+        "scheduler",
+    ];
+    for _ in 0..5 {
+        if let Some(nested) = current.get("data").filter(|value| value.is_object()) {
+            current = nested;
+        } else if !DISPLAY.iter().any(|key| current.get(*key).is_some()) {
+            if let Some(nested) = current.get("result").filter(|value| value.is_object()) {
+                current = nested;
+            } else {
+                break;
+            }
+        } else {
+            break;
+        }
+    }
+    current
+}
+
 impl NativeWorkflowEntry {
     pub fn from_payload(id: &str, title: &str, detail: String, state: &str, data: &Value) -> Self {
         let args = data.get("args").or_else(|| data.get("arguments"));
@@ -71,14 +115,7 @@ impl NativeWorkflowEntry {
 /// Display sections are bounded independently. Copy keeps the original text
 /// instead of silently substituting the clipped 120-line display projection.
 fn complete_copy_text(data: &Value) -> Option<String> {
-    let mut result = data.get("result").unwrap_or(data);
-    for _ in 0..4 {
-        if let Some(nested) = result.get("data").filter(|value| value.is_object()) {
-            result = nested;
-        } else {
-            break;
-        }
-    }
+    let result = result_data(data);
     if let Some(value) = result
         .as_str()
         .or_else(|| result["content"].as_str())
@@ -293,6 +330,26 @@ fn compact(n: f64) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+    #[test]
+    fn nested_results_keep_structured_data_and_unclipped_copy_text() {
+        let content = (0..160)
+            .map(|index| format!("Fixture line {index}\n"))
+            .collect::<String>();
+        let payload = json!({"result":{"data":{"result":{"content":content}}}});
+        let entry = NativeWorkflowEntry::from_payload(
+            "fixture-tool",
+            "read_file",
+            "preview".into(),
+            "completed",
+            &payload,
+        );
+        assert_eq!(entry.detail, content);
+        assert!(entry.sections[0].lines.len() <= 121);
+        assert!(entry.sections[0].lines.last().unwrap().text.contains("120"));
+        let image = json!({"result":{"data":{"path":"sample.png","media_kind":"image","size_bytes":128,"result":{"width":8,"height":8}}}});
+        assert_eq!(result_data(&image)["path"], "sample.png");
+        assert_eq!(result_data(&image)["media_kind"], "image");
+    }
     #[test]
     fn invocation_preview_never_reads_result_fields() {
         for (tool, payload, expected) in [

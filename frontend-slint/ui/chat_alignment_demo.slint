@@ -15,11 +15,12 @@ export component ChatAlignmentDemo inherits Window {
     in-out property <bool> newer: false;
     in-out property <bool> failed: false;
     in-out property <bool> running: false;
+    in-out property <string> footer-status;
     out property <int> page-direction;
     out property <string> last-resource;
     out property <string> copied-text;
     accessible-role: groupbox;
-    accessible-description: "resource=" + root.last-resource + ";copy=" + root.copied-text;
+    accessible-description: "resource=" + root.last-resource + ";copy=" + root.copied-text + ";page=" + root.page-direction;
     copy-buffer := TextInput { width: 0px; height: 0px; }
     TimelineView {
         follow-output: false;
@@ -41,7 +42,7 @@ export component ChatAlignmentDemo inherits Window {
                 ]},
             {kind: 1, id: "fixture-answer", visible: true, group-idx: -1, process-idx: -1,
                 foldable: true, text: "The sample file passed both checks. One requested file is unavailable.",
-                stats: [{key: "hashtag", value: "57"}, {key: "stopwatch", value: "3.2s"}, {key: "gauge-high", value: "42.8 token/s"}, {key: "layer-group", value: "12.3k"}, {key: "bolt", value: "2.4k"}, {key: "screwdriver-wrench", value: "3"}, {key: "coins", value: "4"}]}
+                stats: [{key: root.footer-status == "" ? "hashtag" : root.running ? "status-running" : "status-stopped", value: root.footer-status == "" ? "57" : root.footer-status}, {key: "stopwatch", value: "3.2s"}, {key: "gauge-high", value: "42.8 token/s"}, {key: "layer-group", value: "12.3k"}, {key: "bolt", value: "2.4k"}, {key: "screwdriver-wrench", value: "3"}, {key: "coins", value: "4"}]}
         ];
         toggle(index) => {
             if index == 1 { root.process-open = !root.process-open; }

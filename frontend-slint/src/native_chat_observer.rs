@@ -202,7 +202,6 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
         if is_queue_only_turn(turn) {
             continue;
         }
-        let turn_start = rows.len();
         let mut user = history_user(&turn.user);
         // The bubble carries the turn identity: it is the anchor the reducer's
         // live rows are matched against when the durable snapshot takes over.
@@ -220,6 +219,7 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
         bar.text = crate::timeline_text::process_label(0).into();
         bar.visible = false;
         rows.push(bar);
+        let mut answer_at = None;
         for round in &turn.rounds {
             let tools = round.items.len() as i32;
             let activity = !round.reasoning.is_empty() || tools > 0;
@@ -228,11 +228,14 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
                 if !round.text.is_empty() {
                     let mut body = blank_row(
                         crate::timeline::KIND_BODY,
-                        format!("body-{}-{}", turn.root_id, round.round),
+                        format!("body-{}-{}", round.execution, round.round),
                     );
                     body.text = round.text.as_str().into();
                     body.blocks = crate::message_blocks::from_text(&round.text);
                     body.foldable = true;
+                    if round.is_answer {
+                        answer_at = Some(rows.len());
+                    }
                     rows.push(body);
                 }
                 continue;
@@ -245,7 +248,7 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
             let mut latest = slint::SharedString::default();
             let mut bar = blank_row(
                 crate::timeline::KIND_GROUP,
-                format!("group-{}-{}", turn.root_id, round.round),
+                format!("group-{}-{}", round.execution, round.round),
             );
             bar.text = crate::timeline_text::tool_calls(tools).into();
             bar.payload = bar_at as i32;
@@ -258,7 +261,7 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
             if !round.reasoning.is_empty() {
                 let mut reason = blank_row(
                     crate::timeline::KIND_REASON,
-                    format!("reason-{}-{}", turn.root_id, round.round),
+                    format!("reason-{}-{}", round.execution, round.round),
                 );
                 reason.tool_name = crate::timeline_text::thought_done().into();
                 reason.summary = crate::message_blocks::reasoning_preview(&round.reasoning)
@@ -275,11 +278,14 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
             if !round.text.is_empty() {
                 let mut body = blank_row(
                     crate::timeline::KIND_BODY,
-                    format!("body-{}-{}", turn.root_id, round.round),
+                    format!("body-{}-{}", round.execution, round.round),
                 );
                 body.text = round.text.as_str().into();
                 body.blocks = crate::message_blocks::from_text(&round.text);
                 body.foldable = true;
+                if round.is_answer {
+                    answer_at = Some(rows.len());
+                }
                 rows.push(body);
             }
             for item in &round.items {
@@ -325,10 +331,7 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
         // The metrics belong to the turn and ride on the body row that ends it,
         // which is also the row that owns the copy action: the same
         // owner the live reducer picks with its backward walk.
-        if let Some(body) = (turn_start..rows.len())
-            .rev()
-            .find(|index| rows[*index].kind == crate::timeline::KIND_BODY)
-        {
+        if let Some(body) = answer_at {
             rows[body].stats = turn_stats(&turn.assistant);
         } else {
             let mut body = blank_row(
@@ -337,6 +340,7 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
             );
             body.foldable = true;
             body.stats = turn_stats(&turn.assistant);
+            answer_at = Some(rows.len());
             rows.push(body);
         }
         let end = rows.len();
@@ -346,6 +350,7 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
             end,
             process,
             &turn.assistant.state,
+            answer_at.unwrap_or(usize::MAX),
         );
         if turn.process_steps > 0 {
             rows[bar_at].text =
@@ -382,11 +387,8 @@ fn fold_history_process(
     end: usize,
     process: i32,
     state: &str,
+    newest: usize,
 ) {
-    let newest = ((bar_at + 1)..end)
-        .rev()
-        .find(|index| rows[*index].kind == crate::timeline::KIND_BODY)
-        .unwrap_or(usize::MAX);
     let mut steps = 0i32;
     for index in (bar_at + 1)..end {
         if rows[index].kind == crate::timeline::KIND_GROUP
@@ -523,6 +525,8 @@ mod tests {
             assistant: message,
             rounds: vec![NativeChatRound {
                 round: 1,
+                execution: root.into(),
+                is_answer: true,
                 reasoning: String::new(),
                 text: text.into(),
                 items: Vec::new(),
@@ -646,6 +650,25 @@ mod tests {
         assert_eq!(count, 0, "no metrics renders no row");
     }
 
+    #[test]
+    fn process_only_body_does_not_take_the_final_reply_footer() {
+        let mut turn = fixture("fixture-process-only", "", "running");
+        turn.process_steps = 1;
+        turn.rounds[0].text = "Fixture intermediate note".into();
+        turn.rounds[0].is_answer = false;
+        let rows = project_history(&[turn]);
+        let intermediate = rows
+            .iter()
+            .find(|row| row.text == "Fixture intermediate note")
+            .unwrap();
+        assert_ne!(intermediate.process_idx, crate::timeline::NO_PROCESS);
+        assert_eq!(intermediate.stats.row_count(), 0);
+        let footer = rows.last().unwrap();
+        assert!(footer.text.is_empty());
+        assert_eq!(footer.process_idx, crate::timeline::NO_PROCESS);
+        assert_eq!(footer.stats.row_data(0).unwrap().key, "status-running");
+    }
+
     /// A reloaded turn rebuilds the entries the live stream showed: per model
     /// round one batch holding its thinking and its tools, then that round's
     /// answer block. Collapsing the turn to its newest answer alone is what made
@@ -656,6 +679,8 @@ mod tests {
         turn.rounds = vec![
             NativeChatRound {
                 round: 1,
+                execution: "fixture-rounds".into(),
+                is_answer: false,
                 reasoning: "先想想第一步".into(),
                 text: "第一步说明".into(),
                 items: vec![NativeWorkflowEntry::from_payload(
@@ -668,6 +693,8 @@ mod tests {
             },
             NativeChatRound {
                 round: 2,
+                execution: "fixture-rounds".into(),
+                is_answer: true,
                 reasoning: "再想想第二步".into(),
                 text: "结论".into(),
                 items: Vec::new(),

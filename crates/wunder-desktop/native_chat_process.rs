@@ -101,7 +101,12 @@ fn project_page(page: &Value, final_id: &str) -> NativeProcessPage {
     let final_id = if final_id.is_empty() && page["has_newer"] != true {
         rows.iter()
             .rev()
-            .find(|row| row["kind"] == "assistant_message")
+            .find(|row| {
+                row["kind"] == "assistant_message"
+                    && !row["payload"]["tool_calls"]
+                        .as_array()
+                        .is_some_and(|calls| !calls.is_empty())
+            })
             .and_then(|row| row["item_id"].as_str())
             .unwrap_or_default()
     } else {
@@ -156,7 +161,14 @@ fn project_page(page: &Value, final_id: &str) -> NativeProcessPage {
                             )
                         };
                         item.tool = Some(NativeWorkflowEntry::from_payload(
-                            id, tool, detail, state, data,
+                            data["tool_call_id"]
+                                .as_str()
+                                .filter(|id| !id.is_empty())
+                                .unwrap_or(id),
+                            tool,
+                            detail,
+                            state,
+                            data,
                         ));
                     }
                     _ => return None,
@@ -209,8 +221,11 @@ mod tests {
             ("content", "Fixture answer"),
             ("reasoning", "Fixture thought"),
         ] {
-            state.storage.upsert_thread_text_block(user, session, &json!({"item_id":answer,"field":field,"block_index":0,"event_id":1,"data":{"field":field,"content_offset":0,"content":text}})).unwrap();
+            let mut block = json!({"field":field,"content_offset":0});
+            block[field] = json!(text);
+            state.storage.upsert_thread_text_block(user, session, &json!({"item_id":answer,"field":field,"block_index":0,"event_id":1,"data":block})).unwrap();
         }
+        state.storage.append_thread_item(user, &json!({"session_id":session,"turn_id":root,"item_id":"fixture-child-run","kind":"subagent_run","runtime":{"session_id":"fixture-child","title":"Fixture child","status":"running","can_terminate":true,"metrics":{"tool_calls":2}}})).unwrap();
         // Exceeds the old eight-page replay ceiling, with the answer outside
         // the initial tail. No model/network work is involved.
         for index in 0..1605 {
@@ -224,6 +239,9 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(turn.assistant.text, "Fixture answer");
+        assert_eq!(turn.subagents.len(), 1);
+        assert_eq!(turn.subagents[0].session_id, "fixture-child");
+        assert!(turn.subagents[0].can_terminate);
         assert!(
             turn.rounds
                 .iter()

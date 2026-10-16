@@ -11,6 +11,7 @@ use wunder_server::{blocking, state::AppState, watch_thread_changes, ThreadChang
 struct Projection {
     root: String,
     execution: String,
+    admitted: String,
     status: String,
     cursor: i64,
     // Only the active execution is retained; late records from prior executions
@@ -96,16 +97,26 @@ impl Projection {
                 if let Some(round) = p["user_turn_index"].as_i64().filter(|round| *round > 0) {
                     self.user_round = round;
                 }
+                if p["status"] == "accepted" {
+                    // Admission is a separate durable revision. Remember its
+                    // identity without exposing it as a running execution.
+                    if self.execution != execution {
+                        self.admitted = execution.into();
+                    }
+                    return Ok(events);
+                }
                 if self.execution != execution {
                     // Acceptance starts an execution. Status changes for old
                     // executions must never switch the active execution back.
                     if !matches!(p["status"].as_str(), Some("queued" | "running"))
                         || (!self.execution.is_empty()
+                            && self.admitted != execution
                             && data["revision"].as_i64().unwrap_or(1) != 1)
                     {
                         return Ok(events);
                     }
                     self.execution = execution.into();
+                    self.admitted.clear();
                     self.items.clear();
                     self.text_item.clear();
                     self.text.clear();
@@ -132,10 +143,11 @@ impl Projection {
                 if self.items.get(id).is_some_and(|entry| entry.0 >= revision) {
                     return Ok(events);
                 }
-                ensure!(
-                    self.items.contains_key(id) || self.items.len() < 2048,
-                    "native execution item limit exceeded"
-                );
+                // The durable cursor rejects replay globally. Item revisions
+                // are a bounded hot cache, never a maximum task length.
+                if !self.items.contains_key(id) && self.items.len() >= 2048 {
+                    self.items.retain(|key, _| key == &self.text_item);
+                }
                 let kind = p["kind"].as_str().unwrap_or_default();
                 let round = payload["model_round"].as_i64().unwrap_or(1);
                 self.items.insert(id.into(), (revision, kind.into(), round));
@@ -386,6 +398,36 @@ pub(super) async fn watch(
 mod tests {
     use super::*;
     #[test]
+    fn accepted_continuation_starts_only_after_running_revision() {
+        let mut projection = Projection {
+            root: "fixture-root".into(),
+            execution: "fixture-root".into(),
+            status: "completed".into(),
+            ..Default::default()
+        };
+        assert!(projection.apply(&json!({"cursor":1,"revision":1,"change_type":"turn_upsert","turn_id":"fixture-child","payload":{"root_turn_id":"fixture-root","status":"accepted","user_turn_index":57}})).unwrap().is_empty());
+        assert_eq!(projection.execution, "fixture-root");
+        let events = projection.apply(&json!({"cursor":2,"revision":2,"change_type":"turn_status","turn_id":"fixture-child","payload":{"root_turn_id":"fixture-root","status":"running"}})).unwrap();
+        assert_eq!(projection.execution, "fixture-child");
+        assert_eq!(events[0]["event"], "native_execution_started");
+        assert_eq!(events[0]["data"]["user_round"], 57);
+    }
+
+    #[test]
+    fn long_follow_rolls_revision_cache_without_stopping_the_execution() {
+        let mut projection = Projection {
+            root: "fixture-root".into(),
+            execution: "fixture-root".into(),
+            ..Default::default()
+        };
+        for index in 0..2200 {
+            projection.apply(&json!({"cursor":index+1,"change_type":"item_upsert","turn_id":"fixture-root","payload":{"item_id":format!("fixture-tool-{index}"),"revision":1,"kind":"tool_call","status":"completed","payload":{"tool":"read_file"}}})).unwrap();
+        }
+        assert!(projection.items.len() <= 2048);
+        assert_eq!(projection.cursor, 2200);
+        assert_eq!(projection.execution, "fixture-root");
+    }
+    #[test]
     fn continuation_resets_execution_not_root_and_waits_for_goal() {
         let mut p = Projection {
             root: "fixture-root".into(),
@@ -594,7 +636,17 @@ mod tests {
         let child_id = child["turn_id"].as_str().unwrap();
         // Admission is not execution. Mirror the scheduler's durable running
         // transition before writing streamed items.
-        state.storage.update_thread_turn("owner", "fixture-session", child_id, "running", "", &json!({})).unwrap();
+        state
+            .storage
+            .update_thread_turn(
+                "owner",
+                "fixture-session",
+                child_id,
+                "running",
+                "",
+                &json!({}),
+            )
+            .unwrap();
         let item = format!("{child_id}:text-1");
         state.storage.append_thread_item("owner", &json!({"session_id":"fixture-session","turn_id":child_id,
             "item_id":item,"kind":"assistant_message","role":"assistant","model_round":1,"content":"","status":"running"})).unwrap();

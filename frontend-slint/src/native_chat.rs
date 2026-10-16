@@ -112,7 +112,7 @@ impl TurnOutput {
             *existing = entry.clone();
             existing.clone()
         } else {
-            if self.workflow.len() >= 24 {
+            if self.workflow.len() >= crate::timeline::MAX_LIVE_PROCESS_ROWS {
                 self.workflow.remove(0);
             }
             self.workflow.push(entry.clone());
@@ -127,6 +127,13 @@ impl TurnOutput {
     /// tail. `command_session_delta` frames arrive many times per command, so the
     /// buffer is bounded and only its newest bytes are kept.
     fn append_command_output(&mut self, key: &str, delta: &str) -> String {
+        if !self.command_output.contains_key(key) && self.command_output.len() >= 8 {
+            // Finished outputs already live in their workflow row. Keep only
+            // a small accumulation set for commands still emitting deltas.
+            if let Some(oldest) = self.command_output.keys().next().cloned() {
+                self.command_output.remove(&oldest);
+            }
+        }
         let buffer = self.command_output.entry(key.to_string()).or_default();
         buffer.push_str(delta);
         if buffer.len() > COMMAND_OUTPUT_LIVE_LIMIT {
@@ -3000,6 +3007,7 @@ fn apply_event(
             // Background goal executions restart model_round at one while the
             // timeline keeps the earlier entries of the same user turn.
             active.round = 0;
+            active.body_round = -1;
             timeline.close_segments();
             active.state = "目标继续执行…".into();
         }
@@ -3397,6 +3405,36 @@ fn format_count_i64(value: i64) -> String {
 #[cfg(test)]
 mod turn_tests {
     use super::*;
+    #[test]
+    fn continuation_with_restarted_model_round_keeps_both_bodies() {
+        let timeline = Rc::new(RefCell::new(crate::timeline::Timeline::new()));
+        let mut output = TurnOutput::new("fixture-session".into(), timeline.clone());
+        let mut live = timeline.borrow_mut();
+        live.begin_turn("fixture-root", "Fixture input");
+        apply_event(
+            &mut output,
+            &mut live,
+            &json!({"event":"llm_output","data":{"model_round":1,"content":"Earlier reply"}}),
+        )
+        .unwrap();
+        apply_event(&mut output, &mut live, &json!({"event":"native_execution_started","data":{"root_turn_id":"fixture-root","turn_id":"fixture-child"}})).unwrap();
+        apply_event(
+            &mut output,
+            &mut live,
+            &json!({"event":"llm_output_delta","data":{"model_round":1,"delta":"Next reply"}}),
+        )
+        .unwrap();
+        live.flush();
+        let rows = live.model();
+        let bodies = rows
+            .iter()
+            .filter(|row| row.kind == crate::timeline::KIND_BODY)
+            .collect::<Vec<_>>();
+        assert_eq!(bodies.len(), 2);
+        assert_ne!(bodies[0].id, bodies[1].id);
+        assert_eq!(bodies[0].text, "Earlier reply");
+        assert_eq!(bodies[1].text, "Next reply");
+    }
     use serde_json::json;
 
     #[test]
