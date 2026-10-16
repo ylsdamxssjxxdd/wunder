@@ -1581,6 +1581,115 @@ async fn a_click_in_the_composer_places_the_caret_under_the_pointer() {
     assert!(matches!(app.focus_area, FocusArea::Input));
 }
 
+/// A tool event carries the name the engine resolved, never the alias the model typed, so
+/// the canonical spellings are the only ones that prove a card opens in a real session.
+#[tokio::test]
+async fn canonical_tool_names_open_the_card_their_kind_promises() {
+    let root = TempRoot::new("canonical_names");
+    let mut app = fixture_app(root.path()).await;
+
+    feed_stream_event(
+        &mut app,
+        "tool_call",
+        json!({"tool": "文本编辑", "tool_call_id": "call-p", "turn_id": "turn-p",
+               "args": {"input": "*** Begin Patch\n*** Update File: src/main.rs\n@@\n-old\n+new\n*** End Patch"}}),
+        201,
+    );
+    // The first tool of a turn also lands a phase notice, so the card is read by index
+    // rather than by counting rows.
+    let base = app.logs.len() - 1;
+    assert!(
+        matches!(app.logs[base].special, Some(SpecialLogEntry::Patch(_))),
+        "the diff card must be reachable by the name the engine emits: {:?}",
+        app.logs[base].special
+    );
+
+    feed_stream_event(
+        &mut app,
+        "tool_result",
+        json!({"data": {"tool": "文本编辑", "tool_call_id": "call-p", "turn_id": "turn-p", "ok": true,
+        "data": {"changed_files": 1, "added_lines": 1, "deleted_lines": 1,
+                 "files": [{"action": "update", "path": "src/main.rs",
+                            "added_lines": 1, "deleted_lines": 1,
+                            "diff_blocks": [{"header": "",
+                                "start_line_before": 3, "end_line_before": 3,
+                                "start_line_after": 3, "end_line_after": 3,
+                                "lines": [
+                                    {"kind": "delete", "old_line": 3, "new_line": null, "text": "old"},
+                                    {"kind": "add", "old_line": null, "new_line": 3, "text": "new"}
+                                ]}]}]}}}),
+        202,
+    );
+    let patch_index = app.logs.len() - 1;
+    assert!(
+        matches!(
+            app.logs[patch_index].special,
+            Some(SpecialLogEntry::Patch(_))
+        ),
+        "the finished change stays a diff card: {:?}",
+        app.logs[patch_index].special
+    );
+    let patch_text = plain_lines(&mut app, patch_index, 80);
+    assert!(
+        patch_text.contains("src/main.rs") && patch_text.contains("new"),
+        "the applied diff is drawn from the engine's blocks: {patch_text}"
+    );
+
+    // A write is the same family: it has no patch text to parse, only what was applied.
+    feed_stream_event(
+        &mut app,
+        "tool_call",
+        json!({"tool": "写入文件", "tool_call_id": "call-w", "turn_id": "turn-w",
+               "args": {"path": "notes/a.md", "content": "# head"}}),
+        203,
+    );
+    let write_index = app.logs.len() - 1;
+    feed_stream_event(
+        &mut app,
+        "tool_result",
+        json!({"data": {"tool": "写入文件", "tool_call_id": "call-w", "turn_id": "turn-w", "ok": true,
+               "data": {"changed_files": 1, "added_lines": 1, "deleted_lines": 0,
+                        "files": [{"action": "add", "path": "notes/a.md",
+                                    "added_lines": 1, "deleted_lines": 0,
+                                    "diff_blocks": [{"header": "",
+                                        "start_line_before": 0, "end_line_before": 0,
+                                        "start_line_after": 1, "end_line_after": 1,
+                                        "lines": [{"kind": "add", "old_line": null,
+                                                    "new_line": 1, "text": "# head"}]}]}]}}}),
+        204,
+    );
+    assert!(
+        matches!(
+            app.logs[write_index].special,
+            Some(SpecialLogEntry::Patch(_))
+        ),
+        "a finished write is a diff card: {:?}",
+        app.logs[write_index].special
+    );
+    assert!(
+        plain_lines(&mut app, write_index, 80).contains("# head"),
+        "with the content it wrote"
+    );
+
+    // A remote call reads as the tool it reached, not as an unnamed call.
+    feed_stream_event(
+        &mut app,
+        "tool_result",
+        json!({"data": {"tool": "crm@lookup", "tool_call_id": "call-m", "turn_id": "turn-m", "ok": true,
+               "args": {"customer": "42"},
+               "data": {"server": "crm", "tool": "lookup",
+                        "result": {"content": [{"type": "text", "text": "found"}]}}}}),
+        205,
+    );
+    let remote_index = app.logs.len() - 1;
+    let remote = plain_lines(&mut app, remote_index, 80);
+    assert!(remote.contains("crm.lookup"), "{remote}");
+    assert!(
+        remote.contains("found"),
+        "and previews its result: {remote}"
+    );
+}
+
 /// A tool card is a disclosure subject like any other: it previews the head of its result
 /// and holds the overflow — and a remote call's arguments — behind the same row.
 #[tokio::test]

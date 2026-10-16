@@ -64,6 +64,16 @@ pub(crate) fn stable_answer(item_id: &str, turn_id: &str, kind: &str) -> bool {
     kind == "assistant_message" && item_id.starts_with(&format!("{turn_id}:text-"))
 }
 
+/// An assistant item that owns a tool call is model work-process output.  It
+/// may contain useful prose, but it is not the terminal answer for the user
+/// turn.  Keeping this rule in the shared projection module prevents the
+/// durable view and source fallback from choosing different answer identities.
+pub(crate) fn has_tool_calls(item: &Value) -> bool {
+    item.get("tool_calls")
+        .and_then(Value::as_array)
+        .is_some_and(|calls| !calls.is_empty())
+}
+
 pub(crate) fn is_failed(status: &str) -> i64 {
     i64::from(matches!(status, "failed" | "rejected"))
 }
@@ -94,7 +104,31 @@ pub(crate) fn trajectory(
         item.pointer("/meta/type").and_then(Value::as_str) == Some("model_context_internal");
     // 工具条目的事件负载里工具名字段是 `tool`（tool_name 从不存在）。
     let tool = item.get("tool").and_then(Value::as_str);
-    let summary = if kind == "system_message" {
+    let runtime = item.get("runtime").and_then(Value::as_object);
+    let runtime_label = subagent_label(item);
+    let runtime_task = runtime.and_then(|value| {
+        ["user_message", "task"].iter().find_map(|key| {
+            value
+                .get(*key)
+                .and_then(Value::as_str)
+                .filter(|v| !v.is_empty())
+        })
+    });
+    let runtime_summary = runtime.and_then(|value| {
+        ["summary", "latest_message"].iter().find_map(|key| {
+            value
+                .get(*key)
+                .and_then(Value::as_str)
+                .filter(|v| !v.is_empty())
+        })
+    });
+    let summary = if kind == "subagent_run" {
+        runtime_label
+            .or(runtime_task)
+            .or(runtime_summary)
+            .unwrap_or(kind)
+            .to_owned()
+    } else if kind == "system_message" {
         // The model receives the frozen prompt from the internal log, while
         // the presentation projection must never disclose it (it can contain
         // instructions, paths, or credentials). Keep only bounded metadata.
@@ -129,6 +163,55 @@ pub(crate) fn trajectory(
     } else {
         content.to_owned()
     };
+    let subagent = if kind == "subagent_run" {
+        subagent_runtime_projection(item).or_else(|| {
+            runtime.map(|runtime| {
+                let mut out = serde_json::Map::new();
+                for field in ["label", "spawn_label", "status", "run_id", "session_id"] {
+                    if let Some(value) = runtime
+                        .get(field)
+                        .and_then(Value::as_str)
+                        .filter(|v| !v.is_empty())
+                    {
+                        out.insert(field.into(), Value::String(preview(value, 128)));
+                    }
+                }
+                for field in ["user_message", "task", "summary", "latest_message"] {
+                    if let Some(value) = runtime
+                        .get(field)
+                        .and_then(Value::as_str)
+                        .filter(|v| !v.is_empty())
+                    {
+                        out.insert(field.into(), Value::String(preview(value, 1024)));
+                    }
+                }
+                for field in ["started_time", "finished_time", "updated_time", "elapsed_s"] {
+                    if let Some(value) = runtime.get(field).filter(|v| v.is_number()) {
+                        out.insert(field.into(), value.clone());
+                    }
+                }
+                Value::Object(out)
+            })
+        })
+    } else {
+        None
+    };
+    let started_at = if kind == "subagent_run" {
+        runtime
+            .and_then(|value| value.get("started_time").and_then(Value::as_f64))
+            .unwrap_or(created)
+    } else {
+        item.get("started_at")
+            .and_then(Value::as_f64)
+            .unwrap_or(created)
+    };
+    let completed_at = if kind == "subagent_run" {
+        runtime
+            .and_then(|value| value.get("finished_time").and_then(Value::as_f64))
+            .or_else(|| (is_running(status) == 0).then_some(updated))
+    } else {
+        (is_running(status) == 0).then_some(updated)
+    };
     TrajectoryViewRow {
         item_id: item_id.into(),
         turn_id: turn_id.into(),
@@ -141,20 +224,69 @@ pub(crate) fn trajectory(
         status: preview(status, 48),
         summary: preview(&summary, 256),
         overview_only: false,
-        tool_name: tool.map(|v| preview(v, 96)),
+        tool_name: tool.or(runtime_label).map(|v| preview(v, 96)),
         model_round: item.get("model_round").and_then(Value::as_i64).unwrap_or(0),
         stats: finite_stats(item),
-        started_at: item
-            .get("started_at")
-            .and_then(Value::as_f64)
-            .unwrap_or(created),
-        completed_at: (is_running(status) == 0).then_some(updated),
+        started_at,
+        completed_at,
         detail: Some(BodyRef {
             body_id: body_id(item_id, "detail"),
             revision,
             bytes: 0,
         }),
+        subagent,
     }
+}
+
+pub(crate) fn subagent_label(item: &Value) -> Option<&str> {
+    item.get("runtime")
+        .and_then(Value::as_object)
+        .and_then(|runtime| {
+            ["label", "spawn_label", "title"].iter().find_map(|key| {
+                runtime
+                    .get(*key)
+                    .and_then(Value::as_str)
+                    .filter(|value| !value.is_empty())
+            })
+        })
+}
+
+/// Small bounded runtime projection used by both source fallback and old
+/// persisted trajectory rows. Never copies child result/config payloads.
+pub(crate) fn subagent_runtime_projection(item: &Value) -> Option<Value> {
+    let runtime = item.get("runtime")?.as_object()?;
+    let mut out = serde_json::Map::new();
+    for field in [
+        "label",
+        "spawn_label",
+        "title",
+        "status",
+        "run_id",
+        "session_id",
+    ] {
+        if let Some(value) = runtime
+            .get(field)
+            .and_then(Value::as_str)
+            .filter(|v| !v.is_empty())
+        {
+            out.insert(field.into(), Value::String(preview(value, 128)));
+        }
+    }
+    for field in ["user_message", "task", "summary", "latest_message"] {
+        if let Some(value) = runtime
+            .get(field)
+            .and_then(Value::as_str)
+            .filter(|v| !v.is_empty())
+        {
+            out.insert(field.into(), Value::String(preview(value, 1024)));
+        }
+    }
+    for field in ["started_time", "finished_time", "updated_time", "elapsed_s"] {
+        if let Some(value) = runtime.get(field).filter(|v| v.is_number()) {
+            out.insert(field.into(), value.clone());
+        }
+    }
+    Some(Value::Object(out))
 }
 
 pub(crate) fn redact_internal_context(item: &mut Value) {
@@ -481,5 +613,31 @@ mod tests {
         assert_eq!(cards.len(), MAX_ROW_SUBAGENTS);
         // 窗口裁剪丢掉最旧的运行，同 key 的进度推进永远保留最新一份。
         assert!(cards.iter().all(|c| c["key"] != "turn-1:subagent-run-1"));
+    }
+
+    #[test]
+    fn trajectory_rows_project_subagent_runtime_as_a_bounded_detail() {
+        let row = project(
+            "subagent_run",
+            &json!({
+                "runtime": {
+                    "label": "child worker",
+                    "user_message": "inspect the workspace",
+                    "summary": "found the requested files",
+                    "status": "success",
+                    "started_time": 10.0,
+                    "finished_time": 14.0,
+                    "huge_result": {"must_not": "leak"}
+                }
+            }),
+        );
+        assert_eq!(row.summary, "child worker");
+        assert_eq!(row.tool_name.as_deref(), Some("child worker"));
+        let runtime = row.subagent.expect("subagent projection");
+        assert_eq!(runtime["label"], "child worker");
+        assert_eq!(runtime["user_message"], "inspect the workspace");
+        assert_eq!(runtime["summary"], "found the requested files");
+        assert_eq!(runtime["started_time"], 10.0);
+        assert!(runtime.get("huge_result").is_none());
     }
 }

@@ -38,11 +38,15 @@ CREATE TABLE IF NOT EXISTS thread_body_manifests (
  session_id TEXT NOT NULL, user_id TEXT NOT NULL, body_id TEXT NOT NULL, revision BIGINT NOT NULL,
  fingerprint TEXT NOT NULL, PRIMARY KEY(session_id,body_id)
 );
+CREATE INDEX IF NOT EXISTS idx_thread_body_manifests_user_session
+ ON thread_body_manifests(user_id,session_id);
 CREATE TABLE IF NOT EXISTS thread_body_chunks (
  session_id TEXT NOT NULL, user_id TEXT NOT NULL, body_id TEXT NOT NULL, revision BIGINT NOT NULL,
  chunk_index BIGINT NOT NULL, content TEXT NOT NULL,
  PRIMARY KEY(session_id,body_id,revision,chunk_index)
 );
+CREATE INDEX IF NOT EXISTS idx_thread_body_chunks_user_session
+ ON thread_body_chunks(user_id,session_id);
 CREATE TABLE IF NOT EXISTS thread_trajectory_tiles (
  session_id TEXT NOT NULL, level BIGINT NOT NULL, bucket BIGINT NOT NULL,
  count BIGINT NOT NULL, failed BIGINT NOT NULL, running BIGINT NOT NULL,
@@ -596,6 +600,7 @@ pub(crate) fn project_item(
             })
             .unwrap_or_default();
     } else if projection::stable_answer(id, turn, kind)
+        && !projection::has_tool_calls(&item)
         && (row.assistant.item_id == id || int(&i[3]) >= row.assistant.created_seq)
     {
         // The latest committed execution output is the one answer for a root.
@@ -624,13 +629,6 @@ pub(crate) fn project_item(
         {
             row.assistant.content_offset = content.encode_utf16().count();
         }
-        if item
-            .get("tool_calls")
-            .and_then(Value::as_array)
-            .is_some_and(|v| !v.is_empty())
-        {
-            row.assistant.content.clear();
-        }
         row.assistant.feedback = item.get("feedback").cloned();
         if !row.assistant.reasoning.is_empty() {
             if row.reasoning_item_id != id {
@@ -657,6 +655,17 @@ pub(crate) fn project_item(
             }
         }
     } else if kind == "assistant_message" {
+        let calls_tools = projection::has_tool_calls(&item);
+        // Tool-call assistant items update process metadata only.  They must
+        // never claim or clear the terminal answer slot; a prior committed
+        // answer remains stable while the next model round is executing.
+        if calls_tools && row.assistant.item_id == id {
+            // The same stable item may first arrive as a streaming text row
+            // and only later receive its tool_calls decoration.  Revoke that
+            // provisional answer identity at the transition, while keeping
+            // its durable text in the trajectory/process view.
+            row.assistant = ViewMessage::default();
+        }
         projection::set_reasoning(&mut row.assistant, &item);
         if let Some(stats) = projection::finite_stats(&item) {
             row.assistant.stats = Some(stats);
@@ -704,10 +713,7 @@ pub(crate) fn project_item(
             item.get("tool").and_then(Value::as_str).unwrap_or(""),
         );
     } else if kind == "assistant_message" {
-        let calls_tools = item
-            .get("tool_calls")
-            .and_then(Value::as_array)
-            .is_some_and(|calls| !calls.is_empty());
+        let calls_tools = projection::has_tool_calls(&item);
         let assistant_empty = row.assistant.content.is_empty();
         projection::set_activity(
             &mut row,
@@ -787,13 +793,20 @@ pub(crate) fn project_block(
     }
     let Some(i) = one(
         db,
-        "SELECT turn_id,root_turn_id,kind,visibility,created_seq FROM thread_items WHERE session_id=? AND user_id=? AND item_id=?",
+        "SELECT turn_id,root_turn_id,kind,visibility,created_seq,payload FROM thread_items WHERE session_id=? AND user_id=? AND item_id=?",
         &[json!(session), json!(user), json!(id)],
     )?
     else {
         return Ok(());
     };
     if text(&i[3]) != "user" || !projection::stable_answer(id, text(&i[0]), text(&i[2])) {
+        return Ok(());
+    }
+    // Content blocks for a tool-call assistant item are already part of the
+    // durable process timeline.  They must never create a provisional final
+    // answer body in the chat row.
+    let item = serde_json::from_str::<Value>(text(&i[5]))?;
+    if projection::has_tool_calls(&item) {
         return Ok(());
     }
     let data = block.get("data").unwrap_or(block);
@@ -1063,7 +1076,27 @@ pub(crate) fn page(
         bytes += size;
         page.next_before = Some(int(&r[1]));
         if kind == "trajectory" {
-            page.trajectory.push(serde_json::from_str(text(&r[0]))?);
+            let mut trajectory: TrajectoryViewRow = serde_json::from_str(text(&r[0]))?;
+            // Rows written before the bounded `subagent` projection field was
+            // introduced deserialize with `None`.  Backfill only those rare
+            // child rows from the indexed item payload so old sessions become
+            // useful immediately without rebuilding the entire ledger.
+            if trajectory.kind == "subagent_run" && trajectory.subagent.is_none() {
+                if let Some(item) = one(
+                    db,
+                    "SELECT payload FROM thread_items WHERE user_id=? AND session_id=? AND item_id=? LIMIT 1",
+                    &[json!(user), json!(session), json!(trajectory.item_id)],
+                )? {
+                    if let Ok(payload) = serde_json::from_str::<Value>(text(&item[0])) {
+                        trajectory.subagent = projection::subagent_runtime_projection(&payload);
+                        if let Some(label) = projection::subagent_label(&payload) {
+                            trajectory.summary = preview(label, 256);
+                            trajectory.tool_name = Some(preview(label, 96));
+                        }
+                    }
+                }
+            }
+            page.trajectory.push(trajectory);
         } else {
             page.chat.push(serde_json::from_str(text(&r[0]))?);
         }

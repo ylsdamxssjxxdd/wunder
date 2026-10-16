@@ -109,15 +109,16 @@ fn source_chat_rows(
     // window over every item in a selected root can spill to disk for a giant
     // turn, even when the response only contains a dozen chat rows.
     let mut message_queries = Vec::with_capacity(roots.len().saturating_mul(2));
+    let tool_calls = db.json_text("payload", "tool_calls");
     for root in roots {
         for kind in ["user_message", "assistant_message"] {
-            let answer_filter = if kind == "assistant_message" {
-                " AND item_id LIKE turn_id || ':text-%'"
-            } else {
-                ""
-            };
             let sql = format!(
-                "SELECT root_turn_id,item_id,revision,created_seq,kind,substr(COALESCE({content},''),1,2048),{item_bytes},substr({reasoning},1,2048),substr({stats},1,4096) FROM thread_items WHERE user_id=? AND session_id=? AND root_turn_id=? AND visibility='user' AND kind=?{answer_filter} ORDER BY item_index DESC,created_seq DESC LIMIT 1"
+                "SELECT root_turn_id,item_id,revision,created_seq,kind,substr(COALESCE({content},''),1,2048),{item_bytes},substr({reasoning},1,2048),substr({stats},1,4096) FROM thread_items WHERE user_id=? AND session_id=? AND root_turn_id=? AND visibility='user' AND kind=?{} ORDER BY item_index DESC,created_seq DESC LIMIT 1",
+                if kind == "assistant_message" {
+                    format!(" AND item_id LIKE turn_id || ':text-%' AND (COALESCE({tool_calls},'')='' OR COALESCE({tool_calls},'')='[]')")
+                } else {
+                    String::new()
+                }
             );
             message_queries.push((
                 sql,
@@ -329,16 +330,19 @@ pub(super) fn page(
         let source_meta = db.json_text("i.payload", "meta");
         let meta_type = db.json_text(&source_meta, "type");
         let meta_source = db.json_text(&source_meta, "source");
+        let source_runtime = db.json_text("i.payload", "runtime");
         let rows = {
             let sql = format!(
-                "SELECT i.item_id,i.turn_id,i.root_turn_id,i.item_index,i.created_seq,i.revision,i.kind,i.status,i.created_time,i.updated_time,t.user_turn_index,substr(COALESCE({source_content},''),1,256),substr({source_reasoning},1,256),substr(COALESCE({tool},''),1,96),COALESCE({model},'0'),{payload_bytes},{meta_type},{meta_source},substr(COALESCE({source_stats},'{{}}'),1,4096) FROM thread_items i JOIN thread_turns t ON t.user_id=i.user_id AND t.session_id=i.session_id AND t.turn_id=i.turn_id WHERE i.user_id=? AND i.session_id=?{root_filter} AND i.created_seq{comparison}? AND (i.visibility='user' OR (i.visibility='model_internal' AND (i.kind='system_message' OR (i.kind='user_message' AND {meta_type}='model_context_internal' AND {meta_source}='agent_inbox')))) ORDER BY i.created_seq {direction} LIMIT ?"
+                "SELECT i.item_id,i.turn_id,i.root_turn_id,i.item_index,i.created_seq,i.revision,i.kind,i.status,i.created_time,i.updated_time,t.user_turn_index,substr(COALESCE({source_content},''),1,256),substr({source_reasoning},1,256),substr(COALESCE({tool},''),1,96),COALESCE({model},'0'),{payload_bytes},{meta_type},{meta_source},substr(COALESCE({source_stats},'{{}}'),1,4096),substr(COALESCE({source_runtime},'{{}}'),1,4096) FROM thread_items i JOIN thread_turns t ON t.user_id=i.user_id AND t.session_id=i.session_id AND t.turn_id=i.turn_id WHERE i.user_id=? AND i.session_id=?{root_filter} AND i.created_seq{comparison}? AND (i.visibility='user' OR (i.visibility='model_internal' AND (i.kind='system_message' OR (i.kind='user_message' AND {meta_type}='model_context_internal' AND {meta_source}='agent_inbox')))) ORDER BY i.created_seq {direction} LIMIT ?"
             );
             db.query(&sql, &params)?
         };
         page.has_more = rows.len() > cap;
         for row in rows.into_iter().take(cap) {
             let stats = serde_json::from_str::<Value>(text(&row[18])).unwrap_or(Value::Null);
-            let payload = json!({"content":text(&row[11]),"reasoning":text(&row[12]),"tool":text(&row[13]),"model_round":row[14].as_i64().unwrap_or_else(||text(&row[14]).parse::<i64>().unwrap_or(0)),"message_stats":stats,"meta":{"type":text(&row[16]),"source":text(&row[17])}});
+            let runtime =
+                serde_json::from_str::<Value>(text(&row[19])).unwrap_or_else(|_| json!({}));
+            let payload = json!({"content":text(&row[11]),"reasoning":text(&row[12]),"tool":text(&row[13]),"model_round":row[14].as_i64().unwrap_or_else(||text(&row[14]).parse::<i64>().unwrap_or(0)),"message_stats":stats,"runtime":runtime,"meta":{"type":text(&row[16]),"source":text(&row[17])}});
             let mut projected = projection::trajectory(
                 &payload,
                 text(&row[0]),
@@ -353,6 +357,9 @@ pub(super) fn page(
                 float(&row[8]),
                 float(&row[9]),
             );
+            if projected.kind == "subagent_run" {
+                projected.subagent = projection::subagent_runtime_projection(&payload);
+            }
             projected.detail = Some(BodyRef {
                 body_id: projection::body_id(text(&row[0]), "source_detail"),
                 revision: int(&row[5]),

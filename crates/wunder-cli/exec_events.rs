@@ -746,6 +746,18 @@ mod tests {
         assert_eq!(item_type_for("mcp__demo__lookup"), "mcp_tool_call");
         assert_eq!(item_type_for("read_file"), "tool");
         assert_eq!(item_type_for("something_unknown"), "tool");
+
+        // An event carries the name the engine resolved, so the canonical spellings are the
+        // cases that matter; the aliases above only cover replayed history rows.
+        assert_eq!(item_type_for("执行命令"), "command_execution");
+        assert_eq!(item_type_for("文本编辑"), "file_change");
+        assert_eq!(item_type_for("写入文件"), "file_change");
+        assert_eq!(item_type_for("网页搜索"), "web_search");
+        assert_eq!(item_type_for("网页抓取"), "web_search");
+        assert_eq!(item_type_for("crm@lookup"), "mcp_tool_call");
+        // A file-content search is not a web call, however it is spelled.
+        assert_eq!(item_type_for("搜索内容"), "tool");
+        assert_eq!(item_type_for("search_content"), "tool");
     }
 
     #[test]

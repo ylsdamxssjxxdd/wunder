@@ -20,9 +20,9 @@ mod file_icons;
 mod help_browser;
 mod hotkey;
 mod message_blocks;
-mod native_markdown;
 mod native_chat;
 mod native_interlink;
+mod native_markdown;
 mod native_pages;
 mod native_restore;
 mod native_runtime;
@@ -49,12 +49,18 @@ mod workspace_files;
 mod workspace_ui;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let startup_boot = std::time::Instant::now();
+    startup_log("process_begin", startup_boot);
     install_slint_platform()?;
+    startup_log("slint_platform_ready", startup_boot);
     register_bundled_font()?;
+    startup_log("font_ready", startup_boot);
 
     let mut arguments = std::env::args_os().skip(1);
     let first_argument = arguments.next();
     let app = MainWindow::new()?;
+    startup_log("main_window_new", startup_boot);
+    install_first_frame_probe(&app, startup_boot);
     let close_weak = app.as_weak();
     app.window().on_close_requested(move || {
         if let Some(app) = close_weak.upgrade() {
@@ -93,6 +99,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         native_runtime::install(&app);
         tray::install(&app);
         app.show()?;
+        startup_log("window_show_return", startup_boot);
         maximize_main_window(&app);
         return screenshot::run_hide_probe(&app);
     }
@@ -123,6 +130,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         native_runtime::install_ready_without_pets(&app, runtime.clone());
         app.show()?;
+        startup_log("window_show_return", startup_boot);
         return if restoring {
             native_restore::run(&app, directory, runtime)
         } else {
@@ -136,9 +144,59 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     tray::install(&app);
     app.show()?;
+    startup_log("window_show_return", startup_boot);
     maximize_main_window(&app);
     app.run()?;
     Ok(())
+}
+
+fn startup_timing_enabled() -> bool {
+    matches!(
+        std::env::var("WUNDER_STARTUP_TIMING").ok().as_deref(),
+        Some("1" | "true" | "yes")
+    )
+}
+
+fn startup_log(point: &str, boot: std::time::Instant) {
+    if startup_timing_enabled() {
+        eprintln!(
+            "[startup][desktop-ui] point={point} total_ms={:.1}",
+            boot.elapsed().as_secs_f64() * 1000.0
+        );
+    }
+}
+
+fn install_first_frame_probe(app: &MainWindow, boot: std::time::Instant) {
+    if !startup_timing_enabled() {
+        return;
+    }
+    // Software rendering (the Win7-compatible backend) does not expose a
+    // rendering notifier. A zero-delay timer is the first event-loop turn
+    // after `show()` and is therefore the portable "display committed" proxy.
+    slint::Timer::single_shot(std::time::Duration::from_millis(0), move || {
+        eprintln!(
+            "[startup][desktop-ui] point=first_event_loop total_ms={:.1}",
+            boot.elapsed().as_secs_f64() * 1000.0
+        );
+    });
+    let reported = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let reported_once = reported.clone();
+    if app
+        .window()
+        .set_rendering_notifier(move |state, _| {
+            if matches!(state, slint::RenderingState::AfterRendering)
+                && !reported_once.swap(true, std::sync::atomic::Ordering::Relaxed)
+            {
+                eprintln!(
+                    "[startup][desktop-ui] point=first_frame total_ms={:.1}",
+                    boot.elapsed().as_secs_f64() * 1000.0
+                );
+            }
+        })
+        .is_err()
+    {
+        startup_log("render_notifier_unavailable", boot);
+    }
 }
 
 /// Apply the startup maximized state after the Slint window has been created.

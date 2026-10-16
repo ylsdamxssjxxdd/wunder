@@ -12,11 +12,12 @@ export component MarkdownBlock inherits Rectangle {
     callback open-resource(string);
     callback open-prompt-preview();
     private property <bool> copied: false;
-    private property <length> image-height: root.block.image.width > 0 ? min(280px, min(root.width, 520px) * root.block.image.height / max(1, root.block.image.width)) : 0px;
+    private property <length> image-width: min(root.width, 420px);
+    private property <length> image-height: root.block.image.width > 0 ? min(300px, root.image-width * root.block.image.height / max(1, root.block.image.width)) : 20px;
     height: root.block.kind == 1 ? code-layout.preferred-height :
         root.block.kind == 5 ? min(340px, table-layout.preferred-height + 18px) :
         root.block.kind == 6 ? root.image-height + 44px :
-        root.block.kind == 7 ? 64px :
+        root.block.kind == 7 ? 76px :
         root.block.kind == 4 ? quote-content.preferred-height + 16px : rich-content.preferred-height;
     background: root.block.kind == 1 || root.block.kind == 4 ? Theme.accent-soft : transparent;
     border-radius: 8px;
@@ -34,15 +35,16 @@ export component MarkdownBlock inherits Rectangle {
         StyledText { text: root.block.styled; default-color: Theme.text; default-font-family: "Consolas"; default-font-size: 13px; }
     }
     if root.block.kind == 7 : Rectangle {
-        border-radius: 8px; border-width: 1px; border-color: Theme.border;
+        width: min(parent.width, 280px); height: 76px;
+        border-radius: Theme.radius-md; border-width: 1px; border-color: Theme.border;
         background: document-hover.has-hover ? Theme.accent-soft : Theme.panel;
-        HorizontalLayout { padding: 10px; spacing: 10px;
-            Image { width: 32px; height: 38px; source: root.block.image; image-fit: contain; }
+        HorizontalLayout { padding-left: 10px; padding-right: 10px; padding-top: 9px; padding-bottom: 9px; spacing: 10px;
+            Image { width: 56px; height: 56px; source: root.block.image; image-fit: contain; }
             VerticalLayout { spacing: 4px; horizontal-stretch: 1;
                 Text { text: root.block.text; color: Theme.text; font-size: Theme.font-md; overflow: elide; }
                 Text { text: root.block.image-source; color: Theme.muted; font-size: Theme.font-xs; overflow: elide; }
             }
-            Action { width: 64px; label: I18n.common_open; show-label: true; clicked => { root.open-resource(root.block.image-source); } }
+            Action { width: 56px; label: I18n.common_open; show-label: true; clicked => { root.open-resource(root.block.image-source); } }
         }
         document-hover := TouchArea { mouse-cursor: pointer; clicked => { root.open-resource(root.block.image-source); } }
     }
@@ -52,15 +54,25 @@ export component MarkdownBlock inherits Rectangle {
         x: 10px; y: 8px; width: parent.width - 20px; height: self.preferred-height;
         text: root.block.text; color: Theme.muted; font-size: Theme.font-md; read-only: true; wrap: word-wrap;
     }
-    image-content := Image {
-        visible: root.block.kind == 6 && root.block.image.width > 0;
-        x: 0px; y: 0px; width: min(parent.width, 520px); height: root.image-height;
-        source: root.block.image; image-fit: contain;
-    }
-    Text {
-        visible: root.block.kind == 6; x: 0px; y: root.image-height + 4px; width: parent.width; height: 36px;
-        text: root.block.text + (root.block.image.width == 0 ? I18n.msg_not_loaded : "") + "\n" + root.block.image-source;
-        color: Theme.muted; font-size: Theme.font-xs; overflow: elide;
+    if root.block.kind == 6 : Rectangle {
+        width: root.image-width; height: root.image-height + 44px;
+        border-radius: Theme.radius-md; border-width: 1px; border-color: Theme.border;
+        background: Theme.panel;
+        VerticalLayout { padding: 8px; spacing: 6px;
+            HorizontalLayout { height: 22px;
+                Text { text: root.block.text; color: Theme.text; font-size: Theme.font-md; overflow: elide; horizontal-stretch: 1; }
+            }
+            Rectangle {
+                height: root.image-height; horizontal-stretch: 1;
+                if root.block.image.width > 0 : Image {
+                    width: parent.width; height: parent.height; source: root.block.image; image-fit: contain;
+                }
+                if root.block.image.width <= 0 : Text {
+                    text: I18n.msg_not_loaded; color: Theme.muted; font-size: Theme.font-xs;
+                    horizontal-alignment: center; vertical-alignment: center;
+                }
+            }
+        }
     }
     ScrollView {
         visible: root.block.kind == 5;

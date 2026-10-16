@@ -1379,47 +1379,59 @@ impl PostgresThreadLogStorage for PostgresStorage {
     fn delete_thread_log_by_session_impl(&self, user_id: &str, session_id: &str) -> Result<i64> {
         self.ensure_initialized()?;
         let mut conn = self.conn()?;
-        let mut tx = conn.transaction()?;
-        let now = Self::now_ts();
-        let chat_wm = read_meta_f64(&mut tx, USAGE_CHAT_WATERMARK_KEY)?.unwrap_or(0.0);
         let mut count = 0i64;
-        count += tx.execute(
-            "DELETE FROM thread_log_metrics WHERE user_id=$1 AND session_id=$2",
-            &[&user_id, &session_id],
-        )? as i64;
-        count += tx.execute(
-            "DELETE FROM thread_item_blocks WHERE user_id=$1 AND session_id=$2",
-            &[&user_id, &session_id],
-        )? as i64;
-        count += tx.execute(
-            "DELETE FROM thread_log_changes WHERE user_id=$1 AND session_id=$2",
-            &[&user_id, &session_id],
-        )? as i64;
-        // thread_items: only rows inside the chat watermark were counted in
-        // the usage summary; the rest was never admitted.
-        let counted: i64 = tx
-            .query_one(
-                "WITH del AS (DELETE FROM thread_items WHERE user_id=$1 AND session_id=$2 \
-                   AND visibility='user' AND kind IN ('user_message','assistant_message') \
-                   AND created_time <= $3 RETURNING 1) SELECT COUNT(*) FROM del",
-                &[&user_id, &session_id, &chat_wm],
-            )?
-            .get(0);
-        let rest = tx.execute(
-            "DELETE FROM thread_items WHERE user_id=$1 AND session_id=$2",
-            &[&user_id, &session_id],
-        )? as i64;
-        count += counted + rest;
-        count += tx.execute(
-            "DELETE FROM thread_turns WHERE user_id=$1 AND session_id=$2",
-            &[&user_id, &session_id],
-        )? as i64;
-        count += tx.execute(
-            "DELETE FROM thread_logs WHERE user_id=$1 AND session_id=$2",
-            &[&user_id, &session_id],
-        )? as i64;
-        decrement_usage_summary(&mut tx, &[(user_id.to_string(), counted)], &[], now)?;
+        // The previous implementation deleted every item in one transaction.
+        // A large session therefore held item/index locks until the final
+        // summary update, which blocked the usage reconciler for minutes.  A
+        // tombstone makes this operation idempotent, so commit small batches
+        // and let the next maintenance pass resume after any timeout.
+        const ITEM_BATCH: i64 = 256;
+        loop {
+            let mut tx = conn.transaction()?;
+            tx.execute("SET LOCAL lock_timeout = '2s'", &[])?;
+            tx.execute("SET LOCAL statement_timeout = '8s'", &[])?;
+            let chat_wm = read_meta_f64(&mut tx, USAGE_CHAT_WATERMARK_KEY)?.unwrap_or(0.0);
+            let row = tx.query_one(
+                "WITH doomed AS (
+                    SELECT item_id, created_time FROM thread_items
+                    WHERE user_id=$1 AND session_id=$2
+                    ORDER BY created_time, item_id LIMIT $3
+                 ), del AS (
+                    DELETE FROM thread_items t USING doomed d
+                    WHERE t.session_id=$2 AND t.item_id=d.item_id
+                      AND t.created_time=d.created_time
+                    RETURNING t.visibility, t.kind, t.created_time
+                 )
+                 SELECT COUNT(*) FILTER (WHERE visibility='user'
+                    AND kind IN ('user_message','assistant_message')
+                    AND created_time <= $4), COUNT(*) FROM del",
+                &[&user_id, &session_id, &ITEM_BATCH, &chat_wm],
+            )?;
+            let counted: i64 = row.get(0);
+            let removed: i64 = row.get(1);
+            if removed == 0 {
+                tx.commit()?;
+                break;
+            }
+            decrement_usage_summary(
+                &mut tx,
+                &[(user_id.to_string(), counted)],
+                &[],
+                Self::now_ts(),
+            )?;
+            tx.commit()?;
+            count += removed;
+        }
+
+        // Projections and metadata are independent of the usage counter.  Run
+        // each statement in its own short transaction so one large projection
+        // cannot retain locks acquired by all the others.
         for table in [
+            "thread_log_metrics",
+            "thread_item_blocks",
+            "thread_log_changes",
+            "thread_turns",
+            "thread_logs",
             "thread_body_search",
             "thread_body_manifests",
             "thread_body_chunks",
@@ -1427,15 +1439,22 @@ impl PostgresThreadLogStorage for PostgresStorage {
             "thread_trajectory_rows",
             "thread_view_heads",
         ] {
-            tx.execute(
+            let mut tx = conn.transaction()?;
+            tx.execute("SET LOCAL lock_timeout = '2s'", &[])?;
+            tx.execute("SET LOCAL statement_timeout = '8s'", &[])?;
+            count += tx.execute(
                 &format!("DELETE FROM {table} WHERE user_id=$1 AND session_id=$2"),
                 &[&user_id, &session_id],
-            )?;
+            )? as i64;
+            tx.commit()?;
         }
-        tx.execute(
+        let mut tx = conn.transaction()?;
+        tx.execute("SET LOCAL lock_timeout = '2s'", &[])?;
+        tx.execute("SET LOCAL statement_timeout = '8s'", &[])?;
+        count += tx.execute(
             "DELETE FROM thread_trajectory_tiles WHERE session_id=$1",
             &[&session_id],
-        )?;
+        )? as i64;
         tx.commit()?;
         Ok(count)
     }

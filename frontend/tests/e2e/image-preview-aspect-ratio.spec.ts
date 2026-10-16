@@ -50,7 +50,11 @@ const installChatFixture = async (page: import('@playwright/test').Page, imageFi
       kind: 'user_message', role: 'user', content: `Fixture request ${round}.`,
       status: 'completed', visibility: 'user', revision: 1 });
     const item_id = `${turn_id}:text-1`;
-    const content = round === 1 ? 'No image this round.' : `![Fixture image](fixture-${round}.png)`;
+    const content = round === 1
+      ? 'No image this round.'
+      : round === 2
+        ? `![Fixture image](fixture-${round}.png)`
+        : '[Fixture document](fixture.docx)';
     service.items.set(item_id, { item_id, turn_id, kind: 'assistant_message', role: 'assistant',
       model_round: 1, status: 'completed', revision: 2, visibility: 'user', content });
     service.blocks.set(item_id, { event: 'thread_item_block', item_id, field: 'content', block_index: 0,
@@ -84,7 +88,29 @@ for (const [label, fixture, intrinsicRatio] of [
     try {
       await page.setViewportSize({ width: 1600, height: 1200 });
       await login(page);
-      await expect(page.locator('.ai-resource-card[data-workspace-state="ready"]')).toHaveCount(2);
+      await expect(page.locator('.ai-resource-card[data-workspace-kind="image"][data-workspace-state="ready"]')).toHaveCount(1);
+      const documentCard = page.locator('.message-markdown-body--assistant .ai-resource-card[data-workspace-kind="file"]');
+      await expect(documentCard).toBeVisible();
+      await expect(documentCard.locator('.ai-resource-file-icon-img')).toHaveAttribute(
+        'src',
+        /\/vscode-icons\/icons\/file_type_word\.svg$/
+      );
+      await expect(documentCard.locator('.ai-resource-file-icon-img')).toBeVisible();
+      const documentCardGeometry = await documentCard.evaluate((card) => {
+        const icon = card.querySelector('.ai-resource-file-icon') as HTMLElement | null;
+        const download = card.querySelector('.ai-resource-file-download') as HTMLElement | null;
+        const cardRect = (card as HTMLElement).getBoundingClientRect();
+        const iconRect = icon?.getBoundingClientRect();
+        const downloadRect = download?.getBoundingClientRect();
+        return {
+          cardWidth: Math.round(cardRect.width),
+          icon: iconRect ? [Math.round(iconRect.width), Math.round(iconRect.height)] : [0, 0],
+          download: downloadRect ? [Math.round(downloadRect.width), Math.round(downloadRect.height)] : [0, 0]
+        };
+      });
+      expect(documentCardGeometry.cardWidth).toBeLessThanOrEqual(280);
+      expect(documentCardGeometry.icon).toEqual([56, 56]);
+      expect(documentCardGeometry.download).toEqual([28, 28]);
       const cardGeometry = await page.locator('.message-markdown-body--assistant .ai-resource-card').first()
         .evaluate((card) => {
           const preview = card.querySelector('.ai-resource-preview') as HTMLImageElement | null;
@@ -95,10 +121,10 @@ for (const [label, fixture, intrinsicRatio] of [
             preview: previewRect ? [Math.round(previewRect.width), Math.round(previewRect.height)] : [0, 0]
           };
         });
-      expect(cardGeometry.card[0]).toBeLessThanOrEqual(280);
-      expect(cardGeometry.preview[0]).toBeLessThanOrEqual(264);
-      expect(cardGeometry.preview[1]).toBeLessThanOrEqual(180);
-      await page.locator('.ai-resource-card img').first().click();
+      expect(cardGeometry.card[0]).toBeLessThanOrEqual(438);
+      expect(cardGeometry.preview[0]).toBeLessThanOrEqual(420);
+      expect(cardGeometry.preview[1]).toBeLessThanOrEqual(300);
+      await page.locator('.ai-resource-card[data-workspace-kind="image"] img.ai-resource-preview').first().click();
 
       const image = page.locator('.messenger-image-preview-dialog .zoomable-image');
       await expect(image).toBeVisible();

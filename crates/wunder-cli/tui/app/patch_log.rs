@@ -10,8 +10,7 @@ use super::plan_panel::PlanLogEntry;
 use crate::command_session_display::{CommandSessionDisplayStatus, CommandSessionView};
 use crate::patch_diff::{
     build_patch_diff_preview, patch_diff_preview_from_blocks, PatchDiffBlock, PatchDiffBlockKind,
-    PatchDiffLine, PatchDiffLineKind,
-    PatchDiffPreview,
+    PatchDiffLine, PatchDiffLineKind, PatchDiffPreview,
 };
 use crate::tool_display::summarize_tool_result;
 use crate::tool_presentation::{
@@ -222,7 +221,11 @@ impl GenericToolLogEntry {
         if show_arguments {
             let text = format!(
                 "{}{}",
-                if self.is_zh { "参数: " } else { "Arguments: " },
+                if self.is_zh {
+                    "参数: "
+                } else {
+                    "Arguments: "
+                },
                 self.arguments.as_deref().unwrap_or_default()
             );
             lines.extend(render_wrapped_tree_text(
@@ -375,6 +378,9 @@ pub(super) struct CommandLogEntry {
     title: String,
     command: String,
     metrics: Option<String>,
+    /// The exit code the footer states once the card is open. `None` while the process runs.
+    exit_code: Option<i64>,
+    duration_ms: Option<i64>,
     sections: Vec<CommandSection>,
     is_zh: bool,
 }
@@ -393,12 +399,18 @@ impl CommandLogEntry {
             .sum()
     }
 
-    /// What Enter brings back: the output rows outside the tail budget, plus the command's
-    /// own continuation rows. Rows the stored window already dropped are excluded, because
-    /// no expansion can reveal what is gone — the storage marker owns those.
+    /// What Enter brings back: the output rows outside the tail budget, the command's own
+    /// continuation rows, and the settled footer row that names the exit and the elapsed
+    /// time. Rows the stored window already dropped are excluded, because no expansion can
+    /// reveal what is gone — the storage marker owns those.
     fn card_fold(&self) -> Option<Disclosure> {
         let hidden = self.hidden_output_lines()
-            + self.command.lines().count().saturating_sub(/*header row*/ 1);
+            + self
+                .command
+                .lines()
+                .count()
+                .saturating_sub(/*header row*/ 1)
+            + usize::from(self.exit_code.is_some());
         Disclosure::new_lines(hidden)
     }
 
@@ -453,10 +465,54 @@ impl CommandLogEntry {
             ));
         }
 
+        if expanded {
+            if let Some(line) = self.footer_line() {
+                lines.push(line);
+            }
+        }
+
         if let Some(line) = disclosure_line(expanded, self.card_fold(), width, self.is_zh) {
             lines.push(line);
         }
         lines
+    }
+
+    /// `✓`, or `✗ (code)` when the process came back nonzero, with the elapsed time on the
+    /// same row. A collapsed card does not spend a row on an outcome its header already
+    /// states; expansion is where the reference puts this.
+    fn footer_line(&self) -> Option<Line<'static>> {
+        let exit_code = self.exit_code?;
+        let mut spans = if exit_code == 0 {
+            vec![Span::styled(
+                "\u{2713}".to_string(),
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            )]
+        } else {
+            vec![
+                Span::styled(
+                    "\u{2717}".to_string(),
+                    Style::default()
+                        .fg(Color::Red)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(format!(" ({exit_code})")),
+            ]
+        };
+        if let Some(duration) = self.duration_text() {
+            spans.push(Span::styled(
+                format!(" \u{00b7} {duration}"),
+                theme::secondary_text(),
+            ));
+        }
+        Some(Line::from(spans))
+    }
+
+    fn duration_text(&self) -> Option<String> {
+        self.duration_ms
+            .filter(|value| *value > 0)
+            .map(format_elapsed_ms)
     }
 
     /// `• Ran <cmd>` on success, `• Failed (exit 1) <cmd>` on failure, with the elapsed
@@ -555,6 +611,9 @@ pub(super) struct PatchLogEntry {
     notes: Vec<PatchNote>,
     files: Vec<PatchFileRow>,
     diff_preview: Option<PatchDiffPreview>,
+    /// The header already names the one file this card changed, so the body does not have
+    /// to say the path a second time.
+    header_names_file: bool,
     is_zh: bool,
 }
 
@@ -619,14 +678,19 @@ impl PatchLogEntry {
 
         let mut fold = None;
         if has_diff_preview {
-            let body = self.diff_body_lines(width);
-            fold = Disclosure::new_lines(body.len().saturating_sub(PATCH_FOLD_DIFF_LINES));
-            let shown = if expanded {
-                body.len()
-            } else {
-                body.len().min(PATCH_FOLD_DIFF_LINES)
-            };
-            lines.extend(body.into_iter().take(shown));
+            let blocks = self.diff_body_blocks(width);
+            fold = Disclosure::new_lines(
+                count_body_rows(&blocks, None)
+                    .saturating_sub(count_body_rows(&blocks, Some(PATCH_PREVIEW_ROWS))),
+            );
+            lines.extend(render_body_blocks(
+                &blocks,
+                if expanded {
+                    None
+                } else {
+                    Some(PATCH_PREVIEW_ROWS)
+                },
+            ));
         } else {
             for file in &self.files {
                 let is_last = remaining_items == 1;
@@ -642,22 +706,42 @@ impl PatchLogEntry {
         lines
     }
 
-    /// The diff body in full, with nothing folded. Both the renderer and the fold decision
-    /// read this, so a disclosure row can never count rows the card would not reveal.
-    fn diff_body_lines(&self, width: u16) -> Vec<Line<'static>> {
-        self.diff_preview
-            .as_ref()
-            .map(|preview| render_patch_diff_preview(preview, width))
-            .unwrap_or_default()
+    /// The stored diff, rendered once per file into the path row and the body rows, so the
+    /// fold can count what it hides without wrapping the same text twice.
+    fn diff_body_blocks(&self, width: u16) -> Vec<PatchBodyBlock> {
+        let Some(preview) = self.diff_preview.as_ref() else {
+            return Vec::new();
+        };
+        if preview.is_empty() {
+            return Vec::new();
+        }
+        let total_items = preview.item_count();
+        let mut rendered_items = 0usize;
+        let mut blocks = Vec::with_capacity(preview.blocks.len());
+        let hide_header = self.header_names_file && preview.blocks.len() == 1;
+        for block in &preview.blocks {
+            rendered_items = rendered_items.saturating_add(1);
+            let is_last = rendered_items == total_items;
+            blocks.push(render_patch_diff_block(block, width, is_last, hide_header));
+        }
+        if let Some(text) = preview.omitted_text.as_ref() {
+            rendered_items = rendered_items.saturating_add(1);
+            let is_last = rendered_items == total_items;
+            blocks.push(PatchBodyBlock {
+                header: render_wrapped_tree_text(text.as_str(), summary_style(), is_last, width),
+                body: Vec::new(),
+            });
+        }
+        blocks
     }
 
-    /// A diff longer than the fold budget is what Enter is for on this card, and the count
-    /// is what the row says.
+    /// A diff longer than the per-file preview is what Enter is for on this card, and the
+    /// count is what the row says.
     fn card_fold(&self, width: u16) -> Option<Disclosure> {
+        let blocks = self.diff_body_blocks(width);
         Disclosure::new_lines(
-            self.diff_body_lines(width)
-                .len()
-                .saturating_sub(PATCH_FOLD_DIFF_LINES),
+            count_body_rows(&blocks, None)
+                .saturating_sub(count_body_rows(&blocks, Some(PATCH_PREVIEW_ROWS))),
         )
     }
 
@@ -824,36 +908,84 @@ impl PatchFileRow {
     }
 }
 
-/// Body rows a folded patch card keeps before the disclosure takes over.
-const PATCH_FOLD_DIFF_LINES: usize = 10;
+/// Body rows a folded patch card keeps for each file, the same depth the reference previews
+/// an activity with. The stored window, not this number, bounds what expansion can reveal.
+const PATCH_PREVIEW_ROWS: usize = 3;
 
 /// Diff rows one card keeps in memory. The fold is a render-time view of this window, and
 /// the window is what keeps a large patch from costing the transcript unbounded rows.
 const PATCH_DIFF_WINDOW_LINES: usize = 40;
 
-fn render_patch_diff_preview(preview: &PatchDiffPreview, width: u16) -> Vec<Line<'static>> {
+/// One file's rendered diff: the rows naming it, then its body rows.
+struct PatchBodyBlock {
+    header: Vec<Line<'static>>,
+    body: Vec<Line<'static>>,
+}
+
+/// Rows a set of blocks yields at a per-file cap. Both the disclosure count and the renderer
+/// read this, so a row can never promise a number the card would not reveal.
+fn count_body_rows(blocks: &[PatchBodyBlock], per_file: Option<usize>) -> usize {
+    blocks
+        .iter()
+        .map(|block| {
+            block.header.len()
+                + per_file.map_or(block.body.len(), |limit| block.body.len().min(limit))
+        })
+        .sum()
+}
+
+fn render_body_blocks(blocks: &[PatchBodyBlock], per_file: Option<usize>) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
-    let total_items = preview.item_count();
-    let mut rendered_items = 0usize;
-
-    for block in &preview.blocks {
-        rendered_items = rendered_items.saturating_add(1);
-        let is_last = rendered_items == total_items;
-        lines.extend(render_patch_diff_block(block, width, is_last));
+    for block in blocks {
+        lines.extend(block.header.iter().cloned());
+        match per_file {
+            Some(limit) => lines.extend(block.body.iter().take(limit).cloned()),
+            None => lines.extend(block.body.iter().cloned()),
+        }
     }
-
-    if let Some(text) = preview.omitted_text.as_ref() {
-        rendered_items = rendered_items.saturating_add(1);
-        let is_last = rendered_items == total_items;
-        lines.extend(render_wrapped_tree_text(
-            text.as_str(),
-            summary_style(),
-            is_last,
-            width,
-        ));
-    }
-
     lines
+}
+
+/// Render one file's diff. `hide_header` is the single-file case: the card header already
+/// names the path, so the first body row takes the path row's place in the tree.
+fn render_patch_diff_block(
+    block: &PatchDiffBlock,
+    width: u16,
+    is_last: bool,
+    hide_header: bool,
+) -> PatchBodyBlock {
+    let header = if hide_header {
+        Vec::new()
+    } else {
+        render_wrapped_prefixed_text(
+            tree_item_prefix(is_last).to_string(),
+            tree_item_continuation_prefix(is_last).to_string(),
+            theme::secondary_text(),
+            block.header.as_str(),
+            patch_diff_header_style(block.kind),
+            width,
+        )
+    };
+    // A bare `@@` patch carries no ranges, and a permanent blank gutter column would then
+    // just eat width, so the column appears only when some line actually has a number.
+    let has_gutter = block
+        .lines
+        .iter()
+        .any(|line| line.old_line.is_some() || line.new_line.is_some());
+    let body = block
+        .lines
+        .iter()
+        .enumerate()
+        .flat_map(|(index, line)| {
+            let nested_prefix = if hide_header && index == 0 {
+                tree_item_prefix(is_last)
+            } else {
+                tree_item_continuation_prefix(is_last)
+            };
+            render_patch_diff_line(line, nested_prefix, width, has_gutter)
+        })
+        .collect();
+    PatchBodyBlock { header, body }
 }
 
 /// The `⋮` row that stands where content was folded away.
@@ -932,37 +1064,6 @@ pub(super) fn disclosure_line(
         }
     }
     Some(Line::from(Span::styled(text, theme::accent_text())))
-}
-
-fn render_patch_diff_block(
-    block: &PatchDiffBlock,
-    width: u16,
-    is_last: bool,
-) -> Vec<Line<'static>> {
-    let mut lines = render_wrapped_prefixed_text(
-        tree_item_prefix(is_last).to_string(),
-        tree_item_continuation_prefix(is_last).to_string(),
-        theme::secondary_text(),
-        block.header.as_str(),
-        patch_diff_header_style(block.kind),
-        width,
-    );
-    let nested_prefix = tree_item_continuation_prefix(is_last);
-    // A bare `@@` patch carries no ranges, and a permanent blank gutter column would then
-    // just eat width, so the column appears only when some line actually has a number.
-    let has_gutter = block
-        .lines
-        .iter()
-        .any(|line| line.old_line.is_some() || line.new_line.is_some());
-    for line in &block.lines {
-        lines.extend(render_patch_diff_line(
-            line,
-            nested_prefix,
-            width,
-            has_gutter,
-        ));
-    }
-    lines
 }
 
 fn render_patch_diff_line(
@@ -1253,6 +1354,8 @@ pub(super) fn build_pending_command_log(args: &Value, is_zh: bool) -> Option<Spe
         },
         command,
         metrics: None,
+        exit_code: None,
+        duration_ms: None,
         sections: Vec::new(),
     }))
 }
@@ -1308,10 +1411,9 @@ pub(super) fn build_command_session_log(view: &CommandSessionView, is_zh: bool) 
         }
     };
 
+    // Elapsed time is not a header detail: it belongs to the footer a settled card shows
+    // when it opens. The header keeps only what a reader cannot get from anywhere else.
     let mut metrics = Vec::new();
-    if let Some(duration_ms) = view.duration_ms.filter(|value| *value > 0) {
-        metrics.push(format!("{duration_ms}ms"));
-    }
     if view.timed_out {
         metrics.push("timeout".to_string());
     }
@@ -1342,9 +1444,7 @@ pub(super) fn build_command_session_log(view: &CommandSessionView, is_zh: bool) 
     // One stream with one tail budget. stderr keeps its own colour but no longer gets its
     // own fold row, which is what made a single card promise expansion twice.
     if !view.pty.trim().is_empty() {
-        if let Some(section) =
-            build_output_section("output", view.pty.as_str(), summary_style())
-        {
+        if let Some(section) = build_output_section("output", view.pty.as_str(), summary_style()) {
             sections.push(section);
         }
     } else if !terminal || success {
@@ -1387,6 +1487,8 @@ pub(super) fn build_command_session_log(view: &CommandSessionView, is_zh: bool) 
         title,
         command,
         metrics: (!metrics.is_empty()).then(|| metrics.join(", ")),
+        exit_code: terminal.then_some(view.exit_code.unwrap_or(if success { 0 } else { 1 })),
+        duration_ms: view.duration_ms,
         sections,
         is_zh,
     })
@@ -1416,11 +1518,6 @@ pub(super) fn build_completed_command_log(payload: &Value, is_zh: bool) -> Optio
         .unwrap_or(0);
     let duration_ms = value_as_i64(result.get("meta").and_then(|meta| meta.get("duration_ms")));
     let success = returncode == 0;
-
-    let mut metrics = Vec::new();
-    if let Some(duration_ms) = duration_ms.filter(|value| *value > 0) {
-        metrics.push(format!("{duration_ms}ms"));
-    }
 
     let stdout = first
         .get("stdout")
@@ -1473,7 +1570,9 @@ pub(super) fn build_completed_command_log(payload: &Value, is_zh: bool) -> Optio
         success,
         title,
         command,
-        metrics: Some(metrics.join(", ")),
+        metrics: None,
+        exit_code: Some(returncode),
+        duration_ms,
         sections,
         is_zh,
     }))
@@ -1616,11 +1715,13 @@ pub(super) fn build_pending_patch_log(args: &Value, is_zh: bool) -> Option<Speci
         "Applying patch".to_string()
     };
     let mut summary = (!summary.is_empty()).then_some(summary);
+    let mut header_names_file = false;
     if let [file] = files.as_slice() {
         if file.marker != '\u{2026}' {
             header = format!("{header} {}", file.text);
             summary = file.meta.clone().or(summary);
             files.clear();
+            header_names_file = true;
         }
     }
     Some(SpecialLogEntry::Patch(PatchLogEntry {
@@ -1630,6 +1731,7 @@ pub(super) fn build_pending_patch_log(args: &Value, is_zh: bool) -> Option<Speci
         notes: Vec::new(),
         files,
         diff_preview,
+        header_names_file,
         is_zh,
     }))
 }
@@ -1758,12 +1860,14 @@ pub(super) fn build_completed_patch_log(payload: &Value, is_zh: bool) -> Special
         .unwrap_or_default();
     let mut summary = (!summary_parts.is_empty()).then(|| summary_parts.join(", "));
 
+    let mut header_names_file = false;
     if ok {
         if let [file] = files.as_slice() {
             if file.marker != '…' {
                 header = single_file_patch_header(file, is_zh);
                 summary = file.meta.clone().or(summary);
                 files.clear();
+                header_names_file = true;
             }
         }
     }
@@ -1779,6 +1883,7 @@ pub(super) fn build_completed_patch_log(payload: &Value, is_zh: bool) -> Special
         notes,
         files,
         diff_preview: completed_diff_preview(data, is_zh),
+        header_names_file,
         is_zh,
     })
 }
@@ -2003,6 +2108,20 @@ fn truncate_by_chars(text: &str, max_chars: usize) -> (String, bool) {
         output.push(ch);
     }
     (output, true)
+}
+
+/// Elapsed time as the reference states it: whole milliseconds under a second, two decimal
+/// seconds under a minute, then minutes with a zero-padded remainder.
+fn format_elapsed_ms(elapsed_ms: i64) -> String {
+    if elapsed_ms < 1_000 {
+        return format!("{elapsed_ms}ms");
+    }
+    if elapsed_ms < 60_000 {
+        return format!("{:.2}s", elapsed_ms as f64 / 1000.0);
+    }
+    let minutes = elapsed_ms / 60_000;
+    let seconds = (elapsed_ms % 60_000) / 1_000;
+    format!("{minutes}m {seconds:02}s")
 }
 
 /// The row that marks output the stored window already dropped. It names no count and no
@@ -2505,7 +2624,11 @@ mod tests {
         assert_eq!(entry.status, CommandLogStatus::Completed);
         assert!(!entry.success);
         assert_eq!(entry.title, "Failed (exit 1)");
-        assert_eq!(entry.metrics.as_deref(), Some("28ms"));
+        // The elapsed time is a footer detail now: the collapsed header keeps the outcome,
+        // and opening the card is what spends a row on how long it took.
+        assert_eq!(entry.metrics, None);
+        assert_eq!(entry.duration_ms, Some(28));
+        assert_eq!(entry.exit_code, Some(1));
         assert!(entry
             .sections
             .iter()
@@ -2764,7 +2887,13 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(rendered
             .iter()
-            .any(|line| line.contains("diff src/main.rs")));
+            .any(|line| line.contains("Applying patch src/main.rs")));
+        // One file, one path: the header names it, so the body does not repeat it the way a
+        // multi-file card has to.
+        assert!(
+            !rendered.iter().any(|line| line.contains("diff src/main.rs")),
+            "{rendered:?}"
+        );
         assert!(rendered.iter().any(|line| line.contains("@@")));
         assert!(rendered.iter().any(|line| line.contains("- old")));
         assert!(rendered.iter().any(|line| line.contains("+ new")));
@@ -2791,12 +2920,14 @@ mod tests {
             "an added row is numbered from the new file, before its sign: {rows:?}"
         );
         assert!(
-            rows.iter().any(|row| row.contains("13   ctx")),
-            "context carries the new position with an empty sign: {rows:?}"
-        );
-        assert!(
             rows.iter().any(|row| row.contains("@@ -10,3")),
             "a hunk row is a marker, not a numbered line, so it takes no gutter: {rows:?}"
+        );
+        // The preview keeps three rows per file, so the fourth only reads on an open card.
+        let opened = flat_patch_lines(&entry, 80, true);
+        assert!(
+            opened.iter().any(|row| row.contains("13   ctx")),
+            "context carries the new position with an empty sign: {opened:?}"
         );
     }
 
@@ -2817,13 +2948,21 @@ mod tests {
         assert!(
             folded
                 .iter()
-                .any(|row| row.contains("+6 lines (enter to expand)")),
+                .any(|row| row.contains("+12 lines (enter to expand)")),
             "one row carries both the count and the key: {folded:?}"
         );
         assert!(
             !folded.iter().any(|row| row.contains("\u{22ee} +")),
             "the count may not be said twice on this card: {folded:?}"
         );
+        // Three rows per file is what the folded card spends, the same depth the reference
+        // previews a change with.
+        assert_eq!(
+            folded.iter().filter(|row| row.contains("+line ")).count(),
+            2,
+            "{folded:?}"
+        );
+        assert!(!folded.iter().any(|row| row.contains("+line 3")));
         assert!(!folded.iter().any(|row| row.contains("line 14")));
 
         let opened = flat_patch_lines(&entry, 80, true);
@@ -2848,8 +2987,7 @@ mod tests {
         };
         let rows = flat_patch_lines(&entry, 80, false);
         assert!(
-            rows
-                .iter()
+            rows.iter()
                 .any(|row| row.contains("lines (enter to expand)")),
             "the card counts what Enter reveals: {rows:?}"
         );
@@ -2885,16 +3023,25 @@ mod tests {
         };
         let rows = flat_patch_lines(&entry, 80, false);
         assert!(
-            rows.iter().any(|row| row.contains("diff src/main.rs")),
-            "{rows:?}"
+            rows.iter().any(|row| row.contains("Edited src/main.rs")),
+            "the header names the one file: {rows:?}"
+        );
+        assert!(
+            !rows.iter().any(|row| row.contains("diff src/main.rs")),
+            "and the body does not say the path again: {rows:?}"
         );
         assert!(
             rows.iter().any(|row| row.contains("-10,1 +12,2")),
             "the hunk row is built from the engine's own range: {rows:?}"
         );
         assert!(
-            rows.iter().any(|row| row.contains("let c = 4;")),
+            rows.iter().any(|row| row.contains("let b = 3;")),
             "{rows:?}"
+        );
+        let opened = flat_patch_lines(&entry, 80, true);
+        assert!(
+            opened.iter().any(|row| row.contains("let c = 4;")),
+            "the last row of the range is what Enter is for: {opened:?}"
         );
     }
 
@@ -2937,6 +3084,60 @@ mod tests {
 
     /// A remote call's rows are the thing worth reading; hiding all of them until Enter
     /// made the card a heading with no content.
+    /// Two files in one card: each keeps a three-row preview of its own, so one large file
+    /// cannot spend the whole budget and starve the second file's rows.
+    #[test]
+    fn two_files_each_keep_their_own_preview_rows() {
+        fn added(n: u32, text: &str) -> Value {
+            serde_json::json!({"kind": "add", "old_line": null, "new_line": n, "text": text})
+        }
+        fn file(path: &str, marker: &str) -> Value {
+            serde_json::json!({"action": "update", "path": path, "hunks": 1,
+                "added_lines": 4, "deleted_lines": 0,
+                "diff_blocks": [{"header": "",
+                    "start_line_before": 1, "end_line_before": 1,
+                    "start_line_after": 1, "end_line_after": 4,
+                    "lines": [
+                        added(1, &format!("{marker} one")),
+                        added(2, &format!("{marker} two")),
+                        added(3, &format!("{marker} three")),
+                        added(4, &format!("{marker} four"))
+                    ]}]})
+        }
+        let SpecialLogEntry::Patch(entry) = build_completed_patch_log(
+            &serde_json::json!({"result": {"ok": true, "data": {
+                "changed_files": 2, "updated": 2, "added_lines": 8, "deleted_lines": 0,
+                "files": [file("src/first.rs", "first"), file("src/second.rs", "second")]
+            }}}),
+            false,
+        ) else {
+            panic!("expected a patch card");
+        };
+
+        // Each block is a range row plus four content rows, so a card of two files previews
+        // three of them and holds two back per file.
+        let folded = flat_patch_lines(&entry, 100, false);
+        assert!(folded.iter().any(|row| row.contains("first two")), "{folded:?}");
+        assert!(folded.iter().any(|row| row.contains("second two")), "{folded:?}");
+        assert!(!folded.iter().any(|row| row.contains("first three")), "{folded:?}");
+        assert!(!folded.iter().any(|row| row.contains("second three")), "{folded:?}");
+        assert!(
+            folded
+                .iter()
+                .any(|row| row.contains("+4 lines (enter to expand)")),
+            "{folded:?}"
+        );
+
+        let opened = flat_patch_lines(&entry, 100, true);
+        assert!(opened.iter().any(|row| row.contains("first four")), "{opened:?}");
+        assert!(opened.iter().any(|row| row.contains("second four")), "{opened:?}");
+        // Two files keep two path rows; only a one-file card folds its path into the header.
+        assert!(
+            opened.iter().any(|row| row.contains("diff src/first.rs")),
+            "{opened:?}"
+        );
+    }
+
     #[test]
     fn a_remote_result_previews_rows_and_holds_the_rest_for_enter() {
         fn flat(entry: &SpecialLogEntry, width: u16, expanded: bool) -> Vec<String> {
@@ -2982,10 +3183,7 @@ mod tests {
         );
 
         let opened = flat(&entry, 80, true);
-        assert!(
-            opened.iter().any(|row| row.contains("row 7")),
-            "{opened:?}"
-        );
+        assert!(opened.iter().any(|row| row.contains("row 7")), "{opened:?}");
         assert!(
             opened.iter().any(|row| row.contains("Arguments:"))
                 && opened.iter().any(|row| row.contains("customer")),
@@ -3112,23 +3310,29 @@ mod tests {
     }
 
     #[test]
-    fn command_head_carries_exit_and_duration_and_folds_a_multi_line_command() {
+    fn command_head_folds_a_multi_line_command_and_the_footer_states_the_outcome() {
         let entry = CommandLogEntry {
             status: CommandLogStatus::Completed,
             success: false,
             title: "Failed (exit 1)".to_string(),
             command: "echo first\necho second".to_string(),
-            metrics: Some("28ms".to_string()),
+            metrics: None,
+            exit_code: Some(1),
+            duration_ms: Some(28),
             sections: Vec::new(),
             is_zh: false,
         };
         let rendered = flat_command_lines(&entry, 80, false);
-        assert_eq!(rendered[0], "• Failed (exit 1) echo first … · 28ms");
+        assert_eq!(rendered[0], "• Failed (exit 1) echo first …");
+        assert!(
+            !rendered[0].contains("28ms"),
+            "the elapsed time is not a header detail: {rendered:?}"
+        );
         assert!(
             rendered
                 .iter()
-                .any(|line| line.contains("+1 line (enter to expand)")),
-            "the folded continuation is counted on the row that opens it: {rendered:?}"
+                .any(|line| line.contains("+2 lines (enter to expand)")),
+            "the continuation row and the footer row are both what Enter brings back: {rendered:?}"
         );
 
         let opened = flat_command_lines(&entry, 80, true);
@@ -3136,7 +3340,24 @@ mod tests {
             opened.iter().any(|line| line.contains("  └ echo second")),
             "the open card hangs the rest of the command: {opened:?}"
         );
+        assert!(
+            opened.iter().any(|line| line == "✗ (1) • 28ms"),
+            "the settled footer names the exit and how long it took: {opened:?}"
+        );
         assert!(!opened.iter().any(|line| line.contains('│')));
+    }
+
+    /// The reference counts whole seconds with two decimals and switches to minutes past a
+    /// minute; a raw millisecond figure is what it never prints.
+    #[test]
+    fn elapsed_time_reads_the_way_the_reference_reads_it() {
+        assert_eq!(format_elapsed_ms(0), "0ms");
+        assert_eq!(format_elapsed_ms(999), "999ms");
+        assert_eq!(format_elapsed_ms(1_000), "1.00s");
+        assert_eq!(format_elapsed_ms(1_500), "1.50s");
+        assert_eq!(format_elapsed_ms(59_999), "60.00s");
+        assert_eq!(format_elapsed_ms(60_000), "1m 00s");
+        assert_eq!(format_elapsed_ms(125_400), "2m 05s");
     }
 
     #[test]
@@ -3153,6 +3374,8 @@ mod tests {
             title: "Ran".to_string(),
             command: "ls".to_string(),
             metrics: None,
+            exit_code: None,
+            duration_ms: None,
             sections: vec![section],
             is_zh: false,
         };
@@ -3181,7 +3404,9 @@ mod tests {
         assert!(opened.iter().any(|line| line.contains("line 1")));
         assert!(opened.iter().any(|line| line.contains("line 5")));
         assert!(
-            opened.iter().any(|line| line.contains("\u{2212} Show less")),
+            opened
+                .iter()
+                .any(|line| line.contains("\u{2212} Show less")),
             "{opened:?}"
         );
         assert!(
@@ -3207,6 +3432,8 @@ mod tests {
             title: "Ran".to_string(),
             command: "ls".to_string(),
             metrics: None,
+            exit_code: None,
+            duration_ms: None,
             sections: vec![CommandSection {
                 label: "stdout".to_string(),
                 lines: vec!["last".to_string()],
@@ -3243,6 +3470,8 @@ mod tests {
             title: "已运行".to_string(),
             command: "ls".to_string(),
             metrics: None,
+            exit_code: None,
+            duration_ms: None,
             sections: vec![section],
             is_zh: true,
         };
@@ -3268,9 +3497,7 @@ mod tests {
         // Given room it returns.
         let roomy = flat_command_lines(&entry, 40, false);
         assert!(
-            roomy
-                .iter()
-                .any(|row| row.contains("+6 行（enter 展开）")),
+            roomy.iter().any(|row| row.contains("+6 行（enter 展开）")),
             "{roomy:?}"
         );
     }

@@ -103,7 +103,8 @@ impl BridgeSession {
     }
 
     fn touch(&self) {
-        self.last_active_ms.store(elapsed_millis(), Ordering::Relaxed);
+        self.last_active_ms
+            .store(elapsed_millis(), Ordering::Relaxed);
     }
 
     /// Mark dead and kill the process. `Child::kill` does not block, and the
@@ -310,9 +311,7 @@ impl BrowserBridge {
         };
         match outcome {
             Ok(()) => {
-                session
-                    .state
-                    .store(STATE_READY, Ordering::Release);
+                session.state.store(STATE_READY, Ordering::Release);
                 session.touch();
                 Ok(session)
             }
@@ -586,9 +585,10 @@ impl BrowserBridge {
     }
 
     fn python_program(&self) -> String {
-        self.config.python_path.clone().unwrap_or_else(|| {
-            if cfg!(windows) { "python" } else { "python3" }.to_string()
-        })
+        self.config
+            .python_path
+            .clone()
+            .unwrap_or_else(|| if cfg!(windows) { "python" } else { "python3" }.to_string())
     }
 
     fn launch_args(&self) -> Vec<String> {
@@ -625,18 +625,16 @@ fn pick_evict_candidate(
     protect: Duration,
 ) -> Option<String> {
     candidates.sort();
-    candidates.into_iter().find_map(move |(last_active_ms, key)| {
-        (Duration::from_millis(now_ms.saturating_sub(last_active_ms)) >= protect).then_some(key)
-    })
+    candidates
+        .into_iter()
+        .find_map(move |(last_active_ms, key)| {
+            (Duration::from_millis(now_ms.saturating_sub(last_active_ms)) >= protect).then_some(key)
+        })
 }
 
 /// Reap sessions quieter than `limit`, measured against `now_ms` so the choice
 /// is testable without a wall clock.
-fn sweep_at(
-    sessions: &DashMap<String, Arc<BridgeSession>>,
-    now_ms: u64,
-    limit: Duration,
-) -> usize {
+fn sweep_at(sessions: &DashMap<String, Arc<BridgeSession>>, now_ms: u64, limit: Duration) -> usize {
     // Collect first: locking a shard while iterating the same shard deadlocks.
     let expired = sessions
         .iter()
@@ -649,7 +647,8 @@ fn sweep_at(
     let mut removed = 0usize;
     for key in expired {
         // Re-check under the write lock so a just-reused session wins.
-        if let Some((_, session)) = sessions.remove_if(&key, |_, existing| existing.idle_for(now_ms) > limit)
+        if let Some((_, session)) =
+            sessions.remove_if(&key, |_, existing| existing.idle_for(now_ms) > limit)
         {
             session.teardown();
             removed += 1;
@@ -709,8 +708,8 @@ fn pump_loop(
             let Some(command) = cmd_rx.blocking_recv() else {
                 break;
             };
-            let outcome = write_command(&mut stdin, &command.line)
-                .and_then(|_| read_reply(&mut reader));
+            let outcome =
+                write_command(&mut stdin, &command.line).and_then(|_| read_reply(&mut reader));
             match outcome {
                 Ok(response) => {
                     if command.reply.send(response).is_err() {
@@ -743,7 +742,10 @@ fn read_ready(reader: &mut BufReader<ChildStdout>) -> Result<(), String> {
         .read_line(&mut line)
         .map_err(|err| format!("Bridge failed to start: {err}"))?;
     if line.trim().is_empty() {
-        return Err("Browser bridge exited without ready signal. Check Python/Playwright installation.".to_string());
+        return Err(
+            "Browser bridge exited without ready signal. Check Python/Playwright installation."
+                .to_string(),
+        );
     }
     let ready: BridgeResponse = serde_json::from_str(line.trim())
         .map_err(|err| format!("Bridge startup failed: {err}. Output: {}", line.trim()))?;
@@ -760,7 +762,9 @@ fn read_ready(reader: &mut BufReader<ChildStdout>) -> Result<(), String> {
         .filter(|value| !value.is_empty())
         .map(|value| format!("\n{value}"))
         .unwrap_or_default();
-    Err(format!("Browser bridge failed to start: {error}{traceback}"))
+    Err(format!(
+        "Browser bridge failed to start: {error}{traceback}"
+    ))
 }
 
 fn write_command(stdin: &mut ChildStdin, line: &str) -> Result<(), String> {
@@ -783,7 +787,8 @@ fn read_reply(reader: &mut BufReader<ChildStdout>) -> Result<BridgeResponse, Str
     if line.trim().is_empty() {
         return Err("Browser bridge closed unexpectedly".to_string());
     }
-    serde_json::from_str(line.trim()).map_err(|err| format!("Failed to parse browser response: {err}"))
+    serde_json::from_str(line.trim())
+        .map_err(|err| format!("Failed to parse browser response: {err}"))
 }
 
 fn apply_browser_env(command: &mut std::process::Command, config: &EffectiveBrowserConfig) {
@@ -861,7 +866,10 @@ mod tests {
     #[test]
     fn thread_names_stay_short_and_non_empty() {
         assert_eq!(short_slot("user:session:abc"), "abc");
-        assert_eq!(short_slot("u:web-fetch:123:deadbeefcafe1234"), "deadbeefcafe");
+        assert_eq!(
+            short_slot("u:web-fetch:123:deadbeefcafe1234"),
+            "deadbeefcafe"
+        );
         assert_eq!(short_slot(":"), "session");
     }
 
@@ -912,7 +920,11 @@ mod tests {
             .sessions
             .insert("u1:s1".to_string(), Arc::clone(&session));
         let outcome = bridge
-            .send_command("u1:s1", json!({ "action": "tabs" }), Duration::from_millis(120))
+            .send_command(
+                "u1:s1",
+                json!({ "action": "tabs" }),
+                Duration::from_millis(120),
+            )
             .await;
         let err = outcome.expect_err("a bridge that never replies must fail the call");
         assert!(
@@ -929,12 +941,17 @@ mod tests {
         let bridge = bridge_with(300, 5);
         for (key, last_active_ms) in [("u1:old", 1_000u64), ("u2:edge", 5_500), ("u1:new", 9_000)] {
             let (session, _rx) = silent_session(key, 0);
-            session.last_active_ms.store(last_active_ms, Ordering::Relaxed);
+            session
+                .last_active_ms
+                .store(last_active_ms, Ordering::Relaxed);
             bridge.sessions.insert(key.to_string(), session);
         }
         // now = 10s, window = 5s: only the 9s-quiet session goes, the 4.5s and
         // 1s-quiet ones stay.
-        assert_eq!(sweep_at(&bridge.sessions, 10_000, Duration::from_secs(5)), 1);
+        assert_eq!(
+            sweep_at(&bridge.sessions, 10_000, Duration::from_secs(5)),
+            1
+        );
         assert_eq!(
             bridge.session_keys(),
             vec!["u1:new".to_string(), "u2:edge".to_string()]
@@ -947,14 +964,22 @@ mod tests {
         let (busy, _rx) = silent_session("u1:busy", 0);
         busy.last_active_ms.store(0, Ordering::Relaxed);
         busy.in_flight.store(1, Ordering::Release);
-        bridge.sessions.insert("u1:busy".to_string(), Arc::clone(&busy));
+        bridge
+            .sessions
+            .insert("u1:busy".to_string(), Arc::clone(&busy));
         // Silent since the beginning of the process, yet mid-command: kept.
-        assert_eq!(sweep_at(&bridge.sessions, 10_000_000, Duration::from_secs(5)), 0);
+        assert_eq!(
+            sweep_at(&bridge.sessions, 10_000_000, Duration::from_secs(5)),
+            0
+        );
         assert!(bridge.evict_for_capacity().is_err());
         // Once the caller lets go (guard drop, including cancellation) it is
         // reclaimable again.
         busy.in_flight.store(0, Ordering::Release);
-        assert_eq!(sweep_at(&bridge.sessions, 10_000_000, Duration::from_secs(5)), 1);
+        assert_eq!(
+            sweep_at(&bridge.sessions, 10_000_000, Duration::from_secs(5)),
+            1
+        );
         assert_eq!(bridge.session_count(), 0);
     }
 
@@ -987,7 +1012,10 @@ mod tests {
         // Nothing has been quiet long enough: refuse rather than steal live work.
         assert_eq!(
             pick_evict_candidate(
-                vec![(now - 1_000, "u1:a".to_string()), (now - 2_000, "u2:b".to_string())],
+                vec![
+                    (now - 1_000, "u1:a".to_string()),
+                    (now - 2_000, "u2:b".to_string())
+                ],
                 now,
                 protect
             ),

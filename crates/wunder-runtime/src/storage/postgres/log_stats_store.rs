@@ -185,8 +185,11 @@ impl PostgresLogStatsStorage for PostgresStorage {
         self.ensure_initialized()?;
         let mut conn = self.conn()?;
         let mut tx = conn.transaction()?;
-        tx.execute("SET LOCAL lock_timeout = '5s'", &[])?;
-        tx.execute("SET LOCAL statement_timeout = '300s'", &[])?;
+        // Reconciliation is maintenance work and is safe to retry from its
+        // persisted watermarks.  Never hold summary/index locks for minutes
+        // while a live session purge is waiting on the same user row.
+        tx.execute("SET LOCAL lock_timeout = '2s'", &[])?;
+        tx.execute("SET LOCAL statement_timeout = '20s'", &[])?;
         let now = Self::now_ts();
         let last_full = read_meta_f64(&mut tx, USAGE_FULL_RECONCILE_KEY)?;
         let needs_full = full
@@ -477,7 +480,12 @@ impl PostgresLogStatsStorage for PostgresStorage {
         }
         let mut conn = self.conn()?;
         let mut tx = conn.transaction()?;
-        tx.execute("SET LOCAL statement_timeout = '120s'", &[])?;
+        // User-wide log deletion is an explicit administrative operation, but
+        // it must still yield to live traffic.  The transaction rolls back on
+        // timeout and can be resumed by the caller instead of retaining locks
+        // for minutes.
+        tx.execute("SET LOCAL lock_timeout = '2s'", &[])?;
+        tx.execute("SET LOCAL statement_timeout = '20s'", &[])?;
         let now = Self::now_ts();
         let chat_wm = read_meta_f64(&mut tx, USAGE_CHAT_WATERMARK_KEY)?.unwrap_or(0.0);
         let mut removed = 0i64;
@@ -525,7 +533,8 @@ impl PostgresLogStatsStorage for PostgresStorage {
         }
         let mut conn = self.conn()?;
         let mut tx = conn.transaction()?;
-        tx.execute("SET LOCAL statement_timeout = '60s'", &[])?;
+        tx.execute("SET LOCAL lock_timeout = '2s'", &[])?;
+        tx.execute("SET LOCAL statement_timeout = '20s'", &[])?;
         let now = Self::now_ts();
         let tool_wm = read_meta_f64(&mut tx, USAGE_TOOL_WATERMARK_KEY)?.unwrap_or(0.0) as i64;
         let counted: i64 = tx
@@ -550,7 +559,11 @@ impl PostgresLogStatsStorage for PostgresStorage {
         }
         let mut conn = self.conn()?;
         let mut tx = conn.transaction()?;
-        tx.execute("SET LOCAL statement_timeout = '60s'", &[])?;
+        tx.execute("SET LOCAL lock_timeout = '2s'", &[])?;
+        // A session tombstone retries this work.  Bound the whole
+        // delete-and-counter transaction so it cannot monopolize a user's
+        // summary row while the reconciler is trying to advance its watermark.
+        tx.execute("SET LOCAL statement_timeout = '20s'", &[])?;
         let now = Self::now_ts();
         let tool_wm = read_meta_f64(&mut tx, USAGE_TOOL_WATERMARK_KEY)?.unwrap_or(0.0) as i64;
         let counted: i64 = tx
@@ -588,10 +601,14 @@ impl PostgresLogStatsStorage for PostgresStorage {
             return Ok(0);
         }
         let mut conn = self.conn()?;
-        let affected = conn.execute(
+        let mut tx = conn.transaction()?;
+        tx.execute("SET LOCAL lock_timeout = '2s'", &[])?;
+        tx.execute("SET LOCAL statement_timeout = '20s'", &[])?;
+        let affected = tx.execute(
             "DELETE FROM artifact_logs WHERE user_id = $1 AND session_id = $2",
             &[&cleaned_user, &cleaned_session],
         )?;
+        tx.commit()?;
         Ok(affected as i64)
     }
 

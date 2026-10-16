@@ -118,3 +118,46 @@ test('settling a live thought reloads its complete durable text without changing
   });
   expect(result).toEqual({ live: 'fixture live tail', complete: true, steps: 1 });
 });
+
+test('a corrected final identity immediately restores intermediate prose to the process timeline', async ({ page }) => {
+  await page.goto('/__e2e/composer-b4');
+  const result = await page.evaluate(async () => {
+    const source = await (await fetch('/src/components/chat/MessageTimelineTurnProcess.vue')).text();
+    const runtimeUrl = source.match(/from\s+["']([^"']*\/vue\.js[^"']*)["']/)?.[1];
+    if (!runtimeUrl) throw new Error('Missing fixture Vue runtime');
+    const [{ createApp, reactive, nextTick, h }, { default: Process }, { default: api }] = await Promise.all([
+      import(runtimeUrl), import('/src/components/chat/MessageTimelineTurnProcess.vue'), import('/src/api/http.ts')
+    ]);
+    const host = document.createElement('div'); document.body.append(host);
+    const originalAdapter = api.defaults.adapter;
+    api.defaults.adapter = async (config: unknown) => ({
+      status: 200, statusText: 'OK', headers: {}, config,
+      data: { data: { turn: { items: [
+        { item_id: 'fixture-intermediate', item_index: 1, kind: 'assistant_message', status: 'completed',
+          payload: { content: 'fixture intermediate prose' } }
+      ], has_older: false, has_newer: false } } }
+    });
+    const model = reactive({ sessionId: 'fixture-thread', turnId: 'fixture-turn', count: 1, status: 'running',
+      activity: { kind: 'tool', tool: 'fixture_tool' }, finalItemId: 'fixture-intermediate' });
+    const app = createApp({ setup: () => () => h(Process, model) });
+    try {
+      app.mount(host); await nextTick();
+      host.querySelector<HTMLButtonElement>('.timeline-process-head')!.click();
+      const until = async (predicate: () => boolean) => {
+        const deadline = Date.now() + 4000;
+        while (!predicate()) {
+          if (Date.now() > deadline) throw new Error('Fixture did not update');
+          await new Promise(resolve => setTimeout(resolve, 25));
+        }
+      };
+      await until(() => Boolean(host.querySelector('.timeline-process-body')));
+      const before = host.textContent?.includes('fixture intermediate prose') ?? false;
+      model.finalItemId = 'fixture-final';
+      await until(() => host.textContent?.includes('fixture intermediate prose') ?? false);
+      return { before, after: host.textContent?.includes('fixture intermediate prose') ?? false };
+    } finally {
+      app.unmount(); host.remove(); api.defaults.adapter = originalAdapter;
+    }
+  });
+  expect(result).toEqual({ before: false, after: true });
+});

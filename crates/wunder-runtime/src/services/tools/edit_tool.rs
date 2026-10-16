@@ -80,7 +80,8 @@ fn build_replace_diff(
     needle_len: usize,
     replacement: &str,
 ) -> (LineDiff, Option<&'static str>) {
-    let (diff, unavailable) = diff_literal_replaces(before, after, offsets, needle_len, replacement);
+    let (diff, unavailable) =
+        diff_literal_replaces(before, after, offsets, needle_len, replacement);
     if unavailable.is_none() && occurrences > offsets.len() {
         return (diff.with_hunks(occurrences), None);
     }
@@ -422,7 +423,13 @@ mod tests {
     }
 
     /// 断言全部走生产路径产出的 `data`，不触碰 `line_diff` 内部字段。
-    fn edit_data_for(before: &str, after: &str, offsets: &[usize], needle: &str, new: &str) -> Value {
+    fn edit_data_for(
+        before: &str,
+        after: &str,
+        offsets: &[usize],
+        needle: &str,
+        new: &str,
+    ) -> Value {
         let occurrences = offsets.len().max(1);
         let (diff, unavailable) =
             build_replace_diff(before, after, offsets, occurrences, needle.len(), new);
@@ -441,7 +448,13 @@ mod tests {
 
     #[test]
     fn single_hit_edit_reports_line_numbers_on_both_sides() {
-        let data = edit_data_for("alpha\nbeta\ngamma\n", "alpha\nBETA\ngamma\n", &[6], "beta", "BETA");
+        let data = edit_data_for(
+            "alpha\nbeta\ngamma\n",
+            "alpha\nBETA\ngamma\n",
+            &[6],
+            "beta",
+            "BETA",
+        );
         assert_eq!(data["added_lines"], json!(1));
         assert_eq!(data["deleted_lines"], json!(1));
         assert_eq!(data["hunks_applied"], json!(1));

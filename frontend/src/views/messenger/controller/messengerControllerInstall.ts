@@ -6957,6 +6957,34 @@ function installMessengerControllerTimelineFileActions(ctx: MessengerControllerC
       }
   };
 
+  // 多选批量归档：逐条复用单条归档语义，汇总为一条成功/失败提示。
+  ctx.archiveTimelineSessions = async (sessionIds: string[]) => {
+      const ids = Array.isArray(sessionIds)
+          ? sessionIds.map((id) => String(id || '').trim()).filter(Boolean)
+          : [];
+      if (!ids.length)
+          return;
+      let archived = 0;
+      let failed = 0;
+      for (const id of ids) {
+          try {
+              await ctx.chatStore.archiveSession(id);
+              ctx.timelinePreviewMap.value.delete(id);
+              archived += 1;
+          }
+          catch {
+              failed += 1;
+          }
+      }
+      if (archived > 0) {
+          ctx.triggerRealtimePulseRefresh?.('archive-session');
+          ElMessage.success(ctx.t('chat.history.archiveBatchSuccess', { count: archived }));
+      }
+      if (failed > 0) {
+          ElMessage.error(ctx.t('chat.history.archiveFailed'));
+      }
+  };
+
   ctx.handleArchivedSessionRemoved = (sessionId: string) => {
       const targetId = String(sessionId || '').trim();
       if (!targetId)

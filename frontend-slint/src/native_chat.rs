@@ -513,12 +513,8 @@ fn bind_timeline(
     timeline: Rc<RefCell<crate::timeline::Timeline>>,
     desktop: Arc<NativeDesktop>,
 ) {
-    timeline
-        .borrow_mut()
-        .set_markdown_desktop(desktop.clone());
-    timeline
-        .borrow_mut()
-        .set_markdown_root(markdown_root(app));
+    timeline.borrow_mut().set_markdown_desktop(desktop.clone());
+    timeline.borrow_mut().set_markdown_root(markdown_root(app));
     let toggle_timeline = timeline.clone();
     app.on_timeline_toggle(move |payload| {
         // A fold patches only the rows it owns, so the click never re-runs the
@@ -2952,7 +2948,10 @@ fn apply_event(
     }
     let round = data["model_round"].as_i64().unwrap_or(active.round);
     if round < active.round
-        && matches!(kind, "llm_output_delta" | "llm_output" | "delta" | "reasoning" | "reasoning_delta")
+        && matches!(
+            kind,
+            "llm_output_delta" | "llm_output" | "delta" | "reasoning" | "reasoning_delta"
+        )
     {
         return Ok(false);
     }
@@ -3376,14 +3375,22 @@ mod turn_tests {
         let mut output = TurnOutput::new("fixture-session".into(), timeline.clone());
         let mut live = timeline.borrow_mut();
         live.begin_turn("fixture-root", "Fixture input");
-        for (round, text) in [(1, "First thought"), (2, "Second thought"), (1, " stale") ] {
-            apply_event(&mut output, &mut live, &json!({
-                "event":"reasoning_delta","data":{"model_round":round,"delta":text}
-            })).unwrap();
+        for (round, text) in [(1, "First thought"), (2, "Second thought"), (1, " stale")] {
+            apply_event(
+                &mut output,
+                &mut live,
+                &json!({
+                    "event":"reasoning_delta","data":{"model_round":round,"delta":text}
+                }),
+            )
+            .unwrap();
         }
         live.flush();
-        let reasons: Vec<_> = live.model().iter()
-            .filter(|row| row.kind == crate::timeline::KIND_REASON).collect();
+        let reasons: Vec<_> = live
+            .model()
+            .iter()
+            .filter(|row| row.kind == crate::timeline::KIND_REASON)
+            .collect();
         assert_eq!(reasons.len(), 2);
         assert_eq!(reasons[0].detail, "First thought");
         assert_eq!(reasons[1].detail, "Second thought");
@@ -3613,8 +3620,7 @@ mod turn_tests {
         for row in rows.iter().skip(2).take(6) {
             assert_eq!(row.process_idx, rows[1].process_idx, "step {row:?} escaped");
             assert!(
-                !row.process_open
-                    && (row.group_idx == crate::timeline::NO_GROUP || row.group_open),
+                !row.process_open && (row.group_idx == crate::timeline::NO_GROUP || row.group_open),
                 "the process ships folded without a second batch gate"
             );
         }

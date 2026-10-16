@@ -113,8 +113,26 @@ impl ConfigStore {
         } else {
             guard.clone()
         };
+        // Most callers project their defaults on every process start. Keep the
+        // cross-process lock and fresh disk read for consistency, but avoid an
+        // atomic replace (and its filesystem flush) when the projection is a
+        // no-op. YAML serialization is bounded by the config size and is much
+        // cheaper than rewriting the shared file.
+        let current_yaml =
+            serde_yaml::to_string(&current).context("serialize current config failed")?;
         let mut updated = current;
         updater(&mut updated);
+        let updated_yaml =
+            serde_yaml::to_string(&updated).context("serialize updated config failed")?;
+        if self.config_path.exists() && updated_yaml == current_yaml {
+            *guard = updated.clone();
+            i18n::configure_i18n(
+                Some(updated.i18n.default_language.clone()),
+                Some(updated.i18n.supported_languages.clone()),
+                Some(updated.i18n.aliases.clone()),
+            );
+            return Ok(updated);
+        }
         // Persist first. A write error must never leave memory claiming a
         // configuration state that another process cannot observe on disk.
         self.persist(&updated).await?;
@@ -230,6 +248,25 @@ mod tests {
             .await;
         assert!(result.is_err());
         assert_ne!(store.get().await.server.mode, "changed");
+    }
+
+    #[tokio::test]
+    async fn noop_update_keeps_the_existing_config_file() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        let store = ConfigStore::new(path.clone());
+        store
+            .update(|config| config.server.mode = "desktop".into())
+            .await
+            .unwrap();
+        let before = std::fs::read(&path).unwrap();
+        let version_before = store.version();
+
+        let current = store.update(|_| {}).await.unwrap();
+
+        assert_eq!(current.server.mode, "desktop");
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        assert_eq!(store.version(), version_before);
     }
 }
 

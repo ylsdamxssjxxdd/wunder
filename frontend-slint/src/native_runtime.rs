@@ -11,10 +11,20 @@ pub fn install(app: &crate::MainWindow) {
     app.set_chat_loading(true);
     app.set_status("正在启动内嵌运行时…".into());
     let weak = app.as_weak();
+    let runtime_boot = std::time::Instant::now();
     // SQLite setup and resource discovery must not block the first frame.
     std::thread::spawn(move || {
         let result = NativeDesktop::start().map(Arc::new);
         let _ = weak.upgrade_in_event_loop(move |app| {
+            if matches!(
+                std::env::var("WUNDER_STARTUP_TIMING").ok().as_deref(),
+                Some("1" | "true" | "yes")
+            ) {
+                eprintln!(
+                    "[startup][desktop-ui] point=runtime_ready elapsed_ms={:.1}",
+                    runtime_boot.elapsed().as_secs_f64() * 1000.0
+                );
+            }
             app.set_chat_loading(false);
             match result {
                 Ok(runtime) => install_ready(&app, runtime),

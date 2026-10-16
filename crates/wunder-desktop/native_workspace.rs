@@ -660,10 +660,10 @@ impl NativeDesktop {
             .and_then(|value| value.to_str())
             .unwrap_or_default()
             .to_ascii_lowercase();
-        // These are the formats compiled into Slint's native software
-        // renderer. Keeping this list explicit avoids a UI promise that the
-        // local renderer cannot fulfil on the older desktop targets.
-        if !matches!(extension.as_str(), "png" | "jpg" | "jpeg") {
+        // These are the formats decoded by the desktop image feature. Keeping
+        // this list explicit avoids a UI promise that the native renderer
+        // cannot fulfil on the older desktop targets.
+        if !matches!(extension.as_str(), "png" | "jpg" | "jpeg" | "gif" | "webp") {
             bail!("此图片格式暂不支持");
         }
         let mut bytes = Vec::new();

@@ -25,7 +25,7 @@ import {
   groupVirtualRows,
   requestIdentity,
   timelineFocusIndexes,
-} from "./trajectory-model.js?v=20261015-03";
+} from "./trajectory-model.js?v=20261016-01";
 
 const OVERSCAN_PX = 360;
 const VIRTUAL_THRESHOLD = 100;

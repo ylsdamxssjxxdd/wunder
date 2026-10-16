@@ -113,6 +113,49 @@ test('assistant overview keeps response in output and never duplicates it as inp
   assert.equal(bridgeCell.outputDetail, 'model response');
 });
 
+test('subagent runs keep child task/report and own wall time in a separate subtool span', async () => {
+  const items = [{ kind: 'subagent_run', item_id: 'child-run', created_time: '2026-10-16T11:23:34.000Z', payload: {
+    event_type: 'subagent_run',
+    runtime: {
+      label: 'directory worker',
+      user_message: 'inspect the workspace',
+      summary: 'workspace contains two files',
+      status: 'success',
+      started_time: '2026-10-16T11:23:34.000Z',
+      finished_time: '2026-10-16T11:23:38.000Z',
+    },
+  } }]
+  const [hiveCell] = flattenRecords(buildTrajectoryLayout([{ user_turn_index: 1, items }], translate))
+    .map(record => record.cell)
+  assert.equal(hiveCell?.kind, 'subtool')
+  assert.equal(hiveCell?.text, 'directory worker')
+  assert.equal(hiveCell?.inputDetail, 'inspect the workspace')
+  assert.equal(hiveCell?.outputDetail, 'workspace contains two files')
+  assert.equal(hiveCell?.timeSeconds, 4)
+
+  const bridgeSource = readFileSync(resolve(__dirname, '../../web/modules/trajectory-model.js'), 'utf8')
+  const bridge = await import(`data:text/javascript;base64,${Buffer.from(bridgeSource).toString('base64')}`)
+  const [bridgeCell] = bridge.flattenRecords(bridge.buildTrajectoryLayout([
+    { user_turn_index: 1, items },
+  ], translate)).map((record: any) => record.cell)
+  assert.equal(bridgeCell.kind, 'subtool')
+  assert.equal(bridgeCell.text, 'directory worker')
+  assert.equal(bridgeCell.inputDetail, 'inspect the workspace')
+  assert.equal(bridgeCell.outputDetail, 'workspace contains two files')
+  assert.equal(bridgeCell.timeSeconds, 4)
+})
+
+test('assistant timeline uses own interaction duration instead of delayed durable update time', () => {
+  const [assistant] = flattenRecords(buildTrajectoryLayout([{ user_turn_index: 1, items: [{
+    kind: 'assistant_message', created_time: '2026-10-16T11:23:33.000Z',
+    updated_time: '2026-10-16T11:23:53.000Z', payload: {
+      content: 'done', meta: { message_stats: { interaction_duration_s: 2.5 } },
+    },
+  }] }], translate)).map(record => record.cell)
+  assert.equal(assistant?.timeSeconds, 2.5)
+  assert.equal(assistant?.startedAt, Date.parse('2026-10-16T11:23:50.500Z'))
+})
+
 test('compaction uses summary_text instead of the history placeholder and ignores marker rows', async () => {
   const bridgeSource = readFileSync(resolve(__dirname, '../../web/modules/trajectory-model.js'), 'utf8');
   const bridge = await import(`data:text/javascript;base64,${Buffer.from(bridgeSource).toString('base64')}`);

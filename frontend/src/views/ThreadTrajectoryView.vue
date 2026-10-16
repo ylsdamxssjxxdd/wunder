@@ -763,6 +763,17 @@ const overviewTimeline = computed(() => {
     const bucket = Number(tile?.bucket)
     const total = Math.max(0, Number(tile?.count) || 0)
     if (!Number.isFinite(bucket) || total <= 0) continue
+    // Tile timestamps are stored as Unix seconds while the timed timeline
+    // uses milliseconds. Compute the range before checking overlap; keeping
+    // this above the guard also avoids a temporal-dead-zone failure in the
+    // production bundle (the minifier used to call these values `Ne`).
+    const rawStart = timelineMode.value === 'sequence'
+      ? bucket * bucketWidth
+      : Number(tile?.start) * 1000
+    const rawEnd = timelineMode.value === 'sequence'
+      ? (bucket + 1) * bucketWidth
+      : Math.max(rawStart, Number(tile?.end) * 1000)
+    if (!Number.isFinite(rawStart) || !Number.isFinite(rawEnd)) continue
     // Never paint a full aggregate lane underneath real records from the
     // bounded ledger. The loaded records provide the useful detail; leaving
     // the remainder of that bucket empty is clearer than a misleading solid
@@ -779,13 +790,6 @@ const overviewTimeline = computed(() => {
           Math.round(total * ratios[1]),
           Math.max(0, total - Math.round(total * ratios[0]) - Math.round(total * ratios[1])),
         ]
-    const rawStart = timelineMode.value === 'sequence'
-      ? bucket * bucketWidth
-      : Number(tile?.start) * 1000
-    const rawEnd = timelineMode.value === 'sequence'
-      ? (bucket + 1) * bucketWidth
-      : Math.max(rawStart, Number(tile?.end) * 1000)
-    if (!Number.isFinite(rawStart) || !Number.isFinite(rawEnd)) continue
     start = Math.min(start, rawStart)
     end = Math.max(end, rawEnd)
     const tileEnd = Math.max(rawEnd, rawStart + (timelineMode.value === 'sequence' ? 1 : 0.001))
@@ -1087,9 +1091,12 @@ function summaryTurns(rows:any[], resetMaps=true):unknown[] {
     turnRootByRound.set(Number(row.user_round),String(row.root_turn_id||''))
     let turn=turns.get(row.root_turn_id)
     if(!turn){turn={turn_id:row.root_turn_id,user_turn_index:row.user_round,items:[]};turns.set(row.root_turn_id,turn)}
+    const isSubagent = row.kind === 'subagent_run' || row.kind === 'subagent'
     turn.items.push({item_id:row.item_id,item_index:row.item_index,kind:row.kind,status:row.status,created_time:row.started_at,updated_time:row.completed_at,
       overview_only:row.overview_only===true,
-      payload:{content:row.summary,tool:row.tool_name,model_round:row.model_round,started_at:row.started_at,completed_at:row.completed_at}})
+      payload:{content:row.summary,tool:row.tool_name,label:row.tool_name,
+        ...(isSubagent ? {} : { task: row.summary }),
+        model_round:row.model_round,message_stats:row.stats,runtime:row.subagent}})
   }
   return markRaw([...turns.values()])
 }
@@ -1433,6 +1440,9 @@ const selectedCell = computed<TrajCell | null>(() => {
     ? { ...(detail as Record<string, unknown>), ...(detail.payload as Record<string, unknown>) }
     : detail
   const source = payload as any
+  const runtime = source?.runtime && typeof source.runtime === 'object' ? source.runtime : null
+  const runtimeState = runtime?.agent_state && typeof runtime.agent_state === 'object'
+    ? runtime.agent_state : null
   const usage = extractUsage(source) ?? base.usage
   const metrics = usage || base.metrics
     ? {
@@ -1460,19 +1470,30 @@ const selectedCell = computed<TrajCell | null>(() => {
     // Assistant rows only have their response in the durable detail payload.
     // Do not use `content` as a synthetic input: that produced identical
     // Input/Output sections in the overview. Tool rows still use their args.
-    inputDetail: base.kind === 'tool' || base.kind === 'subtool'
-      ? stringify(args ?? base.inputDetail)
+    inputDetail: base.kind === 'subtool'
+      ? stringify(source?.task ?? source?.user_message ?? runtime?.user_message
+        ?? runtime?.task ?? runtimeState?.user_message ?? base.inputDetail)
+      : base.kind === 'tool'
+        ? stringify(args ?? base.inputDetail)
       : undefined,
-    outputDetail: stringify(base.kind === 'compacted'
-      ? (compactionSummary ?? base.outputDetail)
-      : (content ?? base.outputDetail)),
+    outputDetail: stringify(base.kind === 'subtool'
+      ? (source?.summary ?? source?.latest_message ?? runtime?.summary
+        ?? runtime?.latest_message ?? runtimeState?.message
+        ?? runtimeState?.assistant_message ?? base.outputDetail)
+      : base.kind === 'compacted'
+        ? (compactionSummary ?? base.outputDetail)
+        : (content ?? base.outputDetail)),
     thinkingDetail:stringify(
       source?.reasoning || source?.reasoning_content || source?.thinking || source?.thought
         || source?.reasoningText || source?.thinking_content || base.thinkingDetail
     ),
     result:stringify(resultValue ?? base.result),
     schemaDetail:stringify(schema ?? base.schemaDetail),
-    toolName: typeof source?.tool === 'string' ? source.tool : (typeof source?.name === 'string' ? source.name : base.toolName),
+    toolName: base.kind === 'subtool'
+      ? (typeof source?.label === 'string' ? source.label
+        : typeof runtime?.label === 'string' ? runtime.label
+          : typeof runtime?.spawn_label === 'string' ? runtime.spawn_label : base.toolName)
+      : (typeof source?.tool === 'string' ? source.tool : (typeof source?.name === 'string' ? source.name : base.toolName)),
     usage,
     metrics,
   }

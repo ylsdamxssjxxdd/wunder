@@ -19,16 +19,19 @@ use crate::tui::theme;
 
 use super::patch_log::continuation_prefix;
 use super::patch_log::disclosure_line;
-use super::patch_log::Disclosure;
 use super::patch_log::pending_status_icon_span;
 use super::patch_log::tail_prefix;
+use super::patch_log::Disclosure;
 use super::ToolCallKey;
 
 /// Children one card can hold. A longer run of reads starts a new card, which bounds both
 /// the render cost and what a long exploration keeps in memory.
 const CHILDREN_LIMIT: usize = 24;
-/// Rows the compact transcript shows before folding the rest.
-const VISIBLE_CHILDREN: usize = 6;
+/// Rows the folded card keeps under its header, the same depth the reference previews an
+/// activity before it folds the rest.
+const PREVIEW_ROWS: usize = 3;
+/// Joins the names inside one coalesced read row.
+const NAME_SEPARATOR: &str = ", ";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ExploringChildStatus {
@@ -152,7 +155,7 @@ impl ExploringGroupEntry {
         lines.extend(self.children.iter().map(|child| {
             let parts = self.child_parts(child);
             let mut text = if parts.target.is_empty() {
-                parts.verb.clone()
+                parts.verb
             } else {
                 format!("{} {}", parts.verb, parts.target)
             };
@@ -166,19 +169,58 @@ impl ExploringGroupEntry {
         lines.join("\n")
     }
 
+    /// What the card shows: one row per call, except that a run of plain file reads becomes
+    /// a single `Read a, b` row naming each file once. Copy keeps every child line, because
+    /// a reader who pastes the transcript wants the calls, not the compression.
+    fn display_rows(&self) -> Vec<ExploringRow> {
+        let mut rows: Vec<ExploringRow> = Vec::with_capacity(self.children.len());
+        for child in &self.children {
+            let parts = self.child_parts(child);
+            // A failed call breaks the run and keeps its own row, exactly as the reference
+            // stops grouping at a nonzero exit.
+            let read_run = is_file_read_name(&child.tool_name) && parts.failure.is_empty();
+            if read_run {
+                if let Some(last) = rows.last_mut().filter(|row| row.read_run) {
+                    last.push_name(parts.target);
+                    continue;
+                }
+            }
+            rows.push(ExploringRow {
+                read_run,
+                verb: parts.verb,
+                names: if parts.target.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![parts.target]
+                },
+                failure: parts.failure,
+                // A settled row shows only what was asked for; the reference puts no output
+                // text on these rows. A failure keeps its reason — that is the one note a
+                // reader needs before opening the card.
+                note: if child.status == ExploringChildStatus::Failure {
+                    parts.note
+                } else {
+                    None
+                },
+            });
+        }
+        rows
+    }
+
     pub(super) fn card_fold(&self) -> Option<Disclosure> {
-        Disclosure::new_lines(self.children.len().saturating_sub(VISIBLE_CHILDREN))
+        Disclosure::new_lines(self.display_rows().len().saturating_sub(PREVIEW_ROWS))
     }
 
     pub(super) fn render_lines_for_width(&self, width: u16, expanded: bool) -> Vec<Line<'static>> {
-        let visible = if expanded || self.children.len() <= VISIBLE_CHILDREN {
-            self.children.len()
+        let rows = self.display_rows();
+        let visible = if expanded {
+            rows.len()
         } else {
-            VISIBLE_CHILDREN
+            rows.len().min(PREVIEW_ROWS)
         };
         let mut lines = vec![self.header_line(width)];
-        for (index, child) in self.children.iter().take(visible).enumerate() {
-            lines.push(self.child_line(child, index, width));
+        for (index, row) in rows.iter().take(visible).enumerate() {
+            lines.push(self.row_line(row, index, width));
         }
         // The count lives on the disclosure row, where Enter is named next to it: a second
         // marker row carrying the same number only made the card say it twice.
@@ -267,45 +309,43 @@ impl ExploringGroupEntry {
         }
     }
 
-    /// One row per child: tree prefix, action in the accent colour, and as much of the
-    /// result note as still fits. Children never wrap, so a card cannot grow sideways.
-    fn child_line(&self, child: &ExploringChild, index: usize, width: u16) -> Line<'static> {
+    /// One row per rendered line: tree prefix, action in the accent colour, and as much of
+    /// the result note as still fits. Rows never wrap, so a card cannot grow sideways.
+    fn row_line(&self, row: &ExploringRow, index: usize, width: u16) -> Line<'static> {
         let prefix = if index == 0 {
             tail_prefix(true)
         } else {
             continuation_prefix()
         };
-        let parts = self.child_parts(child);
         let budget = usize::from(width.max(1)).saturating_sub(UnicodeWidthStr::width(prefix));
-        let note = parts
+        let target = row.target();
+        let note = row
             .note
             .as_ref()
             .map(|note| format!(" · {note}"))
-            .filter(|note| {
-                parts.full_row_width() + UnicodeWidthStr::width(note.as_str()) <= budget
-            });
+            .filter(|note| row.full_row_width() + UnicodeWidthStr::width(note.as_str()) <= budget);
         // A note that survives is shown whole or not at all; only the target gives way.
         let target_budget = budget
-            .saturating_sub(UnicodeWidthStr::width(parts.verb.as_str()))
-            .saturating_sub(UnicodeWidthStr::width(parts.failure.as_str()))
+            .saturating_sub(UnicodeWidthStr::width(row.verb.as_str()))
+            .saturating_sub(UnicodeWidthStr::width(row.failure.as_str()))
             .saturating_sub(
                 note.as_deref()
                     .map(UnicodeWidthStr::width)
                     .unwrap_or_default(),
             )
-            .saturating_sub(usize::from(!parts.target.is_empty()));
-        let target = fit_to_width(parts.target.as_str(), target_budget);
+            .saturating_sub(usize::from(!target.is_empty()));
+        let target = fit_to_width(target.as_str(), target_budget);
 
         let mut spans = vec![
             Span::styled(prefix, theme::secondary_text()),
-            Span::styled(parts.verb, theme::accent_text()),
+            Span::styled(row.verb.clone(), theme::accent_text()),
         ];
-        if !parts.target.is_empty() && !target.is_empty() {
+        if !target.is_empty() {
             spans.push(Span::raw(" "));
             spans.push(Span::raw(target));
         }
-        if !parts.failure.is_empty() {
-            spans.push(Span::styled(parts.failure, theme::danger_text()));
+        if !row.failure.is_empty() {
+            spans.push(Span::styled(row.failure.clone(), theme::danger_text()));
         }
         if let Some(note) = note {
             spans.push(Span::styled(note, theme::secondary_text()));
@@ -321,13 +361,39 @@ struct ChildParts {
     note: Option<String>,
 }
 
-impl ChildParts {
+/// A rendered line of an exploring card. A coalesced read run keeps one name per file,
+/// so the width maths has exactly one string to fit.
+struct ExploringRow {
+    read_run: bool,
+    verb: String,
+    names: Vec<String>,
+    failure: String,
+    note: Option<String>,
+}
+
+impl ExploringRow {
+    fn push_name(&mut self, name: String) {
+        if name.is_empty() || self.names.iter().any(|held| held == &name) {
+            return;
+        }
+        self.names.push(name);
+    }
+
+    fn target(&self) -> String {
+        self.names.join(NAME_SEPARATOR)
+    }
+
     fn full_row_width(&self) -> usize {
         UnicodeWidthStr::width(self.verb.as_str())
-            + usize::from(!self.target.is_empty())
-            + UnicodeWidthStr::width(self.target.as_str())
+            + usize::from(!self.names.is_empty())
+            + UnicodeWidthStr::width(self.target().as_str())
             + UnicodeWidthStr::width(self.failure.as_str())
     }
+}
+
+/// Reads whose row is only a name list; the reference folds a run of them into one line.
+fn is_file_read_name(tool_name: &str) -> bool {
+    crate::tool_presentation::is_file_read_tool_name(tool_name)
 }
 
 fn fit_to_width(text: &str, budget: usize) -> String {
@@ -415,9 +481,12 @@ mod tests {
         let rows = group.render_lines_for_width(80, false);
         let text = rows.iter().map(row_text).collect::<Vec<_>>().join("\n");
         // Children keep their own order and their own outcomes; the asked-for row is the
-        // only one that changed.
+        // only one that changed. A settled row states only what it touched.
         assert!(text.contains("Search flaky failed · no matches"), "{text}");
-        assert!(text.contains("List src · 9 entries"), "{text}");
+        assert!(
+            text.contains("List src\n") || text.ends_with("List src"),
+            "{text}"
+        );
         assert!(
             text.contains("Read src/alpha.rs\n") || text.ends_with("Read src/alpha.rs"),
             "{text}"
@@ -479,11 +548,12 @@ mod tests {
 
     #[test]
     fn a_long_group_folds_and_reopens_for_the_transcript_view() {
-        let children = (0..8)
+        // Searches each keep a row, so a long card is what the fold is for.
+        let children = (0..5)
             .map(|index| {
                 child(
-                    "read_file",
-                    &format!("src/module_{index}.rs"),
+                    "search_content",
+                    &format!("symbol_{index}"),
                     &format!("call-{index}"),
                 )
             })
@@ -495,14 +565,78 @@ mod tests {
         let folded_text = folded.iter().map(row_text).collect::<Vec<_>>().join("\n");
         // One header, the preview budget, and the single row that counts the rest: the fold
         // used to spend a second row repeating that number.
-        assert_eq!(folded_text.lines().count(), 1 + VISIBLE_CHILDREN + 1);
+        assert_eq!(folded_text.lines().count(), 1 + PREVIEW_ROWS + 1);
         assert!(folded_text.contains("+2 lines"), "{folded_text}");
-        assert!(!folded_text.contains("module_7"), "{folded_text}");
+        assert!(!folded_text.contains("symbol_4"), "{folded_text}");
 
         let open = group.render_lines_for_width(80, true);
         let open_text = open.iter().map(row_text).collect::<Vec<_>>().join("\n");
-        assert!(open_text.contains("module_7"), "{open_text}");
+        assert!(open_text.contains("symbol_4"), "{open_text}");
         assert!(!open_text.contains("Show details"), "{open_text}");
+    }
+
+    #[test]
+    fn a_run_of_reads_shares_one_row_that_names_each_file_once() {
+        let children = vec![
+            child("read_file", "src/auth.rs", "call-1"),
+            child("read_file", "src/shimmer.rs", "call-2"),
+            child("read_file", "src/auth.rs", "call-3"),
+            child("list_files", "src", "call-4"),
+        ];
+        let mut group = group(children);
+        for id in ["call-1", "call-2", "call-3", "call-4"] {
+            assert!(group.apply_result("read_file", Some(&key(id)), true, None));
+        }
+        let rows = group.render_lines_for_width(120, false);
+        // Header plus one read row plus the listing: four calls, three rows, no fold.
+        assert_eq!(
+            rows.len(),
+            3,
+            "{:?}",
+            rows.iter().map(row_text).collect::<Vec<_>>()
+        );
+        assert_eq!(row_text(&rows[1]), "  └ Read src/auth.rs, src/shimmer.rs");
+        assert_eq!(row_text(&rows[2]), "    List src");
+        assert!(
+            group.card_fold().is_none(),
+            "a run of reads cannot re-inflate the card"
+        );
+        // Copy still carries every call; only the display compresses.
+        let plain = group.summary_text();
+        assert_eq!(plain.lines().count(), 5, "{plain}");
+    }
+
+    #[test]
+    fn a_failed_read_keeps_its_own_row_and_breaks_the_run() {
+        let children = vec![
+            child("read_file", "src/alpha.rs", "call-1"),
+            child("read_file", "src/beta.rs", "call-2"),
+            child("read_file", "src/gamma.rs", "call-3"),
+        ];
+        let mut group = group(children);
+        assert!(group.apply_result(
+            "read_file",
+            Some(&key("call-2")),
+            false,
+            Some("no such file".to_string())
+        ));
+        assert!(group.apply_result("read_file", Some(&key("call-1")), true, None));
+        assert!(group.apply_result("read_file", Some(&key("call-3")), true, None));
+        let text = group
+            .render_lines_for_width(120, false)
+            .iter()
+            .map(row_text)
+            .collect::<Vec<_>>()
+            .join("\n");
+        // The failed call is not folded into the name list, and the reads on either side of
+        // it are two runs, not one.
+        assert!(text.contains("Read src/alpha.rs\n"), "{text}");
+        assert!(
+            text.contains("Read src/beta.rs failed · no such file"),
+            "{text}"
+        );
+        assert!(text.contains("Read src/gamma.rs"), "{text}");
+        assert!(!text.contains("alpha.rs, src/gamma"), "{text}");
     }
 
     #[test]

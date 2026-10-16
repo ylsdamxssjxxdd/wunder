@@ -227,10 +227,38 @@ where
     run_with_exec_timeout(kind, label, kind.exec_timeout(), task).await
 }
 
+/// Run a blocking operation until the worker returns.  Blocking work cannot
+/// be cancelled safely: timing out the caller only drops its wait while the
+/// spawned thread keeps the semaphore permit and any database locks.  This
+/// entry point is reserved for maintenance jobs whose SQL layer already has
+/// transaction-level lock/statement deadlines.  Keeping the permit and the
+/// caller's state alive until completion prevents a second maintenance pass
+/// from overlapping a still-running first pass.
+pub async fn run_to_completion<T, F>(kind: BlockingKind, label: &'static str, task: F) -> Result<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T> + Send + 'static,
+{
+    run_inner(kind, label, None, task).await
+}
+
 pub async fn run_with_exec_timeout<T, F>(
     kind: BlockingKind,
     label: &'static str,
     exec_timeout: Duration,
+    task: F,
+) -> Result<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T> + Send + 'static,
+{
+    run_inner(kind, label, Some(exec_timeout), task).await
+}
+
+async fn run_inner<T, F>(
+    kind: BlockingKind,
+    label: &'static str,
+    exec_timeout: Option<Duration>,
     task: F,
 ) -> Result<T>
 where
@@ -317,7 +345,11 @@ where
         })
     };
 
-    match timeout(exec_timeout, handle).await {
+    let joined = match exec_timeout {
+        Some(limit) => timeout(limit, handle).await,
+        None => Ok(handle.await),
+    };
+    match joined {
         Ok(Ok(result)) => result,
         Ok(Err(err)) => {
             // The closure died before it could release its own permit accounting.
@@ -328,6 +360,7 @@ where
             Err(anyhow!("blocking task {label} ({kind}) join error: {err}"))
         }
         Err(_) => {
+            let limit = exec_timeout.expect("timeout branch requires an execution deadline");
             if task_state.swap(TASK_ABANDONED, Ordering::AcqRel) == TASK_RUNNING {
                 let stalled = stalled_counter.fetch_add(1, Ordering::AcqRel) + 1;
                 warn!(
@@ -342,11 +375,11 @@ where
                 kind.name(),
                 label,
                 queued_ms_u64,
-                exec_timeout.as_millis().min(u128::from(u64::MAX)) as u64,
+                limit.as_millis().min(u128::from(u64::MAX)) as u64,
             );
             Err(anyhow!(
                 "blocking task {label} ({kind}) timed out after {}ms",
-                exec_timeout.as_millis()
+                limit.as_millis()
             ))
         }
     }

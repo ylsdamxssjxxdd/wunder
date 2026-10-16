@@ -459,9 +459,18 @@ impl SqliteThreadLogStorage for SqliteStorage {
         let now = Self::now_ts();
         let mut conn = self.open()?;
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-        if let Some(proof) = input.get("local_open_lease").filter(|value| !value.is_null()) {
-            let owner = proof.get("owner").and_then(Value::as_str).unwrap_or_default();
-            let token = proof.get("token").and_then(Value::as_u64).unwrap_or_default();
+        if let Some(proof) = input
+            .get("local_open_lease")
+            .filter(|value| !value.is_null())
+        {
+            let owner = proof
+                .get("owner")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let token = proof
+                .get("token")
+                .and_then(Value::as_u64)
+                .unwrap_or_default();
             let valid: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM thread_open_leases WHERE session_id=? AND user_id=? AND owner_instance_id=? AND fencing_token=? AND expires_at > (julianday('now')-2440587.5)*86400.0)", params![session_id,user_id,owner,token], |row| row.get(0))?;
             ensure!(valid, "THREAD_IN_USE: stale thread lease");
         }
@@ -539,7 +548,9 @@ impl SqliteThreadLogStorage for SqliteStorage {
             .take(240)
             .collect();
         let mut item = input.clone();
-        if let Some(fields) = item.as_object_mut() { fields.remove("local_open_lease"); }
+        if let Some(fields) = item.as_object_mut() {
+            fields.remove("local_open_lease");
+        }
         item["session_id"] = json!(session_id);
         item["turn_id"] = json!(turn_id);
         item["user_round"] = json!(round);

@@ -398,7 +398,10 @@ pub(crate) fn patch_diff_preview_from_blocks(
 fn number_field(value: &Value, key: &str) -> Option<usize> {
     value
         .get(key)
-        .and_then(|raw| raw.as_u64().or_else(|| raw.as_i64().map(|n| n.max(0) as u64)))
+        .and_then(|raw| {
+            raw.as_u64()
+                .or_else(|| raw.as_i64().map(|n| n.max(0) as u64))
+        })
         .map(|raw| raw as usize)
 }
 

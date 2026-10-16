@@ -400,7 +400,9 @@ impl TerminalGrid {
             MouseAction::Press | MouseAction::WheelUp | MouseAction::WheelDown => true,
             MouseAction::Release => mode != MouseProtocolMode::Press,
             MouseAction::Move => match mode {
-                MouseProtocolMode::None | MouseProtocolMode::Press | MouseProtocolMode::PressRelease => false,
+                MouseProtocolMode::None
+                | MouseProtocolMode::Press
+                | MouseProtocolMode::PressRelease => false,
                 MouseProtocolMode::ButtonMotion => button.is_some(),
                 MouseProtocolMode::AnyMotion => true,
             },
@@ -419,7 +421,11 @@ impl TerminalGrid {
         };
         if wheel {
             // Wheel events are button codes 64/65 and have no release form.
-            code = if action == MouseAction::WheelUp { 64 } else { 65 };
+            code = if action == MouseAction::WheelUp {
+                64
+            } else {
+                65
+            };
         }
         let x = col.min(self.cols.saturating_sub(1)) as u32 + 1;
         let y = row.min(self.rows.saturating_sub(1)) as u32 + 1;
@@ -908,9 +914,7 @@ mod tests {
     fn mouse_reports_follow_sgr_mode_and_cell_coordinates() {
         let mut g = grid(12, 40);
         assert!(!g.mouse_reporting());
-        assert!(g
-            .mouse_input(MouseAction::Press, Some(0), 4, 2)
-            .is_none());
+        assert!(g.mouse_input(MouseAction::Press, Some(0), 4, 2).is_none());
         g.feed(b"\x1b[?1000h\x1b[?1006h");
         assert!(g.mouse_reporting());
         assert_eq!(
@@ -933,9 +937,7 @@ mod tests {
     fn mouse_motion_is_only_reported_when_the_mode_requests_it() {
         let mut g = grid(4, 20);
         g.feed(b"\x1b[?1002h\x1b[?1006h");
-        assert!(g
-            .mouse_input(MouseAction::Move, None, 0, 0)
-            .is_none());
+        assert!(g.mouse_input(MouseAction::Move, None, 0, 0).is_none());
         assert_eq!(
             g.mouse_input(MouseAction::Move, Some(2), 1, 1),
             Some(b"\x1b[<34;2;2M".to_vec())
@@ -950,7 +952,10 @@ mod tests {
     #[test]
     fn paste_uses_bracketed_mode_only_when_requested() {
         let mut g = grid(4, 20);
-        assert_eq!(g.bracketed_paste("line one\nline two"), b"line one\nline two");
+        assert_eq!(
+            g.bracketed_paste("line one\nline two"),
+            b"line one\nline two"
+        );
         g.feed(b"\x1b[?2004h");
         assert_eq!(
             g.bracketed_paste("line one\nline two"),

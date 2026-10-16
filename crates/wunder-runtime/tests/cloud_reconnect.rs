@@ -832,9 +832,15 @@ async fn logout_racing_refresh_keeps_session_removed() {
     let server = spawn_mock_server(Arc::new(move |request| {
         if request.path == "/wunder/auth/refresh" {
             observed.fetch_add(1, Ordering::SeqCst);
-            MockResponse::json(200, refresh_body(TOKEN_V2, REFRESH_V2, 90.0 * 24.0 * 3600.0))
-        } else { MockResponse::json(200, json!({"data": {}})) }
-    })).await;
+            MockResponse::json(
+                200,
+                refresh_body(TOKEN_V2, REFRESH_V2, 90.0 * 24.0 * 3600.0),
+            )
+        } else {
+            MockResponse::json(200, json!({"data": {}}))
+        }
+    }))
+    .await;
     let home = tempfile::tempdir().unwrap();
     write_session_file_with_server(home.path(), &server, TOKEN_V1, REFRESH_V1, 3600.0);
     let first = CloudService::new();
@@ -843,7 +849,8 @@ async fn logout_racing_refresh_keeps_session_removed() {
     second.set_session_base_dir(home.path().into());
     let store = ConfigStore::new(home.path().join("config/wunder.yaml"));
     let (refresh, logout) = tokio::join!(first.recover_auth(TOKEN_V1), second.logout(&store));
-    refresh.unwrap(); logout.unwrap();
+    refresh.unwrap();
+    logout.unwrap();
     assert!(!first.status().logged_in);
     assert!(!second.status().logged_in);
     assert!(!home.path().join("config/cloud.session.json").exists());

@@ -189,7 +189,7 @@ impl CliRuntime {
                 config_store.clone(),
                 config.clone(),
                 AppStateInitOptions::cli_default(),
-        )
+            )
             .context("initialize cli state failed")?,
         );
         cli_startup_segment("app_state_init", step_start, startup_boot);
@@ -1255,7 +1255,10 @@ mod workspace_tests {
                 ensure_workspace_binding(state.clone(), "u1", &work),
                 ensure_workspace_binding(state.clone(), "u1", &work),
             );
-            assert_eq!(left.expect("left binding").workspace_id, right.expect("right binding").workspace_id);
+            assert_eq!(
+                left.expect("left binding").workspace_id,
+                right.expect("right binding").workspace_id
+            );
             assert_eq!(state.storage.list_workspaces("u1").expect("list").len(), 1);
         });
     }

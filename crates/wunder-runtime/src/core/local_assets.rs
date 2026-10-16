@@ -9,18 +9,40 @@ include!(concat!(env!("OUT_DIR"), "/embedded_local_assets.rs"));
 pub fn release_embedded_local_assets(home: &Path) -> Result<usize> {
     let layout = LocalHomeLayout::from_home(home);
     layout.ensure_dirs()?;
-    let mut created = 0usize;
-    for (relative, bytes) in EMBEDDED_LOCAL_ASSETS {
-        let target_relative = if let Some(skill_path) = relative.strip_prefix("config/skills/") {
-            PathBuf::from("skills").join(skill_path)
-        } else {
-            PathBuf::from(relative)
-        };
-        if release_file_if_missing(&home.join(target_relative), bytes)? {
-            created += 1;
+    // The bundled files are independent immutable seeds. Publish them in a
+    // small scoped worker pool so a first launch does not pay hundreds of
+    // sequential directory/metadata calls. Each file still uses
+    // `release_file_if_missing`, whose staging + hard-link publication keeps
+    // concurrent蛹/舵机 launches atomic and never overwrites user edits.
+    let workers = EMBEDDED_LOCAL_ASSETS.len().min(8).max(1);
+    let chunk_size = (EMBEDDED_LOCAL_ASSETS.len() + workers - 1) / workers;
+    std::thread::scope(|scope| -> Result<usize> {
+        let mut jobs = Vec::new();
+        for chunk in EMBEDDED_LOCAL_ASSETS.chunks(chunk_size) {
+            jobs.push(scope.spawn(move || -> Result<usize> {
+                let mut created = 0usize;
+                for (relative, bytes) in chunk {
+                    let target_relative =
+                        if let Some(skill_path) = relative.strip_prefix("config/skills/") {
+                            PathBuf::from("skills").join(skill_path)
+                        } else {
+                            PathBuf::from(relative)
+                        };
+                    if release_file_if_missing(&home.join(target_relative), bytes)? {
+                        created += 1;
+                    }
+                }
+                Ok(created)
+            }));
         }
-    }
-    Ok(created)
+        let mut created = 0usize;
+        for job in jobs {
+            created += job
+                .join()
+                .map_err(|_| anyhow::anyhow!("embedded asset release worker panicked"))??;
+        }
+        Ok(created)
+    })
 }
 
 #[cfg(test)]

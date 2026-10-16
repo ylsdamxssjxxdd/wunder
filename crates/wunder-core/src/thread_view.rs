@@ -107,6 +107,10 @@ pub struct TrajectoryViewRow {
     pub started_at: f64,
     pub completed_at: Option<f64>,
     pub detail: Option<BodyRef>,
+    /// Bounded child-agent projection for subagent_run rows.  This keeps the
+    /// first trajectory page useful without hydrating the full immutable body.
+    #[serde(default)]
+    pub subagent: Option<Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

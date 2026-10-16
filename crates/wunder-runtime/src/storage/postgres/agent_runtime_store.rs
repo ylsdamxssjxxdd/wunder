@@ -513,10 +513,14 @@ impl PostgresAgentRuntimeStorage for PostgresStorage {
             return Ok(0);
         }
         let mut conn = self.conn()?;
-        let affected = conn.execute(
+        let mut tx = conn.transaction()?;
+        tx.execute("SET LOCAL lock_timeout = '2s'", &[])?;
+        tx.execute("SET LOCAL statement_timeout = '20s'", &[])?;
+        let affected = tx.execute(
             "DELETE FROM stream_events WHERE created_time < $1",
             &[&_before_time],
         )?;
+        tx.commit()?;
         Ok(affected as i64)
     }
 
@@ -527,7 +531,11 @@ impl PostgresAgentRuntimeStorage for PostgresStorage {
             return Ok(0);
         }
         let mut conn = self.conn()?;
-        let affected = conn.execute("DELETE FROM stream_events WHERE user_id = $1", &[&cleaned])?;
+        let mut tx = conn.transaction()?;
+        tx.execute("SET LOCAL lock_timeout = '2s'", &[])?;
+        tx.execute("SET LOCAL statement_timeout = '20s'", &[])?;
+        let affected = tx.execute("DELETE FROM stream_events WHERE user_id = $1", &[&cleaned])?;
+        tx.commit()?;
         Ok(affected as i64)
     }
 
@@ -538,10 +546,17 @@ impl PostgresAgentRuntimeStorage for PostgresStorage {
             return Ok(0);
         }
         let mut conn = self.conn()?;
-        let affected = conn.execute(
+        let mut tx = conn.transaction()?;
+        // Stream events are ephemeral.  Yield to a live session writer and
+        // retry in the tombstone pass instead of leaving a pooled connection
+        // blocked behind its row locks.
+        tx.execute("SET LOCAL lock_timeout = '2s'", &[])?;
+        tx.execute("SET LOCAL statement_timeout = '20s'", &[])?;
+        let affected = tx.execute(
             "DELETE FROM stream_events WHERE session_id = $1",
             &[&cleaned],
         )?;
+        tx.commit()?;
         Ok(affected as i64)
     }
 

@@ -105,7 +105,7 @@ pub fn workspace_image_source(source: &str) -> Option<&str> {
         return None;
     }
     let extension = path.rsplit('.').next()?.to_ascii_lowercase();
-    matches!(extension.as_str(), "png" | "jpg" | "jpeg").then_some(path)
+    matches!(extension.as_str(), "png" | "jpg" | "jpeg" | "gif" | "webp").then_some(path)
 }
 
 fn workspace_document_source(source: &str) -> bool {
@@ -142,9 +142,6 @@ fn workspace_document_source(source: &str) -> bool {
             | "yml"
             | "xml"
             | "drawio"
-            | "png"
-            | "jpg"
-            | "jpeg"
     )
 }
 
@@ -214,6 +211,31 @@ fn image_block(alt: &str, source: &str) -> TextBlock {
         table_columns: 0,
         table_rows: string_model(Vec::new()),
         image: slint::Image::default(),
+        image_source: source.into(),
+        language: "".into(),
+    }
+}
+
+fn document_block(label: &str, source: &str) -> TextBlock {
+    let fallback = source
+        .split(['?', '#'])
+        .next()
+        .and_then(|value| value.rsplit(['/', '\\']).next())
+        .filter(|value| !value.is_empty())
+        .unwrap_or("文件");
+    let title = if label.trim().is_empty() {
+        fallback
+    } else {
+        label
+    };
+    TextBlock {
+        text: title.into(),
+        styled: StyledText::from_plain_text(title),
+        kind: 7,
+        table_cells: string_model(Vec::new()),
+        table_columns: 0,
+        table_rows: string_model(Vec::new()),
+        image: crate::file_icons::workspace_file_icon(fallback, "file"),
         image_source: source.into(),
         language: "".into(),
     }
@@ -289,11 +311,7 @@ fn markdown_blocks(source: &str) -> Vec<TextBlock> {
         if let Some((target, label)) = document.as_mut() {
             match &event {
                 Event::End(TagEnd::Link) => {
-                    let mut block = plain_text_block(if label.is_empty() { target } else { label });
-                    block.kind = 7;
-                    block.image_source = target.as_str().into();
-                    block.image = crate::file_icons::workspace_file_icon(target, "file");
-                    blocks.push(block);
+                    blocks.push(document_block(label, target));
                     document = None;
                 }
                 Event::Text(value) | Event::Code(value) => label.push_str(value),
@@ -428,6 +446,9 @@ fn markdown_blocks(source: &str) -> Vec<TextBlock> {
                     if workspace_image_source(&source).is_some() {
                         flush_block(&mut blocks, &mut text, &mut kind);
                         blocks.push(image_block(&image_alt, &source));
+                    } else if workspace_document_source(&source) {
+                        flush_block(&mut blocks, &mut text, &mut kind);
+                        blocks.push(document_block(&image_alt, &source));
                     } else {
                         if image_alt.is_empty() {
                             text.push_str("图片 ");
@@ -597,8 +618,26 @@ mod tests {
             "![图片](/workspaces/scope/workspace/image.png)\n\n[文档](/workspaces/scope/workspace/report.docx)",
         );
         assert_eq!(blocks[0].kind, KIND_IMAGE);
-        assert_eq!(blocks[0].image_source, "/workspaces/scope/workspace/image.png");
+        assert_eq!(
+            blocks[0].image_source,
+            "/workspaces/scope/workspace/image.png"
+        );
         assert_eq!(blocks[1].kind, 7);
-        assert_eq!(blocks[1].image_source, "/workspaces/scope/workspace/report.docx");
+        assert_eq!(
+            blocks[1].image_source,
+            "/workspaces/scope/workspace/report.docx"
+        );
+    }
+
+    #[test]
+    fn image_syntax_for_documents_uses_the_same_file_card_as_links() {
+        let blocks = markdown_blocks(
+            "![交付文档](/workspaces/scope/workspace/report.docx)\n\n![图片](/workspaces/scope/workspace/output.webp)",
+        );
+        assert_eq!(blocks[0].kind, 7);
+        assert_eq!(blocks[0].text, "交付文档");
+        assert!(blocks[0].image.width > 0);
+        assert_eq!(blocks[1].kind, KIND_IMAGE);
+        assert_eq!(blocks[1].image_source, "/workspaces/scope/workspace/output.webp");
     }
 }

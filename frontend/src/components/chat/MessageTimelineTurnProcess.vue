@@ -474,6 +474,19 @@ watch(
   syncCurrentReasoningRow
 );
 
+// The final-answer identity can be corrected after a streamed assistant item
+// gains tool_calls. Reclassify the already loaded durable rows immediately:
+// waiting for the debounced page refresh left that item's prose hidden for the
+// whole tool run, then made it pop back into place on completion.
+watch(
+  () => props.finalItemId,
+  () => {
+    if (!open.value || !loaded.value) return;
+    rebuildRows();
+    restorePageAnchor();
+  }
+);
+
 // Debounce structural/phase changes; individual text deltas patch only their
 // live row. A phase ending also reloads the complete durable reasoning text.
 watch(

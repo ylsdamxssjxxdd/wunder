@@ -396,6 +396,187 @@ button.messenger-sidebar-workspace-row {
   background: var(--mz-surface);
 }
 
+/* 归档按钮：与三个点按钮同排同款，位于其右侧，悬停该行时出现。 */
+.mz-thread-archive {
+  flex-shrink: 0;
+  padding: 2px 4px;
+  border: 0;
+  border-radius: var(--mz-radius-tag);
+  color: var(--mz-text-muted);
+  background: transparent;
+  font: inherit;
+  font-size: var(--mz-font-sm);
+  cursor: pointer;
+  opacity: 0;
+}
+
+.mz-thread-row:hover .mz-thread-archive,
+.mz-thread-archive:focus-visible,
+.mz-thread-row.is-menu-open .mz-thread-archive {
+  opacity: 1;
+}
+
+.mz-thread-archive:hover {
+  color: var(--mz-primary);
+  background: var(--mz-surface);
+}
+
+.mz-thread-archive:disabled {
+  color: var(--mz-text-muted);
+  background: transparent;
+  cursor: not-allowed;
+}
+
+/* 多选模式：复选框、选中行与底部工具条。 */
+
+/* 多选时树撑满工作区区域：列表在内部滚动，工具条以正常流贴在区域底部
+   （正好压在「工作目录」区域头顶），不再覆盖线程行，也不阻断滚轮。 */
+.messenger-sidebar-workspace-region .mz-thread-tree.is-selecting {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.mz-thread-tree.is-selecting .mz-thread-scroll {
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 0;
+}
+
+.mz-thread-row.is-selecting {
+  cursor: pointer;
+}
+
+.mz-thread-row.is-selecting .mz-thread-select {
+  cursor: pointer;
+}
+
+.mz-thread-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  width: 15px;
+  height: 15px;
+  margin: 0 6px 0 2px;
+  border: 1px solid var(--mz-border-strong);
+  border-radius: 4px;
+  color: #fff;
+  background: var(--mz-surface);
+  font-size: 9px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.mz-thread-check:hover {
+  border-color: var(--mz-primary);
+}
+
+.mz-thread-check.is-checked,
+.mz-thread-check.is-partial {
+  border-color: var(--mz-primary);
+  background: var(--mz-primary);
+}
+
+.mz-thread-check.is-disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.mz-thread-selection-bar {
+  flex-shrink: 0;
+  padding: 8px 10px 10px;
+  border-top: 1px solid var(--mz-border);
+  background: var(--mz-surface);
+}
+
+.mz-thread-selection-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 22px;
+}
+
+.mz-thread-selection-label {
+  padding: 0;
+  border: 0;
+  color: var(--mz-text-secondary);
+  background: transparent;
+  font: inherit;
+  font-size: var(--mz-font-md);
+  cursor: pointer;
+}
+
+.mz-thread-selection-label:hover {
+  color: var(--mz-text);
+}
+
+.mz-thread-selection-divider {
+  width: 1px;
+  height: 12px;
+  background: var(--mz-border);
+}
+
+.mz-thread-selection-count {
+  color: var(--mz-text-muted);
+  font-size: var(--mz-font-sm);
+}
+
+.mz-thread-selection-spacer {
+  flex: 1;
+}
+
+.mz-thread-selection-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--mz-radius-tag);
+  color: var(--mz-text-muted);
+  background: transparent;
+  font-size: var(--mz-font-md);
+  cursor: pointer;
+}
+
+.mz-thread-selection-close:hover {
+  color: var(--mz-text);
+  background: var(--mz-hover);
+}
+
+.mz-thread-selection-archive {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  height: 32px;
+  margin-top: 8px;
+  border: 1px solid var(--mz-primary);
+  border-radius: var(--mz-radius-tag);
+  color: #fff;
+  background: var(--mz-primary);
+  font: inherit;
+  font-size: var(--mz-font-md);
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+
+.mz-thread-selection-archive:hover {
+  background: var(--mz-primary-hover);
+}
+
+.mz-thread-selection-archive:disabled {
+  border-color: var(--mz-border-strong);
+  color: var(--mz-text-muted);
+  background: var(--mz-hover);
+  cursor: not-allowed;
+}
+
 .mz-thread-empty,
 .mz-thread-load-more {
   display: block;

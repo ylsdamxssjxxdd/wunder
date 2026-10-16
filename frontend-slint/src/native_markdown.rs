@@ -74,27 +74,18 @@ mod tests {
 }
 
 pub fn hydrate(blocks: &mut Blocks, desktop: Arc<NativeDesktop>, agent: String) {
-    hydrate_model(
-        slint::ModelRc::from(blocks.model.clone()),
-        desktop,
-        agent,
-    );
+    hydrate_model(slint::ModelRc::from(blocks.model.clone()), desktop, agent);
 }
 
 /// Hydrate an already projected block model. History rows are projected as
 /// `TextBlock` models directly, so they cannot retain the temporary `Blocks`
 /// builder used by streaming output. Keeping the same bounded worker here
 /// makes live and restored messages follow one image loading path.
-pub fn hydrate_model(
-    model: slint::ModelRc<TextBlock>,
-    desktop: Arc<NativeDesktop>,
-    agent: String,
-) {
+pub fn hydrate_model(model: slint::ModelRc<TextBlock>, desktop: Arc<NativeDesktop>, agent: String) {
     let sources = model
         .iter()
         .filter_map(|block| {
-            (block.kind == crate::message_blocks::KIND_IMAGE
-                && !block.image_source.is_empty())
+            (block.kind == crate::message_blocks::KIND_IMAGE && !block.image_source.is_empty())
                 .then(|| block.image_source.to_string())
         })
         .collect::<Vec<_>>();

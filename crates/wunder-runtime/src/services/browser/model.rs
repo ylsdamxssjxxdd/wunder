@@ -62,7 +62,12 @@ impl BrowserSessionScope {
 mod tests {
     use super::BrowserSessionScope;
 
-    fn scope(user: &str, session: &str, agent: Option<&str>, id: Option<&str>) -> BrowserSessionScope {
+    fn scope(
+        user: &str,
+        session: &str,
+        agent: Option<&str>,
+        id: Option<&str>,
+    ) -> BrowserSessionScope {
         BrowserSessionScope {
             user_id: user.to_string(),
             session_id: session.to_string(),
@@ -88,11 +93,15 @@ mod tests {
     fn explicit_id_stays_inside_the_caller_namespace() {
         // A supplied id cannot reach another user's live browser.
         assert_eq!(
-            scope("u1", "s1", None, Some("web-fetch:x")).session_key().unwrap(),
+            scope("u1", "s1", None, Some("web-fetch:x"))
+                .session_key()
+                .unwrap(),
             "u1:web-fetch:x"
         );
         assert_ne!(
-            scope("u1", "s1", None, Some("u2:s2")).session_key().unwrap(),
+            scope("u1", "s1", None, Some("u2:s2"))
+                .session_key()
+                .unwrap(),
             "u2:s2"
         );
     }

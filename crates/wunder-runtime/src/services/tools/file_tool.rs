@@ -1,3 +1,8 @@
+use super::line_diff::{
+    diff_added_file, diff_replaced, diff_source_too_large, insert_diff_fields, LineDiff,
+    DIFF_UNAVAILABLE_BINARY, DIFF_UNAVAILABLE_OVERSIZE, DIFF_UNAVAILABLE_UNREADABLE,
+    MAX_DIFF_SOURCE_BYTES,
+};
 use super::{
     build_model_tool_success, build_model_tool_success_with_hint, collect_allow_roots,
     collect_read_roots,
@@ -9,11 +14,6 @@ use super::{
     DEFAULT_START_LINE_WINDOW, MAX_LIST_ITEMS, MAX_RANGE_SPAN, MAX_READ_BUDGET_FILES,
     MAX_READ_BYTES, MAX_READ_LINES, MAX_READ_OUTPUT_BUDGET_BYTES, MAX_READ_TIME_BUDGET_MS,
     MIN_READ_OUTPUT_BUDGET_BYTES,
-};
-use super::line_diff::{
-    diff_added_file, diff_replaced, diff_source_too_large, insert_diff_fields, LineDiff,
-    DIFF_UNAVAILABLE_BINARY, DIFF_UNAVAILABLE_OVERSIZE, DIFF_UNAVAILABLE_UNREADABLE,
-    MAX_DIFF_SOURCE_BYTES,
 };
 use crate::core::atomic_write::atomic_write_text;
 use crate::core::blocking;
@@ -1518,9 +1518,7 @@ pub(crate) async fn write_file(context: &ToolContext<'_>, args: &Value) -> Resul
             let default_workspace_target = workspace.resolve_path(&user_id, &path_for_write)?;
             if is_within_root(&workspace_root, &target)
                 && normalize_path_for_compare(&normalize_target_path(&target))
-                    == normalize_path_for_compare(&normalize_target_path(
-                        &default_workspace_target,
-                    ))
+                    == normalize_path_for_compare(&normalize_target_path(&default_workspace_target))
             {
                 workspace.write_file(&user_id, &path_for_write, &content, true)?;
             } else {
@@ -1638,12 +1636,7 @@ mod write_diff_tests {
     }
 
     fn sorted_keys(value: &Value) -> Vec<String> {
-        let mut keys: Vec<String> = value
-            .as_object()
-            .expect("object")
-            .keys()
-            .cloned()
-            .collect();
+        let mut keys: Vec<String> = value.as_object().expect("object").keys().cloned().collect();
         keys.sort();
         keys
     }
@@ -1748,8 +1741,7 @@ mod write_diff_tests {
         let big = dir.path().join("big.txt");
         {
             let mut file = File::create(&big).expect("create");
-            file.write_all(&[b'x'; 1024])
-                .expect("write chunk");
+            file.write_all(&[b'x'; 1024]).expect("write chunk");
             for _ in 0..(MAX_DIFF_SOURCE_BYTES / 1024 + 1) {
                 file.write_all(&[b'x'; 1024]).expect("write fill");
             }

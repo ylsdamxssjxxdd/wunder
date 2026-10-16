@@ -18,8 +18,8 @@ use crate::tui::theme;
 use super::patch_log::continuation_prefix;
 use super::patch_log::disclosure_line;
 use super::patch_log::fold_marker_line;
-use super::patch_log::Disclosure;
 use super::patch_log::tail_prefix;
+use super::patch_log::Disclosure;
 
 /// Steps shown before the rest fold. Matches the preview depth the other cards
 /// use, so one screen holds the plan and the answer under it.

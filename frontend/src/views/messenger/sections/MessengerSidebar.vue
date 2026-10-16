@@ -67,6 +67,7 @@
             @trajectory="emit('thread-trajectory', $event)"
             @rename="emit('rename-thread', $event)"
             @archive="emit('archive-thread', $event)"
+            @archive-threads="emit('archive-threads', $event)"
           />
         </template>
 
@@ -173,6 +174,7 @@ const emit = defineEmits<{
   'thread-trajectory': [id: string];
   'rename-thread': [id: string];
   'archive-thread': [id: string];
+  'archive-threads': [ids: string[]];
   'open-settings': [];
 }>();
 

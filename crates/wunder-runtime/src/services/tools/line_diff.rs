@@ -217,9 +217,7 @@ fn common_suffix_len(old: &[&str], new: &[&str]) -> usize {
 /// 区域内再裁公共首尾行，只留下真正变化的行。
 fn trim_region(old: &[&str], new: &[&str], mut region: Region) -> Region {
     region = clamp_region(old, new, region);
-    while region.old_len > 0
-        && region.new_len > 0
-        && old[region.old_start] == new[region.new_start]
+    while region.old_len > 0 && region.new_len > 0 && old[region.old_start] == new[region.new_start]
     {
         region.old_start += 1;
         region.old_len -= 1;
@@ -256,7 +254,11 @@ pub(super) fn diff_added_file(content: &str) -> LineDiff {
     diff.hunks = 1;
     let mut rows = Vec::new();
     // 与 `split_lines` 同规则：尾随换行不额外产生空行。
-    let last_segment = content.as_bytes().iter().filter(|byte| **byte == b'\n').count();
+    let last_segment = content
+        .as_bytes()
+        .iter()
+        .filter(|byte| **byte == b'\n')
+        .count();
     let mut total = 0usize;
     for (index, raw) in content.split('\n').enumerate() {
         let text = raw.strip_suffix('\r').unwrap_or(raw);
@@ -432,8 +434,14 @@ pub(super) fn insert_diff_fields(
     map.insert("deleted_lines".to_string(), json!(diff.deleted_lines));
     map.insert("changed_files".to_string(), json!(1usize));
     map.insert("added".to_string(), json!(usize::from(action == "add")));
-    map.insert("updated".to_string(), json!(usize::from(action == "update")));
-    map.insert("deleted".to_string(), json!(usize::from(action == "delete")));
+    map.insert(
+        "updated".to_string(),
+        json!(usize::from(action == "update")),
+    );
+    map.insert(
+        "deleted".to_string(),
+        json!(usize::from(action == "delete")),
+    );
     map.insert("moved".to_string(), json!(0usize));
     map.insert("hunks_applied".to_string(), json!(diff.hunks));
     map.insert("diff_lines_omitted".to_string(), json!(diff.omitted_lines));
@@ -465,12 +473,7 @@ mod tests {
     }
 
     fn sorted_keys(value: &Value) -> Vec<String> {
-        let mut keys: Vec<String> = value
-            .as_object()
-            .expect("object")
-            .keys()
-            .cloned()
-            .collect();
+        let mut keys: Vec<String> = value.as_object().expect("object").keys().cloned().collect();
         keys.sort();
         keys
     }

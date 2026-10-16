@@ -28,6 +28,11 @@ thread_local! {
     static WORKSPACE_ORDER: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
     /// Manual thread display order (session ids), same semantics as above.
     static THREAD_ORDER: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    /// Multi-select checked threads (session ids), the desktop twin of the
+    /// web tree's selection set. Only meaningful while the tree is in
+    /// selection mode; every projection re-derives each row's `checked` from
+    /// it so status refreshes and reorders never drop a tick.
+    static THREAD_SELECTION: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
 }
 
 /// Rank of `id` in a manual order list: unknown ids come first (stable), the
@@ -201,6 +206,33 @@ fn commit_order(cell: &RefCell<Vec<String>>, next: &[String]) -> bool {
 /// 100 entries, so this only guards against pathological projections.
 const MAX_TREE_ROWS: usize = 300;
 
+/// Web-aligned archive gate: a thread may archive only when it is neither
+/// running nor pending (queued/waiting) and not locked. The string families
+/// mirror `RuntimeStatus.normalize` in the Slint status global, so the row's
+/// status dot and its check square can never disagree.
+fn thread_archivable(status: &str, locked: bool) -> bool {
+    if locked {
+        return false;
+    }
+    let pending = status == "pending"
+        || status == "queued"
+        || status == "waiting"
+        || status == "waiting_approval"
+        || status == "waiting_input"
+        || status == "waiting_user_input"
+        || status.starts_with("正在排队")
+        || status.starts_with("任务已排队")
+        || status.starts_with("模型请求正在排队")
+        || status.starts_with("等待");
+    let running = status == "running"
+        || status == "streaming"
+        || status == "executing"
+        || status.starts_with("正在")
+        || status.starts_with("模型响应中")
+        || status.starts_with("目标");
+    !pending && !running
+}
+
 /// Rebuild the sidebar from the workspace facade plus the bounded conversation
 /// list. `desktop` is only needed on the first call and after workspace CRUD;
 /// row rebuilds reuse the existing cards so selection changes cost no I/O.
@@ -242,6 +274,8 @@ fn rebuild_rows(app: &MainWindow) {
     if cards_model.row_count() == 0 {
         let rows: Vec<SidebarRow> = cloud.into_iter().collect();
         app.set_sidebar_rows(ModelRc::new(VecModel::from(rows)));
+        app.set_sidebar_archivable_count(0);
+        app.set_sidebar_selected_count(0);
         return;
     }
     let selected = (usize::try_from(app.get_selected_workspace()).unwrap_or(0))
@@ -251,6 +285,16 @@ fn rebuild_rows(app: &MainWindow) {
     }
     let conversations = app.get_conversations();
     let active = app.get_active_session_id().to_string();
+    // Multi-select bookkeeping: drop ticks for conversations that no longer
+    // exist, then re-derive every row's `checked` from the surviving set.
+    let existing: HashSet<String> = conversations
+        .iter()
+        .map(|conv| conv.id.to_string())
+        .collect();
+    THREAD_SELECTION.with(|slot| {
+        slot.borrow_mut().retain(|id| existing.contains(id));
+    });
+    let selection_mode = app.get_sidebar_selection_mode();
     let mut rows: Vec<SidebarRow> = Vec::with_capacity(cards_model.row_count() * 4 + 1);
     if let Some(cloud) = cloud {
         rows.push(cloud);
@@ -280,6 +324,8 @@ fn rebuild_rows(app: &MainWindow) {
                 active: false,
                 payload: wi as i32,
                 origin: "".into(),
+                archivable: false,
+                checked: false,
             });
             if !expanded {
                 continue;
@@ -308,6 +354,10 @@ fn rebuild_rows(app: &MainWindow) {
                 let Some(conv) = conversations.row_data(ci) else {
                     continue;
                 };
+                let id = conv.id.to_string();
+                let archivable = thread_archivable(conv.runtime_status.as_str(), conv.locked);
+                let checked = selection_mode
+                    && THREAD_SELECTION.with(|slot| slot.borrow().contains(id.as_str()));
                 rows.push(SidebarRow {
                     kind: 1,
                     workspace_id: card.workspace_id.clone(),
@@ -323,11 +373,19 @@ fn rebuild_rows(app: &MainWindow) {
                     active: conv.id == active,
                     payload: ci as i32,
                     origin: conv.origin.clone(),
+                    archivable,
+                    checked,
                 });
             }
         }
     });
+    let archivable_count = rows
+        .iter()
+        .filter(|row| row.kind == 1 && row.archivable)
+        .count() as i32;
     app.set_sidebar_rows(ModelRc::new(VecModel::from(rows)));
+    app.set_sidebar_archivable_count(archivable_count);
+    app.set_sidebar_selected_count(THREAD_SELECTION.with(|slot| slot.borrow().len()) as i32);
 }
 
 /// The pinned "cloud workspace" row: a sentinel (kind 2) whose click points
@@ -353,6 +411,8 @@ fn cloud_row(app: &MainWindow) -> SidebarRow {
         active: false,
         payload: -1,
         origin: "".into(),
+        archivable: false,
+        checked: false,
     }
 }
 
@@ -539,10 +599,123 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
                     app.set_status(format!("无法归档会话：{error}").into());
                     return;
                 }
+                // A tick on the archived thread must not survive into the
+                // selection set.
+                THREAD_SELECTION.with(|slot| {
+                    slot.borrow_mut().remove(id.as_str());
+                });
                 app.invoke_refresh_chat();
                 if was_active {
                     app.set_active_session_id("".into());
                 }
+                crate::navigation_ui::project_sidebar(&app, None);
+            });
+        });
+    });
+    // Multi-select (web alignment): the tree reports intent, this module owns
+    // the checked set, the mode flag and the counts. Toggles re-project so a
+    // concurrent status refresh can never resurrect a stale box.
+    let weak = app.as_weak();
+    app.on_sidebar_begin_selection(move || {
+        let Some(app) = weak.upgrade() else { return };
+        app.set_sidebar_selection_mode(true);
+        crate::navigation_ui::project_sidebar(&app, None);
+    });
+    let weak = app.as_weak();
+    app.on_sidebar_exit_selection(move || {
+        let Some(app) = weak.upgrade() else { return };
+        THREAD_SELECTION.with(|slot| slot.borrow_mut().clear());
+        app.set_sidebar_selection_mode(false);
+        app.set_sidebar_selected_count(0);
+        crate::navigation_ui::project_sidebar(&app, None);
+    });
+    let weak = app.as_weak();
+    app.on_sidebar_toggle_selection(move |index| {
+        let Some(app) = weak.upgrade() else { return };
+        let Some(conv) = app.get_conversations().row_data(index as usize) else {
+            return;
+        };
+        let id = conv.id.to_string();
+        let count = THREAD_SELECTION.with(|slot| {
+            let mut selection = slot.borrow_mut();
+            if !selection.remove(id.as_str()) {
+                selection.insert(id);
+            }
+            selection.len() as i32
+        });
+        app.set_sidebar_selected_count(count);
+        crate::navigation_ui::project_sidebar(&app, None);
+    });
+    let weak = app.as_weak();
+    app.on_sidebar_select_all(move || {
+        let Some(app) = weak.upgrade() else { return };
+        // Only rows the archive gate allows take part, as on the web.
+        let archivable: Vec<String> = app
+            .get_sidebar_rows()
+            .iter()
+            .filter(|row| row.kind == 1 && row.archivable)
+            .map(|row| row.thread_id.to_string())
+            .collect();
+        let all_selected = !archivable.is_empty()
+            && THREAD_SELECTION.with(|slot| {
+                let selection = slot.borrow();
+                archivable.iter().all(|id| selection.contains(id))
+            });
+        let count = THREAD_SELECTION.with(|slot| {
+            let mut selection = slot.borrow_mut();
+            if all_selected {
+                for id in &archivable {
+                    selection.remove(id);
+                }
+            } else {
+                for id in &archivable {
+                    selection.insert(id.clone());
+                }
+            }
+            selection.len() as i32
+        });
+        app.set_sidebar_selected_count(count);
+        crate::navigation_ui::project_sidebar(&app, None);
+    });
+    let weak = app.as_weak();
+    let api = desktop.clone();
+    app.on_sidebar_archive_selected(move || {
+        let Some(app) = weak.upgrade() else { return };
+        let ids: Vec<String> =
+            THREAD_SELECTION.with(|slot| slot.borrow().iter().cloned().collect());
+        if ids.is_empty() {
+            return;
+        }
+        let was_active_id = app.get_active_session_id().to_string();
+        let api = api.clone();
+        let weak = weak.clone();
+        std::thread::spawn(move || {
+            let mut archived = 0usize;
+            let mut first_error: Option<String> = None;
+            for id in &ids {
+                match api.archive_session(id) {
+                    Ok(()) => archived += 1,
+                    Err(error) => {
+                        if first_error.is_none() {
+                            first_error = Some(format!("{error}"));
+                        }
+                    }
+                }
+            }
+            let _ = weak.upgrade_in_event_loop(move |app| {
+                THREAD_SELECTION.with(|slot| slot.borrow_mut().clear());
+                app.set_sidebar_selection_mode(false);
+                app.set_sidebar_selected_count(0);
+                if let Some(error) = first_error {
+                    app.set_status(format!("已归档 {archived} 个线程，其余失败：{error}").into());
+                } else {
+                    app.set_status(format!("已归档 {archived} 个线程").into());
+                }
+                app.invoke_refresh_chat();
+                if ids.iter().any(|id| id.as_str() == was_active_id.as_str()) {
+                    app.set_active_session_id("".into());
+                }
+                crate::navigation_ui::project_sidebar(&app, None);
             });
         });
     });

@@ -43,11 +43,11 @@ export { ScreenshotOverlay } from "screenshot_overlay.slint";
 
 export component MainWindow inherits Window {
     in-out property <[SidebarRow]> sidebar-rows: [
-        { kind: 0, workspace-id: "ws-preview-a", name: I18n.ws_preview_default, icon: "folder", color: "blue", thread-count: 2, expanded: true, selected: true, thread-id: "", title: "", status: "", active: false, payload: 0, origin: "" },
-        { kind: 1, workspace-id: "ws-preview-a", name: "", icon: "", color: "", thread-count: 0, expanded: false, selected: false, thread-id: "t1", title: I18n.main_preview_prompt, status: "done", active: true, payload: 0, origin: "" },
-        { kind: 1, workspace-id: "ws-preview-a", name: "", icon: "", color: "", thread-count: 0, expanded: false, selected: false, thread-id: "t2", title: I18n.main_preview_step_title2, status: "idle", active: false, payload: 1, origin: "cloud" },
-        { kind: 0, workspace-id: "ws-preview-b", name: I18n.ws_preview_docs, icon: "coffee", color: "orange", thread-count: 1, expanded: true, selected: false, thread-id: "", title: "", status: "", active: false, payload: 1, origin: "" },
-        { kind: 1, workspace-id: "ws-preview-b", name: "", icon: "", color: "", thread-count: 0, expanded: false, selected: false, thread-id: "t3", title: I18n.main_preview_step_title1, status: "running", active: false, payload: 2, origin: "device:demo" }
+        { kind: 0, workspace-id: "ws-preview-a", name: I18n.ws_preview_default, icon: "folder", color: "blue", thread-count: 2, expanded: true, selected: true, thread-id: "", title: "", status: "", active: false, payload: 0, origin: "", archivable: false, checked: false },
+        { kind: 1, workspace-id: "ws-preview-a", name: "", icon: "", color: "", thread-count: 0, expanded: false, selected: false, thread-id: "t1", title: I18n.main_preview_prompt, status: "done", active: true, payload: 0, origin: "", archivable: true, checked: false },
+        { kind: 1, workspace-id: "ws-preview-a", name: "", icon: "", color: "", thread-count: 0, expanded: false, selected: false, thread-id: "t2", title: I18n.main_preview_step_title2, status: "idle", active: false, payload: 1, origin: "cloud", archivable: true, checked: true },
+        { kind: 0, workspace-id: "ws-preview-b", name: I18n.ws_preview_docs, icon: "coffee", color: "orange", thread-count: 1, expanded: true, selected: false, thread-id: "", title: "", status: "", active: false, payload: 1, origin: "", archivable: false, checked: false },
+        { kind: 1, workspace-id: "ws-preview-b", name: "", icon: "", color: "", thread-count: 0, expanded: false, selected: false, thread-id: "t3", title: I18n.main_preview_step_title1, status: "running", active: false, payload: 2, origin: "device:demo", archivable: false, checked: false }
     ];
     in-out property <[WorkspaceCard]> workspaces: [
         { workspace-id: "ws-preview-a", name: I18n.ws_preview_default, icon: "folder", color: "blue", root-path: I18n.ws_preview_root_a, thread-count: 2, expanded: true, selected: true },
@@ -65,6 +65,16 @@ export component MainWindow inherits Window {
     callback open-workspace-folder(string);
     callback rename-thread(int, string);
     callback archive-thread(int);
+    // Sidebar multi-select (web alignment): the tree reports intent, Rust owns
+    // the checked set, the mode flag and the counts.
+    in-out property <bool> sidebar-selection-mode: false;
+    in-out property <int> sidebar-selected-count: 0;
+    in-out property <int> sidebar-archivable-count: 0;
+    callback sidebar-begin-selection();
+    callback sidebar-exit-selection();
+    callback sidebar-toggle-selection(int);
+    callback sidebar-select-all();
+    callback sidebar-archive-selected();
     in-out property <DesktopPage> page: DesktopPage.messages;
     // Settings render in an internal overlay window instead of taking over
     // the chat area; the sidebar width is user-draggable.
@@ -851,6 +861,14 @@ export component MainWindow inherits Window {
                     root.thread-rename-open = true;
                 }
                 open-trajectory(index) => { root.open-trajectory(index); }
+                selection-mode: root.sidebar-selection-mode;
+                selected-count: root.sidebar-selected-count;
+                archivable-count: root.sidebar-archivable-count;
+                begin-selection => { root.sidebar-begin-selection(); }
+                exit-selection => { root.sidebar-exit-selection(); }
+                toggle-selection(index) => { root.sidebar-toggle-selection(index); }
+                select-all-threads => { root.sidebar-select-all(); }
+                archive-selected => { root.sidebar-archive-selected(); }
                 open-settings => { root.more-open = false; root.settings-open = true; root.settings-active-panel = 0; root.refresh-settings(); }
                 // Working-directory region: model and actions live on the
                 // window shell, the sidebar only forwards.

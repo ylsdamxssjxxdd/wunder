@@ -8,8 +8,8 @@ const REQUEST_SEPARATOR = "\u0000";
 const TEXT_PREVIEW_SOURCE_LIMIT = 2048;
 const TEXT_PREVIEW_LIMIT = 512;
 const USER_TURN_KEYS = ["user_turn_index", "user_round", "turn_index", "turn"];
-const STARTED_KEYS = ["started_at", "start_time", "created_at"];
-const COMPLETED_KEYS = ["completed_at", "end_time", "finished_at"];
+const STARTED_KEYS = ["started_at", "start_time", "started_time", "created_at"];
+const COMPLETED_KEYS = ["completed_at", "end_time", "finished_at", "finished_time"];
 const CONTEXT_RAW_KINDS = new Set([
   "queue",
   "plan",
@@ -174,6 +174,35 @@ function summarizeToolResult(payload) {
   return contentToText(fallback);
 }
 
+function firstNonEmptyText(...values) {
+  for (const value of values) {
+    const text = contentToText(value).trim();
+    if (text) return text;
+  }
+  return "";
+}
+
+function finiteNonNegative(value) {
+  const number = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
+  return Number.isFinite(number) && number >= 0 ? number : null;
+}
+
+function assistantRecordedDurationSeconds(payload) {
+  const meta = metaOf(payload);
+  const stats = isRecord(payload.message_stats)
+    ? payload.message_stats
+    : isRecord(payload.messageStats)
+      ? payload.messageStats
+      : isRecord(meta.message_stats)
+        ? meta.message_stats
+        : isRecord(meta.messageStats) ? meta.messageStats : undefined;
+  if (!stats) return null;
+  return finiteNonNegative(
+    stats.interaction_duration_s ?? stats.interactionDurationS
+      ?? stats.duration_s ?? stats.durationSeconds,
+  );
+}
+
 // Stream snapshots may wrap the event body in `data`/`payload.data`.  Keep a
 // single bounded merge so reasoning, compaction summaries and tool metadata
 // are read identically in the bridge and hive projections.
@@ -300,8 +329,15 @@ function buildCell(item, payload, kind, index) {
   const recordId = typeof item.item_id === "string" ? item.item_id : String(index);
   const createdMs = firstTime(item, ["created_time"]) ?? firstTime(payload, ["created_time"]);
   const updatedMs = firstTime(item, ["updated_time"]);
-  const startedAt = firstTime(payload, STARTED_KEYS) ?? createdMs;
+  let startedAt = firstTime(payload, STARTED_KEYS) ?? createdMs;
   const completedAt = firstTime(payload, COMPLETED_KEYS) ?? updatedMs;
+  const recordedDuration = kind === "message" ? assistantRecordedDurationSeconds(payload) : null;
+  if (kind === "message" && recordedDuration !== null
+    && firstTime(payload, STARTED_KEYS) === null
+    && firstTime(payload, COMPLETED_KEYS) === null
+    && completedAt !== null) {
+    startedAt = completedAt - recordedDuration * 1000;
+  }
 
   const cell = {
     index,
@@ -337,8 +373,16 @@ function buildCell(item, payload, kind, index) {
       typeof payload.decode_duration_s === "number" && Number.isFinite(payload.decode_duration_s)
         ? payload.decode_duration_s
         : null;
-    cell.timeSeconds =
-      startedAt !== null && completedAt !== null
+    // Durable assistant rows often receive `updated_time` only after the
+    // child/tool work and final replay are committed. Using that bookkeeping
+    // timestamp makes the purple model span cover the whole child run. Prefer
+    // the provider/orchestrator interaction duration when explicit assistant
+    // start/end fields are absent; this is the same own-step duration DSH uses.
+    cell.timeSeconds = recordedDuration !== null
+      && firstTime(payload, STARTED_KEYS) === null
+      && firstTime(payload, COMPLETED_KEYS) === null
+      ? recordedDuration
+      : startedAt !== null && completedAt !== null
         ? Math.max(0, (completedAt - startedAt) / 1000)
         : prefill !== null && decode !== null
           ? prefill + decode
@@ -364,6 +408,46 @@ function buildCell(item, payload, kind, index) {
     };
     cell.isError = status === "failed" || status === "error";
   } else if (kind === "tool" || kind === "subtool") {
+    const runtime = isRecord(payload.runtime) ? payload.runtime : undefined;
+    const runtimeState = runtime && isRecord(runtime.agent_state) ? runtime.agent_state : undefined;
+    const isSubagentRun = kind === "subtool" && runtime !== undefined;
+    const subagentLabel = isSubagentRun
+      ? firstNonEmptyText(
+        payload.spawn_label, payload.label, runtime?.spawn_label, runtime?.label,
+        runtimeState?.label, "subagent_run",
+      )
+      : "";
+    const subagentTask = isSubagentRun
+      ? firstNonEmptyText(
+        payload.task, payload.user_message, runtime?.user_message,
+        runtime?.task, runtimeState?.user_message,
+      )
+      : "";
+    const subagentSummary = isSubagentRun
+      ? firstNonEmptyText(
+        runtime?.summary, runtime?.latest_message, runtimeState?.message,
+        runtimeState?.assistant_message, payload.summary, payload.message,
+      )
+      : "";
+    if (isSubagentRun) {
+      // DSH keeps delegated work as a distinct subtool span. Preserve the
+      // child label, task and final report instead of rendering an empty
+      // `subagent_run` placeholder beside the parent tool call.
+      cell.text = subagentLabel;
+      cell.toolName = subagentLabel;
+      cell.inputDetail = subagentTask || undefined;
+      cell.outputDetail = subagentSummary || undefined;
+      cell.result = subagentSummary || undefined;
+      if (subagentSummary) cell.resultPreviewMarkdown = markdownPreviewText(subagentSummary);
+      const runtimeStart = firstTime(runtime ?? {}, STARTED_KEYS);
+      const runtimeEnd = firstTime(runtime ?? {}, COMPLETED_KEYS);
+      if (runtimeStart !== null) cell.startedAt = runtimeStart;
+      if (runtimeStart !== null && runtimeEnd !== null) {
+        cell.timeSeconds = Math.max(0, (runtimeEnd - runtimeStart) / 1000);
+      }
+      cell.isError = runtime?.failed === true || runtime?.status === "failed" || status === "failed";
+      return cell;
+    }
     const name =
       typeof payload.tool === "string" && payload.tool.trim()
         ? payload.tool

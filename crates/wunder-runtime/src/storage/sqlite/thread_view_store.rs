@@ -1317,6 +1317,83 @@ mod tests {
     }
 
     #[test]
+    fn tool_call_assistant_prose_stays_in_process_until_terminal_answer() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = SqliteStorage::new(dir.path().join("fixture.db").to_string_lossy().into());
+        let receipt = db
+            .accept_thread_turn(
+                "fixture-user",
+                "fixture-thread",
+                &json!({"content":"fixture input"}),
+            )
+            .unwrap();
+        let turn = receipt["turn_id"].as_str().unwrap();
+        let intermediate = format!("{turn}:text-1");
+        db.append_thread_item(
+            "fixture-user",
+            &json!({
+                "session_id":"fixture-thread", "turn_id":turn,
+                "item_id":intermediate, "kind":"assistant_message",
+                "status":"completed", "content":"fixture intermediate"
+            }),
+        )
+        .unwrap();
+        // The stream can publish prose first and attach tool_calls in a later
+        // revision.  That transition must revoke the provisional answer slot.
+        let provisional = db
+            .thread_view_page("fixture-user", "fixture-thread", "chat", None, 12)
+            .unwrap();
+        assert_eq!(provisional.chat[0].assistant.item_id, intermediate);
+        db.append_thread_item(
+            "fixture-user",
+            &json!({
+                "session_id":"fixture-thread", "turn_id":turn,
+                "item_id":intermediate, "kind":"assistant_message",
+                "status":"completed", "content":"fixture intermediate",
+                "tool_calls":[{"id":"call-1","type":"function","function":{"name":"fixture_tool","arguments":"{}"}}]
+            }),
+        )
+        .unwrap();
+        let during_tool = db
+            .thread_view_page("fixture-user", "fixture-thread", "chat", None, 12)
+            .unwrap();
+        assert!(during_tool.chat[0].assistant.item_id.is_empty());
+        assert!(during_tool.chat[0].assistant.content.is_empty());
+        let process = db
+            .thread_view_trajectory_page("fixture-user", "fixture-thread", None, Some(turn), 12)
+            .unwrap();
+        assert!(process
+            .trajectory
+            .iter()
+            .any(|row| row.item_id == intermediate && row.summary == "fixture intermediate"));
+
+        db.append_thread_item(
+            "fixture-user",
+            &json!({
+                "session_id":"fixture-thread", "turn_id":turn,
+                "item_id":format!("{turn}:tool-1"), "kind":"tool_call",
+                "status":"completed", "tool":"fixture_tool"
+            }),
+        )
+        .unwrap();
+        let final_id = format!("{turn}:text-2");
+        db.append_thread_item(
+            "fixture-user",
+            &json!({
+                "session_id":"fixture-thread", "turn_id":turn,
+                "item_id":final_id, "kind":"assistant_message",
+                "status":"completed", "content":"fixture final"
+            }),
+        )
+        .unwrap();
+        let settled = db
+            .thread_view_page("fixture-user", "fixture-thread", "chat", None, 12)
+            .unwrap();
+        assert_eq!(settled.chat[0].assistant.item_id, final_id);
+        assert_eq!(settled.chat[0].assistant.content, "fixture final");
+    }
+
+    #[test]
     #[ignore = "explicit disk benchmark: 500000 fixture rows"]
     fn thread_view_disk_read_comparison() {
         use crate::storage::ThreadSnapshotWindow;

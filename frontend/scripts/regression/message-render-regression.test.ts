@@ -138,6 +138,15 @@ test('renders cloud workspace markdown images as workspace resource cards', () =
   assert.match(html, /data-workspace-path="\/workspaces\/sjxx\/workspace\/%E7%88%B1%E5%BF%83\.png"/);
 });
 
+test('renders cloud workspace documents as file cards with their type icon', () => {
+  const html = renderMarkdown('[交付文档](/workspaces/example/workspace/result.docx)');
+  assert.match(html, /ai-resource-card ai-resource-file/);
+  assert.match(html, /data-workspace-kind="file"/);
+  assert.match(html, /vscode-icons\/icons\/file_type_word\.svg/);
+  assert.match(html, /data-workspace-action="preview"/);
+  assert.match(html, /data-workspace-action="download"/);
+});
+
 test('uses public workspace paths directly for resource requests', () => {
   const params = buildWorkspaceResourceRequestParams(
     {

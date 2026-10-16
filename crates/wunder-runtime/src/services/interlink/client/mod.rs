@@ -445,15 +445,31 @@ impl ClientInner {
     /// The in-memory cloud session keeps its own copy of everything else; this
     /// client reads the secret back from the file after a restart.
     fn store_secret(&self, secret: &NodeSecret) {
-        let Some(expected) = self.session() else { return; };
+        let Some(expected) = self.session() else {
+            return;
+        };
         let base = self.options.session_base_dir.clone();
         let value = secret.secret.clone();
         let version = secret.version;
         long_task::spawn("interlink.client.store_secret", async move {
             let lock_path = base.join("config/cloud.session.lock");
-            let Ok(_lock) = crate::core::process_file_lock::ProcessFileLock::acquire(&lock_path, std::time::Duration::from_secs(8)).await else { return; };
-            let Some(mut session) = CloudSessionFile::load_any(&base) else { return; };
-            if session.user_id != expected.user_id || session.device_id != expected.device_id || session.logged_in_at != expected.logged_in_at { return; }
+            let Ok(_lock) = crate::core::process_file_lock::ProcessFileLock::acquire(
+                &lock_path,
+                std::time::Duration::from_secs(8),
+            )
+            .await
+            else {
+                return;
+            };
+            let Some(mut session) = CloudSessionFile::load_any(&base) else {
+                return;
+            };
+            if session.user_id != expected.user_id
+                || session.device_id != expected.device_id
+                || session.logged_in_at != expected.logged_in_at
+            {
+                return;
+            }
             session.interlink.node_secret = Some(value);
             session.interlink.secret_version = version;
             let _ = session.save(&base);

@@ -10,8 +10,10 @@ export struct WorkspaceCard { workspace-id: string, name: string, icon: string, 
 // under it. `payload` is the workspace or thread index the callbacks expect.
 // Built in one bounded Rust pass so the Slint thread never merges models.
 // `origin` is the thread's remote birthplace ("cloud" / "device:<id>"); an
-// empty string means locally created and renders no badge.
-export struct SidebarRow { kind: int, workspace-id: string, name: string, icon: string, color: string, thread-count: int, expanded: bool, selected: bool, thread-id: string, title: string, status: string, active: bool, payload: int, origin: string }
+// empty string means locally created and renders no badge. `archivable`
+// mirrors the web gate (not running/pending and not locked); `checked` is the
+// multi-select state, only meaningful while the tree is in selection mode.
+export struct SidebarRow { kind: int, workspace-id: string, name: string, icon: string, color: string, thread-count: int, expanded: bool, selected: bool, thread-id: string, title: string, status: string, active: bool, payload: int, origin: string, archivable: bool, checked: bool }
 // Thread trajectory (dsh ui-trajectory alignment). Rows are pre-projected and
 // pre-bounded in Rust; Slint only lays out what it was handed.
 export struct TrajRow {

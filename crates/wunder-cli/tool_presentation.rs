@@ -117,6 +117,7 @@ const fn workspace_call(
 // the engine's own table before matching.
 const CANONICAL_PATCH: &str = "文本编辑";
 const CANONICAL_WRITE: &str = "写入文件";
+const CANONICAL_READ: &str = "读取文件";
 const CANONICAL_COMMAND: &str = "执行命令";
 const CANONICAL_COMMAND_SESSION: &str = "命令会话";
 const CANONICAL_WEB_SEARCH: &str = "网页搜索";
@@ -184,6 +185,13 @@ pub(crate) fn is_patch_tool_name(name: &str) -> bool {
 /// True for `写入文件`, including the `write_file` alias.
 pub(crate) fn is_write_tool_name(name: &str) -> bool {
     matches_canonical(name, CANONICAL_WRITE, &["write_file"])
+}
+
+/// True for `读取文件`, including the `read_file` alias. Only this family collapses into one
+/// name list inside an exploring card; a listing or a search answers a different question,
+/// so it keeps its own row.
+pub(crate) fn is_file_read_tool_name(name: &str) -> bool {
+    matches_canonical(name, CANONICAL_READ, &["read_file"])
 }
 
 /// True for `执行命令` — one-shot command execution, including `execute_command`.
@@ -390,7 +398,9 @@ fn classify(name: &str) -> Option<ToolPresentation> {
             call(ToolAccess::Execute, "浏览网页", "Browse")
         }
         "桌面控制器" | "桌面控制" => call(ToolAccess::Execute, "桌面控制", "Desktop"),
-        "桌面监视器" | "桌面监视" => call(ToolAccess::Execute, "桌面监视", "Desktop monitor"),
+        "桌面监视器" | "桌面监视" => {
+            call(ToolAccess::Execute, "桌面监视", "Desktop monitor")
+        }
         // Work handed to another agent, skill or channel.
         "技能调用" => call(ToolAccess::Delegate, "调用技能", "Run skill"),
         CANONICAL_SUBAGENT => call(ToolAccess::Delegate, "子智能体", "Subagent"),
@@ -448,9 +458,27 @@ mod tests {
         ("列出文件", ToolAccess::Explore, "列出", "List", true),
         ("搜索内容", ToolAccess::Explore, "搜索", "Search", true),
         ("glob", ToolAccess::Explore, "匹配文件", "Find files", true),
-        ("读图工具", ToolAccess::Explore, "查看图片", "View image", true),
-        ("网页搜索", ToolAccess::Explore, "联网搜索", "Web search", false),
-        ("网页抓取", ToolAccess::Explore, "获取网页", "Fetch page", false),
+        (
+            "读图工具",
+            ToolAccess::Explore,
+            "查看图片",
+            "View image",
+            true,
+        ),
+        (
+            "网页搜索",
+            ToolAccess::Explore,
+            "联网搜索",
+            "Web search",
+            false,
+        ),
+        (
+            "网页抓取",
+            ToolAccess::Explore,
+            "获取网页",
+            "Fetch page",
+            false,
+        ),
         ("写入文件", ToolAccess::Mutate, "写入", "Write", false),
         ("文本编辑", ToolAccess::Mutate, "编辑", "Edit", false),
         ("执行命令", ToolAccess::Execute, "运行", "Ran", false),
@@ -461,9 +489,21 @@ mod tests {
             "Command session",
             false,
         ),
-        ("ptc", ToolAccess::Execute, "脚本调用", "Scripted call", false),
+        (
+            "ptc",
+            ToolAccess::Execute,
+            "脚本调用",
+            "Scripted call",
+            false,
+        ),
         ("浏览器", ToolAccess::Execute, "浏览网页", "Browse", false),
-        ("桌面控制器", ToolAccess::Execute, "桌面控制", "Desktop", false),
+        (
+            "桌面控制器",
+            ToolAccess::Execute,
+            "桌面控制",
+            "Desktop",
+            false,
+        ),
         (
             "桌面监视器",
             ToolAccess::Execute,
@@ -471,7 +511,13 @@ mod tests {
             "Desktop monitor",
             false,
         ),
-        ("技能调用", ToolAccess::Delegate, "调用技能", "Run skill", false),
+        (
+            "技能调用",
+            ToolAccess::Delegate,
+            "调用技能",
+            "Run skill",
+            false,
+        ),
         (
             "子智能体控制",
             ToolAccess::Delegate,
@@ -493,14 +539,44 @@ mod tests {
             "Yield session",
             false,
         ),
-        ("计划面板", ToolAccess::Other, "更新计划", "Update plan", false),
+        (
+            "计划面板",
+            ToolAccess::Other,
+            "更新计划",
+            "Update plan",
+            false,
+        ),
         ("问询面板", ToolAccess::Other, "问询", "Ask", false),
-        ("定时任务", ToolAccess::Other, "定时任务", "Schedule task", false),
+        (
+            "定时任务",
+            ToolAccess::Other,
+            "定时任务",
+            "Schedule task",
+            false,
+        ),
         ("记忆管理", ToolAccess::Other, "记忆管理", "Memory", false),
         ("自我状态", ToolAccess::Explore, "读取状态", "Status", false),
-        ("get_goal", ToolAccess::Other, "读取目标", "Read goal", false),
-        ("create_goal", ToolAccess::Other, "创建目标", "Create goal", false),
-        ("update_goal", ToolAccess::Other, "更新目标", "Update goal", false),
+        (
+            "get_goal",
+            ToolAccess::Other,
+            "读取目标",
+            "Read goal",
+            false,
+        ),
+        (
+            "create_goal",
+            ToolAccess::Other,
+            "创建目标",
+            "Create goal",
+            false,
+        ),
+        (
+            "update_goal",
+            ToolAccess::Other,
+            "更新目标",
+            "Update goal",
+            false,
+        ),
         (
             "语音生成",
             ToolAccess::Other,

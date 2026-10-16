@@ -106,15 +106,18 @@ component StatusDot inherits Rectangle {
 component ThreadRow inherits Rectangle {
     in property <SidebarRow> data;
     in property <bool> hover;
+    in property <bool> selecting;
     callback archive();
     callback begin-rename();
     callback open-trajectory();
+    callback begin-selection();
+    callback toggle-selection();
     height: 28px;
     background: data.active ? Theme.selected : transparent;
     // Tree connector line linking the thread to its workspace row.
     Rectangle { x: 20px; y: 0px; width: 1px; height: parent.height; background: Theme.border; }
     HorizontalLayout {
-        padding-left: 34px; padding-right: 8px; spacing: 8px;
+        padding-left: root.selecting ? 56px : 34px; padding-right: 8px; spacing: 8px;
         StatusDot {
             y: (parent.height - self.height) / 2;
             status: data.status;
@@ -145,48 +148,135 @@ component ThreadRow inherits Rectangle {
             }
         }
     }
+    // Multi-select check square, aligned with the web's `.mz-thread-check`:
+    // 15px, accent-filled with a white check once ticked, greyed for rows the
+    // archive gate rejects. The whole row toggles (the touch below), so the
+    // square itself carries no input handling.
+    if root.selecting : Rectangle {
+        x: 16px;
+        y: (parent.height - 15px) / 2;
+        width: 15px; height: 15px;
+        border-radius: 4px;
+        border-width: data.checked ? 0px : 1px;
+        border-color: Theme.border-strong;
+        background: data.checked ? Theme.accent : transparent;
+        opacity: data.archivable ? 1.0 : 0.4;
+        if data.checked : Image {
+            x: (parent.width - 9px) / 2; y: (parent.height - 9px) / 2;
+            width: 9px; height: 9px;
+            source: @image-url("../assets/icons/check.svg");
+            colorize: white;
+        }
+    }
+    // While selecting, the whole row is the toggle and dragging is disabled by
+    // the DragRow wrapper, so this touch is the only click path.
+    if root.selecting : TouchArea {
+        mouse-cursor: pointer;
+        clicked => { if data.archivable { root.toggle-selection(); } }
+    }
     // The hover actions ride over the row's right edge instead of joining its
-    // layout. In-layout they took the top of the row (a layout only stretches a
-    // child that brings no cross size of its own) and their reveal animated a
-    // width, so the title re-ellipsized on every frame of it and the row read
-    // as jittering. The band is opaque so no glyph lands on the title text.
-    if root.hover : Rectangle {
-        x: parent.width - 74px;
+    // layout — two buttons since the web alignment: the ellipsis menu and the
+    // direct archive (greyed while the gate rejects the row). The band is
+    // opaque so no glyph lands on the title text.
+    if root.hover && !root.selecting : Rectangle {
+        x: parent.width - 50px;
         y: 0px;
-        width: 74px;
+        width: 50px;
         height: parent.height;
         background: data.active ? Theme.selected : Theme.accent-soft;
         Rectangle {
             x: 0px; y: (parent.height - 20px) / 2; width: 20px; height: 20px; border-radius: 4px;
-            background: rename-touch.has-hover ? Theme.selected : transparent;
-            Image { x: 3px; y: 3px; width: 14px; height: 14px; source: @image-url("../assets/icons/pen.svg"); colorize: Theme.muted; }
-            Tooltip { text: @markdown("\{I18n.common_rename}"); }
-            rename-touch := TouchArea {
+            background: menu-touch.has-hover ? Theme.selected : transparent;
+            Image { x: 3px; y: 3px; width: 14px; height: 14px; source: @image-url("../assets/icons/ellipsis.svg"); colorize: Theme.muted; }
+            Tooltip { text: @markdown("\{I18n.common_more}"); }
+            menu-touch := TouchArea {
                 mouse-cursor: pointer;
-                accessible-role: button; accessible-label: I18n.common_rename;
-                clicked => { root.begin-rename(); }
+                accessible-role: button; accessible-label: I18n.common_more;
+                clicked => { row-menu.show(); }
             }
         }
         Rectangle {
-            x: 23px; y: (parent.height - 20px) / 2; width: 20px; height: 20px; border-radius: 4px;
-            background: traj-touch.has-hover ? Theme.selected : transparent;
-            Image { x: 3px; y: 3px; width: 14px; height: 14px; source: @image-url("../assets/icons/timeline.svg"); colorize: Theme.muted; }
-            Tooltip { text: @markdown("\{I18n.traj_title}"); }
-            traj-touch := TouchArea {
-                mouse-cursor: pointer;
-                accessible-role: button; accessible-label: I18n.traj_title;
-                clicked => { root.open-trajectory(); }
+            x: 26px; y: (parent.height - 20px) / 2; width: 20px; height: 20px; border-radius: 4px;
+            background: archive-touch.has-hover && data.archivable ? Theme.selected : transparent;
+            Image {
+                x: 3px; y: 3px; width: 14px; height: 14px;
+                source: @image-url("../assets/icons/box-archive.svg");
+                colorize: data.archivable ? Theme.muted : Theme.border-strong;
             }
-        }
-        Rectangle {
-            x: 46px; y: (parent.height - 20px) / 2; width: 20px; height: 20px; border-radius: 4px;
-            background: archive-touch.has-hover ? Theme.selected : transparent;
-            Image { x: 3px; y: 3px; width: 14px; height: 14px; source: @image-url("../assets/icons/box-archive.svg"); colorize: Theme.muted; }
             Tooltip { text: @markdown("\{I18n.ap_archive_thread}"); }
             archive-touch := TouchArea {
-                mouse-cursor: pointer;
+                mouse-cursor: data.archivable ? pointer : default;
+                enabled: data.archivable;
                 accessible-role: button; accessible-label: I18n.ap_archive_thread;
                 clicked => { root.archive(); }
+            }
+        }
+    }
+    // The ellipsis menu mirrors the web dropdown: rename, trajectory and the
+    // multi-select entry. Clicking outside dismisses it; an item closes the
+    // popup before dispatching so the dialog never opens over it.
+    row-menu := PopupWindow {
+        x: parent.width - 136px;
+        y: parent.height + 2px;
+        width: 132px;
+        height: 90px;
+        Rectangle {
+            width: parent.width; height: parent.height;
+            border-radius: Theme.radius-sm;
+            border-width: 1px;
+            border-color: Theme.border;
+            background: Theme.surface;
+            VerticalLayout {
+                padding: 4px;
+                spacing: 2px;
+                Rectangle {
+                    height: 26px; border-radius: 4px;
+                    background: pm-rename.has-hover ? Theme.hover : transparent;
+                    HorizontalLayout {
+                        padding-left: 8px; spacing: 8px;
+                        Rectangle {
+                            width: 14px;
+                            Image { y: (parent.height - 14px) / 2; width: 14px; height: 14px; source: @image-url("../assets/icons/pen.svg"); colorize: Theme.muted; }
+                        }
+                        Text { height: parent.height; text: I18n.common_rename; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                    }
+                    pm-rename := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { row-menu.close(); root.begin-rename(); }
+                    }
+                }
+                Rectangle {
+                    height: 26px; border-radius: 4px;
+                    background: pm-traj.has-hover ? Theme.hover : transparent;
+                    HorizontalLayout {
+                        padding-left: 8px; spacing: 8px;
+                        Rectangle {
+                            width: 14px;
+                            Image { y: (parent.height - 14px) / 2; width: 14px; height: 14px; source: @image-url("../assets/icons/timeline.svg"); colorize: Theme.muted; }
+                        }
+                        Text { height: parent.height; text: I18n.traj_title; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                    }
+                    pm-traj := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { row-menu.close(); root.open-trajectory(); }
+                    }
+                }
+                Rectangle {
+                    height: 26px; border-radius: 4px;
+                    background: pm-select.has-hover ? Theme.hover : transparent;
+                    HorizontalLayout {
+                        padding-left: 8px; spacing: 8px;
+                        Rectangle {
+                            width: 14px;
+                            Image { y: (parent.height - 14px) / 2; width: 14px; height: 14px; source: @image-url("../assets/icons/list-check.svg"); colorize: Theme.muted; }
+                        }
+                        Text { height: parent.height; text: I18n.sb_thread_multi_select; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                    }
+                    pm-select := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { row-menu.close(); root.begin-selection(); }
+                    }
+                }
             }
         }
     }
@@ -219,6 +309,18 @@ export component Sidebar inherits Rectangle {
     callback new-workspace();
     callback move-row(int, int);
     callback archive-thread(int);
+    // Multi-select (web alignment): the tree enters selection mode from a
+    // row's ellipsis menu, clicks toggle rows, the bar at the tree's foot
+    // selects all / closes / archives. The native side owns the checked set,
+    // these just report intent.
+    in property <bool> selection-mode;
+    in property <int> selected-count: 0;
+    in property <int> archivable-count: 0;
+    callback begin-selection();
+    callback exit-selection();
+    callback toggle-selection(int);
+    callback select-all-threads();
+    callback archive-selected();
     // Ask the shell to open the rename prompt for a thread (payload, current
     // title); the shell commits through its own `rename-thread`.
     callback rename-request(int, string);
@@ -374,6 +476,8 @@ export component Sidebar inherits Rectangle {
                 if row.kind == 1 : DragRow {
                     height: parent.height;
                     width: parent.width;
+                    // Selection mode freezes reordering, as on the web.
+                    enabled: !root.busy && !root.selection-mode;
                     selected: row.active;
                     selected-color: Theme.selected;
                     label: row.title;
@@ -387,12 +491,15 @@ export component Sidebar inherits Rectangle {
                         width: parent.width;
                         data: row;
                         hover: parent.hover;
+                        selecting: root.selection-mode;
                         archive => { root.archive-thread(row.payload); }
                         // Renaming needs a draft the user can still abandon, so
                         // the pen asks the shell for the prompt dialog instead
                         // of editing in place.
                         begin-rename => { root.rename-request(row.payload, row.title); }
                         open-trajectory => { root.open-trajectory(row.payload); }
+                        begin-selection => { root.begin-selection(); }
+                        toggle-selection => { root.toggle-selection(row.payload); }
                     }
                 }
                 // Pinned "cloud workspace" sentinel: points the working-
@@ -422,6 +529,116 @@ export component Sidebar inherits Rectangle {
                         mouse-cursor: pointer;
                         accessible-role: button; accessible-label: row.name;
                         clicked => { root.select-row(ri); }
+                    }
+                }
+            }
+        }
+        // Multi-select bar (web alignment): normal flow at the tree's foot,
+        // right above the working-directory region, so the tree keeps its own
+        // scrolling and the bar never floats over rows. Select-all only
+        // reaches rows the archive gate allows; partial selection shows the
+        // minus state.
+        if root.selection-mode : Rectangle {
+            height: 70px;
+            private property <bool> all-selected: root.archivable-count > 0 && root.selected-count >= root.archivable-count;
+            private property <bool> partial-selected: root.selected-count > 0 && root.selected-count < root.archivable-count;
+            VerticalLayout {
+                padding-left: 10px; padding-right: 10px; padding-top: 6px; padding-bottom: 10px;
+                spacing: 6px;
+                HorizontalLayout {
+                    spacing: 8px;
+                    // Select-all cluster: check square (check / minus) plus a
+                    // label, one touch across both. The layout stretches the
+                    // cluster — a `height: parent.height` here would loop the
+                    // bar's preferred-size computation.
+                    Rectangle {
+                        HorizontalLayout {
+                            padding-left: 2px;
+                            spacing: 8px;
+                            Rectangle {
+                                width: 15px;
+                                Rectangle {
+                                    y: (parent.height - 15px) / 2;
+                                    width: 15px; height: 15px;
+                                    border-radius: 4px;
+                                    border-width: all-selected ? 0px : 1px;
+                                    border-color: Theme.border-strong;
+                                    background: all-selected ? Theme.accent : transparent;
+                                    if all-selected : Image {
+                                        x: (parent.width - 9px) / 2; y: (parent.height - 9px) / 2;
+                                        width: 9px; height: 9px;
+                                        source: @image-url("../assets/icons/check.svg");
+                                        colorize: white;
+                                    }
+                                    if partial-selected : Rectangle {
+                                        x: (parent.width - 7px) / 2; y: (parent.height - 2px) / 2;
+                                        width: 7px; height: 2px; border-radius: 1px;
+                                        background: Theme.accent;
+                                    }
+                                }
+                            }
+                            Text {
+                                text: I18n.sb_thread_select_all;
+                                color: Theme.text; font-size: Theme.font-sm;
+                                vertical-alignment: center;
+                            }
+                        }
+                        all-touch := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.select-all-threads(); }
+                        }
+                    }
+                    Rectangle { width: 1px; background: Theme.border; }
+                    Text {
+                        text: I18n.sb_thread_selected(root.selected-count);
+                        color: Theme.muted; font-size: Theme.font-sm;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                    }
+                    Rectangle {
+                        width: 20px;
+                        Rectangle {
+                            y: (parent.height - 20px) / 2;
+                            width: 20px; height: 20px; border-radius: 4px;
+                            background: bar-close.has-hover ? Theme.selected : transparent;
+                            Image { x: 3px; y: 3px; width: 14px; height: 14px; source: @image-url("../assets/icons/xmark.svg"); colorize: Theme.muted; }
+                            Tooltip { text: @markdown("\{I18n.common_close}"); }
+                            bar-close := TouchArea {
+                                mouse-cursor: pointer;
+                                accessible-role: button; accessible-label: I18n.common_close;
+                                clicked => { root.exit-selection(); }
+                            }
+                        }
+                    }
+                }
+                Rectangle {
+                    height: 26px;
+                    border-radius: Theme.radius-sm;
+                    background: root.selected-count > 0 ? Theme.accent : Theme.hover;
+                    HorizontalLayout {
+                        alignment: center;
+                        spacing: 6px;
+                        Rectangle {
+                            width: 14px;
+                            Image {
+                                y: (parent.height - 14px) / 2;
+                                width: 14px; height: 14px;
+                                source: @image-url("../assets/icons/box-archive.svg");
+                                colorize: root.selected-count > 0 ? white : Theme.muted;
+                            }
+                        }
+                        Text {
+                            text: I18n.sb_thread_archive;
+                            color: root.selected-count > 0 ? white : Theme.muted;
+                            font-size: Theme.font-sm; font-weight: 600;
+                            vertical-alignment: center;
+                        }
+                    }
+                    bar-archive := TouchArea {
+                        mouse-cursor: root.selected-count > 0 ? pointer : default;
+                        enabled: root.selected-count > 0;
+                        accessible-role: button; accessible-label: I18n.sb_thread_archive;
+                        clicked => { root.archive-selected(); }
                     }
                 }
             }

@@ -5205,8 +5205,8 @@
   border-color: rgba(var(--ui-accent-rgb), 0.6);
 }
 
-/* 最终回复中的工作目录引用统一收进固定资源卡片，避免原图尺寸撑大时间线。
-   图片保持原始比例并在预览区域内缩放；文档沿用同一宽度和预览/下载入口。 */
+/* 最终回复中的工作目录引用使用资源卡片展示。
+   图片沿用蜂巢原有的自适应预览规格；文档维持紧凑的预览/下载入口。 */
 .messenger-chat-body .message-markdown-body--assistant .ai-resource-card,
 .messenger-chat-body .message-markdown-body--assistant .ai-external-image-card {
   box-sizing: border-box;
@@ -5221,9 +5221,10 @@
 
 .messenger-chat-body .message-markdown-body--assistant .ai-resource-card.ai-resource-image,
 .messenger-chat-body .message-markdown-body--assistant .ai-external-image-card {
-  width: min(100%, 280px);
-  max-width: 280px;
+  width: fit-content;
+  max-width: min(100%, 420px);
   padding: 8px;
+  align-items: stretch;
 }
 
 .messenger-chat-body .message-markdown-body--assistant .ai-resource-card.ai-resource-file {
@@ -5240,8 +5241,10 @@
 .messenger-chat-body .message-markdown-body--assistant .ai-external-image-header {
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  width: 100%;
   min-width: 0;
-  gap: 8px;
+  gap: 10px;
 }
 
 .messenger-chat-body .message-markdown-body--assistant .ai-resource-title,
@@ -5259,14 +5262,14 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 180px;
+  min-height: 0;
 }
 
 .messenger-chat-body .message-markdown-body--assistant .ai-resource-preview,
 .messenger-chat-body .message-markdown-body--assistant .ai-external-image-preview {
   display: none;
-  max-width: 100%;
-  max-height: 180px;
+  max-width: 420px;
+  max-height: 300px;
   width: auto;
   height: auto;
   object-fit: contain;
@@ -5281,15 +5284,97 @@
 
 .messenger-chat-body .message-markdown-body--assistant .ai-resource-body.ai-resource-file {
   min-height: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-start;
+  padding-top: 6px;
+  width: 100%;
+}
+
+.messenger-chat-body .message-markdown-body--assistant .ai-resource-file-row {
+  width: 100%;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.messenger-chat-body .message-markdown-body--assistant .ai-resource-file-icon {
+  width: 56px;
+  height: 56px;
+  padding: 0;
+  border: 1px solid rgba(var(--ui-accent-rgb), 0.34);
+  border-radius: 12px;
+  background: var(--ui-accent-soft-3);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.messenger-chat-body .message-markdown-body--assistant .ai-resource-file-icon-img {
   display: block;
+  width: 36px;
+  height: 36px;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+.messenger-chat-body .message-markdown-body--assistant .ai-resource-file-icon:hover {
+  border-color: rgba(var(--ui-accent-rgb), 0.62);
+  background: var(--ui-accent-soft-2);
+}
+
+.messenger-chat-body .message-markdown-body--assistant .ai-resource-file-icon:focus-visible,
+.messenger-chat-body .message-markdown-body--assistant .ai-resource-file-download:focus-visible {
+  outline: 2px solid rgba(var(--ui-accent-rgb), 0.5);
+  outline-offset: 2px;
+}
+
+.messenger-chat-body .message-markdown-body--assistant .ai-resource-file-download {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  margin: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: #5f6975;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: flex-end;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.messenger-chat-body .message-markdown-body--assistant .ai-resource-file-download:hover {
+  border-color: rgba(var(--ui-accent-rgb), 0.28);
+  background: var(--ui-accent-soft-2);
+  color: var(--ui-accent-deep);
+}
+
+.messenger-chat-body .message-markdown-body--assistant .ai-resource-file-download i {
+  font-size: 14px;
+  line-height: 1;
+  pointer-events: none;
 }
 
 @media (max-width: 480px) {
-  .messenger-chat-body .message-markdown-body--assistant .ai-resource-card.ai-resource-image,
-  .messenger-chat-body .message-markdown-body--assistant .ai-resource-card.ai-resource-file,
-  .messenger-chat-body .message-markdown-body--assistant .ai-external-image-card {
+  .messenger-chat-body .message-markdown-body--assistant .ai-resource-card.ai-resource-file {
     width: min(100%, 248px);
     max-width: 248px;
+  }
+
+  .messenger-chat-body .message-markdown-body--assistant .ai-resource-card.ai-resource-image,
+  .messenger-chat-body .message-markdown-body--assistant .ai-external-image-card {
+    max-width: 100%;
+  }
+
+  .messenger-chat-body .message-markdown-body--assistant .ai-resource-preview,
+  .messenger-chat-body .message-markdown-body--assistant .ai-external-image-preview {
+    max-width: 100%;
   }
 }
 

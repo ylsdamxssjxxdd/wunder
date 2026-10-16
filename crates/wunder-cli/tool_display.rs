@@ -79,24 +79,32 @@ fn summarize_search_matches(data: &Value, is_zh: bool) -> Option<ToolDisplaySumm
 
 fn summarize_read_files(data: &Value, is_zh: bool) -> Option<ToolDisplaySummary> {
     let content = data.get("content").and_then(Value::as_str)?;
-    let files = data
-        .get("meta")
-        .and_then(|meta| meta.get("files"))
-        .and_then(Value::as_array);
+    // The read tool answers with `files[]` at the data root; `meta.files` is what older
+    // durable rows carry. Reading only the second one left every read card without its
+    // per-file line counts, while the non-TTY path (which reads `files`) showed them.
+    let files = data.get("files").and_then(Value::as_array).or_else(|| {
+        data.get("meta")
+            .and_then(|meta| meta.get("files"))
+            .and_then(Value::as_array)
+    });
     let mut details = Vec::new();
     let mut summary = None;
+    let mut unread_only = false;
 
     if let Some(files) = files {
         let mut file_lines = files
             .iter()
             .take(4)
-            .filter_map(format_read_file_summary)
+            .filter_map(|file| format_read_file_summary(file, is_zh))
             .map(|text| ToolDisplayLine { label: None, text })
             .collect::<Vec<_>>();
         if !file_lines.is_empty() {
             details.append(&mut file_lines);
         }
-        if let Some(first) = files.first().and_then(format_read_file_summary) {
+        if let Some(first) = files
+            .first()
+            .and_then(|file| format_read_file_summary(file, is_zh))
+        {
             summary = Some(if files.len() == 1 {
                 first
             } else if is_zh {
@@ -106,16 +114,23 @@ fn summarize_read_files(data: &Value, is_zh: bool) -> Option<ToolDisplaySummary>
             });
         }
         append_remaining_count(&mut details, files.len(), 4, is_zh);
+        // Every file refused: what came back is the engine's own notice text, whose wording
+        // follows the server language, not the session's. The rows above already say it.
+        unread_only = files
+            .iter()
+            .all(|file| file.get("binary").and_then(Value::as_bool).unwrap_or(false));
     }
 
-    append_text_preview(
-        &mut details,
-        Some(if is_zh { "预览:" } else { "preview:" }),
-        content,
-        MAX_PREVIEW_LINES,
-        MAX_PREVIEW_CHARS,
-        is_zh,
-    );
+    if !unread_only {
+        append_text_preview(
+            &mut details,
+            Some(if is_zh { "预览:" } else { "preview:" }),
+            content,
+            MAX_PREVIEW_LINES,
+            MAX_PREVIEW_CHARS,
+            is_zh,
+        );
+    }
 
     Some(ToolDisplaySummary {
         summary: summary.or_else(|| {
@@ -240,7 +255,14 @@ fn summarize_mcp_result(data: &Value, is_zh: bool) -> Option<ToolDisplaySummary>
         if let Some(structured) = inner.get("structured_content") {
             if !structured.is_null() {
                 details.push(ToolDisplayLine {
-                    label: Some(if is_zh { "结构化结果:" } else { "structured:" }.to_string()),
+                    label: Some(
+                        if is_zh {
+                            "结构化结果:"
+                        } else {
+                            "structured:"
+                        }
+                        .to_string(),
+                    ),
                     text: truncate_text(&compact_structured(structured), MAX_PREVIEW_CHARS),
                 });
             }
@@ -273,12 +295,24 @@ fn mcp_block_rows(block: &Value, is_zh: bool) -> Vec<ToolDisplayLine> {
                 text: truncate_text(line, MAX_PREVIEW_CHARS),
             })
             .collect(),
-        Some("image") => vec![marker_line(if is_zh { "返回图片" } else { "Returned image" })],
-        Some("audio") => vec![marker_line(if is_zh { "<音频内容>" } else { "<audio content>" })],
+        Some("image") => vec![marker_line(if is_zh {
+            "返回图片"
+        } else {
+            "Returned image"
+        })],
+        Some("audio") => vec![marker_line(if is_zh {
+            "<音频内容>"
+        } else {
+            "<audio content>"
+        })],
         Some("resource") => vec![marker_line(match resource_uri(block) {
             Some(uri) => format!(
                 "{} {}",
-                if is_zh { "内嵌资源:" } else { "embedded resource:" },
+                if is_zh {
+                    "内嵌资源:"
+                } else {
+                    "embedded resource:"
+                },
                 uri
             ),
             None if is_zh => "<未知内嵌资源>".to_string(),
@@ -300,7 +334,10 @@ fn mcp_block_rows(block: &Value, is_zh: bool) -> Vec<ToolDisplayLine> {
 }
 
 fn marker_line(text: impl Into<String>) -> ToolDisplayLine {
-    ToolDisplayLine { label: None, text: text.into() }
+    ToolDisplayLine {
+        label: None,
+        text: text.into(),
+    }
 }
 
 fn resource_uri(block: &Value) -> Option<String> {
@@ -482,10 +519,51 @@ fn summarize_scalar_object(data: &Value, is_zh: bool) -> Option<ToolDisplaySumma
     })
 }
 
-fn format_read_file_summary(file: &Value) -> Option<String> {
+fn format_read_file_summary(file: &Value, is_zh: bool) -> Option<String> {
     let path = file.get("path").and_then(Value::as_str)?.trim();
     if path.is_empty() {
         return None;
+    }
+    // The engine marks an unreadable file (`binary` plus its mime type) instead of returning
+    // bytes. Nothing used to read those fields, so a PNG came back as a bare path and the
+    // reader could not tell an omitted body from an empty one.
+    if file.get("binary").and_then(Value::as_bool).unwrap_or(false) {
+        let mime = file
+            .get("mime_type")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        let label = match mime {
+            Some(mime) if mime.starts_with("image/") => {
+                if is_zh {
+                    format!("图片 ({mime})")
+                } else {
+                    format!("image ({mime})")
+                }
+            }
+            Some(mime) => {
+                if is_zh {
+                    format!("二进制文件 ({mime})")
+                } else {
+                    format!("binary file ({mime})")
+                }
+            }
+            None => {
+                if is_zh {
+                    "二进制文件".to_string()
+                } else {
+                    "binary file".to_string()
+                }
+            }
+        };
+        let detail = match number_value(file.get("size_bytes")) {
+            Some(size) => format!("{label} · {}", format_bytes(size)),
+            None => label,
+        };
+        return Some(format!(
+            "{path} · {detail} {}",
+            if is_zh { "，未读取" } else { ", not read" }
+        ));
     }
     let read_lines = number_value(file.get("read_lines")).unwrap_or_default();
     let total_lines = number_value(file.get("total_lines")).unwrap_or_default();

@@ -51,7 +51,9 @@ impl BrowserControlService {
     /// sessions, so only the caller's own keys are listed.
     pub fn status_for(&self, owner: Option<&str>) -> Value {
         let sessions = match owner {
-            Some(owner) if !owner.trim().is_empty() => self.bridge.session_keys_for_owner(owner.trim()),
+            Some(owner) if !owner.trim().is_empty() => {
+                self.bridge.session_keys_for_owner(owner.trim())
+            }
             _ => self.bridge.session_keys(),
         };
         json!({
@@ -673,8 +675,8 @@ fn is_private_host(host: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        browser_service, call_deadline, is_private_host, optional_timeout_ms, BrowserControlService,
-        CALL_GRACE, MAX_CALL_DEADLINE,
+        browser_service, call_deadline, is_private_host, optional_timeout_ms,
+        BrowserControlService, CALL_GRACE, MAX_CALL_DEADLINE,
     };
     use crate::config::Config;
     use crate::services::browser::config::effective_browser_config;
@@ -750,14 +752,20 @@ mod tests {
         config.browser.limits.max_snapshot_chars = 2_000;
         let service = BrowserControlService::new(effective_browser_config(&config));
         let scoped = service.status_for(Some("unit-a"));
-        assert_eq!(scoped.get("ok").and_then(serde_json::Value::as_bool), Some(true));
+        assert_eq!(
+            scoped.get("ok").and_then(serde_json::Value::as_bool),
+            Some(true)
+        );
         // No tenant keys leak into a scoped status payload.
         let sessions = scoped["sessions"].as_array().expect("sessions array");
         assert!(sessions
             .iter()
             .all(|key| key.as_str().unwrap_or_default().starts_with("unit-a:")));
         // A requested budget never exceeds the configured ceiling.
-        assert_eq!(service.snapshot_budget(&json!({ "max_chars": 900_000 })), 2_000);
+        assert_eq!(
+            service.snapshot_budget(&json!({ "max_chars": 900_000 })),
+            2_000
+        );
         assert_eq!(service.snapshot_budget(&json!({})), 2_000);
     }
 

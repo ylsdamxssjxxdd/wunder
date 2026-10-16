@@ -20,6 +20,7 @@
         @thread-trajectory="openSessionTrajectory"
         @rename-thread="renameTimelineSession"
         @archive-thread="archiveTimelineSession"
+        @archive-threads="archiveTimelineSessions"
         @open-settings="openSettingsPage"
       />
       <!-- 桌面端侧栏拖宽线：悬停/拖拽显色，双击复位；窄视口抽屉模式不显示。 -->
@@ -422,6 +423,7 @@ const agentSessionLoading = controller.agentSessionLoading;
 const approvalResponding = controller.approvalResponding;
 const applyComposerModelSelection = controller.applyComposerModelSelection;
 const archiveTimelineSession = controller.archiveTimelineSession;
+const archiveTimelineSessions = controller.archiveTimelineSessions;
 const chatFooterRef = controller.chatFooterRef;
 const closeResourcePreview = controller.closeResourcePreview;
 const composerApprovalMode = controller.composerApprovalMode;
