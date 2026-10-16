@@ -597,6 +597,7 @@ export default {
   'messenger.tasks.quota': '额度消耗',
   'messenger.tasks.rename': '重命名',
   'messenger.tasks.archive': '归档',
+  'messenger.tasks.trajectory': '轨迹视图',
   'messenger.tasks.multiSelect': '多选',
   'messenger.tasks.selectedCount': '已选 {count} 项',
   'messenger.tasks.empty': '暂无工作线程',

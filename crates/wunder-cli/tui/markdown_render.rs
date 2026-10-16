@@ -57,20 +57,110 @@ fn is_markdown_fence(fence: &FenceLine) -> bool {
 }
 
 fn is_table_delimiter_line(line: &str) -> bool {
-    let trimmed = line.trim();
-    if !trimmed.contains('|') || !trimmed.contains('-') {
-        return false;
-    }
-    trimmed
-        .trim_start_matches('|')
-        .trim_end_matches('|')
-        .split('|')
-        .all(|cell| !cell.trim().is_empty() && cell.trim().chars().all(|ch| ch == '-' || ch == ':'))
+    table_segments(line).is_some_and(|segments| {
+        segments.len() >= 2
+            && segments.iter().all(|cell| {
+                let cell = cell.trim();
+                let cell = cell.strip_prefix(':').unwrap_or(cell);
+                let cell = cell.strip_suffix(':').unwrap_or(cell);
+                !cell.is_empty() && cell.chars().all(|ch| ch == '-')
+            })
+    })
 }
 
 fn is_table_header_line(line: &str) -> bool {
+    table_segments(line).is_some_and(|segments| {
+        segments.len() >= 2 && segments.iter().any(|cell| !cell.trim().is_empty())
+    }) && !is_table_delimiter_line(line)
+}
+
+fn table_segments(line: &str) -> Option<Vec<&str>> {
     let trimmed = line.trim();
-    trimmed.contains('|') && !is_table_delimiter_line(trimmed)
+    if trimmed.is_empty() {
+        return None;
+    }
+    let outer = trimmed.starts_with('|') || trimmed.ends_with('|');
+    let body = trimmed.strip_prefix('|').unwrap_or(trimmed);
+    let body = body.strip_suffix('|').unwrap_or(body);
+    let mut segments = Vec::new();
+    let mut start = 0;
+    let bytes = body.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'\\' {
+            index = index.saturating_add(2);
+        } else if bytes[index] == b'|' {
+            segments.push(body[start..index].trim());
+            start = index + 1;
+            index += 1;
+        } else {
+            index += 1;
+        }
+    }
+    segments.push(body[start..].trim());
+    if !outer && segments.len() < 2 {
+        return None;
+    }
+    Some(segments)
+}
+
+/// Accept the pipe-table dialects commonly emitted by models (`|-|-|`, missing outer
+/// pipes, and escaped cell pipes) while keeping fenced source code untouched. The parser
+/// still renders a normal GFM table after this small source normalization.
+fn normalize_pipe_tables(input: &str) -> Cow<'_, str> {
+    let mut out = String::with_capacity(input.len());
+    let mut lines = input.split_inclusive('\n').peekable();
+    let mut in_fence: Option<FenceLine> = None;
+    let mut changed = false;
+    while let Some(line) = lines.next() {
+        let trimmed = line.trim_end_matches(['\r', '\n']);
+        if let Some(fence) = fence_parts(trimmed) {
+            if let Some(open) = in_fence.take() {
+                if fence.marker != open.marker || fence.run < open.run || !fence.info.is_empty() {
+                    in_fence = Some(open);
+                }
+            } else {
+                in_fence = Some(fence);
+            }
+            out.push_str(line);
+            continue;
+        }
+        if in_fence.is_some() {
+            out.push_str(line);
+            continue;
+        }
+        let Some(next) = lines.peek().copied() else {
+            out.push_str(line);
+            continue;
+        };
+        if is_table_header_line(trimmed) && is_table_delimiter_line(next.trim_end_matches(['\r', '\n'])) {
+            let delimiter = next.trim_end_matches(['\r', '\n']);
+            let normalized = table_segments(delimiter).map(|cells| {
+                let cells = cells
+                    .iter()
+                    .map(|cell| {
+                        let cell = cell.trim();
+                        match (cell.starts_with(':'), cell.ends_with(':')) {
+                            (true, true) => ":---:",
+                            (true, false) => ":---",
+                            (false, true) => "---:",
+                            (false, false) => "---",
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                format!("| {} |\n", cells.join(" | "))
+            });
+            out.push_str(line);
+            if let Some(normalized) = normalized {
+                let _ = lines.next();
+                out.push_str(normalized.as_str());
+                changed = true;
+            }
+            continue;
+        }
+        out.push_str(line);
+    }
+    if changed { Cow::Owned(out) } else { Cow::Borrowed(input) }
 }
 
 fn body_contains_table(body: &str) -> bool {
@@ -273,6 +363,7 @@ pub(crate) fn render_markdown_text_with_width(input: &str, width: Option<usize>)
     // Models wrap tables in ```markdown fences; parsed as code they lose their shape,
     // so a fence whose body is a table is handed to the parser as bare markdown.
     let source = unwrap_markdown_table_fences(input);
+    let source = normalize_pipe_tables(source.as_ref());
     let mut options = Options::empty();
     options.insert(Options::ENABLE_STRIKETHROUGH);
     options.insert(Options::ENABLE_TABLES);
@@ -1261,6 +1352,14 @@ mod tests {
         );
         assert!(!header.contains("markdown"), "{lines:?}");
         assert!(!lines.iter().any(|line| line.contains("```")), "{lines:?}");
+    }
+
+    #[test]
+    fn a_pipe_table_without_outer_pipes_is_rendered_as_a_grid() {
+        let lines = rendered("Name | Value\n--- | ---\nalpha | 42\n", 40);
+        assert!(lines.iter().any(|line| line.contains("Name") && line.contains("Value")), "{lines:?}");
+        assert!(lines.iter().any(|line| line.contains("alpha") && line.contains("42")), "{lines:?}");
+        assert!(lines.iter().any(|line| line.contains("|")), "{lines:?}");
     }
 
     #[test]

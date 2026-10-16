@@ -1017,8 +1017,13 @@ impl DesktopTerminalService {
                 }
             }
         }
+        // Builds without a console backend always fall back to pipes, so a
+        // configured console path is dead weight: record it once instead of
+        // silently ignoring the two arguments.
         #[cfg(not(all(windows, feature = "terminal-pty")))]
-        let _ = (winpty, &terminal_id);
+        if winpty.is_some() {
+            tracing::debug!("console backend unavailable for {terminal_id}; starting on pipes");
+        }
         let mut child = match spawn_terminal_process(&spec) {
             Ok(child) => Some(child),
             Err(error) => {

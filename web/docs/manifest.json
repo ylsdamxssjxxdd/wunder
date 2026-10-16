@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-10-16T16:46:01.685754+00:00",
+  "generated_at": "2026-10-16T22:23:54.819521+00:00",
   "site": {
     "name": "使用说明书",
     "description": "wunder is an agent orchestration platform: Pupa (desktop) is the local AI workbench, Beehive (web) is the cloud AI workbench, Helm (cli) is the manual local entry point, and the Hull (server) is the user and agent management platform. / wunder 是一个智能体调度平台：蛹（desktop）是本地 AI 工作台，蜂巢（web）是云端 AI 工作台，舵机（cli）是手工本地操作入口，舰体（server）是用户与智能体管理平台。",
@@ -2473,7 +2473,7 @@
       "language": "zh-CN",
       "title": "工作区文件",
       "summary": "列目录、搜内容、读片段、精确替换、整份写入五个动作的参数、匹配规则与失败判定。",
-      "updated_at": "2026-10-16",
+      "updated_at": "2026-10-17",
       "read_when": [],
       "source_docs": [],
       "tab": "工具",
@@ -2506,7 +2506,7 @@
         {
           "id": "section-5",
           "level": 2,
-          "text": "精确替换"
+          "text": "精确替换与文本编辑"
         },
         {
           "id": "section-6",
@@ -6896,7 +6896,7 @@
       "language": "en",
       "title": "Workspace Files",
       "summary": "Parameters, matching rules, and failure diagnosis for the five operations: list a directory, search content, read a range, exact replacement, and whole-file write.",
-      "updated_at": "2026-10-16",
+      "updated_at": "2026-10-17",
       "read_when": [],
       "source_docs": [],
       "tab": "Tools",
@@ -6929,7 +6929,7 @@
         {
           "id": "section-5",
           "level": 2,
-          "text": "Exact replacement"
+          "text": "Exact replacement and text editing"
         },
         {
           "id": "section-6",

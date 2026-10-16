@@ -3,6 +3,8 @@ use serde_json::Value;
 const MAX_PREVIEW_ITEMS: usize = 6;
 const MAX_PREVIEW_LINES: usize = 3;
 const MAX_PREVIEW_CHARS: usize = 360;
+const MAX_GENERIC_DETAIL_ROWS: usize = 18;
+const MAX_GENERIC_DEPTH: usize = 2;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ToolDisplayLine {
@@ -33,6 +35,27 @@ pub(crate) fn summarize_tool_result(payload: &Value, is_zh: bool) -> Option<Tool
         .or_else(|| summarize_lsp_query(result, data, is_zh))
         .or_else(|| summarize_ptc(data, is_zh))
         .or_else(|| summarize_scalar_object(data, is_zh))
+        .or_else(|| summarize_generic_value(data, is_zh))
+}
+
+/// Turn a result into a compact, single-line ledger label. This is intentionally built
+/// from the same bounded display model as the expanded tool card, so the trajectory view
+/// never has to print the persisted JSON blob as its summary.
+pub(crate) fn tool_result_ledger_summary(payload: &Value, is_zh: bool) -> Option<String> {
+    let display = summarize_tool_result(payload, is_zh)?;
+    let mut parts = Vec::new();
+    if let Some(summary) = display.summary.filter(|text| !text.trim().is_empty()) {
+        parts.push(summary);
+    }
+    if let Some(detail) = display.details.iter().find(|detail| !detail.text.trim().is_empty()) {
+        let text = detail
+            .label
+            .as_deref()
+            .map(|label| format!("{label} {}", detail.text))
+            .unwrap_or_else(|| detail.text.clone());
+        parts.push(text);
+    }
+    (!parts.is_empty()).then(|| parts.join(" · "))
 }
 
 fn summarize_list_items(data: &Value, is_zh: bool) -> Option<ToolDisplaySummary> {
@@ -489,6 +512,12 @@ fn summarize_ptc(data: &Value, is_zh: bool) -> Option<ToolDisplaySummary> {
 
 fn summarize_scalar_object(data: &Value, is_zh: bool) -> Option<ToolDisplaySummary> {
     let object = data.as_object()?;
+    if object
+        .values()
+        .any(|value| value.is_object() || value.is_array())
+    {
+        return None;
+    }
     let mut parts = Vec::new();
     for key in [
         "path",
@@ -517,6 +546,158 @@ fn summarize_scalar_object(data: &Value, is_zh: bool) -> Option<ToolDisplaySumma
         summary: Some(parts.join(if is_zh { "，" } else { ", " })),
         details: Vec::new(),
     })
+}
+
+/// Bounded fallback for tool payloads that do not have a tool-specific display adapter.
+///
+/// The old fallback was a compact JSON object. That saved a few columns, but made an
+/// otherwise useful result unreadable in the transcript and in the trajectory ledger.
+/// Keep the tree shallow and small: tool servers are allowed to return arbitrarily large
+/// JSON, while a terminal card must remain cheap to render and easy to scan.
+fn summarize_generic_value(data: &Value, is_zh: bool) -> Option<ToolDisplaySummary> {
+    if data.is_null() || data.is_boolean() || data.is_number() || data.is_string() {
+        return None;
+    }
+    let mut details = Vec::new();
+    let mut hidden = 0usize;
+    append_generic_value(
+        &mut details,
+        &mut hidden,
+        None,
+        data,
+        0,
+        is_zh,
+    );
+    if details.is_empty() {
+        return None;
+    }
+    if hidden > 0 {
+        details.push(ToolDisplayLine {
+            label: None,
+            text: if is_zh {
+                format!("… 还有 {hidden} 项")
+            } else {
+                format!("... {hidden} more items")
+            },
+        });
+    }
+    let summary = match data {
+        Value::Object(map) => {
+            let noun = if is_zh { "个字段" } else { "fields" };
+            Some(format!("{} {noun}", map.len()))
+        }
+        Value::Array(items) => {
+            let noun = if is_zh { "个条目" } else { "items" };
+            Some(format!("{} {noun}", items.len()))
+        }
+        _ => None,
+    };
+    Some(ToolDisplaySummary { summary, details })
+}
+
+fn append_generic_value(
+    details: &mut Vec<ToolDisplayLine>,
+    hidden: &mut usize,
+    path: Option<&str>,
+    value: &Value,
+    depth: usize,
+    is_zh: bool,
+) {
+    if details.len() >= MAX_GENERIC_DETAIL_ROWS {
+        *hidden = hidden.saturating_add(1);
+        return;
+    }
+    match value {
+        Value::Object(map) => {
+            for (key, child) in map {
+                if details.len() >= MAX_GENERIC_DETAIL_ROWS {
+                    *hidden = hidden.saturating_add(1);
+                    continue;
+                }
+                let child_path = path
+                    .map(|prefix| format!("{prefix}.{key}"))
+                    .unwrap_or_else(|| key.clone());
+                if depth >= MAX_GENERIC_DEPTH || is_scalar(child) {
+                    append_generic_leaf(details, &child_path, child, is_zh);
+                } else {
+                    append_generic_value(
+                        details,
+                        hidden,
+                        Some(child_path.as_str()),
+                        child,
+                        depth + 1,
+                        is_zh,
+                    );
+                }
+            }
+        }
+        Value::Array(items) => {
+            let prefix = path.unwrap_or(if is_zh { "条目" } else { "items" });
+            details.push(ToolDisplayLine {
+                label: Some(format!("{prefix}:")),
+                text: if is_zh {
+                    format!("{} 个条目", items.len())
+                } else {
+                    format!("{} items", items.len())
+                },
+            });
+            for (index, child) in items.iter().take(MAX_PREVIEW_ITEMS).enumerate() {
+                if details.len() >= MAX_GENERIC_DETAIL_ROWS {
+                    *hidden = hidden.saturating_add(items.len().saturating_sub(index));
+                    break;
+                }
+                let item_path = format!("{prefix}[{index}]");
+                if depth >= MAX_GENERIC_DEPTH || is_scalar(child) {
+                    append_generic_leaf(details, &item_path, child, is_zh);
+                } else {
+                    append_generic_value(
+                        details,
+                        hidden,
+                        Some(item_path.as_str()),
+                        child,
+                        depth + 1,
+                        is_zh,
+                    );
+                }
+            }
+            *hidden = hidden.saturating_add(items.len().saturating_sub(MAX_PREVIEW_ITEMS));
+        }
+        _ => append_generic_leaf(details, path.unwrap_or("value"), value, is_zh),
+    }
+}
+
+fn is_scalar(value: &Value) -> bool {
+    value.is_null() || value.is_boolean() || value.is_number() || value.is_string()
+}
+
+fn append_generic_leaf(details: &mut Vec<ToolDisplayLine>, path: &str, value: &Value, is_zh: bool) {
+    if let Some(text) = value.as_str() {
+        let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+        let mut lines = normalized.lines();
+        if let Some(first) = lines.next().filter(|line| !line.trim().is_empty()) {
+            details.push(ToolDisplayLine {
+                label: Some(format!("{path}:")),
+                text: truncate_text(first.trim(), MAX_PREVIEW_CHARS),
+            });
+            for line in lines.take(MAX_PREVIEW_LINES.saturating_sub(1)) {
+                if details.len() >= MAX_GENERIC_DETAIL_ROWS {
+                    break;
+                }
+                details.push(ToolDisplayLine {
+                    label: None,
+                    text: truncate_text(line.trim(), MAX_PREVIEW_CHARS),
+                });
+            }
+            return;
+        }
+    }
+    let text = scalar_value_text(value)
+        .or_else(|| (!value.is_null()).then(|| compact_structured(value)))
+        .unwrap_or_else(|| if is_zh { "空".to_string() } else { "null".to_string() });
+    details.push(ToolDisplayLine {
+        label: Some(format!("{path}:")),
+        text: truncate_text(text.as_str(), MAX_PREVIEW_CHARS),
+    });
 }
 
 fn format_read_file_summary(file: &Value, is_zh: bool) -> Option<String> {
@@ -941,5 +1122,36 @@ mod tests {
             "{english_text}"
         );
         assert!(english_text.contains("not read"), "{english_text}");
+    }
+
+    #[test]
+    fn unknown_nested_result_is_expanded_as_bounded_fields() {
+        let summary = summarize_tool_result(
+            &serde_json::json!({
+                "ok": true,
+                "data": {
+                    "status": "ready",
+                    "metrics": {"queued": 2, "running": 1},
+                    "items": [{"name": "first"}, {"name": "second"}]
+                }
+            }),
+            false,
+        )
+        .expect("generic summary");
+        let text = summary
+            .details
+            .iter()
+            .map(|line| {
+                line.label
+                    .as_deref()
+                    .map(|label| format!("{label} {}", line.text))
+                    .unwrap_or_else(|| line.text.clone())
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains("status"), "{text}");
+        assert!(text.contains("metrics.queued"), "{text}");
+        assert!(text.contains("items"), "{text}");
+        assert!(!text.starts_with('{'), "generic results should not be JSON walls: {text}");
     }
 }

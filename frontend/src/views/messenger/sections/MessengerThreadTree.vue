@@ -1,6 +1,7 @@
 <template>
   <div class="mz-thread-tree" :class="{ 'is-selecting': selectionMode }" role="tree" :aria-label="t('messenger.tasks.title')">
-    <div ref="viewport" class="mz-thread-scroll" @scroll.passive="syncViewport">
+    <!-- 空白区右键：只有列表级动作（多选）。行上右键会被行自己的 .stop 拦下。 -->
+    <div ref="viewport" class="mz-thread-scroll" @scroll.passive="syncViewport" @contextmenu.prevent="openMenu(null, $event)">
       <div v-if="!displayItems.length" class="mz-thread-empty" role="status">
         {{ emptyLabel }}
       </div>
@@ -22,6 +23,7 @@
         :aria-selected="activeSessionId === item.id ? 'true' : 'false'"
         @mouseenter="handleRowHover(item.id)"
         @mouseleave="hoverId = ''"
+        @contextmenu.prevent.stop="openMenu(item, $event)"
         @dragstart="handleDragStart($event, item.id)"
         @dragover="handleDragOver($event, item.id)"
         @drop="handleDrop($event, item.id)"
@@ -54,43 +56,59 @@
           ><i :class="['fa-solid', stateIcons[item.indicator]]" aria-hidden="true"></i></span>
           <span class="mz-thread-title">{{ item.title }}</span>
         </button>
-        <el-dropdown
-          v-if="!selectionMode && shouldRenderMenu(item.id)"
-          trigger="click"
-          :teleported="true"
-          placement="bottom-end"
-          popper-class="mz-thread-dropdown"
-          @command="(action: string) => handleAction(action, item.id)"
-          @visible-change="(visible: boolean) => handleMenuVisible(item.id, visible)"
-        >
-          <button class="mz-thread-menu" type="button" :title="t('common.more')" :aria-label="t('common.more')">
-            <i class="fa-solid fa-ellipsis" aria-hidden="true"></i>
+        <!-- 行内动作直接摊平：重命名 / 轨迹视图 / 归档各占一个按钮，
+             不再折叠进「更多」下拉；多选改由右键菜单承载。 -->
+        <template v-if="!selectionMode && shouldRenderActions(item.id)">
+          <button
+            v-for="action in rowActions(item)"
+            :key="action.key"
+            class="mz-thread-action"
+            type="button"
+            :title="action.label"
+            :aria-label="action.label"
+            :disabled="action.disabled"
+            @click.stop="runRowAction(action.key, item.id)"
+          >
+            <i :class="['fa-solid', action.icon]" aria-hidden="true"></i>
           </button>
-          <template #dropdown>
-            <el-dropdown-menu>
-              <el-dropdown-item command="rename">{{ t('messenger.tasks.rename') }}</el-dropdown-item>
-              <el-dropdown-item command="trajectory">{{ t('messenger.trajectory.open') }}</el-dropdown-item>
-              <el-dropdown-item command="multiSelect">{{ t('messenger.tasks.multiSelect') }}</el-dropdown-item>
-            </el-dropdown-menu>
-          </template>
-        </el-dropdown>
-        <button
-          v-if="!selectionMode && shouldRenderMenu(item.id)"
-          class="mz-thread-archive"
-          type="button"
-          :title="t('messenger.tasks.archive')"
-          :aria-label="t('messenger.tasks.archive')"
-          :disabled="!canArchive(item)"
-          @click="emit('archive', item.id)"
-        >
-          <i class="fa-solid fa-box-archive" aria-hidden="true"></i>
-        </button>
+        </template>
       </div>
       <div :style="{ height: `${(displayItems.length - range.end) * ROW_HEIGHT}px` }" aria-hidden="true"></div>
       <button v-if="hasMore" class="mz-thread-load-more" type="button" :disabled="loading" @click="loadMore">
         {{ loading ? t('common.loading') : pageError ? t('messenger.tasks.retry') : t('messenger.tasks.loadMore') }}
       </button>
     </div>
+
+    <!-- 右键菜单：行上右键给该行的三个动作＋多选，空白区右键只给多选。
+         菜单 teleport 到 body，避免被侧栏的 overflow 裁掉。 -->
+    <Teleport to="body">
+      <div
+        v-if="menu.visible"
+        ref="menuRef"
+        class="mz-thread-context-menu"
+        :style="menuStyle"
+        role="menu"
+        :aria-label="t('messenger.tasks.title')"
+        @click.stop
+        @contextmenu.prevent.stop
+      >
+        <template v-for="entry in menuItems" :key="entry.command">
+          <span v-if="entry.divider" class="mz-thread-context-divider" aria-hidden="true"></span>
+          <button
+            v-else
+            class="mz-thread-context-item"
+            type="button"
+            role="menuitem"
+            :disabled="entry.disabled"
+            @click="chooseMenuItem(entry.command)"
+          >
+            <i :class="['fa-solid', entry.icon]" aria-hidden="true"></i>
+            <span>{{ entry.label }}</span>
+          </button>
+        </template>
+      </div>
+    </Teleport>
+
     <!-- 多选模式工具条：覆盖在树底部，参考端同款「全选 | 已选 N 项 + 关闭」＋ 归档动作。 -->
     <div v-if="selectionMode" class="mz-thread-selection-bar">
       <div class="mz-thread-selection-summary">
@@ -130,7 +148,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, toRef, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, toRef, watch } from 'vue';
 import { useI18n } from '@/i18n';
 import { useChatStore } from '@/stores/chat';
 import { useAuthStore } from '@/stores/auth';
@@ -212,22 +230,112 @@ const visibleItems = computed(() => resolveVisibleTaskRows(displayItems.value, r
 })));
 const emptyLabel = computed(() => t('messenger.tasks.empty'));
 
-// Row menus mount on demand: render the dropdown only for the hovered row or
-// the row whose menu is currently open, instead of one el-dropdown per row.
+// 行内动作按钮按需挂载：只为悬停行或右键菜单所属行渲染，避免每行都挂三个按钮。
 const hoverId = ref('');
 const openMenuId = ref('');
-const shouldRenderMenu = (id: string): boolean =>
+const shouldRenderActions = (id: string): boolean =>
   openMenuId.value ? openMenuId.value === id : hoverId.value === id;
 const handleRowHover = (id: string) => {
   hoverId.value = id;
   // 注意：菜单打开期间（openMenuId 非空）绝不在别的行 mouseenter 时清它——
-  // 弹层是 teleport 到 body 的，指针移向弹层途中扫过其他线程行会触发这里；
-  // 一旦清除，el-dropdown 会连同弹层一起被卸载，菜单在鼠标到达前就消失。
-  // 关闭只由 visible-change(false)（点外部/选中项）驱动。
+  // 菜单 teleport 到 body，指针移向菜单途中会扫过其他线程行；清掉会让菜单
+  // 在鼠标到达前消失。关闭只由 closeMenu 驱动。
 };
-const handleMenuVisible = (id: string, visible: boolean) => {
-  if (visible) openMenuId.value = id;
-  else if (openMenuId.value === id) openMenuId.value = '';
+
+type RowAction = { key: 'rename' | 'trajectory' | 'archive'; label: string; icon: string; disabled: boolean };
+
+const rowActions = (item: TaskListItem): RowAction[] => [
+  { key: 'rename', label: t('messenger.tasks.rename'), icon: 'fa-pen-to-square', disabled: false },
+  { key: 'trajectory', label: t('messenger.tasks.trajectory'), icon: 'fa-route', disabled: false },
+  { key: 'archive', label: t('messenger.tasks.archive'), icon: 'fa-box-archive', disabled: !canArchive(item) }
+];
+
+const runRowAction = (key: RowAction['key'], id: string) => {
+  if (key === 'rename') emit('rename', id);
+  else if (key === 'trajectory') emit('trajectory', id);
+  else emit('archive', id);
+};
+
+// -------------------------------------------------- 右键菜单（多选的唯一入口）
+
+type ThreadMenuEntry = { command: string; label: string; icon: string; disabled?: boolean; divider?: boolean };
+
+const menu = ref({ visible: false, x: 0, y: 0, id: '', archivable: false });
+const menuRef = ref<HTMLElement | null>(null);
+const menuStyle = computed(() => ({ left: `${menu.value.x}px`, top: `${menu.value.y}px` }));
+
+const menuItems = computed<ThreadMenuEntry[]>(() => {
+  if (!menu.value.visible) return [];
+  const entries: ThreadMenuEntry[] = [];
+  if (menu.value.id) {
+    entries.push({ command: 'rename', label: t('messenger.tasks.rename'), icon: 'fa-pen-to-square' });
+    entries.push({ command: 'trajectory', label: t('messenger.tasks.trajectory'), icon: 'fa-route' });
+    entries.push({
+      command: 'archive',
+      label: t('messenger.tasks.archive'),
+      icon: 'fa-box-archive',
+      disabled: !menu.value.archivable
+    });
+    entries.push({ command: 'divider', label: '', icon: '', divider: true });
+  }
+  entries.push({
+    command: 'multiSelect',
+    label: t('messenger.tasks.multiSelect'),
+    icon: 'fa-list-check',
+    disabled: displayItems.value.length === 0
+  });
+  return entries;
+});
+
+const closeMenu = () => {
+  if (!menu.value.visible) return;
+  menu.value.visible = false;
+  menu.value.id = '';
+  if (openMenuId.value) openMenuId.value = '';
+};
+
+/** 菜单按实际尺寸回夹进视口：贴着右/下边缘右键时不会顶出屏幕。 */
+const clampMenuPosition = (x: number, y: number) => {
+  const element = menuRef.value;
+  if (!element) return;
+  const maxX = Math.max(8, window.innerWidth - (element.offsetWidth || 160) - 8);
+  const maxY = Math.max(8, window.innerHeight - (element.offsetHeight || 120) - 8);
+  menu.value.x = Math.min(x, maxX);
+  menu.value.y = Math.min(y, maxY);
+};
+
+const openMenu = (item: TaskListItem | null, event: MouseEvent) => {
+  // 多选态下动作由底部工具条承载，不再叠一层菜单。
+  if (selectionMode.value) return;
+  const x = Number.isFinite(event.clientX) && event.clientX > 0 ? event.clientX : 24;
+  const y = Number.isFinite(event.clientY) && event.clientY > 0 ? event.clientY : 24;
+  menu.value = { visible: true, x, y, id: item?.id || '', archivable: item ? canArchive(item) : false };
+  openMenuId.value = item?.id || '';
+  hoverId.value = item?.id || '';
+  void nextTick(() => clampMenuPosition(x, y));
+};
+
+const chooseMenuItem = (command: string) => {
+  const { id, archivable } = menu.value;
+  closeMenu();
+  if (command === 'multiSelect') {
+    enterSelectionMode();
+    return;
+  }
+  if (!id) return;
+  if (command === 'rename') emit('rename', id);
+  else if (command === 'trajectory') emit('trajectory', id);
+  else if (command === 'archive' && archivable) emit('archive', id);
+};
+
+const handleOutsideMenu = (event: Event) => {
+  if (!menu.value.visible) return;
+  if (menuRef.value && event.composedPath().includes(menuRef.value)) return;
+  closeMenu();
+};
+
+const handleMenuKeydown = (event: KeyboardEvent) => {
+  if (event.key === 'Escape') closeMenu();
 };
 
 const stateIcons: Record<TaskIndicatorState, string> = {
@@ -237,14 +345,10 @@ const stateIcons: Record<TaskIndicatorState, string> = {
 const stateLabel = (state: TaskIndicatorState): string => t(`messenger.thread.state.${state}`);
 
 const syncViewport = () => {
+  // 列表滚动时右键菜单会脱离它指向的行，直接收起。
+  closeMenu();
   scrollTop.value = viewport.value?.scrollTop || 0;
   height.value = viewport.value?.clientHeight || 320;
-};
-
-const handleAction = (action: string, id: string) => {
-  if (action === 'trajectory') emit('trajectory', id);
-  else if (action === 'rename') emit('rename', id);
-  else if (action === 'multiSelect') enterSelectionMode();
 };
 
 // -------------------------------------------------- 多选归档
@@ -370,6 +474,12 @@ let observer: ResizeObserver | undefined;
 onMounted(() => {
   void loadMore();
   syncViewport();
+  // 捕获阶段拦截：行和按钮都会 stop 冒泡，capture 才能在它们之前收到。
+  document.addEventListener('pointerdown', handleOutsideMenu, true);
+  document.addEventListener('click', handleOutsideMenu, true);
+  document.addEventListener('keydown', handleMenuKeydown, true);
+  window.addEventListener('resize', closeMenu);
+  window.addEventListener('blur', closeMenu);
 });
 watch(viewport, (element) => {
   observer?.disconnect();
@@ -391,26 +501,27 @@ watch(displayItems, () => {
 });
 onBeforeUnmount(() => {
   observer?.disconnect();
+  document.removeEventListener('pointerdown', handleOutsideMenu, true);
+  document.removeEventListener('click', handleOutsideMenu, true);
+  document.removeEventListener('keydown', handleMenuKeydown, true);
+  window.removeEventListener('resize', closeMenu);
+  window.removeEventListener('blur', closeMenu);
 });
 </script>
 
 <style scoped>
-:global(.mz-thread-dropdown .el-dropdown-menu__item) {
-  font-size: 13px;
-}
-
 /* 拖拽排序的可视反馈：源行半透明，落点行上下缘高亮。 */
 .mz-thread-row.is-dragging {
   opacity: 0.45;
 }
 
-/* 菜单打开期间保持该行的悬停底色与三个点可见：指针已移入 teleport 的弹层，
+/* 右键菜单打开期间保持该行的悬停底色与动作按钮可见：指针已移入 teleport 的菜单，
    行本身不再处于 :hover，不补这条会视觉上「行和菜单断了关联」。 */
 .mz-thread-row.is-menu-open {
   background: var(--mz-hover);
 }
 
-.mz-thread-row.is-menu-open .mz-thread-menu {
+.mz-thread-row.is-menu-open .mz-thread-action {
   opacity: 1;
 }
 

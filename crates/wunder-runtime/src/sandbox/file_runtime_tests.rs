@@ -8,6 +8,48 @@ fn sqlite_config(dir: &std::path::Path) -> Config {
     config
 }
 
+#[tokio::test]
+async fn text_edit_sandbox_uses_shared_replacement_and_preview_contract() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = sqlite_config(dir.path());
+    let runtime = FileRuntime::default();
+    let workspace_root = dir.path().join("workspaces").join("workspace");
+    let context = SandboxContext {
+        workspace_root: workspace_root.clone(),
+        container_root: dir.path().join("workspaces"),
+        allow_commands: Arc::default(),
+    };
+    let request =
+        serde_json::from_value(json!({"user_id":"user", "session_id":"thread", "tool":"文本编辑"}))
+            .unwrap();
+    for args in [
+        json!({"command":"create", "file_path":"sample.txt", "file_text":"token\r\ntoken\r\n"}),
+        json!({"command":"str_replace", "file_path":"sample.txt", "old_string":"token", "new_string":"value", "replace_all":true}),
+        json!({"command":"str_replace", "path":"sample.txt", "old_str":"value", "new_str":"token", "replace_all":true}),
+    ] {
+        let result =
+            execute_with_runtime(&runtime, config.clone(), &request, &context, &args).await;
+        assert!(result.ok, "{}: {}", result.error, result.data);
+    }
+    for args in [
+        json!({"command":"create", "file_path":"nested/new.txt", "file_text":"new"}),
+        json!({"command":"insert", "file_path":"sample.txt", "insert_line":1, "new_string":"middle\n"}),
+        json!({"command":"str_replace", "file_path":"sample.txt", "old_string":"token", "new_string":"value", "replace_all":true}),
+    ] {
+        let mut args = args;
+        args["dry_run"] = json!(true);
+        let result =
+            execute_with_runtime(&runtime, config.clone(), &request, &context, &args).await;
+        assert!(result.ok, "{}: {}", result.error, result.data);
+        assert_eq!(result.data["state"], "dry_run");
+        assert_eq!(
+            std::fs::read_to_string(workspace_root.join("sample.txt")).unwrap(),
+            "token\r\ntoken\r\n"
+        );
+        assert!(!workspace_root.join("nested").exists());
+    }
+}
+
 async fn concurrent_file_tools(config: Config, root: PathBuf) {
     let runtime = Arc::new(FileRuntime::default());
     let contexts = futures::future::join_all((0..24).map(|index| {

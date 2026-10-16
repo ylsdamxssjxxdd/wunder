@@ -2056,52 +2056,44 @@
     "zh-CN": "可选，搜索的目录。省略时默认使用智能体工作目录；相对路径按该目录解释。"
   },
   "tool.spec.text_edit.description": {
-    "en-US": "Edit files. Replace old_string with new_string (set replace_all to replace every occurrence), or apply a raw apply_patch via input, or use the view, create, str_replace, and insert sub-commands.",
-    "zh-CN": "编辑文件。将 old_string 替换为 new_string（replace_all 为 true 时替换全部匹配），或用 input 应用原始 apply_patch 补丁，也可用 view、create、str_replace、insert 子命令。"
+    "en-US": "Edit UTF-8 files. Default (or command=str_replace): file_path + old_string + new_string; old_string must match exactly once unless replace_all=true. command=create: file_path + file_text, new files only. command=insert: file_path + insert_line + new_string; insert after a 1-based line, 0 prepends. command=view: file_path and optional view_range. Alternatively use input for a multi-file apply_patch without file_path; do not mix input with command or replacement fields. dry_run=true previews every write mode without changing files. Read current content first; preserve indentation, omit displayed line numbers. Only LF/CRLF differences are normalized to the target file.",
+    "zh-CN": "编辑 UTF-8 文件。默认（或 command=str_replace）：file_path + old_string + new_string；old_string 须逐字唯一匹配，replace_all=true 才替换全部。command=create：file_path + file_text，仅新建。command=insert：file_path + insert_line + new_string，在指定行之后插入，行号从 1 开始，0 表示开头。command=view：file_path，可选 view_range。也可单独用 input 应用多文件 apply_patch，无需 file_path；不要与 command 或替换字段混用。所有写入方式均支持 dry_run=true 预演且不改文件。先读取当前原文，保持缩进，不带展示行号；仅 LF/CRLF 差异按目标文件换行风格归一化。"
   },
   "tool.spec.text_edit.args.file_path": {
-    "en-US": "Required. Path of the file to edit.",
-    "zh-CN": "必填，要编辑的文件路径。"
+    "en-US": "Target file or view directory; required for replacement and all subcommands. Omit for input-mode patches; their paths are in the patch.",
+    "zh-CN": "替换和各子命令必填的目标文件路径；view 也支持目录。input 补丁模式可省略，路径写在补丁内。"
   },
   "tool.spec.text_edit.args.old_string": {
-    "en-US": "Exact literal text to replace. Required when input is not used.",
-    "zh-CN": "要被替换的原始字面文本；未使用 input 补丁时必填。"
+    "en-US": "Non-empty literal original text for default replacement or command=str_replace. Include enough context for a unique match; preserve spaces and indentation. Not a regex.",
+    "zh-CN": "默认替换或 command=str_replace 必填的非空原文。附带足够上下文确保唯一匹配，保持空格和缩进；不支持正则。"
   },
   "tool.spec.text_edit.args.new_string": {
-    "en-US": "Replacement text; an empty string deletes the matched text.",
-    "zh-CN": "替换后的文本；空字符串表示删除匹配文本。"
+    "en-US": "Required replacement text for default replacement or command=str_replace; empty string deletes. Also required for command=insert (text to insert).",
+    "zh-CN": "默认替换或 command=str_replace 的替换文本；空字符串表示删除。command=insert 时也必填，表示插入文本。"
   },
   "tool.spec.text_edit.args.replace_all": {
-    "en-US": "Replace every occurrence instead of requiring a unique match (default false).",
-    "zh-CN": "替换全部匹配；默认 false 时必须唯一匹配。"
+    "en-US": "Default false: require exactly one match. true replaces every non-overlapping occurrence, including command=str_replace.",
+    "zh-CN": "默认 false，必须唯一匹配；true 替换全部不重叠匹配，对 command=str_replace 同样生效。"
   },
   "tool.spec.text_edit.args.input": {
     "en-US": "Raw apply_patch text. Use it for precise multi-file or multi-hunk edits, adds, deletes, and moves. If a match is uncertain, call dry_run=true first; otherwise apply directly. The input must start exactly with *** Begin Patch and end exactly with *** End Patch. Keep context lines with a leading space, old lines with -, and new lines with +; never copy read_file display headers or line numbers. For generated whole-file rewrites, use write_file or a script.",
     "zh-CN": "原始 apply_patch 文本。适合精确的多文件、多 hunk 修改，以及新增、删除、移动文件；匹配不确定时先调用 dry_run=true，否则可直接应用。输入必须以 *** Begin Patch 开始并以 *** End Patch 结束。上下文行以空格开头，旧行用 -，新行用 +；不要复制 read_file 展示文件头或行号。生成式整文件重写请用写入文件或脚本。"
   },
   "tool.spec.text_edit.args.dry_run": {
-    "en-US": "Optional. Only used with input-mode patches: validate that the patch parses and matches without writing files.",
-    "zh-CN": "可选。仅在使用 input 补丁模式时生效：只校验补丁能否解析与匹配，不写盘。"
+    "en-US": "Default false. true validates and previews replacement, create, insert, or input patches without writing files or creating directories.",
+    "zh-CN": "默认 false。true 时校验并预演替换、create、insert 或 input 补丁，不写文件、不创建目录。"
   },
   "tool.spec.text_edit.args.command": {
-    "en-US": "Optional sub-command form: one of view, create, str_replace, insert. When set, file_path is used as the target path.",
-    "zh-CN": "可选的子命令形态，取值为 view、create、str_replace、insert 之一；设置后 file_path 即为目标路径。"
+    "en-US": "Omit for literal replacement. view reads numbered lines, create requires file_text, insert requires insert_line + new_string. str_replace uses the same old_string/new_string/replace_all rules as default replacement. Do not combine with input.",
+    "zh-CN": "省略即字面替换。view 读带行号文本，create 需 file_text，insert 需 insert_line + new_string；str_replace 与默认替换共用 old_string/new_string/replace_all 规则。不要与 input 混用。"
   },
   "tool.spec.text_edit.args.file_text": {
     "en-US": "Required for the create sub-command. Full contents of the new file.",
     "zh-CN": "create 子命令必填，新文件的完整内容。"
   },
   "tool.spec.text_edit.args.insert_line": {
-    "en-US": "Required for the insert sub-command. Line number after which new_str is inserted; 0 inserts at the beginning of the file.",
-    "zh-CN": "insert 子命令必填，new_str 插入其后的行号；0 表示插入到文件开头。"
-  },
-  "tool.spec.text_edit.args.new_str": {
-    "en-US": "Replacement or inserted text. Required for insert; optional for str_replace, where an empty string deletes the match.",
-    "zh-CN": "替换或插入的文本。insert 必填；str_replace 可选，空字符串表示删除匹配文本。"
-  },
-  "tool.spec.text_edit.args.old_str": {
-    "en-US": "Required for str_replace. Literal text to replace; it must appear verbatim and exactly once.",
-    "zh-CN": "str_replace 必填，要替换的字面文本，必须逐字出现且仅出现一次。"
+    "en-US": "Required integer for insert: insert new_string after this existing 1-based line; 0 prepends. Maximum is the actual line count; a terminal newline does not add an extra empty line.",
+    "zh-CN": "insert 必填整数，在此现有行之后插入 new_string；行号从 1 开始，0 表示开头。最大为实际行数，末尾换行不额外算一行。"
   },
   "tool.spec.text_edit.args.view_range": {
     "en-US": "Optional for view on a file. Two line numbers [start, end]; use -1 for end to view through the last line.",

@@ -66,7 +66,10 @@ pub(crate) fn extract_freeform_tool_input(arguments: &str) -> Option<String> {
 }
 
 fn is_apply_patch_tool(name: &str) -> bool {
-    super::catalog::resolve_tool_name(name) == super::catalog::resolve_tool_name("apply_patch")
+    // The merged editor accepts structured commands as well as patches.
+    // Resolving aliases here would force every edit call through patch-only
+    // grammar and hide its JSON schema from the model.
+    matches!(name.trim(), "apply_patch" | "应用补丁" | "patch")
 }
 
 #[cfg(test)]
@@ -76,6 +79,21 @@ mod tests {
     #[test]
     fn apply_patch_is_recognized_as_freeform_tool() {
         assert!(is_freeform_tool_name("apply_patch"));
+    }
+
+    #[test]
+    fn merged_text_edit_keeps_json_parameters_even_in_freeform_mode() {
+        for name in ["文本编辑", "edit", "编辑", "str_replace_editor"] {
+            assert!(!is_freeform_tool_name(name));
+            assert!(build_responses_freeform_tool(name, "edit", "edit").is_none());
+        }
+        let spec = super::super::catalog::builtin_tool_specs_with_language("en-US")
+            .into_iter()
+            .find(|spec| spec.name == "文本编辑")
+            .unwrap();
+        let rendered = render_prompt_tool_spec(&spec, true);
+        assert_eq!(rendered["arguments"], spec.input_schema);
+        assert!(rendered.get("format").is_none());
     }
 
     #[test]

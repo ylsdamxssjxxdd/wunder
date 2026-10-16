@@ -4,8 +4,8 @@
 //! - `view`：文件按 `cat -n` 风格带行号渲染（六位右对齐 + 两空格），目录列出
 //!   最多两层、过滤隐藏项与 `node_modules`/`__pycache__`；
 //! - `create`：仅在目标不存在时新建；
-//! - `str_replace`：字面文本替换，要求 `old_str` 唯一且逐字出现；
-//! - `insert`：把 `new_str` 插入到第 `insert_line` 行之后。
+//! - `str_replace` 在统一入口与默认字面替换复用同一执行实现；
+//! - `insert`：把 `new_string` 插入到第 `insert_line` 行之后。
 //!
 //! 输出超过 `MAX_OUTPUT_CHARS` 时按字符截断并追加 `<response clipped>` 说明。
 //! 路径沿用 workspace 记账，工作区外的允许根走能力 seam。
@@ -17,11 +17,13 @@
 use super::capabilities::{local_fs, FsCapability};
 use super::context::collect_allow_roots;
 use super::line_diff::{
-    diff_added_file, diff_literal_replaces, diff_replaced, diff_source_too_large,
-    insert_diff_fields, LineDiff, DIFF_UNAVAILABLE_OVERSIZE,
+    diff_added_file, diff_replaced, diff_source_too_large, insert_diff_fields, LineDiff,
+    DIFF_UNAVAILABLE_OVERSIZE,
 };
 use super::{
-    build_model_tool_success, recover_tool_args_value, resolve_tool_path,
+    build_model_tool_success,
+    command_options::parse_dry_run,
+    resolve_tool_path,
     tool_error::{build_failed_tool_result, ToolErrorMeta},
     ToolContext,
 };
@@ -45,9 +47,9 @@ pub(crate) fn command_requested(args: &Value) -> bool {
 /// Maximum returned characters before clipping (dsh default).
 const MAX_OUTPUT_CHARS: usize = 16_000;
 
-const TRUNCATED_MESSAGE: &str = "<response clipped><NOTE>To save on context only part of this file has been shown to you. You should retry this tool after you have searched inside the file with `grep -n` in order to find the line numbers of what you are looking for.</NOTE>";
+const TRUNCATED_MESSAGE: &str = "\n<response clipped>Use search_content to locate relevant lines, then view with a narrower view_range.";
 
-const VALID_COMMANDS: [&str; 4] = ["view", "create", "str_replace", "insert"];
+const VALID_COMMANDS: [&str; 3] = ["view", "create", "insert"];
 
 struct EditorOutcome {
     value: Value,
@@ -108,10 +110,12 @@ fn not_regular_file(path: &str) -> Value {
 }
 
 pub(crate) async fn str_replace_editor(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
-    let args = recover_tool_args_value(args);
     if let Some(result) =
-        super::execute_in_sandbox(context, super::edit_tool::TOOL_EDIT, &args).await
+        super::execute_in_sandbox(context, super::edit_tool::TOOL_EDIT, args).await
     {
+        if super::edit_tool::sandbox_edit_mutated(&result, args) {
+            context.workspace.mark_tree_dirty(context.workspace_id);
+        }
         return Ok(result);
     }
 
@@ -133,19 +137,18 @@ pub(crate) async fn str_replace_editor(context: &ToolContext<'_>, args: &Value) 
             "使用 view、create、str_replace 或 insert。",
         ));
     }
-    // 合并后路径主键为 `file_path`（`path` 经参数对齐回填）；两种都接受。
+    // 别名已在统一入口归一化，此处只处理主参数。
     let path = args
         .get("file_path")
-        .or_else(|| args.get("path"))
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty());
     let Some(path) = path else {
         return Ok(editor_failure(
-            "Parameter `path` must be a non-empty string.",
+            "Parameter `file_path` must be a non-empty string.",
             json!({ "path_required": true }),
             "TOOL_SRE_PATH_REQUIRED",
-            "提供非空字符串 path。",
+            "提供非空字符串 file_path。",
         ));
     };
 
@@ -197,7 +200,6 @@ fn run_editor(
     match command {
         "view" => view_command(ws, &user_id, &target, path, args),
         "create" => create_command(ws, &user_id, &target, path, args),
-        "str_replace" => replace_command(ws, &user_id, &target, path, args),
         "insert" => insert_command(ws, &user_id, &target, path, args),
         _ => Ok(fail(editor_failure(
             &format!("Unknown command `{command}`."),
@@ -295,13 +297,15 @@ fn create_command(
             "删除或改名后重试，或改用 str_replace/insert。",
         )));
     }
-    write_target(ws, user_id, target, path, &file_text)?;
-    Ok(ok(
-        success(
-            "create",
-            &format!("New file created successfully at: {path}"),
-            build_create_data(path, &file_text),
-        ),
+    let dry_run = parse_dry_run(args);
+    if !dry_run {
+        write_target(ws, user_id, target, path, &file_text)?;
+    }
+    Ok(write_outcome(
+        "create",
+        path,
+        build_create_data(path, &file_text),
+        dry_run,
         true,
     ))
 }
@@ -310,93 +314,6 @@ fn create_command(
 /// `new file` 块、每行 `kind:"add"`。热路径只扫一遍新内容，行数/文本各自有界。
 fn build_create_data(path: &str, content: &str) -> Value {
     build_edit_data(path, "add", &diff_added_file(content), None)
-}
-
-fn replace_command(
-    ws: &WorkspaceManager,
-    user_id: &str,
-    target: &Path,
-    path: &str,
-    args: &Value,
-) -> Result<EditorOutcome> {
-    if matches!(args.get("new_str"), Some(Value::Null)) {
-        return Ok(fail(editor_failure(
-            "Parameter `new_str` must be omitted or contain a string for command: str_replace",
-            json!({ "path": path }),
-            "TOOL_SRE_NEW_STR_NULL",
-            "删除匹配文本请省略 new_str 或传空字符串。",
-        )));
-    }
-    let old_str = match args.get("old_str").and_then(Value::as_str) {
-        Some(value) if !value.is_empty() => value.to_string(),
-        Some(_) => {
-            return Ok(fail(editor_failure(
-                "Parameter `old_str` is empty for command: str_replace",
-                json!({ "path": path }),
-                "TOOL_SRE_OLD_STR_EMPTY",
-                "old_str 必填且不能为空。",
-            )));
-        }
-        None => return Ok(fail(missing_param("old_str", "str_replace"))),
-    };
-    let new_str = args
-        .get("new_str")
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .to_string();
-    if !target.exists() {
-        return Ok(fail(not_found(path)));
-    }
-    if target.is_dir() {
-        return Ok(fail(not_regular_file(path)));
-    }
-    let fs_cap = local_fs();
-    let before = fs_cap.read_text(target)?;
-    let offsets = match_offsets(&before, &old_str);
-    let Some(&offset) = offsets.first() else {
-        return Ok(fail(editor_failure(
-            &format!(
-                "No replacement was performed, old_str `{old_str}` did not appear verbatim in {path}."
-            ),
-            json!({ "path": path }),
-            "FS_EDIT_NOT_FOUND",
-            "确保 old_str 与文件内容逐字一致（含空白与缩进）。",
-        )));
-    };
-    if offsets.len() > 1 {
-        let lines = line_numbers_at(&before, &offsets);
-        let joined = lines
-            .iter()
-            .map(|line| line.to_string())
-            .collect::<Vec<_>>()
-            .join(", ");
-        return Ok(fail(editor_failure(
-            &format!(
-                "No replacement was performed. Multiple occurrences of old_str `{old_str}` in lines [{joined}]. Please ensure it is unique"
-            ),
-            json!({ "path": path }),
-            "FS_AMBIGUOUS_EDIT",
-            "补充上下文使 old_str 唯一。",
-        )));
-    }
-    let updated = format!(
-        "{}{}{}",
-        &before[..offset],
-        new_str,
-        &before[offset + old_str.len()..]
-    );
-    write_target(ws, user_id, target, path, &updated)?;
-    // 唯一命中：一个区间一个块，键名与取值词汇与补丁家族完全一致。
-    let (diff, unavailable) =
-        diff_literal_replaces(&before, &updated, &offsets, old_str.len(), &new_str);
-    Ok(ok(
-        success(
-            "str_replace",
-            &format!("The file {path} has been edited successfully."),
-            build_edit_data(path, "update", &diff, unavailable),
-        ),
-        true,
-    ))
 }
 
 /// 组装写类子命令的结果 `data`：保留既有 `path` 键，追加 diff 家族键。
@@ -434,9 +351,9 @@ fn insert_command(
     let Some(insert_line) = insert_line else {
         return Ok(fail(missing_param("insert_line", "insert")));
     };
-    let new_str = match args.get("new_str").and_then(Value::as_str) {
-        Some(value) => value.to_string(),
-        None => return Ok(fail(missing_param("new_str", "insert"))),
+    let new_str = match args.get("new_string").and_then(Value::as_str) {
+        Some(value) => value,
+        None => return Ok(fail(missing_param("new_string", "insert"))),
     };
     if !target.exists() {
         return Ok(fail(not_found(path)));
@@ -446,33 +363,89 @@ fn insert_command(
     }
     let fs_cap = local_fs();
     let before = fs_cap.read_text(target)?;
-    let lines: Vec<&str> = before.split('\n').collect();
-    if insert_line < 0 || insert_line > lines.len() as i64 {
+    let total_lines = before.lines().count();
+    if insert_line < 0 || insert_line as u64 > total_lines as u64 {
         return Ok(fail(editor_failure(
-            &format!(
-                "Invalid `insert_line` parameter: {insert_line}. It should be within the range of lines of the file: [0, {}]",
-                lines.len()
-            ),
-            json!({ "path": path }),
+            &format!("insert_line={insert_line} 超出范围 [0, {total_lines}]；未修改文件。"),
+            json!({ "path": path, "total_lines": total_lines }),
             "TOOL_SRE_INVALID_INSERT_LINE",
-            "insert_line 取值需落在 [0, 总行数]。",
+            "先用 view 查看当前行号；0 表示文件开头。",
         )));
     }
     let index = insert_line as usize;
-    let mut after: Vec<String> = Vec::with_capacity(lines.len() + 1);
-    after.extend(lines[..index].iter().map(|line| (*line).to_string()));
-    after.extend(new_str.split('\n').map(|line| line.to_string()));
-    after.extend(lines[index..].iter().map(|line| (*line).to_string()));
-    let updated = after.join("\n");
-    write_target(ws, user_id, target, path, &updated)?;
-    Ok(ok(
-        success(
-            "insert",
-            &format!("The file {path} has been edited successfully."),
-            build_insert_data(path, &before, &updated),
-        ),
-        true,
+    let offset = if index == 0 {
+        0
+    } else {
+        before
+            .match_indices('\n')
+            .nth(index - 1)
+            .map(|(at, _)| at + 1)
+            .unwrap_or(before.len())
+    };
+    let normalized = super::edit_tool::match_text_newlines(&before, new_str);
+    let mut inserted = normalized.into_owned();
+    if !inserted.is_empty() {
+        let newline = if before.contains("\r\n") {
+            "\r\n"
+        } else {
+            "\n"
+        };
+        if offset > 0 && !before[..offset].ends_with('\n') {
+            inserted.insert_str(0, newline);
+        }
+        if offset < before.len() || before.ends_with('\n') {
+            if !inserted.ends_with('\n') {
+                inserted.push_str(newline);
+            }
+        }
+    }
+    let mut updated = String::with_capacity(before.len() + inserted.len());
+    updated.push_str(&before[..offset]);
+    updated.push_str(&inserted);
+    updated.push_str(&before[offset..]);
+    let dry_run = parse_dry_run(args);
+    let changed = updated != before;
+    if !dry_run && changed {
+        write_target(ws, user_id, target, path, &updated)?;
+    }
+    Ok(write_outcome(
+        "insert",
+        path,
+        build_insert_data(path, &before, &updated),
+        dry_run,
+        changed,
     ))
+}
+
+fn write_outcome(
+    action: &str,
+    path: &str,
+    mut data: Value,
+    dry_run: bool,
+    changed: bool,
+) -> EditorOutcome {
+    if !changed {
+        data["changed_files"] = json!(0);
+        data["updated"] = json!(0);
+    }
+    let state = if dry_run {
+        "dry_run"
+    } else if changed {
+        "completed"
+    } else {
+        "unchanged"
+    };
+    let summary = if dry_run {
+        format!("Validated {action} on {path}; no content written.")
+    } else if changed {
+        format!("Applied {action} to {path}.")
+    } else {
+        format!("No content change in {path}.")
+    };
+    ok(
+        build_model_tool_success(action, state, summary, data),
+        !dry_run && changed,
+    )
 }
 
 /// 插入的 `data`：纯插入在公共前后缀裁剪后天然只剩一个区间，因此一个
@@ -545,53 +518,54 @@ fn format_file_view(
     content: &str,
     view_range: Option<Vec<i64>>,
 ) -> std::result::Result<String, String> {
-    let all_lines: Vec<&str> = content.split('\n').collect();
-    let total = all_lines.len();
-    let mut initial_line: i64 = 1;
-    let mut prompt = format!(
+    let total = content.lines().count();
+    let (start, end) = if let Some(range) = view_range {
+        if range.len() != 2 {
+            return Err("view_range must be [start, end].".to_string());
+        }
+        let (start, end) = (range[0], range[1]);
+        if start < 1
+            || start as u64 > total as u64
+            || (end != -1 && (end < start || end as u64 > total as u64))
+        {
+            return Err(format!(
+                "Invalid view_range=[{start}, {end}]; file has {total} lines. Use end=-1 for EOF."
+            ));
+        }
+        (start as usize, if end == -1 { total } else { end as usize })
+    } else {
+        (1, total)
+    };
+    let mut output = format!(
         "Here's the content of {path} with line numbers (which has a total of {total} lines)"
     );
-    let mut lines: Vec<&str> = all_lines.clone();
-    if let Some(range) = view_range {
-        if range.len() != 2 {
-            return Err("Invalid `view_range`. It should be a list of two integers.".to_string());
-        }
-        let start = range[0];
-        let end = range[1];
-        initial_line = start;
-        if start < 1 || start > total as i64 {
-            return Err(format!(
-                "Invalid `view_range`: [{start}, {end}]. Its first element `{start}` should be within the range of lines of the file: [1, {total}]"
-            ));
-        }
-        if end > total as i64 {
-            return Err(format!(
-                "Invalid `view_range`: [{start}, {end}]. Its second element `{end}` should be smaller than the number of lines in the file: `{total}`"
-            ));
-        }
-        if end != -1 && end < start {
-            return Err(format!(
-                "Invalid `view_range`: [{start}, {end}]. Its second element `{end}` should be larger or equal than its first `{start}`"
-            ));
-        }
-        let begin = (start - 1) as usize;
-        lines = if end == -1 {
-            all_lines[begin..].to_vec()
-        } else {
-            all_lines[begin..end as usize].to_vec()
-        };
-        prompt += &format!(" with view_range=[{start}, {end}]");
+    if start != 1 || end != total {
+        output.push_str(&format!(" with view_range=[{start}, {end}]"));
     }
-    let numbered = lines
-        .iter()
+    output.push_str(":\n");
+    // Render only the requested window and stop at the output budget, even
+    // for a single very long line. No full-file line vector or rendered copy.
+    let mut remaining = MAX_OUTPUT_CHARS.saturating_sub(output.chars().count());
+    for (index, line) in content
+        .lines()
         .enumerate()
-        .map(|(index, line)| format!("{:>6}  {}", initial_line + index as i64, line))
-        .collect::<Vec<_>>()
-        .join("\n");
-    Ok(maybe_truncate(
-        &format!("{prompt}:\n{numbered}\n"),
-        MAX_OUTPUT_CHARS,
-    ))
+        .skip(start - 1)
+        .take(end.saturating_sub(start - 1))
+    {
+        for part in [&format!("{:>6}  ", index + 1), line, "\n"] {
+            let mut chars = part.chars();
+            while remaining > 0 {
+                let Some(ch) = chars.next() else { break };
+                output.push(ch);
+                remaining -= 1;
+            }
+            if chars.next().is_some() {
+                output.push_str(TRUNCATED_MESSAGE);
+                return Ok(output);
+            }
+        }
+    }
+    Ok(output)
 }
 
 fn list_directory(root: &Path, display_base: &str, max_chars: usize) -> String {
@@ -649,43 +623,6 @@ fn maybe_truncate(content: &str, max_chars: usize) -> String {
     format!("{truncated}{TRUNCATED_MESSAGE}")
 }
 
-/// Byte offsets of every occurrence of `search` in `content`.
-fn match_offsets(content: &str, search: &str) -> Vec<usize> {
-    let mut offsets = Vec::new();
-    if search.is_empty() {
-        return offsets;
-    }
-    let mut from = 0usize;
-    while let Some(found) = content[from..].find(search) {
-        let offset = from + found;
-        offsets.push(offset);
-        from = offset + search.len();
-        if from >= content.len() {
-            break;
-        }
-    }
-    offsets
-}
-
-/// 1-based line numbers for the given byte offsets.
-fn line_numbers_at(content: &str, offsets: &[usize]) -> Vec<usize> {
-    let bytes = content.as_bytes();
-    let mut line = 1usize;
-    let mut cursor = 0usize;
-    offsets
-        .iter()
-        .map(|&offset| {
-            while cursor < offset && cursor < bytes.len() {
-                if bytes[cursor] == b'\n' {
-                    line += 1;
-                }
-                cursor += 1;
-            }
-            line
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -723,10 +660,21 @@ mod tests {
     }
 
     #[test]
-    fn match_offsets_finds_every_occurrence() {
-        assert_eq!(match_offsets("aXbXc", "X"), vec![1, 3]);
-        assert!(match_offsets("abc", "z").is_empty());
-        assert!(match_offsets("abc", "").is_empty());
+    fn file_view_uses_actual_lines_and_bounds_long_line_rendering() {
+        let rendered = format_file_view("sample.txt", "alpha\r\nbeta\r\n", None).unwrap();
+        assert!(rendered.contains("total of 2 lines"));
+        assert!(!rendered.contains('\r'));
+        assert!(format_file_view("sample.txt", "alpha\n", Some(vec![2, -1])).is_err());
+        assert!(format_file_view("sample.txt", "", None)
+            .unwrap()
+            .contains("total of 0 lines"));
+        let long = "文".repeat(MAX_OUTPUT_CHARS * 4);
+        let clipped = format_file_view("sample.txt", &long, None).unwrap();
+        assert!(clipped.ends_with(TRUNCATED_MESSAGE));
+        assert_eq!(
+            clipped.chars().count(),
+            MAX_OUTPUT_CHARS + TRUNCATED_MESSAGE.chars().count()
+        );
     }
 
     #[test]
@@ -740,7 +688,13 @@ mod tests {
     fn str_replace_data_carries_the_diff_contract() {
         let before = "alpha\nbeta\ngamma\n";
         let after = "alpha\nBETA\ngamma\n";
-        let (diff, unavailable) = diff_literal_replaces(before, after, &[6], "beta".len(), "BETA");
+        let (diff, unavailable) = super::super::line_diff::diff_literal_replaces(
+            before,
+            after,
+            &[6],
+            "beta".len(),
+            "BETA",
+        );
         assert!(unavailable.is_none());
         let data = build_edit_data("f.txt", "update", &diff, unavailable);
         let mut keys: Vec<&str> = data
@@ -906,7 +860,7 @@ mod tests {
                 "command": "insert",
                 "file_path": "notes.txt",
                 "insert_line": 2,
-                "new_str": "X\nY",
+                "new_string": "X\nY",
             }),
         );
         assert_eq!(result["action"], json!("insert"));
@@ -1012,7 +966,7 @@ mod tests {
                 "command": "insert",
                 "file_path": "a.txt",
                 "insert_line": 1,
-                "new_str": "two",
+                "new_string": "two",
             }),
         );
         assert_eq!(sorted_keys(&inserted["data"]), expected);
@@ -1054,7 +1008,7 @@ mod tests {
                 "command": "insert",
                 "file_path": "big.txt",
                 "insert_line": 1,
-                "new_str": "y",
+                "new_string": "y",
             }),
         );
         let data = &result["data"];

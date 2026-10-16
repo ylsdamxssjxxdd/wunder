@@ -20,6 +20,7 @@ mod desktop_control;
 #[cfg(feature = "desktop-control")]
 mod desktop_control_impl;
 mod dispatch;
+mod edit_args;
 mod edit_tool;
 mod file_tool;
 mod freeform;

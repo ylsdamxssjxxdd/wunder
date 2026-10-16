@@ -373,9 +373,15 @@ button.messenger-sidebar-workspace-row {
   white-space: nowrap;
 }
 
-.mz-thread-menu {
+/* 行内动作：重命名 / 轨迹视图 / 归档三个按钮同排同款，悬停该行时出现。 */
+.mz-thread-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
-  padding: 2px 4px;
+  width: 20px;
+  height: 20px;
+  padding: 0;
   border: 0;
   border-radius: var(--mz-radius-tag);
   color: var(--mz-text-muted);
@@ -386,45 +392,75 @@ button.messenger-sidebar-workspace-row {
   opacity: 0;
 }
 
-.mz-thread-row:hover .mz-thread-menu,
-.mz-thread-menu:focus-visible {
+.mz-thread-row:hover .mz-thread-action,
+.mz-thread-action:focus-visible,
+.mz-thread-row.is-menu-open .mz-thread-action {
   opacity: 1;
 }
 
-.mz-thread-menu:hover {
+.mz-thread-action:hover {
   color: var(--mz-primary);
   background: var(--mz-surface);
 }
 
-/* 归档按钮：与三个点按钮同排同款，位于其右侧，悬停该行时出现。 */
-.mz-thread-archive {
-  flex-shrink: 0;
-  padding: 2px 4px;
-  border: 0;
-  border-radius: var(--mz-radius-tag);
+.mz-thread-action:disabled {
   color: var(--mz-text-muted);
   background: transparent;
-  font: inherit;
-  font-size: var(--mz-font-sm);
-  cursor: pointer;
-  opacity: 0;
-}
-
-.mz-thread-row:hover .mz-thread-archive,
-.mz-thread-archive:focus-visible,
-.mz-thread-row.is-menu-open .mz-thread-archive {
-  opacity: 1;
-}
-
-.mz-thread-archive:hover {
-  color: var(--mz-primary);
-  background: var(--mz-surface);
-}
-
-.mz-thread-archive:disabled {
-  color: var(--mz-text-muted);
-  background: transparent;
+  opacity: 0.4;
   cursor: not-allowed;
+}
+
+/* 右键菜单：行上右键给出该行动作＋多选，teleport 到 body 避免被侧栏裁切。 */
+.mz-thread-context-menu {
+  position: fixed;
+  z-index: 3200;
+  display: flex;
+  flex-direction: column;
+  min-width: 148px;
+  padding: 4px;
+  border: 1px solid var(--mz-border, #e8e6e3);
+  border-radius: var(--mz-radius-card, 12px);
+  background: #ffffff;
+  box-shadow: 0 12px 32px rgba(31, 35, 41, 0.16);
+  color: var(--mz-text-muted, #8a8f99);
+  font-size: var(--mz-font-sm, 12px);
+}
+
+.mz-thread-context-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: var(--mz-radius-tag, 6px);
+  color: var(--mz-text-muted, #8a8f99);
+  background: transparent;
+  font: inherit;
+  font-size: var(--mz-font-sm, 12px);
+  text-align: left;
+  cursor: pointer;
+}
+
+.mz-thread-context-item i {
+  width: 12px;
+  font-size: var(--mz-font-sm, 12px);
+  text-align: center;
+}
+
+.mz-thread-context-item:hover:not(:disabled) {
+  color: var(--mz-primary, #c96443);
+  background: var(--mz-hover, #f1efec);
+}
+
+.mz-thread-context-item:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.mz-thread-context-divider {
+  height: 1px;
+  margin: 3px 4px;
+  background: var(--mz-border, #e8e6e3);
 }
 
 /* 多选模式：复选框、选中行与底部工具条。 */

@@ -766,13 +766,12 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         },
         ToolSpec {
             // 由原 `编辑` 与 `str_replace_editor` 合并：字面替换为主，
-            // 兼容补丁（input）与子命令（command）两种形态。仅 file_path 必填，
-            // 其余按形态在运行时校验。
+            // 兼容补丁（input）与子命令（command）；各形态的必填项在运行时校验。
             name: "文本编辑".to_string(),
             title: None,
             description: t("tool.spec.text_edit.description"),
             input_schema: super::schema::object(vec![
-                super::schema::string("file_path").desc(t("tool.spec.text_edit.args.file_path")),
+                super::schema::string("file_path").desc(t("tool.spec.text_edit.args.file_path")).optional(),
                 super::schema::string("old_string")
                     .desc(t("tool.spec.text_edit.args.old_string"))
                     .optional(),
@@ -797,12 +796,6 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     .optional(),
                 super::schema::integer("insert_line")
                     .desc(t("tool.spec.text_edit.args.insert_line"))
-                    .optional(),
-                super::schema::string("new_str")
-                    .desc(t("tool.spec.text_edit.args.new_str"))
-                    .optional(),
-                super::schema::string("old_str")
-                    .desc(t("tool.spec.text_edit.args.old_str"))
                     .optional(),
                 super::schema::array("view_range")
                     .desc(t("tool.spec.text_edit.args.view_range"))
@@ -1903,10 +1896,12 @@ mod tests {
             .find(|spec| spec.name == "文本编辑")
             .expect("text edit spec");
         assert!(spec.description.to_lowercase().contains("edit"));
-        // 仅 file_path 必填；old_string/new_string 在子命令与补丁形态下并非必需。
-        let required = spec.input_schema["required"].as_array().expect("required");
-        assert_eq!(required.len(), 1, "only file_path is required");
-        assert!(required.iter().any(|v| v == "file_path"));
+        // 多文件补丁无需额外目标路径；所有必填项按形态校验。
+        assert!(spec.input_schema["required"]
+            .as_array()
+            .is_none_or(Vec::is_empty));
+        assert!(spec.input_schema["properties"]["old_str"].is_null());
+        assert!(spec.input_schema["properties"]["new_str"].is_null());
         assert_eq!(spec.input_schema["additionalProperties"], false);
         assert_eq!(
             spec.input_schema["properties"]["replace_all"]["type"],

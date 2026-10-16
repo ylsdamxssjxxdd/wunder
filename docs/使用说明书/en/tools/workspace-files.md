@@ -1,12 +1,12 @@
 ---
 title: Workspace Files
 summary: Parameters, matching rules, and failure diagnosis for the five operations: list a directory, search content, read a range, exact replacement, and whole-file write.
-updated_at: 2026-10-16
+updated_at: 2026-10-17
 ---
 
 # Workspace Files
 
-Five common operations in the local workspace map to five tools: list a directory with `list_files`, search content with `search_content`, read a range with `read_file`, exact replacement with `edit_file2`, and whole-file write with `write_file`.
+Five common operations in the local workspace map to five tools: list a directory with `list_files`, search content with `search_content`, read a range with `read_file`, exact replacement with `edit`, and whole-file write with `write_file`.
 
 ## Listing a directory
 
@@ -20,18 +20,21 @@ It searches a directory by keyword and returns the files and positions that matc
 
 When you know the path, read that range: give a start and end line, reading one file at a time, or pass several files and line ranges to read in a batch. The result assembles the content into directly readable text and gives a summary for each file; when the default window is not enough or the budget truncates the output, it tells you that more reading is needed.
 
-## Exact replacement
+## Exact replacement and text editing
 
-`edit_file2` does one exact replacement, swapping one stretch of original text for new text:
+`文本编辑` (English alias `edit`) provides literal replacement, insertion, creation, and patches:
 
-- The original text must match the file's current content exactly.
-- To delete text, set the new text to an empty string.
-- When replacing several places at once, you can make it require the match count to be exact, and it errors when they do not line up.
-- If the original text accidentally includes a file header or line numbers copied from reading the file, it tries to strip them automatically when the match fails.
-- If the file uses CRLF line endings, it retries the match using the target file's line-ending style.
-- If the replacement has already been made uniquely, it reports that it was already applied.
+- Default replacement requires `file_path`, a non-empty `old_string`, and `new_string`. The original must match once; set `replace_all=true` to replace every occurrence. `command=str_replace` uses the same rules.
+- Preserve spaces and indentation, and omit displayed line numbers. Only LF/CRLF differences are normalized to the target file's uniform newline style.
+- Deletion requires an explicit `new_string=""`; missing or incorrectly typed text fails validation. Legacy `path`, `old_str`, and `new_str` remain accepted; aliases and canonical fields must agree when both are supplied.
+- Insert with `command=insert`, `file_path`, `insert_line`, and `new_string`. Insert after an existing 1-based line; 0 prepends. A terminal newline does not add a phantom line. Insertion follows the file's newline style and does not add another blank line when the input already ends in a newline.
+- Create with `command=create`, `file_path`, and `file_text`; existing targets are rejected. Read with `command=view` and `file_path`; optional `view_range=[start,end]` uses `end=-1` for EOF.
+- Use `input` for multi-file or multi-hunk patches, starting with `*** Begin Patch` and ending with `*** End Patch`. Paths are inside the patch, so `file_path` is unnecessary. Do not combine with `command` or replacement fields.
+- Every write mode supports `dry_run=true`: validate and return bounded diff previews without writing files, creating directories, or updating workspace versions.
 
-It suits an edit where you already have the exact original text, it is a single replacement, and you do not need regular expressions or multi-step logic. For complex replacements, regular-expression replacements, edits spanning several stretches, or edits with conditional logic, write a script with [Execute Command](/docs/en/tools/exec/); to generate or overwrite a whole file, use `write_file`; and for a small code patch reviewed with its surrounding context, use the patch form of `文本编辑`.
+When no match exists, read the current text and revise the arguments. Multiple matches report the count and up to 8 line numbers; add context or explicitly replace all. Repeating identical arguments does not resolve these errors. Identical content returns `unchanged` without rewriting the file.
+
+Use [Execute Command](/docs/en/tools/exec/) for scripts requiring regular expressions or conditional logic, and `write_file` for whole-file generation or overwrites.
 
 ## Whole-file write
 

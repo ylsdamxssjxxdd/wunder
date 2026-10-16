@@ -318,7 +318,7 @@ fn normalize_sandbox_file_tool_args(args: &Value) -> Value {
     let Value::Object(map) = &mut output else {
         return output;
     };
-    for key in ["path", "workdir", "cwd", "root", "base_path"] {
+    for key in ["path", "file_path", "workdir", "cwd", "root", "base_path"] {
         if let Some(Value::String(path)) = map.get_mut(key) {
             *path = normalize_container_visible_path(path);
         }
@@ -344,11 +344,13 @@ mod tests {
     fn normalize_sandbox_file_tool_args_accepts_public_workspaces_relative_prefix() {
         let args = normalize_sandbox_file_tool_args(&json!({
             "path": "workspaces/admin__c__1/a.txt",
+            "file_path": "workspaces/user__c__1/sample.txt",
             "workdir": "./workspaces/admin__c__1",
             "paths": ["workspaces/admin__c__1/b.txt", "notes.txt"]
         }));
 
         assert_eq!(args["path"], "/workspaces/admin__c__1/a.txt");
+        assert_eq!(args["file_path"], "/workspaces/user__c__1/sample.txt");
         assert_eq!(args["workdir"], "/workspaces/admin__c__1");
         assert_eq!(args["paths"][0], "/workspaces/admin__c__1/b.txt");
         assert_eq!(args["paths"][1], "notes.txt");

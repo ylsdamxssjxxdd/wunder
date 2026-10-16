@@ -193,12 +193,16 @@ pub fn start_stress_thread_job(request: StartStressJobRequest) -> Result<Value, 
         map.insert(job_id.clone(), Arc::clone(&job));
     }
 
+    // Only the storage arms consume these; a build without any storage
+    // backend returns an error before either one is read.
+    #[cfg(any(feature = "sqlite-storage", feature = "postgres-storage"))]
     let owner = user_id.clone();
     crate::core::long_task::spawn("stress_thread.generate", async move {
         // The bulk writer is one long blocking call; keep it off the async
         // workers via the shared blocking pool. One dedicated storage instance
         // per job so the write connection never contends with the runtime's
         // pooled connections.
+        #[cfg(any(feature = "sqlite-storage", feature = "postgres-storage"))]
         let job_for_progress = Arc::clone(&job);
         let exec_timeout = stress_generate_timeout(&spec);
         let outcome: anyhow::Result<crate::storage::StressThreadStats> =

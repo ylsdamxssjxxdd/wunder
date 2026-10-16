@@ -14,7 +14,7 @@ use super::line_diff::{diff_literal_replaces, insert_diff_fields, LineDiff};
 use super::{
     build_model_tool_success,
     command_options::parse_dry_run,
-    execute_in_sandbox, recover_tool_args_value, resolve_tool_path,
+    execute_in_sandbox, resolve_tool_path,
     tool_error::{build_failed_tool_result, ToolErrorMeta},
     touch_lsp_file, ToolContext,
 };
@@ -45,7 +45,7 @@ pub(crate) fn has_patch_input(args: &Value) -> bool {
 enum EditFailure {
     NotFound,
     NoMatch,
-    NotUnique(usize),
+    NotUnique { count: usize, lines: Vec<usize> },
 }
 
 impl std::fmt::Display for EditFailure {
@@ -53,7 +53,7 @@ impl std::fmt::Display for EditFailure {
         match self {
             EditFailure::NotFound => write!(f, "目标文件不存在"),
             EditFailure::NoMatch => write!(f, "old_string 未匹配"),
-            EditFailure::NotUnique(count) => write!(f, "old_string 匹配到 {count} 处"),
+            EditFailure::NotUnique { count, .. } => write!(f, "old_string 匹配到 {count} 处"),
         }
     }
 }
@@ -68,6 +68,7 @@ struct EditOutcome {
     /// 字面替换的真实 diff；`unavailable` 有值时只带计数不带块。
     diff: LineDiff,
     unavailable: Option<&'static str>,
+    changed: bool,
 }
 
 /// 字面替换路由的 diff 构造：有界采样命中起点，块上限与有界性守卫都在
@@ -146,28 +147,30 @@ pub(crate) fn validate_edit_args(args: &Value) -> Option<Value> {
 
 /// 统一入口：`文本编辑`。
 ///
-/// 三种形态按优先级分派：
-/// 1. 携带非空 `command` → 子命令编辑（`view`/`create`/`str_replace`/`insert`）；
-/// 2. 携带补丁输入（非空 `input`/`patch`）→ 补丁模式（原 `应用补丁`）；
-/// 3. 其余 → 字面文本替换（dsh `edit` 语义）。
+/// 先归一化别名与校验类型，再将互斥的补丁、子命令、字面替换分派。
+/// `command=str_replace` 与省略 command 共用同一替换实现。
 pub(crate) async fn text_edit(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
-    if super::str_replace_editor_tool::command_requested(args) {
-        return super::str_replace_editor_tool::str_replace_editor(context, args).await;
-    }
-    let args = recover_tool_args_value(args);
+    let args = match super::edit_args::normalize_edit_args(args) {
+        Ok(args) => args,
+        Err(failure) => return Ok(failure),
+    };
     if has_patch_input(&args) {
         return super::apply_patch_tool::apply_patch(context, &args).await;
+    }
+    if super::str_replace_editor_tool::command_requested(&args)
+        && args.get("command").and_then(Value::as_str) != Some("str_replace")
+    {
+        return super::str_replace_editor_tool::str_replace_editor(context, &args).await;
     }
     edit_file(context, &args).await
 }
 
-pub(crate) async fn edit_file(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
-    let args = recover_tool_args_value(args);
-    if let Some(failure) = validate_edit_args(&args) {
+async fn edit_file(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
+    if let Some(failure) = validate_edit_args(args) {
         return Ok(failure);
     }
-    if let Some(result) = execute_in_sandbox(context, TOOL_EDIT, &args).await {
-        if !parse_dry_run(&args) {
+    if let Some(result) = execute_in_sandbox(context, TOOL_EDIT, args).await {
+        if sandbox_edit_mutated(&result, args) {
             context.workspace.mark_tree_dirty(context.workspace_id);
         }
         return Ok(result);
@@ -211,29 +214,33 @@ pub(crate) async fn edit_file(context: &ToolContext<'_>, args: &Value) -> Result
         }
         let fs_cap = local_fs();
         let content = fs_cap.read_text(&target)?;
-        let occurrences = content.matches(&old_for_edit).count();
+        let old_for_edit = match_text_newlines(&content, &old_for_edit);
+        let new_for_edit = match_text_newlines(&content, &new_for_edit);
+        let mut occurrences = 0usize;
+        let mut offsets = Vec::new();
+        for (index, _) in content.match_indices(old_for_edit.as_ref()) {
+            occurrences += 1;
+            if offsets.len() < MAX_DIFF_OFFSETS {
+                offsets.push(index);
+            }
+        }
         if occurrences == 0 {
             return Err(anyhow::Error::new(EditFailure::NoMatch));
         }
         if occurrences > 1 && !replace_all {
-            return Err(anyhow::Error::new(EditFailure::NotUnique(occurrences)));
+            let lines = match_line_numbers(&content, &offsets);
+            return Err(anyhow::Error::new(EditFailure::NotUnique {
+                count: occurrences,
+                lines,
+            }));
         }
-        // diff 只需要有界个命中起点；命中总数仍由 matches().count() 给出。
-        let offsets: Vec<usize> = if replace_all {
-            content
-                .match_indices(&old_for_edit)
-                .map(|(index, _)| index)
-                .take(MAX_DIFF_OFFSETS)
-                .collect()
-        } else {
-            content.find(&old_for_edit).into_iter().collect()
-        };
         let updated = if replace_all {
-            content.replace(&old_for_edit, &new_for_edit)
+            content.replace(old_for_edit.as_ref(), new_for_edit.as_ref())
         } else {
-            content.replacen(&old_for_edit, &new_for_edit, 1)
+            content.replacen(old_for_edit.as_ref(), new_for_edit.as_ref(), 1)
         };
-        if !dry_run {
+        let changed = content != updated;
+        if !dry_run && changed {
             let workspace_root = workspace.workspace_root(&user_id);
             let default_target = workspace.resolve_path(&user_id, &path_for_edit)?;
             if is_within_root(&workspace_root, &target)
@@ -263,6 +270,7 @@ pub(crate) async fn edit_file(context: &ToolContext<'_>, args: &Value) -> Result
             bytes_after: updated.len(),
             diff,
             unavailable,
+            changed,
         })
     })
     .await;
@@ -282,8 +290,8 @@ pub(crate) async fn edit_file(context: &ToolContext<'_>, args: &Value) -> Result
                         "TOOL_EDIT_NO_MATCH",
                         "确保 old_string 与文件内容逐字一致（包含空白与缩进）。",
                     ),
-                    EditFailure::NotUnique(count) => (
-                        format!("文本编辑失败：old_string 匹配到 {count} 处，无法唯一替换"),
+                    EditFailure::NotUnique { count, lines } => (
+                        format!("old_string 匹配到 {count} 处（行号 {lines:?}），未修改文件"),
                         "TOOL_EDIT_NOT_UNIQUE",
                         "补充上下文使匹配唯一，或设置 replace_all=true 全部替换。",
                     ),
@@ -294,7 +302,7 @@ pub(crate) async fn edit_file(context: &ToolContext<'_>, args: &Value) -> Result
                         "path": file_path,
                         "dry_run": dry_run,
                     }),
-                    ToolErrorMeta::new(code, Some(hint.to_string()), true, Some(200)),
+                    ToolErrorMeta::new(code, Some(hint.to_string()), false, None),
                     false,
                 ));
             }
@@ -315,16 +323,16 @@ pub(crate) async fn edit_file(context: &ToolContext<'_>, args: &Value) -> Result
         }
     };
 
-    if !dry_run {
+    if !dry_run && outcome.changed {
         context.workspace.mark_tree_dirty(context.workspace_id);
     }
-    let lsp_info = if dry_run {
+    let lsp_info = if dry_run || !outcome.changed {
         Value::Null
     } else {
         touch_lsp_file(context, &outcome.target, true).await
     };
 
-    let data = build_edit_data(
+    let mut data = build_edit_data(
         &file_path,
         outcome.occurrences,
         replace_all,
@@ -335,12 +343,24 @@ pub(crate) async fn edit_file(context: &ToolContext<'_>, args: &Value) -> Result
         &outcome.diff,
         outcome.unavailable,
     );
+    if !outcome.changed {
+        data["changed_files"] = json!(0);
+        data["updated"] = json!(0);
+    }
 
     Ok(build_model_tool_success(
         "edit",
-        if dry_run { "dry_run" } else { "completed" },
+        if dry_run {
+            "dry_run"
+        } else if !outcome.changed {
+            "unchanged"
+        } else {
+            "completed"
+        },
         if dry_run {
             format!("Validated edit against {file_path} without writing content.")
+        } else if !outcome.changed {
+            format!("No content change in {file_path}.")
         } else {
             format!(
                 "Edited {file_path} ({} replacement(s)).",
@@ -349,6 +369,53 @@ pub(crate) async fn edit_file(context: &ToolContext<'_>, args: &Value) -> Result
         },
         data,
     ))
+}
+
+pub(super) fn sandbox_edit_mutated(result: &Value, args: &Value) -> bool {
+    let inner = super::tool_result_data(result);
+    result.get("ok").and_then(Value::as_bool) == Some(true)
+        && inner.get("ok").and_then(Value::as_bool) != Some(false)
+        && !parse_dry_run(args)
+        && super::tool_result_field(inner, "changed_files")
+            .and_then(Value::as_u64)
+            .unwrap_or(0)
+            > 0
+}
+
+/// Only line-ending normalization is allowed; indentation and other whitespace
+/// remain literal. Keep replacement text in the file's existing newline style.
+pub(super) fn match_text_newlines<'a>(content: &str, text: &'a str) -> std::borrow::Cow<'a, str> {
+    use std::borrow::Cow;
+    let crlf = content.contains("\r\n")
+        && content
+            .as_bytes()
+            .windows(2)
+            .all(|pair| pair[1] != b'\n' || pair[0] == b'\r')
+        && !content.starts_with('\n');
+    if crlf && text.contains('\n') {
+        Cow::Owned(text.replace("\r\n", "\n").replace('\n', "\r\n"))
+    } else if content.contains('\n') && !content.contains('\r') && text.contains("\r\n") {
+        Cow::Owned(text.replace("\r\n", "\n"))
+    } else {
+        Cow::Borrowed(text)
+    }
+}
+
+fn match_line_numbers(content: &str, offsets: &[usize]) -> Vec<usize> {
+    let mut cursor = 0;
+    let mut line = 1;
+    offsets
+        .iter()
+        .take(8)
+        .map(|&offset| {
+            line += content.as_bytes()[cursor..offset]
+                .iter()
+                .filter(|b| **b == b'\n')
+                .count();
+            cursor = offset;
+            line
+        })
+        .collect()
 }
 
 /// 组装字面替换结果 `data`：既有键保持不变，补丁家族的 diff 键一并给出。
@@ -384,9 +451,29 @@ fn build_edit_data(
 }
 
 #[cfg(test)]
+#[cfg(feature = "sqlite-storage")]
+#[path = "edit_tool_tests.rs"]
+mod dispatch_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn sandbox_dirty_flag_requires_a_successful_real_change() {
+        let result = json!({"ok":true, "data":{"ok":true, "data":{"changed_files":1}}});
+        assert!(sandbox_edit_mutated(&result, &json!({})));
+        assert!(!sandbox_edit_mutated(&result, &json!({"dry_run":true})));
+        for result in [
+            json!({"ok":false, "data":{"ok":true, "data":{"changed_files":1}}}),
+            json!({"ok":true, "data":{"ok":false, "data":{"changed_files":1}}}),
+            json!({"ok":true, "data":{"ok":true, "data":{"changed_files":0}}}),
+            json!({"ok":true, "data":{"ok":true, "data":{"content":"view"}}}),
+        ] {
+            assert!(!sandbox_edit_mutated(&result, &json!({})));
+        }
+    }
 
     #[test]
     fn text_edit_routes_by_shape() {

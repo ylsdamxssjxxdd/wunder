@@ -471,6 +471,25 @@ mod tests {
     }
 
     #[test]
+    fn text_edit_responses_history_keeps_structured_arguments() {
+        let args = json!({"command":"insert", "file_path":"sample.txt", "insert_line":0, "new_string":"text"});
+        for name in ["edit", "文本编辑", "str_replace_editor"] {
+            let item = tool_call_to_responses_item(
+                &json!({
+                    "id":"call_edit", "function":{"name":name, "arguments":args.to_string()}
+                }),
+                0,
+            )
+            .unwrap();
+            assert_eq!(item["type"], "function_call");
+            assert_eq!(
+                serde_json::from_str::<Value>(item["arguments"].as_str().unwrap()).unwrap(),
+                args
+            );
+        }
+    }
+
+    #[test]
     fn tool_call_to_responses_item_converts_freeform_tool_to_custom_call() {
         let item = tool_call_to_responses_item(
             &json!({

@@ -605,6 +605,7 @@ export default {
   'messenger.tasks.quota': 'Credits used',
   'messenger.tasks.rename': 'Rename',
   'messenger.tasks.archive': 'Archive',
+  'messenger.tasks.trajectory': 'Trajectory',
   'messenger.tasks.multiSelect': 'Select multiple',
   'messenger.tasks.selectedCount': '{count} selected',
   'messenger.tasks.empty': 'No work threads',

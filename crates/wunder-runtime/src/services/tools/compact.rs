@@ -13,7 +13,7 @@ pub(crate) fn compact_tool_spec_for_model(spec: &ToolSpec) -> ToolSpec {
         name: spec.name.clone(),
         title: None,
         description: compact_tool_description(&spec.name, &spec.description),
-        // Scheduling, routing and browser observation/wait semantics cannot
+        // Editing modes, scheduling, routing and browser wait semantics cannot
         // be inferred from JSON types alone.
         input_schema: if matches!(
             spec.name.as_str(),
@@ -23,6 +23,10 @@ pub(crate) fn compact_tool_spec_for_model(spec: &ToolSpec) -> ToolSpec {
                 | "subagent_control"
                 | "命令会话"
                 | "command_session"
+                | "文本编辑"
+                | "编辑"
+                | "edit"
+                | "str_replace_editor"
         ) || spec.name.starts_with("browser_")
         {
             spec.input_schema.clone()
@@ -68,9 +72,9 @@ fn compact_tool_description(name: &str, original: &str) -> String {
         "视频生成" | "generate_video" => Some("生成视频；prompt 必填，输出路径受限。"),
         "技能调用" | "skill_call" => Some("加载指定已挂载技能的完整 SKILL.md 与目录结构；用户点名技能或请求命中技能 Frontmatter 时，此工具必须作为第一条工具调用，不要先列目录、搜索、读写文件或执行命令；成功加载后严格按 SKILL.md 流程执行。参数 name 填技能名称。"),
         "写入文件" | "write_file" => Some("写入文件；路径受允许范围限制，支持 dry_run。"),
-        "文本编辑" | "编辑" | "edit" => Some(
-            "编辑文件；默认按字面文本替换（old_string 须唯一，除非 replace_all=true），也可用 input 传入补丁做多 hunk/多文件修改。",
-        ),
+        "文本编辑" | "编辑" | "edit" | "str_replace_editor" => {
+            return original.split_whitespace().collect::<Vec<_>>().join(" ");
+        }
         "子智能体控制" | "subagent_control" => Some(
             "管理当前根任务树的子智能体；list 默认直属子线程，parent_id=/root 查根的子线程。只能操作同一用户同一树的工作线程，独立会话不可接管。send 在运行中追加指导、空闲时派发新任务；resume 带消息等同 send，无消息只开放；report 汇报直属父线程。spawn/batch_spawn 可用 fork_turns=0..16、context_summary 提供有界背景。wait/status/history 检查结果，accepted 不等于完成。父线程中断取消后代；过期运行按中断恢复，显式 send 继续，不重放工具。",
         ),
@@ -316,6 +320,41 @@ mod tests {
                 .count()
                 <= 240
         );
+    }
+
+    #[test]
+    fn text_edit_catalog_retains_mode_contract_in_model_request() {
+        for language in ["en-US", "zh-CN"] {
+            let spec = crate::services::tools::catalog::builtin_tool_specs_with_language(language)
+                .into_iter()
+                .find(|spec| spec.name == "文本编辑")
+                .unwrap();
+            let compact = compact_tool_spec_for_model(&spec);
+            assert_eq!(compact.description, spec.description);
+            assert_eq!(compact.input_schema, spec.input_schema);
+            for term in [
+                "command=insert",
+                "command=create",
+                "command=str_replace",
+                "new_string",
+                "replace_all=true",
+                "dry_run=true",
+            ] {
+                assert!(compact.description.contains(term), "{language}: {term}");
+            }
+            let properties = &compact.input_schema["properties"];
+            assert!(properties["old_str"].is_null());
+            assert!(properties["new_str"].is_null());
+            for key in [
+                "file_path",
+                "command",
+                "new_string",
+                "insert_line",
+                "dry_run",
+            ] {
+                assert!(!properties[key]["description"].as_str().unwrap().is_empty());
+            }
+        }
     }
 
     #[test]

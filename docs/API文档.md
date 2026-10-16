@@ -344,6 +344,7 @@ wunder 是一个**智能体调度平台**：蛹（desktop）是本地 AI 工作�
 - `执行命令` 支持预算与预演参数：`dry_run`、`time_budget_ms`、`output_budget_bytes`、`max_commands`（也可放入 `budget` 对象）；`dry_run=true` 时仅返回执行计划与预算，不落地执行。
 - `执行命令` 失败结果的管理员事件通道会在 `data.diagnostics` 保留最多 4 条有界诊断（命令、序号、退出码和输出尾部）；模型 observation 仍只接收精简错误文本，避免把多命令 stderr 再次写入上下文。
 - `写入文件` 与 `文本编辑`（含其补丁形态，原 `应用补丁`）支持 `dry_run` 预演：返回目标文件与变更摘要，不写磁盘；传入相对 `path` 或补丁内相对文件路径时，会按当前智能体工作目录解析，不会落到服务进程 cwd。
+- `文本编辑` 默认替换与 `command=str_replace` 共用 `file_path/old_string/new_string/replace_all`，兼容 `path/old_str/new_str`；别名冲突或错误类型会拒绝执行，删除须显式传空字符串。`create/insert` 同样支持 `dry_run`；插入以实际行数定位并保留换行风格。多文件 `input` 补丁无需另传 `file_path`。模型请求保留各形态参数说明。
 - 文本编辑的补丁形态（原 `应用补丁`）的 `input` 现支持多层 JSON 包裹自动解包（如 `{"input":"{\"input\":\"*** Begin Patch ... *** End Patch\"}"}`），降低模型重复封装导致的格式失败。
 - 文本编辑的补丁形态（原 `应用补丁`）的 `dry_run` 与正式执行共用暂存、冲突检查和上下文匹配逻辑，不写磁盘、不触发工作区版本更新或 LSP 写入通知。`data.files[].diff_blocks` 为有界预览：每文件最多 80 行，每调用最多 320 行、24 KiB 行正文；超预算整行省略。`data` 与 `files[]` 同时提供准确的 `added_lines/deleted_lines` 和 `diff_lines_omitted`，前端不能从预览行数推算实际变更量。模型 observation 保留准确增删行数与文件摘要，省略 diff 正文；事件与工具日志保留有界预览。
 - 当文本编辑的补丁形态（原 `应用补丁`）返回 `PATCH_CONTEXT_NOT_FOUND` 时，`error_meta.hint` 会包含“期望旧片段 + 邻近源码 + 最相似窗口差异示例”，便于模型按上下文重新生成补丁。

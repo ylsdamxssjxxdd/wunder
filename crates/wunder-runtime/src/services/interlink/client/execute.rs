@@ -659,6 +659,21 @@ pub async fn execute(
     }
 }
 
+/// Symlink or reparse point: both are escape hatches out of the workspace.
+/// Windows reparse points (junctions, mount points) are not symlinks to
+/// `file_type()`, so the file attribute flag has to be read as well.
+fn is_link(metadata: &std::fs::Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        metadata.file_type().is_symlink() || metadata.file_attributes() & 0x400 != 0
+    }
+    #[cfg(not(windows))]
+    {
+        metadata.file_type().is_symlink()
+    }
+}
+
 /// A remote path is always relative to one shared root. Existing components
 /// cannot be symlinks or reparse points, including an internal backup folder.
 fn remote_workspace_path(root: &Path, path: &str) -> anyhow::Result<PathBuf> {
@@ -708,13 +723,7 @@ fn remote_workspace_path(root: &Path, path: &str) -> anyhow::Result<PathBuf> {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(error.into()),
             Ok(metadata) => {
-                let mut linked = metadata.file_type().is_symlink();
-                #[cfg(windows)]
-                {
-                    use std::os::windows::fs::MetadataExt;
-                    linked |= metadata.file_attributes() & 0x400 != 0;
-                }
-                anyhow::ensure!(!linked, "linked workspace path is not allowed");
+                anyhow::ensure!(!is_link(&metadata), "linked workspace path is not allowed");
             }
         }
     }
@@ -1428,13 +1437,7 @@ fn copy_dir_all(src: &Path, dst: &Path, cancel: &CancellationToken) -> std::io::
         }
         let entry = entry?;
         let metadata = std::fs::symlink_metadata(entry.path())?;
-        let mut linked = metadata.file_type().is_symlink();
-        #[cfg(windows)]
-        {
-            use std::os::windows::fs::MetadataExt;
-            linked |= metadata.file_attributes() & 0x400 != 0;
-        }
-        if linked || entry.depth() > 32 || plan.len() >= 10_000 {
+        if is_link(&metadata) || entry.depth() > 32 || plan.len() >= 10_000 {
             return Err(std::io::Error::other("directory exceeds safe copy limits"));
         }
         bytes = bytes.saturating_add(if metadata.is_file() {
@@ -1514,13 +1517,7 @@ async fn backup_before(
         remote_workspace_path(&root, &remote_relative)?;
         let backup = backup_root_for(&root);
         if let Ok(metadata) = std::fs::symlink_metadata(&backup) {
-            let mut linked = metadata.file_type().is_symlink();
-            #[cfg(windows)]
-            {
-                use std::os::windows::fs::MetadataExt;
-                linked |= metadata.file_attributes() & 0x400 != 0;
-            }
-            anyhow::ensure!(!linked, "linked backup folder is not allowed");
+            anyhow::ensure!(!is_link(&metadata), "linked backup folder is not allowed");
         }
         let generation = backup_root_for(&root).join(&generation_id);
         std::fs::create_dir_all(&backup)?;
@@ -1531,13 +1528,7 @@ async fn backup_before(
             let staged = generation.join(&relative);
             let mut replaced: Option<String> = None;
             if let Ok(metadata) = std::fs::symlink_metadata(&source) {
-                let mut linked = metadata.file_type().is_symlink();
-                #[cfg(windows)]
-                {
-                    use std::os::windows::fs::MetadataExt;
-                    linked |= metadata.file_attributes() & 0x400 != 0;
-                }
-                anyhow::ensure!(!linked, "linked backup source is not allowed");
+                anyhow::ensure!(!is_link(&metadata), "linked backup source is not allowed");
             }
             if source.is_dir() {
                 copy_dir_all(&source, &staged, &cancel)
