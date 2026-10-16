@@ -26,6 +26,10 @@ const DISPLAY_PAYLOAD_KEYS = new Set([
   'observation_text',
   'observationText',
   'output',
+  'questions',
+  'options',
+  'plan',
+  'media_kind',
   'preview',
   'result_preview',
   'rows',
@@ -47,6 +51,7 @@ const ENVELOPE_MARKER_KEYS = new Set([
   'ok',
   'operation',
   'status',
+  'state',
   'success',
   'tool',
   'tool_name',
@@ -58,6 +63,17 @@ export const asToolWorkflowResultObject = (value: unknown): ToolWorkflowResultOb
   value && typeof value === 'object' && !Array.isArray(value)
     ? (value as ToolWorkflowResultObject)
     : null;
+
+export const parseToolWorkflowResultObject = (value: unknown): ToolWorkflowResultObject | null => {
+  const direct = asToolWorkflowResultObject(value);
+  if (direct) return direct;
+  if (typeof value !== 'string' || !value.trimStart().startsWith('{')) return null;
+  try {
+    return asToolWorkflowResultObject(JSON.parse(value));
+  } catch {
+    return null;
+  }
+};
 
 const hasDisplayPayload = (value: ToolWorkflowResultObject): boolean =>
   Object.keys(value).some((key) => DISPLAY_PAYLOAD_KEYS.has(key));

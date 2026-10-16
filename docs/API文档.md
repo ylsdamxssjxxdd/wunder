@@ -382,6 +382,7 @@ wunder 是一个**智能体调度平台**：蛹（desktop）是本地 AI 工作�
 - 测试开放态（2026-03-11）：`channel_tool` 默认放开账号归属限制，`list_contacts` 可读取当前系统内所有已配置渠道账号；渠道请求默认覆盖 `security.approval_mode=full_auto` 与 `security.exec_policy_mode=allow`，不再进入渠道审批提示链路。
 - 浏览器工具重构（2026-03-27，2026-07-02 更新）：内置工具 `浏览器`（英文别名 `browser`）升级为浏览器运行时入口，支持 `status/profiles/start/stop/tabs/open/focus/close/navigate/snapshot/act/screenshot/read_page`；保留 `browser_navigate/browser_click/browser_type/browser_screenshot/browser_read_page/browser_close` 旧别名兼容。浏览器工具对模型的可见性由 `tools.browser.enabled` 控制，浏览器运行时由顶层 `browser.*` 配置控制；非 desktop 模式下无需再把 `浏览器` 写进 `tools.builtin.enabled`，`desktop + tools.browser.enabled` 仍兼容 legacy 模式。慢页面建议先调用 `start` 预热或复用会话，再在 `open`/`navigate` 中传 `timeout_ms` 或 `timeout_secs`；智能体工具调用 `screenshot` 默认保存到当前工作区 `browser/screenshots/`，直接调用 HTTP 控制接口截图仍落到 `temp_dir` 并返回下载链接。模型侧 `status` 返回会移除本地 `control.host/control.port`，避免模型误把内部控制端点当成下载或浏览地址。
 - 新增浏览器控制接口（2026-03-27）：`/wunder/browser/health`、`/wunder/browser/status`、`/wunder/browser/profiles`、`/wunder/browser/session/start`、`/wunder/browser/session/stop`、`/wunder/browser/tabs`、`/wunder/browser/tabs/open`、`/wunder/browser/tabs/focus`、`/wunder/browser/tabs/close`、`/wunder/browser/navigate`、`/wunder/browser/snapshot`、`/wunder/browser/act`、`/wunder/browser/screenshot`、`/wunder/browser/read_page`。
+- 浏览器交互契约（2026-10-16）：模型使用 provider 注册的 17 个 browser_* 工具；导航、点击、输入、等待和批处理支持 include_snapshot/max_chars，控制接口 navigate/act 接受相同参数。批处理为 1–10 个显式 kind 步骤，等待支持 selector/text/url/load_state；失败通过 HTTP 与工具观察保留 completed_steps、从 1 开始的 failed_step 和已完成摘要。截图附件与结构化元数据在事件、历史和模型上下文中共同保留。会话按用户、任务线程、智能体和可选自定义标识隔离，session_id 必填。
 - 内置工具 `网页抓取`（英文别名 `web_fetch`）支持 `extract_mode=markdown|text` 与 `max_chars`；直接通过 HTTP 抓取网页并输出低噪声正文，不用于本地文件或关键词搜索，并会对明显的前端壳页/验证页返回结构化失败或自动切换浏览器兜底。
 - `网页抓取` 默认执行正文清洗与去噪，移除导航、页脚、广告、评论等低价值片段；同时内置重定向复校验、响应体大小限制与短 TTL 缓存。私网/内网目标默认拦截，但现可通过 `tools.web.fetch.allow_private_network=true` 全量放开，或用 `tools.web.fetch.hostname_allowlist` 按主机名/IP 精确放行。
 - `网页抓取` 运行时支持 `tools.web.fetch.provider=direct|auto|firecrawl`：`direct` 使用 Wunder 内置 HTTP 抓取，`firecrawl` 调用外部 Firecrawl `/v2/scrape`，`auto` 在配置 Firecrawl API Key 或自定义 `base_url` 时优先使用 Firecrawl、失败后回退 direct。Firecrawl 配置位于 `tools.web.fetch.firecrawl.*`，也可通过 `WUNDER_WEB_FETCH_PROVIDER`、`FIRECRAWL_BASE_URL`、`FIRECRAWL_API_KEY` 覆盖；官方云端 `https://api.firecrawl.dev` 需要 API Key。
@@ -915,7 +916,7 @@ wunder 是一个**智能体调度平台**：蛹（desktop）是本地 AI 工作�
 - 说明：管理员开放工具与用户自建工具已拆分为独立区域。舰体/云端模式下管理员开放工具是否可见由管理员配置决定；用户自建 MCP/技能/知识库只要已配置就会进入对应区域，不再依赖用户侧额外“启用”开关。
 - 说明：`items[]` 是目录接口的统一能力视图：`group` 用于前端分组展示，`kind` 用于区分工具/技能；旧字段继续保留用于兼容。
 - 说明：desktop 本地模式下，`builtin_tools/admin_builtin_tools` 默认返回全部内置工具（按运行能力过滤），不再依赖 `tools.builtin.enabled` 白名单。
-- 说明：`default_agent_tool_names` 当前固定收敛为默认画像：`定时任务/记忆管理/执行命令/命令会话/列出文件/glob/搜索内容/读取文件/网页抓取/技能调用/写入文件/文本编辑`，以及默认技能 `技能创建器`；MCP/知识库默认不勾选。`最终回复`/`ptc`/`网页搜索`/`渠道工具`/`a2a观察`/`a2a等待`/`应用补丁` 已移除（其中 `应用补丁` 并入 `文本编辑`）。`execute_command` 默认阻塞返回结果，设置 `run_in_background=true` 转后台后必须使用 `命令会话` 轮询。
+- 说明：`default_agent_tool_names` 当前固定收敛为默认画像：`定时任务/记忆管理/执行命令/命令会话/列出文件/文件名匹配/搜索内容/读取文件/网页抓取/技能调用/写入文件/文本编辑`，以及默认技能 `技能创建器`；MCP/知识库默认不勾选。`最终回复`/`ptc`/`网页搜索`/`渠道工具`/`a2a观察`/`a2a等待`/`应用补丁` 已移除（其中 `应用补丁` 并入 `文本编辑`）。`execute_command` 默认阻塞返回结果，设置 `run_in_background=true` 转后台后必须使用 `命令会话` 轮询。
 
 ### 4.1.2.22 `/wunder/user_tools/shared_tools`
 

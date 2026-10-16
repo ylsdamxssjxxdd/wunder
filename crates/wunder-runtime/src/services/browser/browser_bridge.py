@@ -39,6 +39,14 @@ SNAPSHOT_JS = """(opts) => {
   const refs = [];
   let localCounter = 0;
   const seenTexts = new Set();
+  let used = 0;
+  let visited = 0;
+  let truncated = false;
+  function push(line) {
+    const cost = line.length + (lines.length ? 1 : 0);
+    if (used + cost > opts.max_chars) { truncated = true; return false; }
+    lines.push(line); used += cost; return true;
+  }
 
   const escape = (value) => (window.CSS && CSS.escape ? CSS.escape(value) : String(value));
 
@@ -114,10 +122,18 @@ SNAPSHOT_JS = """(opts) => {
       el.getAttribute('title'),
       el.getAttribute('placeholder'),
     ].filter(Boolean);
-    if (attrs.length > 0) return String(attrs[0]).trim();
+    if (attrs.length > 0) return String(attrs[0]).trim().slice(0, 200);
     if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement) {
-      const value = el.value || el.getAttribute('value');
-      if (value) return String(value).trim();
+      // Names remain stable after filling; values (including passwords) are
+      // user data, never a fallback accessibility label.
+      const label = el.labels && el.labels[0];
+      if (label) return String(label.innerText || label.textContent || '').trim().slice(0, 200);
+      if (el instanceof HTMLInputElement) {
+        if (['submit', 'button', 'reset'].includes(el.type)) return String(el.value || el.type).slice(0, 200);
+        return el.type === 'password' ? 'password' : 'textbox';
+      }
+      if (el instanceof HTMLTextAreaElement) return 'textbox';
+      return 'select';
     }
     const text = (el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
     return text.slice(0, 200);
@@ -154,26 +170,32 @@ SNAPSHOT_JS = """(opts) => {
     if (!root || depth > 8) return;
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
     while (walker.nextNode()) {
+      if (truncated || ++visited > 12000) { truncated = true; return; }
       const node = walker.currentNode;
       if (!(node instanceof HTMLElement) || !isVisible(node)) continue;
-      const own = cssPath(node, stopNode);
-      const selector = selectorPrefix ? selectorPrefix + ' >>> ' + own : own;
       const tag = node.tagName.toLowerCase();
+      const interactive = isInteractive(node);
+      const needsSelector = interactive || node.shadowRoot || tag === 'iframe' || tag === 'frame';
+      const own = needsSelector ? cssPath(node, stopNode) : '';
+      const selector = selectorPrefix ? selectorPrefix + ' >>> ' + own : own;
 
       if (tag === 'iframe' || tag === 'frame') {
         const src = node.getAttribute('src') || '';
         if (seenTexts.has('frame:' + src + ':' + selector)) continue;
         seenTexts.add('frame:' + src + ':' + selector);
-        lines.push('## nested frame (listed separately) src=' + (src || 'about:blank'));
+        push('## nested frame (listed separately) src=' + (src || 'about:blank'));
         continue;
       }
 
       const role = roleOf(node);
-      const name = nameOf(node);
-      if (isInteractive(node)) {
+      const needsName = interactive || /^H[1-6]$/.test(node.tagName) ||
+        (!opts.compact && node.matches('p, li, td, th, label'));
+      const name = needsName ? nameOf(node) : '';
+      if (interactive) {
         if (opts.interactive) {
           localCounter += 1;
           const ref = 'e' + (opts.ref_start + localCounter);
+          if (!push(lineFor(opts.fmt, role, name, ref))) return;
           refs.push({
             ref: ref,
             role: role,
@@ -181,21 +203,17 @@ SNAPSHOT_JS = """(opts) => {
             selector: selector,
             tag: tag,
           });
-          lines.push(lineFor(opts.fmt, role, name, ref));
         }
       } else if (/^H[1-6]$/.test(node.tagName)) {
         if (name && !seenTexts.has(name)) {
-          lines.push('## ' + name);
+          push('## ' + name);
           seenTexts.add(name);
         }
       } else if (!opts.compact && node.matches('p, li, td, th, label')) {
         if (name && !seenTexts.has(name)) {
-          lines.push(name);
+          push(name);
           seenTexts.add(name);
         }
-      } else if (opts.compact && node.matches('main, article') && name && !seenTexts.has(name)) {
-        lines.push(name);
-        seenTexts.add(name);
       }
 
       if (node.shadowRoot) {
@@ -205,7 +223,7 @@ SNAPSHOT_JS = """(opts) => {
   }
 
   if (document.body) walkRoot(document.body, document.body, '', 0);
-  return { lines: lines, refs: refs, count: localCounter };
+  return { lines: lines, refs: refs, count: localCounter, truncated: truncated };
 }"""
 
 # Selector of the element handed in as an argument, used to address the frame
@@ -239,35 +257,49 @@ READABLE_JS = """(maxChars) => {
   const lines = [];
   const skip = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'SVG', 'CANVAS', 'IFRAME', 'FRAME']);
   const seen = new Set();
+  let used = 0;
+  let visited = 0;
+  let truncated = false;
 
   function push(text) {
     const value = (text || '').replace(/\\s+/g, ' ').trim();
     if (!value || seen.has(value)) return;
+    const remaining = maxChars - used - (lines.length ? 1 : 0);
+    if (remaining <= 0) { truncated = true; return; }
     seen.add(value);
-    lines.push(value);
+    const part = value.slice(0, remaining);
+    used += part.length + (lines.length ? 1 : 0);
+    lines.push(part);
+    if (part.length < value.length) truncated = true;
   }
 
-  function walk(node, heading) {
-    if (!node) return;
+  function walk(node, depth) {
+    if (!node || truncated) return;
+    if (depth > 128) { truncated = true; return; }
+    if (++visited > 12000) { truncated = true; return; }
     if (node.nodeType === Node.TEXT_NODE) {
       push(node.textContent);
+      return;
+    }
+    if (node.nodeType === Node.DOCUMENT_FRAGMENT_NODE) {
+      for (const child of node.childNodes) { if (truncated) break; walk(child, depth + 1); }
       return;
     }
     if (node.nodeType !== Node.ELEMENT_NODE) return;
     const el = node;
     if (skip.has(el.tagName)) return;
     const isHeading = /^H[1-6]$/.test(el.tagName);
-    if (isHeading) push('## ' + (el.innerText || el.textContent || ''));
-    else if (el.tagName === 'LI') push('- ' + (el.innerText || el.textContent || ''));
+    if (isHeading) { push('## ' + (el.innerText || el.textContent || '')); return; }
+    else if (el.tagName === 'LI') { push('- ' + (el.innerText || el.textContent || '')); return; }
     else if (el.childNodes && el.childNodes.length === 0) push(el.innerText || el.textContent || '');
-    if (el.shadowRoot) walk(el.shadowRoot, isHeading);
-    for (const child of Array.from(el.childNodes || [])) walk(child, isHeading);
+    if (el.shadowRoot) walk(el.shadowRoot, depth + 1);
+    for (const child of el.childNodes || []) { if (truncated) break; walk(child, depth + 1); }
   }
 
   const main = document.querySelector('main, article, [role="main"], .content, #content');
-  walk(main || document.body, false);
+  walk(main || document.body, 0);
   const joined = lines.join('\\n').replace(/\\n{3,}/g, '\\n\\n').trim();
-  return joined.length > maxChars ? joined.slice(0, maxChars) : joined;
+  return {content: joined, truncated: truncated};
 }"""
 
 
@@ -580,6 +612,23 @@ class BridgeSession:
             pass
 
     def handle(self, raw):
+        result = self._handle(raw)
+        if raw.get("include_snapshot") and result.get("success"):
+            data = result.setdefault("data", {})
+            try:
+                snapshot = self.snapshot(
+                    target_id=data.get("target_id") or raw.get("target_id"),
+                    max_chars=char_budget(raw.get("max_chars")),
+                )["data"]
+                data["snapshot"] = snapshot["snapshot"]
+                data["truncated"] = snapshot["truncated"]
+            except Exception as exc:
+                # The action has already succeeded: a failed observation must
+                # not invite repeating a submitted form.
+                data["snapshot_error"] = "Snapshot unavailable (%s)" % type(exc).__name__
+        return result
+
+    def _handle(self, raw):
         self._sync_pages()
         action = str(raw.get("action", "")).strip().lower()
         if action in ("start", "status"):
@@ -603,7 +652,7 @@ class BridgeSession:
                 fmt=raw.get("format") or "role",
                 interactive=bool(raw.get("interactive", True)),
                 compact=bool(raw.get("compact", True)),
-                max_chars=int(raw.get("max_chars") or 40000),
+                max_chars=char_budget(raw.get("max_chars")),
             )
         if action == "act":
             return self.act(raw.get("request") or {}, raw.get("target_id"))
@@ -619,7 +668,7 @@ class BridgeSession:
         if action in ("read_page", "readpage", "read"):
             return self.read_page(
                 target_id=raw.get("target_id"),
-                max_chars=int(raw.get("max_chars") or 40000),
+                max_chars=char_budget(raw.get("max_chars")),
             )
         return {"success": False, "error": "Unknown action: %s" % action}
 
@@ -743,14 +792,12 @@ class BridgeSession:
         return {"success": False, "error": "Navigation ended at a blocked address: %s" % reason}
 
     def snapshot(self, target_id=None, fmt="role", interactive=True, compact=True, max_chars=40000):
+        max_chars = char_budget(max_chars)
         page, target_id = self._resolve_page(target_id)
-        lines, refs = self._collect(page, fmt, interactive, compact, max_chars)
+        lines, refs, truncated = self._collect(page, fmt, interactive, compact, max_chars)
         refs_map = {item["ref"]: item for item in refs}
         self.refs[target_id] = refs_map
         text = "\n".join(lines).strip()
-        truncated = len(text) > max_chars
-        if truncated:
-            text = text[:max_chars].rstrip() + "\n\n[Truncated]"
         return {
             "success": True,
             "data": {
@@ -775,10 +822,18 @@ class BridgeSession:
         lines = []
         refs = []
         ref_start = 0
+        used = 0
+        truncated = False
         main = page.main_frame
         frames = self._reachable_frames(page)
         for frame in frames:
             is_main = frame is main or frame.parent_frame is None
+            header = "" if is_main else "## frame url=%s" % (frame.url or "about:blank")
+            overhead = (len(header) + 1 if header else 0) + (1 if lines else 0)
+            remaining = max_chars - used - overhead
+            if remaining <= 0:
+                truncated = True
+                break
             frame_path = [] if is_main else self._frame_path(frame)
             try:
                 payload = frame.evaluate(
@@ -788,24 +843,29 @@ class BridgeSession:
                         "interactive": interactive,
                         "compact": compact,
                         "ref_start": ref_start,
+                        "max_chars": remaining,
                     },
                 )
             except Exception as exc:
-                lines.append("## frame unreadable (%s)" % _short(str(exc)))
+                message = "## frame unreadable (%s)" % _short(str(exc))
+                if len(message) + used + overhead <= max_chars:
+                    lines.append(message)
+                    used += len(message) + overhead
+                truncated = True
                 continue
             if not is_main:
-                url = frame.url or "about:blank"
-                lines.append("## frame url=%s" % url)
+                lines.append(header)
             for item in payload.get("refs") or []:
                 entry = dict(item)
                 entry["frame_path"] = list(frame_path)
                 refs.append(entry)
             lines.extend(payload.get("lines") or [])
+            used += len("\n".join(payload.get("lines") or [])) + overhead
             ref_start += int(payload.get("count") or 0)
-            if len("\n".join(lines)) > max_chars:
-                lines.append("[Truncated: more frames not read]")
+            if payload.get("truncated"):
+                truncated = True
                 break
-        return lines, refs
+        return lines, refs, truncated
 
     def _reachable_frames(self, page):
         try:
@@ -864,7 +924,15 @@ class BridgeSession:
             return self.navigate(
                 request.get("url"), target_id, request.get("timeout_ms")
             )
-        locator = self._resolve_locator(page, target_id, request)
+        if kind == "press" and not request.get("ref") and not request.get("selector"):
+            key = request.get("key")
+            if not key:
+                return {"success": False, "error": "Browser press missing 'key'"}
+            page.keyboard.press(str(key))
+            return self._action_result(page, target_id, kind, extra={"key": key})
+        locator_request = ({"ref": request.get("from_ref"), "selector": request.get("from_selector")}
+                           if kind == "drag" else request)
+        locator = self._resolve_locator(page, target_id, locator_request)
         timeout_ms = self._timeout_ms(request.get("timeout_ms"), request.get("timeout_secs"))
         if kind == "click":
             if bool(request.get("double_click", False)):
@@ -876,8 +944,13 @@ class BridgeSession:
             text = request.get("text")
             if text is None:
                 return {"success": False, "error": "Browser type/fill missing 'text'"}
-            locator.fill(str(text), timeout=timeout_ms)
-            return self._action_result(page, target_id, kind, extra={"text": text})
+            try:
+                locator.fill(str(text), timeout=timeout_ms)
+                if request.get("submit"):
+                    locator.press("Enter", timeout=timeout_ms)
+            except Exception as exc:
+                return {"success": False, "error": "Browser input failed (%s)" % type(exc).__name__}
+            return self._action_result(page, target_id, kind)
         if kind == "press":
             key = request.get("key")
             if not key:
@@ -888,11 +961,13 @@ class BridgeSession:
             locator.hover(timeout=timeout_ms)
             return self._action_result(page, target_id, kind)
         if kind == "select":
-            value = request.get("value") or request.get("text")
+            value = request.get("value")
+            if value is None:
+                value = request.get("text")
             if value is None:
                 return {"success": False, "error": "Browser select missing 'value' or 'text'"}
-            locator.select_option(value=str(value), timeout=timeout_ms)
-            return self._action_result(page, target_id, kind, extra={"value": value})
+            locator.select_option(value=value, timeout=timeout_ms)
+            return self._action_result(page, target_id, kind)
         if kind == "drag":
             target_locator = self._resolve_locator(
                 page,
@@ -909,22 +984,35 @@ class BridgeSession:
 
     def batch(self, request, target_id=None):
         """Flat, bounded step list: nesting cannot multiply one call's work."""
-        steps = request.get("steps") or request.get("actions") or request.get("items") or []
+        steps = request.get("steps", [])
         if not isinstance(steps, list):
             return {"success": False, "error": "Browser batch 'steps' must be an array"}
-        if len(steps) > 10:
-            return {"success": False, "error": "Browser batch supports at most 10 steps"}
+        if not 1 <= len(steps) <= 10:
+            return {"success": False, "error": "Browser batch requires 1 to 10 steps"}
         for step in steps:
+            if not isinstance(step, dict) or not step.get("kind"):
+                return {"success": False, "error": "Browser batch steps require an object with 'kind'"}
             if isinstance(step, dict) and str(step.get("kind", "")).strip().lower() == "batch":
                 return {"success": False, "error": "Browser batch steps must not nest batch"}
+            if str(step["kind"]).strip().lower() not in {"type", "fill", "click", "press", "select", "hover", "drag", "wait", "navigate"}:
+                return {"success": False, "error": "Unsupported browser batch step kind"}
         results = []
-        for step in steps:
-            result = self.act(step, target_id)
+        for index, step in enumerate(steps):
+            try:
+                result = self.act(step, target_id)
+            except Exception as exc:
+                # Playwright errors can contain locator.fill arguments. Report
+                # the failed operation and type without echoing user inputs.
+                result = {"success": False, "error": "Browser %s failed (%s)" % (step["kind"], type(exc).__name__)}
             if not result.get("success"):
-                return result
-            results.append(result.get("data"))
+                return {"success": False, "error": result.get("error", "Batch step failed"),
+                        "data": {"completed_steps": len(results), "failed_step": index + 1,
+                                 "results": results}}
+            data = result.get("data") or {}
+            results.append({key: data[key] for key in ("kind", "target_id", "url") if key in data})
         page, resolved = self._resolve_page(target_id)
-        return {"success": True, "data": {"target_id": resolved, "results": results, "url": page.url}}
+        return {"success": True, "data": {"target_id": resolved, "completed_steps": len(results),
+                                          "results": results, "url": page.url}}
 
     def screenshot(self, target_id=None, full_page=False):
         page, target_id = self._resolve_page(target_id)
@@ -942,7 +1030,7 @@ class BridgeSession:
 
     def read_page(self, target_id=None, max_chars=40000):
         page, target_id = self._resolve_page(target_id)
-        content = self._read_all_frames(page, max_chars)
+        content, truncated = self._read_all_frames(page, char_budget(max_chars))
         return {
             "success": True,
             "data": {
@@ -950,24 +1038,30 @@ class BridgeSession:
                 "title": safe_page_title(page),
                 "url": safe_page_url(page),
                 "content": content,
+                "truncated": truncated,
             },
         }
 
     def _read_all_frames(self, page, max_chars):
         chunks = []
         used = 0
+        truncated = False
         for frame in self._reachable_frames(page):
-            budget = max(max_chars - used, 0)
+            header = "" if frame is page.main_frame or frame.parent_frame is None else "## frame url=%s\n" % (frame.url or "about:blank")
+            separator = 2 if chunks else 0
+            budget = max_chars - used - len(header) - separator
             if budget <= 0:
-                chunks.append("[Truncated: more frames not read]")
+                truncated = True
                 break
-            body = extract_readable(frame, budget)
-            if frame is not page.main_frame and frame.parent_frame is not None:
-                body = ("## frame url=%s\n%s" % (frame.url or "about:blank", body)) if body else ""
+            body, clipped = extract_readable(frame, budget)
+            body = header + body if body else ""
             if body:
                 chunks.append(body)
-                used += len(body)
-        return "\n\n".join(chunks)
+                used += len(body) + separator
+            if clipped:
+                truncated = True
+                break
+        return "\n\n".join(chunks), truncated
 
     def _new_page(self):
         limit = max(int(self.args.max_tabs), 1)
@@ -984,7 +1078,7 @@ class BridgeSession:
     def _timeout_ms(self, value=None, seconds=None):
         if value is None and seconds is not None:
             try:
-                return max(int(seconds) * 1000, 1)
+                return min(max(int(seconds) * 1000, 1), self.timeout_ms * 4)
             except Exception:
                 return self.timeout_ms
         if value is None:
@@ -993,7 +1087,7 @@ class BridgeSession:
             timeout_ms = int(value)
         except Exception:
             return self.timeout_ms
-        return max(timeout_ms, 1)
+        return min(max(timeout_ms, 1), self.timeout_ms * 4)
 
     def _resolve_page(self, target_id=None):
         if target_id:
@@ -1056,9 +1150,10 @@ class BridgeSession:
     def _wait(self, page, target_id, request):
         timeout_ms = self._timeout_ms(request.get("timeout_ms"), request.get("timeout_secs"))
         if request.get("wait_ms") is not None:
-            page.wait_for_timeout(int(request.get("wait_ms")))
+            wait_ms = min(max(int(request["wait_ms"]), 0), timeout_ms)
+            page.wait_for_timeout(wait_ms)
             return self._action_result(
-                page, target_id, "wait", extra={"wait_ms": request.get("wait_ms")}
+                page, target_id, "wait", extra={"wait_ms": wait_ms}
             )
         selector = request.get("selector")
         if selector:
@@ -1070,9 +1165,8 @@ class BridgeSession:
             return self._action_result(page, target_id, "wait", extra={"text": text})
         url = request.get("url")
         if url:
-            allowed, reason = self.policy.check(url)
-            if not allowed:
-                return {"success": False, "error": "Wait target blocked: %s" % reason}
+            # This matches the current URL; it never initiates a request. The
+            # action result still verifies the actual final URL against policy.
             page.wait_for_url(str(url), timeout=timeout_ms)
             return self._action_result(page, target_id, "wait", extra={"url": url})
         load_state = request.get("load_state")
@@ -1085,6 +1179,9 @@ class BridgeSession:
         }
 
     def _action_result(self, page, target_id, kind, extra=None):
+        verdict = self._final_url_verdict(page)
+        if verdict is not None:
+            return verdict
         payload = {
             "target_id": target_id,
             "kind": kind,
@@ -1122,17 +1219,20 @@ def safe_page_url(page):
 
 def extract_readable(target, max_chars=40000):
     """Read one frame (or page) as text, piercing open shadow roots."""
-    limit = max(int(max_chars), 512)
+    limit = char_budget(max_chars)
     try:
-        content = target.evaluate(READABLE_JS, limit)
+        result = target.evaluate(READABLE_JS, limit)
+        return result["content"][:limit], bool(result["truncated"])
     except Exception:
         try:
-            content = target.inner_text("body")
+            content = target.evaluate("limit => (document.body ? document.body.innerText : '').slice(0, limit + 1)", limit)
         except Exception:
-            return ""
-    if len(content) > limit:
-        return content[:limit].rstrip() + "\n\n[Truncated - %d total chars]" % len(content)
-    return content
+            return "", True
+    return content[:limit], len(content) > limit
+
+
+def char_budget(value):
+    return min(max(int(value if value is not None else 40000), 1), 40000)
 
 
 def main():

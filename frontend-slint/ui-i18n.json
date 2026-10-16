@@ -463,6 +463,59 @@
   "en": "This permanently deletes every file and folder in the current working directory and cannot be undone. Clear everything?"
  },
  {
+  "key": "sb_thread_multi_select",
+  "zh": "多选",
+  "en": "Multi-select"
+ },
+ {
+  "key": "sb_thread_select_all",
+  "zh": "全选",
+  "en": "Select all"
+ },
+ {
+  "key": "sb_thread_selected",
+  "zh": "已选 {} 项",
+  "en": "{} selected",
+  "params": [
+   "count"
+  ]
+ },
+ {
+  "key": "sb_thread_archive",
+  "zh": "归档",
+  "en": "Archive"
+ },
+ {
+  "key": "tl_state_queued",
+  "zh": "排队中",
+  "en": "Queued"
+ },
+ {
+  "key": "tl_state_question",
+  "zh": "等待回答",
+  "en": "Waiting for answers"
+ },
+ {
+  "key": "tl_state_input",
+  "zh": "等待用户输入",
+  "en": "Waiting for input"
+ },
+ {
+  "key": "tl_state_confirm",
+  "zh": "等待确认",
+  "en": "Waiting for confirmation"
+ },
+ {
+  "key": "tl_state_approval",
+  "zh": "等待审批",
+  "en": "Waiting for approval"
+ },
+ {
+  "key": "tl_state_error",
+  "zh": "错误",
+  "en": "Error"
+ },
+ {
   "key": "common_save",
   "zh": "保存",
   "en": "Save"
@@ -5894,6 +5947,54 @@
   "key": "sub_detail_loading",
   "zh": "正在加载子线程…",
   "en": "Loading the child thread…"
+ },
+ {
+  "key": "tl_process_loading",
+  "zh": "正在加载…",
+  "en": "Loading…"
+ },
+ {
+  "key": "tl_process_retry",
+  "zh": "加载失败，重试",
+  "en": "Loading failed. Retry"
+ },
+ {
+  "key": "tl_process_earlier",
+  "zh": "查看更早的过程",
+  "en": "Earlier steps"
+ },
+ {
+  "key": "tl_process_later",
+  "zh": "查看后续过程",
+  "en": "Later steps"
+ },
+ {
+  "key": "tl_stat_round",
+  "zh": "用户轮次",
+  "en": "User round"
+ },
+ {
+  "key": "tl_user_round",
+  "zh": "第 {} 个用户轮次",
+  "en": "User round {}",
+  "params": [
+   "round"
+  ]
+ },
+ {
+  "key": "tl_stat_credits",
+  "zh": "额度",
+  "en": "Quota"
+ },
+ {
+  "key": "tl_stat_speed_hint",
+  "zh": "有效模型输出 token / 生成流式时间；不含等待和工具执行，优先使用本轮已测量的汇总速度。无法可靠测量时显示 -。",
+  "en": "Measured output tokens per streaming second, excluding wait and tool execution. Uses the turn aggregate when available; - means unavailable."
+ },
+ {
+  "key": "tl_stat_context_hint",
+  "zh": "最近一次模型请求观测的上下文占用，不是累计消耗；压缩后重新观测，可能下降。",
+  "en": "Context occupancy observed for the latest model request, rather than cumulative consumption. It may decrease after compaction."
  },
  {
   "key": "tl_stat_duration",

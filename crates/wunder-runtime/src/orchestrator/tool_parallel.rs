@@ -33,12 +33,9 @@ fn parallel_safe_builtin_names() -> &'static HashSet<String> {
         .map(resolve_tool_name)
         .filter(|name| !name.trim().is_empty())
         .collect();
-        // Browser tools come from the active provider's native surface.
-        for name in crate::services::browser::provider::registered_tool_names() {
-            if !name.trim().is_empty() {
-                names.insert(name);
-            }
-        }
+        // Browser reads can update refs or race navigation too. Only runtime
+        // status is independent of page state; page operations stay exclusive.
+        names.insert(crate::services::browser::providers::playwright::TOOL_STATUS.to_string());
         // 合并工具注册表里声明的并行安全工具，保持单一事实来源。
         for canonical in crate::tools::registry::parallel_safe_canonicals() {
             let resolved = resolve_tool_name(canonical);
@@ -92,6 +89,17 @@ fn external_tool_looks_read_only(canonical: &str) -> bool {
 mod tests {
     use super::tool_call_supports_parallel;
     use serde_json::json;
+
+    #[test]
+    fn browser_page_operations_are_exclusive() {
+        for name in crate::services::browser::providers::playwright::TOOL_NAMES {
+            assert_eq!(
+                tool_call_supports_parallel(name, &json!({})),
+                *name == "browser_status",
+                "{name}"
+            );
+        }
+    }
 
     #[test]
     fn read_file_supports_parallel_execution() {

@@ -72,7 +72,7 @@ pub(crate) const DESCRIPTORS: &[ToolDescriptor] = &[
         arg_aliases: &[("path", "dir")],
     },
     ToolDescriptor {
-        canonical: "glob",
+        canonical: "文件名匹配",
         kind: ToolKind::Read,
         parallel_safe: true,
         arg_aliases: &[("path", "dir")],

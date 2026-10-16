@@ -7,28 +7,34 @@ import { Theme, WorkflowSection } from "theme.slint";
 export component WorkflowDetail inherits Rectangle {
     in property <[WorkflowSection]> sections;
     in property <string> fallback;
+    private property <color> foreground: Theme.text-secondary;
+    private property <color> muted: Theme.muted;
+    private property <color> surface: Theme.panel;
+    private property <color> border: Theme.border;
     callback copy(string);
     height: column.preferred-height;
     column := VerticalLayout {
         height: self.preferred-height; spacing: 8px; alignment: start;
         if root.sections.length == 0 || !root.sections[0].kind.starts-with("compaction") : HorizontalLayout { height: 22px;
-            Text { text: I18n.tl_entry_output; color: Theme.muted; font-size: Theme.font-xs; font-weight: 700; }
+            Text { text: I18n.tl_entry_output; color: root.muted; font-size: Theme.font-xs; font-weight: 700; }
             Rectangle { horizontal-stretch: 1; }
-            Rectangle { width: 24px; height: 24px; border-radius: 7px; border-width: 1px; border-color: Theme.border; background: copy-area.has-hover ? Theme.hover : transparent;
-                Image { width: 12px; height: 12px; source: @image-url("../assets/icons/copy.svg"); colorize: Theme.muted; image-fit: contain; }
+            Rectangle { width: 24px; height: 24px; border-radius: 7px; border-width: 1px; border-color: root.border; background: copy-area.has-hover ? Theme.hover : transparent;
+                accessible-role: button; accessible-label: I18n.common_copy;
+                accessible-action-default => { root.copy(root.fallback); }
+                Image { width: 12px; height: 12px; source: @image-url("../assets/icons/copy.svg"); colorize: root.muted; image-fit: contain; }
                 copy-area := TouchArea { mouse-cursor: pointer; clicked => { root.copy(root.fallback); } }
             }
         }
-        if root.sections.length == 0 : TextInput { text: root.fallback; read-only: true; wrap: word-wrap; color: Theme.text-secondary; font-size: Theme.font-sm; }
+        if root.sections.length == 0 : TextInput { text: root.fallback; read-only: true; wrap: word-wrap; color: root.foreground; font-size: Theme.font-sm; }
         for section in root.sections : Rectangle {
             height: content.preferred-height + 20px;
-            background: Theme.panel; border-width: 1px;
-            border-color: section.kind == "error" ? Theme.danger.transparentize(0.55) : Theme.border; border-radius: 10px;
+            background: root.surface; border-width: 1px;
+            border-color: section.kind == "error" ? Theme.danger.transparentize(0.55) : root.border; border-radius: 8px;
             content := VerticalLayout {
                 x: 10px; y: 10px; width: parent.width - 20px; height: self.preferred-height; spacing: 8px;
                 if section.kind != "compaction-usage" : HorizontalLayout { spacing: 8px;
-                    Text { text: section.title; color: Theme.text; font-family: Theme.font-mono; font-size: Theme.font-sm; font-weight: 600; wrap: word-wrap; horizontal-stretch: 1; }
-                    Text { text: section.meta; color: Theme.muted; font-size: Theme.font-xs; }
+                    Text { text: section.title; color: root.foreground; font-family: Theme.font-mono; font-size: Theme.font-sm; font-weight: 600; wrap: word-wrap; horizontal-stretch: 1; }
+                    Text { text: section.meta; color: root.muted; font-size: Theme.font-xs; }
                 }
                 if section.kind == "compaction-usage" : VerticalLayout { spacing: 6px;
                     Rectangle { height: 10px; border-radius: 5px; background: Theme.hover;
@@ -38,7 +44,7 @@ export component WorkflowDetail inherits Rectangle {
                         }
                     }
                     HorizontalLayout { spacing: 10px;
-                        Text { text: section.lines.length > 1 ? section.lines[1].text : ""; color: Theme.text-secondary; font-size: 10px; wrap: word-wrap; horizontal-stretch: 1; }
+                        Text { text: section.lines.length > 1 ? section.lines[1].text : ""; color: root.foreground; font-size: 10px; wrap: word-wrap; horizontal-stretch: 1; }
                         Text { text: section.lines.length > 0 ? section.lines[0].text : ""; color: Theme.danger; font-size: 10px; wrap: word-wrap; horizontal-alignment: right; horizontal-stretch: 1; }
                     }
                 }
@@ -50,8 +56,8 @@ export component WorkflowDetail inherits Rectangle {
                             : line.kind == "delete" || line.kind == "error" ? Theme.diff-del-bg
                             : line.kind == "header" ? Theme.diff-header
                             : transparent;
-                        if self.gutter : Rectangle { x: 0px; width: 56px; height: parent.height; background: Theme.surface;
-                            Text { x: 10px; y: 2px; text: line.number; color: Theme.muted; font-family: Theme.font-mono; font-size: 11px; }
+                        if self.gutter : Rectangle { x: 0px; width: 56px; height: parent.height; background: root.surface;
+                            Text { x: 10px; y: 2px; text: line.number; color: root.muted; font-family: Theme.font-mono; font-size: 11px; }
                         }
                         Text { x: parent.gutter ? 64px : 8px; y: 2px; width: 20px;
                             text: section.kind != "patch" ? "" : line.kind == "add" ? "+" : line.kind == "delete" ? "−" : line.kind == "error" ? "!" : "";
@@ -62,8 +68,8 @@ export component WorkflowDetail inherits Rectangle {
                             text: line.text; read-only: true; wrap: word-wrap; font-family: Theme.font-mono; font-size: Theme.font-sm;
                             color: line.kind == "add" ? Theme.diff-add-text
                                 : line.kind == "delete" || line.kind == "error" ? Theme.diff-del-text
-                                : line.kind == "header" || line.kind == "note" ? Theme.muted
-                                : Theme.text-secondary;
+                                : line.kind == "header" || line.kind == "note" ? root.muted
+                                : root.foreground;
                         }
                     }
                 }

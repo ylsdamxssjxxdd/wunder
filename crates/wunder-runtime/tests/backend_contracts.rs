@@ -20,7 +20,7 @@ use wunder_server::{
 struct ContractContext {
     server_app: Router,
     desktop_app: Router,
-    _state: Arc<AppState>,
+    state: Arc<AppState>,
     _temp_dir: TempDir,
 }
 
@@ -55,7 +55,7 @@ async fn build_contract_context() -> ContractContext {
     ContractContext {
         server_app: build_router(state.clone()),
         desktop_app: build_desktop_router(state.clone()),
-        _state: state,
+        state,
         _temp_dir: temp_dir,
     }
 }
@@ -208,4 +208,307 @@ fn builtin_tool_catalog_keeps_core_file_tools_available_and_unique() {
             "{alias} should resolve to builtin tool {canonical}"
         );
     }
+}
+
+async fn request_tools_catalog(app: &Router) -> Value {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/wunder/tools?user_id=preset_template")
+                .body(Body::empty())
+                .expect("build tools request"),
+        )
+        .await
+        .expect("request tools catalog");
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), 4 * 1024 * 1024)
+        .await
+        .expect("read tools catalog");
+    serde_json::from_slice(&body).expect("decode tools catalog")
+}
+
+fn assert_builtin_catalog_names(catalog: &Value, expected: &HashSet<String>) {
+    let names = catalog["builtin_tools"]
+        .as_array()
+        .expect("builtin tools")
+        .iter()
+        .map(|tool| tool["name"].as_str().expect("tool name").to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(names.len(), expected.len(), "unexpected or duplicate tools");
+    assert_eq!(names.into_iter().collect::<HashSet<_>>(), *expected);
+
+    // 预设选择器优先使用 items；结构化条目与兼容工具列表必须一致。
+    let items = catalog["items"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .filter(|item| item["group"] == "builtin")
+        .map(|item| {
+            item["runtime_name"]
+                .as_str()
+                .expect("runtime name")
+                .to_string()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(items.len(), expected.len(), "unexpected or duplicate items");
+    assert_eq!(items.into_iter().collect::<HashSet<_>>(), *expected);
+}
+
+#[tokio::test]
+async fn tools_catalog_hides_unavailable_tools_and_resolves_enabled_aliases() {
+    let ctx = build_contract_context().await;
+    ctx.state
+        .config_store
+        .update(|config| {
+            config.server.mode = "api".to_string();
+            config.tools.builtin.enabled = [
+                "ptc",
+                "programmatic_tool_call",
+                "网页搜索",
+                "web_search",
+                "网页抓取",
+                "read_file",
+                "get_goal",
+                "create_goal",
+                "update_goal",
+            ]
+            .into_iter()
+            .map(str::to_string)
+            .collect();
+            config.tools.web.search.enabled = true;
+            config.tools.web.fetch.enabled = false;
+            config.tools.browser.enabled = false;
+        })
+        .await
+        .expect("configure tool visibility");
+
+    let catalog = request_tools_catalog(&ctx.server_app).await;
+    let read_name = if wunder_server::i18n::get_language()
+        .to_lowercase()
+        .starts_with("en")
+    {
+        "read_file"
+    } else {
+        "读取文件"
+    };
+    assert_builtin_catalog_names(&catalog, &HashSet::from([read_name.to_string()]));
+}
+
+#[tokio::test]
+async fn tools_catalog_tracks_browser_switches_without_builtin_whitelist_entries() {
+    let ctx = build_contract_context().await;
+    for (runtime_enabled, tool_enabled, legacy_entries, visible) in [
+        (true, true, false, true),
+        (true, false, true, false),
+        (false, true, true, false),
+        (true, true, false, true),
+    ] {
+        ctx.state
+            .config_store
+            .update(|config| {
+                config.server.mode = "api".to_string();
+                config.browser.enabled = runtime_enabled;
+                config.tools.browser.enabled = tool_enabled;
+                config.tools.builtin.enabled = if legacy_entries {
+                    wunder_server::tools::browser_tool_names()
+                } else {
+                    Vec::new()
+                };
+            })
+            .await
+            .expect("configure browser visibility");
+
+        let catalog = request_tools_catalog(&ctx.server_app).await;
+        let expected = if visible {
+            HashSet::from([wunder_server::tools::browser_tool_summary_spec(
+                &wunder_server::i18n::get_language().to_lowercase(),
+            )
+            .name])
+        } else {
+            HashSet::new()
+        };
+        assert_builtin_catalog_names(&catalog, &expected);
+    }
+}
+
+#[tokio::test]
+async fn default_agents_select_all_available_builtins_in_every_form() {
+    let ctx = build_contract_context().await;
+    for mode in ["api", "desktop", "cli"] {
+        ctx.state
+            .config_store
+            .update(|config| {
+                config.server.mode = mode.to_string();
+                config.tools.builtin.enabled =
+                    wunder_server::default_tool_profile::default_tool_candidates();
+                config.browser.enabled = true;
+                config.tools.browser.enabled = true;
+            })
+            .await
+            .expect("configure available builtins");
+        let user_id = format!("sample_{mode}");
+        let agent = wunder_server::agent_management::owned(&ctx.state, &user_id, "__default__")
+            .await
+            .expect("resolve default agent");
+        let config = ctx.state.config_store.get().await;
+        let skills = ctx.state.skills.read().await.clone();
+        let available = wunder_server::tools::collect_available_tool_names(&config, &skills, None);
+        let expected = wunder_server::default_tool_profile::default_tool_names(&available);
+        assert_eq!(
+            agent.tool_names.iter().collect::<HashSet<_>>(),
+            expected.iter().collect(),
+            "{mode}: default selection must follow runtime availability"
+        );
+        for name in ["浏览器", "文本编辑", "计划面板", "问询面板"] {
+            assert!(
+                agent.tool_names.iter().any(|item| item == name),
+                "{mode}: missing {name}"
+            );
+            assert!(agent.declared_tool_names.iter().any(|item| item == name));
+            assert!(agent
+                .ability_items
+                .iter()
+                .any(|item| item.runtime_name == name));
+        }
+        let selected: HashSet<String> = agent.tool_names.iter().cloned().collect();
+        let expanded = wunder_server::tools::expand_browser_group_selection(selected, &available);
+        for member in wunder_server::tools::browser_tool_names() {
+            assert!(
+                expanded.contains(&member),
+                "{mode}: missing browser member {member}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn default_agent_upgrades_old_tools_and_preserves_later_manual_selection() {
+    use wunder_server::default_agent_protocol::{default_agent_meta_key, DefaultAgentConfig};
+    let ctx = build_contract_context().await;
+    ctx.state
+        .config_store
+        .update(|config| {
+            config.server.mode = "api".to_string();
+            config.tools.builtin.enabled = ["read_file", "edit", "update_plan", "question_panel"]
+                .into_iter()
+                .map(str::to_string)
+                .collect();
+        })
+        .await
+        .expect("configure builtins");
+    let user_id = "sample_migration";
+    let key = default_agent_meta_key(user_id);
+    let legacy = DefaultAgentConfig {
+        system_prompt: "Sample instructions".to_string(),
+        visible_unit_ids: vec!["sample_unit".to_string()],
+        tool_names: vec!["read_file".to_string()],
+        declared_tool_names: vec!["read_file".to_string()],
+        ..Default::default()
+    };
+    ctx.state
+        .user_store
+        .set_meta(&key, &serde_json::to_string(&legacy).unwrap())
+        .unwrap();
+    let upgraded = wunder_server::agent_management::owned(&ctx.state, user_id, "__default__")
+        .await
+        .expect("upgrade default agent");
+    for name in ["读取文件", "文本编辑", "计划面板", "问询面板"] {
+        assert!(upgraded.tool_names.iter().any(|item| item == name));
+        assert!(upgraded.declared_tool_names.iter().any(|item| item == name));
+        assert!(upgraded
+            .ability_items
+            .iter()
+            .any(|item| item.runtime_name == name));
+    }
+    assert_eq!(upgraded.system_prompt, legacy.system_prompt);
+    let config: DefaultAgentConfig = serde_json::from_str(
+        &ctx.state
+            .user_store
+            .get_meta(&key)
+            .expect("load upgraded default config")
+            .expect("default config persisted"),
+    )
+    .expect("parse upgraded default config");
+    assert_eq!(config.visible_unit_ids, legacy.visible_unit_ids);
+    assert_eq!(config.system_prompt, legacy.system_prompt);
+
+    // 模拟编辑器完整保存一个手动缩小的选择，后续读取不得再次恢复已取消项。
+    let manual = DefaultAgentConfig {
+        tool_names: vec!["读取文件".to_string()],
+        declared_tool_names: vec!["读取文件".to_string()],
+        ..legacy
+    };
+    ctx.state
+        .user_store
+        .set_meta(&key, &serde_json::to_string(&manual).unwrap())
+        .unwrap();
+    let read_back = wunder_server::agent_management::owned(&ctx.state, user_id, "__default__")
+        .await
+        .expect("read manual selection");
+    assert_eq!(read_back.tool_names, manual.tool_names);
+
+    // 后续首次启用的新能力自动加入；不会因此恢复之前手动取消的工具。
+    ctx.state
+        .config_store
+        .update(|config| {
+            config.browser.enabled = true;
+            config.tools.browser.enabled = true;
+        })
+        .await
+        .expect("enable browser later");
+    let updated = wunder_server::agent_management::owned(&ctx.state, user_id, "__default__")
+        .await
+        .expect("initialize newly available capability");
+    assert_eq!(
+        updated.tool_names.into_iter().collect::<HashSet<_>>(),
+        ["读取文件", "浏览器"]
+            .into_iter()
+            .map(str::to_string)
+            .collect()
+    );
+}
+
+#[tokio::test]
+async fn default_agent_initialization_respects_user_tool_permissions() {
+    let ctx = build_contract_context().await;
+    let user_id = "sample_restricted";
+    ctx.state
+        .config_store
+        .update(|config| {
+            config.server.mode = "api".to_string();
+            config.tools.builtin.enabled =
+                wunder_server::default_tool_profile::default_tool_candidates();
+            config.browser.enabled = true;
+            config.tools.browser.enabled = true;
+        })
+        .await
+        .expect("configure builtin availability");
+    ctx.state
+        .user_store
+        .set_user_tool_access(user_id, Some(&vec!["读取文件".to_string()]))
+        .expect("restrict tool permissions");
+    let record = wunder_server::agent_management::owned(&ctx.state, user_id, "__default__")
+        .await
+        .expect("resolve restricted default agent");
+    assert_eq!(record.tool_names, vec!["读取文件".to_string()]);
+
+    ctx.state
+        .user_store
+        .set_user_tool_access(
+            user_id,
+            Some(&vec!["读取文件".to_string(), "浏览器".to_string()]),
+        )
+        .expect("grant browser capability");
+    let record = wunder_server::agent_management::owned(&ctx.state, user_id, "__default__")
+        .await
+        .expect("resolve newly granted capability");
+    assert_eq!(
+        record.tool_names.into_iter().collect::<HashSet<_>>(),
+        ["读取文件", "浏览器"]
+            .into_iter()
+            .map(str::to_string)
+            .collect()
+    );
 }

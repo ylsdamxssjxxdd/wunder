@@ -41,6 +41,7 @@ mod terminal_grid;
 mod thread_trajectory;
 mod timeline;
 mod timeline_text;
+mod chat_process;
 mod tool_icons;
 mod tools_ui;
 mod tray;

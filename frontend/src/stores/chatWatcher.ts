@@ -96,7 +96,7 @@ export const startSessionWatcher = (store, sessionId) => {
             })
           : null;
         const displayStatus=threadViewStatus(key);
-        const running = displayStatus!==null ? ['running','queued','waiting_input','waiting_approval'].includes(displayStatus) : durableRunning ?? (
+        const running = displayStatus!==null ? ['running','queued'].includes(displayStatus) : durableRunning ?? (
           isThreadRuntimeBusy(runtime?.threadStatus) ||
           hasRunningAssistantMessage(sessionMessagesRef)
         );

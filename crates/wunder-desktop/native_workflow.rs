@@ -10,11 +10,6 @@ mod sections;
 impl NativeWorkflowEntry {
     pub fn from_payload(id: &str, title: &str, detail: String, state: &str, data: &Value) -> Self {
         let args = data.get("args").or_else(|| data.get("arguments"));
-        let target = args.and_then(|args| {
-            ["path", "file_path", "command", "cmd", "query"]
-                .iter()
-                .find_map(|key| args.get(*key).and_then(Value::as_str))
-        });
         let compaction = title == "上下文压缩" || title == "context_compaction";
         let brief = if compaction {
             match data["status"].as_str().unwrap_or(state) {
@@ -25,19 +20,17 @@ impl NativeWorkflowEntry {
                 _ => "上下文已压缩",
             }
         } else {
-            target
-                .or_else(|| {
-                    ["command", "cmd", "query", "url", "uri"]
-                        .iter()
-                        .find_map(|key| data.get(*key).and_then(Value::as_str))
-                })
-                .unwrap_or_else(|| detail.lines().nth(1).unwrap_or(""))
+            ""
         };
-        let preview = brief
-            .chars()
-            .take(640)
-            .map(|c| if c.is_whitespace() { ' ' } else { c })
-            .collect();
+        let preview = if compaction {
+            brief.to_string()
+        } else {
+            call_preview(title, data)
+        }
+        .chars()
+        .take(640)
+        .map(|c| if c.is_whitespace() { ' ' } else { c })
+        .collect();
         let tokens = request_context_tokens(data)
             .map(|n| format!("{} token", compact(n)))
             .unwrap_or_default();
@@ -65,7 +58,7 @@ impl NativeWorkflowEntry {
             id: id.into(),
             title: title.into(),
             preview,
-            detail,
+            detail: complete_copy_text(data).unwrap_or(detail),
             state: state.into(),
             tokens,
             duration,
@@ -73,6 +66,93 @@ impl NativeWorkflowEntry {
             patch_files,
         }
     }
+}
+
+/// Display sections are bounded independently. Copy keeps the original text
+/// instead of silently substituting the clipped 120-line display projection.
+fn complete_copy_text(data: &Value) -> Option<String> {
+    let mut result = data.get("result").unwrap_or(data);
+    for _ in 0..4 {
+        if let Some(nested) = result.get("data").filter(|value| value.is_object()) {
+            result = nested;
+        } else {
+            break;
+        }
+    }
+    if let Some(value) = result
+        .as_str()
+        .or_else(|| result["content"].as_str())
+        .or_else(|| result["text"].as_str())
+        .or_else(|| result["output"].as_str())
+    {
+        if value.len() <= 2 * 1024 * 1024 {
+            return Some(value.into());
+        }
+    }
+    if result.get("stdout").is_some() || result.get("stderr").is_some() {
+        let stdout = result["stdout"].as_str().unwrap_or_default();
+        let stderr = result["stderr"].as_str().unwrap_or_default();
+        if stdout.len().saturating_add(stderr.len()) <= 2 * 1024 * 1024 {
+            return Some(if stderr.is_empty() {
+                stdout.into()
+            } else {
+                format!("{stdout}\n{stderr}")
+            });
+        }
+    }
+    None
+}
+
+/// A collapsed row describes invocation arguments only. Results can contain
+/// arbitrary `path`, `query` or `content` fields that are not the call target.
+fn call_preview(tool: &str, data: &Value) -> String {
+    let args = data.get("args").or_else(|| data.get("arguments"));
+    let parsed = args
+        .and_then(Value::as_str)
+        .filter(|value| value.len() <= 8192)
+        .and_then(|value| serde_json::from_str::<Value>(value).ok());
+    let args = parsed.as_ref().or(args).unwrap_or(&Value::Null);
+    let command = matches!(
+        tool,
+        "execute_command" | "run_command" | "shell" | "运行命令" | "执行命令" | "command_session"
+    );
+    let keys: &[&str] = if command {
+        &["content", "command", "cmd", "input", "script", "raw"]
+    } else if matches!(tool, "web_fetch" | "webfetch" | "网页抓取") {
+        &["url", "uri", "query"]
+    } else {
+        &[
+            "query",
+            "question",
+            "keyword",
+            "path",
+            "file_path",
+            "file",
+            "filename",
+            "url",
+            "uri",
+            "action",
+            "operation",
+        ]
+    };
+    if let Some(queries) = args["queries"].as_array() {
+        return queries
+            .iter()
+            .filter_map(Value::as_str)
+            .take(8)
+            .map(|value| value.chars().take(104).collect::<String>())
+            .collect::<Vec<_>>()
+            .join(", ")
+            .chars()
+            .take(640)
+            .collect();
+    }
+    keys.iter()
+        .find_map(|key| args.get(*key).and_then(Value::as_str))
+        .unwrap_or_default()
+        .chars()
+        .take(640)
+        .collect()
 }
 
 /// Match the web timeline's collapsed-row metadata: context occupancy wins,
@@ -85,8 +165,8 @@ fn request_context_tokens(data: &Value) -> Option<f64> {
     if let Some(usage) = data.get("request_usage").and_then(Value::as_object) {
         if let Some(total) = usage
             .get("total_tokens")
-            .or_else(|| usage.get("total"))
             .and_then(positive_count)
+            .or_else(|| usage.get("total").and_then(positive_count))
         {
             return Some(total);
         }
@@ -214,6 +294,40 @@ mod tests {
     use super::*;
     use serde_json::json;
     #[test]
+    fn invocation_preview_never_reads_result_fields() {
+        for (tool, payload, expected) in [
+            (
+                "web_search",
+                json!({"args":{"queries":["sample one", "sample two"]},"result":{"query":"wrong"}}),
+                "sample one, sample two",
+            ),
+            (
+                "web_fetch",
+                json!({"arguments":"{\"url\":\"https://example.invalid\"}","result":{"url":"wrong"}}),
+                "https://example.invalid",
+            ),
+            (
+                "execute_command",
+                json!({"args":{"content":"check sample.txt"}}),
+                "check sample.txt",
+            ),
+            (
+                "read_file",
+                json!({"result":{"path":"wrong","content":"output"}}),
+                "",
+            ),
+        ] {
+            let entry = NativeWorkflowEntry::from_payload(
+                "fixture-tool",
+                tool,
+                "result\nwrong".into(),
+                "completed",
+                &payload,
+            );
+            assert_eq!(entry.preview, expected);
+        }
+    }
+    #[test]
     fn collapsed_metrics_match_web_and_ignore_business_metrics() {
         for (payload, expected) in [
             (
@@ -238,7 +352,7 @@ mod tests {
                 json!({"request_context_tokens":null,"data":{"consumed_tokens":123}}),
                 "",
             ),
-            (json!({"request_context_tokens":1800}), ""),
+            (json!({"request_context_tokens":1800}), "1.8k token"),
             (
                 json!({"args":{"consumed_tokens":123},"data":{"usage":{"total":456}}}),
                 "",
@@ -273,7 +387,7 @@ mod tests {
                 row.tokens.as_str(),
                 row.duration.as_str()
             ),
-            ("example.txt", "2.4k token", "1.2s")
+            ("example.txt", "2.4k token", "1.3s")
         );
         let empty = NativeWorkflowEntry::from_payload(
             "tool-2",

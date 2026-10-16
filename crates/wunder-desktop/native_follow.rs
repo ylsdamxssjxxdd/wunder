@@ -19,6 +19,7 @@ struct Projection {
     text_item: String,
     text: String,
     offset: usize,
+    user_round: i64,
 }
 
 impl Projection {
@@ -34,6 +35,11 @@ impl Projection {
             .rev()
             .find(|turn| turn["root_turn_id"] == self.root || turn["turn_id"] == self.root)
             .ok_or_else(|| anyhow!("snapshot root missing"))?;
+        self.user_round = turns
+            .iter()
+            .find(|turn| turn["turn_id"] == self.root)
+            .and_then(|turn| turn["user_turn_index"].as_i64())
+            .unwrap_or(self.user_round);
         let execution = latest["turn_id"]
             .as_str()
             .ok_or_else(|| anyhow!("snapshot execution missing"))?;
@@ -67,7 +73,7 @@ impl Projection {
         }
         self.status = latest["status"].as_str().unwrap_or_default().into();
         self.cursor = cursor;
-        events.push(json!({"event":"native_execution_status","data":{"status":self.status}}));
+        events.push(json!({"event":"native_execution_status","data":{"root_turn_id":self.root,"status":self.status,"user_round":self.user_round}}));
         Ok(events)
     }
 
@@ -87,6 +93,9 @@ impl Projection {
                 if root != self.root {
                     return Ok(events);
                 }
+                if let Some(round) = p["user_turn_index"].as_i64().filter(|round| *round > 0) {
+                    self.user_round = round;
+                }
                 if self.execution != execution {
                     // Acceptance starts an execution. Status changes for old
                     // executions must never switch the active execution back.
@@ -101,11 +110,11 @@ impl Projection {
                     self.text_item.clear();
                     self.text.clear();
                     self.offset = 0;
-                    events.push(json!({"event":"native_execution_started","data":{"root_turn_id":self.root,"turn_id":execution}}));
+                    events.push(json!({"event":"native_execution_started","data":{"root_turn_id":self.root,"turn_id":execution,"user_round":self.user_round}}));
                 }
                 self.status = p["status"].as_str().unwrap_or_default().into();
                 events
-                    .push(json!({"event":"native_execution_status","data":{"status":self.status}}));
+                    .push(json!({"event":"native_execution_status","data":{"root_turn_id":self.root,"status":self.status,"user_round":self.user_round}}));
             }
             "item_upsert" if execution == self.execution => {
                 if matches!(p["visibility"].as_str(), Some("admin" | "model_internal")) {
@@ -283,6 +292,23 @@ pub(super) async fn watch(
         cursor,
         ..Default::default()
     };
+    // Admission can precede the supplied cursor (queued/background starts).
+    // Resolve the root ordinal once, without replaying the full conversation.
+    let storage = state.storage.clone();
+    let (owner, target, root_id) = (user.to_string(), session.to_string(), root.to_string());
+    projection.user_round = blocking::run_db("native.follow.identity", move || {
+        Ok(storage
+            .get_thread_turn(&owner, &target, &root_id, -1, 1, false)?
+            .and_then(|turn| turn["user_turn_index"].as_i64())
+            .unwrap_or_default())
+    })
+    .await?;
+    tokio::select! {
+        _ = cancel.cancelled() => { cancel_chat(state, user, session).await?; return Ok(()); }
+        result = output.send(NativeChatEvent::Event(json!({"event":"native_turn_identity","data":{"root_turn_id":root,"user_round":projection.user_round}}))) => {
+            if result.is_err() { return Ok(()); }
+        }
+    }
     if continuing {
         projection.execution = root.into();
         projection.status = "completed".into();
@@ -293,7 +319,7 @@ pub(super) async fn watch(
                 return Ok(());
             }
             result = output.send(NativeChatEvent::Event(
-                json!({"event":"native_execution_status","data":{"status":"continuing"}}),
+                json!({"event":"native_execution_status","data":{"root_turn_id":root,"status":"continuing","user_round":projection.user_round}}),
             )) => { if result.is_err() { return Ok(()); } }
         }
     }
@@ -348,7 +374,7 @@ pub(super) async fn watch(
                 // Drain the terminal item's text/statistics commits before Finished.
                 if projection.settled(active) && projection.cursor >= watermark {
                     let status = projection.status.clone();
-                    output.send(NativeChatEvent::Event(json!({"event":"turn_terminal","data":{"status":status}}))).await.ok();
+                    output.send(NativeChatEvent::Event(json!({"event":"turn_terminal","data":{"status":status,"user_round":projection.user_round}}))).await.ok();
                     return Ok(());
                 }
             }
@@ -566,6 +592,9 @@ mod tests {
             )
             .unwrap();
         let child_id = child["turn_id"].as_str().unwrap();
+        // Admission is not execution. Mirror the scheduler's durable running
+        // transition before writing streamed items.
+        state.storage.update_thread_turn("owner", "fixture-session", child_id, "running", "", &json!({})).unwrap();
         let item = format!("{child_id}:text-1");
         state.storage.append_thread_item("owner", &json!({"session_id":"fixture-session","turn_id":child_id,
             "item_id":item,"kind":"assistant_message","role":"assistant","model_round":1,"content":"","status":"running"})).unwrap();

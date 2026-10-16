@@ -158,7 +158,7 @@ const TOOL_PROFILES: &[ToolProfile] = &[
         cost_ms: (10, 300),
     },
     ToolProfile {
-        name: "glob",
+        name: "文件名匹配",
         function_name: "glob_files",
         cost_ms: (15, 400),
     },
@@ -365,7 +365,7 @@ pub(crate) fn build_tool_args(rng: &mut Rng, profile: &ToolProfile, turn_index: 
         }
         "ptc" => json!({ "code": "return items.filter(i => i.ok).length;" }),
         "列出文件" => json!({ "path": ".", "depth": rng.int(1, 3) }),
-        "glob" => json!({ "pattern": "**/*.rs", "path": "src" }),
+        "文件名匹配" => json!({ "pattern": "**/*.rs", "path": "src" }),
         "搜索内容" => {
             json!({ "query": rng.pick_str(&["latest_change_seq", "journal_mode", "user_round", "tool_call_id"]), "path": "src" })
         }
@@ -447,7 +447,7 @@ pub(crate) fn build_tool_result(
                 ]),
                 "stderr": "",
             }),
-            "列出文件" | "glob" => {
+            "列出文件" | "文件名匹配" => {
                 let mut entries = Vec::new();
                 for i in 0..rng.int(3, 12) {
                     entries.push(json!({

@@ -48,6 +48,8 @@ export const applyThreadViewEffects=(store,key:string,prior:Map<string,string>)=
   for(const slot of slots){const status=String(slot.assistant.status),turnId=String(slot.assistant.turn_id);
     const previous = prior.get(slot.rootTurnId) ?? prior.get(`pending:${slot.assistant.client_message_id}`);
     if(!terminal(status)||previous===undefined||terminal(previous)||claims.has(turnId))continue;
+    if (['goal_command','user_reply','question_panel'].includes(String(slot.assistant.stop_reason || '')) ||
+        (status === 'completed' && slot.assistant.questionPanel?.status === 'pending')) continue;
     claims.add(turnId);if(claims.size>256)claims.delete(claims.values().next().value!);
     completedTurns.push({sessionId:key,turnId,status:status==='completed'?'completed':status==='failed'?'failed':'cancelled',...(agentId?{agentId}: {})});
   }
@@ -171,6 +173,7 @@ export const applyChatThreadEffects = (store, key: string, changes: ThreadChange
       const completedTurns: AgentRuntimeCompletion[] = changes
         .filter((change) =>
           (change.change_type === 'turn_upsert' || change.change_type === 'turn_status') &&
+          !['goal_command', 'user_reply', 'question_panel'].includes(String(change.data.stop_reason ?? state?.turns.get(String(change.data.turn_id ?? change.turn_id ?? ''))?.stopReason ?? '')) &&
           ['completed', 'failed', 'cancelled', 'canceled', 'interrupted', 'stopped']
             .includes(String(change.data.status ?? '').toLowerCase())
         )

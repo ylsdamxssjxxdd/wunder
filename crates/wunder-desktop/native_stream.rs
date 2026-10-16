@@ -144,6 +144,12 @@ async fn run(
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_string();
+    let user_round = request
+        .config_overrides
+        .as_ref()
+        .and_then(|v| v["__thread_log_user_round"].as_i64())
+        .unwrap_or(0);
+    let _ = output.send(NativeChatEvent::Event(json!({"event":"native_turn_identity", "data":{"root_turn_id":root_id,"user_round":user_round}}))).await;
     let stream = state.kernel.orchestrator.stream(request).await?;
     tokio::pin!(stream);
     let mut stopped = false;

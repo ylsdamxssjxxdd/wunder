@@ -9,7 +9,7 @@ use crate::schemas::ToolSpec;
 use crate::services::browser::provider::{
     scope_from_context, BrowserProvider, ContentBlock, ProviderCallFuture, ProviderOutcome,
 };
-use crate::services::browser::runtime::browser_service;
+use crate::services::browser::runtime::{browser_service, BrowserCommandFailure};
 use crate::services::tools::ToolContext;
 use anyhow::{anyhow, Result};
 use serde_json::{json, Map, Value};
@@ -75,6 +75,9 @@ impl Default for PlaywrightProvider {
 }
 
 impl BrowserProvider for PlaywrightProvider {
+    fn owns_tool(&self, name: &str) -> bool {
+        TOOL_NAMES.contains(&name.trim())
+    }
     fn id(&self) -> &'static str {
         PROVIDER_ID
     }
@@ -93,7 +96,16 @@ impl BrowserProvider for PlaywrightProvider {
         tool: &'a str,
         args: &'a Value,
     ) -> ProviderCallFuture<'a> {
-        Box::pin(async move { dispatch(context, tool, args).await })
+        Box::pin(async move {
+            match dispatch(context, tool, args).await {
+                Err(error) => match error.downcast_ref::<BrowserCommandFailure>() {
+                    Some(failure) => Ok(ProviderOutcome::failure(error.to_string())
+                        .with_structured(failure.data.clone())),
+                    None => Err(error),
+                },
+                result => result,
+            }
+        })
     }
 }
 
@@ -112,10 +124,10 @@ fn raw_spec(name: &str, description: &str, properties: Value, required: &[&str])
 }
 
 fn playwright_tool_specs() -> Vec<ToolSpec> {
-    vec![
+    let mut specs = vec![
         raw_spec(
             TOOL_NAVIGATE,
-            "Navigate the current tab to a URL.",
+            "Navigate the current tab to an absolute URL. Set include_snapshot=true to identify page elements in the same call. A loopback address is relative to the browser runtime (which may run in a container), not necessarily the user's computer.",
             json!({
                 "url": {"type": "string", "description": "Absolute http(s) URL to open."},
                 "target_id": {"type": "string", "description": "Tab id; defaults to the active tab."},
@@ -165,7 +177,7 @@ fn playwright_tool_specs() -> Vec<ToolSpec> {
         ),
         raw_spec(
             TOOL_TYPE,
-            "Type text into an element identified by a snapshot ref or a CSS selector.",
+            "Replace an element's text using a current snapshot ref or CSS selector. submit=true presses Enter after filling. Input values are not echoed. Prefer browser_batch for filling several known fields and submitting in order; never run dependent page actions in parallel.",
             json!({
                 "ref": {"type": "string"},
                 "selector": {"type": "string"},
@@ -234,18 +246,21 @@ fn playwright_tool_specs() -> Vec<ToolSpec> {
         ),
         raw_spec(
             TOOL_WAIT_FOR,
-            "Wait for a fixed duration, a load state, or for text to appear.",
+            "Wait for one condition: visible selector, visible text, URL glob, or load state. Prefer a success element or URL over a fixed delay. Optionally include a fresh snapshot to verify the resulting page. All waits have a bounded timeout.",
             json!({
-                "wait_ms": {"type": "integer", "minimum": 0},
+                "wait_ms": {"type": "integer", "minimum": 0, "maximum":120000},
                 "load_state": {"type": "string", "enum": ["load", "domcontentloaded", "networkidle"]},
                 "text": {"type": "string"},
+                "selector": {"type": "string", "description": "CSS selector that must become visible."},
+                "url": {"type": "string", "description": "Expected absolute URL or Playwright URL glob, e.g. **/complete."},
+                "timeout_ms": {"type": "integer", "minimum": 1, "maximum": 120000},
                 "target_id": {"type": "string"},
             }),
             &[],
         ),
         raw_spec(
             TOOL_SCREENSHOT,
-            "Take a screenshot of the current page and return it as an image.",
+            "Capture the current page and persist an image attachment in the workspace. The result includes its path and metadata; use the image-reading tool if visual inspection is needed. Confirm the attachment reference before reporting successful delivery.",
             json!({
                 "path": {"type": "string", "description": "Optional workspace-relative output path."},
                 "full_page": {"type": "boolean"},
@@ -264,11 +279,12 @@ fn playwright_tool_specs() -> Vec<ToolSpec> {
         ),
         raw_spec(
             TOOL_BATCH,
-            "Run a batch of interaction steps in order (max 10 steps).",
+            "Execute 1 to 10 dependent page actions sequentially in one call. Each step requires kind and its action arguments. Use current snapshot refs; navigation may invalidate them. Example: steps=[{kind:'type',ref:'e1',text:'sample'},{kind:'click',ref:'e2'},{kind:'wait',url:'**/complete'}], include_snapshot=true. Stops on first failure and reports completed_steps and 1-based failed_step; inspect progress before retrying to avoid duplicate submissions. No nested batches.",
             json!({
                 "steps": {
                     "type": "array",
-                    "items": {"type": "object"},
+                    "items": batch_step_schema(),
+                    "minItems": 1,
                     "maxItems": 10
                 },
                 "target_id": {"type": "string"},
@@ -287,7 +303,38 @@ fn playwright_tool_specs() -> Vec<ToolSpec> {
             json!({}),
             &[],
         ),
-    ]
+    ];
+    for spec in &mut specs {
+        if matches!(
+            spec.name.as_str(),
+            TOOL_NAVIGATE | TOOL_CLICK | TOOL_TYPE | TOOL_WAIT_FOR | TOOL_BATCH
+        ) {
+            let properties = spec.input_schema["properties"]
+                .as_object_mut()
+                .expect("properties");
+            properties.insert("include_snapshot".to_string(), json!({"type":"boolean", "description":"Return a fresh bounded element snapshot after success; avoids a separate browser_snapshot call."}));
+            properties.insert("max_chars".to_string(), json!({"type":"integer", "minimum":1, "maximum":40000, "description":"Character budget for the optional snapshot."}));
+        }
+    }
+    specs
+}
+
+fn batch_step_schema() -> Value {
+    json!({
+        "type":"object", "required":["kind"], "additionalProperties":false,
+        "properties": {
+            "kind":{"type":"string", "enum":["type","click","press","select","hover","drag","wait","navigate"]},
+            "ref":{"type":"string"}, "selector":{"type":"string"},
+            "text":{"type":"string"}, "submit":{"type":"boolean"},
+            "key":{"type":"string"}, "double_click":{"type":"boolean"},
+            "value":{"anyOf":[{"type":"string"},{"type":"array","items":{"type":"string"}}]},
+            "from_ref":{"type":"string"}, "from_selector":{"type":"string"},
+            "to_ref":{"type":"string"}, "to_selector":{"type":"string"},
+            "url":{"type":"string"}, "load_state":{"type":"string","enum":["load","domcontentloaded","networkidle"]},
+            "wait_ms":{"type":"integer","minimum":0,"maximum":120000},
+            "timeout_ms":{"type":"integer","minimum":1,"maximum":120000}
+        }
+    })
 }
 
 async fn dispatch(context: &ToolContext<'_>, tool: &str, args: &Value) -> Result<ProviderOutcome> {
@@ -310,6 +357,7 @@ async fn dispatch(context: &ToolContext<'_>, tool: &str, args: &Value) -> Result
             call_args.insert("url".to_string(), json!(url));
             copy_opt(args, &mut call_args, "timeout_ms");
             copy_opt(args, &mut call_args, "target_id");
+            copy_snapshot_args(args, &mut call_args);
             let data = service
                 .execute(&scope, "navigate", &Value::Object(call_args))
                 .await?;
@@ -368,9 +416,14 @@ async fn dispatch(context: &ToolContext<'_>, tool: &str, args: &Value) -> Result
             let data = service
                 .execute(&scope, "snapshot", &Value::Object(call_args))
                 .await?;
-            let text =
-                primary_text(&data).unwrap_or_else(|| summarize_data(&data, max_chars_arg(args)));
-            Ok(ProviderOutcome::text(text))
+            let text = data
+                .get("snapshot")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            Ok(ProviderOutcome::text(text).with_structured(json!({
+                "target_id": data.get("target_id"), "url": data.get("url"),
+                "truncated": data.get("truncated").and_then(Value::as_bool).unwrap_or(false),
+            })))
         }
         TOOL_READ_PAGE => {
             let mut call_args = Map::new();
@@ -379,9 +432,14 @@ async fn dispatch(context: &ToolContext<'_>, tool: &str, args: &Value) -> Result
             let data = service
                 .execute(&scope, "read_page", &Value::Object(call_args))
                 .await?;
-            let text =
-                primary_text(&data).unwrap_or_else(|| summarize_data(&data, max_chars_arg(args)));
-            Ok(ProviderOutcome::text(text))
+            let text = data
+                .get("content")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            Ok(ProviderOutcome::text(text).with_structured(json!({
+                "target_id": data.get("target_id"), "url": data.get("url"),
+                "truncated": data.get("truncated").and_then(Value::as_bool).unwrap_or(false),
+            })))
         }
         TOOL_CLICK => {
             let request = request_with(
@@ -389,23 +447,25 @@ async fn dispatch(context: &ToolContext<'_>, tool: &str, args: &Value) -> Result
                 args,
                 &["ref", "selector", "element", "double_click"],
             );
-            act_outcome(
+            provider_act(
                 service,
                 &scope,
                 request,
                 target.as_deref(),
                 "Clicked the element.",
+                args,
             )
             .await
         }
         TOOL_TYPE => {
             let request = request_with("type", args, &["ref", "selector", "text", "submit"]);
-            act_outcome(
+            provider_act(
                 service,
                 &scope,
                 request,
                 target.as_deref(),
                 "Typed into the element.",
+                args,
             )
             .await
         }
@@ -471,16 +531,23 @@ async fn dispatch(context: &ToolContext<'_>, tool: &str, args: &Value) -> Result
         TOOL_WAIT_FOR => {
             let mut request = Map::new();
             request.insert("kind".to_string(), json!("wait"));
-            for key in ["wait_ms", "ms", "load_state", "state", "text"] {
+            for key in [
+                "wait_ms",
+                "load_state",
+                "text",
+                "selector",
+                "url",
+                "timeout_ms",
+            ] {
                 copy_opt(args, &mut request, key);
             }
-            let request = Value::Object(request);
-            act_outcome(
+            provider_act(
                 service,
                 &scope,
-                request,
+                Value::Object(request),
                 target.as_deref(),
                 "Wait finished.",
+                args,
             )
             .await
         }
@@ -491,12 +558,13 @@ async fn dispatch(context: &ToolContext<'_>, tool: &str, args: &Value) -> Result
                 .filter(Value::is_array)
                 .ok_or_else(|| anyhow!("browser_batch requires an array 'steps'"))?;
             let request = json!({"kind": "batch", "steps": steps});
-            act_outcome(
+            provider_act(
                 service,
                 &scope,
                 request,
                 target.as_deref(),
                 "Batch finished.",
+                args,
             )
             .await
         }
@@ -529,11 +597,10 @@ async fn dispatch(context: &ToolContext<'_>, tool: &str, args: &Value) -> Result
                     ])
                     .with_structured(data))
                 }
-                None => Ok(ProviderOutcome::text(format!(
-                    "Screenshot returned no image payload: {}",
-                    summarize_data(&data, 2000)
-                ))
-                .with_structured(data)),
+                None => Ok(
+                    ProviderOutcome::failure("Screenshot returned no image payload.")
+                        .with_structured(data),
+                ),
             }
         }
         other => Err(anyhow!("Unknown browser tool '{other}'")),
@@ -551,6 +618,30 @@ async fn act_outcome(
         .execute(scope, "act", &act_args(request, target_id))
         .await?;
     Ok(text_outcome(label, data))
+}
+
+async fn provider_act(
+    service: &crate::services::browser::runtime::BrowserControlService,
+    scope: &crate::services::browser::model::BrowserSessionScope,
+    request: Value,
+    target_id: Option<&str>,
+    label: impl Into<String>,
+    args: &Value,
+) -> Result<ProviderOutcome> {
+    let mut call_args = act_args(request, target_id);
+    copy_snapshot_args(args, call_args.as_object_mut().expect("act args"));
+    let data = service.execute(scope, "act", &call_args).await?;
+    Ok(text_outcome(label, data))
+}
+
+fn copy_snapshot_args(args: &Value, call_args: &mut Map<String, Value>) {
+    copy_opt(args, call_args, "include_snapshot");
+    copy_opt(args, call_args, "max_chars");
+    if args.get("include_snapshot").and_then(Value::as_bool) == Some(true) {
+        call_args
+            .entry("max_chars".to_string())
+            .or_insert(json!(4000));
+    }
 }
 
 fn act_args(request: Value, target_id: Option<&str>) -> Value {
@@ -591,24 +682,11 @@ fn required_str(args: &Value, key: &str) -> Result<String> {
     opt_str(args, key).ok_or_else(|| anyhow!("Missing required parameter '{key}'"))
 }
 
-fn max_chars_arg(args: &Value) -> usize {
-    args.get("max_chars")
-        .and_then(Value::as_u64)
-        .filter(|value| *value > 0)
-        .map(|value| value as usize)
-        .unwrap_or(DEFAULT_MAX_CHARS)
-}
-
 /// Turn a bridge payload into a text block, preferring a natural text field.
 fn text_outcome(label: impl Into<String>, data: Value) -> ProviderOutcome {
-    let label = label.into();
-    let body = primary_text(&data).unwrap_or_else(|| summarize_data(&data, DEFAULT_MAX_CHARS));
-    let text = if body.trim().is_empty() {
-        label
-    } else {
-        format!("{label}\n{body}")
-    };
-    ProviderOutcome::text(text).with_structured(data)
+    // Structured data already carries the observation; duplicating its JSON in
+    // a text block wastes context and used to hide attachment loss.
+    ProviderOutcome::text(label).with_structured(data)
 }
 
 /// Prefer a human-readable field over raw JSON.
@@ -633,9 +711,7 @@ fn truncate_chars(input: &str, max_chars: usize) -> String {
     if input.chars().count() <= max_chars {
         return input.to_string();
     }
-    let mut out: String = input.chars().take(max_chars).collect();
-    out.push_str("\n...[truncated]");
-    out
+    input.chars().take(max_chars).collect()
 }
 
 /// Map a bridge image format onto a whitelisted MIME type (dsh parity).
@@ -686,6 +762,44 @@ mod tests {
     }
 
     #[test]
+    fn browser_specs_describe_batch_steps_and_observation_options() {
+        let specs = PlaywrightProvider::new().tool_specs();
+        let batch = specs
+            .iter()
+            .find(|spec| spec.name == "browser_batch")
+            .unwrap();
+        let steps = &batch.input_schema["properties"]["steps"];
+        assert_eq!(steps["minItems"], 1);
+        assert_eq!(steps["maxItems"], 10);
+        assert_eq!(steps["items"]["required"], json!(["kind"]));
+        assert!(steps["items"]["properties"]["kind"]["enum"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|kind| kind == "wait"));
+        for name in [
+            "browser_navigate",
+            "browser_click",
+            "browser_type",
+            "browser_wait_for",
+            "browser_batch",
+        ] {
+            let spec = specs.iter().find(|spec| spec.name == name).unwrap();
+            assert_eq!(
+                spec.input_schema["properties"]["include_snapshot"]["type"],
+                "boolean"
+            );
+        }
+        let wait = specs
+            .iter()
+            .find(|spec| spec.name == "browser_wait_for")
+            .unwrap();
+        for key in ["selector", "url", "timeout_ms"] {
+            assert!(wait.input_schema["properties"].get(key).is_some());
+        }
+    }
+
+    #[test]
     fn image_mime_is_whitelisted() {
         assert_eq!(normalize_image_mime("png"), "image/png");
         assert_eq!(normalize_image_mime("jpg"), "image/jpeg");
@@ -696,10 +810,10 @@ mod tests {
     }
 
     #[test]
-    fn truncate_marks_truncated_payloads() {
+    fn truncation_respects_small_character_budgets() {
         assert_eq!(truncate_chars("abc", 10), "abc");
         let truncated = truncate_chars("abcdefghij", 3);
         assert!(truncated.starts_with("abc"));
-        assert!(truncated.contains("truncated"));
+        assert_eq!(truncated.chars().count(), 3);
     }
 }

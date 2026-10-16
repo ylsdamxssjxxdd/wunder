@@ -154,7 +154,7 @@ pub async fn execute_goal_command(
                 ));
             }
             let edited = service
-                .edit(
+                .edit_with_activation(
                     storage,
                     user_id,
                     session_id,
@@ -164,6 +164,7 @@ pub async fn execute_goal_command(
                     },
                     &objective,
                     None,
+                    (view.phase() == GoalPhase::Active).then_some(GoalActivation::Armed),
                 )
                 .await?;
             Ok((

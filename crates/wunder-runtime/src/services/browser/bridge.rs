@@ -215,22 +215,27 @@ impl BrowserBridge {
         let (reply_tx, reply_rx) = oneshot::channel();
         let line =
             serde_json::to_string(&command).map_err(|err| format!("Serialize error: {err}"))?;
-        if session
-            .tx
-            .send(Command {
-                line,
-                reply: reply_tx,
-            })
-            .await
-            .is_err()
-        {
-            self.retire(&session, "bridge pump gone");
-            return Err(format!(
-                "Browser bridge session '{session_key}' closed unexpectedly; retry the command."
-            ));
-        }
+        let deadline = tokio::time::Instant::now() + call_deadline;
+        let permit = match tokio::time::timeout_at(deadline, session.tx.reserve()).await {
+            Ok(Ok(permit)) => permit,
+            Ok(Err(_)) => {
+                self.retire(&session, "bridge pump gone");
+                return Err("Browser bridge closed before the command was queued.".to_string());
+            }
+            Err(_) => {
+                // This command has not run: do not kill another caller's active
+                // page operation just because the bounded queue is occupied.
+                return Err(
+                    "Browser command queue timed out; this command was not executed.".to_string(),
+                );
+            }
+        };
+        permit.send(Command {
+            line,
+            reply: reply_tx,
+        });
 
-        match tokio::time::timeout(call_deadline, reply_rx).await {
+        match tokio::time::timeout_at(deadline, reply_rx).await {
             Ok(Ok(response)) => {
                 // Idle is counted from the last finished command, not from the
                 // moment this one started.
@@ -934,6 +939,33 @@ mod tests {
         // The poisoned session must not keep holding a slot.
         assert_eq!(bridge.session_count(), 0);
         assert!(!session.is_ready());
+    }
+
+    #[tokio::test]
+    async fn full_command_queue_is_bounded_without_killing_active_session() {
+        let bridge = bridge_with(300, 5);
+        let (session, _rx) = silent_session("sample:thread", 0);
+        let (reply, _) = tokio::sync::oneshot::channel();
+        session
+            .tx
+            .try_send(Command {
+                line: "{}".to_string(),
+                reply,
+            })
+            .unwrap();
+        bridge.sessions.insert(session.key.clone(), session.clone());
+        let error = bridge
+            .send_command(
+                &session.key,
+                json!({"action":"tabs"}),
+                Duration::from_millis(30),
+            )
+            .await
+            .unwrap_err();
+        assert!(error.contains("not executed"));
+        assert!(session.is_ready());
+        assert_eq!(bridge.session_count(), 1);
+        assert_eq!(session.in_flight.load(Ordering::Acquire), 0);
     }
 
     #[test]

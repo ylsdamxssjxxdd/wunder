@@ -72,6 +72,20 @@ export class ChatMockService {
       plan: [{ step: 'First fixture step', status: advance ? 'completed' : 'in_progress' },
         { step: 'Second fixture step', status: advance ? 'in_progress' : 'pending' }] });
   }
+  seedInquiryTurn() {
+    const turn = { turn_id: `fixture-turn-${++this.round}`, user_round: this.round,
+      content: 'Fixture inquiry request', status: 'running' };
+    this.turns.push(turn);
+    this.commit('turn_upsert', turn);
+    this.item(turn, 'user', 'user_message', 'completed', { role: 'user', content: turn.content });
+    this.item(turn, 'text-1', 'assistant_message', 'completed', { role: 'assistant', content: 'Fixture waiting for choice.',
+      meta: { type: 'question_panel', panel: { status: 'pending', keep_open: true, questions: [
+        { question: 'Fixture choice?', multiple: false, options: [
+          { label: 'First fixture option', description: 'Fixture description', recommended: true },
+          { label: 'Second fixture option', description: '', recommended: false }] }] } } });
+    this.state(turn, 'waiting_input');
+    return turn;
+  }
   /** One presentation row per user round: sibling execution turns merge into their root. */
   private turnGroups(): Row[][] {
     const groups = new Map<string, Row[]>();
@@ -111,12 +125,14 @@ export class ChatMockService {
       return {
         execution_turn_id: String(execution.turn_id), root_turn_id: String(root.turn_id),
         user_round: Number(root.user_round), client_message_id: root.client_message_id ?? null,
-        revision: this.changes.length, status,
+        revision: this.changes.length, status, stop_reason: execution.stop_reason ?? '',
         queued_input: status==='queued'?{queue_id:String(root.turn_id),reason:this.active?'input':'capacity',priority:0}:null,
         user: { ...message(user, userContent), tail: '', failure: '', attachments: [] },
         assistant: { ...message(answer, content), content_offset: content.length,
           reasoning: activeReasoning, reasoning_offset: activeReasoning.length,
-          tail: running ? persisted : '', failure, stats: answer?.meta?.message_stats, attachments: [] },
+          tail: running ? persisted : '', failure, stats: answer?.meta?.message_stats, attachments: [],
+          question_panel: answer?.meta?.panel ? { ...answer.meta.panel,
+            status: status === 'cancelled' ? 'dismissed' : status === 'completed' ? 'answered' : 'pending' } : null },
         workflow_count: items.filter(i => i.kind === 'tool_call').length,
         reasoning_count: reasoningItems.length,
         reasoning_item_id: activeReasoning ? String(answer?.item_id ?? '') : '',
@@ -225,7 +241,21 @@ export class ChatMockService {
     }
   }
   private state(turn: Row, status: string) { turn.status = status; this.commit('turn_upsert', turn); }
+  private goalControl(content: string) {
+    const turn = { turn_id: `fixture-turn-${++this.round}`, user_round: this.round,
+      content, status: 'accepted', stop_reason: 'goal_command' };
+    this.turns.push(turn);
+    this.commit('turn_upsert', turn);
+    this.item(turn, 'user', 'user_message', 'completed', { role: 'user', content,
+      meta: { type: 'goal_command', goal_command: true } });
+    this.state(turn, 'completed');
+    return turn;
+  }
   private accept(content: string, client_message_id = '') {
+    for (const previous of this.turns.filter(turn => turn.status === 'waiting_input')) {
+      previous.stop_reason = 'user_reply';
+      this.state(previous, 'completed');
+    }
     const turn = { turn_id: `fixture-turn-${++this.round}`, user_round: this.round,
       content, client_message_id, status: this.active || this.queueNext ? 'queued' : 'accepted', held: this.holdNext,
       autoCompact: this.autoCompactNext, failTool: this.failToolNext };
@@ -262,14 +292,17 @@ export class ChatMockService {
       // Production accepts the command, then starts a separate internal
       // execution turn under the SAME user round. Do not flatten this in mocks.
       const root = turn;
+      root.stop_reason = 'goal_command';
+      this.state(root, 'completed');
+      await this.pause();
+      if (root.status === 'cancelled' || this.goal?.phase !== 'active') return;
       turn = { ...root, turn_id: `${root.turn_id}-continuation`, root_turn_id: root.turn_id,
-        trigger_kind: 'continuation', content: '', client_message_id: '', status: 'running', goalRun: true };
+        trigger_kind: 'continuation', content: '', client_message_id: '', status: 'running', stop_reason: '', goalRun: true };
       this.turns.push(turn);
       this.active = turn;
       this.commit('turn_upsert', turn);
       this.item(turn, 'user', 'user_message', 'completed', { role: 'user',
         content: 'Internal fixture continuation.', visibility: 'model_internal', root_turn_id: root.turn_id });
-      this.state(root, 'completed');
     }
     this.state(turn, 'running');
     if (this.items.has(`${turn.turn_id}:queue`)) this.item(turn, 'queue', 'queue', 'completed', {
@@ -324,6 +357,8 @@ export class ChatMockService {
     this.subscriptions = this.subscriptions.filter(sub => sub.turnId !== root);
   }
   cancel() {
+    // An inquiry has no live executor: session stop still settles its durable wait.
+    for (const waiting of this.turns.filter(turn => turn.status === 'waiting_input')) this.state(waiting, 'cancelled');
     const turn = this.active;
     if (!turn || !['running', 'queued'].includes(turn.status)) return;
     for (const item of this.items.values()) {
@@ -496,13 +531,17 @@ export class ChatMockService {
       else if (path.endsWith('/goal')) {
         if (request.method() === 'PUT') {
           if (payload?.action) {
+            if (payload.action === 'pause') this.cancel();
             this.updateGoal({ ...this.goal, phase: payload.action === 'pause' ? 'paused' : 'active',
               activation: payload.action === 'pause' ? 'disarmed' : 'armed' });
-            data = { goal: this.goal };
+            const command = payload.action === 'pause' ? this.goalControl('/goal pause') : this.accept('/goal resume');
+            data = { ...command, goal: this.goal };
           } else {
+            const editing = Boolean(this.goal);
+            if (editing) this.cancel();
             this.updateGoal({ goal_id: 'fixture-goal', objective: payload?.objective,
               phase: 'active', activation: 'armed', revision: 1, max_goal_rounds: 8, rounds_started: 0 });
-            data = { ...this.accept(`/goal ${payload?.objective}`, payload?.client_message_id), goal: this.goal };
+            data = { ...this.accept(`/goal ${editing ? 'edit ' : ''}${payload?.objective}`, payload?.client_message_id), goal: this.goal };
           }
         } else if (request.method() === 'DELETE') {
           this.updateGoal(null);

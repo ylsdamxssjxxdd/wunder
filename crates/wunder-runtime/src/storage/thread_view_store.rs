@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS thread_chat_rows (
  PRIMARY KEY(session_id,root_turn_id)
 );
 CREATE INDEX IF NOT EXISTS idx_thread_active_view_v2 ON thread_turns(user_id,session_id,user_turn_index DESC,created_time DESC) WHERE status IN ('accepted','queued','running','waiting_input','waiting_approval');
+CREATE INDEX IF NOT EXISTS idx_thread_turn_status_page ON thread_turns(user_id,session_id,status,user_turn_index DESC,created_time DESC);
 CREATE INDEX IF NOT EXISTS idx_thread_execution_view ON thread_turns(user_id,session_id,root_turn_id,created_time DESC,turn_id DESC);
 CREATE INDEX IF NOT EXISTS idx_thread_chat_page ON thread_chat_rows(user_id,session_id,user_round DESC);
 CREATE INDEX IF NOT EXISTS idx_thread_chat_changes ON thread_chat_rows(user_id,session_id,revision);
@@ -273,6 +274,7 @@ fn decode_chat_row(
 ) -> Result<ChatViewRow> {
     let value: Value = serde_json::from_str(payload)?;
     let legacy = value.get("plan").is_none();
+    let legacy_panel = value.pointer("/assistant/question_panel").is_none();
     let mut row: ChatViewRow = serde_json::from_value(value)?;
     if legacy {
         row.plan = super::thread_view_source::load_chat_plans(
@@ -283,7 +285,25 @@ fn decode_chat_row(
         )?
         .remove(&row.root_turn_id);
     }
+    if legacy_panel && !row.assistant.item_id.is_empty() {
+        row.assistant.question_panel = super::thread_view_source::load_question_panels(
+            db, user, session, &[row.assistant.item_id.clone()],
+        )?.remove(&row.assistant.item_id);
+        projection::settle_question_panel(&mut row);
+    }
+    repair_stop_reason(db, user, session, &mut row)?;
     Ok(row)
+}
+
+fn repair_stop_reason(db: &mut impl ViewDb, user: &str, session: &str, row: &mut ChatViewRow) -> Result<()> {
+    if row.stop_reason.is_none() {
+        let field = db.json_text("payload", "stop_reason");
+        if let Some(record) = one(db, &format!("SELECT substr(COALESCE({field},''),1,128) FROM thread_turns WHERE user_id=? AND session_id=? AND turn_id=?"),
+            &[json!(user), json!(session), json!(if row.execution_turn_id.is_empty() { &row.root_turn_id } else { &row.execution_turn_id })])? {
+            row.stop_reason = Some(text(&record[0]).into());
+        }
+    }
+    Ok(())
 }
 
 /// Immutable body versions. A stream writes small durable blocks; full bodies
@@ -359,7 +379,8 @@ pub(crate) fn project_turn(
     let root = text(&t[0]);
     let root_record=one(db,"SELECT user_turn_index,client_message_id,created_time FROM thread_turns WHERE session_id=? AND user_id=? AND turn_id=?",&[json!(session),json!(user),json!(root)])?.unwrap_or_else(||vec![t[1].clone(),t[2].clone(),t[4].clone()]);
     let queue_field = db.json_text("payload", "queued_input");
-    let latest=one(db,&format!("SELECT status,updated_time,turn_id,{queue_field} FROM thread_turns WHERE session_id=? AND user_id=? AND root_turn_id=? ORDER BY created_time DESC,turn_id DESC LIMIT 1"),&[json!(session),json!(user),json!(root)])?.unwrap_or_else(||vec![t[3].clone(),t[5].clone(),json!(turn),Value::Null]);
+    let reason_field = db.json_text("payload", "stop_reason");
+    let latest=one(db,&format!("SELECT status,updated_time,turn_id,{queue_field},substr(COALESCE({reason_field},''),1,128) FROM thread_turns WHERE session_id=? AND user_id=? AND root_turn_id=? ORDER BY created_time DESC,turn_id DESC LIMIT 1"),&[json!(session),json!(user),json!(root)])?.unwrap_or_else(||vec![t[3].clone(),t[5].clone(),json!(turn),Value::Null,json!("")]);
     let existing = one(
         db,
         "SELECT payload FROM thread_chat_rows WHERE session_id=? AND root_turn_id=?",
@@ -378,6 +399,7 @@ pub(crate) fn project_turn(
         )
     };
     row.execution_turn_id = text(&latest[2]).into();
+    row.stop_reason = Some(text(&latest[4]).into());
     row.status = text(&latest[0]).into();
     row.queued_input = if row.status == "queued" {
         serde_json::from_str(text(&latest[3])).ok()
@@ -385,6 +407,7 @@ pub(crate) fn project_turn(
         None
     };
     row.updated_time = float(&latest[1]);
+    projection::settle_question_panel(&mut row);
     let seq = head(db, user, session)?;
     if projection::is_running(&row.status) == 0 {
         if let Some(body) = row
@@ -663,6 +686,8 @@ pub(crate) fn project_item(
         }
         projection::set_reasoning(&mut row.assistant, &item);
         row.assistant.created_seq = int(&i[3]);
+        row.assistant.question_panel = item.pointer("/meta/panel").and_then(projection::question_panel);
+        projection::settle_question_panel(&mut row);
         row.assistant.durable_seq = one(
             db,
             "SELECT latest_change_seq FROM thread_logs WHERE session_id=? AND user_id=?",
@@ -1174,6 +1199,14 @@ pub(crate) fn page(
     } else {
         Default::default()
     };
+    let panel_ids = if kind == "chat" {
+        rows.iter().take(cap).filter_map(|r| {
+            let value: Value = serde_json::from_str(text(&r[0])).ok()?;
+            if value.pointer("/assistant/question_panel").is_some() { return None; }
+            value.pointer("/assistant/item_id")?.as_str().filter(|id| !id.is_empty()).map(str::to_owned)
+        }).collect::<Vec<_>>()
+    } else { vec![] };
+    let mut panels = super::thread_view_source::load_question_panels(db, user, session, &panel_ids)?;
     for r in rows.into_iter().take(cap) {
         if kind == "trajectory" {
             let mut trajectory: TrajectoryViewRow = serde_json::from_str(text(&r[0]))?;
@@ -1239,9 +1272,14 @@ pub(crate) fn page(
             page.trajectory.push(trajectory);
         } else {
             let mut row: ChatViewRow = serde_json::from_str(text(&r[0]))?;
+            repair_stop_reason(db, user, session, &mut row)?;
             if row.plan.is_none() {
                 row.plan = legacy_plans.remove(&row.root_turn_id);
             }
+            if row.assistant.question_panel.is_none() {
+                row.assistant.question_panel = panels.remove(&row.assistant.item_id);
+            }
+            projection::settle_question_panel(&mut row);
             let size = serde_json::to_vec(&row)?.len() + 1;
             if bytes + size > CHAT_RESPONSE_BYTES {
                 page.has_more = true;
@@ -1342,6 +1380,14 @@ pub(crate) fn changes(
             })
             .collect::<Vec<_>>()
     };
+    let panel_ids = if reset { vec![] } else {
+        rows.iter().filter_map(|r| {
+            let value: Value = serde_json::from_str(text(&r[0])).ok()?;
+            if value.pointer("/assistant/question_panel").is_some() { return None; }
+            value.pointer("/assistant/item_id")?.as_str().filter(|id| !id.is_empty()).map(str::to_owned)
+        }).collect::<Vec<_>>()
+    };
+    let mut panels = super::thread_view_source::load_question_panels(db, user, session, &panel_ids)?;
     let mut chat_rows: Vec<ChatViewRow> = if reset {
         vec![]
     } else {
@@ -1351,9 +1397,14 @@ pub(crate) fn changes(
     };
     let mut plans = super::thread_view_source::load_chat_plans(db, user, session, &roots)?;
     for row in &mut chat_rows {
+        repair_stop_reason(db, user, session, row)?;
         if row.plan.is_none() {
             row.plan = plans.remove(&row.root_turn_id);
         }
+        if row.assistant.question_panel.is_none() {
+            row.assistant.question_panel = panels.remove(&row.assistant.item_id);
+        }
+        projection::settle_question_panel(row);
     }
     let reset = reset || serde_json::to_vec(&chat_rows)?.len() > 60 * 1024;
     Ok(ThreadViewChanges {

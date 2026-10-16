@@ -301,4 +301,74 @@ mod tests {
         assert!(!is_browser_group_name(""));
         assert!(!is_browser_tool_name(BROWSER_GROUP_NAME));
     }
+
+    #[cfg(feature = "sqlite-storage")]
+    #[test]
+    fn screenshot_content_is_persisted_as_a_resolvable_attachment() {
+        use crate::services::tools::ToolContext;
+        use crate::storage::{SqliteStorage, StorageBackend};
+        use std::{collections::HashMap, sync::Arc};
+        let dir = tempfile::tempdir().expect("tempdir");
+        let storage: Arc<dyn StorageBackend> = Arc::new(SqliteStorage::new(
+            dir.path().join("sample.db").to_string_lossy().to_string(),
+        ));
+        let workspace = Arc::new(crate::workspace::WorkspaceManager::new(
+            dir.path().to_string_lossy().as_ref(),
+            storage.clone(),
+            0,
+            &HashMap::new(),
+        ));
+        let config = crate::config::Config::default();
+        let skills = crate::skills::SkillRegistry::default();
+        let http = reqwest::Client::new();
+        let context = ToolContext {
+            user_id: "sample-user",
+            session_id: "sample-thread",
+            workspace_id: "sample-user",
+            agent_id: None,
+            user_round: None,
+            model_round: None,
+            is_admin: false,
+            storage,
+            orchestrator: None,
+            monitor: None,
+            lsp_manager: crate::lsp::LspManager::new_disabled(workspace.clone()),
+            workspace,
+            config: &config,
+            skills: &skills,
+            gateway: None,
+            user_world: None,
+            cron_wake_signal: None,
+            user_tool_manager: None,
+            user_tool_bindings: None,
+            user_tool_store: None,
+            request_config_overrides: None,
+            allow_roots: None,
+            read_roots: None,
+            command_sessions: None,
+            event_emitter: None,
+            http: &http,
+        };
+        let mut result = json!({"ok":true,"data":{"format":"png"},"content":[
+            {"type":"image","mime_type":"image/png","data":"c2FtcGxl"}
+        ]});
+        super::persist_image_blocks(
+            &context,
+            &json!({"path":"browser/screenshots/sample.png"}),
+            &mut result,
+        )
+        .unwrap();
+        let block = &result["content"][0];
+        assert!(block.get("data").is_none());
+        assert_eq!(
+            block["attachment"]["path"],
+            "browser/screenshots/sample.png"
+        );
+        assert_eq!(block["attachment"]["bytes"], 6);
+        let path = context
+            .workspace
+            .resolve_path(context.workspace_id, "browser/screenshots/sample.png")
+            .unwrap();
+        assert_eq!(std::fs::read(path).unwrap(), b"sample");
+    }
 }

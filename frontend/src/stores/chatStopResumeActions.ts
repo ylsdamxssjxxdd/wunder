@@ -1,4 +1,6 @@
-import { cancelMessageStream } from '@/api/chat';
+import { cancelMessageStream, getThreadViewBootstrap } from '@/api/chat';
+import { commitThreadView, threadViewGeneration } from '@/realtime/chat/threadViewStore';
+import { syncChatThreadShell } from './chatThreadEffects';
 import { t } from '@/i18n';
 import { chatDebugLog, isChatDebugVerboseEnabled } from '@/utils/chatDebug';
 import { buildMessageIdentityDebugList, buildMessageIdentityDebugSnapshot } from '@/utils/chatMessageDebug';
@@ -12,29 +14,7 @@ import { settleTerminalAssistantArtifacts as settleTerminalAssistantArtifactsBas
 import { clearAssistantRetryState } from './chatStats';
 import { clearChatQueueForSession } from './chatQueueState';
 import type { ResumeStreamOptions } from './chatTypes';
-import { abortCompactRequest, abortResumeStream, abortSendStream, chatWsClient, finalizeManualCompactionAsCancelled, startSessionWatcher } from './chatWatcher';
-
-const sendWsCancelForSessionStop = (
-  sessionId: string
-): void => {
-  // A stop is scoped to the durable session.  Cancelling each start, resume
-  // and watch request first caused repeated server settlements for one click.
-  void chatWsClient
-    .notify({
-      type: 'cancel',
-      session_id: sessionId,
-      payload: {
-        session_id: sessionId,
-        cancel_source: 'user_stop'
-      }
-    })
-    .catch((error) => {
-      chatDebugLog('messenger.send', 'stop-session-ws-cancel-failed', {
-        sessionId,
-        message: String((error as { message?: unknown })?.message || '')
-      });
-    });
-};
+import { abortCompactRequest, abortResumeStream, abortSendStream, finalizeManualCompactionAsCancelled, startSessionWatcher } from './chatWatcher';
 
 export const chatStopResumeActions = {
     async stopSessionActivity(
@@ -52,7 +32,8 @@ export const chatStopResumeActions = {
         runtime.sendAbortReason = 'user_stop';
         runtime.resumeAbortReason = 'user_stop';
       }
-      sendWsCancelForSessionStop(targetSessionId);
+      // One acknowledged session cancellation owns settlement. Sending an
+      // unacknowledged WS cancel too can race the next user submission.
       // The server cancels parked tasks as part of the same stop transaction.
       // Remove their composer projection immediately so an old queue snapshot
       // cannot keep a stale user bubble visible while the cancel settles.
@@ -133,7 +114,7 @@ export const chatStopResumeActions = {
       });
       try {
         const { data } = await cancelMessageStream(targetSessionId);
-        cancelled = Boolean(data?.data?.cancelled) || cancelled;
+        cancelled = Boolean(data?.data?.cancelled || data?.data?.thread_status_reset) || cancelled;
         if (data?.data?.goal_cleared === true) {
           writeSessionGoalState(this, targetSessionId, null, { clear: true });
           cancelled = true;
@@ -143,7 +124,18 @@ export const chatStopResumeActions = {
           sessionId: targetSessionId,
           message: String((error as { message?: unknown })?.message || '')
         });
-        // Ignore cancel API failures; local stop behavior still applies.
+        if (resolveSessionKey(this.activeSessionId) === targetSessionId) startSessionWatcher(this, targetSessionId);
+        throw error;
+      }
+      // Re-read the committed head and reconnect so the presentation source, shell and
+      // future turns all observe the same durable cancellation.
+      try {
+        const generation = threadViewGeneration(targetSessionId);
+        const response = await getThreadViewBootstrap(targetSessionId, { kind: 'chat' });
+        commitThreadView(targetSessionId, response.data.data.page, generation, false, true);
+        syncChatThreadShell(this, targetSessionId);
+      } finally {
+        if (resolveSessionKey(this.activeSessionId) === targetSessionId) startSessionWatcher(this, targetSessionId);
       }
       // The server owns recursive interruption. Keep children available for later reuse.
       void this.refreshSessionSubagents(targetSessionId, { force: true }).catch(() => {});

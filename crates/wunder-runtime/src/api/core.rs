@@ -13,8 +13,9 @@ use crate::services::runtime::thread::ThreadSubmitOutcome;
 use crate::skills::load_skills;
 use crate::state::AppState;
 use crate::tools::{
-    build_mcp_tool_alias_entries_for_names, builtin_tool_specs, mcp_pack_runtime_name,
-    mcp_pack_schema, mcp_pack_spec_for_server,
+    build_mcp_tool_alias_entries_for_names, builtin_tool_specs,
+    collect_enabled_tool_names_for_catalog, mcp_pack_runtime_name, mcp_pack_schema,
+    mcp_pack_spec_for_server,
 };
 use crate::user_store::UserStore;
 use crate::user_tools::{UserMcpServer, UserToolStore, UserToolsPayload};
@@ -202,16 +203,11 @@ async fn wunder_tools(
 ) -> Result<Json<AvailableToolsResponse>, Response> {
     let user_id = params.user_id.as_deref().unwrap_or("").trim();
     let config = state.config_store.get().await;
+    let skills_snapshot = state.skills.read().await.clone();
     let language = i18n::get_language().to_lowercase();
 
-    let enabled_builtin: std::collections::HashSet<String> = config
-        .tools
-        .builtin
-        .enabled
-        .iter()
-        .map(|name| name.trim().to_string())
-        .filter(|name| !name.is_empty())
-        .collect();
+    // 与运行时、用户工具目录和保存过滤共用可用性规则，包含独立开关与下架工具。
+    let enabled_tools = collect_enabled_tool_names_for_catalog(&config, &skills_snapshot, None);
     let mut builtin_tools = Vec::new();
     let mut browser_summarized = false;
     let alias_map = crate::tools::builtin_aliases();
@@ -228,7 +224,7 @@ async fn wunder_tools(
         if crate::services::goal::is_goal_tool_name(&spec.name) {
             continue;
         }
-        if !enabled_builtin.contains(&spec.name) {
+        if !enabled_tools.contains(&spec.name) {
             continue;
         }
         // provider 的细粒度浏览器工具只供模型调用，用户清单里收成一条「浏览器」。
@@ -310,7 +306,6 @@ async fn wunder_tools(
     }
     apply_mcp_tool_display_titles(&mut mcp_tools);
 
-    let skills_snapshot = state.skills.read().await.clone();
     let skills = skills_snapshot
         .list_specs()
         .into_iter()

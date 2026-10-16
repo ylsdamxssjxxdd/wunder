@@ -11,10 +11,25 @@ import { emptyChatThreadState } from '../../src/realtime/chat/chatThreadTypes';
 import { applyChatThreadFrame, applyChatThreadSnapshot, bindStreamStarted } from '../../src/realtime/chat/chatThreadState';
 import { buildChatThreadRenderableMessages } from '../../src/realtime/chat/chatThreadProjection';
 import { materializeChatRuntimeMessage } from '../../src/realtime/chat/chatRuntimeRenderAdapter';
-import { resolveChatPlanDismissKey } from '../../src/realtime/chat/chatPlan';
 import { summarizePlanProgress } from '../../src/components/chat/composerActivity';
 
 type TestFrame = ChatThreadFrame;
+
+test('durable question metadata reaches composer and terminal turns close it without losing content', () => {
+  const state = emptyChatThreadState('fixture-question-session');
+  const turn = {turn_id:'fixture-question-turn',user_round:1,status:'waiting_input',content:'Fixture input'};
+  const item = textItemData(turn.turn_id,1,{status:'completed',content:'Fixture waiting',meta:{type:'question_panel',panel:{
+    status:'pending',keep_open:true,questions:[{question:'Fixture choice?',multiple:false,options:[{label:'Fixture option',description:'',recommended:true}]}]}}});
+  const read = () => materializeChatRuntimeMessage(buildChatThreadRenderableMessages(state).find(row=>row.role==='assistant'))!;
+  applyFrames(state,[turnUpsert(1,turn),itemUpsert(2,item)]);
+  assert.equal(read().questionPanel.status,'pending');
+  assert.equal(read().questionPanel.keepOpen,true);
+  applyChatThreadSnapshot(state,{cursor:2,turns:[turn],items:[item],blocks:[]});
+  assert.equal(read().questionPanel.questions[0].options[0].recommended,true);
+  applyFrames(state,[turnStatus(3,turn.turn_id,'cancelled')]);
+  assert.equal(read().questionPanel.status,'dismissed');
+  assert.equal(read().content,'Fixture waiting');
+});
 
 test('durable plan alone reaches the composer and revisions survive replay and snapshot recovery', () => {
   const state = emptyChatThreadState('fixture-plan-session');
@@ -27,20 +42,17 @@ test('durable plan alone reaches the composer and revisions survive replay and s
   assert.deepEqual(summarizePlanProgress(read().plan), { total: 2, done: 0 });
   assert.equal(read().plan.explanation, plan.explanation);
   assert.equal(read().content, ''); // no assistant text required to show the plan
-  const hidden = resolveChatPlanDismissKey(read());
   const updated = { ...plan, revision: 2, plan: [
     { step: 'First step', status: 'completed' }, { step: 'Second step', status: 'in_progress' }
   ] };
   applyFrames(state, [itemUpsert(3, updated)]);
   assert.deepEqual(summarizePlanProgress(read().plan), { total: 2, done: 1 });
-  assert.notEqual(resolveChatPlanDismissKey(read()), hidden);
+  assert.equal(read().plan.revision, 2);
   const expected = read().plan;
   applyFrames(state, [itemUpsert(3, updated)]);
   assert.deepEqual(read().plan, expected);
-  const latestKey = resolveChatPlanDismissKey(read());
   applyChatThreadSnapshot(state, { cursor: 3, turns: [turn], items: [updated], blocks: [] });
   assert.deepEqual(read().plan, expected);
-  assert.equal(resolveChatPlanDismissKey(read()), latestKey);
   applyFrames(state, [itemUpsert(4, textItemData(turn.turn_id, 2, { content: 'Fixture result' })), turnStatus(5, turn.turn_id, 'completed')]);
   assert.deepEqual(read().plan, expected); // answer replacement and completion retain progress
 });

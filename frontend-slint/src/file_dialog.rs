@@ -477,16 +477,6 @@ fn pick_linux_attachments() -> Vec<String> {
         .collect()
 }
 
-/// Save-as dialog plus the write. A cancelled dialog is `Ok(None)` so the
-/// caller can stay silent instead of reporting a bogus failure.
-pub fn save_text_file(title: &str, text: &str) -> Result<Option<String>, String> {
-    let Some(path) = save_file(title, "回复.txt") else {
-        return Ok(None);
-    };
-    std::fs::write(&path, text).map_err(|error| error.to_string())?;
-    Ok(Some(path))
-}
-
 /// Save-as dialog for exports; the caller writes the file itself.
 pub fn save_file(title: &str, default_name: &str) -> Option<String> {
     #[cfg(windows)]

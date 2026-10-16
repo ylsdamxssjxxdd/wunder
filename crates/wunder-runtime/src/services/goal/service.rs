@@ -8,7 +8,7 @@ use crate::storage::{SessionGoalRecord, StorageBackend};
 use anyhow::Result;
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use uuid::Uuid;
 
 pub const EVENT_GOAL_UPDATED: &str = "goal_updated";
@@ -30,6 +30,7 @@ where
 /// restart always starts disarmed and only humans re-arm.
 pub struct GoalService {
     activations: Mutex<HashMap<String, GoalActivation>>,
+    controls: Mutex<HashMap<String, Weak<tokio::sync::Mutex<()>>>>,
     driver: super::driver::GoalDriver,
 }
 
@@ -43,6 +44,7 @@ impl GoalService {
     pub fn new() -> Self {
         Self {
             activations: Mutex::new(HashMap::new()),
+            controls: Mutex::new(HashMap::new()),
             driver: super::driver::GoalDriver::new(),
         }
     }
@@ -58,6 +60,22 @@ impl GoalService {
             .ok()
             .and_then(|map| map.get(session_id.trim()).copied())
             .unwrap_or(GoalActivation::Disarmed)
+    }
+
+    /// Serialize human goal changes with internal admission, per task thread.
+    pub async fn control_guard(&self, session: &str) -> tokio::sync::OwnedMutexGuard<()> {
+        let gate = {
+            let mut controls = self.controls.lock().unwrap();
+            if let Some(gate) = controls.get(session).and_then(Weak::upgrade) {
+                gate
+            } else {
+                controls.retain(|_, gate| gate.strong_count() > 0);
+                let gate = Arc::new(tokio::sync::Mutex::new(()));
+                controls.insert(session.into(), Arc::downgrade(&gate));
+                gate
+            }
+        };
+        gate.lock_owned().await
     }
 
     fn set_activation(&self, session_id: &str, activation: GoalActivation) {
@@ -227,6 +245,30 @@ impl GoalService {
         objective: &str,
         max_goal_rounds: Option<i64>,
     ) -> Result<GoalView> {
+        self.edit_with_activation(
+            storage,
+            user_id,
+            session_id,
+            reference,
+            objective,
+            max_goal_rounds,
+            None,
+        )
+        .await
+    }
+
+    /// A human edit can re-arm an active goal after its old executor was
+    /// fenced. Publish only the final activation in the same edited snapshot.
+    pub(super) async fn edit_with_activation(
+        &self,
+        storage: Arc<dyn StorageBackend>,
+        user_id: &str,
+        session_id: &str,
+        reference: &GoalRef,
+        objective: &str,
+        max_goal_rounds: Option<i64>,
+        activation: Option<GoalActivation>,
+    ) -> Result<GoalView> {
         let objective = validate_objective(objective)?;
         let mut record = self
             .require_current(&storage, user_id, session_id, reference)
@@ -247,6 +289,9 @@ impl GoalService {
         record.objective = objective;
         record.updated_at = now_ts();
         self.cas_write(&storage, &record, expected_revision).await?;
+        if let Some(activation) = activation {
+            self.set_activation(session_id, activation);
+        }
         let view = self.view(record);
         self.emit_event(&storage, "edited", &view).await;
         self.notify_changed(user_id, session_id);

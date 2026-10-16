@@ -91,6 +91,7 @@ impl Usage {
     }
 }
 
+#[derive(Clone)]
 struct Metrics {
     step_start: Option<f64>,
     first_token: Option<f64>,
@@ -98,6 +99,7 @@ struct Metrics {
     output_tokens: Option<f64>,
 }
 
+#[derive(Clone)]
 struct Cell {
     index: usize,
     record_id: String,
@@ -116,6 +118,7 @@ struct Cell {
     metrics: Option<Metrics>,
     usage: Option<Usage>,
     raw: Value,
+    detail_ref: Option<(String, i64)>,
 }
 
 struct Group {
@@ -190,6 +193,8 @@ struct SnapshotModel {
     overview_end: f64,
     overview_sequence_end: f64,
     has_overview: bool,
+    /// Complete timing metadata, independent of the bounded ledger window.
+    overview_exact: bool,
     overview_error_buckets: HashSet<i64>,
 }
 
@@ -203,6 +208,11 @@ struct State {
     next_after: Option<i64>,
     has_newer: bool,
     loading_page: bool,
+    detail_generation: u64,
+    detail_loading: bool,
+    /// Only the selected body is hydrated; restore its small projection on
+    /// selection changes instead of retaining up to 600 large payloads.
+    detail_original: Option<Cell>,
     older_edge_latched: bool,
     newer_edge_latched: bool,
     view_start: f64,
@@ -224,9 +234,15 @@ struct State {
 impl State {
     fn reset(&mut self, session: String) {
         let show_duration = self.show_duration;
+        let detail_generation = self.detail_generation.wrapping_add(1);
+        let detail_loading = self.detail_loading;
         *self = State {
             session,
             show_duration,
+            view_width: 1.0,
+            selected: -1,
+            detail_generation,
+            detail_loading,
             ..State::default()
         };
     }
@@ -558,6 +574,11 @@ fn merge_page_json(current: &Value, incoming: &Value, older: bool) -> Value {
             "tile_level".into(),
             current.get("tile_level").cloned().unwrap_or(Value::from(0)),
         );
+        for field in ["timeline", "timeline_has_more"] {
+            if let Some(value) = incoming.get(field) {
+                map.insert(field.into(), value.clone());
+            }
+        }
         map.insert("next_before".into(), first_seq);
         map.insert("next_after".into(), last_seq);
         map.insert(
@@ -655,6 +676,7 @@ fn parse_view_page(page: &Value) -> SnapshotModel {
             "updated_time": row.get("completed_at").and_then(Value::as_f64).unwrap_or(0.0),
             "created_seq": row.get("created_seq").and_then(Value::as_i64).unwrap_or(0),
             "item_index": row.get("item_index").and_then(Value::as_i64).unwrap_or(0),
+            "detail": row.get("detail"),
         });
         // Constructing a small synthetic snapshot keeps all existing grouping,
         // request numbering and detail formatting rules in one place.
@@ -695,6 +717,9 @@ fn parse_view_page(page: &Value) -> SnapshotModel {
                 }
             }
         }
+    }
+    if apply_timing_overview(&mut model, page) {
+        return model;
     }
     let mut overview_start = f64::MAX;
     let mut overview_end = f64::MIN;
@@ -932,7 +957,143 @@ fn parse_view_page(page: &Value) -> SnapshotModel {
     model.overview_sequence_end = overview_sequence_end;
     model.has_overview = has_overview;
     model.overview_error_buckets = overview_error_buckets;
+    if !model.has_overview {
+        compress_idle_spans(&mut model.spans);
+        refresh_timing_domain(&mut model);
+    }
     model
+}
+
+fn lane_for(kind: i32) -> usize {
+    match kind {
+        KIND_TOOL | KIND_SUBTOOL => 2,
+        KIND_MESSAGE | KIND_COMPACTED => 1,
+        _ => 0,
+    }
+}
+
+fn compress_idle_spans(spans: &mut [SpanBase]) {
+    let mut order: Vec<usize> = (0..spans.len()).collect();
+    order.sort_by(|&left, &right| {
+        spans[left]
+            .start
+            .total_cmp(&spans[right].start)
+            .then_with(|| spans[left].end.total_cmp(&spans[right].end))
+    });
+    let mut removed = 0.0;
+    let mut covered: Option<f64> = None;
+    for index in order {
+        let span = &mut spans[index];
+        if let Some(end) = covered {
+            removed += (span.start - end).max(0.0);
+        }
+        covered = Some(covered.map_or(span.end, |end| end.max(span.end)));
+        span.start -= removed;
+        span.end -= removed;
+    }
+}
+
+fn refresh_timing_domain(model: &mut SnapshotModel) {
+    let (lo, hi) = model
+        .spans
+        .iter()
+        .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), span| {
+            (lo.min(span.start), hi.max(span.end))
+        });
+    if lo.is_finite() && hi.is_finite() {
+        model.tl_start = lo;
+        model.tl_end = hi.max(lo + 1.0);
+    }
+    for (_, time, record) in &mut model.boundaries {
+        if let Some(span) = model.spans.iter().find(|span| span.record == *record) {
+            *time = span.start;
+        }
+    }
+}
+
+/// The shared engine caps this stream at 1024 timing-only rows. Never mistake
+/// an incomplete tail for the whole thread, or add the detail window twice.
+fn apply_timing_overview(model: &mut SnapshotModel, page: &Value) -> bool {
+    if page.get("timeline_has_more").and_then(Value::as_bool) == Some(true) {
+        return false;
+    }
+    let Some(rows) = page
+        .get("timeline")
+        .and_then(Value::as_array)
+        .filter(|rows| !rows.is_empty() && rows.len() <= 1024)
+    else {
+        return false;
+    };
+    let record_by_sequence: HashMap<i64, usize> = model
+        .spans
+        .iter()
+        .filter_map(|span| Some((span.sequence_start? as i64, span.record)))
+        .collect();
+    let mut spans: Vec<SpanBase> = rows
+        .iter()
+        .filter_map(|row| {
+            let start = timestamp_ms(row.get("started_at")?).filter(|value| *value > 0.0)?;
+            let sequence = row.get("created_seq")?.as_i64()?;
+            let kind = resolve_kind(
+                row.get("kind").and_then(Value::as_str).unwrap_or("context"),
+                &Value::Null,
+            );
+            let lane = lane_for(kind);
+            let end = if lane == 0 {
+                start
+            } else {
+                row.get("completed_at")
+                    .and_then(timestamp_ms)
+                    .unwrap_or(start)
+                    .max(start)
+            };
+            Some(SpanBase {
+                start,
+                end,
+                record: record_by_sequence
+                    .get(&sequence)
+                    .copied()
+                    .unwrap_or(usize::MAX),
+                kind,
+                lane,
+                ttft: None,
+                sequence_start: Some(sequence as f64),
+                sequence_end: Some(sequence as f64 + 1.0),
+            })
+        })
+        .collect();
+    if spans.is_empty() {
+        return false;
+    }
+    compress_idle_spans(&mut spans);
+    let times: HashMap<i64, (f64, f64)> = spans
+        .iter()
+        .filter_map(|span| Some((span.sequence_start? as i64, (span.start, span.end))))
+        .collect();
+    for span in &mut model.spans {
+        if let Some((start, end)) = span.sequence_start.and_then(|seq| times.get(&(seq as i64))) {
+            span.start = *start;
+            span.end = *end;
+        }
+    }
+    refresh_timing_domain(model);
+    model.overview_start = spans
+        .iter()
+        .map(|span| span.start)
+        .fold(f64::INFINITY, f64::min);
+    model.overview_end = spans
+        .iter()
+        .map(|span| span.end)
+        .fold(f64::NEG_INFINITY, f64::max)
+        .max(model.overview_start + 1.0);
+    model.overview_sequence_end = spans
+        .iter()
+        .filter_map(|span| span.sequence_end)
+        .fold(1.0, f64::max);
+    model.overview_spans = spans;
+    model.has_overview = true;
+    model.overview_exact = true;
+    true
 }
 
 fn resolve_kind(raw_kind: &str, payload: &Value) -> i32 {
@@ -941,7 +1102,7 @@ fn resolve_kind(raw_kind: &str, payload: &Value) -> i32 {
     }
     match raw_kind {
         "assistant_message" | "assistant" => KIND_MESSAGE,
-        "subagent" | "subagent_message" => KIND_SUBTOOL,
+        "subagent" | "subagent_run" | "subagent_message" => KIND_SUBTOOL,
         "tool_message" | "tool_call" | "tool_result" | "tool" => KIND_TOOL,
         "compaction" | "compacted" | "compaction_summary" => KIND_COMPACTED,
         "user_message" | "user" => KIND_USER,
@@ -1111,6 +1272,12 @@ fn build_cell(item: &Value, payload: &Value, kind: i32, index: usize) -> Cell {
         metrics: None,
         usage,
         raw: payload.clone(),
+        detail_ref: item.get("detail").and_then(|detail| {
+            Some((
+                detail.get("body_id")?.as_str()?.to_owned(),
+                detail.get("revision")?.as_i64()?,
+            ))
+        }),
     };
 
     match kind {
@@ -1130,8 +1297,7 @@ fn build_cell(item: &Value, payload: &Value, kind: i32, index: usize) -> Cell {
             } else {
                 cell.text = markdown_preview_text(&content_text);
             }
-            cell.input_detail = non_empty(&content_text);
-            cell.output_detail = cell.input_detail.clone();
+            cell.output_detail = non_empty(&content_text);
             cell.thinking_detail = non_empty(&thinking_text);
             let ttft = payload
                 .get("ttft_ms")
@@ -1190,19 +1356,27 @@ fn build_cell(item: &Value, payload: &Value, kind: i32, index: usize) -> Cell {
             }
         }
         KIND_COMPACTED => {
-            let summary_text = content_to_text(
-                payload
-                    .get("summary")
-                    .or_else(|| payload.get("content"))
-                    .unwrap_or(&Value::Null),
-            );
+            let summary_text = [
+                "summary_text",
+                "summaryText",
+                "summary_model_output",
+                "summaryModelOutput",
+                "summary",
+                "content",
+            ]
+            .iter()
+            .filter_map(|key| payload.get(*key))
+            .map(content_to_text)
+            .find(|value| !value.trim().is_empty() && !value.trim().eq_ignore_ascii_case("history"))
+            .unwrap_or_default();
             cell.text = summary_text.trim().to_string();
-            cell.input_detail = non_empty(&summary_text);
+            cell.output_detail = non_empty(&summary_text);
         }
         _ => {
             let content_text = content_to_text(payload.get("content").unwrap_or(&Value::Null));
             cell.text = markdown_preview_text(&content_text);
             cell.input_detail = non_empty(&content_text);
+            cell.time_seconds = started_at.map(|_| 0.0);
         }
     }
     cell
@@ -1540,6 +1714,7 @@ fn parse_snapshot(snapshot: &Value) -> SnapshotModel {
         overview_end: 1.0,
         overview_sequence_end: 1.0,
         has_overview: false,
+        overview_exact: false,
         overview_error_buckets: HashSet::new(),
     }
 }
@@ -2069,42 +2244,59 @@ fn build_rows(state: &State, model: &SnapshotModel, texts: &Texts) -> Vec<TrajRo
 }
 
 /// 时间线投影：时长模式压缩空闲，序列模式等宽；span/边界按当前视口裁剪归一。
-fn project_timeline(app: &MainWindow, state: &State, model: &SnapshotModel, texts: &Texts) {
-    let view_start = state.view_start.clamp(0.0, 1.0);
-    let view_width = state.view_width.clamp(0.02, 1.0);
-    let timed = state.show_duration;
-    let use_overview = model.has_overview && (state.has_more || state.has_newer);
-    let detail_sequence_end = model
-        .spans
-        .iter()
-        .filter_map(|span| span.sequence_end)
-        .fold(model.records.len().max(1) as f64, f64::max);
-    let overview_sequence_end = model
-        .overview_spans
-        .iter()
-        .filter_map(|span| span.sequence_end)
-        .fold(model.overview_sequence_end.max(1.0), f64::max);
-    let sequence_end = if use_overview {
-        overview_sequence_end.max(detail_sequence_end)
-    } else {
-        detail_sequence_end
-    };
-    let (total_lo, total_hi) = if timed {
-        if use_overview {
+fn use_overview(state: &State, model: &SnapshotModel) -> bool {
+    model.has_overview && (model.overview_exact || state.has_more || state.has_newer)
+}
+
+fn timeline_domain(state: &State, model: &SnapshotModel) -> (f64, f64) {
+    let overview = use_overview(state, model);
+    if state.show_duration {
+        if overview {
             (model.overview_start, model.overview_end)
         } else {
             (model.tl_start, model.tl_end)
         }
     } else {
-        (0.0, sequence_end.max(1.0))
-    };
+        let detail_end = model
+            .spans
+            .iter()
+            .filter_map(|span| span.sequence_end)
+            .fold(model.records.len().max(1) as f64, f64::max);
+        (
+            0.0,
+            if overview {
+                detail_end.max(model.overview_sequence_end)
+            } else {
+                detail_end
+            },
+        )
+    }
+}
+
+fn visible_span(start: f64, end: f64, window_lo: f64, window_total: f64) -> Option<(f32, f32)> {
+    if end < window_lo || start > window_lo + window_total {
+        return None;
+    }
+    // An instantaneous input at either endpoint must still have a visible mark.
+    let left = ((start - window_lo) / window_total).clamp(0.0, 0.998);
+    let right = ((end - window_lo) / window_total).min(1.0);
+    Some((left as f32, (right - left).max(0.002) as f32))
+}
+
+fn project_timeline(app: &MainWindow, state: &State, model: &SnapshotModel, texts: &Texts) {
+    let view_start = state.view_start.clamp(0.0, 1.0);
+    let view_width = state.view_width.clamp(0.02, 1.0);
+    let timed = state.show_duration;
+    let use_overview = use_overview(state, model);
+    let (total_lo, total_hi) = timeline_domain(state, model);
     let total = (total_hi - total_lo).max(1.0);
     let window_lo = total_lo + view_start * total;
     let window_total = view_width * total;
     let clamp_pos = |value: f64| ((value - window_lo) / window_total).clamp(0.0, 1.0) as f32;
     let selected_range = model
         .spans
-        .get(state.selected.max(0) as usize)
+        .iter()
+        .find(|span| span.record == state.selected as usize)
         .filter(|_| state.selected >= 0)
         .map(|span| {
             if timed {
@@ -2135,7 +2327,13 @@ fn project_timeline(app: &MainWindow, state: &State, model: &SnapshotModel, text
             .overview_spans
             .iter()
             .map(|span| (span, true))
-            .chain(model.spans.iter().map(|span| (span, false)))
+            .chain(
+                model
+                    .spans
+                    .iter()
+                    .filter(|_| !model.overview_exact)
+                    .map(|span| (span, false)),
+            )
             .collect()
     } else {
         model.spans.iter().map(|span| (span, false)).collect()
@@ -2150,7 +2348,7 @@ fn project_timeline(app: &MainWindow, state: &State, model: &SnapshotModel, text
         };
         let outside = selected_range
             .is_some_and(|(focus_start, focus_end)| end < focus_start || start > focus_end);
-        if aggregate {
+        if aggregate && !model.overview_exact {
             let overlaps = visible_detail_ranges.iter().any(
                 |(detail_start, detail_end, sequence_start, sequence_end)| {
                     if timed {
@@ -2167,17 +2365,13 @@ fn project_timeline(app: &MainWindow, state: &State, model: &SnapshotModel, text
                 continue;
             }
         }
-        let pos = (start - window_lo) / window_total;
-        let width = (end - start) / window_total;
-        let x0 = pos.max(0.0);
-        let x1 = (pos + width).min(1.0);
-        if x1 <= 0.0 || x0 >= 1.0 {
+        let Some((start, width)) = visible_span(start, end, window_lo, window_total) else {
             continue;
-        }
+        };
         spans.push(TrajSpan {
             lane: base.lane as i32,
-            start: x0 as f32,
-            width: ((x1 - x0).max(0.002)) as f32,
+            start,
+            width,
             kind: base.kind,
             index: if base.record == usize::MAX {
                 -1
@@ -2215,7 +2409,13 @@ fn project_timeline(app: &MainWindow, state: &State, model: &SnapshotModel, text
             pos: if timed {
                 clamp_pos(*time)
             } else {
-                clamp_pos(*record_index as f64)
+                let sequence = model
+                    .spans
+                    .iter()
+                    .find(|span| span.record == *record_index)
+                    .and_then(|span| span.sequence_start)
+                    .unwrap_or(*record_index as f64);
+                clamp_pos(sequence)
             },
             label: texts.turn_label(*turn).into(),
         })
@@ -2520,8 +2720,10 @@ fn project_details(app: &MainWindow, state: &State, model: &SnapshotModel, texts
                 });
             }
             if let Some(output) = &cell.output_detail {
-                if cell.kind == KIND_MESSAGE || cell.kind == KIND_TOOL || cell.kind == KIND_SUBTOOL
-                {
+                if matches!(
+                    cell.kind,
+                    KIND_MESSAGE | KIND_TOOL | KIND_SUBTOOL | KIND_COMPACTED
+                ) {
                     sections.push(TrajSection {
                         title: label(zh, "输出", "Output").into(),
                         body: bounded_body(output).into(),
@@ -2584,8 +2786,158 @@ fn apply_model(app: &MainWindow, state: &State) {
     project_search(app, state);
 }
 
+fn apply_detail(cell: &mut Cell, detail: &Value) {
+    if !detail.is_object() {
+        return;
+    }
+    let mut payload = detail.clone();
+    if let Some(nested) = detail.get("payload").and_then(Value::as_object) {
+        if let Some(map) = payload.as_object_mut() {
+            map.extend(nested.clone());
+        }
+    }
+    let item = json!({"item_id": cell.record_id, "status": "completed"});
+    let hydrated = build_cell(&item, &payload, cell.kind, cell.index);
+    cell.input_detail = hydrated.input_detail;
+    cell.output_detail = hydrated.output_detail.or(cell.output_detail.take());
+    cell.thinking_detail = hydrated.thinking_detail.or(cell.thinking_detail.take());
+    cell.schema_detail = hydrated.schema_detail;
+    cell.result = hydrated.result.or(cell.result.take());
+    cell.usage = hydrated.usage.or(cell.usage);
+    cell.raw = payload;
+}
+
+fn restore_detail(state: &mut State) {
+    if let Some(original) = state.detail_original.take() {
+        if let Some(cell) = state.model.as_mut().and_then(|model| {
+            model
+                .cells
+                .iter_mut()
+                .find(|cell| cell.record_id == original.record_id)
+        }) {
+            *cell = original;
+        }
+    }
+}
+
+fn replace_model(state: &mut State, model: SnapshotModel) {
+    let selected_id = state.model.as_ref().and_then(|previous| {
+        previous
+            .records
+            .get(state.selected as usize)
+            .map(|record| previous.cells[record.cell].record_id.as_str())
+    });
+    state.selected = match selected_id {
+        Some(id) => model
+            .records
+            .iter()
+            .position(|record| model.cells[record.cell].record_id == id)
+            .map(|index| index as i32)
+            .unwrap_or(-1),
+        None if state.model.is_none() && !model.records.is_empty() => 0,
+        None => -1,
+    };
+    state.detail_generation = state.detail_generation.wrapping_add(1);
+    state.detail_original = None;
+    state.model = Some(model);
+}
+
+fn hydrate_selected(app: &MainWindow, current: &Rc<RefCell<State>>, backend: &Arc<NativeDesktop>) {
+    let request = {
+        let mut state = current.borrow_mut();
+        state.detail_generation = state.detail_generation.wrapping_add(1);
+        if state.detail_loading || !app.get_traj_open() {
+            return;
+        }
+        let Some(cell) = state.model.as_ref().and_then(|model| {
+            model
+                .records
+                .get(state.selected as usize)
+                .map(|record| &model.cells[record.cell])
+        }) else {
+            return;
+        };
+        let Some((body, revision)) = cell.detail_ref.as_ref() else {
+            return;
+        };
+        let request = (
+            state.session.clone(),
+            cell.clone(),
+            body.clone(),
+            *revision,
+            state.detail_generation,
+        );
+        state.detail_loading = true;
+        request
+    };
+    let (session, mut selected_cell, body, revision, generation) = request;
+    let item = selected_cell.record_id.clone();
+    let next_backend = backend.clone();
+    let backend = backend.clone();
+    let (tx, rx) = sync_channel(1);
+    std::thread::spawn(move || {
+        let result = backend
+            .thread_trajectory_detail(&session, &body, revision)
+            .map(|detail| {
+                // Parse and format the selected payload off the UI thread too.
+                apply_detail(&mut selected_cell, &detail);
+                selected_cell.detail_ref = None;
+                selected_cell
+            });
+        let _ = tx.send(result);
+    });
+    let weak = app.as_weak();
+    let current = current.clone();
+    poll(move || {
+        let result = match rx.try_recv() {
+            Ok(result) => result,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return false,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                current.borrow_mut().detail_loading = false;
+                return true;
+            }
+        };
+        let Some(app) = weak.upgrade() else {
+            return true;
+        };
+        let mut state = current.borrow_mut();
+        state.detail_loading = false;
+        if state.detail_generation != generation || !app.get_traj_open() {
+            drop(state);
+            hydrate_selected(&app, &current, &next_backend);
+            return true;
+        }
+        let selected = state.selected;
+        let Some(model) = state.model.as_mut() else {
+            return true;
+        };
+        let Some(record) = model.records.get(selected as usize) else {
+            return true;
+        };
+        let cell = &mut model.cells[record.cell];
+        if cell.record_id != item {
+            return true;
+        }
+        match result {
+            Ok(hydrated) => {
+                let original = std::mem::replace(cell, hydrated);
+                state.detail_original = Some(original);
+                let texts = Texts::new(app.global::<I18n>().get_zh());
+                project_details(&app, &state, state.model.as_ref().unwrap(), &texts);
+            }
+            Err(error) => app.set_status(format!("无法读取轨迹详情：{error}").into()),
+        }
+        true
+    });
+}
+
 pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
-    let state = Rc::new(RefCell::new(State::default()));
+    let state = Rc::new(RefCell::new(State {
+        show_duration: app.get_traj_show_duration(),
+        view_width: 1.0,
+        selected: -1,
+        ..State::default()
+    }));
     let (weak, current, backend) = (app.as_weak(), state.clone(), api.clone());
     let (weak_edge, current_edge, backend_edge) = (app.as_weak(), state.clone(), api.clone());
     app.on_traj_edge(move |older| {
@@ -2611,7 +2963,11 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                 };
                 let _ = tx.send((session, result));
             });
-            let (weak_edge, current_edge) = (weak_edge.clone(), current_edge.clone());
+            let (weak_edge, current_edge, detail_backend) = (
+                weak_edge.clone(),
+                current_edge.clone(),
+                backend_edge.clone(),
+            );
             poll(move || {
                 let Ok((session, result)) = rx.try_recv() else {
                     return false;
@@ -2644,7 +3000,8 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                             .unwrap_or(false);
                         state.page = Some(merged);
                         if let Some(page) = &state.page {
-                            state.model = Some(parse_view_page(page));
+                            let model = parse_view_page(page);
+                            replace_model(&mut state, model);
                             prune_folds(&mut state);
                             apply_model(&app, &state);
                         }
@@ -2656,6 +3013,8 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                 }
                 state.newer_edge_latched = false;
                 state.loading_page = false;
+                drop(state);
+                hydrate_selected(&app, &current_edge, &detail_backend);
                 true
             });
             return;
@@ -2678,7 +3037,11 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
             };
             let _ = tx.send((session, result));
         });
-        let (weak_edge, current_edge) = (weak_edge.clone(), current_edge.clone());
+        let (weak_edge, current_edge, detail_backend) = (
+            weak_edge.clone(),
+            current_edge.clone(),
+            backend_edge.clone(),
+        );
         poll(move || {
             let Ok((session, result)) = rx.try_recv() else {
                 return false;
@@ -2711,7 +3074,8 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                         .unwrap_or(false);
                     state.page = Some(merged);
                     if let Some(page) = &state.page {
-                        state.model = Some(parse_view_page(page));
+                        let model = parse_view_page(page);
+                        replace_model(&mut state, model);
                         prune_folds(&mut state);
                         apply_model(&app, &state);
                     }
@@ -2723,6 +3087,8 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
             }
             state.older_edge_latched = false;
             state.loading_page = false;
+            drop(state);
+            hydrate_selected(&app, &current_edge, &detail_backend);
             true
         });
     });
@@ -2750,6 +3116,7 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         app.set_traj_ticks(to_model(vec![]));
         app.set_traj_boundaries(to_model(vec![]));
         let (tx, rx) = sync_channel(1);
+        let detail_backend = backend.clone();
         let backend = backend.clone();
         std::thread::spawn(move || {
             // Read the shared bounded presentation projection.  It returns a
@@ -2785,9 +3152,11 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                         .and_then(Value::as_bool)
                         .unwrap_or(false);
                     state.page = Some(page);
-                    state.model = Some(snapshot);
+                    replace_model(&mut state, snapshot);
                     prune_folds(&mut state);
                     apply_model(&app, &state);
+                    drop(state);
+                    hydrate_selected(&app, &current, &detail_backend);
                 }
                 Err(error) => {
                     app.set_traj_loading(false);
@@ -2799,10 +3168,11 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         });
     });
 
-    let (weak, current) = (app.as_weak(), state.clone());
+    let (weak, current, backend) = (app.as_weak(), state.clone(), api.clone());
     app.on_traj_select_row(move |index| {
         let Some(app) = weak.upgrade() else { return };
         let mut s = current.borrow_mut();
+        restore_detail(&mut s);
         let mut kind = None;
         if let Some(model) = &s.model {
             if let Some(record) = model
@@ -2827,6 +3197,8 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
             project_details(&app, &s, model, &texts);
             project_timeline(&app, &s, model, &texts);
         }
+        drop(s);
+        hydrate_selected(&app, &current, &backend);
     });
 
     let (weak, current) = (app.as_weak(), state.clone());
@@ -3234,41 +3606,45 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         }
     });
 
-    let (weak, current) = (app.as_weak(), state.clone());
+    let (weak, current, backend) = (app.as_weak(), state.clone(), api.clone());
     app.on_traj_select_range(move |start, end| {
         let Some(app) = weak.upgrade() else { return };
         let mut state = current.borrow_mut();
+        restore_detail(&mut state);
         let start = (start as f64).clamp(0.0, 1.0);
         let end = (end as f64).clamp(0.0, 1.0);
         state.selection = Some((start.min(end), start.max(end)));
         if let Some(snapshot) = &state.model {
-            let (domain_start, domain_end) = if state.show_duration
-                && snapshot.has_overview
-                && (state.has_more || state.has_newer)
-            {
-                (snapshot.overview_start, snapshot.overview_end)
-            } else if state.show_duration {
-                (snapshot.tl_start, snapshot.tl_end)
-            } else {
-                (0.0, snapshot.records.len().max(1) as f64)
+            let bounds = |span: &SpanBase| {
+                if state.show_duration {
+                    (span.start, span.end)
+                } else {
+                    (
+                        span.sequence_start.unwrap_or(span.record as f64),
+                        span.sequence_end.unwrap_or(span.record as f64 + 1.0),
+                    )
+                }
             };
+            let (domain_start, domain_end) = timeline_domain(&state, snapshot);
             let lo = domain_start + state.selection.unwrap().0 * (domain_end - domain_start);
             let hi = domain_start + state.selection.unwrap().1 * (domain_end - domain_start);
             let selected_record = snapshot
                 .spans
                 .iter()
                 .min_by(|a, b| {
-                    let da = if a.end < lo {
-                        lo - a.end
-                    } else if a.start > hi {
-                        a.start - hi
+                    let (a_start, a_end) = bounds(a);
+                    let (b_start, b_end) = bounds(b);
+                    let da = if a_end < lo {
+                        lo - a_end
+                    } else if a_start > hi {
+                        a_start - hi
                     } else {
                         0.0
                     };
-                    let db = if b.end < lo {
-                        lo - b.end
-                    } else if b.start > hi {
-                        b.start - hi
+                    let db = if b_end < lo {
+                        lo - b_end
+                    } else if b_start > hi {
+                        b_start - hi
                     } else {
                         0.0
                     };
@@ -3282,6 +3658,7 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         }
         drop(state);
         apply_model(&app, &current.borrow());
+        hydrate_selected(&app, &current, &backend);
     });
 
     let (weak, current) = (app.as_weak(), state.clone());
@@ -3291,20 +3668,15 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         apply_model(&app, &current.borrow());
     });
 
-    let (weak, current) = (app.as_weak(), state.clone());
+    let (weak, current, backend) = (app.as_weak(), state.clone(), api.clone());
     app.on_traj_select_position(move |position| {
         let Some(app) = weak.upgrade() else { return };
         let mut state = current.borrow_mut();
+        restore_detail(&mut state);
         let Some(snapshot) = &state.model else { return };
         let position = position as f64;
         let timed = state.show_duration;
-        let (lo, hi) = if timed && snapshot.has_overview && (state.has_more || state.has_newer) {
-            (snapshot.overview_start, snapshot.overview_end)
-        } else if timed {
-            (snapshot.tl_start, snapshot.tl_end)
-        } else {
-            (0.0, snapshot.records.len().max(1) as f64)
-        };
+        let (lo, hi) = timeline_domain(&state, snapshot);
         let absolute = lo + position.clamp(0.0, 1.0) * (hi - lo);
         let selected_record = snapshot
             .spans
@@ -3330,6 +3702,7 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         state.selection = None;
         drop(state);
         apply_model(&app, &current.borrow());
+        hydrate_selected(&app, &current, &backend);
     });
 
     let (weak, current) = (app.as_weak(), state.clone());
@@ -3338,13 +3711,7 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         let state = current.borrow();
         let Some(snapshot) = &state.model else { return };
         let timed = state.show_duration;
-        let (lo, hi) = if timed && snapshot.has_overview && (state.has_more || state.has_newer) {
-            (snapshot.overview_start, snapshot.overview_end)
-        } else if timed {
-            (snapshot.tl_start, snapshot.tl_end)
-        } else {
-            (0.0, snapshot.overview_sequence_end.max(1.0))
-        };
+        let (lo, hi) = timeline_domain(&state, snapshot);
         let absolute = lo + (position as f64).clamp(0.0, 1.0) * (hi - lo);
         let span = snapshot.spans.iter().min_by(|a, b| {
             let value = |item: &SpanBase| {
@@ -3377,6 +3744,157 @@ fn poll(mut receive: impl FnMut() -> bool + 'static) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn complete_timing_stays_stable_across_ledger_pages_and_selection() {
+        let rows = json!([
+            {"item_id":"fixture-user","turn_id":"fixture-turn","user_round":1,"created_seq":1,
+                "kind":"user_message","started_at":1800000000.0,"completed_at":1800003600.0},
+            {"item_id":"fixture-first","turn_id":"fixture-turn","user_round":1,"created_seq":2,
+                "kind":"assistant_message","started_at":1800000000.0,"completed_at":1800000002.0},
+            {"item_id":"fixture-late","turn_id":"fixture-turn","user_round":1,"created_seq":3,
+                "kind":"assistant_message","started_at":1800003600.0,"completed_at":1800003603.0}
+        ]);
+        let timing = rows.as_array().unwrap().iter().map(|row| json!({
+            "created_seq":row["created_seq"],"kind":row["kind"],"started_at":row["started_at"],"completed_at":row["completed_at"]
+        })).collect::<Vec<_>>();
+        let first = json!({"trajectory":[rows[2]],"timeline":timing,"timeline_has_more":false,"has_more":true,
+            "tiles":[{"bucket":0,"count":3,"start":1800000000.0,"end":1800003603.0}]});
+        let model = parse_view_page(&first);
+        assert!(model.overview_exact);
+        assert_eq!(model.overview_end - model.overview_start, 5000.0);
+        assert_eq!(model.overview_spans[0].start, model.overview_spans[0].end);
+        assert_eq!(model.spans[0].start, model.overview_start + 2000.0);
+        let final_page = json!({"trajectory":[rows[0],rows[1]],"timeline":timing,"timeline_has_more":false,"has_more":false});
+        let complete = parse_view_page(&merge_page_json(&first, &final_page, true));
+        assert_eq!(complete.overview_end - complete.overview_start, 5000.0);
+        assert_eq!(complete.overview_spans.len(), 3);
+        for (initial, loaded) in model.overview_spans.iter().zip(&complete.overview_spans) {
+            assert_eq!((initial.start, initial.end), (loaded.start, loaded.end));
+        }
+        let state = State {
+            show_duration: true,
+            selected: 0,
+            ..Default::default()
+        };
+        assert_eq!(
+            timeline_domain(&state, &model),
+            timeline_domain(&state, &complete)
+        );
+        assert!(use_overview(&state, &complete));
+        let mut incomplete = first.clone();
+        incomplete["timeline_has_more"] = json!(true);
+        assert!(!parse_view_page(&incomplete).overview_exact);
+        assert_eq!(visible_span(0.0, 0.0, 0.0, 5000.0), Some((0.0, 0.002)));
+        let (start, width) = visible_span(5000.0, 5000.0, 0.0, 5000.0).unwrap();
+        assert!(width > 0.0 && start + width <= 1.0);
+        assert!(visible_span(6000.0, 6000.0, 0.0, 5000.0).is_none());
+    }
+
+    #[test]
+    fn selected_detail_restores_compaction_summary_and_assistant_reasoning() {
+        let mut compacted = build_cell(
+            &json!({"item_id":"fixture-compaction"}),
+            &json!({"content":"history"}),
+            KIND_COMPACTED,
+            0,
+        );
+        assert!(compacted.output_detail.is_none());
+        apply_detail(
+            &mut compacted,
+            &json!({"payload":{"content":"history","summary_text":"Fixture retained context.",
+            "summary_model_output":"Fixture model summary."}}),
+        );
+        assert_eq!(
+            compacted.output_detail.as_deref(),
+            Some("Fixture retained context.")
+        );
+        assert!(compacted.input_detail.is_none());
+        let mut assistant = build_cell(
+            &json!({"item_id":"fixture-model","created_time":1800000000.0,"updated_time":1800000002.0}),
+            &json!({"content":"Fixture response","message_stats":{"interaction_duration_s":400}}),
+            KIND_MESSAGE,
+            1,
+        );
+        assert_eq!(assistant.time_seconds, Some(2.0));
+        assert!(assistant.input_detail.is_none());
+        apply_detail(
+            &mut assistant,
+            &json!({"content":"Fixture complete response","reasoning_content":"Fixture reasoning"}),
+        );
+        assert_eq!(
+            assistant.output_detail.as_deref(),
+            Some("Fixture complete response")
+        );
+        assert_eq!(
+            assistant.thinking_detail.as_deref(),
+            Some("Fixture reasoning")
+        );
+        assert!(assistant.input_detail.is_none());
+        let mut tool = build_cell(
+            &json!({"item_id":"fixture-tool"}),
+            &json!({"tool":"fixture_tool"}),
+            KIND_TOOL,
+            2,
+        );
+        apply_detail(
+            &mut tool,
+            &json!({"tool":"fixture_tool","args":{"count":2},
+            "schema":{"type":"object"},"result":"Fixture result"}),
+        );
+        assert!(tool.input_detail.as_deref().unwrap().contains("count"));
+        assert!(tool.schema_detail.as_deref().unwrap().contains("object"));
+        assert_eq!(tool.result.as_deref(), Some("Fixture result"));
+    }
+
+    #[test]
+    fn paging_preserves_selected_identity_and_releases_hydrated_body() {
+        let first = json!({"trajectory":[
+            {"item_id":"fixture-first","turn_id":"fixture-turn","created_seq":10,
+                "kind":"assistant_message","summary":"Fixture preview","started_at":100.0,
+                "detail":{"body_id":"fixture-first|detail","revision":1}}
+        ]});
+        let older = json!({"trajectory":[
+            {"item_id":"fixture-older","turn_id":"fixture-turn","created_seq":9,
+                "kind":"user_message","summary":"Fixture input","started_at":99.0}
+        ]});
+        let mut state = State::default();
+        replace_model(&mut state, parse_view_page(&first));
+        let original = state.model.as_ref().unwrap().cells[0].clone();
+        assert!(original.detail_ref.is_some());
+        state.detail_original = Some(original);
+        apply_detail(
+            &mut state.model.as_mut().unwrap().cells[0],
+            &json!({"content":"Fixture complete response"}),
+        );
+        restore_detail(&mut state);
+        assert_eq!(
+            state.model.as_ref().unwrap().cells[0]
+                .output_detail
+                .as_deref(),
+            Some("Fixture preview")
+        );
+        let generation = state.detail_generation;
+        replace_model(
+            &mut state,
+            parse_view_page(&merge_page_json(&first, &older, true)),
+        );
+        assert_eq!(state.selected, 1);
+        assert!(state.detail_generation > generation);
+        assert!(state.detail_original.is_none());
+        replace_model(&mut state, parse_view_page(&older));
+        assert_eq!(state.selected, -1);
+        state.show_duration = true;
+        state.view_width = 0.02;
+        state.detail_loading = true;
+        let generation = state.detail_generation;
+        state.reset("fixture-next-thread".into());
+        assert_eq!(state.view_width, 1.0);
+        assert_eq!(state.view_start, 0.0);
+        assert!(state.show_duration && state.detail_loading);
+        assert!(state.detail_generation > generation);
+        assert_eq!(state.selected, -1);
+    }
 
     #[test]
     fn fold_groups_keep_assistants_separate_and_ignore_orphan_tools() {

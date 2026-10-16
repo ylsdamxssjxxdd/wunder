@@ -1,0 +1,277 @@
+// Current web timeline: light, compact tool rows inside a capped process.
+import { Theme, ProcessEntry, TimelineSpin } from "theme.slint";
+import { I18n } from "i18n.slint";
+import { ToolIcons } from "tool_icons.slint";
+import { WorkflowDetail } from "workflow_detail.slint";
+import { PatchDiffCard } from "patch_diff_card.slint";
+import { MarkdownBlock } from "markdown.slint";
+import { Button, ListView, ScrollView } from "std-widgets.slint";
+
+component ProcessEntryCard inherits Rectangle {
+    in property <ProcessEntry> entry;
+    callback toggle(int);
+    callback copy-text(string);
+    callback open-resource(string);
+    height: column.preferred-height;
+    column := VerticalLayout {
+        spacing: 0px;
+        if root.entry.kind == 1 : VerticalLayout {
+            padding-left: 24px; padding-right: 24px;
+            padding-top: 6px; padding-bottom: 6px; spacing: 6px;
+            for block in root.entry.blocks : MarkdownBlock {
+                block: block;
+                copy-code(text) => { root.copy-text(text); }
+                open-resource(path) => { root.open-resource(path); }
+            }
+            if root.entry.blocks.length == 0 : TextInput {
+                text: root.entry.text; read-only: true; wrap: word-wrap;
+                color: Theme.text; font-size: Theme.font-lg;
+            }
+        }
+        if root.entry.kind != 1 : Rectangle {
+            height: 26px;
+            border-radius: Theme.radius-tag;
+            background: hit.has-hover ? Theme.hover : transparent;
+            accessible-role: button;
+            accessible-label: root.entry.tool-name + " " + root.entry.summary;
+            accessible-action-default => { root.toggle(root.entry.payload); }
+            forward-focus: focus;
+            focus := FocusScope {
+                key-pressed(event) => {
+                    if event.text == " " || event.text == Key.Return {
+                        root.toggle(root.entry.payload); return accept;
+                    }
+                    return reject;
+                }
+            }
+            // Content is above the header hit area, so the file chip owns its click.
+            hit := TouchArea {
+                x: 44px; width: parent.width - 68px;
+                mouse-cursor: pointer;
+                clicked => { focus.focus(); root.toggle(root.entry.payload); }
+            }
+            HorizontalLayout {
+                padding-left: 24px; padding-right: 24px; spacing: 8px;
+                Rectangle {
+                    width: 20px;
+                    Rectangle {
+                        x: 9.5px; y: 0px; width: 1px; height: parent.height;
+                        background: Theme.timeline-line;
+                    }
+                    Rectangle {
+                        x: 3.5px; y: 7px; width: 12px; height: 12px; border-radius: 6px;
+                        background: Theme.panel;
+                        border-width: root.entry.status-kind == 1 ? 0px : 1px;
+                        border-color: root.entry.status-kind == 2 ? Theme.danger : Theme.timeline-entry-soft;
+                        Image {
+                            x: root.entry.status-kind == 1 ? 0px : 2px;
+                            y: root.entry.status-kind == 1 ? 0px : 2px;
+                            width: root.entry.status-kind == 1 ? 12px : 8px;
+                            height: self.width;
+                            source: root.entry.status-kind == 1 ? @image-url("../assets/icons/rotate-right.svg")
+                                : root.entry.status-kind == 2 ? @image-url("../assets/icons/xmark.svg")
+                                : @image-url("../assets/icons/check.svg");
+                            colorize: root.entry.status-kind == 2 ? Theme.danger : Theme.muted;
+                            transform-rotation: root.entry.status-kind == 1 ? TimelineSpin.angle * 1deg : 0deg;
+                        }
+                    }
+                }
+                if root.entry.tool-icon != "" : Image {
+                    y: 6.5px; width: 13px; height: 13px;
+                    source: ToolIcons.image(root.entry.tool-icon);
+                    colorize: Theme.muted;
+                }
+                Text {
+                    width: min(164px, self.preferred-width);
+                    height: parent.height; text: root.entry.tool-name;
+                    color: Theme.muted; font-size: Theme.font-md;
+                    overflow: elide; vertical-alignment: center;
+                }
+                if root.entry.target != "" : Rectangle {
+                    y: 4px; height: 18px;
+                    width: min(target-text.preferred-width + 14px, root.width < 650px ? 108px : 180px);
+                    border-radius: Theme.radius-tag;
+                    background: target-hit.has-hover ? Theme.selected : Theme.hover;
+                    accessible-role: button; accessible-label: root.entry.target;
+                    accessible-action-default => { root.open-resource(root.entry.target); }
+                    forward-focus: target-focus;
+                    target-focus := FocusScope {
+                        key-pressed(event) => {
+                            if event.text == " " || event.text == Key.Return { root.open-resource(root.entry.target); return accept; }
+                            return reject;
+                        }
+                    }
+                    target-text := Text {
+                        x: 7px; width: parent.width - 14px; height: parent.height;
+                        text: root.entry.target; color: Theme.muted; font-size: Theme.font-sm;
+                        overflow: elide; vertical-alignment: center;
+                    }
+                    target-hit := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { target-focus.focus(); root.open-resource(root.entry.target); }
+                    }
+                    Tooltip { text: @markdown("\{root.entry.target}"); }
+                }
+                Text {
+                    horizontal-stretch: 1; min-width: 0px; height: parent.height;
+                    text: root.entry.summary;
+                    color: Theme.timeline-entry-soft; font-size: Theme.font-sm;
+                    overflow: elide; vertical-alignment: center;
+                }
+                if root.entry.tokens != "" : Text {
+                    width: self.preferred-width; height: parent.height;
+                    text: root.entry.tokens; color: Theme.muted;
+                    font-size: Theme.font-xs; font-family: Theme.font-mono;
+                    vertical-alignment: center;
+                }
+                if root.entry.duration != "" : Text {
+                    width: self.preferred-width; height: parent.height;
+                    text: root.entry.duration; color: Theme.muted;
+                    font-size: Theme.font-xs; font-family: Theme.font-mono;
+                    vertical-alignment: center;
+                }
+            }
+
+        }
+        if root.entry.open && root.entry.kind != 1 : VerticalLayout {
+            padding-left: 44px; padding-right: 24px;
+            padding-top: 4px; padding-bottom: 8px;
+            spacing: 8px;
+            for patch in root.entry.patch : PatchDiffCard { card: patch; }
+            if root.entry.patch.length == 0 : Rectangle {
+                height: min(240px, detail.preferred-height + 16px);
+                background: Theme.panel; border-width: 1px;
+                border-color: Theme.border; border-radius: Theme.radius-sm;
+                private property <bool> follow-tail: true;
+                private property <string> revision: root.entry.detail;
+                private property <bool> scroll-pending: true;
+                changed revision => { self.scroll-pending = true; }
+                Timer {
+                    interval: 33ms; running: parent.scroll-pending;
+                    triggered => {
+                        parent.scroll-pending = false;
+                        if parent.follow-tail && root.entry.status-kind == 1 {
+                            detail-scroll.content-y = min(0px, detail-scroll.visible-height - detail-scroll.content-height);
+                        }
+                    }
+                }
+                detail-scroll := ScrollView {
+                    x: 10px; y: 8px; width: parent.width - 20px; height: parent.height - 16px;
+                    horizontal-scrollbar-policy: always-off;
+                    vertical-scrollbar-policy: as-needed;
+                    content-width: self.visible-width;
+                    detail := WorkflowDetail {
+                        width: detail-scroll.visible-width;
+                        sections: root.entry.sections;
+                        fallback: root.entry.detail;
+                        copy(text) => { root.copy-text(text); }
+                    }
+                    scrolled => {
+                        parent.follow-tail = self.visible-height - self.content-height - self.content-y >= -24px;
+                    }
+                }
+            }
+        }
+    }
+}
+
+export component ToolProcess inherits Rectangle {
+    in property <[ProcessEntry]> entries;
+    in property <bool> paged;
+    in property <bool> has-older;
+    in property <bool> has-newer;
+    in property <bool> loading;
+    in property <bool> failed;
+    in property <int> revision;
+    in property <bool> active;
+    in property <bool> live;
+    callback page(int);
+    in property <length> viewport-limit: Theme.workflow-height;
+    callback toggle(int);
+    callback copy-text(string);
+    callback open-resource(string);
+    // Grow naturally for a few entries; long processes keep their own scroll.
+    height: min(root.viewport-limit, root.viewport-height + page-top.height + page-bottom.height);
+    Timer {
+        interval: 33ms;
+        running: root.active && !root.paged && !root.loading && !root.failed;
+        triggered => { root.page(0); }
+    }
+    Timer {
+        interval: 1500ms;
+        running: root.active && root.live && root.paged && !root.has-newer && !root.loading && !root.failed;
+        triggered => { root.page(2); }
+    }
+    changed revision => {
+        root.follow-tail = !root.has-newer;
+        root.scroll-pending = true;
+        root.page-pending = true;
+    }
+    private property <length> viewport-height: min(Theme.workflow-height, max(26px, root.entries.length * 26px));
+    private property <length> measured-height: process-list.content-height;
+    changed measured-height => {
+        root.viewport-height = min(Theme.workflow-height, max(26px, root.measured-height));
+    }
+    private property <bool> follow-tail: true;
+    private property <bool> scroll-pending: true;
+    private property <bool> page-pending: false;
+    private property <int> count: root.entries.length;
+    changed count => { root.scroll-pending = true; }
+    Timer {
+        interval: 33ms; running: root.scroll-pending;
+        triggered => {
+            root.scroll-pending = false;
+            if root.page-pending && root.revision < 0 {
+                process-list.content-y = min(0px, process-list.visible-height - process-list.content-height);
+            } else if root.page-pending && root.revision > 0 && root.has-newer {
+                process-list.content-y = 0px;
+            } else if root.follow-tail && root.entries.length > 0 {
+                process-list.content-y = min(0px, process-list.visible-height - process-list.content-height);
+            } else if root.page-pending && root.revision > 0 {
+                process-list.content-y = 0px;
+            }
+            root.page-pending = false;
+        }
+    }
+    process-list := ListView {
+        y: page-top.height;
+        width: parent.width; height: parent.height - page-top.height - page-bottom.height;
+        horizontal-scrollbar-policy: always-off;
+        vertical-scrollbar-policy: as-needed;
+        content-width: self.visible-width;
+        for entry in root.entries : ProcessEntryCard {
+            width: process-list.visible-width;
+            entry: entry;
+            toggle(index) => { root.toggle(index); }
+            copy-text(text) => { root.copy-text(text); }
+            open-resource(path) => { root.open-resource(path); }
+        }
+        scrolled => {
+            root.follow-tail = self.visible-height - self.content-height - self.content-y >= -32px;
+        }
+    }
+    page-top := Rectangle {
+        x: 24px; y: 0px; width: parent.width - 48px;
+        height: root.has-older || (!root.paged && root.loading) || root.failed ? 30px : 0px;
+        if root.has-older || root.failed : Button {
+            height: 26px; width: min(220px, parent.width);
+            text: root.failed ? I18n.tl_process_retry : I18n.tl_process_earlier;
+            enabled: !root.loading;
+            clicked => { root.page(root.failed ? 0 : -1); }
+        }
+        if root.loading : Text {
+            x: parent.width - self.preferred-width; height: parent.height;
+            text: I18n.tl_process_loading; color: Theme.muted; font-size: Theme.font-xs;
+            vertical-alignment: center;
+        }
+    }
+    page-bottom := Rectangle {
+        x: 24px; y: parent.height - self.height; width: parent.width - 48px;
+        height: root.has-newer ? 30px : 0px;
+        if root.has-newer : Button {
+            height: 26px; width: min(220px, parent.width);
+            text: I18n.tl_process_later; enabled: !root.loading;
+            clicked => { root.page(1); }
+        }
+    }
+}

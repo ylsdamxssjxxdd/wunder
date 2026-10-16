@@ -1,21 +1,30 @@
 <template>
   <div v-if="hasPlan" class="status-dock" role="status">
-    <div class="status-dock-pill">
+    <button
+      ref="pillRef"
+      class="status-dock-pill"
+      type="button"
+      :aria-expanded="expanded"
+      :aria-controls="expanded ? panelId : undefined"
+      @click="expanded = !expanded"
+      @keydown.esc.stop="closePanel"
+    >
       <span v-if="loading" class="status-dock-spinner" aria-hidden="true">
         <i class="fa-solid fa-circle-notch"></i>
       </span>
-      <span class="status-dock-steps">
-        {{ t('chat.activity.steps', { done: planProgress.done, total: planProgress.total }) }}
-      </span>
-    </div>
+      <span class="status-dock-title">{{ t('chat.workflow.plan.title') }}</span>
+      <span class="status-dock-current" :title="currentStepText">{{ currentStepText }}</span>
+      <span class="status-dock-steps">{{ t('chat.workflow.plan.progress', { current: currentStepPosition, total: planProgress.total }) }}</span>
+      <i :class="['fa-solid', expanded ? 'fa-chevron-down' : 'fa-chevron-up', 'status-dock-toggle']" aria-hidden="true"></i>
+    </button>
     <transition name="status-dock-fade">
-      <div v-if="hasPlan" class="status-dock-pop" role="presentation">
+      <div v-if="expanded" :id="panelId" class="status-dock-pop" role="region" :aria-label="t('chat.workflow.plan.title')" @keydown.esc.stop="closePanel">
         <button
           class="status-dock-pop-close"
           type="button"
-          :title="t('chat.workflow.plan.remove')"
-          :aria-label="t('chat.workflow.plan.remove')"
-          @click="handleDismiss"
+          :title="t('common.close')"
+          :aria-label="t('common.close')"
+          @click="closePanel"
         >
           <i class="fa-solid fa-xmark" aria-hidden="true"></i>
         </button>
@@ -25,6 +34,7 @@
             v-for="(step, index) in planSteps"
             :key="`${index}-${step.text}`"
             :class="['status-dock-step', `is-${step.status}`]"
+            :aria-current="step.status === 'in_progress' ? 'step' : undefined"
           >
             <svg class="status-dock-step-icon" viewBox="0 0 20 20" aria-hidden="true">
               <circle cx="10" cy="10" r="8.25" />
@@ -46,29 +56,31 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref, useId, watch } from 'vue';
 
 import { useI18n } from '@/i18n';
 import { summarizePlanProgress } from '@/components/chat/composerActivity';
 
 /**
  * 输入区上方的计划状态条：只有「计划面板」写过步骤才出现，居中胶囊给出
- * 步骤进度，步骤卡常驻在胶囊上方。运行阶段提示不在这里——每个智能体气泡
+ * 当前步骤，点击切换上方步骤卡。展开状态独立于持久计划，关闭不会移除计划。
+ * 运行阶段提示不在这里——每个智能体气泡
  * 自己已经带运行信息。目标条（MessageGoalBar）仍在其下，两者不合并。
  */
 const props = withDefaults(defineProps<{
   loading?: boolean;
   plan?: unknown;
+  sessionId?: string;
 }>(), {
   loading: false,
-  plan: null
+  plan: null,
+  sessionId: ''
 });
 
-const emit = defineEmits<{
-  (event: 'remove'): void;
-}>();
-
 const { t } = useI18n();
+const expanded = ref(false);
+const pillRef = ref<HTMLButtonElement | null>(null);
+const panelId = useId();
 
 const planProgress = computed(() => summarizePlanProgress(props.plan));
 
@@ -88,8 +100,25 @@ const planExplanation = computed(() =>
   String((props.plan as { explanation?: unknown } | null)?.explanation ?? '').trim()
 );
 
-const handleDismiss = () => {
-  emit('remove');
+const currentStepIndex = computed(() => {
+  const active = planSteps.value.findIndex(step => step.status === 'in_progress');
+  return active >= 0 ? active : planSteps.value.findIndex(step => step.status !== 'completed');
+});
+const currentStepPosition = computed(() => currentStepIndex.value < 0
+  ? planProgress.value.total
+  : currentStepIndex.value + 1
+);
+const currentStepText = computed(() => currentStepIndex.value < 0
+  ? t('chat.workflow.plan.completed')
+  : planSteps.value[currentStepIndex.value]?.text || ''
+);
+
+// Updates to the same plan only refresh its content, never the user's open state.
+watch([() => props.sessionId, hasPlan], () => { expanded.value = false; });
+
+const closePanel = () => {
+  expanded.value = false;
+  pillRef.value?.focus({ preventScroll: true });
 };
 </script>
 
@@ -117,6 +146,35 @@ const handleDismiss = () => {
   white-space: nowrap;
   overflow: hidden;
   box-shadow: 0 1px 4px rgba(15, 23, 42, 0.06);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.status-dock-pill:hover {
+  border-color: rgba(15, 23, 42, 0.22);
+}
+
+.status-dock-pill:focus-visible {
+  outline: 2px solid #64748b;
+  outline-offset: 2px;
+}
+
+.status-dock-title {
+  flex: 0 0 auto;
+}
+
+.status-dock-current {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin-left: 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.status-dock-toggle {
+  flex: 0 0 auto;
+  font-size: 10px;
 }
 
 .status-dock-spinner {
@@ -136,7 +194,7 @@ const handleDismiss = () => {
   font-variant-numeric: tabular-nums;
 }
 
-/* 计划步骤卡：有步骤时常驻在胶囊上方，浮在消息流之上，细环三态图标读作进度。 */
+/* 计划步骤卡按需展开，浮在消息流之上，细环三态图标读作进度。 */
 .status-dock-pop {
   position: absolute;
   left: 50%;
@@ -160,7 +218,7 @@ const handleDismiss = () => {
   right: 8px;
   width: 22px;
   height: 22px;
-  display: none;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
   border: none;
@@ -169,10 +227,6 @@ const handleDismiss = () => {
   color: #6b7280;
   font-size: 12px;
   cursor: pointer;
-}
-
-.status-dock-pop:hover .status-dock-pop-close {
-  display: inline-flex;
 }
 
 .status-dock-pop-close:hover {

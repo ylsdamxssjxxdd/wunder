@@ -1160,7 +1160,7 @@ button.messenger-sidebar-workspace-row {
 
 .messenger-sidebar-footer {
   flex-shrink: 0;
-  padding: 2px var(--mz-sidebar-padding) 12px;
+  padding: 0;
   border-top: 1px solid var(--mz-border);
 }
 
@@ -1171,9 +1171,10 @@ button.messenger-sidebar-workspace-row {
   box-sizing: border-box;
   width: 100%;
   height: var(--mz-settings-btn-height);
+  margin: 0;
   padding: 0 8px;
   border: 0;
-  border-radius: var(--mz-radius-btn);
+  border-radius: 0;
   color: var(--mz-text-secondary);
   background: transparent;
   font: inherit;

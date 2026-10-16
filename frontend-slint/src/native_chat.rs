@@ -53,6 +53,8 @@ struct TurnOutput {
     /// Model round whose body block is currently open; a round change starts a
     /// new block instead of appending to the finished one.
     body_round: i64,
+    /// Thread-wide user round supplied by the event envelope.
+    user_round: i64,
     /// Interaction duration of the running turn, shown in the status line.
     stats_duration: String,
     /// Workflow entries of the running batch, keyed by tool-call id, bounded to
@@ -78,6 +80,7 @@ impl TurnOutput {
             state: "正在生成…".into(),
             round: 0,
             body_round: -1,
+            user_round: 0,
             stats_duration: String::new(),
             workflow: Vec::new(),
             command_output: std::collections::HashMap::new(),
@@ -96,13 +99,16 @@ impl TurnOutput {
     fn upsert_workflow(
         &mut self,
         timeline: &mut crate::timeline::Timeline,
-        entry: NativeWorkflowEntry,
+        mut entry: NativeWorkflowEntry,
     ) {
         let projected = if let Some(existing) = self
             .workflow
             .iter_mut()
             .find(|old| !entry.id.is_empty() && old.id == entry.id)
         {
+            if entry.preview.is_empty() {
+                entry.preview = existing.preview.clone();
+            }
             *existing = entry.clone();
             existing.clone()
         } else {
@@ -465,6 +471,7 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
     crate::workspace_ui::install(app, desktop_preview.clone());
     let timeline = state.borrow().timeline.clone();
     bind_timeline(app, timeline, desktop_preview.clone());
+    crate::chat_process::install(app, desktop_preview.clone());
     {
         let timeline = state.borrow().timeline.clone();
         let live = timeline.borrow();
@@ -552,19 +559,6 @@ fn bind_timeline(
                 Err(error) => app.set_status(format!("无法打开工作区文件：{error}").into()),
             });
         });
-    });
-    let weak = app.as_weak();
-    app.on_timeline_download(move |text| {
-        let Some(app) = weak.upgrade() else { return };
-        let text = text.to_string();
-        if text.trim().is_empty() {
-            return;
-        }
-        match crate::file_dialog::save_text_file("保存回复", &text) {
-            Ok(Some(path)) => app.set_status(format!("已保存到 {path}").into()),
-            Ok(None) => {}
-            Err(error) => app.set_status(format!("保存失败：{error}").into()),
-        }
     });
     // Bounded introspection for the native smoke checks and the companion
     // bubble: both need the active thread's tail without reading every row.
@@ -2857,6 +2851,7 @@ fn start_timer(app: &MainWindow, state: Rc<RefCell<State>>) {
                 // cells, never the whole history.
                 let mut live = timeline.borrow_mut();
                 live.flush();
+                live.set_turn_status(&active.state, active.user_round);
                 publish_timeline(&app, &live);
                 app.set_stream_bytes(live.body_text().len().min(i32::MAX as usize) as i32);
                 drop(live);
@@ -2883,6 +2878,7 @@ fn start_timer(app: &MainWindow, state: Rc<RefCell<State>>) {
                 // event; the frozen block keeps its parsed form from here on.
                 let mut live = timeline.borrow_mut();
                 live.finish(failed);
+                live.set_turn_status(&active.state, active.user_round);
                 live.flush();
                 publish_timeline(&app, &live);
                 drop(live);
@@ -2946,6 +2942,13 @@ fn apply_event(
     if active.state == "已停止" {
         return Ok(false);
     }
+    if let Some(round) = data["user_round"]
+        .as_i64()
+        .or_else(|| envelope["user_round"].as_i64())
+        .filter(|round| *round > 0)
+    {
+        active.user_round = round;
+    }
     let round = data["model_round"].as_i64().unwrap_or(active.round);
     if round < active.round
         && matches!(
@@ -2974,6 +2977,12 @@ fn apply_event(
         active.round = active.round.max(round);
     }
     match kind {
+        "native_turn_identity" | "native_execution_identity" => {
+            if let Some(root) = data["root_turn_id"].as_str() {
+                timeline.set_process_root(root);
+            }
+            return Ok(true);
+        }
         "reasoning" | "reasoning_delta" => {
             if let Some(delta) = data["delta"]
                 .as_str()
@@ -2985,6 +2994,9 @@ fn apply_event(
             }
         }
         "native_execution_started" => {
+            if let Some(root) = data["root_turn_id"].as_str() {
+                timeline.set_process_root(root);
+            }
             // Background goal executions restart model_round at one while the
             // timeline keeps the earlier entries of the same user turn.
             active.round = 0;
@@ -2992,6 +3004,9 @@ fn apply_event(
             active.state = "目标继续执行…".into();
         }
         "native_execution_status" => {
+            if let Some(root) = data["root_turn_id"].as_str() {
+                timeline.set_process_root(root);
+            }
             active.state = match data["status"].as_str() {
                 Some("queued") => "正在排队",
                 Some("running") => "正在生成…",
@@ -3047,8 +3062,13 @@ fn apply_event(
             // after a reload. Intermediate deltas carry nothing here.
             if let Some(stats) = crate::turn_stats::message_stats(data) {
                 timeline.set_turn_stats(crate::timeline::stat_metrics(
-                    &crate::turn_stats::metrics(stats),
+                    &crate::turn_stats::with_user_round(
+                        crate::turn_stats::metrics(stats),
+                        active.user_round,
+                    ),
                 ));
+            } else if kind == "final" {
+                timeline.set_user_round(active.user_round);
             }
             if kind == "final" {
                 active.state = "任务完成".into();
@@ -3060,8 +3080,13 @@ fn apply_event(
             // statistics arrive.
             if let Some(stats) = crate::turn_stats::message_stats(data) {
                 timeline.set_turn_stats(crate::timeline::stat_metrics(
-                    &crate::turn_stats::metrics(stats),
+                    &crate::turn_stats::with_user_round(
+                        crate::turn_stats::metrics(stats),
+                        active.user_round,
+                    ),
                 ));
+            } else {
+                timeline.set_user_round(active.user_round);
             }
             active.state = match data["status"].as_str() {
                 Some("cancelled" | "canceled") => "已停止",
@@ -3212,6 +3237,11 @@ fn apply_event(
                 if let Some(code) = exit_code {
                     lines.push(format!("exit {code}"));
                 }
+                let mut command_payload = data.clone();
+                command_payload["args"] = serde_json::json!({"command": command});
+                command_payload["result"] = serde_json::json!({"data": {
+                    "command": command, "stdout": bound_command_output(&output), "exit_code": exit_code
+                }});
                 active.upsert_workflow(
                     timeline,
                     NativeWorkflowEntry::from_payload(
@@ -3227,7 +3257,7 @@ fn apply_event(
                         } else {
                             "running"
                         },
-                        data,
+                        &command_payload,
                     ),
                 );
                 active.state = "正在执行工具…".into();
@@ -3445,13 +3475,15 @@ mod turn_tests {
             &mut output,
             json!({"event":"final","data":{
                 "answer":"Fixture answer",
+                "user_round":57,
                 "meta":{"message_stats":{
                     "interaction_duration_s": 12.44,
                     "request_consumed_tokens": 4096,
                     "toolCalls": 3,
                     "contextTokens": 12345,
                     "avg_model_round_speed_rounds": 2.0,
-                    "avg_model_round_speed_tps": 68234.0
+                    "avg_model_round_speed_tps": 68234.0,
+                    "model_request_count": 4
                 }}
             }}),
         );
@@ -3459,11 +3491,13 @@ mod turn_tests {
         assert_eq!(
             metrics,
             vec![
+                ("hashtag".to_string(), "57".to_string()),
                 ("stopwatch".to_string(), "12.4s".to_string()),
-                ("gauge-high".to_string(), "68.2k/s".to_string()),
+                ("gauge-high".to_string(), "68234.0 token/s".to_string()),
                 ("layer-group".to_string(), "12.3k".to_string()),
                 ("bolt".to_string(), "4.1k".to_string()),
                 ("screwdriver-wrench".to_string(), "3".to_string()),
+                ("coins".to_string(), "4".to_string()),
             ],
             "the row mirrors the web messenger: icon key plus value, in order",
         );
@@ -3505,8 +3539,17 @@ mod turn_tests {
                     .collect()
             })
             .unwrap_or_default();
-        // A zero tool count is dropped rather than rendered as an empty metric.
-        assert_eq!(metrics, vec![("stopwatch".to_string(), "1.5s".to_string())]);
+        assert_eq!(
+            metrics,
+            vec![
+                ("stopwatch".into(), "1.5s".into()),
+                ("gauge-high".into(), "-".into()),
+                ("layer-group".into(), "--".into()),
+                ("bolt".into(), "--".into()),
+                ("screwdriver-wrench".into(), "0".into()),
+                ("coins".into(), "--".into())
+            ]
+        );
     }
 
     /// One runtime round: admission, one reasoning segment, one tool, one

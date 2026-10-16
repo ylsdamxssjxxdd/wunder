@@ -7,6 +7,25 @@ use serde_json::Value;
 use std::sync::Arc;
 
 impl NativeDesktop {
+    /// Hydrate only the selected trajectory row. Bodies remain chunked in
+    /// storage; enforce both byte and page bounds before decoding the payload.
+    pub fn thread_trajectory_detail(
+        &self,
+        session: &str,
+        body_id: &str,
+        revision: i64,
+    ) -> Result<Value> {
+        self.open_session(session)?;
+        read_detail(|cursor| {
+            self.state().storage.thread_body_page(
+                self.user_id(),
+                session,
+                body_id,
+                revision,
+                cursor,
+            )
+        })
+    }
     /// Bounded full-text search used by the native trajectory view.
     pub fn thread_trajectory_search(
         &self,
@@ -141,5 +160,131 @@ impl NativeDesktop {
             }).await??;
             Ok(())
         })
+    }
+}
+
+fn read_detail(
+    mut read: impl FnMut(i64) -> Result<wunder_server::stable_core::thread_view::ThreadBodyPage>,
+) -> Result<Value> {
+    let mut cursor = 0;
+    let mut text = String::new();
+    for _ in 0..256 {
+        let page = read(cursor)?;
+        for chunk in page.chunks {
+            anyhow::ensure!(
+                text.len() + chunk.len() <= 2 * 1024 * 1024,
+                "trajectory detail exceeds display limit; export the complete log"
+            );
+            text.push_str(&chunk);
+        }
+        if !page.has_more {
+            if text.is_empty() {
+                return Ok(Value::Null);
+            }
+            return Ok(serde_json::from_str(&text)?);
+        }
+        let next = page
+            .next_cursor
+            .ok_or_else(|| anyhow::anyhow!("missing trajectory body cursor"))?;
+        anyhow::ensure!(next > cursor, "trajectory body cursor did not advance");
+        cursor = next;
+    }
+    anyhow::bail!("trajectory detail exceeds page limit; export the complete log")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wunder_server::stable_core::thread_view::ThreadBodyPage;
+
+    #[test]
+    fn detail_uses_returned_cursors_and_preserves_summary() {
+        let mut visited = Vec::new();
+        let value = read_detail(|cursor| {
+            visited.push(cursor);
+            Ok(ThreadBodyPage {
+                chunks: vec![if cursor == 0 {
+                    "{\"summary_text\":\"Fixture "
+                } else {
+                    "retained context.\"}"
+                }
+                .into()],
+                has_more: cursor == 0,
+                next_cursor: (cursor == 0).then_some(16),
+                ..Default::default()
+            })
+        })
+        .unwrap();
+        assert_eq!(visited, [0, 16]);
+        assert_eq!(value["summary_text"], "Fixture retained context.");
+        assert_eq!(
+            read_detail(|_| Ok(ThreadBodyPage::default())).unwrap(),
+            Value::Null
+        );
+        assert!(read_detail(|_| Ok(ThreadBodyPage {
+            has_more: true,
+            next_cursor: Some(0),
+            ..Default::default()
+        }))
+        .is_err());
+        assert!(read_detail(|_| Ok(ThreadBodyPage {
+            chunks: vec!["x".repeat(2 * 1024 * 1024 + 1)],
+            ..Default::default()
+        }))
+        .is_err());
+    }
+
+    #[cfg(feature = "sqlite-storage")]
+    #[test]
+    fn stored_compaction_detail_survives_chunked_native_read() {
+        use wunder_server::storage::{SqliteStorage, ThreadLogStore};
+        let directory = tempfile::tempdir().unwrap();
+        let storage =
+            SqliteStorage::new(directory.path().join("fixture.db").to_string_lossy().into());
+        let accepted = storage
+            .accept_thread_turn(
+                "fixture-user",
+                "fixture-thread",
+                &serde_json::json!({"content":"Fixture input"}),
+            )
+            .unwrap();
+        let turn = accepted["turn_id"].as_str().unwrap();
+        let summary = "Fixture retained context.\n".repeat(2400);
+        storage
+            .append_thread_item(
+                "fixture-user",
+                &serde_json::json!({
+                    "session_id":"fixture-thread", "turn_id":turn, "item_id":"fixture-compaction",
+                    "kind":"compaction", "status":"completed", "content":"history",
+                    "summary_text":summary
+                }),
+            )
+            .unwrap();
+        let page = storage
+            .thread_view_trajectory_page("fixture-user", "fixture-thread", None, None, 20)
+            .unwrap();
+        assert!(!page.timeline.is_empty());
+        let body = page
+            .trajectory
+            .iter()
+            .find(|row| row.item_id == "fixture-compaction")
+            .unwrap()
+            .detail
+            .as_ref()
+            .unwrap();
+        let mut pages = 0;
+        let value = read_detail(|cursor| {
+            pages += 1;
+            storage.thread_body_page(
+                "fixture-user",
+                "fixture-thread",
+                &body.body_id,
+                body.revision,
+                cursor,
+            )
+        })
+        .unwrap();
+        assert_eq!(value["summary_text"], summary);
+        assert!(pages >= 1);
     }
 }

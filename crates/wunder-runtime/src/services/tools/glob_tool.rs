@@ -23,7 +23,7 @@ use std::time::SystemTime;
 use walkdir::WalkDir;
 
 /// Canonical tool name.
-pub(crate) const TOOL_GLOB: &str = "glob";
+pub(crate) const TOOL_GLOB: &str = "文件名匹配";
 
 /// Hard cap on returned paths, matching the dsh glob tool.
 const GLOB_MAX_RESULTS: usize = 100;
@@ -178,7 +178,7 @@ fn glob_files_inner(
         format!("Found {total} files matching {pattern}.")
     };
     Ok(build_model_tool_success_with_hint(
-        "glob",
+        TOOL_GLOB,
         "completed",
         summary,
         json!({

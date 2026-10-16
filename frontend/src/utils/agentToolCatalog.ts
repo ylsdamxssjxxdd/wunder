@@ -1,3 +1,4 @@
+// AI生成
 export type ToolOptionLike = {
   label: string;
   value: string;
@@ -37,6 +38,8 @@ const DEFAULT_AGENT_TOOL_NAME_FALLBACKS = new Set([
   'programmatic_tool_call',
   '列出文件',
   'list_files',
+  '文件名匹配',
+  'glob',
   '搜索内容',
   'search_content',
   '读取文件',

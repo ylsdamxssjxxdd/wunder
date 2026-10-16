@@ -33,6 +33,7 @@ import type {
 } from './chatRuntimeTypes';
 import { chatPerf } from '@/utils/chatPerf';
 import { normalizeChatPlan } from './chatPlan';
+import { presentChatInquiry, type ChatInquiryPanel } from './chatInquiry';
 
 // W4-L: guarded clock for the heavy-history metrics. `performance` is missing in
 // some non-browser hosts, and the recorder is inert while capture is off.
@@ -426,6 +427,9 @@ const buildAssistantBubble = (
       ...plan, item_id: planItem.itemId, revision: planItem.revision, created_seq: itemSeq(planItem)
     } };
   }
+  const panel = (latestTextItem?.raw.meta as Record<string, unknown> | undefined)?.panel as ChatInquiryPanel | undefined;
+  const questionPanel = presentChatInquiry(panel, turn.status);
+  if (questionPanel) message.display = { ...(message.display ?? {}), questionPanel };
   if (resolved.cancelled) {
     // Cancellation settles this existing bubble. Its visible partial answer,
     // tool history and performance record remain attached to the same turn.

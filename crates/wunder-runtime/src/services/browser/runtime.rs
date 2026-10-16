@@ -21,6 +21,22 @@ const MAX_CALL_DEADLINE: Duration = Duration::from_secs(900);
 /// A batch runs its steps serially inside one bridge command.
 const MAX_BATCH_STEPS: u64 = 10;
 
+/// Preserve partial progress when an interaction batch fails. Callers must not
+/// blindly retry successful steps (for example, an already submitted form).
+#[derive(Debug)]
+pub struct BrowserCommandFailure {
+    message: String,
+    pub data: Value,
+}
+
+impl std::fmt::Display for BrowserCommandFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for BrowserCommandFailure {}
+
 pub struct BrowserControlService {
     config: EffectiveBrowserConfig,
     bridge: BrowserBridge,
@@ -279,6 +295,8 @@ impl BrowserControlService {
                     "target_id": optional_string(args, "target_id"),
                     "url": url,
                     "timeout_ms": timeout_ms,
+                    "include_snapshot": optional_bool(args, "include_snapshot").unwrap_or(false),
+                    "max_chars": self.snapshot_budget(args),
                 }),
             )
             .await?;
@@ -325,6 +343,8 @@ impl BrowserControlService {
                     "action": "act",
                     "request": request,
                     "target_id": optional_string(args, "target_id"),
+                    "include_snapshot": optional_bool(args, "include_snapshot").unwrap_or(false),
+                    "max_chars": self.snapshot_budget(args),
                 }),
             )
             .await?;
@@ -424,6 +444,7 @@ impl BrowserControlService {
     fn snapshot_budget(&self, args: &Value) -> u64 {
         optional_u64(args, "max_chars")
             .unwrap_or(self.config.max_snapshot_chars as u64)
+            .max(1)
             .min(self.config.max_snapshot_chars as u64)
     }
 
@@ -471,13 +492,17 @@ impl BrowserControlService {
         if response.success {
             Ok(response.data.unwrap_or_else(|| json!({ "ok": true })))
         } else {
-            Err(anyhow!(
+            let message = format!(
                 "{}: {}",
                 fallback_error,
                 response
                     .error
                     .unwrap_or_else(|| "Unknown browser bridge error".to_string())
-            ))
+            );
+            match response.data {
+                Some(data) => Err(BrowserCommandFailure { message, data }.into()),
+                None => Err(anyhow!(message)),
+            }
         }
     }
 }
@@ -767,6 +792,30 @@ mod tests {
             2_000
         );
         assert_eq!(service.snapshot_budget(&json!({})), 2_000);
+        assert_eq!(service.snapshot_budget(&json!({"max_chars":300})), 300);
+        assert_eq!(service.snapshot_budget(&json!({"max_chars":1})), 1);
+        assert_eq!(service.snapshot_budget(&json!({"max_chars":0})), 1);
+    }
+
+    #[test]
+    fn batch_failure_preserves_completed_progress() {
+        let service = BrowserControlService::new(effective_browser_config(&Config::default()));
+        let error = service
+            .extract_data(
+                super::BridgeResponse {
+                    success: false,
+                    error: Some("Step failed".to_string()),
+                    traceback: None,
+                    data: Some(json!({"completed_steps":2,"failed_step":3})),
+                },
+                "Browser batch failed",
+            )
+            .unwrap_err();
+        let failure = error
+            .downcast_ref::<super::BrowserCommandFailure>()
+            .expect("structured failure");
+        assert_eq!(failure.data["completed_steps"], 2);
+        assert_eq!(failure.data["failed_step"], 3);
     }
 
     #[test]

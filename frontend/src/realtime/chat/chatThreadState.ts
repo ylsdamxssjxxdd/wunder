@@ -414,6 +414,7 @@ function applyTurnUpsert(state: ChatThreadState, frame: ThreadChangeFrame): Chat
   if (!existing) {
     state.turns.set(turnId, {
       turnId,
+      stopReason: firstString(data.stop_reason),
       rootTurnId: firstString(data.root_turn_id),
       userRound: firstNumber(data.user_round) ?? null,
       status: firstString(data.status) ?? null,
@@ -425,6 +426,11 @@ function applyTurnUpsert(state: ChatThreadState, frame: ThreadChangeFrame): Chat
 
   let changed = false;
   let structural = false;
+  const stopReason = firstString(data.stop_reason);
+  if (stopReason !== undefined && stopReason !== existing.stopReason) {
+    existing.stopReason = stopReason;
+    changed = true;
+  }
   const rootTurnId = firstString(data.root_turn_id);
   if (rootTurnId && rootTurnId !== existing.rootTurnId) {
     existing.rootTurnId = rootTurnId;
@@ -466,13 +472,16 @@ function applyTurnStatus(state: ChatThreadState, frame: ThreadChangeFrame): Chat
     state.turns.set(turnId, {
       turnId,
       userRound: null,
+      stopReason: firstString(data.stop_reason),
       status,
       clientMessageId: null,
       userContent: null
     });
     return CHANGED_STRUCTURAL;
   }
-  if (existing.status === status) return UNCHANGED;
+  const stopReason = firstString(data.stop_reason);
+  if (existing.status === status && (stopReason === undefined || stopReason === existing.stopReason)) return UNCHANGED;
+  if (stopReason !== undefined) existing.stopReason = stopReason;
   existing.status = status;
   return CHANGED_STRUCTURAL;
 }
@@ -678,6 +687,7 @@ function applySnapshotTurn(state: ChatThreadState, entry: ChatThreadSnapshotTurn
   state.turns.set(turnId, {
     turnId,
     rootTurnId: firstString(entry.root_turn_id),
+    stopReason: firstString(entry.payload?.stop_reason),
     userRound: firstNumber(entry.user_round, entry.user_turn_index, entry.payload?.user_round) ?? null,
     status: firstString(entry.status) ?? null,
     clientMessageId: firstString(entry.client_message_id, entry.payload?.client_message_id) ?? null,

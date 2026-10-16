@@ -3207,7 +3207,7 @@
     "en-US": "Programmatic Tool Call",
     "zh-CN": "程序化工具调用"
   },
-  "tool.title.glob": {
+  "tool.title.文件名匹配": {
     "en-US": "File Glob Match",
     "zh-CN": "文件名通配匹配"
   },

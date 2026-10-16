@@ -751,7 +751,8 @@ async fn cancel_session(
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     Ok(Json(json!({
         "data": {
-            "cancelled": cancel_settlement.monitor_cancelled,
+            "cancelled": cancel_settlement.monitor_cancelled || cancel_settlement.turns_cancelled > 0,
+            "turns_cancelled": cancel_settlement.turns_cancelled,
             "child_sessions_cancelled": cancel_settlement.child_sessions_cancelled,
             "goal_cleared": goal_cleared,
             "queued_tasks_cancelled": cancel_settlement.queued_tasks_cancelled,

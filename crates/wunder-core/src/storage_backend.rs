@@ -251,6 +251,15 @@ pub trait ThreadLogStore {
         summary: &str,
         payload: &Value,
     ) -> Result<bool>;
+    /// Indexed, bounded identities only; used to settle active/waiting turns
+    /// without loading conversation payloads or scanning completed history.
+    fn list_thread_turn_ids_by_status(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        status: &str,
+        limit: usize,
+    ) -> Result<Vec<String>>;
     fn append_thread_item(&self, user_id: &str, payload: &Value) -> Result<()>;
     /// Return a committed change receipt; an idempotent no-op returns None.
     fn commit_thread_item(&self, user_id: &str, payload: &Value) -> Result<Option<Value>>;

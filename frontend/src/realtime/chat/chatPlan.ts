@@ -45,12 +45,3 @@ export const normalizeChatPlan = (value: unknown): ChatPlan | null => {
   if (!steps.length) return null;
   return { explanation: typeof source.explanation === 'string' ? preview(source.explanation.trim(), 512) : '', steps };
 };
-
-/** Hiding a plan version survives row replacement, but never hides its next update. */
-export const resolveChatPlanDismissKey = (message: Record<string, unknown>): string => {
-  const plan = record(message.plan);
-  const itemId = String(plan.item_id ?? '').trim();
-  if (itemId) return JSON.stringify([itemId, plan.revision ?? 0]);
-  const messageId = message.__runtime_message_id ?? message.message_id ?? message.id;
-  return messageId ? JSON.stringify([messageId, plan.explanation, plan.steps]) : '';
-};

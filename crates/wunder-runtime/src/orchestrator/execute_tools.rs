@@ -291,12 +291,21 @@ impl Orchestrator {
         }
         let parallelism = resolve_tool_parallelism(calls.len());
         let execution_lock = Arc::new(tokio::sync::RwLock::new(()));
+        // Acquire before hooks/approval can yield, preserving model call order
+        // for the shared browser page while other tools and threads keep moving.
+        let browser_order = Arc::new(tokio::sync::Mutex::new(()));
         let mut stream = futures::stream::iter(calls.into_iter().map(|planned| {
             let orchestrator = self;
             let approval_tx = approval_tx.clone();
             let emitter = emitter.clone();
             let execution_lock = Arc::clone(&execution_lock);
+            let browser_order = Arc::clone(&browser_order);
             async move {
+                let _browser_order = if crate::services::tools::is_browser_tool_name(&planned.name) {
+                    Some(browser_order.lock_owned().await)
+                } else {
+                    None
+                };
                 let cancelled_call_id = planned.call.id.clone();
                 let cancelled_tool_name = planned.name.clone();
                 let invocation_started = Instant::now();

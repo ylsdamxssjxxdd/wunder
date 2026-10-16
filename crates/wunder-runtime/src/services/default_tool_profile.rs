@@ -1,21 +1,4 @@
-use crate::config::Config;
 use std::collections::HashSet;
-
-const DEFAULT_BUILTIN_TOOL_NAMES: &[&str] = &[
-    "定时任务",
-    "记忆管理",
-    "执行命令",
-    "命令会话",
-    "ptc",
-    "列出文件",
-    "glob",
-    "搜索内容",
-    "读取文件",
-    "网页抓取",
-    "技能调用",
-    "写入文件",
-    "文本编辑",
-];
 
 const DEFAULT_SKILL_NAMES: &[&str] = &["技能创建器"];
 
@@ -30,38 +13,137 @@ const DESKTOP_HIDDEN_TOOL_NAMES: &[&str] = &[
     "会话让出",
 ];
 
-/// 桌面端默认智能体在通用默认工具之外额外启用的本地能力工具。
-const DESKTOP_EXTRA_DEFAULT_TOOL_NAMES: &[&str] =
-    &["读图工具", "桌面监视器", "桌面控制器", "子智能体控制"];
+/// 默认选择直接来自内置工具目录；浏览器成员统一投影为可选择的聚合项。
+pub fn default_tool_candidates() -> Vec<String> {
+    static CANDIDATES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    CANDIDATES
+        .get_or_init(|| {
+            let mut seen = HashSet::new();
+            let mut names = Vec::new();
+            for spec in crate::tools::builtin_tool_specs() {
+                if crate::services::goal::is_goal_tool_name(&spec.name)
+                    || is_temporarily_hidden_tool_name(&spec.name)
+                {
+                    continue;
+                }
+                let name = if crate::tools::is_browser_tool_name(&spec.name) {
+                    crate::tools::BROWSER_GROUP_NAME.to_string()
+                } else {
+                    spec.name
+                };
+                if seen.insert(name.clone()) {
+                    names.push(name);
+                }
+            }
+            names.extend(DEFAULT_SKILL_NAMES.iter().map(|name| name.to_string()));
+            names
+        })
+        .clone()
+}
 
-fn dedup_names(values: impl IntoIterator<Item = String>) -> Vec<String> {
-    let mut seen = HashSet::new();
-    let mut output = Vec::new();
-    for raw in values {
-        let cleaned = raw.trim().to_string();
-        if cleaned.is_empty() || !seen.insert(cleaned.clone()) {
+/// 仅选择授权集合里的内置工具；权限只放行浏览器成员时保留成员边界。
+pub fn default_builtin_tool_names(allowed: &HashSet<String>) -> Vec<String> {
+    let canonical_allowed: HashSet<String> = allowed
+        .iter()
+        .map(|name| crate::tools::resolve_tool_name(name.trim()))
+        .collect();
+    let mut selected = Vec::new();
+    for name in default_tool_candidates() {
+        if DEFAULT_SKILL_NAMES.contains(&name.as_str()) {
             continue;
         }
-        output.push(cleaned);
+        if canonical_allowed.contains(&name) {
+            selected.push(name);
+        } else if crate::tools::is_browser_group_name(&name) {
+            selected.extend(
+                crate::tools::browser_tool_names()
+                    .into_iter()
+                    .filter(|member| canonical_allowed.contains(member)),
+            );
+        }
     }
-    output
+    selected
 }
 
-pub fn curated_default_tool_candidates() -> Vec<String> {
-    dedup_names(
-        DEFAULT_BUILTIN_TOOL_NAMES
+/// 三种执行形态共用默认选择：全部可用内置工具，加上既有默认技能。
+pub fn default_tool_names(allowed: &HashSet<String>) -> Vec<String> {
+    let mut selected = default_builtin_tool_names(allowed);
+    selected.extend(
+        DEFAULT_SKILL_NAMES
             .iter()
-            .chain(DEFAULT_SKILL_NAMES.iter())
-            .map(|name| (*name).to_string()),
-    )
+            .filter(|name| allowed.contains(**name))
+            .map(|name| name.to_string()),
+    );
+    selected
 }
 
-/// 桌面端默认智能体额外启用的工具名（未过滤可用性）。
-pub fn desktop_extra_default_tool_candidates() -> Vec<String> {
-    DESKTOP_EXTRA_DEFAULT_TOOL_NAMES
+/// 已有默认智能体补齐首次可用的内置工具；记住已处理集合，保留后续手动取消。
+pub(crate) fn initialize_default_builtin_tools(
+    store: &crate::user_store::UserStore,
+    user_id: &str,
+    config: &mut crate::services::default_agent_protocol::DefaultAgentConfig,
+    allowed: &HashSet<String>,
+    skill_names: &HashSet<String>,
+) -> anyhow::Result<()> {
+    let key = format!("default_agent_builtin_baseline_v1:{}", user_id.trim());
+    let previous = store
+        .get_meta(&key)?
+        .and_then(|raw| serde_json::from_str::<Vec<String>>(&raw).ok());
+    let mut known: HashSet<String> = previous
+        .as_deref()
+        .unwrap_or_default()
         .iter()
-        .map(|name| name.to_string())
-        .collect()
+        .cloned()
+        .collect();
+    let defaults = default_builtin_tool_names(allowed);
+    let additions: Vec<String> = defaults
+        .into_iter()
+        .filter(|name| known.insert(name.clone()))
+        .collect();
+    if !additions.is_empty() {
+        use crate::services::agent_abilities::{
+            resolve_agent_runtime_tool_names, resolve_record_ability_items,
+            resolve_selected_declared_names,
+        };
+        let mut selected = resolve_agent_runtime_tool_names(
+            &config.tool_names,
+            &config.declared_tool_names,
+            &config.declared_skill_names,
+        );
+        selected.extend(additions);
+        config.tool_names =
+            crate::services::user_agent_presets::filter_allowed_tools(&selected, allowed);
+        let (tools, skills) = resolve_selected_declared_names(
+            &config.tool_names,
+            &config.declared_tool_names,
+            &config.declared_skill_names,
+            skill_names,
+        );
+        config.ability_items =
+            resolve_record_ability_items(&[], &config.tool_names, &tools, &skills, skill_names);
+        config.declared_tool_names = tools;
+        config.declared_skill_names = skills;
+        store.set_meta(
+            &crate::services::default_agent_protocol::default_agent_meta_key(user_id),
+            &serde_json::to_string(config)?,
+        )?;
+        if store.get_user_agent(user_id, "__default__")?.is_some() {
+            store.upsert_user_agent(
+                &crate::services::default_agent_protocol::record_from_default_agent_config(
+                    "__default__",
+                    user_id,
+                    "A",
+                    config,
+                ),
+            )?;
+        }
+    }
+    let mut baseline: Vec<String> = known.into_iter().collect();
+    baseline.sort();
+    if previous.as_ref() != Some(&baseline) {
+        store.set_meta(&key, &serde_json::to_string(&baseline)?)?;
+    }
+    Ok(())
 }
 
 /// 判断内置工具名是否在桌面端隐藏（不可选择、不默认启用）。
@@ -86,148 +168,96 @@ pub fn is_temporarily_hidden_tool_name(name: &str) -> bool {
         .any(|hidden| *hidden == canonical || *hidden == cleaned)
 }
 
-pub fn curated_default_skill_names(allowed_tool_names: &HashSet<String>) -> Vec<String> {
-    dedup_names(
-        DEFAULT_SKILL_NAMES
-            .iter()
-            .map(|name| (*name).to_string())
-            .filter(|name| allowed_tool_names.contains(name)),
-    )
-}
-
-/// 通用默认工具（服务器模式语义），与历史行为保持一致。
-pub fn curated_default_tool_names(allowed_tool_names: &HashSet<String>) -> Vec<String> {
-    curated_default_tool_names_with_desktop_extras(allowed_tool_names, false)
-}
-
-/// 桌面模式的默认工具：在通用默认之上追加桌面本地能力工具，均按可用集合过滤。
-pub fn curated_default_tool_names_for_config(
-    config: &Config,
-    allowed_tool_names: &HashSet<String>,
-) -> Vec<String> {
-    let desktop = config.server.mode.trim().eq_ignore_ascii_case("desktop");
-    curated_default_tool_names_with_desktop_extras(allowed_tool_names, desktop)
-}
-
-pub fn curated_default_tool_names_with_desktop_extras(
-    allowed_tool_names: &HashSet<String>,
-    include_desktop_extras: bool,
-) -> Vec<String> {
-    let mut output = dedup_names(
-        DEFAULT_BUILTIN_TOOL_NAMES
-            .iter()
-            .map(|name| (*name).to_string()),
-    );
-    output.extend(curated_default_skill_names(allowed_tool_names));
-    if include_desktop_extras {
-        output.extend(desktop_extra_default_tool_candidates());
-    }
-    dedup_names(output)
-        .into_iter()
-        .filter(|name| allowed_tool_names.contains(name))
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{
-        curated_default_tool_candidates, curated_default_tool_names,
-        curated_default_tool_names_for_config, curated_default_tool_names_with_desktop_extras,
-        is_desktop_hidden_tool_name, is_temporarily_hidden_tool_name, Config,
-    };
-    use crate::tools::resolve_tool_name;
-    use std::collections::HashSet;
+    use super::*;
+    use crate::config::Config;
 
-    fn allowed_set() -> HashSet<String> {
-        curated_default_tool_candidates()
+    #[test]
+    fn defaults_include_every_available_builtin_without_external_tools() {
+        let mut allowed: HashSet<String> = default_tool_candidates().into_iter().collect();
+        allowed.extend(
+            [
+                "sample_mcp@tool",
+                "sample_skill",
+                "sample_knowledge",
+                "ptc",
+                "get_goal",
+            ]
             .into_iter()
-            .chain(super::desktop_extra_default_tool_candidates())
-            .chain([
-                "get_goal".to_string(),
-                "create_goal".to_string(),
-                "update_goal".to_string(),
-            ])
-            .collect()
-    }
-
-    #[test]
-    fn self_status_is_not_enabled_by_default() {
-        let canonical = resolve_tool_name("self_status");
-        let defaults = curated_default_tool_candidates();
-        assert!(!defaults.contains(&canonical));
-    }
-
-    #[test]
-    fn curated_default_selection_keeps_self_status_disabled() {
-        let canonical = resolve_tool_name("self_status");
-        let mut allowed = curated_default_tool_candidates()
-            .into_iter()
-            .collect::<HashSet<_>>();
-        allowed.insert(canonical.clone());
-        let selected = curated_default_tool_names(&allowed);
-        assert!(!selected.contains(&canonical));
-    }
-
-    #[test]
-    fn curated_default_selection_includes_command_session_for_background_exec() {
-        let allowed = curated_default_tool_candidates()
-            .into_iter()
-            .collect::<HashSet<_>>();
-        let selected = curated_default_tool_names(&allowed);
-        assert!(selected.iter().any(|name| name == "执行命令"));
-        assert!(selected.iter().any(|name| name == "命令会话"));
-    }
-
-    #[test]
-    fn desktop_extras_only_apply_when_requested() {
-        let allowed = allowed_set();
-        let base = curated_default_tool_names_with_desktop_extras(&allowed, false);
-        assert!(!base.iter().any(|name| name == "桌面监视器"));
-        let desktop = curated_default_tool_names_with_desktop_extras(&allowed, true);
-        for name in super::desktop_extra_default_tool_candidates() {
-            assert!(desktop.contains(&name));
-        }
-    }
-
-    #[test]
-    fn desktop_mode_adds_extras_and_server_mode_does_not() {
-        let allowed = allowed_set();
-        let mut config = Config::default();
-        config.server.mode = "desktop".to_string();
-        let desktop = curated_default_tool_names_for_config(&config, &allowed);
-        assert!(desktop.iter().any(|name| name == "读图工具"));
-        assert!(desktop.iter().any(|name| name == "子智能体控制"));
-
-        config.server.mode = "server".to_string();
-        let server = curated_default_tool_names_for_config(&config, &allowed);
-        assert!(!server.iter().any(|name| name == "读图工具"));
-    }
-
-    #[test]
-    fn desktop_hidden_tool_names_cover_system_tools() {
+            .map(str::to_string),
+        );
+        let selected = default_tool_names(&allowed);
         for name in [
-            "get_goal",
-            "create_goal",
-            "update_goal",
-            "会话让出",
-            "会话线程控制",
+            "浏览器",
+            "文本编辑",
+            "计划面板",
+            "问询面板",
+            "self_status",
+            "执行命令",
+            "命令会话",
         ] {
-            assert!(is_desktop_hidden_tool_name(name));
+            let canonical = crate::tools::resolve_tool_name(name);
+            assert!(selected.contains(&canonical), "missing {canonical}");
         }
-        assert!(!is_desktop_hidden_tool_name("读取文件"));
-        assert!(!is_desktop_hidden_tool_name(""));
+        for name in [
+            "sample_mcp@tool",
+            "sample_skill",
+            "sample_knowledge",
+            "ptc",
+            "get_goal",
+        ] {
+            assert!(!selected.iter().any(|selected| selected == name));
+        }
+    }
+
+    #[test]
+    fn defaults_resolve_aliases_and_preserve_partial_browser_permissions() {
+        let allowed = ["edit", "update_plan", "question_panel", "browser_navigate"]
+            .into_iter()
+            .map(str::to_string)
+            .collect();
+        let selected = default_tool_names(&allowed);
+        assert_eq!(
+            selected.into_iter().collect::<HashSet<_>>(),
+            ["文本编辑", "计划面板", "问询面板", "browser_navigate"]
+                .into_iter()
+                .map(str::to_string)
+                .collect()
+        );
+    }
+
+    #[test]
+    fn defaults_follow_runtime_gates_in_all_forms() {
+        for mode in ["api", "desktop", "cli"] {
+            let mut config = Config::default();
+            config.server.mode = mode.to_string();
+            config.tools.builtin.enabled = default_tool_candidates();
+            config.browser.enabled = true;
+            config.tools.browser.enabled = true;
+            let skills = crate::skills::SkillRegistry::default();
+            let allowed = crate::tools::collect_available_tool_names(&config, &skills, None);
+            let selected = default_tool_names(&allowed);
+            for name in ["浏览器", "文本编辑", "计划面板", "问询面板"] {
+                assert!(
+                    selected.iter().any(|selected| selected == name),
+                    "{mode}: missing {name}"
+                );
+            }
+            assert!(selected.iter().all(|name| !name.starts_with("browser_")));
+            config.tools.browser.enabled = false;
+            let allowed = crate::tools::collect_available_tool_names(&config, &skills, None);
+            assert!(!default_tool_names(&allowed)
+                .iter()
+                .any(|name| name == "浏览器"));
+        }
     }
 
     #[test]
     fn temporarily_hidden_tools_cover_web_search_and_ptc() {
         for name in ["网页搜索", "web_search", "ptc", "programmatic_tool_call"] {
-            assert!(
-                is_temporarily_hidden_tool_name(name),
-                "{name} should be temporarily hidden"
-            );
+            assert!(is_temporarily_hidden_tool_name(name));
         }
         assert!(!is_temporarily_hidden_tool_name("读取文件"));
-        assert!(!is_temporarily_hidden_tool_name("网页抓取"));
-        assert!(!is_temporarily_hidden_tool_name(""));
     }
 }

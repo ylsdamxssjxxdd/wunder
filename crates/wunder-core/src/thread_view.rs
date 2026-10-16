@@ -46,6 +46,30 @@ pub struct ViewMessage {
     pub failure: String,
     #[serde(default)]
     pub attachments: Vec<Value>,
+    /// Bounded interactive metadata, independent of lazy body/process reads.
+    #[serde(default)]
+    pub question_panel: Option<ThreadQuestionPanel>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub struct ThreadQuestionPanel {
+    pub questions: Vec<ThreadQuestion>,
+    pub keep_open: bool,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub struct ThreadQuestion {
+    pub question: String,
+    pub multiple: bool,
+    pub options: Vec<ThreadQuestionOption>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub struct ThreadQuestionOption {
+    pub label: String,
+    pub description: String,
+    pub recommended: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -57,6 +81,10 @@ pub struct ChatViewRow {
     pub client_message_id: Option<String>,
     pub revision: i64,
     pub status: String,
+    /// Why this execution settled. Command acknowledgement and consumed
+    /// input waits are not successful task completion.
+    #[serde(default)]
+    pub stop_reason: Option<String>,
     /// Explicit composer ownership, independent of the executing thread head.
     #[serde(default)]
     pub queued_input: Option<QueuedInput>,

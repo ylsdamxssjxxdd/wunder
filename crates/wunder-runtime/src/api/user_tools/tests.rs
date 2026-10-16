@@ -349,6 +349,15 @@ fn user_catalog_collapses_provider_browser_tools_into_one_entry() {
         names.contains(&"执行命令"),
         "collapsing the browser surface must not drop other tools: {names:?}"
     );
+    assert_eq!(
+        summary
+            .default_agent_tool_names
+            .iter()
+            .map(String::as_str)
+            .collect::<HashSet<_>>(),
+        names.into_iter().collect(),
+        "all available builtins, including the browser aggregate, must be selected by default"
+    );
 }
 
 #[test]

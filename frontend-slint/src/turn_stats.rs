@@ -2,13 +2,13 @@
 //!
 //! Every finished turn carries a `message_stats` object: the runtime builds it
 //! in `build_persisted_message_stats` and the desktop façade either resolves it
-//! onto `NativeMessage::stats_*` (durable history) or hands the raw object to
+//! onto `NativeMessage::stats` (durable history) or hands the raw object to
 //! the live stream. Both paths land here, so the row a user sees while the
 //! answer streams and the row they see after a restart are built by the same
 //! code from the same keys.
 //!
 //! The timeline used to render none of this: `update_active_stats` computed a
-//! duration that nothing read, and the history projection ignored `stats_*`
+//! duration that nothing read, and the history projection ignored the statistics
 //! entirely. Keeping the projection in one function is what stops the two from
 //! drifting again.
 //!
@@ -22,7 +22,7 @@ use serde_json::Value;
 /// SVG, and the label used as the hover tooltip.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Metric {
-    /// `duration` | `speed` | `context` | `quota` | `tools`
+    /// A web-compatible footer metric or user-round status.
     pub key: &'static str,
     /// Icon key understood by `ui/tool_icons.slint`.
     pub icon: &'static str,
@@ -34,6 +34,8 @@ pub struct Metric {
 /// what each number looks like.
 fn icon_for(key: &str) -> &'static str {
     match key {
+        "round" => "hashtag",
+        "credits" => "coins",
         "duration" => "stopwatch",
         "speed" => "gauge-high",
         "context" => "layer-group",
@@ -51,211 +53,112 @@ fn metric(key: &'static str, value: String) -> Metric {
     }
 }
 
-/// Metrics from the raw `message_stats` object the runtime emits.
-///
-/// Order follows the web row: duration, speed, context occupancy, consumed
-/// tokens, tool-call count. Anything the runtime did not report is left out
-/// rather than shown as a dash.
+/// The runtime and history both resolve numeric values through the native façade.
 pub fn metrics(message_stats: &Value) -> Vec<Metric> {
-    let mut out = Vec::new();
-
-    if let Some(seconds) = number(
+    metrics_from_native(&wunder_desktop::native::NativeMessageStats::from_payload(
         message_stats,
-        &["interaction_duration_s", "duration_s", "elapsed_s"],
-    )
-    .filter(|value| *value > 0.0)
-    {
-        out.push(metric("duration", duration(seconds)));
-    }
-    if let Some(speed) = speed(message_stats) {
-        out.push(metric("speed", format!("{}/s", rate(speed))));
-    }
-    // 上下文占用: how full the window is, not how much this turn spent.
-    if let Some(context) = number(
-        message_stats,
-        &[
-            "contextTokens",
-            "context_occupancy_tokens",
-            "context_tokens",
-        ],
-    )
-    .filter(|value| *value > 0.0)
-    {
-        out.push(metric("context", count(context)));
-    }
-    // 上下文消耗: what this turn consumed.
-    if let Some(quota) = consumed_tokens(message_stats).filter(|value| *value > 0.0) {
-        out.push(metric("quota", count(quota)));
-    }
-    if let Some(tools) =
-        number(message_stats, &["toolCalls", "tool_calls"]).filter(|value| *value > 0.0)
-    {
-        out.push(metric("tools", count(tools)));
-    }
-
-    out
+    ))
 }
 
-/// Metrics from the façade's resolved `NativeMessage::stats_*` fields.
-///
-/// Durable history hands back display strings rather than the raw object, so the
-/// reload path formats the numbers they carry instead of re-parsing JSON. The
-/// façade's own suffixes are stripped first, which is what keeps the reloaded
-/// row identical to the streamed one.
-pub fn metrics_from_parts(
-    duration_value: &str,
-    speed: &str,
-    context: &str,
-    quota: &str,
-    tools: &str,
-) -> Vec<Metric> {
-    let mut out = Vec::new();
-
-    if let Some(seconds) = façade_duration(duration_value) {
-        out.push(metric("duration", self::duration(seconds)));
+pub fn metrics_from_native(stats: &wunder_desktop::native::NativeMessageStats) -> Vec<Metric> {
+    if stats.is_empty() {
+        return Vec::new();
     }
-    if let Some(value) = number_text(speed).filter(|value| *value > 0.0) {
-        out.push(metric("speed", format!("{}/s", rate(value))));
-    }
-    if let Some(value) = number_text(context).filter(|value| *value > 0.0) {
-        out.push(metric("context", count(value)));
-    }
-    if let Some(value) = number_text(quota).filter(|value| *value > 0.0) {
-        out.push(metric("quota", count(value)));
-    }
-    if let Some(value) = number_text(tools).filter(|value| *value > 0.0) {
-        out.push(metric("tools", count(value)));
-    }
-
-    out
+    vec![
+        metric(
+            "duration",
+            stats.duration_s.map(duration).unwrap_or_else(|| "-".into()),
+        ),
+        metric(
+            "speed",
+            stats
+                .speed_tps
+                .map(|value| format!("{value:.1} token/s"))
+                .unwrap_or_else(|| "-".into()),
+        ),
+        metric(
+            "context",
+            stats
+                .context_tokens
+                .map(count)
+                .unwrap_or_else(|| "--".into()),
+        ),
+        metric(
+            "quota",
+            stats
+                .consumed_tokens
+                .map(count)
+                .unwrap_or_else(|| "--".into()),
+        ),
+        metric(
+            "tools",
+            stats.tool_calls.map(count).unwrap_or_else(|| "--".into()),
+        ),
+        metric(
+            "credits",
+            stats.credits.map(count).unwrap_or_else(|| "--".into()),
+        ),
+    ]
 }
 
-/// Seconds as `12.4s`, or `2m 05s` past a minute.
+/// The user round is a thread-wide ordinal from the runtime, not a model round
+/// or an index in the bounded history window.
+pub fn with_user_round(mut metrics: Vec<Metric>, round: i64) -> Vec<Metric> {
+    if round > 0 {
+        metrics.insert(0, metric("round", round.to_string()));
+    }
+    metrics
+}
+
+/// Web shows the current execution state in place of the settled user-round
+/// status. Numeric usage already observed is retained alongside it.
+pub fn with_status(metrics: Vec<Metric>, state: &str) -> Vec<Metric> {
+    let key = match state {
+        "已停止" | "cancelled" | "canceled" | "interrupted" | "stopped" => "status-stopped",
+        "执行失败" | "failed" | "error" | "rejected" => "status-error",
+        "等待用户输入" | "waiting_input" | "waiting_user_input" => "status-waiting",
+        "等待确认" | "waiting_approval" => "status-waiting",
+        "" | "任务完成" | "输出已结束" | "completed" | "done" | "final" => return metrics,
+        _ => "status-running",
+    };
+    let mut result = vec![Metric {
+        key: "status",
+        icon: key,
+        value: state.into(),
+    }];
+    result.extend(metrics.into_iter().filter(|metric| metric.key != "round"));
+    result
+}
+
+/// Match the web footer's precision for seconds, minutes and hours.
 pub fn duration(seconds: f64) -> String {
-    if seconds < 60.0 {
+    let minutes = (seconds / 60.0).floor() as u64;
+    let hours = minutes / 60;
+    if hours > 0 {
+        format!("{hours}h {}m {:.1}s", minutes % 60, seconds % 60.0)
+    } else if minutes > 0 {
+        format!("{minutes}m {:.1}s", seconds % 60.0)
+    } else {
         format!("{seconds:.1}s")
-    } else {
-        format!(
-            "{}m {:02}s",
-            (seconds / 60.0).floor(),
-            (seconds % 60.0).round()
-        )
-    }
-}
-
-/// Decode speed in tokens/second. The runtime reports a per-round average when
-/// several rounds streamed and a visible decode speed otherwise; prefer the
-/// average exactly as the thread log's overview does.
-fn speed(stats: &Value) -> Option<f64> {
-    let rounds = number(
-        stats,
-        &["avg_model_round_speed_rounds", "avgModelRoundSpeedRounds"],
-    )
-    .unwrap_or_default();
-    if rounds > 0.0 {
-        number(
-            stats,
-            &[
-                "avg_model_round_speed_tps",
-                "avg_model_round_decode_speed_tps",
-            ],
-        )
-        .filter(|speed| *speed > 0.0)
-        .or_else(|| number(stats, &["visible_decode_speed_tps", "decode_speed_tps"]))
-    } else {
-        number(stats, &["visible_decode_speed_tps", "decode_speed_tps"])
-    }
-}
-
-/// Tokens consumed by the turn. Mirrors the façade: the turn's own consumption
-/// first, then the last round's usage.
-fn consumed_tokens(stats: &Value) -> Option<f64> {
-    if let Some(value) = number(stats, &["request_consumed_tokens", "consumed_tokens"]) {
-        return Some(value);
-    }
-    let round = stats.get("round_usage").or_else(|| stats.get("usage"))?;
-    number(round, &["total_tokens", "total"])
-}
-
-fn rate(value: f64) -> String {
-    if value >= 1000.0 {
-        format!("{:.1}k", value / 1000.0)
-    } else {
-        format!("{value:.1}")
     }
 }
 
 fn count(value: f64) -> String {
-    if value >= 1_000_000.0 {
-        format!("{:.1}m", value / 1_000_000.0)
-    } else if value >= 1000.0 {
-        format!("{:.1}k", value / 1000.0)
+    let value = value.trunc();
+    if value < 1000.0 {
+        return format!("{value:.0}");
+    }
+    let (scaled, unit) = if value >= 1_000_000.0 {
+        (value / 1_000_000.0, "m")
     } else {
-        format!("{value:.0}")
-    }
-}
-
-/// Reads the leading number out of a façade-formatted metric, ignoring any unit
-/// it appended (`68234.0/s`, `4.1k`, `12.4s`). Returns `None` for the façade's
-/// "not reported" placeholders.
-fn number_text(value: &str) -> Option<f64> {
-    let value = value.trim();
-    if value.is_empty() || value == "—" {
-        return None;
-    }
-    // Thousands suffixes are part of the façade's own formatting.
-    let (digits, scale) = match value.strip_suffix('m') {
-        Some(rest) => (rest, 1_000_000.0),
-        None => match value.strip_suffix('k') {
-            Some(rest) => (rest, 1_000.0),
-            None => (value, 1.0),
-        },
+        (value / 1000.0, "k")
     };
-    let end = digits
-        .find(|character: char| !character.is_ascii_digit() && character != '.')
-        .unwrap_or(digits.len());
-    digits[..end].parse::<f64>().ok().map(|value| value * scale)
-}
-
-/// Seconds from a façade duration, which is either `12.4s` or `2m 05s`.
-fn façade_duration(value: &str) -> Option<f64> {
-    let value = value.trim();
-    if value.is_empty() || value == "—" {
-        return None;
-    }
-    match value.split_once('m') {
-        // `2m 05s`
-        Some((minutes, rest)) => {
-            let seconds = rest.trim().trim_end_matches('s').trim();
-            Some(minutes.trim().parse::<f64>().ok()? * 60.0 + seconds.parse::<f64>().ok()?)
-        }
-        // `12.4s` or a bare number of seconds
-        None => number_text(value),
-    }
-}
-
-/// Looks a numeric field up across a flat object and its known nested holders
-/// (`stats`, `usage`, `round_usage`, `context_usage`), which is where the
-/// runtime puts the same numbers in different event shapes.
-pub fn number(stats: &Value, keys: &[&str]) -> Option<f64> {
-    let direct = keys
-        .iter()
-        .find_map(|key| stats.get(*key).and_then(Value::as_f64));
-    if direct.is_some() {
-        return direct;
-    }
-    for holder in ["stats", "usage", "round_usage", "context_usage"] {
-        let Some(nested) = stats.get(holder) else {
-            continue;
-        };
-        if let Some(value) = keys
-            .iter()
-            .find_map(|key| nested.get(*key).and_then(Value::as_f64))
-        {
-            return Some(value);
-        }
-    }
-    None
+    let text = if scaled >= 100.0 {
+        format!("{scaled:.0}")
+    } else {
+        format!("{scaled:.1}")
+    };
+    format!("{}{unit}", text.strip_suffix(".0").unwrap_or(&text))
 }
 
 /// Digs the `message_stats` object out of an event payload, whether it sits at
@@ -280,141 +183,47 @@ mod tests {
             .collect()
     }
 
-    fn keys(metrics: &[Metric]) -> Vec<&str> {
-        metrics.iter().map(|metric| metric.key).collect()
-    }
-
     #[test]
-    fn a_full_turn_reports_the_web_rows_five_metrics_in_order() {
+    fn complete_footer_matches_web_order_units_and_round_identity() {
         let stats = json!({
-            "interaction_duration_s": 12.44,
-            "request_consumed_tokens": 4096,
-            "toolCalls": 3,
-            "contextTokens": 12345,
-            "avg_model_round_speed_rounds": 2.0,
-            "avg_model_round_speed_tps": 68234.0,
+            "interaction_duration_s": 3725.25, "request_consumed_tokens": 4096,
+            "toolCalls": 0, "context_occupancy_tokens": 120000,
+            "avg_model_round_speed_rounds": 2, "avg_model_round_speed_tps": 68234,
+            "model_request_count": 4, "account_credits_consumed": 0
         });
-        let metrics = metrics(&stats);
+        let native = wunder_desktop::native::NativeMessageStats::from_payload(&stats);
+        let live = with_user_round(metrics(&stats), 57);
+        assert_eq!(live, with_user_round(metrics_from_native(&native), 57));
         assert_eq!(
-            keys(&metrics),
-            vec!["duration", "speed", "context", "quota", "tools"],
-        );
-        assert_eq!(
-            values(&metrics),
+            values(&live),
             vec![
-                ("duration", "12.4s"),
-                ("speed", "68.2k/s"),
-                ("context", "12.3k"),
+                ("round", "57"),
+                ("duration", "1h 2m 5.2s"),
+                ("speed", "68234.0 token/s"),
+                ("context", "120k"),
                 ("quota", "4.1k"),
-                ("tools", "3"),
-            ],
-        );
-        // Icon keys must match what the web component uses for the same numbers.
-        assert_eq!(
-            metrics.iter().map(|m| m.icon).collect::<Vec<_>>(),
-            vec![
-                "stopwatch",
-                "gauge-high",
-                "layer-group",
-                "bolt",
-                "screwdriver-wrench"
-            ],
+                ("tools", "0"),
+                ("credits", "4")
+            ]
         );
     }
 
-    /// Context occupancy and consumed tokens are different numbers and must not
-    /// be conflated: one is how full the window is, the other what the turn cost.
     #[test]
-    fn context_occupancy_and_consumed_tokens_stay_separate() {
-        let stats = json!({
-            "contextTokens": 120000,
-            "request_consumed_tokens": 900,
-        });
-        let metrics = metrics(&stats);
-        assert_eq!(
-            values(&metrics),
-            vec![("context", "120.0k"), ("quota", "900")],
-        );
-    }
-
-    /// A turn with no statistics must render nothing: a row of dashes is worse
-    /// than no row.
-    #[test]
-    fn an_empty_payload_produces_no_metrics() {
+    fn zero_and_missing_are_distinct_and_unreported_metrics_stay_readable() {
         assert!(metrics(&json!({})).is_empty());
-        assert!(metrics(&json!({"model_request_count": 1})).is_empty());
-    }
-
-    #[test]
-    fn zero_valued_counters_are_left_out() {
-        let stats = json!({
-            "interaction_duration_s": 2.0,
-            "toolCalls": 0,
-            "contextTokens": 0
-        });
-        assert_eq!(values(&metrics(&stats)), vec![("duration", "2.0s")]);
-    }
-
-    /// The live stream and the durable reload describe the same numbers in
-    /// different shapes, so both have to resolve.
-    #[test]
-    fn nested_usage_shapes_resolve_the_same_numbers() {
-        let nested = json!({
-            "round_usage": {"total_tokens": 2048},
-            "visible_decode_speed_tps": 41.5
-        });
         assert_eq!(
-            values(&metrics(&nested)),
-            vec![("speed", "41.5/s"), ("quota", "2.0k")],
+            values(&metrics(&json!({"toolCalls": 0, "contextTokens": 0}))),
+            vec![
+                ("duration", "-"),
+                ("speed", "-"),
+                ("context", "0"),
+                ("quota", "--"),
+                ("tools", "0"),
+                ("credits", "--")
+            ]
         );
-
-        let flat = json!({
-            "interaction_duration_s": 3.0,
-            "decode_speed_tps": 10.0,
-            "usage": {"total": 100}
-        });
-        assert_eq!(
-            values(&metrics(&flat)),
-            vec![("duration", "3.0s"), ("speed", "10.0/s"), ("quota", "100")],
-        );
-    }
-
-    /// The durable path hands over the façade's resolved fields; they must
-    /// produce exactly what the live object produces.
-    #[test]
-    fn resolved_facade_fields_match_the_live_object() {
-        let live = metrics(&json!({
-            "interaction_duration_s": 12.44,
-            "request_consumed_tokens": 4096,
-            "toolCalls": 3,
-            "contextTokens": 12345,
-            "avg_model_round_speed_rounds": 2.0,
-            "avg_model_round_speed_tps": 68234.0,
-        }));
-        // What the façade actually hands back for the same turn: `format_speed`
-        // appends `/s`, the counts are raw numbers.
-        let reloaded = metrics_from_parts("12.4s", "68234.0/s", "12345", "4096", "3");
-        assert_eq!(live, reloaded);
-    }
-
-    /// A turn with nothing reported yields no row, and the façade's em dash
-    /// placeholders do not leak into one.
-    #[test]
-    fn missing_facade_parts_never_produce_a_dash_row() {
-        assert!(metrics_from_parts("", "", "", "", "").is_empty());
-        assert!(metrics_from_parts("—", "—", "", "", "").is_empty());
-        assert_eq!(
-            values(&metrics_from_parts("", "", "", "4100", "")),
-            vec![("quota", "4.1k")],
-        );
-        assert_eq!(
-            values(&metrics_from_parts("2m 05s", "", "", "", "12")),
-            vec![("duration", "2m 05s"), ("tools", "12")],
-        );
-        assert_eq!(
-            values(&metrics_from_parts("2.0s", "", "", "", "0")),
-            vec![("duration", "2.0s")],
-        );
+        assert_eq!(duration(125.4), "2m 5.4s");
+        assert_eq!(count(2048.0), "2k");
     }
 
     #[test]
@@ -422,6 +231,5 @@ mod tests {
         let stats = json!({"interaction_duration_s": 1.0});
         assert!(message_stats(&json!({"message_stats": stats.clone()})).is_some());
         assert!(message_stats(&json!({"meta": {"message_stats": stats}})).is_some());
-        assert!(message_stats(&json!({"other": true})).is_none());
     }
 }

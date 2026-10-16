@@ -11,7 +11,7 @@ use crate::path_utils::{
 };
 use crate::schemas::{AvailableToolsResponse, SharedToolSpec, ToolSpec};
 use crate::services::abilities::populate_ability_items;
-use crate::services::default_tool_profile::curated_default_tool_candidates;
+use crate::services::default_tool_profile::default_tool_candidates;
 use crate::services::skill_archive::{
     create_skill_archive, import_skill_archive, is_supported_skill_archive_filename,
 };
@@ -1788,8 +1788,7 @@ fn build_user_tools_summary(
         .collect::<Vec<_>>();
     shared_tools_selected.sort();
 
-    let default_candidates: HashSet<String> =
-        curated_default_tool_candidates().into_iter().collect();
+    let default_candidates: HashSet<String> = default_tool_candidates().into_iter().collect();
     let mut default_agent_tool_names = Vec::new();
     let mut default_seen = HashSet::new();
     for spec in builtin_tools.iter().chain(skills.iter()) {

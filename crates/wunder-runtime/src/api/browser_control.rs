@@ -216,12 +216,11 @@ fn optional_value_string(payload: &Value, key: &str) -> Option<String> {
 }
 
 fn api_error(err: anyhow::Error) -> Response {
-    (
-        StatusCode::BAD_REQUEST,
-        Json(json!({
-            "ok": false,
-            "error": err.to_string(),
-        })),
-    )
-        .into_response()
+    let mut payload = json!({"ok": false, "error": err.to_string()});
+    if let Some(failure) =
+        err.downcast_ref::<crate::services::browser::runtime::BrowserCommandFailure>()
+    {
+        payload["data"] = failure.data.clone();
+    }
+    (StatusCode::BAD_REQUEST, Json(payload)).into_response()
 }

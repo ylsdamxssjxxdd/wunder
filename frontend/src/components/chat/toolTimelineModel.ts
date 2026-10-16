@@ -18,6 +18,8 @@ import {
 import { buildCollapsedToolWorkflowSummary } from './toolWorkflowCollapsedSummary';
 import { isTimelineEditToolRun } from './toolTimelinePatch';
 import { resolveToolIconClass } from '@/utils/abilityVisuals';
+import { extractToolResultDataObject, parseToolWorkflowResultObject } from './toolWorkflowResultPayload';
+import { buildToolResultPreview } from './toolWorkflowPreview';
 import {
   buildCompactionDisplay,
   resolveCompactionInstanceLabel,
@@ -348,28 +350,31 @@ const resolveRunErrorText = (run: RawToolRun): string => {
 };
 
 const resolveRunDetailText = (run: RawToolRun): string => {
-  const source = run.resultItem || run.outputItem;
-  if (!source) return '';
-  const detailObject = parseDetailObject(source.detail);
-  if (!detailObject) {
-    return typeof source.detail === 'string' ? source.detail : '';
+  for (const source of [run.resultItem, run.outputItem]) {
+    if (!source) continue;
+    const detailObject = parseToolWorkflowResultObject(source.toolResultRawDetail ?? source.tool_result_raw_detail) ||
+      parseToolWorkflowResultObject(source.detail);
+    if (!detailObject) {
+      if (typeof source.detail === 'string' && source.detail.trim()) return source.detail;
+      continue;
+    }
+    const data = extractToolResultDataObject(detailObject);
+    const text = pickString(
+      data?.stdout,
+      data?.output,
+      data?.content,
+      data?.text,
+      data?.summary,
+      data?.message,
+      data?.stderr
+    );
+    if (text) return text;
+    const preview = buildToolResultPreview(data, null);
+    if (preview && preview !== '{}') return preview;
+    const summary = pickString(detailObject.summary, detailObject.message);
+    if (summary) return summary;
   }
-  const data = asObject(detailObject.data) || detailObject;
-  const nested = asObject(data.result) || data;
-  const text = pickString(
-    nested.stdout,
-    nested.output,
-    typeof nested.content === 'string' ? nested.content : '',
-    nested.text,
-    nested.summary,
-    nested.message,
-    data.stdout,
-    data.output,
-    typeof data.content === 'string' ? data.content : ''
-  );
-  if (text) return text;
-  const stderr = pickString(nested.stderr, data.stderr);
-  return stderr;
+  return '';
 };
 
 const isExecuteCommandToolName = (toolName: unknown): boolean => {
@@ -564,6 +569,7 @@ export const buildTimelineToolEntry = (
     isPatchToolName(run.toolName) ||
     // 编辑类工具运行中也能给出「待应用」diff 预览，同样可展开。
     isTimelineEditToolRun(run) ||
+    run.callItem ||
     run.resultItem
   );
   return {

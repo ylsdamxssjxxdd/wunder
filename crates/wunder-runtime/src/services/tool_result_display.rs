@@ -45,6 +45,7 @@ pub fn tool_result_display(tool: &str, payload: &Value, pending: bool) -> String
         "execute_command" | "执行命令" => "执行",
         "search_content" | "搜索内容" => "搜索",
         "list_files" | "列出文件" => "列出",
+        "glob_files" | "glob" | "文件名匹配" => "匹配",
         "web_search" | "网页搜索" => "网页搜索",
         "web_fetch" | "网页抓取" => "网页抓取",
         "" => "工具",

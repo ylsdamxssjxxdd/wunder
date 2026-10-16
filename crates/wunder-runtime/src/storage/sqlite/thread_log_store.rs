@@ -691,7 +691,7 @@ impl SqliteThreadLogStorage for SqliteStorage {
             params![session_id, turn_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )?;
         let change_payload = serde_json::to_string(&json!({"turn_id": turn_id, "status": status,
-            "root_turn_id": root_id, "trigger_kind": trigger, "user_round": user_round}))?;
+            "root_turn_id": root_id, "trigger_kind": trigger, "user_round": user_round, "stop_reason": payload.get("stop_reason")}))?;
         tx.execute("INSERT INTO thread_log_changes(session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time) VALUES(?,?,?,?,?,?,?,?,?)", params![session_id,seq,user_id,change_type,turn_id,change_item,revision,change_payload,now])?;
         if input_changed > 0 {
             crate::storage::thread_view_store::project_item(

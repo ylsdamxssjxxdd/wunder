@@ -6,10 +6,6 @@ use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 use wunder_server::storage::StorageBackend;
 
-/// Tool and compaction entries one turn projects. The timeline lays out every
-/// visible row, so this is a frame-cost bound as well as a display bound.
-const MAX_TURN_ENTRIES: usize = 24;
-
 /// Child-run cards one turn projects. A turn spawning more children than the
 /// cap keeps the newest cards; the runtime list view remains the full index.
 const MAX_TURN_SUBAGENTS: usize = 8;
@@ -26,6 +22,8 @@ pub struct NativeChatTurn {
     /// Child runs spawned by this turn, in durable order. Cards render at the
     /// turn's tail, matching the web messenger's subagent panel.
     pub subagents: Vec<NativeSubagentCard>,
+    /// Authoritative total, independent of the retained process page.
+    pub process_steps: i64,
 }
 
 /// One model round of an assistant turn.
@@ -66,31 +64,82 @@ pub(super) fn load_turn(
     let id = root["turn_id"]
         .as_str()
         .ok_or_else(|| anyhow!("missing root identity"))?;
-    let mut after = -1;
-    let mut items = Vec::new();
-    for page in 0..8 {
-        let Some(detail) = storage.get_thread_turn(user, session, id, after, 200, false)? else {
-            break;
-        };
-        if let Some(rows) = detail["items"].as_array() {
-            items.extend(rows.iter().cloned());
+    // Read a bounded tail. The process has its own bidirectional pager; opening
+    // a conversation must never replay a whole long-running turn or reject it
+    // because it contains more items than the initial display window.
+    let detail =
+        storage.get_thread_turn_page(user, session, id, Some(i64::MAX), None, 24, false)?;
+    let mut items = detail
+        .as_ref()
+        .and_then(|v| v["items"].as_array())
+        .cloned()
+        .unwrap_or_default();
+    if !items
+        .iter()
+        .any(|item| item["kind"] == "user_message" && item["turn_id"] == id)
+    {
+        if let Some(first) = storage.get_thread_turn(user, session, id, -1, 1, false)? {
+            if let Some(input) = first["items"].as_array().and_then(|rows| rows.first()) {
+                items.insert(0, input.clone());
+            }
         }
-        if detail["has_more"] != true {
-            break;
-        }
-        if page == 7 {
-            return Err(anyhow!("turn display limit exceeded; inspect thread log"));
-        }
-        after = detail["next_after"]
-            .as_i64()
-            .or_else(|| items.last().and_then(|row| row["item_index"].as_i64()))
-            .unwrap_or(after);
     }
+    // The latest answer can precede hundreds of tools. Resolve its stable
+    // identity from the bounded presentation projection, not the tail window.
+    let chat = super::chat_process::chat_row(state, user, session, root)?;
+    if let Some(chat) = &chat {
+        if !chat.assistant.item_id.is_empty()
+            && !items
+                .iter()
+                .any(|item| item["item_id"] == chat.assistant.item_id)
+        {
+            if let Some(answer) =
+                storage.get_thread_item(user, session, &chat.assistant.item_id, false)?
+            {
+                items.push(answer);
+            }
+        }
+    }
+    items.sort_by_key(|item| item["item_index"].as_i64().unwrap_or(0));
     // A stop can land before an assistant item is committed, leaving that round
     // with an empty payload while its streamed text is already durable as
     // blocks. Recover every round's own fields: the timeline is per round, so
     // reviving only the newest answer silently drops the earlier ones.
-    for item in items.iter_mut().filter(|item| stable_answer(item)) {
+    recover_fields(&**storage, user, session, &mut items)?;
+    let mut projected = project_turn(root, &items);
+    if let (Some(turn), Some(chat)) = (&mut projected, chat) {
+        turn.process_steps = chat.workflow_count + chat.reasoning_count;
+        // Cards are presentation metadata, independent of the process tail.
+        if !chat.subagents.is_empty() {
+            turn.subagents = chat
+                .subagents
+                .iter()
+                .rev()
+                .take(MAX_TURN_SUBAGENTS)
+                .filter_map(|card| {
+                    let mut runtime = card.clone();
+                    runtime["can_terminate"] = card["canTerminate"].clone();
+                    NativeSubagentCard::from_payload(
+                        &json!({"item_id":card["key"],"runtime":runtime}),
+                    )
+                })
+                .collect();
+            turn.subagents.reverse();
+        }
+    }
+    Ok(projected)
+}
+
+pub(super) fn recover_fields(
+    storage: &dyn StorageBackend,
+    user: &str,
+    session: &str,
+    items: &mut [Value],
+) -> Result<()> {
+    for item in items
+        .iter_mut()
+        .filter(|item| item["kind"] == "assistant_message")
+    {
         let item_id = item["item_id"].as_str().unwrap_or_default().to_string();
         if item_id.is_empty() {
             continue;
@@ -103,13 +152,13 @@ pub(super) fn load_turn(
             {
                 continue;
             }
-            let text = recover_text(&**storage, user, session, &item_id, field)?;
+            let text = recover_text(storage, user, session, &item_id, field)?;
             if !text.is_empty() {
                 item["payload"][field] = json!(text);
             }
         }
     }
-    Ok(project_turn(root, &items))
+    Ok(())
 }
 
 /// Concatenate one item's durable text blocks of one field. Bounded by the
@@ -171,6 +220,7 @@ fn project_turn(root: &Value, items: &[Value]) -> Option<NativeChatTurn> {
     let mut user_payload = input["payload"].clone();
     user_payload["role"] = json!("user");
     user_payload["turn_id"] = json!(id);
+    user_payload["user_round"] = root["user_turn_index"].clone();
     let user = message_from_value(user_payload)?;
     let latest = items.iter().rev().find(|item| stable_answer(item));
     let mut payload = latest
@@ -178,6 +228,7 @@ fn project_turn(root: &Value, items: &[Value]) -> Option<NativeChatTurn> {
         .unwrap_or_else(|| json!({"content":""}));
     payload["role"] = json!("assistant");
     payload["turn_id"] = json!(id);
+    payload["user_round"] = root["user_turn_index"].clone();
     let status =
         if root["status"] == "completed" && latest.is_some_and(|item| item["turn_id"] != id) {
             latest
@@ -191,6 +242,8 @@ fn project_turn(root: &Value, items: &[Value]) -> Option<NativeChatTurn> {
         "cancelled" | "interrupted" | "stopped" => "已停止",
         "failed" | "rejected" => "执行失败",
         "queued" => "正在排队",
+        "waiting_input" | "waiting_user_input" => "等待用户输入",
+        "waiting_approval" => "等待确认",
         "completed" => "任务完成",
         _ => "正在生成…",
     };
@@ -212,7 +265,6 @@ fn project_turn(root: &Value, items: &[Value]) -> Option<NativeChatTurn> {
     // the same batches and answer blocks the live stream produced.
     let mut rounds: Vec<NativeChatRound> = Vec::new();
     let mut subagents: Vec<NativeSubagentCard> = Vec::new();
-    let mut entries = 0usize;
     let mut last_round = 1;
     for item in items {
         let kind = item["kind"].as_str().unwrap_or_default();
@@ -260,10 +312,9 @@ fn project_turn(root: &Value, items: &[Value]) -> Option<NativeChatTurn> {
             }
             continue;
         }
-        if !matches!(kind, "tool_call" | "compaction") || entries >= MAX_TURN_ENTRIES {
+        if !matches!(kind, "tool_call" | "compaction") {
             continue;
         }
-        entries += 1;
         let entry = if kind == "compaction" {
             let detail = data["summary_text"]
                 .as_str()
@@ -314,6 +365,7 @@ fn project_turn(root: &Value, items: &[Value]) -> Option<NativeChatTurn> {
         assistant,
         rounds,
         subagents,
+        process_steps: 0,
     })
 }
 
@@ -333,6 +385,26 @@ fn item_round(item: &Value) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn durable_footer_keeps_thread_round_and_unrounded_statistics() {
+        let turn = project_turn(
+            &json!({"turn_id":"fixture-root", "status":"completed", "user_turn_index":57}),
+            &[
+                json!({"kind":"user_message", "turn_id":"fixture-root", "payload":{"content":"Fixture input"}}),
+                json!({"kind":"assistant_message", "turn_id":"fixture-root", "item_id":"fixture-root:text-1", "status":"completed", "payload":{
+                    "content":"Fixture answer", "meta":{"message_stats":{
+                        "interaction_duration_s":125.4, "decode_speed_tps":42.75,
+                        "contextTokens":0, "toolCalls":0, "model_request_count":4, "account_credits_consumed":0
+                    }}
+                }})
+            ],
+        ).unwrap();
+        assert_eq!(turn.assistant.user_round, 57);
+        assert_eq!(turn.assistant.stats.duration_s, Some(125.4));
+        assert_eq!(turn.assistant.stats.speed_tps, Some(42.75));
+        assert_eq!(turn.assistant.stats.tool_calls, Some(0.0));
+        assert_eq!(turn.assistant.stats.credits, Some(4.0));
+    }
     #[test]
     fn compact_command_replay_keeps_failure_details_without_summary() {
         let turn = project_turn(&json!({"turn_id":"fixture-root", "status":"failed"}), &[

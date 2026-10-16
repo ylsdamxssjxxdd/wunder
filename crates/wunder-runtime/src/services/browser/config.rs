@@ -122,7 +122,7 @@ pub fn effective_browser_config(config: &Config) -> EffectiveBrowserConfig {
             config.browser.limits.max_sessions.max(1)
         },
         max_tabs_per_session: config.browser.limits.max_tabs_per_session.max(1),
-        max_snapshot_chars: config.browser.limits.max_snapshot_chars.max(512),
+        max_snapshot_chars: config.browser.limits.max_snapshot_chars.clamp(1, 40000),
         max_download_bytes: config.browser.limits.max_download_bytes.max(1024),
         python_path: if legacy_runtime {
             trim_option(config.tools.browser.python_path.clone())

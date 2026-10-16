@@ -133,6 +133,11 @@ struct SearchParams {
     max_candidates: usize,
     timeout_ms: u64,
     engine: SearchEngine,
+    /// True only when the caller explicitly pinned `engine`. An explicit `rg`
+    /// request is strict (hard error when ripgrep is unavailable); the default
+    /// keeps ripgrep as the preferred engine but degrades to the built-in
+    /// Rust scanner instead of failing.
+    engine_explicit: bool,
     output_budget_bytes: Option<usize>,
 }
 
@@ -191,6 +196,16 @@ struct SearchAttemptTrace {
     returned_match_count: usize,
     matched_file_count: usize,
     scanned_files: usize,
+}
+
+/// Which engine actually executed the selected attempt, plus the trace needed to
+/// explain a ripgrep fallback. Surfaced to the model so it can tell whether the
+/// bundled ripgrep ran or the built-in Rust scanner was used.
+#[derive(Debug, Clone)]
+struct SearchEngineTrace {
+    engine: SearchEngine,
+    rg_program: Option<String>,
+    fallback_reason: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -402,7 +417,7 @@ pub(super) async fn search_content(context: &ToolContext<'_>, args: &Value) -> R
         {
             Ok(value) => value,
             Err(err) => {
-                if params.engine == SearchEngine::Rg {
+                if params.engine == SearchEngine::Rg && params.engine_explicit {
                     return Ok(build_failed_tool_result(
                         err.to_string(),
                         json!({
@@ -468,11 +483,16 @@ pub(super) async fn search_content(context: &ToolContext<'_>, args: &Value) -> R
         timeout_hit: selected_timeout_hit,
         file_limit_hit,
         match_limit_hit,
-        resolved_engine: _resolved_engine,
-        rg_program: _rg_program,
-        fallback_reason: _fallback_reason,
+        resolved_engine,
+        rg_program,
+        fallback_reason,
         candidate_limit_hit,
     } = selected_result;
+    let engine_trace = SearchEngineTrace {
+        engine: resolved_engine,
+        rg_program,
+        fallback_reason,
+    };
 
     let mut hits = rank_search_hits(raw_hits, selected_attempt, params.case_sensitive);
     if hits.len() > params.max_matches {
@@ -491,6 +511,7 @@ pub(super) async fn search_content(context: &ToolContext<'_>, args: &Value) -> R
         &matched_files,
         &hits,
         scanned_files,
+        resolved_engine,
         output_budget_hit,
     );
     Ok(build_model_search_success(
@@ -503,6 +524,8 @@ pub(super) async fn search_content(context: &ToolContext<'_>, args: &Value) -> R
         hits,
         matched_file_count,
         returned_match_count,
+        scanned_files,
+        &engine_trace,
         SearchResultFlags {
             timeout_hit,
             file_limit_hit,
@@ -563,7 +586,7 @@ fn parse_search_params(args: &Value) -> Result<SearchParams> {
     let output_budget_bytes = budget
         .output_budget_bytes
         .map(|value| value.clamp(MIN_OUTPUT_BUDGET_BYTES, MAX_OUTPUT_BUDGET_BYTES));
-    let engine = parse_search_engine(args);
+    let (engine, engine_explicit) = parse_search_engine(args);
 
     Ok(SearchParams {
         query,
@@ -581,6 +604,7 @@ fn parse_search_params(args: &Value) -> Result<SearchParams> {
         max_candidates,
         timeout_ms,
         engine,
+        engine_explicit,
         output_budget_bytes,
     })
 }
@@ -672,17 +696,23 @@ fn parse_optional_u64_value(value: &Value) -> Option<u64> {
     }
 }
 
-fn parse_search_engine(args: &Value) -> SearchEngine {
+/// Resolve the requested search engine.
+///
+/// The default is `rg`: the tool prefers the bundled ripgrep binary and only
+/// degrades to the built-in Rust scanner when ripgrep cannot be launched. A
+/// caller that explicitly pins `engine=rg` opts into strict behaviour instead
+/// (a missing/unlaunchable ripgrep becomes a hard, retryable error).
+fn parse_search_engine(args: &Value) -> (SearchEngine, bool) {
     let raw = args
         .get("engine")
         .and_then(Value::as_str)
-        .unwrap_or("auto")
-        .trim()
-        .to_ascii_lowercase();
-    match raw.as_str() {
-        "rust" => SearchEngine::Rust,
-        "rg" => SearchEngine::Rg,
-        _ => SearchEngine::Auto,
+        .map(|value| value.trim().to_ascii_lowercase())
+        .filter(|value| !value.is_empty());
+    match raw.as_deref() {
+        Some("rust") => (SearchEngine::Rust, true),
+        Some("rg") => (SearchEngine::Rg, true),
+        Some("auto") => (SearchEngine::Auto, false),
+        _ => (SearchEngine::Rg, false),
     }
 }
 
@@ -1358,7 +1388,7 @@ async fn execute_search_attempt(
                 rg_candidates = Some(result.paths);
             }
             Err(err) => {
-                if params.engine == SearchEngine::Rg {
+                if params.engine == SearchEngine::Rg && params.engine_explicit {
                     return Err(err);
                 }
                 fallback_reason = Some(err.to_string());
@@ -2021,11 +2051,29 @@ fn build_search_scope_note(resolved_path: &str) -> String {
     )
 }
 
-fn build_zero_hit_search_hint(params: &SearchParams, scanned_files: usize) -> String {
+fn build_zero_hit_search_hint(
+    params: &SearchParams,
+    scanned_files: usize,
+    resolved_engine: SearchEngine,
+) -> String {
+    let fallback_terms = literal_query_fallback_terms(&params.query);
+    if resolved_engine == SearchEngine::Rg {
+        // ripgrep already walked the whole tree, so a zero-hit result is a real
+        // "no match", never a "nothing was scanned" situation.
+        if !fallback_terms.is_empty() {
+            return format!(
+                "ripgrep scanned the local workspace and found no matches. Also tried term fallback: {}. Narrow path/glob, or switch to pattern/query_mode=regex for structural matching.",
+                fallback_terms.join(" | ")
+            );
+        }
+        if params.query_source == QuerySource::Pattern && params.query_mode_inferred {
+            return "ripgrep scanned the local workspace and found no matches. pattern defaults to regex; use -F or query_mode=literal for fixed-string matching.".to_string();
+        }
+        return "ripgrep scanned the local workspace and found no matches. This tool only searches the local filesystem, not the web. Narrow path/glob, or switch query_mode between literal and regex depending on the query shape.".to_string();
+    }
     if scanned_files == 0 {
         return "No readable local text files were scanned. This tool only searches the local filesystem, not the web. Use list_files first or widen path/glob.".to_string();
     }
-    let fallback_terms = literal_query_fallback_terms(&params.query);
     if !fallback_terms.is_empty() {
         return format!(
             "No exact hit in local filesystem text files. Also tried term fallback: {}. Narrow path/glob, or switch to pattern/query_mode=regex for structural matching.",
@@ -2045,6 +2093,7 @@ fn build_search_summary(
     matched_files: &[String],
     hits: &[SearchHit],
     scanned_files: usize,
+    resolved_engine: SearchEngine,
     output_budget_hit: bool,
 ) -> SearchSummary {
     let mut matched_terms = Vec::new();
@@ -2076,7 +2125,11 @@ fn build_search_summary(
         && hits.len() >= 4
         && hit_line_span(hits).is_some_and(|(start, end)| end.saturating_sub(start) >= 200);
     let next_hint = if hits.is_empty() {
-        Some(build_zero_hit_search_hint(params, scanned_files))
+        Some(build_zero_hit_search_hint(
+            params,
+            scanned_files,
+            resolved_engine,
+        ))
     } else if output_budget_hit {
         if single_file_spread {
             let (start, end) = hit_line_span(hits).unwrap_or((0, 0));
@@ -2178,15 +2231,23 @@ fn build_model_search_success(
     hits: Vec<SearchHit>,
     matched_file_count: usize,
     returned_match_count: usize,
+    scanned_files: usize,
+    engine: &SearchEngineTrace,
     flags: SearchResultFlags,
     elapsed_ms: u128,
 ) -> Value {
     let truncation_reasons = search_truncation_reasons(flags);
     let truncated = !truncation_reasons.is_empty();
     let summary_text = if returned_match_count == 0 {
-        "No hits in local workspace files.".to_string()
+        format!(
+            "No hits in local workspace files (engine: {}).",
+            engine.engine.as_str()
+        )
     } else {
-        format!("Found {returned_match_count} hits in {matched_file_count} files.")
+        format!(
+            "Found {returned_match_count} hits in {matched_file_count} files (engine: {}).",
+            engine.engine.as_str()
+        )
     };
     super::build_model_tool_success_with_hint(
         "search_content",
@@ -2200,6 +2261,14 @@ fn build_model_search_success(
             "scope": scope,
             "scope_note": scope_note,
             "query_mode": attempt.query_mode.as_str(),
+            "engine": engine.engine.as_str(),
+            "ripgrep_program": engine.rg_program.clone(),
+            "fallback_reason": engine.fallback_reason.clone(),
+            "scanned_file_count": if engine.engine == SearchEngine::Rust {
+                json!(scanned_files)
+            } else {
+                Value::Null
+            },
             "matched_file_count": matched_file_count,
             "returned_match_count": returned_match_count,
             "truncated": truncated,
@@ -2679,6 +2748,7 @@ mod tests {
             max_candidates: 4000,
             timeout_ms: 30_000,
             engine: SearchEngine::Rust,
+            engine_explicit: true,
             output_budget_bytes: Some(4096),
         };
         let attempt = build_search_attempt(
@@ -2742,6 +2812,7 @@ mod tests {
             &["a.md".to_string()],
             &hits,
             1,
+            SearchEngine::Rust,
             true,
         );
         assert_eq!(summary.focus_points[0], "a.md:15 [alpha]");
@@ -2770,6 +2841,7 @@ mod tests {
             max_candidates: DEFAULT_MAX_CANDIDATES,
             timeout_ms: DEFAULT_TIMEOUT_MS,
             engine: SearchEngine::Auto,
+            engine_explicit: false,
             output_budget_bytes: None,
         };
         let attempt = build_search_attempt(
@@ -2781,7 +2853,8 @@ mod tests {
             false,
         )
         .expect("attempt");
-        let summary = build_search_summary(&params, &attempt, &[], &[], &[], 0, false);
+        let summary =
+            build_search_summary(&params, &attempt, &[], &[], &[], 0, SearchEngine::Rust, false);
         assert!(summary
             .next_hint
             .as_deref()
@@ -2812,6 +2885,7 @@ mod tests {
             max_candidates: DEFAULT_MAX_CANDIDATES,
             timeout_ms: DEFAULT_TIMEOUT_MS,
             engine: SearchEngine::Auto,
+            engine_explicit: false,
             output_budget_bytes: Some(4096),
         };
         let attempt = build_search_attempt(
@@ -2864,6 +2938,12 @@ mod tests {
             }],
             1,
             1,
+            1,
+            &SearchEngineTrace {
+                engine: SearchEngine::Rust,
+                rg_program: None,
+                fallback_reason: None,
+            },
             SearchResultFlags {
                 timeout_hit: false,
                 file_limit_hit: false,
@@ -2926,5 +3006,50 @@ mod tests {
         push_rg_candidate_reference(&mut candidates, &mut seen, "rg-custom", &[]);
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0].display, "rg-custom");
+    }
+
+    #[test]
+    fn default_search_engine_prefers_bundled_rg() {
+        assert_eq!(parse_search_engine(&json!({})), (SearchEngine::Rg, false));
+        assert_eq!(
+            parse_search_engine(&json!({ "engine": "rg" })),
+            (SearchEngine::Rg, true)
+        );
+        assert_eq!(
+            parse_search_engine(&json!({ "engine": "rust" })),
+            (SearchEngine::Rust, true)
+        );
+        assert_eq!(
+            parse_search_engine(&json!({ "engine": "auto" })),
+            (SearchEngine::Auto, false)
+        );
+    }
+
+    #[test]
+    fn zero_hit_rg_hint_does_not_claim_unscanned_files() {
+        let params = SearchParams {
+            query: "alpha".to_string(),
+            query_source: QuerySource::Query,
+            path: ".".to_string(),
+            file_pattern_items: vec![],
+            query_mode: QueryMode::Literal,
+            query_mode_inferred: false,
+            case_sensitive: false,
+            context_before: 0,
+            context_after: 0,
+            max_depth: 0,
+            max_files: 0,
+            max_matches: 20,
+            max_candidates: DEFAULT_MAX_CANDIDATES,
+            timeout_ms: DEFAULT_TIMEOUT_MS,
+            engine: SearchEngine::Rg,
+            engine_explicit: false,
+            output_budget_bytes: None,
+        };
+        let rg_hint = build_zero_hit_search_hint(&params, 0, SearchEngine::Rg);
+        assert!(rg_hint.contains("ripgrep"));
+        assert!(!rg_hint.contains("No readable local text files were scanned"));
+        let rust_hint = build_zero_hit_search_hint(&params, 0, SearchEngine::Rust);
+        assert!(rust_hint.contains("No readable local text files were scanned"));
     }
 }

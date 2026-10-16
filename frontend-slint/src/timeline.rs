@@ -8,7 +8,7 @@
 //! patched in place, which keeps the reducer out of every user fold.
 //!
 //! The work-process bar owns thinking, tools and earlier answer blocks. It
-//! ships folded; batch rows retain identity for late results but stay hidden.
+//! ships folded in a bounded viewport; batch rows retain invocation identity.
 use crate::{TextBlock, TimelineRow};
 #[allow(unused_imports)]
 use slint::{Model, ModelRc, VecModel};
@@ -40,8 +40,9 @@ pub const NO_PROCESS: i32 = -1;
 pub(crate) fn is_process_step(kind: i32, index: usize, newest_body: usize) -> bool {
     matches!(kind, KIND_REASON | KIND_TOOL) || (kind == KIND_BODY && index != newest_body)
 }
-/// Entries and bounded fields kept per turn.
-const MAX_GROUP_ENTRIES: usize = 24;
+/// Live rows form a rolling window. Durable process pagination keeps every
+/// earlier step accessible without retaining the whole execution in memory.
+const MAX_LIVE_PROCESS_ROWS: usize = 160;
 
 pub fn status_kind(state: &str) -> i32 {
     match state {
@@ -120,7 +121,19 @@ fn blank(kind: i32, id: String) -> TimelineRow {
         target: slint::SharedString::default(),
         tool_metrics: slint::SharedString::default(),
         tool_metrics_visible: false,
+        tokens: Default::default(),
+        duration: Default::default(),
         detail: slint::SharedString::default(),
+        sections: ModelRc::default(),
+        process_entries: ModelRc::default(),
+        process_root: Default::default(),
+        process_paged: false,
+        process_local: false,
+        process_older: false,
+        process_newer: false,
+        process_loading: false,
+        process_error: false,
+        process_revision: 0,
         status_kind: STATUS_DONE,
         foldable: false,
         open: false,
@@ -188,6 +201,7 @@ pub struct Timeline {
     group: i32,
     next_group: i32,
     reasons: usize,
+    discarded_steps: i32,
     /// Work-process fold of the live turn: its id, its bar row, and the newest
     /// answer block, which is the one row the fold leaves open.
     process: i32,
@@ -263,6 +277,7 @@ impl Timeline {
             group: NO_GROUP,
             next_group: 0,
             reasons: 0,
+            discarded_steps: 0,
             process: NO_PROCESS,
             next_process: 0,
             process_bar: 0,
@@ -382,6 +397,7 @@ impl Timeline {
         self.group = NO_GROUP;
         self.next_group = 0;
         self.reasons = 0;
+        self.discarded_steps = 0;
         self.process = NO_PROCESS;
         self.process_bar = 0;
         self.last_body = usize::MAX;
@@ -407,7 +423,47 @@ impl Timeline {
             return;
         };
         edit(&mut row);
+        self.sync_process_entry(&row);
         self.model.set_row_data(index, row);
+    }
+
+    fn sync_process_entry(&self, row: &TimelineRow) {
+        if row.process_idx == NO_PROCESS || !matches!(row.kind, KIND_REASON | KIND_TOOL | KIND_BODY)
+        {
+            return;
+        }
+        let Some(bar) = self
+            .model
+            .row_data(self.process_bar)
+            .filter(|bar| bar.process_idx == row.process_idx)
+        else {
+            return;
+        };
+        let Some(children) = bar
+            .process_entries
+            .as_any()
+            .downcast_ref::<VecModel<crate::ProcessEntry>>()
+        else {
+            return;
+        };
+        let mut entry = crate::timeline_text::process_entry(row);
+        if let Some(index) = children.iter().position(|child| child.id == row.id) {
+            if bar.process_paged {
+                if bar.process_newer {
+                    return;
+                }
+                if let Some(previous) = children.row_data(index) {
+                    entry.payload = previous.payload;
+                }
+            }
+            children.set_row_data(index, entry);
+        } else if !bar.process_paged {
+            let index = children
+                .iter()
+                .position(|child| child.payload > row.payload)
+                .unwrap_or(children.row_count());
+            children.insert(index, entry);
+        }
     }
 
     /// Patch only when a process-fold field actually changed. Streaming tool
@@ -424,6 +480,7 @@ impl Timeline {
         }
         row.process_idx = process;
         row.process_open = next_open;
+        self.sync_process_entry(&row);
         self.model.set_row_data(index, row);
     }
 
@@ -438,6 +495,7 @@ impl Timeline {
         self.bars.clear();
         self.group = NO_GROUP;
         self.reasons = 0;
+        self.discarded_steps = 0;
         self.turn = Some(root.to_string());
         self.settled = false;
         let mut user = blank(KIND_USER, format!("user-turn-{root}"));
@@ -448,6 +506,15 @@ impl Timeline {
         index
     }
 
+    pub fn set_process_root(&self, root: &str) {
+        if self.process != NO_PROCESS && !root.is_empty() {
+            self.patch(self.process_bar, |bar| {
+                bar.process_root = root.into();
+                bar.status_kind = STATUS_RUNNING;
+            });
+        }
+    }
+
     /// Publish the live turn's work-process bar right behind its bubble. The bar
     /// is pushed once per turn so its row index never moves, and stays invisible
     /// until the turn actually has a process worth folding.
@@ -456,7 +523,9 @@ impl Timeline {
         self.process = self.next_process;
         self.last_body = usize::MAX;
         let mut bar = blank(KIND_PROCESS, format!("process-{root}"));
+        bar.process_local = true;
         bar.text = crate::timeline_text::process_label(0).into();
+        bar.process_entries = ModelRc::new(VecModel::<crate::ProcessEntry>::default());
         bar.visible = false;
         let index = self.push(bar);
         self.process_bar = index;
@@ -487,7 +556,8 @@ impl Timeline {
             return;
         }
         let process = self.process;
-        let mut steps = 0i32;
+        self.trim_process();
+        let mut steps = self.discarded_steps;
         let mut region = Vec::new();
         for index in (self.process_bar + 1)..self.model.row_count() {
             let Some(row) = self.model.row_data(index) else {
@@ -544,10 +614,92 @@ impl Timeline {
         });
     }
 
+    fn trim_process(&mut self) {
+        while self.model.row_count().saturating_sub(self.process_bar + 1) > MAX_LIVE_PROCESS_ROWS {
+            let protected_body = self.body.as_ref().map(|body| body.index);
+            let protected_thinking = self.thinking.as_ref().map(|thinking| thinking.index);
+            let Some(index) = ((self.process_bar + 1)..self.model.row_count()).find(|index| {
+                *index != self.last_body
+                    && Some(*index) != protected_body
+                    && Some(*index) != protected_thinking
+                    && self.model.row_data(*index).is_some_and(|row| {
+                        matches!(row.kind, KIND_TOOL | KIND_REASON | KIND_BODY | KIND_GROUP)
+                    })
+            }) else {
+                break;
+            };
+            let removed = self.model.row_data(index).unwrap();
+            if removed.kind != KIND_GROUP {
+                self.discarded_steps = self.discarded_steps.saturating_add(1);
+            }
+            if let Some(bar) = self.model.row_data(self.process_bar) {
+                if !bar.process_paged {
+                    if let Some(children) = bar
+                        .process_entries
+                        .as_any()
+                        .downcast_ref::<VecModel<crate::ProcessEntry>>()
+                    {
+                        if let Some(child) =
+                            children.iter().position(|entry| entry.id == removed.id)
+                        {
+                            children.remove(child);
+                        }
+                    }
+                }
+            }
+            self.model.remove(index);
+            self.patch(self.process_bar, |bar| bar.process_older = true);
+            self.tools.retain(|tool| tool.index != index);
+            self.bars.retain(|bar| bar.index != index);
+            for tool in &mut self.tools {
+                if tool.index > index {
+                    tool.index -= 1;
+                }
+            }
+            for bar in &mut self.bars {
+                if bar.index > index {
+                    bar.index -= 1;
+                }
+            }
+            if let Some(body) = &mut self.body {
+                if body.index > index {
+                    body.index -= 1;
+                }
+            }
+            if let Some(thinking) = &mut self.thinking {
+                if thinking.index > index {
+                    thinking.index -= 1;
+                }
+            }
+            if self.last_body != usize::MAX && self.last_body > index {
+                self.last_body -= 1;
+            }
+            for shifted in index..self.model.row_count() {
+                if let Some(mut row) = self.model.row_data(shifted) {
+                    row.payload = shifted as i32;
+                    self.sync_process_entry(&row);
+                    self.model.set_row_data(shifted, row);
+                }
+            }
+            self.marks_dirty.set(true);
+        }
+    }
+
     /// Begin the next assistant body block; the runtime registers exactly one
     /// text item per model round, so a block starts where the last one ended.
     pub fn start_body(&mut self, round: i64) -> usize {
         self.close_thinking(false);
+        if let Some(body) = self.body.as_ref().filter(|body| body.text.is_empty()) {
+            if self
+                .model
+                .row_data(body.index)
+                .is_some_and(|row| row.id == "body-0")
+            {
+                let index = body.index;
+                self.patch(index, |row| row.id = format!("body-{round}").into());
+                return index;
+            }
+        }
         self.close_body();
         let blocks = crate::message_blocks::Blocks::new();
         let mut row = blank(KIND_BODY, format!("body-{round}"));
@@ -597,13 +749,10 @@ impl Timeline {
     /// Append a reasoning delta, opening a thinking entry for this segment.
     pub fn append_reasoning(&mut self, delta: &str) -> Result<(), String> {
         if self.thinking.is_none() {
-            if self.reasons >= MAX_GROUP_ENTRIES {
-                return Ok(());
-            }
             self.mark_batch();
             let index = self.push(blank(
                 KIND_REASON,
-                format!("reason-{}", self.model.row_count()),
+                format!("reason-{}-{}", self.process, self.reasons),
             ));
             let group = self.group;
             self.patch(index, |row| {
@@ -616,13 +765,13 @@ impl Timeline {
                 row.foldable = true;
             });
             self.reasons += 1;
-            self.refresh_process_bar();
             self.thinking = Some(Thinking {
                 text: String::new(),
                 index,
                 summary: slint::SharedString::default(),
                 pending: false,
             });
+            self.refresh_process_bar();
         }
         let Some(thinking) = self.thinking.as_mut() else {
             return Ok(());
@@ -711,8 +860,7 @@ impl Timeline {
     pub fn upsert_tool(&mut self, entry: &NativeWorkflowEntry) {
         let label = crate::timeline_text::tool_label(&entry.title);
         let pending = status_kind(&entry.state) == STATUS_RUNNING;
-        let (target, patch) =
-            crate::timeline_text::target_of(&entry.title, entry.detail.as_str(), &entry.sections);
+        let (target, patch) = crate::timeline_text::tool_target(entry);
         if let Some(tool) = self.tools.iter().find(|tool| tool.id == entry.id) {
             let index = tool.index;
             let patch = tool.patch;
@@ -728,6 +876,7 @@ impl Timeline {
             };
             let status = status_kind(&entry.state);
             let icon = crate::tool_icons::workflow_icon(&entry.title).to_string();
+            let sections = crate::timeline_text::sections(&entry.sections);
             self.patch(index, |row| {
                 row.tool_name = label.as_str().into();
                 row.tool_icon = icon.as_str().into();
@@ -736,6 +885,9 @@ impl Timeline {
                 row.tool_metrics = metrics.as_str().into();
                 row.tool_metrics_visible = metrics_visible;
                 row.detail = copy.clone();
+                row.sections = sections;
+                row.tokens = entry.tokens.as_str().into();
+                row.duration = entry.duration.as_str().into();
                 row.status_kind = status;
                 row.patch = cards.clone();
             });
@@ -758,9 +910,6 @@ impl Timeline {
             // compact row instead of attaching it to an unrelated later batch.
             self.mark_batch();
         }
-        if self.tools.len() >= MAX_GROUP_ENTRIES {
-            return;
-        }
         let index = self.push(blank(KIND_TOOL, format!("tool-{}", entry.id)));
         let icon = crate::tool_icons::workflow_icon(&entry.title).to_string();
         let summary = crate::timeline_text::tool_summary(entry);
@@ -774,6 +923,7 @@ impl Timeline {
         };
         let status = status_kind(&entry.state);
         let group = self.group;
+        let sections = crate::timeline_text::sections(&entry.sections);
         self.patch(index, |row| {
             row.tool_name = label.as_str().into();
             row.tool_icon = icon.as_str().into();
@@ -782,6 +932,9 @@ impl Timeline {
             row.tool_metrics = metrics.as_str().into();
             row.tool_metrics_visible = metrics_visible;
             row.detail = copy;
+            row.sections = sections;
+            row.tokens = entry.tokens.as_str().into();
+            row.duration = entry.duration.as_str().into();
             row.status_kind = status;
             row.patch = cards;
             row.payload = index as i32;
@@ -860,6 +1013,9 @@ impl Timeline {
         }
         self.settled = true;
         self.refresh_process_bar();
+        self.patch(self.process_bar, |row| {
+            row.status_kind = if failed { STATUS_FAILED } else { STATUS_DONE }
+        });
         if failed {
             self.patch(self.process_bar, |row| row.summary = "错误".into());
         }
@@ -869,7 +1025,7 @@ impl Timeline {
     /// that was still running settles as failed. A child run is a work unit of
     /// its own, so its card keeps the status the runtime reports for it.
     fn fail_running(&mut self) {
-        for index in 0..self.model.row_count() {
+        for index in self.process_bar.saturating_add(1)..self.model.row_count() {
             let Some(row) = self.model.row_data(index) else {
                 continue;
             };
@@ -881,6 +1037,7 @@ impl Timeline {
             if row.kind == KIND_REASON {
                 row.tool_name = crate::timeline_text::thought_failed().into();
             }
+            crate::timeline_text::sync_process_child(&self.model, &row);
             self.model.set_row_data(index, row);
         }
     }
@@ -960,7 +1117,8 @@ impl Timeline {
 
     /// Replace the whole model with durable history rows. Only for a timeline
     /// that holds no live turn: tests, probes and the thread-log column.
-    pub fn set_history(&mut self, rows: Vec<TimelineRow>) {
+    pub fn set_history(&mut self, mut rows: Vec<TimelineRow>) {
+        crate::timeline_text::process_models(&mut rows);
         self.marks_dirty.set(true);
         self.model.set_vec(rows);
         self.sync_fold_ids();
@@ -1028,7 +1186,8 @@ impl Timeline {
     /// Preserve the VecModel handle after the window binds it. Replacing its
     /// backing vector in place emits one model notification while keeping the
     /// UI subscription stable across history refreshes and streaming updates.
-    fn replace_rows(&self, rows: Vec<TimelineRow>) {
+    fn replace_rows(&self, mut rows: Vec<TimelineRow>) {
+        crate::timeline_text::restore_folds(&mut rows, &self.model);
         self.marks_dirty.set(true);
         self.model.set_vec(rows);
         self.sync_turn_marks();
@@ -1068,6 +1227,7 @@ impl Timeline {
         self.thinking = None;
         self.tools.clear();
         self.bars.clear();
+        self.discarded_steps = 0;
         self.group = NO_GROUP;
         self.process = NO_PROCESS;
         self.last_body = usize::MAX;
@@ -1117,6 +1277,10 @@ impl Timeline {
     /// state is never re-derived from the reducer, so a click costs one
     /// bounded model scan.
     pub fn toggle(&self, payload: i32) {
+        if payload < 0 {
+            crate::chat_process::toggle_entry(&self.model, payload);
+            return;
+        }
         let Ok(payload) = usize::try_from(payload) else {
             return;
         };
@@ -1170,6 +1334,7 @@ impl Timeline {
             _ => {
                 let mut row = row;
                 row.open = !row.open;
+                crate::timeline_text::sync_process_child(&self.model, &row);
                 self.model.set_row_data(payload, row);
             }
         }
@@ -1197,6 +1362,76 @@ impl Timeline {
             }
         }
     }
+
+    pub fn set_turn_status(&mut self, state: &str, round: i64) {
+        if self.turn.is_none() {
+            return;
+        }
+        if self.last_body == usize::MAX {
+            if self.process != NO_PROCESS {
+                self.start_body(0);
+            } else {
+                return;
+            }
+        }
+        let Some(row) = self.model.row_data(self.last_body) else {
+            return;
+        };
+        let mut stats: Vec<_> = row
+            .stats
+            .iter()
+            .filter(|metric| !metric.key.starts_with("status-") && metric.key != "hashtag")
+            .collect();
+        let metric = crate::turn_stats::with_status(
+            crate::turn_stats::with_user_round(Vec::new(), round),
+            state,
+        );
+        let mut prefix = stat_metrics(&metric);
+        prefix.append(&mut stats);
+        if row.stats.iter().collect::<Vec<_>>() != prefix {
+            self.set_turn_stats(prefix);
+        }
+        if self.settled {
+            self.patch(self.last_body, |row| row.foldable = true);
+        }
+        if state == "已停止" || state == "等待用户输入" || state == "等待确认" {
+            self.patch(self.process_bar, |bar| bar.summary = state.into());
+        }
+    }
+
+    /// A terminal frame can carry the turn identity without usage statistics.
+    /// Keep any already received metrics while adding the authoritative round.
+    pub fn set_user_round(&self, round: i64) {
+        if round <= 0 {
+            return;
+        }
+        for index in (0..self.model.row_count()).rev() {
+            let Some(row) = self.model.row_data(index) else {
+                continue;
+            };
+            if row.kind == KIND_USER {
+                return;
+            }
+            if row.kind != KIND_BODY {
+                continue;
+            }
+            let mut stats: Vec<_> = row
+                .stats
+                .iter()
+                .filter(|metric| metric.key != "hashtag")
+                .collect();
+            stats.insert(
+                0,
+                crate::TurnStatMetric {
+                    key: "hashtag".into(),
+                    value: round.to_string().into(),
+                },
+            );
+            let stats = ModelRc::new(VecModel::from(stats));
+            self.patch(index, |row| row.stats = stats);
+            return;
+        }
+    }
 }
 
 /// Apply the linear syntax lexer to every code block of a frozen body and hand
@@ -1217,6 +1452,93 @@ fn highlight_code(blocks: &mut crate::message_blocks::Blocks) -> ModelRc<TextBlo
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn long_live_process_rolls_forward_without_losing_active_reasoning_or_answer() {
+        let mut timeline = Timeline::new();
+        timeline.begin_turn("fixture-long", "Fixture input");
+        timeline.set_process_root("fixture-root");
+        for index in 0..240 {
+            timeline.start_body(index + 1);
+            timeline.append_body(&format!("Note {index}")).unwrap();
+            timeline
+                .append_reasoning(&format!("Thought {index}"))
+                .unwrap();
+            timeline.close_thinking(false);
+            timeline.upsert_tool(&NativeWorkflowEntry::from_payload(
+                &format!("fixture-tool-{index}"),
+                "read_file",
+                "Fixture result".into(),
+                "completed",
+                &serde_json::json!({"args":{"path":"sample.txt"}}),
+            ));
+        }
+        timeline.start_body(241);
+        timeline.append_body("Final answer").unwrap();
+        timeline.flush();
+        assert!(timeline.row_count() <= MAX_LIVE_PROCESS_ROWS + 3);
+        let row = timeline
+            .model
+            .iter()
+            .find(|row| row.id == "tool-fixture-tool-239")
+            .unwrap();
+        timeline.toggle(row.payload);
+        assert!(timeline.model.row_data(row.payload as usize).unwrap().open);
+        assert_eq!(timeline.last_answer(), "Final answer");
+        assert!(
+            timeline
+                .model
+                .row_data(timeline.process_bar)
+                .unwrap()
+                .process_older
+        );
+        let children = timeline
+            .model
+            .row_data(timeline.process_bar)
+            .unwrap()
+            .process_entries;
+        let ids: std::collections::HashSet<_> = children.iter().map(|child| child.id).collect();
+        assert_eq!(ids.len(), children.row_count());
+        assert!(children.iter().any(|child| child.detail == "Thought 239"));
+    }
+
+    #[test]
+    fn state_footer_survives_streaming_stopping_and_durable_handoff() {
+        let mut timeline = Timeline::new();
+        timeline.begin_turn("fixture-state", "Fixture input");
+        timeline.set_turn_status("正在思考…", 57);
+        timeline.start_body(1);
+        timeline.append_body("Fixture answer").unwrap();
+        timeline.flush();
+        assert_eq!(
+            timeline
+                .model
+                .iter()
+                .filter(|row| row.kind == KIND_BODY)
+                .count(),
+            1
+        );
+        timeline.set_turn_stats(stat_metrics(&crate::turn_stats::metrics(
+            &serde_json::json!({"toolCalls":0}),
+        )));
+        timeline.finish(true);
+        timeline.set_turn_status("已停止", 57);
+        let row = timeline.model.row_data(timeline.last_body).unwrap();
+        assert_eq!(row.stats.row_data(0).unwrap().key, "status-stopped");
+        assert!(row
+            .stats
+            .iter()
+            .any(|stat| stat.key == "screwdriver-wrench" && stat.value == "0"));
+        assert!(row.foldable);
+        assert_eq!(
+            timeline
+                .model
+                .row_data(timeline.process_bar)
+                .unwrap()
+                .summary,
+            "已停止"
+        );
+    }
 
     #[test]
     fn reasoning_frames_publish_live_body_and_phase_without_output_in_header() {
@@ -1250,6 +1572,95 @@ mod tests {
             .find(|row| row.kind == KIND_PROCESS)
             .unwrap();
         assert_eq!(process.summary, "已完成");
+    }
+
+    #[test]
+    fn process_children_patch_in_place_and_keep_folds_on_history_refresh() {
+        let mut timeline = Timeline::new();
+        timeline.begin_turn("fixture-root", "Fixture input");
+        timeline.append_reasoning("First thought").unwrap();
+        timeline.flush();
+        let bar = timeline.process_bar;
+        timeline.toggle(bar as i32);
+        let reason = timeline.thinking.as_ref().unwrap().index;
+        timeline.toggle(reason as i32);
+        let children = timeline.model.row_data(bar).unwrap().process_entries;
+        assert_eq!(children.row_count(), 1);
+        timeline.append_reasoning(" extended").unwrap();
+        timeline.flush();
+        assert_eq!(
+            children.row_data(0).unwrap().detail,
+            "First thought extended"
+        );
+        assert!(children.row_data(0).unwrap().open);
+        let mut snapshot: Vec<_> = timeline.model.iter().collect();
+        snapshot[bar].open = false;
+        snapshot[reason].open = false;
+        snapshot[bar].process_entries = ModelRc::default();
+        timeline.finish(false);
+        timeline.publish_history(snapshot);
+        assert!(timeline.model.row_data(bar).unwrap().open);
+        assert!(children.row_data(0).unwrap().open);
+        // The list model survives the snapshot and still receives toggles.
+        timeline.toggle(reason as i32);
+        assert!(!children.row_data(0).unwrap().open);
+    }
+
+    #[test]
+    fn process_keeps_intermediate_body_before_its_tool_and_settles_running_children() {
+        let mut timeline = Timeline::new();
+        timeline.begin_turn("fixture-root", "Fixture input");
+        timeline.start_body(1);
+        timeline.append_body("Fixture note").unwrap();
+        timeline.flush();
+        timeline.upsert_tool(&NativeWorkflowEntry::from_payload(
+            "fixture-call",
+            "read_file",
+            "Fixture result".into(),
+            "running",
+            &serde_json::json!({"args":{"path":"sample.txt"}}),
+        ));
+        timeline.start_body(2);
+        let children = timeline
+            .model
+            .row_data(timeline.process_bar)
+            .unwrap()
+            .process_entries;
+        assert_eq!(
+            children.iter().map(|entry| entry.kind).collect::<Vec<_>>(),
+            vec![KIND_BODY, KIND_TOOL]
+        );
+        timeline.finish(true);
+        assert_eq!(children.row_data(1).unwrap().status_kind, STATUS_FAILED);
+    }
+
+    #[test]
+    fn terminal_round_identity_preserves_previously_received_metrics() {
+        let mut timeline = Timeline::new();
+        timeline.begin_turn("fixture-root", "Fixture input");
+        timeline.start_body(1);
+        timeline.set_turn_stats(stat_metrics(&crate::turn_stats::metrics(
+            &serde_json::json!({"toolCalls":0}),
+        )));
+        timeline.set_user_round(57);
+        timeline.set_user_round(57);
+        let body = timeline.model.row_data(timeline.last_body).unwrap();
+        assert_eq!(
+            body.stats
+                .iter()
+                .filter(|metric| metric.key == "hashtag")
+                .count(),
+            1
+        );
+        assert_eq!(body.stats.row_data(0).unwrap().value, "57");
+        assert_eq!(
+            body.stats
+                .iter()
+                .find(|metric| metric.key == "screwdriver-wrench")
+                .unwrap()
+                .value,
+            "0"
+        );
     }
 
     #[test]

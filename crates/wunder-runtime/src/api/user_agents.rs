@@ -8,11 +8,9 @@ use crate::services::agent_abilities::{
     resolve_record_declared_names,
 };
 use crate::services::default_agent_protocol::{
-    default_agent_config_from_record, default_agent_meta_key, default_agent_preset_questions,
-    is_builtin_default_agent_name, normalize_default_agent_preset_questions, DefaultAgentConfig,
-    DEFAULT_AGENT_NAME,
+    default_agent_config_from_record, default_agent_meta_key, is_builtin_default_agent_name,
+    normalize_default_agent_preset_questions, DefaultAgentConfig, DEFAULT_AGENT_NAME,
 };
-use crate::services::default_tool_profile::curated_default_tool_names_for_config;
 use crate::services::llm::is_llm_model;
 use crate::services::tools::resolve_tool_name;
 use crate::services::user_agent_presets::UserAgentInstance;
@@ -1992,97 +1990,18 @@ fn normalize_default_agent_config(config: &mut DefaultAgentConfig) {
     normalize_default_agent_preset_questions(&mut config.preset_questions);
 }
 
-async fn load_default_agent_config(
-    state: &AppState,
-    user_id: &str,
-) -> Result<Option<DefaultAgentConfig>, Response> {
-    let key = default_agent_meta_key(user_id);
-    let raw = state
-        .user_store
-        .get_meta(&key)
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    let Some(raw) = raw else {
-        return Ok(None);
-    };
-    let cleaned = raw.trim();
-    if cleaned.is_empty() {
-        return Ok(None);
-    }
-    let mut parsed: DefaultAgentConfig = match serde_json::from_str(cleaned) {
-        Ok(value) => value,
-        Err(_) => return Ok(None),
-    };
-    normalize_default_agent_config(&mut parsed);
-    Ok(Some(parsed))
-}
-
-async fn build_default_agent_config(
-    state: &AppState,
-    user: &crate::storage::UserAccountRecord,
-) -> DefaultAgentConfig {
-    let context = build_user_tool_context(state, &user.user_id).await;
-    let allowed = compute_allowed_tool_names(user, &context);
-    let skill_name_keys = collect_context_skill_names(&context);
-    let tool_names = curated_default_tool_names_for_config(&context.config, &allowed);
-    let now = now_ts();
-    let mut config = DefaultAgentConfig {
-        name: DEFAULT_AGENT_NAME.to_string(),
-        description: DEFAULT_AGENT_DESCRIPTION.to_string(),
-        system_prompt: DEFAULT_AGENT_SYSTEM_PROMPT.to_string(),
-        preview_skill: false,
-        model_name: None,
-        ability_items: resolve_record_ability_items(&[], &tool_names, &[], &[], &skill_name_keys),
-        tool_names,
-        declared_tool_names: Vec::new(),
-        declared_skill_names: Vec::new(),
-        visible_unit_ids: Vec::new(),
-        preset_questions: default_agent_preset_questions(),
-        approval_mode: DEFAULT_AGENT_APPROVAL_MODE.to_string(),
-        status: DEFAULT_AGENT_STATUS.to_string(),
-        icon: Some("avatar-046".to_string()),
-        sandbox_container_id: DEFAULT_SANDBOX_CONTAINER_ID,
-        silent: false,
-        prefer_mother: false,
-        created_at: now,
-        updated_at: now,
-    };
-    let (declared_tool_names, declared_skill_names) = resolve_record_declared_names(
-        &config.ability_items,
-        &config.tool_names,
-        &config.declared_tool_names,
-        &config.declared_skill_names,
-        &skill_name_keys,
-    );
-    config.declared_tool_names = declared_tool_names;
-    config.declared_skill_names = declared_skill_names;
-    normalize_default_agent_config(&mut config);
-    config
-}
-
 async fn resolve_default_agent_config(
     state: &AppState,
     user: &crate::storage::UserAccountRecord,
 ) -> Result<DefaultAgentConfig, Response> {
-    if let Some(mut config) = load_default_agent_config(state, &user.user_id).await? {
-        let now = now_ts();
-        if config.created_at <= 0.0 {
-            config.created_at = now;
-        }
-        if config.updated_at <= 0.0 {
-            config.updated_at = config.created_at;
-        }
-        return Ok(config);
-    }
-    let record = state
-        .user_store
-        .get_user_agent(&user.user_id, DEFAULT_AGENT_ID_ALIAS)
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    if let Some(record) = record {
-        let mut config = default_agent_config_from_record(&record);
-        normalize_default_agent_config(&mut config);
-        return Ok(config);
-    }
-    Ok(build_default_agent_config(state, user).await)
+    let mut config = crate::services::default_agent_sync::load_effective_default_agent_config(
+        state,
+        &user.user_id,
+    )
+    .await
+    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    normalize_default_agent_config(&mut config);
+    Ok(config)
 }
 
 fn default_agent_payload(

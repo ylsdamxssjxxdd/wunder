@@ -268,11 +268,19 @@ async fn drive_once(
             .map(|inner| inner.tag.clone())
     });
     if let Some(tag) = cancelled_tag {
-        if let Err(error) = pause_cancelled_round(host, user_id, session_id, &tag).await {
-            tracing::warn!(target: "wunder::goal", %session_id, %error, "settle cancelled goal round failed");
-        }
+        let paused = match pause_cancelled_round(host, user_id, session_id, &tag).await {
+            Ok(paused) => paused,
+            Err(error) => {
+                tracing::warn!(target: "wunder::goal", %session_id, %error, "settle cancelled goal round failed");
+                true // Do not submit another round after an unsettled stop.
+            }
+        };
         state.take_attempt_if_predicate(|inner| inner.cancelled && inner.tag == tag);
-        return;
+        if paused {
+            return;
+        }
+        // A human edit/resume may already have installed a newer revision.
+        // Re-evaluate it after releasing the obsolete cancelled attempt.
     }
     // 2. An admitted round is still in flight; its turn end will re-drive.
     if state
@@ -320,21 +328,21 @@ async fn pause_cancelled_round(
     user_id: &str,
     session_id: &str,
     tag: &GoalRoundTag,
-) -> Result<()> {
+) -> Result<bool> {
     let Some(view) = host
         .host_load_goal_view(user_id, session_id)
         .await
         .ok()
         .flatten()
     else {
-        return Ok(());
+        return Ok(false);
     };
     let driving = view.record.goal_id == tag.goal_id
         && view.record.revision == tag.revision
         && view.record.phase == PHASE_ACTIVE
         && view.activation == GoalActivation::Armed;
     if !driving {
-        return Ok(());
+        return Ok(false);
     }
     host.host_pause_goal(
         user_id,
@@ -344,7 +352,8 @@ async fn pause_cancelled_round(
             revision: tag.revision,
         },
     )
-    .await
+    .await?;
+    Ok(true)
 }
 
 async fn reserve_and_submit(
@@ -654,6 +663,27 @@ mod tests {
 
         assert!(host.pauses().is_empty());
         assert!(state.attempt.lock().unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn obsolete_cancelled_attempt_does_not_fence_a_human_edit_or_resume() {
+        let mut newer = view(PHASE_ACTIVE, 3, 8, GoalActivation::Armed);
+        newer.record.revision += 1;
+        let host = Arc::new(MockHost::with_view(newer));
+        let state = Arc::new(DriverState::default());
+        state.set_attempt(tag(3));
+        state.attempt.lock().unwrap().as_mut().unwrap().cancelled = true;
+        drive(&host, &state).await;
+
+        assert!(host.pauses().is_empty());
+        assert_eq!(
+            host.submits(),
+            vec![GoalRoundTag {
+                revision: 5,
+                ..tag(4)
+            }]
+        );
+        assert!(!state.attempt.lock().unwrap().as_ref().unwrap().cancelled);
     }
 
     #[test]

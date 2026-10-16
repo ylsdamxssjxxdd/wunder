@@ -3,7 +3,7 @@ use crate::services::default_agent_protocol::{
     default_agent_config_from_record, default_agent_meta_key, is_builtin_default_agent_name,
     record_from_default_agent_config, DefaultAgentConfig, DEFAULT_AGENT_NAME,
 };
-use crate::services::default_tool_profile::curated_default_tool_names_for_config;
+use crate::services::default_tool_profile::{default_tool_names, initialize_default_builtin_tools};
 use crate::services::user_agent_presets::{
     build_requested_tool_names_for_sync, PresetSyncMode, PresetSyncSummary,
 };
@@ -143,14 +143,11 @@ async fn load_default_agent_config(
     Ok(Some(parsed))
 }
 
-async fn build_default_agent_config(
-    state: &AppState,
-    user: &UserAccountRecord,
+fn build_default_agent_config(
+    allowed: &HashSet<String>,
+    skill_name_keys: &HashSet<String>,
 ) -> DefaultAgentConfig {
-    let context = build_user_tool_context(state, &user.user_id).await;
-    let allowed = compute_allowed_tool_names(user, &context);
-    let skill_name_keys = collect_context_skill_names(&context);
-    let tool_names = curated_default_tool_names_for_config(&context.config, &allowed);
+    let tool_names = default_tool_names(allowed);
     let mut config = DefaultAgentConfig {
         name: DEFAULT_AGENT_NAME.to_string(),
         description: String::new(),
@@ -172,16 +169,17 @@ async fn build_default_agent_config(
         created_at: now_ts(),
         updated_at: now_ts(),
     };
-    normalize_default_agent_config(&mut config, &skill_name_keys);
+    normalize_default_agent_config(&mut config, skill_name_keys);
     config
 }
 
 async fn resolve_default_agent_config(
     state: &AppState,
     user: &UserAccountRecord,
+    allowed: &HashSet<String>,
+    skill_name_keys: &HashSet<String>,
 ) -> Result<DefaultAgentConfig> {
-    let skill_name_keys = collect_user_skill_name_keys(state, &user.user_id).await;
-    if let Some(config) = load_default_agent_config(state, &user.user_id, &skill_name_keys).await? {
+    if let Some(config) = load_default_agent_config(state, &user.user_id, skill_name_keys).await? {
         return Ok(config);
     }
     if let Some(record) = state
@@ -189,21 +187,40 @@ async fn resolve_default_agent_config(
         .storage_backend()
         .get_user_agent(&user.user_id, DEFAULT_AGENT_ID_ALIAS)?
     {
-        return Ok(config_from_record(&record, &skill_name_keys));
+        return Ok(config_from_record(&record, skill_name_keys));
     }
-    Ok(build_default_agent_config(state, user).await)
+    Ok(build_default_agent_config(allowed, skill_name_keys))
+}
+
+pub async fn load_effective_default_agent_config(
+    state: &AppState,
+    user_id: &str,
+) -> Result<DefaultAgentConfig> {
+    let owner = state
+        .user_store
+        .get_user_by_id(user_id)?
+        .unwrap_or_else(|| synthetic_user(user_id));
+    let context = build_user_tool_context(state, user_id).await;
+    let allowed = compute_allowed_tool_names(&owner, &context);
+    let skill_name_keys = collect_context_skill_names(&context);
+    let mut config =
+        resolve_default_agent_config(state, &owner, &allowed, &skill_name_keys).await?;
+    initialize_default_builtin_tools(
+        &state.user_store,
+        user_id,
+        &mut config,
+        &allowed,
+        &skill_name_keys,
+    )?;
+    Ok(config)
 }
 
 pub async fn load_effective_default_agent_record(
     state: &AppState,
     user_id: &str,
 ) -> Result<UserAgentRecord> {
-    let owner = state
-        .user_store
-        .get_user_by_id(user_id)?
-        .unwrap_or_else(|| synthetic_user(user_id));
-    let config = resolve_default_agent_config(state, &owner).await?;
-    Ok(record_from_config(&owner.user_id, &config))
+    let config = load_effective_default_agent_config(state, user_id).await?;
+    Ok(record_from_config(user_id, &config))
 }
 
 fn record_from_target_snapshot(
@@ -581,24 +598,32 @@ pub async fn sync_default_agent_across_users(
 
 #[cfg(test)]
 mod tests {
-    use crate::services::default_tool_profile::curated_default_tool_names;
+    use crate::services::default_tool_profile::default_tool_names;
     use std::collections::HashSet;
 
     #[test]
-    fn curated_default_agent_tools_follow_fixed_profile() {
+    fn default_agent_tools_include_available_panels() {
         let allowed = HashSet::from([
             "定时任务".to_string(),
             "读取文件".to_string(),
             "技能创建器".to_string(),
             "其他工具".to_string(),
+            "计划面板".to_string(),
+            "问询面板".to_string(),
+            "文本编辑".to_string(),
         ]);
         assert_eq!(
-            curated_default_tool_names(&allowed),
-            vec![
+            default_tool_names(&allowed)
+                .into_iter()
+                .collect::<HashSet<_>>(),
+            HashSet::from([
                 "定时任务".to_string(),
                 "读取文件".to_string(),
                 "技能创建器".to_string(),
-            ]
+                "计划面板".to_string(),
+                "问询面板".to_string(),
+                "文本编辑".to_string(),
+            ])
         );
     }
 }

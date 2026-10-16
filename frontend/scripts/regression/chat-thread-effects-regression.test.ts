@@ -34,6 +34,41 @@ const setup = async () => {
   return { chat, events, eventDetails, apply, applyView, syncChatThreadShell, cleanup: () => { globalThis.window = original; } };
 };
 
+test('goal acknowledgement and consumed inquiry waits never announce task completion', async () => {
+  const { eventDetails, applyView, cleanup } = await setup();
+  const row = (id: string, status: string, revision: number, stop_reason = ''): ChatViewRow => ({
+    root_turn_id: id, user_round: revision, revision, status, stop_reason,
+    user: { item_id: `${id}:user`, content: 'Fixture input' },
+    assistant: { item_id: `${id}:answer`, content: 'Fixture output' }, workflow_count: 0, failed_count: 0
+  });
+  const notices = () => eventDetails.flatMap(detail => detail?.completedTurns ?? []);
+  try {
+    applyView(1, [row('fixture-goal-control', 'accepted', 1)]);
+    applyView(2, [row('fixture-goal-control', 'completed', 2, 'goal_command')]);
+    applyView(3, [row('fixture-inquiry', 'running', 3)]);
+    applyView(4, [row('fixture-inquiry', 'waiting_input', 4, 'question_panel')]);
+    applyView(5, [row('fixture-inquiry', 'completed', 5, 'user_reply')]);
+    assert.deepEqual(notices(), []);
+    applyView(6, [row('fixture-reply', 'running', 6)]);
+    applyView(7, [row('fixture-reply', 'completed', 7, 'stop')]);
+    assert.deepEqual(notices().map(notice => notice.turnId), ['fixture-reply']);
+  } finally { cleanup(); }
+});
+
+test('raw lifecycle carries settlement reasons through separate status frames', async () => {
+  const { eventDetails, apply, cleanup } = await setup();
+  try {
+    apply(1, 'turn_upsert', { turn_id: 'fixture-control', status: 'accepted' });
+    apply(2, 'turn_status', { turn_id: 'fixture-control', status: 'completed', stop_reason: 'goal_command' });
+    apply(3, 'turn_upsert', { turn_id: 'fixture-question', status: 'waiting_input', stop_reason: 'question_panel' });
+    apply(4, 'turn_status', { turn_id: 'fixture-question', status: 'completed', stop_reason: 'user_reply' });
+    assert.deepEqual(eventDetails.flatMap(detail => detail?.completedTurns ?? []), []);
+    apply(5, 'turn_upsert', { turn_id: 'fixture-work', status: 'running' });
+    apply(6, 'turn_status', { turn_id: 'fixture-work', status: 'completed', stop_reason: 'stop' });
+    assert.deepEqual(eventDetails.flatMap(detail => detail?.completedTurns ?? []).map(notice => notice.turnId), ['fixture-work']);
+  } finally { cleanup(); }
+});
+
 test('durable lifecycle settles shell and dispatches workspace effects once even through replay and gaps', async () => {
   const { chat, events, apply, syncChatThreadShell, cleanup } = await setup();
   try {

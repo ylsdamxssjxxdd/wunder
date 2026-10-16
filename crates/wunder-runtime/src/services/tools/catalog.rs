@@ -472,7 +472,7 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
             ]),
         },
         ToolSpec {
-            name: "glob".to_string(),
+            name: "文件名匹配".to_string(),
             title: None,
             description: t("tool.spec.glob.description"),
             input_schema: super::schema::object(vec![
@@ -1183,6 +1183,7 @@ pub fn builtin_aliases() -> HashMap<String, String> {
     map.insert("write_command_stdin".to_string(), "命令会话".to_string());
     map.insert("programmatic_tool_call".to_string(), "ptc".to_string());
     map.insert("list_files".to_string(), "列出文件".to_string());
+    map.insert("glob".to_string(), "文件名匹配".to_string());
     map.insert("search_content".to_string(), "搜索内容".to_string());
     map.insert("read_file".to_string(), "读取文件".to_string());
     map.insert(
@@ -1329,8 +1330,8 @@ pub async fn build_read_image_followup_user_message(
     read_image_tool::build_followup_user_message(context, result).await
 }
 
-fn is_desktop_mode(config: &Config) -> bool {
-    config.server.mode.trim().eq_ignore_ascii_case("desktop")
+fn is_local_mode(config: &Config) -> bool {
+    crate::services::prompting::is_local_runtime_mode(&config.server.mode)
 }
 
 fn runtime_builtin_tool_allowed(config: &Config, canonical: &str) -> bool {
@@ -1549,7 +1550,7 @@ pub fn collect_available_tool_names(
 ) -> HashSet<String> {
     let mut names = HashSet::new();
     let mut enabled_builtin = HashSet::new();
-    if is_desktop_mode(config) {
+    if is_local_mode(config) {
         for canonical in desktop_builtin_tool_names() {
             if !runtime_builtin_tool_allowed(config, canonical) {
                 continue;
@@ -1638,7 +1639,7 @@ pub fn collect_enabled_tool_names_for_catalog(
 ) -> HashSet<String> {
     let mut names = HashSet::new();
     let mut enabled_builtin = HashSet::new();
-    if is_desktop_mode(config) {
+    if is_local_mode(config) {
         for canonical in desktop_builtin_tool_names() {
             if !runtime_builtin_tool_allowed(config, canonical) {
                 continue;
@@ -2430,39 +2431,44 @@ mod tests {
     }
 
     #[test]
-    fn desktop_mode_exposes_all_builtin_tools_even_with_partial_whitelist() {
-        let mut config = Config::default();
-        config.server.mode = "desktop".to_string();
-        config.tools.builtin.enabled = vec!["执行命令".to_string()];
-        config.tools.browser.enabled = true;
-        config.tools.desktop_controller.enabled = true;
-        config.tools.web.search.enabled = true;
-        config.tools.web.search.provider = "firecrawl".to_string();
+    fn local_modes_expose_all_available_builtin_tools_even_with_partial_whitelist() {
+        for mode in ["desktop", "cli"] {
+            let mut config = Config::default();
+            config.server.mode = mode.to_string();
+            config.tools.builtin.enabled = vec!["执行命令".to_string()];
+            config.tools.browser.enabled = true;
+            config.tools.desktop_controller.enabled = true;
+            config.tools.web.search.enabled = true;
+            config.tools.web.search.provider = "firecrawl".to_string();
 
-        let available = collect_available_tool_names(&config, &SkillRegistry::default(), None);
-        for spec in builtin_tool_specs_with_language("zh-CN") {
-            // Runtime feature gates (web, browser, desktop, multimodal) apply
-            // on top of the desktop whitelist bypass; they filter 语音生成 etc.
-            // when the matching provider/model is not configured.
-            if !super::runtime_builtin_tool_allowed(&config, &spec.name) {
-                continue;
-            }
-            if crate::services::default_tool_profile::is_desktop_hidden_tool_name(&spec.name) {
+            let available = collect_available_tool_names(&config, &SkillRegistry::default(), None);
+            for spec in builtin_tool_specs_with_language("zh-CN") {
+                // Runtime feature gates (web, browser, desktop, multimodal) apply
+                // on top of the desktop whitelist bypass; they filter 语音生成 etc.
+                // when the matching provider/model is not configured.
+                if !super::runtime_builtin_tool_allowed(&config, &spec.name) {
+                    continue;
+                }
+                if crate::services::default_tool_profile::is_desktop_hidden_tool_name(&spec.name) {
+                    assert!(
+                        !available.contains(&spec.name),
+                        "desktop mode should hide system tool {}",
+                        spec.name
+                    );
+                    continue;
+                }
                 assert!(
-                    !available.contains(&spec.name),
-                    "desktop mode should hide system tool {}",
+                    available.contains(&spec.name),
+                    "desktop mode should include builtin tool {}",
                     spec.name
                 );
-                continue;
             }
-            assert!(
-                available.contains(&spec.name),
-                "desktop mode should include builtin tool {}",
-                spec.name
-            );
+            assert!(available.contains("read_file"));
+            assert!(available.contains("update_plan"));
+            let catalog =
+                collect_enabled_tool_names_for_catalog(&config, &SkillRegistry::default(), None);
+            assert_eq!(available, catalog, "{mode}: runtime and catalog must agree");
         }
-        assert!(available.contains("read_file"));
-        assert!(available.contains("update_plan"));
     }
 
     #[test]

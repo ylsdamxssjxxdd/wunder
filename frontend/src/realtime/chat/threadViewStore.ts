@@ -4,10 +4,11 @@ import { shallowRef, markRaw } from 'vue';
 import type { ProcessActivity } from '@/components/chat/timelineActivity';
 import { reconcileChatQueueRows } from '@/stores/chatQueueLiveState';
 import type { ChatPlan } from './chatPlan';
+import { presentChatInquiry, type ChatInquiryPanel } from './chatInquiry';
 
 export interface ThreadBodyRef { body_id: string; revision: number; bytes: number }
-export interface ViewMessage { item_id: string; content: string; reasoning?: string; created_seq?: number; durable_seq?: number; content_offset?: number; reasoning_offset?: number; tail_offset?: number; body?: ThreadBodyRef; feedback?: unknown; stats?: unknown; tail?: string; failure?: string; attachments?: unknown[] }
-export interface ChatViewRow { root_turn_id: string; execution_turn_id?:string; user_round: number; client_message_id?: string; revision: number; status: string; queued_input?: { queue_id: string; reason: string; priority: number } | null; user: ViewMessage; assistant: ViewMessage; workflow_count: number; workspace_change_seq?: number; reasoning_count?: number; reasoning_item_id?: string; process_activity?: ProcessActivity; failed_count: number; subagents?: any[]; plan?: ChatPlan | null }
+export interface ViewMessage { item_id: string; content: string; reasoning?: string; created_seq?: number; durable_seq?: number; content_offset?: number; reasoning_offset?: number; tail_offset?: number; body?: ThreadBodyRef; feedback?: unknown; stats?: unknown; tail?: string; failure?: string; attachments?: unknown[]; question_panel?: ChatInquiryPanel | null }
+export interface ChatViewRow { root_turn_id: string; execution_turn_id?:string; user_round: number; client_message_id?: string; revision: number; status: string; stop_reason?: string | null; queued_input?: { queue_id: string; reason: string; priority: number } | null; user: ViewMessage; assistant: ViewMessage; workflow_count: number; workspace_change_seq?: number; reasoning_count?: number; reasoning_item_id?: string; process_activity?: ProcessActivity; failed_count: number; subagents?: any[]; plan?: ChatPlan | null }
 export interface ThreadViewPage { runtime_status?:string;active_turn_id?:string; session_id: string; epoch: number; view_seq: number; projection_state: string; degraded?: boolean; diagnostic?: string | null; thread_empty: boolean | null; latest_round: number; chat: ChatViewRow[]; trajectory: any[]; tiles: any[]; tile_level: number; next_before: number | null; has_more: boolean; next_after?: number | null; has_newer?: boolean }
 export type ViewPhase = 'opening' | 'ready' | 'verified_empty' | 'refreshing' | 'error';
 export interface ViewSlot { key: string; rootTurnId: string; user: Record<string, any>; assistant: Record<string, any> }
@@ -54,14 +55,14 @@ function materialize(row: ChatViewRow): ViewSlot {
     turn_id: row.execution_turn_id??row.root_turn_id, root_turn_id: row.root_turn_id, user_round: row.user_round, client_message_id: row.client_message_id,
     __runtime_projected: true, __thread_view:true, final: !running, state:role==='assistant'?(running?'streaming':row.status==='completed'?'final':row.status):'final', __thread_body: m.body, __thread_preview: Boolean(m.body && m.body.bytes > new TextEncoder().encode(m.content).length),
     streaming: role === 'assistant' && running, status: role === 'assistant' ? row.status : 'completed',
-    queued_input: row.queued_input, workspace_change_seq: row.workspace_change_seq ?? 0,
+    stop_reason: row.stop_reason, queued_input: row.queued_input, workspace_change_seq: row.workspace_change_seq ?? 0,
     // The process badge counts every visible process entry.  The server keeps
     // tool counts separately, so include the aggregated reasoning entry here.
     workflow_count: row.workflow_count, reasoning_count: Number(row.reasoning_count || 0), reasoning_item_id: row.reasoning_item_id || '', process_count: row.workflow_count + Number(row.reasoning_count || 0) + (role === 'assistant' && String(m.reasoning || '').trim() && !Number(row.reasoning_count || 0) ? 1 : 0), workflow_failed_count: row.failed_count, feedback: m.feedback, stats: m.stats, reasoning: m.reasoning || '',
     process_activity: row.process_activity?.kind ? row.process_activity : undefined,
     __thread_tail: m.tail, failureDetail:m.failure, attachments:m.attachments,
     __thread_tail_offset: m.tail_offset,
-    workflowItems: [], ...(role==='assistant'?{plan:row.plan ?? null}:{}), ...(role==='assistant'&&Array.isArray(row.subagents)&&row.subagents.length>0?{subagents:row.subagents}:{}), failed: role === 'assistant' && ['failed','rejected'].includes(row.status), stopped: row.status === 'cancelled' });
+    workflowItems: [], ...(role==='assistant'?{plan:row.plan ?? null,questionPanel:presentChatInquiry(m.question_panel,row.status)}:{}), ...(role==='assistant'&&Array.isArray(row.subagents)&&row.subagents.length>0?{subagents:row.subagents}:{}), failed: role === 'assistant' && ['failed','rejected'].includes(row.status), stopped: row.status === 'cancelled' });
   return markRaw({ key: row.client_message_id ? `turn:client:${row.client_message_id}` : `turn:${row.root_turn_id}`, rootTurnId: row.root_turn_id, user: make('user', row.user), assistant: make('assistant', row.assistant) });
 }
 const isQueueOnlyCancelledRow = (row: ChatViewRow): boolean =>

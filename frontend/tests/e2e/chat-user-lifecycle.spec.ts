@@ -151,8 +151,15 @@ test('user operations drive the production chat through mocked HTTP and WebSocke
     await expect(queuedTurn).toHaveCount(0);
     service.updateQueueAhead(1);
     await expect(queuedTurn).toHaveCount(0);
+    const watchesBeforeReload = service.requests.filter(request => request.transport === 'ws' && request.type === 'watch').length;
     await page.reload();
+    await expect(page.getByTestId('chat-queue-strip')).toContainText('Queue the next fixture request.');
+    await expect.poll(() => service.requests.filter(request => request.transport === 'ws' && request.type === 'watch').length)
+      .toBeGreaterThan(watchesBeforeReload);
     await expect(queuedTurn).toHaveCount(0);
+    // Reload installs a fresh page-local notice recorder. Compare the queued
+    // completion with this recorder rather than the previous page's count.
+    noticesBeforeRound = await noticeCount();
     service.updateQueueAhead(0);
     await expect(queuedTurn).toHaveCount(0);
     coverage.queue = true;
@@ -162,7 +169,9 @@ test('user operations drive the production chat through mocked HTTP and WebSocke
     await send('Verify after the queued request.');
     await completed(11);
     const before = await captureConversation(page, directory);
-    expect(before.map(row => [row.turnId, row.role])).toEqual(
+    // The synthetic greeting has no durable turn identity. Keep it in the
+    // reload comparison, but audit user-round topology on durable rows.
+    expect(before.filter(row => row.turnId).map(row => [row.turnId, row.role])).toEqual(
       Array.from({ length: 11 }, (_, index) => [[`fixture-turn-${index + 1}`, 'user'], [`fixture-turn-${index + 1}`, 'assistant']]).flat());
     expect(before.filter(row => row.role === 'user').map(row => row.turnId)).toEqual(
       Array.from({ length: 11 }, (_, index) => `fixture-turn-${index + 1}`));

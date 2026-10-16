@@ -219,6 +219,20 @@ impl ThreadLogStore for SqliteStorage {
     ) -> Result<bool> {
         self.update_thread_turn_impl(user_id, session_id, turn_id, status, summary, payload)
     }
+    fn list_thread_turn_ids_by_status(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        status: &str,
+        limit: usize,
+    ) -> Result<Vec<String>> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let mut stmt = conn.prepare("SELECT turn_id FROM thread_turns WHERE user_id=? AND session_id=? AND status=? ORDER BY user_turn_index DESC,created_time DESC LIMIT ?")?;
+        let ids = stmt.query_map(rusqlite::params![user_id,session_id,status,limit.clamp(1,64) as i64], |row| row.get(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(ids)
+    }
     fn list_thread_changes_by_session(
         &self,
         session_id: &str,

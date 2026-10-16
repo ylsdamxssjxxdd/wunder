@@ -41,7 +41,12 @@ export async function captureConversation(page: Page, directory: string, expandT
     await list.evaluate((node, offset) => { node.scrollTop = offset; node.dispatchEvent(new Event('scroll')); }, top);
     await page.waitForTimeout(120);
     if (expandTools) {
-      for (const selector of ['details.message-tool-workflow:not([open]) > summary', 'details.tool-workflow-entry:not([open]) > summary']) {
+      for (const selector of [
+        'details.message-tool-workflow:not([open]) > summary',
+        'details.tool-workflow-entry:not([open]) > summary',
+        '.timeline-process-head[aria-expanded="false"]',
+        '.tl-entry-head[aria-expanded="false"]'
+      ]) {
         const handles = await list.locator(selector).elementHandles();
         for (const handle of handles) {
           await handle.evaluate(node => (node as HTMLElement).click());
@@ -58,8 +63,9 @@ export async function captureConversation(page: Page, directory: string, expandT
           .filter(item => { const rect = item.getBoundingClientRect(); return rect.bottom > viewport.top && rect.top < viewport.bottom; })
           .map(item => ({ key: item.dataset.virtualKey!, turnId: item.dataset.turnId ?? '',
             status: item.dataset.messageStatus ?? '', role: item.classList.contains('mine') ? 'user' : 'assistant',
-            content: item.querySelector('.messenger-message-bubble')?.textContent?.trim() ?? '',
-            tools: item.querySelector('.message-tool-workflow')?.textContent?.trim() ?? '',
+            content: Array.from(item.querySelectorAll('.messenger-message-bubble, .timeline-assistant > .timeline-body-block'))
+              .map(body => body.textContent?.trim() ?? '').join('\n'),
+            tools: item.querySelector('.message-tool-workflow, .timeline-turn-process, .timeline-group')?.textContent?.trim() ?? '',
             stats: item.querySelector('.messenger-message-stats')?.textContent?.trim() ?? '' })) };
     });
     for (const row of sample.rows) {

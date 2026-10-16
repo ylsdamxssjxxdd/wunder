@@ -20,7 +20,6 @@ import { getCurrentLanguage, setLanguage, useI18n } from '@/i18n';
 import { flushBackgroundPublication } from '@/realtime/chat/chatBackgroundPublication';
 import { resolveChatRuntimeRenderableKey } from '@/realtime/chat/chatRuntimeMessageKeys';
 import { resolveChatRuntimeMessageRenderKey } from '@/realtime/chat/chatRuntimeRenderAdapter';
-import { resolveChatPlanDismissKey } from '@/realtime/chat/chatPlan';
 import { threadViewClock, threadViewOwnsExecution, threadViewHeadVersion } from '@/realtime/chat/threadViewStore';
 import { threadViewPhase, threadViewSlots } from '@/realtime/chat/threadViewStore';
 import { readThreadBody } from '@/realtime/chat/threadBodyReader';
@@ -706,10 +705,6 @@ function installMessengerControllerStateRefs(ctx: MessengerControllerContext): v
   ctx.autoStickToBottom = ref(true);
 
   ctx.agentInquirySelection = ref<AgentInquiryPanelAnswer[]>([]);
-
-  ctx.dismissedPlanKeys = ref<Set<string>>(new Set());
-
-  ctx.dismissedPlanVersion = ref(0);
 
 
 
@@ -2316,21 +2311,9 @@ function installMessengerControllerRenderableMessages(ctx: MessengerControllerCo
           steps?: unknown[];
       } | null)?.steps?.length || 0) > 0;
 
-  ctx.isPlanMessageDismissed = (message: Record<string, unknown>): boolean => ctx.dismissedPlanKeys.value.has(resolveChatPlanDismissKey(message));
-
-  ctx.markPlanMessageDismissed = (message: Record<string, unknown>) => {
-      const key = resolveChatPlanDismissKey(message);
-      if (!key) return;
-      ctx.dismissedPlanKeys.value.add(key);
-      if (ctx.dismissedPlanKeys.value.size > 64) {
-          ctx.dismissedPlanKeys.value.delete(ctx.dismissedPlanKeys.value.values().next().value);
-      }
-      ctx.dismissedPlanVersion.value += 1;
-  };
-
   ctx.activeAgentPlanMessage = computed<Record<string, unknown> | null>(() => {
-      // Trigger recompute when manual dismiss state changes.
-      void ctx.dismissedPlanVersion.value;
+      void threadViewClock.value;
+      void ctx.chatStore.runtimeProjectionVersionBySession?.[ctx.chatStore.activeSessionId];
       if (!ctx.isAgentConversationActive.value)
           return null;
       for (let index = ctx.agentRenderableMessages.value.length - 1; index >= 0; index -= 1) {
@@ -2339,9 +2322,6 @@ function installMessengerControllerRenderableMessages(ctx: MessengerControllerCo
               continue;
           if (!ctx.hasPlanSteps(message?.plan))
               continue;
-          if (message && ctx.isPlanMessageDismissed(message)) {
-              return null;
-          }
           return message || null;
       }
       return null;
@@ -4868,18 +4848,16 @@ type WorldScreenshotCaptureOption = {
 type StartNewSessionOutcome = 'noop' | 'already_current' | 'opened';
 
 function installMessengerControllerMessagePanelsPresentation(ctx: MessengerControllerContext): void {
-  ctx.dismissActiveAgentPlan = () => {
-      const target = ctx.activeAgentPlanMessage.value;
-      if (!target)
-          return;
-      ctx.markPlanMessageDismissed(target);
-  };
-
   ctx.activeAgentInquiryPanel = computed<ActiveAgentInquiryPanel | null>(() => {
+      void threadViewClock.value;
+      void ctx.chatStore.runtimeProjectionVersionBySession?.[ctx.chatStore.activeSessionId];
       if (!ctx.isAgentConversationActive.value)
           return null;
       for (let index = ctx.agentRenderableMessages.value.length - 1; index >= 0; index -= 1) {
           const message = ctx.agentRenderableMessages.value[index]?.message as Record<string, unknown> | undefined;
+          // A later user input consumes the previous question wait, even before
+          // admission has returned its durable terminal update.
+          if (String(message?.role || '') === 'user') break;
           if (String(message?.role || '') !== 'assistant')
               continue;
           const panel = (message?.questionPanel || null) as AgentInquiryPanelData | null;
@@ -10975,8 +10953,6 @@ function installMessengerControllerLifecycleReactiveEffects(ctx: MessengerContro
           ctx.rememberMessageScrollForKey?.(String(oldValue));
       }
       ctx.clearWorkspaceResourceCache();
-      ctx.dismissedPlanKeys.value = new Set<string>();
-      ctx.dismissedPlanVersion.value += 1;
       ctx.agentInquirySelection.value = [];
       ctx.scheduleWorkspaceResourceHydration('conversation-key-change');
       if (isChatDebugVerboseEnabled()) {
@@ -13421,14 +13397,8 @@ function installMessengerControllerAgentMessageCommands(ctx: MessengerController
       }
       goalSubmitting = true;
       try {
-          const currentGoal = typeof ctx.chatStore.sessionGoal === 'function'
-              ? ctx.chatStore.sessionGoal(sessionId)
-              : null;
-          const currentObjective = String(currentGoal?.objective || '').trim();
-          const currentStatus = String(currentGoal?.phase || '').trim().toLowerCase();
-          if (currentStatus === 'active' && currentObjective && currentObjective !== objective) {
-              await ctx.chatStore.stopStream();
-          }
+          // The goal endpoint owns interruption and revision hand-off. A chat
+          // stop here clears the goal and races the subsequent edit.
           const commandLabel = String(commandText || '').trim();
           const commandMessage = commandLabel
               ? ctx.chatStore.appendLocalMessage('user', commandLabel, { sessionId, goalCommand: true })

@@ -763,7 +763,7 @@ impl PostgresThreadLogStorage for PostgresStorage {
         let change_payload = serde_json::to_string(
             &serde_json::json!({"turn_id": turn_id, "status": status,
             "root_turn_id": identity.get::<_, String>(0), "trigger_kind": identity.get::<_, String>(1),
-            "user_round": identity.get::<_, i64>(2)}),
+            "user_round": identity.get::<_, i64>(2), "stop_reason": payload.get("stop_reason")}),
         )?;
         tx.execute("INSERT INTO thread_log_changes(session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)", &[&session_id,&seq,&user_id,&change_type,&turn_id,&change_item,&revision,&change_payload,&now])?;
         if input_changed > 0 {

@@ -2432,6 +2432,7 @@ const isKnowledgeQueryTool = (toolName: string): boolean => {
 };
 
 const GENERIC_TOOL_LABEL_KEY_BY_NAME: Record<string, string> = {
+  '文件名匹配': 'chat.toolWorkflow.toolLabel.glob',
   glob: 'chat.toolWorkflow.toolLabel.glob',
   str_replace_editor: 'chat.toolWorkflow.toolLabel.strReplaceEditor',
   文本编辑: 'chat.toolWorkflow.toolLabel.textEdit',

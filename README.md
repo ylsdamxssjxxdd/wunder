@@ -30,7 +30,6 @@ wunder（心舰）是一个**智能体调度平台**
 | 🍯 | 蛹 desktop | — | — | — | — | — | — |
 | ⚙️ | 舵机 cli | — | — | — | — | — | — |
 
-> 采集脚本见 [scripts/form-bench](scripts/form-bench/README.md)：一次运行即可产出上表全部指标。
 
 ## 工具矩阵
 
@@ -66,17 +65,6 @@ wunder（心舰）是一个**智能体调度平台**
 | 定时任务 | `schedule_task` | 创建与管理定时 / 周期任务 | 系统与记忆 |
 | get_goal / create_goal / update_goal | — | 目标态三件套，由运行时按会话自动注入，不对桌面端开放选择 | 目标态 |
 
-> `网页搜索` 与 `ptc` 属代码保留、当前**临时下架**（对模型与用户不可见，见 `default_tool_profile.rs`），不是已移除。已彻底移除：渠道工具、用户世界工具、`a2a_*` 工具、`final_response`、`a2ui`、LSP 查询类工具。
-
-## 文档入口
-
-- 系统总览：[docs/wunder系统简介.md](docs/wunder系统简介.md)；总体设计：[docs/总体设计.md](docs/总体设计.md)
-- 使用说明书（用户 / 管理员 / 开发者）：[docs/使用说明书/zh-CN/index.md](docs/使用说明书/zh-CN/index.md)
-- API 文档：[docs/API文档.md](docs/API文档.md)
-- 技术说明书：[docs/技术说明书/README.md](docs/技术说明书/README.md)；设计文档：[docs/设计文档/README.md](docs/设计文档/README.md)
-- 功能迭代记录：[docs/功能迭代.md](docs/功能迭代.md)；经验教训：[docs/经验教训.md](docs/经验教训.md)
-
-对外集成面：REST `/wunder/*` 与 WebSocket 六个实时通道、MCP 端点 `/wunder/mcp`、外部工作流 SSE `/wunder/external/workflow*`、渠道 webhook。
 
 ## 吞噬矩阵
 

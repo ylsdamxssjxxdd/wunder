@@ -3,6 +3,17 @@
 # (key, zh, en) — zh must match UI literals exactly; en is the en-US variant.
 
 ENTRIES = [
+    ("sb_thread_multi_select", "多选", "Multi-select"),
+    ("sb_thread_select_all", "全选", "Select all"),
+    ("sb_thread_selected", "已选 {} 项", "{} selected", ["count"]),
+    ("sb_thread_archive", "归档", "Archive"),
+    ("tl_state_queued", "排队中", "Queued"),
+    ("tl_state_question", "等待回答", "Waiting for answers"),
+    ("tl_state_input", "等待用户输入", "Waiting for input"),
+    ("tl_state_confirm", "等待确认", "Waiting for confirmation"),
+    ("tl_state_approval", "等待审批", "Waiting for approval"),
+    ("tl_state_error", "错误", "Error"),
+
     # ---- common actions ----
     ("common_save", "保存", "Save"),
     ("common_saving", "保存中", "Saving…"),

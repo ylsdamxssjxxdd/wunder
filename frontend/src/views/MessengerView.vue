@@ -113,9 +113,9 @@
           </button>
           <div v-if="resolvedMessageConversationKind === 'agent'" class="messenger-agent-composer messenger-composer-scope chat-shell">
             <ComposerStatusDock
+              :session-id="String(chatStore.activeSessionId || '')"
               :loading="agentSessionLoading"
               :plan="activeAgentPlan"
-              @remove="dismissActiveAgentPlan"
             />
             <MessageGoalBar :session-id="String(chatStore.activeSessionId || '')" />
             <InquiryPanel
@@ -439,7 +439,6 @@ const closeResourcePreview = controller.closeResourcePreview;
 const composerApprovalMode = controller.composerApprovalMode;
 const composerApprovalModeSyncing = controller.composerApprovalModeSyncing;
 const currentContainerId = controller.currentContainerId;
-const dismissActiveAgentPlan = controller.dismissActiveAgentPlan;
 const drawioAgentId = controller.drawioAgentId;
 const drawioContainerId = controller.drawioContainerId;
 const drawioPath = controller.drawioPath;

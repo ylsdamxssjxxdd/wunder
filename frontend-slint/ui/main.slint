@@ -6,6 +6,7 @@ import { RuntimeStatus } from "runtime_status.slint";
 import { I18n } from "i18n.slint";
 import { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, TextBlock, WorkflowLine, WorkflowSection, ToolWorkflowEntry, TimelineRow, TimelineCounts, TurnStatMetric, PatchCard, PatchLine, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, TrajRow, TrajSpan, TrajTick, TrajBoundary, TrajTiming, TrajSection, TrajTab, TrajSearchHit, CronCard, CronRunCard, PromptPackCard, ChannelCatalogCard, ChannelAccountCard, ChannelBindingCard, ChannelLogCard, AvatarOption, AvatarColorChip, CompanionCard, PlanStep, InquiryQuestion, QueueTurn, DraftRecall, InterlinkApproval, WorkspaceFileRow } from "theme.slint";
 import { Action, EdgeToggle, RailButton, Avatar, FormField, MiddleHeader, MiddleFooter, ConfirmDialog, InfoDialog, ToastHost, ToastState } from "components.slint";
+import { ProcessEntry } from "theme.slint";
 import { Composer, GoalBanner, InquiryPanel, StatusDock } from "composer.slint";
 import { TermSpan } from "terminal_view.slint";
 import { TimelineView } from "timeline.slint";
@@ -34,7 +35,7 @@ import { ModelPresets } from "model_presets.slint";
 export { ModelPresets }
 // `TimelineView` is deliberately absent: nothing in Rust names it, and an
 // exported component that does not inherit Window only earns a build warning.
-export { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, TextBlock, WorkflowLine, WorkflowSection, ToolWorkflowEntry, TimelineRow, TimelineCounts, TurnStatMetric, PatchCard, PatchLine, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, TrajRow, TrajSpan, TrajTick, TrajBoundary, TrajTiming, TrajSection, TrajTab, CronCard, CronRunCard, PromptPackCard, ChannelCatalogCard, ChannelBindingCard, ChannelLogCard, AvatarOption, AvatarColorChip, CompanionCard, PlanStep, InterlinkApproval, WorkspaceFileRow }
+export { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, TextBlock, WorkflowLine, WorkflowSection, ToolWorkflowEntry, ProcessEntry, TimelineRow, TimelineCounts, TurnStatMetric, PatchCard, PatchLine, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, TrajRow, TrajSpan, TrajTick, TrajBoundary, TrajTiming, TrajSection, TrajTab, CronCard, CronRunCard, PromptPackCard, ChannelCatalogCard, ChannelBindingCard, ChannelLogCard, AvatarOption, AvatarColorChip, CompanionCard, PlanStep, InterlinkApproval, WorkspaceFileRow }
 export { AppTray } from "tray.slint";
 export { TrayNotice } from "tray-notice.slint";
 export { HelpWindow } from "help_window.slint";
@@ -337,7 +338,6 @@ export component MainWindow inherits Window {
     callback subagent-close();
     callback subagent-interrupt();
     callback subagent-toggle(int);
-    callback subagent-download(string);
     callback subagent-open-resource(string);
     // A timeline card click and its interrupt action; the controller resolves
     // the parent thread from the active session.
@@ -755,9 +755,11 @@ export component MainWindow inherits Window {
     // One timeline fold toggle: the Rust projection patches only the rows the
     // fold owns (itself, its tool batch, or its whole earlier turn).
     callback timeline-toggle(int);
+    callback timeline-process-page(int, int);
+    callback subagent-process-page(int, int);
+    in-out property <string> process-child-session;
     callback timeline-open(string);
     // Save one answer block as a text file through the native layer.
-    callback timeline-download(string);
     // Bounded introspection for the native smoke checks and the companion
     // bubble: the row count and the answer text of the active thread.
     callback timeline-counts() -> TimelineCounts;
@@ -933,8 +935,8 @@ export component MainWindow inherits Window {
                             follow-output <=> root.follow-output;
                             spinning: root.busy;
                             toggle(index) => { root.timeline-toggle(index); }
+                            process-page(index, direction) => { root.timeline-process-page(index, direction); }
                             copy-text(text) => { root.copy-raw(text); }
-                            download-text(text) => { root.timeline-download(text); }
                             open-resource(id) => { root.timeline-open(id); }
                             open-subagent(id) => { root.timeline-open-subagent(id); }
                             stop-subagent(id) => { root.timeline-stop-subagent(id); }
@@ -1376,7 +1378,7 @@ export component MainWindow inherits Window {
         close => { root.subagent-close(); }
         interrupt => { root.subagent-interrupt(); }
         toggle(index) => { root.subagent-toggle(index); }
-        download-text(text) => { root.subagent-download(text); }
+        process-page(index, direction) => { root.subagent-process-page(index, direction); }
         open-resource(id) => { root.subagent-open-resource(id); }
     }
     if root.ws-prompt-open : WorkspacePromptDialog {

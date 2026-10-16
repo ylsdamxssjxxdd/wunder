@@ -67,6 +67,20 @@ export struct PatchCard { path: string, action: string, added: string, deleted: 
 // for the tooltip; Slint has no map, so the icon resolves through StatsIcons.
 export struct TurnStatMetric { key: string, value: string }
 
+// A shared driver avoids installing a timer for each running tool row.
+export global TimelineSpin {
+    in-out property <float> angle: 0.0;
+}
+
+// A process owns a bounded child model. Keeping this separate from TimelineRow
+// avoids recursive models and lets a live tool update only its own child row.
+export struct ProcessEntry {
+    kind: int, id: string, text: string, blocks: [TextBlock],
+    summary: string, tool-name: string, tool-icon: string, target: string,
+    detail: string, sections: [WorkflowSection], patch: [PatchCard],
+    tokens: string, duration: string, status-kind: int, open: bool, payload: int
+}
+
 export struct TimelineRow {
     kind: int,
     id: string,
@@ -82,7 +96,19 @@ export struct TimelineRow {
     // second metrics model for every streamed result frame.
     tool-metrics: string,
     tool-metrics-visible: bool,
+    tokens: string,
+    duration: string,
     detail: string,
+    sections: [WorkflowSection],
+    process-entries: [ProcessEntry],
+    process-root: string,
+    process-paged: bool,
+    process-local: bool,
+    process-older: bool,
+    process-newer: bool,
+    process-loading: bool,
+    process-error: bool,
+    process-revision: int,
     status-kind: int,
     foldable: bool,
     open: bool,
@@ -95,8 +121,8 @@ export struct TimelineRow {
     process-open: bool,
     payload: int,
     patch: [PatchCard],
-    // End-of-turn metrics (duration / speed / context occupancy / consumed
-    // tokens / tool calls). Empty for rows that end no turn. Built by
+    // End-of-turn status and metrics (user round / duration / speed / context
+    // occupancy / consumed tokens / tool calls / quota). Built by
     // `src/turn_stats.rs` and rendered as icon + value, mirroring the web
     // messenger's MessageStats.vue.
     stats: [TurnStatMetric],

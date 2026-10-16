@@ -17,36 +17,33 @@ pub struct BrowserSessionScope {
 
 impl BrowserSessionScope {
     /// Bridge session key. Always namespaced by user: a caller-supplied
-    /// `browser_session_id` can only address the caller's own namespace, never
-    /// another tenant's live browser inside the shared bridge process.
+    /// `browser_session_id` only addresses the caller's current task thread.
+    /// Agent identity must never collapse its independent task threads.
     pub fn session_key(&self) -> Result<String> {
         let user_id = self.user_id.trim();
         if user_id.is_empty() {
             return Err(anyhow!("Missing browser scope field 'user_id'"));
         }
-        if let Some(session_id) = self
-            .browser_session_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        {
-            return Ok(format!("{user_id}:{session_id}"));
+        let session_id = self.session_id.trim();
+        if session_id.is_empty() {
+            return Err(anyhow!("Missing browser scope field 'session_id'"));
         }
-        if let Some(agent_id) = self
+        let agent_id = self
             .agent_id
             .as_deref()
             .map(str::trim)
-            .filter(|value| !value.is_empty())
-        {
-            return Ok(format!("{user_id}:{agent_id}"));
-        }
-        let session_id = self.session_id.trim();
-        if session_id.is_empty() {
-            return Err(anyhow!(
-                "Missing browser scope field 'session_id' when 'agent_id' is absent"
-            ));
-        }
-        Ok(format!("{user_id}:{session_id}"))
+            .filter(|id| !id.is_empty());
+        let browser_session_id = self
+            .browser_session_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        // Encode the tuple so separators inside caller-supplied ids cannot
+        // alias a different thread, agent or explicit browser session.
+        Ok(format!(
+            "{user_id}:{}",
+            serde_json::to_string(&(session_id, agent_id, browser_session_id))?
+        ))
     }
 
     pub fn profile_name(&self) -> Option<String> {
@@ -78,14 +75,18 @@ mod tests {
     }
 
     #[test]
-    fn agent_scope_wins_over_thread_scope() {
+    fn task_threads_stay_isolated_for_the_same_agent() {
         assert_eq!(
             scope("u1", "s1", Some("a1"), None).session_key().unwrap(),
-            "u1:a1"
+            "u1:[\"s1\",\"a1\",null]"
         );
         assert_eq!(
             scope("u1", "s1", None, None).session_key().unwrap(),
-            "u1:s1"
+            "u1:[\"s1\",null,null]"
+        );
+        assert_ne!(
+            scope("u1", "s1", Some("a1"), None).session_key().unwrap(),
+            scope("u1", "s2", Some("a1"), None).session_key().unwrap()
         );
     }
 
@@ -96,13 +97,25 @@ mod tests {
             scope("u1", "s1", None, Some("web-fetch:x"))
                 .session_key()
                 .unwrap(),
-            "u1:web-fetch:x"
+            "u1:[\"s1\",null,\"web-fetch:x\"]"
         );
         assert_ne!(
             scope("u1", "s1", None, Some("u2:s2"))
                 .session_key()
                 .unwrap(),
             "u2:s2"
+        );
+        assert_ne!(
+            scope("u1", "s1", None, Some("shared"))
+                .session_key()
+                .unwrap(),
+            scope("u1", "s2", None, Some("shared"))
+                .session_key()
+                .unwrap()
+        );
+        assert_ne!(
+            scope("u1", "s:a", None, Some("b")).session_key().unwrap(),
+            scope("u1", "s", None, Some("a:b")).session_key().unwrap()
         );
     }
 

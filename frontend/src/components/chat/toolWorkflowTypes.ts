@@ -50,7 +50,7 @@ export type ToolWorkflowStructuredGroup = {
 };
 
 export type ToolWorkflowStructuredView = {
-  variant: 'read' | 'list' | 'search' | 'write' | 'database' | 'knowledge' | 'schedule';
+  variant: 'read' | 'list' | 'search' | 'write' | 'database' | 'knowledge' | 'schedule' | 'question' | 'media' | 'plan';
   metrics: ToolWorkflowStructuredMetric[];
   groups: ToolWorkflowStructuredGroup[];
 };

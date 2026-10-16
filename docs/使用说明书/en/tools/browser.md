@@ -1,7 +1,7 @@
 ---
 title: Browser Tools
 summary: The browser is not a single tool: once enabled it registers a group of `browser_*` tools for opening pages, clicking, typing, waiting, taking screenshots, and reading rendered content.
-updated_at: 2026-10-13
+updated_at: 2026-10-16
 ---
 
 **The browser is not a single tool.** Once enabled it automatically registers a group of native `browser_*` tools (17 of them in the current Playwright-driven set), and the old single "browser" entry point has been removed.
@@ -37,7 +37,7 @@ At call time, the tool name dispatches the request to the matching provider.
 | `browser_drag` | drag one element onto another |
 | `browser_press_key` | press a key such as `Enter`, `Tab`, `ArrowDown` |
 | `browser_evaluate` | evaluate a JavaScript expression in the page and read its value |
-| `browser_wait_for` | wait for a fixed duration, a load state, or a piece of text to appear |
+| `browser_wait_for` | wait for a visible selector, text, URL pattern, load state, or bounded delay |
 | `browser_take_screenshot` | take a screenshot and return image content |
 | `browser_read_page` | read the current page as Markdown or text |
 | `browser_batch` | run a batch of interaction steps in order (up to 10) |
@@ -48,9 +48,25 @@ Except for a few tools, any of them can target a specific tab, and by default th
 
 A typical chain: navigate → take a snapshot to get element refs → click / type → wait → read the page or take a screenshot. Use `browser_status` to confirm the runtime is ready.
 
+Navigation, click, type, wait, and batch calls accept `include_snapshot=true` to return a fresh element snapshot after success (4000 characters by default, adjustable with `max_chars`). Prefer `browser_batch` for known form fields, submission, and a success condition in one call. `browser_type` replaces existing text; `submit=true` presses Enter afterwards.
+
+```json
+{
+  "steps": [
+    {"kind": "type", "ref": "e1", "text": "sample"},
+    {"kind": "click", "ref": "e2"},
+    {"kind": "wait", "url": "**/complete", "timeout_ms": 5000}
+  ],
+  "include_snapshot": true,
+  "max_chars": 2000
+}
+```
+
+Each batch contains 1–10 steps with a `kind`: `type`, `click`, `press`, `select`, `hover`, `drag`, `wait`, or `navigate`. Prefer waiting for a visible success `selector`, `text`, or `url` pattern; a fixed delay does not verify success. Navigation can invalidate element refs, so use stable selectors or refresh the snapshot across pages.
+
 ## What results look like
 
-Browser tools are an exception: they do not use the unified result shell, but return the provider's own result envelope, mainly:
+Providers return content blocks alongside structured data. The runtime preserves both in the unified `ok`, `data`, and error envelope used for model observations, events, and history. The payload includes:
 
 - whether it succeeded
 - an array of content blocks (text or image)
@@ -62,16 +78,18 @@ Browser tools are an exception: they do not use the unified result shell, but re
 
 `browser_status` strips control-plane information before returning: host, port, and token are not leaked to the model.
 
+Screenshot blocks include an `attachment` with a workspace-relative path, format, and byte count; use the image-reading tool for visual inspection. Input actions do not echo filled values, and snapshots do not use input values as control names. Batch failures preserve `completed_steps`, a 1-based `failed_step`, and completed action summaries: inspect progress before retrying to avoid duplicate submissions. If an action succeeds but its optional snapshot fails, the action stays successful and returns `snapshot_error`.
+
 ## Automatic handling and limits
 
 - Only `http` / `https` are allowed; `file://` is blocked by default and needs explicit permission
 - Navigating to an intranet / localhost address is blocked by default and passes only on an allowlist match or an explicit switch
-- Snapshots and read content have a character cap, 40000 by default, and any requested character count is clamped to the cap
+- Snapshot and page text strictly respect the requested character budget (default cap 40000), including frame headings and separators; truncation is reported separately, and traversal also has node and depth limits
 - A single call times out after 60 seconds by default; it can be adjusted but is clamped between 1 second and 4x the default timeout
 - At most 5 concurrent browser sessions by default, and at most 8 tabs per session
 - A session is reclaimed after 300 seconds idle
 - A single download is capped at 100 MiB by default
-- Browser sessions are scoped by user + conversation (+ agent)
+- Browser sessions are scoped by user + task thread + agent; custom browser session ids also stay within the thread. Browser calls in one model response execute in their given order
 
 It is driven by Playwright underneath.
 

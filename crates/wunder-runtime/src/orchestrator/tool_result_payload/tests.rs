@@ -1,6 +1,63 @@
 use super::*;
 
 #[test]
+fn browser_attachment_survives_events_and_model_observations() {
+    let content = json!([
+        {"type":"text","text":"Captured screenshot."},
+        {"type":"image","attachment":{"path":"browser/screenshots/sample.png","bytes":64}}
+    ]);
+    let result = ToolResultPayload::from_value(json!({
+        "ok":true,"data":{"format":"png","target_id":"tab-1"},"content":content
+    }));
+    for observation in [
+        result.to_event_payload("browser_take_screenshot"),
+        result.to_compact_payload("browser_take_screenshot"),
+    ] {
+        assert_eq!(observation["data"]["content"], content);
+        assert_eq!(observation["data"]["format"], "png");
+    }
+    let result = ToolResultPayload::from_value(json!({
+        "ok":true,"data":{"content":"page text"},"content":content
+    }));
+    assert_eq!(result.data["content"], "page text");
+    assert_eq!(result.data["content_blocks"], content);
+}
+
+#[test]
+fn browser_batch_failure_keeps_partial_progress_in_model_observation() {
+    let result = ToolResultPayload::from_value(json!({
+        "ok":false,"error":"Step failed", "content":[],
+        "data":{"completed_steps":2,"failed_step":3,"results":[{"kind":"click"}]}
+    }));
+    let observation = result.to_compact_payload("browser_batch");
+    assert_eq!(observation["ok"], false);
+    assert_eq!(observation["data"]["completed_steps"], 2);
+    assert_eq!(observation["data"]["failed_step"], 3);
+}
+
+#[test]
+fn browser_content_only_failure_is_not_treated_as_success() {
+    let result = ToolResultPayload::from_value(json!({
+        "ok":false,"error":"Browser failed", "content":[{"type":"text","text":"Browser failed"}]
+    }));
+    assert!(!result.ok);
+    assert_eq!(result.error, "Browser failed");
+    assert_eq!(result.data["content"][0]["type"], "text");
+}
+
+#[test]
+fn browser_json_page_text_keeps_page_and_truncation_metadata() {
+    let result = ToolResultPayload::from_value(json!({
+        "ok":true, "data":{"target_id":"tab-1","truncated":true},
+        "content":[{"type":"text","text":"{\"sample\":1}"}]
+    }));
+    let observation = result.to_compact_payload("browser_read_page");
+    assert_eq!(observation["data"]["target_id"], "tab-1");
+    assert_eq!(observation["data"]["truncated"], true);
+    assert_eq!(observation["data"]["content"][0]["text"], "{\"sample\":1}");
+}
+
+#[test]
 fn test_truncate_tool_result_string() {
     let head_chars = 2;
     let tail_chars = 3;

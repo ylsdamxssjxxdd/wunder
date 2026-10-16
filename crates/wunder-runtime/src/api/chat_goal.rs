@@ -164,6 +164,38 @@ async fn native_session_goal_outcome(
         .get_chat_session(user_id, session_id)
         .map_err(|error| anyhow::anyhow!("load session failed: {error}"))?
         .ok_or_else(|| anyhow::anyhow!("session not found"))?;
+    let service = goal_service(state);
+    let _control = service.control_guard(session_id).await;
+    let current = service
+        .get_view(&state.storage, user_id, session_id)
+        .await?;
+    let interrupts = match &command {
+        GoalCommand::Create { objective } => {
+            goal::validate_objective(objective)?;
+            current
+                .as_ref()
+                .is_none_or(|view| view.record.phase == goal::PHASE_COMPLETE)
+        }
+        GoalCommand::Edit { objective } => {
+            goal::validate_objective(objective)?;
+            current.is_some()
+        }
+        GoalCommand::Pause => current.as_ref().is_some_and(|view| {
+            view.record.phase != goal::PHASE_COMPLETE && view.record.phase != goal::PHASE_PAUSED
+        }),
+        GoalCommand::Clear => current.is_some(),
+        _ => false,
+    };
+    if interrupts {
+        // Fence admission before interrupting the old executor. Editing a goal
+        // must never leave it writing underneath the new command's timeline.
+        service.disarm(session_id);
+        state
+            .kernel
+            .thread_runtime
+            .cancel_session_activity(user_id, session_id, "goal_control")
+            .await?;
+    }
     let echo = match &command {
         GoalCommand::Create { objective } => Some(format!("/goal {objective}")),
         GoalCommand::Edit { objective } => Some(format!("/goal edit {objective}")),
@@ -219,9 +251,14 @@ async fn native_session_goal_outcome(
         state.storage.clone(),
         user_id,
         session_id,
-        command,
+        command.clone(),
     )
     .await?;
+    let goal_value = if matches!(command, GoalCommand::Clear) {
+        None
+    } else {
+        goal_value
+    };
     // Create/resume arm the goal: let the driver re-evaluate immediately.
     if goal_value.is_some() {
         goal_service(state)
@@ -282,6 +319,7 @@ mod tests {
     use axum::body::{to_bytes, Body};
     use axum::http::Request;
     use futures::future::BoxFuture;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::Mutex;
     use tower::ServiceExt;
 
@@ -478,8 +516,19 @@ mod tests {
         // model rounds must complete without another human request or wake.
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
+        let hold_model = Arc::new(AtomicBool::new(false));
+        let model_calls = Arc::new(AtomicUsize::new(0));
+        let held = hold_model.clone();
+        let calls = model_calls.clone();
         let mock = Router::new().route("/v1/chat/completions", axum::routing::post(
-            |Json(payload): Json<Value>| async move {
+            move |Json(payload): Json<Value>| {
+                let held = held.clone();
+                let calls = calls.clone();
+                async move {
+                calls.fetch_add(1, Ordering::SeqCst);
+                if held.load(Ordering::SeqCst) {
+                    std::future::pending::<()>().await;
+                }
                 let value = if payload["stream"] == true {
                     "data: {\"choices\":[{\"delta\":{\"content\":\"Example progress.\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n".to_string()
                 } else {
@@ -488,7 +537,7 @@ mod tests {
                 axum::http::Response::builder()
                     .header("content-type", if payload["stream"] == true { "text/event-stream" } else { "application/json" })
                     .body(Body::from(value)).unwrap()
-            },
+            }},
         ));
         let server = tokio::spawn(async move {
             axum::serve(listener, mock).await.unwrap();
@@ -542,10 +591,11 @@ mod tests {
         service.driver().notify_goal_changed(&user.user_id, session);
         let completed = tokio::time::timeout(std::time::Duration::from_secs(15), async {
             loop {
-                let turns = state
+                let snapshot = state
                     .storage
-                    .list_thread_turns(&user.user_id, session, None, 8)
+                    .thread_snapshot(&user.user_id, session)
                     .unwrap();
+                let turns = snapshot["turns"].as_array().unwrap();
                 if turns.len() == 4 && turns.iter().all(|turn| turn["status"] == "completed") {
                     break;
                 }
@@ -553,7 +603,6 @@ mod tests {
             }
         })
         .await;
-        server.abort();
         assert!(
             completed.is_ok(),
             "real runtime must finish two goal rounds: {:?}",
@@ -572,6 +621,310 @@ mod tests {
                 .rounds_started,
             2
         );
+        let page = state
+            .storage
+            .thread_view_page(&user.user_id, session, "chat", None, 12)
+            .unwrap();
+        assert_eq!(
+            page.chat.len(),
+            2,
+            "internal rounds must not allocate user bubbles"
+        );
+        assert_eq!(page.chat[0].stop_reason.as_deref(), Some("goal_command"));
+        assert_eq!(page.chat[1].assistant.content, "Example progress.");
+        assert_ne!(page.chat[1].execution_turn_id, page.chat[1].root_turn_id);
+
+        // Exercise cancellation against a real HTTP model request, including
+        // the direct runner and the queue's execution lease. No mock executor
+        // is allowed to implement the hand-off on the backend's behalf.
+        for queue_enabled in [false, true] {
+            wait_idle(&state, &user.user_id, session).await;
+            service.disarm(session);
+            hold_model.store(true, Ordering::SeqCst);
+            state
+                .config_store
+                .update(|config| config.agent_queue.enabled = queue_enabled)
+                .await
+                .unwrap();
+            let view = service
+                .get_view(&state.storage, &user.user_id, session)
+                .await
+                .unwrap()
+                .unwrap();
+            let target_rounds = view.record.rounds_started + 3;
+            service
+                .edit(
+                    state.storage.clone(),
+                    &user.user_id,
+                    session,
+                    &goal::GoalRef {
+                        goal_id: view.record.goal_id,
+                        revision: view.record.revision,
+                    },
+                    "Complete the example task",
+                    Some(target_rounds),
+                )
+                .await
+                .unwrap();
+            let baseline = model_calls.load(Ordering::SeqCst);
+            let first = native_session_goal_outcome(
+                &state,
+                &user,
+                session,
+                GoalCommand::Edit {
+                    objective: "First revised example task".into(),
+                },
+            )
+            .await
+            .unwrap();
+            wait_model_calls(&model_calls, baseline + 1).await;
+            let first_row = state
+                .storage
+                .thread_view_page(&user.user_id, session, "chat", None, 12)
+                .unwrap()
+                .chat
+                .into_iter()
+                .find(|row| Some(row.user_round) == first.user_round)
+                .unwrap();
+            assert_ne!(first_row.execution_turn_id, first_row.root_turn_id);
+
+            let second = native_session_goal_outcome(
+                &state,
+                &user,
+                session,
+                GoalCommand::Edit {
+                    objective: "Second revised example task".into(),
+                },
+            )
+            .await
+            .unwrap();
+            wait_model_calls(&model_calls, baseline + 2).await;
+            let page = state
+                .storage
+                .thread_view_page(&user.user_id, session, "chat", None, 12)
+                .unwrap();
+            let old = page
+                .chat
+                .iter()
+                .find(|row| row.root_turn_id == first_row.root_turn_id)
+                .unwrap();
+            assert_eq!(old.execution_turn_id, first_row.execution_turn_id);
+            assert_eq!(old.status, "cancelled");
+            let revised = page
+                .chat
+                .iter()
+                .find(|row| Some(row.user_round) == second.user_round)
+                .unwrap();
+            assert_ne!(revised.execution_turn_id, revised.root_turn_id);
+            assert_ne!(revised.execution_turn_id, old.execution_turn_id);
+
+            let paused = native_session_goal_outcome(&state, &user, session, GoalCommand::Pause)
+                .await
+                .unwrap();
+            assert_eq!(paused.goal.as_ref().unwrap()["phase"], "paused");
+            assert_eq!(paused.goal.as_ref().unwrap()["activation"], "disarmed");
+            wait_idle(&state, &user.user_id, session).await;
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            assert_eq!(
+                model_calls.load(Ordering::SeqCst),
+                baseline + 2,
+                "pause must not launch another model request"
+            );
+            let page = state
+                .storage
+                .thread_view_page(&user.user_id, session, "chat", None, 12)
+                .unwrap();
+            assert_eq!(
+                page.chat
+                    .iter()
+                    .find(|row| Some(row.user_round) == second.user_round)
+                    .unwrap()
+                    .status,
+                "cancelled"
+            );
+
+            hold_model.store(false, Ordering::SeqCst);
+            let resumed = native_session_goal_outcome(&state, &user, session, GoalCommand::Resume)
+                .await
+                .unwrap();
+            wait_model_calls(&model_calls, baseline + 3).await;
+            wait_idle(&state, &user.user_id, session).await;
+            let page = state
+                .storage
+                .thread_view_page(&user.user_id, session, "chat", None, 12)
+                .unwrap();
+            let row = page
+                .chat
+                .iter()
+                .find(|row| Some(row.user_round) == resumed.user_round)
+                .unwrap();
+            assert_eq!(row.status, "completed");
+            assert_ne!(row.execution_turn_id, row.root_turn_id);
+            assert_eq!(row.assistant.content, "Example progress.");
+            assert_eq!(
+                page.chat
+                    .iter()
+                    .find(|row| Some(row.user_round) == second.user_round)
+                    .unwrap()
+                    .status,
+                "cancelled"
+            );
+            assert_eq!(
+                service
+                    .get_view(&state.storage, &user.user_id, session)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .record
+                    .rounds_started,
+                target_rounds
+            );
+        }
+
+        // Keep another thread inside its model call so this goal is admitted
+        // to the durable queue. Pausing a never-started round must release the
+        // reservation too; no orchestrator finalization hook will run for it.
+        state.kernel.thread_runtime.clone().start();
+        let blocking_session = "fixture-capacity-thread";
+        let mut record = state
+            .user_store
+            .get_chat_session(&user.user_id, session)
+            .unwrap()
+            .unwrap();
+        record.session_id = blocking_session.into();
+        state.storage.upsert_chat_session(&record).unwrap();
+        state
+            .config_store
+            .update(|config| config.server.max_active_sessions = 1)
+            .await
+            .unwrap();
+        hold_model.store(true, Ordering::SeqCst);
+        let baseline = model_calls.load(Ordering::SeqCst);
+        native_session_goal_outcome(
+            &state,
+            &user,
+            blocking_session,
+            GoalCommand::Create {
+                objective: "Fixture capacity task".into(),
+            },
+        )
+        .await
+        .unwrap();
+        wait_model_calls(&model_calls, baseline + 1).await;
+
+        service.disarm(session);
+        let view = service
+            .get_view(&state.storage, &user.user_id, session)
+            .await
+            .unwrap()
+            .unwrap();
+        service
+            .edit(
+                state.storage.clone(),
+                &user.user_id,
+                session,
+                &goal::GoalRef {
+                    goal_id: view.record.goal_id,
+                    revision: view.record.revision,
+                },
+                "Fixture queued task",
+                Some(view.record.rounds_started + 2),
+            )
+            .await
+            .unwrap();
+        let queued = native_session_goal_outcome(
+            &state,
+            &user,
+            session,
+            GoalCommand::Edit {
+                objective: "Fixture queued task".into(),
+            },
+        )
+        .await
+        .unwrap();
+        wait_queued_goal(&state, &user.user_id, session, queued.user_round.unwrap()).await;
+        native_session_goal_outcome(&state, &user, session, GoalCommand::Pause)
+            .await
+            .unwrap();
+        wait_idle(&state, &user.user_id, session).await;
+        let resumed = native_session_goal_outcome(&state, &user, session, GoalCommand::Resume)
+            .await
+            .unwrap();
+        wait_queued_goal(&state, &user.user_id, session, resumed.user_round.unwrap()).await;
+        assert_eq!(model_calls.load(Ordering::SeqCst), baseline + 1);
+
+        hold_model.store(false, Ordering::SeqCst);
+        native_session_goal_outcome(&state, &user, blocking_session, GoalCommand::Pause)
+            .await
+            .unwrap();
+        wait_model_calls(&model_calls, baseline + 2).await;
+        wait_idle(&state, &user.user_id, session).await;
+        let page = state
+            .storage
+            .thread_view_page(&user.user_id, session, "chat", None, 12)
+            .unwrap();
+        assert_eq!(
+            page.chat
+                .iter()
+                .find(|row| Some(row.user_round) == queued.user_round)
+                .unwrap()
+                .status,
+            "cancelled"
+        );
+        let completed = page
+            .chat
+            .iter()
+            .find(|row| Some(row.user_round) == resumed.user_round)
+            .unwrap();
+        assert_eq!(completed.status, "completed");
+        assert_eq!(completed.assistant.content, "Example progress.");
+        server.abort();
+    }
+
+    async fn wait_queued_goal(state: &AppState, user: &str, session: &str, round: i64) {
+        tokio::time::timeout(std::time::Duration::from_secs(15), async {
+            loop {
+                let page = state
+                    .storage
+                    .thread_view_page(user, session, "chat", None, 12)
+                    .unwrap();
+                if page
+                    .chat
+                    .iter()
+                    .any(|row| row.user_round == round && row.status == "queued")
+                {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("capacity-bound goal must enter the durable queue");
+    }
+
+    async fn wait_model_calls(calls: &AtomicUsize, expected: usize) {
+        tokio::time::timeout(std::time::Duration::from_secs(15), async {
+            while calls.load(Ordering::SeqCst) < expected {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("goal executor must reach the model after hand-off");
+    }
+
+    async fn wait_idle(state: &AppState, user: &str, session: &str) {
+        tokio::time::timeout(std::time::Duration::from_secs(15), async {
+            while !state
+                .kernel
+                .thread_runtime
+                .is_session_available_for_submit(user, session)
+                .await
+            {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("cancelled/completed executor must release its lock and lease");
     }
 
     #[test]

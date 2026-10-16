@@ -1,6 +1,6 @@
 use crate::config::{PresetCustomizable, UserAgentPresetConfig};
 use crate::services::agent_abilities::resolve_selected_declared_names;
-use crate::services::default_tool_profile::curated_default_tool_names;
+use crate::services::default_tool_profile::default_tool_names;
 use crate::services::inner_visible::WorkerCardRecordUpdate;
 use crate::services::preset_worker_cards;
 use crate::services::worker_card_settings::{
@@ -167,7 +167,7 @@ pub fn build_requested_tool_names_for_sync(
     requested_tool_names.extend(explicit_declared_skill_names.iter().cloned());
     requested_tool_names = normalize_tool_list(requested_tool_names);
     if requested_tool_names.is_empty() {
-        return curated_default_tool_names(allowed_tool_names);
+        return default_tool_names(allowed_tool_names);
     }
     filter_allowed_tools(
         &normalize_tool_list(requested_tool_names),

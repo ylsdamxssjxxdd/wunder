@@ -1,0 +1,60 @@
+// Interactive viewer fixture; no runtime, network or local file access.
+import { TimelineView } from "timeline.slint";
+import { Theme } from "theme.slint";
+
+export component ChatAlignmentDemo inherits Window {
+    preferred-width: 960px; preferred-height: 700px;
+    default-font-family: "Microsoft YaHei";
+    background: Theme.panel;
+    in-out property <bool> process-open: true;
+    in-out property <bool> read-open: false;
+    in-out property <bool> command-open: true;
+    in-out property <bool> error-open: false;
+    in-out property <bool> paged: false;
+    in-out property <bool> older: false;
+    in-out property <bool> newer: false;
+    in-out property <bool> failed: false;
+    in-out property <bool> running: false;
+    out property <int> page-direction;
+    out property <string> last-resource;
+    out property <string> copied-text;
+    accessible-role: groupbox;
+    accessible-description: "resource=" + root.last-resource + ";copy=" + root.copied-text;
+    copy-buffer := TextInput { width: 0px; height: 0px; }
+    TimelineView {
+        follow-output: false;
+        rows: [
+            {kind: 0, id: "fixture-user", visible: true, group-idx: -1, process-idx: -1, text: "Check sample.txt and report the result."},
+            {kind: 6, id: "fixture-process", visible: true, group-idx: -1, process-idx: 1,
+                text: "Work process - 3 steps", summary: root.running ? "Running" : "Completed", payload: 1, open: root.process-open,
+                process-paged: root.paged, process-older: root.older, process-newer: root.newer, process-error: root.failed,
+                process-entries: [
+                    {kind: 3, id: "fixture-read", payload: 2, open: root.read-open,
+                        tool-name: "Read file", tool-icon: "file-lines", target: "sample.txt", summary: "Read sample file", tokens: "1.8k token", duration: "19ms",
+                        detail: "sample content", sections: [{title: "sample.txt", kind: "text", lines: [{text: "sample content", kind: "context"}]}]},
+                    {kind: 3, id: "fixture-command", payload: 3, open: root.command-open,
+                        tool-name: "Run command", tool-icon: "terminal", summary: "check sample.txt", tokens: "2.4k token", duration: "1.2s",
+                        detail: "2 checks passed", sections: [{title: "$ check sample.txt", meta: "exit 0", kind: "command", lines: [{text: "2 checks passed", kind: "context"}]}]},
+                    {kind: 3, id: "fixture-error", payload: 4, open: root.error-open, status-kind: 2,
+                        tool-name: "Read file", tool-icon: "file-lines", target: "missing.txt", summary: "Check sample file", duration: "12ms",
+                        detail: "File is unavailable", sections: [{title: "File is unavailable", kind: "error", lines: [{text: "Missing sample file", kind: "error"}]}]}
+                ]},
+            {kind: 1, id: "fixture-answer", visible: true, group-idx: -1, process-idx: -1,
+                foldable: true, text: "The sample file passed both checks. One requested file is unavailable.",
+                stats: [{key: "hashtag", value: "57"}, {key: "stopwatch", value: "3.2s"}, {key: "gauge-high", value: "42.8 token/s"}, {key: "layer-group", value: "12.3k"}, {key: "bolt", value: "2.4k"}, {key: "screwdriver-wrench", value: "3"}, {key: "coins", value: "4"}]}
+        ];
+        toggle(index) => {
+            if index == 1 { root.process-open = !root.process-open; }
+            if index == 2 { root.read-open = !root.read-open; }
+            if index == 3 { root.command-open = !root.command-open; }
+            if index == 4 { root.error-open = !root.error-open; }
+        }
+        process-page(index, direction) => { root.page-direction = direction; }
+        open-resource(path) => { root.last-resource = path; }
+        copy-text(text) => {
+            root.copied-text = text;
+            copy-buffer.text = text;
+            copy-buffer.select-all(); copy-buffer.copy(); copy-buffer.text = "";
+        }
+    }
+}

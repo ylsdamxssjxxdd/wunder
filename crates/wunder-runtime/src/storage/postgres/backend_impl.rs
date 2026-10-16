@@ -259,6 +259,18 @@ impl ThreadLogStore for PostgresStorage {
     ) -> Result<bool> {
         self.update_thread_turn_impl(user_id, session_id, turn_id, status, summary, payload)
     }
+    fn list_thread_turn_ids_by_status(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        status: &str,
+        limit: usize,
+    ) -> Result<Vec<String>> {
+        self.ensure_initialized()?;
+        let mut conn = self.conn()?;
+        let rows = conn.query("SELECT turn_id FROM thread_turns WHERE user_id=$1 AND session_id=$2 AND status=$3 ORDER BY user_turn_index DESC,created_time DESC LIMIT $4", &[&user_id,&session_id,&status,&(limit.clamp(1,64) as i64)])?;
+        Ok(rows.into_iter().map(|row| row.get(0)).collect())
+    }
     fn list_thread_changes_by_session(
         &self,
         session_id: &str,

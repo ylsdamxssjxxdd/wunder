@@ -62,6 +62,7 @@ pub struct ThreadCancelSettlement {
     pub running_tasks_marked_cancelled: usize,
     pub thread_status_reset: bool,
     pub settlement_event_id: i64,
+    pub turns_cancelled: usize,
 }
 
 #[derive(Debug)]
@@ -279,10 +280,19 @@ impl ThreadRuntime {
         let goal_meta = goal_round_tag.as_ref().map(|tag| {
             json!({"type": "goal_round", "goal_id": tag.goal_id, "revision": tag.revision, "round": tag.round})
         });
+        let root_user_round = if goal_round_tag.is_some() {
+            let storage = self.user_store.storage_backend();
+            let session = session_id.clone();
+            blocking::run_db("goal.root_user_round", move || {
+                let round = storage.latest_thread_user_round_by_session(&session)?;
+                Ok((round > 0).then_some(round))
+            }).await?
+        } else { None };
         let input = json!({
             "role": "user", "content": request.question,
             "client_message_id": request.client_message_id, "attachments": request.attachments,
             "meta": goal_meta,
+            "root_user_round": root_user_round,
             "local_open_lease": request.config_overrides.as_ref().and_then(|v| v.get("__local_open_lease")),
         });
         let storage = self.user_store.storage_backend().clone();
@@ -332,7 +342,9 @@ impl ThreadRuntime {
         let session_id = Some(session_id);
         let mut lease = None;
         let config = self.config_store.get().await;
-        if config.agent_queue.enabled || force_runtime_queue {
+        // Autonomous execution also needs the cancellation fence during the
+        // gap between transcript admission and monitor registration.
+        if config.agent_queue.enabled || force_runtime_queue || goal_round_tag.is_some() {
             if let Some(session_id) = session_id.as_deref() {
                 // A background scheduled message always enters the durable
                 // queue. This makes acceptance atomic from the chat page's
@@ -372,6 +384,8 @@ impl ThreadRuntime {
         session_id: &str,
         tag: goal::GoalRoundTag,
     ) -> Result<()> {
+        let service = self.orchestrator.goal_handle();
+        let _control = service.control_guard(session_id).await;
         let session = self
             .user_store
             .get_chat_session(user_id, session_id)?
@@ -388,6 +402,7 @@ impl ThreadRuntime {
             .await?
             .filter(|view| view.record.goal_id == tag.goal_id)
         else {
+            service.driver().notify_turn_ended(user_id, session_id, Some(&tag), goal::TurnEndOutcome::Completed);
             return Ok(());
         };
         if view.record.revision != tag.revision
@@ -395,6 +410,7 @@ impl ThreadRuntime {
             || view.activation != goal::GoalActivation::Armed
             || view.record.rounds_started != tag.round - 1
         {
+            service.driver().notify_turn_ended(user_id, session_id, Some(&tag), goal::TurnEndOutcome::Completed);
             return Ok(());
         }
         let tool_names = self
@@ -461,7 +477,6 @@ impl ThreadRuntime {
             ThreadSubmitOutcome::Run(request, lease) => {
                 let orchestrator = self.orchestrator.clone();
                 long_task::spawn("runtime.thread.goal_round.run", async move {
-                    let _lease = lease;
                     match orchestrator.stream(*request).await {
                         Ok(stream) => {
                             tokio::pin!(stream);
@@ -478,6 +493,8 @@ impl ThreadRuntime {
                             warn!("goal round stream failed: {err}");
                         }
                     }
+                    drop(lease);
+                    orchestrator.goal_handle().driver().notify_goal_changed(&user.user_id, &session.session_id);
                 });
                 Ok(())
             }
@@ -534,7 +551,8 @@ impl ThreadRuntime {
 
     pub async fn cancel_task(&self, task_id: &str) -> Result<()> {
         let now = now_ts();
-        if let Some(task) = self.get_agent_task(task_id).await? {
+        let task = self.get_agent_task(task_id).await?;
+        if let Some(task) = task.as_ref() {
             if let Some(turn_id) = task
                 .request_payload
                 .pointer("/config_overrides/__thread_log_turn_id")
@@ -566,6 +584,14 @@ impl ThreadRuntime {
             now,
         ))
         .await?;
+        // A queued round may never enter the orchestrator, so cancellation
+        // itself must release its driver reservation.
+        if let Some(task) = task {
+            if let Some(tag) = goal::read_goal_round_tag(task.request_payload.get("config_overrides")) {
+                self.orchestrator.goal_handle().driver().notify_turn_ended(
+                    &task.user_id, &task.session_id, Some(&tag), goal::TurnEndOutcome::Aborted);
+            }
+        }
         Ok(())
     }
 
@@ -575,6 +601,8 @@ impl ThreadRuntime {
         session_id: &str,
         cancel_source: &str,
     ) -> Result<ThreadCancelSettlement> {
+        let transition = self.transition_gate(session_id);
+        let _transition = transition.lock().await;
         self.cancel_session_activity_inner(user_id, session_id, cancel_source, false)
             .await
     }
@@ -600,7 +628,7 @@ impl ThreadRuntime {
 
         // This fence belongs to the lease, including the pre-registration gap.
         // Registration may reset monitor flags, but cannot reset this execution.
-        if preserve_root_queue {
+        {
             let active = self
                 .active_runtime_sessions
                 .lock()
@@ -717,6 +745,19 @@ impl ThreadRuntime {
         }
 
         let thread_status_reset = !preserve_root_queue;
+        let mut turns_cancelled = 0;
+        for thread in std::iter::once(cleaned_session)
+            .chain(descendant_session_ids.iter().map(String::as_str))
+        {
+            if preserve_root_queue && thread == cleaned_session {
+                continue;
+            }
+            turns_cancelled += self
+                .orchestrator
+                .committer
+                .cancel_active_turns(cleaned_user, thread, source)
+                .await?;
+        }
         let settlement_event_id = if preserve_root_queue {
             0
         } else {
@@ -732,6 +773,13 @@ impl ThreadRuntime {
         };
         let _ = self.queue_tx.try_send(());
 
+        let has_active_executor = self.active_runtime_sessions.lock().unwrap_or_else(|e| e.into_inner()).contains(cleaned_session);
+        if !preserve_root_queue
+            && !has_active_executor
+            && !self.holds_session_lock(cleaned_user, cleaned_session).await
+        {
+            self.monitor.mark_cancelled(cleaned_session);
+        }
         tracing::info!(
             user_id = cleaned_user,
             session_id = cleaned_session,
@@ -747,6 +795,7 @@ impl ThreadRuntime {
             running_tasks_marked_cancelled,
             thread_status_reset,
             settlement_event_id,
+            turns_cancelled,
         })
     }
 
@@ -1148,6 +1197,9 @@ impl ThreadRuntime {
         if cleaned_user.is_empty() || cleaned_session.is_empty() {
             return false;
         }
+        if self.active_runtime_sessions.lock().unwrap_or_else(|e| e.into_inner()).contains(cleaned_session) {
+            return false;
+        }
         if let Some(record) = self.monitor.get_record(cleaned_session) {
             let status = record.get("status").and_then(Value::as_str).unwrap_or("");
             if status == crate::monitor::MonitorState::STATUS_RUNNING
@@ -1370,8 +1422,11 @@ impl ThreadRuntime {
             let task_clone = task.clone();
             let runtime = self.clone();
             long_task::spawn("runtime.thread.execute_task", async move {
-                let _lease = lease;
+                let user = task_clone.user_id.clone();
+                let session = task_clone.session_id.clone();
                 runtime.execute_task(task_clone).await;
+                drop(lease);
+                runtime.orchestrator.goal_handle().driver().notify_goal_changed(&user, &session);
             });
         }
         self.resume_suspended_tasks().await;
@@ -1583,6 +1638,8 @@ impl ThreadRuntime {
                     ))
                     .await;
                 self.finish_thread(&task.thread_id).await;
+                self.orchestrator.goal_handle().driver().notify_turn_ended(
+                    &task.user_id, &task.session_id, Some(&tag), goal::TurnEndOutcome::Completed);
                 let _ = self.queue_tx.try_send(());
                 return;
             }
@@ -2109,6 +2166,37 @@ fn ensure_session_record_with(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn question_panel_stop_without_live_monitor_settles_and_wakes_view() {
+        use crate::state::{AppState, AppStateInitOptions};
+        let root = tempfile::tempdir().unwrap();
+        let mut config = crate::config::Config::default();
+        config.storage.backend = "sqlite".into();
+        config.storage.db_path = root.path().join("fixture.db").to_string_lossy().into_owned();
+        config.workspace.root = root.path().join("workspace").to_string_lossy().into_owned();
+        let store = ConfigStore::new(root.path().join("config.yaml"));
+        store.update(|current| *current = config.clone()).await.unwrap();
+        let state = AppState::new_with_options(store, config,
+            AppStateInitOptions::cli_default().with_start_thread_runtime(false)).unwrap();
+        let accepted = state.storage.accept_thread_turn("fixture-user", "fixture-thread", &json!({"content":"Fixture input"})).unwrap();
+        let turn = accepted["turn_id"].as_str().unwrap();
+        state.storage.append_thread_item("fixture-user", &json!({"session_id":"fixture-thread","turn_id":turn,
+            "item_id":format!("{turn}:text-1"),"kind":"assistant_message","status":"completed","content":"Fixture waiting",
+            "meta":{"type":"question_panel","panel":{"status":"pending","questions":[{"question":"Fixture choice?","options":[{"label":"Fixture option"}]}]}}})).unwrap();
+        state.storage.update_thread_turn("fixture-user", "fixture-thread", turn, "waiting_input", "", &json!({})).unwrap();
+        let mut wake = state.kernel.orchestrator.change_hub.subscribe("fixture-thread");
+        let settled = state.kernel.thread_runtime.cancel_session_activity("fixture-user", "fixture-thread", "user_stop").await.unwrap();
+        assert_eq!(settled.turns_cancelled, 1);
+        assert!(wake.has_changed().unwrap());
+        wake.borrow_and_update();
+        let page = state.storage.thread_view_page("fixture-user", "fixture-thread", "chat", None, 12).unwrap();
+        assert_eq!(page.runtime_status, "cancelled");
+        assert_eq!(page.chat[0].assistant.question_panel.as_ref().unwrap().status, "dismissed");
+        assert_eq!(page.chat[0].assistant.content, "Fixture waiting");
+        assert_eq!(state.kernel.thread_runtime.cancel_session_activity("fixture-user", "fixture-thread", "user_stop").await.unwrap().turns_cancelled, 0);
+        assert!(!wake.has_changed().unwrap());
+    }
 
     #[tokio::test]
     async fn queue_commit_wakes_feeder_with_committed_cursor() {

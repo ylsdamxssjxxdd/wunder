@@ -309,6 +309,70 @@ mod tests {
     }
 
     #[test]
+    fn control_and_input_settlement_reasons_survive_live_legacy_and_source_views() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = SqliteStorage::new(dir.path().join("fixture.db").to_string_lossy().into());
+        for reason in ["goal_command", "question_panel", "user_reply"] {
+            let accepted = storage.accept_thread_turn("fixture-user", "fixture-thread", &json!({"content":"Fixture input"})).unwrap();
+            let turn = accepted["turn_id"].as_str().unwrap();
+            let before = storage.thread_view_page("fixture-user", "fixture-thread", "chat", None, 12).unwrap().view_seq;
+            storage.update_thread_turn("fixture-user", "fixture-thread", turn, "completed", "", &json!({"stop_reason":reason})).unwrap();
+            let read = || storage.thread_view_page("fixture-user", "fixture-thread", "chat", None, 12).unwrap();
+            let live = read().chat.into_iter().find(|row| row.root_turn_id == turn).unwrap();
+            assert_eq!(live.stop_reason.as_deref(), Some(reason));
+            assert_eq!(storage.thread_view_changes("fixture-user", "fixture-thread", before).unwrap().rows[0].stop_reason.as_deref(), Some(reason));
+            let mut legacy = serde_json::to_value(&live).unwrap();
+            legacy.as_object_mut().unwrap().remove("stop_reason");
+            let conn = storage.open().unwrap();
+            conn.execute("UPDATE thread_chat_rows SET payload=? WHERE root_turn_id=?", [legacy.to_string(), turn.into()]).unwrap();
+            assert_eq!(read().chat.into_iter().find(|row| row.root_turn_id == turn).unwrap().stop_reason.as_deref(), Some(reason));
+            assert_eq!(storage.thread_view_changes("fixture-user", "fixture-thread", before).unwrap().rows[0].stop_reason.as_deref(), Some(reason));
+            conn.execute("UPDATE thread_view_heads SET projection_state='source'", []).unwrap();
+            assert_eq!(read().chat.into_iter().find(|row| row.root_turn_id == turn).unwrap().stop_reason.as_deref(), Some(reason));
+            conn.execute("UPDATE thread_view_heads SET projection_state='ready'", []).unwrap();
+        }
+    }
+
+    #[test]
+    fn question_panel_survives_live_legacy_source_reload_and_cancel() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = SqliteStorage::new(dir.path().join("fixture.db").to_string_lossy().into());
+        let accepted = storage.accept_thread_turn("fixture-user", "fixture-thread", &json!({"content":"Fixture question"})).unwrap();
+        let turn = accepted["turn_id"].as_str().unwrap();
+        let id = format!("{turn}:text-1");
+        let before = storage.thread_view_page("fixture-user", "fixture-thread", "chat", None, 12).unwrap().view_seq;
+        storage.append_thread_item("fixture-user", &json!({"session_id":"fixture-thread", "turn_id":turn,
+            "item_id":id,"kind":"assistant_message","status":"completed","content":"Fixture waiting",
+            "meta":{"type":"question_panel","panel":{"status":"pending","keep_open":true,"questions":[
+                {"question":"Fixture choice?","multiple":false,"options":[{"label":"First option","recommended":true},{"label":"Second option"}]}]}}})).unwrap();
+        storage.update_thread_turn("fixture-user", "fixture-thread", turn, "waiting_input", "", &json!({"stop_reason":"question_panel"})).unwrap();
+        let read = || storage.thread_view_page("fixture-user", "fixture-thread", "chat", None, 12).unwrap();
+        let initial = read();
+        let panel = initial.chat[0].assistant.question_panel.as_ref().unwrap();
+        assert_eq!(panel.status, "pending");
+        assert_eq!(panel.questions[0].options.len(), 2);
+        assert!(panel.questions[0].options[0].recommended);
+        assert_eq!(initial.runtime_status, "waiting_input");
+        assert_eq!(storage.thread_view_changes("fixture-user", "fixture-thread", before).unwrap().rows[0].assistant.question_panel.as_ref(), Some(panel));
+        let mut legacy = serde_json::to_value(&initial.chat[0]).unwrap();
+        legacy["assistant"].as_object_mut().unwrap().remove("question_panel");
+        let conn = storage.open().unwrap();
+        conn.execute("UPDATE thread_chat_rows SET payload=?", [legacy.to_string()]).unwrap();
+        assert_eq!(read().chat[0].assistant.question_panel.as_ref(), Some(panel));
+        assert_eq!(storage.thread_view_changes("fixture-user", "fixture-thread", before).unwrap().rows[0].assistant.question_panel.as_ref(), Some(panel));
+        conn.execute("UPDATE thread_view_heads SET projection_state='source'", []).unwrap();
+        assert_eq!(read().chat[0].assistant.question_panel.as_ref(), Some(panel));
+        conn.execute("UPDATE thread_view_heads SET projection_state='ready'", []).unwrap();
+        storage.update_thread_turn("fixture-user", "fixture-thread", turn, "cancelled", "", &json!({"stop_reason":"user_stop"})).unwrap();
+        let cancelled = read();
+        assert_eq!(cancelled.runtime_status, "cancelled");
+        assert_eq!(cancelled.chat[0].assistant.question_panel.as_ref().unwrap().status, "dismissed");
+        assert_eq!(cancelled.chat[0].assistant.content, "Fixture waiting");
+        let reloaded = SqliteStorage::new(dir.path().join("fixture.db").to_string_lossy().into());
+        assert_eq!(reloaded.thread_view_page("fixture-user", "fixture-thread", "chat", None, 12).unwrap().runtime_status, "cancelled");
+    }
+
+    #[test]
     fn trajectory_diagnostics_match_projection_and_source_fallback() {
         let dir = tempfile::tempdir().unwrap();
         let storage = SqliteStorage::new(dir.path().join("fixture.db").to_string_lossy().into());

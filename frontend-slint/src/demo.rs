@@ -55,7 +55,7 @@ pub fn install(app: &MainWindow) {
             format!("已收到「{text}」。这是一条本地演示回复，可以继续检查条目展开与滚动效果。");
         let mut body = fixture_row(crate::timeline::KIND_BODY, model.row_count(), &reply);
         body.foldable = true;
-        body.stats = demo_stats("3.6s", "51.0/s", "6.1k", "812", "");
+        body.stats = demo_stats("3.6s", "51.0 token/s", "6.1k", "812", "");
         model.push(body);
         let group = model.row_count() as i32;
         let mut bar = fixture_row(
@@ -189,6 +189,7 @@ pub fn install(app: &MainWindow) {
             _ => {
                 let mut row = row;
                 row.open = !row.open;
+                crate::timeline_text::sync_process_child(model, &row);
                 model.set_row_data(payload, row);
             }
         }
@@ -232,11 +233,16 @@ fn demo_stats(
     tools: &str,
 ) -> slint::ModelRc<crate::TurnStatMetric> {
     let entries = [
+        ("hashtag", "1"),
         ("stopwatch", duration),
         ("gauge-high", speed),
         ("layer-group", context),
         ("bolt", quota),
-        ("screwdriver-wrench", tools),
+        (
+            "screwdriver-wrench",
+            if tools.is_empty() { "0" } else { tools },
+        ),
+        ("coins", "--"),
     ];
     ModelRc::new(VecModel::from(
         entries
@@ -267,7 +273,19 @@ fn fixture_row(kind: i32, index: usize, text: &str) -> TimelineRow {
         target: Default::default(),
         tool_metrics: Default::default(),
         tool_metrics_visible: false,
+        tokens: Default::default(),
+        duration: Default::default(),
         detail: Default::default(),
+        sections: ModelRc::default(),
+        process_entries: ModelRc::default(),
+        process_root: Default::default(),
+        process_paged: false,
+        process_local: false,
+        process_older: false,
+        process_newer: false,
+        process_loading: false,
+        process_error: false,
+        process_revision: 0,
         status_kind: crate::timeline::STATUS_DONE,
         foldable: false,
         open: false,
@@ -297,7 +315,7 @@ fn demo_timeline() -> Vec<TimelineRow> {
                 "已完成目录检查，并整理了可以继续使用的文件。",
             );
             body.foldable = true;
-            body.stats = demo_stats("8.2s", "42.5/s", "8.4k", "1.2k", "2");
+            body.stats = demo_stats("8.2s", "42.5 token/s", "8.4k", "1.2k", "2");
             body
         },
     ];
@@ -394,8 +412,9 @@ fn demo_timeline() -> Vec<TimelineRow> {
         "目录结构正常，文本内容可读取，未发现格式问题。",
     );
     answer.foldable = true;
-    answer.stats = demo_stats("12.4s", "68.2k/s", "12.3k", "4.1k", "3");
+    answer.stats = demo_stats("12.4s", "68234.0 token/s", "12.3k", "4.1k", "3");
     rows.push(answer);
+    crate::timeline_text::process_models(&mut rows);
     rows
 }
 

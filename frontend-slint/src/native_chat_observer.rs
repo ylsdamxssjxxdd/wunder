@@ -196,7 +196,7 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
     // processes may share one, not even across turns.
     let mut batch = 0i32;
     let mut process = 0i32;
-    for (index, turn) in turns.iter().enumerate() {
+    for turn in turns {
         // Queue rows are rendered by the composer. Their durable turn is only
         // an admission placeholder and must not become a second user bubble.
         if is_queue_only_turn(turn) {
@@ -212,10 +212,11 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
         let bar_at = rows.len();
         let mut bar = blank_row(
             crate::timeline::KIND_PROCESS,
-            format!("history-{index}-process"),
+            format!("process-{}", turn.root_id),
         );
         bar.payload = bar_at as i32;
         bar.process_idx = process;
+        bar.process_root = turn.root_id.as_str().into();
         bar.text = crate::timeline_text::process_label(0).into();
         bar.visible = false;
         rows.push(bar);
@@ -227,7 +228,7 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
                 if !round.text.is_empty() {
                     let mut body = blank_row(
                         crate::timeline::KIND_BODY,
-                        format!("history-{index}-body-{}", round.round),
+                        format!("body-{}-{}", turn.root_id, round.round),
                     );
                     body.text = round.text.as_str().into();
                     body.blocks = crate::message_blocks::from_text(&round.text);
@@ -244,7 +245,7 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
             let mut latest = slint::SharedString::default();
             let mut bar = blank_row(
                 crate::timeline::KIND_GROUP,
-                format!("history-{index}-group-{}", round.round),
+                format!("group-{}-{}", turn.root_id, round.round),
             );
             bar.text = crate::timeline_text::tool_calls(tools).into();
             bar.payload = bar_at as i32;
@@ -257,7 +258,7 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
             if !round.reasoning.is_empty() {
                 let mut reason = blank_row(
                     crate::timeline::KIND_REASON,
-                    format!("history-{index}-reason-{}", round.round),
+                    format!("reason-{}-{}", turn.root_id, round.round),
                 );
                 reason.tool_name = crate::timeline_text::thought_done().into();
                 reason.summary = crate::message_blocks::reasoning_preview(&round.reasoning)
@@ -274,7 +275,7 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
             if !round.text.is_empty() {
                 let mut body = blank_row(
                     crate::timeline::KIND_BODY,
-                    format!("history-{index}-body-{}", round.round),
+                    format!("body-{}-{}", turn.root_id, round.round),
                 );
                 body.text = round.text.as_str().into();
                 body.blocks = crate::message_blocks::from_text(&round.text);
@@ -284,11 +285,7 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
             for item in &round.items {
                 let mut row = blank_row(crate::timeline::KIND_TOOL, format!("tool-{}", item.id));
                 let label = crate::timeline_text::tool_label(&item.title);
-                let (target, patch) = crate::timeline_text::target_of(
-                    &item.title,
-                    item.detail.as_str(),
-                    &item.sections,
-                );
+                let (target, patch) = crate::timeline_text::tool_target(item);
                 row.tool_name = label.as_str().into();
                 row.tool_icon = crate::tool_icons::workflow_icon(&item.title).into();
                 row.target = target.as_str().into();
@@ -297,6 +294,9 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
                 row.summary = crate::timeline_text::tool_summary(item).as_str().into();
                 latest = row.summary.clone();
                 row.detail = crate::timeline_text::copy_text(&item.sections, item.detail.as_str());
+                row.sections = crate::timeline_text::sections(&item.sections);
+                row.tokens = item.tokens.as_str().into();
+                row.duration = item.duration.as_str().into();
                 row.status_kind = crate::timeline::status_kind(&item.state);
                 row.patch = if patch {
                     crate::timeline_text::patch_cards(&item.patch_files)
@@ -323,13 +323,21 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
             rows.push(row);
         }
         // The metrics belong to the turn and ride on the body row that ends it,
-        // which is also the row that owns the copy and save actions: the same
+        // which is also the row that owns the copy action: the same
         // owner the live reducer picks with its backward walk.
         if let Some(body) = (turn_start..rows.len())
             .rev()
             .find(|index| rows[*index].kind == crate::timeline::KIND_BODY)
         {
             rows[body].stats = turn_stats(&turn.assistant);
+        } else {
+            let mut body = blank_row(
+                crate::timeline::KIND_BODY,
+                format!("status-{}", turn.root_id),
+            );
+            body.foldable = true;
+            body.stats = turn_stats(&turn.assistant);
+            rows.push(body);
         }
         let end = rows.len();
         fold_history_process(
@@ -339,7 +347,14 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
             process,
             &turn.assistant.state,
         );
+        if turn.process_steps > 0 {
+            rows[bar_at].text =
+                crate::timeline_text::process_label(turn.process_steps.min(i32::MAX as i64) as i32)
+                    .into();
+            rows[bar_at].visible = true;
+        }
     }
+    crate::timeline_text::process_models(&mut rows);
     rows
 }
 
@@ -381,17 +396,14 @@ fn fold_history_process(
             steps += i32::from(rows[index].kind != crate::timeline::KIND_GROUP);
         }
     }
-    if steps == 0 {
-        return;
-    }
     let label = crate::timeline_text::process_label(steps);
     let phase = match state {
         "completed" | "done" | "任务完成" => "已完成",
         "failed" | "error" | "rejected" | "system_error" | "执行失败" => "错误",
         "cancelled" | "stopped" | "interrupted" | "已停止" => "已停止",
         "queued" | "pending" | "正在排队" => "排队中",
-        "waiting_input" | "waiting_user_input" => "等待回答",
-        "waiting_approval" => "等待确认",
+        "waiting_input" | "waiting_user_input" | "等待用户输入" => "等待回答",
+        "waiting_approval" | "等待确认" => "等待确认",
         _ => "正在处理…",
     };
     let mut activity = phase.to_string();
@@ -408,21 +420,28 @@ fn fold_history_process(
         }
     }
     let bar = &mut rows[bar_at];
+    bar.status_kind = if phase == "正在处理…" {
+        crate::timeline::STATUS_RUNNING
+    } else if phase == "错误" {
+        crate::timeline::STATUS_FAILED
+    } else {
+        crate::timeline::STATUS_DONE
+    };
     bar.text = label.as_str().into();
     bar.summary = activity.into();
-    bar.visible = true;
+    bar.visible = steps > 0;
 }
 
 /// The turn's statistics footer, projected once per turn and attached to the
 /// body row that carries the durable answer.
 fn turn_stats(assistant: &wunder_desktop::NativeMessage) -> ModelRc<crate::TurnStatMetric> {
     ModelRc::new(VecModel::from(crate::timeline::stat_metrics(
-        &crate::turn_stats::metrics_from_parts(
-            assistant.stats_duration.as_str(),
-            assistant.stats_speed.as_str(),
-            assistant.stats_context.as_str(),
-            assistant.stats_quota.as_str(),
-            assistant.stats_tools.as_str(),
+        &crate::turn_stats::with_status(
+            crate::turn_stats::with_user_round(
+                crate::turn_stats::metrics_from_native(&assistant.stats),
+                assistant.user_round,
+            ),
+            &assistant.stats_status,
         ),
     )))
 }
@@ -448,7 +467,19 @@ fn blank_row(kind: i32, id: String) -> TimelineRow {
         target: Default::default(),
         tool_metrics: Default::default(),
         tool_metrics_visible: false,
+        tokens: Default::default(),
+        duration: Default::default(),
         detail: Default::default(),
+        sections: ModelRc::default(),
+        process_entries: ModelRc::default(),
+        process_root: Default::default(),
+        process_paged: false,
+        process_local: false,
+        process_older: false,
+        process_newer: false,
+        process_loading: false,
+        process_error: false,
+        process_revision: 0,
         status_kind: crate::timeline::STATUS_DONE,
         foldable: false,
         open: false,
@@ -479,12 +510,8 @@ mod tests {
             created_at: 0.0,
             state: status.into(),
             stats_status: status.into(),
-            stats_duration: String::new(),
-            stats_speed: String::new(),
-            stats_context: String::new(),
-            stats_quota: String::new(),
-            stats_tools: String::new(),
-            stats_credits: String::new(),
+            user_round: 0,
+            stats: Default::default(),
         };
         NativeChatTurn {
             root_id: root.into(),
@@ -501,6 +528,7 @@ mod tests {
                 items: Vec::new(),
             }],
             subagents: Vec::new(),
+            process_steps: 0,
         }
     }
 
@@ -572,11 +600,13 @@ mod tests {
     #[test]
     fn a_reloaded_turn_keeps_its_statistics_footer() {
         let mut turn = fixture("fixture-stats", "Fixture answer", "completed");
-        turn.assistant.stats_duration = "12.4s".into();
-        turn.assistant.stats_speed = "68234.0/s".into();
-        turn.assistant.stats_quota = "4.1k".into();
-        turn.assistant.stats_tools = "3".into();
-        turn.assistant.stats_context = "12345".into();
+        turn.assistant.user_round = 57;
+        turn.assistant.stats =
+            wunder_desktop::native::NativeMessageStats::from_payload(&serde_json::json!({
+                "interaction_duration_s": 12.44, "avg_model_round_speed_rounds": 2,
+                "avg_model_round_speed_tps": 68234, "request_consumed_tokens": 4096,
+                "toolCalls": 3, "contextTokens": 12345, "model_request_count": 4
+            }));
 
         let rows = project_history(&[turn]);
         let metrics: Vec<(String, String)> = rows
@@ -592,11 +622,13 @@ mod tests {
         assert_eq!(
             metrics,
             vec![
+                ("hashtag".to_string(), "57".to_string()),
                 ("stopwatch".to_string(), "12.4s".to_string()),
-                ("gauge-high".to_string(), "68.2k/s".to_string()),
+                ("gauge-high".to_string(), "68234.0 token/s".to_string()),
                 ("layer-group".to_string(), "12.3k".to_string()),
                 ("bolt".to_string(), "4.1k".to_string()),
                 ("screwdriver-wrench".to_string(), "3".to_string()),
+                ("coins".to_string(), "4".to_string()),
             ],
         );
     }
@@ -995,7 +1027,7 @@ mod tests {
         ));
         let rows = project_history(&[turn]);
         // A failed turn without an answer still uses the same process handle.
-        assert_eq!(rows.len(), 4);
+        assert_eq!(rows.len(), 5);
         assert_eq!(rows[0].kind, crate::timeline::KIND_USER);
         assert_eq!(rows[1].kind, crate::timeline::KIND_PROCESS);
         assert!(rows[1].visible);
@@ -1006,5 +1038,6 @@ mod tests {
         assert_eq!(rows[3].status_kind, crate::timeline::STATUS_FAILED);
         assert_eq!(rows[3].process_idx, rows[1].process_idx);
         assert!(rows[3].detail.contains("fixture failure"));
+        assert_eq!(rows[4].stats.row_data(0).unwrap().key, "status-error");
     }
 }

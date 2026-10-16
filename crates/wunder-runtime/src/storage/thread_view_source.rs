@@ -116,6 +116,29 @@ fn batch_query(
     db.query(&sql, &params)
 }
 
+/// Repair only missing interactive metadata for the visible assistant ids.
+pub(super) fn load_question_panels(
+    db: &mut impl ViewDb,
+    user: &str,
+    session: &str,
+    ids: &[String],
+) -> Result<std::collections::HashMap<String, ThreadQuestionPanel>> {
+    let panel = db.json_text(&db.json_text("payload", "meta"), "panel");
+    let queries = ids.iter().map(|id| (
+        format!("SELECT item_id,substr({panel},1,65536) FROM thread_items WHERE user_id=? AND session_id=? AND item_id=? AND kind='assistant_message' AND visibility='user' LIMIT 1"),
+        vec![json!(user), json!(session), json!(id)],
+    )).collect();
+    let mut panels = std::collections::HashMap::new();
+    for row in batch_query(db, queries)? {
+        if let Some(panel) = serde_json::from_str::<Value>(text(&row[1]))
+            .ok().as_ref().and_then(projection::question_panel)
+        {
+            panels.insert(text(&row[0]).to_owned(), panel);
+        }
+    }
+    Ok(panels)
+}
+
 /// Indexed, byte-bounded repair for old chat rows and source-only threads.
 /// Never load the execution log or a plan tool's duplicated content/result.
 pub(super) fn load_chat_plans(
@@ -173,9 +196,10 @@ fn source_chat_rows(
     let mut plans = load_chat_plans(db, user, session, &root_ids)?;
     let mut latest_turns = std::collections::HashMap::new();
     let queue_field = db.json_text("payload", "queued_input");
+    let reason_field = db.json_text("payload", "stop_reason");
     let watermark = db.json_text("card.payload", "workspace_change_seq");
     let latest = batch_query(db, root_ids.iter().map(|root| (
-        format!("SELECT root_turn_id,turn_id,status,updated_time,{queue_field},(SELECT CAST(COALESCE({watermark},'0') AS BIGINT) FROM thread_chat_rows card WHERE card.user_id=thread_turns.user_id AND card.session_id=thread_turns.session_id AND card.root_turn_id=thread_turns.root_turn_id) FROM thread_turns WHERE user_id=? AND session_id=? AND root_turn_id=? ORDER BY created_time DESC,turn_id DESC LIMIT 1"),
+        format!("SELECT root_turn_id,turn_id,status,updated_time,{queue_field},(SELECT CAST(COALESCE({watermark},'0') AS BIGINT) FROM thread_chat_rows card WHERE card.user_id=thread_turns.user_id AND card.session_id=thread_turns.session_id AND card.root_turn_id=thread_turns.root_turn_id),substr(COALESCE({reason_field},''),1,128) FROM thread_turns WHERE user_id=? AND session_id=? AND root_turn_id=? ORDER BY created_time DESC,turn_id DESC LIMIT 1"),
         vec![json!(user), json!(session), json!(root)],
     )).collect())?;
     for row in latest {
@@ -219,7 +243,8 @@ fn source_chat_rows(
     for root in roots {
         for kind in ["user_message", "assistant_message"] {
             let sql = format!(
-                "SELECT root_turn_id,item_id,revision,created_seq,kind,substr(COALESCE({content},''),1,2048),{item_bytes},substr({reasoning},1,2048),substr({stats},1,4096) FROM thread_items WHERE user_id=? AND session_id=? AND root_turn_id=? AND visibility='user' AND kind=?{} ORDER BY item_index DESC,created_seq DESC LIMIT 1",
+                "SELECT root_turn_id,item_id,revision,created_seq,kind,substr(COALESCE({content},''),1,2048),{item_bytes},substr({reasoning},1,2048),substr({stats},1,4096),substr({},1,65536) FROM thread_items WHERE user_id=? AND session_id=? AND root_turn_id=? AND visibility='user' AND kind=?{} ORDER BY item_index DESC,created_seq DESC LIMIT 1",
+                db.json_text(&db.json_text("payload", "meta"), "panel"),
                 if kind == "assistant_message" {
                     format!(" AND item_id LIKE turn_id || ':text-%' AND (COALESCE({tool_calls},'')='' OR COALESCE({tool_calls},'')='[]')")
                 } else {
@@ -303,6 +328,8 @@ fn source_chat_rows(
             bytes: body_bytes,
         });
         if is_assistant {
+            message.question_panel = serde_json::from_str::<Value>(text(&row[9]))
+                .ok().as_ref().and_then(projection::question_panel);
             message.reasoning = text(&row[7]).to_owned();
             message.reasoning_offset = message.reasoning.encode_utf16().count();
             if let Ok(stats) = serde_json::from_str::<Value>(text(&row[8])) {
@@ -335,6 +362,7 @@ fn source_chat_rows(
         );
         if let Some(latest) = latest_turns.get(id) {
             row.execution_turn_id = text(&latest[1]).into();
+            row.stop_reason = Some(text(&latest[6]).into());
             row.status = text(&latest[2]).into();
             row.queued_input = if row.status == "queued" {
                 serde_json::from_str(text(&latest[4])).ok()
@@ -353,6 +381,7 @@ fn source_chat_rows(
             row.assistant = assistant.unwrap_or_default();
         }
         row.assistant.durable_seq = page.view_seq;
+        projection::settle_question_panel(&mut row);
         let size = serde_json::to_vec(&row)?.len() + 1;
         if *bytes + size > budget {
             page.has_more = true;

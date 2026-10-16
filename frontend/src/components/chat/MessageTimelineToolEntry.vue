@@ -75,8 +75,9 @@
         <pre class="tl-entry-output-body">{{ outputText }}</pre>
       </div>
 
-      <div v-else-if="!entry.errorText" class="tl-entry-empty">
-        {{ t('chat.timeline.entryNoDetail') }}
+      <div v-else-if="!entry.errorText" class="tl-entry-output">
+        <div class="tl-entry-output-head">{{ fallbackStatus }}</div>
+        <pre v-if="callPreview" class="tl-entry-output-body">{{ callPreview }}</pre>
       </div>
     </div>
   </div>
@@ -92,6 +93,9 @@ import type { ToolWorkflowPatchView, ToolWorkflowStructuredView } from './toolWo
 import MessageToolWorkflowPatchSection from './MessageToolWorkflowPatchSection.vue';
 import MessageToolWorkflowCompactionSection from './MessageToolWorkflowCompactionSection.vue';
 import MessageToolWorkflowStructuredSection from './MessageToolWorkflowStructuredSection.vue';
+import { extractWorkflowCallArgs } from './toolWorkflowCallDebug';
+import { parseToolWorkflowResultObject } from './toolWorkflowResultPayload';
+import { buildToolResultPreview } from './toolWorkflowPreview';
 
 const props = withDefaults(defineProps<{
   entry: TimelineToolEntry;
@@ -111,6 +115,20 @@ const emit = defineEmits<{ (event: 'toggle'): void }>();
 const { t } = useI18n();
 
 const interactive = computed(() => Boolean(props.entry.expandable));
+const fallbackStatus = computed(() => t({
+  loading: 'chat.toolWorkflow.toolResultPending',
+  completed: 'chat.toolWorkflow.resultDone',
+  failed: 'chat.toolWorkflow.resultFailed',
+  cancelled: 'chat.toolWorkflow.statusCancelled'
+}[props.entry.status]));
+// Only build the fallback when the user opens an entry with no result body.
+const callPreview = computed(() => {
+  if (!props.open || props.entry.detailText || props.structuredView || props.patchView || props.entry.errorText) return '';
+  const args = extractWorkflowCallArgs(props.entry.run.callItem, parseToolWorkflowResultObject);
+  if (!args) return '';
+  const preview = buildToolResultPreview(args, null);
+  return preview && preview !== '{}' ? `${t('chat.timeline.entryArgumentsTitle')}\n${preview}` : '';
+});
 
 /**
  * 工具输出在 DOM 里必须有界（方案 §7.3 C「长输出限高折叠」+ 性能要求）。
@@ -360,13 +378,5 @@ button.tl-entry-head:focus-visible {
   font-size: 12px;
   line-height: 1.55;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-}
-
-.tl-entry-empty {
-  padding: 6px 10px;
-  border: 1px dashed var(--mz-border, #e8e6e3);
-  border-radius: 8px;
-  color: var(--mz-text-muted, #8a8f99);
-  font-size: 12px;
 }
 </style>

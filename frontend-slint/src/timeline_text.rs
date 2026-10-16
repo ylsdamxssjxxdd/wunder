@@ -1,7 +1,7 @@
 //! Presentation projection for the chat timeline: localized tool labels, the
 //! target chip, the bounded patch cards handed to `patch_diff_card.slint`, and
 //! the mapping from native workflow sections onto the detail model.
-use crate::{PatchCard, PatchLine};
+use crate::{PatchCard, PatchLine, ProcessEntry, TimelineRow, WorkflowLine, WorkflowSection};
 use slint::{ModelRc, VecModel};
 use wunder_desktop::native::{NativePatchFile, NativeWorkflowEntry, NativeWorkflowSection};
 
@@ -15,6 +15,7 @@ pub fn tool_label(tool: &str) -> String {
         "edit_file" | "edit_file2" | "text_editor" => "编辑文件",
         "apply_patch" => "应用补丁",
         "list_files" | "list_file" => "列出文件",
+        "glob" | "glob_files" | "文件名匹配" => "文件名匹配",
         "search_content" | "search_files" => "搜索内容",
         "web_search" | "web_search_tool" | "web search" | "websearch" | "网页搜索" => {
             "网页搜索"
@@ -79,6 +80,38 @@ pub fn target_of(title: &str, detail: &str, sections: &[NativeWorkflowSection]) 
     (short(lines.next().unwrap_or_default(), 64), patch)
 }
 
+pub fn tool_target(entry: &NativeWorkflowEntry) -> (String, bool) {
+    let patch = is_patch_tool(&entry.title);
+    if patch {
+        return target_of(&entry.title, "", &entry.sections);
+    }
+    if matches!(
+        entry.title.as_str(),
+        "read_file"
+            | "读取文件"
+            | "write_file"
+            | "写入文件"
+            | "list_files"
+            | "列出文件"
+            | "list_file"
+            | "read_image"
+            | "view_image"
+            | "读图"
+    ) {
+        // A bounded preview at its limit may contain only a path prefix.
+        // Keep it as summary text rather than opening an incomplete resource.
+        return (
+            if entry.preview.chars().count() < 640 {
+                entry.preview.clone()
+            } else {
+                String::new()
+            },
+            false,
+        );
+    }
+    (String::new(), false)
+}
+
 fn short(value: &str, limit: usize) -> String {
     value.trim().chars().take(limit).collect()
 }
@@ -92,6 +125,9 @@ pub fn is_patch_tool(tool: &str) -> bool {
 
 /// Flat text of a tool result, kept for the copy affordance of the detail view.
 pub fn copy_text(items: &[NativeWorkflowSection], fallback: &str) -> slint::SharedString {
+    if !fallback.is_empty() {
+        return fallback.into();
+    }
     if items.is_empty() {
         return fallback.into();
     }
@@ -115,6 +151,198 @@ pub fn copy_text(items: &[NativeWorkflowSection], fallback: &str) -> slint::Shar
         output.push('\n');
     }
     output.into()
+}
+
+/// Preserve the native adapter's typed, bounded sections.
+pub fn sections(items: &[NativeWorkflowSection]) -> ModelRc<WorkflowSection> {
+    ModelRc::new(VecModel::from(
+        items
+            .iter()
+            .take(12)
+            .map(|section| WorkflowSection {
+                title: section.title.as_str().into(),
+                meta: section.meta.as_str().into(),
+                kind: section.kind.as_str().into(),
+                lines: ModelRc::new(VecModel::from(
+                    section
+                        .lines
+                        .iter()
+                        .take(201)
+                        .map(|line| WorkflowLine {
+                            ratio: line.ratio,
+                            text: line.text.as_str().into(),
+                            kind: line.kind.as_str().into(),
+                            number: line.number.as_str().into(),
+                        })
+                        .collect::<Vec<_>>(),
+                )),
+            })
+            .collect::<Vec<_>>(),
+    ))
+}
+
+pub fn process_entry(row: &TimelineRow) -> ProcessEntry {
+    let body = row.kind == crate::timeline::KIND_BODY;
+    ProcessEntry {
+        kind: row.kind,
+        id: row.id.clone(),
+        text: row.text.clone(),
+        blocks: row.blocks.clone(),
+        summary: if body {
+            summary(&row.text).into()
+        } else {
+            row.summary.clone()
+        },
+        tool_name: if body {
+            "模型输出".into()
+        } else {
+            row.tool_name.clone()
+        },
+        tool_icon: row.tool_icon.clone(),
+        target: row.target.clone(),
+        detail: if body {
+            row.text.clone()
+        } else {
+            row.detail.clone()
+        },
+        sections: row.sections.clone(),
+        patch: row.patch.clone(),
+        tokens: row.tokens.clone(),
+        duration: row.duration.clone(),
+        status_kind: row.status_kind,
+        open: row.open,
+        payload: row.payload,
+    }
+}
+
+pub fn sync_process_child(model: &VecModel<TimelineRow>, row: &TimelineRow) {
+    use slint::Model;
+    if row.process_idx == crate::timeline::NO_PROCESS {
+        return;
+    }
+    let Some(bar) = model.iter().find(|bar| {
+        bar.kind == crate::timeline::KIND_PROCESS && bar.process_idx == row.process_idx
+    }) else {
+        return;
+    };
+    if let Some(children) = bar
+        .process_entries
+        .as_any()
+        .downcast_ref::<VecModel<ProcessEntry>>()
+    {
+        if let Some(index) = children.iter().position(|entry| entry.id == row.id) {
+            if bar.process_paged {
+                return;
+            }
+            children.set_row_data(index, process_entry(row));
+        }
+    }
+}
+
+/// History replacement builds one child model per process; live deltas patch
+/// the existing child VecModel instead of rebuilding the transcript.
+pub fn process_models(rows: &mut [TimelineRow]) {
+    use slint::Model;
+    let mut children = std::collections::HashMap::<i32, Vec<ProcessEntry>>::new();
+    for row in rows.iter().filter(|row| {
+        row.process_idx != crate::timeline::NO_PROCESS
+            && matches!(
+                row.kind,
+                crate::timeline::KIND_TOOL
+                    | crate::timeline::KIND_REASON
+                    | crate::timeline::KIND_BODY
+            )
+    }) {
+        children
+            .entry(row.process_idx)
+            .or_default()
+            .push(process_entry(row));
+    }
+    for row in rows
+        .iter_mut()
+        .filter(|row| row.kind == crate::timeline::KIND_PROCESS)
+    {
+        if row.process_paged {
+            continue;
+        }
+        let entries = children.remove(&row.process_idx).unwrap_or_default();
+        if let Some(model) = row
+            .process_entries
+            .as_any()
+            .downcast_ref::<VecModel<ProcessEntry>>()
+        {
+            if model.row_count() == entries.len()
+                && model
+                    .iter()
+                    .zip(&entries)
+                    .all(|(old, new)| old.id == new.id)
+            {
+                for (index, entry) in entries.into_iter().enumerate() {
+                    if model.row_data(index).as_ref() != Some(&entry) {
+                        model.set_row_data(index, entry);
+                    }
+                }
+            } else {
+                model.set_vec(entries);
+            }
+        } else {
+            row.process_entries = ModelRc::new(VecModel::from(entries));
+        }
+    }
+}
+
+/// Keep user disclosure choices through durable refreshes in both the main
+/// chat and child-thread dialog. State stays bounded by the loaded history.
+pub fn restore_folds(rows: &mut [TimelineRow], previous: &VecModel<TimelineRow>) {
+    use slint::Model;
+    let old: std::collections::HashMap<_, _> = previous
+        .iter()
+        .filter(|row| {
+            matches!(
+                row.kind,
+                crate::timeline::KIND_PROCESS
+                    | crate::timeline::KIND_TOOL
+                    | crate::timeline::KIND_REASON
+            )
+        })
+        .map(|row| (row.id.clone(), row))
+        .collect();
+    for row in rows.iter_mut() {
+        if let Some(previous) = old.get(&row.id) {
+            row.open = previous.open;
+            if row.kind == crate::timeline::KIND_PROCESS {
+                row.process_entries = previous.process_entries.clone();
+                row.process_paged = previous.process_paged;
+                row.process_older = previous.process_older;
+                row.process_newer = previous.process_newer;
+                row.process_loading = previous.process_loading;
+                row.process_error = previous.process_error;
+                row.process_revision = previous.process_revision;
+                if row.process_paged {
+                    for index in 0..row.process_entries.row_count() {
+                        if let Some(mut entry) = row.process_entries.row_data(index) {
+                            entry.payload = -1 - row.process_idx * 1024 - index as i32;
+                            row.process_entries.set_row_data(index, entry);
+                        }
+                    }
+                }
+                if previous.process_root.is_empty() && !row.process_root.is_empty() {
+                    row.process_loading = false;
+                }
+            }
+        }
+    }
+    let folds: std::collections::HashMap<_, _> = rows
+        .iter()
+        .filter(|row| row.kind == crate::timeline::KIND_PROCESS)
+        .map(|row| (row.process_idx, row.open))
+        .collect();
+    for row in rows.iter_mut() {
+        if let Some(open) = folds.get(&row.process_idx) {
+            row.process_open = *open;
+        }
+    }
+    process_models(rows);
 }
 
 /// The patch cards of one tool entry (§7.4). Bounds are re-applied here so a
@@ -176,18 +404,7 @@ pub fn tool_summary(entry: &NativeWorkflowEntry) -> String {
     if !preview.is_empty() {
         return short(preview, 160);
     }
-    if matches!(
-        entry.title.trim(),
-        "execute_command" | "运行命令" | "command_session"
-    ) {
-        let detail = entry.detail.trim();
-        let Some((_, command)) = detail.split_once('\n') else {
-            return short(detail, 160);
-        };
-        let command = command.lines().next().unwrap_or_default();
-        return short(command, 160);
-    }
-    summary(entry.detail.as_str())
+    String::new()
 }
 
 /// The web timeline keeps invocation usage at the far edge of the row. Native
@@ -206,11 +423,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn command_summary_uses_the_command_line_not_the_status_line() {
-        let entry = NativeWorkflowEntry {
+    fn command_summary_uses_only_invocation_and_never_result_text() {
+        let mut entry = NativeWorkflowEntry {
             id: "fixture-command".into(),
             title: "execute_command".into(),
-            preview: String::new(),
+            preview: "list files".into(),
             detail: "执行 · 运行中\nlist files\noutput".into(),
             state: "running".into(),
             tokens: String::new(),
@@ -219,5 +436,8 @@ mod tests {
             patch_files: Vec::new(),
         };
         assert_eq!(tool_summary(&entry), "list files");
+        entry.preview.clear();
+        assert_eq!(tool_summary(&entry), "");
+        assert_eq!(tool_target(&entry).0, "");
     }
 }

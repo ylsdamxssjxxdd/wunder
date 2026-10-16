@@ -523,7 +523,7 @@ fn shared_tool_icon(name: &str, description: &str, category: &str) -> &'static s
     // `TOOL_NAME_ICON_OVERRIDES` map in `web/shared/tool-visuals.js`.
     match normalize(name).as_str() {
         "编辑" | "str_replace_editor" => return "file-pen",
-        "glob" => return "folder-tree",
+        "文件名匹配" | "glob" => return "folder-tree",
         _ => {}
     }
     for (keywords, icon) in TOOL_RULES {
@@ -698,6 +698,7 @@ mod tests {
         assert_eq!(workflow_icon("generate_image"), "paintbrush");
         assert_eq!(workflow_icon("编辑"), "file-pen");
         assert_eq!(workflow_icon("str_replace_editor"), "file-pen");
+        assert_eq!(workflow_icon("文件名匹配"), "folder-tree");
         assert_eq!(workflow_icon("glob"), "folder-tree");
         assert_eq!(workflow_icon("wunder@excute"), "dragon");
         assert_eq!(workflow_icon("mcp_server.query"), "plug");

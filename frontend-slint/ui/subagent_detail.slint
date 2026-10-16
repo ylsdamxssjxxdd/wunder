@@ -21,7 +21,7 @@ export component SubagentDetailDialog inherits Rectangle {
     callback close();
     callback interrupt();
     callback toggle(int);
-    callback download-text(string);
+    callback process-page(int, int);
     callback open-resource(string);
     // Copy reuses the hidden-buffer trick the main window's copy-raw uses.
     copy-buffer := TextInput { width: 0px; height: 0px; }
@@ -86,8 +86,8 @@ export component SubagentDetailDialog inherits Rectangle {
                 spinning: root.running;
                 follow-output: true;
                 toggle(index) => { root.toggle(index); }
+                process-page(index, direction) => { root.process-page(index, direction); }
                 copy-text(text) => { root.copy-text(text); }
-                download-text(text) => { root.download-text(text); }
                 open-resource(id) => { root.open-resource(id); }
             }            if root.loading && root.rows.length == 0 : Text {
                 text: I18n.sub_detail_loading; color: Theme.muted;

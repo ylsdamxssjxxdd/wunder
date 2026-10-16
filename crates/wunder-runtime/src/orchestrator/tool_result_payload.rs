@@ -11,12 +11,29 @@ pub(super) struct ToolResultPayload {
 }
 
 impl ToolResultPayload {
-    pub(super) fn from_value(value: Value) -> Self {
+    pub(super) fn from_value(mut value: Value) -> Self {
         let timestamp = Utc::now();
-        if let Value::Object(map) = &value {
-            if map.get("ok").and_then(Value::as_bool).is_some() && map.contains_key("data") {
+        if let Value::Object(map) = &mut value {
+            if map.get("ok").and_then(Value::as_bool).is_some()
+                && (map.contains_key("data") || map.contains_key("content"))
+            {
                 let ok = map.get("ok").and_then(Value::as_bool).unwrap_or(true);
-                let mut data = map.get("data").cloned().unwrap_or_else(|| json!({}));
+                let mut data = map.remove("data").unwrap_or_else(|| json!({}));
+                // Provider envelopes may contain both structured data and MCP
+                // content blocks. Keep both through history, events and model
+                // observations, including persisted image attachment references.
+                if let Some(content) = map.remove("content").filter(|v| !v.is_null()) {
+                    if !data.is_object() {
+                        data = json!({ "result": data });
+                    }
+                    let object = data.as_object_mut().expect("object data");
+                    let key = if object.contains_key("content") {
+                        "content_blocks"
+                    } else {
+                        "content"
+                    };
+                    object.insert(key.to_string(), content);
+                }
                 if let Some(error_meta) = map.get("error_meta").cloned() {
                     if let Some(obj) = data.as_object_mut() {
                         obj.entry("error_meta".to_string()).or_insert(error_meta);
@@ -219,6 +236,16 @@ fn compact_failure_observation_payload(map: &mut Map<String, Value>) -> bool {
         &raw_data,
     );
     map.remove("data");
+    if let Some(progress) = raw_data
+        .as_object()
+        .filter(|data| data.contains_key("completed_steps") && data.contains_key("failed_step"))
+    {
+        let progress: Map<String, Value> = ["completed_steps", "failed_step", "results"]
+            .into_iter()
+            .filter_map(|key| progress.get(key).map(|v| (key.to_string(), v.clone())))
+            .collect();
+        map.insert("data".to_string(), Value::Object(progress));
+    }
     map.remove("preflight");
     map.remove("duration_ms");
     map.remove("sandbox");
@@ -823,8 +850,12 @@ fn extract_observation_data(value: &Value, tool_name: &str) -> Value {
             return structured_content.clone();
         }
     }
-    if let Some(parsed) = parse_json_from_content_text_blocks(value) {
-        return parsed;
+    // Browser content can itself be JSON text. It must not replace its sibling
+    // page identity, truncation state or persisted attachment references.
+    if !map.contains_key("target_id") && !map.contains_key("content_blocks") {
+        if let Some(parsed) = parse_json_from_content_text_blocks(value) {
+            return parsed;
+        }
     }
     value.clone()
 }

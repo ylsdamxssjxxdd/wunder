@@ -14,7 +14,7 @@ use crate::services::default_agent_protocol::{
     default_agent_meta_key, is_builtin_default_agent_name, record_from_default_agent_config,
     DefaultAgentConfig as DefaultAgentConfigMirror, DEFAULT_AGENT_ID_ALIAS, DEFAULT_AGENT_NAME,
 };
-use crate::services::default_tool_profile::curated_default_tool_names_with_desktop_extras;
+use crate::services::default_tool_profile::{default_tool_names, initialize_default_builtin_tools};
 use crate::services::inner_visible::layout::{
     agent_id_from_worker_card_file_name, defaults_worker_card_path, normalize_agent_file_stem,
     tooling_path, user_paths, worker_card_path, InnerVisiblePaths,
@@ -161,7 +161,6 @@ impl InnerVisibleService {
             &worker_card_skill_names,
             &bindings,
             mode,
-            desktop_mode(&config),
         )?;
         self.sync_regular_agents(
             user_id,
@@ -269,10 +268,8 @@ impl InnerVisibleService {
         worker_card_skill_names: &HashSet<String>,
         bindings: &UserToolBindings,
         mode: InnerVisibleSyncMode,
-        include_desktop_extras: bool,
     ) -> Result<()> {
-        let mut config =
-            self.load_default_agent_config(user_id, allowed_tool_names, include_desktop_extras)?;
+        let mut config = self.load_default_agent_config(user_id, allowed_tool_names)?;
         let has_persisted_state = self.has_persisted_default_agent_state(user_id)?;
         let worker_card_file = resolve_latest_worker_card_file(paths, Some(DEFAULT_AGENT_ID_ALIAS));
         let latest_file_mtime = worker_card_file
@@ -306,6 +303,13 @@ impl InnerVisibleService {
             }
         }
 
+        initialize_default_builtin_tools(
+            &self.user_store,
+            user_id,
+            &mut config,
+            allowed_tool_names,
+            worker_card_skill_names,
+        )?;
         self.write_default_agent_files(user_id, paths, &config, worker_card_skill_names)?;
         Ok(())
     }
@@ -501,7 +505,6 @@ impl InnerVisibleService {
         &self,
         user_id: &str,
         allowed_tool_names: &HashSet<String>,
-        include_desktop_extras: bool,
     ) -> Result<DefaultAgentConfigMirror> {
         let raw = self.user_store.get_meta(&default_agent_meta_key(user_id))?;
         if let Some(raw) = raw.as_deref().filter(|value| !value.trim().is_empty()) {
@@ -546,10 +549,7 @@ impl InnerVisibleService {
             preview_skill: false,
             model_name: None,
             ability_items: Vec::new(),
-            tool_names: curated_default_tool_names_with_desktop_extras(
-                allowed_tool_names,
-                include_desktop_extras,
-            ),
+            tool_names: default_tool_names(allowed_tool_names),
             declared_tool_names: Vec::new(),
             declared_skill_names: Vec::new(),
             visible_unit_ids: Vec::new(),
@@ -1072,10 +1072,6 @@ fn file_modified_ts(path: &Path) -> f64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_secs_f64())
         .unwrap_or(0.0)
-}
-
-fn desktop_mode(config: &Config) -> bool {
-    config.server.mode.trim().eq_ignore_ascii_case("desktop")
 }
 
 fn should_apply_worker_card_file(

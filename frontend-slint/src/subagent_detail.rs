@@ -45,6 +45,7 @@ pub fn install(app: &crate::MainWindow, api: Arc<NativeDesktop>) {
             return;
         };
         let parent = app.get_active_session_id().to_string();
+        app.set_process_child_session(child.as_str().into());
         let model = open_state.borrow().model.clone();
         {
             let mut current = open_state.borrow_mut();
@@ -125,6 +126,10 @@ pub fn install(app: &crate::MainWindow, api: Arc<NativeDesktop>) {
     // main timeline's reducer applies to its rows.
     let model = state.borrow().model.clone();
     app.on_subagent_toggle(move |payload| {
+        if payload < 0 {
+            crate::chat_process::toggle_entry(model.as_ref(), payload);
+            return;
+        }
         let Ok(payload) = usize::try_from(payload) else {
             return;
         };
@@ -168,23 +173,8 @@ pub fn install(app: &crate::MainWindow, api: Arc<NativeDesktop>) {
         }
         let mut row = row;
         row.open = !row.open;
+        crate::timeline_text::sync_process_child(&model, &row);
         model.set_row_data(payload, row);
-    });
-
-    let save_weak = weak.clone();
-    app.on_subagent_download(move |text| {
-        let Some(app) = save_weak.upgrade() else {
-            return;
-        };
-        let text = text.to_string();
-        if text.trim().is_empty() {
-            return;
-        }
-        match crate::file_dialog::save_text_file("保存回复", &text) {
-            Ok(Some(path)) => app.set_status(format!("已保存到 {path}").into()),
-            Ok(None) => {}
-            Err(error) => app.set_status(format!("保存失败：{error}").into()),
-        }
     });
 
     let open_weak = weak.clone();
@@ -250,7 +240,8 @@ fn refresh_tick(
             }
             match turns {
                 Some(turns) => {
-                    let rows = crate::native_chat::project_history(&turns);
+                    let mut rows = crate::native_chat::project_history(&turns);
+                    crate::timeline_text::restore_folds(&mut rows, &state.borrow().model);
                     state.borrow().model.set_vec(rows);
                     app.set_subagent_loading(false);
                     app.set_subagent_failed(false);

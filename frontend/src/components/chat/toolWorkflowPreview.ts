@@ -12,7 +12,8 @@ const PREVIEW_DEPTH_LIMIT = 3;
 const INTERNAL_RESULT_KEYS = new Set([
   'query_handle', 'cursor', 'next_cursor', 'event_type', 'session_id', 'turn_id',
   'item_id', 'tool_call_id', 'revision', 'request_usage', 'request_context_tokens',
-  'args', 'arguments', 'meta'
+  'args', 'arguments', 'meta', 'resolved_path', 'public_path', 'source_public_path',
+  'data_url', 'base64'
 ]);
 
 const asObject = (value: unknown): UnknownObject | null => {

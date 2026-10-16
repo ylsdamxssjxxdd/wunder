@@ -4,11 +4,12 @@
 // an entry expands, a streamed line wraps, and the layout follows, which is
 // what a virtualized ListView cannot do while the rows keep changing height.
 import { I18n } from "i18n.slint";
-import { Theme, TimelineRow, PatchCard, TextBlock } from "theme.slint";
+import { Theme, TimelineRow, PatchCard, TextBlock, TimelineSpin, TurnStatMetric } from "theme.slint";
 import { MarkdownBlock } from "markdown.slint";
 import { PatchDiffCard } from "patch_diff_card.slint";
 import { WorkflowDetail } from "workflow_detail.slint";
 import { ToolIcons } from "tool_icons.slint";
+import { ToolProcess } from "tool_process.slint";
 import { ScrollView } from "std-widgets.slint";
 
 // One entry kind per timeline row; the Rust projection stamps the matching
@@ -18,6 +19,12 @@ import { ScrollView } from "std-widgets.slint";
 // Kept out of ToolIcons because these are message statistics, not tools.
 export global StatsIcons {
     public pure function image(key: string) -> image {
+        key == "hashtag" ? @image-url("../assets/icons/hashtag.svg") :
+        key == "status-running" ? @image-url("../assets/icons/rotate-right.svg") :
+        key == "status-stopped" ? @image-url("../assets/icons/stop.svg") :
+        key == "status-error" ? @image-url("../assets/icons/xmark.svg") :
+        key == "status-waiting" ? @image-url("../assets/icons/fa-circle-question.svg") :
+        key == "coins" ? @image-url("../assets/icons/coins.svg") :
         key == "stopwatch" ? @image-url("../assets/icons/stopwatch.svg") :
         key == "gauge-high" ? @image-url("../assets/icons/gauge-high.svg") :
         key == "layer-group" ? @image-url("../assets/icons/layer-group.svg") :
@@ -28,6 +35,8 @@ export global StatsIcons {
     // The label is the tooltip and the accessible name. Slint has no map, so the
     // key is resolved through the same branch chain as the icon.
     public pure function label(key: string) -> string {
+        key == "hashtag" ? I18n.tl_stat_round :
+        key == "coins" ? I18n.tl_stat_credits :
         key == "stopwatch" ? I18n.tl_stat_duration :
         key == "gauge-high" ? I18n.tl_stat_speed :
         key == "layer-group" ? I18n.tl_stat_context :
@@ -35,6 +44,12 @@ export global StatsIcons {
         key == "screwdriver-wrench" ? I18n.tl_stat_tools :
         key;
     }
+    public pure function hint(key: string) -> string {
+        key == "gauge-high" ? I18n.tl_stat_speed_hint :
+        key == "layer-group" ? I18n.tl_stat_context_hint :
+        StatsIcons.label(key);
+    }
+
 }
 
 export global EntryKind {
@@ -49,10 +64,6 @@ export global EntryKind {
 
 // One shared rotation driver for every running spinner; a single timer in the
 // view keeps a busy turn from installing one timer per entry.
-export global TimelineSpin {
-    in-out property <float> angle: 0.0;
-}
-
 // The tool timeline gutter: a dot with the connector drawn through it. Slint has
 // no module-level constants, so the shared metrics live in a global.
 export global TimelineMetrics {
@@ -169,99 +180,106 @@ component UserBubble inherits HorizontalLayout {
     }
 }
 
+component FooterMetric inherits Rectangle {
+    in property <TurnStatMetric> metric;
+    width: metric-row.preferred-width; height: 22px;
+    accessible-role: text;
+    accessible-label: StatsIcons.label(root.metric.key) + " " + root.metric.value;
+    metric-row := HorizontalLayout {
+        spacing: 5px; alignment: start;
+        Image { y: 5px; width: 12px; height: 12px; source: StatsIcons.image(root.metric.key); colorize: Theme.muted; image-fit: contain; }
+        Text {
+            height: 22px; text: root.metric.key == "hashtag" ? I18n.tl_user_round(root.metric.value) : root.metric.value;
+            color: root.metric.key == "status-error" ? Theme.danger : Theme.muted; font-size: Theme.font-xs; vertical-alignment: center;
+        }
+    }
+    Tooltip { text: @markdown("\{StatsIcons.hint(root.metric.key)}"); }
+}
+
+// Wrap the compact metrics on narrow chat columns without squeezing values.
+component FooterStats inherits Rectangle {
+    in property <[TurnStatMetric]> metrics;
+    in property <length> available-width;
+    min-width: 0px; preferred-width: 0px;
+    height: footer-column.preferred-height;
+    footer-column := FlexboxLayout {
+        width: root.available-width;
+        spacing-horizontal: 12px; spacing-vertical: 0px; alignment: start;
+        for metric in root.metrics : FooterMetric {
+            metric: metric;
+        }
+    }
+}
+
 // ---- assistant body block (§7.3 A): page text, no bubble ----
 component BodyBlock inherits Rectangle {
     in property <TimelineRow> data;
     callback copy-text(string);
-    callback download-text(string);
     callback open-resource(string);
     height: body-column.preferred-height;
     // No background tint for this block: an answer can be a screenful of text,
     // and painting all of it on hover reads as the whole page changing colour.
     // The hover only reveals the actions, as on the web.
     // The block's own content is a *child* of this TouchArea, not a sibling:
-    // the hover-revealed copy and save buttons are touch areas too, and a
+    // the hover-revealed copy button is a touch area too, and a
     // sibling overlay hands the hover path over to them the moment the pointer
     // reaches one. The buttons then hide, the path comes back, and the whole
     // answer block flashes at the rate the pointer moves. As an ancestor the
     // block keeps its hover while any descendant holds the pointer.
     body-hover := TouchArea {
-        @children
-    }
-    body-column := VerticalLayout {
-        padding-left: Theme.timeline-padding; padding-right: Theme.timeline-padding; padding-top: 6px; padding-bottom: 6px;
-        spacing: 8px;
-        body-text := VerticalLayout {
-            spacing: 6px;
-            if root.data.blocks.length == 0 && root.data.text != "" : TextInput {
-                text: root.data.text; color: Theme.text; font-size: Theme.font-lg;
-                read-only: true; wrap: word-wrap;
+        body-column := VerticalLayout {
+            padding-left: Theme.timeline-padding; padding-right: Theme.timeline-padding; padding-top: 6px; padding-bottom: 6px;
+            spacing: 8px;
+            body-text := VerticalLayout {
+                spacing: 6px;
+                if root.data.blocks.length == 0 && root.data.text != "" : TextInput {
+                    text: root.data.text; color: Theme.text; font-size: Theme.font-lg;
+                    read-only: true; wrap: word-wrap;
+                }
+                for block in root.data.blocks : MarkdownBlock {
+                    block: block;
+                    copy-code(text) => { root.copy-text(text); }
+                    open-resource(path) => { root.open-resource(path); }
+                }
             }
-            for block in root.data.blocks : MarkdownBlock {
-                block: block;
-                copy-code(text) => { root.copy-text(text); }
-                open-resource(path) => { root.open-resource(path); }
-            }
-        }
-        // The end-of-turn line: metrics on the left, actions on the right.
-        // It stays visible for a frozen block (no hover needed) because it is
-        // also the only place the turn's duration and speed are reported; a
-        // streaming block has neither and stays free of controls so the text
-        // never jumps while tokens arrive.
-        // Each metric is icon + value with the label as the tooltip, matching
-        // the web messenger's stats row.
-        if root.data.foldable : HorizontalLayout {
-            height: 22px; spacing: 12px;
-            for metric in root.data.stats : HorizontalLayout {
-                // Icon and value are laid out by this inner row rather than
-                // positioned inside a fixed-width box: a `width:` guess that is
-                // even a pixel short clips the neighbouring value.
-                height: parent.height; spacing: 5px; alignment: start;
-                Image {
-                    y: 5px; width: 12px; height: 12px;
-                    source: StatsIcons.image(metric.key);
-                    colorize: Theme.muted; image-fit: contain;
+            // The end-of-turn line: metrics on the left, actions on the right.
+            // It stays visible for a frozen block (no hover needed) because it is
+            // also the only place the turn's duration and speed are reported; a
+            // streaming block has neither and stays free of controls so the text
+            // never jumps while tokens arrive.
+            // Each metric is icon + value with the label as the tooltip, matching
+            // the web messenger's stats row.
+            if root.data.foldable || root.data.stats.length > 0 : HorizontalLayout {
+                spacing: 8px;
+                FooterStats { metrics: root.data.stats; available-width: root.width - 2 * Theme.timeline-padding - 60px; horizontal-stretch: 1; }
+                copy-hit := Rectangle {
+                    visible: root.data.text != "";
+                    width: 52px; height: 22px; border-radius: Theme.radius-tag;
+                    // The web messenger keeps the actions out of the reading flow
+                    // until the block is hovered; the metrics line stays put.
+                    opacity: body-hover.has-hover || copy-focus.has-focus ? 1 : 0;
+                    accessible-role: button; accessible-label: I18n.common_copy;
+                    accessible-action-default => { root.copy-text(root.data.text); }
+                    forward-focus: copy-focus;
+                    background: copy-area.has-hover ? Theme.selected : transparent;
+                    Image {
+                        x: 8px; y: 5px; width: 12px; height: 12px;
+                        source: @image-url("../assets/icons/copy.svg"); colorize: Theme.muted; image-fit: contain;
+                    }
+                    Text {
+                        x: 24px; y: 0px; width: self.preferred-width; height: parent.height;
+                        text: I18n.common_copy; color: Theme.muted; font-size: Theme.font-xs;
+                        vertical-alignment: center;
+                    }
+                    copy-focus := FocusScope {
+                        key-pressed(event) => {
+                            if event.text == " " || event.text == Key.Return { root.copy-text(root.data.text); return accept; }
+                            return reject;
+                        }
+                    }
+                    copy-area := TouchArea { mouse-cursor: pointer; clicked => { copy-focus.focus(); root.copy-text(root.data.text); } }
+                    Tooltip { text: @markdown("\{I18n.common_copy}"); }
                 }
-                Text {
-                    height: parent.height; width: self.preferred-width;
-                    text: metric.value; color: Theme.muted; font-size: Theme.font-xs;
-                    vertical-alignment: center;
-                }
-                accessible-role: text;
-                accessible-label: StatsIcons.label(metric.key) + " " + metric.value;
-            }
-            Rectangle { horizontal-stretch: 1; }
-            copy-hit := Rectangle {
-                width: 52px; height: 22px; border-radius: Theme.radius-tag;
-                // The web messenger keeps the actions out of the reading flow
-                // until the block is hovered; the metrics line stays put.
-                opacity: body-hover.has-hover ? 1 : 0;
-                background: copy-area.has-hover ? Theme.selected : transparent;
-                Image {
-                    x: 8px; y: 5px; width: 12px; height: 12px;
-                    source: @image-url("../assets/icons/copy.svg"); colorize: Theme.muted; image-fit: contain;
-                }
-                Text {
-                    x: 24px; y: 0px; width: self.preferred-width; height: parent.height;
-                    text: I18n.common_copy; color: Theme.muted; font-size: Theme.font-xs;
-                    vertical-alignment: center;
-                }
-                copy-area := TouchArea { mouse-cursor: pointer; clicked => { root.copy-text(root.data.text); } }
-            }
-            save-hit := Rectangle {
-                width: 52px; height: 22px; border-radius: Theme.radius-tag;
-                opacity: body-hover.has-hover ? 1 : 0;
-                background: save-area.has-hover ? Theme.selected : transparent;
-                Image {
-                    x: 8px; y: 5px; width: 12px; height: 12px;
-                    source: @image-url("../assets/icons/save.svg"); colorize: Theme.muted; image-fit: contain;
-                }
-                Text {
-                    x: 24px; y: 0px; width: self.preferred-width; height: parent.height;
-                    text: I18n.common_save; color: Theme.muted; font-size: Theme.font-xs;
-                    vertical-alignment: center;
-                }
-                save-area := TouchArea { mouse-cursor: pointer; clicked => { root.download-text(root.data.text); } }
             }
         }
     }
@@ -391,6 +409,7 @@ component FoldEntry inherits Rectangle {
                     x: 10px; y: 8px; width: parent.width - 20px; height: parent.height - 16px;
 
                     tool-body := WorkflowDetail {
+                        sections: root.data.sections;
                         fallback: root.data.detail;
                         copy(text) => { root.copy-text(text); }
                     }
@@ -447,29 +466,44 @@ component GroupBar inherits Rectangle {
 // come with it, because opening the process is the user asking to see the work.
 component ProcessBar inherits Rectangle {
     in property <TimelineRow> data;
+    in property <length> process-height: Theme.workflow-height;
     callback toggle(int);
+    callback process-page(int, int);
+    callback copy-text(string);
+    callback open-resource(string);
     // One step heavier than a batch bar: it owns a whole turn's process.
-    height: 34px;
+    height: root.data.open ? 40px + process-body.height : 34px;
     border-radius: Theme.radius-tag;
     // Keep the work-process row calm while the pointer moves across it. The
     // affordance is the small left control, matching the compact web header.
     background: transparent;
+    accessible-role: button;
+    accessible-label: root.data.text + " " + root.data.summary;
+    accessible-action-default => { root.toggle(root.data.payload); }
+    forward-focus: process-focus;
+    process-focus := FocusScope {
+        key-pressed(event) => {
+            if event.text == " " || event.text == Key.Return { root.toggle(root.data.payload); return accept; }
+            return reject;
+        }
+    }
     bar-touch := TouchArea {
         x: Theme.timeline-padding; y: 0px;
         width: parent.width - Theme.timeline-padding * 2;
-        height: parent.height;
+        height: 34px;
         mouse-cursor: pointer;
-        clicked => { root.toggle(root.data.payload); }
+        clicked => { process-focus.focus(); root.toggle(root.data.payload); }
     }
     HorizontalLayout {
+        y: 0px; height: 34px; width: parent.width;
         padding-left: Theme.timeline-padding; padding-right: Theme.timeline-padding;
         spacing: 0px;
         process-gutter := Rectangle {
             width: 22px; height: parent.height;
             Rectangle {
                 x: 1px; y: 8px; width: 16px; height: 16px;
-                border-radius: 8px;
-                border-width: 1px; border-color: process-hit.has-hover ? Theme.border-strong : Theme.border;
+                border-radius: 8px; border-width: 1px;
+                border-color: process-hit.has-hover ? Theme.border-strong : Theme.border;
                 background: process-hit.has-hover ? Theme.hover : Theme.surface;
             }
             Image {
@@ -481,7 +515,7 @@ component ProcessBar inherits Rectangle {
             }
             process-hit := TouchArea {
                 mouse-cursor: pointer;
-                clicked => { root.toggle(root.data.payload); }
+                clicked => { process-focus.focus(); root.toggle(root.data.payload); }
             }
         }
         HorizontalLayout {
@@ -500,6 +534,25 @@ component ProcessBar inherits Rectangle {
                 visible: root.data.summary != "";
             }
         }
+    }
+    process-body := ToolProcess {
+        visible: root.data.open;
+        x: 0px; y: 34px;
+        width: parent.width;
+        viewport-limit: root.process-height;
+        entries: root.data.open ? root.data.process-entries : [];
+        paged: root.data.process-paged;
+        has-older: root.data.process-older;
+        has-newer: root.data.process-newer;
+        loading: root.data.process-loading;
+        failed: root.data.process-error;
+        revision: root.data.process-revision;
+        active: root.data.open && root.data.process-root != "" && !root.data.process-local;
+        live: root.data.status-kind == 1;
+        page(direction) => { root.process-page(root.data.payload, direction); }
+        toggle(index) => { root.toggle(index); }
+        copy-text(text) => { root.copy-text(text); }
+        open-resource(path) => { root.open-resource(path); }
     }
 }
 
@@ -586,9 +639,10 @@ component SubagentCard inherits Rectangle {
 
 export component TimelineRowView inherits Rectangle {
     in property <TimelineRow> entry;
+    in property <length> process-height: Theme.workflow-height;
     callback toggle(int);
+    callback process-page(int, int);
     callback copy-text(string);
-    callback download-text(string);
     callback open-resource(string);
     callback open-subagent(string);
     callback stop-subagent(string);
@@ -605,7 +659,7 @@ export component TimelineRowView inherits Rectangle {
             || root.entry.kind == EntryKind.process
             || root.entry.group-idx == -1
             || root.entry.group-open)
-        && (!root.in-process || root.entry.process-open);
+        && !root.in-process;
     visible: root.shown;
     // The column sizes every row from its own content, so an unfold or a
     // wrapped line simply makes the timeline taller. A hidden row has to give
@@ -615,33 +669,36 @@ export component TimelineRowView inherits Rectangle {
     cell := VerticalLayout {
         width: root.width;
         spacing: 0px; alignment: start;
-        if root.entry.kind == EntryKind.user : UserBubble {
+        if root.shown && root.entry.kind == EntryKind.user : UserBubble {
             data: root.entry;
             copy-text(text) => { root.copy-text(text); }
             open-resource(path) => { root.open-resource(path); }
         }
-        if root.entry.kind == EntryKind.body : BodyBlock {
+        if root.shown && root.entry.kind == EntryKind.body : BodyBlock {
             data: root.entry;
             copy-text(text) => { root.copy-text(text); }
-            download-text(text) => { root.download-text(text); }
             open-resource(path) => { root.open-resource(path); }
         }
-        if root.entry.kind == EntryKind.reason || root.entry.kind == EntryKind.tool : FoldEntry {
+        if root.shown && (root.entry.kind == EntryKind.reason || root.entry.kind == EntryKind.tool) : FoldEntry {
             data: root.entry;
             in-group: root.entry.group-idx != -1;
             toggle(index) => { root.toggle(index); }
             copy-text(text) => { root.copy-text(text); }
             open-resource(id) => { root.open-resource(id); }
         }
-        if root.entry.kind == EntryKind.group : GroupBar {
+        if root.shown && root.entry.kind == EntryKind.group : GroupBar {
             data: root.entry;
             toggle(index) => { root.toggle(index); }
         }
-        if root.entry.kind == EntryKind.process : ProcessBar {
+        if root.shown && root.entry.kind == EntryKind.process : ProcessBar {
             data: root.entry;
+            process-height: root.process-height;
             toggle(index) => { root.toggle(index); }
+            process-page(index, direction) => { root.process-page(index, direction); }
+            copy-text(text) => { root.copy-text(text); }
+            open-resource(path) => { root.open-resource(path); }
         }
-        if root.entry.kind == EntryKind.subagent : SubagentCard {
+        if root.shown && root.entry.kind == EntryKind.subagent : SubagentCard {
             data: root.entry;
             open-subagent(id) => { root.open-subagent(id); }
             stop-subagent(id) => { root.stop-subagent(id); }
@@ -663,8 +720,8 @@ export component TimelineView inherits Rectangle {
     // smoke checks (they assert the position holds while the user reads back).
     out property <length> scroll-y: rows-scroll.content-y;
     callback toggle(int);
+    callback process-page(int, int);
     callback copy-text(string);
-    callback download-text(string);
     callback open-resource(string);
     callback open-subagent(string);
     callback stop-subagent(string);
@@ -677,7 +734,7 @@ export component TimelineView inherits Rectangle {
     // Push the viewport to the newest content on request; the projection calls
     // this when it follows the stream, and the "back to latest" action does too.
     public function scroll-to-end() {
-        rows-scroll.content-y = rows-scroll.visible-height - rows-scroll.content-height;
+        rows-scroll.content-y = min(0px, rows-scroll.visible-height - rows-scroll.content-height);
     }
     public function scroll-to-top() {
         root.follow-output = false;
@@ -718,16 +775,17 @@ export component TimelineView inherits Rectangle {
             spacing: 0px; alignment: start;
             for item in root.rows : TimelineRowView {
                 entry: item;
+                process-height: min(Theme.workflow-height, root.height * 0.64);
                 toggle(target) => { root.toggle(target); }
+                process-page(index, direction) => { root.process-page(index, direction); }
                 copy-text(text) => { root.copy-text(text); }
-                download-text(text) => { root.download-text(text); }
-                open-resource(id) => { root.open-resource(id); }
+                    open-resource(id) => { root.open-resource(id); }
                 open-subagent(id) => { root.open-subagent(id); }
                 stop-subagent(id) => { root.stop-subagent(id); }
             }
         }
         scrolled => {
-            root.follow-output = self.content-y + self.visible-height >= self.content-height - 32px;
+            root.follow-output = self.visible-height - self.content-height - self.content-y >= -32px;
         }
     }
     // ---- turn ruler (right edge): compact locator ticks sit around the

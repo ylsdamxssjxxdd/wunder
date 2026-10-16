@@ -64,7 +64,7 @@ pub async fn execute_builtin_tool(
         "ptc" => command_tool::execute_ptc(context, args).await,
         "列出文件" => file_tool::list_files(context, args).await,
         "搜索内容" => search_content(context, args).await,
-        "glob" => glob_tool::glob_files(context, args).await,
+        glob_tool::TOOL_GLOB => glob_tool::glob_files(context, args).await,
         "读取文件" => file_tool::read_files(context, args).await,
         read_image_tool::TOOL_READ_IMAGE => read_image_tool::tool_read_image(context, args).await,
         multimodal_generation_tool::TOOL_GENERATE_SPEECH => {

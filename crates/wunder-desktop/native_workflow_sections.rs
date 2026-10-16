@@ -29,8 +29,9 @@ fn action_label(action: &str) -> &'static str {
     }
 }
 fn push_body(section: &mut Section, body: &str, kind: &str) {
-    for value in body
-        .lines()
+    let mut values = body.lines();
+    for value in values
+        .by_ref()
         .take(120usize.saturating_sub(section.lines.len()))
     {
         section.lines.push(line(
@@ -39,7 +40,7 @@ fn push_body(section: &mut Section, body: &str, kind: &str) {
             String::new(),
         ));
     }
-    if body.lines().count() > 120 {
+    if values.next().is_some() {
         section
             .lines
             .push(line("仅展示前 120 行".into(), "note", String::new()));
@@ -63,12 +64,22 @@ pub(super) fn project(tool: &str, payload: &Value, state: &str, fallback: &str) 
         .get("args")
         .or_else(|| payload.get("arguments"))
         .unwrap_or(&Value::Null);
+    let parsed_args = args
+        .as_str()
+        .filter(|value| value.len() <= 8192)
+        .and_then(|value| serde_json::from_str::<Value>(value).ok());
+    let args = parsed_args.as_ref().unwrap_or(args);
     let failed = matches!(state, "failed" | "error" | "rejected")
         || result["ok"] == false
         || result["success"] == false;
-    let pending = matches!(state, "running" | "queued");
-    let mut sections = Vec::new();
-    if tool == "apply_patch" || tool.contains("应用补丁") {
+    let pending = matches!(
+        state,
+        "running" | "queued" | "pending" | "loading" | "streaming"
+    );
+    let mut sections = structured::project(tool, data, args);
+    if !sections.is_empty() {
+        // Structured groups already preserve the tool's readable result.
+    } else if tool == "apply_patch" || tool.contains("应用补丁") {
         // The structured patch cards are projected once in the shared module;
         // this view renders the same files as readable sections.
         for file in super::patch::project(tool, payload, args).iter().take(8) {
@@ -92,7 +103,11 @@ pub(super) fn project(tool: &str, payload: &Value, state: &str, fallback: &str) 
             }));
             sections.push(section);
         }
-    } else if tool == "execute_command" || tool.contains("执行命令") {
+    } else if matches!(
+        tool,
+        "execute_command" | "run_command" | "shell" | "运行命令" | "command_session"
+    ) || tool.contains("执行命令")
+    {
         let records = data["results"]
             .as_array()
             .map(Vec::as_slice)
@@ -100,7 +115,7 @@ pub(super) fn project(tool: &str, payload: &Value, state: &str, fallback: &str) 
         for record in records.iter().take(3) {
             let mut command = text(record, &["command", "cmd"]);
             if command.is_empty() {
-                command = text(args, &["command", "cmd"]);
+                command = text(args, &["command", "cmd", "content", "input", "script"]);
             }
             let exit = record
                 .get("returncode")
@@ -130,6 +145,13 @@ pub(super) fn project(tool: &str, payload: &Value, state: &str, fallback: &str) 
                     push_body(&mut section, body, kind);
                 }
             }
+            if section.lines.is_empty() {
+                push_body(
+                    &mut section,
+                    fallback,
+                    if failed { "error" } else { "context" },
+                );
+            }
             sections.push(section);
         }
     } else if tool == "web_search" || tool.contains("网页搜索") {
@@ -137,6 +159,7 @@ pub(super) fn project(tool: &str, payload: &Value, state: &str, fallback: &str) 
         // line per source, and an explicit note when the batch was clipped.
         let queries = data["queries"]
             .as_array()
+            .or_else(|| args["queries"].as_array())
             .map(|values| {
                 values
                     .iter()
@@ -375,3 +398,6 @@ mod tests {
 
 #[path = "native_compaction_view.rs"]
 mod compaction;
+
+#[path = "native_workflow_structured.rs"]
+mod structured;

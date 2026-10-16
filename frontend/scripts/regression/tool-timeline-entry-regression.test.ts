@@ -12,6 +12,9 @@ import {
   isTimelineEditToolRun
 } from '../../src/components/chat/toolTimelinePatch';
 import type { RawToolRun, WorkflowItem } from '../../src/components/chat/toolWorkflowRunModel';
+import { buildWorkflowToolRuns } from '../../src/components/chat/toolWorkflowRunModel';
+import { buildTimelineStructuredView } from '../../src/components/chat/toolTimelineStructured';
+import { extractToolResultDataObject } from '../../src/components/chat/toolWorkflowResultPayload';
 
 const t = (key: string, params?: Record<string, unknown>): string =>
   params && params.line !== undefined ? `${key}:${params.line}` : key;
@@ -121,6 +124,99 @@ test('tool results never leak into the collapsed summary', () => {
     })
   }), t);
   assert.equal(query.summary, 'timeline dedup');
+});
+
+test('question panels retain questions, options and recommendation through nested result envelopes', () => {
+  for (const toolName of ['问询面板', 'question_panel', 'ask_panel']) {
+    const run = baseRun({
+      toolName,
+      resultItem: callItem({ result: { ok: true, data: { action: 'question_panel', state: 'awaiting_input',
+        summary: 'Fixture panel summary', data: { questions: [
+          { question: 'Choose a fixture option?', multiple: true, options: [
+            { label: 'Option A', description: 'Fixture description', recommended: true }, 'Option B'
+          ] }
+        ] } } } })
+    });
+    const view = buildTimelineStructuredView(run, t);
+    assert.equal(view?.variant, 'question');
+    assert.equal(view?.groups[0].title, 'Choose a fixture option?');
+    assert.equal(view?.groups[0].rows[0].title, 'chat.toolWorkflow.detail.multipleChoice');
+    assert.equal(view?.groups[0].rows[1].body, 'Fixture description');
+    assert.equal(view?.groups[0].rows[1].meta, 'chat.inquiry.recommended');
+    assert.equal(view?.groups[0].rows[2].title, 'Option B');
+    assert.ok(buildTimelineToolEntry(run, t).detailText.includes('Choose a fixture option?'));
+  }
+});
+
+test('legacy and pending question panels recover the call payload without requiring a result', () => {
+  const run = baseRun({ toolName: '问询面板', callItem: callItem({
+    args: { question: 'Fixture question?', options: ['Option A', 'Option B'] }
+  }, { status: 'running' }) });
+  const view = buildTimelineStructuredView(run, t);
+  assert.equal(view?.groups[0].title, 'Fixture question?');
+  assert.equal(view?.groups[0].rows[1].title, 'Option A');
+  assert.equal(buildTimelineToolEntry(run, t).expandable, true);
+});
+
+test('read image preserves source metadata beside the processed media result', () => {
+  const data = { path: 'fixtures/sample.png', resolved_path: 'hidden-source', media_kind: 'image', size_bytes: 128,
+    result: { kind: 'image', name: 'sample.png', frame_count: 1, warnings: ['Fixture warning'],
+      attachments: [{ name: 'sample.png', content_type: 'image/png', public_path: 'hidden-resource' }] } };
+  // A media result is useful payload, not another envelope to unwrap.
+  assert.equal(extractToolResultDataObject({ data })?.path, 'fixtures/sample.png');
+  for (const toolName of ['读图工具', 'read_image', 'view_image']) {
+    const run = baseRun({ toolName, resultItem: callItem({ result: { data: { action: 'read_image', data } } }) });
+    const view = buildTimelineStructuredView(run, t);
+    assert.equal(view?.variant, 'media');
+    assert.equal(view?.groups[0].rows[0].title, 'fixtures/sample.png');
+    assert.match(view!.groups[0].rows[0].body!, /128/);
+    assert.match(view!.groups[0].rows[0].body!, /Fixture warning/);
+    assert.doesNotMatch(JSON.stringify(view), /hidden-source|hidden-resource|attachments/);
+    assert.doesNotMatch(buildTimelineToolEntry(run, t).detailText, /hidden-source|hidden-resource/);
+  }
+});
+
+test('durable terminal panels recover stored arguments and raw tool results', () => {
+  const [run] = buildWorkflowToolRuns([{ id: 'fixture-panel', toolName: '问询面板', eventType: 'tool_result',
+    status: 'completed', detail: '{}', toolCallRawDetail: JSON.stringify({
+      arguments: JSON.stringify({ question: 'Stored fixture question?', options: ['Option A'] })
+    }) }]);
+  assert.equal(buildTimelineStructuredView(run, t)?.groups[0].title, 'Stored fixture question?');
+  const rawRun = baseRun({ toolName: 'read_file', resultItem: callItem({}, {
+    toolResultRawDetail: JSON.stringify({ data: { data: { content: 'Stored fixture content' } } })
+  }) });
+  assert.equal(buildTimelineToolEntry(rawRun, t).detailText, 'Stored fixture content');
+  assert.match(JSON.stringify(buildTimelineStructuredView(rawRun, t)), /Stored fixture content/);
+});
+
+test('generic tool text, content blocks and structured payloads stay readable without internal handles', () => {
+  for (const data of [
+    { data: { text: 'Fixture nested content' } },
+    { content: [{ type: 'text', text: 'Fixture block content' }] },
+    { structuredContent: { value: 'Fixture structured content', query_handle: 'hidden-handle' } },
+    { count: 2, query_handle: 'hidden-handle', resolved_path: 'hidden-source' }
+  ]) {
+    const entry = buildTimelineToolEntry(baseRun({ toolName: 'fixture_tool',
+      resultItem: callItem({ result: { data } }) }), t);
+    assert.ok(entry.detailText);
+    assert.doesNotMatch(entry.detailText, /hidden-handle|hidden-source/);
+    assert.equal(entry.summary, '');
+  }
+});
+
+test('panel and plan projections cap item counts and text length', () => {
+  const question = { question: 'q'.repeat(2000), options: Array(30).fill('o'.repeat(2000)) };
+  const view = buildTimelineStructuredView(baseRun({ toolName: 'question_panel',
+    resultItem: callItem({ data: { questions: Array(30).fill(question) } }) }), t)!;
+  assert.equal(view.groups.length, 4);
+  assert.equal(view.groups[0].rows.length, 5);
+  assert.equal(view.groups[0].title!.length, 801);
+  const plan = buildTimelineStructuredView(baseRun({ toolName: '计划面板',
+    callItem: callItem({ args: { plan: Array(30).fill({ step: 'Fixture step', status: 'in_progress' }) } }),
+    resultItem: callItem({ data: { status: 'ok' } }) }), t)!;
+  assert.equal(plan.variant, 'plan');
+  assert.equal(plan.groups[0].rows.length, 12);
+  assert.equal(plan.groups[0].rows[0].meta, 'chat.toolWorkflow.statusRunning');
 });
 
 test('text_edit replace folds into a red/green diff card with +/- stats', () => {

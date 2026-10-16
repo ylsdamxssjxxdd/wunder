@@ -124,7 +124,7 @@ const CANONICAL_WEB_SEARCH: &str = "网页搜索";
 const CANONICAL_WEB_FETCH: &str = "网页抓取";
 const CANONICAL_SUBAGENT: &str = "子智能体控制";
 const CANONICAL_READ_IMAGE: &str = "读图工具";
-const CANONICAL_GLOB: &str = "glob";
+const CANONICAL_GLOB: &str = "文件名匹配";
 
 /// The pack helper an MCP server exposes to browse and call its own remote tools.
 /// Mirrors `services/tools/mcp_pack.rs:8`, whose constant is module-private.
@@ -458,7 +458,7 @@ mod tests {
         ("读取文件", ToolAccess::Explore, "读取", "Read", true),
         ("列出文件", ToolAccess::Explore, "列出", "List", true),
         ("搜索内容", ToolAccess::Explore, "搜索", "Search", true),
-        ("glob", ToolAccess::Explore, "匹配文件", "Find files", true),
+        ("文件名匹配", ToolAccess::Explore, "匹配文件", "Find files", true),
         (
             "读图工具",
             ToolAccess::Explore,
@@ -799,6 +799,7 @@ mod tests {
         // Image reads and glob patterns are exploring, same as the reference cards.
         assert!(present("读图工具").workspace_read);
         assert!(present("read_image").workspace_read);
+        assert!(present("文件名匹配").workspace_read);
         assert!(present("glob").workspace_read);
         // Web and knowledge reads keep their own card; their result is the point.
         assert!(!present("web_search").workspace_read);

@@ -123,6 +123,7 @@ export interface ThreadBlockUpsertPayload {
 
 /** change_type === 'turn_upsert' — turn accepted (user bubble content included). */
 export interface ThreadTurnUpsertPayload {
+  stop_reason?: string | null;
   root_turn_id?: string;
   turn_id: string;
   user_round?: number;
@@ -133,6 +134,7 @@ export interface ThreadTurnUpsertPayload {
 
 /** change_type === 'turn_status' — turn lifecycle transition. */
 export interface ThreadTurnStatusPayload {
+  stop_reason?: string | null;
   turn_id: string;
   status: string;
 }
@@ -177,6 +179,7 @@ export function hasEmbeddedItemPayload(row: Record<string, unknown>): boolean {
 // ---------------------------------------------------------------------------
 
 export interface ThreadTurnState {
+  stopReason?: string;
   rootTurnId?: string;
   turnId: string;
   userRound: number | null;

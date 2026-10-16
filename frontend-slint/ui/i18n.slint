@@ -94,6 +94,16 @@ export global I18n {
     out property <string> dk_folder_name: zh ? "目录名称" : "Folder name";
     out property <string> dk_clear_workspace: zh ? "清空工作目录" : "Clear workspace";
     out property <string> dk_clear_confirm: zh ? "将永久删除当前工作目录中的全部文件与目录，且无法恢复。确认清空？" : "This permanently deletes every file and folder in the current working directory and cannot be undone. Clear everything?";
+    out property <string> sb_thread_multi_select: zh ? "多选" : "Multi-select";
+    out property <string> sb_thread_select_all: zh ? "全选" : "Select all";
+    public pure function sb_thread_selected(count: string) -> string { return zh ? "已选 " + count + " 项" : "" + count + " selected"; }
+    out property <string> sb_thread_archive: zh ? "归档" : "Archive";
+    out property <string> tl_state_queued: zh ? "排队中" : "Queued";
+    out property <string> tl_state_question: zh ? "等待回答" : "Waiting for answers";
+    out property <string> tl_state_input: zh ? "等待用户输入" : "Waiting for input";
+    out property <string> tl_state_confirm: zh ? "等待确认" : "Waiting for confirmation";
+    out property <string> tl_state_approval: zh ? "等待审批" : "Waiting for approval";
+    out property <string> tl_state_error: zh ? "错误" : "Error";
     out property <string> common_save: zh ? "保存" : "Save";
     out property <string> common_saving: zh ? "保存中" : "Saving…";
     out property <string> common_cancel: zh ? "取消" : "Cancel";
@@ -237,10 +247,6 @@ export global I18n {
     out property <string> preview_close: zh ? "关闭预览" : "Close preview";
     out property <string> sidebar_workspaces: zh ? "工作区" : "Workspaces";
     out property <string> sidebar_settings: zh ? "设置" : "Settings";
-    out property <string> sb_thread_multi_select: zh ? "多选" : "Multi-select";
-    out property <string> sb_thread_select_all: zh ? "全选" : "Select all";
-    public pure function sb_thread_selected(count: int) -> string { return zh ? "已选 \{count} 项" : "\{count} selected"; }
-    out property <string> sb_thread_archive: zh ? "归档" : "Archive";
     out property <string> ws_menu_new_thread: zh ? "新建线程" : "New thread";
     out property <string> ws_menu_edit: zh ? "编辑工作区" : "Edit workspace";
     public pure function sb_rename_body(name: string) -> string { return zh ? "重命名「" + name + "」为：" : "Rename “" + name + "” to:"; }
@@ -1179,6 +1185,15 @@ export global I18n {
     out property <string> sub_detail_empty: zh ? "子线程暂无内容" : "The child thread has no content yet";
     out property <string> sub_detail_load_failed: zh ? "子线程加载失败" : "Failed to load the child thread";
     out property <string> sub_detail_loading: zh ? "正在加载子线程…" : "Loading the child thread…";
+    out property <string> tl_process_loading: zh ? "正在加载…" : "Loading…";
+    out property <string> tl_process_retry: zh ? "加载失败，重试" : "Loading failed. Retry";
+    out property <string> tl_process_earlier: zh ? "查看更早的过程" : "Earlier steps";
+    out property <string> tl_process_later: zh ? "查看后续过程" : "Later steps";
+    out property <string> tl_stat_round: zh ? "用户轮次" : "User round";
+    public pure function tl_user_round(round: string) -> string { return zh ? "第 " + round + " 个用户轮次" : "User round " + round + ""; }
+    out property <string> tl_stat_credits: zh ? "额度" : "Quota";
+    out property <string> tl_stat_speed_hint: zh ? "有效模型输出 token / 生成流式时间；不含等待和工具执行，优先使用本轮已测量的汇总速度。无法可靠测量时显示 -。" : "Measured output tokens per streaming second, excluding wait and tool execution. Uses the turn aggregate when available; - means unavailable.";
+    out property <string> tl_stat_context_hint: zh ? "最近一次模型请求观测的上下文占用，不是累计消耗；压缩后重新观测，可能下降。" : "Context occupancy observed for the latest model request, rather than cumulative consumption. It may decrease after compaction.";
     out property <string> tl_stat_duration: zh ? "耗时" : "Duration";
     out property <string> tl_stat_speed: zh ? "生成速度" : "Generation speed";
     out property <string> tl_stat_context: zh ? "上下文占用" : "Context occupancy";

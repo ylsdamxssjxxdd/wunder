@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { ChatMockService, MOCK_SESSION } from '../support/chatMockService';
 
-test('composer shows durable plans before process hydration and keeps updates across reload', async ({ page }) => {
+test('composer toggles plan details without removing progress across updates and reload', async ({ page }) => {
   const service = new ChatMockService();
   const turn = service.seedPlanTurn();
   await service.install(page);
@@ -15,27 +15,63 @@ test('composer shows durable plans before process hydration and keeps updates ac
     await page.waitForURL('**/app/**');
     await page.goto(`/app/chat?session_id=${MOCK_SESSION}`);
     const dock = page.locator('.status-dock');
+    const pill = dock.locator('.status-dock-pill');
+    const panel = dock.locator('.status-dock-pop');
+    const progress = pill.locator('.status-dock-steps');
+    const current = pill.locator('.status-dock-current');
     const first = dock.locator('.status-dock-step').nth(0);
     const second = dock.locator('.status-dock-step').nth(1);
     await expect(dock).toBeVisible();
-    await expect(dock).toContainText('Fixture plan progress');
+    await expect(pill).toHaveAttribute('aria-expanded', 'false');
+    await expect(panel).toHaveCount(0);
+    await expect(progress).toContainText('1 / 2');
+    await expect(current).toHaveText('First fixture step');
+    await pill.click();
+    await expect(pill).toHaveAttribute('aria-expanded', 'true');
+    await expect(panel).toBeVisible();
+    await expect(panel).toContainText('Fixture plan progress');
     await expect(first).toHaveClass(/is-in_progress/);
     await expect(second).toHaveClass(/is-pending/);
+    await pill.click();
+    await expect(panel).toHaveCount(0);
+    await expect(pill).toBeVisible();
+    await pill.focus();
+    await pill.press('Enter');
+    await expect(panel).toBeVisible();
     await expect.poll(() => service.subscriptions.filter(sub => sub.display).length).toBeGreaterThan(0);
     service.updatePlanTurn(turn, true);
+    await expect(pill).toHaveAttribute('aria-expanded', 'true');
+    await expect(progress).toContainText('2 / 2');
+    await expect(current).toHaveText('Second fixture step');
     await expect(first).toHaveClass(/is-completed/);
     await expect(second).toHaveClass(/is-in_progress/);
     await page.reload();
     await expect(dock).toBeVisible();
+    await expect(panel).toHaveCount(0);
+    await expect(progress).toContainText('2 / 2');
+    await pill.click();
     await expect(first).toHaveClass(/is-completed/);
     await expect(second).toHaveClass(/is-in_progress/);
-    await dock.locator('.status-dock-pop').hover();
     await dock.locator('.status-dock-pop-close').click();
-    await expect(dock).toHaveCount(0);
+    await expect(panel).toHaveCount(0);
+    await expect(pill).toBeVisible();
+    await expect(pill).toHaveAttribute('aria-expanded', 'false');
+    await expect(pill).toBeFocused();
+    await expect(progress).toContainText('2 / 2');
     service.updatePlanTurn(turn);
-    await expect(dock).toBeVisible();
+    await expect(progress).toContainText('1 / 2');
+    await expect(current).toHaveText('First fixture step');
+    await expect(panel).toHaveCount(0);
+    await pill.click();
     await expect(first).toHaveClass(/is-in_progress/);
+    await dock.locator('.status-dock-pop-close').focus();
+    await page.keyboard.press('Escape');
+    await expect(panel).toHaveCount(0);
+    await expect(pill).toBeFocused();
+    await pill.click();
+    await expect(panel).toBeVisible();
     expect(errors).toEqual([]);
+    expect(service.failures).toEqual([]);
   } finally {
     await service.dispose();
   }

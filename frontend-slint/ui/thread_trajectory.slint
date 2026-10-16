@@ -5,6 +5,7 @@
 import { Theme, TrajRow, TrajSpan, TrajTick, TrajBoundary, TrajTiming, TrajSection, TrajTab, TrajSearchHit } from "theme.slint";
 import { I18n } from "i18n.slint";
 import { ListView, ScrollView, LineEdit } from "std-widgets.slint";
+import { TextEditBase } from "textedit-base.slint";
 
 export global TrajTokens {
     out property <color> brand: #4176E6;
@@ -772,27 +773,22 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                                     color: TrajTokens.text;
                                     font-size: 12px; font-weight: 600;
                                 }
-                                Rectangle {
+                                TextEditBase {
                                     width: parent.width;
                                     height: 140px;
                                     border-radius: 4px;
                                     background: TrajTokens.code-bg;
                                     border-width: 1px; border-color: TrajTokens.border-1;
                                     clip: true;
-                                    ScrollView {
-                                        horizontal-scrollbar-policy: always-off; vertical-scrollbar-policy: always-off;
-                                        width: parent.width; height: parent.height;
-                                        section-body := TextInput {
-                                            x: 6px; y: 6px;
-                                            width: parent.width - 12px;
-                                            text: section.body;
-                                            read-only: true;
-                                            wrap: no-wrap;
-                                            font-family: Theme.font-mono;
-                                            font-size: 11px;
-                                            color: TrajTokens.text-2;
-                                        }
-                                    }
+                                    text: section.body;
+                                    read-only: true;
+                                    wrap: word-wrap;
+                                    scroll-view-padding: 6px;
+                                    font-family: Theme.font-mono;
+                                    font-size: 11px;
+                                    foreground: TrajTokens.text-2;
+                                    selection-background-color: TrajTokens.brand-soft;
+                                    selection-foreground-color: TrajTokens.text;
                                 }
                             }
                             // timing rows
@@ -819,23 +815,22 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                             }
                             // raw tab; the list contents are tab-scoped by the
                             // Rust projection, raw shows only when filled
-                            if root.raw-text != "" : Rectangle {
+                            if root.raw-text != "" : TextEditBase {
                                 width: parent.width;
                                 height: 260px;
                                 border-radius: 4px;
                                 background: TrajTokens.code-bg;
                                 border-width: 1px; border-color: TrajTokens.border-1;
                                 clip: true;
-                                raw-body := TextInput {
-                                    x: 6px; y: 6px;
-                                    width: parent.width - 12px;
-                                    text: root.raw-text;
-                                    read-only: true;
-                                    wrap: no-wrap;
-                                    font-family: Theme.font-mono;
-                                    font-size: 11px;
-                                    color: TrajTokens.text-2;
-                                }
+                                text: root.raw-text;
+                                read-only: true;
+                                wrap: no-wrap;
+                                scroll-view-padding: 6px;
+                                font-family: Theme.font-mono;
+                                font-size: 11px;
+                                foreground: TrajTokens.text-2;
+                                selection-background-color: TrajTokens.brand-soft;
+                                selection-foreground-color: TrajTokens.text;
                             }
                         }
                     }

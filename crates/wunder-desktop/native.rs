@@ -23,6 +23,10 @@ mod trajectory;
 #[path = "native_workflow.rs"]
 mod native_workflow;
 
+#[path = "native_message_stats.rs"]
+mod message_stats;
+pub use message_stats::NativeMessageStats;
+
 #[path = "native_commands.rs"]
 mod commands;
 pub use commands::{NativeChatCommand, NativeGoal};
@@ -39,6 +43,9 @@ pub use terminal::{
 
 #[path = "native_chat_turns.rs"]
 mod chat_turns;
+#[path = "native_chat_process.rs"]
+mod chat_process;
+pub use chat_process::{NativeProcessItem, NativeProcessPage};
 #[path = "native_observer.rs"]
 mod observer;
 #[path = "native_queue.rs"]
@@ -168,12 +175,8 @@ pub struct NativeMessage {
     pub created_at: f64,
     pub state: String,
     pub stats_status: String,
-    pub stats_duration: String,
-    pub stats_speed: String,
-    pub stats_context: String,
-    pub stats_quota: String,
-    pub stats_tools: String,
-    pub stats_credits: String,
+    pub user_round: i64,
+    pub stats: NativeMessageStats,
 }
 
 /// Compact, bounded tool-call presentation for native frontends. The raw
@@ -1068,124 +1071,13 @@ fn message_from_value(value: Value) -> Option<NativeMessage> {
         } else {
             String::new()
         },
-        stats_duration: format_duration(stats_value(
-            stats,
-            &["interaction_duration_s", "duration_s", "elapsed_s"],
-        )),
-        stats_speed: format_speed(stats_speed_value(stats)),
-        // Raw counts, not abbreviated text: the UI owns number formatting so the
-        // streamed footer and the reloaded one cannot disagree (`12.3k` vs
-        // `12345` for the same turn was exactly that bug).
-        stats_context: raw_count(stats_value(
-            stats,
-            &[
-                "contextTokens",
-                "context_occupancy_tokens",
-                "context_tokens",
-            ],
-        )),
-        stats_quota: {
-            // A turn's own consumption first, then the last round's usage.
-            let direct = raw_count(stats_value(
-                stats,
-                &["request_consumed_tokens", "consumed_tokens"],
-            ));
-            if direct.is_empty() {
-                raw_count(
-                    stats
-                        .get("round_usage")
-                        .and_then(|value| stats_value(value, &["total_tokens", "total"])),
-                )
-            } else {
-                direct
-            }
-        },
-        stats_tools: format_count(stats_value(stats, &["toolCalls", "tool_calls"]))
+        user_round: value
+            .get("user_round")
+            .or_else(|| value.get("userRound"))
+            .and_then(Value::as_i64)
             .unwrap_or_default(),
-        stats_credits: format_count(stats_value(
-            stats,
-            &["account_credits_consumed", "creditsConsumed"],
-        ))
-        .unwrap_or_default(),
+        stats: NativeMessageStats::from_payload(stats),
     })
-}
-
-fn stats_value<'a>(stats: &'a Value, keys: &[&str]) -> Option<&'a Value> {
-    keys.iter().find_map(|key| stats.get(*key))
-}
-
-fn stats_speed_value(stats: &Value) -> Option<&Value> {
-    let aggregate_rounds = stats
-        .get("avg_model_round_speed_rounds")
-        .or_else(|| stats.get("avgModelRoundSpeedRounds"))
-        .and_then(|value| value.as_f64())
-        .unwrap_or_default();
-    if aggregate_rounds > 0.0 {
-        if let Some(value) = stats
-            .get("avg_model_round_speed_tps")
-            .or_else(|| stats.get("avg_model_round_decode_speed_tps"))
-            .filter(|value| value.as_f64().is_some_and(|speed| speed > 0.0))
-        {
-            return Some(value);
-        }
-    }
-    stats_value(stats, &["visible_decode_speed_tps", "decode_speed_tps"])
-}
-
-fn format_count(value: Option<&Value>) -> Option<String> {
-    let number = value.and_then(|value| {
-        value
-            .as_i64()
-            .or_else(|| value.as_f64().map(|value| value as i64))
-    })?;
-    (number >= 0).then(|| {
-        if number >= 1_000_000 {
-            format!("{:.1}m", number as f64 / 1_000_000.0)
-        } else if number >= 1_000 {
-            format!("{:.1}k", number as f64 / 1_000.0)
-        } else {
-            number.to_string()
-        }
-    })
-}
-
-/// A count as a plain number, for fields the UI formats itself. An absent or
-/// negative value becomes an empty string rather than a zero, so the UI can tell
-/// "not reported" from "reported as zero".
-fn raw_count(value: Option<&Value>) -> String {
-    value
-        .and_then(|value| {
-            value
-                .as_i64()
-                .or_else(|| value.as_f64().map(|value| value as i64))
-        })
-        .filter(|number| *number >= 0)
-        .map(|number| number.to_string())
-        .unwrap_or_default()
-}
-
-fn format_duration(value: Option<&Value>) -> String {
-    let Some(seconds) = value
-        .and_then(Value::as_f64)
-        .filter(|value| value.is_finite() && *value > 0.0)
-    else {
-        return String::new();
-    };
-    if seconds < 60.0 {
-        format!("{seconds:.1}s")
-    } else {
-        format!("{}m {:.0}s", (seconds / 60.0).floor(), seconds % 60.0)
-    }
-}
-
-fn format_speed(value: Option<&Value>) -> String {
-    let Some(speed) = value
-        .and_then(Value::as_f64)
-        .filter(|value| value.is_finite() && *value > 0.0)
-    else {
-        return String::new();
-    };
-    format!("{speed:.1}/s")
 }
 
 fn now_ts() -> f64 {

@@ -30,8 +30,6 @@ Performance characteristics of the same engine across forms. Values are to be fi
 | 🍯 | Pupa (desktop) | — | — | — | — | — | — |
 | ⚙️ | Helm (cli) | — | — | — | — | — | — |
 
-> Collection harness: [scripts/form-bench](scripts/form-bench/README.md) — one run produces every metric above.
-
 ## Tool Matrix
 
 Canonical tool names are mostly Chinese (what the model sees), each with English aliases normalized via `resolve_tool_name` (`crates/wunder-runtime/src/services/tools/catalog.rs`). MCP tools (`server@tool`), skill names, knowledge-base names, and user-tool aliases are registered dynamically and are not listed here.
@@ -66,17 +64,6 @@ Canonical tool names are mostly Chinese (what the model sees), each with English
 | 定时任务 | `schedule_task` | Create and manage scheduled / periodic tasks | System & memory |
 | get_goal / create_goal / update_goal | — | Goal-state trio, auto-injected per session by the runtime; not selectable on desktop | Goal state |
 
-> `网页搜索` and `ptc` are kept in code but **temporarily delisted** (invisible to models and users; see `default_tool_profile.rs`) — they are not removed. Fully removed: channel tools, user-world tools, `a2a_*` tools, `final_response`, `a2ui`, and LSP query tools.
-
-## Documentation
-
-- System overview: [docs/wunder系统简介.md](docs/wunder系统简介.md); overall design: [docs/总体设计.md](docs/总体设计.md)
-- User manual: [docs/使用说明书/zh-CN/index.md](docs/使用说明书/zh-CN/index.md)
-- API reference: [docs/API文档.md](docs/API文档.md)
-- Technical manual: [docs/技术说明书/README.md](docs/技术说明书/README.md); design docs: [docs/设计文档/README.md](docs/设计文档/README.md)
-- Feature log: [docs/功能迭代.md](docs/功能迭代.md); lessons learned: [docs/经验教训.md](docs/经验教训.md)
-
-External integration surface: REST under `/wunder/*` plus six realtime WebSocket channels, the MCP endpoint `/wunder/mcp`, external-workflow SSE at `/wunder/external/workflow*`, and channel webhooks.
 
 ## Absorbed Matrix
 

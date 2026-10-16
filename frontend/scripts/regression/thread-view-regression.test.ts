@@ -245,7 +245,6 @@ console.log('thread view: follow-up admission, binding, queued input and submiss
 
 // The committed presentation window is the real page source: a plan must be
 // available before lazy workflow hydration, and remain stable on reload.
-import { resolveChatPlanDismissKey } from '../../src/realtime/chat/chatPlan';
 import { summarizePlanProgress } from '../../src/components/chat/composerActivity';
 clearThreadView(key); generation=beginThreadView(key);
 const plan={item_id:'fixture-plan',revision:1,created_seq:2,explanation:'Fixture progress',
@@ -255,15 +254,31 @@ commitThreadView(key,page([planned]),generation);
 const planMessage=()=>threadViewSlots(key)![0].assistant;
 assert.deepEqual(summarizePlanProgress(planMessage().plan),{total:2,done:0});
 assert.equal(threadViewSlots(key)![0].user.plan,undefined);
-const dismissed=new Set([resolveChatPlanDismissKey(planMessage())]);
 applyThreadViewChanges(key,{view_seq:2,rows:[{...planned,revision:2}]});
-assert.equal(dismissed.has(resolveChatPlanDismissKey(planMessage())),true);
+assert.deepEqual(planMessage().plan,plan);
 const nextPlan={...plan,revision:2,steps:[{step:'First step',status:'completed' as const},{step:'Second step',status:'in_progress' as const}]};
 applyThreadViewChanges(key,{view_seq:3,rows:[{...planned,revision:3,plan:nextPlan}]});
 assert.deepEqual(summarizePlanProgress(planMessage().plan),{total:2,done:1});
-assert.equal(dismissed.has(resolveChatPlanDismissKey(planMessage())),false);
+assert.equal(planMessage().plan.revision,2);
 const completed={...row(1,4),plan:nextPlan};
 applyThreadViewChanges(key,{view_seq:4,rows:[completed]});
 clearThreadView(key);generation=beginThreadView(key);commitThreadView(key,page([completed],4),generation);
 assert.deepEqual(planMessage().plan,nextPlan);
-console.log('thread view: durable composer plan, progress, dismiss identity and reload pass');
+console.log('thread view: durable composer plan, progress, revision and reload pass');
+
+clearThreadView(key); generation=beginThreadView(key);
+const questionPanel={status:'pending' as const,keep_open:true,questions:[{question:'Fixture choice?',multiple:false,
+  options:[{label:'First option',description:'Fixture description',recommended:true}]}]};
+const waiting={...row(1,1),status:'waiting_input',assistant:{...row(1).assistant,question_panel:questionPanel}};
+commitThreadView(key,{...page([waiting]),runtime_status:'waiting_input',active_turn_id:waiting.root_turn_id},generation);
+assert.equal(threadViewSlots(key)![0].assistant.questionPanel.status,'pending');
+assert.equal(threadViewSlots(key)![0].assistant.questionPanel.keepOpen,true);
+assert.equal(threadViewSlots(key)![0].user.questionPanel,undefined);
+applyThreadViewChanges(key,{view_seq:2,runtime_status:'cancelled',active_turn_id:'',rows:[{...waiting,revision:2,status:'cancelled'}]});
+assert.equal(threadViewStatus(key),'cancelled');
+assert.equal(threadViewSlots(key)![0].assistant.questionPanel.status,'dismissed');
+assert.equal(threadViewSlots(key)![0].assistant.content,'fixture answer');
+clearThreadView(key); generation=beginThreadView(key);
+commitThreadView(key,{...page([{...waiting,status:'completed'}]),runtime_status:'completed',active_turn_id:''},generation);
+assert.equal(threadViewSlots(key)![0].assistant.questionPanel.status,'answered');
+console.log('thread view: durable inquiry metadata and terminal settlement pass');

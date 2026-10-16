@@ -70,6 +70,77 @@ pub(crate) fn body_id(item_id: &str, field: &str) -> String {
     format!("{item_id}|{field}")
 }
 
+pub(crate) fn question_panel(payload: &Value) -> Option<wunder_core::thread_view::ThreadQuestionPanel> {
+    use wunder_core::thread_view::{ThreadQuestion, ThreadQuestionOption, ThreadQuestionPanel};
+    let raw = payload.get("questions").and_then(Value::as_array)?;
+    let questions = raw
+        .iter()
+        .take(4)
+        .filter_map(|question| {
+            let options = question
+                .get("options")?
+                .as_array()?
+                .iter()
+                .take(4)
+                .filter_map(|option| {
+                    let label = option
+                        .get("label")
+                        .and_then(Value::as_str)
+                        .or_else(|| option.as_str())?
+                        .trim();
+                    if label.is_empty() {
+                        return None;
+                    }
+                    Some(ThreadQuestionOption {
+                        label: preview(label, 256),
+                        description: preview(
+                            option.get("description").and_then(Value::as_str).unwrap_or("").trim(),
+                            512,
+                        ),
+                        recommended: option.get("recommended").and_then(Value::as_bool).unwrap_or(false),
+                    })
+                })
+                .collect::<Vec<_>>();
+            if options.is_empty() {
+                return None;
+            }
+            Some(ThreadQuestion {
+                question: preview(
+                    question.get("question").and_then(Value::as_str).unwrap_or("").trim(),
+                    1024,
+                ),
+                multiple: question.get("multiple").and_then(Value::as_bool).unwrap_or(false),
+                options,
+            })
+        })
+        .collect::<Vec<_>>();
+    if questions.is_empty() {
+        return None;
+    }
+    Some(ThreadQuestionPanel {
+        questions,
+        keep_open: payload.get("keep_open").and_then(Value::as_bool).unwrap_or(true),
+        status: match payload.get("status").and_then(Value::as_str) {
+            Some("answered") => "answered",
+            Some("dismissed") => "dismissed",
+            _ => "pending",
+        }.into(),
+    })
+}
+
+pub(crate) fn settle_question_panel(row: &mut ChatViewRow) {
+    if let Some(panel) = row.assistant.question_panel.as_mut() {
+        if matches!(
+            row.status.as_str(),
+            "cancelled" | "failed" | "rejected" | "stopped" | "interrupted"
+        ) {
+            panel.status = "dismissed".into();
+        } else if row.status == "completed" {
+            panel.status = "answered".into();
+        }
+    }
+}
+
 pub(crate) fn message(item_id: &str, content: &str, revision: i64) -> ViewMessage {
     ViewMessage {
         item_id: item_id.into(),
