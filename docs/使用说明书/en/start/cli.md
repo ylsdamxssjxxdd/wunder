@@ -11,7 +11,7 @@ source_docs:
   - crates/wunder-cli/tui/mod.rs
   - crates/wunder-cli/exec_events.rs
   - crates/wunder-cli/args.rs
-updated_at: 2026-10-13
+updated_at: 2026-10-16
 ---
 
 # Using the Helm (CLI)
@@ -51,6 +51,7 @@ cargo build --release -p wunder-cli
 | --- | --- | --- |
 | `exec` | `e` | Run a single agent task non-interactively; `--json` produces a JSONL event stream |
 | `resume` | — | Resume a previous session |
+| `trajectory` | — | Inspect, search, and export thread trajectories; JSON and bidirectional cursors |
 | `tool` | — | Run built-in, MCP, or skill tools directly |
 | `mcp` | — | Manage local MCP servers |
 | `skills` | — | Manage the current user's local skills |
@@ -88,6 +89,7 @@ wunder-cli exec --json "tidy up the files in the current directory" | jq -c 'sel
 | `/help` | `/h` | Help |
 | `/status` | — | Current status |
 | `/resume` | `/r` | Resume a previous session |
+| `/trajectory` | `/trace` | Inspect the current or specified thread trajectory |
 | `/new` | — | New thread |
 | `/clear` | `/cls` | Clear the screen |
 | `/model` | — | Switch model; `/model add` registers an endpoint |
@@ -108,6 +110,44 @@ wunder-cli exec --json "tidy up the files in the current directory" | jq -c 'sel
 | `/quit` | `/q` | Exit |
 
 There are **no** `cloud`, `cron`, `channel`, `memory`, or `knowledge` slash commands: `cloud` is a subcommand, and the other four have no management interface on the Helm.
+
+
+## Trajectory logs
+
+Run `/trajectory` (alias `/trace`) in the interactive session to inspect the current thread, or `/trajectory <session_id>` for another thread. In the task center, press `t` to inspect the selected thread without switching the executing thread.
+
+The viewer provides sequence / elapsed-time controls, turn and tool-group folding, zoom, three input/model/tool lanes, a ledger, and item details. Wide terminals show details beside the ledger; press `i` for a separate detail page on narrow terminals.
+
+| Key | Trajectory action |
+| --- | --- |
+| `↑↓` / `j k`, `PageUp PageDown` | Select records; automatically read older / newer records at window edges |
+| `Enter` | Inspect the selected user turn; inside a turn, toggle detail focus |
+| `i` / `→` | Toggle detail focus; arrows and page keys scroll focused details |
+| `Tab` / `Shift+Tab` | Cycle applicable overview, preview, raw, params, result, schema, and timing tabs |
+| `h` / `l` in details | Pan long lines horizontally |
+| `d`, `+ -`, `0` | Sequence / elapsed time, zoom around selection, reset zoom |
+| `t`, Space, `c` | Fold all turns, selected turn, or tools in a model round |
+| `/` | Enter a full-text query; up to 20 hits per request, refine if more are available |
+| `f`, `r` | Toggle live follow, refresh / retry; manual browsing pauses follow |
+| `y`, `e` | Copy the current detail tab, export full JSONL to the launch directory |
+| `Esc` / `q`, `?` | Return one level, show help |
+
+The viewer uses shared engine projections and body reads in the background. It retains a maximum of 600 ledger rows, with bidirectional cursors to reread evicted records. Detail previews are limited to 1 MiB and 16,384 lines per tab with an explicit notice; export retrieves the full log. Exports retain user-visible records; system prompt contents remain hidden.
+
+For scripts and pipelines, use the subcommand. Without a thread ID it selects the most recent thread in the current workspace:
+
+```bash
+wunder-cli trajectory --raw
+wunder-cli trajectory <session_id> --turn <root_turn_id> --limit 80 --raw
+wunder-cli trajectory <session_id> --before <cursor> --raw
+wunder-cli trajectory <session_id> --after <cursor> --raw
+wunder-cli trajectory <session_id> --search <query> --raw
+wunder-cli trajectory <session_id> --item <item_id>
+wunder-cli trajectory <session_id> --export trajectory.jsonl
+wunder-cli trajectory <session_id> --export -
+```
+
+Use returned `next_before` / `next_after` cursors; `--before` and `--after` are mutually exclusive. `--raw` or global `--json` emits structured data. Export destinations must not already exist. A final `export_complete` record distinguishes a complete export from an interrupted file.
 
 ## Keys
 

@@ -161,3 +161,50 @@ test('a corrected final identity immediately restores intermediate prose to the 
   });
   expect(result).toEqual({ before: false, after: true });
 });
+
+test('automatic compaction system records render as one process entry', async ({ page }) => {
+  await page.goto('/__e2e/composer-b4');
+  const result = await page.evaluate(async () => {
+    const source = await (await fetch('/src/components/chat/MessageTimelineTurnProcess.vue')).text();
+    const runtimeUrl = source.match(/from\s+["']([^"']*\/vue\.js[^"']*)["']/)?.[1];
+    if (!runtimeUrl) throw new Error('Missing fixture Vue runtime');
+    const [{ createApp, reactive, nextTick, h }, { default: Process }, { default: api }] = await Promise.all([
+      import(runtimeUrl), import('/src/components/chat/MessageTimelineTurnProcess.vue'), import('/src/api/http.ts')
+    ]);
+    const host = document.createElement('div'); document.body.append(host);
+    const originalAdapter = api.defaults.adapter;
+    api.defaults.adapter = async (config: unknown) => ({
+      status: 200, statusText: 'OK', headers: {}, config,
+      data: { data: { turn: { items: [{
+        item_id: 'fixture-compaction', item_index: 3, kind: 'system_message', status: 'completed',
+        payload: {
+          content: 'Retained compacted history.',
+          meta: { type: 'compaction_summary', compaction_id: 'cmp-fixture' }
+        }
+      }], has_older: false, has_newer: false } } }
+    });
+    const model = reactive({ sessionId: 'fixture-thread', turnId: 'fixture-turn', count: 1, status: 'completed' });
+    const app = createApp({ setup: () => () => h(Process, model) });
+    try {
+      app.mount(host); await nextTick();
+      host.querySelector<HTMLButtonElement>('.timeline-process-head')!.click();
+      const until = async (predicate: () => boolean) => {
+        const deadline = Date.now() + 4000;
+        while (!predicate()) {
+          if (Date.now() > deadline) throw new Error(`Fixture did not render: ${host.textContent}`);
+          await new Promise(resolve => setTimeout(resolve, 25));
+        }
+      };
+      await until(() => (host.textContent?.includes('上下文压缩') ?? false));
+      host.querySelector<HTMLElement>('.tl-entry-head')?.click();
+      await until(() => host.textContent?.includes('Retained compacted history.') ?? false);
+      return {
+        compaction: host.textContent?.includes('上下文压缩') ?? false,
+        summary: host.textContent?.includes('Retained compacted history.') ?? false
+      };
+    } finally {
+      app.unmount(); host.remove(); api.defaults.adapter = originalAdapter;
+    }
+  });
+  expect(result).toEqual({ compaction: true, summary: true });
+});

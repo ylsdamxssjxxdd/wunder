@@ -22,7 +22,7 @@ const authStore = useAuthStore();
 const route = useRoute();
 const isEmbeddedChatRoute = computed(() => /\/(?:app|demo)\/embed\/chat(?:\/|$)/.test(route.path));
 const isMessengerViewRoute = computed(() =>
-  /\/(?:app|demo)\/(?:home|chat|settings)(?:\/|$)/.test(route.path)
+  /\/(?:app|demo)\/(?:home|chat|settings|trajectory)(?:\/|$)/.test(route.path)
 );
 const showGlobalCompanionLayer = computed(() => !isEmbeddedChatRoute.value && !isMessengerViewRoute.value);
 

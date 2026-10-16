@@ -11,6 +11,7 @@ mod orchestrator;
 pub mod request_limits;
 pub mod sandbox;
 mod services;
+pub use services::thread_log::export_stream as export_thread_log_stream;
 pub use services::archive_extract;
 pub use services::companions;
 pub use services::memory_fragments;

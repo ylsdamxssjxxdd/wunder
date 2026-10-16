@@ -20,7 +20,7 @@ import { getCurrentLanguage, setLanguage, useI18n } from '@/i18n';
 import { flushBackgroundPublication } from '@/realtime/chat/chatBackgroundPublication';
 import { resolveChatRuntimeRenderableKey } from '@/realtime/chat/chatRuntimeMessageKeys';
 import { resolveChatRuntimeMessageRenderKey } from '@/realtime/chat/chatRuntimeRenderAdapter';
-import { threadViewClock, threadViewOwnsExecution } from '@/realtime/chat/threadViewStore';
+import { threadViewClock, threadViewOwnsExecution, threadViewHeadVersion } from '@/realtime/chat/threadViewStore';
 import { threadViewPhase, threadViewSlots } from '@/realtime/chat/threadViewStore';
 import { readThreadBody } from '@/realtime/chat/threadBodyReader';
 import { buildChatThreadMaterializedSlots } from '@/realtime/chat/chatThreadRuntime';
@@ -910,6 +910,14 @@ function installMessengerControllerStateRefs(ctx: MessengerControllerContext): v
   ctx.agentSendForegroundLock = ref(false);
 
   ctx.agentSendForegroundLockSessionId = ref('');
+
+  ctx.agentSendForegroundLockAgentId = ref('');
+  ctx.agentSendInitialHeadVersion = '';
+  ctx.isAgentSubmissionAwaitingHead = (sessionId: string): boolean => Boolean(
+      ctx.agentSendForegroundLock.value && sessionId &&
+      ctx.agentSendForegroundLockSessionId.value === sessionId &&
+      threadViewHeadVersion(sessionId) === ctx.agentSendInitialHeadVersion
+  );
 
   ctx.MESSENGER_PERF_TRACE_ENABLED = (() => {
       if (typeof window === 'undefined')
@@ -11646,6 +11654,12 @@ function installMessengerControllerLifecycleRuntimeMeta(ctx: MessengerController
           ctx.agentRuntimeStateMap.value.get(agentId) ||
           fallbackStateMap?.get(agentId) ||
           'idle';
+      // Only bridge the head observed before admission; a newer head must
+      // settle normally even while the send promise is still unwinding.
+      if (ctx.isAgentSubmissionAwaitingHead(targetSessionId)) {
+          localTerminalRuntimeSessionSnapshot.delete(targetSessionId);
+          return;
+      }
       const override = ctx.runtimeStateOverrides?.value?.get(agentId);
       const localStreaming = Boolean(ctx.streamingAgentIdSet?.value?.has(agentId));
       const localWaiting = Boolean(ctx.waitingAgentIdSet?.value?.has(agentId));
@@ -12563,6 +12577,13 @@ function installMessengerControllerAgentRuntimeSignals(ctx: MessengerControllerC
 
   ctx.handleAgentRuntimeStateUpdate = (stateMap: Map<string, AgentRuntimeState>) => {
       const reconciledStateMap = new Map(stateMap);
+      // Once a thread has a durable execution head, its per-turn terminal
+      // events own notices. Aggregate idle/done has no turn identity and
+      // cannot distinguish a previous completion from a new send or a stop.
+      const durableNoticeAgentIds = new Set<string>();
+      for (const [sessionId, agentId] of ctx.buildSessionAgentMap()) {
+          if (threadViewOwnsExecution(sessionId)) durableNoticeAgentIds.add(agentId);
+      }
       if (ctx.agentRuntimeStateHydrated) {
           const keys = new Set<string>([
               ...Array.from(ctx.agentRuntimeStateSnapshot.keys()),
@@ -12583,15 +12604,19 @@ function installMessengerControllerAgentRuntimeSignals(ctx: MessengerControllerC
                   ctx.streamingAgentIdSet?.value?.has(agentId) ||
                   ctx.waitingAgentIdSet?.value?.has(agentId)
               );
+              const pendingAdmission = Boolean(
+                  ctx.agentSendForegroundLockAgentId.value === agentId &&
+                  ctx.isAgentSubmissionAwaitingHead(ctx.agentSendForegroundLockSessionId.value)
+              );
               const preserveActiveTurn = shouldNotifyAgentTaskCompletion({
                   previousState,
                   nextState: remoteState
-              }) && localTurnStillActive;
+              }) && (localTurnStillActive || pendingAdmission);
               const nextState = preserveMissing || preserveActiveTurn ? previousState : remoteState;
-              if (preserveMissing || preserveActiveTurn) reconciledStateMap.set(agentId, previousState);
+              if (preserveMissing || preserveActiveTurn) reconciledStateMap.set(agentId, nextState);
               if (previousState === nextState)
                   return;
-              if (ctx.shouldNotifyAgentCompletion(previousState, nextState)) {
+              if (!durableNoticeAgentIds.has(agentId) && ctx.shouldNotifyAgentCompletion(previousState, nextState)) {
                   const suppressionUntil = Number(ctx.completedAgentNoticeSuppression.get(agentId) || 0);
                   if (suppressionUntil > Date.now()) {
                       ctx.completedAgentNoticeSuppression.delete(agentId);
@@ -13599,6 +13624,8 @@ function installMessengerControllerAgentMessageCommands(ctx: MessengerController
           attachmentCount: attachments.length
       });
       const activeSessionIdBeforeSend = String(ctx.chatStore.activeSessionId || '').trim();
+      ctx.agentSendInitialHeadVersion = threadViewHeadVersion(activeSessionIdBeforeSend);
+      ctx.agentSendForegroundLockAgentId.value = targetAgentId;
       ctx.agentSendForegroundLock.value = true;
       ctx.agentSendForegroundLockSessionId.value = activeSessionIdBeforeSend || `draft:${targetAgentId}`;
       ctx.autoStickToBottom.value = true;
@@ -13635,6 +13662,7 @@ function installMessengerControllerAgentMessageCommands(ctx: MessengerController
       finally {
           ctx.agentSendForegroundLock.value = false;
           ctx.agentSendForegroundLockSessionId.value = '';
+          ctx.agentSendForegroundLockAgentId.value = '';
           ctx.agentInquirySelection.value = [];
       }
   };

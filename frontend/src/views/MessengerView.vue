@@ -82,7 +82,10 @@
             ref="messageListRef"
             class="messenger-chat-body"
             data-testid="messenger-message-list"
-            :class="{ 'is-messages': hasActiveThread }"
+            :class="{
+              'is-messages': hasActiveThread,
+              'is-agent': resolvedMessageConversationKind === 'agent'
+            }"
             @scroll.passive="handleMessageListScroll"
             @click="handleMessageContentClick"
           >
@@ -259,7 +262,14 @@ const CompanionFloatingLayer = defineRecoverableAsyncComponent(
   () => import('@/components/companions/CompanionFloatingLayer.vue')
 );
 const companionLayerReady = vueRef(false);
-const showCompanionLayer = vueComputed(() => !isEmbeddedChatRoute.value && companionLayerReady.value);
+// The trajectory route is kept alive while navigating from chat. Its
+// Teleport-to-body layer must be disabled there, otherwise the cached chat
+// instance and the layout host can both render the same desktop companion.
+const showCompanionLayer = vueComputed(() => {
+  const path = String(controller.route?.path || '');
+  const isTrajectoryRoute = /\/(?:app|demo)\/trajectory(?:\/|$)/.test(path);
+  return !isEmbeddedChatRoute.value && !isTrajectoryRoute && companionLayerReady.value;
+});
 const scheduleCompanionLayerLoad = () => {
   if (companionLayerReady.value || typeof window === 'undefined') return;
   const load = () => {

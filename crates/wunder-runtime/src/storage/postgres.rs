@@ -47,6 +47,7 @@ mod conversation_log_store;
 mod cron;
 mod gateway_store;
 mod interlink_store;
+mod log_maintenance;
 mod log_stats_store;
 mod media_store;
 mod memory_store;

@@ -111,6 +111,9 @@ pub struct TrajectoryViewRow {
     /// first trajectory page useful without hydrating the full immutable body.
     #[serde(default)]
     pub subagent: Option<Value>,
+    /// Bounded model retry/failure metadata; bodies remain on-demand.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diagnostics: Option<Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

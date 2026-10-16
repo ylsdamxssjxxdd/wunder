@@ -16,6 +16,7 @@ mod runtime;
 mod slash_command;
 mod tool_display;
 mod tool_presentation;
+mod trajectory;
 mod tui;
 mod user_config;
 mod workspace_context;
@@ -136,6 +137,7 @@ fn dispatch_command<'a>(
         Command::Skills(cmd) => Box::pin(handle_skills(runtime, global, cmd)),
         Command::Config(cmd) => Box::pin(handle_config(runtime, global, cmd)),
         Command::StressThread(cmd) => Box::pin(handle_stress_thread(runtime, global, cmd)),
+        Command::Trajectory(cmd) => Box::pin(trajectory::handle(runtime, global, cmd)),
         Command::Doctor(cmd) => Box::pin(handle_doctor(runtime, global, cmd)),
         Command::Cloud(cmd) => Box::pin(cloud_command::handle_cloud(runtime, global, cmd)),
         Command::Completion(cmd) => Box::pin(handle_completion(cmd)),

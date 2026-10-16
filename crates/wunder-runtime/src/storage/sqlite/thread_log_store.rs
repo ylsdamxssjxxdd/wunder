@@ -831,6 +831,17 @@ impl SqliteThreadLogStorage for SqliteStorage {
             )
             .optional()?;
         let root_id = root_id.ok_or_else(|| anyhow::anyhow!("unknown thread turn"))?;
+        let existing: Option<(String, String)> = tx
+            .query_row(
+                "SELECT turn_id,payload FROM thread_items WHERE session_id=? AND item_id=?",
+                params![session_id, item_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+        let payload = crate::services::thread_log::diagnostics::merge_item(
+            payload,
+            existing.as_ref().map(|(_, text)| text.as_str()),
+        );
         let kind = payload
             .get("kind")
             .and_then(Value::as_str)
@@ -847,14 +858,7 @@ impl SqliteThreadLogStorage for SqliteStorage {
                 .and_then(Value::as_str)
                 .unwrap_or("user")
         };
-        let text = serde_json::to_string(payload)?;
-        let existing: Option<(String, String)> = tx
-            .query_row(
-                "SELECT turn_id,payload FROM thread_items WHERE session_id=? AND item_id=?",
-                params![session_id, item_id],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
-            .optional()?;
+        let text = serde_json::to_string(payload.as_ref())?;
         if let Some((existing_turn, _)) = &existing {
             ensure!(
                 existing_turn == turn_id,

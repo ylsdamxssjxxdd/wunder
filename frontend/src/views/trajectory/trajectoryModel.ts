@@ -29,6 +29,25 @@ export interface TrajMetrics {
   outputTokens: number | null
 }
 
+export interface TrajFailure {
+  status: string
+  code?: string
+  message?: string
+  retryable?: boolean
+  retryAfterMs?: number
+  recoveryAction?: string
+  sourceStage?: string
+}
+
+export interface TrajRetry {
+  attempt?: number
+  maxAttempts?: number
+  delaySeconds?: number
+  reason?: string
+  message?: string
+  willRetry: boolean
+}
+
 export interface TrajCell {
   index: number
   recordId: string
@@ -44,6 +63,9 @@ export interface TrajCell {
   callId?: string
   toolName?: string
   isError?: boolean
+  status?: string
+  failure?: TrajFailure
+  retry?: TrajRetry
   toolCallOnly?: boolean
   overviewOnly?: boolean
   timeSeconds: number | null
@@ -77,6 +99,8 @@ export interface TrajRequestNumber {
   usage?: TrajUsage
   cumulativeUsage: TrajUsage
   assistantIndex: number
+  failure?: TrajFailure
+  retry?: TrajRetry
 }
 
 export type TimelineMode = 'sequence' | 'duration' | 'time' | 'actual'
@@ -234,6 +258,15 @@ function payloadOf(item: RawRecord): RawRecord {
 
 function metaOf(payload: RawRecord): RawRecord {
   return isRecord(payload.meta) ? payload.meta : {}
+}
+
+function isCompactionMarkerPayload(payload: RawRecord): boolean {
+  const meta = metaOf(payload)
+  const type = String(meta.type ?? payload.type ?? '').trim().toLowerCase()
+  return meta.manual_compaction === true || payload.manual_compaction_marker === true
+    || payload.manualCompactionMarker === true || type === 'manual_compaction_marker'
+    || (typeof meta.compaction_id === 'string'
+      && (type === 'system_message' || Array.isArray(meta.replacement_history)))
 }
 
 function rawKindOf(item: RawRecord, payload: RawRecord): string {
@@ -430,6 +463,86 @@ function isToolFailure(payload: RawRecord, status = ''): boolean {
     || status === 'error'
 }
 
+/** Normalize only bounded diagnostic fields, including imported old ledgers. */
+function diagnosticText(value: unknown, limit = 2048): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.slice(0, limit) : undefined
+}
+
+function diagnosticNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined
+}
+
+function failedStatus(status: string): boolean {
+  return ['failed', 'error', 'cancelled', 'interrupted', 'rejected'].includes(status)
+}
+
+export function trajectoryFailure(payload: RawRecord, status = ''): TrajFailure | undefined {
+  const diagnostics = isRecord(payload.diagnostics) ? payload.diagnostics : {}
+  const direct = payload.trajectory_failure ?? diagnostics.failure
+  const error = isRecord(direct) ? direct : isRecord(payload.error) ? payload.error : {}
+  const meta = isRecord(error.error_meta) ? error.error_meta : {}
+  if (!isRecord(direct) && !failedStatus(status) && !hasExplicitToolError(payload.error ?? payload.is_error)
+      && Object.keys(error).length === 0 && payload.ok !== false && payload.success !== false) return undefined
+  return {
+    status: diagnosticText(error.status, 48) ?? (failedStatus(status) ? status : 'failed'),
+    code: diagnosticText(error.code ?? payload.code ?? payload.stop_reason, 128),
+    message: diagnosticText(error.message ?? payload.error ?? payload.message),
+    retryable: typeof (error.retryable ?? payload.retryable ?? meta.retryable) === 'boolean'
+      ? Boolean(error.retryable ?? payload.retryable ?? meta.retryable) : undefined,
+    retryAfterMs: diagnosticNumber(error.retry_after_ms ?? payload.retry_after_ms ?? meta.retry_after_ms),
+    recoveryAction: diagnosticText(error.recovery_action ?? payload.recovery_action ?? meta.recovery_action, 128),
+    sourceStage: diagnosticText(error.source_stage ?? payload.source_stage ?? meta.source_stage, 128),
+  }
+}
+
+export function trajectoryRetry(payload: RawRecord): TrajRetry | undefined {
+  const diagnostics = isRecord(payload.diagnostics) ? payload.diagnostics : {}
+  const retry = payload.trajectory_retry ?? diagnostics.retry
+  if (!isRecord(retry)) return undefined
+  return {
+    attempt: diagnosticNumber(retry.attempt),
+    maxAttempts: diagnosticNumber(retry.max_attempts),
+    delaySeconds: diagnosticNumber(retry.delay_s),
+    reason: diagnosticText(retry.reason ?? retry.retry_reason, 128),
+    message: diagnosticText(retry.message ?? retry.error),
+    willRetry: retry.will_retry === true,
+  }
+}
+
+/** Identical inspector fields for model failures, tool failures and recovery. */
+export function trajectoryDiagnosticRows(cell: TrajCell, t: Translate): { label: string; value: string }[] {
+  const rows: { label: string; value: string }[] = []
+  const add = (key: string, value: string | undefined) => { if (value) rows.push({ label: t(`trajectory.${key}`), value }) }
+  const failure = cell.failure
+  if (failure) {
+    add('errorCode', failure.code)
+    add('errorMessage', failure.message)
+    add('errorStage', failure.sourceStage)
+    if (failure.retryable !== undefined) add('retryable', t(`trajectory.${failure.retryable ? 'yes' : 'no'}`))
+    if (failure.retryAfterMs !== undefined) add('retryAfter', formatDurationMillis(failure.retryAfterMs, t))
+    add('recoveryAction', failure.recoveryAction ? t(`trajectory.recovery.${failure.recoveryAction}`) : undefined)
+  }
+  const retry = cell.retry
+  if (retry) {
+    add('retryAttempts', retry.attempt === undefined ? undefined : `${retry.attempt}${retry.maxAttempts === undefined ? '' : ` / ${retry.maxAttempts}`}`)
+    if (retry.delaySeconds !== undefined) add('retryDelay', formatDurationMillis(retry.delaySeconds * 1000, t))
+    add('lastAttemptError', retry.message)
+    add('retryReason', retry.reason)
+  }
+  return rows
+}
+
+function applyTrajectoryFailure(cell: TrajCell, failure: TrajFailure, endedAt: number | null): void {
+  cell.failure = failure
+  cell.isError = true
+  cell.status = failure.status
+  if (cell.retry) cell.retry = { ...cell.retry, willRetry: false }
+  if (cell.metrics && cell.metrics.completedTime === null && endedAt !== null) {
+    cell.metrics = { ...cell.metrics, completedTime: endedAt, timingRecorded: cell.startedAt !== null }
+    if (cell.startedAt !== null) cell.timeSeconds = Math.max(0, (endedAt - cell.startedAt) / 1000)
+  }
+}
+
 /* ------------------------------------------------------------------ */
 /* 单元格构建                                                          */
 /* ------------------------------------------------------------------ */
@@ -440,7 +553,8 @@ function buildCell(item: RawRecord, payload: RawRecord, kind: TrajKind, index: n
   const createdMs = firstTime(item, ['created_time']) ?? firstTime(payload, ['created_time'])
   const updatedMs = firstTime(item, ['updated_time'])
   let startedAt = firstTime(payload, STARTED_KEYS) ?? createdMs
-  const completedAt = firstTime(payload, COMPLETED_KEYS) ?? updatedMs
+  const completedAt = ['running', 'queued', 'waiting_input', 'waiting_approval'].includes(status)
+    ? null : firstTime(payload, COMPLETED_KEYS) ?? updatedMs
   const recordedDuration = kind === 'message' ? assistantRecordedDurationSeconds(payload) : null
   // Durable assistant rows are created when the model round is admitted, but
   // updated only after child/tool work and replay have settled.  That row
@@ -461,6 +575,10 @@ function buildCell(item: RawRecord, payload: RawRecord, kind: TrajKind, index: n
     text: '',
     timeSeconds: null,
     startedAt,
+    status,
+    failure: ['message', 'tool', 'subtool', 'compacted'].includes(kind)
+      || ['terminal', 'turn_terminal'].includes(rawKindOf(item, payload)) ? trajectoryFailure(payload, status) : undefined,
+    retry: trajectoryRetry(payload),
   }
   cell.overviewOnly = item.overview_only === true
   const usage = extractUsage(payload)
@@ -522,7 +640,7 @@ function buildCell(item: RawRecord, payload: RawRecord, kind: TrajKind, index: n
       usageProvided: usage !== undefined,
       outputTokens: usage?.output ?? null,
     }
-    cell.isError = status === 'failed' || status === 'error'
+    cell.isError = cell.failure !== undefined || failedStatus(status)
   } else if (kind === 'tool' || kind === 'subtool') {
     const runtime = isRecord(payload.runtime) ? payload.runtime : undefined
     const runtimeState = runtime && isRecord(runtime.agent_state) ? runtime.agent_state : undefined
@@ -618,6 +736,7 @@ function buildCell(item: RawRecord, payload: RawRecord, kind: TrajKind, index: n
     cell.timeSeconds = startedAt !== null ? 0 : null
   }
 
+  if (cell.failure) cell.isError = true
   return cell
 }
 
@@ -645,6 +764,11 @@ export function buildTrajectoryLayout(rawTurns: unknown, t: Translate): TrajTurn
     const model: TrajTurnModel = { turn: turnNo, groups: [] }
     turns.push(model)
 
+    const assistants = new Map<string, TrajCell>()
+    const lastAssistants = new Map<string, TrajCell>()
+    const pending: { item: RawRecord; payload: RawRecord; retry: boolean; scope: string }[] = []
+    const unfinishedTools: { cell: TrajCell; scope: string }[] = []
+    const scopeOf = (item: RawRecord, payload: RawRecord) => String(item.turn_id ?? payload.turn_id ?? rawTurn.turn_id ?? '')
     let compactionSeq = 0
     const messageGroup = (): TrajGroupModel => {
       const last = model.groups[model.groups.length - 1]
@@ -680,12 +804,19 @@ export function buildTrajectoryLayout(rawTurns: unknown, t: Translate): TrajTurn
       const item = ordered[i]
       const payload = payloadOf(item)
       const rawKind = rawKindOf(item, payload)
-      // progress/workspace_update/model_usage/llm_stream_retry 是传输态或统计
+      if (rawKind === 'terminal' || rawKind === 'turn_terminal' || rawKind === 'llm_stream_retry') {
+        if (rawKind === 'llm_stream_retry' || trajectoryFailure(payload, String(item.status ?? payload.status ?? ''))) {
+          pending.push({ item, payload, retry: rawKind === 'llm_stream_retry', scope: scopeOf(item, payload) })
+        }
+        continue
+      }
+      if ((rawKind === 'assistant_message' || rawKind === 'system_message' || rawKind === 'system') && isCompactionMarkerPayload(payload)) continue
+      // progress/workspace_update/model_usage 是传输态或统计
       // 通知，成功的轮次终止只是生命周期回执；后端已不再入账，这里跳过历史
       // 遗留数据（不占用记录索引）。
       if (
         rawKind === 'progress' || rawKind === 'workspace_update'
-        || rawKind === 'model_usage' || rawKind === 'llm_stream_retry'
+        || rawKind === 'model_usage'
         || rawKind === 'thread_turn_started' || rawKind === 'model_call'
       ) continue
       // 历史脏数据：队列瞬态（含 user_withdrew 等取消回执）、会话写入器重复
@@ -696,7 +827,6 @@ export function buildTrajectoryLayout(rawTurns: unknown, t: Translate): TrajTurn
         || rawKind === 'tool_message' || rawKind.startsWith('command_session')
         || rawKind === 'knowledge_request' || rawKind.startsWith('hook/')
       ) continue
-      if ((rawKind === 'terminal' || rawKind === 'turn_terminal') && !payload.error && item.status === 'completed') continue
       const kind = resolveKind(rawKind, payload)
       const cell = buildCell(item, payload, kind, index)
       index += 1
@@ -716,6 +846,8 @@ export function buildTrajectoryLayout(rawTurns: unknown, t: Translate): TrajTurn
             defineLazy(cell, 'resultPreviewMarkdown', () => markdownPreviewText(resultRaw))
           }
           const candidateStatus = typeof candidate.status === 'string' ? candidate.status : ''
+          cell.status = candidateStatus || 'completed'
+          cell.failure = trajectoryFailure(candidatePayload, candidateStatus)
           if (isToolFailure(candidatePayload, candidateStatus)) cell.isError = true
           const candidateStart = firstTime(candidatePayload, STARTED_KEYS)
             ?? firstTime(candidate, ['created_time'])
@@ -730,6 +862,9 @@ export function buildTrajectoryLayout(rawTurns: unknown, t: Translate): TrajTurn
       }
 
       if (kind === 'message') {
+        const scope = scopeOf(item, payload)
+        assistants.set(`${scope}:${payload.model_round ?? 0}`, cell)
+        lastAssistants.set(scope, cell)
         const step = payload.model_round
         if (typeof step === 'number' && Number.isFinite(step)) {
           stepGroup(step).cells.push(cell)
@@ -739,6 +874,9 @@ export function buildTrajectoryLayout(rawTurns: unknown, t: Translate): TrajTurn
       } else if (kind === 'compacted') {
         pushCompaction(cell)
       } else if (kind === 'tool' || kind === 'subtool') {
+        if (kind === 'tool' && !cell.result && !cell.failure?.message && !cell.failure?.code && (cell.status === 'running' || failedStatus(cell.status ?? ''))) {
+          unfinishedTools.push({ cell, scope: scopeOf(item, payload) })
+        }
         const step = payload.model_round
         if (typeof step === 'number' && Number.isFinite(step)) {
           stepGroup(step).cells.push(cell)
@@ -753,6 +891,34 @@ export function buildTrajectoryLayout(rawTurns: unknown, t: Translate): TrajTurn
       } else {
         messageGroup().cells.push(cell)
       }
+    }
+    for (const event of pending) {
+      const { item, payload, scope } = event
+      const target = assistants.get(`${scope}:${payload.model_round ?? 0}`)
+        ?? (event.retry ? undefined : lastAssistants.get(scope))
+      if (event.retry) {
+        if (target) target.retry = trajectoryRetry({ trajectory_retry: payload })
+        continue
+      }
+      const failure = trajectoryFailure(payload, String(item.status ?? payload.status ?? 'failed'))
+      if (!failure) continue
+      const endedAt = firstTime(payload, COMPLETED_KEYS) ?? firstTime(item, ['updated_time', 'created_time'])
+      if (target) applyTrajectoryFailure(target, failure, endedAt)
+      else {
+        // Admission can fail before a model request exists. Keep that failure
+        // visible instead of incorrectly attaching it to a different execution.
+        const fallback = buildCell(item, payload, 'context', index++)
+        if (!fallback.text) Object.defineProperty(fallback, 'text', { value: failure.message ?? failure.code ?? t('trajectory.stateFailed'), enumerable: true, configurable: true })
+        applyTrajectoryFailure(fallback, failure, endedAt)
+        messageGroup().cells.push(fallback)
+      }
+      for (const tool of unfinishedTools) {
+        if (tool.scope !== scope) continue
+        applyTrajectoryFailure(tool.cell, { status: 'interrupted', code: 'INTERRUPTED', message: t('trajectory.toolInterrupted') }, endedAt)
+      }
+    }
+    for (const cell of assistants.values()) {
+      if (cell.retry && cell.status !== 'running') cell.retry = { ...cell.retry, willRetry: false }
     }
   }
 
@@ -789,7 +955,7 @@ export function buildRequestNumbers(turns: readonly TrajTurnModel[]): TrajReques
       addUsage(cumulative, messageCell.usage)
       const status: TrajRequestNumber['status'] = messageCell.isError
         ? 'error'
-        : messageCell.metrics?.completedTime == null ? 'running' : 'complete'
+        : messageCell.status === 'running' || messageCell.metrics?.completedTime == null ? 'running' : 'complete'
       group.requestNumber = requests.length + 1
       requests.push({
         identity: requestIdentity(turn.turn, group.title),
@@ -803,6 +969,8 @@ export function buildRequestNumbers(turns: readonly TrajTurnModel[]): TrajReques
         usage: messageCell.usage,
         cumulativeUsage: { ...cumulative },
         assistantIndex: messageCell.index,
+        failure: messageCell.failure,
+        retry: messageCell.retry,
       })
     }
   }
@@ -1000,6 +1168,9 @@ function recordNeedle(record: TableRecord): string {
     record.cell.inputDetail ?? '',
     record.cell.outputDetail ?? '',
     record.cell.result ?? '',
+    record.cell.failure?.code ?? '',
+    record.cell.failure?.message ?? '',
+    record.cell.retry?.message ?? '',
   ].join('\n').toLowerCase()
 }
 

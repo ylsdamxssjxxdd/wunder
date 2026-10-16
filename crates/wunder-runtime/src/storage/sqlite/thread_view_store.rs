@@ -219,6 +219,170 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn trajectory_diagnostics_match_projection_and_source_fallback() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = SqliteStorage::new(dir.path().join("fixture.db").to_string_lossy().into());
+        let accepted = storage
+            .accept_thread_turn(
+                "fixture-user",
+                "fixture-thread",
+                &json!({"content":"input"}),
+            )
+            .unwrap();
+        let turn = accepted["turn_id"].as_str().unwrap();
+        storage.append_thread_item("fixture-user", &json!({
+            "session_id":"fixture-thread", "turn_id":turn, "item_id":"fixture-model",
+            "kind":"assistant_message", "status":"failed", "model_round":1,
+            "trajectory_retry":{"attempt":1,"max_attempts":3,"message":"fixture retry","will_retry":false},
+            "trajectory_failure":{"status":"failed","code":"UPSTREAM_TIMEOUT","message":"fixture timeout","retryable":true,"recovery_action":"retry_later"},
+        })).unwrap();
+        storage.append_thread_item("fixture-user", &json!({
+            "session_id":"fixture-thread", "turn_id":turn, "item_id":"fixture-tool",
+            "kind":"tool_call", "status":"failed", "tool":"fixture_tool", "error":"fixture tool error",
+        })).unwrap();
+        let live = storage
+            .thread_view_trajectory_page("fixture-user", "fixture-thread", None, Some(turn), 12)
+            .unwrap();
+        let conn = storage.open().unwrap();
+        conn.execute("UPDATE thread_view_heads SET projection_state='source'", [])
+            .unwrap();
+        let source = storage
+            .thread_view_trajectory_page("fixture-user", "fixture-thread", None, Some(turn), 12)
+            .unwrap();
+        for row in &live.trajectory {
+            let fallback = source
+                .trajectory
+                .iter()
+                .find(|other| other.item_id == row.item_id)
+                .unwrap();
+            assert_eq!(fallback.diagnostics, row.diagnostics);
+        }
+    }
+
+    #[test]
+    fn trajectory_diagnostics_legacy_backfill_respects_page_budget_and_cursors() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = SqliteStorage::new(dir.path().join("fixture.db").to_string_lossy().into());
+        let accepted = storage
+            .accept_thread_turn(
+                "fixture-user",
+                "fixture-thread",
+                &json!({"content":"input"}),
+            )
+            .unwrap();
+        let turn = accepted["turn_id"].as_str().unwrap();
+        for index in 0..100 {
+            storage.append_thread_item("fixture-user", &json!({
+                "session_id":"fixture-thread", "turn_id":turn,
+                "item_id":format!("fixture-error-{index}"), "kind":"terminal", "status":"failed",
+                "error":{"code":"c".repeat(128), "message":"e".repeat(2048)},
+                "source_stage":"s".repeat(128), "recovery_action":"r".repeat(128), "retryable":true,
+            })).unwrap();
+        }
+        storage.open().unwrap().execute(
+            "UPDATE thread_trajectory_rows SET payload=json_remove(payload,'$.diagnostics') WHERE session_id='fixture-thread'",
+            [],
+        ).unwrap();
+        let first = storage
+            .thread_view_trajectory_page("fixture-user", "fixture-thread", None, Some(turn), 100)
+            .unwrap();
+        assert!(first.has_more);
+        assert!(first.trajectory.len() < 100);
+        let mut before = None;
+        let mut seen = std::collections::HashSet::new();
+        let mut failures = 0;
+        for _ in 0..10 {
+            let page = storage
+                .thread_view_trajectory_page(
+                    "fixture-user",
+                    "fixture-thread",
+                    before,
+                    Some(turn),
+                    100,
+                )
+                .unwrap();
+            assert!(serde_json::to_vec(&page).unwrap().len() < TRAJECTORY_RESPONSE_BYTES);
+            for row in &page.trajectory {
+                assert!(seen.insert(row.item_id.clone()));
+                if row.kind == "terminal" {
+                    assert_eq!(
+                        row.diagnostics.as_ref().unwrap()["failure"]["message"],
+                        "e".repeat(2048)
+                    );
+                    failures += 1;
+                }
+            }
+            if !page.has_more {
+                break;
+            }
+            assert_ne!(page.next_before, before);
+            before = page.next_before;
+        }
+        assert_eq!(failures, 100);
+    }
+
+    #[test]
+    fn automatic_compaction_is_counted_in_live_and_source_process_views() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = SqliteStorage::new(dir.path().join("fixture.db").to_string_lossy().into());
+        let accepted = storage
+            .accept_thread_turn(
+                "fixture-user",
+                "fixture-thread",
+                &json!({"content":"input"}),
+            )
+            .unwrap();
+        let turn = accepted["turn_id"].as_str().unwrap();
+        storage
+            .append_thread_item(
+                "fixture-user",
+                &json!({
+                    "session_id":"fixture-thread", "turn_id":turn, "item_id":"fixture-prompt",
+                    "kind":"system_message", "status":"completed", "content":"internal prompt",
+                    "visibility":"model_internal", "meta":{"type":"system_prompt"}
+                }),
+            )
+            .unwrap();
+        for index in 0..2 {
+            let meta = if index == 0 {
+                json!({"type":"compaction_summary", "replacement_history":[{"content":"internal context"}]})
+            } else {
+                json!({"compaction_id":"fixture-compaction-id"})
+            };
+            let item = json!({
+                "session_id":"fixture-thread", "turn_id":turn,
+                "item_id":format!("fixture-compaction-{index}"), "kind":"system_message",
+                "status":"completed", "content":"Retained compacted history.", "meta":meta
+            });
+            storage.append_thread_item("fixture-user", &item).unwrap();
+            // Repeated persistence must not duplicate the process count.
+            storage.append_thread_item("fixture-user", &item).unwrap();
+        }
+        let live = storage
+            .thread_view_page("fixture-user", "fixture-thread", "chat", None, 12)
+            .unwrap();
+        assert_eq!(live.chat[0].workflow_count, 2);
+        assert!(live.chat[0].assistant.content.is_empty());
+        let trajectory = storage
+            .thread_view_trajectory_page("fixture-user", "fixture-thread", None, Some(turn), 12)
+            .unwrap();
+        let compaction = trajectory
+            .trajectory
+            .iter()
+            .find(|item| item.item_id == "fixture-compaction-0")
+            .unwrap();
+        assert_eq!(compaction.summary, "上下文压缩");
+        let conn = storage.open().unwrap();
+        conn.execute("UPDATE thread_view_heads SET projection_state='source'", [])
+            .unwrap();
+        let source = storage
+            .thread_view_page("fixture-user", "fixture-thread", "chat", None, 12)
+            .unwrap();
+        assert_eq!(source.chat[0].workflow_count, live.chat[0].workflow_count);
+        assert!(source.chat[0].assistant.content.is_empty());
+    }
+
+    #[test]
     fn admission_queue_reason_and_execution_share_one_durable_head() {
         let dir = tempfile::tempdir().unwrap();
         let storage = SqliteStorage::new(dir.path().join("fixture.db").to_string_lossy().into());

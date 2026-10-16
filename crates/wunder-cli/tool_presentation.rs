@@ -191,7 +191,8 @@ pub(crate) fn is_write_tool_name(name: &str) -> bool {
 /// name list inside an exploring card; a listing or a search answers a different question,
 /// so it keeps its own row.
 pub(crate) fn is_file_read_tool_name(name: &str) -> bool {
-    matches_canonical(name, CANONICAL_READ, &["read_file"])
+    let _ = name;
+    false
 }
 
 /// True for `执行命令` — one-shot command execution, including `execute_command`.

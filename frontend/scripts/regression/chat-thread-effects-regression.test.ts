@@ -116,6 +116,7 @@ test('production send callback binds its pending pair and settles from server tu
     }]}));
     assert.equal(chat.isSessionBusy(key), false);
     assert.equal(chat.isSessionLoading(key), false);
+    assert.deepEqual(eventDetails.flatMap(detail => detail?.completedTurns ?? []).map(item => item.turnId), ['fixture-turn-send']);
     const refreshes = events.filter(type => type === 'wunder:workspace-refresh').length;
     assert.equal(refreshes, 1, 'binding the pending row directly to a terminal row refreshes directories');
     options.onEvent('workspace_update', JSON.stringify({ data: { paths: ['reports/result.txt'] } }));
@@ -164,6 +165,55 @@ test('view lifecycle refreshes on interaction, completion, failure and stop with
     assert.ok(refreshes.every(detail => detail.forceTree && detail.scope === 'directory'));
     assert.equal(applyChatThreadServerEvent({}, key, 'workspace_update', {}), false);
   } finally { cleanup(); }
+});
+
+test('sending again after completion ignores old completion and settles the new turn once', async () => {
+  const { chat, eventDetails, applyView, cleanup } = await setup();
+  const { chatWsClient } = await import('../../src/stores/chatWatcher');
+  const { clearSessionWatcher } = await import('../../src/stores/chatRuntimeControls');
+  const originalRequest = chatWsClient.request;
+  const previous: ChatViewRow = {
+    root_turn_id: 'fixture-previous-turn', user_round: 1, revision: 10, status: 'completed',
+    user: { item_id: 'fixture-previous-user', content: 'Fixture input' },
+    assistant: { item_id: 'fixture-previous-answer', content: 'Fixture answer' }, workflow_count: 0, failed_count: 0
+  };
+  const completions = () => eventDetails.flatMap(detail => detail?.completedTurns ?? []);
+  applyView(10, [previous], 'completed');
+  chatWsClient.request = (async (options: any) => {
+    const request = typeof options.message === 'function' ? options.message() : options.message;
+    if (request.type !== 'start') {
+      return new Promise(resolve => options.signal?.addEventListener('abort', () => resolve(undefined), { once: true }));
+    }
+    assert.equal(chat.sessionRuntimeStatus(key), 'running');
+    assert.equal(chat.isSessionBusy(key), true);
+    options.onEvent('thread_view_change', JSON.stringify({epoch:1,view_seq:10,runtime_status:'completed',rows:[previous]}));
+    assert.equal(chat.sessionRuntimeStatus(key), 'running');
+    assert.equal(completions().length, 0);
+    const current: ChatViewRow = {
+      ...previous, root_turn_id: 'fixture-followup-turn', user_round: 2, revision: 11,
+      client_message_id: request.payload.client_message_id, status: 'running',
+      assistant: { item_id: 'fixture-followup-answer', content: '' }
+    };
+    options.onEvent('thread_view_change', JSON.stringify({epoch:1,view_seq:11,runtime_status:'running',rows:[current]}));
+    assert.equal(chat.isSessionBusy(key), true);
+    assert.equal(completions().length, 0);
+    const finished = { ...current, revision:12, status:'completed', assistant:{...current.assistant,content:'Fixture follow-up answer'} };
+    const terminal = JSON.stringify({epoch:1,view_seq:12,runtime_status:'completed',rows:[finished]});
+    options.onEvent('thread_view_change', terminal);
+    options.onEvent('thread_view_change', terminal);
+    assert.equal(chat.isSessionBusy(key), false);
+    assert.equal(chat.isSessionLoading(key), false);
+    assert.deepEqual(completions().map(item => item.turnId), ['fixture-followup-turn']);
+    options.onEvent('final', JSON.stringify({content:'Fixture follow-up answer'}));
+  }) as any;
+  try {
+    await chat.sendMessage('Fixture follow-up');
+    assert.equal(chat.sessionRuntimeStatus(key), 'completed');
+  } finally {
+    clearSessionWatcher();
+    chatWsClient.request = originalRequest;
+    cleanup();
+  }
 });
 
 test('durable file writes refresh while running and terminal heads clear all shell busy state', async () => {

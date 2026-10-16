@@ -840,6 +840,12 @@
   overflow-wrap: anywhere;
 }
 
+.tt-diagnostic-row dd {
+  white-space: pre-wrap;
+  max-height: 180px;
+  overflow: auto;
+}
+
 .tt-dd-clickable {
   cursor: pointer;
 }

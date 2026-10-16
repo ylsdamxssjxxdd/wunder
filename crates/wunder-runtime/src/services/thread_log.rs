@@ -3,6 +3,8 @@ use crate::storage::StorageBackend;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
+pub(crate) mod diagnostics;
+
 /// Read-time lifecycle projection also repairs logs written before terminal
 /// turns began settling their unfinished items. It does not rewrite model context.
 pub fn project_visible_item(message: &mut Value, kind: &str, turn_status: &str) {
@@ -106,6 +108,28 @@ pub fn export_response(
     session_id: String,
     include_internal: bool,
 ) -> axum::response::Response {
+    let rx = export_stream(storage, user_id, session_id, include_internal);
+    let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
+    let mut response = axum::response::Response::new(axum::body::Body::from_stream(stream));
+    response.headers_mut().insert(
+        axum::http::header::CONTENT_TYPE,
+        axum::http::HeaderValue::from_static("application/x-ndjson;charset=utf-8"),
+    );
+    response.headers_mut().insert(
+        axum::http::header::CONTENT_DISPOSITION,
+        axum::http::HeaderValue::from_static("attachment; filename=thread-log.jsonl"),
+    );
+    response
+}
+
+/// Shared export for HTTP and local clients. Dropping the receiver cancels the
+/// producer; the two-record channel keeps database reads under backpressure.
+pub fn export_stream(
+    storage: Arc<dyn StorageBackend>,
+    user_id: String,
+    session_id: String,
+    include_internal: bool,
+) -> tokio::sync::mpsc::Receiver<Result<String, std::io::Error>> {
     // Backpressure propagates to the database producer, including download cancellation.
     let (tx, rx) = tokio::sync::mpsc::channel::<Result<String, std::io::Error>>(2);
     crate::core::long_task::spawn("thread_log.export", async move {
@@ -130,6 +154,24 @@ pub fn export_response(
                             .ok_or_else(||anyhow::anyhow!("turn deleted during export"))?;
                         for item in page["items"].as_array().into_iter().flatten() {
                             tx.send(Ok(format!("{}\n",json!({"record_type":"item","item":item})))).await?;
+                            // A streamed response can exist only as durable blocks.
+                            // Export those blocks verbatim in bounded pages instead
+                            // of assembling another full response in memory.
+                            let item_id=item["item_id"].as_str().unwrap_or_default().to_owned();
+                            for field in ["content", "reasoning", "reasoning_content"] {
+                              let mut block_after=0;
+                              loop {
+                                let db=storage.clone();let owner=user_id.clone();let thread=session_id.clone();let id=item_id.clone();
+                                let (blocks,next,more)=crate::core::blocking::run_db("thread_log.export.blocks",move ||
+                                    db.list_thread_item_blocks_page(&owner,&thread,&id,Some(field),block_after,16,include_internal)).await?;
+                                for block in blocks {
+                                    tx.send(Ok(format!("{}\n",json!({"record_type":"item_block","item_id":item_id,"field":field,"block":block})))).await?;
+                                }
+                                if !more {break;}
+                                block_after=next.map(|cursor|cursor.saturating_add(1)).filter(|cursor|*cursor>block_after)
+                                    .ok_or_else(||anyhow::anyhow!("export block cursor did not advance"))?;
+                              }
+                            }
                         }
                         if page["has_more"]!=true {break;}
                         after=page["next_after"].as_i64().ok_or_else(||anyhow::anyhow!("missing item cursor"))?;
@@ -144,28 +186,19 @@ pub fn export_response(
             let _ = tx.send(Err(std::io::Error::other(err.to_string()))).await;
         }
     });
-    let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
-    let mut response = axum::response::Response::new(axum::body::Body::from_stream(stream));
-    response.headers_mut().insert(
-        axum::http::header::CONTENT_TYPE,
-        axum::http::HeaderValue::from_static("application/x-ndjson;charset=utf-8"),
-    );
-    response.headers_mut().insert(
-        axum::http::header::CONTENT_DISPOSITION,
-        axum::http::HeaderValue::from_static("attachment; filename=thread-log.jsonl"),
-    );
-    response
+    rx
 }
 
 /// Stable lifecycle projection. Transport-only deltas never enter the timeline.
 ///
 /// 严格白名单：只有携带时间线信息量的事件才入账（对齐 dsh 只记录可读轨迹）。
 /// 传输态与统计通知（`*_delta`、heartbeat、context_usage、progress、
-/// workspace_update、model_usage、llm_stream_retry）、生命周期回执
+/// workspace_update、model_usage）、生命周期回执
 /// （final/thread_status/…/llm_response；失败详情由 turn_terminal 携带，error
 /// 事件只是流式通知）以及一切未知事件（hook 通知、子会话生命周期等）一律
 /// 不入账 —— catch-all 兜底只会制造大量「无内容」的上下文噪音。queue_* 是
 /// 挂起/恢复的持久台账（同一条目 queued→running upsert），轨迹前端自行跳过。
+/// llm_stream_retry 通过 diagnostics 更新稳定模型条目，不新增事件行。
 pub fn event_item(session_id: &str, event_type: &str, data: &Value) -> Option<Value> {
     let turn = data.get("turn_id")?.as_str()?;
     let model = data.get("model_round").and_then(Value::as_i64).unwrap_or(0);

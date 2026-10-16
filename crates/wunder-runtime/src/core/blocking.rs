@@ -387,7 +387,9 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{run_cpu, run_db, run_with_exec_timeout, stalled_permits, BlockingKind};
+    use super::{
+        run_cpu, run_db, run_to_completion, run_with_exec_timeout, stalled_permits, BlockingKind,
+    };
     use anyhow::{anyhow, Result};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
@@ -470,5 +472,20 @@ mod tests {
             run_cpu("blocking.test.err", || Err(anyhow!("expected error"))).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("expected error"));
+    }
+
+    #[tokio::test]
+    async fn completion_wait_keeps_the_worker_attached() {
+        let started = Instant::now();
+        run_to_completion(BlockingKind::Db, "blocking.test.completion_wait", || {
+            std::thread::sleep(Duration::from_millis(35));
+            Ok::<_, anyhow::Error>(())
+        })
+        .await
+        .expect("completion wait should return the worker result");
+        assert!(
+            started.elapsed() >= Duration::from_millis(30),
+            "maintenance callers must wait for the blocking worker, not abandon it"
+        );
     }
 }

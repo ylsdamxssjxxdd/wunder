@@ -248,6 +248,9 @@ pub enum Command {
     /// Generate a synthetic thread for rendering stress tests / 生成线程渲染压测线程。
     StressThread(StressThreadCommand),
 
+    /// Inspect a thread trajectory / 查看线程轨迹。
+    Trajectory(TrajectoryCommand),
+
     /// Diagnose local runtime environment / 诊断本地运行环境。
     Doctor(DoctorCommand),
 
@@ -543,6 +546,45 @@ pub struct StressThreadCommand {
     /// Optional session title / 可选会话标题。
     #[arg(long)]
     pub title: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct TrajectoryCommand {
+    /// Thread id; omitted uses --session or the most recent local thread / 线程 ID；省略时使用 --session 或最近线程。
+    #[arg(value_name = "SESSION_ID")]
+    pub session_id: Option<String>,
+
+    /// Read one root turn in detail / 读取指定用户轮次的完整轨迹。
+    #[arg(long, value_name = "ROOT_TURN_ID")]
+    pub turn: Option<String>,
+
+    /// Number of rows to read (bounded by the shared projection) / 读取条数（受共享投影上限约束）。
+    #[arg(long, default_value_t = 80)]
+    pub limit: usize,
+
+    /// Emit the projection as JSON / 以 JSON 输出投影。
+    #[arg(long, default_value_t = false)]
+    pub raw: bool,
+
+    /// Search indexed thread bodies (up to 20 hits) / 搜索线程正文（最多 20 个命中）。
+    #[arg(long, short = 'q')]
+    pub search: Option<String>,
+
+    /// Exclusive older-record cursor / 向前读取的排他游标。
+    #[arg(long, conflicts_with = "after")]
+    pub before: Option<i64>,
+
+    /// Exclusive newer-record cursor / 向后读取的排他游标。
+    #[arg(long)]
+    pub after: Option<i64>,
+
+    /// Inspect an item body / 查看指定条目的正文。
+    #[arg(long, value_name = "ITEM_ID", conflicts_with = "search")]
+    pub item: Option<String>,
+
+    /// Export complete JSONL; '-' writes stdout / 导出完整 JSONL；'-' 写入标准输出。
+    #[arg(long, value_name = "FILE", conflicts_with_all = ["search", "item", "before", "after", "turn"])]
+    pub export: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -842,6 +884,58 @@ mod tests {
             let cli = parse(&["wunder-cli", "--approval-mode", word]);
             assert_eq!(cli.global.approval_mode, Some(expected), "`{word}`");
         }
+    }
+
+    #[test]
+    fn trajectory_command_keeps_shared_projection_controls() {
+        let cli = parse(&[
+            "wunder-cli",
+            "trajectory",
+            "thread-fixture",
+            "--turn",
+            "root-fixture",
+            "--limit",
+            "120",
+            "--search",
+            "tool",
+            "--raw",
+        ]);
+        let Some(Command::Trajectory(command)) = cli.command else {
+            panic!("trajectory command expected");
+        };
+        assert_eq!(command.session_id.as_deref(), Some("thread-fixture"));
+        assert_eq!(command.turn.as_deref(), Some("root-fixture"));
+        assert_eq!(command.limit, 120);
+        assert_eq!(command.search.as_deref(), Some("tool"));
+        assert!(command.raw);
+    }
+
+    #[test]
+    fn trajectory_cursor_and_export_options_are_unambiguous() {
+        assert!(
+            Cli::try_parse_from(["wunder-cli", "trajectory", "--before", "4", "--after", "8"])
+                .is_err()
+        );
+        assert!(Cli::try_parse_from([
+            "wunder-cli",
+            "trajectory",
+            "--export",
+            "-",
+            "--search",
+            "fixture"
+        ])
+        .is_err());
+        let cli = parse(&["wunder-cli", "trajectory", "--after", "8", "--json"]);
+        assert!(cli.global.json);
+        let Some(Command::Trajectory(command)) = cli.command else {
+            panic!("trajectory command expected");
+        };
+        assert_eq!(command.after, Some(8));
+        let cli = parse(&["wunder-cli", "trajectory", "--export", "-"]);
+        let Some(Command::Trajectory(command)) = cli.command else {
+            panic!("trajectory command expected");
+        };
+        assert_eq!(command.export.as_deref(), Some(std::path::Path::new("-")));
     }
 
     #[test]

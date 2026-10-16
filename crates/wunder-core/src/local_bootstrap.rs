@@ -118,10 +118,11 @@ pub fn release_file_if_missing(target: &Path, bytes: &[u8]) -> Result<bool> {
         std::process::id()
     ));
     // These bytes are immutable bundled seeds. The destination is linked only
-    // after the complete staging write, so a crash leaves either a valid file
-    // or no destination and the next launch retries it. Avoiding a per-asset
-    // fsync is material on the first launch with hundreds of small files; the
-    // user database and credentials still use strict atomic writes.
+    // after the complete staging write, so competing processes cannot observe
+    // a partial publication. These reconstructible seeds do not promise fsync
+    // durability across power loss. Avoiding a per-asset fsync is material on
+    // the first launch with hundreds of small files; the user database and
+    // credentials still use strict atomic writes.
     let mut file = OpenOptions::new()
         .create_new(true)
         .write(true)

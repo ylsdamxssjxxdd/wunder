@@ -556,14 +556,12 @@ fn format_read_file_summary(file: &Value, is_zh: bool) -> Option<String> {
                 }
             }
         };
-        let detail = match number_value(file.get("size_bytes")) {
-            Some(size) => format!("{label} · {}", format_bytes(size)),
-            None => label,
-        };
-        return Some(format!(
-            "{path} · {detail} {}",
-            if is_zh { "，未读取" } else { ", not read" }
-        ));
+        let mut parts = vec![path.to_string(), label];
+        if let Some(size) = number_value(file.get("size_bytes")) {
+            parts.push(format_bytes(size));
+        }
+        parts.push(if is_zh { "未读取" } else { "not read" }.to_string());
+        return Some(parts.join(" · "));
     }
     let read_lines = number_value(file.get("read_lines")).unwrap_or_default();
     let total_lines = number_value(file.get("total_lines")).unwrap_or_default();
@@ -572,11 +570,9 @@ fn format_read_file_summary(file: &Value, is_zh: bool) -> Option<String> {
         .and_then(Value::as_bool)
         .unwrap_or(false);
     Some(if total_lines > 0 {
-        if complete {
-            format!("{path} · {total_lines}/{total_lines} lines")
-        } else {
-            format!("{path} · {read_lines}/{total_lines} lines")
-        }
+        let shown = if complete { total_lines } else { read_lines };
+        let noun = if is_zh { "行" } else { "lines" };
+        format!("{path} · {shown}/{total_lines} {noun}")
     } else {
         path.to_string()
     })
@@ -868,5 +864,82 @@ mod tests {
             .details
             .iter()
             .any(|line| line.text.contains("1: fn main() {}")));
+    }
+
+    /// The read tool answers with `files[]` at the data root. A card that only looked under
+    /// `meta` showed the body and never the per-file counts the engine reported.
+    #[test]
+    fn a_read_card_counts_each_file_from_the_engine_shape() {
+        let summary = summarize_tool_result(
+            &serde_json::json!({
+                "content": ">>> src/main.rs\n1: fn main() {}",
+                "files": [
+                    { "path": "src/main.rs", "read_lines": 3, "total_lines": 12, "complete": false },
+                    { "path": "src/lib.rs", "read_lines": 40, "total_lines": 40, "complete": true }
+                ]
+            }),
+            true,
+        )
+        .expect("summary");
+        let text = summary
+            .details
+            .iter()
+            .map(|line| line.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains("src/main.rs · 3/12 行"), "{text}");
+        assert!(text.contains("src/lib.rs · 40/40 行"), "{text}");
+        assert_eq!(summary.summary.as_deref(), Some("2 个文件"));
+    }
+
+    /// A binary read returns no body at all: the engine says so with `binary`, its mime type
+    /// and the size, and its notice text follows the server language rather than the
+    /// session's. The card has to name what it refused and stop quoting that sentence.
+    #[test]
+    fn a_binary_read_names_what_it_refused_instead_of_quoting_the_notice() {
+        let summary = summarize_tool_result(
+            &serde_json::json!({
+                "content": ">>> public/logo.png\n[二进制文件未显示]",
+                "files": [
+                    { "path": "public/logo.png", "binary": true, "mime_type": "image/png", "size_bytes": 12_580 }
+                ]
+            }),
+            true,
+        )
+        .expect("summary");
+        let text = summary
+            .details
+            .iter()
+            .map(|line| line.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains("图片 (image/png)"), "{text}");
+        assert!(text.contains("未读取"), "{text}");
+        assert!(
+            !text.contains("二进制文件未显示"),
+            "the server's sentence is not the card's: {text}"
+        );
+
+        let english = summarize_tool_result(
+            &serde_json::json!({
+                "content": ">>> public/logo.png\n[binary file not shown]",
+                "files": [
+                    { "path": "public/logo.png", "binary": true, "mime_type": "application/pdf", "size_bytes": 2_048 }
+                ]
+            }),
+            false,
+        )
+        .expect("summary");
+        let english_text = english
+            .details
+            .iter()
+            .map(|line| line.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            english_text.contains("binary file (application/pdf)"),
+            "{english_text}"
+        );
+        assert!(english_text.contains("not read"), "{english_text}");
     }
 }

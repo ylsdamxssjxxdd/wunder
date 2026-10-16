@@ -199,15 +199,46 @@ const busyAdmission=threadViewSlots(key)!.at(-1)!;
 assert.equal(isParkedQueueTurn([],busyAdmission.user,busyAdmission.assistant),true);
 console.log('thread view: busy admission preserves composer ownership until dispatch pass');
 
-import {applyThreadViewHead} from '../../src/realtime/chat/threadViewStore';
+import {applyThreadViewHead,settlePendingThreadView,threadViewHeadVersion} from '../../src/realtime/chat/threadViewStore';
 const replayCursor=threadViewCursor(key);
 assert.equal(applyThreadViewHead(key,{epoch:1,view_seq:200,runtime_status:'completed',active_turn_id:''}),true);
 assert.equal(threadViewStatus(key),'completed');
-// A composer-only pending row cannot reopen a server-authoritative terminal
-// head. This is the lifecycle that previously kept the stop button active.
+// A fresh submission bridges the previous terminal head until admission;
+// replaying that same head must not report completion for the new request.
 submitThreadView(key,'fixture-terminal-pending','next input');
-assert.equal(threadViewStatus(key),'completed');
+assert.equal(threadViewStatus(key),'running');
+assert.equal(threadViewActiveTurnId(key),'pending:fixture-terminal-pending');
 assert.equal(threadViewCursor(key),replayCursor);
 assert.equal(applyThreadViewHead(key,{epoch:1,view_seq:199,runtime_status:'running',active_turn_id:'fixture-stale'}),false);
+applyThreadViewChanges(key,{epoch:1,view_seq:200,runtime_status:'completed',active_turn_id:'',rows:[]});
+assert.equal(threadViewStatus(key),'running');
+assert.equal(threadViewHeadVersion(key),'1:200');
+// A newer authoritative completion wins even if replay has not yet delivered
+// the row that binds this client id. No permanent stop-button state.
+assert.equal(applyThreadViewHead(key,{epoch:1,view_seq:201,runtime_status:'completed',active_turn_id:''}),true);
 assert.equal(threadViewStatus(key),'completed');
+assert.equal(threadViewActiveTurnId(key),'');
 console.log('thread view: detached catalog head advances without skipping transcript replay pass');
+
+submitThreadView(key,'fixture-new-admission','input');
+assert.equal(threadViewStatus(key),'running');
+applyThreadViewChanges(key,{epoch:1,view_seq:202,runtime_status:'running',active_turn_id:'fixture-turn-4',rows:[{
+  ...row(4,202),client_message_id:'fixture-new-admission',status:'accepted'
+}]});
+assert.equal(threadViewStatus(key),'running');
+assert.equal(threadViewActiveTurnId(key),'fixture-turn-4');
+submitThreadView(key,'fixture-parked','waiting input');
+assert.equal(threadViewStatus(key),'running');
+assert.equal(threadViewActiveTurnId(key),'fixture-turn-4');
+applyThreadViewChanges(key,{epoch:1,view_seq:203,runtime_status:'completed',active_turn_id:'',rows:[row(4,203)]});
+assert.equal(threadViewStatus(key),'completed');
+for (const status of ['failed','cancelled','rejected']) {
+  const client=`fixture-submit-${status}`;
+  submitThreadView(key,client,'input');
+  assert.equal(threadViewStatus(key),'running');
+  settlePendingThreadView(key,client,status);
+  assert.equal(threadViewStatus(key),'completed');
+  assert.equal(threadViewActiveTurnId(key),'');
+}
+assert.equal(threadViewStatus(background),'running');
+console.log('thread view: follow-up admission, binding, queued input and submission failure settle independently pass');

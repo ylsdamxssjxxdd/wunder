@@ -39,8 +39,10 @@ pub async fn run_main(
     first_prompt: Option<String>,
     session_override: Option<String>,
 ) -> Result<()> {
+    crate::runtime::cli_ui_startup_point("tui_begin");
     let (frame_requester, frame_notifications) = spawn_frame_scheduler();
     let mut terminal = setup_terminal()?;
+    crate::runtime::cli_ui_startup_point("tui_terminal_ready");
     let mut app = match TuiApp::new(
         runtime.clone(),
         global.clone(),
@@ -55,11 +57,13 @@ pub async fn run_main(
             return Err(error);
         }
     };
+    crate::runtime::cli_ui_startup_point("tui_app_ready");
 
     // Interlink tunnel (互通方案 I9): the TUI is the only resident 舵机 form, so
     // it is the only place a node may open its outbound link. One-shot
     // subcommands never reach here, and the same exit path always closes it.
     let tunnel_open = crate::interlink_tunnel::start(runtime).await;
+    crate::runtime::cli_ui_startup_point("tui_tunnel_scheduled");
     app.set_tunnel_open(tunnel_open);
     app.poll_tunnel();
 
@@ -102,6 +106,7 @@ async fn run_loop(
     // Startup fills are owned here, not by the app, so polling them does not
     // borrow the app the key branch is about to use.
     let mut startup_rx = app.take_startup_receiver();
+    let mut first_frame_pending = true;
 
     loop {
         sync_mouse_mode(terminal, app, &mut mouse_capture_enabled)?;
@@ -161,6 +166,12 @@ async fn run_loop(
         sync_mouse_mode(terminal, app, &mut mouse_capture_enabled)?;
 
         terminal.draw(|frame| ui::draw(frame, app))?;
+        if first_frame_pending {
+            first_frame_pending = false;
+            // draw() has flushed its output; terminal emulators may display it
+            // later, so this is a submitted frame rather than a paint callback.
+            crate::runtime::cli_ui_startup_point("tui_first_frame_submitted");
+        }
 
         let pending_scrollback_lines = app.drain_pending_scrollback_lines();
         if !pending_scrollback_lines.is_empty() {

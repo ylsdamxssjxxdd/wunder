@@ -1422,7 +1422,10 @@
 }
 
 .messenger-chat-body.is-agent {
-  padding-bottom: clamp(60px, 17vh, 140px);
+  /* Keep a visible breathing area after the final assistant block.  The
+     composer lives outside this scroll container, so only content padding
+     makes the space part of the scroll range and preserves bottom-follow. */
+  padding-bottom: clamp(84px, 13vh, 132px);
 }
 
 .messenger-chat-body.is-agent .messenger-message:not(.mine) {

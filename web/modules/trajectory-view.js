@@ -4,7 +4,7 @@
 
 import { elements } from "./elements.js?v=20261016-01";
 import { getAuthHeaders } from "./admin-auth.js?v=20261011-01";
-import { getCurrentLanguage, t } from "./i18n.js?v=20261016-01";
+import { getCurrentLanguage, t } from "./i18n.js?v=20261016-02";
 import { getWunderBase } from "./api.js";
 import { notify } from "./notify.js";
 import { normalizeMarkdownForWebPreview, enhanceRenderedMarkdown } from "./markdown-preview.js";
@@ -25,7 +25,8 @@ import {
   groupVirtualRows,
   requestIdentity,
   timelineFocusIndexes,
-} from "./trajectory-model.js?v=20261016-01";
+  trajectoryDiagnosticRows,
+} from "./trajectory-model.js?v=20261016-02";
 
 const OVERSCAN_PX = 360;
 const VIRTUAL_THRESHOLD = 100;
@@ -845,6 +846,13 @@ export function createTrajectoryView(host, options = {}) {
         } else {
           content.appendChild(h("span", "tt-record-empty", modelT("noContent")));
         }
+        if (cell.isError && cell.kind !== "tool" && cell.kind !== "subtool") {
+          const chip = h("span", "tt-state-chip tt-state-error", statusLabel(cell));
+          chip.title = cell.failure?.message || "";
+          content.appendChild(chip);
+        } else if (cell.retry?.willRetry && cell.status === "running") {
+          content.appendChild(h("span", "tt-state-chip", modelT("stateRetrying")));
+        }
         contentCell.appendChild(content);
       }
       tr.appendChild(contentCell);
@@ -938,7 +946,11 @@ export function createTrajectoryView(host, options = {}) {
   };
 
   const statusLabel = (cell) => {
+    if (cell.status === "cancelled" || cell.status === "interrupted") return modelT("stateInterrupted");
+    if (cell.status === "rejected") return modelT("stateRejected");
     if (cell.isError) return modelT("stateFailed");
+    if (cell.retry?.willRetry && cell.status === "running") return modelT("stateRetrying");
+    if (cell.status === "running" || cell.status === "queued") return modelT("stateWaiting");
     if (cell.kind === "message" || cell.kind === "tool" || cell.kind === "subtool") {
       return cell.metrics?.timingRecorded || cell.timeSeconds !== null
         ? modelT("stateCompleted")
@@ -1117,6 +1129,10 @@ export function createTrajectoryView(host, options = {}) {
       };
 
       addRow(modelT("status"), statusLabel(selectedCell));
+      for (const row of trajectoryDiagnosticRows(selectedCell, modelT)) {
+        const value = addRow(row.label, row.value);
+        value.parentElement.classList.add("tt-diagnostic-row");
+      }
 
       const links = [];
       if ((selectedCell.kind === "tool" || selectedCell.kind === "subtool") && request) {

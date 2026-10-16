@@ -511,7 +511,7 @@ onBeforeUnmount(() => {
 // ---------------------------------------------------------------- 条目装配
 
 const TERMINAL_TOOL_STATUS = new Set(['completed', 'failed', 'cancelled', 'interrupted']);
-const SKIP_KINDS = new Set(['user_message', 'tool_message', 'system_message']);
+const SKIP_KINDS = new Set(['user_message', 'tool_message']);
 
 const asObject = (value: unknown): Record<string, unknown> =>
   value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
@@ -550,6 +550,15 @@ const stringifyDetail = (value: unknown): string => {
   } catch {
     return '';
   }
+};
+
+const isCompactionSystemItem = (item: Record<string, unknown>): boolean => {
+  if (String(item?.kind || '') !== 'system_message') return false;
+  const data = flattenItemPayload(item?.payload);
+  const meta = asObject(data.meta);
+  const type = String(meta.type ?? data.type ?? '').trim().toLowerCase();
+  const id = String(meta.compaction_id ?? meta.compactionId ?? data.compaction_id ?? data.compactionId ?? '').trim();
+  return type === 'compaction_summary' || Boolean(id);
 };
 
 type PersistedToolCallIdentity = { name: string; functionName: string; arguments?: unknown };
@@ -593,11 +602,14 @@ const mapWorkflowItem = (
   persistedToolCalls: ReadonlyMap<string, PersistedToolCallIdentity>
 ): WorkflowItem | null => {
   const kind = String(item?.kind || '');
-  if (!kind || kind === 'assistant_message' || SKIP_KINDS.has(kind)) return null;
+  if (!kind || kind === 'assistant_message' || SKIP_KINDS.has(kind) ||
+    (kind === 'system_message' && !isCompactionSystemItem(item))) return null;
   const data = flattenItemPayload(item?.payload);
   const status = String(item?.status || data.status || 'completed');
   const eventType =
-    kind === 'tool_call'
+    kind === 'system_message'
+      ? 'compaction'
+      : kind === 'tool_call'
       ? TERMINAL_TOOL_STATUS.has(status)
         ? 'tool_result'
         : 'tool_call'
@@ -610,6 +622,19 @@ const mapWorkflowItem = (
     detail: stringifyDetail(data),
     updatedSeq: Number(item?.revision) || undefined
   };
+  if (kind === 'system_message') {
+    mapped.toolName = 'context_compaction';
+    mapped.tool = 'context_compaction';
+    const summary = pickText(data, [
+      'summary_text', 'summaryText', 'summary_model_output', 'summaryModelOutput',
+      // Automatic compaction replacement rows persist the bounded summary in
+      // the system item's content field.
+      'content'
+    ]);
+    if (summary) {
+      mapped.detail = stringifyDetail({ ...data, summary_text: summary });
+    }
+  }
   const callId = pickText(data, ['tool_call_id', 'toolCallId', 'call_id', 'callId']);
   const persisted = callId ? persistedToolCalls.get(callId) : undefined;
   const toolName = pickText(data, ['tool', 'name', 'tool_name', 'toolName']) || persisted?.name || '';
@@ -669,7 +694,7 @@ const buildRows = (items: Array<Record<string, unknown>>): ProcessRow[] => {
   const persistedToolCalls = collectAssistantToolCalls(items);
   for (const item of items) {
     const kind = String(item?.kind || '');
-    if (SKIP_KINDS.has(kind)) continue;
+    if (SKIP_KINDS.has(kind) || (kind === 'system_message' && !isCompactionSystemItem(item))) continue;
     if (kind === 'assistant_message') {
       slots.push({ type: 'message', item });
       continue;

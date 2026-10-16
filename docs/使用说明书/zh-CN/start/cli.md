@@ -1,7 +1,7 @@
 ---
 title: 舵机（cli）使用
 summary: 手工本地操作入口。终端里进交互界面，管道里自动降级为一次性执行；22 条斜杠命令、exec --json 事件流、cloud 子命令全套；舵机侧关闭定时任务与引擎排队。
-updated_at: 2026-10-13
+updated_at: 2026-10-16
 ---
 
 # 舵机（cli）使用
@@ -41,6 +41,7 @@ cargo build --release -p wunder-cli
 | --- | --- | --- |
 | `exec` | `e` | 非交互执行一次智能体任务；`--json` 走 JSONL 事件流 |
 | `resume` | — | 恢复历史会话 |
+| `trajectory` | — | 查看、搜索与导出线程轨迹；支持 JSON 与双向游标 |
 | `tool` | — | 直接运行内置 / MCP / 技能工具 |
 | `mcp` | — | 管理本地 MCP 服务器 |
 | `skills` | — | 管理当前用户本地技能 |
@@ -78,6 +79,7 @@ wunder-cli exec --json "整理当前目录的文件" | jq -c 'select(.type=="ite
 | `/help` | `/h` | 帮助 |
 | `/status` | — | 当前状态 |
 | `/resume` | `/r` | 恢复历史会话 |
+| `/trajectory` | `/trace` | 查看当前或指定线程轨迹 |
 | `/new` | — | 新建线程 |
 | `/clear` | `/cls` | 清屏 |
 | `/model` | — | 切换模型；`/model add` 登记新端点 |
@@ -98,6 +100,44 @@ wunder-cli exec --json "整理当前目录的文件" | jq -c 'select(.type=="ite
 | `/quit` | `/q` | 退出 |
 
 **没有** `cloud`、`cron`、`channel`、`memory`、`knowledge` 斜杠命令：`cloud` 是子命令形式；后四者在舵机上没有管理界面。
+
+
+## 轨迹日志
+
+交互界面输入 `/trajectory`（别名 `/trace`）查看当前线程，或 `/trajectory <session_id>` 查看其他线程。任务中心按 `t` 打开选中线程的轨迹，无需切换执行线程。
+
+顶部提供顺序 / 耗时、轮次折叠、工具调用折叠和缩放；中间是输入、模型、工具三条泳道；下方为按用户轮次 / 模型轮次排列的台账，选中后查看详情。宽终端并排显示台账与详情，窄终端按 `i` 切换详情页。
+
+| 键 | 轨迹查看操作 |
+| --- | --- |
+| `↑↓` / `j k`、`PageUp PageDown` | 选择记录；到窗口边缘自动读取较早 / 较新记录 |
+| `Enter` | 进入选中用户轮次；轮次内切换详情焦点 |
+| `i` / `→` | 切换详情焦点；焦点在详情时方向键和翻页键滚动正文 |
+| `Tab` / `Shift+Tab` | 切换概览、正文、原始数据、参数、结果、契约、耗时等适用页签 |
+| `h` / `l`（详情内） | 左右平移长行 |
+| `d`、`+ -`、`0` | 顺序 / 耗时、围绕当前条目缩放、复位缩放 |
+| `t`、空格、`c` | 折叠全部轮次、当前轮次、同模型轮次的工具调用 |
+| `/` | 输入关键词后按 Enter 全文搜索；单次最多 20 个命中，提示更多时缩小查询范围 |
+| `f`、`r` | 切换实时跟随、刷新 / 重试；手动浏览暂停跟随 |
+| `y`、`e` | 复制当前详情页签、导出完整 JSONL 到启动目录（显示保存位置） |
+| `Esc` / `q` | 返回上一层；`?` 查看完整帮助 |
+
+轨迹与其他端共用引擎投影和正文接口，后台查询不阻塞终端操作。列表窗口最多保留 600 条记录，双向游标允许重读已移出的记录；单条详情预览上限 1 MiB，各页签最多 16,384 行，超出时明确提示并可导出完整日志。导出保留用户可见记录，系统提示词内容保持隐藏。
+
+脚本和管道使用独立子命令（默认读取当前工作区最近线程，可显式传入线程 ID）：
+
+```bash
+wunder-cli trajectory --raw
+wunder-cli trajectory <session_id> --turn <root_turn_id> --limit 80 --raw
+wunder-cli trajectory <session_id> --before <cursor> --raw
+wunder-cli trajectory <session_id> --after <cursor> --raw
+wunder-cli trajectory <session_id> --search <query> --raw
+wunder-cli trajectory <session_id> --item <item_id>
+wunder-cli trajectory <session_id> --export trajectory.jsonl
+wunder-cli trajectory <session_id> --export -
+```
+
+`--before` / `--after` 互斥，使用响应里的 `next_before` / `next_after`。`--raw` 或全局 `--json` 输出结构化数据。导出文件必须尚不存在，防止覆盖；最后一行 `export_complete` 表示导出完成，缺少时视为不完整文件。
 
 ## 键位
 

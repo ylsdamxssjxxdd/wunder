@@ -269,6 +269,11 @@
                       <template v-else>
                         <span class="tt-record-empty">{{ t('messenger.trajectory.noContent') }}</span>
                       </template>
+                      <span v-if="row.record.cell.isError && row.record.cell.kind !== 'tool' && row.record.cell.kind !== 'subtool'" class="tt-state-chip tt-state-error"
+                        :title="row.record.cell.failure?.message">{{ statusLabel(row.record.cell) }}</span>
+                      <span v-else-if="row.record.cell.retry?.willRetry && row.record.cell.status === 'running'" class="tt-state-chip">
+                        {{ t('messenger.trajectory.stateRetrying') }}
+                      </span>
                     </div>
                   </template>
                 </td>
@@ -357,6 +362,10 @@
                   <dd :class="{ 'tt-dd-clickable': row.toggleable }" @click="row.toggleable ? toggleTimestampMode() : undefined">
                     {{ row.value }}
                   </dd>
+                </div>
+                <div v-for="row in trajectoryDiagnosticRows(selectedCell, modelT)" :key="row.label" class="tt-overview-row tt-diagnostic-row">
+                  <dt>{{ row.label }}</dt>
+                  <dd>{{ row.value }}</dd>
                 </div>
               </dl>
               <template v-if="selectedCell.kind === 'message'">
@@ -491,6 +500,9 @@ import {
   groupVirtualRows,
   requestIdentity,
   timelineFocusIndexes,
+  trajectoryFailure,
+  trajectoryRetry,
+  trajectoryDiagnosticRows,
 } from './trajectory/trajectoryModel'
 import type {
   TableRecord,
@@ -725,6 +737,16 @@ const overviewTimeline = computed(() => {
   const detailedBuckets = new Set<number>()
   const detailedRanges: Array<{ start: number; end: number }> = []
   const detailedSpans: OverviewSpan[] = []
+  // The projection contract stores durable times as Unix seconds. Accepting
+  // milliseconds as well keeps old/replayed rows safe, while rejecting zero
+  // and non-finite values prevents a single corrupt tile from expanding the
+  // domain from the first real event back to the Unix epoch.
+  const timestampMs = (value: unknown): number | null => {
+    const numeric = Number(value)
+    if (!Number.isFinite(numeric) || numeric <= 0) return null
+    const milliseconds = Math.abs(numeric) < 1e11 ? numeric * 1000 : numeric
+    return Number.isFinite(milliseconds) && milliseconds > 0 ? milliseconds : null
+  }
   // Overlay the rows currently in the bounded ledger with their real
   // positions. The rest of the session remains tile based, so the first
   // screen has DSH-like event marks without unbounded DOM work.
@@ -734,11 +756,15 @@ const overviewTimeline = computed(() => {
     if (!cell || !localSpan) continue
     const rawStart = timelineMode.value === 'sequence'
       ? Number(row.created_seq)
-      : Number(row.started_at) * 1000
+      : timestampMs(row.started_at)
+    const completed = timelineMode.value === 'sequence'
+      ? null
+      : timestampMs(row.completed_at ?? row.started_at)
     const rawEnd = timelineMode.value === 'sequence'
-      ? rawStart + 1
-      : Math.max(rawStart, Number(row.completed_at ?? row.started_at) * 1000)
-    if (!Number.isFinite(rawStart) || !Number.isFinite(rawEnd)) continue
+      ? (Number.isFinite(rawStart) ? rawStart + 1 : NaN)
+      : (rawStart !== null ? Math.max(rawStart, completed ?? rawStart) : NaN)
+    if (rawStart === null || rawEnd === null
+      || !Number.isFinite(rawStart) || !Number.isFinite(rawEnd)) continue
     const bucket = timelineMode.value === 'sequence'
       ? Math.floor(rawStart / bucketWidth)
       : null
@@ -759,6 +785,7 @@ const overviewTimeline = computed(() => {
     16,
     Math.floor(MAX_OVERVIEW_SPANS / Math.max(1, tiles.length)),
   ))
+  const validTiles: Array<{ tile: any; bucket: number; total: number; start: number; end: number }> = []
   for (const tile of tiles) {
     const bucket = Number(tile?.bucket)
     const total = Math.max(0, Number(tile?.count) || 0)
@@ -769,11 +796,27 @@ const overviewTimeline = computed(() => {
     // production bundle (the minifier used to call these values `Ne`).
     const rawStart = timelineMode.value === 'sequence'
       ? bucket * bucketWidth
-      : Number(tile?.start) * 1000
-    const rawEnd = timelineMode.value === 'sequence'
+      : timestampMs(tile?.start)
+    const tileEnd = timelineMode.value === 'sequence'
       ? (bucket + 1) * bucketWidth
-      : Math.max(rawStart, Number(tile?.end) * 1000)
-    if (!Number.isFinite(rawStart) || !Number.isFinite(rawEnd)) continue
+      : timestampMs(tile?.end)
+    const rawEnd = timelineMode.value === 'sequence'
+      ? tileEnd
+      : (rawStart !== null ? Math.max(rawStart, tileEnd ?? rawStart) : null)
+    if (rawStart === null || rawEnd === null
+      || !Number.isFinite(rawStart) || !Number.isFinite(rawEnd)) continue
+    validTiles.push({ tile, bucket, total, start: rawStart, end: rawEnd })
+  }
+  // Preserve the whole thread's domain even when every aggregate bucket is
+  // covered by the currently loaded detailed rows. Without this pass, a long
+  // thread can temporarily zoom into the tail window and make the timeline
+  // appear to contain only a handful of records.
+  for (const tile of validTiles) {
+    start = Math.min(start, tile.start)
+    end = Math.max(end, tile.end)
+  }
+  for (const entry of validTiles) {
+    const { tile, bucket, total, start: rawStart, end: rawEnd } = entry
     // Never paint a full aggregate lane underneath real records from the
     // bounded ledger. The loaded records provide the useful detail; leaving
     // the remainder of that bucket empty is clearer than a misleading solid
@@ -790,12 +833,10 @@ const overviewTimeline = computed(() => {
           Math.round(total * ratios[1]),
           Math.max(0, total - Math.round(total * ratios[0]) - Math.round(total * ratios[1])),
         ]
-    start = Math.min(start, rawStart)
-    end = Math.max(end, rawEnd)
-    const tileEnd = Math.max(rawEnd, rawStart + (timelineMode.value === 'sequence' ? 1 : 0.001))
+    const spanEnd = Math.max(rawEnd, rawStart + (timelineMode.value === 'sequence' ? 1 : 0.001))
     const totalLaneCount = laneCounts.reduce((sum, value) => sum + Math.max(0, value), 0)
     const segmentCount = Math.max(1, Math.min(perTileLimit, totalLaneCount || total))
-    const segmentWidth = (tileEnd - rawStart) / segmentCount
+    const segmentWidth = (spanEnd - rawStart) / segmentCount
     for (let segment = 0; segment < segmentCount; segment += 1) {
       const eventAt = ((segment + 0.5) / segmentCount) * (totalLaneCount || total)
       let lane = 2
@@ -808,7 +849,7 @@ const overviewTimeline = computed(() => {
         }
       }
       const segmentStart = rawStart + segment * segmentWidth
-      const segmentEnd = segment === segmentCount - 1 ? tileEnd : segmentStart + segmentWidth
+      const segmentEnd = segment === segmentCount - 1 ? spanEnd : segmentStart + segmentWidth
       spans.push({
         start: segmentStart,
         end: segmentEnd,
@@ -831,7 +872,8 @@ const overviewTimeline = computed(() => {
     0,
     Math.max(0, MAX_OVERVIEW_SPANS - detailedSpans.length),
   ))
-  return spans.length > 0 ? { start, end: Math.max(end, start + 1), spans, turnBoundaries: [] } : null
+  if (spans.length === 0 || !Number.isFinite(start) || !Number.isFinite(end)) return null
+  return { start, end: Math.max(end, start + 1), spans, turnBoundaries: [] }
 })
 
 const domain = computed(() => {
@@ -842,10 +884,14 @@ const domain = computed(() => {
 
 watch([timeline, overviewTimeline], ([detailModel, overviewModel]) => {
   const model = overviewModel ?? detailModel
-  if (!model) return
+  if (!model || !Number.isFinite(model.start) || !Number.isFinite(model.end)) {
+    viewStart.value = 0
+    viewSpan.value = 1
+    return
+  }
   viewStart.value = model.start
   viewSpan.value = Math.max(1, model.end - model.start)
-})
+}, { immediate: true })
 
 const projectedOverviewSpans = computed(() => {
   const model = overviewTimeline.value
@@ -948,6 +994,7 @@ const timelineTicks = computed(() => {
   const width = trackWidth.value || 600
   if (width <= 0) return []
   const span = Math.max(1e-9, viewSpan.value)
+  if (!Number.isFinite(viewStart.value) || !Number.isFinite(span)) return []
   const targetCount = Math.max(2, Math.floor(width / 120))
   const raw = span / targetCount
   const magnitude = 10 ** Math.floor(Math.log10(raw))
@@ -1092,11 +1139,11 @@ function summaryTurns(rows:any[], resetMaps=true):unknown[] {
     let turn=turns.get(row.root_turn_id)
     if(!turn){turn={turn_id:row.root_turn_id,user_turn_index:row.user_round,items:[]};turns.set(row.root_turn_id,turn)}
     const isSubagent = row.kind === 'subagent_run' || row.kind === 'subagent'
-    turn.items.push({item_id:row.item_id,item_index:row.item_index,kind:row.kind,status:row.status,created_time:row.started_at,updated_time:row.completed_at,
+    turn.items.push({item_id:row.item_id,turn_id:row.turn_id,item_index:row.item_index,kind:row.kind,status:row.status,created_time:row.started_at,updated_time:row.completed_at,
       overview_only:row.overview_only===true,
       payload:{content:row.summary,tool:row.tool_name,label:row.tool_name,
         ...(isSubagent ? {} : { task: row.summary }),
-        model_round:row.model_round,message_stats:row.stats,runtime:row.subagent}})
+        model_round:row.model_round,message_stats:row.stats,runtime:row.subagent,diagnostics:row.diagnostics}})
   }
   return markRaw([...turns.values()])
 }
@@ -1440,6 +1487,12 @@ const selectedCell = computed<TrajCell | null>(() => {
     ? { ...(detail as Record<string, unknown>), ...(detail.payload as Record<string, unknown>) }
     : detail
   const source = payload as any
+  const detailedFailure = trajectoryFailure(source, base.status)
+  // Legacy terminal failures are folded into the assistant summary. Its own
+  // old body may contain no diagnostics; hydration must not erase that repair.
+  const failure = base.failure || detailedFailure
+    ? { ...base.failure, ...Object.fromEntries(Object.entries(detailedFailure ?? {}).filter(([, value]) => value !== undefined)) }
+    : undefined
   const runtime = source?.runtime && typeof source.runtime === 'object' ? source.runtime : null
   const runtimeState = runtime?.agent_state && typeof runtime.agent_state === 'object'
     ? runtime.agent_state : null
@@ -1467,6 +1520,8 @@ const selectedCell = computed<TrajCell | null>(() => {
   const stringify=(v:unknown)=>typeof v==='string'?v:v===undefined||v===null?'':JSON.stringify(v,null,2)
   return {
     ...base,
+    failure,
+    retry: trajectoryRetry(source) ?? base.retry,
     // Assistant rows only have their response in the durable detail payload.
     // Do not use `content` as a synthetic input: that produced identical
     // Input/Output sections in the overview. Tool rows still use their args.
@@ -1541,7 +1596,11 @@ const hierarchyLinks = computed(() => {
 })
 
 function statusLabel(cell: TrajCell): string {
+  if (cell.status === 'cancelled' || cell.status === 'interrupted') return t('messenger.trajectory.stateInterrupted')
+  if (cell.status === 'rejected') return t('messenger.trajectory.stateRejected')
   if (cell.isError) return t('messenger.trajectory.stateFailed')
+  if (cell.retry?.willRetry && cell.status === 'running') return t('messenger.trajectory.stateRetrying')
+  if (cell.status === 'running' || cell.status === 'queued') return t('messenger.trajectory.stateWaiting')
   if (cell.kind === 'message' || cell.kind === 'tool' || cell.kind === 'subtool') {
     return cell.metrics?.timingRecorded || cell.timeSeconds !== null
       ? t('messenger.trajectory.stateCompleted')
@@ -2061,4 +2120,9 @@ function formatTokens(value: number | undefined): string {
 </script>
 
 <style scoped>
+.tt-diagnostic-row dd {
+  white-space: pre-wrap;
+  max-height: 180px;
+  overflow: auto;
+}
 </style>

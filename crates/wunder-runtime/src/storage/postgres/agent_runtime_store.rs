@@ -1,3 +1,4 @@
+use super::log_maintenance::{self, PurgeBudget};
 use super::PostgresStorage;
 use crate::storage::{AgentTaskRecord, StorageLifecycle, UpdateAgentTaskStatusParams};
 use anyhow::Result;
@@ -507,57 +508,48 @@ impl PostgresAgentRuntimeStorage for PostgresStorage {
         Ok(rows.get::<_, i64>(0))
     }
 
-    fn delete_stream_events_before_impl(&self, _before_time: f64) -> Result<i64> {
+    fn delete_stream_events_before_impl(&self, before_time: f64) -> Result<i64> {
         self.ensure_initialized()?;
-        if _before_time <= 0.0 {
+        if !before_time.is_finite() || before_time <= 0.0 {
             return Ok(0);
         }
-        let mut conn = self.conn()?;
-        let mut tx = conn.transaction()?;
-        tx.execute("SET LOCAL lock_timeout = '2s'", &[])?;
-        tx.execute("SET LOCAL statement_timeout = '20s'", &[])?;
-        let affected = tx.execute(
-            "DELETE FROM stream_events WHERE created_time < $1",
-            &[&_before_time],
-        )?;
-        tx.commit()?;
-        Ok(affected as i64)
+        log_maintenance::delete_rows(
+            &mut self.conn()?,
+            "stream_events",
+            "created_time < $1",
+            &[&before_time],
+            &mut PurgeBudget::new(),
+        )
     }
 
-    fn delete_stream_events_by_user_impl(&self, _user_id: &str) -> Result<i64> {
+    fn delete_stream_events_by_user_impl(&self, user_id: &str) -> Result<i64> {
         self.ensure_initialized()?;
-        let cleaned = _user_id.trim();
-        if cleaned.is_empty() {
+        let user_id = user_id.trim();
+        if user_id.is_empty() {
             return Ok(0);
         }
-        let mut conn = self.conn()?;
-        let mut tx = conn.transaction()?;
-        tx.execute("SET LOCAL lock_timeout = '2s'", &[])?;
-        tx.execute("SET LOCAL statement_timeout = '20s'", &[])?;
-        let affected = tx.execute("DELETE FROM stream_events WHERE user_id = $1", &[&cleaned])?;
-        tx.commit()?;
-        Ok(affected as i64)
+        log_maintenance::delete_rows(
+            &mut self.conn()?,
+            "stream_events",
+            "user_id=$1",
+            &[&user_id],
+            &mut PurgeBudget::new(),
+        )
     }
 
-    fn delete_stream_events_by_session_impl(&self, _session_id: &str) -> Result<i64> {
+    fn delete_stream_events_by_session_impl(&self, session_id: &str) -> Result<i64> {
         self.ensure_initialized()?;
-        let cleaned = _session_id.trim();
-        if cleaned.is_empty() {
+        let session_id = session_id.trim();
+        if session_id.is_empty() {
             return Ok(0);
         }
-        let mut conn = self.conn()?;
-        let mut tx = conn.transaction()?;
-        // Stream events are ephemeral.  Yield to a live session writer and
-        // retry in the tombstone pass instead of leaving a pooled connection
-        // blocked behind its row locks.
-        tx.execute("SET LOCAL lock_timeout = '2s'", &[])?;
-        tx.execute("SET LOCAL statement_timeout = '20s'", &[])?;
-        let affected = tx.execute(
-            "DELETE FROM stream_events WHERE session_id = $1",
-            &[&cleaned],
-        )?;
-        tx.commit()?;
-        Ok(affected as i64)
+        log_maintenance::delete_rows(
+            &mut self.conn()?,
+            "stream_events",
+            "session_id=$1",
+            &[&session_id],
+            &mut PurgeBudget::new(),
+        )
     }
 
     fn delete_stream_events_by_round_impl(

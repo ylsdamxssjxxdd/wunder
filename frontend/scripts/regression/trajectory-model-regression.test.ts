@@ -5,6 +5,10 @@ import { resolve } from 'node:path';
 
 import {
   buildTrajectoryLayout,
+  buildRequestNumbers,
+  deriveTimeline,
+  filterRecords,
+  trajectoryDiagnosticRows,
   collapseTurnRecords,
   extractUsage,
   flattenRecords,
@@ -279,4 +283,172 @@ test('bridge and hive project identical folds for the same ledger', async () => 
       assert.deepEqual(admin, hive);
     }
   }
+});
+
+const bridgeModel = async () => {
+  const source = readFileSync(resolve(__dirname, '../../web/modules/trajectory-model.js'), 'utf8');
+  return import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+};
+
+const assistantItem = (step: number, status = 'completed', execution = 'execution-a') => ({
+  kind: 'assistant_message', turn_id: execution, item_id: `${execution}:text-${step}`,
+  status, created_seq: step, created_time: 1800000000, updated_time: 1800000002,
+  payload: { model_round: step, content: 'partial response' },
+});
+
+test('bridge snapshots group continuations once and retain failure execution identity', async () => {
+  const bridge = await bridgeModel();
+  const first = assistantItem(1);
+  const continued = assistantItem(1, 'running', 'execution-b');
+  const snapshot = { turns: [
+    { turn_id: 'execution-b', root_turn_id: 'execution-a', trigger_kind: 'continuation', user_turn_index: 1, items: [continued] },
+    { turn_id: 'execution-a', root_turn_id: 'execution-a', trigger_kind: 'user', user_turn_index: 1, items: [first] },
+  ], items: [first, continued, { kind: 'terminal', item_id: 'failure', turn_id: 'execution-b',
+    status: 'failed', payload: { model_round: 1, error: { code: 'UPSTREAM_TIMEOUT', message: 'fixture timeout' } } }] };
+  const before = JSON.stringify(snapshot);
+  const turns = bridge.attachTurnItems(snapshot);
+  assert.equal(turns.length, 1);
+  assert.equal(turns[0].trigger_kind, 'user');
+  assert.equal(turns[0].items.length, 3);
+  const cells = bridge.flattenRecords(bridge.buildTrajectoryLayout(turns, translate)).map((r: any) => r.cell);
+  assert.equal(cells.length, 2);
+  assert.equal(cells.find((cell: any) => cell.recordId === first.item_id).isError, false);
+  assert.equal(cells.find((cell: any) => cell.recordId === continued.item_id).failure.code, 'UPSTREAM_TIMEOUT');
+  assert.equal(JSON.stringify(snapshot), before);
+  const continuationOnly = bridge.attachTurnItems({ turns: [snapshot.turns[0]], items: [continued] });
+  assert.equal(continuationOnly.length, 1);
+  assert.equal(continuationOnly[0].turn_id, 'execution-a');
+  assert.equal(continuationOnly[0].items.length, 1);
+});
+
+test('bridge failure details hydrate durable blocks without duplication or replacing sealed text', async () => {
+  const bridge = await bridgeModel();
+  const active = { ...assistantItem(1, 'failed'), payload: { model_round: 1 } };
+  const sealed = { ...assistantItem(2), payload: { model_round: 2, content: 'sealed output', reasoning_content: 'sealed reasoning' } };
+  const chunk = (item: string, field: string, index: number, offset: number, text: string) => ({
+    item_id: item, field, block_index: index, data: { [field]: text, [`${field}_offset`]: offset },
+  });
+  const snapshot = { turns: [{ turn_id: 'execution-a', user_turn_index: 1 }], items: [active, sealed], blocks: [
+    chunk(active.item_id, 'content', 1, 2, ' done'),
+    chunk(active.item_id, 'content', 0, 0, '😀'),
+    chunk(active.item_id, 'content', 0, 0, '😀'),
+    chunk(active.item_id, 'reasoning', 0, 0, 'partial thought'),
+    chunk(sealed.item_id, 'content', 0, 0, 'stale output'),
+    chunk(sealed.item_id, 'reasoning', 0, 0, 'stale reasoning'),
+  ] };
+  const before = JSON.stringify(snapshot);
+  const cells = bridge.flattenRecords(bridge.buildTrajectoryLayout(bridge.attachTurnItems(snapshot), translate)).map((r: any) => r.cell);
+  assert.equal(cells[0].outputDetail, '😀 done');
+  assert.equal(cells[0].thinkingDetail, 'partial thought');
+  assert.equal(cells[1].outputDetail, 'sealed output');
+  assert.equal(cells[1].thinkingDetail, 'sealed reasoning');
+  assert.equal(JSON.stringify(snapshot), before);
+  const gapped = bridge.attachTurnItems({ ...snapshot, blocks: [chunk(active.item_id, 'content', 1, 100000000, 'tail')] });
+  assert.equal(gapped[0].items[0].payload.content, '\n…\ntail');
+});
+
+test('legacy timeout settles the matching request and timeline without an extra context row', async () => {
+  const fixture = [{ user_turn_index: 1, items: [
+    assistantItem(1), assistantItem(2, 'running'),
+    { kind: 'terminal', turn_id: 'execution-a', status: 'failed', created_seq: 3,
+      updated_time: 1800000005, payload: { model_round: 2, error: {
+        code: 'UPSTREAM_TIMEOUT', message: 'fixture provider timed out',
+        error_meta: { source_stage: 'llm', retryable: true, recovery_action: 'retry_later' },
+      }, retry_after_ms: 1000 } },
+  ] }];
+  const bridge = await bridgeModel();
+  for (const model of [{ buildTrajectoryLayout, flattenRecords, buildRequestNumbers, deriveTimeline, filterRecords }, bridge]) {
+    const turns = model.buildTrajectoryLayout(fixture, translate);
+    const cells = model.flattenRecords(turns).map((r: any) => r.cell);
+    assert.equal(cells.length, 2);
+    assert.equal(cells[0].isError, false);
+    assert.equal(cells[1].isError, true);
+    assert.equal(cells[1].failure.code, 'UPSTREAM_TIMEOUT');
+    assert.equal(cells[1].failure.recoveryAction, 'retry_later');
+    assert.equal(cells[1].failure.retryAfterMs, 1000);
+    const requests = model.buildRequestNumbers(turns);
+    assert.equal(requests[1].status, 'error');
+    assert.equal(requests[1].completedAt, 1800000005000);
+    assert.equal(model.deriveTimeline(turns).spans[1].isError, true);
+    assert.equal(model.filterRecords(model.flattenRecords(turns), 'UPSTREAM_TIMEOUT').length, 1);
+  }
+});
+
+test('successful retries retain last failure while running retries stay pending', async () => {
+  const fixture = [{ user_turn_index: 1, items: [
+    { ...assistantItem(1), payload: { model_round: 1, content: 'response', trajectory_retry: {
+      attempt: 2, max_attempts: 3, delay_s: 0.5, message: 'temporary provider error', will_retry: false,
+    } } },
+    { ...assistantItem(2, 'running'), payload: { model_round: 2, trajectory_retry: {
+      attempt: 1, max_attempts: 3, error: 'another temporary failure', will_retry: true,
+    } } },
+  ] }];
+  const bridge = await bridgeModel();
+  for (const model of [{ buildTrajectoryLayout, flattenRecords, buildRequestNumbers, trajectoryDiagnosticRows }, bridge]) {
+    const turns = model.buildTrajectoryLayout(fixture, translate);
+    const requests = model.buildRequestNumbers(turns);
+    assert.equal(requests[0].status, 'complete');
+    assert.equal(requests[0].retry.attempt, 2);
+    assert.equal(requests[0].retry.willRetry, false);
+    assert.equal(requests[1].status, 'running');
+    assert.equal(requests[1].completedAt, null);
+    const cells = model.flattenRecords(turns).map((r: any) => r.cell);
+    assert.equal(cells[1].isError, false);
+    assert.equal(cells[1].retry.willRetry, true);
+    assert.ok(model.trajectoryDiagnosticRows(cells[0], translate).some((r: any) => r.value === 'temporary provider error'));
+  }
+});
+
+test('tool error objects are preserved and unfinished calls become interrupted', async () => {
+  const fixture = [{ user_turn_index: 1, items: [
+    assistantItem(1),
+    { kind: 'tool_call', turn_id: 'execution-a', status: 'running', created_seq: 2, payload: { tool: 'fixture_tool', model_round: 1, tool_call_id: 'tool-a' } },
+    { kind: 'tool_result', turn_id: 'execution-a', status: 'completed', created_seq: 3, payload: { tool_call_id: 'tool-a', ok: false, error: { code: 'TOOL_INVALID', message: 'fixture argument rejected' } } },
+    { kind: 'tool_call', turn_id: 'execution-a', status: 'cancelled', created_seq: 4, payload: { tool: 'fixture_tool', tool_call_id: 'tool-b', model_round: 1 } },
+    { kind: 'terminal', turn_id: 'execution-a', status: 'cancelled', created_seq: 5, payload: { model_round: 1, error: { code: 'CANCELLED', message: 'cancelled' } } },
+  ] }];
+  const bridge = await bridgeModel();
+  for (const model of [{ buildTrajectoryLayout, flattenRecords }, bridge]) {
+    const cells = model.flattenRecords(model.buildTrajectoryLayout(fixture, translate)).map((r: any) => r.cell);
+    assert.equal(cells.length, 3);
+    assert.equal(cells[0].status, 'cancelled');
+    assert.equal(cells[1].failure.code, 'TOOL_INVALID');
+    assert.equal(cells[1].failure.message, 'fixture argument rejected');
+    assert.equal(cells[2].failure.code, 'INTERRUPTED');
+    assert.equal(cells[2].isError, true);
+  }
+});
+
+test('errors never cross execution identity and admission failures remain visible', async () => {
+  const fixture = [{ user_turn_index: 1, items: [
+    assistantItem(1), assistantItem(2), assistantItem(1, 'completed', 'execution-b'),
+    { kind: 'terminal', turn_id: 'execution-a', status: 'failed', created_seq: 4, payload: { error: { code: 'MODEL_ERROR', message: 'fixture failure' } } },
+    { kind: 'terminal', turn_id: 'execution-c', status: 'rejected', created_seq: 5, payload: { error: { code: 'INPUT_INVALID', message: 'fixture rejected' } } },
+  ] }];
+  const bridge = await bridgeModel();
+  for (const model of [{ buildTrajectoryLayout, flattenRecords }, bridge]) {
+    const cells = model.flattenRecords(model.buildTrajectoryLayout(fixture, translate)).map((r: any) => r.cell);
+    assert.equal(cells.length, 4);
+    assert.equal(cells.find((c: any) => c.recordId === 'execution-a:text-2').failure.code, 'MODEL_ERROR');
+    assert.equal(cells.find((c: any) => c.recordId === 'execution-b:text-1').isError, false);
+    assert.equal(cells[3].failure.code, 'INPUT_INVALID');
+  }
+});
+
+test('bounded paged diagnostics and exported retry events have identical client projections', async () => {
+  const fixture = [{ user_turn_index: 1, items: [
+    { ...assistantItem(1), payload: { model_round: 1, diagnostics: { failure: {
+      status: 'failed', code: 'MODEL_ERROR', message: 'x'.repeat(10000), source_stage: 'llm', recovery_action: 'retry_later', retryable: true,
+    }, retry: { attempt: 1, max_attempts: 3, message: 'fixture retry', will_retry: false } } } },
+    { ...assistantItem(2), payload: { model_round: 2, content: 'done' } },
+    { kind: 'llm_stream_retry', turn_id: 'execution-a', payload: { model_round: 2, attempt: 1, max_attempts: 3, error: 'fixture transient failure', will_retry: true } },
+  ] }];
+  const bridge = await bridgeModel();
+  const hive = flattenRecords(buildTrajectoryLayout(fixture, translate)).map(r => r.cell);
+  const admin = bridge.flattenRecords(bridge.buildTrajectoryLayout(fixture, translate)).map((r: any) => r.cell);
+  assert.deepEqual(admin, hive);
+  assert.equal(hive[0].failure?.message?.length, 2048);
+  assert.equal(hive[0].failure?.retryable, true);
+  assert.equal(hive[1].retry?.willRetry, false);
+  assert.equal(hive[1].isError, false);
 });

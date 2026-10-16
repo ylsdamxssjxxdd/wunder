@@ -314,6 +314,37 @@ impl EventEmitter {
             }
             self.enqueue_tail(&tail_event).await;
         }
+        // Diagnostics update the stable admitted model item. The store merges
+        // this bounded patch inside its item transaction, preserving text and
+        // reasoning even when a history writer completes concurrently.
+        if let Some(item) = crate::services::thread_log::diagnostics::event_patch(
+            &self.session_id,
+            event_type,
+            &data,
+        ) {
+            if let Some(committer) = self.committer.clone() {
+                match committer.commit_item(&self.user_id, &item).await {
+                    Ok(Some(receipt)) => {
+                        self.enqueue_event(
+                            &StreamEvent {
+                                event: "thread_change".into(),
+                                data: enrich_event_payload(
+                                    receipt,
+                                    Some(&self.session_id),
+                                    timestamp,
+                                ),
+                                id: None,
+                                timestamp: Some(timestamp),
+                            },
+                            true,
+                        )
+                        .await;
+                    }
+                    Ok(None) => {}
+                    Err(error) => warn!("persist model diagnostics failed: {error}"),
+                }
+            }
+        }
         if let Some(item) =
             crate::services::thread_log::event_item(&self.session_id, event_type, &data)
         {

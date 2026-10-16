@@ -48,7 +48,7 @@ const ASSISTANT_BUBBLE_ID_PREFIX = 'tturn:';
 // Queue entries remain available to the composer projection so queue metadata
 // (position/ahead) survives replay, but they are explicitly non-tool records.
 const WORKFLOW_ITEM_KINDS = new Set([
-  'tool_call', 'approval', 'plan', 'compaction', 'compacted', 'compaction_summary', 'queue'
+  'tool_call', 'approval', 'plan', 'compaction', 'compacted', 'compaction_summary', 'system_message', 'queue'
 ]);
 
 // User-facing visibility. 'admin' is excluded per the v2 contract;
@@ -259,7 +259,8 @@ const buildTurnSlot = (
     if (item.kind === 'assistant_message' && item.itemId === textItemId(item.turnId, item.modelRound) &&
         !isCompactionSummaryAssistantItem(item)) {
       textItems.push(item);
-    } else if (WORKFLOW_ITEM_KINDS.has(item.kind)) {
+    } else if (WORKFLOW_ITEM_KINDS.has(item.kind) &&
+      (item.kind !== 'system_message' || isCompactionSystemItem(item))) {
       workflows.push(item);
     }
   }
@@ -718,7 +719,8 @@ export const buildWorkflowRecord = (
   const toolCallIdentity = item.kind === 'tool_call'
     ? resolveToolCallIdentity(item, assistantItems)
     : { name: '', arguments: undefined, functionName: '' };
-  const isCompaction = ['compaction', 'compacted', 'compaction_summary'].includes(item.kind);
+  const isCompaction = ['compaction', 'compacted', 'compaction_summary'].includes(item.kind) ||
+    isCompactionSystemItem(item);
   const toolName = isCompaction
     ? 'context_compaction'
     : toolCallIdentity.name || firstText(payload.tool, payload.tool_name, payload.name, payload.toolName);
@@ -728,7 +730,11 @@ export const buildWorkflowRecord = (
     // content field is only a short reason marker such as "history".
     ...(isCompaction ? {
       summary_text: firstText(payload.summary_text, payload.summaryText,
-        payload.summary_model_output, payload.summaryModelOutput),
+        payload.summary_model_output, payload.summaryModelOutput,
+        // Auto compaction persists the injected summary as the system row's
+        // content.  Do not apply this fallback to workflow compaction rows:
+        // their content can only be a short marker such as "history".
+        isCompactionSystemItem(item) ? payload.content : ''),
       detail: stringifyWorkflowDetail(payload)
     } : {}),
     ...(payload.request_usage ? { usage: payload.request_usage } : {}),
@@ -896,6 +902,27 @@ const isCompactionSummaryAssistantItem = (item: ThreadItemState): boolean => {
     type === 'manual_compaction_marker' ||
     raw.manual_compaction_marker === true ||
     raw.manualCompactionMarker === true;
+};
+
+/**
+ * Auto compaction is persisted as a system replacement row, whereas manual
+ * compaction uses an assistant compatibility marker.  Both forms describe
+ * one workflow activity, never a user-visible assistant reply.  Recognise
+ * the system form by its explicit durable marker rather than its summary
+ * prose, so ordinary system rows remain hidden.
+ */
+const isCompactionSystemItem = (item: ThreadItemState): boolean => {
+  if (item.kind !== 'system_message') return false;
+  const rawSource = item.raw ?? {};
+  const raw = isPlainRecord(rawSource.data)
+    ? { ...rawSource, ...rawSource.data }
+    : isPlainRecord(rawSource.payload)
+      ? { ...rawSource, ...rawSource.payload }
+      : rawSource;
+  const meta = isPlainRecord(raw.meta) ? raw.meta : {};
+  const type = normalizeStatus(firstText(meta.type, raw.type));
+  const compactionId = firstText(meta.compaction_id, meta.compactionId, raw.compaction_id, raw.compactionId);
+  return type === 'compaction_summary' || Boolean(compactionId);
 };
 
 /** Do not render a lifecycle-only tool row until its function identity is

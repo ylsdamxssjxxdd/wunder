@@ -46,7 +46,8 @@ export const applyThreadViewEffects=(store,key:string,prior:Map<string,string>)=
   while(viewCompletions.size>32)viewCompletions.delete(viewCompletions.keys().next().value!);
   const completedTurns:AgentRuntimeCompletion[]=[];
   for(const slot of slots){const status=String(slot.assistant.status),turnId=String(slot.assistant.turn_id);
-    if(!terminal(status)||!prior.has(slot.rootTurnId)||terminal(prior.get(slot.rootTurnId))||claims.has(turnId))continue;
+    const previous = prior.get(slot.rootTurnId) ?? prior.get(`pending:${slot.assistant.client_message_id}`);
+    if(!terminal(status)||previous===undefined||terminal(previous)||claims.has(turnId))continue;
     claims.add(turnId);if(claims.size>256)claims.delete(claims.values().next().value!);
     completedTurns.push({sessionId:key,turnId,status:status==='completed'?'completed':status==='failed'?'failed':'cancelled',...(agentId?{agentId}: {})});
   }

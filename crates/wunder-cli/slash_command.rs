@@ -8,6 +8,7 @@ pub enum SlashCommand {
     Help,
     Status,
     Resume,
+    Trajectory,
     New,
     Clear,
     Config,
@@ -41,7 +42,7 @@ struct SlashCommandDoc {
     description: &'static str,
 }
 
-const SLASH_COMMAND_DOCS: [SlashCommandDoc; 21] = [
+const SLASH_COMMAND_DOCS: [SlashCommandDoc; 22] = [
     SlashCommandDoc {
         command: SlashCommand::Help,
         usage: "/help",
@@ -56,6 +57,11 @@ const SLASH_COMMAND_DOCS: [SlashCommandDoc; 21] = [
         command: SlashCommand::Resume,
         usage: "/resume [--all|session_id]",
         description: "list and resume sessions (current workspace, --all widens)",
+    },
+    SlashCommandDoc {
+        command: SlashCommand::Trajectory,
+        usage: "/trajectory [session_id]",
+        description: "inspect the durable thread trajectory (alias: /trace)",
     },
     SlashCommandDoc {
         command: SlashCommand::New,
@@ -158,6 +164,7 @@ impl SlashCommand {
                 | SlashCommand::New
                 | SlashCommand::Clear
                 | SlashCommand::Resume
+                | SlashCommand::Trajectory
                 | SlashCommand::Diff
                 | SlashCommand::Mcp
                 | SlashCommand::Skills
@@ -184,6 +191,7 @@ pub fn parse_slash_command(input: &str) -> Option<ParsedSlashCommand<'_>> {
         "help" | "h" => (SlashCommand::Help, remaining),
         "status" => (SlashCommand::Status, remaining),
         "resume" | "r" => (SlashCommand::Resume, remaining),
+        "trajectory" | "trace" => (SlashCommand::Trajectory, remaining),
         "new" => (SlashCommand::New, remaining),
         "clear" | "cls" => (SlashCommand::Clear, remaining),
         "model" => (SlashCommand::Model, remaining),
@@ -280,6 +288,7 @@ fn command_doc_by_name(name: &str) -> Option<&'static SlashCommandDoc> {
         "help" | "h" => SlashCommand::Help,
         "status" => SlashCommand::Status,
         "resume" | "r" => SlashCommand::Resume,
+        "trajectory" | "trace" => SlashCommand::Trajectory,
         "new" => SlashCommand::New,
         "clear" | "cls" => SlashCommand::Clear,
         "config" => SlashCommand::Config,
@@ -359,6 +368,7 @@ fn localized_description(entry: &SlashCommandDoc, language: &str) -> String {
         SlashCommand::Help => "显示 slash 命令帮助",
         SlashCommand::Status => "显示会话配置与 token 用量",
         SlashCommand::Resume => "列出并恢复历史会话（默认限当前工作区，--all 放开）",
+        SlashCommand::Trajectory => "查看当前或指定线程的轨迹日志（别名：/trace）",
         SlashCommand::New => "在当前工作区新建线程",
         SlashCommand::Clear => "清屏并新建线程（Ctrl+L）",
         SlashCommand::Config => "查看生效配置或编辑 config.toml",
@@ -495,6 +505,14 @@ mod tests {
         let parsed = parse_slash_command("/r last").expect("command should parse");
         assert_eq!(parsed.command, SlashCommand::Resume);
         assert_eq!(parsed.args, "last");
+    }
+
+    #[test]
+    fn parse_trajectory_command_with_alias_and_session() {
+        let parsed = parse_slash_command("/trace thread-fixture").expect("command should parse");
+        assert_eq!(parsed.command, SlashCommand::Trajectory);
+        assert_eq!(parsed.args, "thread-fixture");
+        assert!(SlashCommand::Trajectory.available_during_task());
     }
 
     #[test]

@@ -81,6 +81,8 @@ mod input_selection;
 mod plan_panel;
 mod text_selection;
 mod thread_ui_state;
+#[path = "trajectory.rs"]
+pub(crate) mod trajectory;
 mod transcript_search;
 mod transcript_view;
 use input_selection::MouseSelection;
@@ -530,6 +532,7 @@ pub struct TuiApp {
     banner: crate::empty_state_animation::WelcomeLogo,
     banner_cells: usize,
     transcript_view: transcript_view::TranscriptView,
+    trajectory_view: Option<trajectory::TrajectoryView>,
     /// Cards the reader opened with Enter, keyed by cell identity so trimming the
     /// transcript cannot re-point an opening at an unrelated card.
     expanded_cards: std::collections::BTreeSet<u64>,
@@ -745,6 +748,7 @@ impl TuiApp {
             banner: crate::empty_state_animation::WelcomeLogo::default(),
             banner_cells: 0,
             transcript_view: Default::default(),
+            trajectory_view: None,
             expanded_cards: Default::default(),
             search_expanded_cards: Default::default(),
             search_expand_revision: 0,
@@ -1050,6 +1054,7 @@ impl TuiApp {
     }
 
     pub fn schedule_periodic_redraw_if_needed(&self) {
+        self.schedule_trajectory_redraw();
         // Keep the cross-process open lease alive even while the selected
         // thread is idle and no stream animation is running.
         self.frame_requester
@@ -1517,7 +1522,9 @@ impl TuiApp {
     pub fn mouse_capture_enabled(&self) -> bool {
         // The Ctrl+T view scrolls with the wheel, so it needs capture even when the
         // terminal is configured to leave the mouse to the console.
-        self.mouse_mode.captures_mouse() || self.transcript_view_open()
+        self.mouse_mode.captures_mouse()
+            || self.transcript_view_open()
+            || self.trajectory_view_open()
     }
 
     fn refresh_workspace_context(&mut self) {
@@ -3140,6 +3147,11 @@ impl TuiApp {
                 center.reconcile_selection();
             }
             KeyCode::Char('?') => center.help = true,
+            KeyCode::Char('t') => {
+                if let Some(target) = center.selected_session_id() {
+                    self.open_trajectory_view(Some(target)).await?;
+                }
+            }
             KeyCode::Enter => {
                 if let Some(target) = center.selected_session_id() {
                     self.close_command_center();
@@ -4177,6 +4189,7 @@ impl TuiApp {
     }
 
     pub async fn drain_stream_events(&mut self) {
+        self.poll_trajectory_results();
         self.touch_thread_lease_if_due();
         self.flush_key_paste_burst_if_due(false);
         self.flush_pending_paste();
@@ -4688,6 +4701,10 @@ impl TuiApp {
     }
 
     pub fn on_paste(&mut self, text: String) {
+        if self.trajectory_view_open() {
+            self.paste_trajectory_search(&text);
+            return;
+        }
         let Some(normalized) = normalize_clipboard_text(text) else {
             return;
         };
@@ -4790,6 +4807,17 @@ impl TuiApp {
                 self.decide_remote_approval(decision);
                 return Ok(());
             }
+        }
+
+        if self.trajectory_view_open() {
+            if let Some(action) = self.try_handle_inquiry_panel_navigation_key(key) {
+                if let Some(selection) = action {
+                    self.submit_line(selection).await?;
+                }
+                return Ok(());
+            }
+            let _ = self.handle_trajectory_view_key(key).await?;
+            return Ok(());
         }
 
         if self.warning_panel_open() && matches!(key.code, KeyCode::Esc) {
@@ -6188,6 +6216,10 @@ impl TuiApp {
     }
 
     pub fn on_mouse(&mut self, mouse: MouseEvent) {
+        if self.trajectory_view_open() {
+            self.trajectory_mouse(mouse);
+            return;
+        }
         if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Right)) {
             // The right button copies what is marked, the way codex does it, and only
             // reaches for the clipboard when nothing is selected. Either region's mark goes
@@ -6256,7 +6288,8 @@ impl TuiApp {
     /// A surface above the transcript owns the screen: a click there must not fall
     /// through to the cards hidden underneath it.
     fn modal_surface_open(&mut self) -> bool {
-        self.command_center.is_some()
+        self.trajectory_view_open()
+            || self.command_center.is_some()
             || self.resume_picker.is_some()
             || self.shortcuts_visible
             || self.active_approval.is_some()

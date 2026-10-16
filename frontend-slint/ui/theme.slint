@@ -47,7 +47,7 @@ export struct TrajBoundary { pos: float, label: string }
 export struct TrajTiming { label: string, value: string }
 export struct TrajSection { title: string, body: string }
 export struct TrajTab { title: string, kind: int }  // 0 overview 1 raw 2 timing
-export struct TextBlock { text: string, styled: styled-text, kind: int, table-cells: [string], table-columns: int, table-rows: [string], image: image, image-source: string, language: string }
+export struct TextBlock { text: string, styled: styled-text, kind: int, table-cells: [string], table-columns: int, table-rows: [string], image: image, image-source: string, resource-name: string, language: string }
 // A bounded, stable projection of one tool invocation. Detail text is only
 // laid out after the user expands that entry, so streaming tool output never
 // causes the full chat history to be reparsed.

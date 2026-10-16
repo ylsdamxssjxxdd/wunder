@@ -74,6 +74,25 @@ pub(crate) fn has_tool_calls(item: &Value) -> bool {
         .is_some_and(|calls| !calls.is_empty())
 }
 
+/// Automatic context compaction is stored as a system replacement message so
+/// it can reset the model history without becoming an assistant reply.  The
+/// presentation projection treats only that explicitly marked system row as a
+/// workflow activity; ordinary system prompts remain internal context.
+pub(crate) fn is_compaction_system_message(kind: &str, item: &Value) -> bool {
+    if kind != "system_message" {
+        return false;
+    }
+    let meta = item.get("meta").and_then(Value::as_object);
+    matches!(
+        meta.and_then(|value| value.get("type"))
+            .and_then(Value::as_str),
+        Some("compaction_summary")
+    ) || meta
+        .and_then(|value| value.get("compaction_id"))
+        .and_then(Value::as_str)
+        .is_some_and(|value| !value.is_empty())
+}
+
 pub(crate) fn is_failed(status: &str) -> i64 {
     i64::from(matches!(status, "failed" | "rejected"))
 }
@@ -128,6 +147,8 @@ pub(crate) fn trajectory(
             .or(runtime_summary)
             .unwrap_or(kind)
             .to_owned()
+    } else if is_compaction_system_message(kind, item) {
+        "上下文压缩".to_string()
     } else if kind == "system_message" {
         // The model receives the frozen prompt from the internal log, while
         // the presentation projection must never disclose it (it can contain
@@ -235,6 +256,12 @@ pub(crate) fn trajectory(
             bytes: 0,
         }),
         subagent,
+        diagnostics: matches!(
+            kind,
+            "assistant_message" | "tool_call" | "terminal" | "compaction" | "subagent_run"
+        )
+        .then(|| crate::services::thread_log::diagnostics::project(item, status))
+        .flatten(),
     }
 }
 
@@ -290,6 +317,21 @@ pub(crate) fn subagent_runtime_projection(item: &Value) -> Option<Value> {
 }
 
 pub(crate) fn redact_internal_context(item: &mut Value) {
+    // The compaction replacement is user-visible execution history.  It is
+    // stored as a system message only because that is how it replaces model
+    // context; keep its bounded summary available to the process-card view.
+    if is_compaction_system_message("system_message", item) {
+        if let Some(map) = item.as_object_mut() {
+            map.remove("model_content");
+            // This is the model's replacement context, not part of the
+            // summary detail. Do not copy the entire retained history into
+            // the presentation body for a single process entry.
+            if let Some(meta) = map.get_mut("meta").and_then(Value::as_object_mut) {
+                meta.remove("replacement_history");
+            }
+        }
+        return;
+    }
     if let Some(map) = item.as_object_mut() {
         map.remove("content");
         map.remove("model_content");
@@ -546,6 +588,24 @@ mod tests {
         );
         assert!(row.summary.contains("内容已隐藏"));
         assert!(!row.summary.contains("强大的智能体"));
+    }
+
+    #[test]
+    fn compaction_system_rows_are_distinguished_from_system_prompts() {
+        let mut compaction = json!({
+            "content":"Retained compacted history.",
+            "meta":{"type":"compaction_summary","compaction_id":"cmp-fixture",
+                "replacement_history":[{"content":"internal context"}]}
+        });
+        assert!(is_compaction_system_message("system_message", &compaction));
+        redact_internal_context(&mut compaction);
+        assert_eq!(compaction["content"], "Retained compacted history.");
+        assert!(compaction.pointer("/meta/replacement_history").is_none());
+
+        let mut prompt = json!({"content":"internal prompt","meta":{"type":"system_prompt"}});
+        assert!(!is_compaction_system_message("system_message", &prompt));
+        redact_internal_context(&mut prompt);
+        assert!(prompt.get("content").is_none());
     }
 
     #[test]

@@ -225,6 +225,11 @@ impl TuiApp {
             SlashCommand::Resume => {
                 self.handle_resume_slash(command.args).await?;
             }
+            SlashCommand::Trajectory => {
+                let requested = command.args.trim();
+                let session_id = (!requested.is_empty()).then(|| requested.to_string());
+                self.open_trajectory_view(session_id).await?;
+            }
             SlashCommand::New => {
                 // Deliberately not gated by `busy`: a fresh thread does not disturb the
                 // running one, it only moves it to the background.

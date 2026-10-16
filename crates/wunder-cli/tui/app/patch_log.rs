@@ -493,9 +493,7 @@ impl CommandLogEntry {
             vec![
                 Span::styled(
                     "\u{2717}".to_string(),
-                    Style::default()
-                        .fg(Color::Red)
-                        .add_modifier(Modifier::BOLD),
+                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
                 ),
                 Span::raw(format!(" ({exit_code})")),
             ]
@@ -910,7 +908,7 @@ impl PatchFileRow {
 
 /// Body rows a folded patch card keeps for each file, the same depth the reference previews
 /// an activity with. The stored window, not this number, bounds what expansion can reveal.
-const PATCH_PREVIEW_ROWS: usize = 3;
+const PATCH_PREVIEW_ROWS: usize = 4;
 
 /// Diff rows one card keeps in memory. The fold is a render-time view of this window, and
 /// the window is what keeps a large patch from costing the transcript unbounded rows.
@@ -2077,7 +2075,14 @@ fn output_window(text: &str) -> (Vec<String>, bool) {
 fn empty_output_section(is_zh: bool) -> CommandSection {
     CommandSection {
         label: if is_zh { "输出" } else { "output" }.to_string(),
-        lines: vec![if is_zh { "<空>" } else { "<empty>" }.to_string()],
+        // The reference states a silent run as a sentence, not as a sentinel from a
+        // serialiser: `<empty>` read like the stream had a literal value rather than none.
+        lines: vec![if is_zh {
+            "（无输出）"
+        } else {
+            "(no output)"
+        }
+        .to_string()],
         window_truncated: false,
         style: theme::secondary_text(),
     }
@@ -2677,11 +2682,12 @@ mod tests {
         assert!(!stderr_section.window_truncated);
 
         let folded = flat_command_lines(&entry, 80, false);
+        // The disclosure counts the folded head *and* the outcome row the open card adds.
+        let hidden = 8 - COMMAND_TAIL_PREVIEW_LINES + 1;
         assert!(
             folded
                 .iter()
-                .any(|line| line
-                    .contains(format!("+{} lines", 8 - COMMAND_TAIL_PREVIEW_LINES).as_str())),
+                .any(|line| line.contains(format!("+{hidden} lines").as_str())),
             "the disclosure row counts the folded head: {folded:?}"
         );
         assert!(
@@ -2891,7 +2897,9 @@ mod tests {
         // One file, one path: the header names it, so the body does not repeat it the way a
         // multi-file card has to.
         assert!(
-            !rendered.iter().any(|line| line.contains("diff src/main.rs")),
+            !rendered
+                .iter()
+                .any(|line| line.contains("diff src/main.rs")),
             "{rendered:?}"
         );
         assert!(rendered.iter().any(|line| line.contains("@@")));
@@ -2958,11 +2966,11 @@ mod tests {
         // Three rows per file is what the folded card spends, the same depth the reference
         // previews a change with.
         assert_eq!(
-            folded.iter().filter(|row| row.contains("+line ")).count(),
+            folded.iter().filter(|row| row.contains("+ line ")).count(),
             2,
             "{folded:?}"
         );
-        assert!(!folded.iter().any(|row| row.contains("+line 3")));
+        assert!(!folded.iter().any(|row| row.contains("+ line 3")));
         assert!(!folded.iter().any(|row| row.contains("line 14")));
 
         let opened = flat_patch_lines(&entry, 80, true);
@@ -3093,16 +3101,16 @@ mod tests {
         }
         fn file(path: &str, marker: &str) -> Value {
             serde_json::json!({"action": "update", "path": path, "hunks": 1,
-                "added_lines": 4, "deleted_lines": 0,
-                "diff_blocks": [{"header": "",
-                    "start_line_before": 1, "end_line_before": 1,
-                    "start_line_after": 1, "end_line_after": 4,
-                    "lines": [
-                        added(1, &format!("{marker} one")),
-                        added(2, &format!("{marker} two")),
-                        added(3, &format!("{marker} three")),
-                        added(4, &format!("{marker} four"))
-                    ]}]})
+            "added_lines": 4, "deleted_lines": 0,
+            "diff_blocks": [{"header": "",
+                "start_line_before": 1, "end_line_before": 1,
+                "start_line_after": 1, "end_line_after": 4,
+                "lines": [
+                    added(1, &format!("{marker} one")),
+                    added(2, &format!("{marker} two")),
+                    added(3, &format!("{marker} three")),
+                    added(4, &format!("{marker} four"))
+                ]}]})
         }
         let SpecialLogEntry::Patch(entry) = build_completed_patch_log(
             &serde_json::json!({"result": {"ok": true, "data": {
@@ -3117,10 +3125,22 @@ mod tests {
         // Each block is a range row plus four content rows, so a card of two files previews
         // three of them and holds two back per file.
         let folded = flat_patch_lines(&entry, 100, false);
-        assert!(folded.iter().any(|row| row.contains("first two")), "{folded:?}");
-        assert!(folded.iter().any(|row| row.contains("second two")), "{folded:?}");
-        assert!(!folded.iter().any(|row| row.contains("first three")), "{folded:?}");
-        assert!(!folded.iter().any(|row| row.contains("second three")), "{folded:?}");
+        assert!(
+            folded.iter().any(|row| row.contains("first two")),
+            "{folded:?}"
+        );
+        assert!(
+            folded.iter().any(|row| row.contains("second two")),
+            "{folded:?}"
+        );
+        assert!(
+            !folded.iter().any(|row| row.contains("first three")),
+            "{folded:?}"
+        );
+        assert!(
+            !folded.iter().any(|row| row.contains("second three")),
+            "{folded:?}"
+        );
         assert!(
             folded
                 .iter()
@@ -3129,8 +3149,14 @@ mod tests {
         );
 
         let opened = flat_patch_lines(&entry, 100, true);
-        assert!(opened.iter().any(|row| row.contains("first four")), "{opened:?}");
-        assert!(opened.iter().any(|row| row.contains("second four")), "{opened:?}");
+        assert!(
+            opened.iter().any(|row| row.contains("first four")),
+            "{opened:?}"
+        );
+        assert!(
+            opened.iter().any(|row| row.contains("second four")),
+            "{opened:?}"
+        );
         // Two files keep two path rows; only a one-file card folds its path into the header.
         assert!(
             opened.iter().any(|row| row.contains("diff src/first.rs")),
@@ -3247,7 +3273,15 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(rendered
             .iter()
-            .any(|line| line.contains("diff src/main.rs")));
+            .any(|line| line.contains("Edited src/main.rs")));
+        // The inherited diff belongs to the one file the header already names, so the body
+        // does not spend a row repeating the path.
+        assert!(
+            !rendered
+                .iter()
+                .any(|line| line.contains("diff src/main.rs")),
+            "{rendered:?}"
+        );
         assert!(rendered.iter().all(|line| !line.contains("M src/main.rs")));
     }
 

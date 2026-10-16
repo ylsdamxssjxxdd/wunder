@@ -239,6 +239,30 @@ test('assistant stays active between model and tool rounds and retains its rende
   assert.equal(assistant().__runtime_render_key, initialKey);
 });
 
+test('automatic compaction system messages stay in the process across replay and reload', () => {
+  const state = emptyChatThreadState('fixture-compaction-session');
+  const turn = { turn_id: 'fixture-compaction-turn', user_round: 1, status: 'completed', content: 'Fixture input' };
+  const item = { item_id: 'fixture-compaction', turn_id: turn.turn_id,
+    kind: 'system_message', status: 'completed', visibility: 'user', revision: 1,
+    content: 'Retained compacted history.', meta: { type: 'compaction_summary', compaction_id: 'fixture-cmp' } };
+  const prompt = { ...item, item_id: 'fixture-prompt', content: 'internal prompt', meta: { type: 'system_prompt' } };
+  const frames = [turnUpsert(1, turn), itemUpsert(2, prompt), itemUpsert(3, item)];
+  applyFrames(state, frames);
+  applyFrames(state, frames);
+  const verify = () => {
+    const messages = buildChatThreadRenderableMessages(state);
+    const assistant = messages.find(message => message.role === 'assistant')!;
+    assert.equal(assistant.content, '');
+    assert.equal(assistant.workflowItems?.length, 1);
+    assert.equal(assistant.workflowItems?.[0]?.toolName, 'context_compaction');
+    assert.equal(assistant.workflowItems?.[0]?.eventType, 'compaction');
+    assert.equal(assistant.workflowItems?.[0]?.summary_text, 'Retained compacted history.');
+  };
+  verify();
+  applyChatThreadSnapshot(state, { cursor: 3, turns: [turn], items: [prompt, item] });
+  verify();
+});
+
 test('manual compaction keeps its activity identity live and after snapshot reload', () => {
   const state = emptyChatThreadState('compaction-session');
   const turn = { turn_id: 'compact-turn', user_round: 1, status: 'running', content: '/compact' };

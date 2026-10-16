@@ -387,9 +387,9 @@ fn draw_footer(frame: &mut Frame, area: Rect, view: &CommandCenterView, is_zh: b
             "Type to search  Enter done  Esc clear"
         }
     } else if is_zh {
-        "↑↓ 选择  Enter 切换  Tab 筛选  g 分组  / 搜索  r 刷新  ? 帮助  ← 返回"
+        "↑↓ 选择  Enter 切换  Tab 筛选  g 分组  / 搜索  r 刷新  t 轨迹  ? 帮助  ← 返回"
     } else {
-        "↑↓ select  Enter switch  Tab filter  g group  / search  r refresh  ? help  ← back"
+        "↑↓ select  Enter switch  Tab filter  g group  / search  r refresh  t trajectory  ? help  ← back"
     };
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(text, theme::secondary_text()))),
@@ -399,9 +399,9 @@ fn draw_footer(frame: &mut Frame, area: Rect, view: &CommandCenterView, is_zh: b
 
 fn draw_help(frame: &mut Frame, area: Rect, is_zh: bool) {
     let text = if is_zh {
-        "任务中心\n\n↑↓ / PageUp PageDown：选择任务\nEnter：进入选中任务\nTab / Shift+Tab：切换状态筛选\ng：循环父子谱系、状态、工作区分组\n/：搜索标题、工作区或会话\nr：刷新任务目录\n← 或 Esc：返回会话\n\n按 Esc 或 ? 返回"
+        "任务中心\n\n↑↓ / PageUp PageDown：选择任务\nEnter：进入选中任务\nTab / Shift+Tab：切换状态筛选\ng：循环父子谱系、状态、工作区分组\n/：搜索标题、工作区或会话\nt：查看选中线程轨迹\nr：刷新任务目录\n← 或 Esc：返回会话\n\n按 Esc 或 ? 返回"
     } else {
-        "Threads\n\n↑↓ / PageUp PageDown: select a task\nEnter: switch to the selected task\nTab / Shift+Tab: change the status filter\ng: cycle parent/status/workspace grouping\n/: search title, workspace, or session\nr: refresh the task directory\n← or Esc: return to the conversation\n\nPress Esc or ? to return"
+        "Threads\n\n↑↓ / PageUp PageDown: select a task\nEnter: switch to the selected task\nTab / Shift+Tab: change the status filter\ng: cycle parent/status/workspace grouping\n/: search title, workspace, or session\nt: inspect selected trajectory\nr: refresh the task directory\n← or Esc: return to the conversation\n\nPress Esc or ? to return"
     };
     frame.render_widget(Paragraph::new(text).wrap(Wrap { trim: false }), area);
 }

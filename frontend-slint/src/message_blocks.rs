@@ -175,6 +175,7 @@ fn text_block(text: &str, kind: i32) -> TextBlock {
         table_rows: string_model(Vec::new()),
         image: slint::Image::default(),
         image_source: "".into(),
+        resource_name: "".into(),
         language: "".into(),
     }
 }
@@ -198,13 +199,24 @@ fn table_block(rows: &[String], columns: usize) -> TextBlock {
         ),
         image: slint::Image::default(),
         image_source: "".into(),
+        resource_name: "".into(),
         language: "".into(),
     }
 }
 
 fn image_block(alt: &str, source: &str) -> TextBlock {
     TextBlock {
-        text: format!("图片：{alt}").into(),
+        text: if alt.trim().is_empty() {
+            source
+                .split(['?', '#'])
+                .next()
+                .and_then(|value| value.rsplit(['/', '\\']).next())
+                .filter(|value| !value.is_empty())
+                .unwrap_or("图片")
+                .into()
+        } else {
+            alt.into()
+        },
         styled: StyledText::from_plain_text(alt),
         kind: KIND_IMAGE,
         table_cells: string_model(Vec::new()),
@@ -212,6 +224,7 @@ fn image_block(alt: &str, source: &str) -> TextBlock {
         table_rows: string_model(Vec::new()),
         image: slint::Image::default(),
         image_source: source.into(),
+        resource_name: "".into(),
         language: "".into(),
     }
 }
@@ -237,6 +250,7 @@ fn document_block(label: &str, source: &str) -> TextBlock {
         table_rows: string_model(Vec::new()),
         image: crate::file_icons::workspace_file_icon(fallback, "file"),
         image_source: source.into(),
+        resource_name: fallback.into(),
         language: "".into(),
     }
 }
@@ -251,6 +265,7 @@ fn plain_text_block(text: &str) -> TextBlock {
         table_rows: string_model(Vec::new()),
         image: slint::Image::default(),
         image_source: "".into(),
+        resource_name: "".into(),
         language: "".into(),
     }
 }
@@ -636,7 +651,7 @@ mod tests {
         );
         assert_eq!(blocks[0].kind, 7);
         assert_eq!(blocks[0].text, "交付文档");
-        assert!(blocks[0].image.width > 0);
+        assert!(blocks[0].image.to_rgba8().is_some());
         assert_eq!(blocks[1].kind, KIND_IMAGE);
         assert_eq!(blocks[1].image_source, "/workspaces/scope/workspace/output.webp");
     }

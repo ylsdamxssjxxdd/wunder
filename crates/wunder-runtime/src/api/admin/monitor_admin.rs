@@ -993,7 +993,7 @@ async fn admin_monitor_delete(
                     .user_store
                     .delete_chat_session(&user_id, &session_id)?;
                 state.workspace.purge_session_data(&user_id, &session_id);
-                state.workspace.purge_session_logs(&user_id, &session_id);
+                state.workspace.purge_session_logs(&user_id, &session_id)?;
                 state
                     .storage
                     .delete_cron_jobs_by_session(&user_id, &session_id)?;

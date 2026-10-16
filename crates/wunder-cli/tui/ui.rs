@@ -13,6 +13,17 @@ use ratatui::Frame;
 
 pub fn draw(frame: &mut Frame, app: &mut TuiApp) {
     let is_zh = app.is_zh_language();
+    if app.trajectory_view_open() {
+        trajectory::draw(frame, frame.area(), app, is_zh);
+        if let Some(lines) = app.approval_modal_lines() {
+            modals::draw_approval_modal(frame, frame.area(), frame.area(), lines, is_zh);
+        } else if let Some(lines) = app.remote_approval_modal_lines() {
+            modals::draw_approval_modal(frame, frame.area(), frame.area(), lines, is_zh);
+        } else if let Some(lines) = app.inquiry_modal_lines() {
+            modals::draw_inquiry_modal(frame, frame.area(), frame.area(), lines, is_zh);
+        }
+        return;
+    }
     if let Some(view) = app.command_center_view() {
         command_center::draw(frame, frame.area(), view, is_zh);
         return;
@@ -79,4 +90,8 @@ pub fn draw(frame: &mut Frame, app: &mut TuiApp) {
     } else if let Some(lines) = app.inquiry_modal_lines() {
         modals::draw_inquiry_modal(frame, frame.area(), layout.input, lines, is_zh);
     }
+}
+
+mod trajectory {
+    pub(super) use crate::tui::app::trajectory::draw;
 }

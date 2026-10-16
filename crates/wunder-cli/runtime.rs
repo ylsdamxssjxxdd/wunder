@@ -16,6 +16,8 @@ pub const CLI_DEFAULT_USER_ID: &str = "local_user";
 /// Bumped when the legacy-thread adoption rule changes.
 const CLI_WORKSPACE_MIGRATION_VERSION: u32 = 1;
 
+static STARTUP_BOOT: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+
 /// The workspace this process works in: the launch directory, bound to a real
 /// row in `workspaces` so threads, tools and the thread directory all agree on
 /// one root. No sandbox copy is involved.
@@ -69,7 +71,7 @@ pub enum TurnNotificationWhen {
 
 impl CliRuntime {
     pub async fn init(global: &GlobalArgs) -> Result<Self> {
-        let startup_boot = Instant::now();
+        let startup_boot = *STARTUP_BOOT.get_or_init(Instant::now);
         let mut step_start = startup_boot;
         cli_startup_point("init_begin", startup_boot);
         let launch_dir = resolve_launch_dir(global)?;
@@ -535,6 +537,12 @@ fn cli_startup_point(point: &str, startup_boot: Instant) {
         "[startup][cli] point={point} total_ms={:.1}",
         startup_boot.elapsed().as_secs_f64() * 1000.0,
     );
+}
+
+pub(crate) fn cli_ui_startup_point(point: &str) {
+    if let Some(boot) = STARTUP_BOOT.get() {
+        cli_startup_point(point, *boot);
+    }
 }
 
 fn now_ts() -> f64 {

@@ -106,7 +106,7 @@ impl ExploringGroupEntry {
     pub(super) fn has_pending_child_named(&self, tool_name: &str) -> bool {
         self.children.iter().any(|child| {
             child.status == ExploringChildStatus::Pending
-                && child.tool_name.eq_ignore_ascii_case(tool_name)
+                && canonical_tool_name(child.tool_name.as_str()) == canonical_tool_name(tool_name)
         })
     }
 
@@ -207,12 +207,19 @@ impl ExploringGroupEntry {
         rows
     }
 
+    /// Rows the preview budget leaves out. Both the disclosure row and the Enter gate read
+    /// this, so the count can never name rows the card would not reveal.
+    fn hidden_rows(rows: &[ExploringRow]) -> usize {
+        rows.len().saturating_sub(PREVIEW_ROWS)
+    }
+
     pub(super) fn card_fold(&self) -> Option<Disclosure> {
-        Disclosure::new_lines(self.display_rows().len().saturating_sub(PREVIEW_ROWS))
+        Disclosure::new_lines(Self::hidden_rows(&self.display_rows()))
     }
 
     pub(super) fn render_lines_for_width(&self, width: u16, expanded: bool) -> Vec<Line<'static>> {
         let rows = self.display_rows();
+        let fold = Disclosure::new_lines(Self::hidden_rows(&rows));
         let visible = if expanded {
             rows.len()
         } else {
@@ -224,7 +231,7 @@ impl ExploringGroupEntry {
         }
         // The count lives on the disclosure row, where Enter is named next to it: a second
         // marker row carrying the same number only made the card say it twice.
-        if let Some(line) = disclosure_line(expanded, self.card_fold(), width, self.is_zh) {
+        if let Some(line) = disclosure_line(expanded, fold, width, self.is_zh) {
             lines.push(line);
         }
         lines

@@ -19,10 +19,10 @@ use wunder_server::config::Config;
 use wunder_server::config_store::ConfigStore;
 use wunder_server::state::{AppState, AppStateInitOptions};
 
-struct TempRoot(PathBuf);
+pub(super) struct TempRoot(PathBuf);
 
 impl TempRoot {
-    fn new(tag: &str) -> Self {
+    pub(super) fn new(tag: &str) -> Self {
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -38,7 +38,7 @@ impl TempRoot {
         Self(root)
     }
 
-    fn path(&self) -> &Path {
+    pub(super) fn path(&self) -> &Path {
         self.0.as_path()
     }
 }
@@ -49,7 +49,7 @@ impl Drop for TempRoot {
     }
 }
 
-fn fixture_runtime(root: &Path) -> CliRuntime {
+pub(super) fn fixture_runtime(root: &Path) -> CliRuntime {
     let mut config = Config::default();
     config.server.mode = "cli".to_string();
     config.storage.backend = "sqlite".to_string();
@@ -96,7 +96,7 @@ fn fixture_runtime(root: &Path) -> CliRuntime {
 
 /// A fictional but representative transcript: a user turn, a long reasoning block, a
 /// finished command card, a patch card with a real hunk, and the final answer.
-async fn fixture_app(root: &Path) -> TuiApp {
+pub(super) async fn fixture_app(root: &Path) -> TuiApp {
     let global = Cli::parse_from([
         "wunder-cli",
         "--lang",
@@ -750,10 +750,12 @@ async fn the_acceptance_sample_composes_the_documented_template() {
     }
 
     // The hunk gutter is what makes a diff readable without color: the row number sits
-    // in the gutter and the sign follows it, so both columns stay aligned per row.
+    // in the gutter and the sign follows it, so both columns stay aligned per row. A folded
+    // card previews three rows of its file, so the sample reads the removed row and the
+    // context row where they sit.
     assert!(
-        frame.contains("11 - ") && frame.contains("11 + "),
-        "numbered rows keep the gutter before the sign: {frame}"
+        frame.contains("11 - "),
+        "a removed row is numbered from the old file, before its sign: {frame}"
     );
     assert!(
         frame.contains("10   keep"),
@@ -819,6 +821,11 @@ async fn a_diff_row_keeps_its_tint_across_the_number_column() {
     );
     completed.inherit_patch_preview_from(&pending);
     app.push_special_log(LogKind::Tool, completed.summary_text(), completed);
+
+    // A folded card previews three rows of the file, which is not enough to hold both signs;
+    // the tint is what an open card is for.
+    let cell_id = app.logs[app.logs.len() - 1].cell_id;
+    app.expanded_cards.insert(cell_id);
 
     let width = usize::from(80u16);
     let buffer = draw_buffer(&mut app, 80, 30);

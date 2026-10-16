@@ -57,6 +57,115 @@ async fn drain_changes(queue_rx: &mut mpsc::Receiver<StreamSignal>) -> (Vec<Valu
     (changes, tails)
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn trajectory_diagnostics_survive_emission_history_and_paged_reads() {
+    let (state, _dir) = build_test_state("trajectory_diagnostics").await;
+    let emitter = EventEmitter::new(
+        "fixture-thread".into(),
+        "fixture-owner".into(),
+        None,
+        Some(state.storage.clone()),
+        state.monitor.clone(),
+        false,
+        None,
+    )
+    .with_committer(state.kernel.orchestrator.committer.clone());
+    let turn = accept_turn(&state, "fixture-thread", "fixture-owner");
+    emitter.bind_turn(&turn, 1);
+    emitter.emit("llm_request", json!({"model_round":1})).await;
+    emitter
+        .emit(
+            "llm_stream_retry",
+            json!({
+                "model_round":1, "attempt":1,"max_attempts":3,"delay_s":0.1,
+                "error":"fixture transient error","will_retry":true,
+            }),
+        )
+        .await;
+    emitter
+        .emit(
+            "llm_output",
+            json!({"model_round":1,"content":"response","reasoning":"thought"}),
+        )
+        .await;
+    let page = state
+        .storage
+        .thread_view_page("fixture-owner", "fixture-thread", "trajectory", None, 20)
+        .unwrap();
+    let assistant = page
+        .trajectory
+        .iter()
+        .find(|row| row.kind == "assistant_message")
+        .unwrap();
+    assert_eq!(assistant.status, "completed");
+    let diagnostic = assistant.diagnostics.as_ref().unwrap();
+    assert_eq!(diagnostic["retry"]["will_retry"], false);
+    assert_eq!(diagnostic["retry"]["message"], "fixture transient error");
+    assert!(!page
+        .trajectory
+        .iter()
+        .any(|row| row.kind == "llm_stream_retry"));
+
+    emitter
+        .emit(
+            "turn_terminal",
+            json!({"model_round":1,"status":"completed"}),
+        )
+        .await;
+    let item_id = format!("{turn}:text-1");
+    let successful = state
+        .storage
+        .get_thread_item("fixture-owner", "fixture-thread", &item_id, true)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        successful["status"], "completed",
+        "a success receipt cannot mark the model failed"
+    );
+    emitter.emit("turn_terminal", json!({
+        "model_round":1,"status":"failed", "error": {
+            "code":"UPSTREAM_TIMEOUT", "message":"fixture provider timeout",
+            "error_meta":{"source_stage":"llm","retryable":true,"recovery_action":"retry_later"},
+        }, "retry_after_ms":500,
+    })).await;
+    // Simulate the normal asynchronous history/usage writer arriving last.
+    state
+        .storage
+        .commit_thread_item(
+            "fixture-owner",
+            &json!({
+                "session_id":"fixture-thread","turn_id":turn,"item_id":item_id,
+                "kind":"assistant_message","role":"assistant","status":"completed",
+                "model_round":1,"content":"response","reasoning":"thought",
+            }),
+        )
+        .unwrap();
+    let item = state
+        .storage
+        .get_thread_item("fixture-owner", "fixture-thread", &item_id, true)
+        .unwrap()
+        .unwrap();
+    assert_eq!(item["status"], "failed");
+    assert_eq!(item["payload"]["content"], "response");
+    assert_eq!(item["payload"]["reasoning"], "thought");
+    let page = state
+        .storage
+        .thread_view_page("fixture-owner", "fixture-thread", "trajectory", None, 20)
+        .unwrap();
+    let assistant = page
+        .trajectory
+        .iter()
+        .find(|row| row.kind == "assistant_message")
+        .unwrap();
+    let failure = &assistant.diagnostics.as_ref().unwrap()["failure"];
+    assert_eq!(assistant.status, "failed");
+    assert_eq!(failure["code"], "UPSTREAM_TIMEOUT");
+    assert_eq!(failure["source_stage"], "llm");
+    assert_eq!(failure["recovery_action"], "retry_later");
+    assert_eq!(failure["retryable"], true);
+    assert_eq!(failure["retry_after_ms"], 500);
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn concurrent_emits_keep_change_cursor_order_in_queue() {
     let (state, _dir) = build_test_state("change_stream_order").await;

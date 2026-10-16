@@ -10,7 +10,7 @@ export interface ChatViewRow { root_turn_id: string; execution_turn_id?:string; 
 export interface ThreadViewPage { runtime_status?:string;active_turn_id?:string; session_id: string; epoch: number; view_seq: number; projection_state: string; degraded?: boolean; diagnostic?: string | null; thread_empty: boolean | null; latest_round: number; chat: ChatViewRow[]; trajectory: any[]; tiles: any[]; tile_level: number; next_before: number | null; has_more: boolean; next_after?: number | null; has_newer?: boolean }
 export type ViewPhase = 'opening' | 'ready' | 'verified_empty' | 'refreshing' | 'error';
 export interface ViewSlot { key: string; rootTurnId: string; user: Record<string, any>; assistant: Record<string, any> }
-interface Entry { phase: ViewPhase; epoch: number; seq: number; generation: number; rows: Map<string, ChatViewRow>; slots: Map<string, ViewSlot>; order: string[]; next: number | null; more: boolean; bytes: number; error: string; atLatest: boolean; latestRound: number; latestStatus: string; headSeq: number; activeTurnId: string; headAuthoritative: boolean }
+interface Entry { phase: ViewPhase; epoch: number; seq: number; generation: number; rows: Map<string, ChatViewRow>; slots: Map<string, ViewSlot>; order: string[]; next: number | null; more: boolean; bytes: number; error: string; atLatest: boolean; latestRound: number; latestStatus: string; headSeq: number; activeTurnId: string; headAuthoritative: boolean; submissionHead?: { id: string; seq: number } }
 const entries = new Map<string, Entry>();
 export const threadViewClock = shallowRef(0);
 const MAX_BYTES = 48 * 1024 * 1024;
@@ -180,8 +180,32 @@ function applyExecutionHead(e: Entry, payload: {view_seq:number;runtime_status?:
   }
   e.headSeq=payload.view_seq;
 }
-export function threadViewActiveTurnId(key:string):string {void threadViewClock.value;return entries.get(key)?.activeTurnId || '';}
+const optimisticSubmissionOwnsExecutionHead = (e: Entry): boolean => {
+  // Bridge only the terminal head observed when this submission was made.
+  // Any newer server head takes ownership, even if the local placeholder has
+  // not been bound yet. A leftover pending row must never reopen a later
+  // completion or turn an input waiting in the composer into an execution.
+  const submission = e.submissionHead;
+  return Boolean(submission && e.headSeq === submission.seq &&
+    e.rows.get(submission.id)?.status === 'accepted');
+};
+
+export function threadViewActiveTurnId(key:string):string {
+  void threadViewClock.value;
+  const e=entries.get(key);
+  if (!e) return '';
+  if (optimisticSubmissionOwnsExecutionHead(e)) {
+    return e.submissionHead!.id;
+  }
+  return e.activeTurnId || '';
+}
 export function threadViewOwnsExecution(key:string):boolean {void threadViewClock.value;return entries.get(key)?.headAuthoritative ?? false;}
+/** Admission guards compare execution watermarks, never transcript cursors. */
+export function threadViewHeadVersion(key:string):string {
+  void threadViewClock.value;
+  const e=entries.get(key);
+  return e?.headAuthoritative ? `${e.epoch}:${e.headSeq}` : '';
+}
 /** Catalog reads can advance detached thread status without advancing the
  * transcript replay cursor (otherwise reconnect would skip missing rows). */
 export function applyThreadViewHead(key:string, head:any):boolean {
@@ -261,16 +285,15 @@ export function threadViewCommitted(key:string):boolean {
 }
 export function submitThreadView(key:string,client:string,content:string) { const e=entry(key);const id=`pending:${client}`;if(e.rows.has(id))return;
   const queued = ['accepted','running','queued','waiting_input','waiting_approval'].includes(threadViewStatus(key) || '');
+  if (!queued) e.submissionHead = { id, seq: e.headSeq };
   merge(e,{root_turn_id:id,user_round:Math.max(e.latestRound,...[...e.rows.values()].map(r=>r.user_round))+1,client_message_id:client,revision:-1,status:queued?'queued':'accepted',user:{item_id:'',content},assistant:{item_id:'',content:''},workflow_count:0,failed_count:0});e.phase='ready';bound(e);notify(); }
 export function resetThreadViews(){entries.clear();notify();}
 export function clearThreadView(key:string) {entries.delete(key);notify();}
 export function threadViewStatus(key:string):string|null {
   void threadViewClock.value;const e=entries.get(key);if(!e)return null;
-  // Once a server head is available it is the sole execution authority.  A
-  // local `pending:` row represents a composer submission only; allowing it
-  // to reopen a completed head left the shell permanently busy after the
-  // server had already closed the turn.
-  if (e.headAuthoritative) return e.latestStatus;
+  // A fresh submission bridges its previously observed head only. Later
+  // server heads stay authoritative even if a local pending row remains.
+  if (e.headAuthoritative) return optimisticSubmissionOwnsExecutionHead(e) ? 'running' : e.latestStatus;
   const rows=e.order.map(id=>e.rows.get(id)!);
   // Before the first durable head arrives, keep the optimistic submission
   // responsive by treating an accepted local row as a provisional run.

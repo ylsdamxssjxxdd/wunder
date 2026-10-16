@@ -441,7 +441,7 @@ pub(crate) fn project_item(
                 if matches!(
                     text(&i[5]),
                     "tool_call" | "approval" | "plan" | "compaction" | "queue" | "subagent_run"
-                ) {
+                ) || projection::is_compaction_system_message(text(&i[5]), &parsed_item) {
                     row.workflow_count = (row.workflow_count - 1).max(0);
                     row.failed_count =
                         (row.failed_count - projection::is_failed(text(&old[0]))).max(0);
@@ -551,7 +551,11 @@ pub(crate) fn project_item(
         .unwrap_or((0, 0, 0));
     for level in 0..8 {
         let bucket = int(&i[3]) / (128i64 << (level * 3));
-        db.execute("INSERT INTO thread_trajectory_tiles(session_id,level,bucket,count,failed,running,start,finish,input_count,model_count,tool_count) VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(session_id,level,bucket) DO UPDATE SET count=thread_trajectory_tiles.count+excluded.count,failed=thread_trajectory_tiles.failed+excluded.failed,running=thread_trajectory_tiles.running+excluded.running,input_count=thread_trajectory_tiles.input_count+excluded.input_count,model_count=thread_trajectory_tiles.model_count+excluded.model_count,tool_count=thread_trajectory_tiles.tool_count+excluded.tool_count,finish=CASE WHEN thread_trajectory_tiles.finish<excluded.finish THEN excluded.finish ELSE thread_trajectory_tiles.finish END", &[json!(session),json!(level),json!(bucket),json!(i64::from(old.is_none())),json!(projection::is_failed(status)-old_status.map(projection::is_failed).unwrap_or(0)),json!(projection::is_running(status)-old_status.map(projection::is_running).unwrap_or(0)),json!(float(&i[9])),json!(float(&i[10])),json!(input_count-old_lane.0),json!(model_count-old_lane.1),json!(tool_count-old_lane.2)])?;
+        // `start` is an aggregate lower bound.  The old upsert only advanced
+        // `finish`; a legacy zero value therefore survived every later row
+        // and made timed overviews span from the Unix epoch.  Keep both bounds
+        // monotonic and repair that old sentinel during normal projection.
+        db.execute("INSERT INTO thread_trajectory_tiles(session_id,level,bucket,count,failed,running,start,finish,input_count,model_count,tool_count) VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(session_id,level,bucket) DO UPDATE SET count=thread_trajectory_tiles.count+excluded.count,failed=thread_trajectory_tiles.failed+excluded.failed,running=thread_trajectory_tiles.running+excluded.running,input_count=thread_trajectory_tiles.input_count+excluded.input_count,model_count=thread_trajectory_tiles.model_count+excluded.model_count,tool_count=thread_trajectory_tiles.tool_count+excluded.tool_count,start=CASE WHEN thread_trajectory_tiles.start<=0 OR excluded.start<thread_trajectory_tiles.start THEN excluded.start ELSE thread_trajectory_tiles.start END,finish=CASE WHEN thread_trajectory_tiles.finish<excluded.finish THEN excluded.finish ELSE thread_trajectory_tiles.finish END", &[json!(session),json!(level),json!(bucket),json!(i64::from(old.is_none())),json!(projection::is_failed(status)-old_status.map(projection::is_failed).unwrap_or(0)),json!(projection::is_running(status)-old_status.map(projection::is_running).unwrap_or(0)),json!(float(&i[9])),json!(float(&i[10])),json!(input_count-old_lane.0),json!(model_count-old_lane.1),json!(tool_count-old_lane.2)])?;
     }
     db.execute("UPDATE thread_view_heads SET latest_item_seq=CASE WHEN latest_item_seq<? THEN ? ELSE latest_item_seq END WHERE session_id=?", &[json!(int(&i[3])),json!(int(&i[3])),json!(session)])?;
     let Some(r) = one(
@@ -732,7 +736,8 @@ pub(crate) fn project_item(
     if matches!(
         kind,
         "tool_call" | "approval" | "plan" | "compaction" | "subagent_run"
-    ) {
+    ) || projection::is_compaction_system_message(kind, &item)
+    {
         row.workflow_count += i64::from(old.is_none());
         row.failed_count +=
             projection::is_failed(status) - old_status.map(projection::is_failed).unwrap_or(0);
@@ -1063,20 +1068,21 @@ pub(crate) fn page(
     let rows = db.query(&sql, &query_params)?;
     page.has_more = rows.len() > cap;
     for r in rows.into_iter().take(cap) {
-        let size = text(&r[0]).len();
-        let budget = if kind == "trajectory" {
-            TRAJECTORY_RESPONSE_BYTES
-        } else {
-            CHAT_RESPONSE_BYTES
-        };
-        if bytes + size > budget {
-            page.has_more = true;
-            break;
-        }
-        bytes += size;
-        page.next_before = Some(int(&r[1]));
         if kind == "trajectory" {
             let mut trajectory: TrajectoryViewRow = serde_json::from_str(text(&r[0]))?;
+            // Old terminal rows predate diagnostics in the small page schema.
+            // Repair just these indexed rows, never scan/rebuild full threads.
+            if trajectory.kind == "terminal" && trajectory.diagnostics.is_none() {
+                if let Some(item) = one(
+                    db,
+                    "SELECT payload FROM thread_items WHERE user_id=? AND session_id=? AND item_id=? LIMIT 1",
+                    &[json!(user), json!(session), json!(trajectory.item_id)],
+                )? {
+                    if let Ok(payload) = serde_json::from_str::<Value>(text(&item[0])) {
+                        trajectory.diagnostics = crate::services::thread_log::diagnostics::project(&payload, &trajectory.status);
+                    }
+                }
+            }
             // Rows written before the bounded `subagent` projection field was
             // introduced deserialize with `None`.  Backfill only those rare
             // child rows from the indexed item payload so old sessions become
@@ -1096,10 +1102,25 @@ pub(crate) fn page(
                     }
                 }
             }
+            // Legacy backfills add bounded fields; count the repaired row,
+            // otherwise diagnostics can bypass the response byte budget.
+            let size = serde_json::to_vec(&trajectory)?.len() + 1;
+            if bytes + size > TRAJECTORY_RESPONSE_BYTES {
+                page.has_more = true;
+                break;
+            }
+            bytes += size;
             page.trajectory.push(trajectory);
         } else {
+            let size = text(&r[0]).len() + 1;
+            if bytes + size > CHAT_RESPONSE_BYTES {
+                page.has_more = true;
+                break;
+            }
+            bytes += size;
             page.chat.push(serde_json::from_str(text(&r[0]))?);
         }
+        page.next_before = Some(int(&r[1]));
     }
     if after.is_none() {
         page.chat.reverse();

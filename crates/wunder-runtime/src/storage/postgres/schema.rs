@@ -1014,6 +1014,42 @@ impl PostgresStorage {
                  ON thread_items (created_time, session_id)",
             ),
             (
+                "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_thread_items_user_session_time \
+                 ON thread_items (user_id, session_id, created_time, item_id)",
+                "CREATE INDEX IF NOT EXISTS idx_thread_items_user_session_time \
+                 ON thread_items (user_id, session_id, created_time, item_id)",
+            ),
+            (
+                "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_thread_blocks_time \
+                 ON thread_item_blocks (created_time)",
+                "CREATE INDEX IF NOT EXISTS idx_thread_blocks_time \
+                 ON thread_item_blocks (created_time)",
+            ),
+            (
+                "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_thread_changes_time \
+                 ON thread_log_changes (created_time)",
+                "CREATE INDEX IF NOT EXISTS idx_thread_changes_time \
+                 ON thread_log_changes (created_time)",
+            ),
+            (
+                "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_thread_turns_time \
+                 ON thread_turns (created_time)",
+                "CREATE INDEX IF NOT EXISTS idx_thread_turns_time \
+                 ON thread_turns (created_time)",
+            ),
+            (
+                "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_deleted_session_grace_time \
+                 ON deleted_session_log_grace (deleted_at)",
+                "CREATE INDEX IF NOT EXISTS idx_deleted_session_grace_time \
+                 ON deleted_session_log_grace (deleted_at)",
+            ),
+            (
+                "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_deleted_session_grace_session \
+                 ON deleted_session_log_grace (session_id)",
+                "CREATE INDEX IF NOT EXISTS idx_deleted_session_grace_session \
+                 ON deleted_session_log_grace (session_id)",
+            ),
+            (
                 "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_tool_logs_time_session \
                  ON tool_logs (created_time, session_id)",
                 "CREATE INDEX IF NOT EXISTS idx_tool_logs_time_session \
@@ -1084,7 +1120,15 @@ impl PostgresStorage {
             let (next_year, next_month) = shift_month(partition_year, partition_month, 1);
             let end = month_start_epoch(next_year, next_month);
             let name = format!("{table}_y{partition_year:04}m{partition_month:02}");
-            conn.execute(
+            let exists: bool = conn
+                .query_one("SELECT to_regclass($1) IS NOT NULL", &[&name])?
+                .get(0);
+            if exists {
+                continue;
+            }
+            let mut tx = conn.transaction()?;
+            tx.batch_execute("SET LOCAL lock_timeout = '2s'; SET LOCAL statement_timeout = '8s'")?;
+            tx.execute(
                 &format!(
                     "CREATE TABLE IF NOT EXISTS {name} PARTITION OF {table} \
                      FOR VALUES FROM ({start}) TO ({end}) \
@@ -1092,11 +1136,21 @@ impl PostgresStorage {
                 ),
                 &[],
             )?;
+            tx.commit()?;
         }
-        conn.execute(
-            &format!("CREATE TABLE IF NOT EXISTS {table}_default PARTITION OF {table} DEFAULT"),
-            &[],
-        )?;
+        let name = format!("{table}_default");
+        let exists: bool = conn
+            .query_one("SELECT to_regclass($1) IS NOT NULL", &[&name])?
+            .get(0);
+        if !exists {
+            let mut tx = conn.transaction()?;
+            tx.batch_execute("SET LOCAL lock_timeout = '2s'; SET LOCAL statement_timeout = '8s'")?;
+            tx.execute(
+                &format!("CREATE TABLE IF NOT EXISTS {name} PARTITION OF {table} DEFAULT"),
+                &[],
+            )?;
+            tx.commit()?;
+        }
         Ok(())
     }
 }

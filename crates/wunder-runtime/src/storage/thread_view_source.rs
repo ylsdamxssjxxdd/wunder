@@ -85,6 +85,9 @@ fn source_chat_rows(
         db.json_text("payload", "reasoning"),
         db.json_text("payload", "reasoning_content")
     );
+    let item_meta = db.json_text("payload", "meta");
+    let compaction_type = db.json_text(&item_meta, "type");
+    let compaction_id = db.json_text(&item_meta, "compaction_id");
     // Do not aggregate every item in a large root here.  A legacy stress
     // thread can contain thousands of workflow rows in one user turn; the
     // unbounded GROUP BY made the "load older history" request exceed the
@@ -92,7 +95,7 @@ fn source_chat_rows(
     // bounded indicator, so count a small indexed prefix per root.  The
     // trajectory page remains the source of the complete workflow ledger.
     for row in batch_query(db, root_ids.iter().map(|root| (
-        format!("SELECT CAST(? AS TEXT),SUM(CASE WHEN kind IN ('tool_call','approval','plan','compaction','subagent_run') THEN 1 ELSE 0 END),SUM(CASE WHEN kind IN ('tool_call','approval','plan','compaction','subagent_run') AND status IN ('failed','rejected') THEN 1 ELSE 0 END),SUM(CASE WHEN kind='assistant_message' AND {reasoning} IS NOT NULL AND {reasoning}<>'' THEN 1 ELSE 0 END) FROM (SELECT status,kind,payload FROM thread_items WHERE user_id=? AND session_id=? AND root_turn_id=? AND visibility='user' ORDER BY item_index LIMIT 512) bounded"),
+        format!("SELECT CAST(? AS TEXT),SUM(CASE WHEN kind IN ('tool_call','approval','plan','compaction','subagent_run') OR (kind='system_message' AND ({compaction_type}='compaction_summary' OR COALESCE({compaction_id},'')<>'')) THEN 1 ELSE 0 END),SUM(CASE WHEN (kind IN ('tool_call','approval','plan','compaction','subagent_run') OR (kind='system_message' AND ({compaction_type}='compaction_summary' OR COALESCE({compaction_id},'')<>''))) AND status IN ('failed','rejected') THEN 1 ELSE 0 END),SUM(CASE WHEN kind='assistant_message' AND {reasoning} IS NOT NULL AND {reasoning}<>'' THEN 1 ELSE 0 END) FROM (SELECT status,kind,payload FROM thread_items WHERE user_id=? AND session_id=? AND root_turn_id=? AND visibility='user' ORDER BY item_index LIMIT 512) bounded"),
         vec![json!(root), json!(user), json!(session), json!(root)],
     )).collect())? {
         counts.insert(text(&row[0]).to_owned(), (int(&row[1]), int(&row[2]), int(&row[3])));
@@ -331,9 +334,24 @@ pub(super) fn page(
         let meta_type = db.json_text(&source_meta, "type");
         let meta_source = db.json_text(&source_meta, "source");
         let source_runtime = db.json_text("i.payload", "runtime");
+        let source_retry = db.json_text("i.payload", "trajectory_retry");
+        let source_failure = db.json_text("i.payload", "trajectory_failure");
+        let source_error = db.json_text("i.payload", "error");
+        // SQLite json_extract returns a string error as plain text. Never feed
+        // that back into JSON extraction; providers and tools use both shapes.
+        let error_type = if db.is_postgres() {
+            "jsonb_typeof(i.payload::jsonb->'error')"
+        } else {
+            "json_type(i.payload,'$.error')"
+        };
+        let error_object =
+            format!("CASE WHEN {error_type}='object' THEN {source_error} ELSE '{{}}' END");
+        let error_code = db.json_text(&error_object, "code");
+        let error_message = format!("COALESCE({}, CASE WHEN {error_type} IN ('string','text') THEN {source_error} ELSE '' END)", db.json_text(&error_object, "message"));
+        let error_meta = db.json_text(&error_object, "error_meta");
         let rows = {
             let sql = format!(
-                "SELECT i.item_id,i.turn_id,i.root_turn_id,i.item_index,i.created_seq,i.revision,i.kind,i.status,i.created_time,i.updated_time,t.user_turn_index,substr(COALESCE({source_content},''),1,256),substr({source_reasoning},1,256),substr(COALESCE({tool},''),1,96),COALESCE({model},'0'),{payload_bytes},{meta_type},{meta_source},substr(COALESCE({source_stats},'{{}}'),1,4096),substr(COALESCE({source_runtime},'{{}}'),1,4096) FROM thread_items i JOIN thread_turns t ON t.user_id=i.user_id AND t.session_id=i.session_id AND t.turn_id=i.turn_id WHERE i.user_id=? AND i.session_id=?{root_filter} AND i.created_seq{comparison}? AND (i.visibility='user' OR (i.visibility='model_internal' AND (i.kind='system_message' OR (i.kind='user_message' AND {meta_type}='model_context_internal' AND {meta_source}='agent_inbox')))) ORDER BY i.created_seq {direction} LIMIT ?"
+                "SELECT i.item_id,i.turn_id,i.root_turn_id,i.item_index,i.created_seq,i.revision,i.kind,i.status,i.created_time,i.updated_time,t.user_turn_index,substr(COALESCE({source_content},''),1,256),substr({source_reasoning},1,256),substr(COALESCE({tool},''),1,96),COALESCE({model},'0'),{payload_bytes},{meta_type},{meta_source},substr(COALESCE({source_stats},'{{}}'),1,4096),substr(COALESCE({source_runtime},'{{}}'),1,4096),substr(COALESCE({source_retry},'null'),1,16384),substr(COALESCE({source_failure},'null'),1,16384),substr(COALESCE({error_code},''),1,128),substr(COALESCE({error_message},''),1,2048),substr(COALESCE({error_meta},'{{}}'),1,4096) FROM thread_items i JOIN thread_turns t ON t.user_id=i.user_id AND t.session_id=i.session_id AND t.turn_id=i.turn_id WHERE i.user_id=? AND i.session_id=?{root_filter} AND i.created_seq{comparison}? AND (i.visibility='user' OR (i.visibility='model_internal' AND (i.kind='system_message' OR (i.kind='user_message' AND {meta_type}='model_context_internal' AND {meta_source}='agent_inbox')))) ORDER BY i.created_seq {direction} LIMIT ?"
             );
             db.query(&sql, &params)?
         };
@@ -342,7 +360,21 @@ pub(super) fn page(
             let stats = serde_json::from_str::<Value>(text(&row[18])).unwrap_or(Value::Null);
             let runtime =
                 serde_json::from_str::<Value>(text(&row[19])).unwrap_or_else(|_| json!({}));
-            let payload = json!({"content":text(&row[11]),"reasoning":text(&row[12]),"tool":text(&row[13]),"model_round":row[14].as_i64().unwrap_or_else(||text(&row[14]).parse::<i64>().unwrap_or(0)),"message_stats":stats,"runtime":runtime,"meta":{"type":text(&row[16]),"source":text(&row[17])}});
+            let retry = serde_json::from_str::<Value>(text(&row[20])).unwrap_or(Value::Null);
+            let failure = serde_json::from_str::<Value>(text(&row[21])).unwrap_or(Value::Null);
+            let error_meta =
+                serde_json::from_str::<Value>(text(&row[24])).unwrap_or_else(|_| json!({}));
+            let mut payload = json!({"content":text(&row[11]),"reasoning":text(&row[12]),"tool":text(&row[13]),"model_round":row[14].as_i64().unwrap_or_else(||text(&row[14]).parse::<i64>().unwrap_or(0)),"message_stats":stats,"runtime":runtime,"meta":{"type":text(&row[16]),"source":text(&row[17])}});
+            if retry.is_object() {
+                payload["trajectory_retry"] = retry;
+            }
+            if failure.is_object() {
+                payload["trajectory_failure"] = failure;
+            }
+            if !text(&row[22]).is_empty() || !text(&row[23]).is_empty() {
+                payload["error"] =
+                    json!({"code":text(&row[22]),"message":text(&row[23]),"error_meta":error_meta});
+            }
             let mut projected = projection::trajectory(
                 &payload,
                 text(&row[0]),

@@ -107,7 +107,8 @@ impl ConfigStore {
         // field updates are applied to the current file, never to a stale
         // in-memory copy.
         let mut guard = self.inner.write().await;
-        let current = if self.config_path.exists() {
+        let disk_fingerprint = file_fingerprint(&self.config_path);
+        let current = if disk_fingerprint.is_some() {
             try_load_config_from_path(&self.config_path)
                 .with_context(|| format!("reload config failed: {}", self.config_path.display()))?
         } else {
@@ -124,7 +125,18 @@ impl ConfigStore {
         updater(&mut updated);
         let updated_yaml =
             serde_yaml::to_string(&updated).context("serialize updated config failed")?;
-        if self.config_path.exists() && updated_yaml == current_yaml {
+        if disk_fingerprint.is_some() && updated_yaml == current_yaml {
+            let mut cached_fingerprint = self
+                .disk_fingerprint
+                .lock()
+                .unwrap_or_else(|err| err.into_inner());
+            if *cached_fingerprint != disk_fingerprint {
+                // A no-op against disk may still replace a stale local
+                // snapshot. Publish its version so dependent caches refresh.
+                self.version.fetch_add(1, Ordering::SeqCst);
+            }
+            *cached_fingerprint = disk_fingerprint;
+            drop(cached_fingerprint);
             *guard = updated.clone();
             i18n::configure_i18n(
                 Some(updated.i18n.default_language.clone()),
@@ -135,7 +147,7 @@ impl ConfigStore {
         }
         // Persist first. A write error must never leave memory claiming a
         // configuration state that another process cannot observe on disk.
-        self.persist(&updated).await?;
+        self.persist_text(&updated_yaml)?;
         *guard = updated.clone();
         self.version.fetch_add(1, Ordering::SeqCst);
         i18n::configure_i18n(
@@ -167,11 +179,10 @@ impl ConfigStore {
         Ok(Some(disk))
     }
 
-    async fn persist(&self, config: &Config) -> Result<()> {
-        let text = serde_yaml::to_string(config).context("serialize config failed")?;
+    fn persist_text(&self, text: &str) -> Result<()> {
         // No detached blocking write: cancellation must not release the file
         // lock while a worker continues replacing the shared file.
-        atomic_write_text(&self.config_path, &text).context("write config failed")?;
+        atomic_write_text(&self.config_path, text).context("write config failed")?;
         *self
             .disk_fingerprint
             .lock()
@@ -259,6 +270,12 @@ mod tests {
             .update(|config| config.server.mode = "desktop".into())
             .await
             .unwrap();
+        // A replacement would lose this disk-only comment even if all
+        // deserialized config fields and the serialized bytes were identical.
+        let mut text = std::fs::read_to_string(&path).unwrap();
+        text.push_str("\n# retained user comment\n");
+        std::fs::write(&path, &text).unwrap();
+        let store = ConfigStore::try_new(path.clone()).unwrap();
         let before = std::fs::read(&path).unwrap();
         let version_before = store.version();
 
@@ -267,6 +284,33 @@ mod tests {
         assert_eq!(current.server.mode, "desktop");
         assert_eq!(std::fs::read(&path).unwrap(), before);
         assert_eq!(store.version(), version_before);
+    }
+
+    #[tokio::test]
+    async fn noop_update_publishes_an_external_change_and_materializes_missing_file() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        let store = ConfigStore::new(path.clone());
+        store.update(|_| {}).await.unwrap();
+        assert!(path.is_file(), "initial defaults must still be persisted");
+        let writer = ConfigStore::try_new(path.clone()).unwrap();
+        writer
+            .update(|config| config.server.mode = "external-mode".into())
+            .await
+            .unwrap();
+        let version_before = store.version();
+
+        let current = store.update(|_| {}).await.unwrap();
+
+        assert_eq!(current.server.mode, "external-mode");
+        assert!(store.version() > version_before);
+        let refreshed_version = store.version();
+        assert_eq!(store.get().await.server.mode, "external-mode");
+        assert_eq!(
+            store.version(),
+            refreshed_version,
+            "no redundant disk reload"
+        );
     }
 }
 

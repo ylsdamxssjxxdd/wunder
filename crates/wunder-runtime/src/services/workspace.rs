@@ -45,8 +45,8 @@ const PUBLIC_WORKSPACE_ROOT: &str = "/workspaces";
 const WORKSPACE_SINGLE_ROOT_ENV: &str = "WUNDER_WORKSPACE_SINGLE_ROOT";
 const USER_PRIVATE_PERSISTENT_ROOTS: &[&str] = &["global", "knowledge", "skills"];
 pub const DEFAULT_DELETED_SESSION_LOG_GRACE_HOURS: i64 = 24;
-// Keep the janitor slice below the DB blocking-task deadline.  A failed or
-// contended session remains tombstoned and is retried on the next pass.
+// Bound each janitor pass. A failed or contended session keeps its durable
+// marker and resumes on a later pass.
 const DELETED_SESSION_LOG_CLEANUP_BATCH: i64 = 4;
 /// Usage summary cache: short TTL, invalidated whenever the tree is marked dirty.
 const USAGE_STATS_TTL_S: f64 = 15.0;
@@ -376,7 +376,7 @@ impl WorkspaceManager {
             deleted_session_log_grace_hours: AtomicI64::new(
                 DEFAULT_DELETED_SESSION_LOG_GRACE_HOURS,
             ),
-            retention_interval_s: 3600.0,
+            retention_interval_s: 60.0,
             retention_state: Arc::new(Mutex::new(RetentionState::default())),
             orphan_sweep_last_ts: Arc::new(AtomicI64::new(0)),
             orphan_sweep_interval_s: 6.0 * 3600.0,
@@ -928,7 +928,6 @@ impl WorkspaceManager {
 
     fn maybe_schedule_retention_cleanup(&self) {
         let grace_hours = self.deleted_session_log_grace_hours();
-        let retention_enabled = self.stream_event_retention_hours > 0;
         let now = now_ts();
         let orphan_due = {
             let last = self
@@ -959,24 +958,12 @@ impl WorkspaceManager {
                 .load(std::sync::atomic::Ordering::SeqCst) as f64;
             last <= 0.0 || now - last >= 3600.0
         };
-        if !retention_enabled
-            && grace_hours <= 0
-            && !orphan_due
-            && !usage_due
-            && !partitions_due
-            && !slow_query_due
-        {
-            return;
-        }
+        // Always poll deletion markers, including zero-grace deletions whose
+        // first attempt failed. Maintenance failures must not bypass the
+        // scheduling interval and flood the database on every workspace read.
         {
             let mut state = self.retention_state.lock();
-            if state.running
-                || (!orphan_due
-                    && !usage_due
-                    && !partitions_due
-                    && !slow_query_due
-                    && now - state.last_cleanup < self.retention_interval_s)
-            {
+            if state.running || now - state.last_cleanup < self.retention_interval_s {
                 return;
             }
             state.running = true;
@@ -1004,10 +991,17 @@ impl WorkspaceManager {
                 let result =
                     run_workspace_maintenance_db("workspace.retention.cleanup", move || {
                         if retention_enabled {
-                            let deleted = storage.cleanup_retention(cutoff)?;
-                            let removed = deleted.get("stream_events").copied().unwrap_or(0);
-                            if removed > 0 {
-                                info!(removed, cutoff, "expired stream events removed");
+                            match storage.cleanup_retention(cutoff) {
+                                Ok(deleted) => {
+                                    let removed =
+                                        deleted.get("stream_events").copied().unwrap_or(0);
+                                    if removed > 0 {
+                                        info!(removed, cutoff, "expired stream events removed");
+                                    }
+                                }
+                                Err(error) => {
+                                    warn!(error = %format_args!("{error:#}"), "stream event retention slice incomplete")
+                                }
                             }
                         }
                         cleanup_expired_deleted_session_logs(storage.as_ref(), grace_hours, now);
@@ -1028,7 +1022,7 @@ impl WorkspaceManager {
                                     );
                                 }
                                 Err(error) => {
-                                    warn!(%error, "usage summary reconcile failed");
+                                    warn!(error = %format_args!("{error:#}"), "usage summary reconcile failed");
                                 }
                             }
                         }
@@ -1041,7 +1035,7 @@ impl WorkspaceManager {
                                     );
                                 }
                                 Err(error) => {
-                                    warn!(%error, "time partition roll-forward failed");
+                                    warn!(error = %format_args!("{error:#}"), "time partition roll-forward failed");
                                 }
                             }
                         }
@@ -1053,7 +1047,7 @@ impl WorkspaceManager {
                     })
                     .await;
                 if let Err(error) = result {
-                    warn!(%error, "workspace retention cleanup failed");
+                    warn!(error = %format_args!("{error:#}"), "workspace retention cleanup failed");
                 }
                 let mut guard = state.lock();
                 guard.running = false;
@@ -1077,7 +1071,7 @@ impl WorkspaceManager {
                         usage_flag.store(now_ts() as i64, std::sync::atomic::Ordering::SeqCst)
                     }
                     Err(error) => {
-                        warn!(%error, "usage summary reconcile failed");
+                        warn!(error = %format_args!("{error:#}"), "usage summary reconcile failed");
                     }
                 }
             }
@@ -1087,7 +1081,7 @@ impl WorkspaceManager {
                         partitions_flag.store(now_ts() as i64, std::sync::atomic::Ordering::SeqCst)
                     }
                     Err(error) => {
-                        warn!(%error, "time partition roll-forward failed");
+                        warn!(error = %format_args!("{error:#}"), "time partition roll-forward failed");
                     }
                 }
             }
@@ -2339,37 +2333,21 @@ impl WorkspaceManager {
         let _ = self.delete_session_context_limit_hint(cleaned_user, cleaned_session);
     }
 
-    pub fn purge_session_logs(&self, user_id: &str, session_id: &str) {
-        let cleaned_user = user_id.trim();
-        let cleaned_session = session_id.trim();
-        if cleaned_user.is_empty() || cleaned_session.is_empty() {
-            return;
+    pub fn purge_session_logs(&self, user_id: &str, session_id: &str) -> Result<()> {
+        let user_id = user_id.trim();
+        let session_id = session_id.trim();
+        if user_id.is_empty() || session_id.is_empty() {
+            return Ok(());
         }
-        // Administrative deletion is immediate, but it still needs the same
-        // durable retry marker as the grace-window path.  Otherwise a lock
-        // timeout can leave logs behind with no future janitor pass aware of
-        // them.
-        if let Err(error) =
-            self.storage
-                .mark_deleted_session_log_grace(cleaned_user, cleaned_session, now_ts())
-        {
-            warn!(%error, user_id, session_id, "session log purge marker failed");
-            return;
-        }
-        match purge_session_logs_with_storage(self.storage.as_ref(), cleaned_user, cleaned_session)
-        {
-            Ok(_) => {
-                if let Err(error) = self
-                    .storage
-                    .delete_deleted_session_log_grace(cleaned_user, cleaned_session)
-                {
-                    warn!(%error, user_id, session_id, "session log purge marker cleanup failed");
-                }
-            }
-            Err(error) => {
-                warn!(%error, user_id, session_id, "session log purge incomplete; retaining retry marker");
-            }
-        }
+        // Explicit purge retries immediately instead of restarting the grace
+        // window. Persist the marker before any partial deletion can commit.
+        let eligible_at = now_ts() - self.deleted_session_log_grace_hours().max(0) as f64 * 3600.0;
+        self.storage
+            .mark_deleted_session_log_grace(user_id, session_id, eligible_at)?;
+        purge_session_logs_with_storage(self.storage.as_ref(), user_id, session_id)?;
+        self.storage
+            .delete_deleted_session_log_grace(user_id, session_id)?;
+        Ok(())
     }
 
     /// User-facing session deletion: durable logs are kept for a grace window
@@ -2382,23 +2360,24 @@ impl WorkspaceManager {
             return;
         }
         let grace_hours = self.deleted_session_log_grace_hours();
+        // Write the marker before launching work: queue rejection or a crash
+        // before the worker starts must still leave a durable retry record.
+        if let Err(error) =
+            self.storage
+                .mark_deleted_session_log_grace(cleaned_user, cleaned_session, now_ts())
+        {
+            warn!(%error, "mark deleted session log grace failed");
+            return;
+        }
         if grace_hours <= 0 {
             let workspace = Arc::clone(self);
             let user_id = cleaned_user.to_string();
             let session_id = cleaned_session.to_string();
             if let Ok(handle) = Handle::try_current() {
                 handle.spawn(async move {
-                    let _ = run_workspace_maintenance_db(
+                    let result = run_workspace_maintenance_db(
                         "workspace.deleted_session_logs.purge",
                         move || {
-                            // Even zero-grace deletion gets a tombstone.  A lock
-                            // timeout must not turn a failed purge into forgotten
-                            // durable logs; the janitor retries it immediately.
-                            workspace.storage.mark_deleted_session_log_grace(
-                                &user_id,
-                                &session_id,
-                                now_ts(),
-                            )?;
                             purge_session_logs_with_storage(
                                 workspace.storage.as_ref(),
                                 &user_id,
@@ -2406,37 +2385,17 @@ impl WorkspaceManager {
                             )?;
                             workspace
                                 .storage
-                                .delete_deleted_session_log_grace(&user_id, &session_id)?;
-                            Ok(())
+                                .delete_deleted_session_log_grace(&user_id, &session_id)
                         },
                     )
                     .await;
+                    if let Err(error) = result {
+                        warn!(error = %format_args!("{error:#}"), "session log purge incomplete; retaining retry marker");
+                    }
                 });
-            } else {
-                let _ = self.storage.mark_deleted_session_log_grace(
-                    cleaned_user,
-                    cleaned_session,
-                    now_ts(),
-                );
-                if purge_session_logs_with_storage(
-                    self.storage.as_ref(),
-                    cleaned_user,
-                    cleaned_session,
-                )
-                .is_ok()
-                {
-                    let _ = self
-                        .storage
-                        .delete_deleted_session_log_grace(cleaned_user, cleaned_session);
-                }
+            } else if let Err(error) = self.purge_session_logs(cleaned_user, cleaned_session) {
+                warn!(error = %format_args!("{error:#}"), "session log purge incomplete; retaining retry marker");
             }
-            return;
-        }
-        if let Err(err) =
-            self.storage
-                .mark_deleted_session_log_grace(cleaned_user, cleaned_session, now_ts())
-        {
-            warn!("mark deleted session log grace failed: {err}");
         }
     }
 
@@ -3313,7 +3272,7 @@ fn run_orphan_sweep_once(storage: &dyn StorageBackend, flag: &AtomicI64, cutoff:
             flag.store(now as i64, std::sync::atomic::Ordering::SeqCst);
         }
         Err(err) => {
-            warn!(error = %err, "orphan session log sweep failed");
+            warn!(error = %format_args!("{err:#}"), "orphan session log sweep failed");
         }
     }
 }
@@ -3352,7 +3311,7 @@ fn cleanup_expired_deleted_session_logs(
             Err(err) => {
                 // Keep the tombstone.  Removing it after a partial/failed
                 // purge would make the remaining durable rows permanent.
-                warn!(error = %err, user_id, session_id, "expired session purge failed; will retry");
+                warn!(error = %format_args!("{err:#}"), user_id, session_id, "expired session purge failed; will retry");
             }
         }
     }
@@ -3986,12 +3945,154 @@ mod tests {
             vec![("user-a".to_string(), "session-new".to_string())]
         );
 
-        // A non-positive grace purges immediately without a tombstone.
+        // A non-positive grace removes its marker only after a complete purge.
         manager.set_deleted_session_log_grace_hours(0);
         manager.schedule_deleted_session_log_cleanup("user-a", "session-new");
         assert!(storage
             .load_thread_context_items("user-a", "session-new", 500, true)
             .expect("load new chat after immediate purge")
+            .is_empty());
+    }
+
+    #[test]
+    fn deleted_session_log_grace_keeps_failed_purge_retryable() {
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("fixture.db");
+        let storage: Arc<dyn StorageBackend> =
+            Arc::new(SqliteStorage::new(path.to_string_lossy().into_owned()));
+        storage.ensure_initialized().unwrap();
+        storage
+            .append_tool_log(
+                "fixture-user",
+                &json!({"session_id":"fixture-session","tool":"fixture-tool","ok":true}),
+            )
+            .unwrap();
+        let now = super::now_ts();
+        storage
+            .mark_deleted_session_log_grace("fixture-user", "fixture-session", now - 90000.0)
+            .unwrap();
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute_batch(
+            "CREATE TRIGGER fixture_hold BEFORE DELETE ON tool_logs
+            BEGIN SELECT RAISE(ABORT,'fixture lock'); END;",
+        )
+        .unwrap();
+        assert_eq!(
+            super::cleanup_expired_deleted_session_logs(storage.as_ref(), 24, now),
+            0
+        );
+        assert_eq!(
+            storage
+                .list_expired_deleted_session_log_grace(now, 4)
+                .unwrap()
+                .len(),
+            1
+        );
+        conn.execute_batch("DROP TRIGGER fixture_hold").unwrap();
+        assert_eq!(
+            super::cleanup_expired_deleted_session_logs(storage.as_ref(), 24, now),
+            1
+        );
+        assert!(storage
+            .list_expired_deleted_session_log_grace(now, 4)
+            .unwrap()
+            .is_empty());
+        // An explicit administrative purge propagates errors and its marker
+        // is immediately eligible despite the configured grace period.
+        storage
+            .append_tool_log(
+                "fixture-user",
+                &json!({"session_id":"fixture-session","tool":"fixture-tool","ok":true}),
+            )
+            .unwrap();
+        conn.execute_batch(
+            "CREATE TRIGGER fixture_hold BEFORE DELETE ON tool_logs
+            BEGIN SELECT RAISE(ABORT,'fixture lock'); END;",
+        )
+        .unwrap();
+        let manager = super::WorkspaceManager::new(
+            &dir.path().join("files").to_string_lossy(),
+            storage.clone(),
+            0,
+            &HashMap::new(),
+        );
+        manager.set_deleted_session_log_grace_hours(24);
+        assert!(manager
+            .purge_session_logs("fixture-user", "fixture-session")
+            .is_err());
+        assert_eq!(
+            storage
+                .list_expired_deleted_session_log_grace(super::now_ts() - 86400.0, 4)
+                .unwrap()
+                .len(),
+            1
+        );
+        conn.execute_batch("DROP TRIGGER fixture_hold").unwrap();
+        assert_eq!(
+            super::cleanup_expired_deleted_session_logs(storage.as_ref(), 24, super::now_ts()),
+            1
+        );
+    }
+
+    #[test]
+    fn deleted_session_log_grace_zero_grace_retry_obeys_maintenance_interval() {
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("fixture.db");
+        let storage: Arc<dyn StorageBackend> =
+            Arc::new(SqliteStorage::new(path.to_string_lossy().into_owned()));
+        storage.ensure_initialized().unwrap();
+        let manager = Arc::new(super::WorkspaceManager::new(
+            &dir.path().join("files").to_string_lossy(),
+            storage.clone(),
+            0,
+            &HashMap::new(),
+        ));
+        manager.set_deleted_session_log_grace_hours(0);
+        storage
+            .append_tool_log(
+                "fixture-user",
+                &json!({"session_id":"fixture-session","tool":"fixture-tool","ok":true}),
+            )
+            .unwrap();
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute_batch(
+            "CREATE TRIGGER fixture_hold BEFORE DELETE ON tool_logs
+             BEGIN SELECT RAISE(ABORT,'fixture lock'); END;",
+        )
+        .unwrap();
+        manager.schedule_deleted_session_log_cleanup("fixture-user", "fixture-session");
+        manager.maybe_schedule_retention_cleanup();
+        let first_pass = manager.retention_state.lock().last_cleanup;
+        conn.execute_batch("DROP TRIGGER fixture_hold").unwrap();
+        // Failed due flags must not trigger another pass on every read.
+        manager
+            .usage_reconcile_last_ts
+            .store(0, std::sync::atomic::Ordering::SeqCst);
+        manager.maybe_schedule_retention_cleanup();
+        assert_eq!(manager.retention_state.lock().last_cleanup, first_pass);
+        assert_eq!(
+            storage
+                .list_expired_deleted_session_log_grace(super::now_ts(), 4)
+                .unwrap()
+                .len(),
+            1
+        );
+        // Mark every periodic job as not due. Zero-grace retry markers alone
+        // must still be polled once the maintenance interval has elapsed.
+        let now = super::now_ts() as i64;
+        for flag in [
+            &manager.usage_reconcile_last_ts,
+            &manager.orphan_sweep_last_ts,
+            &manager.partitions_ensure_last_ts,
+            &manager.slow_query_last_ts,
+        ] {
+            flag.store(now, std::sync::atomic::Ordering::SeqCst);
+        }
+        manager.retention_state.lock().last_cleanup -= manager.retention_interval_s + 1.0;
+        manager.maybe_schedule_retention_cleanup();
+        assert!(storage
+            .list_expired_deleted_session_log_grace(super::now_ts(), 4)
+            .unwrap()
             .is_empty());
     }
 

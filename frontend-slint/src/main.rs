@@ -48,8 +48,10 @@ mod turn_stats;
 mod workspace_files;
 mod workspace_ui;
 
+static STARTUP_BOOT: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let startup_boot = std::time::Instant::now();
+    let startup_boot = *STARTUP_BOOT.get_or_init(std::time::Instant::now);
     startup_log("process_begin", startup_boot);
     install_slint_platform()?;
     startup_log("slint_platform_ready", startup_boot);
@@ -60,7 +62,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let first_argument = arguments.next();
     let app = MainWindow::new()?;
     startup_log("main_window_new", startup_boot);
-    install_first_frame_probe(&app, startup_boot);
+    install_first_frame_probe(startup_boot);
     let close_weak = app.as_weak();
     app.window().on_close_requested(move || {
         if let Some(app) = close_weak.upgrade() {
@@ -166,37 +168,27 @@ fn startup_log(point: &str, boot: std::time::Instant) {
     }
 }
 
-fn install_first_frame_probe(app: &MainWindow, boot: std::time::Instant) {
+pub(crate) fn startup_point(point: &str) {
+    if let Some(boot) = STARTUP_BOOT.get() {
+        startup_log(point, *boot);
+    }
+}
+
+fn install_first_frame_probe(boot: std::time::Instant) {
     if !startup_timing_enabled() {
         return;
     }
-    // Software rendering (the Win7-compatible backend) does not expose a
-    // rendering notifier. A zero-delay timer is the first event-loop turn
-    // after `show()` and is therefore the portable "display committed" proxy.
+    // Event-loop entry and native presentation are separate milestones. The
+    // vendored software backend signals only a successful, non-empty present.
     slint::Timer::single_shot(std::time::Duration::from_millis(0), move || {
         eprintln!(
             "[startup][desktop-ui] point=first_event_loop total_ms={:.1}",
             boot.elapsed().as_secs_f64() * 1000.0
         );
     });
-    let reported = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let reported_once = reported.clone();
-    if app
-        .window()
-        .set_rendering_notifier(move |state, _| {
-            if matches!(state, slint::RenderingState::AfterRendering)
-                && !reported_once.swap(true, std::sync::atomic::Ordering::Relaxed)
-            {
-                eprintln!(
-                    "[startup][desktop-ui] point=first_frame total_ms={:.1}",
-                    boot.elapsed().as_secs_f64() * 1000.0
-                );
-            }
-        })
-        .is_err()
-    {
-        startup_log("render_notifier_unavailable", boot);
-    }
+    i_slint_backend_winit::first_frame::on_first_frame_presented(move || {
+        startup_log("first_frame_presented", boot);
+    });
 }
 
 /// Apply the startup maximized state after the Slint window has been created.
@@ -257,9 +249,12 @@ pub(crate) fn register_bundled_font() -> Result<(), Box<dyn std::error::Error>> 
     use slint::fontique_011::fontique;
 
     let mut collection = slint::fontique_011::shared_collection();
+    startup_point("font_collection_ready");
     let bytes = bundled_font::yahei_ttc();
+    startup_point("font_decompressed");
     let registered =
         collection.register_fonts(fontique::Blob::new(std::sync::Arc::new(bytes)), None);
+    startup_point("font_registered");
     let families: Vec<_> = registered.iter().map(|(family, _)| *family).collect();
     if families.is_empty() {
         return Err("内嵌 Microsoft YaHei 注册失败".into());

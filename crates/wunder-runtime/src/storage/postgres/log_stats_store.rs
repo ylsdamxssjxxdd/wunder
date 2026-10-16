@@ -1,3 +1,4 @@
+use super::log_maintenance::{self, PurgeBudget, UsageRows};
 use super::{PgTx, PostgresStorage};
 use crate::storage::{
     StorageLifecycle, USAGE_CHAT_WATERMARK_KEY, USAGE_FULL_RECONCILE_INTERVAL_S,
@@ -56,6 +57,9 @@ fn append_tool_log_exclusions(filters: &mut Vec<String>) {
 }
 
 pub(super) fn read_meta_f64(tx: &mut PgTx<'_>, key: &str) -> Result<Option<f64>> {
+    if matches!(key, USAGE_CHAT_WATERMARK_KEY | USAGE_TOOL_WATERMARK_KEY) {
+        log_maintenance::lock_usage(tx, false)?;
+    }
     Ok(tx
         .query_opt("SELECT value FROM meta WHERE key = $1", &[&key])?
         .and_then(|row| row.get::<_, String>(0).trim().parse::<f64>().ok()))
@@ -185,87 +189,105 @@ impl PostgresLogStatsStorage for PostgresStorage {
         self.ensure_initialized()?;
         let mut conn = self.conn()?;
         let mut tx = conn.transaction()?;
-        // Reconciliation is maintenance work and is safe to retry from its
-        // persisted watermarks.  Never hold summary/index locks for minutes
-        // while a live session purge is waiting on the same user row.
-        tx.execute("SET LOCAL lock_timeout = '2s'", &[])?;
-        tx.execute("SET LOCAL statement_timeout = '20s'", &[])?;
+        tx.batch_execute("SET LOCAL lock_timeout = '2s'; SET LOCAL statement_timeout = '20s'")?;
+        log_maintenance::lock_usage(&mut tx, true)?;
         let now = Self::now_ts();
         let last_full = read_meta_f64(&mut tx, USAGE_FULL_RECONCILE_KEY)?;
         let needs_full = full
             || last_full.is_none()
             || now - last_full.unwrap_or(0.0) >= USAGE_FULL_RECONCILE_INTERVAL_S;
+        // Aggregate into a transaction-local relation BEFORE acquiring any
+        // summary row locks. No client-side all-user copy and no DELETE of
+        // the summary followed by a long scan of the source tables.
+        // The NULL-user sentinel captures MAX in the SAME SQL snapshot as
+        // the counts, so writes arriving later cannot be skipped by a newer
+        // watermark. Acquire the advisory lock before taking this snapshot.
         if needs_full {
-            // Full recompute: replace the summary in one transaction. Chat
-            // counts follow the thread_logs join shape so both paths agree.
-            tx.execute("DELETE FROM user_usage_summary", &[])?;
             tx.execute(
-                "INSERT INTO user_usage_summary (user_id, chat_records, tool_records, updated_time) \
-                 SELECT u.user_id, COALESCE(c.chat_records, 0), COALESCE(t.tool_records, 0), $1 \
-                 FROM (SELECT user_id FROM thread_logs GROUP BY user_id \
-                       UNION SELECT user_id FROM tool_logs WHERE excluded = FALSE GROUP BY user_id) u \
-                 LEFT JOIN (SELECT l.user_id, COUNT(i.item_id) AS chat_records \
-                            FROM thread_logs l \
-                            LEFT JOIN thread_items i ON i.session_id = l.session_id AND i.user_id = l.user_id \
-                              AND i.visibility = 'user' AND i.kind IN ('user_message','assistant_message') \
-                            GROUP BY l.user_id) c ON c.user_id = u.user_id \
-                 LEFT JOIN (SELECT user_id, COUNT(*) AS tool_records FROM tool_logs \
-                            WHERE excluded = FALSE GROUP BY user_id) t ON t.user_id = u.user_id",
+                "CREATE TEMP TABLE usage_reconcile_batch ON COMMIT DROP AS
+                 SELECT user_id, SUM(chat_records)::BIGINT AS chat_records,
+                        SUM(tool_records)::BIGINT AS tool_records,
+                        NULL::BIGINT AS tool_max, NULL::DOUBLE PRECISION AS chat_max FROM (
+                    SELECT l.user_id, COUNT(i.item_id) AS chat_records, 0::BIGINT AS tool_records
+                    FROM thread_logs l LEFT JOIN thread_items i
+                      ON i.session_id=l.session_id AND i.user_id=l.user_id
+                      AND i.visibility='user' AND i.kind IN ('user_message','assistant_message')
+                    GROUP BY l.user_id
+                    UNION ALL
+                    SELECT user_id, 0::BIGINT, COUNT(*) FROM tool_logs
+                    WHERE excluded=FALSE GROUP BY user_id
+                 ) counts GROUP BY user_id
+                 UNION ALL SELECT NULL::TEXT,0,0,
+                    (SELECT COALESCE(MAX(id),0) FROM tool_logs),
+                    (SELECT COALESCE(MAX(created_time),0) FROM thread_items)",
+                &[],
+            )?;
+            tx.execute(
+                "INSERT INTO user_usage_summary(user_id,chat_records,tool_records,updated_time)
+                 SELECT user_id,chat_records,tool_records,$1 FROM usage_reconcile_batch
+                 WHERE user_id IS NOT NULL ORDER BY user_id
+                 ON CONFLICT(user_id) DO UPDATE SET chat_records=EXCLUDED.chat_records,
+                    tool_records=EXCLUDED.tool_records,updated_time=EXCLUDED.updated_time",
                 &[&now],
             )?;
-            let tool_max: i64 = tx
-                .query_one("SELECT COALESCE(MAX(id), 0) FROM tool_logs", &[])?
-                .get(0);
-            let chat_max: f64 = tx
-                .query_one(
-                    "SELECT COALESCE(MAX(created_time), 0) FROM thread_items",
-                    &[],
-                )?
-                .get(0);
-            write_meta_f64(&mut tx, USAGE_TOOL_WATERMARK_KEY, tool_max as f64, now)?;
-            write_meta_f64(&mut tx, USAGE_CHAT_WATERMARK_KEY, chat_max, now)?;
+            tx.execute(
+                "DELETE FROM user_usage_summary s WHERE NOT EXISTS
+                (SELECT 1 FROM usage_reconcile_batch b WHERE b.user_id=s.user_id)",
+                &[],
+            )?;
             write_meta_f64(&mut tx, USAGE_FULL_RECONCILE_KEY, now, now)?;
         } else {
-            // Incremental: aggregate only rows past the watermarks, then
-            // advance them inside the same transaction. Watermarks always
-            // move forward; a weekly full pass corrects any drift.
             let tool_wm = read_meta_f64(&mut tx, USAGE_TOOL_WATERMARK_KEY)?.unwrap_or(0.0) as i64;
             let chat_wm = read_meta_f64(&mut tx, USAGE_CHAT_WATERMARK_KEY)?.unwrap_or(0.0);
             tx.execute(
-                "INSERT INTO user_usage_summary (user_id, chat_records, tool_records, updated_time) \
-                 SELECT user_id, 0, COUNT(*), $2 FROM tool_logs \
-                 WHERE id > $1 AND excluded = FALSE GROUP BY user_id \
-                 ON CONFLICT (user_id) DO UPDATE SET \
-                   tool_records = user_usage_summary.tool_records + EXCLUDED.tool_records, \
-                   updated_time = EXCLUDED.updated_time",
-                &[&tool_wm, &now],
+                "CREATE TEMP TABLE usage_reconcile_batch ON COMMIT DROP AS
+                 SELECT user_id, SUM(chat_records)::BIGINT AS chat_records,
+                        SUM(tool_records)::BIGINT AS tool_records,
+                        NULL::BIGINT AS tool_max, NULL::DOUBLE PRECISION AS chat_max FROM (
+                    SELECT user_id, 0::BIGINT AS chat_records, COUNT(*) AS tool_records
+                    FROM tool_logs WHERE id>$1 AND excluded=FALSE GROUP BY user_id
+                    UNION ALL
+                    SELECT user_id, COUNT(*), 0::BIGINT FROM thread_items
+                    WHERE created_time>$2 AND visibility='user'
+                      AND kind IN ('user_message','assistant_message') GROUP BY user_id
+                 ) counts GROUP BY user_id
+                 UNION ALL SELECT NULL::TEXT,0,0,
+                    (SELECT COALESCE(MAX(id),0) FROM tool_logs),
+                    (SELECT COALESCE(MAX(created_time),0) FROM thread_items)",
+                &[&tool_wm, &chat_wm],
             )?;
             tx.execute(
-                "INSERT INTO user_usage_summary (user_id, chat_records, tool_records, updated_time) \
-                 SELECT user_id, COUNT(*), 0, $2 FROM thread_items \
-                 WHERE created_time > $1 AND visibility = 'user' \
-                   AND kind IN ('user_message','assistant_message') GROUP BY user_id \
-                 ON CONFLICT (user_id) DO UPDATE SET \
-                   chat_records = user_usage_summary.chat_records + EXCLUDED.chat_records, \
-                   updated_time = EXCLUDED.updated_time",
-                &[&chat_wm, &now],
+                "INSERT INTO user_usage_summary(user_id,chat_records,tool_records,updated_time)
+                 SELECT user_id,chat_records,tool_records,$1 FROM usage_reconcile_batch
+                 WHERE user_id IS NOT NULL ORDER BY user_id
+                 ON CONFLICT(user_id) DO UPDATE SET
+                    chat_records=user_usage_summary.chat_records+EXCLUDED.chat_records,
+                    tool_records=user_usage_summary.tool_records+EXCLUDED.tool_records,
+                    updated_time=EXCLUDED.updated_time",
+                &[&now],
             )?;
-            let tool_max: i64 = tx
-                .query_one("SELECT COALESCE(MAX(id), 0) FROM tool_logs", &[])?
-                .get(0);
-            let chat_max: f64 = tx
-                .query_one(
-                    "SELECT COALESCE(MAX(created_time), 0) FROM thread_items",
-                    &[],
-                )?
-                .get(0);
-            if tool_max as f64 > tool_wm as f64 {
-                write_meta_f64(&mut tx, USAGE_TOOL_WATERMARK_KEY, tool_max as f64, now)?;
-            }
-            if chat_max > chat_wm {
-                write_meta_f64(&mut tx, USAGE_CHAT_WATERMARK_KEY, chat_max, now)?;
-            }
         }
+        // Do not move backward after deletion removes the current maximum.
+        let upper = tx.query_one(
+            "SELECT tool_max,chat_max FROM usage_reconcile_batch WHERE user_id IS NULL",
+            &[],
+        )?;
+        let tool_max: i64 = upper.get(0);
+        let chat_max: f64 = upper.get(1);
+        let tool_wm = read_meta_f64(&mut tx, USAGE_TOOL_WATERMARK_KEY)?.unwrap_or(0.0);
+        let chat_wm = read_meta_f64(&mut tx, USAGE_CHAT_WATERMARK_KEY)?.unwrap_or(0.0);
+        write_meta_f64(
+            &mut tx,
+            USAGE_TOOL_WATERMARK_KEY,
+            (tool_max as f64).max(tool_wm),
+            now,
+        )?;
+        write_meta_f64(
+            &mut tx,
+            USAGE_CHAT_WATERMARK_KEY,
+            chat_max.max(chat_wm),
+            now,
+        )?;
         tx.commit()?;
         Ok(())
     }
@@ -400,6 +422,7 @@ impl PostgresLogStatsStorage for PostgresStorage {
         let mut tx = conn.transaction()?;
         tx.execute("SET LOCAL lock_timeout = '5s'", &[])?;
         tx.execute("SET LOCAL statement_timeout = '30s'", &[])?;
+        log_maintenance::lock_usage(&mut tx, false)?;
         // Serialize this rare maintenance command with new thread starts; a
         // transaction alone would still allow a start between guard and deletion.
         tx.execute("LOCK TABLE chat_sessions, session_locks, agent_tasks, session_runs, monitor_sessions, \
@@ -486,6 +509,7 @@ impl PostgresLogStatsStorage for PostgresStorage {
         // for minutes.
         tx.execute("SET LOCAL lock_timeout = '2s'", &[])?;
         tx.execute("SET LOCAL statement_timeout = '20s'", &[])?;
+        log_maintenance::lock_usage(&mut tx, false)?;
         let now = Self::now_ts();
         let chat_wm = read_meta_f64(&mut tx, USAGE_CHAT_WATERMARK_KEY)?.unwrap_or(0.0);
         let mut removed = 0i64;
@@ -552,34 +576,18 @@ impl PostgresLogStatsStorage for PostgresStorage {
 
     fn delete_tool_logs_by_session_impl(&self, user_id: &str, session_id: &str) -> Result<i64> {
         self.ensure_initialized()?;
-        let cleaned_user = user_id.trim();
-        let cleaned_session = session_id.trim();
-        if cleaned_user.is_empty() || cleaned_session.is_empty() {
+        let user_id = user_id.trim();
+        let session_id = session_id.trim();
+        if user_id.is_empty() || session_id.is_empty() {
             return Ok(0);
         }
-        let mut conn = self.conn()?;
-        let mut tx = conn.transaction()?;
-        tx.execute("SET LOCAL lock_timeout = '2s'", &[])?;
-        // A session tombstone retries this work.  Bound the whole
-        // delete-and-counter transaction so it cannot monopolize a user's
-        // summary row while the reconciler is trying to advance its watermark.
-        tx.execute("SET LOCAL statement_timeout = '20s'", &[])?;
-        let now = Self::now_ts();
-        let tool_wm = read_meta_f64(&mut tx, USAGE_TOOL_WATERMARK_KEY)?.unwrap_or(0.0) as i64;
-        let counted: i64 = tx
-            .query_one(
-                "WITH del AS (DELETE FROM tool_logs WHERE user_id=$1 AND session_id=$2 \
-                   AND excluded=FALSE AND id <= $3 RETURNING 1) SELECT COUNT(*) FROM del",
-                &[&cleaned_user, &cleaned_session, &tool_wm],
-            )?
-            .get(0);
-        let rest = tx.execute(
-            "DELETE FROM tool_logs WHERE user_id=$1 AND session_id=$2",
-            &[&cleaned_user, &cleaned_session],
-        )? as i64;
-        decrement_usage_summary(&mut tx, &[], &[(cleaned_user.to_string(), counted)], now)?;
-        tx.commit()?;
-        Ok(counted + rest)
+        log_maintenance::delete_usage_rows(
+            &mut self.conn()?,
+            UsageRows::Tool,
+            "user_id=$1 AND session_id=$2",
+            &[&user_id, &session_id],
+            &mut PurgeBudget::new(),
+        )
     }
 
     fn delete_artifact_logs_impl(&self, user_id: &str) -> Result<i64> {
@@ -595,21 +603,18 @@ impl PostgresLogStatsStorage for PostgresStorage {
 
     fn delete_artifact_logs_by_session_impl(&self, user_id: &str, session_id: &str) -> Result<i64> {
         self.ensure_initialized()?;
-        let cleaned_user = user_id.trim();
-        let cleaned_session = session_id.trim();
-        if cleaned_user.is_empty() || cleaned_session.is_empty() {
+        let user_id = user_id.trim();
+        let session_id = session_id.trim();
+        if user_id.is_empty() || session_id.is_empty() {
             return Ok(0);
         }
-        let mut conn = self.conn()?;
-        let mut tx = conn.transaction()?;
-        tx.execute("SET LOCAL lock_timeout = '2s'", &[])?;
-        tx.execute("SET LOCAL statement_timeout = '20s'", &[])?;
-        let affected = tx.execute(
-            "DELETE FROM artifact_logs WHERE user_id = $1 AND session_id = $2",
-            &[&cleaned_user, &cleaned_session],
-        )?;
-        tx.commit()?;
-        Ok(affected as i64)
+        log_maintenance::delete_rows(
+            &mut self.conn()?,
+            "artifact_logs",
+            "user_id=$1 AND session_id=$2",
+            &[&user_id, &session_id],
+            &mut PurgeBudget::new(),
+        )
     }
 
     fn mark_deleted_session_log_grace_impl(
