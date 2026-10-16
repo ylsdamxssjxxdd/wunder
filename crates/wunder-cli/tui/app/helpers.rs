@@ -1121,18 +1121,18 @@ pub(super) fn sanitize_assistant_delta(delta: &str) -> String {
 }
 
 pub(super) fn sanitize_assistant_delta_streaming(delta: &str, in_tool_markup: &mut bool) -> String {
-    if delta.trim().is_empty() {
+    if delta.is_empty() {
         return String::new();
     }
 
     let stripped = strip_streaming_tool_markup(delta, in_tool_markup);
-    if stripped.trim().is_empty() {
+    if stripped.is_empty() {
         return String::new();
     }
 
     let cleaned = strip_tool_block_tags(stripped.as_str());
     let trimmed = cleaned.trim();
-    if trimmed.is_empty() || looks_like_tool_payload(trimmed) {
+    if looks_like_tool_payload(trimmed) {
         return String::new();
     }
 
@@ -1274,38 +1274,9 @@ pub(super) fn merge_stream_text_with_delta(
     if incoming.is_empty() {
         return None;
     }
-    if existing.is_empty() {
-        existing.push_str(incoming);
-        return Some(incoming.to_string());
-    }
-    if existing == incoming {
-        return None;
-    }
-    if incoming.starts_with(existing.as_str()) {
-        let suffix = &incoming[existing.len()..];
-        *existing = incoming.to_string();
-        return if suffix.is_empty() {
-            None
-        } else {
-            Some(suffix.to_string())
-        };
-    }
-    if existing.ends_with(incoming) {
-        return None;
-    }
-
-    let overlap = longest_suffix_prefix_overlap(existing.as_str(), incoming);
-    if overlap > 0 {
-        let suffix = &incoming[overlap..];
-        existing.push_str(suffix);
-        return if suffix.is_empty() {
-            None
-        } else {
-            Some(suffix.to_string())
-        };
-    }
-    // Most streaming providers send raw deltas; when there is no overlap we should
-    // append directly instead of forcing a newline, otherwise output becomes token-per-line.
+    // Delta frames contain new bytes, including whitespace and repeated tokens.
+    // Replay deduplication belongs to event IDs in apply_stream_event; text
+    // overlap cannot distinguish a repeated event from legitimate content.
     existing.push_str(incoming);
     Some(incoming.to_string())
 }

@@ -260,6 +260,7 @@ fn csv_filename(now: f64) -> String {
 /// One fleet row: the persisted device plus its live tunnel and shadow facts.
 #[derive(Debug, Clone)]
 struct FleetRow {
+    active_sessions: i64,
     device_id: String,
     user_id: String,
     client: String,
@@ -278,6 +279,7 @@ struct FleetRow {
     interlink_enabled: bool,
     revoked: bool,
     capabilities: Vec<String>,
+    authorized_capabilities: Vec<String>,
     policy_overrides: Value,
     shadow_revision: i64,
     rtt_ms: Option<i64>,
@@ -287,6 +289,8 @@ struct FleetRow {
 impl FleetRow {
     fn to_json(&self) -> Value {
         json!({
+            "session_active": !self.revoked && self.active_sessions > 0,
+            "active_sessions": if self.revoked {0} else {self.active_sessions},
             "device_id": self.device_id,
             "user_id": self.user_id,
             "client": self.client,
@@ -303,6 +307,7 @@ impl FleetRow {
             "interlink_enabled": self.interlink_enabled,
             "revoked": self.revoked,
             "capabilities": self.capabilities,
+            "authorized_capabilities": self.authorized_capabilities,
             "policy_overrides": self.policy_overrides,
             "shadow_revision": self.shadow_revision,
             "rtt_ms": self.rtt_ms,
@@ -509,10 +514,17 @@ async fn get_fleet(
                 storage.get_interlink_shadow_revision(&device.device_id)?,
             );
         }
-        Ok::<_, anyhow::Error>((devices, total, channels, revisions))
+        let mut sessions = HashMap::new();
+        for device in &devices {
+            sessions.insert(
+                device.device_id.clone(),
+                storage.count_cloud_device_sessions(&device.device_id, now)?,
+            );
+        }
+        Ok::<_, anyhow::Error>((devices, total, channels, revisions, sessions))
     })
     .await;
-    let (devices, total, channels, revisions) = match fetched {
+    let (devices, total, channels, revisions, sessions) = match fetched {
         Ok(value) => value,
         Err(err) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
     };
@@ -570,6 +582,7 @@ async fn get_fleet(
         let resumed_count = channel_row.map(|row| row.resumed_count).unwrap_or(0);
 
         rows.push(FleetRow {
+            active_sessions: sessions.get(&device.device_id).copied().unwrap_or(0),
             device_id: device.device_id.clone(),
             user_id: device.user_id.clone(),
             client: device.client.clone(),
@@ -588,6 +601,7 @@ async fn get_fleet(
             interlink_enabled: patch.interlink_enabled != Some(false),
             revoked: device.revoked,
             capabilities,
+            authorized_capabilities: authorized,
             policy_overrides: serde_json::to_value(&policy).unwrap_or_else(|_| json!({})),
             shadow_revision: revisions.get(&device.device_id).copied().unwrap_or(0),
             rtt_ms,
@@ -628,6 +642,7 @@ async fn get_fleet(
             "total": total,
             "offset": offset,
             "limit": limit,
+            "filter_scope": "page",
             "aggregates": aggregates.to_json(),
             "online_rate_24h": online_rate,
             "live_channels": live.len(),
@@ -1439,6 +1454,7 @@ mod tests {
         resumed: i64,
     ) -> FleetRow {
         FleetRow {
+            active_sessions: 0,
             device_id: device_id.to_string(),
             user_id: "u_1".to_string(),
             client: client.to_string(),
@@ -1455,6 +1471,7 @@ mod tests {
             interlink_enabled: true,
             revoked: false,
             capabilities: vec!["query.basic".to_string()],
+            authorized_capabilities: vec!["query.basic".to_string()],
             policy_overrides: json!({}),
             shadow_revision: 0,
             rtt_ms: rtt,

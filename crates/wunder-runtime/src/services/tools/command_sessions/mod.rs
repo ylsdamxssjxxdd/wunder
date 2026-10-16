@@ -12,4 +12,4 @@ pub use desktop::{
     DesktopTerminalSnapshot, DesktopTerminalStartSpec, DesktopTerminalStatus,
 };
 pub(crate) use tracker::CommandSessionTracker;
-pub(crate) use types::{CommandSessionLaunchMode, CommandSessionStatus, CommandSessionStream};
+pub(crate) use types::{CommandSessionLaunchMode, CommandSessionStream};

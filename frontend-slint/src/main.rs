@@ -22,6 +22,7 @@ mod hotkey;
 mod message_blocks;
 mod native_chat;
 mod native_interlink;
+mod cloud_threads;
 mod native_markdown;
 mod native_pages;
 mod native_restore;

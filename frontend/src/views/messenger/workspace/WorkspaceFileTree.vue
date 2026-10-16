@@ -158,10 +158,11 @@ const props = withDefaults(
     selectedPaths: string[];
     /** 只读投影（互通远程节点）：隐藏写操作菜单，只留预览/展开。 */
     readOnly?: boolean;
+    remote?: boolean;
     /** 空态提示覆盖（远程投影与云端拖拽提示语义不同）。 */
     emptyHint?: string;
   }>(),
-  { readOnly: false, emptyHint: '' }
+  { readOnly: false, remote: false, emptyHint: '' }
 );
 
 const emit = defineEmits<{
@@ -299,6 +300,16 @@ const createItems = (): MenuItem[] => [
 
 const menuItems = computed<MenuItem[]>(() => {
   const row = menu.value.row;
+  if (props.remote && !props.readOnly) {
+    const items: MenuItem[] = [{ command: 'refresh', label: t('common.refresh'), icon: 'fa-rotate-right' }];
+    if (!row || row.kind === 'dir') items.push(...createItems());
+    if (row && row.kind !== 'more') {
+      items.push(row.kind === 'dir' ? { command: 'toggle', label: t('messenger.filesArea.menu.open'), icon: 'fa-folder-open' } : { command: 'preview', label: t('messenger.filesArea.menu.preview'), icon: 'fa-eye' });
+      items.push({ command: 'rename', label: t('messenger.filesArea.menu.rename'), icon: 'fa-i-cursor' });
+      items.push({ command: 'delete', label: t('common.delete'), icon: 'fa-trash-can', danger: true });
+    }
+    return items;
+  }
   // 只读投影：行上只给「打开目录 / 预览」，写类动作在远程节点上不存在；
   // 空白区给「刷新」，右键不再无声无息。
   if (props.readOnly) {

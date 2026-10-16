@@ -7,7 +7,7 @@ use axum::{
     Router,
 };
 use serde_json::{json, Value};
-use std::{path::Path, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 use tempfile::TempDir;
 use tower::ServiceExt;
 use wunder_server::{
@@ -265,7 +265,8 @@ async fn device_registration_is_idempotent() {
     let device_a_again = register_device(&context, &token, "desktop", "workstation").await;
     assert_eq!(device_a, device_a_again, "same identity reuses the device");
 
-    let device_b = register_device(&context, &token, "cli", "workstation").await;
+    let cli_token = context.state.user_store.create_session_token_with_scope(&user_id, "local_cli").unwrap().token;
+    let device_b = register_device(&context, &cli_token, "cli", "workstation").await;
     assert_ne!(device_a, device_b, "different client means new device");
 
     let (_, body, _) = send_request(
@@ -437,11 +438,6 @@ async fn chat_concurrency_queue_semantics() {
     let user_id = create_user_id(&context, "queue_user");
     let token = create_local_token(&context, &user_id);
     let device_id = register_device(&context, &token, "desktop", "queue-host").await;
-    let payload = json!({
-        "model": "cloud-model",
-        "messages": [{"role": "user", "content": "hello"}],
-        "stream": false,
-    });
 
     // Occupies the only slot and hangs on the upstream.
     let first_app = context.app.clone();
@@ -575,7 +571,7 @@ fn log_entry(seq: i64, message: &str) -> Value {
 async fn logs_upload_is_idempotent_and_bounded() {
     let context = build_context(|_| {}).await;
     let user_id = create_user_id(&context, "log_user");
-    let token = create_local_token(&context, &user_id);
+    let token = context.state.user_store.create_token_for_user_with_scope(&user_id, "local_cli").unwrap().token;
     let device_id = register_device(&context, &token, "cli", "log-host").await;
 
     let payload = json!({
@@ -665,7 +661,7 @@ async fn logs_upload_is_idempotent_and_bounded() {
     )
     .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
-    assert_eq!(body["error"]["code"], json!("DEVICE_REVOKED"));
+    assert_eq!(body["error"]["code"], json!("AUTH_REQUIRED"));
 }
 
 // ---------------------------------------------------------------------------
@@ -701,11 +697,12 @@ async fn device_revocation_blocks_access() {
     )
     .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
-    assert_eq!(body["error"]["code"], json!("DEVICE_REVOKED"));
+    assert_eq!(body["error"]["code"], json!("AUTH_REQUIRED"));
 
-    // Re-login on the same identity keeps the revoked flag.
-    let same_device = register_device(&context, &token, "desktop", "revoke-host").await;
-    assert_eq!(same_device, device_id);
+    // A revoked credential cannot bootstrap registration or reset the flag.
+    let (status, _, _) = send_request(&context.app, Method::POST,
+        "/wunder/cloud/devices", Some(&token), &[], Some(register_device_body("desktop", "fixture_device"))).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
     let (status, body, _) = send_request(
         &context.app,
         Method::GET,

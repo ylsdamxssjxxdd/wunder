@@ -1,5 +1,5 @@
 <template>
-  <div class="tl-entry" :class="[`is-${entry.status}`, { 'is-open': open }]">
+  <div class="tl-entry" :class="[`is-${displayStatus}`, { 'is-open': open }]">
     <component
       :is="interactive ? 'button' : 'div'"
       class="tl-entry-head"
@@ -9,9 +9,9 @@
     >
       <span class="tl-gutter" aria-hidden="true">
         <span class="tl-gutter-line"></span>
-        <span class="tl-entry-status" :class="`is-${entry.status}`">
-          <i v-if="entry.status === 'loading'" class="fa-solid fa-circle-notch fa-spin"></i>
-          <i v-else-if="entry.status === 'failed' || entry.status === 'cancelled'" class="fa-solid fa-xmark"></i>
+        <span class="tl-entry-status" :class="`is-${displayStatus}`">
+          <i v-if="displayStatus === 'loading'" class="fa-solid fa-circle-notch fa-spin"></i>
+          <i v-else-if="displayStatus === 'failed' || displayStatus === 'cancelled'" class="fa-solid fa-xmark"></i>
           <i v-else class="fa-solid fa-check"></i>
         </span>
       </span>
@@ -65,11 +65,11 @@
         <div class="tl-entry-output-head">
           <span>{{ t('chat.timeline.entryOutputTitle') }}</span>
           <span
-            v-if="entry.exitCode !== null"
+            v-if="displayExitCode !== null"
             class="tl-entry-output-exit"
-            :class="{ 'is-nonzero': entry.exitCode !== 0 }"
+            :class="{ 'is-nonzero': displayExitCode !== 0 }"
           >
-            {{ t('chat.timeline.entryOutputExitCode', { code: entry.exitCode }) }}
+            {{ t('chat.timeline.entryOutputExitCode', { code: displayExitCode }) }}
           </span>
         </div>
         <pre class="tl-entry-output-body">{{ outputText }}</pre>
@@ -96,6 +96,8 @@ import MessageToolWorkflowStructuredSection from './MessageToolWorkflowStructure
 import { extractWorkflowCallArgs } from './toolWorkflowCallDebug';
 import { parseToolWorkflowResultObject } from './toolWorkflowResultPayload';
 import { buildToolResultPreview } from './toolWorkflowPreview';
+import { useCommandSessionStore } from '@/stores/commandSessions';
+import { commandSessionOutputPreview, resolveTimelineCommandSessionRef } from './toolTimelineCommandSession';
 
 const props = withDefaults(defineProps<{
   entry: TimelineToolEntry;
@@ -113,14 +115,28 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{ (event: 'toggle'): void }>();
 
 const { t } = useI18n();
+const commandStore = useCommandSessionStore();
+const commandSessionId = computed(() => resolveTimelineCommandSessionRef(props.entry.run));
+const commandSession = computed(() => commandSessionId.value
+  ? commandStore.getById(commandSessionId.value)
+  : commandStore.getByToolCallId(String(props.entry.run.callItem?.toolCallId ??
+      props.entry.run.callItem?.tool_call_id ?? props.entry.run.key)));
+const displayStatus = computed(() => {
+  const command = commandSession.value;
+  if (!command) return props.entry.status;
+  if (command.status === 'running') return 'loading';
+  return command.status === 'failed_to_start' || command.timedOut || command.error ||
+    (command.exitCode !== null && command.exitCode !== 0) ? 'failed' : 'completed';
+});
+const displayExitCode = computed(() => commandSession.value?.exitCode ?? props.entry.exitCode);
 
-const interactive = computed(() => Boolean(props.entry.expandable));
+const interactive = computed(() => Boolean(props.entry.expandable || commandSession.value));
 const fallbackStatus = computed(() => t({
   loading: 'chat.toolWorkflow.toolResultPending',
   completed: 'chat.toolWorkflow.resultDone',
   failed: 'chat.toolWorkflow.resultFailed',
   cancelled: 'chat.toolWorkflow.statusCancelled'
-}[props.entry.status]));
+}[displayStatus.value]));
 // Only build the fallback when the user opens an entry with no result body.
 const callPreview = computed(() => {
   if (!props.open || props.entry.detailText || props.structuredView || props.patchView || props.entry.errorText) return '';
@@ -133,13 +149,16 @@ const callPreview = computed(() => {
 /**
  * 工具输出在 DOM 里必须有界（方案 §7.3 C「长输出限高折叠」+ 性能要求）。
  * 服务端可能返回几十万字的输出，整段塞进 `<pre>` 会同时撑大内存与 `innerText`
- * 成本；这里保留前 N 字并显式标注省略量（与旧工作流条目的有界预览同一口径）。
+ * 成本；这里保留开头与最新尾部并显式标注省略量。
  */
-const OUTPUT_TEXT_LIMIT = 4000;
 const outputText = computed(() => {
+  const command = props.open ? commandSession.value : null;
+  if (command) {
+    const text = [command.ptyTail, command.stdoutTail, command.stderrTail, command.error].filter(Boolean).join('\n');
+    if (text) return commandSessionOutputPreview(text);
+  }
   const text = String(props.entry.detailText || '');
-  if (text.length <= OUTPUT_TEXT_LIMIT) return text;
-  return `${text.slice(0, OUTPUT_TEXT_LIMIT)}\n… (${text.length - OUTPUT_TEXT_LIMIT} chars omitted)`;
+  return commandSessionOutputPreview(text);
 });
 
 const handleHeadClick = (): void => {

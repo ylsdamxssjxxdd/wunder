@@ -78,7 +78,13 @@ pub(crate) async fn handle_cloud_interlink(
     global: &GlobalArgs,
     command: crate::args::CloudSubcommand,
 ) -> Result<()> {
+    if cloud_shared().session().is_none() { cloud_shared().adopt_shared_login().await?; }
     match command {
+        crate::args::CloudSubcommand::Agents => {
+            let data = get_json(&session()?, "/wunder/agents").await?;
+            println!("{}", serde_json::to_string_pretty(&data)?);
+            Ok(())
+        },
         crate::args::CloudSubcommand::Devices => devices(runtime, global).await,
         crate::args::CloudSubcommand::Ws(command) => ws(runtime, global, command).await,
         crate::args::CloudSubcommand::Threads(command) => threads(runtime, global, command).await,
@@ -133,12 +139,9 @@ fn ws_base(session: &CloudSessionFile) -> String {
 }
 
 async fn get_json(session: &CloudSessionFile, path: &str) -> Result<Value> {
-    let url = format!("{}{}", base_url(session), path);
-    let response = http()?
-        .get(url)
-        .bearer_auth(&session.token)
-        .send()
-        .await
+    let _ = session;
+    let client = http()?;
+    let response = cloud_shared().authed_send(|live| client.get(format!("{}{}", base_url(live), path)).bearer_auth(&live.token)).await
         .context("request failed")?;
     let status = response.status();
     let body: Value = response.json().await.unwrap_or(Value::Null);
@@ -149,12 +152,9 @@ async fn get_json(session: &CloudSessionFile, path: &str) -> Result<Value> {
 }
 
 async fn get_bytes(session: &CloudSessionFile, path: &str) -> Result<Vec<u8>> {
-    let url = format!("{}{}", base_url(session), path);
-    let response = http()?
-        .get(url)
-        .bearer_auth(&session.token)
-        .send()
-        .await
+    let _ = session;
+    let client = http()?;
+    let response = cloud_shared().authed_send(|live| client.get(format!("{}{}", base_url(live), path)).bearer_auth(&live.token)).await
         .context("request failed")?;
     let status = response.status();
     if !status.is_success() {
@@ -165,13 +165,9 @@ async fn get_bytes(session: &CloudSessionFile, path: &str) -> Result<Vec<u8>> {
 }
 
 async fn post_json(session: &CloudSessionFile, path: &str, body: Value) -> Result<Value> {
-    let url = format!("{}{}", base_url(session), path);
-    let response = http()?
-        .post(url)
-        .bearer_auth(&session.token)
-        .json(&body)
-        .send()
-        .await
+    let _ = session;
+    let client = http()?;
+    let response = cloud_shared().authed_send(|live| client.post(format!("{}{}", base_url(live), path)).bearer_auth(&live.token).json(&body)).await
         .context("request failed")?;
     let status = response.status();
     let text: Value = response.json().await.unwrap_or(Value::Null);
@@ -217,6 +213,7 @@ async fn issue_and_wait(
         if data.get("approval_state").and_then(Value::as_str) == Some("pending")
             || TERMINAL_STATUSES.contains(&status)
         {
+            anyhow::ensure!(status != "succeeded" || !data["result"].is_null(), "RESULT_EXPIRED: command {command_id} result expired; refresh the view");
             return Ok(record);
         }
         if std::time::Instant::now() >= deadline {
@@ -279,11 +276,11 @@ fn print_command_outcome(record: &Value, is_zh: bool) -> Result<()> {
             println!("{}", format_result(data));
             Ok(())
         }
-        _ if is_open_status(status) => Err(anyhow!(
-            "命令 {command_id} 仍在执行（{status}），稍后可重新查询 / command {command_id} is still {status}; query it again later"
-        )),
         _ if data.get("approval_state").and_then(Value::as_str) == Some("pending") => Err(anyhow!(
             "命令 {command_id} 等待审批：在蜂巢设备面板或用 `cloud approve {command_id} --yes` 处理 / command {command_id} awaits approval: decide in the web device panel or via `cloud approve {command_id} --yes`"
+        )),
+        _ if is_open_status(status) => Err(anyhow!(
+            "命令 {command_id} 仍在执行（{status}），稍后可重新查询 / command {command_id} is still {status}; query it again later"
         )),
         _ => Err(failure_error(data, is_zh)),
     }
@@ -1224,7 +1221,17 @@ async fn thread(
     global: &GlobalArgs,
     command: CloudThreadCommand,
 ) -> Result<()> {
-    let crate::args::CloudThreadAction::Show(command) = command.action;
+    let command = match command.action {
+        crate::args::CloudThreadAction::Show(command) => command,
+        crate::args::CloudThreadAction::Cancel(command) => {
+            let record = issue_and_wait(&session()?, &normalize_target(&command.to)?, "thread.cancel", json!({"local_thread_id": command.id})).await?;
+            return print_command_outcome(&record, zh(global));
+        }
+        crate::args::CloudThreadAction::Answer(command) => {
+            let record = issue_and_wait(&session()?, &normalize_target(&command.to)?, "thread.answer", json!({"local_thread_id": command.id, "approval_id": command.approval_id, "decision": command.decision})).await?;
+            return print_command_outcome(&record, zh(global));
+        }
+    };
     thread_show(runtime, global, command).await
 }
 
@@ -1320,6 +1327,7 @@ async fn send(runtime: &CliRuntime, global: &GlobalArgs, command: CloudSendComma
     let session = session()?;
     let to_node = normalize_target(&command.to)?;
     let mut args = json!({"message": command.message});
+    if let Some(agent) = command.agent { args["agent"] = json!(agent); }
     if let Some(thread) = command
         .thread
         .as_deref()
@@ -2334,23 +2342,42 @@ async fn watch(
     // threads in its own durable log, so `--to cloud` has nothing to relay
     // (docs §7.4). `cloud send --attach` subscribes to that log over `chat_ws`.
     if target == "cloud" {
-        return Err(anyhow!(
-            "{}",
-            crate::locale::tr(
-                if is_zh { "zh" } else { "en" },
-                "旁观只支持设备节点（--to device:<id>）；云端线程请用 `cloud send --attach` 或 `cloud thread show`",
-                "watch supports device nodes only (--to device:<id>); for cloud threads use `cloud send --attach` or `cloud thread show`",
-            )
-        ));
+        let cloud = cloud_shared();
+        let page = cloud.cloud_thread_view(&command.thread).await?;
+        let cursor = page.pointer("/page/view_seq").and_then(Value::as_i64).unwrap_or(0);
+        println!("{}", serde_json::to_string(&page)?);
+        let mut feed = cloud.watch_cloud_thread(command.thread.clone(), cursor);
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(command.seconds.max(1));
+        loop {
+            tokio::select! {
+                _ = tokio::time::sleep_until(deadline) => break,
+                _ = tokio::signal::ctrl_c() => break,
+                event = feed.recv() => match event {
+                    Some(wunder_server::cloud::CloudThreadEvent::Change(change)) => println!("{}", serde_json::to_string(&change)?),
+                    Some(wunder_server::cloud::CloudThreadEvent::Connection(state)) => eprintln!("{state}"),
+                    Some(wunder_server::cloud::CloudThreadEvent::Reload) => {
+                        let page = cloud.cloud_thread_view(&command.thread).await?;
+                        let cursor = page.pointer("/page/view_seq").and_then(Value::as_i64).unwrap_or(0);
+                        println!("{}", serde_json::to_string(&page)?);
+                        feed = cloud.watch_cloud_thread(command.thread.clone(), cursor);
+                    }
+                    None => break,
+                }
+            }
+        }
+        return Ok(());
     }
     let url = format!(
-        "{}/wunder/interlink/remote_ws?target={}&thread={}&token={}",
+        "{}/wunder/interlink/remote_ws?target={}&thread={}",
         ws_base(&session),
         urlencode(target.as_str()),
         urlencode(&command.thread),
-        urlencode(&session.token),
     );
-    let (socket, _response) = tokio_tungstenite::connect_async(url)
+    let mut request = url.into_client_request()?;
+    request.headers_mut().insert("authorization", format!("Bearer {}", session.token).parse()?);
+    request.headers_mut().insert("sec-websocket-protocol", "wunder-interlink-remote".parse()?);
+    request.headers_mut().insert("x-wunder-device-id", session.device_id.parse()?);
+    let (socket, _response) = tokio_tungstenite::connect_async(request)
         .await
         .map_err(|err| anyhow!("remote_ws 连接失败 / remote_ws connect failed: {err}"))?;
     let (mut sink, mut stream) = socket.split();
@@ -2582,11 +2609,7 @@ async fn audit(
     let session = session()?;
     let path = audit_query_path(&command);
     let url = format!("{}{}", base_url(&session), path);
-    let response = http()?
-        .get(url)
-        .bearer_auth(&session.token)
-        .send()
-        .await
+    let response = cloud_shared().authed_send(|live| http().expect("http client").get(&url).bearer_auth(&live.token)).await
         .context("request failed")?;
     let status = response.status();
     let text = response.text().await.unwrap_or_default();

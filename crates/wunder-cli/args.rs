@@ -269,6 +269,8 @@ pub struct CloudCommand {
 
 #[derive(Debug, Subcommand)]
 pub enum CloudSubcommand {
+    /// Local inbound sharing: off / summary / full; writes still require approval.
+    Share { #[arg(value_enum)] mode: CloudShareMode },
     /// Log in to the cloud server / 登录云端舰体。
     Login(CloudLoginCommand),
 
@@ -289,6 +291,9 @@ pub enum CloudSubcommand {
 
     /// List the account's interlink nodes / 列出本账号互通节点。
     Devices,
+
+    /// Show the cloud agent available to this account / 查看本账号云端智能体。
+    Agents,
 
     /// Show the cloud workspace / 查看云端工作区。
     Ws(CloudWsCommand),
@@ -311,6 +316,9 @@ pub enum CloudSubcommand {
     /// Decide a pending interlink approval / 处理待决定审批。
     Approve(CloudApproveCommand),
 }
+
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+pub enum CloudShareMode { Off, Summary, Full }
 
 /// `cloud ws …`: the workspace actions. The bare `cloud ws <PATH>` spelling is
 /// kept so scripts written before `ws ls` exists still run.
@@ -414,6 +422,26 @@ pub struct CloudThreadCommand {
 pub enum CloudThreadAction {
     /// Show one thread's key points and recent items / 查看线程要点与最近条目。
     Show(CloudThreadShowCommand),
+    /// Stop a running thread / 停止线程。
+    Cancel(CloudThreadCancelCommand),
+    /// Answer a tool approval in one thread / 处理线程工具审批。
+    Answer(CloudThreadAnswerCommand),
+}
+
+#[derive(Debug, Args)]
+pub struct CloudThreadCancelCommand {
+    pub id: String,
+    #[arg(long, default_value = "cloud")]
+    pub to: String,
+}
+#[derive(Debug, Args)]
+pub struct CloudThreadAnswerCommand {
+    pub id: String,
+    pub approval_id: String,
+    #[arg(value_parser = ["approve_once", "approve_session", "deny"])]
+    pub decision: String,
+    #[arg(long, default_value = "cloud")]
+    pub to: String,
 }
 
 #[derive(Debug, Args)]
@@ -437,6 +465,9 @@ pub struct CloudThreadShowCommand {
 
 #[derive(Debug, Args)]
 pub struct CloudSendCommand {
+    /// Cloud agent ID for a new thread / 新线程使用的云端智能体 ID。
+    #[arg(long)]
+    pub agent: Option<String>,
     /// Target node: `cloud` or `device:<id>` / 目标节点：cloud 或 device:<id>。
     #[arg(long, default_value = "cloud")]
     pub to: String,
@@ -1189,6 +1220,7 @@ mod tests {
                 assert!(show.raw);
                 assert_eq!(show.limit, 20);
             }
+            _ => panic!("expected show"),
         }
 
         let cli = parse(&["wunder-cli", "cloud", "watch", "--thread", "t1"]);

@@ -257,7 +257,7 @@ impl SqliteLogStatsStorage for SqliteStorage {
                  SELECT user_id, 0, COUNT(*) AS delta_records, ?2 FROM tool_logs \
                  WHERE id > ?1 AND excluded = 0 GROUP BY user_id \
                  ON CONFLICT (user_id) DO UPDATE SET \
-                   tool_records = user_usage_summary.tool_records + excluded.delta_records, \
+                   tool_records = user_usage_summary.tool_records + excluded.tool_records, \
                    updated_time = excluded.updated_time",
                 params![tool_wm, now],
             )?;
@@ -267,7 +267,7 @@ impl SqliteLogStatsStorage for SqliteStorage {
                  WHERE created_time > ?1 AND visibility = 'user' \
                    AND kind IN ('user_message','assistant_message') GROUP BY user_id \
                  ON CONFLICT (user_id) DO UPDATE SET \
-                   chat_records = user_usage_summary.chat_records + excluded.delta_records, \
+                   chat_records = user_usage_summary.chat_records + excluded.chat_records, \
                    updated_time = excluded.updated_time",
                 params![chat_wm, now],
             )?;
@@ -684,6 +684,61 @@ mod tests {
         let storage = SqliteStorage::new(db_path.to_string_lossy().to_string());
         storage.ensure_initialized().expect("initialize sqlite");
         (storage, dir)
+    }
+
+    #[test]
+    fn live_acceptance_incremental_usage_updates_target_columns_once() {
+        let (storage, _dir) = build_storage();
+        storage
+            .reconcile_user_usage(true)
+            .expect("initialize watermarks");
+        storage
+            .append_chat(
+                "fixture-user",
+                &json!({
+                    "session_id": "fixture-thread", "role": "user", "content": "fixture input"
+                }),
+            )
+            .expect("append input");
+        storage
+            .append_tool_log(
+                "fixture-user",
+                &json!({
+                    "session_id": "fixture-thread", "tool": "fixture-tool", "ok": true
+                }),
+            )
+            .expect("append tool");
+        storage
+            .reconcile_user_usage(false)
+            .expect("first incremental pass");
+        assert_eq!(
+            storage
+                .get_user_usage_summary()
+                .expect("summary")
+                .get("fixture-user"),
+            Some(&(1, 1))
+        );
+        storage
+            .append_tool_log(
+                "fixture-user",
+                &json!({
+                    "session_id": "fixture-thread", "tool": "fixture-tool", "ok": true
+                }),
+            )
+            .expect("append next tool");
+        storage
+            .reconcile_user_usage(false)
+            .expect("update existing summary");
+        storage
+            .reconcile_user_usage(false)
+            .expect("repeat without new records");
+        assert_eq!(
+            storage
+                .get_user_usage_summary()
+                .expect("summary")
+                .get("fixture-user"),
+            Some(&(1, 2))
+        );
     }
 
     #[test]

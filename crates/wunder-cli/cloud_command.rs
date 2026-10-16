@@ -18,13 +18,20 @@ pub(crate) async fn handle_cloud(
     command: CloudCommand,
 ) -> Result<()> {
     match command.command {
+        CloudSubcommand::Share { mode } => {
+            use crate::args::CloudShareMode;
+            cloud_shared().set_local_sharing(!matches!(mode, CloudShareMode::Off), matches!(mode, CloudShareMode::Full)).await?;
+            println!("{}", if matches!(mode, CloudShareMode::Off) { "Local sharing disabled" } else { "Local sharing enabled; remote mutations require approval" });
+            Ok(())
+        }
         CloudSubcommand::Login(command) => cloud_login(runtime, global, command).await,
         CloudSubcommand::Logout => cloud_logout(runtime, global).await,
         CloudSubcommand::Status => cloud_status(runtime, global).await,
         CloudSubcommand::Models => cloud_models(runtime, global).await,
         CloudSubcommand::Refresh => cloud_refresh(runtime, global).await,
         CloudSubcommand::Logs(command) => cloud_logs(runtime, global, command).await,
-        interlink @ (CloudSubcommand::Devices
+        interlink @ (CloudSubcommand::Agents
+        | CloudSubcommand::Devices
         | CloudSubcommand::Ws(_)
         | CloudSubcommand::Threads(_)
         | CloudSubcommand::Thread(_)
@@ -306,6 +313,11 @@ fn cloud_status_lines_at(status: &CloudStatus, is_zh: bool, now: f64) -> Vec<Str
         });
     }
     lines.extend(cloud_connection_lines(status, is_zh, now));
+    lines.push(if is_zh {
+        format!("本地远程访问: {} / 目录共享: {}", if status.inbound_enabled {"开启"} else {"关闭"}, if status.full_shadow {"完整"} else {"摘要"})
+    } else {
+        format!("inbound access: {} / catalog: {}", status.inbound_enabled, if status.full_shadow {"full"} else {"summary"})
+    });
     if let Some(max) = status.max_concurrent_calls {
         let active = status.concurrency_active.unwrap_or(0);
         let queued = status.concurrency_queued.unwrap_or(0);
@@ -634,6 +646,8 @@ mod tests {
 
     fn logged_out_status() -> CloudStatus {
         CloudStatus {
+            inbound_enabled: false,
+            full_shadow: false,
             logged_in: false,
             server: None,
             user_id: None,
@@ -655,6 +669,8 @@ mod tests {
 
     fn logged_in_status(balance: i64) -> CloudStatus {
         CloudStatus {
+            inbound_enabled: false,
+            full_shadow: false,
             logged_in: true,
             server: Some("http://127.0.0.1:8000".to_string()),
             user_id: Some("u1".to_string()),

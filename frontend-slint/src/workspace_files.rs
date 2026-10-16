@@ -1,10 +1,9 @@
-//! Sidebar working-directory region: the cloud workspace file tree. One flat
-//! row model, rebuilt on the UI thread from a per-directory page cache; every
+//! Sidebar working-directory region: one bounded, lazy file tree. Every
 //! cloud round trip runs on a background thread through the synchronous
 //! interlink façade and lands via `upgrade_in_event_loop`. The tree shares the
 //! web left-rail's semantics: lazy directories, 200-entry pages with a
-//! load-more tail, dirs-first natural order, and a click on a file pulls it
-//! into the local workspace and opens it with the OS default application.
+//! load-more tail, dirs-first natural order, click-to-select and double-click
+//! to open with the OS default application.
 //! A locally bound workspace folder mirrors the same tree from the disk with
 //! the same menu (minus the cloud-only download/archive/clear trio) and
 //! executes its writes directly through the `workspace_local_*` façade.
@@ -22,6 +21,10 @@ use wunder_desktop::NativeDesktop;
 /// Expanded directories reloaded by one refresh; a bound keeps the fan-out
 /// finite even if a user expands a wide tree before hitting refresh.
 const REFRESH_DIR_CAP: usize = 12;
+const MAX_REQUESTS: u32 = 4;
+const MAX_CACHED_DIRS: usize = 64;
+const MAX_DIRECTORY_ENTRIES: usize = 2000;
+const MAX_CACHED_ENTRIES: usize = 8000;
 
 /// Context-menu action codes shared with the .slint side (aligned with the
 /// web left-rail menu: open/preview, download, rename, delete, reference,
@@ -51,6 +54,7 @@ enum PromptKind {
     Delete,
     NewDir,
     NewFile,
+    Clear,
 }
 
 /// One parked prompt: the entry it acts on plus, once the cloud parks the
@@ -59,6 +63,8 @@ struct PromptOp {
     kind: PromptKind,
     path: String,
     command_id: Option<String>,
+    generation: u64,
+    target: Target,
 }
 
 #[derive(Default)]
@@ -76,6 +82,8 @@ struct Panel {
     model: Rc<VecModel<WorkspaceFileRow>>,
     /// Page cache keyed by directory path; the root lives under `""`.
     dirs: HashMap<String, DirState>,
+    in_flight: u32,
+    refresh_pending: bool,
 }
 
 thread_local! {
@@ -84,6 +92,7 @@ thread_local! {
     /// disconnecting re-arms it so signing back in reloads.
     static BOOTED: Cell<bool> = const { Cell::new(false) };
     static BUSY: Cell<u32> = const { Cell::new(0) };
+    static GENERATION: Cell<u64> = const { Cell::new(0) };
     /// The prompt currently on screen, if any; drives both dialog stages.
     static PROMPT: RefCell<Option<PromptOp>> = const { RefCell::new(None) };
     /// One OS drag at a time: DoDragDrop is modal on its worker thread.
@@ -93,7 +102,7 @@ thread_local! {
 /// Which workspace the file panel mirrors: the cloud account workspace
 /// (default) or one locally bound workspace folder, keyed by its root path.
 /// Switching targets resets the page cache so no stale row leaks across.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Target {
     Cloud,
     Local(String),
@@ -105,6 +114,13 @@ thread_local! {
 
 fn current_target() -> Target {
     TARGET.with(|slot| slot.borrow().clone())
+}
+
+fn generation() -> u64 {
+    GENERATION.with(Cell::get)
+}
+fn is_current(request: u64) -> bool {
+    request == generation()
 }
 
 /// True while the panel mirrors the cloud account workspace.
@@ -135,10 +151,25 @@ pub(crate) fn set_target(app: &MainWindow, api: Arc<NativeDesktop>, target: Targ
     }
 }
 
+/// Coalesced refresh after an execution writes files; no per-token scans.
+pub(crate) fn execution_finished(app: &MainWindow, api: Arc<NativeDesktop>) {
+    if !is_cloud_target() {
+        refresh(app, api);
+    }
+}
+
 /// Push the target's chrome: the local flag swaps cloud-only actions out, the
 /// offline hint (a local folder needs no tunnel) and a cleared usage line.
 fn reflect_target(app: &MainWindow) {
     let cloud = is_cloud_target();
+    app.set_selected_workspace(match current_target() {
+        Target::Cloud => -1,
+        Target::Local(root) => app
+            .get_workspaces()
+            .iter()
+            .position(|card| card.root_path == root)
+            .map_or(-1, |index| index as i32),
+    });
     app.set_ws_file_local(!cloud);
     app.set_ws_file_stats("".into());
     app.set_ws_file_error("".into());
@@ -146,7 +177,20 @@ fn reflect_target(app: &MainWindow) {
         app.set_ws_file_offline(false);
     }
     // Drop the cached pages so the next listing starts from a clean root.
-    with_panel(|panel| panel.dirs.clear());
+    GENERATION.with(|slot| slot.set(slot.get().wrapping_add(1)));
+    with_panel(|panel| {
+        panel.dirs.clear();
+        panel.model.set_vec(Vec::new());
+        panel.in_flight = 0;
+        panel.refresh_pending = false;
+    });
+    app.set_ws_file_active_path("".into());
+    app.set_ws_file_active_index(-1);
+    app.set_ws_file_busy(false);
+    app.set_ws_file_loading(true);
+    app.set_ws_prompt_open(false);
+    app.set_ws_prompt_busy(false);
+    PROMPT.with(|slot| *slot.borrow_mut() = None);
     BOOTED.with(|slot| slot.set(true));
     crate::navigation_ui::project_sidebar(app, None);
 }
@@ -180,6 +224,8 @@ fn with_panel<R>(run: impl FnOnce(&mut Panel) -> R) -> Option<R> {
         let panel = slot.get_or_insert_with(|| Panel {
             model: Rc::new(VecModel::default()),
             dirs: HashMap::new(),
+            in_flight: 0,
+            refresh_pending: false,
         });
         Some(run(panel))
     })
@@ -206,7 +252,7 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
     app.set_ws_file_rows(ModelRc::from(model));
 
     // Row click: a directory expands or collapses (lazy load on first open),
-    // the load-more tail pages its directory, a file pulls and opens.
+    // the load-more tail pages its directory, a file becomes selected.
     let weak = app.as_weak();
     let toggle_api = api.clone();
     app.on_ws_file_toggle(move |index| {
@@ -217,10 +263,66 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
             return;
         };
         let path = row.path.to_string();
+        app.set_ws_file_active_path(row.path.clone());
+        app.set_ws_file_active_index(index);
         match row.kind {
-            0 => open_file(&app, toggle_api.clone(), path, row.name.to_string()),
+            0 => {}
             1 => toggle_dir(&app, toggle_api.clone(), path),
             _ => load_more(&app, toggle_api.clone(), path),
+        }
+    });
+
+    let weak = app.as_weak();
+    let key_api = api.clone();
+    app.on_ws_file_key(move |key| {
+        let Some(app) = weak.upgrade() else {
+            return;
+        };
+        if key == 9 {
+            refresh(&app, key_api.clone());
+            return;
+        }
+        let rows = app.get_ws_file_rows();
+        let count = rows.row_count();
+        if count == 0 {
+            return;
+        }
+        let active = usize::try_from(app.get_ws_file_active_index())
+            .ok()
+            .filter(|&index| index < count);
+        let index = match key {
+            0 => active.unwrap_or(1).saturating_sub(1),
+            1 => active.map_or(0, |i| (i + 1).min(count - 1)),
+            4 => 0,
+            5 => count - 1,
+            _ => active.unwrap_or(0),
+        };
+        let Some(row) = rows.row_data(index) else {
+            return;
+        };
+        app.set_ws_file_active_path(row.path.clone());
+        app.set_ws_file_active_index(index as i32);
+        match key {
+            2 if row.kind == 1 && row.expanded => {
+                toggle_dir(&app, key_api.clone(), row.path.to_string())
+            }
+            2 => {
+                let parent = parent_cloud_dir(&row.path);
+                if let Some(i) = rows
+                    .iter()
+                    .position(|candidate| candidate.path == parent && candidate.kind == 1)
+                {
+                    app.set_ws_file_active_path(parent.into());
+                    app.set_ws_file_active_index(i as i32);
+                }
+            }
+            3 if row.kind == 1 && !row.expanded => {
+                toggle_dir(&app, key_api.clone(), row.path.to_string())
+            }
+            6 => app.invoke_ws_file_menu(index as i32, MENU_OPEN),
+            7 if row.kind != 2 => app.invoke_ws_file_menu(index as i32, MENU_RENAME),
+            8 if row.kind != 2 => app.invoke_ws_file_menu(index as i32, MENU_DELETE),
+            _ => {}
         }
     });
 
@@ -236,7 +338,7 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
     });
 
     // Context menu (aligned with the web left-rail). `index` is -1 for the
-    // blank-area entries (new dir / new file land in the root); actions and
+    // blank-area entries (new entries use the selected directory); actions and
     // the destructive confirm dialog ride the shared prompt. Local folders
     // run the same menu minus the cloud-only download/archive/clear trio —
     // their writes execute straight off the disk in the prompt flow.
@@ -249,6 +351,14 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         let row = (index >= 0)
             .then(|| app.get_ws_file_rows().row_data(index as usize))
             .flatten();
+        if (app.get_ws_file_busy() || app.get_ws_prompt_open())
+            && matches!(
+                action,
+                MENU_RENAME | MENU_DELETE | MENU_NEW_DIR | MENU_NEW_FILE | MENU_CLEAR
+            )
+        {
+            return;
+        }
         match action {
             MENU_OPEN => {
                 if let Some(row) = row {
@@ -260,7 +370,7 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                             row.name.to_string(),
                         ),
                         1 => toggle_dir(&app, menu_api.clone(), row.path.to_string()),
-                        _ => {}
+                        _ => load_more(&app, menu_api.clone(), row.path.to_string()),
                     }
                 }
             }
@@ -301,21 +411,33 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                 if let Some(row) = row {
                     // 引用到聊天：把路径追加进草稿，模型可按路径取用。
                     let draft = app.get_draft();
-                    app.set_draft(format!("{draft}@{} ", row.path).into());
+                    let reference = match current_target() {
+                        Target::Local(root) => std::path::Path::new(&root)
+                            .join(row.path.as_str())
+                            .to_string_lossy()
+                            .into_owned(),
+                        Target::Cloud => row.path.to_string(),
+                    };
+                    let separator = if draft.is_empty() || draft.ends_with(char::is_whitespace) {
+                        ""
+                    } else {
+                        "\n"
+                    };
+                    app.set_draft(format!("{draft}{separator}@\"{reference}\" ").into());
                 }
             }
             MENU_NEW_DIR => {
                 let dir = row
                     .as_ref()
                     .map(|row| target_dir(&row.path, row.kind))
-                    .unwrap_or_default();
+                    .unwrap_or_else(|| active_directory(&app));
                 open_prompt(&app, PromptKind::NewDir, dir, String::new());
             }
             MENU_NEW_FILE => {
                 let dir = row
                     .as_ref()
                     .map(|row| target_dir(&row.path, row.kind))
-                    .unwrap_or_default();
+                    .unwrap_or_else(|| active_directory(&app));
                 open_prompt(&app, PromptKind::NewFile, dir, String::new());
             }
             MENU_ARCHIVE => {
@@ -335,7 +457,21 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                     return;
                 }
                 if row.is_none() {
-                    clear_root(&app, menu_api.clone());
+                    open_prompt(&app, PromptKind::Clear, String::new(), String::new());
+                }
+            }
+            9 => {
+                if let Target::Local(root) = current_target() {
+                    let api = menu_api.clone();
+                    let weak = app.as_weak();
+                    std::thread::spawn(move || {
+                        let result = api.open_workspace_resource(&root, "");
+                        let _ = weak.upgrade_in_event_loop(move |app| {
+                            if let Err(error) = result {
+                                app.set_status(format!("打开失败：{error}").into());
+                            }
+                        });
+                    });
                 }
             }
             _ => {}
@@ -366,10 +502,15 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         app.set_status(format!("正在准备拖出 {name}…").into());
         let weak = app.as_weak();
         let worker_api = drag_api.clone();
+        let target = current_target();
+        let request = generation();
         std::thread::spawn(move || {
-            let outcome = drag_out(&worker_api, &path, &name);
+            let outcome = drag_out(&worker_api, &target, &path, &name);
             let _ = weak.upgrade_in_event_loop(move |app| {
                 DRAG_OUT.set(false);
+                if !is_current(request) {
+                    return;
+                }
                 match outcome {
                     Ok(copied) => {
                         if copied {
@@ -387,7 +528,7 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
     });
 
     // Drag-in: Explorer drops land inside the active target — text uploads
-    // into the cloud workspace root (the gesture is the user's approval for
+    // into the selected cloud directory (the gesture approves
     // the write), or a plain copy into the browsed local folder. A drop
     // carrying nothing uploadable simply does nothing here.
     let weak = app.as_weak();
@@ -397,6 +538,9 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
             return;
         };
         let local = !is_cloud_target();
+        if app.get_ws_file_busy() {
+            return;
+        }
         if !local && app.get_ws_file_offline() {
             return;
         }
@@ -421,18 +565,24 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         } else {
             format!("正在上传 {count} 个文件…").into()
         });
-        begin_busy(&app.as_weak());
+        let Some(request) = begin_busy(&app) else {
+            return;
+        };
+        let directory = active_directory(&app);
         let weak = app.as_weak();
         let worker_api = drop_api.clone();
         let target = current_target();
         std::thread::spawn(move || {
             let (done, failed) = match &target {
-                Target::Local(root) => copy_files(&worker_api, root, &paths),
-                Target::Cloud => upload_files(&worker_api, &paths),
+                Target::Local(root) => copy_files(&worker_api, root, &directory, &paths),
+                Target::Cloud => upload_files(&worker_api, &directory, &paths),
             };
             let refresh_api = worker_api;
             let _ = weak.upgrade_in_event_loop(move |app| {
-                end_busy(&app);
+                end_busy(&app, refresh_api.clone(), request);
+                if !is_current(request) {
+                    return;
+                }
                 refresh(&app, refresh_api);
                 let mut message = format!(
                     "已{verb} {done}/{count} 个文件",
@@ -462,21 +612,45 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
             PROMPT.with(|slot| *slot.borrow_mut() = Some(op));
             return;
         }
+        if !is_current(op.generation) || op.target != current_target() {
+            return;
+        }
         let value = value.trim().to_string();
+        if op.command_id.is_none()
+            && matches!(
+                op.kind,
+                PromptKind::Rename | PromptKind::NewDir | PromptKind::NewFile
+            )
+            && !valid_name(&value)
+        {
+            PROMPT.with(|slot| *slot.borrow_mut() = Some(op));
+            app.set_ws_prompt_body(
+                "请输入有效名称，不能包含路径分隔符或特殊字符（最多 120 字）".into(),
+            );
+            return;
+        }
+        if op.kind == PromptKind::Clear {
+            clear_root(&app, prompt_api.clone());
+            app.set_ws_prompt_open(false);
+            return;
+        }
+        let request = op.generation;
+        let target = op.target.clone();
+        if begin_busy(&app).is_none() {
+            PROMPT.with(|slot| *slot.borrow_mut() = Some(op));
+            app.set_ws_prompt_body("操作正在处理中，请稍后重试".into());
+            return;
+        }
         // A local workspace folder writes straight off the disk: no parked
         // command, no approval stage — validate, run, refresh.
-        if let Target::Local(root) = current_target() {
-            if op.kind != PromptKind::Delete && value.is_empty() {
-                PROMPT.with(|slot| *slot.borrow_mut() = Some(op));
-                app.set_ws_prompt_body("名称不能为空".into());
-                return;
-            }
+        if let Target::Local(root) = &target {
             app.set_ws_prompt_busy(true);
             let kind = op.kind;
             let path = op.path.clone();
             let weak = app.as_weak();
             let local_api = prompt_api.clone();
             let refresh_api = prompt_api.clone();
+            let root = root.clone();
             std::thread::spawn(move || {
                 let result = match kind {
                     PromptKind::Rename => local_api.workspace_local_rename(&root, &path, &value),
@@ -487,31 +661,40 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                     PromptKind::NewFile => {
                         local_api.workspace_local_write(&root, &join_cloud(&path, &value))
                     }
+                    PromptKind::Clear => unreachable!(),
                 };
-                let _ = weak.upgrade_in_event_loop(move |app| match result {
-                    Ok(()) => {
-                        // A renamed or removed directory leaves stale page
-                        // cache entries behind; drop them before the refresh
-                        // re-lists the expanded set.
-                        match kind {
-                            PromptKind::Rename | PromptKind::Delete => drop_dir_cache(&path),
-                            _ => {}
-                        }
-                        app.set_ws_prompt_open(false);
-                        PROMPT.with(|slot| *slot.borrow_mut() = None);
-                        app.set_status(done_message(kind, &value).into());
-                        refresh(&app, refresh_api);
+                let _ = weak.upgrade_in_event_loop(move |app| {
+                    end_busy(&app, refresh_api.clone(), request);
+                    if !is_current(request) {
+                        return;
                     }
-                    Err(error) => {
-                        app.set_ws_prompt_busy(false);
-                        PROMPT.with(|slot| {
-                            *slot.borrow_mut() = Some(PromptOp {
-                                kind,
-                                path,
-                                command_id: None,
-                            })
-                        });
-                        app.set_ws_prompt_body(format!("操作失败：{error}").into());
+                    match result {
+                        Ok(()) => {
+                            // A renamed or removed directory leaves stale page
+                            // cache entries behind; drop them before the refresh
+                            // re-lists the expanded set.
+                            match kind {
+                                PromptKind::Rename | PromptKind::Delete => drop_dir_cache(&path),
+                                _ => {}
+                            }
+                            app.set_ws_prompt_open(false);
+                            PROMPT.with(|slot| *slot.borrow_mut() = None);
+                            app.set_status(done_message(kind, &value).into());
+                            refresh(&app, refresh_api);
+                        }
+                        Err(error) => {
+                            app.set_ws_prompt_busy(false);
+                            PROMPT.with(|slot| {
+                                *slot.borrow_mut() = Some(PromptOp {
+                                    kind,
+                                    path,
+                                    command_id: None,
+                                    generation: request,
+                                    target,
+                                })
+                            });
+                            app.set_ws_prompt_body(format!("操作失败：{error}").into());
+                        }
                     }
                 });
             });
@@ -526,9 +709,16 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
             std::thread::spawn(move || {
                 let result = confirm_api.interlink_cloud_confirm(&command_id);
                 let _ = weak.upgrade_in_event_loop(move |app| {
+                    end_busy(&app, refresh_api.clone(), request);
+                    if !is_current(request) {
+                        return;
+                    }
                     app.set_ws_prompt_busy(false);
                     match result {
                         Ok(CloudOpOutcome::Done(_)) => {
+                            if matches!(op.kind, PromptKind::Rename | PromptKind::Delete) {
+                                drop_dir_cache(&op.path);
+                            }
                             app.set_ws_prompt_open(false);
                             PROMPT.with(|slot| *slot.borrow_mut() = None);
                             app.set_status("云端已执行".into());
@@ -541,6 +731,8 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                                     kind: op.kind,
                                     path: op.path,
                                     command_id: Some(command_id),
+                                    generation: request,
+                                    target,
                                 })
                             });
                             app.set_ws_prompt_body("云端命令仍在等待确认，请稍后重试。".into());
@@ -559,11 +751,6 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
             return;
         }
         // Stage one: validate, then issue the cloud write command.
-        if op.kind != PromptKind::Delete && value.is_empty() {
-            PROMPT.with(|slot| *slot.borrow_mut() = Some(op));
-            app.set_ws_prompt_body("名称不能为空".into());
-            return;
-        }
         app.set_ws_prompt_busy(true);
         let kind = op.kind;
         let path = op.path.clone();
@@ -578,55 +765,68 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                 PromptKind::NewFile => {
                     issue_api.interlink_cloud_write(&join_cloud(&path, &value), "")
                 }
+                PromptKind::Clear => unreachable!(),
             };
-            let _ = weak.upgrade_in_event_loop(move |app| match result {
-                Ok(CloudOpOutcome::NeedsApproval { command_id }) => {
-                    // 云端停泊了命令：切换为确认阶段，用户确认后才执行。
-                    PROMPT.with(|slot| {
-                        *slot.borrow_mut() = Some(PromptOp {
-                            kind,
-                            path,
-                            command_id: Some(command_id),
-                        })
-                    });
-                    app.set_ws_prompt_busy(false);
-                    app.set_ws_prompt_body("云端要求确认后才会执行此操作。".into());
-                    app.set_ws_prompt_input(false);
-                    app.set_ws_prompt_confirm("确认执行".into());
-                    app.set_ws_prompt_danger(true);
+            let _ = weak.upgrade_in_event_loop(move |app| {
+                end_busy(&app, refresh_api.clone(), request);
+                if !is_current(request) {
+                    return;
                 }
-                Ok(CloudOpOutcome::Done(_)) => {
-                    // Same stale-cache rule as the local path: the renamed or
-                    // removed directory must not be re-listed on refresh.
-                    if matches!(kind, PromptKind::Rename | PromptKind::Delete) {
-                        drop_dir_cache(&path);
+                match result {
+                    Ok(CloudOpOutcome::NeedsApproval { command_id }) => {
+                        // 云端停泊了命令：切换为确认阶段，用户确认后才执行。
+                        PROMPT.with(|slot| {
+                            *slot.borrow_mut() = Some(PromptOp {
+                                kind,
+                                path,
+                                command_id: Some(command_id),
+                                generation: request,
+                                target,
+                            })
+                        });
+                        app.set_ws_prompt_busy(false);
+                        app.set_ws_prompt_body("云端要求确认后才会执行此操作。".into());
+                        app.set_ws_prompt_input(false);
+                        app.set_ws_prompt_confirm("确认执行".into());
+                        app.set_ws_prompt_danger(true);
                     }
-                    app.set_ws_prompt_open(false);
-                    PROMPT.with(|slot| *slot.borrow_mut() = None);
-                    app.set_status(done_message(kind, &value).into());
-                    refresh(&app, refresh_api);
-                }
-                Ok(CloudOpOutcome::Failed(reason)) => {
-                    app.set_ws_prompt_busy(false);
-                    PROMPT.with(|slot| {
-                        *slot.borrow_mut() = Some(PromptOp {
-                            kind,
-                            path,
-                            command_id: None,
-                        })
-                    });
-                    app.set_ws_prompt_body(reason.into());
-                }
-                Err(error) => {
-                    app.set_ws_prompt_busy(false);
-                    PROMPT.with(|slot| {
-                        *slot.borrow_mut() = Some(PromptOp {
-                            kind,
-                            path,
-                            command_id: None,
-                        })
-                    });
-                    app.set_ws_prompt_body(format!("操作失败：{error}").into());
+                    Ok(CloudOpOutcome::Done(_)) => {
+                        // Same stale-cache rule as the local path: the renamed or
+                        // removed directory must not be re-listed on refresh.
+                        if matches!(kind, PromptKind::Rename | PromptKind::Delete) {
+                            drop_dir_cache(&path);
+                        }
+                        app.set_ws_prompt_open(false);
+                        PROMPT.with(|slot| *slot.borrow_mut() = None);
+                        app.set_status(done_message(kind, &value).into());
+                        refresh(&app, refresh_api);
+                    }
+                    Ok(CloudOpOutcome::Failed(reason)) => {
+                        app.set_ws_prompt_busy(false);
+                        PROMPT.with(|slot| {
+                            *slot.borrow_mut() = Some(PromptOp {
+                                kind,
+                                path,
+                                command_id: None,
+                                generation: request,
+                                target,
+                            })
+                        });
+                        app.set_ws_prompt_body(reason.into());
+                    }
+                    Err(error) => {
+                        app.set_ws_prompt_busy(false);
+                        PROMPT.with(|slot| {
+                            *slot.borrow_mut() = Some(PromptOp {
+                                kind,
+                                path,
+                                command_id: None,
+                                generation: request,
+                                target,
+                            })
+                        });
+                        app.set_ws_prompt_body(format!("操作失败：{error}").into());
+                    }
                 }
             });
         });
@@ -635,6 +835,9 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
     let weak = app.as_weak();
     app.on_ws_prompt_canceled(move || {
         if let Some(app) = weak.upgrade() {
+            if app.get_ws_prompt_busy() {
+                return;
+            }
             app.set_ws_prompt_open(false);
         }
         PROMPT.with(|slot| *slot.borrow_mut() = None);
@@ -696,12 +899,22 @@ fn open_prompt(app: &MainWindow, kind: PromptKind, path: String, name: String) {
             true,
             String::new(),
         ),
+        PromptKind::Clear => (
+            "清空工作目录",
+            "清空云端工作目录中的全部文件和子目录？此操作不可恢复。".into(),
+            "确认清空",
+            true,
+            false,
+            String::new(),
+        ),
     };
     PROMPT.with(|slot| {
         *slot.borrow_mut() = Some(PromptOp {
             kind,
             path,
             command_id: None,
+            generation: generation(),
+            target: current_target(),
         })
     });
     app.set_ws_prompt_open(true);
@@ -717,8 +930,13 @@ fn open_prompt(app: &MainWindow, kind: PromptKind, path: String, name: String) {
 /// Drag-out on a worker thread: a local file leaves straight off the disk; a
 /// cloud file is staged first (a fresh pull, so the handed-out copy is
 /// current), then the modal OLE gesture runs.
-fn drag_out(api: &Arc<NativeDesktop>, path: &str, name: &str) -> Result<bool, String> {
-    let local = match current_target() {
+fn drag_out(
+    api: &Arc<NativeDesktop>,
+    target: &Target,
+    path: &str,
+    name: &str,
+) -> Result<bool, String> {
+    let local = match target {
         Target::Local(root) => api
             .workspace_local_resolve(&root, path)
             .map_err(|error| format!("定位 {name} 失败：{error}"))?,
@@ -730,10 +948,14 @@ fn drag_out(api: &Arc<NativeDesktop>, path: &str, name: &str) -> Result<bool, St
 }
 
 /// Drop-in uploads: read each staged file as text (binary and oversized
-/// files are rejected with a clear reason), write it to the cloud root, and
+/// files are rejected with a clear reason), write it to the selected directory, and
 /// auto-confirm parked commands — the drag-in gesture is the user's own
 /// approval for this write.
-fn upload_files(api: &Arc<NativeDesktop>, paths: &[PathBuf]) -> (usize, Vec<String>) {
+fn upload_files(
+    api: &Arc<NativeDesktop>,
+    directory: &str,
+    paths: &[PathBuf],
+) -> (usize, Vec<String>) {
     let mut done = 0usize;
     let mut failed = Vec::new();
     for path in paths {
@@ -741,7 +963,7 @@ fn upload_files(api: &Arc<NativeDesktop>, paths: &[PathBuf]) -> (usize, Vec<Stri
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_else(|| path.to_string_lossy().into_owned());
-        match upload_one(api, path) {
+        match upload_one(api, directory, path) {
             Ok(()) => done += 1,
             Err(error) => failed.push(format!("{name}（{error}）")),
         }
@@ -751,7 +973,12 @@ fn upload_files(api: &Arc<NativeDesktop>, paths: &[PathBuf]) -> (usize, Vec<Stri
 
 /// Drop-in for a local workspace folder: copy each dropped OS file into the
 /// folder as-is (no text-only or size caps — the copy never leaves the disk).
-fn copy_files(api: &Arc<NativeDesktop>, root: &str, paths: &[PathBuf]) -> (usize, Vec<String>) {
+fn copy_files(
+    api: &Arc<NativeDesktop>,
+    root: &str,
+    directory: &str,
+    paths: &[PathBuf],
+) -> (usize, Vec<String>) {
     let mut done = 0usize;
     let mut failed = Vec::new();
     for path in paths {
@@ -759,7 +986,7 @@ fn copy_files(api: &Arc<NativeDesktop>, root: &str, paths: &[PathBuf]) -> (usize
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_else(|| path.to_string_lossy().into_owned());
-        match api.workspace_local_upload(root, path) {
+        match api.workspace_local_upload_to(root, directory, path) {
             Ok(_) => done += 1,
             Err(error) => failed.push(format!("{name}（{error}）")),
         }
@@ -767,7 +994,7 @@ fn copy_files(api: &Arc<NativeDesktop>, root: &str, paths: &[PathBuf]) -> (usize
     (done, failed)
 }
 
-fn upload_one(api: &Arc<NativeDesktop>, path: &PathBuf) -> Result<(), String> {
+fn upload_one(api: &Arc<NativeDesktop>, directory: &str, path: &PathBuf) -> Result<(), String> {
     let meta = std::fs::metadata(path).map_err(|error| format!("读取失败：{error}"))?;
     if meta.is_dir() {
         return Err("目录不支持直接上传".to_string());
@@ -781,7 +1008,7 @@ fn upload_one(api: &Arc<NativeDesktop>, path: &PathBuf) -> Result<(), String> {
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .ok_or("无效的文件名")?;
-    let outcome = match api.interlink_cloud_write(&name, &content) {
+    let outcome = match api.interlink_cloud_write(&join_cloud(directory, &name), &content) {
         Ok(outcome) => outcome,
         Err(error) => return Err(error.to_string()),
     };
@@ -799,13 +1026,33 @@ fn upload_one(api: &Arc<NativeDesktop>, path: &PathBuf) -> Result<(), String> {
 }
 
 /// Directory a new entry lands in: a directory row is its own target, a
-/// file row and the blank area fall back to the entry's parent (root).
+/// file row resolves to its parent. Blank-area actions use the active entry.
 fn target_dir(path: &str, kind: i32) -> String {
     if kind == 1 {
         path.to_string()
     } else {
         parent_cloud_dir(path)
     }
+}
+
+fn active_directory(app: &MainWindow) -> String {
+    let path = app.get_ws_file_active_path();
+    app.get_ws_file_rows()
+        .iter()
+        .find(|row| row.path == path && row.kind != 2)
+        .map(|row| target_dir(&row.path, row.kind))
+        .unwrap_or_default()
+}
+
+fn valid_name(name: &str) -> bool {
+    !name.is_empty()
+        && name != "."
+        && name != ".."
+        && name.chars().count() <= 120
+        && !name.chars().any(|c| {
+            c.is_control() || matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|')
+        })
+        && !name.ends_with('.')
 }
 
 fn parent_cloud_dir(path: &str) -> String {
@@ -829,6 +1076,7 @@ fn done_message(kind: PromptKind, value: &str) -> String {
         PromptKind::Delete => "已删除".to_string(),
         PromptKind::NewDir => format!("已新建目录 {value}"),
         PromptKind::NewFile => format!("已新建文件 {value}"),
+        PromptKind::Clear => "已清空工作目录".into(),
     }
 }
 
@@ -863,26 +1111,24 @@ pub fn tunnel_tick(app: &MainWindow, api: &Arc<NativeDesktop>, connected: bool) 
 /// refreshed) and hand it to the OS. Feedback rides the status bar, matching
 /// the other shell actions.
 fn open_file(app: &MainWindow, api: Arc<NativeDesktop>, path: String, name: String) {
-    if app.get_ws_file_busy() {
+    let target = current_target();
+    let Some(request) = begin_busy(app) else {
         return;
-    }
-    // A local file opens straight from the workspace folder; the cloud path
-    // pulls a local copy first.
-    if let Target::Local(root) = current_target() {
-        match api.open_workspace_resource(&root, &path) {
-            Ok(()) => app.set_status(format!("已打开 {name}").into()),
-            Err(error) => app.set_status(format!("打开失败：{error}").into()),
-        }
-        return;
-    }
-    app.set_status(format!("正在拉取 {name}…").into());
+    };
+    app.set_status(format!("正在打开 {name}…").into());
     let weak = app.as_weak();
     std::thread::spawn(move || {
-        let result = api.interlink_cloud_open(&path);
+        let result = match target {
+            Target::Local(root) => api.open_workspace_resource(&root, &path),
+            Target::Cloud => api.interlink_cloud_open(&path).map(|_| ()),
+        };
         let _ = weak.upgrade_in_event_loop(move |app| {
+            end_busy(&app, api, request);
+            if !is_current(request) {
+                return;
+            }
             match result {
-                Ok(pulled) => app
-                    .set_status(format!("已打开 {}（{}）", name, format_size(pulled.bytes)).into()),
+                Ok(()) => app.set_status(format!("已打开 {name}").into()),
                 Err(error) => app.set_status(format!("打开失败：{error}").into()),
             };
         });
@@ -895,13 +1141,22 @@ fn download_file(app: &MainWindow, api: Arc<NativeDesktop>, path: String, name: 
     if app.get_ws_file_busy() {
         return;
     }
+    let Some(request) = begin_busy(app) else {
+        return;
+    };
     app.set_status(format!("正在下载 {name}…").into());
     let weak = app.as_weak();
     std::thread::spawn(move || {
         let result = api.interlink_cloud_stage(&path);
-        let _ = weak.upgrade_in_event_loop(move |app| match result {
-            Ok(_) => app.set_status(format!("已下载 {name} 到本地工作区").into()),
-            Err(error) => app.set_status(format!("下载失败：{error}").into()),
+        let _ = weak.upgrade_in_event_loop(move |app| {
+            end_busy(&app, api, request);
+            if !is_current(request) {
+                return;
+            }
+            match result {
+                Ok(_) => app.set_status(format!("已下载 {name} 到本地工作区").into()),
+                Err(error) => app.set_status(format!("下载失败：{error}").into()),
+            }
         });
     });
 }
@@ -911,14 +1166,24 @@ fn archive_dir(app: &MainWindow, api: Arc<NativeDesktop>, path: String, name: St
     if app.get_ws_file_busy() {
         return;
     }
+    let Some(request) = begin_busy(app) else {
+        return;
+    };
     app.set_status(format!("正在打包 {name}…").into());
     let weak = app.as_weak();
     std::thread::spawn(move || {
         let result = api.interlink_cloud_archive(&path, &name);
-        let _ = weak.upgrade_in_event_loop(move |app| match result {
-            Ok(pulled) => app
-                .set_status(format!("已打包下载 {}（{}）", name, format_size(pulled.bytes)).into()),
-            Err(error) => app.set_status(format!("打包失败：{error}").into()),
+        let _ = weak.upgrade_in_event_loop(move |app| {
+            end_busy(&app, api, request);
+            if !is_current(request) {
+                return;
+            }
+            match result {
+                Ok(pulled) => app.set_status(
+                    format!("已打包下载 {}（{}）", name, format_size(pulled.bytes)).into(),
+                ),
+                Err(error) => app.set_status(format!("打包失败：{error}").into()),
+            }
         });
     });
 }
@@ -928,16 +1193,26 @@ fn clear_root(app: &MainWindow, api: Arc<NativeDesktop>) {
     if app.get_ws_file_busy() {
         return;
     }
+    let Some(request) = begin_busy(app) else {
+        return;
+    };
     app.set_status("正在清空工作目录…".into());
     let weak = app.as_weak();
     std::thread::spawn(move || {
         let result = api.interlink_cloud_clear();
-        let _ = weak.upgrade_in_event_loop(move |app| match result {
-            Ok(()) => {
-                app.set_status("已清空工作目录".into());
-                refresh(&app, api);
+        let _ = weak.upgrade_in_event_loop(move |app| {
+            end_busy(&app, api.clone(), request);
+            if !is_current(request) {
+                return;
             }
-            Err(error) => app.set_status(format!("清空失败：{error}").into()),
+            match result {
+                Ok(()) => {
+                    with_panel(|panel| panel.dirs.clear());
+                    app.set_status("已清空工作目录".into());
+                    refresh(&app, api);
+                }
+                Err(error) => app.set_status(format!("清空失败：{error}").into()),
+            }
         });
     });
 }
@@ -949,11 +1224,8 @@ fn toggle_dir(app: &MainWindow, api: Arc<NativeDesktop>, path: String) {
         let Some(dir) = panel.dirs.get_mut(&path) else {
             return None;
         };
-        if dir.loading {
-            return Some((dir.expanded, dir.loaded, true));
-        }
         dir.expanded = !dir.expanded;
-        Some((dir.expanded, dir.loaded, false))
+        Some((dir.expanded, dir.loaded, dir.loading))
     })
     .flatten();
     let Some((expanded, loaded, loading)) = known else {
@@ -962,14 +1234,15 @@ fn toggle_dir(app: &MainWindow, api: Arc<NativeDesktop>, path: String) {
         return;
     };
     if loading {
+        rebuild(app);
         return;
     }
     if !expanded {
-        rebuild();
+        rebuild(app);
         return;
     }
     if loaded {
-        rebuild();
+        rebuild(app);
         return;
     }
     load_dir(&app_weak(app), api, path, 0);
@@ -977,6 +1250,16 @@ fn toggle_dir(app: &MainWindow, api: Arc<NativeDesktop>, path: String) {
 
 /// Page one directory further from its load-more tail.
 fn load_more(app: &MainWindow, api: Arc<NativeDesktop>, path: String) {
+    if with_panel(|panel| {
+        panel
+            .dirs
+            .get(&path)
+            .is_some_and(|dir| dir.loading || dir.entries.len() >= MAX_DIRECTORY_ENTRIES)
+    })
+    .unwrap_or(true)
+    {
+        return;
+    }
     let loaded = with_panel(|panel| {
         panel
             .dirs
@@ -996,20 +1279,46 @@ fn app_weak(app: &MainWindow) -> slint::Weak<MainWindow> {
 /// loading tag while in flight; the root failure surfaces as the panel's
 /// error block, child failures ride the status bar.
 fn load_dir(weak: &slint::Weak<MainWindow>, api: Arc<NativeDesktop>, path: String, offset: u64) {
+    let Some(app) = weak.upgrade() else {
+        return;
+    };
+    if with_panel(|panel| panel.dirs.get(&path).is_some_and(|dir| dir.loading)).unwrap_or(false) {
+        return;
+    }
+    if !make_cache_room(&path) {
+        if path.is_empty() {
+            app.set_ws_file_loading(false);
+        }
+        app.set_status("已达到目录浏览缓存上限，请收起部分目录后刷新".into());
+        return;
+    }
+    let Some(request) = begin_busy(&app) else {
+        with_panel(|panel| {
+            if panel.dirs.len() < MAX_CACHED_DIRS {
+                panel.dirs.entry(path).or_default().expanded = true;
+            }
+        });
+        with_panel(|panel| panel.refresh_pending = true);
+        return;
+    };
     with_panel(|panel| {
         let dir = panel.dirs.entry(path.clone()).or_default();
         dir.loading = true;
         dir.expanded = true;
     });
-    begin_busy(weak);
-    rebuild();
+    if path.is_empty() {
+        app.set_ws_file_loading(true);
+    }
+    rebuild(&app);
     let weak = weak.clone();
     let target = current_target();
     std::thread::spawn(move || {
         let result = list_dir(&api, &target, &path, offset);
         let _ = weak.upgrade_in_event_loop(move |app| {
-            apply_listing(&app, path, offset, result);
-            end_busy(&app);
+            if is_current(request) {
+                apply_request_listing(&app, request, path, offset, result);
+            }
+            end_busy(&app, api, request);
         });
     });
 }
@@ -1018,20 +1327,42 @@ fn load_dir(weak: &slint::Weak<MainWindow>, api: Arc<NativeDesktop>, path: Strin
 /// sequentially on one background thread so the panel flips states once.
 fn refresh(app: &MainWindow, api: Arc<NativeDesktop>) {
     if app.get_ws_file_busy() {
+        with_panel(|panel| panel.refresh_pending = true);
         return;
     }
-    let expanded: Vec<String> = with_panel(|panel| {
-        panel
+    let expanded: Vec<(String, usize)> = with_panel(|panel| {
+        let mut expanded: Vec<_> = panel
             .dirs
             .iter()
-            .filter(|(path, dir)| dir.expanded && !path.is_empty())
-            .map(|(path, _)| path.clone())
-            .take(REFRESH_DIR_CAP)
-            .collect()
+            .filter(|(path, dir)| dir.expanded || path.is_empty())
+            .map(|(path, dir)| (path.clone(), dir.entries.len()))
+            .collect();
+        if !expanded.iter().any(|(path, _)| path.is_empty()) {
+            expanded.push((String::new(), 0));
+        }
+        expanded.sort_by(|a, b| {
+            a.0.matches('/')
+                .count()
+                .cmp(&b.0.matches('/').count())
+                .then_with(|| a.0.cmp(&b.0))
+        });
+        expanded.truncate(REFRESH_DIR_CAP);
+        expanded
     })
     .unwrap_or_default();
-    begin_busy(&app.as_weak());
-    rebuild();
+    let Some(request) = begin_busy(app) else {
+        with_panel(|panel| panel.refresh_pending = true);
+        return;
+    };
+    // Reserve the refreshed directories so a simultaneous load-more cannot
+    // append a page that the older refresh snapshot would then overwrite.
+    with_panel(|panel| {
+        for (path, _) in &expanded {
+            panel.dirs.entry(path.clone()).or_default().loading = true;
+        }
+    });
+    app.set_ws_file_loading(app.get_ws_file_rows().row_count() == 0);
+    rebuild(app);
     let weak = app.as_weak();
     let target = current_target();
     std::thread::spawn(move || {
@@ -1041,27 +1372,61 @@ fn refresh(app: &MainWindow, api: Arc<NativeDesktop>) {
             Target::Cloud => api.interlink_cloud_stats().ok(),
             Target::Local(_) => None,
         };
-        let root = list_dir(&api, &target, "", 0);
-        let mut children = Vec::new();
-        for path in &expanded {
-            children.push((path.clone(), list_dir(&api, &target, path, 0)));
+        let mut listings = Vec::new();
+        for (path, loaded) in expanded {
+            // Keep already paged rows through refresh instead of jumping back
+            // to the first 200 items while the user is browsing further down.
+            let mut listing = list_dir(&api, &target, &path, 0);
+            if let Ok(first) = &mut listing {
+                while first.status == "succeeded"
+                    && first.entries.len() < loaded.min(MAX_DIRECTORY_ENTRIES)
+                    && (first.entries.len() as u64) < first.total
+                {
+                    let offset = first.entries.len() as u64;
+                    match list_dir(&api, &target, &path, offset) {
+                        Ok(next) if next.status == "succeeded" && !next.entries.is_empty() => {
+                            first.entries.extend(next.entries);
+                            first.total = next.total;
+                        }
+                        _ => break,
+                    }
+                }
+            }
+            listings.push((path, listing));
         }
         let _ = weak.upgrade_in_event_loop(move |app| {
+            if !is_current(request) {
+                end_busy(&app, api, request);
+                return;
+            }
             if let Some(stats) = stats {
                 app.set_ws_file_stats(stats_line(&stats).into());
             }
-            match root {
-                Ok(root) => apply_listing(&app, String::new(), 0, Ok(root)),
-                Err(error) => app.set_ws_file_error(format!("{}：{error}", read_error()).into()),
-            }
-            for (path, listing) in children {
-                if let Ok(listing) = listing {
-                    apply_listing(&app, path, 0, Ok(listing));
+            for (path, listing) in listings {
+                if path.is_empty()
+                    || with_panel(|panel| panel.dirs.contains_key(&path)).unwrap_or(false)
+                {
+                    apply_listing_state(&app, path, 0, listing);
                 }
             }
-            end_busy(&app);
+            rebuild(&app);
+            end_busy(&app, api, request);
         });
     });
+}
+
+fn apply_request_listing(
+    app: &MainWindow,
+    request: u64,
+    path: String,
+    offset: u64,
+    result: Result<NativeInterlinkListing>,
+) -> bool {
+    if !is_current(request) {
+        return false;
+    }
+    apply_listing(app, path, offset, result);
+    true
 }
 
 /// Apply one directory page: replace or append, then reproject the tree.
@@ -1071,6 +1436,19 @@ fn apply_listing(
     offset: u64,
     result: Result<NativeInterlinkListing>,
 ) {
+    apply_listing_state(app, path, offset, result);
+    rebuild(app);
+}
+
+fn apply_listing_state(
+    app: &MainWindow,
+    path: String,
+    offset: u64,
+    result: Result<NativeInterlinkListing>,
+) {
+    if path.is_empty() {
+        app.set_ws_file_loading(false);
+    }
     let result = match result {
         Ok(listing) => listing,
         Err(error) => {
@@ -1087,16 +1465,28 @@ fn apply_listing(
                     }
                 }
             });
-            rebuild();
             return;
         }
     };
     match listing_status(&result) {
         "succeeded" => {
             with_panel(|panel| {
+                let budget = MAX_CACHED_ENTRIES.saturating_sub(
+                    panel
+                        .dirs
+                        .iter()
+                        .filter(|(key, _)| *key != &path)
+                        .map(|(_, dir)| dir.entries.len())
+                        .sum::<usize>(),
+                );
                 let dir = panel.dirs.entry(path.clone()).or_default();
                 dir.loading = false;
-                dir.expanded = true;
+                if offset > 0 && offset != dir.entries.len() as u64 {
+                    return;
+                }
+                if path.is_empty() {
+                    dir.expanded = true;
+                }
                 dir.loaded = true;
                 if offset == 0 {
                     dir.entries = result.entries.clone();
@@ -1104,6 +1494,21 @@ fn apply_listing(
                     dir.entries.extend(result.entries.clone());
                 }
                 dir.total = result.total;
+                dir.entries.truncate(MAX_DIRECTORY_ENTRIES.min(budget));
+                let surviving: std::collections::HashSet<_> = dir
+                    .entries
+                    .iter()
+                    .filter(|entry| matches!(entry.kind.as_str(), "dir" | "directory"))
+                    .map(|entry| entry.path.clone())
+                    .collect();
+                // Remove cached descendants of folders deleted outside the UI.
+                panel.dirs.retain(|key, _| {
+                    key == &path
+                        || !is_descendant(key, &path)
+                        || surviving
+                            .iter()
+                            .any(|child| key == child || is_descendant(key, child))
+                });
             });
             if path.is_empty() {
                 app.set_ws_file_error(String::new().into());
@@ -1142,18 +1547,92 @@ fn apply_listing(
             }
         }
     }
-    rebuild();
 }
 
 /// Rebuild the flat visible rows from the page cache: expanded directories
 /// inline their children (recursively), each paged directory ends with the
 /// load-more tail when entries remain.
-fn rebuild() {
+fn rebuild(app: &MainWindow) {
     with_panel(|panel| {
         let mut rows: Vec<WorkspaceFileRow> = Vec::new();
         walk(panel, &mut rows, "", 0);
-        panel.model.set_vec(rows);
+        let count = panel.model.row_count();
+        let new_count = rows.len();
+        for (index, row) in rows.into_iter().enumerate() {
+            if index < count {
+                if panel.model.row_data(index).as_ref() != Some(&row) {
+                    panel.model.set_row_data(index, row);
+                }
+            } else {
+                panel.model.push(row);
+            }
+        }
+        while panel.model.row_count() > new_count {
+            panel.model.remove(panel.model.row_count() - 1);
+        }
     });
+    let mut active = app.get_ws_file_active_path().to_string();
+    let rows = app.get_ws_file_rows();
+    let index = loop {
+        if let Some(index) = rows
+            .iter()
+            .position(|row| row.path == active && row.kind != 2)
+        {
+            break Some(index);
+        }
+        if active.is_empty() {
+            break None;
+        }
+        active = parent_cloud_dir(&active);
+    };
+    if index.is_some() {
+        app.set_ws_file_active_path(active.into());
+    }
+    app.set_ws_file_active_index(index.map_or(-1, |index| index as i32));
+    if index.is_none() {
+        app.set_ws_file_active_path("".into());
+    }
+}
+
+fn is_descendant(path: &str, parent: &str) -> bool {
+    if parent.is_empty() {
+        !path.is_empty()
+    } else {
+        path.strip_prefix(parent)
+            .is_some_and(|rest| rest.starts_with('/'))
+    }
+}
+
+/// Only collapsed branches are evicted; a visible expansion never disappears
+/// just because another folder was opened. All cache growth has a hard bound.
+fn make_cache_room(path: &str) -> bool {
+    with_panel(|panel| {
+        while (!panel.dirs.contains_key(path) && panel.dirs.len() >= MAX_CACHED_DIRS)
+            || panel
+                .dirs
+                .values()
+                .map(|dir| dir.entries.len())
+                .sum::<usize>()
+                >= MAX_CACHED_ENTRIES
+        {
+            let victim = panel
+                .dirs
+                .iter()
+                .filter(|(key, dir)| {
+                    !key.is_empty() && key.as_str() != path && !dir.expanded && !dir.loading
+                })
+                .map(|(key, _)| key.clone())
+                .min();
+            let Some(victim) = victim else {
+                return false;
+            };
+            panel
+                .dirs
+                .retain(|key, _| key != &victim && !is_descendant(key, &victim));
+        }
+        true
+    })
+    .unwrap_or(false)
 }
 
 fn walk(panel: &Panel, rows: &mut Vec<WorkspaceFileRow>, key: &str, depth: usize) {
@@ -1193,18 +1672,33 @@ fn walk(panel: &Panel, rows: &mut Vec<WorkspaceFileRow>, key: &str, depth: usize
     }
     let loaded = dir.entries.len() as u64;
     if dir.total > loaded {
+        let capped = loaded >= MAX_DIRECTORY_ENTRIES as u64
+            || panel
+                .dirs
+                .values()
+                .map(|dir| dir.entries.len())
+                .sum::<usize>()
+                >= MAX_CACHED_ENTRIES;
         rows.push(WorkspaceFileRow {
             path: key.to_string().as_str().into(),
-            name: format!("加载更多（剩余 {} 项）", dir.total - loaded)
-                .as_str()
-                .into(),
+            name: if capped {
+                "已达浏览上限，请收起目录后刷新".to_string()
+            } else {
+                format!("加载更多（剩余 {} 项）", dir.total - loaded)
+            }
+            .as_str()
+            .into(),
             kind: 2,
             size_text: slint::SharedString::default(),
             icon: slint::Image::default(),
             depth: depth as i32,
             expanded: false,
-            loading: false,
-            remaining: (dir.total - loaded).min(i32::MAX as u64) as i32,
+            loading: dir.loading || capped,
+            remaining: if capped {
+                -1
+            } else {
+                (dir.total - loaded).min(i32::MAX as u64) as i32
+            },
         });
     }
 }
@@ -1248,17 +1742,34 @@ fn format_size(bytes: u64) -> String {
     }
 }
 
-fn begin_busy(weak: &slint::Weak<MainWindow>) {
-    BUSY.with(|slot| slot.set(slot.get().saturating_add(1)));
-    let _ = weak.upgrade_in_event_loop(|app| app.set_ws_file_busy(true));
+fn begin_busy(app: &MainWindow) -> Option<u64> {
+    if BUSY.with(Cell::get) >= MAX_REQUESTS {
+        return None;
+    }
+    BUSY.with(|slot| slot.set(slot.get() + 1));
+    with_panel(|panel| panel.in_flight += 1);
+    app.set_ws_file_busy(true);
+    Some(generation())
 }
 
-fn end_busy(app: &MainWindow) {
-    let still_busy = BUSY.with(|slot| {
-        slot.set(slot.get().saturating_sub(1));
-        slot.get() > 0
-    });
-    app.set_ws_file_busy(still_busy);
+fn end_busy(app: &MainWindow, api: Arc<NativeDesktop>, request: u64) {
+    BUSY.with(|slot| slot.set(slot.get().saturating_sub(1)));
+    let (busy, pending) = with_panel(|panel| {
+        if is_current(request) {
+            panel.in_flight = panel.in_flight.saturating_sub(1);
+        }
+        let busy = panel.in_flight > 0;
+        let pending = !busy && panel.refresh_pending && BUSY.with(Cell::get) < MAX_REQUESTS;
+        if pending {
+            panel.refresh_pending = false;
+        }
+        (busy, pending)
+    })
+    .unwrap_or_default();
+    app.set_ws_file_busy(busy);
+    if pending {
+        refresh(app, api);
+    }
 }
 
 #[cfg(test)]
@@ -1283,6 +1794,8 @@ mod tests {
             *slot.borrow_mut() = Some(Panel {
                 model: Rc::new(VecModel::default()),
                 dirs: HashMap::new(),
+                in_flight: 0,
+                refresh_pending: false,
             });
         });
         with_panel(|panel| {
@@ -1352,5 +1865,139 @@ mod tests {
             "已新建目录 notes"
         );
         assert_eq!(done_message(PromptKind::NewFile, "a.md"), "已新建文件 a.md");
+    }
+
+    #[test]
+    fn stale_workspace_read_is_rejected_even_after_returning_to_the_same_target() {
+        GENERATION.with(|slot| slot.set(40));
+        let old = generation();
+        GENERATION.with(|slot| slot.set(42));
+        assert!(!is_current(old));
+        assert!(is_current(generation()));
+        GENERATION.with(|slot| slot.set(0));
+    }
+
+    #[test]
+    fn directory_cache_evicts_collapsed_branches_and_keeps_visible_folders() {
+        PANEL.with(|slot| *slot.borrow_mut() = None);
+        with_panel(|panel| {
+            panel.dirs.insert(String::new(), DirState::default());
+            for index in 0..MAX_CACHED_DIRS - 1 {
+                panel.dirs.insert(
+                    format!("folder{index}"),
+                    DirState {
+                        expanded: index != 0,
+                        ..Default::default()
+                    },
+                );
+            }
+        });
+        assert!(make_cache_room("new"));
+        with_panel(|panel| {
+            assert!(!panel.dirs.contains_key("folder0"));
+            assert!(panel.dirs.contains_key("folder1"));
+            panel.dirs.insert(
+                "new".into(),
+                DirState {
+                    expanded: true,
+                    ..Default::default()
+                },
+            );
+        });
+        assert!(!make_cache_room("another"));
+        PANEL.with(|slot| *slot.borrow_mut() = None);
+    }
+
+    #[test]
+    fn entry_names_and_cache_path_boundaries_are_explicit() {
+        for name in ["sample.txt", "folder2", "示例"] {
+            assert!(valid_name(name));
+        }
+        for name in ["", ".", "..", "a/b", "a\\b", "a:b", "a?b", "sample."] {
+            assert!(!valid_name(name));
+        }
+        assert!(is_descendant("notes/sub/sample.txt", "notes"));
+        assert!(!is_descendant("notes-other/sample.txt", "notes"));
+        assert!(!is_descendant("notes", "notes"));
+    }
+
+    #[test]
+    fn listing_projection_preserves_collapse_selection_and_rejects_old_results() {
+        struct TestPlatform;
+        impl slint::platform::Platform for TestPlatform {
+            fn create_window_adapter(
+                &self,
+            ) -> Result<Rc<dyn slint::platform::WindowAdapter>, slint::PlatformError> {
+                Ok(
+                    slint::platform::software_renderer::MinimalSoftwareWindow::new(
+                        slint::platform::software_renderer::RepaintBufferType::NewBuffer,
+                    ),
+                )
+            }
+        }
+        slint::platform::set_platform(Box::new(TestPlatform)).unwrap();
+        crate::register_bundled_font().expect("register fixture font");
+        let app = MainWindow::new().unwrap();
+        PANEL.with(|slot| *slot.borrow_mut() = None);
+        let model = with_panel(|panel| panel.model.clone()).unwrap();
+        app.set_ws_file_rows(ModelRc::from(model));
+        let listing =
+            |path: &str, entries: Vec<NativeInterlinkEntry>, total| NativeInterlinkListing {
+                status: "succeeded".into(),
+                path: path.into(),
+                entries,
+                total,
+                error: None,
+                command_id: None,
+            };
+        GENERATION.with(|slot| slot.set(12));
+        apply_listing(
+            &app,
+            "".into(),
+            0,
+            Ok(listing("", vec![entry("notes", "notes", "dir", 0)], 1)),
+        );
+        with_panel(|panel| {
+            panel.dirs.insert(
+                "notes".into(),
+                DirState {
+                    loading: true,
+                    expanded: false,
+                    ..Default::default()
+                },
+            );
+        });
+        apply_listing(
+            &app,
+            "notes".into(),
+            0,
+            Ok(listing(
+                "notes",
+                vec![entry("sample.txt", "notes/sample.txt", "file", 1)],
+                1,
+            )),
+        );
+        assert_eq!(
+            app.get_ws_file_rows().row_count(),
+            1,
+            "late response must not reopen a collapsed folder"
+        );
+        with_panel(|panel| panel.dirs.get_mut("notes").unwrap().expanded = true);
+        app.set_ws_file_active_path("notes/sample.txt".into());
+        rebuild(&app);
+        assert_eq!(app.get_ws_file_active_index(), 1);
+        let stale = listing("", vec![entry("stale.txt", "stale.txt", "file", 1)], 1);
+        assert!(!apply_request_listing(&app, 10, "".into(), 0, Ok(stale)));
+        assert_eq!(app.get_ws_file_rows().row_count(), 2);
+        with_panel(|panel| panel.dirs.get_mut("notes").unwrap().expanded = false);
+        rebuild(&app);
+        assert_eq!(app.get_ws_file_active_path(), "notes");
+        assert_eq!(app.get_ws_file_active_index(), 0);
+        apply_listing(&app, "".into(), 0, Ok(listing("", Vec::new(), 0)));
+        assert_eq!(app.get_ws_file_rows().row_count(), 0);
+        assert_eq!(with_panel(|panel| panel.dirs.len()), Some(1));
+        assert_eq!(app.get_ws_file_active_index(), -1);
+        PANEL.with(|slot| *slot.borrow_mut() = None);
+        GENERATION.with(|slot| slot.set(0));
     }
 }

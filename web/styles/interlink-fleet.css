@@ -1,0 +1,9 @@
+.interlink-fleet { width: min(1160px, 94vw); max-height: 88vh; border: 1px solid #cbd5e1; border-radius: 8px; padding: 18px; color: #1e293b; background: #fff; }
+.interlink-fleet::backdrop { background: #0f172a66; }
+.interlink-fleet-toolbar { display: flex; align-items: center; gap: 10px; }
+.interlink-fleet-toolbar strong { margin-right: auto; }
+.interlink-fleet-toolbar input { max-width: 260px; }
+.interlink-fleet-table { max-height: 58vh; overflow: auto; margin: 12px 0; }
+.interlink-fleet-table td { vertical-align: top; padding: 10px; }
+.interlink-fleet-table td label { display: block; white-space: nowrap; font-size: 12px; }
+.interlink-fleet-table td button { display: block; margin: 0 0 6px; white-space: nowrap; }

@@ -43,6 +43,7 @@ import {
   toggleMonitorPolling,
 } from "./modules/monitor.js?v=20261015-06";
 import { initUserManagementPanel, loadUserStats } from "./modules/users.js?v=20260215-01";
+import { initInterlinkFleet } from "./modules/interlink-fleet.js?v=20261016-01";
 import { initUserAccountsPanel, loadUserAccounts } from "./modules/user-accounts.js?v=20261016-01";
 import { initPresetAgentsPanel, loadPresetAgents } from "./modules/preset-agents.js?v=20261012-01";
 import { initCompanionsPanel, loadCompanions } from "./modules/companions.js?v=20260506-01";
@@ -1076,6 +1077,7 @@ const bootstrap = async () => {
 
   initUserManagementPanel();
   initUserAccountsPanel();
+  initInterlinkFleet();
   initPresetAgentsPanel();
   initCompanionsPanel();
   initOrgUnitsPanel();

@@ -611,6 +611,8 @@ pub struct TuiApp {
     terminal_focused: bool,
     key_paste_burst_buffer: String,
     key_paste_burst_last_at: Option<Instant>,
+    plain_char_burst_last_at: Option<Instant>,
+    plain_char_burst_len: usize,
     suppressed_clipboard_paste: String,
     suppressed_clipboard_paste_last_at: Option<Instant>,
     workspace_project_name: Option<String>,
@@ -808,6 +810,8 @@ impl TuiApp {
             terminal_focused: true,
             key_paste_burst_buffer: String::new(),
             key_paste_burst_last_at: None,
+            plain_char_burst_last_at: None,
+            plain_char_burst_len: 0,
             suppressed_clipboard_paste: String::new(),
             suppressed_clipboard_paste_last_at: None,
             workspace_project_name: None,
@@ -4763,10 +4767,32 @@ impl TuiApp {
         }
     }
 
-    fn reset_plain_char_burst(&mut self) {}
+    fn reset_plain_char_burst(&mut self) {
+        self.plain_char_burst_last_at = None;
+        self.plain_char_burst_len = 0;
+    }
+
+    fn record_plain_char_burst(&mut self) {
+        let now = Instant::now();
+        self.plain_char_burst_len = if self
+            .plain_char_burst_last_at
+            .is_some_and(|last| now.saturating_duration_since(last) <= PASTE_BURST_CHAR_GAP)
+        {
+            self.plain_char_burst_len.saturating_add(1)
+        } else {
+            1
+        };
+        self.plain_char_burst_last_at = Some(now);
+    }
 
     fn should_treat_enter_as_paste_newline(&self) -> bool {
-        false
+        // Legacy Windows console input exposes a paste as key events rather
+        // than Event::Paste. A rapid run followed immediately by Enter is a
+        // pasted newline; an Enter after the burst settles still sends.
+        self.plain_char_burst_len >= 4
+            && self
+                .plain_char_burst_last_at
+                .is_some_and(|last| last.elapsed() <= PASTE_BURST_CHAR_GAP)
     }
 
     pub async fn on_key(&mut self, key: KeyEvent) -> Result<()> {
@@ -5091,8 +5117,11 @@ impl TuiApp {
                 if self.model_wizard.is_none()
                     && key
                         .modifiers
-                        .intersects(KeyModifiers::SHIFT | KeyModifiers::ALT)
+                        .intersects(KeyModifiers::SHIFT | KeyModifiers::ALT | KeyModifiers::CONTROL)
                 {
+                    // The Windows console reports a pasted LF as Ctrl+Enter.
+                    // Preserve it as a draft newline, including short lines
+                    // that cannot be identified by the burst heuristic.
                     self.insert_char_at_cursor('\n');
                     return Ok(());
                 }
@@ -5214,13 +5243,19 @@ impl TuiApp {
                 }
             }
             KeyCode::Char('?') => {
-                self.insert_char_at_cursor('?');
+                if self.input.is_empty() {
+                    self.shortcuts_visible = true;
+                } else {
+                    self.insert_char_at_cursor('?');
+                    self.record_plain_char_burst();
+                }
             }
             KeyCode::Char(ch) => {
                 if matches!(key.modifiers, KeyModifiers::NONE | KeyModifiers::SHIFT)
                     || is_altgr(key.modifiers)
                 {
                     self.insert_char_at_cursor(ch);
+                    self.record_plain_char_burst();
                 }
             }
             _ => self.reset_plain_char_burst(),
@@ -7801,10 +7836,9 @@ impl TuiApp {
                 if let Some(reasoning_delta) =
                     payload.get("reasoning_delta").and_then(Value::as_str)
                 {
-                    let cleaned_reasoning = sanitize_reasoning_text(reasoning_delta);
-                    if !cleaned_reasoning.is_empty() {
+                    if !reasoning_delta.is_empty() {
                         self.stream_saw_output = true;
-                        self.merge_reasoning_delta(cleaned_reasoning.as_str());
+                        self.merge_reasoning_delta(reasoning_delta);
                     }
                 }
 
@@ -8248,7 +8282,7 @@ impl TuiApp {
     }
 
     fn merge_assistant_delta(&mut self, delta: &str) {
-        if delta.trim().is_empty() {
+        if delta.is_empty() {
             return;
         }
 
@@ -8300,14 +8334,13 @@ impl TuiApp {
     }
 
     fn merge_reasoning_delta(&mut self, delta: &str) {
-        let cleaned = sanitize_reasoning_text(delta);
-        if cleaned.is_empty() {
+        if delta.is_empty() {
             return;
         }
 
         let index = self.ensure_reasoning_entry();
         let appended = if let Some(entry) = self.logs.get_mut(index) {
-            merge_stream_text_with_delta(&mut entry.text, cleaned.as_str())
+            merge_stream_text_with_delta(&mut entry.text, delta)
         } else {
             None
         };

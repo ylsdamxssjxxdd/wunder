@@ -105,6 +105,9 @@ export const interlinkWorkspaceRows = (nodes: InterlinkNode[]): InterlinkWorkspa
     const deviceId = String(node.node_id || '').trim();
     if (!deviceId) return;
     const workspaces = interlinkNodeWorkspaces(node).filter((item) => item.workspace_id);
+    if (!workspaces.length) {
+      rows.push({ key: `device:${deviceId}@`, deviceId, workspaceId: '', label: workspaceRowLabel(node, ''), node });
+    }
     workspaces.slice(0, INTERLINK_NODE_MAX_RENDERED).forEach((item) => {
       rows.push({
         key: `device:${deviceId}@${item.workspace_id}`,
@@ -132,9 +135,15 @@ export const supportsInterlinkKind = (
 ): boolean => {
   const target = String(kind || '').trim();
   if (!node || !target) return false;
+  const operations = node.meta?.allowed_commands;
+  if (Array.isArray(operations)) return operations.includes(target);
   const caps = Array.isArray(node.capabilities) ? node.capabilities.filter(Boolean) : [];
   if (!caps.length) return READ_ONLY_KINDS.includes(target as InterlinkCommandKind);
   if (caps.includes('*') || caps.includes(target)) return true;
+  const required = READ_ONLY_KINDS.includes(target as InterlinkCommandKind)
+    ? 'query.basic' : SESSION_KINDS.includes(target as InterlinkCommandKind)
+      ? 'thread.drive' : target.startsWith('workspace.') ? 'workspace.write' : target;
+  if (caps.includes(required)) return true;
   const namespace = target.split('.')[0];
   return caps.includes(`${namespace}.*`) || caps.includes(namespace);
 };

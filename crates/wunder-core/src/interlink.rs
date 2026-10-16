@@ -161,6 +161,8 @@ pub struct InterlinkHello {
 /// `hello_ack` payload, server -> local.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InterlinkHelloAck {
+    #[serde(default = "default_heartbeat_s")]
+    pub heartbeat_s: u64,
     pub channel_id: String,
     pub protocol: i64,
     pub capabilities_granted: Vec<String>,
@@ -241,6 +243,17 @@ pub fn command_policy(kind: &str) -> (&'static str, &'static str, bool) {
         CMD_AGENT_SPAWN => (RISK_HIGH, CAP_AGENT_SPAWN, true),
         _ => (RISK_HIGH, CAP_TOOL_EXEC, true),
     }
+}
+
+/// Effective operations exposed to clients. Server and client capability
+/// checks must not interpret group names as operation namespaces.
+pub fn allowed_commands(capabilities: &[String]) -> Vec<&'static str> {
+    [CMD_NODE_SUMMARY, CMD_SHADOW_REFRESH, CMD_WORKSPACE_LIST, CMD_WORKSPACE_READ,
+     CMD_WORKSPACE_SEARCH, CMD_WORKSPACE_STAT, CMD_THREADS_LIST, CMD_THREADS_GET,
+     CMD_THREAD_CREATE, CMD_THREAD_MESSAGE, CMD_THREAD_CANCEL, CMD_THREAD_ANSWER,
+     CMD_WORKSPACE_WRITE, CMD_WORKSPACE_MKDIR, CMD_WORKSPACE_MOVE, CMD_WORKSPACE_COPY,
+     CMD_WORKSPACE_DELETE, CMD_TOOL_EXEC, CMD_AGENT_SPAWN].into_iter()
+        .filter(|kind| capabilities.iter().any(|cap| cap == command_policy(kind).1)).collect()
 }
 
 /// Kinds that must never bypass approval regardless of local settings.
@@ -454,3 +467,5 @@ mod tests {
         );
     }
 }
+
+fn default_heartbeat_s() -> u64 { 25 }

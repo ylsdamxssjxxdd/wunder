@@ -29,6 +29,64 @@ pub(crate) const WS_MAX_MESSAGE_BYTES: usize = 512 * 1024;
 const STREAM_EVENT_HEARTBEAT_INTERVAL_S: f64 = 15.0;
 const STREAM_EVENT_IDLE_WATCH_MAX_INTERVAL_S: f64 = 5.0;
 
+/// Command tails outlive a model turn. Subscribe independently of its online
+/// queue; initial snapshots and lag recovery heal the bounded live channel.
+pub(crate) async fn watch_command_sessions(
+    broker: Arc<crate::services::tools::command_sessions::CommandSessionBroker>,
+    user_id: String,
+    session_id: String,
+    request_id: Option<String>,
+    tx: WsSender,
+    cancel: CancellationToken,
+) {
+    let mut events = broker.subscribe();
+    let mut cursors = std::collections::HashMap::new();
+    loop {
+        cursors.clear();
+        for snapshot in broker.list_session_snapshots(&user_id, &session_id) {
+            if cursors.len() < 256 {
+                cursors.insert(snapshot.command_session_id.clone(), snapshot.seq);
+            }
+            let event = StreamEvent {
+                event: "command_session_summary".into(),
+                data: serde_json::to_value(snapshot).unwrap_or(Value::Null),
+                id: None,
+                timestamp: Some(Utc::now()),
+            };
+            if tokio::select! {
+                _ = cancel.cancelled() => return,
+                result = send_ws_event(&tx, request_id.as_deref(), event) => result,
+            }.is_err() { return; }
+        }
+        loop {
+            let event = tokio::select! {
+                _ = cancel.cancelled() => return,
+                event = events.recv() => event,
+            };
+            let event = match event {
+                Ok(event) => event,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => break,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
+            };
+            if event.user_id != user_id || event.session_id != session_id { continue; }
+            let id = event.data.get("command_session_id").and_then(Value::as_str).unwrap_or_default();
+            let seq = event.data.get("seq").and_then(Value::as_u64).unwrap_or(0);
+            if cursors.get(id).is_some_and(|cursor| seq <= *cursor) { continue; }
+            // The receiver and deduplication window are both bounded.
+            if cursors.len() >= 256 { cursors.clear(); }
+            cursors.insert(id.to_string(), seq);
+            let event = StreamEvent {
+                event: event.event_type.into(), data: event.data,
+                id: None, timestamp: Some(Utc::now()),
+            };
+            if tokio::select! {
+                _ = cancel.cancelled() => return,
+                result = send_ws_event(&tx, request_id.as_deref(), event) => result,
+            }.is_err() { return; }
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub(crate) struct WsQuery {
     #[serde(default)]

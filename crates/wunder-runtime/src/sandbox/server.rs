@@ -98,6 +98,10 @@ struct SandboxCommandSessionControlRequest {
     after_seq: u64,
     #[serde(default)]
     yield_time_ms: u64,
+    #[serde(default)]
+    wait_for_exit: bool,
+    #[serde(default)]
+    include_snapshot: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -144,20 +148,23 @@ struct SandboxCommandSession {
 }
 
 impl SandboxCommandSession {
-    fn snapshot(&self, after_seq: u64) -> SandboxCommandSessionSnapshot {
+    fn snapshot(&self, after_seq: u64, include_snapshot: bool) -> SandboxCommandSessionSnapshot {
         let state = self.state.lock();
-        let stdout = state
-            .deltas
-            .iter()
-            .filter(|item| item.stream == "stdout")
-            .map(|item| item.delta.as_str())
-            .collect::<String>();
-        let stderr = state
-            .deltas
-            .iter()
-            .filter(|item| item.stream == "stderr")
-            .map(|item| item.delta.as_str())
-            .collect::<String>();
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+        let mut deltas = Vec::new();
+        for item in &state.deltas {
+            if include_snapshot {
+                if item.stream == "stderr" {
+                    stderr.push_str(&item.delta);
+                } else {
+                    stdout.push_str(&item.delta);
+                }
+            }
+            if item.seq > after_seq {
+                deltas.push(item.clone());
+            }
+        }
         SandboxCommandSessionSnapshot {
             command_session_id: String::new(),
             status: if state.running { "running" } else { "exited" },
@@ -165,15 +172,10 @@ impl SandboxCommandSession {
             exit_code: state.exit_code,
             timed_out: state.timed_out,
             error: state.error.clone(),
-            deltas: state
-                .deltas
-                .iter()
-                .filter(|item| item.seq > after_seq)
-                .cloned()
-                .collect(),
+            deltas,
             stdout,
             stderr,
-            dropped: after_seq > 0 && after_seq.saturating_add(1) < state.first_seq,
+            dropped: after_seq.saturating_add(1) < state.first_seq,
         }
     }
 
@@ -192,7 +194,7 @@ impl SandboxCommandSession {
         state
             .deltas
             .push_back(SandboxCommandSessionDelta { seq, stream, delta });
-        while state.delta_bytes > COMMAND_SESSION_DELTA_BYTES {
+        while state.delta_bytes > COMMAND_SESSION_DELTA_BYTES || state.deltas.len() > 4096 {
             let Some(removed) = state.deltas.pop_front() else {
                 break;
             };
@@ -640,16 +642,24 @@ async fn poll_command_session_inner(
     }
     // Register the waiter before the snapshot so a concurrently appended
     // delta or exit cannot be missed between observing `running` and waiting.
-    let notified = session.changed.notified();
-    let initial = session.snapshot(request.after_seq);
-    if initial.status == "running" && request.yield_time_ms > 0 {
-        let _ = timeout(
-            Duration::from_millis(request.yield_time_ms.clamp(1, 60_000)),
-            notified,
-        )
-        .await;
+    let deadline =
+        tokio::time::Instant::now() + Duration::from_millis(request.yield_time_ms.min(60_000));
+    loop {
+        let notified = session.changed.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+        {
+            let state = session.state.lock();
+            if !state.running
+                || (!request.wait_for_exit && state.seq > request.after_seq)
+                || tokio::time::Instant::now() >= deadline
+            {
+                break;
+            }
+        }
+        let _ = tokio::time::timeout_at(deadline, notified).await;
     }
-    let mut snapshot = session.snapshot(request.after_seq);
+    let mut snapshot = session.snapshot(request.after_seq, request.include_snapshot);
     snapshot.command_session_id = request.command_session_id;
     json!({"ok": true, "data": snapshot})
 }
@@ -802,9 +812,10 @@ async fn launch_command_session_inner(request: SandboxToolRequest) -> Value {
     let initial = timeout(Duration::from_millis(yield_time_ms), async {
         loop {
             let notified = session.changed.notified();
-            let snapshot = session.snapshot(0);
-            if snapshot.status != "running" {
-                break snapshot;
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if !session.state.lock().running {
+                break session.snapshot(0, true);
             }
             notified.await;
         }

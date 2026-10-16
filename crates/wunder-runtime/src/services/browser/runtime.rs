@@ -297,6 +297,7 @@ impl BrowserControlService {
                     "timeout_ms": timeout_ms,
                     "include_snapshot": optional_bool(args, "include_snapshot").unwrap_or(false),
                     "max_chars": self.snapshot_budget(args),
+                    "snapshot_timeout_ms": optional_u64(args, "snapshot_timeout_ms"),
                 }),
             )
             .await?;
@@ -318,6 +319,7 @@ impl BrowserControlService {
                     "interactive": optional_bool(args, "interactive").unwrap_or(true),
                     "compact": optional_bool(args, "compact").unwrap_or(true),
                     "max_chars": self.snapshot_budget(args),
+                    "snapshot_timeout_ms": optional_u64(args, "snapshot_timeout_ms"),
                 }),
             )
             .await?;
@@ -345,6 +347,7 @@ impl BrowserControlService {
                     "target_id": optional_string(args, "target_id"),
                     "include_snapshot": optional_bool(args, "include_snapshot").unwrap_or(false),
                     "max_chars": self.snapshot_budget(args),
+                    "snapshot_timeout_ms": optional_u64(args, "snapshot_timeout_ms"),
                 }),
             )
             .await?;
@@ -375,6 +378,9 @@ impl BrowserControlService {
             &json!({
                 "request": request,
                 "target_id": optional_string(args, "target_id"),
+                "include_snapshot": optional_bool(args, "include_snapshot").unwrap_or(false),
+                "max_chars": self.snapshot_budget(args),
+                "snapshot_timeout_ms": optional_u64(args, "snapshot_timeout_ms"),
             }),
         )
         .await
@@ -565,6 +571,7 @@ fn build_direct_request(args: &Value) -> Value {
         "key",
         "url",
         "load_state",
+        "state",
         "wait_ms",
         "timeout_ms",
         "timeout_secs",

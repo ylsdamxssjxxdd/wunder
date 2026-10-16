@@ -19,7 +19,7 @@ pub mod logging;
 pub mod long_task;
 pub mod onlyoffice_config;
 pub mod path_utils;
-pub(crate) mod process_file_lock;
+pub mod process_file_lock;
 pub mod python_runtime;
 pub mod repo_assets;
 pub mod runtime_metrics;

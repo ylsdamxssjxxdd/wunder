@@ -609,6 +609,15 @@ pub struct SessionLockRecord {
     pub expires_at: f64,
 }
 
+/// Server-owned binding shared by every access/refresh token in a local
+/// session family. Device identity cannot be replaced by a request header.
+#[derive(Debug, Clone)]
+pub struct UserSessionDeviceRecord {
+    pub family_id: String,
+    pub user_id: String,
+    pub device_id: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct ThreadOpenLeaseRecord {
     pub session_id: String,

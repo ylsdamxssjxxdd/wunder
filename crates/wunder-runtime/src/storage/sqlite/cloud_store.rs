@@ -97,9 +97,10 @@ impl SqliteCloudStorage for SqliteStorage {
             "INSERT INTO cloud_devices(device_id, user_id, client, name, os, arch, app_version, last_seen_at, created_at, revoked) \
              VALUES(?,?,?,?,?,?,?,?,?,?) \
              ON CONFLICT(device_id) DO UPDATE SET \
-               user_id=excluded.user_id, client=excluded.client, name=excluded.name, \
+               name=excluded.name, \
                os=excluded.os, arch=excluded.arch, app_version=excluded.app_version, \
-               last_seen_at=excluded.last_seen_at",
+               last_seen_at=excluded.last_seen_at \
+             WHERE cloud_devices.user_id=excluded.user_id AND cloud_devices.client=excluded.client",
             params![
                 record.device_id.trim(),
                 record.user_id.trim(),

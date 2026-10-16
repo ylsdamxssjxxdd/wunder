@@ -581,7 +581,7 @@ impl PostgresLogStatsStorage for PostgresStorage {
         if user_id.is_empty() || session_id.is_empty() {
             return Ok(0);
         }
-        log_maintenance::delete_usage_rows(
+        log_maintenance::delete_usage_rows_all(
             &mut self.conn()?,
             UsageRows::Tool,
             "user_id=$1 AND session_id=$2",
@@ -608,7 +608,7 @@ impl PostgresLogStatsStorage for PostgresStorage {
         if user_id.is_empty() || session_id.is_empty() {
             return Ok(0);
         }
-        log_maintenance::delete_rows(
+        log_maintenance::delete_rows_all(
             &mut self.conn()?,
             "artifact_logs",
             "user_id=$1 AND session_id=$2",

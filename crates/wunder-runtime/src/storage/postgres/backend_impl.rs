@@ -961,7 +961,7 @@ impl RetentionStore for PostgresStorage {
     fn cleanup_retention(&self, cutoff_epoch_s: f64) -> Result<HashMap<String, i64>> {
         self.cleanup_retention_impl(cutoff_epoch_s)
     }
-    fn cleanup_orphan_session_logs(&self, cutoff_epoch_s: f64) -> Result<HashMap<String, i64>> {
+    fn cleanup_orphan_session_logs(&self, cutoff_epoch_s: f64) -> Result<OrphanSweepResult> {
         self.cleanup_orphan_session_logs_impl(cutoff_epoch_s)
     }
 }
@@ -1057,6 +1057,68 @@ impl UserAccountStore for PostgresStorage {
 }
 
 impl UserRefreshTokenStore for PostgresStorage {
+    fn rotate_user_refresh_token(
+        &self,
+        presented: &str,
+        access: &crate::storage::UserTokenRecord,
+        refresh: &UserRefreshTokenRecord,
+    ) -> Result<bool> {
+        self.ensure_initialized()?;
+        let mut conn = self.conn()?;
+        let mut tx = conn.transaction()?;
+        tx.query_one(
+            "SELECT pg_advisory_xact_lock(hashtextextended($1,0))",
+            &[&refresh.family_id],
+        )?;
+        let consumed = tx.execute("UPDATE user_refresh_tokens SET revoked=TRUE WHERE refresh_token=$1 AND revoked=FALSE AND expires_at>$2 AND user_id=$3 AND family_id=$4 AND NOT EXISTS (SELECT 1 FROM user_session_scopes s WHERE s.user_id=user_refresh_tokens.user_id AND s.session_scope=user_refresh_tokens.session_scope AND s.last_login_at>user_refresh_tokens.created_at+0.000001)", &[&presented,&access.created_at,&access.user_id,&refresh.family_id])?;
+        if consumed != 1 {
+            return Ok(false);
+        }
+        tx.execute(
+            "DELETE FROM user_tokens WHERE family_id=$1",
+            &[&refresh.family_id],
+        )?;
+        tx.execute("INSERT INTO user_tokens (token,user_id,session_scope,family_id,expires_at,created_at,last_used_at) VALUES ($1,$2,$3,$4,$5,$6,$7)", &[&access.token,&access.user_id,&access.session_scope,&access.family_id,&access.expires_at,&access.created_at,&access.last_used_at])?;
+        tx.execute("INSERT INTO user_refresh_tokens (refresh_token,user_id,session_scope,family_id,expires_at,created_at,last_used_at,revoked) VALUES ($1,$2,$3,$4,$5,$6,$7,FALSE)", &[&refresh.refresh_token,&refresh.user_id,&refresh.session_scope,&refresh.family_id,&refresh.expires_at,&refresh.created_at,&refresh.last_used_at])?;
+        tx.commit()?;
+        Ok(true)
+    }
+
+    fn bind_user_session_device(
+        &self,
+        record: &crate::storage::UserSessionDeviceRecord,
+    ) -> Result<()> {
+        self.ensure_initialized()?;
+        let mut conn = self.conn()?;
+        conn.execute("INSERT INTO user_session_devices (family_id,user_id,device_id) VALUES ($1,$2,$3) ON CONFLICT(family_id) DO NOTHING", &[&record.family_id, &record.user_id, &record.device_id])?;
+        drop(conn);
+        let bound = self.get_user_session_device(&record.family_id)?;
+        anyhow::ensure!(
+            bound.is_some_and(
+                |bound| bound.user_id == record.user_id && bound.device_id == record.device_id
+            ),
+            "session is already bound to a different device"
+        );
+        Ok(())
+    }
+    fn get_user_session_device(
+        &self,
+        family_id: &str,
+    ) -> Result<Option<crate::storage::UserSessionDeviceRecord>> {
+        self.ensure_initialized()?;
+        let mut conn = self.conn()?;
+        Ok(conn
+            .query_opt(
+                "SELECT family_id,user_id,device_id FROM user_session_devices WHERE family_id=$1",
+                &[&family_id],
+            )?
+            .map(|row| crate::storage::UserSessionDeviceRecord {
+                family_id: row.get(0),
+                user_id: row.get(1),
+                device_id: row.get(2),
+            }))
+    }
+
     fn create_user_refresh_token(&self, record: &UserRefreshTokenRecord) -> Result<()> {
         self.create_user_refresh_token_impl(record)
     }
@@ -2031,6 +2093,41 @@ impl InterlinkStore for PostgresStorage {
 }
 
 impl CloudStore for PostgresStorage {
+    fn register_cloud_device_session(
+        &self,
+        record: &CloudDeviceRecord,
+        family_id: &str,
+    ) -> Result<bool> {
+        self.ensure_initialized()?;
+        let mut conn = self.conn()?;
+        let mut tx = conn.transaction()?;
+        tx.query_one(
+            "SELECT pg_advisory_xact_lock(hashtextextended($1,0))",
+            &[&family_id],
+        )?;
+        let bound = tx.query_opt(
+            "SELECT user_id,device_id FROM user_session_devices WHERE family_id=$1",
+            &[&family_id],
+        )?;
+        if bound.is_some_and(|row| {
+            row.get::<_, String>(0) != record.user_id || row.get::<_, String>(1) != record.device_id
+        }) {
+            return Ok(false);
+        }
+        let changed = tx.execute("INSERT INTO cloud_devices(device_id,user_id,client,name,os,arch,app_version,last_seen_at,created_at,revoked) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,FALSE) ON CONFLICT(device_id) DO UPDATE SET name=EXCLUDED.name,os=EXCLUDED.os,arch=EXCLUDED.arch,app_version=EXCLUDED.app_version,last_seen_at=EXCLUDED.last_seen_at WHERE cloud_devices.user_id=EXCLUDED.user_id AND cloud_devices.client=EXCLUDED.client AND cloud_devices.revoked=FALSE",
+            &[&record.device_id,&record.user_id,&record.client,&record.name,&record.os,&record.arch,&record.app_version,&record.last_seen_at,&record.created_at])?;
+        if changed != 1 {
+            return Ok(false);
+        }
+        tx.execute("INSERT INTO user_session_devices(family_id,user_id,device_id) VALUES($1,$2,$3) ON CONFLICT(family_id) DO NOTHING", &[&family_id,&record.user_id,&record.device_id])?;
+        tx.commit()?;
+        Ok(true)
+    }
+    fn count_cloud_device_sessions(&self, device_id: &str, now: f64) -> Result<i64> {
+        self.ensure_initialized()?;
+        let row = self.conn()?.query_one("SELECT COUNT(*) FROM user_session_devices d WHERE d.device_id=$1 AND (EXISTS (SELECT 1 FROM user_tokens t WHERE t.family_id=d.family_id AND t.user_id=d.user_id AND t.expires_at>$2 AND NOT EXISTS (SELECT 1 FROM user_session_scopes s WHERE s.user_id=t.user_id AND s.session_scope=t.session_scope AND s.last_login_at>t.created_at+0.000001)) OR EXISTS (SELECT 1 FROM user_refresh_tokens r WHERE r.family_id=d.family_id AND r.user_id=d.user_id AND r.revoked=FALSE AND r.expires_at>$2 AND NOT EXISTS (SELECT 1 FROM user_session_scopes s WHERE s.user_id=r.user_id AND s.session_scope=r.session_scope AND s.last_login_at>r.created_at+0.000001)))", &[&device_id,&now])?;
+        Ok(row.get(0))
+    }
     fn find_cloud_device_by_identity(
         &self,
         user_id: &str,

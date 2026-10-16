@@ -1,0 +1,62 @@
+import { Button, ComboBox, LineEdit, ListView, TextEdit } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { I18n } from "i18n.slint";
+
+export struct CloudTurn { id: string, user: string, assistant: string, status: string }
+export component CloudThreadsPanel inherits Rectangle {
+    in property <[string]> threads;
+    in property <[string]> agents;
+    in property <[CloudTurn]> turns;
+    in property <bool> busy;
+    in property <string> status;
+    in-out property <int> thread-index: 0;
+    in-out property <int> agent-index: 0;
+    in-out property <string> message;
+    in-out property <string> approval;
+    callback refresh();
+    callback select-thread(int);
+    callback send();
+    callback stop();
+    callback answer(bool);
+    callback close();
+    background: Theme.overlay;
+    TouchArea { }
+    Rectangle {
+        width: min(parent.width - 48px, 900px); height: min(parent.height - 48px, 700px);
+        x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
+        background: Theme.surface; border-radius: 8px; border-width: 1px; border-color: Theme.border;
+        VerticalLayout {
+            padding: 18px; spacing: 10px;
+            HorizontalLayout {
+                Text { text: I18n.zh ? "云端智能体与线程" : "Cloud agent and threads"; font-size: 18px; color: Theme.text; horizontal-stretch: 1; }
+                Button { text: I18n.common_close; clicked => { root.close(); } }
+            }
+            HorizontalLayout {
+                ComboBox { horizontal-stretch: 1; model: root.agents; current-index <=> root.agent-index; enabled: !root.busy; }
+                ComboBox { horizontal-stretch: 2; model: root.threads; current-index <=> root.thread-index; enabled: !root.busy; selected(_) => { root.select-thread(self.current-index); } }
+                Button { text: I18n.zh ? "刷新" : "Refresh"; enabled: !root.busy; clicked => { root.refresh(); } }
+            }
+            Text { text: root.status; color: Theme.muted; font-size: 12px; overflow: elide; }
+            ListView {
+                vertical-stretch: 1;
+                for turn in root.turns : Rectangle {
+                    height: content.preferred-height + 16px; background: Theme.input-bg;
+                    content := VerticalLayout {
+                        padding: 8px; spacing: 8px;
+                        Text { text: turn.user; wrap: word-wrap; color: Theme.text; }
+                        Text { text: turn.assistant; wrap: word-wrap; color: Theme.text; }
+                        Text { text: turn.status; color: Theme.muted; font-size: 11px; }
+                    }
+                }
+            }
+            TextEdit { height: 86px; text <=> root.message; enabled: !root.busy; }
+            HorizontalLayout {
+                Button { text: I18n.zh ? "发送" : "Send"; enabled: !root.busy && root.message != ""; primary: true; clicked => { root.send(); } }
+                Button { text: I18n.zh ? "停止线程" : "Stop thread"; enabled: !root.busy && root.thread-index > 0; clicked => { root.stop(); } }
+                LineEdit { horizontal-stretch: 1; placeholder-text: I18n.zh ? "工具审批 ID" : "Tool approval ID"; text <=> root.approval; }
+                Button { text: I18n.zh ? "允许一次" : "Allow once"; enabled: !root.busy && root.approval != ""; clicked => { root.answer(true); } }
+                Button { text: I18n.zh ? "拒绝" : "Deny"; enabled: !root.busy && root.approval != ""; clicked => { root.answer(false); } }
+            }
+        }
+    }
+}

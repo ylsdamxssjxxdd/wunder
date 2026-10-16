@@ -1,4 +1,3 @@
-use crate::core::long_task;
 use axum::extract::ws::Message;
 use dashmap::DashMap;
 use serde_json::json;
@@ -87,11 +86,10 @@ impl AuthSessionService {
 
         let error_text = build_forced_logout_payload();
         for (connection_id, sender) in targets {
-            let forced_logout_error = error_text.clone();
-            long_task::spawn("services.auth_sessions.force_logout", async move {
-                let _ = sender.send(Message::Text(forced_logout_error.into())).await;
-                let _ = sender.send(Message::Close(None)).await;
-            });
+            // Congested sockets are closed by their periodic credential check;
+            // logout must never create an unbounded set of stalled send tasks.
+            let _ = sender.try_send(Message::Text(error_text.clone().into()));
+            let _ = sender.try_send(Message::Close(None));
             self.connections.remove(&connection_id);
         }
     }

@@ -3,6 +3,7 @@
 import argparse
 import importlib.util
 import json
+import time
 import unittest
 from unittest.mock import patch
 from pathlib import Path
@@ -116,9 +117,110 @@ class BrowserBridgeTests(unittest.TestCase):
         self.assertEqual(self.page.evaluate("document.activeElement.id"), "secret")
 
     def test_wait_supports_url_and_selector(self):
-        self.assertTrue(self.act({"kind": "wait", "url": "about:*", "timeout_ms": 100})["success"])
+        result = self.act({"kind": "wait", "url": "about:*", "timeout_ms": 100})
+        self.assertTrue(result["success"])
+        self.assertEqual(result["data"]["url"], "about:blank")
+        self.assertEqual(result["data"]["expected_url"], "about:*")
         self.assertTrue(self.act({"kind": "wait", "selector": "#send", "timeout_ms": 100})["success"])
         self.assertEqual(self.session._timeout_ms(999999), 8000)
+
+    def test_wait_conditions_override_delay_and_support_hidden_loading(self):
+        self.page.evaluate("""() => {
+            const el = document.querySelector('#status');
+            el.id = 'loading';
+            setTimeout(() => el.remove(), 60);
+        }""")
+        with patch.object(self.page, "wait_for_timeout", side_effect=AssertionError("fixed delay used")):
+            result = self.act({"kind": "wait", "selector": "#loading", "state": "hidden",
+                               "wait_ms": 2000, "timeout_ms": 1000})
+        self.assertTrue(result["success"])
+        self.assertEqual(result["data"]["state"], "hidden")
+
+    def test_wait_checks_all_conditions_with_a_shared_timeout(self):
+        with patch.object(self.page, "wait_for_url", side_effect=RuntimeError("URL not ready")) as wait_url:
+            with self.assertRaisesRegex(RuntimeError, "URL not ready"):
+                self.act({"kind": "wait", "selector": "#send", "url": "**/complete",
+                          "timeout_ms": 100})
+        self.assertEqual(wait_url.call_args.args, ("**/complete",))
+        self.assertGreater(wait_url.call_args.kwargs["timeout"], 0)
+        self.assertLessEqual(wait_url.call_args.kwargs["timeout"], 100)
+
+    def test_batch_wait_failure_keeps_submission_progress(self):
+        self.page.locator("#send").evaluate("el => el.onclick = () => window.submissions = (window.submissions || 0) + 1")
+        result = self.act({"kind": "batch", "steps": [
+            {"kind": "click", "selector": "#send"},
+            {"kind": "wait", "selector": "#missing", "timeout_ms": 30},
+            {"kind": "click", "selector": "#send"},
+        ]}, include_snapshot=True)
+        self.assertFalse(result["success"])
+        self.assertEqual(result["data"]["completed_steps"], 1)
+        self.assertEqual(result["data"]["failed_step"], 2)
+        self.assertEqual(self.page.evaluate("window.submissions"), 1)
+
+    def test_snapshot_waits_for_delayed_client_render_and_syncs_identity(self):
+        url = "https://example.test/initial"
+        self.page.route(url, lambda route: route.fulfill(content_type="text/html", body="""
+          <script>setTimeout(() => {
+            history.replaceState({}, '', '/ready'); document.title='Ready page';
+            document.body.innerHTML='<input placeholder="Sample field"><button>Continue</button>';
+          }, 120)</script>"""))
+        try:
+            result = self.session.handle({"action": "navigate", "url": url,
+                                          "target_id": self.target, "include_snapshot": True,
+                                          "max_chars": 1000, "snapshot_timeout_ms": 1000})
+            self.assertTrue(result["success"])
+            data = result["data"]
+            self.assertIn("Sample field", data["snapshot"])
+            self.assertEqual(data["url"], "https://example.test/ready")
+            self.assertEqual(data["title"], "Ready page")
+            self.assertEqual(data["tabs"][0]["url"], data["url"])
+            self.assertTrue(self.act({"kind": "type", "ref": "e1", "text": "sample"})["success"])
+        finally:
+            self.page.unroute(url)
+
+    def test_snapshot_empty_wait_is_bounded_and_can_be_disabled(self):
+        self.page.set_content("<div></div>")
+        with patch.object(self.page, "wait_for_timeout", side_effect=AssertionError("unexpected delay")):
+            data = self.session.snapshot(self.target, ready_timeout_ms=0)["data"]
+        self.assertEqual(data["snapshot"], "")
+        started = time.monotonic()
+        data = self.session.snapshot(self.target, ready_timeout_ms=80)["data"]
+        self.assertEqual(data["snapshot"], "")
+        self.assertLess(time.monotonic() - started, 1)
+        self.page.set_content("<button>Ready</button>")
+        with patch.object(self.page, "wait_for_timeout", side_effect=AssertionError("populated snapshot delayed")):
+            self.assertIn("Ready", self.session.snapshot(self.target)["data"]["snapshot"])
+
+    def test_snapshot_retries_transient_context_loss_only(self):
+        collect = self.session._collect
+        with patch.object(self.session, "_collect", side_effect=[
+            RuntimeError("Execution context was destroyed"), collect(self.page, "role", True, True, 1000),
+        ]):
+            self.assertIn("Sample form", self.session.snapshot(self.target)["data"]["snapshot"])
+        with patch.object(self.session, "_collect", side_effect=RuntimeError("unavailable")) as failed:
+            with self.assertRaisesRegex(RuntimeError, "unavailable"):
+                self.session.snapshot(self.target)
+            self.assertEqual(failed.call_count, 1)
+        self.assertEqual(self.session.refs[self.target], {})
+
+    def test_observation_updates_url_and_tabs_after_action(self):
+        url = "https://example.test/start"
+        self.page.route(url, lambda route: route.fulfill(content_type="text/html", body="<button>Continue</button>"))
+        try:
+            self.page.goto(url)
+            original = self.session.snapshot
+            def redirected_snapshot(**kwargs):
+                self.page.evaluate("history.pushState({}, '', '/complete'); document.title='Complete page'")
+                return original(**kwargs)
+            with patch.object(self.session, "snapshot", side_effect=redirected_snapshot):
+                result = self.act({"kind": "click", "selector": "button"}, include_snapshot=True)
+            self.assertTrue(result["success"])
+            data = result["data"]
+            self.assertEqual(data["url"], "https://example.test/complete")
+            self.assertEqual(data["title"], "Complete page")
+            self.assertEqual(data["tabs"][0]["url"], data["url"])
+        finally:
+            self.page.unroute(url)
 
     def test_observation_failure_does_not_mark_successful_action_failed(self):
         with patch.object(self.session, "snapshot", side_effect=RuntimeError("unavailable")):
@@ -144,6 +246,8 @@ class BrowserBridgeTests(unittest.TestCase):
             ]}, include_snapshot=True, max_chars=1000)
             self.assertTrue(result["success"])
             self.assertIn("Complete", result["data"]["snapshot"])
+            self.assertEqual(result["data"]["url"], "https://example.test/complete")
+            self.assertEqual(result["data"]["results"][-1]["url"], result["data"]["url"])
         finally:
             self.page.unroute(url)
 

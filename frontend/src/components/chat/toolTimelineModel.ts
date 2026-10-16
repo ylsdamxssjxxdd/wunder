@@ -500,6 +500,25 @@ const buildTargets = (run: RawToolRun): TimelineTargetChip[] => {
     });
 };
 
+/**
+ * 摘要与目标徽章的去重：文本编辑、读图等路径型工具的摘要就是文件名，
+ * 徽章已渲染同一份路径，摘要再显示一遍就成了行内重复。
+ * 覆盖完整路径、折叠标签与 basename 三种形态的比对；compactPath（摘要）
+ * 用 `.../`、compactPathLabel（徽章）用 `…/`，先剥掉折叠前缀再比对，
+ * 避免深层路径因省略号写法不同而漏判。
+ */
+const summaryDuplicatesTarget = (summary: string, targets: TimelineTargetChip[]): boolean => {
+  const normalized = summary.trim().replace(/^(?:\u2026|\.{3})\//, '');
+  if (!normalized) return false;
+  return targets.some((target) => {
+    const path = normalizePathLike(target.path);
+    const label = (target.label || '').replace(/^(?:\u2026|\.{3})\//, '');
+    return normalized === path ||
+      normalized === label ||
+      normalized === basenameOfPath(path);
+  });
+};
+
 const buildSummaryFallback = (run: RawToolRun): string => {
   // 兜底同样只吃调用侧参数，避免把工具结果文本填进摘要。
   const fields = readRawObjectFields(run.callItem?.detail);
@@ -562,6 +581,10 @@ export const buildTimelineToolEntry = (
     summary = status === 'loading'
       ? truncateSingleLine(t('chat.toolWorkflow.pendingToolDetail'))
       : buildSummaryFallback(run);
+  }
+  // 徽章已展示同一目标路径时，摘要不再重复文件名。
+  if (summary && targets.length && summaryDuplicatesTarget(summary, targets)) {
+    summary = '';
   }
   const expandable = Boolean(
     errorText ||

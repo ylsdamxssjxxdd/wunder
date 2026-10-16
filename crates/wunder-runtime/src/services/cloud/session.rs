@@ -1,7 +1,8 @@
-//! Local cloud session persistence (`cloud.session.json`).
+//! Per-form local cloud sessions with an explicit shared-login bootstrap source.
 //!
-//! The file only exists while logged in; a missing or unparsable file means
-//! logged out. Schema follows the cloud connection plan §3.1. The file holds
+//! Desktop and CLI keep independent device credentials. The shared file only
+//! bootstraps a companion session; explicit logout persists a per-form opt-out.
+//! A missing or unparsable form file means logged out. The file holds
 //! the session token, so it is written with 0600 on unix (Windows keeps the
 //! default user-profile ACL; the file lives under the user home which is not
 //! readable by other accounts by default).
@@ -11,8 +12,8 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 pub const SESSION_FILE: &str = "config/cloud.session.json";
-pub const SESSION_FILE_DESKTOP: &str = SESSION_FILE;
-pub const SESSION_FILE_CLI: &str = SESSION_FILE;
+pub const SESSION_FILE_DESKTOP: &str = "config/cloud.desktop.session.json";
+pub const SESSION_FILE_CLI: &str = "config/cloud.cli.session.json";
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CloudQuotaSnapshot {
@@ -95,6 +96,9 @@ pub struct InterlinkSessionConfig {
     /// User kill switch: `false` means the tunnel is never opened.
     #[serde(default = "default_interlink_enabled")]
     pub enabled: bool,
+    /// Explicit local consent to publish workspace/thread names and structure.
+    #[serde(default)]
+    pub full_shadow: bool,
     /// Protocol version the node offers (docs §4.1 negotiation).
     #[serde(default = "default_interlink_protocol")]
     pub protocol: i64,
@@ -115,6 +119,7 @@ impl Default for InterlinkSessionConfig {
     fn default() -> Self {
         Self {
             enabled: default_interlink_enabled(),
+            full_shadow: false,
             protocol: default_interlink_protocol(),
             shadow_interval_s: default_interlink_shadow_interval_s(),
             approval_default: default_interlink_approval_default(),
@@ -155,6 +160,7 @@ impl InterlinkSessionConfig {
     fn normalized(&self) -> Self {
         Self {
             enabled: self.enabled,
+            full_shadow: self.full_shadow,
             protocol: self.protocol.max(1),
             shadow_interval_s: self.shadow_interval_s(),
             approval_default: self.approval_policy().to_string(),
@@ -239,9 +245,17 @@ impl CloudSessionFile {
         copy
     }
 
-    /// Desktop and CLI use one canonical session file under the shared home.
-    pub fn path_for(base_dir: &Path, _client: &str) -> PathBuf {
-        base_dir.join(SESSION_FILE)
+    /// Each local form owns its credential; the shared file bootstraps exchange.
+    pub fn path_for(base_dir: &Path, client: &str) -> PathBuf {
+        base_dir.join(match client {
+            "desktop" => SESSION_FILE_DESKTOP,
+            "cli" => SESSION_FILE_CLI,
+            _ => SESSION_FILE,
+        })
+    }
+
+    pub fn load_for(base_dir: &Path, client: &str) -> Option<Self> {
+        serde_json::from_str(&std::fs::read_to_string(Self::path_for(base_dir, client)).ok()?).ok()
     }
 
     /// Load the canonical shared session file. A corrupt file is treated as
@@ -250,7 +264,13 @@ impl CloudSessionFile {
         let path = Self::path_for(base_dir, "shared");
         match std::fs::read_to_string(&path) {
             Ok(text) => match serde_json::from_str::<Self>(&text) {
-                Ok(session) => Some(session),
+                Ok(session) => Some(
+                    Self::load_for(base_dir, &session.client)
+                        .filter(|current| {
+                            current.server == session.server && current.user_id == session.user_id
+                        })
+                        .unwrap_or(session),
+                ),
                 Err(err) => {
                     tracing::warn!("cloud session file is corrupt, ignoring: {err}");
                     None
@@ -261,7 +281,7 @@ impl CloudSessionFile {
     }
 
     pub fn save(&self, base_dir: &Path) -> Result<PathBuf> {
-        let path = Self::path_for(base_dir, "shared");
+        let path = Self::path_for(base_dir, &self.client);
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).with_context(|| {
                 format!("create cloud session dir failed: {}", parent.display())
@@ -272,11 +292,33 @@ impl CloudSessionFile {
         wunder_core::atomic_write::atomic_write_text(&path, &text)
             .with_context(|| format!("write cloud session failed: {}", path.display()))?;
         restrict_permissions(&path);
+        // The canonical file permits another local form to exchange this
+        // credential for its own independent device session after startup.
+        let shared = Self::path_for(base_dir, "shared");
+        if Self::load_any(base_dir).is_none_or(|source| {
+            source.client == self.client
+                && source.server == self.server
+                && source.user_id == self.user_id
+        }) {
+            wunder_core::atomic_write::atomic_write_text(&shared, &text)?;
+            restrict_permissions(&shared);
+        }
         Ok(path)
+    }
+
+    pub fn publish_shared(&self, base_dir: &Path) -> Result<()> {
+        let path = Self::path_for(base_dir, "shared");
+        let text = serde_json::to_string(&self.normalized_copy())?;
+        wunder_core::atomic_write::atomic_write_text(&path, &text)?;
+        restrict_permissions(&path);
+        Ok(())
     }
 
     pub fn remove(base_dir: &Path, client: &str) {
         let _ = std::fs::remove_file(Self::path_for(base_dir, client));
+        if Self::load_any(base_dir).is_some_and(|session| session.client == client) {
+            let _ = std::fs::remove_file(Self::path_for(base_dir, "shared"));
+        }
     }
 }
 
@@ -322,15 +364,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn session_path_is_shared_between_clients() {
+    fn session_paths_are_isolated_between_clients() {
         let base = Path::new("/tmp/wunder-home");
         assert_eq!(
             CloudSessionFile::path_for(base, "desktop"),
-            base.join("config/cloud.session.json")
+            base.join("config/cloud.desktop.session.json")
         );
         assert_eq!(
             CloudSessionFile::path_for(base, "cli"),
-            base.join("config/cloud.session.json")
+            base.join("config/cloud.cli.session.json")
         );
     }
 
@@ -421,6 +463,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("temp dir");
         let session = session_with_interlink(InterlinkSessionConfig {
             enabled: true,
+            full_shadow: true,
             protocol: 1,
             shadow_interval_s: 5,
             approval_default: "allow_readonly".to_string(),

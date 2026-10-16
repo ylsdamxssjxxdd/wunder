@@ -66,17 +66,37 @@ pub async fn run(
     };
     let collector = ShadowCollector::new();
     let wake = Arc::new(tokio::sync::Notify::new());
-    let report = execute::execute(
+    let cancel = CancellationToken::new();
+    let execution = execute::execute(
         &spec,
         &ctx,
         &writer,
         &collector,
         &wake,
-        CancellationToken::new(),
-    )
-    .await;
+        cancel.clone(),
+    );
+    tokio::pin!(execution);
+    let mut tick = tokio::time::interval(std::time::Duration::from_millis(250));
+    let report = loop {
+        tokio::select! {
+            report = &mut execution => break report,
+            _ = tick.tick() => {
+                let storage = state.storage.clone(); let lookup = command_id.clone();
+                let active = crate::core::blocking::run_db("interlink.cloud.active", move || storage.get_interlink_command(&lookup)).await.ok().flatten()
+                    .is_some_and(|row| !wunder_core::interlink::is_terminal_command_status(&row.status));
+                if !active { cancel.cancel(); return; }
+            }
+        }
+    };
 
-    let payload = report.payload();
+    let mut payload = report.result.clone();
+    if let Some(map) = payload.as_object_mut() {
+        if let Some(extra) = report.payload().as_object() {
+            for key in ["inline", "stream_id", "size", "usage"] {
+                if let Some(value) = extra.get(key) { map.insert(key.to_string(), value.clone()); }
+            }
+        }
+    }
     let storage = state.storage.clone();
     let id = command_id.clone();
     let status = report.status.to_string();

@@ -780,13 +780,23 @@ impl ThreadRuntime {
         {
             self.monitor.mark_cancelled(cleaned_session);
         }
-        tracing::info!(
-            user_id = cleaned_user,
-            session_id = cleaned_session,
-            cancelled_commands,
-            child_commands_cancelled,
-            "terminated active command sessions for interrupted thread tree"
-        );
+        // An interrupt with nothing left to terminate is the common case;
+        // it must not push a line into the log on every stop.
+        if cancelled_commands + child_commands_cancelled > 0 {
+            tracing::info!(
+                user_id = cleaned_user,
+                session_id = cleaned_session,
+                cancelled_commands,
+                child_commands_cancelled,
+                "terminated active command sessions for interrupted thread tree"
+            );
+        } else {
+            tracing::debug!(
+                user_id = cleaned_user,
+                session_id = cleaned_session,
+                "interrupted thread tree had no active command sessions"
+            );
+        }
 
         Ok(ThreadCancelSettlement {
             monitor_cancelled,

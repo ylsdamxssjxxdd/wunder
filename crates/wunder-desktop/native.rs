@@ -61,6 +61,9 @@ pub use stream::{NativeChatEvent, NativeStream};
 mod catalog;
 #[path = "native_cloud.rs"]
 mod cloud;
+#[path = "native_cloud_threads.rs"]
+mod cloud_threads;
+pub use cloud_threads::{NativeCloudAgent, NativeCloudThread};
 
 #[path = "native_interlink.rs"]
 mod interlink;
@@ -327,6 +330,7 @@ impl NativeDesktop {
                 .enable_all()
                 .build()?,
         );
+        wunder_server::cloud::shared().set_client_kind("desktop");
         let desktop = runtime.block_on(DesktopRuntime::init(&args))?;
         // Startup self-healing probe: refresh the session, re-synthesize the
         // cloud models and fire one heartbeat in the background. Returns

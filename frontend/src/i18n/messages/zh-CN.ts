@@ -1,5 +1,6 @@
 // AI生成
 export default {
+  'interlink.operation.waitApproval': '等待本地设备确认，可在此取消',
   'chat.subagentPool.title': '子智能体',
   'chat.subagentPool.empty': '暂无子智能体',
   'chat.subagentPool.interrupted': '已中断 · 可复用',

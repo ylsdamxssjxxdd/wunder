@@ -15,11 +15,30 @@ pub struct ResolvedUser {
     pub session_scope: Option<String>,
 }
 
+/// Long-lived transports periodically revalidate their original credential.
+/// Rotation retires that credential, causing a clean authenticated reconnect.
+pub async fn credential_active(state: &AppState, token: &str, user_id: &str) -> bool {
+    let store = state.user_store.clone();
+    let token = token.to_string();
+    let expected = user_id.to_string();
+    blocking::run_db("api.transport.revalidate", move || {
+        store.authenticate_token_details(&token).map(|auth| auth.is_some_and(|auth| auth.user.user_id == expected))
+    }).await.unwrap_or(false)
+}
+
 pub async fn resolve_user(
     state: &AppState,
     headers: &HeaderMap,
     user_id: Option<&str>,
 ) -> Result<ResolvedUser, Response> {
+    resolve_user_internal(state, headers, user_id, false).await
+}
+
+pub async fn resolve_user_for_device_registration(state: &AppState, headers: &HeaderMap) -> Result<ResolvedUser, Response> {
+    resolve_user_internal(state, headers, None, true).await
+}
+
+async fn resolve_user_internal(state: &AppState, headers: &HeaderMap, user_id: Option<&str>, allow_unbound: bool) -> Result<ResolvedUser, Response> {
     let requested = user_id
         .map(|value| value.trim())
         .filter(|value| !value.is_empty());
@@ -39,6 +58,26 @@ pub async fn resolve_user(
     } else {
         None
     };
+    if let Some(auth) = token_auth.as_ref() {
+        let local = crate::user_store::UserStore::is_local_refresh_scope(&auth.session_scope);
+        if local && auth.family_id.is_none() && !allow_unbound {
+            return Err(error_response(StatusCode::UNAUTHORIZED, "device registration required".to_string()));
+        }
+        if let Some(family) = auth.family_id.as_deref() {
+            let storage = state.storage.clone();
+            let family = family.to_string();
+            let binding = blocking::run_db("api.user_context.device", move || storage.get_user_session_device(&family)).await
+                .map_err(|_| error_response(StatusCode::SERVICE_UNAVAILABLE, "session validation unavailable".to_string()))?;
+            if local && binding.is_none() && !allow_unbound {
+                return Err(error_response(StatusCode::UNAUTHORIZED, "device registration required".to_string()));
+            }
+            if let (Some(bound), Some(header)) = (binding, headers.get("x-wunder-device-id")) {
+                if header.to_str().ok() != Some(bound.device_id.as_str()) {
+                    return Err(error_response(StatusCode::UNAUTHORIZED, "device identity mismatch".to_string()));
+                }
+            }
+        }
+    }
     let token_user = token_auth.as_ref().map(|auth| auth.user.clone());
     let token_session_scope = token_auth.as_ref().map(|auth| auth.session_scope.clone());
     let token_presence_kind =

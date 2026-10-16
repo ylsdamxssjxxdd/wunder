@@ -2184,6 +2184,16 @@ impl TuiApp {
             self.thread_ui_cache.remove(index);
         }
 
+        // Change the selected thread only after its own lease is acquired.
+        // Reusing the previous thread's token makes the next input fail and
+        // leaks the previous lease until its TTL expires.
+        let next_session_id = uuid::Uuid::new_v4().simple().to_string();
+        let previous_lease_token = self.open_lease_token;
+        if let Err(error) = self.acquire_thread_lease(&next_session_id) {
+            self.push_log(LogKind::Error, error.to_string());
+            return;
+        }
+
         self.thread_registry.save_view_state(
             previous_session_id.as_str(),
             self.input.clone(),
@@ -2201,7 +2211,8 @@ impl TuiApp {
                 .queue_approval(previous_session_id.as_str(), request);
         }
 
-        self.session_id = uuid::Uuid::new_v4().simple().to_string();
+        self.session_id = next_session_id;
+        self.release_thread_lease(&previous_session_id, previous_lease_token);
         // A thread this process just created is writable by definition.
         self.watch_only_reason = None;
         self.thread_registry.activate(self.session_id.as_str());

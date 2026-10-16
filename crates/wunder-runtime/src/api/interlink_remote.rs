@@ -68,7 +68,8 @@ async fn remote_ws(
     }
     drop(config);
 
-    let auth_headers = match query.token.as_deref().map(str::trim) {
+    let protocol_token = headers.get("sec-websocket-protocol").and_then(|value| value.to_str().ok()).and_then(|value| value.split(',').map(str::trim).find_map(|item| item.strip_prefix("wunder-auth.")));
+    let auth_headers = match query.token.as_deref().or(protocol_token).map(str::trim) {
         Some(token) if !token.is_empty() && headers.get(AUTHORIZATION).is_none() => {
             let mut cloned = headers.clone();
             if let Ok(value) = HeaderValue::from_str(&format!("Bearer {token}")) {
@@ -83,6 +84,7 @@ async fn remote_ws(
         Err(response) => return Err(response),
     };
     let user_id = resolved.user.user_id.clone();
+    let credential = crate::auth::extract_bearer_token(&auth_headers).unwrap_or_default();
 
     let Some(device_id) = query
         .target
@@ -140,15 +142,17 @@ async fn remote_ws(
         .protocols([REMOTE_WS_PROTOCOL, TUNNEL_WS_PROTOCOL])
         .max_message_size(WS_MAX_MESSAGE_BYTES)
         .max_frame_size(WS_MAX_MESSAGE_BYTES)
-        .on_upgrade(move |socket| handle_remote(socket, state, device_id, thread_id)))
+        .on_upgrade(move |socket| handle_remote(socket, state, device_id, thread_id, credential, user_id)))
 }
 
 /// Bridge one watched `(device, thread)` pair onto the browser socket.
 async fn handle_remote(
     socket: WebSocket,
-    _state: Arc<AppState>,
+    state: Arc<AppState>,
     device_id: String,
     thread_id: String,
+    credential: String,
+    user_id: String,
 ) {
     let (mut sender, mut receiver) = socket.split();
 
@@ -194,6 +198,8 @@ async fn handle_remote(
         }
     }
 
+    let mut ticker = tokio::time::interval(std::time::Duration::from_secs(PING_INTERVAL_S));
+    ticker.tick().await;
     loop {
         tokio::select! {
             frame = thread_rx.recv() => {
@@ -202,7 +208,11 @@ async fn handle_remote(
                     break;
                 }
             }
-            _ = tokio::time::sleep(std::time::Duration::from_secs(PING_INTERVAL_S)) => {
+            _ = ticker.tick() => {
+                if !crate::api::user_context::credential_active(&state, &credential, &user_id).await {
+                    let _ = send_json(&mut sender, &json!({"type": REMOTE_FRAME_CLOSE, "reason": "session_revoked"})).await;
+                    break;
+                }
                 if sender.send(Message::Ping(Vec::new().into())).await.is_err() {
                     break;
                 }

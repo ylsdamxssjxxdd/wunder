@@ -284,6 +284,7 @@ async fn build_local_node(server: &Server) -> LocalNode {
         "device_name": "loopback",
         "client": "desktop",
         "logged_in_at": 0.0,
+        "interlink": {"enabled":true,"full_shadow":true},
     }))
     .expect("session file");
     session
@@ -697,6 +698,7 @@ fn loopback_tunnel_shadow_commands_and_approvals_end_to_end() {
 
 async fn loopback_run() {
     let server = spawn_server().await;
+    server.state.config_store.update(|config| config.interlink.heartbeat_s = 1).await.unwrap();
     // The alert pump is a 舰体 background task that the real server starts with
     // its janitor; this harness builds the router directly, so without an
     // explicit spawn every detected alert would only be counted as dropped.
@@ -705,6 +707,11 @@ async fn loopback_run() {
 
     // -- handshake: secret bootstrap + hello/ack --------------------------
     wait_connected(&node.client).await;
+    let initial_channel = node.client.status().channel_id;
+    // Survive more than three negotiated heartbeats without reconnecting.
+    tokio::time::sleep(Duration::from_secs(5)).await;
+    assert_eq!(node.client.status().state, wunder_server::interlink::client::TunnelState::Connected);
+    assert_eq!(node.client.status().channel_id, initial_channel);
     assert_eq!(
         node.client.status().device_id.as_deref(),
         Some(DEVICE_ID),
@@ -787,7 +794,7 @@ async fn loopback_run() {
     )
     .await;
     assert_eq!(cloud_record["status"], json!("succeeded"), "{cloud_record}");
-    let entries = &cloud_record["result"]["result"]["result"]["entries"];
+    let entries = &cloud_record["result"]["entries"];
     assert!(
         entries.is_array(),
         "cloud listing returns entries (is_array={}): {cloud_record}",
@@ -838,7 +845,7 @@ async fn loopback_run() {
     )
     .await;
     assert_eq!(record["status"], json!("succeeded"), "{record}");
-    let entries = record["result"]["result"]["entries"]
+    let entries = record["result"]["entries"]
         .as_array()
         .expect("entries");
     assert!(
@@ -869,7 +876,7 @@ async fn loopback_run() {
     let record = wait_terminal(&server, &read_id, Duration::from_secs(60)).await;
     assert_eq!(record["status"], json!("succeeded"), "{record}");
     assert_eq!(
-        record["result"]["result"]["transport"],
+        record["result"]["transport"],
         json!("stream"),
         "a 1 MiB file must not be inlined: {record}"
     );
@@ -1145,7 +1152,7 @@ async fn loopback_run() {
         "the remote cancel must settle: {cancel_record}"
     );
     assert_eq!(
-        cancel_record["result"]["result"]["cancelled"],
+        cancel_record["result"]["cancelled"],
         json!(true),
         "a live session had to be terminated, not a finished thread: {cancel_record}"
     );

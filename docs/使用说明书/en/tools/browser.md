@@ -46,9 +46,9 @@ At call time, the tool name dispatches the request to the matching provider.
 
 Except for a few tools, any of them can target a specific tab, and by default they act on the active tab.
 
-A typical chain: navigate → take a snapshot to get element refs → click / type → wait → read the page or take a screenshot. Use `browser_status` to confirm the runtime is ready.
+For interactive tasks, call `browser_navigate` directly without fetching the page first. A typical chain is navigation with a snapshot → batch input, submission, and a success condition → inspect the result. Use `browser_status` to confirm the runtime is ready.
 
-Navigation, click, type, wait, and batch calls accept `include_snapshot=true` to return a fresh element snapshot after success (4000 characters by default, adjustable with `max_chars`). Prefer `browser_batch` for known form fields, submission, and a success condition in one call. `browser_type` replaces existing text; `submit=true` presses Enter afterwards.
+Navigation includes an element snapshot by default; set `include_snapshot=false` to opt out. Click, type, wait, and batch calls accept `include_snapshot=true`. Attached snapshots use 4000 characters by default, adjustable with `max_chars`. Initially empty snapshots retry for up to 1500 ms for client rendering; `snapshot_timeout_ms` accepts 0–5000 ms, with 0 returning immediately. Populated snapshots do not wait. URL, title, and tab metadata are synchronized to the observation. Prefer `browser_batch` for known form fields, submission, and a success condition in one call. `browser_type` replaces existing text; `submit=true` presses Enter afterwards.
 
 ```json
 {
@@ -62,7 +62,7 @@ Navigation, click, type, wait, and batch calls accept `include_snapshot=true` to
 }
 ```
 
-Each batch contains 1–10 steps with a `kind`: `type`, `click`, `press`, `select`, `hover`, `drag`, `wait`, or `navigate`. Prefer waiting for a visible success `selector`, `text`, or `url` pattern; a fixed delay does not verify success. Navigation can invalidate element refs, so use stable selectors or refresh the snapshot across pages.
+Each batch contains 1–10 steps with a `kind`: `type`, `click`, `press`, `select`, `hover`, `drag`, `wait`, or `navigate`. Wait for a known success `selector`, `text`, or `url` pattern rather than guessing a destination route. Use `state=hidden` for an observed loading indicator to disappear; states are visible (default), hidden, attached, and detached. Multiple conditions are checked sequentially within one `timeout_ms` budget. Conditions override `wait_ms`; a fixed delay alone does not verify success. URL patterns are returned as `expected_url`, while `url` remains the actual address. Navigation can invalidate element refs, so use stable selectors or refresh the snapshot across pages.
 
 ## What results look like
 
@@ -79,6 +79,8 @@ Providers return content blocks alongside structured data. The runtime preserves
 `browser_status` strips control-plane information before returning: host, port, and token are not leaked to the model.
 
 Screenshot blocks include an `attachment` with a workspace-relative path, format, and byte count; use the image-reading tool for visual inspection. Input actions do not echo filled values, and snapshots do not use input values as control names. Batch failures preserve `completed_steps`, a 1-based `failed_step`, and completed action summaries: inspect progress before retrying to avoid duplicate submissions. If an action succeeds but its optional snapshot fails, the action stays successful and returns `snapshot_error`.
+
+Model-facing tool definitions retain browser batch, wait, and observation instructions. The default prompt asks the model not to repeat user-provided passwords, verification codes, or tokens in progress or final replies unless explicitly requested. System prompts remain frozen after thread initialization; existing threads retain their prompt while updated tool descriptions are delivered through the tool definitions.
 
 ## Automatic handling and limits
 

@@ -202,6 +202,9 @@ export component SettingsPage inherits Rectangle {
     // Login state, quota snapshot and the drafts are wired two-way to the
     // shell; the native side owns every cloud call and pushes results back.
     in-out property <bool> cloud-logged-in: false;
+    in-out property <bool> cloud-inbound-enabled: false;
+    in-out property <bool> cloud-full-shadow: false;
+    callback cloud-toggle-sharing(bool, bool);
     in-out property <bool> cloud-expired: false;
     in-out property <string> cloud-username;
     in-out property <string> cloud-balance;
@@ -219,6 +222,7 @@ export component SettingsPage inherits Rectangle {
     in-out property <string> cloud-last-error;
     in-out property <string> cloud-last-success;
     in-out property <string> cloud-next-retry;
+    callback cloud-open-threads();
     callback cloud-login();
     callback cloud-logout();
     callback cloud-refresh-account();
@@ -873,6 +877,12 @@ export component SettingsPage inherits Rectangle {
                                         enabled: root.cloud-logged-in && !root.cloud-expired && !root.cloud-busy;
                                         clicked => { root.cloud-refresh-account(); }
                                     }
+                                    if root.cloud-logged-in : Action {
+                                        width: 130px; show-label: true;
+                                        label: I18n.zh ? "云端智能体与线程" : "Cloud threads";
+                                        enabled: !root.cloud-expired && !root.cloud-busy;
+                                        clicked => { root.cloud-open-threads(); }
+                                    }
                                     // Lightweight retry while the engine reports a
                                     // degraded connection: a failed refresh keeps the
                                     // state, a success flips back to online.
@@ -893,6 +903,16 @@ export component SettingsPage inherits Rectangle {
                                         enabled: root.cloud-logged-in && !root.cloud-busy;
                                         toggled => { root.cloud-toggle-sync(root.cloud-sync-enabled); }
                                     }
+                                }
+                                SettingRow {
+                                    label: I18n.zh ? "允许远程访问本地" : "Allow remote local access";
+                                    note: I18n.zh ? "启用设备互通；写入和线程操作仍需本地审批" : "Enable the tunnel; writes and thread actions still require local approval";
+                                    Switch { checked <=> root.cloud-inbound-enabled; enabled: root.cloud-logged-in && !root.cloud-busy; toggled => { root.cloud-toggle-sharing(self.checked, root.cloud-full-shadow); } }
+                                }
+                                SettingRow {
+                                    label: I18n.zh ? "共享工作区与线程目录" : "Share workspace and thread catalog";
+                                    note: I18n.zh ? "需同时获得舰桥授权；关闭时只共享设备摘要" : "Also requires server grants; otherwise only device summary is shared";
+                                    Switch { checked <=> root.cloud-full-shadow; enabled: root.cloud-inbound-enabled && !root.cloud-busy; toggled => { root.cloud-toggle-sharing(root.cloud-inbound-enabled, self.checked); } }
                                 }
                             }
                             SettingsCard {

@@ -167,7 +167,9 @@ pub(super) fn install(app: &MainWindow, state: Rc<RefCell<State>>) {
                         "正在生成…" | "正在排队"
                     ) || turn.assistant.stats_status.starts_with("正在排队 ·")
                 });
+                let finished = app.get_busy() && !busy;
                 app.set_busy(busy);
+                if finished { crate::workspace_files::execution_finished(&app, desktop.clone()); }
                 if !busy {
                     app.set_stopping(false);
                 }

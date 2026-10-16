@@ -27,6 +27,8 @@ const TRUNCATION_NOTE: &str = "\n…(output truncated)";
 pub(crate) struct ExecEventWriter {
     thread_id: String,
     message_seq: u64,
+    tool_seq: u64,
+    command_seq: u64,
     open_message: Option<OpenText>,
     commands: CommandSessionDisplayState,
     /// Open items keyed by the stable tool call id, for both plain tools and
@@ -60,6 +62,8 @@ impl ExecEventWriter {
         Self {
             thread_id: thread_id.to_string(),
             message_seq: 0,
+            tool_seq: 0,
+            command_seq: 0,
             open_message: None,
             commands: CommandSessionDisplayState::default(),
             open_items: Vec::new(),
@@ -270,7 +274,8 @@ impl ExecEventWriter {
         if self.has_open_item(call_id.as_str()) || self.call_is_closed(call_id.as_str()) {
             return;
         }
-        let id = format!("item_{}", self.open_items.len() + 1);
+        self.tool_seq = self.tool_seq.saturating_add(1);
+        let id = format!("item_{}", self.tool_seq);
         emit(json!({
             "type": "item.started",
             "item": {
@@ -361,7 +366,8 @@ impl ExecEventWriter {
                 .and_then(Value::as_str)
                 .unwrap_or("tool")
                 .to_string();
-            let id = format!("item_{}", self.open_items.len() + 1);
+            self.tool_seq = self.tool_seq.saturating_add(1);
+            let id = format!("item_{}", self.tool_seq);
             self.open_items.push((
                 call_id.clone(),
                 ToolItem {
@@ -480,7 +486,8 @@ impl ExecEventWriter {
                 return;
             }
         }
-        let id = format!("cmd_{}", self.command_items.len() + 1);
+        self.command_seq = self.command_seq.saturating_add(1);
+        let id = format!("cmd_{}", self.command_seq);
         emit(json!({
             "type": "item.started",
             "item": {
@@ -735,6 +742,23 @@ mod tests {
             id: None,
             timestamp: None,
         }
+    }
+
+    #[test]
+    fn live_acceptance_tool_item_ids_are_not_reused_after_completion() {
+        let mut writer = ExecEventWriter::new("fixture-thread");
+        let mut ids = std::collections::HashSet::new();
+        for n in 0..4 {
+            let call = format!("fixture-call-{n}");
+            writer.start_tool(&json!({"tool": "read_file", "tool_call_id": call, "args": {"path": "fixture.txt"}}));
+            assert!(ids.insert(writer.open_items.last().expect("open item").1.id.clone()));
+            writer.complete_tool(&json!({"tool": "read_file", "tool_call_id": call, "ok": true}));
+            assert!(writer.open_items.is_empty());
+        }
+        writer.complete_tool(
+            &json!({"tool": "read_file", "tool_call_id": "fixture-orphan", "ok": true}),
+        );
+        assert_eq!(writer.tool_seq, 5);
     }
 
     #[test]

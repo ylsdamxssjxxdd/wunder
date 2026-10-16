@@ -80,8 +80,8 @@ struct SessionFingerprint {
     modified_nanos: u32,
 }
 
-fn session_fingerprint(base: &Path) -> Option<SessionFingerprint> {
-    let path = CloudSessionFile::path_for(base, "shared");
+fn session_fingerprint(base: &Path, client: &str) -> Option<SessionFingerprint> {
+    let path = CloudSessionFile::path_for(base, client);
     let metadata = std::fs::metadata(path).ok()?;
     let modified = metadata.modified().ok()?;
     let duration = modified.duration_since(UNIX_EPOCH).ok()?;
@@ -95,6 +95,8 @@ fn session_fingerprint(base: &Path) -> Option<SessionFingerprint> {
 /// UI-facing login/account status snapshot.
 #[derive(Debug, Clone, Serialize)]
 pub struct CloudStatus {
+    pub inbound_enabled: bool,
+    pub full_shadow: bool,
     pub logged_in: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub server: Option<String>,
@@ -133,6 +135,7 @@ pub struct CloudService {
     state: Mutex<CloudServiceState>,
     reporter: Mutex<Option<Arc<LogReporter>>>,
     session_base_override: Mutex<Option<std::path::PathBuf>>,
+    local_client: Mutex<String>,
     /// Single-flight guard for silent token refresh: concurrent 401s queue
     /// here and only one refresh request is issued.
     refresh_lock: tokio::sync::Mutex<()>,
@@ -164,6 +167,7 @@ impl CloudService {
             }),
             reporter: Mutex::new(None),
             session_base_override: Mutex::new(None),
+            local_client: Mutex::new("shared".to_string()),
             refresh_lock: tokio::sync::Mutex::new(()),
             flush_wake: Notify::new(),
             flush_in_flight: Arc::new(AtomicBool::new(false)),
@@ -188,6 +192,20 @@ impl CloudService {
             .unwrap_or_else(|err| err.into_inner()) = Some(dir);
     }
 
+    pub fn set_client_kind(&self, client: &str) {
+        *self
+            .local_client
+            .lock()
+            .unwrap_or_else(|err| err.into_inner()) = normalize_client(client);
+    }
+
+    pub fn client_kind(&self) -> String {
+        self.local_client
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .clone()
+    }
+
     fn session_base_dir(&self) -> std::path::PathBuf {
         self.session_base_override
             .lock()
@@ -198,7 +216,7 @@ impl CloudService {
 
     fn ensure_loaded(&self) {
         let base = self.session_base_dir();
-        let fingerprint = session_fingerprint(&base);
+        let fingerprint = session_fingerprint(&base, &self.client_kind());
         {
             let state = self.lock_state();
             if state.loaded
@@ -220,7 +238,7 @@ impl CloudService {
         state.loaded = true;
         state.loaded_base = Some(base.clone());
         state.session_fingerprint = fingerprint;
-        let next_session = CloudSessionFile::load_any(&base);
+        let next_session = CloudSessionFile::load_for(&base, &self.client_kind());
         let changed = match (&state.session, &next_session) {
             (Some(old), Some(new)) => {
                 old.token != new.token || old.refresh_token != new.refresh_token
@@ -229,11 +247,7 @@ impl CloudService {
             _ => true,
         };
         if let Some(session) = next_session {
-            tracing::info!(
-                "[cloud] session restored for user {} on {}",
-                session.username,
-                session.server
-            );
+            tracing::info!("[cloud] local client session restored");
             state.session = Some(session);
             state.connection = CONNECTION_ONLINE;
         } else {
@@ -273,7 +287,7 @@ impl CloudService {
 
     fn persist_session_fingerprint(&self) {
         let base = self.session_base_dir();
-        self.lock_state().session_fingerprint = session_fingerprint(&base);
+        self.lock_state().session_fingerprint = session_fingerprint(&base, &self.client_kind());
     }
 
     /// Current session snapshot (lazy-loads the session file once).
@@ -535,7 +549,8 @@ impl CloudService {
         {
             let mut state = self.lock_state();
             state.session = Some(next);
-            state.session_fingerprint = session_fingerprint(&self.session_base_dir());
+            state.session_fingerprint =
+                session_fingerprint(&self.session_base_dir(), &self.client_kind());
             state.expired = false;
             state.connection = CONNECTION_ONLINE;
             state.last_error = None;
@@ -549,15 +564,25 @@ impl CloudService {
     /// single-flight silent refresh and retry the request exactly once with
     /// the fresh token. Success and network outcomes feed the connection
     /// state machine. `build` must be pure (called once per attempt).
-    async fn authed_send(
+    pub async fn authed_send(
         &self,
         build: impl Fn(&CloudSessionFile) -> reqwest::RequestBuilder,
     ) -> Result<reqwest::Response> {
+        if self.session().is_none() {
+            self.adopt_shared_login().await?;
+        }
         let Some(session) = self.session() else {
             return Err(anyhow!(CloudSessionExpired));
         };
+        let identity = (
+            session.server.clone(),
+            session.user_id.clone(),
+            session.device_id.clone(),
+            session.logged_in_at,
+        );
         let stale_token = session.token.clone();
         let attempt = build(&session)
+            .header("x-wunder-device-id", &session.device_id)
             .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
             .send()
             .await;
@@ -582,7 +607,19 @@ impl CloudService {
         let Some(session) = self.session() else {
             return Err(anyhow!(CloudSessionExpired));
         };
+        if (
+            session.server.clone(),
+            session.user_id.clone(),
+            session.device_id.clone(),
+            session.logged_in_at,
+        ) != identity
+        {
+            return Err(anyhow!(
+                "cloud session changed; retry the operation explicitly"
+            ));
+        }
         let attempt = build(&session)
+            .header("x-wunder-device-id", &session.device_id)
             .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
             .send()
             .await;
@@ -667,9 +704,16 @@ impl CloudService {
     /// so the device shows up online right away. Every failure is recorded in
     /// the connection state machine only.
     pub async fn startup_probe(&self, config_store: &ConfigStore) {
-        let Some(_) = self.session() else {
+        if self.session().is_none() {
+            let config = config_store.clone();
+            tokio::spawn(async move {
+                let cloud = super::shared();
+                if cloud.adopt_shared_login().await.is_ok() {
+                    let _ = cloud.synthesize_cloud_models(&config).await;
+                }
+            });
             return;
-        };
+        }
         self.ensure_reporter_task();
         self.ensure_keeper_task();
         let config_store = config_store.clone();
@@ -715,6 +759,7 @@ impl CloudService {
         client: &str,
     ) -> Result<CloudStatus> {
         let client_kind = normalize_client(client);
+        let _file_lock = self.acquire_session_file_lock().await?;
         let scope = if client_kind == "cli" {
             "local_cli"
         } else {
@@ -766,7 +811,8 @@ impl CloudService {
 
         // 2. Register (or reuse) this device.
         let device_name = local_device_name(&client_kind);
-        let device_body = json!({
+        let mut device_body = json!({
+            "device_id": self.installation_device_id(&client_kind, &server, &user_id, false)?,
             "client": client_kind,
             "name": device_name,
             "os": std::env::consts::OS,
@@ -782,8 +828,24 @@ impl CloudService {
             .send()
             .await
             .map_err(|err| anyhow!("cloud device registration failed: {err}"))?;
-        let status = response.status();
-        let body = read_json(response).await;
+        let mut status = response.status();
+        let mut body = read_json(response).await;
+        if status.as_u16() == 401 && body["error"]["code"] == "DEVICE_REVOKED" {
+            // A fresh password login may register a new identity with default
+            // grants. Silent adoption never replaces a revoked device.
+            device_body["device_id"] =
+                json!(self.installation_device_id(&client_kind, &server, &user_id, true)?);
+            let response = self
+                .http
+                .post(format!("{server}/wunder/cloud/devices"))
+                .bearer_auth(&token)
+                .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
+                .json(&device_body)
+                .send()
+                .await?;
+            status = response.status();
+            body = read_json(response).await;
+        }
         if !status.is_success() {
             return Err(anyhow!(
                 "cloud device registration failed: {status} {}",
@@ -814,6 +876,9 @@ impl CloudService {
             preferences_sync_enabled: true,
             interlink: super::session::InterlinkSessionConfig::default(),
         };
+        // Signing in enables outbound cloud use. Inbound local access requires
+        // the user's separate, persisted consent in settings / CLI.
+        session.interlink.enabled = false;
         session.account = Some(CloudAccountSnapshot {
             max_concurrent_calls,
             ..self.fetch_account(&session).await?
@@ -832,14 +897,107 @@ impl CloudService {
 
         // 5. Persist and install; the reporter starts from the persisted cursor.
         let base_dir = self.session_base_dir();
-        let _file_lock = self.acquire_session_file_lock().await?;
         session.save(&base_dir)?;
+        session.publish_shared(&base_dir)?;
+        let _ = std::fs::remove_file(self.adoption_block_path());
         self.install_session(session);
 
         // 6. Synthesize cloud models into the local config.
         self.synthesize_cloud_models(config_store).await?;
 
         Ok(self.status())
+    }
+
+    fn installation_device_id(
+        &self,
+        client: &str,
+        server: &str,
+        user: &str,
+        replace: bool,
+    ) -> Result<String> {
+        use sha2::{Digest, Sha256};
+        let namespace = format!("{server}\n{user}");
+        let digest = format!("{:x}", Sha256::digest(namespace.as_bytes()));
+        let path = self
+            .session_base_dir()
+            .join(format!("config/cloud.{client}.{}.device-id", &digest[..24]));
+        if let Some(value) = std::fs::read_to_string(&path).ok().filter(|_| !replace) {
+            if uuid::Uuid::parse_str(value.trim()).is_ok() {
+                return Ok(value.trim().to_string());
+            }
+        }
+        let value = uuid::Uuid::new_v4().to_string();
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        crate::core::atomic_write::atomic_write_text(&path, &value)?;
+        Ok(value)
+    }
+
+    /// Exchange the shared account credential for a separate local-form
+    /// family. No password is retained and the source family stays untouched.
+    pub async fn adopt_shared_login(&self) -> Result<()> {
+        let client = self.client_kind();
+        if client == "shared" || self.session().is_some() {
+            return Ok(());
+        }
+        let _lock = self.acquire_session_file_lock().await?;
+        if self.session().is_some() {
+            return Ok(());
+        }
+        if self.adoption_block_path().exists() {
+            return Err(anyhow!("logged out; explicit login required"));
+        }
+        let source = CloudSessionFile::load_any(&self.session_base_dir())
+            .ok_or_else(|| anyhow!("not logged in"))?;
+        let response = self
+            .http
+            .post(format!("{}/wunder/auth/local-session", source.server))
+            .bearer_auth(&source.token)
+            .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
+            .json(&json!({ "client": client }))
+            .send()
+            .await?;
+        let status = response.status();
+        let body = read_json(response).await;
+        if !status.is_success() {
+            return Err(anyhow!("shared login exchange rejected ({status})"));
+        }
+        let data = &body["data"];
+        let token = data["access_token"]
+            .as_str()
+            .ok_or_else(|| anyhow!("missing access token"))?
+            .to_string();
+        let device_id =
+            self.installation_device_id(&client, &source.server, &source.user_id, false)?;
+        let response = self.http.post(format!("{}/wunder/cloud/devices", source.server)).bearer_auth(&token)
+            .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS)).json(&json!({
+                "device_id": device_id, "client": client, "name": local_device_name(&client),
+                "os": std::env::consts::OS, "arch": std::env::consts::ARCH, "app_version": env!("CARGO_PKG_VERSION")
+            })).send().await?;
+        let status = response.status();
+        let registered = read_json(response).await;
+        if !status.is_success() {
+            return Err(anyhow!("device registration rejected ({status})"));
+        }
+        let mut session = source;
+        session.token = token;
+        session.refresh_token = data["refresh_token"].as_str().map(str::to_string);
+        session.token_expires_at = data["expires_at"].as_f64();
+        session.scope = format!("local_{client}");
+        session.client = client;
+        session.device_id = registered["data"]["device_id"]
+            .as_str()
+            .ok_or_else(|| anyhow!("missing device identity"))?
+            .to_string();
+        session.interlink.node_secret = None;
+        session.interlink.secret_version = 0;
+        session.interlink.enabled = false;
+        session.interlink.full_shadow = false;
+        session.logged_in_at = super::reporter::now_unix_seconds();
+        session.save(&self.session_base_dir())?;
+        self.install_session(session);
+        Ok(())
     }
 
     /// Install a fully built session (login result or restored snapshot):
@@ -852,7 +1010,8 @@ impl CloudService {
             let mut state = self.lock_state();
             state.loaded = true;
             state.loaded_base = Some(self.session_base_dir());
-            state.session_fingerprint = session_fingerprint(&self.session_base_dir());
+            state.session_fingerprint =
+                session_fingerprint(&self.session_base_dir(), &self.client_kind());
             state.expired = false;
             state.connection = CONNECTION_ONLINE;
             state.last_error = None;
@@ -902,6 +1061,13 @@ impl CloudService {
     /// here matters: `loaded_base` is cleared, so a surviving file would be
     /// reloaded on the next touch and resurrect the session.
     fn clear_session_state(&self) {
+        // Explicit logout/revocation must survive restart and never auto-adopt
+        // a still logged-in companion form's credential.
+        let marker = self.adoption_block_path();
+        if let Some(parent) = marker.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = crate::core::atomic_write::atomic_write_text(&marker, "logged_out");
         let client = {
             let mut state = self.lock_state();
             let client = state.session.take().map(|session| session.client);
@@ -923,8 +1089,14 @@ impl CloudService {
         if let Some(client) = client.as_deref() {
             CloudSessionFile::remove(&self.session_base_dir(), client);
         }
-        self.lock_state().session_fingerprint = session_fingerprint(&self.session_base_dir());
+        self.lock_state().session_fingerprint =
+            session_fingerprint(&self.session_base_dir(), &self.client_kind());
         *self.reporter.lock().unwrap_or_else(|err| err.into_inner()) = None;
+    }
+
+    fn adoption_block_path(&self) -> std::path::PathBuf {
+        self.session_base_dir()
+            .join(format!("config/cloud.{}.logged-out", self.client_kind()))
     }
 
     /// Status snapshot for UI binding.
@@ -933,6 +1105,8 @@ impl CloudService {
         let state = self.lock_state();
         let Some(session) = state.session.as_ref() else {
             return CloudStatus {
+                inbound_enabled: false,
+                full_shadow: false,
                 logged_in: false,
                 server: None,
                 user_id: None,
@@ -958,6 +1132,8 @@ impl CloudService {
             state.connection
         };
         CloudStatus {
+            inbound_enabled: session.interlink.enabled,
+            full_shadow: session.interlink.full_shadow,
             logged_in: true,
             server: Some(session.server.clone()),
             user_id: Some(session.user_id.clone()),
@@ -978,6 +1154,21 @@ impl CloudService {
     }
 
     /// Toggle basic-preference sharing (§4.6).
+    pub async fn set_local_sharing(&self, enabled: bool, full_shadow: bool) -> Result<()> {
+        let _lock = self.acquire_session_file_lock().await?;
+        let mut session = self.session().ok_or_else(|| anyhow!(CloudSessionExpired))?;
+        session.interlink.enabled = enabled;
+        session.interlink.full_shadow = full_shadow;
+        session.save(&self.session_base_dir())?;
+        self.install_session(session);
+        // Finish the old generation before its next handshake offers new grants.
+        if let Some(client) = crate::services::interlink::client::shared() {
+            client.stop();
+            client.start();
+        }
+        Ok(())
+    }
+
     pub async fn set_preferences_sync(&self, enabled: bool) -> Result<()> {
         let _file_lock = self.acquire_session_file_lock().await?;
         self.ensure_loaded();
@@ -1108,6 +1299,34 @@ impl CloudService {
         Ok(body.get("data").cloned().unwrap_or(Value::Null))
     }
 
+    pub async fn cloud_agents(&self) -> Result<Value> {
+        self.interlink_data(
+            |session| {
+                self.http
+                    .get(format!("{}/wunder/agents", session.server))
+                    .bearer_auth(&session.token)
+            },
+            "agent catalog",
+        )
+        .await
+    }
+
+    pub async fn cloud_thread_view(&self, thread: &str) -> Result<Value> {
+        let thread = urlencode_component(thread);
+        self.interlink_data(
+            |session| {
+                self.http
+                    .get(format!(
+                        "{}/wunder/chat/sessions/{thread}/view/bootstrap",
+                        session.server
+                    ))
+                    .bearer_auth(&session.token)
+            },
+            "thread view",
+        )
+        .await
+    }
+
     /// Device fleet with tunnel-aware presence, as the user sees it.
     pub async fn interlink_nodes(&self) -> Result<Value> {
         self.interlink_data(
@@ -1157,6 +1376,23 @@ impl CloudService {
                     .bearer_auth(&session.token)
             },
             "command query",
+        )
+        .await
+    }
+
+    pub async fn interlink_cancel_command(&self, command_id: &str) -> Result<Value> {
+        let command_id = urlencode_component(command_id);
+        self.interlink_data(
+            |session| {
+                self.http
+                    .post(format!(
+                        "{}/wunder/interlink/commands/{command_id}/cancel",
+                        session.server
+                    ))
+                    .bearer_auth(&session.token)
+                    .json(&json!({}))
+            },
+            "command cancel",
         )
         .await
     }

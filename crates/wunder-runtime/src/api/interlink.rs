@@ -332,6 +332,9 @@ fn device_node(
         ),
         None => (default_device_capabilities(), false, None),
     };
+    let policy = digest::DevicePolicy::parse(device.interlink.as_ref().and_then(|patch| patch.policy_overrides.as_deref()));
+    let capabilities = live.map(|channel| channel.capabilities.clone()).unwrap_or_else(|| interlink_ws::grant_capabilities(&capabilities, &capabilities, &policy));
+    let allowed: Vec<_> = wunder_core::interlink::allowed_commands(&capabilities).into_iter().filter(|kind| !policy.disables(kind)).collect();
 
     let status = match live {
         // A live tunnel answers immediately; its presence beat carries busy/away
@@ -359,10 +362,12 @@ fn device_node(
         last_seen_at: live
             .map(|live| live.last_seen_at)
             .unwrap_or(device.last_seen_at),
-        capabilities,
+        capabilities: capabilities.clone(),
         shadow_revision,
         connected: live.is_some() || connected,
         meta: json!({
+            "allowed_commands": allowed,
+            "sharing": if capabilities.iter().any(|cap| cap == "shadow:full") { "full" } else { "minimal" },
             "os": device.os,
             "arch": device.arch,
             "app_version": device.app_version,
@@ -702,6 +707,20 @@ async fn rotate_node_secret(
         Ok(None) => return shadow_device_error(),
         Err(err) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
     };
+    if let Some(token) = crate::auth::extract_bearer_token(&headers) {
+        let store = state.user_store.clone();
+        let storage = state.storage.clone();
+        let target = device_id.clone();
+        let bound = blocking::run_db("api.interlink.secret_binding", move || {
+            let auth = store.authenticate_token_details(&token)?;
+            match auth.and_then(|auth| auth.family_id) {
+                Some(family) => Ok(storage.get_user_session_device(&family)?
+                    .is_some_and(|binding| binding.device_id == target)),
+                None => Ok(true),
+            }
+        }).await;
+        if !matches!(bound, Ok(true)) { return shadow_device_error(); }
+    }
     if device.revoked || device.user_id != user_id {
         return shadow_device_error();
     }
@@ -854,20 +873,12 @@ async fn issue_command(
 
     // Where did this come from? A local node sends its own device header; a
     // browser session is `web`.
-    let from_node = request
-        .from
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .or_else(|| {
-            headers
+    let from_node = headers
                 .get("x-wunder-device-id")
                 .and_then(|value| value.to_str().ok())
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
                 .map(|value| format!("device:{value}"))
-        })
         .unwrap_or_else(|| "web".to_string());
 
     let (direction, node) = if to == "cloud" {
@@ -959,7 +970,14 @@ async fn issue_command(
         let kind = kind.to_string();
         let actor = outcome.record.actor_user_id.clone();
         let pending = outcome.record.approval_state == APPROVAL_PENDING;
+        static CLOUD_COMMAND_SLOTS: std::sync::OnceLock<Arc<tokio::sync::Semaphore>> = std::sync::OnceLock::new();
+        let slots = CLOUD_COMMAND_SLOTS.get_or_init(|| Arc::new(tokio::sync::Semaphore::new(64)));
+        let Ok(permit) = slots.clone().try_acquire_owned() else {
+            let _ = commands::finalize(state.storage.clone(), &command_id, COMMAND_STATUS_FAILED, Some(now_unix_seconds()), Some(ERR_NODE_BUSY), None).await;
+            return error_response(StatusCode::SERVICE_UNAVAILABLE, "cloud command capacity reached".to_string());
+        };
         tokio::spawn(async move {
+            let _permit = permit;
             // A pending ticket must be decided first; the waiter keeps the
             // original args in hand because the ledger stores digests only.
             if pending && !wait_for_cloud_approval(&state, &command_id).await {
@@ -1063,6 +1081,8 @@ async fn get_command(
     }
     let digest_value = serde_json::from_str::<Value>(record.args_digest.as_deref().unwrap_or("{}"))
         .unwrap_or(Value::Null);
+    let result = commands::hub().result(&record.command_id);
+    let expired_result = record.status == "succeeded" && result.is_none();
     Json(json!({
         "data": {
             "command_id": record.command_id,
@@ -1073,10 +1093,10 @@ async fn get_command(
             "created_at": record.created_at,
             "acked_at": record.acked_at,
             "finished_at": record.finished_at,
-            "error_code": record.error_code,
-            "error_summary": record.error_summary,
+            "error_code": if expired_result {Some("RESULT_EXPIRED".to_string())} else {record.error_code},
+            "error_summary": if expired_result {Some("operation completed; its transient result expired".to_string())} else {record.error_summary},
             "args_digest": digest_value,
-            "result": commands::hub().result(&record.command_id),
+            "result": result,
             "queued_depth": commands::hub().queued_depth(Some(&record.actor_user_id)),
         }
     }))
@@ -1223,6 +1243,7 @@ async fn wait_for_cloud_approval(state: &Arc<AppState>, command_id: &str) -> boo
     // Ticket TTL is 120s; the waiter outlives it so expiry is observed here.
     let deadline = now_unix_seconds() + 180.0;
     loop {
+        if !load_command(state, command_id).await.ok().flatten().is_some_and(|row| !wunder_core::interlink::is_terminal_command_status(&row.status)) { return false; }
         let now = now_unix_seconds();
         if now > deadline {
             let _ = commands::finalize(

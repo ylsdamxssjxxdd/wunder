@@ -1101,6 +1101,13 @@ impl SqliteSchemaStorage for SqliteStorage {
               ON user_refresh_tokens (user_id, family_id);
             CREATE INDEX IF NOT EXISTS idx_user_refresh_tokens_expires
               ON user_refresh_tokens (expires_at);
+            CREATE TABLE IF NOT EXISTS user_session_devices (
+              family_id TEXT PRIMARY KEY,
+              user_id TEXT NOT NULL,
+              device_id TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_user_session_devices_device
+              ON user_session_devices (device_id);
             CREATE TABLE IF NOT EXISTS user_session_scopes (
               user_id TEXT NOT NULL,
               session_scope TEXT NOT NULL,

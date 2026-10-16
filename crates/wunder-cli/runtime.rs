@@ -205,6 +205,7 @@ impl CliRuntime {
         // Cloud self-healing: refresh the session, re-synthesize the cloud
         // models and fire one heartbeat in the background. The engine probes
         // without blocking, so both the TUI and command mode start instantly.
+        wunder_server::cloud::shared().set_client_kind("cli");
         wunder_server::cloud::shared()
             .startup_probe(&config_store)
             .await;

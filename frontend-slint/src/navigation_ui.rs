@@ -18,13 +18,9 @@ pub(crate) fn project(app: &MainWindow) {
 }
 
 thread_local! {
-    /// Workspaces the user expanded; every workspace starts collapsed and one
-    /// click on its row toggles between open (solid glyph) and closed (hollow).
+    /// Only the selected workspace reveals its thread tree.
     static EXPANDED: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
-    /// Manual workspace display order (workspace ids). Session-scoped until the
-    /// facade grows a persisted ordering API; a row joins the list the first
-    /// time it takes part in a drag, and unknown ids rank before the ordered
-    /// tail so a fresh workspace keeps its facade (top) position.
+    /// Dragged workspace order, persisted through the native workspace façade.
     static WORKSPACE_ORDER: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
     /// Manual thread display order (session ids), same semantics as above.
     static THREAD_ORDER: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
@@ -238,6 +234,10 @@ fn thread_archivable(status: &str, locked: bool) -> bool {
 /// row rebuilds reuse the existing cards so selection changes cost no I/O.
 pub(crate) fn project_sidebar(app: &MainWindow, desktop: Option<&NativeDesktop>) {
     if let Some(desktop) = desktop {
+        let selected_id = usize::try_from(app.get_selected_workspace())
+            .ok()
+            .and_then(|index| app.get_workspaces().row_data(index))
+            .map(|card| card.workspace_id.to_string());
         match desktop.list_workspaces() {
             Ok(list) => {
                 let cards: Vec<WorkspaceCard> = list
@@ -255,10 +255,20 @@ pub(crate) fn project_sidebar(app: &MainWindow, desktop: Option<&NativeDesktop>)
                     .collect();
                 app.set_workspaces(ModelRc::new(VecModel::from(cards)));
                 let count = app.get_workspaces().row_count();
-                let selected = app.get_selected_workspace();
-                if !(0..count).contains(&(selected as usize)) {
-                    app.set_selected_workspace(if count > 0 { 0 } else { -1 });
-                }
+                let index = selected_id.and_then(|id| {
+                    app.get_workspaces()
+                        .iter()
+                        .position(|card| card.workspace_id == id)
+                });
+                app.set_selected_workspace(index.map(|index| index as i32).unwrap_or(
+                    if crate::workspace_files::is_cloud_target() {
+                        -1
+                    } else if count > 0 {
+                        0
+                    } else {
+                        -1
+                    },
+                ));
             }
             Err(error) => app.set_status(format!("无法读取工作区：{error}").into()),
         }
@@ -278,11 +288,13 @@ fn rebuild_rows(app: &MainWindow) {
         app.set_sidebar_selected_count(0);
         return;
     }
-    let selected = (usize::try_from(app.get_selected_workspace()).unwrap_or(0))
-        .min(cards_model.row_count() - 1);
-    if app.get_selected_workspace() != selected as i32 {
-        app.set_selected_workspace(selected as i32);
-    }
+    let selected = if crate::workspace_files::is_cloud_target() {
+        None
+    } else {
+        usize::try_from(app.get_selected_workspace())
+            .ok()
+            .filter(|&index| index < cards_model.row_count())
+    };
     let conversations = app.get_conversations();
     let active = app.get_active_session_id().to_string();
     // Multi-select bookkeeping: drop ticks for conversations that no longer
@@ -299,7 +311,7 @@ fn rebuild_rows(app: &MainWindow) {
     if let Some(cloud) = cloud {
         rows.push(cloud);
     }
-    // Manual drag order is session-scoped; un-ordered ids keep facade position.
+    // Persisted manual order; un-ordered ids keep their facade position.
     let mut cards: Vec<(usize, WorkspaceCard)> = cards_model.iter().enumerate().collect();
     WORKSPACE_ORDER.with(|slot| {
         let order = slot.borrow();
@@ -308,7 +320,7 @@ fn rebuild_rows(app: &MainWindow) {
     EXPANDED.with(|slot| {
         let expanded = slot.borrow();
         for (wi, card) in cards {
-            let expanded = expanded.contains(card.workspace_id.as_str());
+            let expanded = selected == Some(wi) && expanded.contains(card.workspace_id.as_str());
             rows.push(SidebarRow {
                 kind: 0,
                 workspace_id: card.workspace_id.clone(),
@@ -317,7 +329,7 @@ fn rebuild_rows(app: &MainWindow) {
                 color: card.color.clone(),
                 thread_count: card.thread_count,
                 expanded,
-                selected: wi == selected,
+                selected: selected == Some(wi),
                 thread_id: "".into(),
                 title: "".into(),
                 status: "".into(),
@@ -434,7 +446,9 @@ pub(crate) fn focus_workspace_of(
             // The focused thread's workspace must show its threads, so the
             // focus implicitly expands the workspace.
             EXPANDED.with(|slot| {
-                slot.borrow_mut().insert(workspace_id.to_string());
+                let mut expanded = slot.borrow_mut();
+                expanded.clear();
+                expanded.insert(workspace_id.to_string());
             });
             let root = card.root_path.to_string();
             if !root.is_empty() {
@@ -444,6 +458,7 @@ pub(crate) fn focus_workspace_of(
                     crate::workspace_files::Target::Local(root),
                 );
             }
+            project_sidebar(app, None);
             return;
         }
     }
@@ -451,6 +466,39 @@ pub(crate) fn focus_workspace_of(
 
 /// Sidebar interactions and the workspace entry points on the window.
 pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
+    let weak = app.as_weak();
+    let layout_api = desktop.clone();
+    std::thread::spawn(move || {
+        let ratio = layout_api.sidebar_split_ratio().unwrap_or(0.6);
+        let order = layout_api.navigation_order().unwrap_or_default().threads;
+        let _ = weak.upgrade_in_event_loop(move |app| {
+            app.set_sidebar_split_ratio(ratio);
+            THREAD_ORDER.with(|slot| *slot.borrow_mut() = order);
+            project_sidebar(&app, None);
+        });
+    });
+    // Coalesce quick keyboard nudges and drags; one worker owns each save.
+    let layout_timer = std::rc::Rc::new(slint::Timer::default());
+    let weak = app.as_weak();
+    let layout_api = desktop.clone();
+    app.on_sidebar_layout_changed(move || {
+        let weak = weak.clone();
+        let api = layout_api.clone();
+        layout_timer.start(
+            slint::TimerMode::SingleShot,
+            std::time::Duration::from_millis(400),
+            move || {
+                let Some(app) = weak.upgrade() else {
+                    return;
+                };
+                let ratio = app.get_sidebar_split_ratio();
+                let api = api.clone();
+                std::thread::spawn(move || {
+                    let _ = api.save_sidebar_split_ratio(ratio);
+                });
+            },
+        );
+    });
     let api = desktop.clone();
     let weak = app.as_weak();
     app.on_select_row(move |index| {
@@ -462,6 +510,8 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
             // Pinned cloud row: point the file panel back at the cloud
             // workspace and drop the local selection.
             app.set_selected_workspace(-1);
+            THREAD_SELECTION.with(|slot| slot.borrow_mut().clear());
+            app.set_sidebar_selection_mode(false);
             crate::workspace_files::set_target(
                 &app,
                 api.clone(),
@@ -471,14 +521,15 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
         } else if row.kind == 0 {
             let workspace = row.payload;
             let id = row.workspace_id.to_string();
-            // The row itself is the fold switch: every click toggles between
-            // open (solid glyph, threads visible) and closed (hollow).
+            // Selection reveals this workspace's threads, as in the web rail.
+            // Clicking the selected row again keeps its tree open.
             EXPANDED.with(|slot| {
                 let mut expanded = slot.borrow_mut();
-                if !expanded.remove(id.as_str()) {
-                    expanded.insert(id);
-                }
+                expanded.clear();
+                expanded.insert(id);
             });
+            THREAD_SELECTION.with(|slot| slot.borrow_mut().clear());
+            app.set_sidebar_selection_mode(false);
             app.set_selected_workspace(workspace);
             // Mirror this workspace's folder in the working-directory panel.
             if let Some(card) = app.get_workspaces().row_data(workspace as usize) {
@@ -501,6 +552,7 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
     // tree pitch says which row that lands on, and the row takes that slot in
     // its own group. Threads cannot leave their workspace and the pinned cloud
     // row cannot be dragged or dropped on at all.
+    let order_api = desktop.clone();
     app.on_move_row(move |index, travel| {
         let Some(app) = weak.upgrade() else { return };
         let rows_model = app.get_sidebar_rows();
@@ -532,6 +584,42 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
         };
         if applied {
             crate::navigation_ui::project_sidebar(&app, None);
+            if specs[from].kind == 0 {
+                let api = order_api.clone();
+                let weak = app.as_weak();
+                std::thread::spawn(move || {
+                    let result = api.reorder_workspaces(&next);
+                    let _ = weak.upgrade_in_event_loop(move |app| {
+                        if let Err(error) = result {
+                            app.set_status(format!("无法保存工作区顺序：{error}").into());
+                        }
+                    });
+                });
+            } else {
+                let ids: Vec<String> = THREAD_ORDER.with(|slot| {
+                    slot.borrow()
+                        .iter()
+                        .filter(|id| {
+                            app.get_conversations()
+                                .iter()
+                                .any(|row| row.id == id.as_str())
+                        })
+                        .take(100)
+                        .cloned()
+                        .collect()
+                });
+                THREAD_ORDER.with(|slot| *slot.borrow_mut() = ids.clone());
+                let api = order_api.clone();
+                let weak = app.as_weak();
+                std::thread::spawn(move || {
+                    let result = api.save_thread_order(&ids);
+                    let _ = weak.upgrade_in_event_loop(move |app| {
+                        if let Err(error) = result {
+                            app.set_status(format!("无法保存线程顺序：{error}").into());
+                        }
+                    });
+                });
+            }
         }
     });
     let weak = app.as_weak();
@@ -542,9 +630,9 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
         let Some(card) = app.get_workspaces().row_data(workspace as usize) else {
             return;
         };
-        app.set_selected_workspace(workspace);
         match action {
             0 => {
+                focus_workspace_of(&app, api.clone(), Some(card.workspace_id.as_str()));
                 app.invoke_new_thread();
             }
             1 => crate::workspace_ui::open_edit(&app, workspace as usize),
@@ -554,9 +642,11 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
                 let weak = weak.clone();
                 std::thread::spawn(move || {
                     let result = api.open_workspace_resource(&root, "");
-                    if let (Err(error), Some(app)) = (result, weak.upgrade()) {
-                        app.set_status(format!("无法打开文件夹：{error}").into());
-                    }
+                    let _ = weak.upgrade_in_event_loop(move |app| {
+                        if let Err(error) = result {
+                            app.set_status(format!("无法打开文件夹：{error}").into());
+                        }
+                    });
                 });
             }
             3 => crate::workspace_ui::open_delete(&app, workspace as usize),
@@ -575,11 +665,13 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
         let weak = weak.clone();
         std::thread::spawn(move || {
             let result = api.rename_session(&id, &title);
-            if let (Err(error), Some(app)) = (result, weak.upgrade()) {
-                app.set_status(format!("无法重命名会话：{error}").into());
-            }
+            let _ = weak.upgrade_in_event_loop(move |app| {
+                if let Err(error) = result {
+                    app.set_status(format!("无法重命名会话：{error}").into());
+                }
+                app.invoke_refresh_chat();
+            });
         });
-        crate::navigation_ui::project_sidebar(&app, None);
     });
     let weak = app.as_weak();
     let api = desktop.clone();
@@ -726,9 +818,11 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
         let weak = weak.clone();
         std::thread::spawn(move || {
             let result = api.open_workspace_resource(root.as_str(), "");
-            if let (Err(error), Some(app)) = (result, weak.upgrade()) {
-                app.set_status(format!("无法打开文件夹：{error}").into());
-            }
+            let _ = weak.upgrade_in_event_loop(move |app| {
+                if let Err(error) = result {
+                    app.set_status(format!("无法打开文件夹：{error}").into());
+                }
+            });
         });
     });
     // §8.2: the composer's more-menu opens the active workspace folder. It
@@ -745,9 +839,11 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
         let weak = weak.clone();
         std::thread::spawn(move || {
             let result = api.open_workspace_resource(root.as_str(), "");
-            if let (Err(error), Some(app)) = (result, weak.upgrade()) {
-                app.set_status(format!("无法打开文件夹：{error}").into());
-            }
+            let _ = weak.upgrade_in_event_loop(move |app| {
+                if let Err(error) = result {
+                    app.set_status(format!("无法打开文件夹：{error}").into());
+                }
+            });
         });
     });
     // §8.4: the permission chip is a recorded preference. The runtime reads

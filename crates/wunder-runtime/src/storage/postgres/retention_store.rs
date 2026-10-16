@@ -2,15 +2,14 @@ use super::agent_runtime_store::PostgresAgentRuntimeStorage;
 use super::log_maintenance::{self, PurgeBudget, UsageRows};
 use super::log_stats_store::read_meta_f64;
 use super::{PgTx, PostgresStorage};
-use crate::storage::StorageLifecycle;
+use crate::storage::{OrphanSweepResult, StorageLifecycle};
 use anyhow::Result;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 pub(super) trait PostgresRetentionStorage {
     fn cleanup_retention_impl(&self, cutoff_epoch_s: f64) -> Result<HashMap<String, i64>>;
-    fn cleanup_orphan_session_logs_impl(&self, cutoff_epoch_s: f64)
-        -> Result<HashMap<String, i64>>;
+    fn cleanup_orphan_session_logs_impl(&self, cutoff_epoch_s: f64) -> Result<OrphanSweepResult>;
 }
 
 /// Width of one incremental orphan-sweep slice (seconds). Slices are swept in
@@ -52,39 +51,52 @@ impl PostgresRetentionStorage for PostgresStorage {
         Ok(deleted)
     }
 
-    fn cleanup_orphan_session_logs_impl(
-        &self,
-        cutoff_epoch_s: f64,
-    ) -> Result<HashMap<String, i64>> {
+    fn cleanup_orphan_session_logs_impl(&self, cutoff_epoch_s: f64) -> Result<OrphanSweepResult> {
         self.ensure_initialized()?;
-        let mut deleted = HashMap::new();
+        let deleted = HashMap::new();
         if cutoff_epoch_s <= 0.0 {
-            return Ok(deleted);
+            return Ok(OrphanSweepResult {
+                deleted,
+                completed: true,
+                swept_until: cutoff_epoch_s,
+            });
         }
         // Every source and projection uses the same committed row batches as
         // session purge. Advance the time watermark only after all tables in
         // the interval are exhausted; a busy or oversized interval resumes.
         let deadline = Instant::now() + ORPHAN_SWEEP_BUDGET;
+        let mut deleted = HashMap::new();
+        let mut swept_until = 0.0;
         loop {
             // Any failure leaves the interval watermark in place for retry.
-            if self
-                .sweep_orphan_slice(cutoff_epoch_s, &mut deleted)?
-                .reached_cutoff
-            {
-                break;
+            let slice =
+                self.sweep_orphan_slice(cutoff_epoch_s, &mut deleted, &mut swept_until, deadline)?;
+            if slice.reached_cutoff {
+                return Ok(OrphanSweepResult {
+                    deleted,
+                    completed: true,
+                    swept_until: cutoff_epoch_s,
+                });
             }
-            // Incomplete catch-up should retry at the maintenance interval,
-            // not wait the full interval reserved for a completed sweep.
-            anyhow::ensure!(
-                Instant::now() < deadline,
-                "orphan log sweep incomplete; resume from the persisted watermark"
-            );
+            // Spending the budget mid-interval is the normal way a large
+            // backlog converges: rows are already gone and the watermark
+            // points at the resume position. Report it as progress instead of
+            // failing, otherwise every pass logs an error for doing its job.
+            if !slice.completed || Instant::now() >= deadline {
+                return Ok(OrphanSweepResult {
+                    deleted,
+                    completed: false,
+                    swept_until,
+                });
+            }
         }
-        Ok(deleted)
     }
 }
 
 struct SliceOutcome {
+    /// Every table in the interval was drained, so the watermark advanced.
+    completed: bool,
+    /// The swept range now covers the cutoff.
     reached_cutoff: bool,
 }
 
@@ -94,6 +106,8 @@ impl PostgresStorage {
         &self,
         cutoff_epoch_s: f64,
         deleted: &mut HashMap<String, i64>,
+        swept_until: &mut f64,
+        deadline: Instant,
     ) -> Result<SliceOutcome> {
         let mut conn = self.conn()?;
         let mut tx = log_maintenance::begin(&mut conn)?;
@@ -102,8 +116,10 @@ impl PostgresStorage {
             None => earliest_orphan_source_time(&mut tx, cutoff_epoch_s)?,
         };
         tx.commit()?;
+        *swept_until = watermark;
         if watermark >= cutoff_epoch_s {
             return Ok(SliceOutcome {
+                completed: true,
                 reached_cutoff: true,
             });
         }
@@ -111,20 +127,24 @@ impl PostgresStorage {
         let predicate =
             format!("t.created_time >= $1 AND t.created_time < $2 AND {ORPHAN_PREDICATE}");
         let params: &[&(dyn tokio_postgres::types::ToSql + Sync)] = &[&watermark, &slice_hi];
-        let mut budget = PurgeBudget::new();
+        // One budget for the whole interval: whichever table still has rows
+        // when the clock runs out resumes from the same watermark.
+        let mut budget = PurgeBudget::until(deadline);
+        let mut drained = true;
         for (source, table) in [
             (UsageRows::Chat, "thread_items"),
             (UsageRows::Tool, "tool_logs"),
         ] {
-            let removed = log_maintenance::delete_usage_rows(
+            let outcome = log_maintenance::delete_usage_rows(
                 &mut conn,
                 source,
                 &predicate,
                 params,
                 &mut budget,
             )?;
-            if removed > 0 {
-                *deleted.entry(table.to_string()).or_insert(0) += removed;
+            drained &= outcome.drained;
+            if outcome.removed > 0 {
+                *deleted.entry(table.to_string()).or_insert(0) += outcome.removed;
             }
         }
         for table in [
@@ -133,11 +153,20 @@ impl PostgresStorage {
             "thread_turns",
             "thread_log_changes",
         ] {
-            let removed =
+            let outcome =
                 log_maintenance::delete_rows(&mut conn, table, &predicate, params, &mut budget)?;
-            if removed > 0 {
-                *deleted.entry(table.to_string()).or_insert(0) += removed;
+            drained &= outcome.drained;
+            if outcome.removed > 0 {
+                *deleted.entry(table.to_string()).or_insert(0) += outcome.removed;
             }
+        }
+        if !drained {
+            // Rows remain in this interval. Leave the watermark untouched so
+            // the next pass continues here instead of skipping them.
+            return Ok(SliceOutcome {
+                completed: false,
+                reached_cutoff: false,
+            });
         }
         // Concurrent sweepers can finish out of order, so never regress.
         let mut tx = log_maintenance::begin(&mut conn)?;
@@ -150,6 +179,7 @@ impl PostgresStorage {
         )?;
         tx.commit()?;
         Ok(SliceOutcome {
+            completed: true,
             reached_cutoff: slice_hi >= cutoff_epoch_s,
         })
     }

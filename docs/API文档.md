@@ -383,6 +383,7 @@ wunder 是一个**智能体调度平台**：蛹（desktop）是本地 AI 工作�
 - 浏览器工具面（2026-10-16 更新）：模型侧使用 provider 注册的 17 个 browser_* 原生工具，用户侧“浏览器”（别名 browser）仅作为选择与授权的聚合条目，不能直接调用。工具可见性由 tools.browser.enabled 控制，运行时由顶层 browser.* 配置控制；桌面模式保留运行时回退。模型截图返回工作区附件引用，控制接口截图仍可返回临时下载链接；模型 status 移除 control 控制面信息。
 - 新增浏览器控制接口（2026-03-27）：`/wunder/browser/health`、`/wunder/browser/status`、`/wunder/browser/profiles`、`/wunder/browser/session/start`、`/wunder/browser/session/stop`、`/wunder/browser/tabs`、`/wunder/browser/tabs/open`、`/wunder/browser/tabs/focus`、`/wunder/browser/tabs/close`、`/wunder/browser/navigate`、`/wunder/browser/snapshot`、`/wunder/browser/act`、`/wunder/browser/screenshot`、`/wunder/browser/read_page`。
 - 浏览器交互契约（2026-10-16）：模型使用 provider 注册的 17 个 browser_* 工具；导航、点击、输入、等待和批处理支持 include_snapshot/max_chars，控制接口 navigate/act 接受相同参数。批处理为 1–10 个显式 kind 步骤，等待支持 selector/text/url/load_state；失败通过 HTTP 与工具观察保留 completed_steps、从 1 开始的 failed_step 和已完成摘要。截图附件与结构化元数据在事件、历史和模型上下文中共同保留。会话按用户、任务线程、智能体和可选自定义标识隔离，session_id 必填。
+- 浏览器观察与等待补充：模型工具 browser_navigate 默认附带 4000 字符快照，可显式 include_snapshot=false；控制接口保持显式开关。navigate/snapshot/act 及快捷动作支持 snapshot_timeout_ms（0–5000，默认 1500），只对空快照或观察期间上下文切换做有界重试。附带快照同步 url/title/tabs；等待 URL 模式在 expected_url 返回，url 保留实际地址。selector/text 支持 state=visible/hidden/attached/detached，多条件顺序检查共用 timeout_ms，有条件时忽略 wait_ms。
 - 内置工具 `网页抓取`（英文别名 `web_fetch`）支持 `extract_mode=markdown|text` 与 `max_chars`；直接通过 HTTP 抓取网页并输出低噪声正文，不用于本地文件或关键词搜索，并会对明显的前端壳页/验证页返回结构化失败或自动切换浏览器兜底。
 - `网页抓取` 默认执行正文清洗与去噪，移除导航、页脚、广告、评论等低价值片段；同时内置重定向复校验、响应体大小限制与短 TTL 缓存。私网/内网目标默认拦截，但现可通过 `tools.web.fetch.allow_private_network=true` 全量放开，或用 `tools.web.fetch.hostname_allowlist` 按主机名/IP 精确放行。
 - `网页抓取` 运行时支持 `tools.web.fetch.provider=direct|auto|firecrawl`：`direct` 使用 Wunder 内置 HTTP 抓取，`firecrawl` 调用外部 Firecrawl `/v2/scrape`，`auto` 在配置 Firecrawl API Key 或自定义 `base_url` 时优先使用 Firecrawl、失败后回退 direct。Firecrawl 配置位于 `tools.web.fetch.firecrawl.*`，也可通过 `WUNDER_WEB_FETCH_PROVIDER`、`FIRECRAWL_BASE_URL`、`FIRECRAWL_API_KEY` 覆盖；官方云端 `https://api.firecrawl.dev` 需要 API Key。
@@ -3624,4 +3625,3 @@ Slint 程序默认链接 `wunder-desktop` library；不拉起 bridge，不通过
 - **用户侧多智能体入口整体移除**：`GET /wunder/agents` 收敛为单实例（`data.items` 至多一项）、`/wunder/agents/shared`、创建/删除/排序等端点不再提供；`/wunder/agents` 的 items 与 `/wunder/user/agent` 的 `agent` 字段完全同构。
 - 通用响应包裹约定不变：`/wunder/workspace*` 用裸对象；`/wunder/user/*`、`/wunder/agents/*`、`/wunder/admin/*` 用 `{ "data": { ... } }`；错误统一 `{"error": {"code": "...", "message": "..."}}`。
 - 所有列表接口必须分页：`/workspace*` 用既有 `offset` / `limit`，管理侧列表用 `page` / `page_size`。
-

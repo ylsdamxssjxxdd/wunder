@@ -12,12 +12,39 @@ pub struct NativeNavigationOrder {
     pub models: Vec<String>,
 }
 impl NativeDesktop {
+    /// Per-user sidebar layout, separate from execution and model preferences.
+    pub fn sidebar_split_ratio(&self) -> Result<f32> {
+        Ok(self
+            .state()
+            .user_store
+            .get_meta(&format!("desktop_sidebar_split:v1:{}", self.user_id()))?
+            .and_then(|raw| raw.parse::<f32>().ok())
+            .filter(|ratio| ratio.is_finite() && (0.3..=0.8).contains(ratio))
+            .unwrap_or(0.6))
+    }
+
+    pub fn save_sidebar_split_ratio(&self, ratio: f32) -> Result<()> {
+        if !ratio.is_finite() || !(0.3..=0.8).contains(&ratio) {
+            bail!("Invalid sidebar split ratio");
+        }
+        self.state().user_store.set_meta(
+            &format!("desktop_sidebar_split:v1:{}", self.user_id()),
+            &ratio.to_string(),
+        )?;
+        Ok(())
+    }
+
     pub fn navigation_order(&self) -> Result<NativeNavigationOrder> {
         self.state()
             .user_store
             .get_meta(&format!("desktop_navigation:v1:{}", self.user_id()))?
             .map(|raw| serde_json::from_str(&raw).map_err(Into::into))
             .unwrap_or_else(|| Ok(Default::default()))
+    }
+    pub fn save_thread_order(&self, ids: &[String]) -> Result<()> {
+        let mut order = self.navigation_order()?;
+        order.threads = ids.to_vec();
+        self.save_navigation_order(&order)
     }
     pub fn save_navigation_order(&self, order: &NativeNavigationOrder) -> Result<()> {
         for ids in [&order.agents, &order.threads] {

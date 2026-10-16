@@ -176,6 +176,9 @@ async fn run_loop(
         let pending_scrollback_lines = app.drain_pending_scrollback_lines();
         if !pending_scrollback_lines.is_empty() {
             scrollback::insert_history_lines(terminal, pending_scrollback_lines)?;
+            // insert_before clears the inline viewport. Repaint it without
+            // waiting for another key, stream event or lease heartbeat.
+            app.request_redraw();
         }
 
         if app.should_quit() {

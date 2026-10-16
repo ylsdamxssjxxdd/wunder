@@ -20,6 +20,7 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
     bind_cloud(app, api.clone());
     bind_profile(app, api.clone());
     crate::native_interlink::install(app, api.clone());
+    crate::cloud_threads::install(app, api.clone());
     crate::cron_ui::install(app, api.clone());
     crate::channel_ui::install(app, api.clone());
     crate::expert_ui::install(app, api.clone());
@@ -398,6 +399,8 @@ fn bind_preferences_and_prompts(app: &MainWindow, api: Arc<NativeDesktop>) {
 /// the session values; signed-out drafts keep whatever the user typed.
 fn push_cloud_status(app: &MainWindow, status: CloudStatusView) {
     let CloudStatusView {
+        inbound_enabled,
+        full_shadow,
         logged_in,
         expired,
         server,
@@ -414,6 +417,8 @@ fn push_cloud_status(app: &MainWindow, status: CloudStatusView) {
     } = status;
     let was_logged_in = app.get_cloud_logged_in();
     app.set_cloud_logged_in(logged_in);
+    app.set_cloud_inbound_enabled(inbound_enabled);
+    app.set_cloud_full_shadow(full_shadow);
     // The sidebar pins a "cloud workspace" row while signed in; rebuild it on
     // the sign-in flip so the row appears/disappears with the account.
     if was_logged_in != logged_in {
@@ -483,6 +488,23 @@ fn restart_cloud_status_poll(app_weak: slint::Weak<MainWindow>, api: Arc<NativeD
 /// from the shell into the call; it is never logged nor persisted.
 fn bind_cloud(app: &MainWindow, api: Arc<NativeDesktop>) {
     restart_cloud_status_poll(app.as_weak(), api.clone());
+    let weak = app.as_weak(); let backend = api.clone();
+    app.on_cloud_toggle_sharing(move |enabled, full| {
+        let Some(app) = weak.upgrade() else { return };
+        if app.get_cloud_busy() { return; }
+        app.set_cloud_busy(true);
+        let weak = app.as_weak(); let backend = backend.clone();
+        std::thread::spawn(move || {
+            let result = backend.cloud_set_local_sharing(enabled, full);
+            let _ = weak.upgrade_in_event_loop(move |app| {
+                app.set_cloud_busy(false);
+                match result {
+                    Ok(status) => push_cloud_status(&app, status),
+                    Err(error) => app.set_cloud_error(error.to_string().into()),
+                }
+            });
+        });
+    });
     let weak = app.as_weak();
     let login_api = api.clone();
     app.on_cloud_login(move || {

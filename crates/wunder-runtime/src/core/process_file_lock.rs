@@ -8,11 +8,11 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub(crate) struct ProcessFileLock {
+pub struct ProcessFileLock {
     _file: File,
 }
 impl ProcessFileLock {
-    pub(crate) async fn acquire(path: &Path, timeout: Duration) -> Result<Self> {
+    pub async fn acquire(path: &Path, timeout: Duration) -> Result<Self> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }

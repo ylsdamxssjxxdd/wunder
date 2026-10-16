@@ -15,6 +15,8 @@ use wunder_server::cloud::{shared, CloudStatus};
 /// short Chinese relative strings, matching the façade's error copy style.
 #[derive(Clone, Debug, Default)]
 pub struct CloudStatusView {
+    pub inbound_enabled: bool,
+    pub full_shadow: bool,
     pub logged_in: bool,
     pub expired: bool,
     pub server: String,
@@ -61,6 +63,8 @@ fn relative_future(at: f64) -> String {
 impl CloudStatusView {
     fn project(status: CloudStatus) -> Self {
         Self {
+            inbound_enabled: status.inbound_enabled,
+            full_shadow: status.full_shadow,
             logged_in: status.logged_in,
             expired: status.expired,
             server: status.server.unwrap_or_default(),
@@ -110,6 +114,10 @@ fn friendly_error(error: anyhow::Error, login: bool) -> anyhow::Error {
 }
 
 impl NativeDesktop {
+    pub fn cloud_set_local_sharing(&self, enabled: bool, full_shadow: bool) -> Result<CloudStatusView> {
+        self.runtime.block_on(shared().set_local_sharing(enabled, full_shadow))?;
+        Ok(CloudStatusView::project(shared().status()))
+    }
     /// Login against `server` with a local-scope session. The engine persists
     /// the session, registers the device, pulls the account and synthesizes
     /// `cloud/<id>` models into the local config before returning.

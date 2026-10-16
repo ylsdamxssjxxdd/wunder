@@ -27,7 +27,7 @@ use std::sync::{Arc, OnceLock};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::runtime::Handle;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 use walkdir::WalkDir;
 
 const TREE_CACHE_TTL_S: f64 = 5.0;
@@ -3259,17 +3259,55 @@ fn purge_session_logs_with_storage(
     }
 }
 
+/// Last time an unfinished sweep was reported, so a backlog that needs many
+/// passes does not produce one line per minute.
+static ORPHAN_SWEEP_PROGRESS_LOG_TS: AtomicI64 = AtomicI64::new(0);
+/// Report catch-up progress at most once per half hour.
+const ORPHAN_SWEEP_PROGRESS_LOG_INTERVAL_S: i64 = 1800;
+
 /// Sweep thread/tool log rows whose session no longer exists in the durable
 /// catalog. Only runs when due; the storage layer ignores rows younger than
 /// the cutoff so in-flight sessions are never touched.
 fn run_orphan_sweep_once(storage: &dyn StorageBackend, flag: &AtomicI64, cutoff: f64, now: f64) {
     match storage.cleanup_orphan_session_logs(cutoff) {
-        Ok(deleted) => {
-            let total: i64 = deleted.values().copied().sum();
-            if total > 0 {
-                info!(total, tables = ?deleted, "orphan session logs removed");
+        Ok(result) => {
+            let total = result.removed();
+            if result.completed {
+                if total > 0 {
+                    info!(total, tables = ?result.deleted, "orphan session logs removed");
+                }
+                // Full sweep: wait the whole interval before running again.
+                flag.store(now as i64, std::sync::atomic::Ordering::SeqCst);
+                ORPHAN_SWEEP_PROGRESS_LOG_TS.store(0, std::sync::atomic::Ordering::SeqCst);
+                return;
             }
-            flag.store(now as i64, std::sync::atomic::Ordering::SeqCst);
+            // The pass spent its time budget inside one interval. Deleted rows
+            // stay deleted and the persisted watermark holds the resume point,
+            // so retry at the maintenance interval instead of the sweep
+            // interval — without an error line for each pass.
+            let last = ORPHAN_SWEEP_PROGRESS_LOG_TS.load(std::sync::atomic::Ordering::SeqCst);
+            if now as i64 - last >= ORPHAN_SWEEP_PROGRESS_LOG_INTERVAL_S
+                && ORPHAN_SWEEP_PROGRESS_LOG_TS
+                    .compare_exchange(
+                        last,
+                        now as i64,
+                        std::sync::atomic::Ordering::SeqCst,
+                        std::sync::atomic::Ordering::SeqCst,
+                    )
+                    .is_ok()
+            {
+                info!(
+                    total,
+                    cutoff, swept_until = result.swept_until,
+                    "orphan session log sweep catching up"
+                );
+            } else {
+                debug!(
+                    total,
+                    cutoff, swept_until = result.swept_until,
+                    "orphan session log sweep in progress"
+                );
+            }
         }
         Err(err) => {
             warn!(error = %format_args!("{err:#}"), "orphan session log sweep failed");

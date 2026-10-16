@@ -9,7 +9,8 @@
 use super::{NativeDesktop, NativeInterlinkEntry, NativeInterlinkListing};
 use anyhow::{anyhow, bail, Result};
 use std::{
-    collections::HashMap,
+    cmp::Ordering,
+    collections::{BinaryHeap, HashMap},
     io::Read,
     path::{Component, Path, PathBuf},
 };
@@ -20,6 +21,64 @@ use wunder_server::storage::WorkspaceRecord;
 use std::process::Command;
 
 pub const WORKSPACE_ROOT_MISSING: &str = "工作区文件夹不存在或不可访问";
+
+struct LocalListingCandidate(NativeInterlinkEntry);
+impl PartialEq for LocalListingCandidate {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == Ordering::Equal
+    }
+}
+impl Eq for LocalListingCandidate {}
+impl PartialOrd for LocalListingCandidate {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for LocalListingCandidate {
+    fn cmp(&self, other: &Self) -> Ordering {
+        (other.0.kind == "dir")
+            .cmp(&(self.0.kind == "dir"))
+            .then_with(|| natural_name_cmp(&self.0.name, &other.0.name))
+            .then_with(|| self.0.name.cmp(&other.0.name))
+    }
+}
+
+/// Compare numeric runs without parsing into machine integers. This keeps
+/// sample2 before sample10 and supports arbitrarily long numeric file names.
+fn natural_name_cmp(left: &str, right: &str) -> Ordering {
+    let mut left = left.chars().flat_map(char::to_lowercase).peekable();
+    let mut right = right.chars().flat_map(char::to_lowercase).peekable();
+    loop {
+        match (left.peek().copied(), right.peek().copied()) {
+            (Some(a), Some(b)) if a.is_ascii_digit() && b.is_ascii_digit() => {
+                let mut a = String::new();
+                let mut b = String::new();
+                while left.peek().is_some_and(char::is_ascii_digit) {
+                    a.push(left.next().unwrap());
+                }
+                while right.peek().is_some_and(char::is_ascii_digit) {
+                    b.push(right.next().unwrap());
+                }
+                let a = a.trim_start_matches('0');
+                let b = b.trim_start_matches('0');
+                let order = a.len().cmp(&b.len()).then_with(|| a.cmp(b));
+                if order != Ordering::Equal {
+                    return order;
+                }
+            }
+            (Some(a), Some(b)) => {
+                left.next();
+                right.next();
+                if a != b {
+                    return a.cmp(&b);
+                }
+            }
+            (None, None) => return Ordering::Equal,
+            (None, _) => return Ordering::Less,
+            (_, None) => return Ordering::Greater,
+        }
+    }
+}
 
 /// Icon choices offered by the workspace dialog; stored values outside this
 /// set fall back to the default icon at read time.
@@ -236,6 +295,16 @@ impl NativeDesktop {
     /// Validate a candidate folder before create/update. Read/write probes
     /// use temporary names inside the directory and clean up after themselves.
     pub fn validate_workspace_path(&self, raw_path: &str) -> Result<WorkspacePathReport> {
+        self.validate_workspace_edit_path(raw_path, "")
+    }
+
+    /// Validate an edited binding without treating its own folder as occupied.
+    /// Other workspace bindings keep the same overlap and permission checks.
+    pub fn validate_workspace_edit_path(
+        &self,
+        raw_path: &str,
+        workspace_id: &str,
+    ) -> Result<WorkspacePathReport> {
         let path = raw_path.trim();
         let mut report = WorkspacePathReport {
             path: path.to_string(),
@@ -261,6 +330,9 @@ impl NativeDesktop {
         report.readable = std::fs::read_dir(&root).is_ok();
         report.writable = probe_writable(&root);
         for record in self.state().storage.list_workspaces(self.user_id())? {
+            if record.workspace_id == workspace_id {
+                continue;
+            }
             let other = PathBuf::from(&record.root_path);
             if paths_equal(&other, &root) {
                 report.occupied_by = Some(record.name);
@@ -351,14 +423,15 @@ impl NativeDesktop {
     fn archive_workspace_threads(&self, workspace_id: &str) -> Result<usize> {
         let storage = self.state().storage.as_ref();
         let mut archived = 0;
-        let mut offset = 0i64;
         const PAGE: i64 = 200;
         loop {
-            let (records, total) = storage.list_chat_sessions_by_workspace(
+            // Each write removes a row from the active query. Always drain
+            // its first page; advancing an offset would skip remaining rows.
+            let (records, _) = storage.list_chat_sessions_by_workspace(
                 self.user_id(),
                 workspace_id,
                 Some("active"),
-                offset,
+                0,
                 PAGE,
             )?;
             let page = records.len();
@@ -368,8 +441,7 @@ impl NativeDesktop {
                 storage.upsert_chat_session(&record)?;
                 archived += 1;
             }
-            offset += page as i64;
-            if page == 0 || offset >= total {
+            if page < PAGE as usize {
                 break;
             }
         }
@@ -379,14 +451,13 @@ impl NativeDesktop {
     fn discard_workspace_threads(&self, workspace_id: &str) -> Result<usize> {
         let storage = self.state().storage.as_ref();
         let mut deleted = 0;
-        let mut offset = 0i64;
         const PAGE: i64 = 200;
         loop {
-            let (records, total) = storage.list_chat_sessions_by_workspace(
+            let (records, _) = storage.list_chat_sessions_by_workspace(
                 self.user_id(),
                 workspace_id,
                 None,
-                offset,
+                0,
                 PAGE,
             )?;
             let page = records.len();
@@ -394,8 +465,7 @@ impl NativeDesktop {
                 storage.delete_chat_session(self.user_id(), &record.session_id)?;
                 deleted += 1;
             }
-            offset += page as i64;
-            if page == 0 || offset >= total {
+            if page < PAGE as usize {
                 break;
             }
         }
@@ -491,6 +561,19 @@ impl NativeDesktop {
     /// local folder). The stored name is the file's own; an existing entry is
     /// replaced, matching the cloud write semantics.
     pub fn workspace_local_upload(&self, root_path: &str, source: &Path) -> Result<String> {
+        self.workspace_local_upload_to(root_path, "", source)
+    }
+
+    /// Copy a dropped file into the selected workspace-relative directory.
+    /// Resolving both the parent and existing destination prevents symlinks
+    /// from redirecting a local copy outside the workspace, and copying a file
+    /// onto itself is a no-op rather than a destructive truncation.
+    pub fn workspace_local_upload_to(
+        &self,
+        root_path: &str,
+        directory: &str,
+        source: &Path,
+    ) -> Result<String> {
         let root = normalize_root(root_path)?;
         if !root.is_dir() {
             bail!(WORKSPACE_ROOT_MISSING);
@@ -504,9 +587,34 @@ impl NativeDesktop {
             .map(|name| name.to_string_lossy().into_owned())
             .ok_or_else(|| anyhow!("无效的文件名"))?;
         validate_entry_name(&name)?;
-        let target = workspace_new_entry_target(&root, &name)?;
+        let parent = if directory.is_empty() {
+            root.clone()
+        } else {
+            workspace_resource_target(&root, directory)?
+        };
+        if !parent.is_dir() {
+            bail!("目标目录不存在");
+        }
+        let target = parent.join(&name);
+        if target.exists() {
+            let existing = target.canonicalize()?;
+            if !existing.starts_with(&root) {
+                bail!("路径超出当前工作区");
+            }
+            if existing == source.canonicalize()? {
+                return Ok(if directory.is_empty() {
+                    name
+                } else {
+                    format!("{directory}/{name}")
+                });
+            }
+        }
         std::fs::copy(source, &target).map_err(|error| anyhow!("复制失败：{error}"))?;
-        Ok(name)
+        Ok(if directory.is_empty() {
+            name
+        } else {
+            format!("{directory}/{name}")
+        })
     }
 
     /// Rename one workspace entry within its own parent directory.
@@ -577,6 +685,10 @@ impl NativeDesktop {
         offset: u64,
     ) -> Result<NativeInterlinkListing> {
         const LOCAL_PAGE: usize = 200;
+        const BROWSE_CAP: usize = 2000;
+        if offset >= BROWSE_CAP as u64 {
+            bail!("已达到目录浏览上限");
+        }
         let root = normalize_root(root_path)?;
         if !root.is_dir() {
             bail!(WORKSPACE_ROOT_MISSING);
@@ -591,7 +703,11 @@ impl NativeDesktop {
         if !dir.is_dir() {
             bail!("目录不存在");
         }
-        let mut entries: Vec<NativeInterlinkEntry> = Vec::new();
+        // Keep only the requested prefix while scanning. Large host folders
+        // must not allocate a complete directory listing just to show 200 rows.
+        let keep = (offset as usize + LOCAL_PAGE).min(BROWSE_CAP);
+        let mut entries: BinaryHeap<LocalListingCandidate> = BinaryHeap::with_capacity(keep);
+        let mut total = 0u64;
         for item in std::fs::read_dir(&dir)? {
             let Ok(item) = item else { continue };
             let name = item.file_name().to_string_lossy().to_string();
@@ -600,8 +716,8 @@ impl NativeDesktop {
             }
             let Ok(kind) = item.file_type() else { continue };
             let is_dir = kind.is_dir();
-            let size = item.metadata().map(|meta| meta.len()).unwrap_or(0);
-            entries.push(NativeInterlinkEntry {
+            total += 1;
+            let candidate = LocalListingCandidate(NativeInterlinkEntry {
                 name: name.clone(),
                 path: if path.is_empty() {
                     name
@@ -609,24 +725,28 @@ impl NativeDesktop {
                     format!("{path}/{name}")
                 },
                 kind: if is_dir { "dir".into() } else { "file".into() },
-                size,
+                size: 0,
                 updated_time: String::new(),
             });
+            if entries.len() < keep {
+                entries.push(candidate);
+            } else if entries.peek().is_some_and(|last| candidate < *last) {
+                entries.pop();
+                entries.push(candidate);
+            }
         }
-        // Directories lead, then case-insensitive name order, matching the
-        // cloud listing's projection.
-        entries.sort_by(|a, b| {
-            let a_dir = a.kind == "dir";
-            let b_dir = b.kind == "dir";
-            b_dir
-                .cmp(&a_dir)
-                .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
-        });
-        let total = entries.len() as u64;
         let page = entries
+            .into_sorted_vec()
             .into_iter()
+            .map(|candidate| candidate.0)
             .skip(offset as usize)
             .take(LOCAL_PAGE)
+            .map(|mut entry| {
+                entry.size = std::fs::metadata(dir.join(&entry.name))
+                    .map(|metadata| metadata.len())
+                    .unwrap_or(0);
+                entry
+            })
             .collect();
         Ok(NativeInterlinkListing {
             status: "succeeded".into(),

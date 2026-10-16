@@ -1391,7 +1391,7 @@ impl PostgresThreadLogStorage for PostgresStorage {
         let mut conn = self.conn()?;
         let mut count = 0i64;
         let mut budget = PurgeBudget::new();
-        count += log_maintenance::delete_usage_rows(
+        count += log_maintenance::delete_usage_rows_all(
             &mut conn,
             UsageRows::Chat,
             "user_id=$1 AND session_id=$2",
@@ -1412,7 +1412,7 @@ impl PostgresThreadLogStorage for PostgresStorage {
             "thread_trajectory_rows",
             "terminal_transcript_blocks",
         ] {
-            count += log_maintenance::delete_rows(
+            count += log_maintenance::delete_rows_all(
                 &mut conn,
                 table,
                 "user_id=$1 AND session_id=$2",
@@ -1420,7 +1420,7 @@ impl PostgresThreadLogStorage for PostgresStorage {
                 &mut budget,
             )?;
         }
-        count += log_maintenance::delete_rows(
+        count += log_maintenance::delete_rows_all(
             &mut conn,
             "thread_trajectory_tiles",
             "session_id=$1",
@@ -1428,7 +1428,7 @@ impl PostgresThreadLogStorage for PostgresStorage {
             &mut budget,
         )?;
         for table in ["thread_turns", "thread_view_heads", "thread_logs"] {
-            count += log_maintenance::delete_rows(
+            count += log_maintenance::delete_rows_all(
                 &mut conn,
                 table,
                 "user_id=$1 AND session_id=$2",

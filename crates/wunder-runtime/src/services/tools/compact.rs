@@ -13,12 +13,18 @@ pub(crate) fn compact_tool_spec_for_model(spec: &ToolSpec) -> ToolSpec {
         name: spec.name.clone(),
         title: None,
         description: compact_tool_description(&spec.name, &spec.description),
-        // Scheduling units and thread routing cannot be inferred from JSON
-        // types. Keep their descriptions in the actual model-facing schema.
+        // Scheduling, routing and browser observation/wait semantics cannot
+        // be inferred from JSON types alone.
         input_schema: if matches!(
             spec.name.as_str(),
-            "定时任务" | "schedule_task" | "子智能体控制" | "subagent_control"
-        ) {
+            "定时任务"
+                | "schedule_task"
+                | "子智能体控制"
+                | "subagent_control"
+                | "命令会话"
+                | "command_session"
+        ) || spec.name.starts_with("browser_")
+        {
             spec.input_schema.clone()
         } else {
             compact_schema(&spec.input_schema)
@@ -49,7 +55,7 @@ fn compact_tool_description(name: &str, original: &str) -> String {
             "执行命令；默认阻塞等待结束并返回完整输出；长任务设 run_in_background=true 转后台后用命令会话轮询；不要用 sleep 空等。",
         ),
         "命令会话" | "command_session" | "write_command_stdin" => Some(
-            "轮询后台命令或写入 stdin；用 execute_command 后台模式返回的 command_session_id；yield_time_ms 最长 60000 可一次等待结束，确认退出后再报告完成。",
+            "等待后台命令或写入 stdin；输出由运行时持续推送。poll 默认 wait_for=exit、yield_time_ms=60000，避免按输出反复轮询；需要中间结果时用 wait_for=output。仅返回游标后的新增输出，省略 after_seq 自动续读；确认退出后再报告完成。",
         ),
         "ptc" => Some("执行 PTC 脚本；受权限、工作区和超时限制。"),
         "列出文件" | "list_files" => Some("列出允许范围内的文件；结果限量。"),
@@ -69,8 +75,13 @@ fn compact_tool_description(name: &str, original: &str) -> String {
             "管理当前根任务树的子智能体；list 默认直属子线程，parent_id=/root 查根的子线程。只能操作同一用户同一树的工作线程，独立会话不可接管。send 在运行中追加指导、空闲时派发新任务；resume 带消息等同 send，无消息只开放；report 汇报直属父线程。spawn/batch_spawn 可用 fork_turns=0..16、context_summary 提供有界背景。wait/status/history 检查结果，accepted 不等于完成。父线程中断取消后代；过期运行按中断恢复，显式 send 继续，不重放工具。",
         ),
         "网页搜索" | "web_search" => Some("搜索网页；query 必填，结果限量。"),
-        "网页抓取" | "web_fetch" => Some("抓取明确 URL；不是搜索，不猜测 URL。"),
-        other if other.starts_with("browser_") => Some("操作浏览器；受会话、域名和超时限制。"),
+        "网页抓取" | "web_fetch" => Some("抓取已确认 URL 的正文；不是搜索，不猜测 URL。登录、注册、填表或点击等交互任务直接使用 browser_navigate，不先抓取页面。"),
+        // Browser descriptions carry the workflow contract (batch ordering,
+        // readiness, conditional waits, and credential handling). A generic
+        // replacement used to erase those instructions from every model call.
+        other if other.starts_with("browser_") => {
+            return original.split_whitespace().collect::<Vec<_>>().join(" ");
+        }
         _ if canonical.contains("数据库导出")
             || canonical.starts_with("db_export")
             || (original.contains("导出") && original.contains("SQL")) =>
@@ -308,6 +319,46 @@ mod tests {
     }
 
     #[test]
+    fn compact_browser_tools_preserve_workflow_and_parameter_semantics() {
+        use crate::services::browser::provider::BrowserProvider;
+        use crate::services::browser::providers::playwright::PlaywrightProvider;
+
+        let specs = PlaywrightProvider::new().tool_specs();
+        for spec in &specs {
+            let compact = compact_tool_spec_for_model(spec);
+            assert_eq!(compact.description, spec.description);
+            assert_eq!(compact.input_schema, spec.input_schema);
+        }
+        let navigate = specs
+            .iter()
+            .find(|spec| spec.name == "browser_navigate")
+            .unwrap();
+        assert!(compact_tool_spec_for_model(navigate)
+            .description
+            .contains("instead of web_fetch"));
+        let batch = specs
+            .iter()
+            .find(|spec| spec.name == "browser_batch")
+            .unwrap();
+        let compact = compact_tool_spec_for_model(batch);
+        assert!(compact.description.contains("success condition"));
+        assert!(compact.description.contains("passwords"));
+        assert!(
+            compact.input_schema["properties"]["steps"]["items"]["properties"]["state"]["enum"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("hidden"))
+        );
+        let fetch = compact_tool_spec_for_model(&ToolSpec {
+            name: "web_fetch".to_string(),
+            title: None,
+            description: String::new(),
+            input_schema: json!({}),
+        });
+        assert!(fetch.description.contains("browser_navigate"));
+    }
+
+    #[test]
     fn compact_command_tools_describe_blocking_default_and_polling() {
         let exec = compact_tool_spec_for_model(&ToolSpec {
             name: "执行命令".to_string(),
@@ -323,7 +374,7 @@ mod tests {
         });
         assert!(exec.description.contains("run_in_background"));
         assert!(exec.description.contains("阻塞"));
-        assert!(session.description.contains("轮询后台命令"));
+        assert!(session.description.contains("wait_for=exit"));
         assert!(session.description.contains("60000"));
     }
 

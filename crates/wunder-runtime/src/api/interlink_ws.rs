@@ -88,6 +88,7 @@ struct TicketEntry {
     device_id: String,
     user_id: String,
     expires_at: f64,
+    credential: String,
     /// Source address of the issuer, when observable (docs §9.1).
     issued_from: Option<String>,
 }
@@ -104,6 +105,11 @@ impl TicketStore {
         // that never connects cannot grow this map.
         let now = now_unix_seconds();
         guard.retain(|_, entry| entry.expires_at > now);
+        // At most one pending ticket per device and a hard global ceiling.
+        guard.retain(|_, pending| pending.device_id != entry.device_id);
+        if guard.len() >= 4096 {
+            if let Some(oldest) = guard.iter().min_by(|a,b| a.1.expires_at.total_cmp(&b.1.expires_at)).map(|(key,_)| key.clone()) { guard.remove(&oldest); }
+        }
         guard.insert(ticket, entry);
     }
 
@@ -141,6 +147,7 @@ async fn issue_ticket(
         Err(response) => return response,
     };
     let user_id = resolved.user.user_id.clone();
+    let Some(credential) = crate::auth::extract_bearer_token(&headers) else { return device_error(); };
 
     let config = state.config_store.get().await;
     if !config.interlink.enabled {
@@ -189,6 +196,14 @@ async fn issue_ticket(
         );
     }
 
+    // Body device IDs must obey the same immutable binding as header IDs.
+    let auth = state.user_store.authenticate_token_details(&credential).ok().flatten();
+    if let Some(family) = auth.and_then(|auth| auth.family_id) {
+        match state.storage.get_user_session_device(&family) {
+            Ok(Some(binding)) if binding.device_id == device_id => {},
+            _ => return device_error(),
+        }
+    }
     let now = now_unix_seconds();
     let ticket = format!("itk_{}", Uuid::new_v4().simple());
     ticket_store().insert(
@@ -198,6 +213,7 @@ async fn issue_ticket(
             device_id: device_id.clone(),
             user_id,
             expires_at: now + TICKET_TTL_S,
+            credential,
             issued_from: source_address(&headers),
         },
     );
@@ -254,6 +270,9 @@ async fn interlink_ws(
             "ticket is invalid or expired".to_string(),
         )
     })?;
+    if !crate::api::user_context::credential_active(&state, &entry.credential, &entry.user_id).await {
+        return Err(device_error());
+    }
     // The ticket is bound to the address it was minted for (docs §9.1). A
     // server without a visible source address cannot enforce this and proceeds.
     if let (Some(issued_from), Some(presented)) = (
@@ -285,15 +304,20 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>, ticket: TicketEntry)
         let _ = send_close(&mut sender, "interlink_disabled", None).await;
         return;
     }
-    let heartbeat_s = config.interlink.heartbeat_s.max(1);
+    let heartbeat_s = config.interlink.heartbeat_s.clamp(1, 300);
     let max_channels = config.interlink.max_channels_per_device;
     let _presence_ttl_s = config.interlink.presence_ttl_s.max(1) as f64;
     let limits = commands::Limits::from_config(&config.interlink);
     let shadow_limits = shadow_limit_config(&config.interlink.shadow);
     drop(config);
 
+    if !crate::api::user_context::credential_active(&state, &ticket.credential, &ticket.user_id).await {
+        let _ = send_close(&mut sender, "session_revoked", None).await;
+        return;
+    }
     // 1) First frame must be `hello`.
-    let hello = match read_hello(&mut receiver).await {
+    let hello = match tokio::time::timeout(Duration::from_secs(10), read_hello(&mut receiver)).await
+        .unwrap_or_else(|_| Err("hello timeout".to_string())) {
         Ok(hello) => hello,
         Err(reason) => {
             let _ = send_close(&mut sender, &reason, None).await;
@@ -511,6 +535,7 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>, ticket: TicketEntry)
     // 5) hello_ack.
     let shadow_revision = shadow_revision(&state, &live.device_id).await;
     let ack = InterlinkHelloAck {
+        heartbeat_s,
         channel_id: channel_id.clone(),
         protocol: INTERLINK_PROTOCOL_VERSION,
         capabilities_granted: granted.clone(),
@@ -547,21 +572,22 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>, ticket: TicketEntry)
     // Consume the immediate first tick produced by `interval`.
     ticker.tick().await;
 
+    let mut last_received = tokio::time::Instant::now();
     loop {
         tokio::select! {
             _ = ticker.tick() => {
-                let beat_now = now_unix_seconds();
-                if !registry().heartbeat(&live.device_id, &channel_id, beat_now, None) {
+                if last_received.elapsed() > Duration::from_secs(heartbeat_s.saturating_mul(3)) {
+                    let _ = send_close(&mut sender, "heartbeat_timeout", Some(&channel_id)).await;
+                    break;
+                }
+                if !crate::api::user_context::credential_active(&state, &ticket.credential, &ticket.user_id).await {
+                    let _ = send_close(&mut sender, "session_revoked", Some(&channel_id)).await;
+                    break;
+                }
+                if !registry().by_device(&live.device_id).is_some_and(|current| current.channel_id == channel_id) {
                     let _ = send_close(&mut sender, "superseded", Some(&channel_id)).await;
                     break;
                 }
-                persist_heartbeat(&state, &live.device_id, &channel_id, beat_now).await;
-                // Keep the presence last-seen fresh so the desktop/cli surface
-                // stays online in the admin view across heartbeats.
-                state
-                    .control
-                    .presence
-                    .touch_user(&live.user_id, presence_kind, beat_now);
                 if send_frame(&mut sender, FRAME_PING, Some(&channel_id), None, json!({})).await.is_err() {
                     break;
                 }
@@ -589,6 +615,12 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>, ticket: TicketEntry)
                                 continue;
                             }
                         };
+                        if frame.v != INTERLINK_PROTOCOL_VERSION || frame.channel_id.as_deref() != Some(channel_id.as_str()) {
+                            let _ = send_close(&mut sender, "bad_frame", Some(&channel_id)).await;
+                            break;
+                        }
+                        last_received = tokio::time::Instant::now();
+                        state.control.presence.touch_user(&live.user_id, presence_kind, now_unix_seconds());
                         if !handle_inbound(&state, &mut sender, &live, &limits, &shadow_limits, frame).await {
                             break;
                         }
@@ -599,6 +631,7 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>, ticket: TicketEntry)
                         }
                     }
                     Some(Ok(Message::Ping(payload))) => {
+                        last_received = tokio::time::Instant::now();
                         // Transport-level keepalive: mirror it with a pong.
                         if sender.send(Message::Pong(payload)).await.is_err() {
                             break;
@@ -1314,7 +1347,7 @@ async fn teardown(state: &AppState, live: &LiveChannel, reason: &str) {
     )
     .await;
 
-    if owned {
+    if owned || registry().by_device(&live.device_id).is_none() {
         set_tunnel_connected(state, &live.device_id, false, 0.0).await;
         // In-flight commands against a node that vanished answer immediately
         // (docs §13.2 7) and remote watchers are released.
@@ -1397,6 +1430,7 @@ mod tests {
             device_id: entry.to_string(),
             user_id: "u1".to_string(),
             expires_at,
+            credential: String::new(),
             issued_from: None,
         }
     }

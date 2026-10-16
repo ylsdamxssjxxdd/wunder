@@ -513,7 +513,7 @@ impl PostgresAgentRuntimeStorage for PostgresStorage {
         if !before_time.is_finite() || before_time <= 0.0 {
             return Ok(0);
         }
-        log_maintenance::delete_rows(
+        log_maintenance::delete_rows_all(
             &mut self.conn()?,
             "stream_events",
             "created_time < $1",
@@ -528,7 +528,7 @@ impl PostgresAgentRuntimeStorage for PostgresStorage {
         if user_id.is_empty() {
             return Ok(0);
         }
-        log_maintenance::delete_rows(
+        log_maintenance::delete_rows_all(
             &mut self.conn()?,
             "stream_events",
             "user_id=$1",
@@ -543,7 +543,7 @@ impl PostgresAgentRuntimeStorage for PostgresStorage {
         if session_id.is_empty() {
             return Ok(0);
         }
-        log_maintenance::delete_rows(
+        log_maintenance::delete_rows_all(
             &mut self.conn()?,
             "stream_events",
             "session_id=$1",

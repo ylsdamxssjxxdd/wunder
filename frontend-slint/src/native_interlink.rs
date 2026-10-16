@@ -21,11 +21,10 @@ const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
 /// One poll tick: push status, then open the next approval if the card is
 /// free. Runs on the UI thread; both façade calls are synchronous in-process.
 fn poll(app: &MainWindow, api: &Arc<NativeDesktop>) {
-    let status = api.interlink_status();
-    // The working-directory region rides the same tick: it derives its
-    // offline state from the tunnel and boots the cloud tree on the first
-    // connected tick after sign-in.
-    crate::workspace_files::tunnel_tick(app, api, status.state == "connected");
+    let _status = api.interlink_status();
+    // Cloud workspace access depends on outbound login, independently of
+    // whether the user enabled the inbound device tunnel.
+    crate::workspace_files::tunnel_tick(app, api, app.get_cloud_logged_in() && !app.get_cloud_expired());
     if app.get_interlink_approval_open() {
         return;
     }

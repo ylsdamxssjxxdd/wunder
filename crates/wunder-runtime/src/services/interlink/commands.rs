@@ -9,7 +9,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex, OnceLock};
 
-use serde_json::{Map, Value};
+use serde_json::{json, Map, Value};
 use uuid::Uuid;
 
 use wunder_core::interlink::{
@@ -995,18 +995,15 @@ pub async fn on_result(
         return Ok(false);
     }
 
-    let mut summary = Map::new();
-    summary.insert("status".to_string(), Value::String(status.to_string()));
-    summary.insert(
-        "result".to_string(),
-        payload.get("result").cloned().unwrap_or(Value::Null),
-    );
-    for key in ["usage", "inline", "stream_id", "size"] {
-        if let Some(value) = payload.get(key) {
-            summary.insert(key.to_string(), value.clone());
+    // The HTTP record exposes the operation payload directly; status/error
+    // belong to the ledger and transport metadata has its own stable fields.
+    let mut result = payload.get("result").cloned().unwrap_or_else(|| json!({}));
+    if let Some(map) = result.as_object_mut() {
+        for key in ["usage", "inline", "stream_id", "size"] {
+            if let Some(value) = payload.get(key) { map.insert(key.to_string(), value.clone()); }
         }
     }
-    hub().track_result(command_id, Value::Object(summary));
+    hub().track_result(command_id, result);
 
     let device_id = target_device(&record);
     finalize(
@@ -1092,6 +1089,10 @@ pub async fn drain(
         let Some(item) = hub().dequeue_for(user_id, &target) else {
             break;
         };
+        if load(storage.clone(), &item.command_id).await?.is_none_or(|record| is_terminal_command_status(&record.status)) {
+            hub().drop_frame(&item.command_id);
+            continue;
+        }
         match registry().dispatch(
             device_id,
             &live.channel_id,
@@ -1367,13 +1368,7 @@ pub async fn finish_local(
     error_code: Option<&str>,
     now: f64,
 ) -> anyhow::Result<()> {
-    hub().track_result(
-        command_id,
-        json_object(vec![
-            ("status", Value::String(status.to_string())),
-            ("result", result),
-        ]),
-    );
+    hub().track_result(command_id, result);
     finalize(storage, command_id, status, Some(now), error_code, None).await
 }
 

@@ -40,5 +40,8 @@
 [[RUNTIME_SERVER]]
 - 你当前运行在 server 侧 Docker 容器中，已配置常用的环境。
 - 容器内使用python3，优先使用matplotlib绘制图像。
+- 容器已通过 MATPLOTLIBRC 配置中文绘图默认字体，Matplotlib 绘图优先沿用默认字体，不凭经验硬编码字体名。
+- 必须指定字体时，先用同一 Python 解释器的 matplotlib.font_manager.findfont(..., fallback_to_default=False) 验证；fc-list 可见不代表 Matplotlib 能按同名字族找到，TTC 字体集合可能只登记首个字族。
+- findfont 的候选字体未找到警告不等于中文缺字；结合实际回退字体、Glyph missing 警告和产物检查判断是否需要修复，不仅因候选字体警告重绘或反复清理缓存。
 - 你只能利用当前环境中可用的依赖和库，不要尝试用pip或apt安装任何新包。
 [[/RUNTIME_SERVER]]

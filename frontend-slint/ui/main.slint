@@ -15,6 +15,8 @@ export { ActivityMonth, ActivityWeek }
 import { Sidebar, WorkspaceVisual } from "sidebar.slint";
 import { SidebarMetrics } from "drag_row.slint";
 export { SidebarMetrics }
+import { CloudThreadsPanel, CloudTurn } from "cloud_threads.slint";
+export { CloudTurn }
 import { SettingsPage } from "settings_page.slint";
 import { I18n } from "i18n.slint";
 import { ThreadTrajectoryDialog } from "thread_trajectory.slint";
@@ -507,6 +509,9 @@ export component MainWindow inherits Window {
     // and the error line live on the shell so the settings card stays plain
     // two-way data. The password draft never leaves the process.
     in-out property <bool> cloud-logged-in: false;
+    in-out property <bool> cloud-inbound-enabled: false;
+    in-out property <bool> cloud-full-shadow: false;
+    callback cloud-toggle-sharing(bool, bool);
     in-out property <bool> cloud-expired: false;
     in-out property <string> cloud-username;
     in-out property <string> cloud-balance;
@@ -527,6 +532,23 @@ export component MainWindow inherits Window {
     in-out property <string> cloud-server-draft;
     in-out property <string> cloud-user-draft;
     in-out property <string> cloud-pass-draft;
+    in-out property <bool> cloud-threads-open: false;
+    in-out property <[string]> cloud-thread-names;
+    in-out property <[string]> cloud-agent-names;
+    in-out property <[CloudTurn]> cloud-turns;
+    in-out property <int> cloud-thread-index: 0;
+    in-out property <int> cloud-agent-index: 0;
+    in-out property <string> cloud-thread-message;
+    in-out property <string> cloud-thread-approval;
+    in-out property <string> cloud-thread-status;
+    in-out property <bool> cloud-thread-busy;
+    callback cloud-open-threads();
+    callback cloud-close-threads();
+    callback cloud-reload-threads();
+    callback cloud-select-thread(int);
+    callback cloud-send-thread();
+    callback cloud-stop-thread();
+    callback cloud-answer-thread(bool);
     callback cloud-login();
     callback cloud-logout();
     callback cloud-refresh-account();
@@ -551,6 +573,11 @@ export component MainWindow inherits Window {
     in-out property <string> ws-file-error;
     in-out property <bool> ws-file-offline: true;
     in-out property <bool> ws-file-busy: false;
+    in-out property <string> ws-file-active-path;
+    in-out property <int> ws-file-active-index: -1;
+    callback ws-file-key(int);
+    in-out property <float> sidebar-split-ratio: 0.6;
+    callback sidebar-layout-changed();
     // Which folder the working-directory region browses: false = the cloud
     // workspace, true = a local workspace folder (cloud-only actions hide,
     // file operations run straight off the disk).
@@ -880,6 +907,11 @@ export component MainWindow inherits Window {
                 file-error: root.ws-file-error;
                 file-offline: root.ws-file-offline;
                 file-busy: root.ws-file-busy;
+                file-active-path: root.ws-file-active-path;
+                file-active-index: root.ws-file-active-index;
+                file-key(action) => { root.ws-file-key(action); }
+                split-ratio <=> root.sidebar-split-ratio;
+                layout-changed => { root.sidebar-layout-changed(); }
                 file-local: root.ws-file-local;
                 file-toggle(index) => { root.ws-file-toggle(index); }
                 file-refresh => { root.ws-file-refresh(); }
@@ -1113,6 +1145,9 @@ export component MainWindow inherits Window {
         refresh => { root.refresh-settings(); }
         // ---- cloud account (§6.1) ----
         cloud-logged-in <=> root.cloud-logged-in;
+        cloud-inbound-enabled <=> root.cloud-inbound-enabled;
+        cloud-full-shadow <=> root.cloud-full-shadow;
+        cloud-toggle-sharing(enabled, full) => { root.cloud-toggle-sharing(enabled, full); }
         cloud-expired <=> root.cloud-expired;
         cloud-username <=> root.cloud-username;
         cloud-balance <=> root.cloud-balance;
@@ -1128,6 +1163,7 @@ export component MainWindow inherits Window {
         cloud-server-draft <=> root.cloud-server-draft;
         cloud-user-draft <=> root.cloud-user-draft;
         cloud-pass-draft <=> root.cloud-pass-draft;
+        cloud-open-threads => { root.cloud-open-threads(); }
         cloud-login => { root.cloud-login(); }
         cloud-logout => { root.cloud-logout(); }
         cloud-refresh-account => { root.cloud-refresh-account(); }
@@ -1436,6 +1472,18 @@ export component MainWindow inherits Window {
             root.archive-thread(root.thread-archive-pending);
         }
         canceled => { root.thread-archive-open = false; }
+    }
+    if root.cloud-threads-open : CloudThreadsPanel {
+        z: 230;
+        threads: root.cloud-thread-names; agents: root.cloud-agent-names;
+        turns: root.cloud-turns; busy: root.cloud-thread-busy; status: root.cloud-thread-status;
+        thread-index <=> root.cloud-thread-index; agent-index <=> root.cloud-agent-index;
+        message <=> root.cloud-thread-message; approval <=> root.cloud-thread-approval;
+        refresh => { root.cloud-reload-threads(); }
+        select-thread(index) => { root.cloud-select-thread(index); }
+        send => { root.cloud-send-thread(); } stop => { root.cloud-stop-thread(); }
+        answer(approve) => { root.cloud-answer-thread(approve); }
+        close => { root.cloud-close-threads(); }
     }
     // ---- interlink approval (§I9): one remote command at a time ----
     // ConfirmDialog has no meta line, so this is a light self-drawn modal: the

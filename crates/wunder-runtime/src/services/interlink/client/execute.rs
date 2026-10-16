@@ -342,6 +342,29 @@ impl CommandLedger {
         }
     }
 
+    /// Cancellation can overtake a queued command. Keep a bounded tombstone
+    /// for an unclaimed id, and retain a claimed command's canceled token.
+    pub async fn cancel_or_remember(&self, command_id: &str, now: f64) {
+        let mut state = self.state.lock().await;
+        prune(&mut state, now);
+        if let Some(running) = state.running.get(command_id) {
+            running.cancel.cancel();
+        } else if !state.seen.contains_key(command_id) {
+            while state.seen.len() >= SEEN_MAX {
+                if let Some(stale) = state.order.pop_front() {
+                    state.seen.remove(&stale);
+                } else {
+                    break;
+                }
+            }
+            state.order.push_back(command_id.to_string());
+            state.seen.insert(
+                command_id.to_string(),
+                (now, CommandReport::canceled("command canceled").payload()),
+            );
+        }
+    }
+
     pub async fn running_ids(&self) -> Vec<String> {
         let state = self.state.lock().await;
         state.running.keys().cloned().collect()
@@ -352,10 +375,28 @@ impl CommandLedger {
     pub async fn abort_all(&self) -> usize {
         let mut state = self.state.lock().await;
         let count = state.running.len();
+        let ids: Vec<_> = state.running.keys().cloned().collect();
         for entry in state.running.values() {
             entry.cancel.cancel();
         }
         state.running.clear();
+        for id in ids {
+            while state.seen.len() >= SEEN_MAX {
+                if let Some(stale) = state.order.pop_front() {
+                    state.seen.remove(&stale);
+                } else {
+                    break;
+                }
+            }
+            state.order.push_back(id.clone());
+            state.seen.insert(
+                id,
+                (
+                    super::now_ts(),
+                    CommandReport::canceled("tunnel closed").payload(),
+                ),
+            );
+        }
         count
     }
 }
@@ -533,6 +574,9 @@ pub async fn execute(
     shadow_wake: &Arc<Notify>,
     cancel: CancellationToken,
 ) -> CommandReport {
+    if cancel.is_cancelled() {
+        return CommandReport::failed("COMMAND_CANCELED", "command canceled");
+    }
     match spec.kind.as_str() {
         CMD_NODE_SUMMARY => node_summary(ctx).await,
         CMD_SHADOW_REFRESH => {
@@ -695,19 +739,36 @@ async fn workspace_stat(spec: &CommandSpec, ctx: &ExecContext) -> CommandReport 
 
 async fn threads_list(spec: &CommandSpec, ctx: &ExecContext) -> CommandReport {
     let limit = bounded_limit(&spec.args, LIST_LIMIT_DEFAULT).min(shadow::THREADS_MAX as u64);
-    let sources = ctx.shadow_sources();
-    let limits = shadow::TreeLimits {
-        max_entries: 1,
-        depth: 1,
-        threads_max: limit.max(1) as usize,
-        tasks_max: 1,
-    };
-    let (rows, truncated) = shadow::gather_threads(&ctx.state, &sources, &limits).await;
-    CommandReport::succeeded(json!({
-        "threads": rows,
-        "offset": spec.args.get("offset").and_then(Value::as_u64).unwrap_or(0),
-        "truncated": truncated,
-    }))
+    let offset = spec
+        .args
+        .get("offset")
+        .and_then(Value::as_i64)
+        .unwrap_or(0)
+        .clamp(0, 1_000_000);
+    let catalog =
+        crate::services::thread_catalog::ThreadCatalogService::new(ctx.state.as_ref().clone());
+    match catalog
+        .list(crate::services::thread_catalog::ThreadListQuery {
+            user_id: ctx.local_user_id.clone(),
+            offset,
+            limit: limit as i64,
+            workspace_id: arg_str(&spec.args, "workspace_id").or_else(|| ctx.workspace_id.clone()),
+            ..Default::default()
+        })
+        .await
+    {
+        Ok(page) => {
+            let rows: Vec<Value> = page.items.into_iter().map(|row| json!({
+                "local_thread_id": row.session_id, "title": row.title, "status": row.status,
+                "agent": row.agent_id, "workspace_id": row.workspace_id, "updated_at": row.updated_at,
+                "message_count": row.user_round, "duration_ms": 0,
+            })).collect();
+            CommandReport::succeeded(
+                json!({"threads": rows, "offset": offset, "total": page.total, "truncated": offset + (rows.len() as i64) < page.total}),
+            )
+        }
+        Err(error) => CommandReport::failed("THREAD_ERROR", sanitize(&error.to_string())),
+    }
 }
 
 impl ExecContext {
@@ -756,6 +817,20 @@ async fn threads_get(spec: &CommandSpec, ctx: &ExecContext) -> CommandReport {
     let Some(thread_id) = arg_str(&spec.args, "local_thread_id") else {
         return CommandReport::failed("THREAD_REQUIRED", "local_thread_id is required");
     };
+    if !ctx
+        .state
+        .user_store
+        .get_chat_session(&ctx.local_user_id, &thread_id)
+        .ok()
+        .flatten()
+        .is_some()
+    {
+        return CommandReport::failed(
+            "THREAD_NOT_FOUND",
+            "thread is not owned by the current user",
+        );
+    }
+
     let limit = spec
         .args
         .get("limit")
@@ -825,6 +900,20 @@ async fn admit_turn(
         Err(err) => return CommandReport::failed("USER_UNAVAILABLE", sanitize(&err.to_string())),
     };
     let state = ctx.state.clone();
+    if let Some(id) = thread.as_deref() {
+        if !state
+            .user_store
+            .get_chat_session(&ctx.local_user_id, id)
+            .ok()
+            .flatten()
+            .is_some()
+        {
+            return CommandReport::failed(
+                "THREAD_NOT_FOUND",
+                "thread is not owned by the current user",
+            );
+        }
+    }
     let session_id = match thread.clone() {
         Some(id) => id,
         None => match state
@@ -854,7 +943,7 @@ async fn admit_turn(
             updated_at: now,
             last_message_at: now,
             agent_id: (!agent.is_empty()).then_some(agent.clone()),
-            workspace_id: ctx.workspace_id.clone(),
+            workspace_id: arg_str(&spec.args, "workspace_id").or_else(|| ctx.workspace_id.clone()),
             tool_overrides: Vec::new(),
             parent_session_id: None,
             parent_message_id: None,
@@ -983,6 +1072,17 @@ async fn thread_answer(spec: &CommandSpec, ctx: &ExecContext) -> CommandReport {
             return CommandReport::failed("APPROVAL_SESSION_MISMATCH", "approval session mismatch");
         }
     }
+    // A guessed approval id cannot authorize another user's thread.
+    if !ctx
+        .state
+        .user_store
+        .get_chat_session(&ctx.local_user_id, &snapshot.session_id)
+        .ok()
+        .flatten()
+        .is_some()
+    {
+        return CommandReport::failed("THREAD_NOT_FOUND", "thread is not owned by this user");
+    }
     // The registry owns the responder: taking the entry out first is what makes
     // a double answer impossible.
     let Some(entry) = registry.remove(&approval_id).await else {
@@ -1038,7 +1138,15 @@ async fn workspace_write(
         Err(message) => return CommandReport::failed("BACKUP_FAILED", message),
     };
     let workspace = ctx.state.workspace.clone();
-    match workspace.write_file(&scope, &path, &content, true) {
+    let write_scope = scope.clone();
+    let write_path = path.clone();
+    let write_content = content.clone();
+    let write_workspace = workspace.clone();
+    match blocking::run_fs("interlink.client.write", move || {
+        write_workspace.write_file(&write_scope, &write_path, &write_content, true)
+    })
+    .await
+    {
         Ok(()) => {
             workspace.mark_tree_dirty(&scope);
             collector.mark_dirty(Sections::WORKSPACE);
@@ -1173,14 +1281,41 @@ async fn workspace_mutate(
 
 /// Recursively copy a directory, mirroring the workspace API's own helper.
 fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
-    std::fs::create_dir_all(dst)?;
-    for entry in std::fs::read_dir(src)? {
+    // Validate the entire bounded tree before copying. Never follow nested
+    // symlinks/reparse points or recursively exhaust the worker stack.
+    let mut plan = Vec::new();
+    let mut bytes = 0u64;
+    for entry in walkdir::WalkDir::new(src).follow_links(false).max_depth(33) {
         let entry = entry?;
-        let target = dst.join(entry.file_name());
-        if entry.file_type()?.is_dir() {
-            copy_dir_all(&entry.path(), &target)?;
+        let metadata = std::fs::symlink_metadata(entry.path())?;
+        let mut linked = metadata.file_type().is_symlink();
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::MetadataExt;
+            linked |= metadata.file_attributes() & 0x400 != 0;
+        }
+        if linked || entry.depth() > 32 || plan.len() >= 10_000 {
+            return Err(std::io::Error::other("directory exceeds safe copy limits"));
+        }
+        bytes = bytes.saturating_add(if metadata.is_file() {
+            metadata.len()
         } else {
-            std::fs::copy(entry.path(), target)?;
+            0
+        });
+        if bytes > 256 * 1024 * 1024 {
+            return Err(std::io::Error::other("directory exceeds backup byte limit"));
+        }
+        plan.push((
+            entry.path().to_path_buf(),
+            dst.join(entry.path().strip_prefix(src).unwrap_or(Path::new(""))),
+            metadata.is_dir(),
+        ));
+    }
+    for (source, target, dir) in plan {
+        if dir {
+            std::fs::create_dir_all(target)?;
+        } else {
+            std::fs::copy(source, target)?;
         }
     }
     Ok(())
@@ -1233,9 +1368,21 @@ async fn backup_before(
         std::fs::create_dir_all(&generation).map_err(|err| anyhow::anyhow!(err.to_string()))?;
         let staged = generation.join(&relative);
         let mut replaced: Option<String> = None;
+        if let Ok(metadata) = std::fs::symlink_metadata(&source) {
+            let mut linked = metadata.file_type().is_symlink();
+            #[cfg(windows)]
+            {
+                use std::os::windows::fs::MetadataExt;
+                linked |= metadata.file_attributes() & 0x400 != 0;
+            }
+            anyhow::ensure!(!linked, "linked backup source is not allowed");
+        }
         if source.is_dir() {
             copy_dir_all(&source, &staged).map_err(|err| anyhow::anyhow!(err.to_string()))?;
         } else if source.exists() {
+            if std::fs::metadata(&source)?.len() > 256 * 1024 * 1024 {
+                anyhow::bail!("file exceeds backup byte limit");
+            }
             replaced = digest_of(&source);
             if let Some(parent) = staged.parent().filter(|path| !path.as_os_str().is_empty()) {
                 std::fs::create_dir_all(parent).map_err(|err| anyhow::anyhow!(err.to_string()))?;
@@ -1773,6 +1920,18 @@ mod tests {
         COMMAND_STATUS_FAILED, COMMAND_STATUS_SUCCEEDED, COMMAND_STATUS_TIMEOUT,
         ERR_APPROVAL_REJECTED, RISK_HIGH,
     };
+
+    #[tokio::test]
+    async fn cancellation_fences_both_queued_and_claimed_commands() {
+        let ledger = CommandLedger::default();
+        ledger.cancel_or_remember("queued", 1.0).await;
+        assert!(!ledger.claim("queued", "workspace.write", 1.1).await);
+        assert!(ledger.claim("running", "workspace.write", 1.1).await);
+        let cancel = ledger.cancel_token_for("running").await.unwrap();
+        ledger.cancel_or_remember("running", 1.2).await;
+        assert!(cancel.is_cancelled());
+        assert!(!ledger.claim("running", "workspace.write", 1.3).await);
+    }
 
     fn spec(kind: &str, args: Value) -> CommandSpec {
         CommandSpec::parse(

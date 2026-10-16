@@ -1,14 +1,15 @@
 use super::agent_runtime_store::SqliteAgentRuntimeStorage;
 use super::SqliteStorage;
-use crate::storage::{StorageLifecycle, USAGE_CHAT_WATERMARK_KEY, USAGE_TOOL_WATERMARK_KEY};
+use crate::storage::{
+    OrphanSweepResult, StorageLifecycle, USAGE_CHAT_WATERMARK_KEY, USAGE_TOOL_WATERMARK_KEY,
+};
 use anyhow::Result;
 use rusqlite::params;
 use std::collections::HashMap;
 
 pub(super) trait SqliteRetentionStorage {
     fn cleanup_retention_impl(&self, cutoff_epoch_s: f64) -> Result<HashMap<String, i64>>;
-    fn cleanup_orphan_session_logs_impl(&self, cutoff_epoch_s: f64)
-        -> Result<HashMap<String, i64>>;
+    fn cleanup_orphan_session_logs_impl(&self, cutoff_epoch_s: f64) -> Result<OrphanSweepResult>;
 }
 
 impl SqliteRetentionStorage for SqliteStorage {
@@ -33,14 +34,16 @@ impl SqliteRetentionStorage for SqliteStorage {
         Ok(deleted)
     }
 
-    fn cleanup_orphan_session_logs_impl(
-        &self,
-        cutoff_epoch_s: f64,
-    ) -> Result<HashMap<String, i64>> {
+    fn cleanup_orphan_session_logs_impl(&self, cutoff_epoch_s: f64) -> Result<OrphanSweepResult> {
         self.ensure_initialized()?;
         let mut deleted = HashMap::new();
         if cutoff_epoch_s <= 0.0 {
-            return Ok(deleted);
+            // Nothing to sweep, so nothing is left behind.
+            return Ok(OrphanSweepResult {
+                deleted,
+                completed: true,
+                swept_until: cutoff_epoch_s,
+            });
         }
         // Orphan sweep: log rows whose session vanished from the durable
         // catalog. Only rows older than the cutoff are swept so in-flight
@@ -151,7 +154,13 @@ impl SqliteRetentionStorage for SqliteStorage {
             conn.execute_batch("PRAGMA incremental_vacuum;")?;
             conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
         }
-        Ok(deleted)
+        // One transaction covers every table, so the sweep always reaches the
+        // cutoff.
+        Ok(OrphanSweepResult {
+            deleted,
+            completed: true,
+            swept_until: cutoff_epoch_s,
+        })
     }
 }
 

@@ -26,6 +26,7 @@ import os
 import re
 import socket
 import sys
+import time
 import traceback
 from collections import OrderedDict
 from pathlib import Path
@@ -619,9 +620,19 @@ class BridgeSession:
                 snapshot = self.snapshot(
                     target_id=data.get("target_id") or raw.get("target_id"),
                     max_chars=char_budget(raw.get("max_chars")),
+                    ready_timeout_ms=raw.get("snapshot_timeout_ms"),
                 )["data"]
-                data["snapshot"] = snapshot["snapshot"]
-                data["truncated"] = snapshot["truncated"]
+                for key in ("snapshot", "truncated", "target_id", "url", "title"):
+                    data[key] = snapshot[key]
+                if snapshot.get("blocked"):
+                    data.setdefault("blocked", []).extend(snapshot["blocked"])
+                # The observation can finish after a SPA redirect. Keep the
+                # identity and tab list from that observation, not the action.
+                data["tabs"] = snapshot["tabs"]
+                page, _ = self._resolve_page(snapshot["target_id"])
+                verdict = self._final_url_verdict(page)
+                if verdict is not None:
+                    return verdict
             except Exception as exc:
                 # The action has already succeeded: a failed observation must
                 # not invite repeating a submitted form.
@@ -653,6 +664,7 @@ class BridgeSession:
                 interactive=bool(raw.get("interactive", True)),
                 compact=bool(raw.get("compact", True)),
                 max_chars=char_budget(raw.get("max_chars")),
+                ready_timeout_ms=raw.get("snapshot_timeout_ms"),
             )
         if action == "act":
             return self.act(raw.get("request") or {}, raw.get("target_id"))
@@ -791,19 +803,53 @@ class BridgeSession:
             pass
         return {"success": False, "error": "Navigation ended at a blocked address: %s" % reason}
 
-    def snapshot(self, target_id=None, fmt="role", interactive=True, compact=True, max_chars=40000):
+    def snapshot(self, target_id=None, fmt="role", interactive=True, compact=True, max_chars=40000,
+                 ready_timeout_ms=None):
         max_chars = char_budget(max_chars)
         page, target_id = self._resolve_page(target_id)
-        lines, refs, truncated = self._collect(page, fmt, interactive, compact, max_chars)
+        # DOMContentLoaded precedes client rendering. Retry only an empty or
+        # interrupted observation; populated pages pay no readiness delay.
+        grace_ms = min(self._timeout_ms(ready_timeout_ms if ready_timeout_ms is not None else 1500), 5000)
+        if ready_timeout_ms == 0:
+            grace_ms = 0
+        deadline = time.monotonic() + grace_ms / 1000
+        # Failed standalone observations must not leave a previous page's refs
+        # available for a later action.
+        self.refs[target_id] = {}
+        while True:
+            url = safe_page_url(page)
+            try:
+                lines, refs, truncated = self._collect(page, fmt, interactive, compact, max_chars)
+                title = safe_page_title(page)
+                tabs = self._tabs_state()
+                if url != safe_page_url(page):
+                    raise RuntimeError("Page changed while taking snapshot")
+            except Exception as exc:
+                transient = any(message in str(exc) for message in (
+                    "Execution context was destroyed", "Cannot find context",
+                    "Frame was detached", "Page changed while taking snapshot",
+                ))
+                if not transient or time.monotonic() >= deadline:
+                    raise
+            else:
+                if lines or truncated or time.monotonic() >= deadline:
+                    break
+            remaining_ms = (deadline - time.monotonic()) * 1000
+            if remaining_ms > 0:
+                page.wait_for_timeout(min(50, remaining_ms))
         refs_map = {item["ref"]: item for item in refs}
         self.refs[target_id] = refs_map
         text = "\n".join(lines).strip()
+        for tab in tabs:
+            if tab["target_id"] == target_id:
+                tab.update(url=url, title=title)
         return {
             "success": True,
             "data": {
                 "target_id": target_id,
-                "title": safe_page_title(page),
-                "url": safe_page_url(page),
+                "title": title,
+                "url": url,
+                "tabs": tabs,
                 "format": fmt,
                 "snapshot": text,
                 "stats": {
@@ -847,6 +893,8 @@ class BridgeSession:
                     },
                 )
             except Exception as exc:
+                if is_main:
+                    raise
                 message = "## frame unreadable (%s)" % _short(str(exc))
                 if len(message) + used + overhead <= max_chars:
                     lines.append(message)
@@ -1149,30 +1197,42 @@ class BridgeSession:
 
     def _wait(self, page, target_id, request):
         timeout_ms = self._timeout_ms(request.get("timeout_ms"), request.get("timeout_secs"))
-        if request.get("wait_ms") is not None:
+        state = request.get("state") or "visible"
+        if state not in ("visible", "hidden", "attached", "detached"):
+            return {"success": False, "error": "Browser wait state must be visible/hidden/attached/detached"}
+        selector, text, url, load_state = (request.get(key) for key in ("selector", "text", "url", "load_state"))
+        has_condition = any((selector, text, url, load_state))
+        # A duration is a fallback pause, never a reason to skip explicit
+        # conditions or to delay a condition that is already satisfied.
+        if not has_condition and request.get("wait_ms") is not None:
             wait_ms = min(max(int(request["wait_ms"]), 0), timeout_ms)
             page.wait_for_timeout(wait_ms)
             return self._action_result(
                 page, target_id, "wait", extra={"wait_ms": wait_ms}
             )
-        selector = request.get("selector")
+        deadline = time.monotonic() + timeout_ms / 1000
+
+        def remaining_ms():
+            # Playwright treats zero as an unbounded timeout.
+            return max(1, int((deadline - time.monotonic()) * 1000))
+
+        matched = {}
         if selector:
-            page.locator(str(selector)).first.wait_for(state="visible", timeout=timeout_ms)
-            return self._action_result(page, target_id, "wait", extra={"selector": selector})
-        text = request.get("text")
+            page.locator(str(selector)).first.wait_for(state=state, timeout=remaining_ms())
+            matched.update(selector=selector, state=state)
         if text:
-            page.get_by_text(str(text), exact=False).first.wait_for(timeout=timeout_ms)
-            return self._action_result(page, target_id, "wait", extra={"text": text})
-        url = request.get("url")
+            page.get_by_text(str(text), exact=False).first.wait_for(state=state, timeout=remaining_ms())
+            matched.update(text=text, state=state)
         if url:
             # This matches the current URL; it never initiates a request. The
             # action result still verifies the actual final URL against policy.
-            page.wait_for_url(str(url), timeout=timeout_ms)
-            return self._action_result(page, target_id, "wait", extra={"url": url})
-        load_state = request.get("load_state")
+            page.wait_for_url(str(url), wait_until="domcontentloaded", timeout=remaining_ms())
+            matched["expected_url"] = url
         if load_state:
-            page.wait_for_load_state(str(load_state), timeout=timeout_ms)
-            return self._action_result(page, target_id, "wait", extra={"load_state": load_state})
+            page.wait_for_load_state(str(load_state), timeout=remaining_ms())
+            matched["load_state"] = load_state
+        if has_condition:
+            return self._action_result(page, target_id, "wait", extra=matched)
         return {
             "success": False,
             "error": "Browser wait requires one of wait_ms/selector/text/url/load_state",

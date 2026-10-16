@@ -1,5 +1,6 @@
 // AI生成
 export default {
+  'interlink.operation.waitApproval': 'Waiting for approval on the local device; you can cancel here',
   'chat.subagentPool.title': 'Subagents',
   'chat.subagentPool.empty': 'No subagents yet',
   'chat.subagentPool.interrupted': 'Interrupted · reusable',

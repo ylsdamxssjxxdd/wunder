@@ -3,6 +3,60 @@ use super::*;
 use futures::StreamExt;
 
 #[tokio::test]
+async fn command_poll_exit_wait_does_not_return_on_output_and_snapshots_are_optional() {
+    let id = format!("sandcmd_{}", Uuid::new_v4().simple());
+    let session = Arc::new(SandboxCommandSession {
+        user_id: "user".into(),
+        session_id: "thread".into(),
+        stdin: AsyncMutex::new(None),
+        cancel: CancellationToken::new(),
+        changed: Notify::new(),
+        state: Mutex::new(SandboxCommandSessionState {
+            running: true,
+            seq: 0,
+            exit_code: None,
+            timed_out: false,
+            error: None,
+            deltas: VecDeque::new(),
+            delta_bytes: 0,
+            first_seq: 1,
+            expires_at: None,
+        }),
+    });
+    command_sessions()
+        .sessions
+        .insert(id.clone(), session.clone());
+    let request = SandboxCommandSessionControlRequest {
+        user_id: "user".into(),
+        session_id: "thread".into(),
+        command_session_id: id.clone(),
+        input: String::new(),
+        after_seq: 0,
+        yield_time_ms: 2000,
+        wait_for_exit: true,
+        include_snapshot: false,
+    };
+    let poll = tokio::spawn(poll_command_session_inner(request, false));
+    tokio::task::yield_now().await;
+    session.append_delta("stdout", b"first\n");
+    tokio::task::yield_now().await;
+    assert!(!poll.is_finished());
+    session.append_delta("stdout", b"second\n");
+    session.finish(Some(0), false, None);
+    let result = timeout(Duration::from_millis(500), poll)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(result["data"]["status"], "exited");
+    assert_eq!(result["data"]["stdout"], "");
+    assert_eq!(result["data"]["deltas"].as_array().unwrap().len(), 2);
+    let snapshot = session.snapshot(2, true);
+    assert_eq!(snapshot.stdout, "first\nsecond\n");
+    assert!(snapshot.deltas.is_empty());
+    command_sessions().sessions.remove(&id);
+}
+
+#[tokio::test]
 async fn dropping_capture_task_closes_pipe_reader() {
     let (reader, mut writer) = tokio::io::duplex(32);
     let capture = CaptureTask(tokio::spawn(read_stream_capture(
@@ -113,7 +167,7 @@ async fn background_command_session_can_be_polled_only_in_its_scope() {
         .post(format!("http://{address}/sandboxes/command-sessions/poll"))
         .json(&json!({
             "user_id": "user_a", "session_id": "thread_a",
-            "command_session_id": command_session_id, "yield_time_ms": 500
+            "command_session_id": command_session_id, "yield_time_ms": 500, "wait_for_exit": true, "include_snapshot": true
         }))
         .send()
         .await

@@ -832,6 +832,28 @@ pub trait BenchmarkStore {
     fn delete_benchmark_run(&self, run_id: &str) -> Result<i64>;
 }
 
+/// Outcome of one orphan-log sweep pass.
+#[derive(Debug, Default, Clone)]
+pub struct OrphanSweepResult {
+    /// Deleted row counts keyed by table name.
+    pub deleted: HashMap<String, i64>,
+    /// True when every interval up to the cutoff was fully drained. False
+    /// means the pass spent its time budget mid-interval and the next pass
+    /// resumes from the persisted watermark; it is progress, not a failure.
+    pub completed: bool,
+    /// Epoch seconds the sweep has fully covered. The next pass resumes from
+    /// here, so a value that stops moving means rows in that interval cannot
+    /// be removed.
+    pub swept_until: f64,
+}
+
+impl OrphanSweepResult {
+    /// Total rows removed across every table.
+    pub fn removed(&self) -> i64 {
+        self.deleted.values().copied().sum()
+    }
+}
+
 /// Retention cleanup storage.
 pub trait RetentionStore {
     /// Delete ephemeral stream events created before `cutoff_epoch_s`
@@ -843,8 +865,8 @@ pub trait RetentionStore {
     /// durable catalog. Only rows created before `cutoff_epoch_s` are
     /// considered, so in-flight sessions are never touched, and sessions
     /// inside the deletion-grace window are preserved. Returns deleted row
-    /// counts keyed by table name.
-    fn cleanup_orphan_session_logs(&self, cutoff_epoch_s: f64) -> Result<HashMap<String, i64>>;
+    /// counts keyed by table name plus whether the sweep reached the cutoff.
+    fn cleanup_orphan_session_logs(&self, cutoff_epoch_s: f64) -> Result<OrphanSweepResult>;
 }
 
 /// User, organization, token, external link, and session-scope storage.
@@ -896,6 +918,11 @@ pub trait UserAccountStore {
 
 /// Refresh-token rotation storage for local (desktop/cli) sessions.
 pub trait UserRefreshTokenStore {
+    /// Consume one refresh token and replace its family's access/refresh pair
+    /// in one transaction. False means the token was consumed or revoked.
+    fn rotate_user_refresh_token(&self, presented: &str, access: &UserTokenRecord, refresh: &UserRefreshTokenRecord) -> Result<bool>;
+    fn bind_user_session_device(&self, record: &UserSessionDeviceRecord) -> Result<()>;
+    fn get_user_session_device(&self, family_id: &str) -> Result<Option<UserSessionDeviceRecord>>;
     fn create_user_refresh_token(&self, record: &UserRefreshTokenRecord) -> Result<()>;
     fn get_user_refresh_token(&self, refresh_token: &str)
         -> Result<Option<UserRefreshTokenRecord>>;
@@ -1492,6 +1519,9 @@ pub trait TerminalTranscriptStore {
 /// The device log stream is an independent namespace: it never touches
 /// thread_logs/monitor tables and is safe to prune by retention.
 pub trait CloudStore {
+    /// Live, non-revoked access/refresh families bound to one device. Indexed
+    /// lookup for a paged governance view; heartbeats are not login evidence.
+    fn count_cloud_device_sessions(&self, device_id: &str, now: f64) -> Result<i64>;
     /// Login device reuse: the row registered for (user, client, name).
     fn find_cloud_device_by_identity(
         &self,
@@ -1503,6 +1533,9 @@ pub trait CloudStore {
     /// The stored `revoked` flag is never reset here; only
     /// `set_cloud_device_revoked` may change it.
     fn upsert_cloud_device(&self, record: &CloudDeviceRecord) -> Result<()>;
+    /// Atomically register an unrevoked device and bind one immutable token
+    /// family. Returns false for identity conflicts; neither row is changed.
+    fn register_cloud_device_session(&self, record: &CloudDeviceRecord, family_id: &str) -> Result<bool>;
     fn get_cloud_device(&self, device_id: &str) -> Result<Option<CloudDeviceRecord>>;
     /// Heartbeat: advance `last_seen_at` without touching any other field.
     fn touch_cloud_device(&self, device_id: &str, last_seen_at: f64) -> Result<()>;

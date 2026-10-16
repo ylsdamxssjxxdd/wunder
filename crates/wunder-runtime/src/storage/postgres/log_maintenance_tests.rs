@@ -1,6 +1,6 @@
 //! Opt-in integration checks; every test owns a separate PostgreSQL schema.
 use super::super::*;
-use super::{begin, delete_rows, lock_usage, PurgeBudget};
+use super::{begin, delete_rows_all, lock_usage, PurgeBudget};
 use crate::storage::{USAGE_CHAT_WATERMARK_KEY, USAGE_TOOL_WATERMARK_KEY};
 use std::time::Instant;
 
@@ -255,7 +255,7 @@ fn postgres_log_maintenance_partition_row_ids_are_scoped() {
         (3,'fixture-user','fixture-keep',1100,FALSE)",
         )
         .unwrap();
-    let removed = delete_rows(
+    let removed = delete_rows_all(
         &mut f.db.conn().unwrap(),
         "tool_logs",
         "user_id=$1 AND session_id=$2",
@@ -283,7 +283,7 @@ fn postgres_log_maintenance_partial_delete_does_not_report_completion() {
          FOR EACH ROW EXECUTE FUNCTION fixture_keep_row()",
         )
         .unwrap();
-    assert!(delete_rows(
+    assert!(delete_rows_all(
         &mut f.db.conn().unwrap(),
         "thread_body_chunks",
         "user_id=$1 AND session_id=$2",
@@ -297,7 +297,7 @@ fn postgres_log_maintenance_partial_delete_does_not_report_completion() {
         .batch_execute("DROP TRIGGER fixture_keep ON thread_body_chunks")
         .unwrap();
     assert_eq!(
-        delete_rows(
+        delete_rows_all(
             &mut f.db.conn().unwrap(),
             "thread_body_chunks",
             "user_id=$1 AND session_id=$2",
@@ -319,6 +319,8 @@ fn postgres_log_maintenance_orphan_watermark_waits_for_every_row() {
             FROM generate_series(1,4500) n;
          INSERT INTO tool_logs SELECT n,'fixture-user','fixture-orphan-'||n,100,FALSE
             FROM generate_series(1,4500) n;
+         INSERT INTO thread_log_changes SELECT 'fixture-orphan-'||n,'fixture-user',100
+            FROM generate_series(1,10) n;
          INSERT INTO chat_sessions VALUES('fixture-live');
          INSERT INTO deleted_session_log_grace VALUES('fixture-user','fixture-grace',0);
          INSERT INTO thread_logs VALUES('fixture-live','fixture-user'),('fixture-grace','fixture-user');
@@ -327,9 +329,20 @@ fn postgres_log_maintenance_orphan_watermark_waits_for_every_row() {
          INSERT INTO tool_logs VALUES(5000,'fixture-user','fixture-live',100,FALSE),
             (5001,'fixture-user','fixture-grace',100,FALSE)"
     ).unwrap();
+    // One projection holds its rows back: the interval keeps them, so the
+    // watermark must stay put even though other tables are already empty.
+    f.db.conn().unwrap().batch_execute(
+        "CREATE FUNCTION fixture_keep_row() RETURNS trigger LANGUAGE plpgsql AS
+         'BEGIN RETURN NULL; END';
+         CREATE TRIGGER fixture_keep BEFORE DELETE ON thread_log_changes
+         FOR EACH ROW EXECUTE FUNCTION fixture_keep_row()",
+    ).unwrap();
     f.db.reconcile_user_usage_impl(true).unwrap();
-    assert!(f.db.cleanup_orphan_session_logs_impl(200.0).is_err());
-    assert!(f.count("thread_items") > 2);
+    let partial = f.db.cleanup_orphan_session_logs_impl(200.0).unwrap();
+    assert!(
+        !partial.completed,
+        "an unfinished interval is progress, not success"
+    );
     assert_eq!(
         f.db.conn()
             .unwrap()
@@ -342,11 +355,18 @@ fn postgres_log_maintenance_orphan_watermark_waits_for_every_row() {
         0,
         "unfinished intervals must not advance"
     );
+    f.db.conn()
+        .unwrap()
+        .batch_execute("DROP TRIGGER fixture_keep ON thread_log_changes")
+        .unwrap();
+    let mut completed = false;
     for _ in 0..5 {
-        if f.db.cleanup_orphan_session_logs_impl(200.0).is_ok() {
+        if f.db.cleanup_orphan_session_logs_impl(200.0).unwrap().completed {
+            completed = true;
             break;
         }
     }
+    assert!(completed, "sweep must reach the cutoff once rows are deletable");
     assert_eq!(f.count("thread_items"), 2);
     assert_eq!(f.count("tool_logs"), 2);
     assert_eq!(

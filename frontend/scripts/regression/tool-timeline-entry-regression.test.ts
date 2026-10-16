@@ -219,6 +219,49 @@ test('panel and plan projections cap item counts and text length', () => {
   assert.equal(plan.groups[0].rows[0].meta, 'chat.toolWorkflow.statusRunning');
 });
 
+test('path tools do not render the same file name twice beside the target chip', () => {
+  // 文本编辑：调用参数 file_path 同时进徽章与摘要，摘要必须让位。
+  const edit = buildTimelineToolEntry(baseRun({
+    toolName: 'text_edit',
+    toolDisplayName: '文本编辑',
+    toolRuntimeName: 'text_edit',
+    callItem: callItem({ args: { file_path: 'temp/draw_duck.py', old_string: 'a', new_string: 'b' } })
+  }), t);
+  assert.equal(edit.targets.length, 1);
+  assert.equal(edit.targets[0].path, 'temp/draw_duck.py');
+  assert.equal(edit.summary, '');
+
+  // 读图工具：摘要取 basename，与徽章同一份文件名，同样去重。
+  const readImage = buildTimelineToolEntry(baseRun({
+    toolName: 'read_image',
+    toolDisplayName: '读图工具',
+    toolRuntimeName: 'read_image',
+    callItem: callItem({ args: { path: 'temp/鸭子.png' } }),
+    resultItem: callItem({ result: { data: { path: 'temp/鸭子.png', media_kind: 'image' } } })
+  }), t);
+  assert.equal(readImage.targets[0]?.path, 'temp/鸭子.png');
+  assert.equal(readImage.summary, '');
+
+  // 深层路径：摘要折叠前缀 `.../` 与徽章 `…/` 写法不同，仍需判定为重复。
+  const deep = buildTimelineToolEntry(baseRun({
+    toolName: 'write_file',
+    toolDisplayName: '写入文件',
+    toolRuntimeName: 'write_file',
+    callItem: callItem({ args: { path: 'crates/engine/src/lib.rs', content: '# hi\n' } })
+  }), t);
+  assert.equal(deep.targets[0]?.label, '…/src/lib.rs');
+  assert.equal(deep.summary, '');
+
+  // 摘要与徽章内容不同（命令/query）时保持原样。
+  const command = buildTimelineToolEntry(baseRun({
+    toolName: 'execute_command',
+    toolDisplayName: '执行命令',
+    toolRuntimeName: 'execute_command',
+    callItem: callItem({ args: { content: 'python draw.py' } })
+  }), t);
+  assert.equal(command.summary, 'python draw.py');
+});
+
 test('text_edit replace folds into a red/green diff card with +/- stats', () => {
   const run = baseRun({
     toolName: 'text_edit',

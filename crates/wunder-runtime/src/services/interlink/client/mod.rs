@@ -43,8 +43,8 @@ use wunder_core::interlink::{
     CAP_THREAD_DRIVE, CAP_TOOL_EXEC, CAP_WORKSPACE_READ_BINARY, CAP_WORKSPACE_WRITE,
     CMD_COMMAND_CANCEL, ERR_NODE_BUSY, EVENT_NODE_JOINED, EVENT_PRESENCE, EVENT_THREAD,
     FRAME_COMMAND, FRAME_COMMAND_ACK, FRAME_COMMAND_RESULT, FRAME_ERROR, FRAME_EVENT,
-    FRAME_HELLO_ACK, FRAME_PONG, NODE_STATUS_AWAY, NODE_STATUS_BUSY, NODE_STATUS_ONLINE,
-    TUNNEL_WS_PROTOCOL,
+    FRAME_HELLO_ACK, FRAME_PONG, INTERLINK_PROTOCOL_VERSION, NODE_STATUS_AWAY, NODE_STATUS_BUSY,
+    NODE_STATUS_ONLINE, TUNNEL_WS_PROTOCOL,
 };
 
 use crate::core::long_task;
@@ -217,6 +217,7 @@ pub struct TunnelWriter {
     control: mpsc::Sender<OutboundFrame>,
     data: mpsc::Sender<OutboundFrame>,
     channel_id: RwLock<Option<String>>,
+    cancel: CancellationToken,
 }
 
 /// Frames a full bounded queue refused, cumulative for the process so a
@@ -241,6 +242,7 @@ impl TunnelWriter {
                 control: control_tx,
                 data: data_tx,
                 channel_id: RwLock::new(None),
+                cancel: CancellationToken::new(),
             }),
             control_rx,
             data_rx,
@@ -337,9 +339,10 @@ struct ClientInner {
     reconnect_degraded: AtomicBool,
     /// Command sender of the current generation; `start()` swaps it together
     /// with the dispatcher's matching receiver.
-    commands: RwLock<mpsc::Sender<CommandSpec>>,
+    commands: RwLock<mpsc::Sender<(CommandSpec, Arc<TunnelWriter>)>>,
     forwarders: RwLock<HashMap<String, Forwarder>>,
     secret: RwLock<Option<NodeSecret>>,
+    session_identity: RwLock<Option<String>>,
     last_error: RwLock<Option<String>>,
     next_retry_at: RwLock<Option<f64>>,
     last_busy_at: AtomicU64,
@@ -349,9 +352,12 @@ struct ClientInner {
     /// staying dead until the form restarts.
     stop: RwLock<CancellationToken>,
     running: AtomicBool,
+    lifecycle: std::sync::Mutex<()>,
+    generation_gate: tokio::sync::Mutex<()>,
 }
 
 struct Forwarder {
+    id: String,
     cancel: CancellationToken,
 }
 
@@ -381,11 +387,14 @@ impl ClientInner {
             commands: RwLock::new(commands),
             forwarders: RwLock::new(HashMap::new()),
             secret: RwLock::new(None),
+            session_identity: RwLock::new(None),
             last_error: RwLock::new(None),
             next_retry_at: RwLock::new(None),
             last_busy_at: AtomicU64::new(0),
             stop: RwLock::new(CancellationToken::new()),
             running: AtomicBool::new(false),
+            lifecycle: std::sync::Mutex::new(()),
+            generation_gate: tokio::sync::Mutex::new(()),
         })
     }
 
@@ -461,7 +470,7 @@ impl ClientInner {
             else {
                 return;
             };
-            let Some(mut session) = CloudSessionFile::load_any(&base) else {
+            let Some(mut session) = CloudSessionFile::load_for(&base, &expected.client) else {
                 return;
             };
             if session.user_id != expected.user_id
@@ -504,6 +513,7 @@ impl ClientInner {
     }
 
     fn clear_writer(&self, writer: &Arc<TunnelWriter>) {
+        writer.cancel.cancel();
         let mut guard = self.writer.write().expect("tunnel state lock poisoned");
         if guard
             .as_ref()
@@ -614,7 +624,14 @@ impl ClientInner {
     /// declared, recomputed so a capability the server handed out by mistake is
     /// still refused (docs §9.2 three-way intersection).
     fn declared_capabilities(&self) -> Vec<String> {
-        declared_capabilities(&NodePlatform::detect(&self.state))
+        let mut capabilities = declared_capabilities(&NodePlatform::detect(&self.state));
+        if !cloud::shared()
+            .session()
+            .is_some_and(|session| session.interlink.full_shadow)
+        {
+            capabilities.retain(|cap| cap != CAP_SHADOW_FULL);
+        }
+        capabilities
     }
 
     fn set_capabilities(&self, caps: Vec<String>) {
@@ -715,6 +732,11 @@ impl InterlinkClient {
     /// re-opened in the same process.
     pub fn start(&self) {
         let inner = self.inner.clone();
+        let _lifecycle = self
+            .inner
+            .lifecycle
+            .lock()
+            .expect("tunnel lifecycle lock poisoned");
         if inner.running.swap(true, Ordering::AcqRel) {
             // Already running: a repeated `start()` is how a form expresses
             // "connect now" (e.g. right after saving the session with the
@@ -729,21 +751,51 @@ impl InterlinkClient {
         // One command channel per generation: the previous receiver was moved
         // into the dispatcher that `stop()` just cancelled, so taking it from a
         // slot would leave a reconnected node with nobody to run commands.
-        let (sender, receiver) = mpsc::channel(COMMAND_QUEUE_CAPACITY);
-        *inner
-            .commands
-            .write()
-            .expect("command sender lock poisoned") = sender;
-        long_task::spawn(
-            "interlink.client.commands",
-            command_dispatcher(inner.clone(), receiver),
-        );
-        long_task::spawn("interlink.client.run_loop", run_loop(inner.clone()));
+        let generation = inner.stop_token();
+        long_task::spawn("interlink.client.run_loop", async move {
+            // A replacement generation cannot publish a writer or receive commands
+            // until all old tasks have stopped and their ledger has been cleaned.
+            let _gate = inner.generation_gate.lock().await;
+            if generation.is_cancelled() {
+                return;
+            }
+            let (sender, receiver) = mpsc::channel(COMMAND_QUEUE_CAPACITY);
+            *inner
+                .commands
+                .write()
+                .expect("command sender lock poisoned") = sender;
+            let commands = tokio::spawn(command_dispatcher(
+                inner.clone(),
+                receiver,
+                generation.clone(),
+            ));
+            tokio::select! {
+                biased;
+                _ = generation.cancelled() => {},
+                _ = run_loop(inner.clone()) => {},
+            }
+            generation.cancel();
+            let _ = commands.await;
+            inner.ledger.abort_all().await;
+            for id in inner.in_flight.snapshot() {
+                inner.in_flight.remove(&id);
+            }
+            inner.approvals.clear();
+            inner.set_capabilities(Vec::new());
+            if let Some(writer) = inner.writer() {
+                inner.clear_writer(&writer);
+            }
+        });
     }
 
     /// Stop the tunnel and forget everything transient. The kill switch uses
     /// the same path, so a restart picks up the new session config.
     pub fn stop(&self) {
+        let _lifecycle = self
+            .inner
+            .lifecycle
+            .lock()
+            .expect("tunnel lifecycle lock poisoned");
         if !self.inner.running.load(Ordering::Acquire) {
             return;
         }
@@ -757,10 +809,6 @@ impl InterlinkClient {
         self.inner.approvals.clear();
         self.inner.set_capabilities(Vec::new());
         self.drop_all_forwarders();
-        let inner = self.inner.clone();
-        long_task::spawn("interlink.client.abort", async move {
-            inner.ledger.abort_all().await;
-        });
     }
 
     fn drop_all_forwarders(&self) {
@@ -891,6 +939,7 @@ async fn run_loop(inner: Arc<ClientInner>) {
             return;
         }
         let Some(session) = inner.session() else {
+            let _ = cloud::shared().adopt_shared_login().await;
             // Logged out: stay quiet and cheap, surface `disabled`.
             inner.set_tunnel(TunnelState::Disabled);
             inner.set_capabilities(Vec::new());
@@ -907,6 +956,25 @@ async fn run_loop(inner: Arc<ClientInner>) {
             sleep_or_stop(&inner, IDLE_WAIT).await;
             continue;
         }
+        let identity = format!(
+            "{}\n{}\n{}\n{}",
+            session.server, session.user_id, session.device_id, session.logged_in_at
+        );
+        {
+            let mut previous = inner
+                .session_identity
+                .write()
+                .expect("tunnel identity lock poisoned");
+            if previous.as_deref() != Some(&identity) {
+                *previous = Some(identity);
+                *inner.secret.write().expect("tunnel secret lock poisoned") = None;
+                *inner
+                    .resume_channel
+                    .write()
+                    .expect("tunnel resume lock poisoned") = None;
+                inner.approvals.forget_memory();
+            }
+        }
         if quiet {
             // A session appeared or the local kill switch was lifted: what
             // the loop was waiting on has changed, so this is "worth trying
@@ -918,6 +986,23 @@ async fn run_loop(inner: Arc<ClientInner>) {
             attempt = 0;
             inner.set_reconnect_degraded(false);
         }
+        // One process per local form owns the inbound tunnel. Other instances
+        // keep outbound cloud access and retry the kernel lease on the idle cadence.
+        let lock_path = inner
+            .options
+            .session_base_dir
+            .join(format!("config/interlink.{}.lock", session.client));
+        let Ok(_tunnel_lease) =
+            crate::core::process_file_lock::ProcessFileLock::acquire(&lock_path, Duration::ZERO)
+                .await
+        else {
+            inner.set_tunnel(TunnelState::Disabled);
+            inner.set_error(Some(
+                "another local instance owns the device tunnel".to_string(),
+            ));
+            sleep_or_stop(&inner, IDLE_WAIT).await;
+            continue;
+        };
         inner.set_error(None);
         // Bootstrap the node secret before the first ticket (docs §4.1).
         if inner.cached_secret().is_none() {
@@ -1074,6 +1159,7 @@ async fn connect_once(
     session: &CloudSessionFile,
     secret: NodeSecret,
 ) -> Result<CloseReason, CloseReason> {
+    let stop = inner.stop_token();
     let ticket = handshake::fetch_channel_ticket(session)
         .await
         .map_err(|err| reason_for_error(&err))?;
@@ -1138,14 +1224,21 @@ async fn connect_once(
     // frame priority), both queues are bounded. Protocol-level pongs travel a
     // small raw lane so the read loop can answer pings after the sink moved.
     let (pong_tx, pong_rx) = mpsc::channel::<WsMessage>(8);
-    let writer_task = tokio::spawn(write_pump(
+    // Aborting the enclosing connection future must also close its writer.
+    struct AbortWriter(tokio::task::JoinHandle<()>);
+    impl Drop for AbortWriter {
+        fn drop(&mut self) {
+            self.0.abort();
+        }
+    }
+    let writer_task = AbortWriter(tokio::spawn(write_pump(
         sink,
         writer.clone(),
         control_rx,
         data_rx,
         pong_rx,
-        inner.stop_token(),
-    ));
+        stop.clone(),
+    )));
 
     // Commands with a `workspace_id` resolve real host folders only when the
     // bindings are registered; do it before the first command can land.
@@ -1154,24 +1247,16 @@ async fn connect_once(
     // First projection right after the ack (docs §6.2 1).
     send_full_shadow(&inner, &writer, session, revision).await;
 
-    let heartbeat_s = inner
-        .state
-        .config_store
-        .get()
-        .await
-        .interlink
-        .heartbeat_s
-        .max(1);
+    let heartbeat_s = ack.heartbeat_s.clamp(1, 300);
     let full_interval_s = session
         .interlink
         .shadow_interval_s()
         .max(shadow::DELTA_MERGE_WINDOW.as_secs() * 2);
 
-    let mut watchdog = tokio::time::interval(Duration::from_secs(
-        heartbeat_s * u64::from(HEARTBEAT_MISSED_BEATS.max(1)),
-    ));
-    watchdog.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    watchdog.tick().await;
+    let idle_timeout =
+        Duration::from_secs(heartbeat_s.saturating_mul(u64::from(HEARTBEAT_MISSED_BEATS.max(1))));
+    let watchdog = tokio::time::sleep(idle_timeout);
+    tokio::pin!(watchdog);
     let mut presence = tokio::time::interval(PRESENCE_INTERVAL);
     presence.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     presence.tick().await;
@@ -1181,18 +1266,20 @@ async fn connect_once(
     let mut full_timer = tokio::time::interval(Duration::from_secs(full_interval_s));
     full_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     full_timer.tick().await;
-    let stop = inner.stop_token();
 
     let reason = loop {
         tokio::select! {
             incoming = stream.next() => {
                 match incoming {
                     Some(Ok(WsMessage::Text(text))) => {
-                        if let Some(reason) = handle_inbound(&inner, &writer, &text) {
+                        if !serde_json::from_str::<InterlinkFrame>(&text).is_ok_and(|frame| frame.v == INTERLINK_PROTOCOL_VERSION && frame.channel_id.as_deref().is_none_or(|channel| channel == ack.channel_id)) { continue; }
+                        watchdog.as_mut().reset(tokio::time::Instant::now() + idle_timeout);
+                        if let Some(reason) = handle_inbound(&inner, &writer, &text).await {
                             break reason;
                         }
                     }
                     Some(Ok(WsMessage::Ping(payload))) => {
+                        watchdog.as_mut().reset(tokio::time::Instant::now() + idle_timeout);
                         if pong_tx.send(WsMessage::Pong(payload)).await.is_err() {
                             break CloseReason::Transport;
                         }
@@ -1207,6 +1294,7 @@ async fn connect_once(
                 writer.try_send_frame(FRAME_EVENT, None, payload);
             }
             _ = delta_window.tick() => {
+                if !inner.session().is_some_and(|current| current.interlink.enabled && current.token == session.token && current.device_id == session.device_id && current.server == session.server && current.logged_in_at == session.logged_in_at) { break CloseReason::ClosedByPeer; }
                 pump_shadow_signals(&inner, &writer, session).await;
             }
             _ = full_timer.tick() => {
@@ -1217,7 +1305,7 @@ async fn connect_once(
                 let revision = inner.collector.next_revision();
                 send_full_shadow(&inner, &writer, session, revision).await;
             }
-            _ = watchdog.tick() => {
+            _ = &mut watchdog => {
                 // Nothing at all from the server for three heartbeat periods.
                 break CloseReason::Timeout;
             }
@@ -1225,12 +1313,19 @@ async fn connect_once(
         }
     };
 
-    writer_task.abort();
+    drop(writer_task);
     inner.clear_writer(&writer);
     inner.set_capabilities(Vec::new());
     inner.approvals.clear();
-    if let Some(client) = shared() {
-        client.drop_all_forwarders();
+    let forwarders: Vec<_> = inner
+        .forwarders
+        .write()
+        .expect("forwarder table lock poisoned")
+        .drain()
+        .map(|(_, entry)| entry)
+        .collect();
+    for forwarder in forwarders {
+        forwarder.cancel.cancel();
     }
     let aborted = inner.ledger.abort_all().await;
     if aborted > 0 {
@@ -1313,7 +1408,7 @@ fn reason_for_error(err: &HandshakeError) -> CloseReason {
 }
 
 /// Route one inbound JSON frame. `Some(reason)` ends the connection.
-fn handle_inbound(
+async fn handle_inbound(
     inner: &Arc<ClientInner>,
     writer: &Arc<TunnelWriter>,
     text: &str,
@@ -1347,13 +1442,11 @@ fn handle_inbound(
                     .target_command_id
                     .clone()
                     .unwrap_or_else(|| spec.command_id.clone());
-                let inner = inner.clone();
-                long_task::spawn("interlink.client.command_cancel", async move {
-                    inner.ledger.cancel(&target).await;
-                });
+                inner.ledger.cancel_or_remember(&target, now_ts()).await;
+                inner.approvals.dismiss_command(&target);
                 return None;
             }
-            let job = spec;
+            let job = (spec, writer.clone());
             let sender = inner
                 .commands
                 .read()
@@ -1453,6 +1546,7 @@ impl ClientInner {
             }
         }
         let cancel = CancellationToken::new();
+        let forwarder_id = handshake::frame_id();
         let already = {
             let mut table = self
                 .forwarders
@@ -1464,6 +1558,7 @@ impl ClientInner {
                 table.insert(
                     thread_id.clone(),
                     Forwarder {
+                        id: forwarder_id.clone(),
                         cancel: cancel.clone(),
                     },
                 );
@@ -1477,9 +1572,21 @@ impl ClientInner {
         let writer = writer.clone();
         let owned_thread = thread_id.clone();
         long_task::spawn("interlink.client.thread_forward", async move {
-            let Some(user_id) = inner.options.local_user_id.clone().into() else {
+            let user_id = inner.options.local_user_id.clone();
+            let store = inner.state.user_store.clone();
+            let owner = user_id.clone();
+            let thread = owned_thread.clone();
+            let owned = crate::blocking::run_db("interlink.forward.owner", move || {
+                store.get_chat_session(&owner, &thread)
+            })
+            .await
+            .ok()
+            .flatten()
+            .is_some();
+            if !owned || cancel.is_cancelled() || writer.cancel.is_cancelled() {
+                inner.forget_forwarder(&owned_thread, &forwarder_id);
                 return;
-            };
+            }
             // Snapshot first, then deltas from the durable cursor.
             let (snapshot, cursor) = thread_snapshot(&inner, &user_id, &owned_thread).await;
             // `snapshot: true` is what makes the server relay this as the
@@ -1496,7 +1603,7 @@ impl ClientInner {
                     "payload": snapshot,
                 }),
             ) {
-                inner.forget_forwarder(&owned_thread);
+                inner.forget_forwarder(&owned_thread, &forwarder_id);
                 return;
             }
             let receiver = match crate::services::thread_change_feeder::watch_thread_changes(
@@ -1509,7 +1616,7 @@ impl ClientInner {
             {
                 Ok(receiver) => receiver,
                 Err(_) => {
-                    inner.forget_forwarder(&owned_thread);
+                    inner.forget_forwarder(&owned_thread, &forwarder_id);
                     return;
                 }
             };
@@ -1521,7 +1628,7 @@ impl ClientInner {
                 cancel,
             )
             .await;
-            inner.forget_forwarder(&owned_thread);
+            inner.forget_forwarder(&owned_thread, &forwarder_id);
         });
     }
 
@@ -1538,12 +1645,14 @@ impl ClientInner {
         }
     }
 
-    fn forget_forwarder(&self, thread_id: &str) {
+    fn forget_forwarder(&self, thread_id: &str, id: &str) {
         let mut table = self
             .forwarders
             .write()
             .expect("forwarder table lock poisoned");
-        table.remove(thread_id);
+        if table.get(thread_id).is_some_and(|entry| entry.id == id) {
+            table.remove(thread_id);
+        }
     }
 }
 
@@ -1776,25 +1885,38 @@ async fn pump_shadow_signals(
 // Command dispatcher
 // ---------------------------------------------------------------------------
 
-async fn command_dispatcher(inner: Arc<ClientInner>, mut receiver: mpsc::Receiver<CommandSpec>) {
-    let stop = inner.stop_token();
+async fn command_dispatcher(
+    inner: Arc<ClientInner>,
+    mut receiver: mpsc::Receiver<(CommandSpec, Arc<TunnelWriter>)>,
+    stop: CancellationToken,
+) {
+    let mut tasks = tokio::task::JoinSet::new();
     loop {
-        let spec = tokio::select! {
-            Some(spec) = receiver.recv() => spec,
-            _ = stop.cancelled() => return,
-            else => return,
+        let (spec, writer) = tokio::select! {
+            biased;
+            _ = stop.cancelled() => break,
+            Some(_) = tasks.join_next(), if !tasks.is_empty() => continue,
+            Some(spec) = receiver.recv(), if tasks.len() < execute::INFLIGHT_MAX => spec,
+            else => break,
         };
+        if !inner
+            .writer()
+            .is_some_and(|current| Arc::ptr_eq(&current, &writer))
+        {
+            continue;
+        }
         let inner = inner.clone();
-        long_task::spawn("interlink.client.command_run", async move {
-            run_command(inner, spec).await;
+        tasks.spawn(async move {
+            let canceled = writer.cancel.clone();
+            let command_id = spec.command_id.clone();
+            tokio::select! { biased; _ = canceled.cancelled() => {}, _ = run_command(inner.clone(), writer, spec) => {} }
+            inner.in_flight.remove(&command_id);
         });
     }
+    tasks.shutdown().await;
 }
 
-async fn run_command(inner: Arc<ClientInner>, spec: CommandSpec) {
-    let Some(writer) = inner.writer() else {
-        return; // the tunnel is gone; the server already knows
-    };
+async fn run_command(inner: Arc<ClientInner>, writer: Arc<TunnelWriter>, spec: CommandSpec) {
     let Some(session) = inner.session() else {
         return;
     };
@@ -1820,6 +1942,11 @@ async fn run_command(inner: Arc<ClientInner>, spec: CommandSpec) {
     {
         return;
     }
+    let cancel = inner
+        .ledger
+        .cancel_token_for(&spec.command_id)
+        .await
+        .unwrap_or_default();
     if !inner
         .in_flight
         .try_add(&spec.command_id, execute::INFLIGHT_MAX)
@@ -1869,13 +1996,23 @@ async fn run_command(inner: Arc<ClientInner>, spec: CommandSpec) {
                 .await;
             return;
         }
-        Preflight::NeedPrompt => match request_decision(&inner, &writer, &spec).await {
-            Some(state) => state,
-            None => {
-                inner.in_flight.remove(&spec.command_id);
-                return;
+        Preflight::NeedPrompt => {
+            match request_decision(&inner, &writer, &spec, cancel.clone()).await {
+                Some(state) => state,
+                None => {
+                    inner.in_flight.remove(&spec.command_id);
+                    inner
+                        .ledger
+                        .finish(
+                            &spec.command_id,
+                            CommandReport::canceled("approval canceled or expired").payload(),
+                            now_ts(),
+                        )
+                        .await;
+                    return;
+                }
             }
-        },
+        }
     };
 
     // 3) accepted: ack, then execute.
@@ -1889,11 +2026,6 @@ async fn run_command(inner: Arc<ClientInner>, spec: CommandSpec) {
         .ok();
 
     let ctx = inner.exec_context(&writer, &session).await;
-    let cancel = inner
-        .ledger
-        .cancel_token_for(&spec.command_id)
-        .await
-        .unwrap_or_default();
     let report = execute::execute(
         &spec,
         &ctx,
@@ -1929,6 +2061,7 @@ async fn request_decision(
     inner: &Arc<ClientInner>,
     writer: &Arc<TunnelWriter>,
     spec: &CommandSpec,
+    cancel: CancellationToken,
 ) -> Option<String> {
     let now = now_ts();
     let window = approval::window_seconds(spec.approval_expires_at, spec.timeout_s, now);
@@ -1967,6 +2100,7 @@ async fn request_decision(
         answered = receiver => answered.ok(),
         _ = tokio::time::sleep(Duration::from_secs_f64(window.max(0.001))) => None,
         _ = stop.cancelled() => None,
+        _ = cancel.cancelled() => None,
     };
     let state = match decision {
         Some(Decision::Approve) => APPROVAL_APPROVED.to_string(),

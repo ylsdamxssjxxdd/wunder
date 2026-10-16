@@ -160,6 +160,7 @@ async fn chat_ws(
     let conn_meta = WsConnMeta::from_headers(&headers, has_protocol_token);
     let connection_id = format!("ws_{}", Uuid::new_v4().simple());
     let session_scope = resolved.session_scope.clone();
+    let credential = crate::auth::extract_bearer_token(&auth_headers).unwrap_or_default();
     Ok(ws
         .protocols(["wunder"])
         .max_message_size(WS_MAX_MESSAGE_BYTES)
@@ -172,6 +173,7 @@ async fn chat_ws(
                 session_scope,
                 connection_id,
                 conn_meta,
+                credential,
             )
         }))
 }
@@ -183,6 +185,7 @@ async fn handle_ws(
     session_scope: Option<String>,
     connection_id: String,
     conn_meta: WsConnMeta,
+    credential: String,
 ) {
     let (mut ws_sender, mut ws_receiver) = socket.split();
     let (out_tx, mut out_rx) = mpsc::channel::<Message>(STREAM_EVENT_QUEUE_SIZE);
@@ -255,7 +258,19 @@ async fn handle_ws(
     let mut handshake_done = false;
     let mut close_logged = false;
 
-    while let Some(Ok(message)) = WsStreamExt::next(&mut ws_receiver).await {
+    let mut auth_tick = tokio::time::interval(std::time::Duration::from_secs(15));
+    auth_tick.tick().await;
+    loop {
+        let message = tokio::select! {
+            incoming = WsStreamExt::next(&mut ws_receiver) => match incoming { Some(Ok(message)) => message, _ => break },
+            _ = auth_tick.tick() => {
+                if !crate::api::user_context::credential_active(&state, &credential, &user.user_id).await {
+                    let _ = out_tx.try_send(Message::Close(None));
+                    break;
+                }
+                continue;
+            }
+        };
         match message {
             Message::Text(text) => {
                 let envelope: WsEnvelope = match serde_json::from_str(&text) {
@@ -279,6 +294,10 @@ async fn handle_ws(
                 };
 
                 let kind = envelope.kind.trim().to_ascii_lowercase();
+                if !matches!(kind.as_str(), "ping" | "connect") && !crate::api::user_context::credential_active(&state, &credential, &user.user_id).await {
+                    let _ = out_tx.try_send(Message::Close(None));
+                    break;
+                }
                 if !handshake_done && kind != "connect" && kind != "ping" {
                     handshake_done = true;
                     log_ws_handshake(
@@ -594,6 +613,10 @@ async fn handle_ws(
                                     // make the start feeder and the later watch
                                     // publish the same change rows concurrently.
                                     let feeder_cancel = cancel.child_token();
+                                    long_task::spawn("api.chat_ws.command_stream", crate::api::ws_helpers::watch_command_sessions(
+                                        state_snapshot.control.command_sessions.clone(), display_user.clone(), session_id_cleanup.clone(),
+                                        Some(request_id_cleanup.clone()), ws_tx_snapshot.clone(), feeder_cancel.child_token(),
+                                    ));
                                     let mut stream_drained = false;
                                     loop {
                                         tokio::select! {
@@ -651,32 +674,8 @@ async fn handle_ws(
                                                     continue;
                                                 }
                                                 if event.event == "thread_item_delta" {
-                                                    // Command-session output is the only delta
-                                                    // class the web timeline renders live;
-                                                    // assistant text rides thread_item_tail.
-                                                    // Restore the semantic stream name so the
-                                                    // client's command-session side effects
-                                                    // dispatch, and send it lossy like a tail:
-                                                    // the durable tool_result heals any gap.
-                                                    if event
-                                                        .data
-                                                        .pointer("/data/source_event")
-                                                        .and_then(serde_json::Value::as_str)
-                                                        == Some("command_session_delta")
-                                                    {
-                                                        let forwarded = StreamEvent {
-                                                            event: "command_session_delta".into(),
-                                                            data: event.data.clone(),
-                                                            id: None,
-                                                            timestamp: event.timestamp,
-                                                        };
-                                                        let _ = send_ws_tail_event(
-                                                            &ws_tx_snapshot,
-                                                            Some(&request_id_cleanup),
-                                                            forwarded,
-                                                        )
-                                                        .await;
-                                                    }
+                                                    // Command output has its own broker subscription;
+                                                    // model-turn delta frames must not duplicate it.
                                                     continue;
                                                 }
                                                 // Durable content is delivered only by the feeder.
@@ -815,6 +814,7 @@ async fn handle_ws(
                         let ws_tx_snapshot = ws_tx.clone();
                         let state_snapshot = state.clone();
                         let after_change_seq = payload.after_change_seq.unwrap_or(0).max(0);
+                        let command_user = user.user_id.clone();
                         let (cancel, task_id) =
                             register_ws_task(&tasks, &request_id, Some(session_id.clone()), false)
                                 .await;
@@ -822,6 +822,11 @@ async fn handle_ws(
                         let request_id_cleanup = request_id.clone();
                         let task_id_cleanup = task_id.clone();
                         long_task::spawn("api.chat_ws.resume_stream", async move {
+                            let command_stream = crate::api::ws_helpers::watch_command_sessions(
+                                state_snapshot.control.command_sessions.clone(), command_user, session_id.clone(),
+                                Some(request_id_cleanup.clone()), ws_tx_snapshot.clone(), cancel.clone(),
+                            );
+                            let thread_stream =
                             resume_thread_changes_v2(
                                 state_snapshot,
                                 session_id,
@@ -829,8 +834,8 @@ async fn handle_ws(
                                 Some(&request_id_cleanup),
                                 ws_tx_snapshot,
                                 Some(cancel.clone()),
-                            )
-                            .await;
+                            );
+                            tokio::select! { _ = command_stream => {}, _ = thread_stream => {} }
                             let _ = cleanup_ws_task(
                                 &tasks_cleanup,
                                 &request_id_cleanup,
@@ -907,6 +912,11 @@ async fn handle_ws(
                         let request_id_cleanup = request_id.clone();
                         let task_id_cleanup = task_id.clone();
                         long_task::spawn("api.chat_ws.watch_stream", async move {
+                            let command_stream = crate::api::ws_helpers::watch_command_sessions(
+                                state_snapshot.control.command_sessions.clone(), view_user.clone(), session_id.clone(),
+                                Some(request_id_cleanup.clone()), ws_tx_snapshot.clone(), cancel.clone(),
+                            );
+                            let thread_stream = async {
                             if let Some(seq) = view_seq {
                                 crate::api::ws_helpers::resume_thread_view(
                                     state_snapshot,
@@ -929,6 +939,8 @@ async fn handle_ws(
                                 )
                                 .await;
                             }
+                            };
+                            tokio::select! { _ = command_stream => {}, _ = thread_stream => {} }
                             let _ = cleanup_ws_task(
                                 &tasks_cleanup,
                                 &request_id_cleanup,

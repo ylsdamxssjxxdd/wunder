@@ -6,11 +6,29 @@
 
 use crate::{MainWindow, WorkspaceDialogState};
 use slint::{ComponentHandle, Model};
+use std::cell::Cell;
 use std::sync::Arc;
 use wunder_desktop::{NativeDesktop, WorkspaceEdit, WORKSPACE_COLORS, WORKSPACE_ICONS};
 
 /// The dialog enforces the same 1–40 glyph bound before submit (§6.1).
 const MAX_NAME_CHARS: usize = 40;
+
+thread_local! {
+    static DIALOG_GENERATION: Cell<u64> = const { Cell::new(0) };
+    static PICKING_FOLDER: Cell<bool> = const { Cell::new(false) };
+}
+
+fn invalidate_dialog() -> u64 {
+    DIALOG_GENERATION.with(|slot| {
+        let next = slot.get().wrapping_add(1);
+        slot.set(next);
+        next
+    })
+}
+
+fn current_dialog(request: u64) -> bool {
+    DIALOG_GENERATION.with(|slot| slot.get() == request)
+}
 
 fn clamp_name(raw: &str) -> String {
     let name = raw.trim();
@@ -37,6 +55,9 @@ fn validation_error(report: &wunder_desktop::WorkspacePathReport) -> String {
     if !report.is_directory {
         return "所选路径不是文件夹".into();
     }
+    if !report.readable {
+        return "文件夹不可读".into();
+    }
     if !report.writable {
         return "文件夹不可写".into();
     }
@@ -54,17 +75,26 @@ fn validation_error(report: &wunder_desktop::WorkspacePathReport) -> String {
 
 /// Kick off an async path validation; only the report for the still-selected
 /// folder is applied, so stale results cannot overwrite newer input.
-fn spawn_validation(api: Arc<NativeDesktop>, weak: slint::Weak<MainWindow>, path: String) {
+fn spawn_validation(
+    api: Arc<NativeDesktop>,
+    weak: slint::Weak<MainWindow>,
+    path: String,
+    workspace_id: String,
+    request: u64,
+) {
     std::thread::spawn(move || {
-        let outcome = match api.validate_workspace_path(&path) {
+        let outcome = match api.validate_workspace_edit_path(&path, &workspace_id) {
             Ok(report) => validation_error(&report),
             Err(error) => format!("无法校验该文件夹：{error}"),
         };
         let _ = slint::invoke_from_event_loop(move || {
             let Some(app) = weak.upgrade() else { return };
             let state = app.global::<WorkspaceDialogState>();
-            state.set_validating(false);
-            if state.get_folder_path().as_str() == path {
+            if current_dialog(request)
+                && state.get_open()
+                && state.get_folder_path().as_str() == path
+            {
+                state.set_validating(false);
                 state.set_validate_error(outcome.into());
             }
         });
@@ -74,6 +104,10 @@ fn spawn_validation(api: Arc<NativeDesktop>, weak: slint::Weak<MainWindow>, path
 /// Open the dialog in create mode with factory defaults.
 pub(crate) fn open_create(app: &MainWindow) {
     let state = app.global::<WorkspaceDialogState>();
+    if state.get_busy() {
+        return;
+    }
+    invalidate_dialog();
     state.set_edit_mode(false);
     state.set_workspace_id("".into());
     state.set_folder_path("".into());
@@ -91,6 +125,10 @@ pub(crate) fn open_edit(app: &MainWindow, workspace_index: usize) {
         return;
     };
     let state = app.global::<WorkspaceDialogState>();
+    if state.get_busy() {
+        return;
+    }
+    invalidate_dialog();
     state.set_edit_mode(true);
     state.set_workspace_id(card.workspace_id.to_string().into());
     state.set_folder_path(card.root_path.to_string().into());
@@ -120,6 +158,9 @@ pub(crate) fn open_delete(app: &MainWindow, workspace_index: usize) {
         return;
     };
     let state = app.global::<WorkspaceDialogState>();
+    if state.get_busy() {
+        return;
+    }
     state.set_workspace_id(card.workspace_id.to_string().into());
     state.set_delete_name(card.name.to_string().into());
     state.set_delete_mode(0);
@@ -134,9 +175,11 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
     state.on_pick_folder(move || {
         let Some(app) = weak.upgrade() else { return };
         let state = app.global::<WorkspaceDialogState>();
-        if state.get_busy() {
+        if state.get_busy() || PICKING_FOLDER.with(Cell::get) {
             return;
         }
+        PICKING_FOLDER.with(|slot| slot.set(true));
+        let request = DIALOG_GENERATION.with(Cell::get);
         let weak = weak.clone();
         let api = api.clone();
         // The native chooser blocks its thread; keep it off the UI thread.
@@ -144,8 +187,12 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
             let picked = crate::file_dialog::pick_directory("选择工作区文件夹");
             let _ = slint::invoke_from_event_loop(move || {
                 let Some(app) = weak.upgrade() else { return };
-                let Some(picked) = picked else { return };
+                PICKING_FOLDER.with(|slot| slot.set(false));
                 let state = app.global::<WorkspaceDialogState>();
+                if !current_dialog(request) || !state.get_open() {
+                    return;
+                }
+                let Some(picked) = picked else { return };
                 state.set_folder_path(picked.clone().into());
                 state.set_validate_error("".into());
                 // New workspaces default the name to the folder's own (§6.1).
@@ -157,7 +204,12 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
                     state.set_name_draft(clamp_name(&base).into());
                 }
                 state.set_validating(true);
-                spawn_validation(api, app.as_weak(), picked);
+                let id = if state.get_edit_mode() {
+                    state.get_workspace_id().to_string()
+                } else {
+                    String::new()
+                };
+                spawn_validation(api, app.as_weak(), picked, id, invalidate_dialog());
             });
         });
     });
@@ -165,6 +217,10 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
     state.on_clear_folder(move || {
         let Some(app) = weak.upgrade() else { return };
         let state = app.global::<WorkspaceDialogState>();
+        if state.get_busy() {
+            return;
+        }
+        invalidate_dialog();
         state.set_folder_path("".into());
         state.set_validate_error("".into());
         state.set_validating(false);
@@ -174,7 +230,7 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
     state.on_accept(move || {
         let Some(app) = weak.upgrade() else { return };
         let state = app.global::<WorkspaceDialogState>();
-        if state.get_busy() || state.get_validating() {
+        if state.get_busy() || state.get_validating() || !state.get_validate_error().is_empty() {
             return;
         }
         let name = clamp_name(&state.get_name_draft());
@@ -215,8 +271,16 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
                 match result {
                     Ok(id) => {
                         state.set_open(false);
+                        invalidate_dialog();
+                        let focus = !edit_mode
+                            || usize::try_from(app.get_selected_workspace())
+                                .ok()
+                                .and_then(|index| app.get_workspaces().row_data(index))
+                                .is_some_and(|card| card.workspace_id == id);
                         crate::navigation_ui::project_sidebar(&app, Some(&api_refresh));
-                        crate::navigation_ui::focus_workspace_of(&app, api_refresh, Some(&id));
+                        if focus {
+                            crate::navigation_ui::focus_workspace_of(&app, api_refresh, Some(&id));
+                        }
                     }
                     Err(error) => state.set_validate_error(format!("{error}").into()),
                 }
@@ -226,6 +290,10 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
     let weak = app.as_weak();
     state.on_canceled(move || {
         if let Some(app) = weak.upgrade() {
+            if app.global::<WorkspaceDialogState>().get_busy() {
+                return;
+            }
+            invalidate_dialog();
             app.global::<WorkspaceDialogState>().set_open(false);
         }
     });
@@ -245,15 +313,20 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
         // Off-thread like every other facade call; errors land on status.
         std::thread::spawn(move || {
             let result = api.open_workspace_resource(&folder, "");
-            if let (Err(error), Some(app)) = (result, weak.upgrade()) {
-                app.set_status(format!("无法打开文件夹：{error}").into());
-            }
+            let _ = weak.upgrade_in_event_loop(move |app| {
+                if let Err(error) = result {
+                    app.set_status(format!("无法打开文件夹：{error}").into());
+                }
+            });
         });
     });
     let weak = app.as_weak();
     state.on_request_delete(move || {
         let Some(app) = weak.upgrade() else { return };
         let state = app.global::<WorkspaceDialogState>();
+        if state.get_busy() {
+            return;
+        }
         state.set_delete_name(state.get_name_draft());
         state.set_delete_mode(0);
         state.set_delete_open(true);
@@ -263,22 +336,52 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
     state.on_delete_confirmed(move || {
         let Some(app) = weak.upgrade() else { return };
         let state = app.global::<WorkspaceDialogState>();
+        if state.get_busy() {
+            return;
+        }
         let workspace_id = state.get_workspace_id().to_string();
         if workspace_id.is_empty() {
             return;
         }
         let delete_threads = state.get_delete_mode() == 1;
+        state.set_busy(true);
         state.set_delete_open(false);
         let api = api.clone();
         let weak = weak.clone();
         std::thread::spawn(move || {
             let result = api.delete_workspace(&workspace_id, delete_threads);
-            let _ = weak.upgrade_in_event_loop(move |app| match result {
-                Ok(_) => {
-                    crate::navigation_ui::project_sidebar(&app, Some(&api));
-                    app.invoke_refresh_chat();
+            let _ = weak.upgrade_in_event_loop(move |app| {
+                let state = app.global::<WorkspaceDialogState>();
+                state.set_busy(false);
+                match result {
+                    Ok(_) => {
+                        state.set_open(false);
+                        invalidate_dialog();
+                        let deleted_selected = usize::try_from(app.get_selected_workspace())
+                            .ok()
+                            .and_then(|index| app.get_workspaces().row_data(index))
+                            .is_some_and(|card| card.workspace_id == workspace_id);
+                        crate::navigation_ui::project_sidebar(&app, Some(&api));
+                        if deleted_selected {
+                            if let Some(card) = app.get_workspaces().row_data(0) {
+                                crate::navigation_ui::focus_workspace_of(
+                                    &app,
+                                    api.clone(),
+                                    Some(card.workspace_id.as_str()),
+                                );
+                            } else {
+                                crate::workspace_files::set_target(
+                                    &app,
+                                    api.clone(),
+                                    crate::workspace_files::Target::Cloud,
+                                );
+                            }
+                            app.set_active_session_id("".into());
+                        }
+                        app.invoke_refresh_chat();
+                    }
+                    Err(error) => app.set_status(format!("无法删除工作区：{error}").into()),
                 }
-                Err(error) => app.set_status(format!("无法删除工作区：{error}").into()),
             });
         });
     });

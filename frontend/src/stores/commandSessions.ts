@@ -367,6 +367,11 @@ export const useCommandSessionStore = defineStore('commandSessions', {
     upsertSnapshot(sessionId: string, payload: unknown): CommandSessionRuntimeEntry | null {
       const normalized = normalizeEntryPayload(sessionId, payload);
       if (!normalized) return null;
+      // Reconnect hydration uses backend tails (up to hundreds of KB); retain
+      // the same bounded preview as the live-delta path.
+      for (const field of ['stdoutTail', 'stderrTail', 'ptyTail'] as const) {
+        normalized[field] = compactTerminalText('', normalized[field]).value;
+      }
       const existing = this.entries[normalized.commandSessionId];
       const existingSeq = existing?.seq ?? -1;
       const nextSeq = normalized.seq;
@@ -387,9 +392,11 @@ export const useCommandSessionStore = defineStore('commandSessions', {
               launchMode: normalized.launchMode || existing.launchMode,
               tty: normalized.tty || existing.tty,
               interactive: normalized.interactive || existing.interactive,
-              stdoutTail: normalized.stdoutTail || existing.stdoutTail,
-              stderrTail: normalized.stderrTail || existing.stderrTail,
-              ptyTail: normalized.ptyTail || existing.ptyTail,
+              // A slower subscription may hydrate an older snapshot after a
+              // newer live delta. Keep the newest text along with its cursor.
+              stdoutTail: existing.stdoutTail || normalized.stdoutTail,
+              stderrTail: existing.stderrTail || normalized.stderrTail,
+              ptyTail: existing.ptyTail || normalized.ptyTail,
               stdoutBytes: Math.max(existing.stdoutBytes, normalized.stdoutBytes),
               stderrBytes: Math.max(existing.stderrBytes, normalized.stderrBytes),
               ptyBytes: Math.max(existing.ptyBytes, normalized.ptyBytes),
@@ -407,6 +414,9 @@ export const useCommandSessionStore = defineStore('commandSessions', {
           : normalized)
       };
       if (existing && !preserveTerminalState) {
+        next.toolCallId = normalized.toolCallId || existing.toolCallId;
+        next.command = normalized.command || existing.command;
+        next.commandIndex = normalized.commandIndex ?? existing.commandIndex;
         next.stdoutTail = mergeTerminalText(normalized.stdoutTail, existing.stdoutTail);
         next.stderrTail = mergeTerminalText(normalized.stderrTail, existing.stderrTail);
         next.ptyTail = mergeTerminalText(normalized.ptyTail, existing.ptyTail);
@@ -446,6 +456,10 @@ export const useCommandSessionStore = defineStore('commandSessions', {
       }
       const streamName = normalizeStream(stream);
       const existing = this.entries[normalizedCommandSessionId];
+      const incomingSeq = normalizeOptionalCount(meta.seq);
+      // A send stream and a watcher can deliver the same frame, and a reconnect
+      // may replay output already included by a hydrated snapshot.
+      if (existing && incomingSeq !== null && incomingSeq <= existing.seq) return null;
       const normalizedSessionId = normalizeText(sessionId || existing?.sessionId);
       if (!normalizedSessionId) {
         return null;
@@ -469,7 +483,7 @@ export const useCommandSessionStore = defineStore('commandSessions', {
         next.commandIndex = commandIndex;
       }
       next.updatedAt = new Date().toISOString();
-      next.seq = Math.max(next.seq + 1, normalizeCount(meta.seq));
+      next.seq = incomingSeq ?? next.seq + 1;
 
       if (streamName === 'stderr') {
         const tail = compactTerminalText(next.stderrTail, textDelta);

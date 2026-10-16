@@ -124,6 +124,13 @@ impl CommandSessionTracker {
             }
         };
         if !existed {
+            if let Some(broker) = broker.as_ref() {
+                broker.publish_event(
+                    &snapshot.command_session_id,
+                    "command_session_start",
+                    snapshot.start_event_payload(),
+                );
+            }
             if let Some(emitter) = emitter.as_ref() {
                 emitter.emit("command_session_start", snapshot.start_event_payload());
             }
@@ -162,25 +169,22 @@ impl CommandSessionTracker {
         } else {
             self.fallback_seq.fetch_add(1, Ordering::Relaxed) + 1
         };
-        let Some(emitter) = self.emitter.as_ref().filter(|item| item.stream_enabled()) else {
-            return;
-        };
         let delta = String::from_utf8_lossy(chunk).into_owned();
         if delta.is_empty() {
             return;
         }
-        emitter.emit(
-            "command_session_delta",
-            json!({
-                "command_session_id": self.command_session_id,
-                "command_index": self.command_index,
-                "command": self.command,
-                "cwd": self.cwd,
-                "stream": stream_name(stream),
-                "delta": delta,
-                "seq": seq,
-            }),
-        );
+        let data = json!({
+            "command_session_id": self.command_session_id,
+            "command_index": self.command_index,
+            "command": self.command,
+            "cwd": self.cwd,
+            "stream": stream_name(stream),
+            "delta": delta,
+            "seq": seq,
+        });
+        if let Some(emitter) = self.emitter.as_ref().filter(|item| item.stream_enabled()) {
+            emitter.emit("command_session_delta", data);
+        }
     }
 
     pub(crate) fn emit_failed_to_start(&self, error: impl Into<String>) {

@@ -102,9 +102,10 @@ impl RemoteHub {
         let (sender, receiver) = mpsc::channel(SUBSCRIBER_QUEUE);
         watchers.push(Watcher { id, sender });
         if first {
-            state
-                .upstream
-                .push((device_id.to_string(), thread_id.to_string()));
+            let key = (device_id.to_string(), thread_id.to_string());
+            if !state.upstream.contains(&key) {
+                state.upstream.push(key);
+            }
         }
         Ok((Subscription { id, first }, receiver))
     }
@@ -159,43 +160,45 @@ impl RemoteHub {
     /// Non-blocking by design: a watcher whose queue is full is dropped, so one
     /// stalled browser tab can never slow the tunnel (docs §10.1).
     pub fn publish(&self, device_id: &str, thread_id: &str, frame: &str) -> usize {
-        let state = self.lock();
+        let mut state = self.lock();
         let watchers = match state
             .threads
-            .get(&(device_id.to_string(), thread_id.to_string()))
+            .get_mut(&(device_id.to_string(), thread_id.to_string()))
         {
             Some(watchers) => watchers,
             None => return 0,
         };
         let mut delivered = 0usize;
-        for watcher in watchers {
-            if watcher.sender.try_send(frame.to_string()).is_ok() {
+        watchers.retain(|watcher| match watcher.sender.try_send(frame.to_string()) {
+            Ok(()) => {
                 delivered += 1;
+                true
             }
-        }
+            Err(_) => false,
+        });
         delivered
     }
 
     /// Forward a command lifecycle notice to a device's control watchers.
     pub fn publish_control(&self, device_id: &str, frame: &str) -> usize {
-        let state = self.lock();
+        let mut state = self.lock();
         let mut delivered = 0usize;
-        if let Some(watchers) = state.control.get(device_id) {
-            for watcher in watchers {
-                if watcher.sender.try_send(frame.to_string()).is_ok() {
+        if let Some(watchers) = state.control.get_mut(device_id) {
+            watchers.retain(|watcher| match watcher.sender.try_send(frame.to_string()) {
+                Ok(()) => {
                     delivered += 1;
+                    true
                 }
-            }
+                Err(_) => false,
+            });
         }
         // Command notices also reach thread watchers of that device so the
         // remote session view learns about cancel/finish without polling.
-        for (key, watchers) in state.threads.iter() {
+        for (key, watchers) in state.threads.iter_mut() {
             if key.0 != device_id {
                 continue;
             }
-            for watcher in watchers {
-                let _ = watcher.sender.try_send(frame.to_string());
-            }
+            watchers.retain(|watcher| watcher.sender.try_send(frame.to_string()).is_ok());
         }
         delivered
     }

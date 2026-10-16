@@ -549,7 +549,8 @@ impl UserStore {
         user_id: &str,
         session_scope: &str,
     ) -> Result<UserTokenRecord> {
-        self.create_session_token_with_scope_and_family(user_id, session_scope, None)
+        let family = Self::is_local_refresh_scope(session_scope).then(|| Uuid::new_v4().to_string());
+        self.create_session_token_with_scope_and_family(user_id, session_scope, family.as_deref())
     }
 
     /// Issue a session token bound to a refresh-token rotation family. The
@@ -615,6 +616,28 @@ impl UserStore {
     }
 
     /// Scopes allowed to hold refresh tokens and use the refresh endpoint.
+    pub fn rotate_refresh_token(&self, previous: &UserRefreshTokenRecord) -> Result<Option<(UserTokenRecord, UserRefreshTokenRecord)>> {
+        let now = now_ts();
+        let access = UserTokenRecord {
+            token: format!("wund_{}", Uuid::new_v4().simple()),
+            user_id: previous.user_id.clone(), session_scope: previous.session_scope.clone(),
+            family_id: Some(previous.family_id.clone()),
+            expires_at: now + DEFAULT_TOKEN_TTL_S as f64, created_at: now, last_used_at: now,
+        };
+        let refresh = UserRefreshTokenRecord {
+            refresh_token: format!("wundr_{}", Uuid::new_v4().simple()),
+            user_id: previous.user_id.clone(), session_scope: previous.session_scope.clone(), family_id: previous.family_id.clone(),
+            expires_at: now + REFRESH_TOKEN_TTL_S as f64, created_at: now, last_used_at: now, revoked: false,
+        };
+        if self.storage.rotate_user_refresh_token(&previous.refresh_token, &access, &refresh)? {
+            Ok(Some((access, refresh)))
+        } else {
+            self.storage.revoke_refresh_token_family(&previous.family_id)?;
+            self.storage.delete_user_tokens_by_family(&previous.family_id)?;
+            Ok(None)
+        }
+    }
+
     pub fn is_local_refresh_scope(session_scope: &str) -> bool {
         matches!(
             Self::normalize_session_scope(Some(session_scope)).as_str(),
@@ -662,12 +685,13 @@ impl UserStore {
         user.last_login_at = Some(issued_at);
         user.updated_at = issued_at;
         self.storage.update_user_account_profile(&user)?;
-        self.storage
-            .upsert_user_session_scope(&UserSessionScopeRecord {
+        if !Self::is_local_refresh_scope(&normalized_scope) {
+            self.storage.upsert_user_session_scope(&UserSessionScopeRecord {
                 user_id: user.user_id.clone(),
                 session_scope: normalized_scope.clone(),
                 last_login_at: issued_at,
             })?;
+        }
         let token =
             self.create_session_token_at(&user.user_id, &normalized_scope, issued_at, family_id)?;
         Ok(UserSession { user, token })
@@ -687,9 +711,10 @@ impl UserStore {
         self.storage
             .upsert_user_session_scope(&UserSessionScopeRecord {
                 user_id: cleaned_user_id.to_string(),
-                session_scope: normalized_scope,
+                session_scope: normalized_scope.clone(),
                 last_login_at: invalidated_at,
             })?;
+        self.storage.revoke_refresh_token_families_by_user_scope(cleaned_user_id, &normalized_scope)?;
         Ok(invalidated_at)
     }
 
@@ -723,6 +748,11 @@ impl UserStore {
             let _ = self.storage.delete_user_token(&record.token);
             return Ok(None);
         }
+        if let Some(family) = record.family_id.as_deref() {
+            if !self.session_device_active(family, &record.user_id)? {
+                return Ok(None);
+            }
+        }
         if user.status.trim().to_lowercase() != "active" {
             return Ok(None);
         }
@@ -734,6 +764,16 @@ impl UserStore {
             session_scope: Self::normalize_session_scope(Some(&record.session_scope)),
             family_id: record.family_id,
         }))
+    }
+
+    pub fn session_device_active(&self, family: &str, user_id: &str) -> Result<bool> {
+        let Some(binding) = self.storage.get_user_session_device(family)? else {
+            // Unbound sessions may only bootstrap their first device. Once
+            // bound, every endpoint enforces the immutable server-side identity.
+            return Ok(true);
+        };
+        Ok(binding.user_id == user_id && self.storage.get_cloud_device(&binding.device_id)?
+            .is_some_and(|device| device.user_id == user_id && !device.revoked))
     }
 
     fn should_touch_token_at(&self, token: &str, last_used_at: f64, now: f64) -> bool {
@@ -784,21 +824,8 @@ impl UserStore {
             return Err(anyhow!("scope does not support refresh tokens"));
         }
         let user = self.verify_login_credentials(username, password)?;
-        // A new local login replaces the previous session of the same scope:
-        // revoke the old refresh families (and their access tokens) before
-        // the new family exists, so a stale refresh token cannot resurrect
-        // the kicked session via rotation.
-        let kicked = self
-            .storage
-            .revoke_refresh_token_families_by_user_scope(&user.user_id, &normalized_scope)?;
-        if kicked > 0 {
-            tracing::info!(
-                user_id = %user.user_id,
-                session_scope = %normalized_scope,
-                revoked_refresh_tokens = kicked,
-                "previous local session families revoked by new login"
-            );
-        }
+        // Local sessions coexist across devices. Revocation is explicit and
+        // scoped to a family/device, never an incidental side effect of login.
         let family_id = Uuid::new_v4().simple().to_string();
         let session = self.issue_session_for_user_with_scope_and_family(
             user,

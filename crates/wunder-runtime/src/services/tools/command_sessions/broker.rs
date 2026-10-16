@@ -18,6 +18,21 @@ const FINISHED_SESSION_RETENTION_MINUTES: i64 = 5;
 const SESSION_RING_HEAD_RATIO_NUMERATOR: usize = 3;
 const SESSION_RING_HEAD_RATIO_DENOMINATOR: usize = 8;
 const MAX_ACTIVE_COMMAND_PROCESSES: usize = 16;
+const MAX_RETAINED_DELTAS: usize = 4096;
+
+#[derive(Clone)]
+pub(crate) struct CommandSessionEvent {
+    pub user_id: String,
+    pub session_id: String,
+    pub event_type: &'static str,
+    pub data: serde_json::Value,
+}
+
+struct OutputDelta {
+    seq: u64,
+    stream: CommandSessionStream,
+    text: String,
+}
 
 #[derive(Default)]
 struct OutputTailState {
@@ -150,6 +165,11 @@ struct CommandSessionRecord {
     stdout: OutputTailState,
     stderr: OutputTailState,
     pty: OutputTailState,
+    deltas: VecDeque<OutputDelta>,
+    delta_bytes: usize,
+    model_cursor: u64,
+    dropped_through_seq: u64,
+    changed: Arc<Notify>,
 }
 
 impl CommandSessionRecord {
@@ -180,6 +200,11 @@ impl CommandSessionRecord {
             stdout: OutputTailState::default(),
             stderr: OutputTailState::default(),
             pty: OutputTailState::default(),
+            deltas: VecDeque::new(),
+            delta_bytes: 0,
+            model_cursor: 0,
+            dropped_through_seq: 0,
+            changed: Arc::new(Notify::new()),
         }
     }
 
@@ -226,13 +251,12 @@ impl CommandSessionRecord {
     }
 }
 
-#[derive(Default)]
 pub struct CommandSessionBroker {
     sessions: DashMap<String, Arc<Mutex<CommandSessionRecord>>>,
     processes: DashMap<String, Arc<CommandProcessHandle>>,
-    changed: Notify,
     ring_buffer_bytes: usize,
     active_processes: AtomicUsize,
+    events: tokio::sync::broadcast::Sender<CommandSessionEvent>,
 }
 
 /// Runtime-only controls for a detached command. The durable/session snapshot
@@ -270,19 +294,58 @@ impl CommandProcessHandle {
     }
 }
 
+impl Default for CommandSessionBroker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CommandSessionBroker {
     pub(crate) fn new() -> Self {
         Self {
             sessions: DashMap::new(),
             processes: DashMap::new(),
-            changed: Notify::new(),
             ring_buffer_bytes: DEFAULT_SESSION_RING_BUFFER_BYTES,
             active_processes: AtomicUsize::new(0),
+            events: tokio::sync::broadcast::channel(256).0,
         }
     }
 
     pub(crate) fn generate_session_id() -> String {
         format!("cmd_{}", Uuid::new_v4().simple())
+    }
+
+    pub(crate) fn subscribe(&self) -> tokio::sync::broadcast::Receiver<CommandSessionEvent> {
+        self.events.subscribe()
+    }
+
+    pub(crate) fn publish_event(
+        &self,
+        command_session_id: &str,
+        event_type: &'static str,
+        data: serde_json::Value,
+    ) {
+        let Some(entry) = self.sessions.get(command_session_id) else {
+            return;
+        };
+        let record = entry.value().lock();
+        let _ = self.events.send(CommandSessionEvent {
+            user_id: record.user_id.clone(),
+            session_id: record.session_id.clone(),
+            event_type,
+            data,
+        });
+    }
+
+    pub(crate) fn mark_output_gap(&self, command_session_id: &str) {
+        if let Some(entry) = self.sessions.get(command_session_id) {
+            let mut record = entry.value().lock();
+            // The remote cursor and broker sequence are independent. Advance
+            // the local sequence so an unread gap is visible even with no text.
+            record.seq = record.seq.saturating_add(1);
+            record.dropped_through_seq = record.seq;
+            record.changed.notify_waiters();
+        }
     }
 
     pub(crate) fn start_session(&self, spec: CommandSessionStartSpec) -> CommandSessionSnapshot {
@@ -310,7 +373,6 @@ impl CommandSessionBroker {
         )));
         let snapshot = record.lock().snapshot();
         self.sessions.insert(command_session_id, record);
-        self.changed.notify_waiters();
         snapshot
     }
 
@@ -330,7 +392,31 @@ impl CommandSessionBroker {
         record
             .stream_mut(stream)
             .push(chunk, self.ring_buffer_bytes);
-        self.changed.notify_waiters();
+        let text = String::from_utf8_lossy(chunk).into_owned();
+        record.delta_bytes = record.delta_bytes.saturating_add(text.len());
+        let seq = record.seq;
+        record.deltas.push_back(OutputDelta { seq, stream, text });
+        while record.delta_bytes > self.ring_buffer_bytes
+            || record.deltas.len() > MAX_RETAINED_DELTAS
+        {
+            if let Some(delta) = record.deltas.pop_front() {
+                record.delta_bytes = record.delta_bytes.saturating_sub(delta.text.len());
+                record.dropped_through_seq = record.dropped_through_seq.max(delta.seq);
+            }
+        }
+        record.changed.notify_waiters();
+        let _ = self.events.send(CommandSessionEvent {
+            user_id: record.user_id.clone(),
+            session_id: record.session_id.clone(),
+            event_type: "command_session_delta",
+            data: serde_json::json!({
+                "command_session_id": record.command_session_id,
+                "tool_call_id": record.tool_call_id,
+                "command_index": record.command_index,
+                "stream": stream,
+                "delta": String::from_utf8_lossy(chunk), "seq": seq,
+            }),
+        });
         Some(record.seq)
     }
 
@@ -348,8 +434,15 @@ impl CommandSessionBroker {
         record.expires_at =
             Some(record.updated_at + Duration::minutes(FINISHED_SESSION_RETENTION_MINUTES));
         record.error = Some(error.into());
-        self.changed.notify_waiters();
-        Some(record.snapshot())
+        record.changed.notify_waiters();
+        let snapshot = record.snapshot();
+        let _ = self.events.send(CommandSessionEvent {
+            user_id: record.user_id.clone(),
+            session_id: record.session_id.clone(),
+            event_type: "command_session_status",
+            data: snapshot.status_event_payload(),
+        });
+        Some(snapshot)
     }
 
     pub(crate) fn finish_session(
@@ -370,8 +463,15 @@ impl CommandSessionBroker {
         record.exit_code = exit_code;
         record.timed_out = timed_out;
         record.error = error;
-        self.changed.notify_waiters();
-        Some(record.snapshot())
+        record.changed.notify_waiters();
+        let snapshot = record.snapshot();
+        let _ = self.events.send(CommandSessionEvent {
+            user_id: record.user_id.clone(),
+            session_id: record.session_id.clone(),
+            event_type: "command_session_exit",
+            data: snapshot.exit_event_payload(),
+        });
+        Some(snapshot)
     }
 
     pub(crate) fn register_process(
@@ -418,7 +518,6 @@ impl CommandSessionBroker {
         if self.processes.remove(command_session_id).is_some() {
             self.active_processes.fetch_sub(1, Ordering::AcqRel);
         }
-        self.changed.notify_waiters();
     }
 
     pub(crate) async fn write_stdin(
@@ -447,20 +546,65 @@ impl CommandSessionBroker {
         user_id: &str,
         session_id: &str,
         command_session_id: &str,
+        after_seq: Option<u64>,
         yield_time: std::time::Duration,
-    ) -> Result<CommandSessionSnapshot, String> {
-        // Register first so an exit/delta between the snapshot and wait is
-        // retained by Notify instead of making this poll wait unnecessarily.
-        let notified = self.changed.notified();
-        let initial = self
-            .snapshot_for_scope(user_id, session_id, command_session_id)
+        wait_for_exit: bool,
+    ) -> Result<serde_json::Value, String> {
+        // Hold only this command's record, never a DashMap guard across await.
+        let record = self
+            .sessions
+            .get(command_session_id)
+            .map(|entry| Arc::clone(entry.value()))
             .ok_or_else(|| "unknown command session".to_string())?;
-        if initial.status != CommandSessionStatus::Running || yield_time.is_zero() {
-            return Ok(initial);
+        let (changed, cursor) = {
+            let record = record.lock();
+            if record.user_id != user_id || record.session_id != session_id {
+                return Err("unknown command session".to_string());
+            }
+            (
+                Arc::clone(&record.changed),
+                after_seq.unwrap_or(record.model_cursor),
+            )
+        };
+        let deadline = tokio::time::Instant::now() + yield_time;
+        loop {
+            let notified = changed.notified();
+            tokio::pin!(notified);
+            // notify_waiters does not retain a permit: enable before checking.
+            notified.as_mut().enable();
+            {
+                let mut record = record.lock();
+                if record.status != CommandSessionStatus::Running
+                    || (!wait_for_exit && record.seq > cursor)
+                    || tokio::time::Instant::now() >= deadline
+                {
+                    let mut stdout = String::new();
+                    let mut stderr = String::new();
+                    let mut pty = String::new();
+                    for delta in record.deltas.iter().filter(|delta| delta.seq > cursor) {
+                        match delta.stream {
+                            CommandSessionStream::Stdout => stdout.push_str(&delta.text),
+                            CommandSessionStream::Stderr => stderr.push_str(&delta.text),
+                            CommandSessionStream::Pty => pty.push_str(&delta.text),
+                        }
+                    }
+                    let dropped = cursor < record.dropped_through_seq;
+                    record.model_cursor = record.model_cursor.max(record.seq);
+                    return Ok(serde_json::json!({
+                        "command_session_id": record.command_session_id,
+                        "status": record.status,
+                        "seq": record.seq,
+                        "exit_code": record.exit_code,
+                        "timed_out": record.timed_out,
+                        "error": record.error,
+                        "stdout": stdout, "stderr": stderr, "pty": pty,
+                        "dropped": dropped,
+                        "output_truncated": dropped,
+                    }));
+                }
+            }
+            let _ = tokio::time::timeout_at(deadline, notified).await;
         }
-        let _ = tokio::time::timeout(yield_time, notified).await;
-        self.snapshot_for_scope(user_id, session_id, command_session_id)
-            .ok_or_else(|| "command session expired".to_string())
     }
 
     pub(crate) fn terminate_scope(&self, user_id: &str, session_id: &str) -> usize {
@@ -518,11 +662,13 @@ impl CommandSessionBroker {
         session_id: &str,
         command_session_id: &str,
     ) -> Option<CommandSessionSnapshot> {
-        let snapshot = self.snapshot(command_session_id)?;
-        if snapshot.user_id != user_id || snapshot.session_id != session_id {
+        self.prune_expired();
+        let entry = self.sessions.get(command_session_id)?;
+        let record = entry.value().lock();
+        if record.user_id != user_id || record.session_id != session_id {
             return None;
         }
-        Some(snapshot)
+        Some(record.snapshot())
     }
 
     pub(crate) fn list_session_snapshots(
@@ -535,11 +681,11 @@ impl CommandSessionBroker {
             .sessions
             .iter()
             .filter_map(|entry| {
-                let snapshot = entry.value().lock().snapshot();
-                if snapshot.user_id != user_id || snapshot.session_id != session_id {
+                let record = entry.value().lock();
+                if record.user_id != user_id || record.session_id != session_id {
                     return None;
                 }
-                Some(snapshot)
+                Some(record.snapshot())
             })
             .collect::<Vec<_>>();
         snapshots.sort_by(|left, right| {
@@ -674,16 +820,204 @@ mod tests {
         broker.finish_session("cmd_test", Some(0), false, None);
 
         let snapshot = broker
-            .poll("user_a", "sess_1", "cmd_test", std::time::Duration::ZERO)
+            .poll(
+                "user_a",
+                "sess_1",
+                "cmd_test",
+                None,
+                std::time::Duration::ZERO,
+                true,
+            )
             .await
             .expect("scoped snapshot");
-        assert_eq!(snapshot.status, CommandSessionStatus::Exited);
-        assert_eq!(snapshot.exit_code, Some(0));
-        assert_eq!(snapshot.stdout_tail, "ready\n");
+        assert_eq!(snapshot["status"], "exited");
+        assert_eq!(snapshot["exit_code"], 0);
+        assert_eq!(snapshot["stdout"], "ready\n");
         assert!(broker
-            .poll("user_b", "sess_1", "cmd_test", std::time::Duration::ZERO)
+            .poll(
+                "user_b",
+                "sess_1",
+                "cmd_test",
+                None,
+                std::time::Duration::ZERO,
+                true
+            )
             .await
             .is_err());
+    }
+
+    #[tokio::test]
+    async fn incremental_poll_keeps_ui_snapshot_and_supports_explicit_replay() {
+        let broker = CommandSessionBroker::new();
+        broker.start_session(build_start_spec());
+        broker.append_delta("cmd_test", CommandSessionStream::Stdout, b"first\n");
+        let first = broker
+            .poll(
+                "user_a",
+                "sess_1",
+                "cmd_test",
+                None,
+                std::time::Duration::ZERO,
+                false,
+            )
+            .await
+            .unwrap();
+        assert_eq!(first["stdout"], "first\n");
+        broker.append_delta("cmd_test", CommandSessionStream::Stderr, b"second\n");
+        let second = broker
+            .poll(
+                "user_a",
+                "sess_1",
+                "cmd_test",
+                None,
+                std::time::Duration::ZERO,
+                false,
+            )
+            .await
+            .unwrap();
+        assert_eq!(second["stdout"], "");
+        assert_eq!(second["stderr"], "second\n");
+        let replay = broker
+            .poll(
+                "user_a",
+                "sess_1",
+                "cmd_test",
+                Some(0),
+                std::time::Duration::ZERO,
+                false,
+            )
+            .await
+            .unwrap();
+        assert_eq!(replay["stdout"], "first\n");
+        assert_eq!(replay["stderr"], "second\n");
+        let empty = broker
+            .poll(
+                "user_a",
+                "sess_1",
+                "cmd_test",
+                None,
+                std::time::Duration::ZERO,
+                false,
+            )
+            .await
+            .unwrap();
+        assert_eq!(empty["stdout"], "");
+        assert_eq!(empty["stderr"], "");
+        assert_eq!(broker.snapshot("cmd_test").unwrap().stdout_tail, "first\n");
+    }
+
+    #[tokio::test]
+    async fn wait_for_exit_streams_output_without_finishing_model_poll() {
+        let broker = Arc::new(CommandSessionBroker::new());
+        broker.start_session(build_start_spec());
+        let mut events = broker.subscribe();
+        let waiting = Arc::clone(&broker);
+        let poll = tokio::spawn(async move {
+            waiting
+                .poll(
+                    "user_a",
+                    "sess_1",
+                    "cmd_test",
+                    None,
+                    std::time::Duration::from_secs(2),
+                    true,
+                )
+                .await
+                .unwrap()
+        });
+        tokio::task::yield_now().await;
+        broker.append_delta("cmd_test", CommandSessionStream::Stdout, b"live\n");
+        let event = events.recv().await.unwrap();
+        assert_eq!(event.event_type, "command_session_delta");
+        assert_eq!(event.data["delta"], "live\n");
+        assert_eq!(event.user_id, "user_a");
+        assert_eq!(event.session_id, "sess_1");
+        tokio::task::yield_now().await;
+        assert!(!poll.is_finished(), "output must not complete an exit wait");
+        broker.finish_session("cmd_test", Some(0), false, None);
+        let result = tokio::time::timeout(std::time::Duration::from_millis(500), poll)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(result["status"], "exited");
+        assert_eq!(result["stdout"], "live\n");
+        assert_eq!(result["dropped"], false);
+    }
+
+    #[tokio::test]
+    async fn incremental_poll_bounds_output_and_reports_an_unread_gap() {
+        let mut broker = CommandSessionBroker::new();
+        broker.ring_buffer_bytes = 8;
+        broker.start_session(build_start_spec());
+        broker.append_delta("cmd_test", CommandSessionStream::Stdout, b"discarded");
+        broker.append_delta("cmd_test", CommandSessionStream::Stderr, b"kept");
+        let result = broker
+            .poll(
+                "user_a",
+                "sess_1",
+                "cmd_test",
+                Some(0),
+                std::time::Duration::ZERO,
+                false,
+            )
+            .await
+            .unwrap();
+        assert_eq!(result["stdout"], "");
+        assert_eq!(result["stderr"], "kept");
+        assert_eq!(result["dropped"], true);
+        broker.finish_session("cmd_test", Some(0), false, None);
+        let result = broker
+            .poll(
+                "user_a",
+                "sess_1",
+                "cmd_test",
+                None,
+                std::time::Duration::ZERO,
+                true,
+            )
+            .await
+            .unwrap();
+        assert_eq!(result["dropped"], false);
+        assert_eq!(result["stdout"], "");
+    }
+
+    #[tokio::test]
+    async fn websocket_command_stream_hydrates_and_isolates_thread_output() {
+        use crate::api::ws_helpers::{watch_command_sessions, WsSender};
+        let broker = Arc::new(CommandSessionBroker::new());
+        broker.start_session(build_start_spec());
+        let mut foreign = build_start_spec();
+        foreign.command_session_id = Some("cmd_foreign".into());
+        foreign.session_id = "sess_other".into();
+        broker.start_session(foreign);
+        let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+        let cancel = CancellationToken::new();
+        let stream = tokio::spawn(watch_command_sessions(
+            broker.clone(),
+            "user_a".into(),
+            "sess_1".into(),
+            Some("request".into()),
+            WsSender::new(tx),
+            cancel.clone(),
+        ));
+        let initial = rx.recv().await.unwrap().into_text().unwrap();
+        let initial: serde_json::Value = serde_json::from_str(&initial).unwrap();
+        assert_eq!(initial["payload"]["event"], "command_session_summary");
+        broker.append_delta("cmd_foreign", CommandSessionStream::Stdout, b"foreign");
+        broker.append_delta("cmd_test", CommandSessionStream::Stdout, b"live");
+        let live = rx.recv().await.unwrap().into_text().unwrap();
+        let live: serde_json::Value = serde_json::from_str(&live).unwrap();
+        assert_eq!(live["payload"]["event"], "command_session_delta");
+        assert_eq!(live["payload"]["data"]["delta"], "live");
+        broker.finish_session("cmd_test", Some(0), false, None);
+        let exit = rx.recv().await.unwrap().into_text().unwrap();
+        let exit: serde_json::Value = serde_json::from_str(&exit).unwrap();
+        assert_eq!(exit["payload"]["event"], "command_session_exit");
+        cancel.cancel();
+        tokio::time::timeout(std::time::Duration::from_millis(500), stream)
+            .await
+            .unwrap()
+            .unwrap();
     }
 
     #[test]

@@ -431,6 +431,10 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     .desc(t("tool.spec.command_session.args.after_seq"))
                     .min(0)
                     .optional(),
+                super::schema::string("wait_for")
+                    .desc(t("tool.spec.command_session.args.wait_for"))
+                    .enums(vec!["exit", "output"])
+                    .optional(),
                 super::schema::integer("yield_time_ms")
                     .desc(t("tool.spec.command_session.args.yield_time_ms"))
                     .min(0)
@@ -1938,7 +1942,11 @@ mod tests {
             .iter()
             .find(|spec| spec.name == "命令会话")
             .expect("Chinese command session spec");
-        assert!(zh_session.description.contains("轮询后台命令"));
+        assert!(zh_session.description.contains("wait_for=exit"));
+        assert_eq!(
+            zh_session.input_schema["properties"]["wait_for"]["enum"],
+            serde_json::json!(["exit", "output"])
+        );
         assert!(
             zh_session.input_schema["properties"]["action"]["description"]
                 .as_str()
@@ -1952,7 +1960,7 @@ mod tests {
             .into_iter()
             .find(|spec| spec.name == "命令会话")
             .expect("English command session spec");
-        assert!(en_session.description.contains("Poll a background command"));
+        assert!(en_session.description.contains("wait_for=exit"));
         assert!(
             en_session.input_schema["properties"]["action"]["description"]
                 .as_str()

@@ -171,6 +171,121 @@ fn ctrl(code: KeyCode) -> KeyEvent {
 }
 
 #[tokio::test]
+async fn live_acceptance_shortcuts_open_without_consuming_question_marks_in_a_draft() {
+    let root = TempRoot::new("shortcut_input");
+    let mut app = fixture_app(root.path()).await;
+    app.on_key(key(KeyCode::Char('?')))
+        .await
+        .expect("open help");
+    assert!(app.shortcuts_visible);
+    assert!(app.input.is_empty());
+    app.on_key(key(KeyCode::Esc)).await.expect("close help");
+    assert!(!app.shortcuts_visible);
+    app.input = "why".to_string();
+    app.input_cursor = app.input.len();
+    app.on_key(key(KeyCode::Char('?')))
+        .await
+        .expect("type punctuation");
+    assert_eq!(app.input, "why?");
+    assert!(!app.shortcuts_visible);
+}
+
+#[tokio::test]
+async fn live_acceptance_key_event_paste_keeps_newlines_in_the_draft() {
+    let root = TempRoot::new("paste_keys");
+    let mut app = fixture_app(root.path()).await;
+    for ch in "first line".chars() {
+        app.on_key(key(KeyCode::Char(ch)))
+            .await
+            .expect("paste character");
+    }
+    app.on_key(key(KeyCode::Enter))
+        .await
+        .expect("pasted newline");
+    for ch in "second line".chars() {
+        app.on_key(key(KeyCode::Char(ch)))
+            .await
+            .expect("paste character");
+    }
+    assert_eq!(app.input, "first line\nsecond line");
+    assert!(!app.busy);
+    app.plain_char_burst_last_at = Some(Instant::now() - Duration::from_millis(100));
+    assert!(
+        !app.should_treat_enter_as_paste_newline(),
+        "Enter sends once the paste has settled"
+    );
+    app.clear_input_draft();
+    app.on_key(key(KeyCode::Char('x')))
+        .await
+        .expect("short line");
+    app.on_key(ctrl(KeyCode::Enter))
+        .await
+        .expect("Windows pasted LF");
+    app.on_key(key(KeyCode::Char('y')))
+        .await
+        .expect("next line");
+    assert_eq!(app.input, "x\ny");
+    assert!(!app.busy, "pasted LF must never submit a partial message");
+}
+
+#[tokio::test]
+async fn live_acceptance_delta_frames_preserve_whitespace_and_repeated_tokens() {
+    let root = TempRoot::new("stream_bytes");
+    let mut app = fixture_app(root.path()).await;
+    app.active_assistant = None;
+    app.active_reasoning = None;
+    let chunks = [
+        "let", " ", "text", " = ", "\"", "ha", "ha", "\"", ";", "\n", "\n", "    ", "示例", "例",
+    ];
+    let expected = chunks.concat();
+    for chunk in chunks {
+        app.apply_stream_event(StreamEvent {
+            event: "llm_output_delta".to_string(),
+            data: json!({"delta": chunk, "reasoning_delta": chunk}),
+            id: None,
+            timestamp: None,
+        });
+    }
+    assert_eq!(
+        app.logs[app.active_assistant.expect("assistant")].text,
+        expected
+    );
+    assert_eq!(
+        app.logs[app.active_reasoning.expect("reasoning")].text,
+        expected
+    );
+}
+
+#[tokio::test]
+async fn live_acceptance_new_thread_owns_a_lease_before_accepting_commands() {
+    let root = TempRoot::new("new_thread_lease");
+    let mut app = fixture_app(root.path()).await;
+    let previous = app.session_id.clone();
+    let owner = app.open_instance_id.clone();
+    app.switch_to_new_session().await;
+    assert_ne!(app.session_id, previous);
+    app.validate_thread_lease()
+        .expect("new thread owns its lease");
+    assert!(app
+        .runtime
+        .state
+        .storage
+        .get_thread_open_lease(&previous, &app.runtime.user_id)
+        .expect("read previous lease")
+        .is_none());
+    app.submit_line("/status".to_string())
+        .await
+        .expect("command in new thread");
+    app.switch_to_existing_session(&previous)
+        .await
+        .expect("return to previous thread");
+    assert_eq!(app.session_id, previous);
+    assert_eq!(app.open_instance_id, owner);
+    app.validate_thread_lease()
+        .expect("resumed thread owns its lease");
+}
+
+#[tokio::test]
 async fn ctrl_r_searches_the_composer_history_and_escape_restores_the_draft() {
     let root = TempRoot::new("history_search");
     let mut app = fixture_app(root.path()).await;

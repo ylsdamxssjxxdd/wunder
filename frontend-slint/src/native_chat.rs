@@ -2902,7 +2902,7 @@ fn start_timer(app: &MainWindow, state: Rc<RefCell<State>>) {
                 // the engine starts the successor as soon as this lease drops,
                 // and the next tick hands it the live slot.
                 app.set_status(active.state.as_str().into());
-                let _ = desktop;
+                crate::workspace_files::execution_finished(&app, desktop.clone());
             }
             if done {
                 live_turn = None;

@@ -135,9 +135,10 @@ impl PostgresCloudStorage for PostgresStorage {
             "INSERT INTO cloud_devices(device_id, user_id, client, name, os, arch, app_version, last_seen_at, created_at, revoked) \
              VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) \
              ON CONFLICT(device_id) DO UPDATE SET \
-               user_id = EXCLUDED.user_id, client = EXCLUDED.client, name = EXCLUDED.name, \
+               name = EXCLUDED.name, \
                os = EXCLUDED.os, arch = EXCLUDED.arch, app_version = EXCLUDED.app_version, \
-               last_seen_at = EXCLUDED.last_seen_at",
+               last_seen_at = EXCLUDED.last_seen_at \
+             WHERE cloud_devices.user_id = EXCLUDED.user_id AND cloud_devices.client = EXCLUDED.client",
             &[
                 &record.device_id,
                 &record.user_id,

@@ -40,5 +40,8 @@ All commands are preferentially executed in the current working directory and it
 [[RUNTIME_SERVER]]
 - You are running in the server-side Docker runtime.
 - Prefer using python3 for coding, and use matplotlib for plotting when needed.
+- The container configures CJK plotting defaults through MATPLOTLIBRC. Prefer Matplotlib's configured fonts instead of hardcoding assumed family names.
+- If an explicit font is required, verify it with matplotlib.font_manager.findfont(..., fallback_to_default=False) in the same Python interpreter. A family listed by fc-list may be unavailable to Matplotlib by that name; a TTC collection may expose only its first family.
+- A findfont warning about an unavailable candidate does not establish missing CJK glyphs. Check the selected fallback, missing-glyph warnings, and the artifact before deciding to repair it; do not redraw or repeatedly clear caches just because a candidate was unavailable.
 - Only use dependencies available in the current environment; do not install new packages with pip or apt.
 [[/RUNTIME_SERVER]]

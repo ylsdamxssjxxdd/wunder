@@ -28,6 +28,23 @@ struct TestContext {
     _temp_dir: TempDir,
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn concurrent_refresh_has_one_winner_and_reuse_burns_family() {
+    let context = build_context().await;
+    create_user_id(&context, "fixture_concurrent");
+    let (_, body) = login(&context, "fixture_concurrent", Some("local_desktop")).await;
+    let refresh = body["data"]["refresh_token"].as_str().unwrap();
+    let first = send_request(&context.app, Method::POST, "/wunder/auth/refresh", None, None, Some(refresh_body(refresh)));
+    let second = send_request(&context.app, Method::POST, "/wunder/auth/refresh", None, None, Some(refresh_body(refresh)));
+    let (first, second) = tokio::join!(first, second);
+    let results = [first, second];
+    assert_eq!(results.iter().filter(|row| row.0 == StatusCode::OK).count(), 1);
+    assert_eq!(results.iter().filter(|row| row.0 == StatusCode::UNAUTHORIZED).count(), 1);
+    let winner = results.iter().find(|row| row.0 == StatusCode::OK).unwrap();
+    let access = winner.1["data"]["access_token"].as_str().unwrap();
+    assert!(context.state.user_store.authenticate_token_details(access).unwrap().is_none());
+}
+
 async fn build_context() -> TestContext {
     let temp_dir = tempfile::tempdir().expect("tempdir");
     let mut config = Config::default();
@@ -367,13 +384,13 @@ async fn refresh_with_expired_token_returns_expired_and_cleans_up() {
 }
 
 // ---------------------------------------------------------------------------
-// Multi-device semantics: a new local login kicks the previous session
+// Independent local logins coexist; logout revokes only its own family.
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn relogin_kicks_previous_local_family() {
+async fn independent_families_survive_login_and_other_family_logout() {
     let context = build_context().await;
-    let username = "relogin_kick_user";
+    let username = "fixture_account";
     create_user_id(&context, username);
 
     // First local login.
@@ -388,7 +405,7 @@ async fn relogin_kicks_previous_local_family() {
         .expect("first refresh token")
         .to_string();
 
-    // Second login on the same scope replaces the first session.
+    // Another device uses the same scope with an independent family.
     let (status, second_login) = login(&context, username, Some("local_desktop")).await;
     assert_eq!(
         status,
@@ -404,7 +421,7 @@ async fn relogin_kicks_previous_local_family() {
         .expect("second refresh token")
         .to_string();
 
-    // The kicked session's access token is dead immediately.
+    // Both sessions authenticate after the second login.
     let (status, _, _) = send_request(
         &context.app,
         Method::GET,
@@ -416,12 +433,18 @@ async fn relogin_kicks_previous_local_family() {
     .await;
     assert_eq!(
         status,
-        StatusCode::UNAUTHORIZED,
-        "kicked access token must fail"
+        StatusCode::OK,
+        "independent access token must remain valid"
     );
 
-    // The kicked refresh token is revoked, so refreshing it hits the reuse
-    // branch: 401 with REFRESH_TOKEN_REUSED (not resurrecting the session).
+    let (status, _, _) = send_request(&context.app, Method::POST,
+        "/wunder/auth/logout", Some(&first_access), None, None).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _, _) = send_request(&context.app, Method::GET,
+        "/wunder/auth/me", Some(&first_access), None, None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    // Logout also burns the refresh credential; it cannot resurrect the family.
     let (status, body, error_code) = send_request(
         &context.app,
         Method::POST,

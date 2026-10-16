@@ -1112,6 +1112,8 @@ async fn admin_user_accounts_force_logout(
     for scope in [
         UserStore::normalize_session_scope(Some("user_web")),
         UserStore::default_session_scope().to_string(),
+        "local_desktop".to_string(),
+        "local_cli".to_string(),
     ] {
         let scope_invalidated_at = state
             .user_store
@@ -1124,13 +1126,18 @@ async fn admin_user_accounts_force_logout(
             .force_logout_user(cleaned, &scope)
             .await;
     }
+    // Close live tunnels as well as rejecting their next HTTP request.
+    for channel in crate::services::interlink::registry().snapshot().into_iter().filter(|channel| channel.user_id == cleaned) {
+        crate::api::interlink_ws::close_tunnel(&channel.device_id, "session_revoked").await;
+        crate::services::interlink::remote::hub().close_node(&channel.device_id);
+    }
     state.control.presence.force_user_offline(cleaned, now_ts());
 
     Ok(Json(json!({
         "data": {
             "ok": true,
             "user_id": cleaned,
-            "session_scopes": ["user_web", "default"],
+            "session_scopes": ["user_web", "default", "local_desktop", "local_cli"],
             "invalidated_at": invalidated_at,
         }
     })))

@@ -40,7 +40,7 @@ export type InterlinkCommandRunResult = {
   errorCode: string;
   errorSummary: string;
   result: Record<string, unknown> | null;
-  /** 前端侧超时（命令仍在服务端台账里，可稍后再查）。 */
+  /** 前端侧等待超时，同时向服务端发出取消。 */
   timedOut: boolean;
 };
 
@@ -91,6 +91,7 @@ export const runInterlinkCommand = async (options: {
   onState?: (state: { submit: InterlinkCommandSubmitResult; record: InterlinkCommandRecord | null }) => void;
 }): Promise<InterlinkCommandRunResult> => {
   let submit: InterlinkCommandSubmitResult | null = null;
+  if (options.signal?.aborted) return { ...failedOutcome(null, null, ''), status: 'canceled' };
   try {
     submit = await submitInterlinkCommand({
       to: options.to,
@@ -105,7 +106,7 @@ export const runInterlinkCommand = async (options: {
   // 会话类命令默认要人在回路审批（§7.1），审批超时是 120s，前端等待窗口跟着放宽。
   const timeoutMs =
     Number(options.timeoutMs) ||
-    (isSessionKind(options.kind)
+    (isSessionKind(options.kind) || ['workspace.write', 'workspace.mkdir', 'workspace.move', 'workspace.delete'].includes(options.kind)
       ? REMOTE_COMMAND_APPROVAL_TIMEOUT_MS
       : REMOTE_COMMAND_TIMEOUT_MS);
   const deadline = Date.now() + timeoutMs;
@@ -120,7 +121,7 @@ export const runInterlinkCommand = async (options: {
         return {
           submit,
           record,
-          status: record.status,
+          status: record.status === 'succeeded' && record.result == null ? 'failed' : record.status,
           approvalState: record.approval_state,
           errorCode: record.error_code,
           errorSummary: record.error_summary,
@@ -132,11 +133,13 @@ export const runInterlinkCommand = async (options: {
     }
   } catch (error) {
     if ((error as { name?: string })?.name === 'AbortError') {
-      return failedOutcome(submit, lastRecord, '', false);
+      await cancelInterlinkCommandRun(submit.command_id);
+      return { ...failedOutcome(submit, lastRecord, '', false), status: 'canceled' };
     }
     return failedOutcome(submit, lastRecord, resolveApiError(error, '').message || '');
   }
 
+  await cancelInterlinkCommandRun(submit.command_id);
   return failedOutcome(submit, lastRecord, '', true);
 };
 
@@ -155,7 +158,7 @@ const asRecord = (value: unknown): Record<string, unknown> =>
 /** 契约里小文件内联在 command_result（base64 ≤1MB），字段名兼容几种常见写法。 */
 const pickInlineBase64 = (result: Record<string, unknown> | null): string => {
   const record = asRecord(result);
-  const keys = ['content_base64', 'base64', 'data_base64', 'binary_base64'];
+  const keys = ['inline', 'content_base64', 'base64', 'data_base64', 'binary_base64'];
   for (const key of keys) {
     const value = record[key];
     if (typeof value === 'string' && value) return value;
@@ -230,7 +233,7 @@ export const readRemoteFile = async (options: {
   const text = pickInlineText(result);
   const base64 = pickInlineBase64(result);
 
-  if (text) {
+  if (text || (size === 0 && (asRecord(result).inline === '' || asRecord(result).content === '' || asRecord(result).text === ''))) {
     return { payload: { text, bytes: null, size, truncated, source: 'inline' }, failure: '', errorCode: '' };
   }
   if (base64) {

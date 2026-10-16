@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
+use wunder_server::cloud::CloudSessionFile;
 use wunder_server::cloud::{shared as cloud_shared, CloudService, CloudSessionExpired};
 use wunder_server::config::LlmModelConfig;
 use wunder_server::config_store::ConfigStore;
@@ -19,6 +20,43 @@ const TOKEN_V2: &str = "wund_tok_v2";
 const REFRESH_V1: &str = "wund_ref_v1";
 const REFRESH_V2: &str = "wund_ref_v2";
 const TEST_DEVICE: &str = "dev-reconnect-1";
+
+#[tokio::test]
+async fn companion_logout_does_not_remove_source_and_survives_restart() {
+    let home = tempfile::tempdir().unwrap();
+    write_session_file(home.path(), TOKEN_V1, REFRESH_V1, 3600.0);
+    let source = CloudSessionFile::load_any(home.path()).unwrap();
+    source.save(home.path()).unwrap();
+    let mut companion = source.clone();
+    companion.client = "cli".into();
+    companion.scope = "local_cli".into();
+    companion.device_id = "fixture_companion".into();
+    companion.token = "fixture_companion_token".into();
+    companion.save(home.path()).unwrap();
+    assert_eq!(
+        CloudSessionFile::load_any(home.path()).unwrap().client,
+        "desktop"
+    );
+    let cli = CloudService::new();
+    cli.set_client_kind("cli");
+    cli.set_session_base_dir(home.path().into());
+    let store = ConfigStore::new(home.path().join("config/wunder.yaml"));
+    cli.logout(&store).await.unwrap();
+    assert!(CloudSessionFile::load_for(home.path(), "cli").is_none());
+    assert_eq!(
+        CloudSessionFile::load_any(home.path()).unwrap().token,
+        source.token
+    );
+    let restarted = CloudService::new();
+    restarted.set_client_kind("cli");
+    restarted.set_session_base_dir(home.path().into());
+    let error = restarted
+        .adopt_shared_login()
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("explicit login required"));
+}
 
 #[derive(Debug, Clone)]
 struct MockRequest {

@@ -303,6 +303,8 @@ pub enum AdmissionDecision {
 struct CloudIdentity {
     user_id: String,
     is_admin: bool,
+    family_id: Option<String>,
+    scope: String,
 }
 
 fn is_local_scope(scope: &str) -> bool {
@@ -313,7 +315,18 @@ async fn authenticate_cloud(
     state: &AppState,
     headers: &HeaderMap,
 ) -> Result<CloudIdentity, Response> {
-    let resolved = resolve_user(state, headers, None).await?;
+    authenticate_cloud_with_registration(state, headers, false).await
+}
+async fn authenticate_cloud_with_registration(
+    state: &AppState,
+    headers: &HeaderMap,
+    registering: bool,
+) -> Result<CloudIdentity, Response> {
+    let resolved = if registering {
+        crate::api::user_context::resolve_user_for_device_registration(state, headers).await?
+    } else {
+        resolve_user(state, headers, None).await?
+    };
     let scope_ok = resolved
         .session_scope
         .as_deref()
@@ -327,10 +340,23 @@ async fn authenticate_cloud(
             None,
         ));
     }
+    let family_id = if let Some(token) = crate::auth::extract_bearer_token(headers) {
+        let store = state.user_store.clone();
+        blocking::run_db("api.cloud.session_family", move || {
+            store.authenticate_token_details(&token)
+        })
+        .await
+        .map_err(internal_error)?
+        .and_then(|auth| auth.family_id)
+    } else {
+        None
+    };
     let is_admin = UserStore::is_admin(&resolved.user);
     Ok(CloudIdentity {
         user_id: resolved.user.user_id,
         is_admin,
+        family_id,
+        scope: resolved.session_scope.unwrap_or_default(),
     })
 }
 
@@ -515,6 +541,8 @@ fn exposed_models<'a>(
 
 #[derive(Debug, Deserialize)]
 struct RegisterDeviceRequest {
+    #[serde(default)]
+    device_id: Option<String>,
     client: String,
     name: String,
     #[serde(default)]
@@ -531,7 +559,7 @@ async fn register_device(
     Json(payload): Json<RegisterDeviceRequest>,
 ) -> Result<Json<Value>, Response> {
     require_cloud_enabled(&state).await?;
-    let identity = authenticate_cloud(&state, &headers).await?;
+    let identity = authenticate_cloud_with_registration(&state, &headers, true).await?;
     let client = payload.client.trim().to_ascii_lowercase();
     let name = payload.name.trim().to_string();
     if !matches!(client.as_str(), "desktop" | "cli") || name.is_empty() {
@@ -540,17 +568,56 @@ async fn register_device(
             "client must be desktop or cli and name must not be empty",
         ));
     }
+    if identity.scope != format!("local_{client}") {
+        return Err(cloud_error(
+            StatusCode::FORBIDDEN,
+            CODE_CLOUD_SCOPE_FORBIDDEN,
+            "device client must match the authenticated local session scope",
+            None,
+        ));
+    }
     let now = now_unix_seconds();
     let storage = state.storage.clone();
     let user_id = identity.user_id.clone();
-    let lookup_client = client.clone();
-    let lookup_name = name.clone();
+    let requested_id = payload
+        .device_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|id| !id.is_empty());
+    if requested_id.is_some_and(|id| Uuid::parse_str(id).is_err()) {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "device_id must be a UUID",
+        ));
+    }
+    let binding = identity
+        .family_id
+        .as_deref()
+        .map(|family| state.storage.get_user_session_device(family))
+        .transpose()
+        .map_err(internal_error)?
+        .flatten();
+    let device_id = binding
+        .as_ref()
+        .map(|bound| bound.device_id.clone())
+        .or_else(|| requested_id.map(str::to_string))
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
+    if binding.as_ref().is_some_and(|bound| {
+        bound.user_id != identity.user_id || requested_id.is_some_and(|id| id != bound.device_id)
+    }) {
+        return Err(device_revoked_error());
+    }
+    let lookup = device_id.clone();
     let existing = blocking::run_db("api.cloud.find_device", move || {
-        storage.find_cloud_device_by_identity(&user_id, &lookup_client, &lookup_name)
+        storage.get_cloud_device(&lookup)
     })
     .await
     .map_err(internal_error)?;
-
+    if existing.as_ref().is_some_and(|device| {
+        device.user_id != user_id || device.client != client || device.revoked
+    }) {
+        return Err(device_revoked_error());
+    }
     let record = match existing {
         Some(mut record) => {
             record.os = payload.os.clone();
@@ -560,7 +627,7 @@ async fn register_device(
             record
         }
         None => CloudDeviceRecord {
-            device_id: Uuid::new_v4().to_string(),
+            device_id,
             user_id: identity.user_id.clone(),
             client: client.clone(),
             name: name.clone(),
@@ -575,12 +642,15 @@ async fn register_device(
     };
     let storage = state.storage.clone();
     let upsert = record.clone();
-    blocking::run_db("api.cloud.upsert_device", move || {
-        storage.upsert_cloud_device(&upsert)
+    let family = identity.family_id.ok_or_else(device_revoked_error)?;
+    let registered = blocking::run_db("api.cloud.register_session", move || {
+        storage.register_cloud_device_session(&upsert, &family)
     })
     .await
     .map_err(internal_error)?;
-
+    if !registered {
+        return Err(device_revoked_error());
+    }
     let config = state.config_store.get().await;
     Ok(Json(json!({
         "data": {

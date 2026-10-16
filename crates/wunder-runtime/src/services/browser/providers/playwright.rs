@@ -127,7 +127,7 @@ fn playwright_tool_specs() -> Vec<ToolSpec> {
     let mut specs = vec![
         raw_spec(
             TOOL_NAVIGATE,
-            "Navigate the current tab to an absolute URL. Set include_snapshot=true to identify page elements in the same call. A loopback address is relative to the browser runtime (which may run in a container), not necessarily the user's computer.",
+            "Open an absolute URL for browser interaction, including login, registration, and form submission; use this directly instead of web_fetch for interactive tasks. Returns an element snapshot by default, briefly waiting if client rendering is initially empty. include_snapshot=false skips it. A loopback address is relative to the browser runtime, which may be in a container.",
             json!({
                 "url": {"type": "string", "description": "Absolute http(s) URL to open."},
                 "target_id": {"type": "string", "description": "Tab id; defaults to the active tab."},
@@ -177,7 +177,7 @@ fn playwright_tool_specs() -> Vec<ToolSpec> {
         ),
         raw_spec(
             TOOL_TYPE,
-            "Replace an element's text using a current snapshot ref or CSS selector. submit=true presses Enter after filling. Input values are not echoed. Prefer browser_batch for filling several known fields and submitting in order; never run dependent page actions in parallel.",
+            "Replace an element's text using a current snapshot ref or CSS selector. submit=true presses Enter after filling. Input values are not echoed; do not repeat user-provided passwords or tokens in progress or final replies unless explicitly asked. Prefer browser_batch for known fields, submission and a success condition; never run dependent page actions in parallel.",
             json!({
                 "ref": {"type": "string"},
                 "selector": {"type": "string"},
@@ -246,12 +246,13 @@ fn playwright_tool_specs() -> Vec<ToolSpec> {
         ),
         raw_spec(
             TOOL_WAIT_FOR,
-            "Wait for one condition: visible selector, visible text, URL glob, or load state. Prefer a success element or URL over a fixed delay. Optionally include a fresh snapshot to verify the resulting page. All waits have a bounded timeout.",
+            "Verify a page condition after an action: selector/text state, URL glob, or load state. Use a known success condition after submission, or state=hidden for an observed loading indicator, instead of guessing a fixed delay. Conditions share timeout_ms and take precedence over wait_ms; wait_ms alone is only a pause, not evidence of success. include_snapshot=true observes the resulting page.",
             json!({
-                "wait_ms": {"type": "integer", "minimum": 0, "maximum":120000},
+                "wait_ms": {"type": "integer", "minimum": 0, "maximum":120000, "description":"Fallback pause only when no condition is provided; cannot verify completion."},
                 "load_state": {"type": "string", "enum": ["load", "domcontentloaded", "networkidle"]},
                 "text": {"type": "string"},
-                "selector": {"type": "string", "description": "CSS selector that must become visible."},
+                "selector": {"type": "string", "description": "CSS selector to wait for."},
+                "state": {"type":"string", "enum":["visible","hidden","attached","detached"], "description":"Selector/text state; defaults to visible. Use hidden for an observed loading indicator."},
                 "url": {"type": "string", "description": "Expected absolute URL or Playwright URL glob, e.g. **/complete."},
                 "timeout_ms": {"type": "integer", "minimum": 1, "maximum": 120000},
                 "target_id": {"type": "string"},
@@ -279,7 +280,7 @@ fn playwright_tool_specs() -> Vec<ToolSpec> {
         ),
         raw_spec(
             TOOL_BATCH,
-            "Execute 1 to 10 dependent page actions sequentially in one call. Each step requires kind and its action arguments. Use current snapshot refs; navigation may invalidate them. Example: steps=[{kind:'type',ref:'e1',text:'sample'},{kind:'click',ref:'e2'},{kind:'wait',url:'**/complete'}], include_snapshot=true. Stops on first failure and reports completed_steps and 1-based failed_step; inspect progress before retrying to avoid duplicate submissions. No nested batches.",
+            "Execute 1 to 10 dependent actions sequentially: combine known field inputs, submission, and a known success condition in one call. Use current refs; navigation may invalidate them. Example: steps=[{kind:'type',ref:'e1',text:'sample'},{kind:'click',ref:'e2'},{kind:'wait',url:'**/complete'}], include_snapshot=true. Wait for success or an observed loading indicator to disappear; do not guess routes. Stops on failure with completed_steps and 1-based failed_step; inspect progress before retrying. Never repeat user-provided passwords in the final reply unless explicitly asked. No nested batches.",
             json!({
                 "steps": {
                     "type": "array",
@@ -312,8 +313,17 @@ fn playwright_tool_specs() -> Vec<ToolSpec> {
             let properties = spec.input_schema["properties"]
                 .as_object_mut()
                 .expect("properties");
-            properties.insert("include_snapshot".to_string(), json!({"type":"boolean", "description":"Return a fresh bounded element snapshot after success; avoids a separate browser_snapshot call."}));
+            properties.insert("include_snapshot".to_string(), json!({"type":"boolean", "default":spec.name == TOOL_NAVIGATE, "description":"Return a fresh bounded element snapshot after success; enabled by default for navigation. Initially empty snapshots briefly wait for client rendering."}));
             properties.insert("max_chars".to_string(), json!({"type":"integer", "minimum":1, "maximum":40000, "description":"Character budget for the optional snapshot."}));
+        }
+        if matches!(
+            spec.name.as_str(),
+            TOOL_NAVIGATE | TOOL_SNAPSHOT | TOOL_CLICK | TOOL_TYPE | TOOL_WAIT_FOR | TOOL_BATCH
+        ) {
+            spec.input_schema["properties"].as_object_mut().expect("properties").insert(
+                "snapshot_timeout_ms".to_string(),
+                json!({"type":"integer", "minimum":0, "maximum":5000, "description":"Maximum wait for an initially empty snapshot; default 1500 ms, 0 returns immediately. Populated snapshots return immediately."}),
+            );
         }
     }
     specs
@@ -331,6 +341,7 @@ fn batch_step_schema() -> Value {
             "from_ref":{"type":"string"}, "from_selector":{"type":"string"},
             "to_ref":{"type":"string"}, "to_selector":{"type":"string"},
             "url":{"type":"string"}, "load_state":{"type":"string","enum":["load","domcontentloaded","networkidle"]},
+            "state":{"type":"string","enum":["visible","hidden","attached","detached"]},
             "wait_ms":{"type":"integer","minimum":0,"maximum":120000},
             "timeout_ms":{"type":"integer","minimum":1,"maximum":120000}
         }
@@ -357,7 +368,7 @@ async fn dispatch(context: &ToolContext<'_>, tool: &str, args: &Value) -> Result
             call_args.insert("url".to_string(), json!(url));
             copy_opt(args, &mut call_args, "timeout_ms");
             copy_opt(args, &mut call_args, "target_id");
-            copy_snapshot_args(args, &mut call_args);
+            copy_snapshot_args(args, &mut call_args, true);
             let data = service
                 .execute(&scope, "navigate", &Value::Object(call_args))
                 .await?;
@@ -413,6 +424,7 @@ async fn dispatch(context: &ToolContext<'_>, tool: &str, args: &Value) -> Result
             let mut call_args = Map::new();
             copy_opt(args, &mut call_args, "target_id");
             copy_opt(args, &mut call_args, "max_chars");
+            copy_opt(args, &mut call_args, "snapshot_timeout_ms");
             let data = service
                 .execute(&scope, "snapshot", &Value::Object(call_args))
                 .await?;
@@ -536,6 +548,7 @@ async fn dispatch(context: &ToolContext<'_>, tool: &str, args: &Value) -> Result
                 "load_state",
                 "text",
                 "selector",
+                "state",
                 "url",
                 "timeout_ms",
             ] {
@@ -629,15 +642,21 @@ async fn provider_act(
     args: &Value,
 ) -> Result<ProviderOutcome> {
     let mut call_args = act_args(request, target_id);
-    copy_snapshot_args(args, call_args.as_object_mut().expect("act args"));
+    copy_snapshot_args(args, call_args.as_object_mut().expect("act args"), false);
     let data = service.execute(scope, "act", &call_args).await?;
     Ok(text_outcome(label, data))
 }
 
-fn copy_snapshot_args(args: &Value, call_args: &mut Map<String, Value>) {
+fn copy_snapshot_args(args: &Value, call_args: &mut Map<String, Value>, default_include: bool) {
     copy_opt(args, call_args, "include_snapshot");
     copy_opt(args, call_args, "max_chars");
-    if args.get("include_snapshot").and_then(Value::as_bool) == Some(true) {
+    copy_opt(args, call_args, "snapshot_timeout_ms");
+    if default_include {
+        call_args
+            .entry("include_snapshot".to_string())
+            .or_insert(json!(true));
+    }
+    if call_args.get("include_snapshot").and_then(Value::as_bool) == Some(true) {
         call_args
             .entry("max_chars".to_string())
             .or_insert(json!(4000));
@@ -728,7 +747,9 @@ fn normalize_image_mime(format: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_image_mime, truncate_chars, PlaywrightProvider, TOOL_NAMES};
+    use super::{
+        copy_snapshot_args, normalize_image_mime, truncate_chars, PlaywrightProvider, TOOL_NAMES,
+    };
     use crate::services::browser::provider::BrowserProvider;
     use serde_json::json;
 
@@ -797,6 +818,35 @@ mod tests {
         for key in ["selector", "url", "timeout_ms"] {
             assert!(wait.input_schema["properties"].get(key).is_some());
         }
+        assert_eq!(
+            wait.input_schema["properties"]["state"]["enum"],
+            json!(["visible", "hidden", "attached", "detached"])
+        );
+        assert_eq!(
+            specs
+                .iter()
+                .find(|spec| spec.name == "browser_navigate")
+                .unwrap()
+                .input_schema["properties"]["include_snapshot"]["default"],
+            true
+        );
+    }
+
+    #[test]
+    fn navigation_defaults_to_observation_and_respects_opt_out() {
+        let mut call_args = serde_json::Map::new();
+        copy_snapshot_args(&json!({}), &mut call_args, true);
+        assert_eq!(call_args["include_snapshot"], true);
+        assert_eq!(call_args["max_chars"], 4000);
+        let mut call_args = serde_json::Map::new();
+        copy_snapshot_args(
+            &json!({"include_snapshot":false, "snapshot_timeout_ms":0}),
+            &mut call_args,
+            true,
+        );
+        assert_eq!(call_args["include_snapshot"], false);
+        assert_eq!(call_args["snapshot_timeout_ms"], 0);
+        assert!(!call_args.contains_key("max_chars"));
     }
 
     #[test]

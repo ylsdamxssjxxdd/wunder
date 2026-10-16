@@ -147,7 +147,7 @@ export const startSessionWatcher = (store, sessionId) => {
     // are a shell side effect rather than a chat timeline item.  The v2
     // reducer intentionally consumes unknown events once a view exists, so
     // dispatch this side effect before handing the frame to that reducer.
-    if (normalizedEventType === 'workspace_update') {
+    if (normalizedEventType === 'workspace_update' || normalizedEventType.startsWith('command_session_')) {
       applyCanonicalStreamSideEffects(store, key, normalizedEventType, payload);
       return;
     }

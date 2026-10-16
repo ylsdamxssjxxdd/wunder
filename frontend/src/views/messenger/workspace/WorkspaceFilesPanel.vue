@@ -23,6 +23,11 @@
       </div>
     </div>
 
+    <RemoteThreadsPanel v-if="remoteInterlinkActive" :target="interlinkTarget" :workspace-id="interlinkWorkspaceId" :node="remoteInterlinkNode" />
+    <div v-if="remoteOperationState" class="workspace-files-remote-note" role="status">
+      {{ remoteOperationState }}
+      <button type="button" @click="cancelRemoteOperation">{{ t('common.cancel') }}</button>
+    </div>
     <div v-if="remoteTruncated" class="workspace-files-remote-note" aria-live="polite">
       {{ t('interlink.workspace.treeTruncated') }}
     </div>
@@ -48,7 +53,8 @@
       :error="filesError"
       :selection-mode="selectionMode"
       :selected-paths="selectedList"
-      :read-only="remoteInterlinkActive"
+      :read-only="remoteInterlinkActive && !remoteWritable"
+      :remote="remoteInterlinkActive"
       :empty-hint="remoteEmptyHint"
       @toggle-dir="handleToggleDirectory"
       @load-more="handleLoadMore"
@@ -169,7 +175,8 @@ import WorkspaceFileTree from './WorkspaceFileTree.vue';
 import { useInterlinkNodeTarget } from '@/views/messenger/interlink/interlinkNodeTarget';
 import { useInterlinkNodes } from '@/views/messenger/interlink/useInterlinkNodes';
 import { useInterlinkShadow } from '@/views/messenger/interlink/useInterlinkShadow';
-import { listRemoteDirectory, readRemoteFile } from '@/views/messenger/interlink/interlinkCommandRunner';
+import RemoteThreadsPanel from '@/views/messenger/interlink/RemoteThreadsPanel.vue';
+import { listRemoteDirectory, readRemoteFile, runInterlinkCommand } from '@/views/messenger/interlink/interlinkCommandRunner';
 import {
   DISABLED_REASON_KEY,
   REMOTE_PREVIEW_MAX_BYTES,
@@ -329,6 +336,26 @@ const listBlockedReason = computed(() => {
   return reason ? t(DISABLED_REASON_KEY[reason]) : '';
 });
 
+const remoteWritable = computed(() => !resolveDisabledReason(remoteInterlinkNode.value, 'workspace.write'));
+const remoteMutation = async (kind: string, args: Record<string, unknown>) => {
+  const target = interlinkTarget.value;
+  const workspace = interlinkWorkspaceId.value;
+  const abort = directoryAbort;
+  const blocked = resolveDisabledReason(remoteInterlinkNode.value, kind);
+  if (blocked) throw new Error(t(DISABLED_REASON_KEY[blocked]));
+  const outcome = await runInterlinkCommand({
+    to: interlinkTarget.value, kind,
+    args: { ...args, ...(interlinkWorkspaceId.value ? { workspace_id: interlinkWorkspaceId.value } : {}) },
+    signal: directoryAbort.signal,
+    timeoutMs: 135_000,
+    onState: ({ record }) => { if (abort === directoryAbort) remoteOperationState.value = record?.approval_state === 'pending' ? t('interlink.operation.waitApproval') : String(record?.status || ''); }
+  });
+  if (abort !== directoryAbort || target !== interlinkTarget.value || workspace !== interlinkWorkspaceId.value) throw new Error(t('common.cancel'));
+  remoteOperationState.value = '';
+  if (outcome.status !== 'succeeded') throw new Error(outcome.errorSummary || outcome.errorCode || outcome.status);
+};
+const remoteOperationState = ref('');
+
 const readBlockedReason = computed(() => {
   if (!remoteInterlinkActive.value) return '';
   const reason = resolveDisabledReason(remoteInterlinkNode.value, 'workspace.read');
@@ -337,6 +364,11 @@ const readBlockedReason = computed(() => {
 
 // 每次切换目标都换一个 controller：旧命令轮询不会继续回填状态。
 let directoryAbort = createAbortHost();
+const cancelRemoteOperation = () => {
+  directoryAbort.controller.abort();
+  directoryAbort = createAbortHost();
+  remoteOperationState.value = '';
+};
 
 function createAbortHost(): { controller: AbortController; signal: AbortSignal } {
   const controller = new AbortController();
@@ -784,7 +816,8 @@ const handleCreateEntry = async (kind: 'dir' | 'file', row: WorkspaceVisibleRow 
     const name = String(value || '').trim();
     if (!name) return;
     busy.value = true;
-    await createWorkspaceDirectory(directory, name);
+    if (remoteInterlinkActive.value) await remoteMutation('workspace.mkdir', { path: joinWorkspacePath(directory, name) });
+    else await createWorkspaceDirectory(directory, name);
     await refreshDirectory(directory);
     await revealPath(joinWorkspacePath(directory, name));
     scheduleStatsRefresh();
@@ -810,7 +843,8 @@ const handleNewFileConfirm = async (payload: { name: string; content: string; ty
   const directory = newFileDialog.directory;
   busy.value = true;
   try {
-    await createWorkspaceFile(directory, name, payload.content || '');
+    if (remoteInterlinkActive.value) await remoteMutation('workspace.write', { path: joinWorkspacePath(directory, name), content: payload.content || '' });
+    else await createWorkspaceFile(directory, name, payload.content || '');
     await refreshDirectory(directory);
     await revealPath(joinWorkspacePath(directory, name));
     scheduleStatsRefresh();
@@ -825,20 +859,16 @@ const handleNewFileConfirm = async (payload: { name: string; content: string; ty
 // -------------------------------------------------------------- row commands
 
 const handleRowCommand = async (command: string, row: WorkspaceVisibleRow | null) => {
-  // 远程是只读投影：菜单只有「打开目录 / 预览 / 刷新」，写类动作不存在。
   if (remoteInterlinkActive.value) {
-    if (command === 'refresh') {
-      await handleRefresh({ forceTree: true });
-      return;
+    if (command === 'refresh') { await handleRefresh({ forceTree: true }); return; }
+    if (command === 'new-dir' || command === 'new-file') {
+      await handleCreateEntry(command === 'new-dir' ? 'dir' : 'file', row); return;
     }
     if (!row) return;
-    if (command === 'toggle') {
-      await toggleDirectoryPath(row.path);
-      return;
-    }
-    if (command === 'preview') {
-      await openPreview(row.path, row.name, row.size);
-    }
+    if (command === 'toggle') await toggleDirectoryPath(row.path);
+    else if (command === 'preview' || command === 'download') await openPreview(row.path, row.name, row.size);
+    else if (command === 'rename' && remoteWritable.value) await renameEntry(row);
+    else if (command === 'delete' && remoteWritable.value) await deleteEntry(row);
     return;
   }
   // 空白区菜单没有宿主行：创建落在当前目录，其余三项承接自已下线的头部 ⋯。
@@ -927,7 +957,8 @@ const renameEntry = async (row: WorkspaceVisibleRow) => {
     if (!nextName || nextName === row.name) return;
     busy.value = true;
     const parent = workspaceParentPath(row.path);
-    await moveWorkspacePath(row.path, joinWorkspacePath(parent, nextName));
+    if (remoteInterlinkActive.value) await remoteMutation('workspace.move', { path: row.path, destination: joinWorkspacePath(parent, nextName) });
+    else await moveWorkspacePath(row.path, joinWorkspacePath(parent, nextName));
     removePaths([row.path]);
     await refreshDirectory(parent);
     ElMessage.success(t('messenger.filesArea.renameSuccess'));
@@ -961,7 +992,8 @@ const deleteEntry = async (row: WorkspaceVisibleRow) => {
   }
   busy.value = true;
   try {
-    await deleteWorkspacePath(row.path);
+    if (remoteInterlinkActive.value) await remoteMutation('workspace.delete', { path: row.path });
+    else await deleteWorkspacePath(row.path);
     removePaths([row.path]);
     await refreshDirectory(workspaceParentPath(row.path));
     scheduleStatsRefresh();
@@ -1208,6 +1240,7 @@ const openRemoteFilePreview = async (path: string, name: string, size: number) =
   previewAbort = controller;
   const outcome = await readRemoteFile({
     to: interlinkTarget.value,
+    workspaceId: interlinkWorkspaceId.value || undefined,
     path,
     signal: controller.signal
   });
@@ -1235,9 +1268,10 @@ const openRemoteFilePreview = async (path: string, name: string, size: number) =
   }
 
   if (declaredKind === 'text' || declaredKind === 'unsupported') {
-    if (outcome.payload.text) {
+    if (typeof outcome.payload.text === 'string') {
       preview.previewKind = 'text';
       preview.content = outcome.payload.text;
+      preview.editable = remoteWritable.value && !outcome.payload.truncated;
       return;
     }
     preview.previewKind = 'unsupported';
@@ -1288,10 +1322,11 @@ const handlePreviewDownload = async () => {
 };
 
 const handlePreviewSave = async (content: string) => {
-  if (!preview.path || preview.saving || remoteInterlinkActive.value) return;
+  if (!preview.path || preview.saving) return;
   preview.saving = true;
   try {
-    await writeWorkspaceFileContent(preview.path, content);
+    if (remoteInterlinkActive.value) await remoteMutation('workspace.write', { path: preview.path, content });
+    else await writeWorkspaceFileContent(preview.path, content);
     preview.content = content;
     await refreshDirectory(workspaceParentPath(preview.path));
     ElMessage.success(t('messenger.filesArea.saved'));

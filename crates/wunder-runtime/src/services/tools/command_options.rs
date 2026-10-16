@@ -6,6 +6,39 @@ const MIN_OUTPUT_BUDGET_BYTES: usize = 4 * 1024;
 const MAX_OUTPUT_BUDGET_BYTES: usize = 4 * 1024 * 1024;
 const MIN_COMMAND_LIMIT: usize = 1;
 const MAX_COMMAND_LIMIT: usize = 200;
+pub(crate) const MAX_COMMAND_SESSION_POLL_MS: u64 = 60_000;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CommandSessionWaitOptions {
+    pub(crate) wait_for_exit: bool,
+    pub(crate) yield_time_ms: u64,
+}
+
+/// Share the same wait policy with the orchestrator's outer tool deadline.
+pub(crate) fn parse_command_session_wait(args: &Value) -> CommandSessionWaitOptions {
+    let write_stdin = args
+        .get("action")
+        .and_then(Value::as_str)
+        .is_some_and(|action| action.eq_ignore_ascii_case("write_stdin"));
+    let wait_for_exit = args
+        .get("wait_for")
+        .and_then(Value::as_str)
+        .map(|value| value != "output")
+        .unwrap_or(!write_stdin);
+    let yield_time_ms = args
+        .get("yield_time_ms")
+        .and_then(Value::as_u64)
+        .unwrap_or(if wait_for_exit {
+            MAX_COMMAND_SESSION_POLL_MS
+        } else {
+            500
+        })
+        .min(MAX_COMMAND_SESSION_POLL_MS);
+    CommandSessionWaitOptions {
+        wait_for_exit,
+        yield_time_ms,
+    }
+}
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct CommandExecutionBudget {
@@ -128,5 +161,36 @@ mod tests {
         };
         assert!((apply_time_budget_secs(5.0, &budget) - 1.5).abs() < f64::EPSILON);
         assert!((apply_time_budget_secs(0.0, &budget) - 1.5).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn command_session_wait_defaults_match_exit_and_interactive_actions() {
+        assert_eq!(
+            parse_command_session_wait(&json!({})),
+            CommandSessionWaitOptions {
+                wait_for_exit: true,
+                yield_time_ms: 60_000
+            }
+        );
+        for args in [
+            json!({"action": "write_stdin"}),
+            json!({"wait_for": "output"}),
+        ] {
+            assert_eq!(
+                parse_command_session_wait(&args),
+                CommandSessionWaitOptions {
+                    wait_for_exit: false,
+                    yield_time_ms: 500
+                }
+            );
+        }
+        assert_eq!(
+            parse_command_session_wait(&json!({"yield_time_ms": 0})).yield_time_ms,
+            0
+        );
+        assert_eq!(
+            parse_command_session_wait(&json!({"yield_time_ms": 90_000})).yield_time_ms,
+            60_000
+        );
     }
 }

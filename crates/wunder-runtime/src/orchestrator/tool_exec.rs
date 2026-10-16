@@ -804,10 +804,8 @@ impl Orchestrator {
             }
         } else if canonical_tool_name == "命令会话" {
             // A poll may wait up to 60s server-side before responding.
-            let yield_s = args
-                .get("yield_time_ms")
-                .and_then(Value::as_u64)
-                .unwrap_or(500) as f64
+            let yield_s = crate::tools::command_options::parse_command_session_wait(args)
+                .yield_time_ms as f64
                 / 1000.0;
             timeout_s = timeout_s.max(yield_s.min(60.0) + 30.0);
         } else if tool_name.contains('@') {
@@ -1305,6 +1303,34 @@ fn parse_timeout_secs(value: Option<&Value>) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "sqlite-storage")]
+    #[tokio::test]
+    async fn command_session_outer_deadline_outlasts_the_default_exit_wait() {
+        let root = tempfile::tempdir().unwrap();
+        let mut config = Config::default();
+        config.storage.backend = "sqlite".into();
+        config.storage.db_path = root.path().join("state.db").to_string_lossy().into_owned();
+        config.workspace.root = root.path().join("workspace").to_string_lossy().into_owned();
+        config.server.mode = "desktop".into();
+        let state = crate::state::AppState::new_with_options(
+            ConfigStore::new(root.path().join("config.yaml")),
+            config.clone(),
+            crate::state::AppStateInitOptions::cli_default().with_start_thread_runtime(false),
+        )
+        .unwrap();
+        let orchestrator = &state.kernel.orchestrator;
+        assert_eq!(
+            orchestrator.resolve_tool_timeout(&config, "command_session", &json!({})),
+            Some(Duration::from_secs(90))
+        );
+        assert_eq!(
+            orchestrator.resolve_tool_timeout(
+                &config, "command_session", &json!({"action": "write_stdin"})
+            ),
+            Some(Duration::from_millis(30_500))
+        );
+    }
 
     #[test]
     fn test_split_markdown_target_keeps_title_suffix() {
