@@ -373,3 +373,6 @@ fn trajectory_degraded_page_keeps_rows_and_epoch_for_recovery() {
     );
     assert_eq!(v.rows.first().unwrap().created_seq, 20);
 }
+
+#[path = "D:/proj/wunder/.temp/trajectory-preview/capture.rs"]
+mod temporary_preview_capture;

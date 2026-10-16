@@ -159,11 +159,8 @@ cat > "$appdir/AppRun" <<'EOF'
 set -eu
 APPDIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 export LD_LIBRARY_PATH="$APPDIR/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-data_root="${XDG_DATA_HOME:-${HOME:-/tmp}/.local/share}/wunder"
-temp_root="$data_root/WUNDER_TEMPD"
-workspace_root="$data_root/WUNDER_WORK"
-export WUNDER_DESKTOP_TEMP_ROOT="${WUNDER_DESKTOP_TEMP_ROOT:-$temp_root}"
-export WUNDER_DESKTOP_WORKSPACE_ROOT="${WUNDER_DESKTOP_WORKSPACE_ROOT:-$workspace_root}"
+# Let the shared runtime resolve HOME/.wunder or explicit WUNDER_HOME.
+# Preserve caller overrides without introducing AppImage-specific data roots.
 exec "$APPDIR/usr/bin/wunder-frontend-slint" "$@"
 EOF
 chmod +x "$appdir/AppRun"
