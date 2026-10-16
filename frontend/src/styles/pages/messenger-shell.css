@@ -715,7 +715,7 @@ button.messenger-sidebar-workspace-row {
   position: relative;
   flex: 1;
   min-height: 0;
-  margin: 0 var(--mz-sidebar-padding);
+  margin: 0;
   border: 1px solid var(--mz-border);
   /* 不用圆角：滚动容器会按 border-radius 裁剪内容，首个文件条目四角被削成弧形。
      列表本身就是方形条目，这里保持直角与之对齐。 */
@@ -1160,7 +1160,7 @@ button.messenger-sidebar-workspace-row {
 
 .messenger-sidebar-footer {
   flex-shrink: 0;
-  padding: 8px var(--mz-sidebar-padding) 12px;
+  padding: 2px var(--mz-sidebar-padding) 12px;
   border-top: 1px solid var(--mz-border);
 }
 

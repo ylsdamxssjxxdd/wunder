@@ -329,11 +329,11 @@ FFmpeg: $ffmpeg_flavor $ffmpeg_version (opt/ffmpeg/bin/ffmpeg)
 Browsers: Playwright Chromium in opt/python/ms-playwright (when bundled)
 
 Usage:
-1. Close Wunder Desktop.
-2. Extract this archive into the desktop install directory, or (AppImage)
-   into the directory that holds the .AppImage file.
+1. Use Import supplement in the Pupa settings, or close processes using this runtime.
+2. For manual installation, extract into WUNDER_HOME (default: ~/.wunder),
+   including when the Pupa is distributed as an AppImage.
 3. Ensure the target now contains opt/python, opt/git, opt/rg, and opt/ffmpeg.
-4. Start Wunder Desktop again; the native runtime prepends opt/python,
+4. Start the Pupa or Helm; both prepend the shared opt/python,
    opt/git, opt/rg, and opt/ffmpeg to PATH automatically.
 EOF
 

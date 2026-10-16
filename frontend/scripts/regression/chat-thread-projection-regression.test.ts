@@ -11,8 +11,39 @@ import { emptyChatThreadState } from '../../src/realtime/chat/chatThreadTypes';
 import { applyChatThreadFrame, applyChatThreadSnapshot, bindStreamStarted } from '../../src/realtime/chat/chatThreadState';
 import { buildChatThreadRenderableMessages } from '../../src/realtime/chat/chatThreadProjection';
 import { materializeChatRuntimeMessage } from '../../src/realtime/chat/chatRuntimeRenderAdapter';
+import { resolveChatPlanDismissKey } from '../../src/realtime/chat/chatPlan';
+import { summarizePlanProgress } from '../../src/components/chat/composerActivity';
 
 type TestFrame = ChatThreadFrame;
+
+test('durable plan alone reaches the composer and revisions survive replay and snapshot recovery', () => {
+  const state = emptyChatThreadState('fixture-plan-session');
+  const turn = { turn_id: 'fixture-plan-turn', user_round: 1, status: 'running', content: 'Fixture input' };
+  const plan = { item_id: `${turn.turn_id}:plan`, turn_id: turn.turn_id, kind: 'plan',
+    event_type: 'plan_update', status: 'completed', visibility: 'user', revision: 1, created_seq: 2,
+    explanation: 'Fixture plan', plan: [{ step: 'First step', status: 'in_progress' }, { step: 'Second step', status: 'pending' }] };
+  const read = () => materializeChatRuntimeMessage(buildChatThreadRenderableMessages(state).find(row => row.role === 'assistant'))!;
+  applyFrames(state, [turnUpsert(1, turn), itemUpsert(2, plan)]);
+  assert.deepEqual(summarizePlanProgress(read().plan), { total: 2, done: 0 });
+  assert.equal(read().plan.explanation, plan.explanation);
+  assert.equal(read().content, ''); // no assistant text required to show the plan
+  const hidden = resolveChatPlanDismissKey(read());
+  const updated = { ...plan, revision: 2, plan: [
+    { step: 'First step', status: 'completed' }, { step: 'Second step', status: 'in_progress' }
+  ] };
+  applyFrames(state, [itemUpsert(3, updated)]);
+  assert.deepEqual(summarizePlanProgress(read().plan), { total: 2, done: 1 });
+  assert.notEqual(resolveChatPlanDismissKey(read()), hidden);
+  const expected = read().plan;
+  applyFrames(state, [itemUpsert(3, updated)]);
+  assert.deepEqual(read().plan, expected);
+  const latestKey = resolveChatPlanDismissKey(read());
+  applyChatThreadSnapshot(state, { cursor: 3, turns: [turn], items: [updated], blocks: [] });
+  assert.deepEqual(read().plan, expected);
+  assert.equal(resolveChatPlanDismissKey(read()), latestKey);
+  applyFrames(state, [itemUpsert(4, textItemData(turn.turn_id, 2, { content: 'Fixture result' })), turnStatus(5, turn.turn_id, 'completed')]);
+  assert.deepEqual(read().plan, expected); // answer replacement and completion retain progress
+});
 
 test('durable subagents retain run identity, progress and independent lifecycle across replay and reload', () => {
   const state = emptyChatThreadState('fixture-session');

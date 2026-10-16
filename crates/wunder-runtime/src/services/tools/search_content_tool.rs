@@ -1045,6 +1045,13 @@ fn resolve_rg_launch_candidates(configured_rg_path: Option<&str>) -> Vec<RgLaunc
         push_rg_candidate_reference(&mut candidates, &mut seen, raw.trim(), &base_dirs);
     }
 
+    if let Some(path) = crate::core::local_bootstrap::supplement::find_tool(
+        &[crate::core::local_bootstrap::resolve_home_from_env_or_user()],
+        crate::core::local_bootstrap::supplement::Tool::Rg,
+    ) {
+        push_rg_candidate_path(&mut candidates, &mut seen, path);
+    }
+
     let binary_name = rg_binary_name();
     for base in &base_dirs {
         push_rg_candidate_path(&mut candidates, &mut seen, base.join(binary_name));

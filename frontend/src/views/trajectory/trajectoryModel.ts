@@ -365,9 +365,10 @@ function assistantRecordedDurationSeconds(payload: RawRecord): number | null {
         ? meta.message_stats
         : isRecord(meta.messageStats) ? meta.messageStats : undefined
   if (!stats) return null
+  // interaction_duration_s is elapsed time since the USER turn began. It is
+  // cumulative across requests and tools, not this assistant's own duration.
   return finiteNonNegative(
-    stats.interaction_duration_s ?? stats.interactionDurationS
-      ?? stats.duration_s ?? stats.durationSeconds,
+    stats.model_duration_s ?? stats.request_duration_s ?? stats.duration_s ?? stats.durationSeconds,
   )
 }
 
@@ -559,7 +560,7 @@ function buildCell(item: RawRecord, payload: RawRecord, kind: TrajKind, index: n
   // Durable assistant rows are created when the model round is admitted, but
   // updated only after child/tool work and replay have settled.  That row
   // timestamp is bookkeeping, not the model span start.  When the runtime
-  // recorded its own interaction duration, anchor the span at completion and
+  // recorded an explicit per-request duration, anchor the span at completion and
   // derive the start so delegated child work stays visibly separate.
   if (kind === 'message' && recordedDuration !== null
     && firstTime(payload, STARTED_KEYS) === null
@@ -611,7 +612,7 @@ function buildCell(item: RawRecord, payload: RawRecord, kind: TrajKind, index: n
     // Durable assistant rows often receive `updated_time` only after the
     // child/tool work and final replay are committed. Using that bookkeeping
     // timestamp makes the purple model span cover the whole child run. Prefer
-    // the provider/orchestrator interaction duration when explicit assistant
+    // an explicit per-request duration when assistant
     // start/end fields are absent; this is the same own-step duration DSH uses.
     cell.timeSeconds = recordedDuration !== null
       && firstTime(payload, STARTED_KEYS) === null

@@ -65,7 +65,7 @@ impl Orchestrator {
         emitter: &EventEmitter,
         active_turn_id: Option<&str>,
         active_turn_round: RoundInfo,
-        goal_round: Option<goal::GoalRoundTag>,
+        _goal_round: Option<goal::GoalRoundTag>,
         err: &OrchestratorError,
     ) {
         // Cloud device-log: thread turn failure summary (code only, no
@@ -159,16 +159,6 @@ impl Orchestrator {
             )
             .await;
         }
-        // An aborted turn that owned a goal round settles the attempt; the
-        // driver pauses the goal at this idle point (deepseek fence).
-        if err.code() == "CANCELLED" {
-            self.goal_handle().driver().notify_turn_ended(
-                user_id,
-                session_id,
-                goal_round.as_ref(),
-                goal::TurnEndOutcome::Aborted,
-            );
-        }
         // The terminal stable item was written above. Do not append a second
         // assistant history item here.
         if err.code() == "CANCELLED" {
@@ -201,7 +191,7 @@ impl Orchestrator {
         emitter: &EventEmitter,
         last_round_info: RoundInfo,
         active_turn_id: Option<&str>,
-        goal_round: Option<goal::GoalRoundTag>,
+        _goal_round: Option<goal::GoalRoundTag>,
         waiting_question_panel: bool,
         has_round_usage: bool,
         round_usage: &TokenUsage,
@@ -251,26 +241,6 @@ impl Orchestrator {
             },
         )
         .await;
-        // Goal driver hand-off: settle the in-flight round, then re-evaluate
-        // driving at this idle point. Humans keep priority because the driver
-        // only fires on a fully available session.
-        {
-            let goal_service = self.goal_handle();
-            let outcome = if waiting_question_panel {
-                goal::TurnEndOutcome::WaitingUserInput
-            } else if stop_reason == "max_tokens" {
-                goal_service.disarm(session_id);
-                goal::TurnEndOutcome::MaxTokens
-            } else {
-                goal::TurnEndOutcome::Completed
-            };
-            goal_service.driver().notify_turn_ended(
-                user_id,
-                session_id,
-                goal_round.as_ref(),
-                outcome,
-            );
-        }
         if let Some(turn_id) = active_turn_id {
             self.finish_active_turn(
                 session_id,

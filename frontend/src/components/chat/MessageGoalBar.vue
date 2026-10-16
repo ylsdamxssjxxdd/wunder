@@ -4,7 +4,7 @@
       <i class="fa-solid fa-bullseye"></i>
     </span>
     <span class="goal-bar-title">{{ goalTitle }}</span>
-    <span v-if="elapsedLabel" class="goal-bar-time" :title="elapsedHint">{{ elapsedLabel }}</span>
+    <span class="goal-bar-time">{{ t('chat.goalBar.rounds', { started: goal.rounds_started, max: goal.max_goal_rounds }) }}</span>
     <span v-if="objectiveLabel" class="goal-bar-objective" :title="objectiveLabel">{{ objectiveLabel }}</span>
     <span class="goal-bar-actions">
       <button
@@ -56,17 +56,12 @@ import { ElMessage, ElMessageBox } from 'element-plus';
 import { useI18n } from '@/i18n';
 import { clearSessionGoal } from '@/api/chat';
 import { useChatStore } from '@/stores/chat';
-import { normalizeChatDurationSeconds } from '@/utils/chatTiming';
 
 /**
  * 目标条：时间线底部、输入区上方（参考样式：粉色圆角条 + 右侧图标操作）。
  *
- * 降级策略（后端字段现状，已核实）：
- * - 后端 `services/goal` 运行期写入 active、budget_limited、complete；
- *   `paused` 在用户暂停或预算受限时出现。active/paused/budget_limited
- *   都在此呈现；complete 是已达成，不再打扰用户。
- * - 「已用时」优先取服务端 `time_used_seconds`，缺失时按 `created_at` 推算（tooltip 标注来源）。
- * - 暂停/恢复走 PUT 的 `action: pause|resume`（api/chat_goal.rs 的 GoalCommand）。
+ * 使用后端 phase / activation 和已受理目标轮次；完成的目标不再展示。
+ * 暂停/恢复走 PUT 的 action: pause|resume。
  */
 const props = withDefaults(defineProps<{
   sessionId?: string;
@@ -86,62 +81,24 @@ const goal = computed(() => {
   const resolve = chatStore.sessionGoal;
   const value = typeof resolve === 'function' ? resolve(sessionId) : null;
   if (!value) return null;
-  const status = String(value.status || '').trim().toLowerCase();
+  const status = value.phase;
   // complete 是已达成，不再打扰用户。
   if (status === 'complete') return null;
   if (!String(value.objective || '').trim()) return null;
   return value;
 });
 
-const goalStatus = computed(() => String(goal.value?.status || '').trim().toLowerCase());
-const canPause = computed(() => goalStatus.value === 'active');
+const goalStatus = computed(() => goal.value?.phase);
+const canPause = computed(() => goalStatus.value === 'active' && goal.value?.activation === 'armed');
 
 const objectiveLabel = computed(() => String(goal.value?.objective || '').trim());
 
 const goalTitle = computed(() => {
   const status = goalStatus.value;
-  if (status === 'budget_limited') return t('chat.goalBar.budgetLimited');
-  if (status === 'paused') return t('chat.goalBar.paused');
+  if (status === 'blocked') return t('chat.goalBar.blocked');
+  if (status === 'paused' || goal.value?.activation === 'disarmed') return t('chat.goalBar.paused');
   return t('chat.goal.timelineBadge');
 });
-
-const formatDuration = (totalSeconds: number): string => {
-  const seconds = Math.max(0, Math.round(totalSeconds));
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  const rest = seconds % 60;
-  if (hours > 0) return `${hours}小时${minutes}分${rest}秒`;
-  if (minutes > 0) return `${minutes}分${rest}秒`;
-  return `${rest}秒`;
-};
-
-const elapsedSeconds = computed<number | null>(() => {
-  const value = goal.value;
-  if (!value) return null;
-  // 优先使用服务端累计用时；为 0 时退回按创建时间推算（并可能偏低，因为
-  // 暂停期间不计入服务端累计）。
-  const reported = normalizeChatDurationSeconds(value.time_used_seconds);
-  if (reported !== null && reported > 0) return reported;
-  const createdAt = Number(value.created_at || 0);
-  if (Number.isFinite(createdAt) && createdAt > 0) {
-    // 服务端 now_ts() 为「秒 + 毫秒小数」，这里同时兼容秒/毫秒时间戳。
-    const startedAtMs = createdAt < 1e11 ? createdAt * 1000 : createdAt;
-    const delta = (Date.now() - startedAtMs) / 1000;
-    if (delta > 0) return delta;
-  }
-  return reported;
-});
-
-const elapsedLabel = computed(() => {
-  const seconds = elapsedSeconds.value;
-  if (seconds === null) return '';
-  return formatDuration(seconds);
-});
-
-// 说明用时的来源，避免把推算值当成服务端累计值。
-const elapsedHint = computed(() =>
-  elapsedSeconds.value === null ? t('chat.goalBar.elapsedUnknown') : t('chat.goalBar.elapsedHint')
-);
 
 const resolvedGoalSessionId = computed(
   () => String(goal.value?.session_id || activeSessionId.value).trim()
@@ -194,7 +151,6 @@ const handleRemove = async (): Promise<void> => {
   }
   busy.value = true;
   try {
-    // 后端不支持「清空目标」的 PUT（`GoalCommand::Clear` 会被拒绝），
     // 删除走 DELETE 端点，随后同步本地 goal 状态。
     await clearSessionGoal(sessionId);
     chatStore.syncSessionGoal?.(sessionId, null);

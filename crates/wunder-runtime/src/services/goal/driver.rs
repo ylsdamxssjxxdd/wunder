@@ -203,8 +203,12 @@ impl GoalDriver {
         let state = self.state(session_id);
         self.state_user_id(&state, user_id);
         match outcome {
-            TurnEndOutcome::WaitingUserInput => return,
-            TurnEndOutcome::MaxTokens => return, // disarm handled by the service
+            TurnEndOutcome::WaitingUserInput | TurnEndOutcome::MaxTokens => {
+                if let Some(tag) = goal_round {
+                    self.take_attempt_if(&state, |attempt| attempt.tag == *tag);
+                }
+                return; // waiting/disarm prevents driving until human input
+            }
             TurnEndOutcome::Aborted => {
                 if let Some(tag) = goal_round {
                     if self.attempt_tag(&state).as_ref() == Some(tag) {
@@ -212,7 +216,11 @@ impl GoalDriver {
                     }
                 }
             }
-            TurnEndOutcome::Completed | TurnEndOutcome::Failed => {}
+            TurnEndOutcome::Completed | TurnEndOutcome::Failed => {
+                if let Some(tag) = goal_round {
+                    self.take_attempt_if(&state, |attempt| attempt.tag == *tag);
+                }
+            }
         }
         self.request_drive(&state, user_id, session_id);
     }
@@ -681,13 +689,16 @@ mod tests {
         let state = driver.state("session-1");
         state.set_attempt(tag(1));
 
-        // WaitingUserInput and MaxTokens never settle or re-drive.
+        // WaitingUserInput and MaxTokens release the ended attempt without
+        // driving, so a later human response/resume is not fenced out.
         for outcome in [TurnEndOutcome::WaitingUserInput, TurnEndOutcome::MaxTokens] {
+            state.set_attempt(tag(1));
             driver.notify_turn_ended("user-1", "session-1", Some(&tag(1)), outcome);
-            assert!(state.attempt.lock().unwrap().is_some());
+            assert!(state.attempt.lock().unwrap().is_none());
         }
 
         // Aborted settles only the exact admitted round.
+        state.set_attempt(tag(1));
         driver.notify_turn_ended(
             "user-1",
             "session-1",
@@ -702,6 +713,41 @@ mod tests {
             TurnEndOutcome::Aborted,
         );
         assert!(state.attempt.lock().unwrap().as_ref().unwrap().cancelled);
+    }
+
+    #[tokio::test]
+    async fn completed_round_releases_attempt_and_drives_next_round() {
+        let driver = GoalDriver::new();
+        let host = Arc::new(MockHost::with_view(view(
+            PHASE_ACTIVE,
+            1,
+            8,
+            GoalActivation::Armed,
+        )));
+        driver.set_host(host.clone());
+        let state = driver.state("session-1");
+        state.set_attempt(tag(1));
+        driver.notify_turn_ended(
+            "user-1",
+            "session-1",
+            Some(&tag(9)),
+            TurnEndOutcome::Completed,
+        );
+        assert!(state.attempt.lock().unwrap().is_some());
+        driver.notify_turn_ended(
+            "user-1",
+            "session-1",
+            Some(&tag(1)),
+            TurnEndOutcome::Completed,
+        );
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while host.submits().is_empty() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(host.submits(), vec![tag(2)]);
     }
 
     #[tokio::test]

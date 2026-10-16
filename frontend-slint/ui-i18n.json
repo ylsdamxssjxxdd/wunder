@@ -4914,8 +4914,8 @@
  },
  {
   "key": "st_exec_paths_note",
-  "zh": "指定 Python / Git / rg 可执行文件路径，保存后对新启动的工具立即生效；留空表示自动检测。也可将补充包解压到安装目录的 opt/ 下自动识别。",
-  "en": "Set Python / Git / rg executable paths; saved paths apply to newly started tools immediately. Empty means auto-detect. Supplement packages unpacked under the install directory's opt/ are also detected."
+  "zh": "指定 Python / Git / rg 路径，保存后对新启动的工具生效；留空自动检测。补充包统一导入用户目录 .wunder/opt，与舵机共用；设置 WUNDER_HOME 时使用该目录。",
+  "en": "Set Python / Git / rg paths for newly started tools; leave empty to auto-detect. Supplements are imported into .wunder/opt in your home and shared with the Helm. WUNDER_HOME overrides this location."
  },
  {
   "key": "st_python_path",

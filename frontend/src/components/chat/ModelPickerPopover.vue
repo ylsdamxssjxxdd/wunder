@@ -257,6 +257,7 @@ const resolveModelTags = (item: ComposerModelOption): Array<{
   gap: 8px;
   box-sizing: border-box;
   width: 100%;
+  height: 50px;
   padding: 6px 8px;
   border: 0;
   border-radius: 8px;
@@ -265,6 +266,7 @@ const resolveModelTags = (item: ComposerModelOption): Array<{
   font: inherit;
   text-align: left;
   cursor: pointer;
+  overflow: hidden;
 }
 
 .composer-model-row:hover:not(:disabled) {
@@ -305,9 +307,11 @@ const resolveModelTags = (item: ComposerModelOption): Array<{
 
 .composer-model-row-main {
   display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
   gap: 2px;
   min-width: 0;
+  overflow: hidden;
 }
 
 .composer-model-row-name {
@@ -322,10 +326,13 @@ const resolveModelTags = (item: ComposerModelOption): Array<{
   display: flex;
   align-items: center;
   gap: 4px;
-  flex-wrap: wrap;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
 }
 
 .composer-model-tag {
+  flex: 0 0 auto;
   padding: 0 5px;
   border-radius: 4px;
   background: var(--mz-hover, #f1efec);
@@ -407,11 +414,15 @@ const resolveModelTags = (item: ComposerModelOption): Array<{
   border-bottom: 1px solid var(--mz-border, #e8e6e3);
 }
 
+.composer-model-context .composer-model-footer-title {
+  font-size: 12px;
+}
+
 .composer-model-context-value {
   min-width: 0;
   overflow: hidden;
   color: var(--mz-text-secondary, #3d3d3d);
-  font-size: 11px;
+  font-size: 13px;
   font-variant-numeric: tabular-nums;
   text-overflow: ellipsis;
   white-space: nowrap;

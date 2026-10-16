@@ -295,7 +295,9 @@ impl GoalService {
         let mut record = self
             .require_current(&storage, user_id, session_id, reference)
             .await?;
-        if record.phase != PHASE_PAUSED && record.phase != PHASE_BLOCKED {
+        let disarmed_active =
+            record.phase == PHASE_ACTIVE && self.activation(session_id) == GoalActivation::Disarmed;
+        if record.phase != PHASE_PAUSED && record.phase != PHASE_BLOCKED && !disarmed_active {
             return Err(goal_error(
                 "only a paused or blocked goal can be resumed",
                 ERR_GOAL_INVALID_TRANSITION,

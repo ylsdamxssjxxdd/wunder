@@ -200,7 +200,7 @@ jobs:
             gh release create "$RELEASE_TAG" \
               --repo "${GITHUB_REPOSITORY}" \
               --title "Wunder 补充包（Win7 32 位 / Linux x86_64 / Linux ARM64）" \
-              --notes "桌面端补充包。解压到桌面安装目录或者设置中导入即可生效，使蛹直接获得运行环境（python、git、rg、ffmpeg）" \
+              --notes "本地补充包。在蛹设置中导入，或手动解压到 WUNDER_HOME（默认用户主目录 .wunder），蛹与舵机共用 Python、Git、rg、ffmpeg 运行环境。" \
             --latest=false --target "${GITHUB_SHA}"
           fi
           find release-assets -type f -maxdepth 2 -print0 | while IFS= read -r -d '' asset; do

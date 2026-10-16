@@ -1999,6 +1999,24 @@ impl Orchestrator {
                     &mut heartbeat_task,
                 )
                 .await;
+                // Drive only after the durable turn, monitor and session lock
+                // have settled. Earlier notifications race the busy check and
+                // leave the goal idle with no later wake.
+                let service = self.goal_handle();
+                let outcome = match value.stop_reason.as_deref() {
+                    Some("question_panel") => goal::TurnEndOutcome::WaitingUserInput,
+                    Some("max_tokens") => {
+                        service.disarm(&session_id);
+                        goal::TurnEndOutcome::MaxTokens
+                    }
+                    _ => goal::TurnEndOutcome::Completed,
+                };
+                service.driver().notify_turn_ended(
+                    &user_id,
+                    &session_id,
+                    goal_round.as_ref(),
+                    outcome,
+                );
                 Ok(value)
             }
             Err(err) => {
@@ -2020,6 +2038,16 @@ impl Orchestrator {
                     &mut heartbeat_task,
                 )
                 .await;
+                self.goal_handle().driver().notify_turn_ended(
+                    &user_id,
+                    &session_id,
+                    goal_round.as_ref(),
+                    if err.code() == "CANCELLED" {
+                        goal::TurnEndOutcome::Aborted
+                    } else {
+                        goal::TurnEndOutcome::Failed
+                    },
+                );
                 Err(err)
             }
         }

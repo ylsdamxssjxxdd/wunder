@@ -20,6 +20,7 @@ import { getCurrentLanguage, setLanguage, useI18n } from '@/i18n';
 import { flushBackgroundPublication } from '@/realtime/chat/chatBackgroundPublication';
 import { resolveChatRuntimeRenderableKey } from '@/realtime/chat/chatRuntimeMessageKeys';
 import { resolveChatRuntimeMessageRenderKey } from '@/realtime/chat/chatRuntimeRenderAdapter';
+import { resolveChatPlanDismissKey } from '@/realtime/chat/chatPlan';
 import { threadViewClock, threadViewOwnsExecution, threadViewHeadVersion } from '@/realtime/chat/threadViewStore';
 import { threadViewPhase, threadViewSlots } from '@/realtime/chat/threadViewStore';
 import { readThreadBody } from '@/realtime/chat/threadBodyReader';
@@ -706,7 +707,7 @@ function installMessengerControllerStateRefs(ctx: MessengerControllerContext): v
 
   ctx.agentInquirySelection = ref<AgentInquiryPanelAnswer[]>([]);
 
-  ctx.dismissedPlanMessages = ref<WeakSet<Record<string, unknown>>>(new WeakSet());
+  ctx.dismissedPlanKeys = ref<Set<string>>(new Set());
 
   ctx.dismissedPlanVersion = ref(0);
 
@@ -2315,10 +2316,15 @@ function installMessengerControllerRenderableMessages(ctx: MessengerControllerCo
           steps?: unknown[];
       } | null)?.steps?.length || 0) > 0;
 
-  ctx.isPlanMessageDismissed = (message: Record<string, unknown>): boolean => ctx.dismissedPlanMessages.value.has(message);
+  ctx.isPlanMessageDismissed = (message: Record<string, unknown>): boolean => ctx.dismissedPlanKeys.value.has(resolveChatPlanDismissKey(message));
 
   ctx.markPlanMessageDismissed = (message: Record<string, unknown>) => {
-      ctx.dismissedPlanMessages.value.add(message);
+      const key = resolveChatPlanDismissKey(message);
+      if (!key) return;
+      ctx.dismissedPlanKeys.value.add(key);
+      if (ctx.dismissedPlanKeys.value.size > 64) {
+          ctx.dismissedPlanKeys.value.delete(ctx.dismissedPlanKeys.value.values().next().value);
+      }
       ctx.dismissedPlanVersion.value += 1;
   };
 
@@ -2342,6 +2348,9 @@ function installMessengerControllerRenderableMessages(ctx: MessengerControllerCo
   });
 
   ctx.activeAgentPlan = computed(() => {
+      // Materialized fallback rows can retain object identity across updates.
+      void threadViewClock.value;
+      void ctx.chatStore.runtimeProjectionVersionBySession?.[ctx.chatStore.activeSessionId];
       const message = ctx.activeAgentPlanMessage.value as {
           plan?: unknown;
       } | null;
@@ -10966,7 +10975,7 @@ function installMessengerControllerLifecycleReactiveEffects(ctx: MessengerContro
           ctx.rememberMessageScrollForKey?.(String(oldValue));
       }
       ctx.clearWorkspaceResourceCache();
-      ctx.dismissedPlanMessages.value = new WeakSet<Record<string, unknown>>();
+      ctx.dismissedPlanKeys.value = new Set<string>();
       ctx.dismissedPlanVersion.value += 1;
       ctx.agentInquirySelection.value = [];
       ctx.scheduleWorkspaceResourceHydration('conversation-key-change');
@@ -13416,7 +13425,7 @@ function installMessengerControllerAgentMessageCommands(ctx: MessengerController
               ? ctx.chatStore.sessionGoal(sessionId)
               : null;
           const currentObjective = String(currentGoal?.objective || '').trim();
-          const currentStatus = String(currentGoal?.status || '').trim().toLowerCase();
+          const currentStatus = String(currentGoal?.phase || '').trim().toLowerCase();
           if (currentStatus === 'active' && currentObjective && currentObjective !== objective) {
               await ctx.chatStore.stopStream();
           }
@@ -13424,7 +13433,7 @@ function installMessengerControllerAgentMessageCommands(ctx: MessengerController
           const commandMessage = commandLabel
               ? ctx.chatStore.appendLocalMessage('user', commandLabel, { sessionId, goalCommand: true })
               : null;
-          const result = await ctx.chatStore.setSessionGoal(sessionId, { objective, approval_mode: 'full_auto' });
+          const result = await ctx.chatStore.setSessionGoal(sessionId, { objective });
           applyGoalCommandUserRound(sessionId, commandMessage, result?.user_round);
           const savedObjective = String(result?.goal?.objective || objective).trim();
           ElMessage.success(ctx.t('chat.command.goalSet', { objective: savedObjective }));
@@ -13487,7 +13496,7 @@ function installMessengerControllerAgentMessageCommands(ctx: MessengerController
                   goalCommand: true
               });
               try {
-                  const result = await ctx.chatStore.setSessionGoal(goalSessionId, { status: 'active', approval_mode: 'full_auto' });
+                  const result = await ctx.chatStore.setSessionGoal(goalSessionId, { action: 'resume' });
                   applyGoalCommandUserRound(goalSessionId, commandMessage, result?.user_round);
                   ElMessage.success(ctx.t('chat.command.goalResumed'));
               }
@@ -13507,7 +13516,7 @@ function installMessengerControllerAgentMessageCommands(ctx: MessengerController
                   if (objective) {
                       ElMessage.info(ctx.t('chat.command.goalStatus', {
                           objective,
-                          status: String(goal?.status || '').trim() || '-'
+                          status: String(goal?.phase || '').trim() || '-'
                       }));
                   }
                   else {

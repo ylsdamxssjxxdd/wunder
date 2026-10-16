@@ -27,6 +27,7 @@ CREATE INDEX IF NOT EXISTS idx_thread_view_rebuild ON thread_view_heads(projecti
 CREATE INDEX IF NOT EXISTS idx_thread_blocks_view_rebuild ON thread_item_blocks(user_id,session_id,item_id,field,block_index);
 CREATE INDEX IF NOT EXISTS idx_thread_items_view_rebuild ON thread_items(user_id,session_id,created_seq);
 CREATE INDEX IF NOT EXISTS idx_thread_items_view_root_seq ON thread_items(user_id,session_id,root_turn_id,created_seq DESC);
+CREATE INDEX IF NOT EXISTS idx_thread_items_view_plan ON thread_items(user_id,session_id,root_turn_id,created_seq DESC) WHERE kind='plan' AND visibility='user';
 CREATE TABLE IF NOT EXISTS thread_trajectory_rows (
  session_id TEXT NOT NULL, user_id TEXT NOT NULL, item_id TEXT NOT NULL,
  root_turn_id TEXT NOT NULL, created_seq BIGINT NOT NULL, revision BIGINT NOT NULL,
@@ -88,7 +89,16 @@ fn int(v: &Value) -> i64 {
     v.as_i64().unwrap_or(0)
 }
 fn float(v: &Value) -> f64 {
-    v.as_f64().unwrap_or(0.0)
+    v.as_f64()
+        .or_else(|| v.as_str().and_then(|value| value.parse::<f64>().ok()))
+        .unwrap_or(0.0)
+}
+fn optional_float(v: &Value) -> Option<f64> {
+    if v.is_null() {
+        return None;
+    }
+    let value = float(v);
+    value.is_finite().then_some(value)
 }
 
 pub(crate) fn initialize(db: &mut impl ViewDb, user: &str, session: &str) -> Result<()> {
@@ -252,6 +262,30 @@ fn save_chat(
     Ok(())
 }
 
+/// Upgrade only a legacy row before its next write. Otherwise a normal text or
+/// status update could serialize plan:null over an old card whose plan still
+/// exists in durable items and thereby disable the read-time repair.
+fn decode_chat_row(
+    db: &mut impl ViewDb,
+    user: &str,
+    session: &str,
+    payload: &str,
+) -> Result<ChatViewRow> {
+    let value: Value = serde_json::from_str(payload)?;
+    let legacy = value.get("plan").is_none();
+    let mut row: ChatViewRow = serde_json::from_value(value)?;
+    if legacy {
+        row.plan = super::thread_view_source::load_chat_plans(
+            db,
+            user,
+            session,
+            &[row.root_turn_id.clone()],
+        )?
+        .remove(&row.root_turn_id);
+    }
+    Ok(row)
+}
+
 /// Immutable body versions. A stream writes small durable blocks; full bodies
 /// are chunked once when their item is committed, never selected by page reads.
 fn save_body(
@@ -332,7 +366,7 @@ pub(crate) fn project_turn(
         &[json!(session), json!(root)],
     )?;
     let mut row = if let Some(r) = existing {
-        serde_json::from_str::<ChatViewRow>(text(&r[0]))?
+        decode_chat_row(db, user, session, text(&r[0]))?
     } else {
         projection::new_chat(
             root,
@@ -431,12 +465,15 @@ pub(crate) fn project_item(
                 "SELECT payload FROM thread_chat_rows WHERE session_id=? AND root_turn_id=?",
                 &[json!(session), i[1].clone()],
             )? {
-                let mut row: ChatViewRow = serde_json::from_str(text(&r[0]))?;
+                let mut row = decode_chat_row(db, user, session, text(&r[0]))?;
                 if row.user.item_id == id {
                     row.user = ViewMessage::default();
                 }
                 if row.assistant.item_id == id {
                     row.assistant = ViewMessage::default();
+                }
+                if row.plan.as_ref().is_some_and(|plan| plan.item_id == id) {
+                    row.plan = None;
                 }
                 if matches!(
                     text(&i[5]),
@@ -566,8 +603,16 @@ pub(crate) fn project_item(
     else {
         return Ok(());
     };
-    let mut row: ChatViewRow = serde_json::from_str(text(&r[0]))?;
+    let mut row = decode_chat_row(db, user, session, text(&r[0]))?;
     let content = item.get("content").and_then(Value::as_str).unwrap_or("");
+    if kind == "plan"
+        && row
+            .plan
+            .as_ref()
+            .is_none_or(|plan| int(&i[3]) >= plan.created_seq)
+    {
+        row.plan = projection::plan(&item, id, revision, int(&i[3]));
+    }
     if kind == "user_message" && turn == root {
         row.user = projection::message(id, content, revision);
         let content_rev = if let Some(rev) = content_revision {
@@ -775,7 +820,7 @@ pub(crate) fn project_feedback(
     else {
         return Ok(());
     };
-    let mut row: ChatViewRow = serde_json::from_str(text(&r[0]))?;
+    let mut row = decode_chat_row(db, user, session, text(&r[0]))?;
     if row.assistant.item_id == id {
         row.assistant.feedback = Some(feedback.clone());
         let seq = head(db, user, session)?;
@@ -842,7 +887,7 @@ pub(crate) fn project_block(
     else {
         return Ok(());
     };
-    let mut row: ChatViewRow = serde_json::from_str(text(&r[0]))?;
+    let mut row = decode_chat_row(db, user, session, text(&r[0]))?;
     // Old executions and delayed blocks cannot replace a newer sealed answer.
     if (field == "content" && int(&i[4]) < row.assistant.created_seq)
         || (field == "content"
@@ -978,6 +1023,52 @@ fn message_for_stream(id: &str, body: &str) -> ViewMessage {
     }
 }
 
+/// Fetch timing metadata only, independently of ledger pagination. No bodies
+/// or history-wide aggregation: an indexed tail of at most 1025 small rows.
+pub(super) fn timeline_page(
+    db: &mut impl ViewDb,
+    user: &str,
+    session: &str,
+    root: Option<&str>,
+    page: &mut ThreadViewPage,
+    bytes: &mut usize,
+) -> Result<()> {
+    let start = db.json_text("payload", "started_at");
+    let finish = db.json_text("payload", "completed_at");
+    let kind = db.json_text("payload", "kind");
+    let root_filter = if root.is_some() {
+        " AND root_turn_id=?"
+    } else {
+        ""
+    };
+    let mut params = vec![json!(user), json!(session)];
+    if let Some(root) = root {
+        params.push(json!(root));
+    }
+    let rows = db.query(&format!(
+        "SELECT created_seq,{kind},status,{start},{finish} FROM thread_trajectory_rows WHERE user_id=? AND session_id=?{root_filter} AND {kind} IN ('system_message','user_message','context','context_message','note','status','plan','approval','terminal','assistant_message','tool_call','tool_result','compaction','compacted','subagent_run') ORDER BY created_seq DESC LIMIT 1025"
+    ), &params)?;
+    page.timeline_has_more = rows.len() > 1024;
+    for row in rows.into_iter().take(1024) {
+        let entry = TrajectoryTimelineRow {
+            created_seq: int(&row[0]),
+            kind: text(&row[1]).into(),
+            status: text(&row[2]).into(),
+            started_at: float(&row[3]),
+            completed_at: optional_float(&row[4]),
+        };
+        let size = serde_json::to_vec(&entry)?.len() + 1;
+        if *bytes + size > TRAJECTORY_RESPONSE_BYTES {
+            page.timeline_has_more = true;
+            break;
+        }
+        *bytes += size;
+        page.timeline.push(entry);
+    }
+    page.timeline.reverse();
+    Ok(())
+}
+
 pub(crate) fn page(
     db: &mut impl ViewDb,
     user: &str,
@@ -1067,9 +1158,44 @@ pub(crate) fn page(
     };
     let rows = db.query(&sql, &query_params)?;
     page.has_more = rows.len() > cap;
+    let mut legacy_plans = if kind == "chat" {
+        let roots = rows
+            .iter()
+            .take(cap)
+            .filter_map(|r| {
+                let row: Value = serde_json::from_str(text(&r[0])).ok()?;
+                if row.get("plan").is_some() {
+                    return None;
+                }
+                row.get("root_turn_id")?.as_str().map(str::to_owned)
+            })
+            .collect::<Vec<_>>();
+        super::thread_view_source::load_chat_plans(db, user, session, &roots)?
+    } else {
+        Default::default()
+    };
     for r in rows.into_iter().take(cap) {
         if kind == "trajectory" {
             let mut trajectory: TrajectoryViewRow = serde_json::from_str(text(&r[0]))?;
+            // Old compacted rows used the event's "history" placeholder even
+            // though the durable payload already contained the real summary.
+            if matches!(trajectory.kind.as_str(), "compaction" | "compacted")
+                && (trajectory.summary.trim().is_empty()
+                    || trajectory.summary.eq_ignore_ascii_case("history")
+                    || trajectory.summary.eq_ignore_ascii_case("compaction"))
+            {
+                let summary = format!(
+                    "COALESCE(NULLIF({},''),NULLIF({},''),NULLIF({},''),NULLIF({},''),'')",
+                    db.json_text("payload", "summary_text"),
+                    db.json_text("payload", "summaryText"),
+                    db.json_text("payload", "summary_model_output"),
+                    db.json_text("payload", "summary")
+                );
+                if let Some(item) = one(db, &format!("SELECT substr({summary},1,256) FROM thread_items WHERE user_id=? AND session_id=? AND item_id=? LIMIT 1"),
+                    &[json!(user), json!(session), json!(trajectory.item_id)])? {
+                    if !text(&item[0]).is_empty() { trajectory.summary = preview(text(&item[0]), 256); }
+                }
+            }
             // Old terminal rows predate diagnostics in the small page schema.
             // Repair just these indexed rows, never scan/rebuild full threads.
             if trajectory.kind == "terminal" && trajectory.diagnostics.is_none() {
@@ -1112,13 +1238,17 @@ pub(crate) fn page(
             bytes += size;
             page.trajectory.push(trajectory);
         } else {
-            let size = text(&r[0]).len() + 1;
+            let mut row: ChatViewRow = serde_json::from_str(text(&r[0]))?;
+            if row.plan.is_none() {
+                row.plan = legacy_plans.remove(&row.root_turn_id);
+            }
+            let size = serde_json::to_vec(&row)?.len() + 1;
             if bytes + size > CHAT_RESPONSE_BYTES {
                 page.has_more = true;
                 break;
             }
             bytes += size;
-            page.chat.push(serde_json::from_str(text(&r[0]))?);
+            page.chat.push(row);
         }
         page.next_before = Some(int(&r[1]));
     }
@@ -1134,6 +1264,7 @@ pub(crate) fn page(
         page.trajectory.reverse();
     }
     if kind == "trajectory" && page.projection_state == "ready" && page.view_seq > 0 {
+        timeline_page(db, user, session, root_turn_id, &mut page, &mut bytes)?;
         for r in db.query("SELECT bucket,count,failed,running,start,finish,input_count,model_count,tool_count FROM thread_trajectory_tiles WHERE session_id=? AND level=? ORDER BY bucket LIMIT 1024", &[json!(session),json!(page.tile_level as i64)])? {
             let tile=TrajectoryTile {bucket:int(&r[0]),count:int(&r[1]),failed:int(&r[2]),running:int(&r[3]),start:float(&r[4]),end:float(&r[5]),input_count:int(&r[6]),model_count:int(&r[7]),tool_count:int(&r[8])};
             let size=serde_json::to_vec(&tile)?.len()+1;if bytes+size>TRAJECTORY_RESPONSE_BYTES {break;}bytes+=size;page.tiles.push(tile);
@@ -1196,19 +1327,42 @@ pub(crate) fn changes(
         || after > seq
         || rows.len() > 20
         || rows.iter().map(|r| text(&r[0]).len()).sum::<usize>() > 60 * 1024;
+    // New rows explicitly carry plan:null. Only pre-contract rows need the
+    // indexed repair, so ordinary text updates add no source-plan query.
+    let roots = if reset {
+        vec![]
+    } else {
+        rows.iter()
+            .filter_map(|r| {
+                let row: Value = serde_json::from_str(text(&r[0])).ok()?;
+                if row.get("plan").is_some() {
+                    return None;
+                }
+                row.get("root_turn_id")?.as_str().map(str::to_owned)
+            })
+            .collect::<Vec<_>>()
+    };
+    let mut chat_rows: Vec<ChatViewRow> = if reset {
+        vec![]
+    } else {
+        rows.into_iter()
+            .map(|r| serde_json::from_str(text(&r[0])))
+            .collect::<std::result::Result<_, _>>()?
+    };
+    let mut plans = super::thread_view_source::load_chat_plans(db, user, session, &roots)?;
+    for row in &mut chat_rows {
+        if row.plan.is_none() {
+            row.plan = plans.remove(&row.root_turn_id);
+        }
+    }
+    let reset = reset || serde_json::to_vec(&chat_rows)?.len() > 60 * 1024;
     Ok(ThreadViewChanges {
         runtime_status,
         active_turn_id,
         epoch,
         view_seq: seq,
         reset_required: reset,
-        rows: if reset {
-            vec![]
-        } else {
-            rows.into_iter()
-                .map(|r| serde_json::from_str(text(&r[0])))
-                .collect::<std::result::Result<_, _>>()?
-        },
+        rows: if reset { vec![] } else { chat_rows },
     })
 }
 

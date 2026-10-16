@@ -149,16 +149,37 @@ test('subagent runs keep child task/report and own wall time in a separate subto
   assert.equal(bridgeCell.timeSeconds, 4)
 })
 
-test('assistant timeline uses own interaction duration instead of delayed durable update time', () => {
+test('assistant timeline uses explicit request duration instead of cumulative user duration', () => {
   const [assistant] = flattenRecords(buildTrajectoryLayout([{ user_turn_index: 1, items: [{
     kind: 'assistant_message', created_time: '2026-10-16T11:23:33.000Z',
     updated_time: '2026-10-16T11:23:53.000Z', payload: {
-      content: 'done', meta: { message_stats: { interaction_duration_s: 2.5 } },
+      content: 'done', meta: {
+        // This is cumulative from the user turn and must not set the one
+        // request span. `request_duration_s` is the explicit own-step value.
+        message_stats: { interaction_duration_s: 400, request_duration_s: 2.5 },
+      },
     },
   }] }], translate)).map(record => record.cell)
   assert.equal(assistant?.timeSeconds, 2.5)
   assert.equal(assistant?.startedAt, Date.parse('2026-10-16T11:23:50.500Z'))
 })
+
+test('cumulative user duration never stretches assistant spans in either client', async () => {
+  const fixture = [{ user_turn_index: 1, items: [{
+    kind: 'assistant_message', status: 'completed', created_time: 1800000000,
+    updated_time: 1800000002, payload: {
+      content: 'fixture response', message_stats: { interaction_duration_s: 400 },
+    },
+  }] }];
+  for (const model of [{ buildTrajectoryLayout, flattenRecords, deriveTimeline }, await bridgeModel()]) {
+    const turns = model.buildTrajectoryLayout(fixture, translate);
+    const [cell] = model.flattenRecords(turns).map((record: any) => record.cell);
+    assert.equal(cell.startedAt, 1800000000000);
+    assert.equal(cell.timeSeconds, 2);
+    const timeline = model.deriveTimeline(turns, 'duration');
+    assert.equal(timeline.end - timeline.start, 2000);
+  }
+});
 
 test('compaction uses summary_text instead of the history placeholder and ignores marker rows', async () => {
   const bridgeSource = readFileSync(resolve(__dirname, '../../web/modules/trajectory-model.js'), 'utf8');

@@ -1695,6 +1695,11 @@ impl ThreadRuntime {
             }
         }
         self.finish_thread(&task.thread_id).await;
+        // A queued execution remained busy until its task row was settled.
+        self.orchestrator
+            .goal_handle()
+            .driver()
+            .notify_goal_changed(&task.user_id, &task.session_id);
         let _ = self.queue_tx.try_send(());
     }
 

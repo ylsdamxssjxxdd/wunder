@@ -1,11 +1,10 @@
 //! Supplement package import: unpack the `opt/` runtime tree (python, git,
-//! rg) next to the executable and refresh the tool command environment in
+//! rg) into the shared WUNDER_HOME and refresh the tool command environment in
 //! process, so newly spawned tool commands use it without an app restart.
 
 use super::NativeDesktop;
 use crate::runtime::{
-    embedded_supplement_roots_for_env, load_desktop_settings, refresh_runtime_tool_env,
-    resolve_effective_tool_bins,
+    load_desktop_settings, refresh_runtime_tool_env, resolve_effective_tool_bins,
 };
 use anyhow::{anyhow, bail, Context, Result};
 use std::path::{Path, PathBuf};
@@ -65,38 +64,10 @@ impl NativeDesktop {
             bail!("请使用 zip 或 tar.gz 格式的补充包");
         }
 
-        // Prefer a root that already carries `opt/` (upgrade in place), else
-        // the first writable supplement root (AppImage users unpack beside
-        // the image because the mount point is read-only).
-        let roots = embedded_supplement_roots_for_env(&self.desktop.app_dir);
-        let target_root = roots
-            .iter()
-            .find(|root| root.join("opt").is_dir())
-            .cloned()
-            .or_else(|| {
-                roots.iter().find_map(|root| {
-                    std::fs::create_dir_all(root.join("opt")).ok()?;
-                    Some(root.clone())
-                })
-            })
-            .ok_or_else(|| anyhow!("没有可写入的补充包目录，请检查安装目录权限"))?;
-
-        let strip = plan_supplement_archive(archive, kind)?;
-        let (files, bytes) = match kind {
-            archive_extract::ArchiveKind::Zip => {
-                let prefix = (!strip.is_empty()).then(|| format!("{strip}/"));
-                archive_extract::extract_zip_streaming(
-                    archive,
-                    &target_root,
-                    prefix.as_deref(),
-                    |entry| entry.starts_with(SUPPLEMENT_ROOT),
-                )?
-            }
-            _ => extract_tar_supplement(archive, &target_root, &strip)?,
-        };
-        if !target_root.join("opt").is_dir() {
-            bail!("补充包中未找到 opt 运行时目录，不是有效的补充包");
-        }
+        // Installation location never chooses the data root, including when
+        // an older supplement is already present beside the executable/image.
+        let target_root = &self.desktop.wunder_home;
+        let (files, bytes) = import_supplement_archive(archive, kind, target_root)?;
 
         let settings = load_desktop_settings(&self.desktop.settings_path).unwrap_or_default();
         refresh_runtime_tool_env(&settings, &self.desktop.app_dir);
@@ -117,10 +88,38 @@ impl NativeDesktop {
     }
 }
 
+fn import_supplement_archive(
+    archive: &Path,
+    kind: archive_extract::ArchiveKind,
+    home: &Path,
+) -> Result<(u64, u64)> {
+    let strip = plan_supplement_archive(archive, kind)?;
+    std::fs::create_dir_all(home.join("config"))
+        .context("无法创建共享补充包目录，请检查 WUNDER_HOME 权限")?;
+    // Persistent kernel lock: concurrent instances cannot interleave upgrades.
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(home.join("config/supplement.lock"))?;
+    lock.try_lock()
+        .map_err(|error| anyhow!("补充包导入目录正忙或无法锁定，请稍后重试：{error}"))?;
+    match kind {
+        archive_extract::ArchiveKind::Zip => {
+            let prefix = (!strip.is_empty()).then(|| format!("{strip}/"));
+            archive_extract::extract_zip_streaming(archive, home, prefix.as_deref(), |entry| {
+                entry.starts_with(SUPPLEMENT_ROOT)
+            })
+        }
+        _ => extract_tar_supplement(archive, home, &strip),
+    }
+}
+
 /// Inspect the archive entry list and decide which top-level prefix to strip:
 /// packages rooted at `opt/` unpack as-is; a package wrapped in one folder
 /// (e.g. `wunder-supplement/opt/...`) strips that folder. Anything without an
-/// `opt/` runtime tree is rejected before touching the install directory.
+/// `opt/` runtime tree is rejected before touching the shared home.
 fn plan_supplement_archive(archive: &Path, kind: archive_extract::ArchiveKind) -> Result<String> {
     let names = match kind {
         archive_extract::ArchiveKind::Zip => list_zip_entries(archive)?,
@@ -158,7 +157,7 @@ fn list_tar_entries(archive: &Path) -> Result<Vec<String>> {
         .arg("-tf")
         .arg(archive)
         .output()
-        .context("系统缺少 tar 命令，Linux 补充包请解压到安装目录或改用 zip 格式")?;
+        .context("系统缺少 tar 命令，请手动将补充包解压到 WUNDER_HOME 或改用 zip 格式")?;
     if !output.status.success() {
         bail!(
             "读取压缩包目录失败：{}",
@@ -168,8 +167,8 @@ fn list_tar_entries(archive: &Path) -> Result<Vec<String>> {
     let mut names = Vec::new();
     for line in String::from_utf8_lossy(&output.stdout).lines() {
         let name = line.trim().replace('\\', "/");
-        let name = name.trim_end_matches('/');
-        if name.is_empty() {
+        let name = name.trim_end_matches('/').trim_start_matches("./");
+        if name.is_empty() || name == "." {
             continue;
         }
         archive_extract::validate_archive_entry_path(name)?;
@@ -189,14 +188,13 @@ fn extract_tar_supplement(archive: &Path, target_root: &Path, strip: &str) -> Re
     let result = (|| -> Result<(u64, u64)> {
         let mut command = tar_command();
         command.arg("-xf").arg(archive).arg("-C").arg(&temp);
-        if !strip.is_empty() {
-            command.arg("--strip-components=1");
-        }
         let status = command.status()?;
         if !status.success() {
             bail!("tar 解压失败，请确认压缩包完整");
         }
-        let source_opt = temp.join("opt");
+        // Inspect normalized paths, but preserve the archive's own ./ prefix:
+        // stripping one tar component would remove ./ instead of its wrapper.
+        let source_opt = temp.join(strip).join("opt");
         if !source_opt.is_dir() {
             bail!("补充包中未找到 opt 运行时目录，不是有效的补充包");
         }
@@ -220,6 +218,10 @@ fn tar_command() -> std::process::Command {
 /// Recursively copy `src` over `dst`, overwriting existing files so a repeat
 /// import upgrades the runtimes in place. Returns files and bytes copied.
 fn merge_dir(src: &Path, dst: &Path) -> Result<(u64, u64)> {
+    merge_dir_with_boundary(src, dst, &src.canonicalize()?)
+}
+
+fn merge_dir_with_boundary(src: &Path, dst: &Path, source_root: &Path) -> Result<(u64, u64)> {
     std::fs::create_dir_all(dst)?;
     let mut files = 0u64;
     let mut bytes = 0u64;
@@ -228,11 +230,21 @@ fn merge_dir(src: &Path, dst: &Path) -> Result<(u64, u64)> {
         let entry_type = entry.file_type()?;
         let target = dst.join(entry.file_name());
         if entry_type.is_dir() {
-            let (sub_files, sub_bytes) = merge_dir(&entry.path(), &target)?;
+            let (sub_files, sub_bytes) =
+                merge_dir_with_boundary(&entry.path(), &target, source_root)?;
             files += sub_files;
             bytes += sub_bytes;
         } else if entry_type.is_file() {
             bytes += std::fs::copy(entry.path(), &target)?;
+            files += 1;
+        } else if entry_type.is_symlink() {
+            // Linux Python packages carry aliases such as python3 -> python3.8.
+            // Copy their payload so the shared install has no staging links.
+            let resolved = entry.path().canonicalize()?;
+            if !resolved.starts_with(source_root) || !resolved.is_file() {
+                bail!("补充包包含越界或不支持的符号链接");
+            }
+            bytes += std::fs::copy(resolved, &target)?;
             files += 1;
         }
     }
@@ -357,5 +369,167 @@ mod tests {
         assert_eq!(bytes, 3);
         assert_eq!(std::fs::read(dst.join("python.exe")).expect("read"), b"new");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn import_installs_only_opt_under_shared_home_and_upgrades_in_place() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("profile");
+        let install = dir.path().join("install");
+        std::fs::create_dir_all(install.join("opt/python")).unwrap();
+        std::fs::write(install.join("opt/python/python.exe"), b"legacy").unwrap();
+        std::fs::create_dir_all(home.join("config")).unwrap();
+        std::fs::write(home.join("config/wunder.yaml"), b"user config").unwrap();
+        let archive = dir.path().join("supplement.zip");
+        write_test_zip(
+            &archive,
+            &[
+                ("bundle/opt/python/python.exe", "first"),
+                ("bundle/config/wunder.yaml", "must not overwrite"),
+            ],
+        );
+        assert_eq!(
+            import_supplement_archive(&archive, archive_extract::ArchiveKind::Zip, &home).unwrap(),
+            (1, 5)
+        );
+        assert_eq!(
+            std::fs::read(home.join("opt/python/python.exe")).unwrap(),
+            b"first"
+        );
+        assert_eq!(
+            std::fs::read(home.join("config/wunder.yaml")).unwrap(),
+            b"user config"
+        );
+        assert_eq!(
+            std::fs::read(install.join("opt/python/python.exe")).unwrap(),
+            b"legacy"
+        );
+        write_test_zip(&archive, &[("opt/python/python.exe", "second")]);
+        assert_eq!(
+            import_supplement_archive(&archive, archive_extract::ArchiveKind::Zip, &home).unwrap(),
+            (1, 6)
+        );
+        assert_eq!(
+            std::fs::read(home.join("opt/python/python.exe")).unwrap(),
+            b"second"
+        );
+    }
+
+    #[test]
+    fn import_rejects_invalid_package_before_creating_shared_home() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("profile");
+        let archive = dir.path().join("invalid.zip");
+        write_test_zip(&archive, &[("readme.txt", "fixture")]);
+        assert!(
+            import_supplement_archive(&archive, archive_extract::ArchiveKind::Zip, &home).is_err()
+        );
+        assert!(!home.exists());
+    }
+
+    #[test]
+    fn import_refuses_concurrent_upgrade() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("profile");
+        std::fs::create_dir_all(home.join("config")).unwrap();
+        let lock = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(home.join("config/supplement.lock"))
+            .unwrap();
+        lock.try_lock().unwrap();
+        let archive = dir.path().join("supplement.zip");
+        write_test_zip(&archive, &[("opt/rg/rg.exe", "fixture")]);
+        assert!(
+            import_supplement_archive(&archive, archive_extract::ArchiveKind::Zip, &home).is_err()
+        );
+        assert!(!home.join("opt").exists());
+        drop(lock);
+        import_supplement_archive(&archive, archive_extract::ArchiveKind::Zip, &home).unwrap();
+    }
+
+    #[test]
+    fn import_accepts_tar_with_dot_root_used_by_linux_packages() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source");
+        std::fs::create_dir_all(source.join("opt/python/bin")).unwrap();
+        std::fs::write(source.join("opt/python/bin/python3"), b"fixture").unwrap();
+        std::fs::write(source.join("manifest.json"), b"{}").unwrap();
+        let archive = dir.path().join("supplement.tar.gz");
+        assert!(tar_command()
+            .arg("-czf")
+            .arg(&archive)
+            .arg("-C")
+            .arg(&source)
+            .arg(".")
+            .status()
+            .unwrap()
+            .success());
+        let home = dir.path().join("profile");
+        assert_eq!(
+            import_supplement_archive(&archive, archive_extract::ArchiveKind::TarLike, &home)
+                .unwrap(),
+            (1, 7)
+        );
+        assert_eq!(
+            std::fs::read(home.join("opt/python/bin/python3")).unwrap(),
+            b"fixture"
+        );
+        assert!(!home.join("manifest.json").exists());
+
+        let wrapped = source.parent().unwrap().join("wrapped");
+        std::fs::create_dir_all(wrapped.join("bundle/opt/rg/bin")).unwrap();
+        std::fs::write(wrapped.join("bundle/opt/rg/bin/rg"), b"fixture").unwrap();
+        let archive = dir.path().join("wrapped.tar.gz");
+        assert!(tar_command()
+            .arg("-czf")
+            .arg(&archive)
+            .arg("-C")
+            .arg(&wrapped)
+            .arg(".")
+            .status()
+            .unwrap()
+            .success());
+        assert_eq!(
+            import_supplement_archive(&archive, archive_extract::ArchiveKind::TarLike, &home)
+                .unwrap(),
+            (1, 7)
+        );
+        assert!(home.join("opt/rg/bin/rg").is_file());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn merge_keeps_python_aliases_and_rejects_external_links() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("opt/python/bin");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(source.join("python3.8"), b"fixture").unwrap();
+        std::fs::set_permissions(
+            source.join("python3.8"),
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+        symlink("python3.8", source.join("python3")).unwrap();
+        let out = dir.path().join("installed");
+        merge_dir(&dir.path().join("opt"), &out).unwrap();
+        assert_eq!(
+            std::fs::read(out.join("python/bin/python3")).unwrap(),
+            b"fixture"
+        );
+        assert_ne!(
+            std::fs::metadata(out.join("python/bin/python3"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o111,
+            0
+        );
+        std::fs::write(dir.path().join("outside"), b"private").unwrap();
+        symlink(dir.path().join("outside"), source.join("external")).unwrap();
+        assert!(merge_dir(&dir.path().join("opt"), &out).is_err());
     }
 }

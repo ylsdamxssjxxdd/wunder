@@ -2,6 +2,70 @@
 use serde_json::{json, Value};
 use wunder_core::thread_view::{preview, BodyRef, ChatViewRow, TrajectoryViewRow, ViewMessage};
 
+/// Only bounded plan presentation belongs in a chat page; tool arguments and
+/// results remain in the process ledger. The item status describes the update
+/// operation, while each step owns its own progress status.
+pub(crate) fn plan(
+    item: &Value,
+    id: &str,
+    revision: i64,
+    created_seq: i64,
+) -> Option<wunder_core::thread_view::ThreadPlanView> {
+    use wunder_core::thread_view::{ThreadPlanStep, ThreadPlanView};
+    let raw = item.get("plan").or_else(|| item.get("steps"))?.as_array()?;
+    let mut active = false;
+    let steps = raw
+        .iter()
+        .take(32)
+        .filter_map(|entry| {
+            let step = entry
+                .get("step")
+                .or_else(|| entry.get("title"))
+                .and_then(Value::as_str)
+                .or_else(|| entry.as_str())?
+                .trim();
+            if step.is_empty() {
+                return None;
+            }
+            let status = entry
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim()
+                .to_lowercase()
+                .replace(['-', ' '], "_");
+            let status = match status.as_str() {
+                "completed" | "complete" | "done" => "completed",
+                "in_progress" | "inprogress" if !active => {
+                    active = true;
+                    "in_progress"
+                }
+                _ => "pending",
+            };
+            Some(ThreadPlanStep {
+                step: preview(step, 256),
+                status: status.into(),
+            })
+        })
+        .collect::<Vec<_>>();
+    if steps.is_empty() {
+        return None;
+    }
+    Some(ThreadPlanView {
+        item_id: id.into(),
+        revision,
+        created_seq,
+        explanation: preview(
+            item.get("explanation")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim(),
+            512,
+        ),
+        steps,
+    })
+}
+
 pub(crate) fn body_id(item_id: &str, field: &str) -> String {
     format!("{item_id}|{field}")
 }
@@ -162,6 +226,23 @@ pub(crate) fn trajectory(
         } else {
             format!("系统提示词（内容已隐藏，语言：{language}）")
         }
+    } else if kind == "compaction" || kind == "compacted" {
+        [
+            "summary_text",
+            "summaryText",
+            "summary_model_output",
+            "summaryModelOutput",
+            "summary",
+            "content",
+        ]
+        .iter()
+        .find_map(|key| {
+            item.get(*key)
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty() && *value != "history")
+        })
+        .unwrap_or("上下文压缩")
+        .to_owned()
     } else if content.is_empty() {
         if kind == "tool_call" {
             // 工具行必须展示调用的是什么工具，而不是回退成裸 kind。

@@ -13,8 +13,19 @@ fn int(value: &Value) -> i64 {
     value.as_i64().unwrap_or(0)
 }
 fn float(value: &Value) -> f64 {
-    value.as_f64().unwrap_or(0.0)
+    value
+        .as_f64()
+        .or_else(|| value.as_str().and_then(|raw| raw.parse::<f64>().ok()))
+        .unwrap_or(0.0)
 }
+fn optional_float(value: &Value) -> Option<f64> {
+    if value.is_null() {
+        return None;
+    }
+    let parsed = float(value);
+    parsed.is_finite().then_some(parsed)
+}
+
 fn one(db: &mut impl ViewDb, sql: &str, values: &[Value]) -> Result<Option<Vec<Value>>> {
     Ok(db.query(sql, values)?.into_iter().next())
 }
@@ -28,6 +39,59 @@ fn block_content(db: &impl ViewDb) -> String {
         db.json_text(&db.json_text("payload", "data"), "content"),
         db.json_text("payload", "content")
     )
+}
+
+/// Source mode does not have projected timeline rows yet. Read only an indexed
+/// tail of timing metadata so the initial overview and subsequently paged
+/// ledger use the same clock domain without loading bodies or aggregating a
+/// whole thread.
+fn source_timeline_page(
+    db: &mut impl ViewDb,
+    user: &str,
+    session: &str,
+    root: Option<&str>,
+    page: &mut ThreadViewPage,
+    bytes: &mut usize,
+) -> Result<()> {
+    let root_filter = if root.is_some() { " AND i.root_turn_id=?" } else { "" };
+    let mut params = vec![json!(user), json!(session)];
+    if let Some(root) = root {
+        params.push(json!(root));
+    }
+    let meta = db.json_text("i.payload", "meta");
+    let meta_type = db.json_text(&meta, "type");
+    let meta_source = db.json_text(&meta, "source");
+    let projected_kind = format!("CASE WHEN i.kind='system_message' AND {meta_type}='compaction_summary' THEN 'compacted' WHEN i.kind='user_message' AND {meta_type}='model_context_internal' THEN 'context' ELSE i.kind END");
+    let rows = db.query(
+        &format!(
+            "SELECT i.created_seq,{projected_kind},i.status,i.created_time,i.updated_time
+             FROM thread_items i
+             WHERE i.user_id=? AND i.session_id=?{root_filter}
+               AND i.kind IN ('system_message','user_message','context','context_message','note','status','plan','approval','terminal','assistant_message','tool_call','tool_result','compaction','compacted','subagent_run')
+               AND (i.visibility='user' OR (i.visibility='model_internal' AND (i.kind='system_message' OR (i.kind='user_message' AND {meta_type}='model_context_internal' AND {meta_source}='agent_inbox'))))
+             ORDER BY i.created_seq DESC LIMIT 1025"
+        ),
+        &params,
+    )?;
+    page.timeline_has_more = rows.len() > 1024;
+    for row in rows.into_iter().take(1024) {
+        let entry = TrajectoryTimelineRow {
+            created_seq: int(&row[0]),
+            kind: text(&row[1]).to_owned(),
+            status: text(&row[2]).to_owned(),
+            started_at: float(&row[3]),
+            completed_at: optional_float(&row[4]),
+        };
+        let size = serde_json::to_vec(&entry)?.len() + 1;
+        if *bytes + size > TRAJECTORY_RESPONSE_BYTES {
+            page.timeline_has_more = true;
+            break;
+        }
+        *bytes += size;
+        page.timeline.push(entry);
+    }
+    page.timeline.reverse();
+    Ok(())
 }
 
 // Each branch performs its own indexed LIMIT before UNION ALL. This keeps
@@ -52,6 +116,44 @@ fn batch_query(
     db.query(&sql, &params)
 }
 
+/// Indexed, byte-bounded repair for old chat rows and source-only threads.
+/// Never load the execution log or a plan tool's duplicated content/result.
+pub(super) fn load_chat_plans(
+    db: &mut impl ViewDb,
+    user: &str,
+    session: &str,
+    roots: &[String],
+) -> Result<std::collections::HashMap<String, ThreadPlanView>> {
+    if roots.is_empty() {
+        return Ok(Default::default());
+    }
+    let steps = format!(
+        "COALESCE({}, {}, '[]')",
+        db.json_text("payload", "plan"),
+        db.json_text("payload", "steps")
+    );
+    let explanation = db.json_text("payload", "explanation");
+    let queries = roots.iter().map(|root| (
+        format!("SELECT root_turn_id,item_id,revision,created_seq,substr({steps},1,65536),substr({explanation},1,512) FROM thread_items WHERE user_id=? AND session_id=? AND root_turn_id=? AND kind='plan' AND visibility='user' ORDER BY created_seq DESC LIMIT 1"),
+        vec![json!(user), json!(session), json!(root)],
+    )).collect();
+    let mut plans = std::collections::HashMap::new();
+    for row in batch_query(db, queries)? {
+        let Ok(steps) = serde_json::from_str::<Value>(text(&row[4])) else {
+            continue;
+        };
+        if let Some(plan) = projection::plan(
+            &json!({"steps": steps, "explanation": text(&row[5])}),
+            text(&row[1]),
+            int(&row[2]),
+            int(&row[3]),
+        ) {
+            plans.insert(text(&row[0]).to_owned(), plan);
+        }
+    }
+    Ok(plans)
+}
+
 fn source_chat_rows(
     db: &mut impl ViewDb,
     user: &str,
@@ -68,6 +170,7 @@ fn source_chat_rows(
         .iter()
         .map(|row| text(&row[0]).to_owned())
         .collect::<Vec<_>>();
+    let mut plans = load_chat_plans(db, user, session, &root_ids)?;
     let mut latest_turns = std::collections::HashMap::new();
     let queue_field = db.json_text("payload", "queued_input");
     let watermark = db.json_text("card.payload", "workspace_change_seq");
@@ -244,6 +347,7 @@ fn source_chat_rows(
         (row.workflow_count, row.failed_count, row.reasoning_count) =
             counts.get(id).copied().unwrap_or_default();
         row.revision = page.view_seq;
+        row.plan = plans.remove(id);
         if let Some((user, assistant)) = messages.remove(id) {
             row.user = user.unwrap_or_default();
             row.assistant = assistant.unwrap_or_default();
@@ -317,7 +421,10 @@ pub(super) fn page(
         let tool = db.json_text("i.payload", "tool");
         let model = db.json_text("i.payload", "model_round");
         let payload_bytes = db.text_bytes("i.payload");
-        let source_content = db.json_text("i.payload", "content");
+        let raw_content = db.json_text("i.payload", "content");
+        let source_content = format!("CASE WHEN i.kind IN ('compaction','compacted') THEN COALESCE(NULLIF({},''),NULLIF({},''),NULLIF({},''),NULLIF({},''),NULLIF({raw_content},'history'),'') ELSE {raw_content} END",
+            db.json_text("i.payload", "summary_text"), db.json_text("i.payload", "summaryText"),
+            db.json_text("i.payload", "summary_model_output"), db.json_text("i.payload", "summary"));
         let source_reasoning = format!(
             "COALESCE(NULLIF({},''),{})",
             db.json_text("i.payload", "reasoning"),
@@ -424,6 +531,9 @@ pub(super) fn page(
         if after.is_none() {
             page.chat.reverse();
         }
+    }
+    if kind == "trajectory" {
+        source_timeline_page(db, user, session, root_turn_id, &mut page, &mut bytes)?;
     }
     if kind == "trajectory"
         && page.view_seq > 0

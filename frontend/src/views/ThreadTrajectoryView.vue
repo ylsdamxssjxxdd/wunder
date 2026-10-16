@@ -131,6 +131,10 @@
               :class="spanClasses(span)"
               :style="spanStyle(span)"
               :title="overviewSpanTitle(span)"
+              @pointerdown.stop
+              @pointerenter="span.model.index >= 0 && onSpanEnter(span, $event)"
+              @pointerleave="onSpanLeave"
+              @click.stop="span.model.index >= 0 && selectIndex(span.model.index)"
             />
           </template>
           <span
@@ -397,16 +401,28 @@
                   </div>
                 </div>
               </template>
+              <template v-else-if="selectedCell.kind === 'compacted'">
+                <div v-if="selectedCell.outputDetail" class="tt-overview-section">
+                  <button class="tt-section-title" type="button" @click="toggleSection('output')">
+                    {{ t('messenger.trajectory.output') }}
+                    <span class="tt-section-chevron" :class="{ 'tt-section-chevron-open': openSections.output }">›</span>
+                  </button>
+                  <div v-if="openSections.output" class="tt-section-scroll">
+                    <div class="tt-markdown-payload" v-html="outputMarkdown" />
+                  </div>
+                </div>
+              </template>
             </div>
             <!-- 预览 -->
             <div v-else-if="activeTab === previewTab" class="tt-markdown-preview">
               <div class="tt-markdown-payload" v-html="previewMarkdown" />
             </div>
             <!-- 原始内容 -->
-            <div v-else-if="activeTab === rawTab" class="tt-payload-stack">
+            <div v-else-if="activeTab === rawTab || (selectedCell.kind === 'compacted' && activeTab === t('messenger.trajectory.tabRawOutput'))" class="tt-payload-stack">
+              <pre v-if="selectedCell.kind === 'compacted' && selectedCell.outputDetail" class="tt-payload-pre"><code>{{ selectedCell.outputDetail }}</code></pre>
               <pre v-if="selectedCell.thinkingDetail" class="tt-payload-pre"><code>{{ selectedCell.thinkingDetail }}</code></pre>
               <pre v-if="selectedCell.inputDetail" class="tt-payload-pre"><code>{{ selectedCell.inputDetail }}</code></pre>
-              <div v-if="!selectedCell.inputDetail && !selectedCell.thinkingDetail" class="tt-no-payload">
+              <div v-if="!selectedCell.inputDetail && !selectedCell.thinkingDetail && !selectedCell.outputDetail" class="tt-no-payload">
                 {{ t('messenger.trajectory.noContent') }}
               </div>
             </div>
@@ -506,6 +522,8 @@ import {
 } from './trajectory/trajectoryModel'
 import type {
   TableRecord,
+  TimelineMode,
+  TimelineModel,
   TimelineSpan,
   TrajCell,
   TrajKind,
@@ -703,11 +721,70 @@ const windowTopPx = computed(() => {
 const timeline = computed(() => deriveTimeline(turns.value, timelineMode.value))
 
 type OverviewSpan = TimelineSpan & { count: number; aggregate?: true; bucket?: number }
+type TimelineRow = { created_seq?: unknown; kind?: unknown; status?: unknown; started_at?: unknown; completed_at?: unknown }
 
 // The server returns at most 1024 aggregate buckets. Keep that bounded
 // overview, but subdivide each bucket into a small number of deterministic
 // slices so the overview retains the segmented feel of DSH.
 const MAX_OVERVIEW_SPANS = 4096
+
+function timestampMs(value: unknown): number | null {
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric) || numeric <= 0) return null
+  const milliseconds = Math.abs(numeric) < 1e11 ? numeric * 1000 : numeric
+  return Number.isFinite(milliseconds) && milliseconds > 0 ? milliseconds : null
+}
+
+function overviewKind(kind: unknown): TrajKind {
+  const value = String(kind || '')
+  if (value === 'assistant_message') return 'message'
+  if (value === 'tool_call' || value === 'tool_result') return 'tool'
+  if (value === 'subagent_run') return 'subtool'
+  if (value === 'compaction' || value === 'compacted') return 'compacted'
+  if (value === 'system_message') return 'system'
+  if (value === 'user_message') return 'user'
+  return 'context'
+}
+
+function laneFor(kind: TrajKind): number {
+  if (kind === 'tool' || kind === 'subtool') return 2
+  if (kind === 'message' || kind === 'compacted') return 1
+  return 0
+}
+
+/** A bounded timing-only stream uses the same idle-gap compression as the
+ * detailed ledger, so paging older rows cannot change the initial overview. */
+function serverOverviewTimeline(rows: unknown[], mode: TimelineMode, indexBySeq: ReadonlyMap<number, number>): TimelineModel | null {
+  const raw = (Array.isArray(rows) ? rows : []).flatMap((row, index): TimelineSpan[] => {
+    if (!row || typeof row !== 'object') return []
+    const item = row as TimelineRow
+    const start = mode === 'sequence' ? Number(item.created_seq) : timestampMs(item.started_at)
+    if (start === null || !Number.isFinite(start)) return []
+    const kind = overviewKind(item.kind)
+    const completed = mode === 'sequence' ? null : timestampMs(item.completed_at)
+    // Input/context rows are points even if their durable bookkeeping row
+    // was updated at turn completion. Giving them that lifetime bridges idle
+    // gaps and paints a misleading full-width input lane.
+    const end = mode === 'sequence' ? start + 1
+      : laneFor(kind) === 0 ? start : Math.max(start, completed ?? start)
+    return [{ start, end, index: indexBySeq.get(Number(item.created_seq)) ?? -(index + 1), isError: ['failed', 'error', 'cancelled', 'interrupted', 'rejected'].includes(String(item.status || '')),
+      kind, label: '', lane: laneFor(kind), ttftFraction: null }]
+  })
+  if (raw.length === 0) return null
+  raw.sort((left, right) => left.start - right.start || left.end - right.end || left.index - right.index)
+  const compressed = mode === 'duration'
+  let removed = 0
+  let covered: number | null = null
+  const spans = raw.map(span => {
+    if (compressed && covered !== null && span.start > covered) removed += span.start - covered
+    covered = covered === null ? span.end : Math.max(covered, span.end)
+    return { ...span, start: span.start - removed, end: (mode === 'sequence' || mode === 'duration' || mode === 'actual' ? span.end : span.start) - removed }
+  })
+  let start = Infinity; let end = -Infinity
+  for (const span of spans) { start = Math.min(start, span.start); end = Math.max(end, span.end) }
+  return Number.isFinite(start) && Number.isFinite(end)
+    ? { start, end: Math.max(end, start + 1), spans, turnBoundaries: [] } : null
+}
 
 const overviewTimeline = computed(() => {
   // A detail turn has its own time domain. Keeping the session-wide tile
@@ -715,6 +792,19 @@ const overviewTimeline = computed(() => {
   // translucent lane underneath them.
   if (detailRootTurn.value) return null
   const page = displayPage.value
+  // A tail-only timeline is useful as a bounded fallback, but it must not be
+  // presented as the full session domain: older spans would otherwise appear
+  // to move when the user scrolls and loads them.
+  const indexById = new Map(allRecords.value.map(record => [record.cell.recordId, record.cell.index]))
+  const indexBySeq = new Map<number, number>()
+  for (const row of summaryRows.value) {
+    const index = indexById.get(String(row.item_id))
+    if (index !== undefined) indexBySeq.set(Number(row.created_seq), index)
+  }
+  const serverTimeline = page?.timeline_has_more
+    ? null
+    : serverOverviewTimeline(page?.timeline, timelineMode.value, indexBySeq)
+  if (serverTimeline) return serverTimeline
   const tiles = Array.isArray(page?.tiles) ? page.tiles : []
   if (tiles.length === 0) return null
   // A complete small page already has the real per-record timeline.  Tiles
@@ -737,16 +827,6 @@ const overviewTimeline = computed(() => {
   const detailedBuckets = new Set<number>()
   const detailedRanges: Array<{ start: number; end: number }> = []
   const detailedSpans: OverviewSpan[] = []
-  // The projection contract stores durable times as Unix seconds. Accepting
-  // milliseconds as well keeps old/replayed rows safe, while rejecting zero
-  // and non-finite values prevents a single corrupt tile from expanding the
-  // domain from the first real event back to the Unix epoch.
-  const timestampMs = (value: unknown): number | null => {
-    const numeric = Number(value)
-    if (!Number.isFinite(numeric) || numeric <= 0) return null
-    const milliseconds = Math.abs(numeric) < 1e11 ? numeric * 1000 : numeric
-    return Number.isFinite(milliseconds) && milliseconds > 0 ? milliseconds : null
-  }
   // Overlay the rows currently in the bounded ledger with their real
   // positions. The rest of the session remains tile based, so the first
   // screen has DSH-like event marks without unbounded DOM work.
@@ -882,6 +962,12 @@ const domain = computed(() => {
   return { start: model.start, end: Math.max(model.end, model.start + 1) }
 })
 
+// Selection and click targets share the displayed overview coordinates.
+// Recompressing only the loaded tail gives those same records another origin.
+const interactionTimeline = computed(() => overviewTimeline.value
+  ? { ...overviewTimeline.value, spans: overviewTimeline.value.spans.filter(span => span.index >= 0) }
+  : timeline.value)
+
 watch([timeline, overviewTimeline], ([detailModel, overviewModel]) => {
   const model = overviewModel ?? detailModel
   if (!model || !Number.isFinite(model.start) || !Number.isFinite(model.end)) {
@@ -916,7 +1002,7 @@ const projectedOverviewSpans = computed(() => {
 /** 选中变化后，若对应 span 不在时间线视口内则自动平移视口（对齐参考实现）。 */
 watch(selectedIndex, (index) => {
   if (index === null) return
-  const model = timeline.value
+  const model = interactionTimeline.value
   if (!model) return
   const span = model.spans.find(entry => entry.index === index)
   if (!span) return
@@ -952,7 +1038,7 @@ function recordNeedleText(record: TableRecord): string {
 const focusSet = computed<ReadonlySet<number> | null>(() => {
   if (!selection.value || dragging.value) return null
   const {start,end}=selection.value
-  return new Set((timeline.value?.spans??[]).filter(s=>s.start<=end && s.end>=start).map(s=>s.index))
+  return new Set((interactionTimeline.value?.spans??[]).filter(s=>s.start<=end && s.end>=start).map(s=>s.index))
 })
 
 const projectedSpans = computed(() => {
@@ -1513,8 +1599,9 @@ const selectedCell = computed<TrajCell | null>(() => {
     : base.metrics
   const args = source?.args ?? source?.arguments
   const content = source?.content ?? source?.message
-  const compactionSummary = source?.summary_text ?? source?.summaryText ?? source?.summary_model_output
-    ?? source?.summaryModelOutput ?? source?.summary
+  const compactionSummary = [source?.summary_text, source?.summaryText, source?.summary_model_output,
+    source?.summaryModelOutput, source?.summary, content, base.outputDetail]
+    .find(value => typeof value === 'string' && value.trim() && value.trim() !== 'history')
   const resultValue = source?.result ?? source?.data ?? source?.output ?? source?.raw
   const schema = source?.schema ?? source?.tool_schema ?? source?.input_schema ?? source?.inputSchema
   const stringify=(v:unknown)=>typeof v==='string'?v:v===undefined||v===null?'':JSON.stringify(v,null,2)
@@ -1975,7 +2062,7 @@ function finishTimelinePointer(): void {
   if (state.kind !== 'select') return
   if (!state.moved) {
     // 视为点击：聚焦时间上最近的记录。
-    const model = timeline.value
+    const model = interactionTimeline.value
     if (model && model.spans.length > 0) {
       let best = model.spans[0]!
       let bestDistance = Number.POSITIVE_INFINITY

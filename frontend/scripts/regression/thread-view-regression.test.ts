@@ -242,3 +242,28 @@ for (const status of ['failed','cancelled','rejected']) {
 }
 assert.equal(threadViewStatus(background),'running');
 console.log('thread view: follow-up admission, binding, queued input and submission failure settle independently pass');
+
+// The committed presentation window is the real page source: a plan must be
+// available before lazy workflow hydration, and remain stable on reload.
+import { resolveChatPlanDismissKey } from '../../src/realtime/chat/chatPlan';
+import { summarizePlanProgress } from '../../src/components/chat/composerActivity';
+clearThreadView(key); generation=beginThreadView(key);
+const plan={item_id:'fixture-plan',revision:1,created_seq:2,explanation:'Fixture progress',
+  steps:[{step:'First step',status:'in_progress' as const},{step:'Second step',status:'pending' as const}]};
+const planned={...row(1,1),status:'running',assistant:{item_id:'',content:''},plan};
+commitThreadView(key,page([planned]),generation);
+const planMessage=()=>threadViewSlots(key)![0].assistant;
+assert.deepEqual(summarizePlanProgress(planMessage().plan),{total:2,done:0});
+assert.equal(threadViewSlots(key)![0].user.plan,undefined);
+const dismissed=new Set([resolveChatPlanDismissKey(planMessage())]);
+applyThreadViewChanges(key,{view_seq:2,rows:[{...planned,revision:2}]});
+assert.equal(dismissed.has(resolveChatPlanDismissKey(planMessage())),true);
+const nextPlan={...plan,revision:2,steps:[{step:'First step',status:'completed' as const},{step:'Second step',status:'in_progress' as const}]};
+applyThreadViewChanges(key,{view_seq:3,rows:[{...planned,revision:3,plan:nextPlan}]});
+assert.deepEqual(summarizePlanProgress(planMessage().plan),{total:2,done:1});
+assert.equal(dismissed.has(resolveChatPlanDismissKey(planMessage())),false);
+const completed={...row(1,4),plan:nextPlan};
+applyThreadViewChanges(key,{view_seq:4,rows:[completed]});
+clearThreadView(key);generation=beginThreadView(key);commitThreadView(key,page([completed],4),generation);
+assert.deepEqual(planMessage().plan,nextPlan);
+console.log('thread view: durable composer plan, progress, dismiss identity and reload pass');

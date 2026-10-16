@@ -32,6 +32,7 @@ import type {
   ChatRuntimeWorkflowItemProjection
 } from './chatRuntimeTypes';
 import { chatPerf } from '@/utils/chatPerf';
+import { normalizeChatPlan } from './chatPlan';
 
 // W4-L: guarded clock for the heavy-history metrics. `performance` is missing in
 // some non-browser hosts, and the recorder is inert while capture is off.
@@ -413,6 +414,17 @@ const buildAssistantBubble = (
       ...(turn.userRound !== null ? { user_round: turn.userRound } : {}),
       ...(stats ? { stats } : {})
     };
+  }
+  // A plan is a durable turn item, not part of an assistant text payload.
+  // The latest execution/creation identity wins independently of arrival order.
+  const planItem = workflows.filter(item => item.kind === 'plan').sort((a, b) =>
+    compareExecutions(a, b) || itemSeq(a) - itemSeq(b) || compareWorkflowItems(a, b)
+  ).at(-1);
+  const plan = planItem ? normalizeChatPlan(planItem.raw) : null;
+  if (plan && planItem) {
+    message.display = { ...(message.display ?? {}), plan: {
+      ...plan, item_id: planItem.itemId, revision: planItem.revision, created_seq: itemSeq(planItem)
+    } };
   }
   if (resolved.cancelled) {
     // Cancellation settles this existing bubble. Its visible partial answer,

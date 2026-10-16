@@ -219,6 +219,96 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn trajectory_timing_is_independent_of_ledger_cursor_and_compaction_keeps_summary() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = SqliteStorage::new(dir.path().join("fixture.db").to_string_lossy().into());
+        let accepted = storage.accept_thread_turn("fixture-user", "fixture-thread", &json!({"content":"fixture input"})).unwrap();
+        let turn = accepted["turn_id"].as_str().unwrap();
+        for index in 0..3 {
+            storage.append_thread_item("fixture-user", &json!({
+                "session_id":"fixture-thread", "turn_id":turn,
+                "item_id":format!("fixture-model-{index}"),
+                "kind":"assistant_message", "status":"completed", "content":"fixture response"
+            })).unwrap();
+        }
+        storage.append_thread_item("fixture-user", &json!({
+            "session_id":"fixture-thread", "turn_id":turn, "item_id":"fixture-compaction",
+            "kind":"compaction", "status":"completed", "content":"history",
+            "summary_text":"Fixture retained context."
+        })).unwrap();
+        // Reproduce an already persisted legacy projection without rebuilding
+        // the entire thread or changing its execution payload.
+        storage.open().unwrap().execute(
+            "UPDATE thread_trajectory_rows SET payload=json_set(payload,'$.summary','history') WHERE item_id='fixture-compaction'", []
+        ).unwrap();
+        for state in ["ready", "source"] {
+            storage.open().unwrap().execute("UPDATE thread_view_heads SET projection_state=?", [state]).unwrap();
+            let first = storage.thread_view_trajectory_page("fixture-user", "fixture-thread", None, None, 2).unwrap();
+            let older = storage.thread_view_trajectory_page("fixture-user", "fixture-thread", first.next_before, None, 2).unwrap();
+            assert!(first.has_more);
+            assert_eq!(serde_json::to_value(&first.timeline).unwrap(), serde_json::to_value(&older.timeline).unwrap());
+            assert!(!first.timeline_has_more);
+            assert!(first.timeline.len() >= 4);
+            assert!(first.timeline.iter().all(|row| row.started_at > 0.0));
+            let row = first.trajectory.iter().find(|row| row.item_id == "fixture-compaction").unwrap();
+            assert_eq!(row.summary, "Fixture retained context.");
+            let body = row.detail.as_ref().unwrap();
+            let detail = storage.thread_body_page("fixture-user", "fixture-thread", &body.body_id, body.revision, 0).unwrap();
+            assert!(detail.chunks.join("").contains("Fixture retained context."));
+            assert!(serde_json::to_vec(&first).unwrap().len() < TRAJECTORY_RESPONSE_BYTES);
+            assert!(storage.thread_view_trajectory_page("fixture-other", "fixture-thread", None, None, 2).unwrap().timeline.is_empty());
+        }
+    }
+
+    #[test]
+    fn chat_plan_projects_live_updates_reload_legacy_and_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = SqliteStorage::new(dir.path().join("fixture.db").to_string_lossy().into());
+        let accepted = storage.accept_thread_turn("fixture-user", "fixture-thread", &json!({"content":"Fixture input"})).unwrap();
+        let turn = accepted["turn_id"].as_str().unwrap();
+        let id = format!("{turn}:plan");
+        let first = json!({"session_id":"fixture-thread", "turn_id":turn, "item_id":id,
+            "kind":"plan", "status":"completed", "event_type":"plan_update", "explanation":"Fixture plan",
+            "plan":[{"step":"First step","status":"in_progress"},{"step":"Second step","status":"pending"}]});
+        let read = || storage.thread_view_page("fixture-user", "fixture-thread", "chat", None, 12).unwrap();
+        let before = read().view_seq;
+        storage.append_thread_item("fixture-user", &first).unwrap();
+        let initial = read();
+        let plan = initial.chat[0].plan.as_ref().expect("plan without assistant output");
+        assert_eq!(plan.item_id, id);
+        assert_eq!(plan.steps[0].status, "in_progress");
+        assert!(initial.chat[0].assistant.content.is_empty());
+        assert_eq!(storage.thread_view_changes("fixture-user", "fixture-thread", before).unwrap().rows[0].plan.as_ref(), Some(plan));
+        let mut second = first.clone();
+        second["plan"][0]["status"] = json!("completed");
+        second["plan"][1]["status"] = json!("in_progress");
+        storage.append_thread_item("fixture-user", &second).unwrap();
+        let updated = read();
+        let plan = updated.chat[0].plan.as_ref().unwrap();
+        assert!(plan.revision > initial.chat[0].plan.as_ref().unwrap().revision);
+        assert_eq!(plan.steps[0].status, "completed");
+        assert_eq!(plan.steps[1].status, "in_progress");
+        storage.append_thread_item("fixture-user", &json!({"session_id":"fixture-thread", "turn_id":turn,
+            "item_id":format!("{turn}:text-2"),"kind":"assistant_message","status":"completed","model_round":2,"content":"Fixture result"})).unwrap();
+        assert_eq!(read().chat[0].plan.as_ref(), Some(plan));
+        // Simulate a chat card persisted before plan became part of the schema.
+        let conn = storage.open().unwrap();
+        let mut legacy = serde_json::to_value(&read().chat[0]).unwrap();
+        legacy.as_object_mut().unwrap().remove("plan");
+        conn.execute("UPDATE thread_chat_rows SET payload=?", [legacy.to_string()]).unwrap();
+        assert_eq!(read().chat[0].plan.as_ref(), Some(plan));
+        assert_eq!(storage.thread_view_changes("fixture-user", "fixture-thread", before).unwrap().rows[0].plan.as_ref(), Some(plan));
+        storage.append_thread_item("fixture-user", &json!({"session_id":"fixture-thread", "turn_id":turn,
+            "item_id":format!("{turn}:text-3"),"kind":"assistant_message","status":"completed","model_round":3,"content":"Next fixture result"})).unwrap();
+        assert_eq!(read().chat[0].plan.as_ref(), Some(plan));
+        conn.execute("UPDATE thread_view_heads SET projection_state='source'", []).unwrap();
+        assert_eq!(read().chat[0].plan.as_ref(), Some(plan));
+        // A fresh storage instance reads the same plan from disk.
+        let reloaded = SqliteStorage::new(dir.path().join("fixture.db").to_string_lossy().into());
+        assert_eq!(reloaded.thread_view_page("fixture-user", "fixture-thread", "chat", None, 12).unwrap().chat[0].plan.as_ref(), Some(plan));
+    }
+
+    #[test]
     fn trajectory_diagnostics_match_projection_and_source_fallback() {
         let dir = tempfile::tempdir().unwrap();
         let storage = SqliteStorage::new(dir.path().join("fixture.db").to_string_lossy().into());
@@ -925,6 +1015,9 @@ mod tests {
         let before = first.next_before.expect("source page cursor");
         assert!(first.trajectory.iter().all(|row| !row.overview_only));
         assert!(first.trajectory.iter().all(|row| row.kind == "tool_call"));
+        assert!(first.timeline.len() >= 25);
+        assert!(first.timeline.windows(2).all(|rows| rows[0].created_seq < rows[1].created_seq));
+        assert!(first.timeline.iter().any(|row| row.kind == "tool_call"));
 
         let second = db
             .thread_view_trajectory_page(

@@ -7,19 +7,19 @@
 - `opt/rg`：给 `search_content` 与命令行检索使用的内置 ripgrep
 - `opt/ffmpeg`：随包附带的静态 ffmpeg（`opt/ffmpeg/bin` 已由桌面运行时自动接入 `PATH`）
 
-补充包设计目标：**直接解压到桌面安装目录即可生效**。
+补充包设计目标：**统一安装到 `WUNDER_HOME/opt`，蛹与舵机共用一份运行环境**。
 
 当前约定：
 
 - Win7 `setup.exe` 安装包默认不再内置 Python、Git 与 ripgrep。
-- 如需 Python/Git/ripgrep，请单独分发并解压 `wunder-supplement-win7-*.zip` 到安装目录根部。
-- 原生桌面运行时会自动识别安装目录中的 `opt/python`、`opt/git`、`opt/rg` 与 `opt/ffmpeg`。
+- 如需 Python/Git/ripgrep，请在蛹设置中导入 `wunder-supplement-win7-*.zip`，或手动解压到 `WUNDER_HOME`（默认用户主目录下的 `.wunder`）。
+- 两端自动识别共享 home 中的 `opt/python`、`opt/git`、`opt/rg` 与 `opt/ffmpeg`；蛹对安装目录旧 `opt/` 保留读取回退，新导入不再写入安装目录。
 
 ## 版本选择
 
 - Python：`3.8.10 embeddable package`
   - Python 官方从 `3.9` 开始要求 Windows `8.1+`，因此 Win7 路线固定使用 `3.8`。
-  - 当前脚本使用官方可下载的 embeddable 压缩包，便于直接解压进安装目录。
+  - 当前脚本使用官方可下载的 embeddable 压缩包，便于安装到共享用户目录。
 - Git：`MinGit 2.46.2`
   - Git for Windows FAQ 将 `2.46.2` 标为最后支持 Windows `7 / 8 / 8.1` 的版本。
   - `MinGit` 适合嵌入第三方桌面应用，体积比完整安装包更小。
@@ -78,19 +78,21 @@ wunder-win7-supplement.json
 
 ## 使用方式
 
-1. 关闭已运行的 Wunder Desktop。
-2. 将 `wunder-supplement-win7-ia32-common.zip` 解压到桌面安装目录根部。
-3. 解压后确认安装目录下出现：
+推荐在蛹设置中选择“导入补充包”，导入后新启动的工具立即生效。手动安装步骤：
+
+1. 关闭使用该补充包的蛹、舵机及工具进程。
+2. 将 `wunder-supplement-win7-ia32-common.zip` 解压到 `WUNDER_HOME`（默认用户主目录的 `.wunder`）。
+3. 解压后确认共享 home 下出现：
    - `opt/python`
    - `opt/git`
    - `opt/rg`
    - `opt/ffmpeg`
-4. 重新启动桌面端。
+4. 重新启动蛹或舵机。
 
-原生 Win7 桌面程序启动时会自动：
+两端启动时会自动：
 
-- 把安装目录写入 `WUNDER_DESKTOP_APP_DIR`
-- 将 `opt/python`、`opt/python/Scripts`、`opt/git/cmd`、`opt/git/bin`、`opt/rg`、`opt/rg/bin`、`opt/ffmpeg/bin` 追加到 `PATH` 前部
+- 从共享 home 探测补充包，不受程序安装目录和启动目录影响
+- 将共享 home 下的 `opt/python`、`opt/python/Scripts`、`opt/git/cmd`、`opt/git/bin`、`opt/rg`、`opt/rg/bin`、`opt/ffmpeg/bin` 接入 `PATH`，重复导入不会重复累加
 
 这样桥接层与智能体工具调用就能优先命中内置 Python / Git / rg。
 
@@ -102,4 +104,3 @@ wunder-win7-supplement.json
 - `common` 档位（当前唯一档位）会额外内置 `pip / setuptools / wheel`，并按 `packaging/python/requirements-win7-common.txt` 预装办公文档、数据库、轻量视频、地图/雷达与绘图库。
 - 默认 Python 包索引为清华 Tuna：`https://pypi.tuna.tsinghua.edu.cn/simple`；如需切回官方源，可使用 `-PythonPackageIndexUrl https://pypi.org/simple`。
 - 两个档位都保持 Win7 友好，优先使用二进制 wheel，避免现场编译依赖。
-

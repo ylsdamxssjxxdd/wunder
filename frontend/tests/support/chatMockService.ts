@@ -15,6 +15,10 @@ export class ChatMockService {
   requests: Row[] = [];
   connections = 0;
   goal: Row | null = null;
+  updateGoal(goal: Row | null) {
+    this.goal = goal;
+    for (const sub of this.subscriptions) this.send(sub, 'goal_updated', { goal });
+  }
   failures: string[] = [];
   private round = 0;
   private queue: Row[] = [];
@@ -54,6 +58,20 @@ export class ChatMockService {
     this.withheldProcessItemIds.add(`${turn.turn_id}:text-2`);
     return turn;
   }
+  seedPlanTurn() {
+    const turn = { turn_id: `fixture-turn-${++this.round}`, user_round: this.round,
+      content: 'Fixture plan request', status: 'running' };
+    this.turns.push(turn);
+    this.commit('turn_upsert', turn);
+    this.item(turn, 'user', 'user_message', 'completed', { role: 'user', content: turn.content });
+    this.updatePlanTurn(turn);
+    return turn;
+  }
+  updatePlanTurn(turn: Row, advance = false) {
+    this.item(turn, 'plan', 'plan', 'completed', { event_type: 'plan_update', explanation: 'Fixture plan progress',
+      plan: [{ step: 'First fixture step', status: advance ? 'completed' : 'in_progress' },
+        { step: 'Second fixture step', status: advance ? 'in_progress' : 'pending' }] });
+  }
   /** One presentation row per user round: sibling execution turns merge into their root. */
   private turnGroups(): Row[][] {
     const groups = new Map<string, Row[]>();
@@ -89,6 +107,7 @@ export class ChatMockService {
       });
       const reasoningItems = items.filter(item => item.kind === 'assistant_message' && String(item.reasoning ?? '').trim());
       const activeReasoning = String(answer?.reasoning ?? '');
+      const plan = items.filter(item => item.kind === 'plan' && Array.isArray(item.plan)).at(-1);
       return {
         execution_turn_id: String(execution.turn_id), root_turn_id: String(root.turn_id),
         user_round: Number(root.user_round), client_message_id: root.client_message_id ?? null,
@@ -103,6 +122,8 @@ export class ChatMockService {
         reasoning_item_id: activeReasoning ? String(answer?.item_id ?? '') : '',
         failed_count: items.filter(i => i.kind === 'tool_call' && i.status === 'failed').length,
         subagents: [], created_time: Number(root.user_round) * 1000, updated_time: this.changes.length,
+        ...(plan ? { plan: { item_id: plan.item_id, revision: plan.revision,
+          created_seq: 0, explanation: plan.explanation, steps: plan.plan } } : {}),
       };
     });
   }
@@ -285,8 +306,7 @@ export class ChatMockService {
         summary_text: 'Retained fixture summary.', event_type: 'compaction' });
     }
     if (turn.goalRun) {
-      this.goal = { status: 'complete', objective: 'Fixture objective' };
-      this.item(turn, 'goal', 'plan', 'completed', { event_type: 'goal_completed', goal: this.goal });
+      this.updateGoal({ ...this.goal, phase: 'complete', activation: 'disarmed' });
     }
     this.item(turn, 'text-1', 'assistant_message', 'completed', { role: 'assistant',
       content: compact ? 'Retained fixture summary.' : `Completed reply ${turn.user_round}.`,
@@ -401,7 +421,7 @@ export class ChatMockService {
       const payload = request.postDataJSON();
       this.record({ transport: 'http', path, query: new URL(request.url()).search, method: request.method() });
       const session = { id: MOCK_SESSION, agent_id: MOCK_AGENT, title: 'Fixture conversation',
-        updated_at: '2026-01-01T00:00:00Z', status: 'active', running: Boolean(this.active) };
+        updated_at: '2026-01-01T00:00:00Z', status: 'active', running: Boolean(this.active), goal: this.goal };
       const agent = { id: MOCK_AGENT, name: 'Fixture Agent', description: '', tool_names: ['read_file'] };
       let data: any = { items: [], total: 0 };
       if (path === '/auth/login') data = { access_token: 'fixture-auth', user: { id: 'fixture-user', username: 'fixture-user', roles: ['user'] } };
@@ -475,8 +495,18 @@ export class ChatMockService {
       else if (path.endsWith('/compaction')) data = this.accept('/compact', payload?.client_message_id);
       else if (path.endsWith('/goal')) {
         if (request.method() === 'PUT') {
-          this.goal = { status: 'active', objective: payload?.objective };
-          data = { ...this.accept(`/goal ${payload?.objective}`, payload?.client_message_id), goal: this.goal };
+          if (payload?.action) {
+            this.updateGoal({ ...this.goal, phase: payload.action === 'pause' ? 'paused' : 'active',
+              activation: payload.action === 'pause' ? 'disarmed' : 'armed' });
+            data = { goal: this.goal };
+          } else {
+            this.updateGoal({ goal_id: 'fixture-goal', objective: payload?.objective,
+              phase: 'active', activation: 'armed', revision: 1, max_goal_rounds: 8, rounds_started: 0 });
+            data = { ...this.accept(`/goal ${payload?.objective}`, payload?.client_message_id), goal: this.goal };
+          }
+        } else if (request.method() === 'DELETE') {
+          this.updateGoal(null);
+          data = { goal: null, deleted: true };
         } else data = { goal: this.goal };
       } else if (!['GET', 'HEAD'].includes(request.method())) {
         this.failures.push('unexpected-http-mutation');

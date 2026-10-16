@@ -7,11 +7,11 @@
 - `opt/rg`：给 `search_content` 与命令行检索使用的内置 ripgrep
 - `opt/ffmpeg`：给音视频抽帧、抽音轨与转码使用的内置静态 ffmpeg
 
-补充包设计目标与 Win7 版一致：**解压到桌面程序同级目录即可生效**。
+补充包设计目标与 Win7 版一致：**统一安装到 `WUNDER_HOME/opt`，蛹与舵机共用一份运行环境**。
 
-- 桌面安装目录（Win7 风格布局）：解压到可执行文件所在目录。
-- AppImage：解压到 `.AppImage` 文件所在的目录；运行时会额外探测 `$APPIMAGE`
-  同级目录中的 `opt/`，AppImage 自身的只读挂载点无需写入。
+- 推荐在蛹设置中选择“导入补充包”，默认写入 `~/.wunder/opt/`，导入后蛹新启动的工具立即生效。
+- 手动安装时，关闭使用该补充包的进程，将压缩包解压到 `${WUNDER_HOME:-$HOME/.wunder}`，使其下直接出现 `opt/python`、`opt/git`、`opt/rg`、`opt/ffmpeg`，再启动蛹或舵机。
+- AppImage 同样使用这个可写用户目录；安装目录与 AppImage 同级旧 `opt/` 仅保留读取回退，新导入始终写入共享 home，不自动搬迁旧文件。
 
 ## 版本选择
 

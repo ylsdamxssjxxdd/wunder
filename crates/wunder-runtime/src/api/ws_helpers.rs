@@ -300,6 +300,7 @@ pub(crate) async fn resume_thread_view(
 ) {
     let mut wake = state.kernel.orchestrator.change_hub.subscribe(&session_id);
     let mut idle = 0u32;
+    let mut last_goal = None;
     loop {
         if cancel.as_ref().is_some_and(|c| c.is_cancelled()) {
             return;
@@ -308,9 +309,46 @@ pub(crate) async fn resume_thread_view(
         let session = session_id.clone();
         let user = user_id.clone();
         let result = blocking::run_view("api.ws.thread_view", move || {
-            storage.thread_view_changes(&user, &session, after)
+            let page = storage.thread_view_changes(&user, &session, after)?;
+            let goal = storage.get_session_goal(&user, &session)?;
+            Ok((page, goal))
         })
         .await;
+        // Goal snapshots are session controls rather than timeline rows. The
+        // display subscription must carry them as well, including terminal
+        // changes after the last chat row and disarmed state after reconnect.
+        let result = match result {
+            Ok((page, record)) => {
+                let service = state.kernel.orchestrator.goal_handle();
+                let goal = record
+                    .map(|record| {
+                        crate::services::goal::goal_payload(&crate::services::goal::GoalView {
+                            activation: service.activation(&session_id),
+                            record,
+                        })
+                    })
+                    .unwrap_or(Value::Null);
+                if last_goal.as_ref() != Some(&goal) {
+                    if try_send_ws_event(
+                        &tx,
+                        request_id,
+                        StreamEvent {
+                            event: "goal_updated".into(),
+                            data: json!({"session_id": session_id, "goal": goal}),
+                            id: None,
+                            timestamp: Some(Utc::now()),
+                        },
+                    )
+                    .is_err()
+                    {
+                        return;
+                    }
+                    last_goal = Some(goal);
+                }
+                Ok(page)
+            }
+            Err(error) => Err(error),
+        };
         match result {
             Ok(page) if page.reset_required => {
                 let _ = try_send_ws_event(
@@ -1483,6 +1521,88 @@ mod tests {
         };
         assert!(!is_queue_event_for_queue(&event, "queue-known"));
         assert!(is_queue_event_for_queue(&event, ""));
+    }
+
+    #[tokio::test]
+    async fn display_watch_projects_goal_changes_without_chat_rows() {
+        let (state, _dir) = build_test_state("goal-display-fixture").await;
+        let user = "fixture-user";
+        let session = "fixture-thread";
+        state
+            .storage
+            .upsert_chat_session(&crate::storage::ChatSessionRecord {
+                session_id: session.into(),
+                user_id: user.into(),
+                title: "fixture".into(),
+                status: "active".into(),
+                created_at: 1.,
+                updated_at: 1.,
+                last_message_at: 1.,
+                agent_id: None,
+                workspace_id: None,
+                tool_overrides: vec![],
+                parent_session_id: None,
+                parent_message_id: None,
+                spawn_label: None,
+                spawned_by: None,
+            })
+            .unwrap();
+        let mut record = crate::storage::SessionGoalRecord {
+            goal_id: "fixture-goal".into(),
+            user_id: user.into(),
+            session_id: session.into(),
+            revision: 1,
+            objective: "Complete the example task".into(),
+            phase: "active".into(),
+            blocked_code: None,
+            blocked_message: None,
+            max_goal_rounds: 8,
+            rounds_started: 0,
+            created_at: 1.,
+            updated_at: 1.,
+        };
+        state.storage.upsert_session_goal(&record).unwrap();
+        let page = state
+            .storage
+            .thread_view_page(user, session, "chat", None, 12)
+            .unwrap();
+        let (tx, mut rx) = mpsc::channel(64);
+        let cancel = CancellationToken::new();
+        let task = tokio::spawn(resume_thread_view(
+            state.clone(),
+            session.into(),
+            user.into(),
+            page.view_seq,
+            None,
+            WsSender::new(tx),
+            Some(cancel.clone()),
+        ));
+        async fn next_goal(rx: &mut mpsc::Receiver<Message>) -> Value {
+            tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    let Some(Message::Text(raw)) = rx.recv().await else {
+                        panic!("watch closed");
+                    };
+                    let value: Value = serde_json::from_str(&raw).unwrap();
+                    if value["payload"]["event"] == "goal_updated" {
+                        return value["payload"]["data"]["goal"].clone();
+                    }
+                }
+            })
+            .await
+            .expect("goal snapshot delivered")
+        }
+        let initial = next_goal(&mut rx).await;
+        assert_eq!(initial["phase"], "active");
+        assert_eq!(initial["activation"], "disarmed");
+        record.phase = "paused".into();
+        record.revision = 2;
+        state.storage.upsert_session_goal(&record).unwrap();
+        assert_eq!(next_goal(&mut rx).await["phase"], "paused");
+        state.storage.delete_session_goal(user, session).unwrap();
+        assert!(next_goal(&mut rx).await.is_null());
+        cancel.cancel();
+        task.await.unwrap();
     }
 
     #[tokio::test]

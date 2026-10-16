@@ -10,6 +10,8 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+pub mod supplement;
+
 pub const HOME_ENV: &str = "WUNDER_HOME";
 pub const CONFIG_FILE: &str = "config/wunder.yaml";
 pub const DATABASE_FILE: &str = "data/wunder.db";

@@ -273,8 +273,8 @@ export const normalizeSessionGoal = (value): SessionGoal | null => {
   const source = value as Record<string, unknown>;
   const goalId = String(source.goal_id ?? source.goalId ?? '').trim();
   const objective = String(source.objective ?? '').trim();
-  const status = String(source.status ?? '').trim().toLowerCase();
-  if (!goalId || !objective || !status) {
+  const phase = String(source.phase ?? '').trim().toLowerCase() as SessionGoal['phase'];
+  if (!goalId || !objective || !['active', 'paused', 'blocked', 'complete'].includes(phase)) {
     return null;
   }
   return {
@@ -282,29 +282,24 @@ export const normalizeSessionGoal = (value): SessionGoal | null => {
     session_id: String(source.session_id ?? source.sessionId ?? '').trim(),
     user_id: String(source.user_id ?? source.userId ?? '').trim(),
     objective,
-    status,
-    token_budget: normalizeGoalNumber(source.token_budget ?? source.tokenBudget),
-    tokens_used: Math.max(0, Math.trunc(normalizeGoalNumber(source.tokens_used ?? source.tokensUsed) ?? 0)),
-    time_used_seconds: Math.max(
-      0,
-      Math.trunc(normalizeGoalNumber(source.time_used_seconds ?? source.timeUsedSeconds) ?? 0)
-    ),
+    phase,
+    activation: source.activation === 'armed' ? 'armed' : 'disarmed',
+    revision: Math.max(1, Math.trunc(normalizeGoalNumber(source.revision) ?? 1)),
+    max_goal_rounds: Math.max(1, Math.trunc(normalizeGoalNumber(source.max_goal_rounds) ?? 1)),
+    rounds_started: Math.max(0, Math.trunc(normalizeGoalNumber(source.rounds_started) ?? 0)),
+    blocked_code: String(source.blocked_code ?? '').trim(),
+    blocked_message: String(source.blocked_message ?? '').trim(),
     created_at: normalizeGoalNumber(source.created_at ?? source.createdAt),
-    updated_at: normalizeGoalNumber(source.updated_at ?? source.updatedAt),
-    completed_at: normalizeGoalNumber(source.completed_at ?? source.completedAt),
-    last_continued_at: normalizeGoalNumber(source.last_continued_at ?? source.lastContinuedAt),
-    source: String(source.source ?? '').trim()
+    updated_at: normalizeGoalNumber(source.updated_at ?? source.updatedAt)
   };
 };
 
 export const isGoalActiveForLock = (goal): boolean => {
-  const status = String(goal?.status || '').trim().toLowerCase();
-  return status === 'active' || status === 'paused';
+  return goal?.phase === 'active' && goal?.activation === 'armed';
 };
 
 export const isGoalCompletedForNotice = (goal): boolean => {
-  const status = String(goal?.status || '').trim().toLowerCase();
-  return status === 'complete';
+  return goal?.phase === 'complete';
 };
 
 export const goalSessionIdFromPayload = (value, fallback = ''): string => {

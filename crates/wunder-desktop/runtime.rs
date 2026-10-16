@@ -33,6 +33,7 @@ const DESKTOP_CONTROLLER_MIN_NORM_HEIGHT: i32 = 1000;
 pub struct DesktopRuntime {
     pub state: Arc<AppState>,
     pub app_dir: PathBuf,
+    pub wunder_home: PathBuf,
     pub temp_root: PathBuf,
     pub settings_path: PathBuf,
     pub workspace_root: PathBuf,
@@ -252,11 +253,11 @@ impl DesktopRuntime {
         set_env_path("WUNDER_COMPANIONS_ROOT", &companions_root);
         set_env_path("WUNDER_DESKTOP_SETTINGS_PATH", &settings_path);
         set_env_path("WUNDER_DESKTOP_APP_DIR", &app_dir);
+        set_env_path("WUNDER_HOME", &wunder_home);
         refresh_runtime_tool_env(&settings, &app_dir);
         set_env_path("WUNDER_DESKTOP_DEFAULT_WORKSPACE_ROOT", &workspace_root);
         set_env_path(BUILTIN_SKILLS_ROOT_ENV, &state_root.join("skills"));
         std::env::set_var("WUNDER_DESKTOP_USER_ID", user_id.clone());
-        set_env_path("WUNDER_HOME", &wunder_home);
         std::env::set_var("WUNDER_WORKSPACE_SINGLE_ROOT", "1");
         log_startup_segment(
             startup_enabled,
@@ -404,6 +405,7 @@ impl DesktopRuntime {
         Ok(Self {
             state,
             app_dir,
+            wunder_home,
             temp_root,
             settings_path,
             workspace_root,
@@ -982,22 +984,10 @@ pub fn resolve_winpty_library(app_dir: &Path, settings: &DesktopSettings) -> Opt
 }
 
 fn resolve_embedded_git_bin(app_dir: &Path) -> Option<PathBuf> {
-    embedded_supplement_roots_for_env(app_dir)
-        .into_iter()
-        .find_map(|root| {
-            if cfg!(windows) {
-                [
-                    root.join("opt/git/cmd/git.exe"),
-                    root.join("opt/git/bin/git.exe"),
-                ]
-                .into_iter()
-                .find(|candidate| candidate.is_file())
-            } else {
-                [root.join("opt/git/bin/git"), root.join("opt/git/cmd/git")]
-                    .into_iter()
-                    .find(|candidate| candidate.is_file())
-            }
-        })
+    wunder_server::local_bootstrap::supplement::find_tool(
+        &embedded_supplement_roots_for_env(app_dir),
+        wunder_server::local_bootstrap::supplement::Tool::Git,
+    )
 }
 
 fn sanitize_workspace_scope(value: &str) -> String {
@@ -1052,117 +1042,34 @@ fn set_env_path_if_exists(key: &str, value: &Path) {
     }
 }
 
-fn prepend_path_entry_if_exists(value: &Path) {
-    if !value.exists() {
-        return;
-    }
-    let mut entries = vec![value.to_path_buf()];
-    if let Some(existing) = std::env::var_os("PATH") {
-        entries.extend(std::env::split_paths(&existing));
-    }
-    if let Ok(joined) = std::env::join_paths(entries) {
-        std::env::set_var("PATH", joined);
-    }
-}
-
-/// Install roots that may carry a bundled supplement (`opt/python`,
-/// `opt/git`, `opt/rg`). The executable directory is the classic install
-/// root; for AppImage runs the directory holding the `.AppImage` file is
-/// added as well, so a supplement archive extracted beside the image works
-/// even though the executable itself lives on a read-only mount.
-fn embedded_supplement_roots(app_dir: &Path, appimage_dir: Option<PathBuf>) -> Vec<PathBuf> {
-    let mut roots = vec![app_dir.to_path_buf()];
-    if let Some(extra) = appimage_dir {
-        if !roots.contains(&extra) {
-            roots.push(extra);
-        }
-    }
-    roots
-}
-
+/// The shared home is authoritative; install/AppImage trees are read-only
+/// fallbacks for older manually unpacked supplements.
 pub(crate) fn embedded_supplement_roots_for_env(app_dir: &Path) -> Vec<PathBuf> {
-    embedded_supplement_roots(app_dir, resolve_appimage_dir())
+    wunder_server::local_bootstrap::supplement::roots(
+        &resolve_wunder_home_dir(),
+        app_dir,
+        resolve_appimage_dir(),
+    )
 }
 
 fn prepend_embedded_tool_paths(app_dir: &Path) {
-    // Keep bundled supplement paths ahead of the system PATH so extracting
-    // opt/python/opt/git/opt/rg/opt/ffmpeg into a supplement root becomes
-    // effective immediately.
-    let relative_candidates = [
-        "opt/python",
-        "opt/python/Scripts",
-        "opt/python/bin",
-        "opt/venv",
-        "opt/venv/Scripts",
-        "opt/venv/bin",
-        "opt/git/cmd",
-        "opt/git/bin",
-        "opt/rg",
-        "opt/rg/bin",
-        "opt/ripgrep",
-        "opt/ripgrep/bin",
-        "opt/ffmpeg",
-        "opt/ffmpeg/bin",
-    ];
-    for root in embedded_supplement_roots_for_env(app_dir) {
-        for candidate in relative_candidates {
-            prepend_path_entry_if_exists(&root.join(candidate));
-        }
-    }
-}
-
-fn embedded_python_bin_candidates(root: &Path) -> Vec<PathBuf> {
-    if cfg!(windows) {
-        vec![
-            root.join("opt/python/python.exe"),
-            root.join("opt/python/python3.exe"),
-            root.join("opt/python/bin/python.exe"),
-            root.join("opt/python/bin/python3.exe"),
-        ]
-    } else {
-        vec![
-            root.join("opt/python/bin/python3"),
-            root.join("opt/python/bin/python"),
-        ]
-    }
+    wunder_server::local_bootstrap::supplement::prepend_tool_paths(
+        &embedded_supplement_roots_for_env(app_dir),
+    );
 }
 
 fn resolve_embedded_python_bin(app_dir: &Path) -> Option<PathBuf> {
-    embedded_supplement_roots_for_env(app_dir)
-        .into_iter()
-        .find_map(|root| {
-            embedded_python_bin_candidates(&root)
-                .into_iter()
-                .find(|candidate| candidate.is_file())
-        })
-}
-
-fn embedded_rg_bin_candidates(root: &Path) -> Vec<PathBuf> {
-    if cfg!(windows) {
-        vec![
-            root.join("opt/rg/rg.exe"),
-            root.join("opt/rg/bin/rg.exe"),
-            root.join("opt/ripgrep/rg.exe"),
-            root.join("opt/ripgrep/bin/rg.exe"),
-        ]
-    } else {
-        vec![
-            root.join("opt/rg/bin/rg"),
-            root.join("opt/rg/rg"),
-            root.join("opt/ripgrep/bin/rg"),
-            root.join("opt/ripgrep/rg"),
-        ]
-    }
+    wunder_server::local_bootstrap::supplement::find_tool(
+        &embedded_supplement_roots_for_env(app_dir),
+        wunder_server::local_bootstrap::supplement::Tool::Python,
+    )
 }
 
 fn resolve_embedded_rg_bin(app_dir: &Path) -> Option<PathBuf> {
-    embedded_supplement_roots_for_env(app_dir)
-        .into_iter()
-        .find_map(|root| {
-            embedded_rg_bin_candidates(&root)
-                .into_iter()
-                .find(|candidate| candidate.is_file())
-        })
+    wunder_server::local_bootstrap::supplement::find_tool(
+        &embedded_supplement_roots_for_env(app_dir),
+        wunder_server::local_bootstrap::supplement::Tool::Rg,
+    )
 }
 
 fn set_env_prompts_root_if_unset(repo_root: &Path) {
@@ -2203,20 +2110,31 @@ mod tests {
     }
 
     #[test]
-    fn embedded_supplement_roots_appends_appimage_dir() {
+    fn embedded_supplement_roots_prefers_shared_home() {
+        let home = PathBuf::from("/tmp/shared-profile");
         let app_dir = PathBuf::from("/tmp/wunder-mount/usr/bin");
-        let appimage_dir = PathBuf::from("/home/user/apps");
+        let appimage_dir = PathBuf::from("/tmp/image-fixture");
         let sidecar = Some(appimage_dir.clone());
 
-        let roots = embedded_supplement_roots(&app_dir, sidecar);
-        assert_eq!(roots, vec![app_dir.clone(), appimage_dir.clone()]);
+        let roots = wunder_server::local_bootstrap::supplement::roots(&home, &app_dir, sidecar);
+        assert_eq!(
+            roots,
+            vec![home.clone(), app_dir.clone(), appimage_dir.clone()]
+        );
 
         // A duplicate AppImage root (or no AppImage at all) must not be added twice.
         assert_eq!(
-            embedded_supplement_roots(&app_dir, Some(app_dir.clone())),
-            vec![app_dir.clone()]
+            wunder_server::local_bootstrap::supplement::roots(
+                &home,
+                &app_dir,
+                Some(app_dir.clone())
+            ),
+            vec![home.clone(), app_dir.clone()]
         );
-        assert_eq!(embedded_supplement_roots(&app_dir, None), vec![app_dir]);
+        assert_eq!(
+            wunder_server::local_bootstrap::supplement::roots(&home, &app_dir, None),
+            vec![home, app_dir]
+        );
     }
 
     #[test]
@@ -2261,10 +2179,19 @@ mod tests {
         fs::create_dir_all(rg_bin.parent().expect("rg parent")).expect("create rg dir");
         fs::write(&rg_bin, "").expect("create rg stub");
 
-        let roots = embedded_supplement_roots(&app_dir, Some(appimage_dir.clone()));
+        let roots = wunder_server::local_bootstrap::supplement::roots(
+            &root.join("profile"),
+            &app_dir,
+            Some(appimage_dir.clone()),
+        );
         assert!(roots.contains(&appimage_dir));
-        let candidates = embedded_rg_bin_candidates(&appimage_dir);
-        assert!(candidates.contains(&rg_bin));
+        assert_eq!(
+            wunder_server::local_bootstrap::supplement::find_tool(
+                &roots,
+                wunder_server::local_bootstrap::supplement::Tool::Rg
+            ),
+            Some(rg_bin)
+        );
 
         let _ = fs::remove_dir_all(&root);
     }
@@ -2277,7 +2204,11 @@ mod tests {
         ));
         let app_dir = root.join("app");
         let exe = if cfg!(windows) { ".exe" } else { "" };
-        let python_bin = app_dir.join(format!("opt/python/python{exe}"));
+        let python_bin = app_dir.join(if cfg!(windows) {
+            "opt/python/python.exe"
+        } else {
+            "opt/python/bin/python3"
+        });
         let git_bin = app_dir.join(format!("opt/git/cmd/git{exe}"));
         let rg_bin = app_dir.join(format!("opt/rg/rg{exe}"));
         fs::create_dir_all(python_bin.parent().expect("python parent")).expect("create python dir");

@@ -539,6 +539,32 @@ async fn pause_resume_and_block_lifecycle() {
 }
 
 #[tokio::test]
+async fn human_resume_rearms_disarmed_active_goal_after_restart() {
+    let (service, storage, _dir) = setup().await;
+    let created = service
+        .create(storage.clone(), USER, SESSION, "Example task", Some(8))
+        .await
+        .unwrap();
+    service.disarm(SESSION);
+    let resumed = service
+        .resume(
+            storage,
+            USER,
+            SESSION,
+            &GoalRef {
+                goal_id: created.record.goal_id,
+                revision: created.record.revision,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(resumed.activation, GoalActivation::Armed);
+    assert_eq!(resumed.record.phase, PHASE_ACTIVE);
+    assert_eq!(resumed.record.rounds_started, 0);
+    assert_eq!(resumed.record.revision, created.record.revision + 1);
+}
+
+#[tokio::test]
 async fn complete_is_terminal() {
     let (service, storage, _dir) = setup().await;
     let created = service

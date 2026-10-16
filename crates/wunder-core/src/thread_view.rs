@@ -78,6 +78,9 @@ pub struct ChatViewRow {
     pub failed_count: i64,
     #[serde(default)]
     pub subagents: Vec<Value>,
+    /// Latest durable plan for this root user turn, independent of reply bodies.
+    #[serde(default)]
+    pub plan: Option<ThreadPlanView>,
     pub created_time: f64,
     pub updated_time: f64,
 }
@@ -116,6 +119,21 @@ pub struct TrajectoryViewRow {
     pub diagnostics: Option<Value>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub struct ThreadPlanView {
+    pub item_id: String,
+    pub revision: i64,
+    pub created_seq: i64,
+    pub explanation: String,
+    pub steps: Vec<ThreadPlanStep>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub struct ThreadPlanStep {
+    pub step: String,
+    pub status: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TrajectoryTile {
     pub bucket: i64,
@@ -132,6 +150,16 @@ pub struct TrajectoryTile {
     pub model_count: i64,
     #[serde(default)]
     pub tool_count: i64,
+}
+
+/// A bounded timeline independent of the scrollable ledger/body window.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct TrajectoryTimelineRow {
+    pub created_seq: i64,
+    pub kind: String,
+    pub status: String,
+    pub started_at: f64,
+    pub completed_at: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -178,6 +206,10 @@ pub struct ThreadViewPage {
     pub chat: Vec<ChatViewRow>,
     pub trajectory: Vec<TrajectoryViewRow>,
     pub tiles: Vec<TrajectoryTile>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub timeline: Vec<TrajectoryTimelineRow>,
+    #[serde(default)]
+    pub timeline_has_more: bool,
     pub tile_level: usize,
     pub next_before: Option<i64>,
     pub has_more: bool,

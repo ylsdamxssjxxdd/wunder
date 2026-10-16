@@ -116,6 +116,7 @@ import { hasRetainedMessageConversationContext as hasRetainedConversationContext
 
 import { clearSessionCommandSessions, removeDemoChatSession, sortSessionsByActivity, syncDemoChatCache } from './chatDemoPanels';
 import { DEFAULT_AGENT_KEY, goalSessionIdFromPayload, persistAgentSession, resolvePersistedSessionId, writeSessionGoalState } from './chatPersist';
+import { getRuntime } from './chatRuntimeState';
 import { clearSessionWatcher, setSessionLoading } from './chatRuntimeControls';
 import { clearSessionEventsSnapshot, filterSessionsByAgent, purgeUnavailableSession, resolveSessionKey, sessionDetailPrefetchInFlight, sessionDetailWarmState, sessionHistoryState, sessionMessages, sessionRuntime, sessionSubagentsCache, sessionSubagentsInFlight, writeSessionListCache } from './chatRuntimeState';
 import { clearChatSnapshot } from './chatSnapshot';
@@ -289,7 +290,9 @@ export const chatSessionMutationActions = {
       }
       const { data } = await setSessionGoalApi(targetId, payload || {});
       const goal = this.syncSessionGoal(targetId, data?.data?.goal ?? null);
-      if (data?.data?.continuation?.should_start === true) {
+      if (goal?.phase === 'active' && goal.activation === 'armed' &&
+          targetId === resolveSessionKey(this.activeSessionId) &&
+          !getRuntime(targetId)?.watchController) {
         startSessionWatcher(this, targetId);
       }
       return {

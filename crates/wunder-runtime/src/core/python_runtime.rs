@@ -81,6 +81,13 @@ pub fn resolve_python_runtime() -> Option<PythonRuntime> {
         }
     }
 
+    if let Some(bin) = super::local_bootstrap::supplement::find_tool(
+        &[super::local_bootstrap::resolve_home_from_env_or_user()],
+        super::local_bootstrap::supplement::Tool::Python,
+    ) {
+        return Some(python_runtime_from_bin(bin));
+    }
+
     let app_dir = resolve_app_dir()?;
     let runtime_root = resolve_runtime_root().unwrap_or_else(|| app_dir.clone());
     let python_root = runtime_root.join("opt/python");
@@ -322,7 +329,7 @@ fn remove_path_env_entries(cmd: &mut TokioCommand, key: &str, removals: &[PathBu
 }
 
 fn bundled_python_path_entries() -> Vec<PathBuf> {
-    let mut roots = Vec::new();
+    let mut roots = vec![super::local_bootstrap::resolve_home_from_env_or_user()];
     if let Some(runtime_root) = resolve_runtime_root() {
         roots.push(runtime_root);
     }
@@ -405,13 +412,21 @@ fn resolve_desktop_settings_python_preference() -> DesktopPythonPreference {
 }
 
 fn resolve_desktop_command_overrides() -> DesktopCommandOverrides {
-    let Some(settings) = read_desktop_python_settings() else {
-        return DesktopCommandOverrides::default();
-    };
+    let settings = read_desktop_python_settings();
+    let roots = [super::local_bootstrap::resolve_home_from_env_or_user()];
+    use super::local_bootstrap::supplement::{find_tool, Tool};
     DesktopCommandOverrides {
-        pip_bin: resolve_desktop_settings_file_path(&settings.pip_path),
-        git_bin: resolve_desktop_settings_file_path(&settings.git_path),
-        rg_bin: resolve_desktop_settings_file_path(&settings.rg_path),
+        pip_bin: settings
+            .as_ref()
+            .and_then(|s| resolve_desktop_settings_file_path(&s.pip_path)),
+        git_bin: settings
+            .as_ref()
+            .and_then(|s| resolve_desktop_settings_file_path(&s.git_path))
+            .or_else(|| find_tool(&roots, Tool::Git)),
+        rg_bin: settings
+            .as_ref()
+            .and_then(|s| resolve_desktop_settings_file_path(&s.rg_path))
+            .or_else(|| find_tool(&roots, Tool::Rg)),
     }
 }
 
@@ -624,6 +639,56 @@ mod tests {
             Some(value) => env::set_var(key, value),
             None => env::remove_var(key),
         }
+    }
+
+    #[test]
+    fn shared_supplement_resolves_without_desktop_launcher_environment() {
+        with_env_lock(|| {
+            let temp = tempdir().expect("tempdir");
+            let home = temp.path().join("profile");
+            let python = home.join(if cfg!(windows) {
+                "opt/python/python.exe"
+            } else {
+                "opt/python/bin/python3"
+            });
+            let git = home.join(if cfg!(windows) {
+                "opt/git/cmd/git.exe"
+            } else {
+                "opt/git/bin/git"
+            });
+            let rg = home.join(if cfg!(windows) {
+                "opt/rg/rg.exe"
+            } else {
+                "opt/rg/bin/rg"
+            });
+            for path in [&python, &git, &rg] {
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(path, b"fixture").unwrap();
+            }
+            std::fs::create_dir_all(home.join("opt/python/Lib/site-packages")).unwrap();
+            let keys = [
+                "WUNDER_HOME",
+                DESKTOP_SETTINGS_PATH_ENV,
+                super::PYTHON_BIN_ENV,
+                DESKTOP_APP_DIR_ENV,
+            ];
+            let previous = keys.map(|key| env::var_os(key));
+            env::set_var("WUNDER_HOME", &home);
+            for key in &keys[1..] {
+                env::remove_var(key);
+            }
+            let runtime = super::resolve_python_runtime();
+            let commands = super::resolve_desktop_command_overrides();
+            for (key, value) in keys.into_iter().zip(previous) {
+                restore_env(key, value);
+            }
+            let runtime = runtime.expect("shared Python");
+            assert_eq!(runtime.bin, python);
+            assert!(runtime.embedded);
+            assert_eq!(runtime.home, Some(home.join("opt/python")));
+            assert_eq!(commands.git_bin, Some(git));
+            assert_eq!(commands.rg_bin, Some(rg));
+        });
     }
 
     #[test]

@@ -9,8 +9,8 @@ pinned archives, stages the opt/ tree, optionally installs the Playwright
 Chromium (manifest python.installBrowser), and produces
 wunder-supplement-win7-<arch>[-<profile>].zip.
 
-The archive is meant to be extracted directly into the Wunder Desktop install
-directory; the native runtime auto-detects opt/python, opt/git, opt/rg and
+The archive is imported into WUNDER_HOME (default: the user's .wunder
+directory); both local forms auto-detect opt/python, opt/git, opt/rg and
 opt/ffmpeg on startup.
 
 .PARAMETER Arch
@@ -458,9 +458,10 @@ Contents:
   opt/rg       ripgrep __RGVER__
   opt/ffmpeg   ffmpeg __FFVER__ (when bundled)
 
-Unpack this archive into the Wunder Desktop install directory (next to the
-executable). The native runtime auto-detects opt/python, opt/git, opt/rg and
-opt/ffmpeg on startup, and prepends their bin directories to PATH.
+Use Import supplement in the Pupa settings to install into WUNDER_HOME.
+For manual installation, close processes using this runtime and unpack into
+WUNDER_HOME (default: .wunder in your user home). The Pupa and Helm share
+opt/python, opt/git, opt/rg and opt/ffmpeg, and prepend their bins to PATH.
 
 Browsers: __BROWSER__
 '@

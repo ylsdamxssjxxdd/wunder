@@ -199,7 +199,7 @@ test('user operations drive the production chat through mocked HTTP and WebSocke
     expect(service.items.get('fixture-turn-5:compaction')?.summary_text).toBe('Retained fixture summary.');
     coverage.tools = true;
     coverage.compaction = true;
-    expect(service.goal?.status).toBe('complete');
+    expect(service.goal?.phase).toBe('complete');
     coverage.goal = true;
     await expect(page.locator('.message-compaction-divider')).toHaveCount(0);
     const audit = await page.evaluate(() => (window as any).__chatRenderAudit);
